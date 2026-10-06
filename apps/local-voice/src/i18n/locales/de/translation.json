@@ -1728,7 +1728,15 @@
     "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
     "portableUpdateButton": "GitHub Releases öffnen",
     "localUpdateAvailable": "Update {{version}} lokal verfügbar",
-    "localInstalling": "Installer wird gestartet…"
+    "localInstalling": "Installer wird gestartet…",
+    "updateAvailableTitle": "Version {{version}} ist verfügbar – klicken zum Installieren",
+    "updateDialog": {
+      "title": "Version {{version}} ist verfügbar",
+      "description": "Du nutzt {{current}}. Jetzt installieren? Die App startet danach neu.",
+      "install": "Jetzt installieren",
+      "later": "Später",
+      "noNotes": "Zu dieser Version sind keine Release-Notes hinterlegt."
+    }
   },
   "common": {
     "loading": "Wird geladen...",

@@ -6681,7 +6681,12 @@ export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
  * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.
  */
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
-export type LocalUpdate = { version: string; path: string; file_name: string }
+export type LocalUpdate = { version: string; path: string; file_name: string;
+/**
+ * Release-Notes (Markdown) aus `<installer>.notes.md` neben dem Installer, fuer
+ * alle Versionen seit der installierten (neueste zuerst); `None` ohne Datei.
+ */
+notes: string | null }
 /**
  * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
  */

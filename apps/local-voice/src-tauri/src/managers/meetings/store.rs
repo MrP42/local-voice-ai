@@ -4044,7 +4044,7 @@ mod tests {
                 &conn,
                 "SELECT COUNT(*) FROM meeting_templates WHERE id LIKE 'builtin:%'"
             ),
-            8
+            9
         );
 
         // Ein Marker im Stempel zeigt, ob ein erneutes Oeffnen aktuelle Zeilen anfasst.
@@ -4168,7 +4168,7 @@ mod tests {
         let s = MeetingStore::open_at(&path).unwrap();
         assert_eq!(
             s.list_template_infos().unwrap().len(),
-            8,
+            9,
             "naechstes Oeffnen holt es nach"
         );
     }
@@ -4845,7 +4845,7 @@ mod tests {
         let list = s.list_template_infos().unwrap();
         assert_eq!(list.len(), 10);
         assert_eq!(
-            list[8], created,
+            list[9], created,
             "eigene Vorlagen stehen hinter den mitgelieferten"
         );
 
@@ -4908,7 +4908,7 @@ mod tests {
                 &s.get_connection().unwrap(),
                 "SELECT COUNT(*) FROM meeting_templates"
             ),
-            9
+            10
         );
     }
 
@@ -4995,7 +4995,7 @@ mod tests {
             .into_iter()
             .map(|i| i.id)
             .collect();
-        assert_eq!(&ids[8..], &[second.id, first.id]);
+        assert_eq!(&ids[9..], &[second.id, first.id]);
     }
 
     #[test]

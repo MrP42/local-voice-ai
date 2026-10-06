@@ -1728,7 +1728,15 @@
     "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
     "portableUpdateButton": "Open GitHub Releases",
     "localUpdateAvailable": "Update {{version}} available locally",
-    "localInstalling": "Starting installer…"
+    "localInstalling": "Starting installer…",
+    "updateAvailableTitle": "Version {{version}} is available – click to install",
+    "updateDialog": {
+      "title": "Version {{version}} is available",
+      "description": "You are on {{current}}. Install now? The app restarts afterwards.",
+      "install": "Install now",
+      "later": "Later",
+      "noNotes": "No release notes for this version."
+    }
   },
   "whatsNew": {
     "title": "New in Local Voice AI v{{version}}"
