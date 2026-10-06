@@ -16,6 +16,7 @@ import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
 import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
+import { openModelsArea } from "@/components/settings/models/ModelsSettings";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { ShortcutInput } from "../ShortcutInput";
@@ -1932,13 +1933,7 @@ export const TtsSettings = () => {
                           type="button"
                           className="underline cursor-pointer"
                           data-testid="voice-setup-button"
-                          onClick={() => {
-                            window.dispatchEvent(
-                              new CustomEvent("lv-navigate", {
-                                detail: { section: "models" },
-                              }),
-                            );
-                          }}
+                          onClick={() => openModelsArea("voices")}
                         >
                           {t("tts.voices.setUp")}
                         </button>

@@ -9,8 +9,26 @@ import { LlmSection } from "./LlmSection";
 import { DictationSection } from "./DictationSection";
 import { VoicesSection } from "./VoicesSection";
 
-type Area = "llm" | "dictation" | "voices";
+export type ModelsArea = "llm" | "dictation" | "voices";
+type Area = ModelsArea;
 const AREAS: Area[] = ["llm", "dictation", "voices"];
+const AREA_KEY = "models.area";
+
+/**
+ * Zur Modellseite springen und dort einen Bereich zeigen (z. B. "Vorlesen"
+ * vom Einrichten-Hinweis der Vorlesen-Seite aus). Der Bereich wird vor dem
+ * Sprung gemerkt -- die Seite liest ihn beim Oeffnen.
+ */
+export const openModelsArea = (area: ModelsArea) => {
+  try {
+    window.localStorage.setItem(`lva.ui.${AREA_KEY}`, area);
+  } catch {
+    /* ohne Speicher landet man im zuletzt gewaehlten Bereich */
+  }
+  window.dispatchEvent(
+    new CustomEvent("lv-navigate", { detail: { section: "models" } }),
+  );
+};
 
 /**
  * Die Modellseite: drei Bereiche zum Umschalten -- Sprachmodelle (KI),
@@ -22,7 +40,7 @@ const AREAS: Area[] = ["llm", "dictation", "voices"];
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const { loading } = useModelStore();
-  const [area, setArea] = usePersistentState<Area>("models.area", "llm", (v) =>
+  const [area, setArea] = usePersistentState<Area>(AREA_KEY, "llm", (v) =>
     (AREAS as string[]).includes(v),
   );
   const [query, setQuery] = useState("");
