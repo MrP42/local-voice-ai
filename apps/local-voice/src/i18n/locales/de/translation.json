@@ -1662,7 +1662,10 @@
         "priceIn": "Preis Eingabe / Mio.",
         "priceOut": "Preis Ausgabe / Mio.",
         "effort": "Effort",
-        "effortDefault": "Vorgabe"
+        "effortDefault": "Standard ({{level}})",
+        "fast": "Fast-Modus",
+        "fastOn": "Fast-Modus an: 1,5–2× schneller, verbraucht mehr vom Abo-Kontingent. Klicken zum Ausschalten.",
+        "fastOff": "Fast-Modus aus. Klicken: 1,5–2× schneller, verbraucht dafür mehr vom Abo-Kontingent."
       },
       "usage": {
         "title": "Verbrauch",
@@ -1708,6 +1711,10 @@
         "xhigh": "sehr hoch",
         "max": "maximal",
         "ultra": "ultra (mit Delegation)"
+      },
+      "defaultEffort": {
+        "title": "Standard-Effort (Abo-Modelle)",
+        "description": "Denktiefe für Claude- und ChatGPT-Abo, wenn ein Modell keinen eigenen Effort hat. Höher = gründlicher, aber langsamer und mehr Kontingent."
       }
     }
   },
@@ -1724,7 +1731,15 @@
     "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
     "portableUpdateButton": "GitHub Releases öffnen",
     "localUpdateAvailable": "Update {{version}} lokal verfügbar",
-    "localInstalling": "Installer wird gestartet…"
+    "localInstalling": "Installer wird gestartet…",
+    "updateAvailableTitle": "Version {{version}} ist verfügbar – klicken zum Installieren",
+    "updateDialog": {
+      "title": "Version {{version}} ist verfügbar",
+      "description": "Du nutzt {{current}}. Jetzt installieren? Die App startet danach neu.",
+      "install": "Jetzt installieren",
+      "later": "Später",
+      "noNotes": "Zu dieser Version sind keine Release-Notes hinterlegt."
+    }
   },
   "common": {
     "loading": "Wird geladen...",
@@ -3188,7 +3203,9 @@
         "confirmTitle": "Ausschnitte an {{provider}} senden?",
         "confirmBody": "Für die Antwort gehen Ausschnitte aus Transkript und Notizen an {{provider}}. Diese Bestätigung gilt für diesen Anbieter und wird nicht erneut abgefragt.",
         "confirm": "Senden",
-        "cancel": "Abbrechen"
+        "cancel": "Abbrechen",
+        "short": "Cloud: {{provider}}",
+        "minimize": "Hinweis einklappen"
       },
       "errors": {
         "no_provider": "Kein KI-Anbieter eingerichtet (Einstellungen → Nachbearbeitung).",
@@ -3508,6 +3525,16 @@
         "agent_external": "Externer Agent",
         "agent_local": "Lokaler Agent"
       }
+    },
+    "docUsage": {
+      "model": "Modell",
+      "effort": "Effort",
+      "tokens": "Token",
+      "tokensHint": "Eingabe {{input}} · Ausgabe {{output}}",
+      "cost": "Kosten",
+      "subscriptionHint": "* Über dein Abo abgerechnet – es sind keine API-Kosten angefallen.",
+      "localHint": "* Lokales Modell – es sind keine Kosten angefallen.",
+      "costUnknown": "Kosten nicht erfasst (kein Preis hinterlegt oder älteres Protokoll)."
     }
   },
   "micSelector": {
@@ -3557,7 +3584,8 @@
     "ollamaLoaded": "Ollama hält im Speicher: {{models}}",
     "ollamaEmpty": "Ollama: nichts im Speicher (lädt bei Bedarf)",
     "ollamaWarmHint": "Lädt das Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
-    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger."
+    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger.",
+    "spendTitle": "Dieser Monat: {{monthCalls}} Aufrufe · Token ein {{monthIn}} / aus {{monthOut}} · {{monthCost}}\nGesamt: {{allCalls}} Aufrufe · Token ein {{allIn}} / aus {{allOut}} · {{allCost}}"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

@@ -1267,7 +1267,8 @@ fn simulate_notes(
     if let Some(model) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
         managers::meetings::notes::eval::apply_model_override(&mut settings, model);
     }
-    let decision = auto_enhance_decision(&settings, "live", false);
+    // Die Messung laeuft immer, auch ohne Nutzernotizen.
+    let decision = auto_enhance_decision(&settings, "live", false, true);
     let provider = managers::meetings::llm_call::resolve_provider_coded(&settings)
         .ok()
         .map(|(p, model, _)| format!("{}:{model}", p.id));
@@ -1895,6 +1896,8 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_set_active_model,
             commands::llm::llm_list_remote_models,
             commands::llm::llm_model_efforts,
+            commands::llm::llm_set_default_effort,
+            commands::llm::llm_model_offers_fast,
             commands::llm::llm_set_api_key,
             commands::llm::llm_local_list,
             commands::llm::llm_local_download,
@@ -1917,6 +1920,7 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,
+            commands::usage::usage_cost_of,
             commands::usage::usage_clear,
             commands::usage::usage_budget_states,
             sync::sync_login,

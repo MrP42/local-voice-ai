@@ -64,7 +64,12 @@ pub struct CliModel {
     pub id: String,
     pub efforts: Vec<String>,
     pub default_effort: Option<String>,
+    /// Bietet den Fast-Modus an (Codex-Katalog: `additional_speed_tiers`).
+    pub fast: bool,
 }
+
+/// Endung der gespeicherten Angabe fuer den Fast-Modus: `gpt-6.1-sol@high~fast`.
+pub const FAST_SUFFIX: &str = "~fast";
 
 /// Modellname, wie er auf die Kommandozeile darf: Buchstaben, Ziffern, `.`, `-`,
 /// `_`, hoechstens 64 Zeichen. Es gibt keine Shell dazwischen; die Regel haelt
@@ -80,12 +85,22 @@ pub fn valid_effort(s: &str) -> bool {
     KNOWN_EFFORTS.contains(&s)
 }
 
-/// Modell und Effort aus der gespeicherten Angabe `modell@effort`.
+/// Modell und Effort aus der gespeicherten Angabe `modell@effort` (eine
+/// Endung `~fast` faellt dabei weg, siehe [`split_fast`]).
 pub fn split_spec(spec: &str) -> (&str, Option<&str>) {
+    let spec = split_fast(spec).0;
     match spec.split_once('@') {
         Some((m, e)) if !e.is_empty() => (m, Some(e)),
         Some((m, _)) => (m, None),
         None => (spec, None),
+    }
+}
+
+/// Angabe ohne Fast-Endung und ob sie gesetzt war.
+pub fn split_fast(spec: &str) -> (&str, bool) {
+    match spec.strip_suffix(FAST_SUFFIX) {
+        Some(rest) => (rest, true),
+        None => (spec, false),
     }
 }
 
@@ -125,9 +140,14 @@ pub(crate) fn codex_catalog(home: &Path) -> Vec<CliModel> {
                 .filter(|e| valid_effort(e))
                 .map(str::to_string)
                 .collect();
+            let fast = m
+                .get("additional_speed_tiers")
+                .and_then(|x| x.as_array())
+                .is_some_and(|tiers| tiers.iter().any(|t| t.as_str() == Some("fast")));
             Some(CliModel {
                 id: id.to_string(),
                 efforts,
+                fast,
                 default_effort: m
                     .get("default_reasoning_level")
                     .and_then(|x| x.as_str())
@@ -154,6 +174,7 @@ fn standard(ids: &[&str], efforts: &[&str]) -> Vec<CliModel> {
             id: id.to_string(),
             efforts: efforts.iter().map(|e| e.to_string()).collect(),
             default_effort: None,
+            fast: false,
         })
         .collect()
 }
@@ -203,6 +224,11 @@ impl Cli {
             .map(|m| m.efforts)
             .unwrap_or_default()
     }
+
+    /// Bietet das Modell den Fast-Modus an? (nur Codex laut Katalog)
+    pub fn offers_fast(self, model: &str) -> bool {
+        self.models().into_iter().any(|m| m.id == model && m.fast)
+    }
 }
 
 /// Antwort eines CLI-Aufrufs samt Token (soweit die CLI sie meldet).
@@ -248,7 +274,23 @@ pub(crate) fn args(
     effort: Option<&str>,
     system: Option<&str>,
 ) -> Vec<String> {
+    args_with(cli, model, effort, false, system)
+}
+
+/// Wie [`args`], dazu der Fast-Modus (nur Codex: `service_tier = "fast"`).
+pub(crate) fn args_with(
+    cli: Cli,
+    model: &str,
+    effort: Option<&str>,
+    fast: bool,
+    system: Option<&str>,
+) -> Vec<String> {
     let mut a = args_without_effort(cli, model, system);
+    if fast && cli == Cli::Codex {
+        let at = a.len() - 1;
+        a.insert(at, "service_tier=\"fast\"".into());
+        a.insert(at, "-c".into());
+    }
     if let Some(e) = effort {
         match cli {
             Cli::Claude => {
@@ -424,7 +466,8 @@ pub fn call(
     system: Option<&str>,
     user: &str,
 ) -> Result<CliReply, String> {
-    // `modell@effort`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
+    // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
+    let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
     if !valid_model_name(model) {
         return Err(format!("cli_model_not_in_plan: {model}"));
@@ -441,7 +484,7 @@ pub fn call(
         _ => user.to_string(),
     };
     let (program, mut argv) = launcher(binary);
-    argv.extend(args(cli, model, effort, system));
+    argv.extend(args_with(cli, model, effort, fast, system));
     let mut cmd = Command::new(program);
     cmd.args(&argv)
         .current_dir(&work)
@@ -681,6 +724,13 @@ mod tests {
             ("gpt-6.1-sol", Some("high"))
         );
         assert_eq!(split_spec("sonnet"), ("sonnet", None));
+        assert_eq!(
+            split_spec("gpt-6.1-sol@high~fast"),
+            ("gpt-6.1-sol", Some("high"))
+        );
+        assert_eq!(split_spec("gpt-6-luna~fast"), ("gpt-6-luna", None));
+        assert_eq!(split_fast("gpt-6-luna@low~fast"), ("gpt-6-luna@low", true));
+        assert_eq!(split_fast("gpt-6-luna@low"), ("gpt-6-luna@low", false));
     }
 
     #[test]
@@ -709,6 +759,7 @@ mod tests {
             dir.path().join("models_cache.json"),
             r#"{"identity":{"geheim":"nie gelesen"},"models":[
               {"slug":"gpt-6-astra","visibility":"list","default_reasoning_level":"medium",
+               "additional_speed_tiers":["fast"],
                "supported_reasoning_levels":[{"effort":"low"},{"effort":"ultra"},{"effort":"x;y"}]},
               {"slug":"gpt-reserve","visibility":"hide","supported_reasoning_levels":[]},
               {"slug":"bad name","visibility":"list","supported_reasoning_levels":[]}]}"#,
@@ -724,6 +775,24 @@ mod tests {
         assert_eq!(ids, ["gpt-6.1-sol", "gpt-6-astra"]);
         assert_eq!(models[1].efforts, ["low", "ultra"]);
         assert_eq!(models[1].default_effort.as_deref(), Some("medium"));
+        assert!(models[1].fast, "Katalog bietet Fast an");
+        assert!(
+            !models[0].fast,
+            "eingestelltes Modell ohne Katalogeintrag: kein Fast"
+        );
+    }
+
+    #[test]
+    fn fast_mode_sets_the_service_tier_only_for_codex() {
+        let c = args_with(Cli::Codex, "gpt-6.1-sol", Some("high"), true, None);
+        assert!(c
+            .windows(2)
+            .any(|w| w[0] == "-c" && w[1] == "service_tier=\"fast\""));
+        assert_eq!(c.last().map(String::as_str), Some("-"));
+        let slow = args_with(Cli::Codex, "gpt-6.1-sol", None, false, None);
+        assert!(!slow.iter().any(|a| a.contains("service_tier")));
+        let claude = args_with(Cli::Claude, "sonnet", None, true, None);
+        assert!(!claude.iter().any(|a| a.contains("service_tier")));
     }
 
     #[test]

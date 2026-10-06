@@ -14,6 +14,9 @@ use super::model::{SectionKind, TemplateInfo, TemplateSection, TemplateSpec};
 pub const BUILTIN_PREFIX: &str = "builtin:";
 /// Standardvorlage, solange der Nutzer keine andere gewaehlt hat.
 pub const DEFAULT_TEMPLATE_ID: &str = "builtin:allgemein";
+/// Vorlage der KI-Notizen (06.10.2026): knapp, ohne Zusammenfassung — nur
+/// Ergebnisse, Entscheidungen und Aufgaben aus den Notizen des Nutzers.
+pub const NOTES_TEMPLATE_ID: &str = "builtin:kompakt";
 /// P1k: "Automatisch (nach Inhalt)". Kein Vorlagen-Eintrag, sondern die Wahl
 /// selbst: sie steht als Wert in `meetings.template_id` (und in der Einstellung
 /// `meeting_default_template_id`), und der Motor waehlt beim Erzeugen anhand des
@@ -195,7 +198,7 @@ fn spec(context: &str, sections: Vec<TemplateSection>) -> TemplateSpec {
     }
 }
 
-/// Die acht mitgelieferten deutschen Vorlagen als `(key, titel, spec)`; die
+/// Die neun mitgelieferten deutschen Vorlagen als `(key, titel, spec)`; die
 /// Reihenfolge ist die Anzeigereihenfolge. Jede hat mindestens einen
 /// `Tasks`-Abschnitt. Aenderungen an Texten greifen beim naechsten Oeffnen des
 /// Stores (Upsert), Schluessel duerfen nie umbenannt werden (Besprechungen
@@ -489,6 +492,30 @@ pub fn builtin_templates() -> Vec<(&'static str, &'static str, TemplateSpec)> {
                 ],
             ),
         ),
+        (
+            "kompakt",
+            "Kompakt: Ergebnisse, Entscheidungen, Aufgaben",
+            spec(
+                "Knappe Notizen zu einer Besprechung, ausgehend von den Stichpunkten, die der Nutzer während des Gesprächs geschrieben hat. Keine Zusammenfassung, keine Nacherzählung: nur, was am Ende festgehalten wurde.",
+                vec![
+                    text(
+                        "ergebnisse",
+                        "Ergebnisse",
+                        "Was im Gespräch erreicht, geklärt oder festgestellt wurde. Ein kurzer Satz je Ergebnis, höchstens sechs. Vorrang haben die Punkte aus den Notizen des Nutzers.",
+                    ),
+                    text(
+                        "entscheidungen",
+                        "Entscheidungen",
+                        "Nur tatsächlich Beschlossenes, ein kurzer Satz je Entscheidung. Leer lassen, wenn nichts entschieden wurde.",
+                    ),
+                    tasks(
+                        "aufgaben",
+                        "Aufgaben",
+                        "Ausdrücklich vergebene oder zugesagte Aufgaben: wer erledigt was bis wann. Verantwortliche und Termine nur, wenn sie genannt wurden.",
+                    ),
+                ],
+            ),
+        ),
     ]
 }
 
@@ -516,12 +543,12 @@ mod tests {
     #[test]
     fn all_builtins_validate() {
         let all = builtin_templates();
-        assert_eq!(all.len(), 8, "acht mitgelieferte Vorlagen");
+        assert_eq!(all.len(), 9, "neun mitgelieferte Vorlagen");
 
         let mut keys: Vec<&str> = all.iter().map(|(k, _, _)| *k).collect();
         keys.sort_unstable();
         keys.dedup();
-        assert_eq!(keys.len(), 8, "Schluessel eindeutig");
+        assert_eq!(keys.len(), 9, "Schluessel eindeutig");
 
         for (key, title, spec) in &all {
             assert!(

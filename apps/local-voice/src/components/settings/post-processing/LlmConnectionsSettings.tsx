@@ -6,8 +6,18 @@ import {
   type LlmModelConfig,
   type PostProcessProvider,
 } from "@/bindings";
-import { ChevronDown, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
+import { modelLabel } from "@/lib/modelNames";
+
+/// Stufen fuer den Standard-Effort (alle Abo-Modelle kennen sie).
+const DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Select } from "../../ui/Select";
@@ -119,7 +129,8 @@ export const LlmConnectionsSettings: React.FC = () => {
 
   const labelFor = (m: LlmModelConfig) => {
     const conn = connections.find((c) => c.id === m.connection_id);
-    return conn ? `${m.label} · ${conn.label}` : m.label;
+    const name = modelLabel(m.remote_id, m.label);
+    return conn ? `${name} · ${conn.label}` : name;
   };
 
   const addConnection = async (kind: string) => {
@@ -174,6 +185,29 @@ export const LlmConnectionsSettings: React.FC = () => {
               </span>
             )}
           </div>
+        </SettingContainer>
+        <SettingContainer
+          title={t("settings.llm.defaultEffort.title")}
+          description={t("settings.llm.defaultEffort.description")}
+          descriptionMode="tooltip"
+          layout="horizontal"
+          grouped={true}
+        >
+          <select
+            value={(getSetting("llm_default_effort") ?? "medium") as string}
+            onChange={(e) =>
+              void run(() => commands.llmSetDefaultEffort(e.target.value))
+            }
+            className="w-72 rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+            data-testid="default-effort"
+            aria-label={t("settings.llm.defaultEffort.title")}
+          >
+            {DEFAULT_EFFORTS.map((level) => (
+              <option key={level} value={level}>
+                {t(`settings.llm.effortLevels.${level}`)}
+              </option>
+            ))}
+          </select>
         </SettingContainer>
       </SettingsGroup>
 
@@ -542,15 +576,28 @@ const ModelRow: React.FC<{
 }> = ({ model, isActive, run }) => {
   const { t } = useTranslation();
   const assessment = useComplianceStore((s) => s.byModel[model.id]);
+  const { getSetting } = useSettings();
+  const defaultEffort = (getSetting("llm_default_effort") ??
+    "medium") as string;
   const [details, setDetails] = useState(false);
   // Effort-Stufen (nur Abo-Modelle ueber die CLI kennen welche).
   const [efforts, setEfforts] = useState<string[]>([]);
+  // Fast-Modus (nur Codex-Modelle, die ihn laut Katalog anbieten).
+  const [offersFast, setOffersFast] = useState(false);
   useEffect(() => {
     let cancelled = false;
     commands
       .llmModelEfforts(model.connection_id, model.remote_id)
       .then((list) => {
-        if (!cancelled) setEfforts(list);
+        if (!cancelled) setEfforts(list ?? []);
+      })
+      .catch(() => {
+        // Ohne Backend: keine Auswahl.
+      });
+    commands
+      .llmModelOffersFast(model.connection_id, model.remote_id)
+      .then((offers) => {
+        if (!cancelled) setOffersFast(offers === true);
       })
       .catch(() => {
         // Ohne Backend: keine Auswahl.
@@ -593,7 +640,9 @@ const ModelRow: React.FC<{
   return (
     <div className="rounded border border-mid-gray/15 px-2 py-1.5">
       <div className="flex items-center gap-2 text-sm">
-        <span className="font-medium truncate">{model.label}</span>
+        <span className="font-medium truncate" title={model.remote_id}>
+          {modelLabel(model.remote_id, model.label)}
+        </span>
         <ModelBadges assessment={assessment} />
         {isActive && (
           <Badge variant="success">{t("settings.llm.model.active")}</Badge>
@@ -608,7 +657,13 @@ const ModelRow: React.FC<{
               className="rounded border border-mid-gray/30 bg-background px-1.5 py-0.5 text-xs text-text"
               data-effort-select={model.id}
             >
-              <option value="">{t("settings.llm.model.effortDefault")}</option>
+              <option value="">
+                {t("settings.llm.model.effortDefault", {
+                  level: t(`settings.llm.effortLevels.${defaultEffort}`, {
+                    defaultValue: defaultEffort,
+                  }),
+                })}
+              </option>
               {efforts.map((level) => (
                 <option key={level} value={level}>
                   {t(`settings.llm.effortLevels.${level}`, {
@@ -618,6 +673,30 @@ const ModelRow: React.FC<{
               ))}
             </select>
           </label>
+        )}
+        {offersFast && (
+          <button
+            type="button"
+            onClick={() => void save({ fast: !model.fast })}
+            aria-pressed={!!model.fast}
+            title={t(
+              model.fast
+                ? "settings.llm.model.fastOn"
+                : "settings.llm.model.fastOff",
+            )}
+            aria-label={t("settings.llm.model.fast")}
+            className={`rounded p-1 transition-colors ${
+              model.fast
+                ? "bg-yellow-400/20 text-yellow-500"
+                : "text-text/40 hover:bg-mid-gray/10 hover:text-text/70"
+            }`}
+            data-fast-toggle={model.id}
+          >
+            <Zap
+              className="h-4 w-4"
+              fill={model.fast ? "currentColor" : "none"}
+            />
+          </button>
         )}
         <Button
           size="sm"

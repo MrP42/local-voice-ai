@@ -280,6 +280,34 @@ async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
 async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]> {
     return await TAURI_INVOKE("llm_model_efforts", { connectionId, remoteId });
 },
+/**
+ * Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
+ */
+async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("llm_model_offers_fast", { connectionId, remoteId });
+},
+/**
+ * Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
+ */
+async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_default_effort", { effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kosten einer Reihe von Aufrufen (Mikro-Dollar), etwa der eines Protokolls.
+ */
+async usageCostOf(ids: number[]) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_cost_of", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
@@ -5309,6 +5337,11 @@ llm_model_dirs?: string[];
  */
 compliance_profile?: ComplianceProfile;
 /**
+ * Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
+ * hat (`low` … `max`). Vorgabe `medium`.
+ */
+llm_default_effort?: string;
+/**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.
  */
@@ -6648,13 +6681,23 @@ export type LlmModelConfig = { id: string; connection_id: string; remote_id: str
  * Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
  * auch `ultra`); `None` = Vorgabe der CLI.
  */
-effort?: string | null }
+effort?: string | null;
+/**
+ * Fast-Modus der Codex-Modelle (`service_tier = "fast"`: schneller, verbraucht
+ * mehr vom Abo-Kontingent); nur wirksam, wo der Codex-Katalog ihn anbietet.
+ */
+fast?: boolean }
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 /**
  * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.
  */
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
-export type LocalUpdate = { version: string; path: string; file_name: string }
+export type LocalUpdate = { version: string; path: string; file_name: string;
+/**
+ * Release-Notes (Markdown) aus `<installer>.notes.md` neben dem Installer, fuer
+ * alle Versionen seit der installierten (neueste zuerst); `None` ohne Datei.
+ */
+notes: string | null }
 /**
  * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
  */

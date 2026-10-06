@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
       ],
       llm_models: [
         { id: "local:llm-qwen3-4b-q4", connection_id: "local", remote_id: "llm-qwen3-4b-q4", label: "Qwen3 4B", enabled: true, tags: [] },
-        { id: "openai-1:gpt-4.1-mini", connection_id: "openai-1", remote_id: "gpt-4.1-mini", label: "gpt-4.1-mini", enabled: true, tags: [] },
+        { id: "openai-1:gpt-4.1-mini", connection_id: "openai-1", remote_id: "gpt-4.1-mini", label: "gpt-4.1-mini", enabled: true, tags: [], fast: true },
         { id: "aus:qwen3:8b", connection_id: "aus", remote_id: "qwen3:8b", label: "qwen3:8b", enabled: true, tags: [] },
         { id: "ol:qwen3.8:27b", connection_id: "ol", remote_id: "qwen3.8:27b", label: "qwen3.8:27b", enabled: true, tags: [] },
       ],
@@ -103,6 +103,16 @@ test("switching in the footer offers only released models of enabled connections
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.active))
     .toBe("openai-1:gpt-4.1-mini");
+});
+
+test("a model in fast mode carries a lightning bolt in the footer menu", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect(page.locator("[data-llm-selector]")).not.toContainText("⚡");
+  await page.locator("[data-llm-selector]").click();
+  const menu = page.getByRole("menu");
+  await expect(menu.locator("[data-llm-fast]")).toHaveCount(1);
+  await expect(menu.getByRole("menuitem").filter({ has: page.locator("[data-llm-fast]") })).toContainText("GPT-4.1-Mini");
 });
 
 test("memory is shown as measured: RAM and the dedicated GPU, not the iGPU", async ({ page }) => {

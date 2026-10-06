@@ -45,13 +45,9 @@ const Footer: React.FC = () => {
           {/* Fish-Speech-Server (Vorlesen): links neben dem Schild. */}
           <FishServerButton />
           <ComplianceShield />
-          {/* Update Status */}
-          <div className="hidden sm:flex items-center gap-1">
-            <UpdateChecker />
-            <span>•</span>
-            {/* eslint-disable-next-line i18next/no-literal-string */}
-            <span>v{version}</span>
-          </div>
+          {/* Version: ein Klick sucht nach Updates; ein gefundenes meldet
+              sich beim Start als Fenster mit den Release-Notes. */}
+          <UpdateChecker version={version} />
         </div>
       </div>
     </div>

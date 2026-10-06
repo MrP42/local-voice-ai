@@ -31,6 +31,7 @@ import {
   type ScopeFilter,
 } from "@/bindings";
 import { useSettings } from "../../../../hooks/useSettings";
+import { usePersistentState } from "../../../../hooks/usePersistentState";
 import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import { isLocalProvider } from "../MeetingChatNotice";
@@ -140,6 +141,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
 
+  // Cloud-Hinweis: einklappbar, nie ganz weg (es gehen Ausschnitte hinaus).
+  const [remoteBar, setRemoteBar] = usePersistentState<"full" | "min">(
+    "chat.remoteBar",
+    "full",
+    (v) => v === "full" || v === "min",
+  );
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const threadIdRef = useRef<string | null>(null);
@@ -553,7 +560,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         />
       )}
 
-      {remote && (
+      {remote && remoteBar === "min" && (
+        <button
+          type="button"
+          data-testid="chat-remote-bar-min"
+          onClick={() => setRemoteBar("full")}
+          title={t("meetings.chat.remote.bar", { provider: remote.label })}
+          className="inline-flex max-w-full items-center gap-1 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-1.5 py-0.5 text-xs text-yellow-700 dark:text-yellow-300"
+        >
+          <AlertTriangle
+            width={12}
+            height={12}
+            className="shrink-0"
+            aria-hidden="true"
+          />
+          <span className="truncate">
+            {t("meetings.chat.remote.short", { provider: remote.label })}
+          </span>
+        </button>
+      )}
+      {remote && remoteBar === "full" && (
         <p
           data-testid="chat-remote-bar"
           className="flex items-start gap-1.5 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-2 py-1.5 text-xs text-yellow-700 dark:text-yellow-300"
@@ -564,9 +590,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             className="mt-0.5 shrink-0"
             aria-hidden="true"
           />
-          <span>
+          <span className="flex-1">
             {t("meetings.chat.remote.bar", { provider: remote.label })}
           </span>
+          <button
+            type="button"
+            onClick={() => setRemoteBar("min")}
+            aria-label={t("meetings.chat.remote.minimize")}
+            title={t("meetings.chat.remote.minimize")}
+            className="shrink-0 rounded p-0.5 hover:bg-yellow-500/20"
+            data-testid="chat-remote-bar-close"
+          >
+            <X width={12} height={12} aria-hidden="true" />
+          </button>
         </p>
       )}
 
