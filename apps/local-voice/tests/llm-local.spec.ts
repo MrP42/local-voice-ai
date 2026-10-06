@@ -110,48 +110,91 @@ test.beforeEach(async ({ page }) => {
 async function openModels(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
-  await expect(page.getByText("Sprachmodelle in der App")).toBeVisible();
+  // Seit 06.10.2026 drei Bereiche; Sprachmodelle ist der erste.
+  await expect(page.getByRole("tab", { name: "Sprachmodelle" })).toHaveAttribute("aria-selected", "true");
 }
+
+type Page = import("@playwright/test").Page;
+const card = (page: Page, id: string) => page.locator(`[data-llm-card="${id}"]`);
+/** Gruppe aufklappen (Modellordner, Zum Laden, Laufzeit starten zugeklappt). */
+async function openGroup(page: Page, id: string) {
+  const header = page.locator(`[data-model-section="${id}"] > div button[aria-expanded]`).first();
+  if ((await header.getAttribute("aria-expanded")) === "false") await header.click();
+}
+/** Details einer Zeile aufklappen. */
+async function openRow(page: Page, id: string) {
+  const toggle = card(page, id).locator("button[aria-expanded]").first();
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+}
+
+test("the page is split into three areas and remembers the choice", async ({ page }) => {
+  await openModels(page);
+  await expect(page.getByRole("tab", { name: "Diktat" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Vorlesen" })).toBeVisible();
+  await page.getByRole("tab", { name: "Vorlesen" }).click();
+  await expect(page.locator('[data-models-section="voices"]')).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
+});
+
+test("installed models are one line each, the rest is folded away", async ({ page }) => {
+  await openModels(page);
+  const installed = page.locator('[data-model-section="llm-installed"]');
+  await expect(installed.locator("[data-llm-card]")).toHaveCount(1);
+  await expect(installed.locator('[data-llm-card="llm-qwen3-4b-q4"]')).toBeVisible();
+  // Ladbares, Modellordner und Laufzeit sind zugeklappt.
+  await expect(card(page, "llm-qwen3-8b-q4")).toHaveCount(0);
+  await expect(card(page, "ext-aaaaaaaaaaaa")).toHaveCount(0);
+  // Eine Zeile ist niedrig: keine Beschreibung, bis man sie aufklappt.
+  const row = card(page, "llm-qwen3-4b-q4");
+  await expect(row.getByText("Empfohlener Standard.")).toHaveCount(0);
+  const box = await row.boundingBox();
+  expect(box!.height).toBeLessThan(60);
+});
 
 test("runtimes for other platforms stay out of the list entirely", async ({ page }) => {
   await openModels(page);
-  // Ein macOS-Paket auf einem Windows-Rechner ist nur Ballast -- die Seite
-  // zeigt es gar nicht erst, statt es als "nicht ladbar" mitzuschleppen.
-  await expect(page.locator('[data-llm-card="llm-runtime-macos-aarch64"]')).toHaveCount(0);
-  const vulkan = page.locator('[data-llm-card="llm-runtime-windows-x64-vulkan"]');
+  await openGroup(page, "llm-runtime");
+  await expect(card(page, "llm-runtime-macos-aarch64")).toHaveCount(0);
+  const vulkan = card(page, "llm-runtime-windows-x64-vulkan");
   await expect(vulkan.getByText("Installiert")).toBeVisible();
   await expect(vulkan.getByText("Vulkan – jede Grafikkarte")).toBeVisible();
 });
 
-test("models carry readable traits and only downloaded ones can be used", async ({ page }) => {
+test("details show traits, only downloaded models can be used", async ({ page }) => {
   await openModels(page);
-  const qwen4 = page.locator('[data-llm-card="llm-qwen3-4b-q4"]');
-  // exact: die Beschreibung "Empfohlener Standard." traefe sonst ebenfalls.
-  await expect(qwen4.getByText("empfohlen", { exact: true })).toBeVisible();
-  await expect(qwen4.getByText("stark bei Zusammenfassungen")).toBeVisible();
+  await openRow(page, "llm-qwen3-4b-q4");
+  const qwen4 = card(page, "llm-qwen3-4b-q4");
+  await expect(qwen4.getByText("Empfohlener Standard.")).toBeVisible();
+  await expect(qwen4.getByText(/empfohlen · stark bei Zusammenfassungen/)).toBeVisible();
   await expect(qwen4.getByRole("button", { name: "Verwenden" })).toBeVisible();
-  const qwen8 = page.locator('[data-llm-card="llm-qwen3-8b-q4"]');
+  await openGroup(page, "llm-available");
+  const qwen8 = card(page, "llm-qwen3-8b-q4");
   await expect(qwen8.getByRole("button", { name: "Verwenden" })).toHaveCount(0);
   await expect(qwen8.getByRole("button", { name: "Laden" })).toBeVisible();
 });
 
 test("using a model reaches the backend and marks it active", async ({ page }) => {
   await openModels(page);
-  const qwen4 = page.locator('[data-llm-card="llm-qwen3-4b-q4"]');
+  const qwen4 = card(page, "llm-qwen3-4b-q4");
   await qwen4.getByRole("button", { name: "Verwenden" }).click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.activated))
     .toBe("llm-qwen3-4b-q4");
   await expect(qwen4.getByText("Aktiv", { exact: true })).toBeVisible();
   await expect(qwen4.getByRole("button", { name: "Verwenden" })).toHaveCount(0);
+  await expect(page.locator("[data-active-name]")).toHaveText("Qwen3 4B");
 });
 
 test("each model says whether it fits, with the numbers behind it", async ({ page }) => {
   await openModels(page);
-  const qwen4 = page.locator('[data-llm-card="llm-qwen3-4b-q4"]');
-  await expect(qwen4.locator("[data-fit=fits]")).toContainText("braucht ≈ 4,3 GB, frei 18,5 GB");
-  const qwen8 = page.locator('[data-llm-card="llm-qwen3-8b-q4"]');
-  await expect(qwen8.locator("[data-fit=tight]")).toContainText("Knapp");
+  const qwen4 = card(page, "llm-qwen3-4b-q4");
+  await expect(qwen4.locator("[data-fit=fits]")).toHaveAttribute("title", /braucht ≈ 4,3 GB, frei 18,5 GB/);
+  await openRow(page, "llm-qwen3-4b-q4");
+  await expect(qwen4.locator("[data-fit-text=fits]")).toContainText("braucht ≈ 4,3 GB");
+  await openGroup(page, "llm-available");
+  await expect(card(page, "llm-qwen3-8b-q4").locator("[data-fit=tight]")).toHaveAttribute("title", /Knapp/);
 });
 
 // Modellordner (05.10.2026): Modelle aus Ollama/LM Studio erscheinen mit
@@ -159,24 +202,30 @@ test("each model says whether it fits, with the numbers behind it", async ({ pag
 // die Laufzeit nicht laden kann, ist nicht waehlbar -- mit Grund.
 test("models from model folders show source and load status", async ({ page }) => {
   await openModels(page);
+  await openGroup(page, "llm-folders");
+  await expect(page.locator('[data-model-section="llm-folders"]')).toContainText("1 lädt nicht");
   await expect(page.getByTestId("llm-model-dirs")).toContainText("D:\\ollama\\models");
-  const ok = page.locator('[data-llm-card="ext-aaaaaaaaaaaa"]');
+  const ok = card(page, "ext-aaaaaaaaaaaa");
   await expect(ok.getByText("Ollama", { exact: true })).toBeVisible();
   await expect(ok.locator("[data-compat=ok]")).toHaveText("Geprüft");
   await expect(ok.getByRole("button", { name: "Verwenden" })).toBeVisible();
-  await expect(ok.getByRole("button", { name: "Entfernen" })).toHaveCount(0);
+  // Fremde Dateien: kein Entfernen, auch nicht im Menue (es gibt keins).
+  await expect(ok.getByTestId("row-menu")).toHaveCount(0);
 
-  const blocked = page.locator('[data-llm-card="ext-cccccccccccc"]');
+  const blocked = card(page, "ext-cccccccccccc");
   await expect(blocked.locator("[data-compat=incompatible]")).toHaveText("Lädt nicht");
-  await expect(blocked.locator("[data-incompatible-reason]")).toContainText("Verbindung „Ollama“");
   await expect(blocked.getByRole("button", { name: "Verwenden" })).toHaveCount(0);
+  await openRow(page, "ext-cccccccccccc");
+  await expect(blocked.locator("[data-incompatible-reason]")).toContainText("Verbindung „Ollama“");
 });
 
-test("an unchecked model can be checked from its card", async ({ page }) => {
+test("an unchecked model can be checked from its menu", async ({ page }) => {
   await openModels(page);
-  const unchecked = page.locator('[data-llm-card="ext-bbbbbbbbbbbb"]');
+  await openGroup(page, "llm-folders");
+  const unchecked = card(page, "ext-bbbbbbbbbbbb");
   await expect(unchecked.locator("[data-compat=unchecked]")).toHaveText("Ungeprüft");
-  await unchecked.getByRole("button", { name: "Prüfen" }).click();
+  await unchecked.getByTestId("row-menu").click();
+  await page.getByTestId("row-probe").click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.probed))
     .toBe("ext-bbbbbbbbbbbb");
@@ -185,6 +234,7 @@ test("an unchecked model can be checked from its card", async ({ page }) => {
 
 test("a detected folder is offered, not added on its own", async ({ page }) => {
   await openModels(page);
+  await openGroup(page, "llm-folders");
   const dirs = page.getByTestId("llm-model-dirs");
   // Ollama steht schon drin, also wird nur LM Studio vorgeschlagen.
   const suggestion = dirs.locator("[data-suggested-dir]");
@@ -196,15 +246,22 @@ test("a detected folder is offered, not added on its own", async ({ page }) => {
     .toEqual(["D:\\ollama\\models", "C:\\Users\\x\\.lmstudio\\models"]);
 });
 
-test("an app copy with a checked twin in a folder can be deleted after asking", async ({ page }) => {
+test("an app copy with a checked twin is marked and can be deleted after asking", async ({ page }) => {
   await openModels(page);
-  const qwen4 = page.locator('[data-llm-card="llm-qwen3-4b-q4"]');
-  const hint = qwen4.locator('[data-replaceable-by="qwen3:4b"]');
-  await expect(hint).toContainText("„qwen3:4b“");
-  await hint.getByRole("button", { name: /App-Kopie löschen/ }).click();
+  const qwen4 = card(page, "llm-qwen3-4b-q4");
+  await expect(qwen4.locator('[data-duplicate="qwen3:4b"]')).toBeVisible();
+  await qwen4.getByTestId("row-menu").click();
+  await page.getByTestId("row-delete-copy").click();
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.deleted))
     .toBe("llm-qwen3-4b-q4");
-  // Ohne Zwilling kein Angebot.
-  await expect(page.locator('[data-llm-card="llm-qwen3-8b-q4"] [data-replaceable-by]')).toHaveCount(0);
+  await openGroup(page, "llm-available");
+  await expect(card(page, "llm-qwen3-8b-q4").locator("[data-duplicate]")).toHaveCount(0);
+});
+
+test("search finds models in folded groups", async ({ page }) => {
+  await openModels(page);
+  await page.getByPlaceholder(/suchen/i).fill("gpt-oss");
+  await expect(card(page, "ext-bbbbbbbbbbbb")).toBeVisible();
+  await expect(card(page, "llm-qwen3-4b-q4")).toHaveCount(0);
 });
