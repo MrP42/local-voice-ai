@@ -1267,7 +1267,8 @@ fn simulate_notes(
     if let Some(model) = model_override.map(str::trim).filter(|m| !m.is_empty()) {
         managers::meetings::notes::eval::apply_model_override(&mut settings, model);
     }
-    let decision = auto_enhance_decision(&settings, "live", false);
+    // Die Messung laeuft immer, auch ohne Nutzernotizen.
+    let decision = auto_enhance_decision(&settings, "live", false, true);
     let provider = managers::meetings::llm_call::resolve_provider_coded(&settings)
         .ok()
         .map(|(p, model, _)| format!("{}:{model}", p.id));
