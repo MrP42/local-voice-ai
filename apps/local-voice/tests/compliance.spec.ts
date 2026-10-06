@@ -120,6 +120,21 @@ test("the shield is green when all is well and explains itself on click", async 
   await expect(panel.locator('[data-check="model_local"]')).toContainText("Qwen3 4B");
 });
 
+test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur fuer Abnahmebilder");
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  await page.locator('[data-llm-option="bedrock:claude"]').waitFor();
+  await page.screenshot({ path: `${dir}/modellauswahl.png`, animations: "disabled", clip: { x: 0, y: 480, width: 760, height: 320 } });
+  await page.keyboard.press("Escape");
+  await page.mouse.click(640, 300);
+  await page.locator("[data-compliance-shield]").click();
+  await page.locator("[data-compliance-panel]").waitFor();
+  await page.screenshot({ path: `${dir}/schild.png`, animations: "disabled", clip: { x: 760, y: 380, width: 520, height: 420 } });
+});
+
 test("the shield turns red on a blocked call and says why", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => {
