@@ -10,12 +10,26 @@ const H = 11;
 
 const stripesV = (colors: string[]) =>
   colors.map((c, i) => (
-    <rect key={i} x={(W / colors.length) * i} y={0} width={W / colors.length} height={H} fill={c} />
+    <rect
+      key={i}
+      x={(W / colors.length) * i}
+      y={0}
+      width={W / colors.length}
+      height={H}
+      fill={c}
+    />
   ));
 
 const stripesH = (colors: string[]) =>
   colors.map((c, i) => (
-    <rect key={i} x={0} y={(H / colors.length) * i} width={W} height={H / colors.length} fill={c} />
+    <rect
+      key={i}
+      x={0}
+      y={(H / colors.length) * i}
+      width={W}
+      height={H / colors.length}
+      fill={c}
+    />
   ));
 
 const FLAGS: Record<string, React.ReactNode> = {
@@ -33,7 +47,14 @@ const FLAGS: Record<string, React.ReactNode> = {
   US: (
     <>
       {Array.from({ length: 7 }, (_, i) => (
-        <rect key={i} x={0} y={i * (H / 6.5)} width={W} height={H / 13} fill="#b22234" />
+        <rect
+          key={i}
+          x={0}
+          y={i * (H / 6.5)}
+          width={W}
+          height={H / 13}
+          fill="#b22234"
+        />
       ))}
       <rect width={7} height={6} fill="#3c3b6e" />
     </>
@@ -44,18 +65,31 @@ const FLAGS: Record<string, React.ReactNode> = {
       {Array.from({ length: 12 }, (_, i) => {
         const a = (i / 12) * Math.PI * 2;
         return (
-          <circle key={i} cx={8 + Math.sin(a) * 3.4} cy={5.5 - Math.cos(a) * 3.4} r={0.6} fill="#ffcc00" />
+          <circle
+            key={i}
+            cx={8 + Math.sin(a) * 3.4}
+            cy={5.5 - Math.cos(a) * 3.4}
+            r={0.6}
+            fill="#ffcc00"
+          />
         );
       })}
     </>
   ),
 };
 
-export const Flag: React.FC<{ code: string; title?: string }> = ({ code, title }) => {
+export const Flag: React.FC<{ code: string; title?: string }> = ({
+  code,
+  title,
+}) => {
   const drawing = FLAGS[code.toUpperCase()];
   if (!drawing) {
     return (
-      <span className="text-[10px] font-semibold text-text/60" title={title} data-flag={code}>
+      <span
+        className="text-[10px] font-semibold text-text/60"
+        title={title}
+        data-flag={code}
+      >
         {code}
       </span>
     );

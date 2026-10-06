@@ -351,10 +351,7 @@ const ConnectionRow: React.FC<RowProps> = ({
           )}
           {(connection.kind === "claude_cli" ||
             connection.kind === "codex_cli") && (
-            <p
-              className="text-xs text-text/60"
-              data-cli-hint={connection.kind}
-            >
+            <p className="text-xs text-text/60" data-cli-hint={connection.kind}>
               {t(`settings.llm.cli.${connection.kind}`)}
             </p>
           )}

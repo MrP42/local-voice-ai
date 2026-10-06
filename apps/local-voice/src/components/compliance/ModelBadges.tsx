@@ -8,7 +8,10 @@ import { Flag } from "./Flag";
 export const reasonsText = (
   t: (key: string, opts?: Record<string, unknown>) => string,
   a: Assessment,
-) => a.reasons.map((r) => t(`compliance.reasons.${r}`, { defaultValue: r })).join(" ");
+) =>
+  a.reasons
+    .map((r) => t(`compliance.reasons.${r}`, { defaultValue: r }))
+    .join(" ");
 
 /**
  * Hinter dem Modellnamen: Wolke für Cloud-Modelle, die Flagge des
@@ -24,7 +27,9 @@ export const ModelBadges: React.FC<{ assessment?: Assessment | null }> = ({
     .map((c) => t(`compliance.countries.${c}`, { defaultValue: c }))
     .join(", ");
   const title = assessment.cloud
-    ? t("compliance.badge.cloud", { where: where || t("compliance.countries.unknown") })
+    ? t("compliance.badge.cloud", {
+        where: where || t("compliance.countries.unknown"),
+      })
     : t("compliance.badge.local");
   return (
     <span
@@ -40,10 +45,17 @@ export const ModelBadges: React.FC<{ assessment?: Assessment | null }> = ({
         <HardDrive className="h-3.5 w-3.5 text-text/40" aria-label={title} />
       )}
       {assessment.countries.map((c) => (
-        <Flag key={c} code={c} title={t(`compliance.countries.${c}`, { defaultValue: c })} />
+        <Flag
+          key={c}
+          code={c}
+          title={t(`compliance.countries.${c}`, { defaultValue: c })}
+        />
       ))}
       {assessment.verdict === "blocked" && (
-        <Ban className="h-3.5 w-3.5 text-red-500" aria-label={t("compliance.badge.blocked")} />
+        <Ban
+          className="h-3.5 w-3.5 text-red-500"
+          aria-label={t("compliance.badge.blocked")}
+        />
       )}
     </span>
   );

@@ -19,7 +19,8 @@ export const ComplianceSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, refreshSettings } = useSettings();
   const { setProfile, refresh } = useComplianceStore();
-  const profile = (getSetting("compliance_profile") ?? "eu") as ComplianceProfile;
+  const profile = (getSetting("compliance_profile") ??
+    "eu") as ComplianceProfile;
 
   useEffect(() => {
     void refresh();

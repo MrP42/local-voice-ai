@@ -2,7 +2,10 @@ import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import type { ShieldLevel } from "@/bindings";
-import { COMPLIANCE_CHANGED, useComplianceStore } from "@/stores/complianceStore";
+import {
+  COMPLIANCE_CHANGED,
+  useComplianceStore,
+} from "@/stores/complianceStore";
 import { ModelBadges, reasonsText } from "./ModelBadges";
 
 const COLOR: Record<ShieldLevel, string> = {
@@ -74,7 +77,9 @@ export const ComplianceShield: React.FC = () => {
           aria-label={t("compliance.shield.title")}
           data-compliance-panel
         >
-          <div className={`flex items-center gap-2 font-semibold ${COLOR[status.level]}`}>
+          <div
+            className={`flex items-center gap-2 font-semibold ${COLOR[status.level]}`}
+          >
             <Icon className="h-4 w-4" />
             <span>{summary}</span>
           </div>
@@ -88,7 +93,9 @@ export const ComplianceShield: React.FC = () => {
                   data-check={check.id}
                   data-level={check.level}
                 >
-                  <CheckIcon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${COLOR[check.level]}`} />
+                  <CheckIcon
+                    className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${COLOR[check.level]}`}
+                  />
                   <span className="min-w-0">
                     {t(`compliance.checks.${check.id}`, {
                       detail: check.detail ?? "",
@@ -112,11 +119,17 @@ export const ComplianceShield: React.FC = () => {
           </p>
           {status.active?.sources && status.active.sources.length > 0 && (
             <p className="mt-1 text-[11px] text-text/50">
-              {t("compliance.shield.sources", { date: status.active.checked ?? "" })}
-              <span className="block break-all">{status.active.sources.join(" · ")}</span>
+              {t("compliance.shield.sources", {
+                date: status.active.checked ?? "",
+              })}
+              <span className="block break-all">
+                {status.active.sources.join(" · ")}
+              </span>
             </p>
           )}
-          <p className="mt-1 text-[11px] text-text/40">{t("compliance.shield.disclaimer")}</p>
+          <p className="mt-1 text-[11px] text-text/40">
+            {t("compliance.shield.disclaimer")}
+          </p>
         </div>
       )}
     </div>

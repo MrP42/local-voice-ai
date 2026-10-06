@@ -19,7 +19,10 @@ interface ComplianceStore {
   byModel: Record<string, Assessment>;
   refresh: () => Promise<void>;
   setProfile: (profile: ComplianceProfile) => Promise<boolean>;
-  setTrainingOptOut: (connectionId: string, optOut: boolean) => Promise<boolean>;
+  setTrainingOptOut: (
+    connectionId: string,
+    optOut: boolean,
+  ) => Promise<boolean>;
 }
 
 export const useComplianceStore = create<ComplianceStore>()((set, get) => ({
@@ -48,7 +51,10 @@ export const useComplianceStore = create<ComplianceStore>()((set, get) => ({
   },
 
   setTrainingOptOut: async (connectionId, optOut) => {
-    const result = await commands.complianceSetTrainingOptOut(connectionId, optOut);
+    const result = await commands.complianceSetTrainingOptOut(
+      connectionId,
+      optOut,
+    );
     await get().refresh();
     notifyComplianceChanged();
     return result.status === "ok";
