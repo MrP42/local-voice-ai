@@ -242,5 +242,9 @@ pub fn facts_for(provider: &str, base_url: &str) -> Option<&'static ProviderFact
     FACTS
         .iter()
         .find(|f| f.provider == provider && f.host.is_some() && f.host.map(str::to_string) == host)
-        .or_else(|| FACTS.iter().find(|f| f.provider == provider && f.host.is_none()))
+        .or_else(|| {
+            FACTS
+                .iter()
+                .find(|f| f.provider == provider && f.host.is_none())
+        })
 }

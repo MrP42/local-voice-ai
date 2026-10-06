@@ -62,7 +62,8 @@ pub struct CliReply {
 
 /// Wo liegt die CLI? PATH zuerst, dann die ueblichen Installationsorte.
 pub fn locate(cli: Cli) -> Option<PathBuf> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    let home =
+        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
     let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
     let names: &[&str] = match (cli, cfg!(windows)) {
         (Cli::Claude, true) => &["claude.exe", "claude.cmd"],
@@ -138,7 +139,10 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
     let v: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|e| format!("cli_bad_output: Claude-Antwort unlesbar ({e})"))?;
     if v.get("is_error").and_then(|b| b.as_bool()) == Some(true) {
-        let msg = v.get("result").and_then(|r| r.as_str()).unwrap_or("unbekannter Fehler");
+        let msg = v
+            .get("result")
+            .and_then(|r| r.as_str())
+            .unwrap_or("unbekannter Fehler");
         return Err(classify_error(msg));
     }
     let text = v
@@ -147,10 +151,16 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
         .ok_or_else(|| "cli_bad_output: Claude-Antwort ohne Ergebnis".to_string())?
         .to_string();
     let u = v.get("usage");
-    let n = |k: &str| u.and_then(|u| u.get(k)).and_then(|x| x.as_u64()).unwrap_or(0);
+    let n = |k: &str| {
+        u.and_then(|u| u.get(k))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+    };
     Ok(CliReply {
         text,
-        prompt_tokens: n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens"),
+        prompt_tokens: n("input_tokens")
+            + n("cache_creation_input_tokens")
+            + n("cache_read_input_tokens"),
         completion_tokens: n("output_tokens"),
     })
 }
@@ -168,13 +178,22 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
         match ev.get("type").and_then(|t| t.as_str()) {
             Some("item.completed") => {
                 let item = ev.get("item");
-                if item.and_then(|i| i.get("type")).and_then(|t| t.as_str()) == Some("agent_message") {
-                    text = item.and_then(|i| i.get("text")).and_then(|t| t.as_str()).map(str::to_string);
+                if item.and_then(|i| i.get("type")).and_then(|t| t.as_str())
+                    == Some("agent_message")
+                {
+                    text = item
+                        .and_then(|i| i.get("text"))
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string);
                 }
             }
             Some("turn.completed") => {
                 let u = ev.get("usage");
-                let n = |k: &str| u.and_then(|u| u.get(k)).and_then(|x| x.as_u64()).unwrap_or(0);
+                let n = |k: &str| {
+                    u.and_then(|u| u.get(k))
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0)
+                };
                 pin = n("input_tokens");
                 pout = n("output_tokens");
             }
@@ -198,11 +217,16 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
 /// Fehler der CLI in Codes, die die Oberflaeche erklaeren kann.
 pub(crate) fn classify_error(msg: &str) -> String {
     let lower = msg.to_ascii_lowercase();
-    if lower.contains("login") || lower.contains("not logged in") || lower.contains("authenticat") || lower.contains("401") {
+    if lower.contains("login")
+        || lower.contains("not logged in")
+        || lower.contains("authenticat")
+        || lower.contains("401")
+    {
         format!("cli_not_logged_in: {msg}")
     } else if lower.contains("not supported when using codex with a chatgpt account") {
         format!("cli_model_not_in_plan: {msg}")
-    } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429") {
+    } else if lower.contains("usage limit") || lower.contains("rate limit") || lower.contains("429")
+    {
         format!("cli_limit_reached: {msg}")
     } else {
         format!("cli_failed: {msg}")
@@ -210,7 +234,13 @@ pub(crate) fn classify_error(msg: &str) -> String {
 }
 
 /// Ein Aufruf. Blockiert -- auf einem Blocking-Thread ausfuehren.
-pub fn call(cli: Cli, binary: &Path, model: &str, system: Option<&str>, user: &str) -> Result<CliReply, String> {
+pub fn call(
+    cli: Cli,
+    binary: &Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+) -> Result<CliReply, String> {
     let work = std::env::temp_dir().join("local-voice-cli");
     std::fs::create_dir_all(&work).map_err(|e| format!("cli_failed: {e}"))?;
     // Codex erhaelt den Systemtext vor der Aufgabe -- `exec` kennt keinen
@@ -301,7 +331,9 @@ fn wait_with_timeout(
             Err(e) => return Err(format!("cli_failed: {e}")),
         }
     };
-    let (stdout, stderr) = reader.join().map_err(|_| "cli_failed: Ausgabe unlesbar".to_string())?;
+    let (stdout, stderr) = reader
+        .join()
+        .map_err(|_| "cli_failed: Ausgabe unlesbar".to_string())?;
     Ok(std::process::Output {
         status,
         stdout,
@@ -319,7 +351,8 @@ mod tests {
         let r = parse_claude(out).unwrap();
         assert_eq!(r.text, "Release am Freitag.");
         assert_eq!((r.prompt_tokens, r.completion_tokens), (782, 12));
-        let err = parse_claude(r#"{"is_error":true,"result":"Not logged in · Please run /login"}"#).unwrap_err();
+        let err = parse_claude(r#"{"is_error":true,"result":"Not logged in · Please run /login"}"#)
+            .unwrap_err();
         assert!(err.starts_with("cli_not_logged_in"), "{err}");
     }
 
@@ -327,29 +360,45 @@ mod tests {
     #[test]
     fn codex_events_yield_the_last_agent_message() {
         let out = concat!(
-            r#"{"type":"thread.started","thread_id":"x"}"#, "\n",
-            r#"{"type":"item.completed","item":{"type":"reasoning","text":"denke"}}"#, "\n",
-            r#"{"type":"item.completed","item":{"type":"agent_message","text":"Release am Freitag; Anna repariert die Tests."}}"#, "\n",
-            r#"{"type":"turn.completed","usage":{"input_tokens":20744,"output_tokens":18}}"#, "\n",
+            r#"{"type":"thread.started","thread_id":"x"}"#,
+            "\n",
+            r#"{"type":"item.completed","item":{"type":"reasoning","text":"denke"}}"#,
+            "\n",
+            r#"{"type":"item.completed","item":{"type":"agent_message","text":"Release am Freitag; Anna repariert die Tests."}}"#,
+            "\n",
+            r#"{"type":"turn.completed","usage":{"input_tokens":20744,"output_tokens":18}}"#,
+            "\n",
         );
         let r = parse_codex(out).unwrap();
         assert_eq!(r.text, "Release am Freitag; Anna repariert die Tests.");
         assert_eq!((r.prompt_tokens, r.completion_tokens), (20744, 18));
         let refused = r#"{"type":"error","message":"The 'gpt-6' model is not supported when using Codex with a ChatGPT account."}"#;
-        assert!(parse_codex(refused).unwrap_err().starts_with("cli_model_not_in_plan"));
+        assert!(parse_codex(refused)
+            .unwrap_err()
+            .starts_with("cli_model_not_in_plan"));
     }
 
     #[test]
     fn calls_are_isolated_from_the_users_configuration() {
         let a = args(Cli::Claude, "sonnet", Some("System"));
-        for flag in ["--setting-sources", "--strict-mcp-config", "--disable-slash-commands", "--tools", "--no-session-persistence"] {
+        for flag in [
+            "--setting-sources",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--tools",
+            "--no-session-persistence",
+        ] {
             assert!(a.iter().any(|x| x == flag), "{flag} fehlt");
         }
         // --bare liest den Abo-Login nicht.
         assert!(!a.iter().any(|x| x == "--bare"));
         let c = args(Cli::Codex, "gpt-6-astra", None);
-        assert!(c.windows(2).any(|w| w[0] == "-c" && w[1] == "mcp_servers={}"));
-        assert!(c.windows(2).any(|w| w[0] == "--sandbox" && w[1] == "read-only"));
+        assert!(c
+            .windows(2)
+            .any(|w| w[0] == "-c" && w[1] == "mcp_servers={}"));
+        assert!(c
+            .windows(2)
+            .any(|w| w[0] == "--sandbox" && w[1] == "read-only"));
     }
 
     /// Gegen die echten CLIs mit dem Login des Nutzers (nur von Hand):

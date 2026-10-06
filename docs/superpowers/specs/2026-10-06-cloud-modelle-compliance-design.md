@@ -77,8 +77,38 @@ Ohne Isolation lädt `claude -p` die persönliche Konfiguration (89 kTok, **Hook
 3. Abo-Anbieter `claude_cli`, `codex_cli`.
 4. Abnahme-Installer, Release gebündelt.
 
+## Recherche 06.10.2026 (Primärquellen gegengelesen)
+
+| Zugang | Standort | Training | AVV | Unter „EU“ |
+|---|---|---|---|---|
+| Anthropic API | Inferenz global/US, Speicherung nur US ([data-residency](https://platform.claude.com/docs/en/manage-claude/data-residency)) | nein | ja | gesperrt |
+| Claude Pro/Max (Claude Code) | USA | an, abschaltbar | nein | gesperrt |
+| OpenAI API | USA | nein ([your-data](https://developers.openai.com/api/docs/guides/your-data)) | ja | gesperrt |
+| OpenAI API, EU-Projekt (`eu.api.openai.com`) | EU (Freigabe + Modified-Retention-Zusatz nötig) | nein | ja | erlaubt |
+| ChatGPT Plus/Pro (Codex) | USA | an, abschaltbar | nein | gesperrt |
+| Mistral API | EU (US-Endpunkt nur ausdrücklich) ([347629](https://help.mistral.ai/en/articles/347629)) | Pay-as-you-go: an, abschaltbar ([347617](https://help.mistral.ai/en/articles/347617)) | ja | erlaubt mit Bestätigung „Training aus“ |
+| AWS Bedrock Frankfurt/Irland/Mailand/Stockholm | jeweilige EU-Region ([Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)) | nein, Modellanbieter ohne Zugriff ([data-protection](https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html)) | ja | erlaubt |
+| AWS Bedrock US-Regionen | USA | nein | ja | gesperrt |
+
+DPF-Status konnten wir nicht selbst abfragen → überall „unbekannt“; für kein Ergebnis entscheidend.
+London (`eu-west-2`) ist nicht wählbar (nicht EU/EWR, Angemessenheit nicht geprüft).
+
+**Nutzungsbedingungen Abo-Weg:** Claude Code – das unveränderte Programm mit eigenem Login für die
+eigene Nutzung gilt als „ordinary use“; die App liest, speichert, vermittelt keine Zugangsdaten
+([legal-and-compliance](https://code.claude.com/docs/en/legal-and-compliance)). Codex – OpenAI
+empfiehlt für programmgesteuerte Nutzung API-Schlüssel; Grauzone, in der Oberfläche benannt.
+
+## Umsetzung (Stand 06.10.)
+
+- Etappen 1–3 umgesetzt: `managers/compliance` (Fakten, Regel, Schild), `commands/compliance.rs`,
+  Prüfung vor jedem Aufruf (`llm_client`, Agent), `managers/llm/cli.rs` (Abo), `llm_keys.rs`
+  (Schlüssel per DPAPI, Migration beim ersten Start), Oberfläche (Schild, Symbole, Regelwerk,
+  Bestätigung „Training aus“, Bedrock-Region, Abo-Hinweise).
+- Belege: Rust-Gruppen compliance/llm/llm_client/settings/secret/meetings/agent/… grün; echte
+  CLI-Aufrufe aus Rust (`real_cli_calls`); Playwright `compliance.spec.ts`.
+
 ## Grenzen
 
 Kein Rechtsrat: das Schild prüft dokumentierte Anbieterangaben gegen ein Regelwerk, es ersetzt
-keine Datenschutzprüfung. Abo-Nutzung über CLIs nur für den Eigengebrauch, Bedingungen siehe
-Recherche (Abschnitt folgt).
+keine Datenschutzprüfung. Abo-Nutzung über CLIs nur für den Eigengebrauch. Auf macOS bleiben
+API-Schlüssel vorerst im Klartext (DPAPI nur Windows) – das Schild zeigt dann gelb.

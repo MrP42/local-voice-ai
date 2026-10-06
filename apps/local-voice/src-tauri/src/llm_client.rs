@@ -436,10 +436,8 @@ async fn send_cli(
     let wants_json = json_schema.is_some();
     let system = match json_schema {
         Some(schema) => Some(format!(
-            "{}
-
-Antworte ausschliesslich mit einem JSON-Objekt nach diesem JSON-Schema, ohne Erklaerung und ohne Codeblock:
-{}",
+            "{}\n\nAntworte ausschliesslich mit einem JSON-Objekt nach diesem JSON-Schema, \
+             ohne Erklaerung und ohne Codeblock:\n{}",
             system_prompt.unwrap_or_default(),
             schema
         )),
@@ -884,12 +882,8 @@ async fn stream_inner(
             .filter(|m| m.role != "system")
             .map(|m| format!("{}: {}", m.role, m.content))
             .collect();
-        let system = (!system.is_empty()).then(|| system.join("
-
-"));
-        let (reply, tokens) = send_cli(cli, model, dialog.join("
-
-"), system, None).await?;
+        let system = (!system.is_empty()).then(|| system.join("\n\n"));
+        let (reply, tokens) = send_cli(cli, model, dialog.join("\n\n"), system, None).await?;
         let text = reply.content.unwrap_or_default();
         on_delta(&text);
         return Ok((text, tokens));

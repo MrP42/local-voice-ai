@@ -151,14 +151,23 @@ fn eu_verdict(f: &ProviderFacts, training_opt_out: bool, today: &str) -> (Verdic
         conditions.push("facts_stale");
     }
     if !blocked.is_empty() {
-        (Verdict::Blocked, blocked.into_iter().map(String::from).collect())
+        (
+            Verdict::Blocked,
+            blocked.into_iter().map(String::from).collect(),
+        )
     } else if !conditions.is_empty() {
         conditions.extend(notes);
-        (Verdict::Conditional, conditions.into_iter().map(String::from).collect())
+        (
+            Verdict::Conditional,
+            conditions.into_iter().map(String::from).collect(),
+        )
     } else {
         let mut reasons = vec!["eu_ok"];
         reasons.extend(notes);
-        (Verdict::Allowed, reasons.into_iter().map(String::from).collect())
+        (
+            Verdict::Allowed,
+            reasons.into_iter().map(String::from).collect(),
+        )
     }
 }
 
@@ -177,8 +186,13 @@ pub fn today() -> String {
 /// Einstellungen (Tests, frueher Start) gilt das Standardprofil.
 pub fn check_call(provider: &PostProcessProvider) -> Result<(), String> {
     let settings = crate::managers::usage::settings_snapshot();
-    let profile = settings.as_ref().map(|s| s.compliance_profile).unwrap_or_default();
-    let opt_out = settings.as_ref().is_some_and(|s| training_opt_out_for(s, provider));
+    let profile = settings
+        .as_ref()
+        .map(|s| s.compliance_profile)
+        .unwrap_or_default();
+    let opt_out = settings
+        .as_ref()
+        .is_some_and(|s| training_opt_out_for(s, provider));
     let a = assess(profile, provider, opt_out, &today());
     if a.verdict == Verdict::Blocked {
         record_block(&provider.label);
@@ -193,7 +207,10 @@ pub fn check_call(provider: &PostProcessProvider) -> Result<(), String> {
 
 /// Hat der Nutzer an einer passenden Verbindung (gleiche Vorlage und
 /// Adresse) bestaetigt, dass das Training abgeschaltet ist?
-pub fn training_opt_out_for(settings: &crate::settings::AppSettings, provider: &PostProcessProvider) -> bool {
+pub fn training_opt_out_for(
+    settings: &crate::settings::AppSettings,
+    provider: &PostProcessProvider,
+) -> bool {
     settings.llm_connections.iter().any(|c| {
         c.kind == provider.id
             && c.base_url.trim_end_matches('/') == provider.base_url.trim_end_matches('/')
@@ -211,7 +228,9 @@ static BLOCKS: std::sync::Mutex<Vec<(i64, String)>> = std::sync::Mutex::new(Vec:
 
 fn record_block(provider_label: &str) {
     let now = chrono::Utc::now().timestamp();
-    let mut blocks = BLOCKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut blocks = BLOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     blocks.retain(|(ts, _)| now - ts < 86_400);
     blocks.push((now, provider_label.to_string()));
 }
@@ -219,8 +238,14 @@ fn record_block(provider_label: &str) {
 /// Gesperrte Versuche der letzten 24 Stunden, neueste zuerst.
 pub fn recent_blocks() -> Vec<(i64, String)> {
     let now = chrono::Utc::now().timestamp();
-    let blocks = BLOCKS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut out: Vec<_> = blocks.iter().filter(|(ts, _)| now - ts < 86_400).cloned().collect();
+    let blocks = BLOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut out: Vec<_> = blocks
+        .iter()
+        .filter(|(ts, _)| now - ts < 86_400)
+        .cloned()
+        .collect();
     out.reverse();
     out
 }
@@ -321,7 +346,11 @@ pub fn shield(
         checks.push(ShieldCheck {
             id: "blocked_calls".into(),
             level: ShieldLevel::Red,
-            detail: Some(format!("{} × {}", inputs.blocks_24h.len(), names.join(", "))),
+            detail: Some(format!(
+                "{} × {}",
+                inputs.blocks_24h.len(),
+                names.join(", ")
+            )),
         });
     }
     if inputs.cloud_errors_24h > 0 {
@@ -331,7 +360,11 @@ pub fn shield(
             detail: Some(inputs.cloud_errors_24h.to_string()),
         });
     }
-    let level = checks.iter().map(|c| c.level).max().unwrap_or(ShieldLevel::Green);
+    let level = checks
+        .iter()
+        .map(|c| c.level)
+        .max()
+        .unwrap_or(ShieldLevel::Green);
     ShieldStatus {
         level,
         profile,

@@ -26,7 +26,9 @@ fn secret_ref(id: &str) -> SecretRef {
 }
 
 fn with_cache<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
-    let mut guard = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     f(guard.get_or_insert_with(HashMap::new))
 }
 
@@ -130,7 +132,10 @@ mod tests {
         let file = dir.path().join(format!("int-llm-{id}-apikey.bin"));
         assert!(file.is_file());
         let raw = std::fs::read(&file).unwrap();
-        assert!(!raw.windows(13).any(|w| w == b"sk-geheim-123"), "Klartext in der Datei");
+        assert!(
+            !raw.windows(13).any(|w| w == b"sk-geheim-123"),
+            "Klartext in der Datei"
+        );
 
         *CACHE.lock().unwrap() = None; // wie nach einem Neustart
         let mut loaded = sealed.clone();
@@ -140,7 +145,10 @@ mod tests {
 
         let cleared = seal(&map(&[(id, "")]));
         assert_eq!(cleared.get(id).map(String::as_str), Some(""));
-        assert!(!file.exists(), "geleerter Schluessel muss das Geheimnis loeschen");
+        assert!(
+            !file.exists(),
+            "geleerter Schluessel muss das Geheimnis loeschen"
+        );
     }
 
     #[test]

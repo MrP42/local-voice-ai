@@ -89,7 +89,11 @@ pub fn compliance_set_training_opt_out(
 pub fn compliance_status(app: AppHandle) -> ShieldStatus {
     let s = settings::get_settings(&app);
     let active = s.active_llm_model().map(|(c, m)| {
-        (m.label.clone(), provider_for_connection(c), c.training_opt_out)
+        (
+            m.label.clone(),
+            provider_for_connection(c),
+            c.training_opt_out,
+        )
     });
     // Was wirklich unverschluesselt in der Datei steht -- geladen sind die
     // Schluessel immer im Klartext.
@@ -107,7 +111,10 @@ pub fn compliance_status(app: AppHandle) -> ShieldStatus {
         .unwrap_or(0);
     let inputs = ShieldInputs {
         plaintext_keys,
-        blocks_24h: compliance::recent_blocks().into_iter().map(|(_, p)| p).collect(),
+        blocks_24h: compliance::recent_blocks()
+            .into_iter()
+            .map(|(_, p)| p)
+            .collect(),
         cloud_errors_24h,
     };
     compliance::shield(
