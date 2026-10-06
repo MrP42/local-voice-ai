@@ -1838,6 +1838,7 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
+    crate::llm_keys::ensure_dir(app);
 
     // Settings reads also persist one-time migrations. Migration helpers are
     // idempotent, so this converges after the first read of an older store.
@@ -1865,18 +1866,25 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         }
 
         if updated {
-            store.set("settings", serde_json::to_value(&settings).unwrap());
+            store.set("settings", to_store_value(&settings));
         }
 
         settings
     } else {
         let default_settings = get_default_settings();
-        store.set("settings", serde_json::to_value(&default_settings).unwrap());
+        store.set("settings", to_store_value(&default_settings));
         default_settings
     };
 
-    if ensure_post_process_defaults(&mut settings) {
-        store.set("settings", serde_json::to_value(&settings).unwrap());
+    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest --
+    // und noch im Klartext liegende gleich versiegeln.
+    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
+    let plaintext = store
+        .get("settings")
+        .map(|v| crate::llm_keys::plaintext_count(&v))
+        .unwrap_or(0);
+    if ensure_post_process_defaults(&mut settings) || plaintext > 0 {
+        store.set("settings", to_store_value(&settings));
     }
 
     settings
@@ -2086,8 +2094,26 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
+    crate::llm_keys::ensure_dir(app);
+    store.set("settings", to_store_value(&settings));
+}
 
-    store.set("settings", serde_json::to_value(&settings).unwrap());
+/// Wie viele API-Schluessel stehen in `settings_store.json` noch im Klartext?
+/// (Schild: nicht versiegelbar, etwa ausserhalb von Windows.)
+pub fn stored_plaintext_key_count(app: &AppHandle) -> usize {
+    app.store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .ok()
+        .and_then(|store| store.get("settings"))
+        .map(|v| crate::llm_keys::plaintext_count(&v))
+        .unwrap_or(0)
+}
+
+/// Was in `settings_store.json` landet: API-Schluessel versiegelt
+/// (`llm_keys`), alles andere wie es ist.
+fn to_store_value(settings: &AppSettings) -> serde_json::Value {
+    let mut sealed = settings.clone();
+    sealed.post_process_api_keys = crate::llm_keys::seal(&settings.post_process_api_keys);
+    serde_json::to_value(&sealed).unwrap()
 }
 
 pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {

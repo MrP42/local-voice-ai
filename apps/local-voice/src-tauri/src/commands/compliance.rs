@@ -91,15 +91,9 @@ pub fn compliance_status(app: AppHandle) -> ShieldStatus {
     let active = s.active_llm_model().map(|(c, m)| {
         (m.label.clone(), provider_for_connection(c), c.training_opt_out)
     });
-    let plaintext_keys = s
-        .llm_connections
-        .iter()
-        .filter(|c| {
-            s.post_process_api_keys
-                .get(&c.id)
-                .is_some_and(|k| !k.trim().is_empty())
-        })
-        .count();
+    // Was wirklich unverschluesselt in der Datei steht -- geladen sind die
+    // Schluessel immer im Klartext.
+    let plaintext_keys = settings::stored_plaintext_key_count(&app);
     let now = chrono::Utc::now().timestamp();
     let cloud_errors_24h = crate::managers::usage::ledger()
         .and_then(|l| l.events(200, 0).ok())

@@ -30,6 +30,7 @@ mod process_guard;
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
+mod llm_keys;
 mod settings;
 mod shortcut;
 mod signal_handle;
