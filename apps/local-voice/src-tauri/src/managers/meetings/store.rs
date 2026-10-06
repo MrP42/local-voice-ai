@@ -3936,7 +3936,7 @@ mod tests {
             1,
             "nur das Standardprotokoll"
         );
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
         // Alt-Aufgaben ohne Dokumentbezug erscheinen nicht in der neuen Liste,
         // die manuelle schon.
         let items = s.list_action_items("M1").unwrap();
@@ -4025,7 +4025,7 @@ mod tests {
         }
         let conn = Connection::open(&path).unwrap();
         assert_eq!(user_version(&conn), MIGRATIONS.len() as i64);
-        assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM meeting_templates"), 9);
+        assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM meeting_templates"), 10);
     }
 
     #[test]
@@ -4038,7 +4038,7 @@ mod tests {
         let conn = Connection::open(&path).unwrap();
         let all_cols = table_columns(&conn, "meeting_templates");
         let after_first = dump(&conn, "meeting_templates", &all_cols, "");
-        assert_eq!(after_first.len(), 9, "Standardprotokoll + 8 mitgelieferte");
+        assert_eq!(after_first.len(), 10, "Standardprotokoll + 9 mitgelieferte");
         assert_eq!(
             scalar(
                 &conn,
@@ -4101,9 +4101,9 @@ mod tests {
         let (_dir, s) = tmp_store();
         assert_eq!(s.list_templates().unwrap().len(), 1);
         assert_eq!(s.list_templates().unwrap()[0].title, "Standardprotokoll");
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
         let conn = s.get_connection().unwrap();
-        assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM meeting_templates"), 9);
+        assert_eq!(scalar(&conn, "SELECT COUNT(*) FROM meeting_templates"), 10);
     }
 
     #[test]
@@ -4133,7 +4133,7 @@ mod tests {
         assert_eq!(restored.title, original.title);
         assert_eq!(restored.spec, original.spec);
         assert!(s.get_template_info("builtin:kickoff").unwrap().is_some());
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
     }
 
     #[test]
@@ -4829,7 +4829,7 @@ mod tests {
             s.get_template_info("builtin:allgemein").unwrap().unwrap(),
             before
         );
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
     }
 
     #[test]
@@ -4843,7 +4843,7 @@ mod tests {
         assert!(!created.id.starts_with("builtin:"));
 
         let list = s.list_template_infos().unwrap();
-        assert_eq!(list.len(), 9);
+        assert_eq!(list.len(), 10);
         assert_eq!(
             list[8], created,
             "eigene Vorlagen stehen hinter den mitgelieferten"
@@ -4870,7 +4870,7 @@ mod tests {
         );
 
         s.delete_template(&created.id).unwrap();
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
         assert!(s.get_template_info(&created.id).unwrap().is_none());
         assert_eq!(
             s.delete_template(&created.id).unwrap_err().to_string(),
@@ -4902,7 +4902,7 @@ mod tests {
                 .to_string(),
             "template_invalid:tasks_sections"
         );
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
         assert_eq!(
             scalar(
                 &s.get_connection().unwrap(),
@@ -4967,7 +4967,7 @@ mod tests {
                 .unwrap();
             }
         }
-        assert_eq!(s.list_template_infos().unwrap().len(), 8);
+        assert_eq!(s.list_template_infos().unwrap().len(), 9);
         assert!(s.get_template_info("future").unwrap().is_none());
     }
 
@@ -5012,7 +5012,7 @@ mod tests {
         assert_ne!(copy.id, saved.id, "Import legt eine neue Vorlage an");
         assert_eq!(copy.title, saved.title);
         assert_eq!(copy.spec, saved.spec, "Rundreise verlustfrei");
-        assert_eq!(s.list_template_infos().unwrap().len(), 10);
+        assert_eq!(s.list_template_infos().unwrap().len(), 11);
 
         // Auch ein mitgeliefertes Original laesst sich exportieren und als eigene Kopie importieren.
         let builtin = s.get_template_info("builtin:jour_fixe").unwrap().unwrap();
