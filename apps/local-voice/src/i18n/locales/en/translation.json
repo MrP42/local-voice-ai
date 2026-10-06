@@ -3544,7 +3544,11 @@
     "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
     "unload": "Unload from memory",
     "budget": "Budget: {{spent}} of {{limit}} USD ({{percent}} %) this month",
-    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)"
+    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)",
+    "ollamaLoaded": "Ollama keeps in memory: {{models}}",
+    "ollamaEmpty": "Ollama: nothing in memory (loads on demand)",
+    "ollamaWarmHint": "Loads the model for ten minutes so the next job starts without loading time.",
+    "ollamaUnloadHint": "Frees the memory right away; the next job loads again and takes longer."
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

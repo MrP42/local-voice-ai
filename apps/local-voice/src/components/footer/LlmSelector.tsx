@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import {
   commands,
   type LlmConnection,
@@ -21,6 +22,10 @@ import {
  * Das Dropdown wechselt zwischen allen freigegebenen Modellen eingeschalteter
  * Verbindungen; Cloud-Modelle sind immer "bereit", ein lokales zeigt, ob es
  * im Speicher liegt, und lässt sich dort auch entladen.
+ *
+ * Seit 0.21.7 auch das Ollama-Modell der Nachbearbeitung (vorher ein eigenes
+ * Symbol oben auf der Vorlesen-Seite): Ampel gelb pulsierend, solange es
+ * arbeitet, im Menü „vorwärmen“ und „entladen“.
  */
 export const LlmSelector: React.FC = () => {
   const { t } = useTranslation();
@@ -29,6 +34,10 @@ export const LlmSelector: React.FC = () => {
   const [status, setStatus] = useState<LocalLlmStatus | null>(null);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Ollama: was im Speicher liegt, ob gerade gearbeitet wird, letzter Fehler. */
+  const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
+  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
   const { byModel, refresh: refreshCompliance } = useComplianceStore();
@@ -112,6 +121,40 @@ export const LlmSelector: React.FC = () => {
     };
   }, [activeIsLocal, activeId]);
 
+  // Ollama: Ereignis waehrend der Arbeit, dazu eine Abfrage alle zehn
+  // Sekunden (Ollama entlaedt nach eigener Frist, ohne dass die App es erfaehrt).
+  // Billig: ohne Ollama als Nachbearbeitung antwortet der Befehl sofort leer.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      void commands
+        .llmPs()
+        .then((loaded) => {
+          if (!cancelled) setOllamaLoaded(loaded);
+        })
+        .catch(() => {
+          // Ohne Backend (Browser-Test) bleibt nichts geladen.
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 10_000);
+    const un = listen<{ busy: boolean; error?: string | null }>(
+      "llm-activity",
+      (e) => {
+        setOllamaBusy(e.payload.busy);
+        if (!e.payload.busy) {
+          setOllamaError(e.payload.error ?? null);
+          poll();
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      void un.then((f) => f());
+    };
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent) => {
@@ -122,6 +165,8 @@ export const LlmSelector: React.FC = () => {
   }, [open]);
 
   const light = (): string => {
+    // Arbeitet gerade (Uebersetzen, Zusammenfassen): das gilt vor allem anderen.
+    if (ollamaBusy) return "bg-yellow-400 animate-pulse";
     if (!active) return "bg-red-400";
     // Budget schlaegt Ladezustand: ein gesperrtes Modell ist nicht "gruen".
     if (budgetExceeded && budget?.enforced) return "bg-red-400";
@@ -165,6 +210,29 @@ export const LlmSelector: React.FC = () => {
     notifyComplianceChanged();
   };
 
+  /** Ollama-Modell laden, ohne etwas zu erzeugen (vor mehreren Aufträgen). */
+  const warmOllama = async () => {
+    setOpen(false);
+    setOllamaError(null);
+    setOllamaBusy(true);
+    const result = await commands.llmWarm();
+    setOllamaBusy(false);
+    if (result.status === "error") setOllamaError(result.error);
+    setOllamaLoaded(await commands.llmPs());
+  };
+
+  /** Alles, was Ollama gerade hält, aus dem Speicher nehmen. */
+  const unloadOllama = async () => {
+    setOpen(false);
+    setOllamaError(null);
+    const result = await commands.llmUnload();
+    if (result.status === "error") setOllamaError(result.error);
+    setOllamaLoaded(await commands.llmPs());
+  };
+
+  const showOllama =
+    active?.connection.kind === "ollama" || ollamaLoaded.length > 0;
+
   const unload = async () => {
     setOpen(false);
     await commands.llmLocalStop();
@@ -192,7 +260,14 @@ export const LlmSelector: React.FC = () => {
           },
         )
       : undefined;
-  const title = error ?? status?.message ?? budgetTitle ?? undefined;
+  const ollamaTitle = ollamaBusy
+    ? t("tts.llm.busy")
+    : (ollamaError ??
+      (ollamaLoaded.length > 0
+        ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
+        : undefined));
+  const title =
+    error ?? ollamaTitle ?? status?.message ?? budgetTitle ?? undefined;
 
   return (
     <div className="relative" ref={ref}>
@@ -289,6 +364,47 @@ export const LlmSelector: React.FC = () => {
             >
               {t("llmSelector.unload")}
             </button>
+          )}
+          {showOllama && (
+            <div
+              className="mt-1 border-t border-mid-gray/20 pt-1"
+              data-llm-ollama
+            >
+              <div
+                className={`px-3 py-1 text-xs ${ollamaError ? "text-orange-500" : "text-text/60"}`}
+              >
+                {ollamaError ??
+                  (ollamaBusy
+                    ? t("tts.llm.busy")
+                    : ollamaLoaded.length > 0
+                      ? t("llmSelector.ollamaLoaded", {
+                          models: ollamaLoaded.join(", "),
+                        })
+                      : t("llmSelector.ollamaEmpty"))}
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void warmOllama()}
+                disabled={ollamaBusy}
+                title={t("llmSelector.ollamaWarmHint")}
+                className="w-full px-3 py-2 text-start text-sm text-text/70 hover:bg-mid-gray/10 disabled:opacity-50"
+                data-llm-warm
+              >
+                {t("tts.llm.warm")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void unloadOllama()}
+                disabled={ollamaBusy || ollamaLoaded.length === 0}
+                title={t("llmSelector.ollamaUnloadHint")}
+                className="w-full px-3 py-2 text-start text-sm text-text/70 hover:bg-mid-gray/10 disabled:opacity-50"
+                data-llm-unload-ollama
+              >
+                {t("tts.llm.unload")}
+              </button>
+            </div>
           )}
         </div>
       )}

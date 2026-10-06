@@ -61,11 +61,11 @@ Die Engine steht unter **Einstellungen → Vorlesen**. Piper-Stimmen lädt die M
 Piper läuft auf der CPU, startet sofort und braucht nur eine kleine Stimme. Laden: **Modelle → Vorlesestimmen**. Ist das Piper-Programm unvollständig, steht die Stimme dort als „nicht nutzbar“ und lässt sich mit „Programm installieren“ reparieren.
 <!--/if:nofish-->
 
-## Symbole im Seitenkopf
+## Sprachmodell und Server in der Fußleiste
 
-- **Gehirn**: das Sprachmodell für Übersetzen, Zusammenfassen und Auto-Tagging. Klick lädt es vor oder entlädt es.
+- **Sprachmodell** (Fußleiste, Aufklappmenü): das Modell für Übersetzen, Zusammenfassen und Auto-Tagging. Die Ampel pulsiert gelb, solange es arbeitet; im Menü „Vorwärmen“ (lädt es für zehn Minuten) und „Entladen“ (gibt den Speicher frei).
 <!--if:fish-->
-- **Server**: der Fish-Speech-Server. Grau aus, gelb startet, grün läuft, orange Fehler. Klick tut, was in diesem Zustand ansteht.
+- **Server** (Fußleiste, links neben dem Schild): der Fish-Speech-Server. Grau aus, gelb startet, grün läuft, orange Fehler. Ein Klick fragt nach: starten, neu starten oder beenden.
 <!--/if:fish-->
 
 ## Wenn etwas hakt
