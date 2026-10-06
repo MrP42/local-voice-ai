@@ -22,10 +22,8 @@ const AREAS: Area[] = ["llm", "dictation", "voices"];
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const { loading } = useModelStore();
-  const [area, setArea] = usePersistentState<Area>(
-    "models.area",
-    "llm",
-    (v) => (AREAS as string[]).includes(v),
+  const [area, setArea] = usePersistentState<Area>("models.area", "llm", (v) =>
+    (AREAS as string[]).includes(v),
   );
   const [query, setQuery] = useState("");
   // Beim Wechsel des Bereichs beginnt die Suche von vorn: ein Suchwort aus
@@ -61,7 +59,10 @@ export const ModelsSettings: React.FC = () => {
         {/* Suche im gewaehlten Bereich -- die Lupe als Geschwister im Fluss,
             nicht als Ueberlagerung (die verrutschte frueher). */}
         <label className="mb-2 flex w-full items-center gap-2 rounded-lg border border-mid-gray/40 bg-mid-gray/10 px-3 py-1.5 focus-within:ring-1 focus-within:ring-logo-primary sm:w-64">
-          <Search className="h-4 w-4 shrink-0 text-text/40" aria-hidden="true" />
+          <Search
+            className="h-4 w-4 shrink-0 text-text/40"
+            aria-hidden="true"
+          />
           <input
             type="text"
             value={query}

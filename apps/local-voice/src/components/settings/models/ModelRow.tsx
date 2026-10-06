@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Loader2, MoreHorizontal } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  MoreHorizontal,
+} from "lucide-react";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { Button } from "../../ui/Button";
 
@@ -47,7 +52,8 @@ export const ModelRow: React.FC<ModelRowProps> = ({
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const hasDetails = details !== undefined && details !== null && details !== false;
+  const hasDetails =
+    details !== undefined && details !== null && details !== false;
   const visibleMenu = (menu ?? []).filter(Boolean);
 
   return (
@@ -101,6 +107,8 @@ export const ModelRow: React.FC<ModelRowProps> = ({
               trigger={{
                 icon: MoreHorizontal,
                 label: t("settings.models.row.more", { name }),
+                description: t("settings.models.row.more", { name }),
+                testId: "row-menu",
                 size: "sm",
               }}
               items={visibleMenu}

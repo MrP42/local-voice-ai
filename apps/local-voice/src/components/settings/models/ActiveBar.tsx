@@ -25,9 +25,7 @@ export const ActiveBar: React.FC<{
         {name ?? t("settings.models.active.none")}
       </span>
       {chips}
-      {aside && (
-        <span className="ms-auto text-xs text-text/50">{aside}</span>
-      )}
+      {aside && <span className="ms-auto text-xs text-text/50">{aside}</span>}
     </div>
   );
 };

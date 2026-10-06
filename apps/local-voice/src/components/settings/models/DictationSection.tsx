@@ -42,8 +42,7 @@ const languageSummary = (
 ) => {
   const langs = getUniqueCapabilityLanguages(model.supported_languages);
   if (langs.length === 0) return null;
-  if (langs.length === 1)
-    return getLanguageLabel(langs[0]) || langs[0];
+  if (langs.length === 1) return getLanguageLabel(langs[0]) || langs[0];
   return t("modelSelector.capabilities.languageCount", { total: langs.length });
 };
 
@@ -137,7 +136,14 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
       (a, b) => Number(b.is_recommended) - Number(a.is_recommended),
     );
     return { installed, available };
-  }, [models, languageFilter, q, downloadingModels, extractingModels, currentModel]);
+  }, [
+    models,
+    languageFilter,
+    q,
+    downloadingModels,
+    extractingModels,
+    currentModel,
+  ]);
 
   const active = models.find((m) => m.id === currentModel) ?? null;
 
@@ -186,7 +192,9 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
             {model.is_custom && <RowChip>{t("modelSelector.custom")}</RowChip>}
             {isLegacy(model) && <RowChip>{t("modelSelector.legacy")}</RowChip>}
             {model.license_non_commercial && (
-              <RowChip tone="warning">{t("modelSelector.nonCommercial")}</RowChip>
+              <RowChip tone="warning">
+                {t("modelSelector.nonCommercial")}
+              </RowChip>
             )}
           </>
         }
@@ -205,7 +213,11 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
         }
         primary={
           st === "available" ? (
-            <Button variant="primary" size="sm" onClick={() => void select(model.id)}>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void select(model.id)}
+            >
               {t("settings.models.row.use")}
             </Button>
           ) : st === "downloadable" ? (
@@ -226,7 +238,10 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
           <>
             <p>{getTranslatedModelDescription(model, t)}</p>
             {model.license_non_commercial && (
-              <p className="text-amber-700 dark:text-amber-400" data-testid="model-nc-note">
+              <p
+                className="text-amber-700 dark:text-amber-400"
+                data-testid="model-nc-note"
+              >
                 {t("modelSelector.nonCommercialHint", {
                   license: (model.license ?? "").toUpperCase(),
                 })}
@@ -291,7 +306,10 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
               />
               {t("settings.models.rescan.label")}
             </button>
-            <LanguageFilter value={languageFilter} onChange={setLanguageFilter} />
+            <LanguageFilter
+              value={languageFilter}
+              onChange={setLanguageFilter}
+            />
           </>
         }
       >

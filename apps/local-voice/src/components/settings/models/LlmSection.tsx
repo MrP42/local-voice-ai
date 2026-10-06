@@ -151,7 +151,9 @@ export const LlmSection: React.FC<{ query: string }> = ({ query }) => {
         chips={
           active && (
             <>
-              <RowChip>{t(`settings.models.source.${sourceKey(active)}`)}</RowChip>
+              <RowChip>
+                {t(`settings.models.source.${sourceKey(active)}`)}
+              </RowChip>
               {serving === active.id && (
                 <RowChip tone="success">
                   {t("settings.models.llm.status.loaded")}
@@ -207,9 +209,7 @@ export const LlmSection: React.FC<{ query: string }> = ({ query }) => {
         forceOpen={q !== ""}
       >
         <div className="border-b border-mid-gray/15">
-          <LlmModelDirs
-            foundCount={models.filter((m) => m.external).length}
-          />
+          <LlmModelDirs foundCount={models.filter((m) => m.external).length} />
         </div>
         {shownFolders.map((m) => row(m, false))}
       </ModelSection>
@@ -287,7 +287,10 @@ const LlmRow: React.FC<{
     ? t(`settings.models.llm.fit.${fit.verdict}`, {
         need: gb(fit.estimate.total_mb),
         free: gb(fit.free_mb),
-      }) + (fit.estimate.from_metadata ? "" : ` ${t("settings.models.llm.fit.rough")}`)
+      }) +
+      (fit.estimate.from_metadata
+        ? ""
+        : ` ${t("settings.models.llm.fit.rough")}`)
     : null;
 
   const canUse =
@@ -395,10 +398,14 @@ const LlmRow: React.FC<{
             </RowChip>
           )}
           {isActive && (
-            <RowChip tone="accent">{t("settings.models.llm.status.active")}</RowChip>
+            <RowChip tone="accent">
+              {t("settings.models.llm.status.active")}
+            </RowChip>
           )}
           {isServing && (
-            <RowChip tone="success">{t("settings.models.llm.status.loaded")}</RowChip>
+            <RowChip tone="success">
+              {t("settings.models.llm.status.loaded")}
+            </RowChip>
           )}
           {info.replaceable_by && (
             <RowChip
@@ -501,7 +508,9 @@ const RuntimeRow: React.FC<{ info: LlmDownloadInfo }> = ({ info }) => {
           )}
         </>
       }
-      meta={<span className="tabular-nums">{formatModelSize(info.size_mb)}</span>}
+      meta={
+        <span className="tabular-nums">{formatModelSize(info.size_mb)}</span>
+      }
       primary={
         !info.is_downloaded && !downloading ? (
           <Button

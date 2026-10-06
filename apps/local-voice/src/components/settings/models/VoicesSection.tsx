@@ -131,7 +131,9 @@ export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
                 {language}
               </span>
             )}
-            <span className="tabular-nums">{formatModelSize(info.size_mb)}</span>
+            <span className="tabular-nums">
+              {formatModelSize(info.size_mb)}
+            </span>
           </>
         }
         primary={
@@ -177,12 +179,15 @@ export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
                 className="text-amber-700 dark:text-amber-400"
                 data-testid="tts-nc-note"
               >
-                {t(`settings.models.ttsVoices.voices.${info.id}.nonCommercialHint`, {
-                  defaultValue: t(
-                    "settings.models.ttsVoices.license.nonCommercialHint",
-                    { license: info.license ?? "" },
-                  ),
-                })}
+                {t(
+                  `settings.models.ttsVoices.voices.${info.id}.nonCommercialHint`,
+                  {
+                    defaultValue: t(
+                      "settings.models.ttsVoices.license.nonCommercialHint",
+                      { license: info.license ?? "" },
+                    ),
+                  },
+                )}
               </p>
             )}
             {info.license && (
