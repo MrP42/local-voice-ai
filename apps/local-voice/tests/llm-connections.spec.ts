@@ -91,9 +91,11 @@ test.beforeEach(async ({ page }) => {
               : ["gpt-4.1-mini", "gpt-4.1"];
           if (cmd === "llm_model_efforts")
             return args?.connectionId === "openai-1" ? ["low", "medium", "high", "xhigh", "max"] : [];
+          if (cmd === "llm_model_offers_fast") return args?.connectionId === "openai-1";
           if (cmd === "llm_upsert_model") {
-            const model = args?.model as { connection_id: string; remote_id: string; effort?: string | null };
+            const model = args?.model as { connection_id: string; remote_id: string; effort?: string | null; fast?: boolean };
             if (model.effort !== undefined) saved.effort = model.effort;
+            if (model.fast !== undefined) saved.fast = model.fast;
             const id = `${model.connection_id}:${model.remote_id}`;
             saved.upsertModel = id;
             const list = settings.llm_models as unknown[];
@@ -135,7 +137,7 @@ test("only released models are offered as active model", async ({ page }) => {
   await openTab(page);
   // Die Regelwerk-Auswahl (#76) steht davor und hat dieselbe Breite.
   const active = page.locator(".w-72:not([data-compliance-profile])").first();
-  await expect(active).toContainText("gpt-4.1-mini");
+  await expect(active).toContainText("GPT-4.1-Mini");
   await active.click();
   // Die zweite Verbindung hat nichts freigegeben -- nichts von ihr im Menue.
   await expect(page.getByText("qwen3:4b")).toHaveCount(0);
@@ -210,4 +212,18 @@ test("subscription models offer an effort per released model", async ({ page }) 
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.effort))
     .toBe("high");
+});
+
+test("models with a fast mode get a lightning switch", async ({ page }) => {
+  await openTab(page);
+  await page.getByRole("button", { name: "OpenAI", exact: true }).click();
+  const fast = page.locator('[data-fast-toggle="openai-1:gpt-4.1-mini"]');
+  await expect(fast).toBeVisible();
+  await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await fast.click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.fast))
+    .toBe(true);
+  // Ohne Angebot (Ollama) kein Schalter.
+  await expect(page.locator('[data-fast-toggle^="ollama-1:"]')).toHaveCount(0);
 });

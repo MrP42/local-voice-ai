@@ -589,7 +589,7 @@ const ModelRow: React.FC<{
     commands
       .llmModelEfforts(model.connection_id, model.remote_id)
       .then((list) => {
-        if (!cancelled) setEfforts(list);
+        if (!cancelled) setEfforts(list ?? []);
       })
       .catch(() => {
         // Ohne Backend: keine Auswahl.
@@ -597,7 +597,7 @@ const ModelRow: React.FC<{
     commands
       .llmModelOffersFast(model.connection_id, model.remote_id)
       .then((offers) => {
-        if (!cancelled) setOffersFast(offers);
+        if (!cancelled) setOffersFast(offers === true);
       })
       .catch(() => {
         // Ohne Backend: keine Auswahl.
