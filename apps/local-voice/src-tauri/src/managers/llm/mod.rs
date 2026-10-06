@@ -7,6 +7,7 @@
 //! Pruefsumme, entpacken, aufloesen.
 
 pub mod app_usage;
+pub mod cli;
 pub mod context;
 pub mod estimate;
 pub mod external;

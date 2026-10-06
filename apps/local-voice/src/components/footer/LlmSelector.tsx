@@ -8,6 +8,12 @@ import {
   type LocalLlmStatus,
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
+import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
+import {
+  COMPLIANCE_CHANGED,
+  notifyComplianceChanged,
+  useComplianceStore,
+} from "@/stores/complianceStore";
 
 /**
  * Das Sprachmodell in der Fußleiste — neben dem Diktatmodell, mit derselben
@@ -24,6 +30,14 @@ export const LlmSelector: React.FC = () => {
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
+  const { byModel, refresh: refreshCompliance } = useComplianceStore();
+  useEffect(() => {
+    void refreshCompliance();
+    const onChange = () => void refreshCompliance();
+    window.addEventListener(COMPLIANCE_CHANGED, onChange);
+    return () => window.removeEventListener(COMPLIANCE_CHANGED, onChange);
+  }, [refreshCompliance]);
 
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
@@ -148,6 +162,7 @@ export const LlmSelector: React.FC = () => {
       return;
     }
     await refreshSettings();
+    notifyComplianceChanged();
   };
 
   const unload = async () => {
@@ -192,6 +207,7 @@ export const LlmSelector: React.FC = () => {
       >
         <div className={`w-2 h-2 rounded-full ${light()}`} />
         <span className="max-w-32 truncate">{label()}</span>
+        {active && <ModelBadges assessment={byModel[active.model.id]} />}
         {budgetWarning && (
           <span
             className={`text-xs tabular-nums ${budgetExceeded ? "text-red-400" : "text-yellow-500"}`}
@@ -225,28 +241,45 @@ export const LlmSelector: React.FC = () => {
               {t("llmSelector.empty")}
             </div>
           ) : (
-            selectable.map(({ model, connection }) => (
-              <div
-                key={model.id}
-                role="menuitem"
-                tabIndex={0}
-                onClick={() => void choose(model.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    void choose(model.id);
-                  }
-                }}
-                className={`w-full px-3 py-2 text-start hover:bg-mid-gray/10 transition-colors cursor-pointer focus:outline-none ${
-                  model.id === activeId
-                    ? "bg-logo-primary/10 text-logo-primary"
-                    : ""
-                }`}
-              >
-                <div className="text-sm text-text/80">{model.label}</div>
-                <div className="text-xs text-text/50">{connection.label}</div>
-              </div>
-            ))
+            selectable.map(({ model, connection }) => {
+              const assessment = byModel[model.id];
+              // Gesperrt: sichtbar mit Grund, aber nicht waehlbar.
+              const blocked = assessment?.verdict === "blocked";
+              return (
+                <div
+                  key={model.id}
+                  role="menuitem"
+                  tabIndex={blocked ? -1 : 0}
+                  aria-disabled={blocked || undefined}
+                  data-llm-option={model.id}
+                  title={blocked ? reasonsText(t, assessment) : undefined}
+                  onClick={() => {
+                    if (!blocked) void choose(model.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (!blocked && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault();
+                      void choose(model.id);
+                    }
+                  }}
+                  className={`w-full px-3 py-2 text-start transition-colors focus:outline-none ${
+                    blocked
+                      ? "cursor-not-allowed opacity-50"
+                      : "cursor-pointer hover:bg-mid-gray/10"
+                  } ${
+                    model.id === activeId
+                      ? "bg-logo-primary/10 text-logo-primary"
+                      : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-sm text-text/80">
+                    <span className="min-w-0 truncate">{model.label}</span>
+                    <ModelBadges assessment={assessment} />
+                  </div>
+                  <div className="text-xs text-text/50">{connection.label}</div>
+                </div>
+              );
+            })
           )}
           {activeIsLocal && status?.phase === "ready" && (
             <button

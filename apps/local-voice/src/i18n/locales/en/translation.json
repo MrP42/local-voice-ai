@@ -843,6 +843,25 @@
     }
   },
   "settings": {
+    "compliance": {
+        "title": "Rule set",
+        "profile": "Rules for language models",
+        "profiles": {
+          "eu": {
+            "label": "EU (EU AI Act, GDPR)",
+            "description": "Only providers that process in the EU (or with a verified safeguard), offer a DPA and don't train on your data. Everything else is blocked."
+          },
+          "local_only": {
+            "label": "Local only",
+            "description": "Nothing leaves the computer. All cloud models are blocked."
+          },
+          "none": {
+            "label": "No restriction",
+            "description": "All models can be used; cloud models are only marked."
+          }
+        },
+        "disclaimer": "The classification is based on the providers' documented information (as of 2026-10-06) and is not legal advice."
+    },
     "meetings": {
       "captureSystem": "Record system audio by default",
       "captureSystemDescription": "Default for the “Capture system audio” checkbox when starting. The last choice on the recording page is remembered here.",
@@ -1543,6 +1562,24 @@
       }
     },
     "llm": {
+        "connections": {
+          "region": "Region",
+          "trainingOptOut": "Training turned off in my account",
+          "trainingOptOutDescription": "Only confirm once you have turned off training on your data in the provider's account settings. Under the \"EU\" rule set the provider is blocked otherwise."
+        },
+        "cli": {
+          "claude_cli": "Uses your Claude subscription (Pro/Max) through the installed Claude Code. Sign in inside Claude Code itself (claude, then /login) – the app never sees credentials. Personal use only. Blocked under the \"EU\" rule set (USA, no DPA).",
+          "codex_cli": "Uses your ChatGPT subscription (Plus/Pro) through the installed Codex CLI. Sign in inside Codex itself (codex login). Note: OpenAI's terms recommend API keys for programmatic use; going through the subscription is a grey area. Blocked under the \"EU\" rule set (USA, no DPA)."
+        },
+        "regions": {
+          "eu-central-1": "EU – Frankfurt",
+          "eu-west-1": "EU – Ireland",
+          "eu-south-1": "EU – Milan",
+          "eu-north-1": "EU – Stockholm",
+          "us-east-1": "USA – Virginia",
+          "us-east-2": "USA – Ohio",
+          "us-west-2": "USA – Oregon"
+        },
       "active": {
         "title": "Language model",
         "model": "Active model",
@@ -4862,5 +4899,61 @@
       "propose": "propose (suggestion for triage)",
       "untouchable": "untouchable (do not change)"
     }
+  },
+  "compliance": {
+      "reasons": {
+        "local": "Runs on this computer – nothing leaves the device.",
+        "no_restriction": "Rule set \"No restriction\": cloud models are allowed.",
+        "cloud_not_allowed": "Rule set \"Local only\": cloud models are blocked.",
+        "facts_unknown": "No verified information is available for this provider.",
+        "trains_on_data": "The provider trains on your data.",
+        "training_unknown": "Unclear whether the provider trains on your data.",
+        "training_opt_out_missing": "Training on your data is on – turn it off in your account and confirm it on the connection.",
+        "training_opt_out_attested": "Training turned off, as you confirmed.",
+        "no_dpa": "No data processing agreement (DPA) for this access.",
+        "dpa_unknown": "Unclear whether a data processing agreement (DPA) exists.",
+        "third_country_dpf": "Processed outside the EU, covered by the EU-US Data Privacy Framework.",
+        "third_country_no_safeguard": "Processed outside the EU without a verified safeguard.",
+        "facts_stale": "The provider information is older than 180 days.",
+        "eu_ok": "Processed in the EU, DPA in place, no training on your data."
+      },
+      "countries": {
+        "US": "USA",
+        "EU": "EU",
+        "DE": "Germany (Frankfurt)",
+        "IE": "Ireland",
+        "IT": "Italy (Milan)",
+        "SE": "Sweden (Stockholm)",
+        "FR": "France",
+        "unknown": "unknown"
+      },
+      "badge": {
+        "cloud": "Cloud model · server: {{where}}",
+        "local": "Local model – runs on this computer",
+        "blocked": "Blocked by the rule set"
+      },
+      "shield": {
+        "title": "Security and rule set",
+        "green": "Secure and compliant",
+        "yellow": "Allowed, with notes",
+        "red": "Violates the rule set",
+        "where": "Change the rule set: Settings › Post-processing › Rule set.",
+        "sources": "Provider information checked on {{date}}:",
+        "disclaimer": "The shield checks documented provider information against the rule set. It is not a data protection assessment."
+      },
+      "checks": {
+        "profile_eu": "Rule set: EU (EU AI Act and GDPR)",
+        "profile_local_only": "Rule set: Local only",
+        "profile_none": "Rule set: No restriction",
+        "model_local": "Active model \"{{detail}}\" runs locally.",
+        "model_cloud_ok": "Active model \"{{detail}}\" is a cloud model and allowed.",
+        "model_cloud_conditional": "Active model \"{{detail}}\" is allowed, with a condition.",
+        "model_blocked": "Active model \"{{detail}}\" is blocked – it receives no requests.",
+        "model_none": "No language model active.",
+        "keys_plaintext": "{{detail}} API keys are stored unencrypted in the settings.",
+        "keys_protected": "No unencrypted API keys.",
+        "blocked_calls": "Blocked calls in the last 24 hours: {{detail}}",
+        "cloud_errors": "{{detail}} failed cloud calls in the last 24 hours."
+      }
   }
 }

@@ -548,6 +548,12 @@ pub fn ledger() -> Option<Arc<UsageLedger>> {
     LEDGER.get().cloned()
 }
 
+/// Die aktuellen Einstellungen fuer Module ohne `AppHandle` (Regelwerk).
+/// `None` vor dem Start und in Tests.
+pub fn settings_snapshot() -> Option<AppSettings> {
+    SETTINGS.get().map(|source| source())
+}
+
 // ----------------------------------------------------------------- Capture --
 
 /// Ein Aufruf, den ein Erfassungsbereich (`with_capture`) mitgeschrieben hat:
@@ -767,6 +773,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: budget,
             budget_enforced: enforced,
+            training_opt_out: false,
         }
     }
 

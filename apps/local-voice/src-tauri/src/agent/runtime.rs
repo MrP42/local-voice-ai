@@ -412,6 +412,10 @@ impl AgentRuntime {
     }
 
     async fn post_inner(&self, req: &Request<'_>, user: &str) -> Result<RawReply, AgentError> {
+        // Regelwerk: ein fester Endpunkt ausserhalb des Rechners wird wie jeder
+        // andere Anbieter geprueft, bevor etwas das Geraet verlaesst.
+        crate::managers::compliance::check_call(&self.ledger_provider())
+            .map_err(AgentError::NotConfigured)?;
         let base = self.base_url().await?;
         let url = format!("{}/chat/completions", base.trim_end_matches('/'));
         let body = request_body(

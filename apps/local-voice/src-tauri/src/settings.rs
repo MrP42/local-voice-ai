@@ -210,6 +210,11 @@ pub struct LlmConnection {
     /// im Protokoll schon.
     #[serde(default)]
     pub budget_enforced: bool,
+    /// Der Nutzer bestaetigt, dass das Training mit seinen Daten im Konto des
+    /// Anbieters abgeschaltet ist (Mistral, Abo-Plaene). Zaehlt fuer das
+    /// Regelwerk nur, wo der Anbieter das Abschalten anbietet.
+    #[serde(default)]
+    pub training_opt_out: bool,
 }
 
 /// Ein freigegebenes Modell einer Verbindung. Nur freigegebene Modelle
@@ -551,6 +556,11 @@ pub struct AppSettings {
     /// (`managers::llm::external`).
     #[serde(default)]
     pub llm_model_dirs: Vec<String>,
+    /// Regelwerk fuer Sprachmodelle (`managers::compliance`): EU, nur lokal
+    /// oder keine Einschraenkung. Gesperrte Modelle sind nicht waehlbar und
+    /// bekommen keine Anfrage.
+    #[serde(default)]
+    pub compliance_profile: crate::managers::compliance::ComplianceProfile,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -1289,6 +1299,44 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: false,
         },
+        // Mistral (Frankreich): OpenAI-kompatibel, Verarbeitung in der EU --
+        // die naheliegende Wahl unter dem Regelwerk "EU".
+        PostProcessProvider {
+            id: "mistral".to_string(),
+            label: "Mistral".to_string(),
+            base_url: "https://api.mistral.ai/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: true,
+        },
+        // OpenAI mit EU-Datenresidenz: nur fuer API-Projekte mit EU-Region
+        // (Freischaltung bei OpenAI noetig, sonst lehnt der Endpunkt ab).
+        PostProcessProvider {
+            id: "openai_eu".to_string(),
+            label: "OpenAI (EU-Datenresidenz)".to_string(),
+            base_url: "https://eu.api.openai.com/v1".to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: Some("/models".to_string()),
+            supports_structured_output: true,
+        },
+        // Abo statt API-Schluessel: die offiziellen CLIs mit dem eigenen Login
+        // (`managers::llm::cli`). Kein Schluessel, keine Kosten je Token.
+        PostProcessProvider {
+            id: "claude_cli".to_string(),
+            label: "Claude-Abo (Claude Code)".to_string(),
+            base_url: crate::managers::llm::cli::CLAUDE_CLI_URL.to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        },
+        PostProcessProvider {
+            id: "codex_cli".to_string(),
+            label: "ChatGPT-Abo (Codex)".to_string(),
+            base_url: crate::managers::llm::cli::CODEX_CLI_URL.to_string(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        },
         PostProcessProvider {
             id: "groq".to_string(),
             label: "Groq".to_string(),
@@ -1604,6 +1652,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_models: Vec::new(),
         llm_active_model_id: None,
         llm_model_dirs: Vec::new(),
+        compliance_profile: Default::default(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
@@ -1789,6 +1838,7 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
+    crate::llm_keys::ensure_dir(app);
 
     // Settings reads also persist one-time migrations. Migration helpers are
     // idempotent, so this converges after the first read of an older store.
@@ -1816,18 +1866,25 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         }
 
         if updated {
-            store.set("settings", serde_json::to_value(&settings).unwrap());
+            store.set("settings", to_store_value(&settings));
         }
 
         settings
     } else {
         let default_settings = get_default_settings();
-        store.set("settings", serde_json::to_value(&default_settings).unwrap());
+        store.set("settings", to_store_value(&default_settings));
         default_settings
     };
 
-    if ensure_post_process_defaults(&mut settings) {
-        store.set("settings", serde_json::to_value(&settings).unwrap());
+    // Schluessel aus dem Geheimnisspeicher einsetzen, bevor jemand liest --
+    // und noch im Klartext liegende gleich versiegeln.
+    crate::llm_keys::unseal(&mut settings.post_process_api_keys);
+    let plaintext = store
+        .get("settings")
+        .map(|v| crate::llm_keys::plaintext_count(&v))
+        .unwrap_or(0);
+    if ensure_post_process_defaults(&mut settings) || plaintext > 0 {
+        store.set("settings", to_store_value(&settings));
     }
 
     settings
@@ -1902,6 +1959,7 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         if let Some(remote) = chosen.filter(|m| !m.is_empty()) {
             models.push(LlmModelConfig {
@@ -2036,8 +2094,26 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     let store = app
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
+    crate::llm_keys::ensure_dir(app);
+    store.set("settings", to_store_value(&settings));
+}
 
-    store.set("settings", serde_json::to_value(&settings).unwrap());
+/// Wie viele API-Schluessel stehen in `settings_store.json` noch im Klartext?
+/// (Schild: nicht versiegelbar, etwa ausserhalb von Windows.)
+pub fn stored_plaintext_key_count(app: &AppHandle) -> usize {
+    app.store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .ok()
+        .and_then(|store| store.get("settings"))
+        .map(|v| crate::llm_keys::plaintext_count(&v))
+        .unwrap_or(0)
+}
+
+/// Was in `settings_store.json` landet: API-Schluessel versiegelt
+/// (`llm_keys`), alles andere wie es ist.
+fn to_store_value(settings: &AppSettings) -> serde_json::Value {
+    let mut sealed = settings.clone();
+    sealed.post_process_api_keys = crate::llm_keys::seal(&settings.post_process_api_keys);
+    serde_json::to_value(&sealed).unwrap()
 }
 
 pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
@@ -2579,6 +2655,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings.settings_schema_version = 1;
         let raw = serde_json::json!({
@@ -2603,6 +2680,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings
             .llm_models
@@ -2638,6 +2716,7 @@ mod tests {
             enabled: false,
             monthly_budget_usd: None,
             budget_enforced: false,
+            training_opt_out: false,
         });
         settings
             .llm_models

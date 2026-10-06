@@ -107,6 +107,23 @@ pub fn llm_set_active_model(app: AppHandle, id: Option<String>) -> Result<(), St
         if !selectable {
             return Err(format!("Modell nicht waehlbar: {wanted}"));
         }
+        // Regelwerk: ein gesperrtes Modell ist nicht waehlbar -- sonst liefe
+        // jede Funktion gegen die Sperre in `llm_client`.
+        if let Some(c) = s
+            .llm_models
+            .iter()
+            .find(|m| m.id == *wanted)
+            .and_then(|m| s.llm_connections.iter().find(|c| c.id == m.connection_id))
+        {
+            let a = crate::commands::compliance::assess_connection(&s, c);
+            if a.verdict == crate::managers::compliance::Verdict::Blocked {
+                return Err(format!(
+                    "{}: {}",
+                    crate::managers::compliance::CODE_COMPLIANCE_BLOCKED,
+                    a.reasons.join(", ")
+                ));
+            }
+        }
     }
     s.llm_active_model_id = id;
     s.sync_legacy_from_llm();
@@ -286,6 +303,7 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
                 enabled: true,
                 monthly_budget_usd: None,
                 budget_enforced: false,
+                training_opt_out: false,
             });
             LOCAL_PROVIDER_ID.to_string()
         }

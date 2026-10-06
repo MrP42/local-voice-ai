@@ -16,6 +16,11 @@ import { Button } from "../../ui/Button";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import Badge from "../../ui/Badge";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
+import { ModelBadges } from "../../compliance/ModelBadges";
+import {
+  notifyComplianceChanged,
+  useComplianceStore,
+} from "@/stores/complianceStore";
 
 /// Vorlagen, bei denen ein Schluessel nichts zu suchen hat: lokal, ohne Konto.
 const KEYLESS_KINDS = new Set([
@@ -23,7 +28,29 @@ const KEYLESS_KINDS = new Set([
   "vllm",
   "local",
   "apple_intelligence",
+  // Abo ueber die CLI: angemeldet wird in der CLI selbst, nie in der App.
+  "claude_cli",
+  "codex_cli",
 ]);
+
+/// Anbieter, bei denen sich das Training im Konto abschalten laesst -- dort
+/// zaehlt die Bestaetigung fuer das Regelwerk.
+const OPT_OUT_KINDS = new Set(["mistral", "claude_cli", "codex_cli"]);
+
+/// Bedrock-Regionen (OpenAI-kompatibler Mantle-Endpunkt), EU zuerst.
+const BEDROCK_REGIONS = [
+  "eu-central-1",
+  "eu-west-1",
+  "eu-south-1",
+  "eu-north-1",
+  "us-east-1",
+  "us-east-2",
+  "us-west-2",
+];
+const bedrockUrl = (region: string) =>
+  `https://bedrock-mantle.${region}.api.aws/v1`;
+const bedrockRegion = (url: string) =>
+  /bedrock-mantle\.([a-z0-9-]+)\.api\.aws/.exec(url)?.[1] ?? "us-east-1";
 
 /**
  * Verbindungen zu Sprachmodell-Anbietern und die Freigabe ihrer Modelle.
@@ -59,6 +86,7 @@ export const LlmConnectionsSettings: React.FC = () => {
         return false;
       }
       await refreshSettings();
+      notifyComplianceChanged();
       return true;
     },
     [refreshSettings],
@@ -321,6 +349,43 @@ const ConnectionRow: React.FC<RowProps> = ({
               />
             </label>
           )}
+          {(connection.kind === "claude_cli" ||
+            connection.kind === "codex_cli") && (
+            <p className="text-xs text-text/60" data-cli-hint={connection.kind}>
+              {t(`settings.llm.cli.${connection.kind}`)}
+            </p>
+          )}
+          {connection.kind === "bedrock_mantle" && (
+            <label className="block text-sm">
+              <span className="text-text/70">
+                {t("settings.llm.connections.region")}
+              </span>
+              <div className="mt-1 w-72">
+                <Select
+                  value={bedrockRegion(connection.base_url)}
+                  options={BEDROCK_REGIONS.map((r) => ({
+                    value: r,
+                    label: t(`settings.llm.regions.${r}`, { defaultValue: r }),
+                  }))}
+                  isClearable={false}
+                  onChange={(value) => {
+                    if (value) void upsert({ base_url: bedrockUrl(value) });
+                  }}
+                />
+              </div>
+            </label>
+          )}
+          {OPT_OUT_KINDS.has(connection.kind) && (
+            <ToggleSwitch
+              checked={connection.training_opt_out === true}
+              onChange={(checked) => void upsert({ training_opt_out: checked })}
+              label={t("settings.llm.connections.trainingOptOut")}
+              description={t(
+                "settings.llm.connections.trainingOptOutDescription",
+              )}
+              descriptionMode="inline"
+            />
+          )}
           {!keyless && (
             <label className="block text-sm">
               <span className="text-text/70">
@@ -447,6 +512,7 @@ const ModelRow: React.FC<{
   run: RowProps["run"];
 }> = ({ model, isActive, run }) => {
   const { t } = useTranslation();
+  const assessment = useComplianceStore((s) => s.byModel[model.id]);
   const [details, setDetails] = useState(false);
 
   const num = (value: string): number | null => {
@@ -483,6 +549,7 @@ const ModelRow: React.FC<{
     <div className="rounded border border-mid-gray/15 px-2 py-1.5">
       <div className="flex items-center gap-2 text-sm">
         <span className="font-medium truncate">{model.label}</span>
+        <ModelBadges assessment={assessment} />
         {isActive && (
           <Badge variant="success">{t("settings.llm.model.active")}</Badge>
         )}
