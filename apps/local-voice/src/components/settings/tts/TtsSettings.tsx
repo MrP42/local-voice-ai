@@ -65,7 +65,7 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { BrainCircuit, HelpCircle, Server } from "lucide-react";
+import { HelpCircle } from "lucide-react";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -231,22 +231,11 @@ export const TtsSettings = () => {
   const [dictating, setDictating] = useState(false);
   const [startingSeconds, setStartingSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
-  /** Rueckmeldung des harten Beendens — was gefunden und beendet wurde. */
-  const [killNotice, setKillNotice] = useState<string | null>(null);
   /** Der Vorlesetext wurde an der Zeichengrenze gekappt. */
   const [truncated, setTruncated] = useState<{
     limit: number;
     total: number;
   } | null>(null);
-  /** Sprachmodell-Anzeige: was Ollama geladen hat, ob gerade uebersetzt
-   *  wird, und der letzte Fehler. */
-  const [llmLoaded, setLlmLoaded] = useState<string[]>([]);
-  const [llmBusy, setLlmBusy] = useState(false);
-  const [llmError, setLlmError] = useState<string | null>(null);
-  const [llmDialog, setLlmDialog] = useState(false);
-  const [llmWorking, setLlmWorking] = useState(false);
-  /** Offene Rueckfrage vor dem Beenden des Servers. */
-  const [confirmStop, setConfirmStop] = useState(false);
   const [speakProgress, setSpeakProgress] = useState<{
     position: number;
     total: number;
@@ -506,72 +495,6 @@ export const TtsSettings = () => {
     }, 500);
     return () => window.clearTimeout(handle);
   }, [activePage, text, summary, sourceUrl, tab, tabVoices, autoTagOptions]);
-
-  // Sprachmodell-Anzeige: Ereignis waehrend der Uebersetzung, dazu eine
-  // Abfrage alle zehn Sekunden — billig (lokaler Aufruf mit kurzem Timeout)
-  // und noetig, weil auch Ollamas eigene Frist ein Modell entlaedt, ohne
-  // dass die App davon erfuehre.
-  useEffect(() => {
-    const poll = () => {
-      void commands.llmPs().then(setLlmLoaded);
-    };
-    poll();
-    const timer = window.setInterval(poll, 10_000);
-    const un = listen<{ busy: boolean; error?: string | null }>(
-      "llm-activity",
-      (e) => {
-        setLlmBusy(e.payload.busy);
-        if (!e.payload.busy) {
-          setLlmError(e.payload.error ?? null);
-          poll();
-        }
-      },
-    );
-    return () => {
-      window.clearInterval(timer);
-      un.then((f) => f());
-    };
-  }, []);
-
-  /** Farbe des Sprachmodell-Symbols — dieselbe Sprache wie das Serversymbol:
-   *  grau aus, gelb pulsierend arbeitet, gruen geladen, orange Fehler. */
-  const llmIconClass = llmBusy
-    ? "text-yellow-400 animate-pulse"
-    : llmError
-      ? "text-orange-500 animate-pulse"
-      : llmLoaded.length > 0
-        ? "text-green-500"
-        : "text-text/40";
-
-  const llmTitle = llmBusy
-    ? t("tts.llm.busy")
-    : llmError
-      ? llmError
-      : llmLoaded.length > 0
-        ? t("tts.llm.loaded", { models: llmLoaded.join(", ") })
-        : t("tts.llm.idle");
-
-  const llmUnloadNow = async () => {
-    setLlmWorking(true);
-    setLlmError(null);
-    const result = await commands.llmUnload();
-    setLlmWorking(false);
-    setLlmDialog(false);
-    if (result.status === "error") setLlmError(result.error);
-    setLlmLoaded(await commands.llmPs());
-  };
-
-  const llmWarmNow = async () => {
-    setLlmWorking(true);
-    setLlmError(null);
-    setLlmDialog(false);
-    setLlmBusy(true);
-    const result = await commands.llmWarm();
-    setLlmBusy(false);
-    setLlmWorking(false);
-    if (result.status === "error") setLlmError(result.error);
-    setLlmLoaded(await commands.llmPs());
-  };
 
   // Stimmenliste fuer das Dropdown. Die Verwaltung unten meldet
   // Aenderungen ueber ein Fensterereignis, damit beide nie auseinanderlaufen.
@@ -951,55 +874,6 @@ export const TtsSettings = () => {
     },
     [t, uiLang],
   );
-
-  const startServer = async () => {
-    setLastError(null);
-    const result = await commands.ttsServerStart();
-    if (result.status === "error") setLastError(result.error);
-  };
-
-  /**
-   * Harter Ausweg: beendet, was auf dem TTS-Port lauscht, ohne vorher zu
-   * fragen, ob es antwortet. Meldet zurueck, was gefunden wurde — "nichts
-   * gefunden" ist ein Ergebnis und kein Fehler, deshalb steht es als Hinweis
-   * und nicht als Fehlermeldung.
-   */
-  const killServer = async () => {
-    setLastError(null);
-    const result = await commands.ttsServerKill();
-    if (result.status === "error") {
-      setLastError(result.error);
-      return;
-    }
-    setKillNotice(result.data);
-    window.setTimeout(() => setKillNotice(null), 4000);
-  };
-
-  /**
-   * Farbe des Serversymbols. Nur Farbe, kein zweites Symbol: die Form soll
-   * ueber alle Zustaende gleich bleiben, damit man sie an derselben Stelle
-   * wiederfindet — was sich aendert, ist der Zustand, nicht die Sache.
-   *
-   * Der Fehlerzustand blinkt als einziger. Er ist der einzige, der eine
-   * Handlung verlangt, die nicht aufschiebbar ist.
-   */
-  const serverIconClass =
-    phase === "starting"
-      ? "text-yellow-400 animate-pulse"
-      : phase === "error"
-        ? "text-orange-500 animate-pulse"
-        : phase === "stopped"
-          ? "text-text/40"
-          : "text-green-500";
-
-  const serverTitle =
-    phase === "stopped"
-      ? t("tts.serverIconStart")
-      : phase === "starting"
-        ? t("tts.serverIconStarting")
-        : phase === "error"
-          ? (status?.message ?? t("tts.serverIconError"))
-          : t("tts.serverIconStop");
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
@@ -1387,36 +1261,6 @@ export const TtsSettings = () => {
     setTab("summary");
   };
 
-  /**
-   * Ein Klick tut, was im jeweiligen Zustand ansteht. Beim laufenden Server
-   * ist das Beenden — und weil damit ein Modellstart von bis zu zwei Minuten
-   * verfaellt und laufendes Vorlesen abbricht, wird vorher gefragt.
-   */
-  const onServerIconClick = () => {
-    // IMMER der Dialog, in jeder Phase — wie beim Sprachmodell daneben.
-    // Frueher startete ein Klick bei gestopptem Server sofort: ein
-    // versehentlicher Klick belegte damit ungefragt 17 GB Grafikspeicher
-    // und zwei Minuten Ladezeit. Starten ist eine Entscheidung, keine
-    // Beruehrung.
-    setConfirmStop(true);
-  };
-
-  /**
-   * Neu starten = beenden und sofort wieder hochfahren. Der Weg, wenn der
-   * Server zwar laeuft, aber nicht mehr vernuenftig antwortet (etwa mit 500);
-   * ohne ihn muesste man zweimal klicken und dazwischen raten, wann er
-   * wirklich unten ist.
-   */
-  const restartServer = async () => {
-    setLastError(null);
-    const killed = await commands.ttsServerKill();
-    if (killed.status === "error") {
-      setLastError(killed.error);
-      return;
-    }
-    await startServer();
-  };
-
   const showVramHint =
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
@@ -1450,45 +1294,6 @@ export const TtsSettings = () => {
           >
             <HelpCircle width={20} height={20} aria-hidden="true" />
           </button>
-          {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
-            Zusammenfassen), in derselben Farbsprache wie der Server
-            daneben. Klick: entladen oder vorwaermen. */}
-          <button
-            type="button"
-            onClick={() => setLlmDialog(true)}
-            title={llmTitle}
-            aria-label={llmTitle}
-            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <BrainCircuit
-              width={20}
-              height={20}
-              className={llmIconClass}
-              aria-hidden="true"
-            />
-          </button>
-          {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
-          sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
-          (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
-          diesem Zustand ansteht. Das Wort daneben war eine zweite
-          Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
-          stoert, wenn man es sucht. */}
-          {fishReady && (
-            <button
-              type="button"
-              onClick={onServerIconClick}
-              title={serverTitle}
-              aria-label={serverTitle}
-              className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-            >
-              <Server
-                width={20}
-                height={20}
-                className={serverIconClass}
-                aria-hidden="true"
-              />
-            </button>
-          )}
         </>
       }
     >
@@ -1529,9 +1334,6 @@ export const TtsSettings = () => {
                   total: truncated.total,
                 })}
               </p>
-            )}
-            {killNotice && (
-              <p className="px-4 pb-2 text-sm text-text/70">{killNotice}</p>
             )}
             {showVramHint && (
               <p className="px-4 pb-2 text-sm text-text/70">
@@ -2114,40 +1916,6 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
 
-          <Dialog
-            open={llmDialog}
-            onOpenChange={setLlmDialog}
-            title={t("tts.llm.dialogTitle")}
-            closeLabel={t("tts.stopConfirmCancel")}
-            footer={
-              <>
-                <Button variant="secondary" onClick={() => setLlmDialog(false)}>
-                  {t("tts.stopConfirmCancel")}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={llmWarmNow}
-                  disabled={llmWorking}
-                >
-                  {t("tts.llm.warm")}
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={llmUnloadNow}
-                  disabled={llmWorking || llmLoaded.length === 0}
-                >
-                  {t("tts.llm.unload")}
-                </Button>
-              </>
-            }
-          >
-            <p className="text-sm text-text/80">
-              {llmLoaded.length > 0
-                ? t("tts.llm.dialogLoaded", { models: llmLoaded.join(", ") })
-                : t("tts.llm.dialogEmpty")}
-            </p>
-          </Dialog>
-
           <ScriptWorkshopDialog
             open={workshopOpen}
             onOpenChange={setWorkshopOpen}
@@ -2195,72 +1963,6 @@ export const TtsSettings = () => {
                 }
               }}
             />
-          </Dialog>
-
-          <Dialog
-            open={confirmStop}
-            onOpenChange={setConfirmStop}
-            title={
-              phase === "stopped" || phase === "error"
-                ? t("tts.serverStartTitle")
-                : t("tts.stopConfirmTitle")
-            }
-            closeLabel={t("tts.stopConfirmCancel")}
-            footer={
-              phase === "stopped" || phase === "error" ? (
-                <>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setConfirmStop(false)}
-                  >
-                    {t("tts.stopConfirmCancel")}
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void startServer();
-                    }}
-                  >
-                    {t("tts.serverStart")}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setConfirmStop(false)}
-                  >
-                    {t("tts.stopConfirmCancel")}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void restartServer();
-                    }}
-                  >
-                    {t("tts.stopConfirmRestart")}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void killServer();
-                    }}
-                  >
-                    {t("tts.stopConfirmAccept")}
-                  </Button>
-                </>
-              )
-            }
-          >
-            <p className="text-sm text-text/80">
-              {phase === "stopped" || phase === "error"
-                ? t("tts.serverStartBody")
-                : phase === "starting"
-                  ? t("tts.stopConfirmBodyStarting")
-                  : t("tts.stopConfirmBody")}
-            </p>
           </Dialog>
         </div>
       </div>

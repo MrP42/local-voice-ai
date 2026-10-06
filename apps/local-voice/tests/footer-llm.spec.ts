@@ -27,11 +27,13 @@ test.beforeEach(async ({ page }) => {
         { id: "local", kind: "local", label: "In der App", base_url: "http://127.0.0.1:0/v1", enabled: true },
         { id: "openai-1", kind: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", enabled: true },
         { id: "aus", kind: "ollama", label: "Ollama aus", base_url: "http://127.0.0.1:11434/v1", enabled: false },
+        { id: "ol", kind: "ollama", label: "Ollama", base_url: "http://127.0.0.1:11434/v1", enabled: true },
       ],
       llm_models: [
         { id: "local:llm-qwen3-4b-q4", connection_id: "local", remote_id: "llm-qwen3-4b-q4", label: "Qwen3 4B", enabled: true, tags: [] },
         { id: "openai-1:gpt-4.1-mini", connection_id: "openai-1", remote_id: "gpt-4.1-mini", label: "gpt-4.1-mini", enabled: true, tags: [] },
         { id: "aus:qwen3:8b", connection_id: "aus", remote_id: "qwen3:8b", label: "qwen3:8b", enabled: true, tags: [] },
+        { id: "ol:qwen3.8:27b", connection_id: "ol", remote_id: "qwen3.8:27b", label: "qwen3.8:27b", enabled: true, tags: [] },
       ],
       llm_active_model_id: "local:llm-qwen3-4b-q4",
       push_to_talk: true,
@@ -54,7 +56,13 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:event|listen") return ++callback;
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
-          if (cmd === "tts_server_status") return { phase: "stopped", message: null };
+          if (cmd === "tts_server_status") return { phase: "stopped", owns_server: false, message: null };
+          if (cmd === "tts_server_start") { saved.serverStarted = true; return null; }
+          if (cmd === "compliance_status")
+            return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
+          if (cmd === "llm_ps") return (window as unknown as { __ollamaLoaded?: string[] }).__ollamaLoaded ?? [];
+          if (cmd === "llm_warm") { saved.warm = true; return "qwen3.8:27b"; }
+          if (cmd === "llm_unload") { saved.unload = true; return 1; }
           if (cmd === "llm_local_status") return { phase: "ready", model_id: "llm-qwen3-4b-q4", backend: "vulkan", port: 18477, message: null };
           if (cmd === "llm_set_active_model") { saved.active = args?.id; settings.llm_active_model_id = args?.id; return null; }
           if (cmd === "system_memory")
@@ -139,4 +147,69 @@ test("without a measurable app VRAM only the app RAM is added, never an invented
   await expect(meter).toContainText("RAM 31,6 / 64,0 GB (App 4,2)");
   await expect(meter).toContainText("GPU 0,9 / 22,6 GB");
   await expect(meter).not.toContainText("GPU 0,9 / 22,6 GB (App");
+});
+
+test("the Fish server sits in the footer left of the shield and asks before starting", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const server = page.locator("[data-fish-server]");
+  await expect(server).toHaveAttribute("data-fish-server", "stopped");
+  const shield = page.locator("[data-compliance-shield]");
+  const [s, c] = [await server.boundingBox(), await shield.boundingBox()];
+  expect(s && c && s.x < c.x && Math.abs(s.y - c.y) < 20).toBeTruthy();
+  await server.click();
+  await expect(page.getByRole("dialog")).toContainText("Fish-Speech-Server starten?");
+  await page.getByTestId("fish-server-start").click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.serverStarted))
+    .toBe(true);
+});
+
+test("an active Ollama model can be warmed and unloaded from the footer menu", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __ollamaLoaded: string[] }).__ollamaLoaded = ["qwen3.8:27b"];
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  await page.locator('[data-llm-option="ol:qwen3.8:27b"]').click();
+  await page.locator("[data-llm-selector]").click();
+  const section = page.locator("[data-llm-ollama]");
+  await expect(section).toContainText("Ollama hält im Speicher: qwen3.8:27b");
+  await section.locator("[data-llm-unload-ollama]").click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.unload))
+    .toBe(true);
+  await page.locator("[data-llm-selector]").click();
+  await page.locator("[data-llm-warm]").click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.warm))
+    .toBe(true);
+});
+
+test("the read-aloud page no longer carries the server and model icons", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).first().click();
+  await expect(page.locator("#page-title")).toHaveText("Vorlesen");
+  await expect(page.locator("main [data-fish-server]")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Fish-Speech-Server starten" })).toHaveCount(1);
+});
+
+test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur fuer Abnahmebilder");
+  await page.addInitScript(() => {
+    (window as unknown as { __ollamaLoaded: string[] }).__ollamaLoaded = ["qwen3.8:27b"];
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Vorlesen", exact: true }).first().click();
+  await expect(page.locator("#page-title")).toHaveText("Vorlesen");
+  await page.screenshot({ path: `${dir}/vorlesen-kopf-fussleiste.png`, animations: "disabled" });
+  await page.locator("[data-llm-selector]").click();
+  await page.locator('[data-llm-option="ol:qwen3.8:27b"]').click();
+  await page.locator("[data-llm-selector]").click();
+  await expect(page.locator("[data-llm-ollama]")).toBeVisible();
+  await page.screenshot({ path: `${dir}/fussleiste-sprachmodell-menue.png`, animations: "disabled" });
 });

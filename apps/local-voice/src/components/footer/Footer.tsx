@@ -7,6 +7,7 @@ import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
 import { ComplianceShield } from "../compliance/ComplianceShield";
+import { FishServerButton } from "./FishServerButton";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
@@ -41,6 +42,8 @@ const Footer: React.FC = () => {
 
         {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
         <div className="flex items-center gap-2">
+          {/* Fish-Speech-Server (Vorlesen): links neben dem Schild. */}
+          <FishServerButton />
           <ComplianceShield />
           {/* Update Status */}
           <div className="hidden sm:flex items-center gap-1">

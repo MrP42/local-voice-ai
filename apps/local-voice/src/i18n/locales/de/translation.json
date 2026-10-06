@@ -3544,7 +3544,11 @@
     "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
     "unload": "Aus dem Speicher entladen",
     "budget": "Budget: {{spent}} von {{limit}} USD ({{percent}} %) in diesem Monat",
-    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)"
+    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)",
+    "ollamaLoaded": "Ollama hält im Speicher: {{models}}",
+    "ollamaEmpty": "Ollama: nichts im Speicher (lädt bei Bedarf)",
+    "ollamaWarmHint": "Lädt das Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
+    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger."
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
