@@ -1662,7 +1662,7 @@
         "priceIn": "Price input / M",
         "priceOut": "Price output / M",
         "effort": "Effort",
-        "effortDefault": "Default"
+        "effortDefault": "Default ({{level}})"
       },
       "usage": {
         "title": "Usage",
@@ -1708,6 +1708,10 @@
         "xhigh": "extra high",
         "max": "max",
         "ultra": "ultra (with delegation)"
+      },
+      "defaultEffort": {
+        "title": "Default effort (subscription models)",
+        "description": "Reasoning depth for the Claude and ChatGPT subscriptions when a model has no effort of its own. Higher = more thorough, but slower and uses more quota."
       }
     }
   },
@@ -3188,7 +3192,9 @@
         "confirmTitle": "Send excerpts to {{provider}}?",
         "confirmBody": "To answer, excerpts from transcript and notes are sent to {{provider}}. This confirmation applies to this provider and will not be asked again.",
         "confirm": "Send",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "short": "Cloud: {{provider}}",
+        "minimize": "Collapse notice"
       },
       "errors": {
         "no_provider": "No AI provider set up (Settings → Post-processing).",
@@ -3508,6 +3514,16 @@
         "agent_external": "External agent",
         "agent_local": "Local agent"
       }
+    },
+    "docUsage": {
+      "model": "Model",
+      "effort": "Effort",
+      "tokens": "Tokens",
+      "tokensHint": "Input {{input}} · Output {{output}}",
+      "cost": "Cost",
+      "subscriptionHint": "* Billed via your subscription – no API costs incurred.",
+      "localHint": "* Local model – no costs incurred.",
+      "costUnknown": "Cost not recorded (no price set or older minutes)."
     }
   },
   "micSelector": {
@@ -3557,7 +3573,8 @@
     "ollamaLoaded": "Ollama keeps in memory: {{models}}",
     "ollamaEmpty": "Ollama: nothing in memory (loads on demand)",
     "ollamaWarmHint": "Loads the model for ten minutes so the next job starts without loading time.",
-    "ollamaUnloadHint": "Frees the memory right away; the next job loads again and takes longer."
+    "ollamaUnloadHint": "Frees the memory right away; the next job loads again and takes longer.",
+    "spendTitle": "This month: {{monthCalls}} calls · tokens in {{monthIn}} / out {{monthOut}} · {{monthCost}}\nTotal: {{allCalls}} calls · tokens in {{allIn}} / out {{allOut}} · {{allCost}}"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

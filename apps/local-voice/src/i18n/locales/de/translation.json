@@ -1662,7 +1662,7 @@
         "priceIn": "Preis Eingabe / Mio.",
         "priceOut": "Preis Ausgabe / Mio.",
         "effort": "Effort",
-        "effortDefault": "Vorgabe"
+        "effortDefault": "Standard ({{level}})"
       },
       "usage": {
         "title": "Verbrauch",
@@ -1708,6 +1708,10 @@
         "xhigh": "sehr hoch",
         "max": "maximal",
         "ultra": "ultra (mit Delegation)"
+      },
+      "defaultEffort": {
+        "title": "Standard-Effort (Abo-Modelle)",
+        "description": "Denktiefe für Claude- und ChatGPT-Abo, wenn ein Modell keinen eigenen Effort hat. Höher = gründlicher, aber langsamer und mehr Kontingent."
       }
     }
   },
@@ -3188,7 +3192,9 @@
         "confirmTitle": "Ausschnitte an {{provider}} senden?",
         "confirmBody": "Für die Antwort gehen Ausschnitte aus Transkript und Notizen an {{provider}}. Diese Bestätigung gilt für diesen Anbieter und wird nicht erneut abgefragt.",
         "confirm": "Senden",
-        "cancel": "Abbrechen"
+        "cancel": "Abbrechen",
+        "short": "Cloud: {{provider}}",
+        "minimize": "Hinweis einklappen"
       },
       "errors": {
         "no_provider": "Kein KI-Anbieter eingerichtet (Einstellungen → Nachbearbeitung).",
@@ -3508,6 +3514,16 @@
         "agent_external": "Externer Agent",
         "agent_local": "Lokaler Agent"
       }
+    },
+    "docUsage": {
+      "model": "Modell",
+      "effort": "Effort",
+      "tokens": "Token",
+      "tokensHint": "Eingabe {{input}} · Ausgabe {{output}}",
+      "cost": "Kosten",
+      "subscriptionHint": "* Über dein Abo abgerechnet – es sind keine API-Kosten angefallen.",
+      "localHint": "* Lokales Modell – es sind keine Kosten angefallen.",
+      "costUnknown": "Kosten nicht erfasst (kein Preis hinterlegt oder älteres Protokoll)."
     }
   },
   "micSelector": {
@@ -3557,7 +3573,8 @@
     "ollamaLoaded": "Ollama hält im Speicher: {{models}}",
     "ollamaEmpty": "Ollama: nichts im Speicher (lädt bei Bedarf)",
     "ollamaWarmHint": "Lädt das Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
-    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger."
+    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger.",
+    "spendTitle": "Dieser Monat: {{monthCalls}} Aufrufe · Token ein {{monthIn}} / aus {{monthOut}} · {{monthCost}}\nGesamt: {{allCalls}} Aufrufe · Token ein {{allIn}} / aus {{allOut}} · {{allCost}}"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { DocUsageLine } from "./DocUsageLine";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
@@ -320,6 +321,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           data-testid="minutes-doc"
           className="rounded-lg border border-mid-gray/20 p-4"
         >
+          <DocUsageLine documentId={doc.id} />
           <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
         </div>
       ) : (

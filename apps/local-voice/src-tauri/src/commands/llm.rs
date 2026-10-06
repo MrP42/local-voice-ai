@@ -179,6 +179,20 @@ pub fn llm_model_efforts(app: AppHandle, connection_id: String, remote_id: Strin
         .unwrap_or_default()
 }
 
+/// Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_default_effort(app: AppHandle, effort: String) -> Result<(), String> {
+    if !crate::managers::llm::cli::valid_effort(&effort) {
+        return Err(format!("Unbekannte Effort-Stufe: {effort}"));
+    }
+    let mut s = settings::get_settings(&app);
+    s.llm_default_effort = effort;
+    s.sync_legacy_from_llm();
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
 /// Schluessel einer Verbindung setzen. Abgelegt unter der Verbindungs-`id`,
 /// nicht unter der Vorlage -- zwei Konten derselben Art brauchen zwei
 /// Schluessel. Der aeltere Befehl prueft gegen die Vorlagen und wuerde eine

@@ -134,6 +134,11 @@ interface AudioPlayerProps {
   /** Schmale Spalte: Transport, Lautstärke und Tempo oben, der Zeitstrahl
    *  darunter über die volle Breite (statt alles in einer Zeile). */
   compact?: boolean;
+  /** Eine Zeile: Beschriftung, Play, Zeitstrahl, Zeit, Tempo (Bedienfeld der
+   *  Aufnahmen; Springen per Zeitstrahl, ohne ±10 s, Stopp und Lautstärke). */
+  dense?: boolean;
+  /** Beschriftung vor dem Player (nur mit `dense`), z. B. „Ich“. */
+  label?: string;
   /** Meldet die Abspielposition (Sekunden) bei jeder Aenderung: Wiedergabe, Sprung, Ziehen. */
   onTimeChange?: (seconds: number) => void;
 }
@@ -177,6 +182,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   className = "",
   autoPlay = false,
   compact = false,
+  dense = false,
+  label,
   onTimeChange,
 }) => {
   const group = useContext(AudioPlayerGroupContext);
@@ -563,6 +570,99 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   };
 
   const progressPercent = getProgressPercent();
+
+  const rateMenu = (
+    <div className="relative" ref={rateMenuRef}>
+      <button
+        type="button"
+        onClick={() => setIsRateMenuOpen((open) => !open)}
+        className={`px-1.5 py-0.5 text-xs font-semibold tabular-nums rounded-md border transition-colors cursor-pointer ${
+          playbackRate === 1
+            ? "border-mid-gray/80 bg-mid-gray/10 text-text/70 hover:border-logo-primary hover:bg-logo-primary/10"
+            : "border-logo-primary bg-logo-primary/10 text-text"
+        }`}
+        aria-label="Playback speed"
+        aria-haspopup="listbox"
+        aria-expanded={isRateMenuOpen}
+      >
+        {formatRate(playbackRate)}
+      </button>
+
+      {isRateMenuOpen && (
+        <div
+          role="listbox"
+          className="absolute right-0 bottom-full z-50 mb-1 rounded-md border border-mid-gray/80 bg-background shadow-lg py-1"
+        >
+          {PLAYBACK_RATES.map((rate) => (
+            <button
+              key={rate}
+              type="button"
+              role="option"
+              aria-selected={rate === playbackRate}
+              onClick={() => handleSelectRate(rate)}
+              className={`block w-full px-3 py-1 text-xs text-start tabular-nums whitespace-nowrap transition-colors cursor-pointer hover:bg-logo-primary/10 ${
+                rate === playbackRate
+                  ? "text-logo-primary font-semibold"
+                  : "text-text"
+              }`}
+            >
+              {formatRate(rate)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const slider = (
+    <input
+      type="range"
+      min="0"
+      max={duration || 0}
+      step="0.01"
+      value={currentTime}
+      aria-label="Wiedergabeposition"
+      onChange={handleSeek}
+      onMouseDown={handleSliderMouseDown}
+      onTouchStart={handleSliderTouchStart}
+      className={`flex-1 min-w-0 h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-logo-primary ${progressPercent >= 99.5 ? "[&::-webkit-slider-thumb]:translate-x-0.5 [&::-moz-range-thumb]:translate-x-0.5" : ""}`}
+      style={{
+        // Signalgelb aus dem Token-Satz statt Handys Rosa, das hier aus
+        // dem Fork uebriggeblieben war.
+        background: `linear-gradient(to right, var(--color-logo-primary) 0%, var(--color-logo-primary) ${progressPercent}%, rgba(128, 128, 128, 0.2) ${progressPercent}%, rgba(128, 128, 128, 0.2) 100%)`,
+      }}
+    />
+  );
+
+  if (dense) {
+    return (
+      <div
+        className={`flex items-center gap-2 ${className}`}
+        data-player-dense
+      >
+        <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
+        {label && (
+          <span className="w-16 shrink-0 truncate text-xs text-text/60">
+            {label}
+          </span>
+        )}
+        <button
+          type="button"
+          className="mbtn mbtn--sm mbtn--primary shrink-0"
+          onClick={togglePlay}
+          disabled={isLoading}
+          aria-label={isPlaying ? "Pause" : "Wiedergabe"}
+        >
+          <Glyph name={isPlaying ? "pause" : "play"} />
+        </button>
+        {slider}
+        <span className="shrink-0 text-xs text-text/60 tabular-nums">
+          {formatTime(currentTime)}/{formatTime(duration)}
+        </span>
+        {rateMenu}
+      </div>
+    );
+  }
 
   return (
     <div

@@ -10,6 +10,7 @@ import {
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
+import { displayModelName } from "@/lib/modelNames";
 import {
   COMPLIANCE_CHANGED,
   notifyComplianceChanged,
@@ -33,6 +34,11 @@ export const LlmSelector: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<LocalLlmStatus | null>(null);
   const [budget, setBudget] = useState<BudgetState | null>(null);
+  /** Verbrauch des aktiven Modells: dieser Monat und gesamt. */
+  const [spend, setSpend] = useState<{
+    month: { tokensIn: number; tokensOut: number; cost: number; calls: number };
+    all: { tokensIn: number; tokensOut: number; cost: number; calls: number };
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Ollama: was im Speicher liegt, ob gerade gearbeitet wird, letzter Fehler. */
   const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
@@ -62,6 +68,14 @@ export const LlmSelector: React.FC = () => {
   }, [connections, models]);
 
   const active = selectable.find((s) => s.model.id === activeId) ?? null;
+  const defaultEffort = (getSetting("llm_default_effort") ?? "medium") as string;
+  const isCli = (c: LlmConnection) =>
+    c.kind === "claude_cli" || c.kind === "codex_cli";
+  /** Effort, mit dem das Modell laeuft (eigener oder Standard; nur Abo/CLI). */
+  const effortOf = (m: LlmModelConfig, c: LlmConnection): string | null =>
+    isCli(c) ? m.effort || defaultEffort : null;
+  const effortText = (e: string | null) =>
+    e ? t(`settings.llm.effortLevels.${e}`, { defaultValue: e }) : null;
   const activeIsLocal = active?.connection.kind === "local";
   const activeConnectionId = active?.connection.id ?? null;
 
@@ -92,6 +106,64 @@ export const LlmSelector: React.FC = () => {
       window.clearInterval(timer);
     };
   }, [activeConnectionId]);
+
+  // Verbrauch des aktiven Modells (Monat, gesamt) fuer Anzeige und Tooltip.
+  useEffect(() => {
+    if (!activeId) {
+      setSpend(null);
+      return;
+    }
+    let cancelled = false;
+    const pick = (s: { by_model: { key: string; prompt_tokens: number; completion_tokens: number; cost_micro: number; calls: number }[] }) => {
+      const b = s.by_model.find((x) => x.key === activeId);
+      return {
+        tokensIn: b?.prompt_tokens ?? 0,
+        tokensOut: b?.completion_tokens ?? 0,
+        cost: b?.cost_micro ?? 0,
+        calls: b?.calls ?? 0,
+      };
+    };
+    const tick = async () => {
+      try {
+        const [m, a] = await Promise.all([
+          commands.usageSummary("month"),
+          commands.usageSummary("all"),
+        ]);
+        if (cancelled || m.status !== "ok" || a.status !== "ok") return;
+        setSpend({ month: pick(m.data), all: pick(a.data) });
+      } catch {
+        // Ohne Backend kein Verbrauch.
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeId]);
+
+  const usd = (micro: number) =>
+    `${(micro / 1_000_000).toLocaleString("de-DE", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })} $`;
+  const tok = (n: number) => n.toLocaleString("de-DE");
+  const spendTitle = spend
+    ? t("llmSelector.spendTitle", {
+        monthIn: tok(spend.month.tokensIn),
+        monthOut: tok(spend.month.tokensOut),
+        monthCost: usd(spend.month.cost),
+        monthCalls: spend.month.calls,
+        allIn: tok(spend.all.tokensIn),
+        allOut: tok(spend.all.tokensOut),
+        allCost: usd(spend.all.cost),
+        allCalls: spend.all.calls,
+      }) +
+      (active && isCli(active.connection)
+        ? `\n${t("meetings.docUsage.subscriptionHint")}`
+        : "")
+    : undefined;
 
   const budgetRatio = budget?.ratio ?? null;
   const budgetWarning = budgetRatio !== null && budgetRatio >= 0.8;
@@ -186,7 +258,8 @@ export const LlmSelector: React.FC = () => {
 
   const label = (): string => {
     if (!active) return t("llmSelector.none");
-    const name = active.model.label;
+    const effort = effortText(effortOf(active.model, active.connection));
+    const name = `${displayModelName(active.model.remote_id)}${effort ? ` (${effort})` : ""}`;
     if (!activeIsLocal) return name;
     switch (status?.phase) {
       case "starting":
@@ -269,7 +342,12 @@ export const LlmSelector: React.FC = () => {
         ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
         : undefined));
   const title =
-    error ?? ollamaTitle ?? status?.message ?? budgetTitle ?? undefined;
+    error ??
+    ollamaTitle ??
+    status?.message ??
+    budgetTitle ??
+    spendTitle ??
+    undefined;
 
   return (
     <div className="relative" ref={ref}>
@@ -283,7 +361,12 @@ export const LlmSelector: React.FC = () => {
         data-llm-selector
       >
         <div className={`w-2 h-2 rounded-full ${light()}`} />
-        <span className="max-w-32 truncate">{label()}</span>
+        <span className="max-w-56 truncate">{label()}</span>
+        {spend && spend.month.cost > 0 && (
+          <span className="text-xs tabular-nums text-text/60" data-llm-spend>
+            {usd(spend.month.cost)}
+          </span>
+        )}
         {active && <ModelBadges assessment={byModel[active.model.id]} />}
         {budgetWarning && (
           <span
@@ -350,12 +433,12 @@ export const LlmSelector: React.FC = () => {
                   }`}
                 >
                   <div className="flex items-center gap-2 text-sm text-text/80">
-                    <span className="min-w-0 truncate">{model.label}</span>
-                    {model.effort && (
+                    <span className="min-w-0 truncate">
+                      {displayModelName(model.remote_id)}
+                    </span>
+                    {effortOf(model, connection) && (
                       <span className="text-xs text-text/50" data-llm-effort>
-                        {t(`settings.llm.effortLevels.${model.effort}`, {
-                          defaultValue: model.effort,
-                        })}
+                        ({effortText(effortOf(model, connection))})
                       </span>
                     )}
                     <ModelBadges assessment={assessment} />

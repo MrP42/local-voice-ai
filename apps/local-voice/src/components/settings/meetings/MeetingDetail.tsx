@@ -1520,16 +1520,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       {hasAudio && !live && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player">
-              {meeting.system_audio_path && (
-                <p className="text-xs text-text/60">
-                  {meeting.source === "import"
-                    ? t("meetings.meta.audioImport")
-                    : t("meetings.live.me")}
-                </p>
-              )}
+            <div data-testid="rec-player">
               <AudioPlayer
-                compact
+                dense
+                label={
+                  meeting.system_audio_path
+                    ? meeting.source === "import"
+                      ? t("meetings.meta.audioImport")
+                      : t("meetings.live.me")
+                    : undefined
+                }
                 controlRef={micPlayerRef}
                 onTimeChange={onPlayTime}
                 src={convertFileSrc(meeting.mic_audio_path, "asset")}
@@ -1538,14 +1538,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             </div>
           )}
           {meeting.system_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player-system">
-              {meeting.mic_audio_path && (
-                <p className="text-xs text-text/60">
-                  {t("meetings.live.remote")}
-                </p>
-              )}
+            <div data-testid="rec-player-system">
               <AudioPlayer
-                compact
+                dense
+                label={
+                  meeting.mic_audio_path ? t("meetings.live.remote") : undefined
+                }
                 controlRef={systemPlayerRef}
                 src={convertFileSrc(meeting.system_audio_path, "asset")}
                 className="w-full"

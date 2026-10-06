@@ -248,6 +248,10 @@ pub struct LlmModelConfig {
     pub effort: Option<String>,
 }
 
+fn default_llm_effort() -> String {
+    "medium".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -565,6 +569,10 @@ pub struct AppSettings {
     /// bekommen keine Anfrage.
     #[serde(default)]
     pub compliance_profile: crate::managers::compliance::ComplianceProfile,
+    /// Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
+    /// hat (`low` … `max`). Vorgabe `medium`.
+    #[serde(default = "default_llm_effort")]
+    pub llm_default_effort: String,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -1657,6 +1665,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_active_model_id: None,
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
+        llm_default_effort: default_llm_effort(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
@@ -1785,9 +1794,14 @@ impl AppSettings {
         let base_url = connection.base_url.clone();
         // Abo-Modelle ueber die CLI: Effort reist als `modell@effort` mit
         // (`cli::call` trennt es wieder); andere Anbieter bekommen den Namen.
+        let effort = model
+            .effort
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .or(Some(self.llm_default_effort.as_str()).filter(|e| !e.is_empty()));
         let remote = match (
             crate::managers::llm::cli::Cli::from_base_url(&base_url),
-            model.effort.as_deref().filter(|e| !e.is_empty()),
+            effort,
         ) {
             (Some(_), Some(effort)) => format!("{}@{effort}", model.remote_id),
             _ => model.remote_id.clone(),

@@ -280,6 +280,28 @@ async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
 async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]> {
     return await TAURI_INVOKE("llm_model_efforts", { connectionId, remoteId });
 },
+/**
+ * Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
+ */
+async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_default_effort", { effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kosten einer Reihe von Aufrufen (Mikro-Dollar), etwa der eines Protokolls.
+ */
+async usageCostOf(ids: number[]) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_cost_of", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
@@ -5308,6 +5330,11 @@ llm_model_dirs?: string[];
  * oder keine Einschraenkung.
  */
 compliance_profile?: ComplianceProfile;
+/**
+ * Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
+ * hat (`low` … `max`). Vorgabe `medium`.
+ */
+llm_default_effort?: string;
 /**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.

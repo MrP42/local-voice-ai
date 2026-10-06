@@ -20,6 +20,20 @@ pub async fn usage_summary(
         .map_err(|e| e.to_string())
 }
 
+/// Kosten einer Reihe von Aufrufen (Mikro-Dollar), etwa der eines Protokolls.
+#[tauri::command]
+#[specta::specta]
+pub async fn usage_cost_of(
+    ledger: State<'_, Arc<UsageLedger>>,
+    ids: Vec<i64>,
+) -> Result<i64, String> {
+    let ledger = ledger.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || ledger.cost_of(&ids))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn usage_events(
