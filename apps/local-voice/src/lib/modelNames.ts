@@ -33,3 +33,14 @@ export const displayModelName = (raw: string): string => {
       .join("-");
   return name.charAt(0).toUpperCase() + name.slice(1);
 };
+
+/**
+ * Name eines freigegebenen Modells: Claude/GPT mit Version (aus der Kennung),
+ * alle anderen mit ihrem gespeicherten Namen (lokale Modelle: „Qwen3 4B“).
+ */
+export const modelLabel = (remoteId: string, label: string): string => {
+  const [name] = splitModel(remoteId.trim());
+  return CLAUDE[name.toLowerCase()] || /^gpt-/i.test(name)
+    ? displayModelName(name)
+    : label || displayModelName(name);
+};

@@ -179,6 +179,18 @@ pub fn llm_model_efforts(app: AppHandle, connection_id: String, remote_id: Strin
         .unwrap_or_default()
 }
 
+/// Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
+#[tauri::command]
+#[specta::specta]
+pub fn llm_model_offers_fast(app: AppHandle, connection_id: String, remote_id: String) -> bool {
+    let s = settings::get_settings(&app);
+    s.llm_connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .and_then(|c| crate::managers::llm::cli::Cli::from_base_url(&c.base_url))
+        .is_some_and(|cli| cli.offers_fast(&remote_id))
+}
+
 /// Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
 #[tauri::command]
 #[specta::specta]
@@ -354,6 +366,7 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
             price_output_per_mtok: Some(0.0),
             tags: info.tags.clone(),
             effort: None,
+            fast: false,
         });
     } else if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == id) {
         m.enabled = true;

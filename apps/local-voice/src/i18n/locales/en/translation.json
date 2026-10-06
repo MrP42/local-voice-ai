@@ -1662,7 +1662,10 @@
         "priceIn": "Price input / M",
         "priceOut": "Price output / M",
         "effort": "Effort",
-        "effortDefault": "Default ({{level}})"
+        "effortDefault": "Default ({{level}})",
+        "fast": "Fast mode",
+        "fastOn": "Fast mode on: 1.5–2× faster, uses more of your plan allowance. Click to turn off.",
+        "fastOff": "Fast mode off. Click for 1.5–2× speed at a higher plan usage."
       },
       "usage": {
         "title": "Usage",

@@ -10,7 +10,7 @@ import {
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
-import { displayModelName } from "@/lib/modelNames";
+import { modelLabel } from "@/lib/modelNames";
 import {
   COMPLIANCE_CHANGED,
   notifyComplianceChanged,
@@ -268,7 +268,7 @@ export const LlmSelector: React.FC = () => {
   const label = (): string => {
     if (!active) return t("llmSelector.none");
     const effort = effortText(effortOf(active.model, active.connection));
-    const name = `${displayModelName(active.model.remote_id)}${effort ? ` (${effort})` : ""}`;
+    const name = `${modelLabel(active.model.remote_id, active.model.label)}${effort ? ` (${effort})` : ""}${active.model.fast ? " ⚡" : ""}`;
     if (!activeIsLocal) return name;
     switch (status?.phase) {
       case "starting":
@@ -443,11 +443,20 @@ export const LlmSelector: React.FC = () => {
                 >
                   <div className="flex items-center gap-2 text-sm text-text/80">
                     <span className="min-w-0 truncate">
-                      {displayModelName(model.remote_id)}
+                      {modelLabel(model.remote_id, model.label)}
                     </span>
                     {effortOf(model, connection) && (
                       <span className="text-xs text-text/50" data-llm-effort>
                         ({effortText(effortOf(model, connection))})
+                      </span>
+                    )}
+                    {model.fast && (
+                      <span
+                        className="text-xs"
+                        title={t("settings.llm.model.fastOn")}
+                        data-llm-fast
+                      >
+                        ⚡
                       </span>
                     )}
                     <ModelBadges assessment={assessment} />

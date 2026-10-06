@@ -246,6 +246,10 @@ pub struct LlmModelConfig {
     /// auch `ultra`); `None` = Vorgabe der CLI.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Fast-Modus der Codex-Modelle (`service_tier = "fast"`: schneller, verbraucht
+    /// mehr vom Abo-Kontingent); nur wirksam, wo der Codex-Katalog ihn anbietet.
+    #[serde(default)]
+    pub fast: bool,
 }
 
 fn default_llm_effort() -> String {
@@ -1799,13 +1803,15 @@ impl AppSettings {
             .as_deref()
             .filter(|e| !e.is_empty())
             .or(Some(self.llm_default_effort.as_str()).filter(|e| !e.is_empty()));
-        let remote = match (
-            crate::managers::llm::cli::Cli::from_base_url(&base_url),
-            effort,
-        ) {
+        let cli = crate::managers::llm::cli::Cli::from_base_url(&base_url);
+        let mut remote = match (cli, effort) {
             (Some(_), Some(effort)) => format!("{}@{effort}", model.remote_id),
             _ => model.remote_id.clone(),
         };
+        // Fast reist als Endung `~fast` mit (`cli::split_spec` trennt sie).
+        if cli == Some(crate::managers::llm::cli::Cli::Codex) && model.fast {
+            remote.push_str(crate::managers::llm::cli::FAST_SUFFIX);
+        }
         self.post_process_provider_id = kind.clone();
         if let Some(template) = self.post_process_provider_mut(&kind) {
             template.base_url = base_url;
@@ -2001,6 +2007,7 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
                 price_output_per_mtok: None,
                 tags: Vec::new(),
                 effort: None,
+                fast: false,
             });
         }
     }
@@ -2545,6 +2552,7 @@ mod tests {
             price_output_per_mtok: None,
             tags: Vec::new(),
             effort: None,
+            fast: false,
         }
     }
 
@@ -2727,6 +2735,50 @@ mod tests {
                 .post_process_provider("openai")
                 .map(|p| p.base_url.as_str()),
             Some("https://proxy.example/v1")
+        );
+    }
+
+    /// Abo-Modelle: Effort (sonst der Standard) und Fast reisen im Modellnamen
+    /// mit; Fast nur bei Codex.
+    #[test]
+    fn sync_legacy_carries_effort_and_fast_for_cli_models() {
+        let mut settings = get_default_settings();
+        for (id, url) in [("codex_cli", "cli://codex"), ("claude_cli", "cli://claude")] {
+            settings.llm_connections.push(LlmConnection {
+                id: id.into(),
+                kind: id.into(),
+                label: id.into(),
+                base_url: url.into(),
+                enabled: true,
+                monthly_budget_usd: None,
+                budget_enforced: false,
+                training_opt_out: false,
+            });
+        }
+        let mut gpt = llm_model("codex:gpt-6.1-sol", "codex_cli", "gpt-6.1-sol", true);
+        gpt.fast = true;
+        let mut sonnet = llm_model("claude:sonnet", "claude_cli", "sonnet", true);
+        sonnet.fast = true;
+        sonnet.effort = Some("high".into());
+        settings.llm_models.extend([gpt, sonnet]);
+
+        settings.llm_active_model_id = Some("codex:gpt-6.1-sol".into());
+        settings.sync_legacy_from_llm();
+        assert_eq!(
+            settings
+                .post_process_models
+                .get("codex_cli")
+                .map(String::as_str),
+            Some("gpt-6.1-sol@medium~fast")
+        );
+        settings.llm_active_model_id = Some("claude:sonnet".into());
+        settings.sync_legacy_from_llm();
+        assert_eq!(
+            settings
+                .post_process_models
+                .get("claude_cli")
+                .map(String::as_str),
+            Some("sonnet@high")
         );
     }
 

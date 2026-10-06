@@ -4080,7 +4080,7 @@ mod tests {
         );
 
         let infos = s.list_template_infos().unwrap();
-        assert_eq!(infos.len(), 8);
+        assert_eq!(infos.len(), 9);
         assert_eq!(
             infos[0].id, "builtin:allgemein",
             "Katalogreihenfolge, Standard zuerst"
@@ -4865,7 +4865,7 @@ mod tests {
         );
         assert_eq!(
             s.list_template_infos().unwrap().len(),
-            9,
+            10,
             "Update legt keine zweite an"
         );
 

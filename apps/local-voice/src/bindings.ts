@@ -281,6 +281,12 @@ async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]
     return await TAURI_INVOKE("llm_model_efforts", { connectionId, remoteId });
 },
 /**
+ * Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
+ */
+async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("llm_model_offers_fast", { connectionId, remoteId });
+},
+/**
  * Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
  */
 async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
@@ -6675,7 +6681,12 @@ export type LlmModelConfig = { id: string; connection_id: string; remote_id: str
  * Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
  * auch `ultra`); `None` = Vorgabe der CLI.
  */
-effort?: string | null }
+effort?: string | null;
+/**
+ * Fast-Modus der Codex-Modelle (`service_tier = "fast"`: schneller, verbraucht
+ * mehr vom Abo-Kontingent); nur wirksam, wo der Codex-Katalog ihn anbietet.
+ */
+fast?: boolean }
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 /**
  * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.

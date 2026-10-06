@@ -1897,6 +1897,7 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_list_remote_models,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
+            commands::llm::llm_model_offers_fast,
             commands::llm::llm_set_api_key,
             commands::llm::llm_local_list,
             commands::llm::llm_local_download,

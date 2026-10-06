@@ -1662,7 +1662,10 @@
         "priceIn": "Preis Eingabe / Mio.",
         "priceOut": "Preis Ausgabe / Mio.",
         "effort": "Effort",
-        "effortDefault": "Standard ({{level}})"
+        "effortDefault": "Standard ({{level}})",
+        "fast": "Fast-Modus",
+        "fastOn": "Fast-Modus an: 1,5–2× schneller, verbraucht mehr vom Abo-Kontingent. Klicken zum Ausschalten.",
+        "fastOff": "Fast-Modus aus. Klicken: 1,5–2× schneller, verbraucht dafür mehr vom Abo-Kontingent."
       },
       "usage": {
         "title": "Verbrauch",

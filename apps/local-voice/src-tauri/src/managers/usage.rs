@@ -814,6 +814,7 @@ mod tests {
             price_output_per_mtok: Some(pout),
             tags: Vec::new(),
             effort: None,
+            fast: false,
         }
     }
 
