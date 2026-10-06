@@ -265,3 +265,15 @@ test("search finds models in folded groups", async ({ page }) => {
   await expect(card(page, "ext-bbbbbbbbbbbb")).toBeVisible();
   await expect(card(page, "llm-qwen3-4b-q4")).toHaveCount(0);
 });
+
+test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur fuer Abnahmebilder");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openModels(page);
+  await page.screenshot({ path: `${dir}/modelle-zugeklappt.png`, animations: "disabled" });
+  await openGroup(page, "llm-folders");
+  await openGroup(page, "llm-available");
+  await openRow(page, "llm-qwen3-4b-q4");
+  await page.screenshot({ path: `${dir}/modelle-aufgeklappt.png`, animations: "disabled", fullPage: true });
+});
