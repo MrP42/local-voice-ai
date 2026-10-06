@@ -571,7 +571,8 @@ const ModelRow: React.FC<{
   const { t } = useTranslation();
   const assessment = useComplianceStore((s) => s.byModel[model.id]);
   const { getSetting } = useSettings();
-  const defaultEffort = (getSetting("llm_default_effort") ?? "medium") as string;
+  const defaultEffort = (getSetting("llm_default_effort") ??
+    "medium") as string;
   const [details, setDetails] = useState(false);
   // Effort-Stufen (nur Abo-Modelle ueber die CLI kennen welche).
   const [efforts, setEfforts] = useState<string[]>([]);

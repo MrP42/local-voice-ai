@@ -636,10 +636,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   if (dense) {
     return (
-      <div
-        className={`flex items-center gap-2 ${className}`}
-        data-player-dense
-      >
+      <div className={`flex items-center gap-2 ${className}`} data-player-dense>
         <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
         {label && (
           <span className="w-16 shrink-0 truncate text-xs text-text/60">

@@ -68,7 +68,8 @@ export const LlmSelector: React.FC = () => {
   }, [connections, models]);
 
   const active = selectable.find((s) => s.model.id === activeId) ?? null;
-  const defaultEffort = (getSetting("llm_default_effort") ?? "medium") as string;
+  const defaultEffort = (getSetting("llm_default_effort") ??
+    "medium") as string;
   const isCli = (c: LlmConnection) =>
     c.kind === "claude_cli" || c.kind === "codex_cli";
   /** Effort, mit dem das Modell laeuft (eigener oder Standard; nur Abo/CLI). */
@@ -114,7 +115,15 @@ export const LlmSelector: React.FC = () => {
       return;
     }
     let cancelled = false;
-    const pick = (s: { by_model: { key: string; prompt_tokens: number; completion_tokens: number; cost_micro: number; calls: number }[] }) => {
+    const pick = (s: {
+      by_model: {
+        key: string;
+        prompt_tokens: number;
+        completion_tokens: number;
+        cost_micro: number;
+        calls: number;
+      }[];
+    }) => {
       const b = s.by_model.find((x) => x.key === activeId);
       return {
         tokensIn: b?.prompt_tokens ?? 0,
