@@ -955,6 +955,44 @@
       }
     },
     "models": {
+        "areas": {
+          "llm": "Language models",
+          "dictation": "Dictation",
+          "voices": "Read aloud"
+        },
+        "groups": {
+          "installed": "Installed",
+          "installedEmpty": "Nothing installed yet – expand below and download.",
+          "folders": "From model folders",
+          "foldersBlocked_one": "{{count}} won't load",
+          "foldersBlocked_other": "{{count}} won't load",
+          "available": "Available to download",
+          "runtime": "Runtime"
+        },
+        "active": {
+          "llm": "Active",
+          "dictation": "Active",
+          "none": "no model selected"
+        },
+        "source": {
+          "app": "App",
+          "ollama": "Ollama",
+          "lmstudio": "LM Studio",
+          "folder": "Folder"
+        },
+        "row": {
+          "details": "Details for {{name}}",
+          "more": "More actions for {{name}}",
+          "downloading": "Downloading … {{percentage}} %",
+          "cancel": "Cancel",
+          "use": "Use",
+          "download": "Download",
+          "duplicate": "duplicate"
+        },
+        "runtime": {
+          "summary": "Runtime: {{backend}}",
+          "missing": "Runtime missing – download it under “Runtime” below"
+        },
       "title": "Transcription Models",
       "description": "Select a transcription model or download additional models. Different models offer varying levels of accuracy and speed.",
       "searchPlaceholder": "Search models by name…",
