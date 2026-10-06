@@ -114,7 +114,7 @@ pub fn explain(
     if !i.enabled {
         return (GrantMode::Off, Some(OffReason::IntegrationDisabled));
     }
-    if !i.kind.capabilities().contains(&cap) {
+    if !i.capabilities().contains(&cap) {
         return (GrantMode::Off, Some(OffReason::CapabilityNotOffered));
     }
     if !capability_enabled(i, cap) {

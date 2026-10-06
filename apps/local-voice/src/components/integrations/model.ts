@@ -1,4 +1,11 @@
-import type { Caller, Direction, GrantMode, Kind } from "@/bindings";
+import type {
+  Caller,
+  Direction,
+  GrantMode,
+  Integration,
+  Kind,
+  ServiceId,
+} from "@/bindings";
 
 /** Aufrufer-Spalten der Rechte-Matrix (Reihenfolge wie im Backend). */
 export const MATRIX_CALLERS: Caller[] = [
@@ -41,7 +48,8 @@ export const configText = (configJson: string, key: string): string => {
 };
 
 /** Arten mit eigenem Einstellungsformular (A6, K1): Konto oder Ziel mit Pfad/Adresse. */
-export type TargetKind = "folder" | "smtp" | "obsidian" | "wissen" | "webhook";
+export type TargetKind =
+  "folder" | "smtp" | "obsidian" | "wissen" | "webhook" | "service";
 
 export const TARGET_KINDS: readonly Kind[] = [
   "folder",
@@ -49,6 +57,7 @@ export const TARGET_KINDS: readonly Kind[] = [
   "obsidian",
   "wissen",
   "webhook",
+  "service",
 ];
 
 export const isTargetKind = (kind: Kind): kind is TargetKind =>
@@ -96,6 +105,73 @@ export const CATALOG: CatalogEntry[] = [
   { id: "wissen", kind: "wissen", status: "available" },
   { id: "webhook", kind: "webhook", status: "available" },
 ];
+
+/** Dienste (Welle 1) im Katalog, nach Zweck gruppiert. Felder und Anmeldung liefert das
+ * Backend (`integrationServices`); die Namen sind Marken und werden nicht uebersetzt. */
+export type ServiceGroup =
+  "chat" | "tasks" | "pages" | "crm" | "records" | "calendar";
+
+export const SERVICE_GROUPS: { group: ServiceGroup; ids: ServiceId[] }[] = [
+  { group: "chat", ids: ["slack", "teams", "discord"] },
+  {
+    group: "tasks",
+    ids: [
+      "asana",
+      "clickup",
+      "jira",
+      "trello",
+      "todoist",
+      "monday",
+      "linear",
+      "github",
+    ],
+  },
+  { group: "pages", ids: ["notion", "confluence"] },
+  { group: "crm", ids: ["hubspot", "pipedrive"] },
+  { group: "records", ids: ["airtable"] },
+  { group: "calendar", ids: ["icloud"] },
+];
+
+export const SERVICE_LABELS: Record<ServiceId, string> = {
+  slack: "Slack",
+  teams: "Microsoft Teams",
+  discord: "Discord",
+  notion: "Notion",
+  confluence: "Confluence",
+  asana: "Asana",
+  clickup: "ClickUp",
+  jira: "Jira",
+  trello: "Trello",
+  todoist: "Todoist",
+  monday: "monday.com",
+  linear: "Linear",
+  github: "GitHub",
+  hubspot: "HubSpot",
+  pipedrive: "Pipedrive",
+  airtable: "Airtable",
+  icloud: "iCloud-Kalender",
+};
+
+const isServiceId = (s: string): s is ServiceId => s in SERVICE_LABELS;
+
+/** Der Dienst einer Dienst-Integration (`config_json.service`). */
+export const serviceOf = (configJson: string): ServiceId | null => {
+  const s = configText(configJson, "service");
+  return isServiceId(s) ? s : null;
+};
+
+/** Schluessel fuer Symbol: bei Diensten der Dienst, sonst die Art. */
+export const iconKey = (i: Integration): string =>
+  i.kind === "service" ? (serviceOf(i.config_json) ?? "service") : i.kind;
+
+/** Name der Art fuer Karte und Detail: bei Diensten der Markenname. */
+export const kindName = (
+  t: (key: string) => string,
+  i: Integration,
+): string => {
+  const service = i.kind === "service" ? serviceOf(i.config_json) : null;
+  return service ? SERVICE_LABELS[service] : t(`integrations.kinds.${i.kind}`);
+};
 
 export const capabilityKey = (capability: string): string =>
   `integrations.capabilities.${capability.replace(".", "_")}`;

@@ -1018,16 +1018,21 @@ impl Action for ExportDocument {
         let meeting_id = meeting_id_of(ctx).ok_or_else(no_meeting)?;
         let (store, meeting) = ready_meeting(ctx, &*self.services, &meeting_id)?;
 
-        // Ziel: eine Ordner-Integration. Das Recht hat die Engine vor `run` geprueft.
+        // Ziel: eine Ordner-Integration oder OneDrive (Microsoft 365, Welle 2). Das Recht hat die
+        // Engine vor `run` geprueft.
         let conn = ctx
             .conn()
             .map_err(|e| StepError::Transient(format!("Das Register ist nicht erreichbar ({e}).")))?;
         let integration = integrations_store::get(&conn, target_id)
             .map_err(|e| StepError::Transient(format!("Das Register ist nicht erreichbar ({e}).")))?
             .ok_or_else(|| StepError::Permanent(format!("Das Ziel „{target_id}“ gibt es nicht.")))?;
+        drop(conn);
+        if integration.kind == Kind::M365 {
+            return self.to_onedrive(ctx, &store, &meeting, &integration, format, content, params);
+        }
         if integration.kind != Kind::Folder {
             return Err(StepError::Permanent(format!(
-                "Das Ziel „{target_id}“ ist kein Ordner."
+                "Das Ziel „{target_id}“ ist weder ein Ordner noch ein OneDrive-Konto."
             )));
         }
         let cfg = FolderConfig::from_config_json(&integration.config_json)
@@ -1052,32 +1057,8 @@ impl Action for ExportDocument {
             }
         }
 
-        let bundle = export::build_bundle(&store, &meeting_id).map_err(|e| {
-            if e.starts_with("meeting_not_found") {
-                StepError::Permanent("Die Besprechung gibt es nicht mehr.".to_string())
-            } else {
-                StepError::Transient(format!("Die Besprechung ließ sich nicht lesen ({e})."))
-            }
-        })?;
-        let missing = match content {
-            "minutes" => bundle.minutes_md.is_none().then_some("Protokoll"),
-            "notes" => bundle.enhanced.is_none().then_some("KI-Notizen"),
-            _ => None,
-        };
-        if let Some(what) = missing {
-            return Err(StepError::Permanent(format!(
-                "Zu dieser Besprechung gibt es noch keine {what}; davor muss der Schritt stehen, der sie erzeugt."
-            )));
-        }
-        let markdown = export::bundle_to_markdown(&bundle, &export_parts(content));
-
-        let base = text_param(params, "name").unwrap_or(meeting.title.as_str());
-        let ext = format!(".{format}");
-        let file_name = if base.to_lowercase().ends_with(&ext) {
-            base.to_string()
-        } else {
-            format!("{base}{ext}")
-        };
+        let markdown = export_markdown(&store, &meeting_id, content)?;
+        let file_name = export_file_name(params, &meeting.title, format);
         let placed = sandbox
             .write_new(&rel_dir, &file_name, |path| {
                 export::write_document(path, &markdown)
@@ -1101,6 +1082,132 @@ impl Action for ExportDocument {
         );
         Ok(export_output(&sandbox, &placed.path, format, placed.bytes, false))
     }
+}
+
+/// Der Inhalt des Exports als Markdown (Protokoll, KI-Notizen oder alles).
+fn export_markdown(
+    store: &MeetingStore,
+    meeting_id: &str,
+    content: &str,
+) -> Result<String, StepError> {
+    let bundle = export::build_bundle(store, meeting_id).map_err(|e| {
+        if e.starts_with("meeting_not_found") {
+            StepError::Permanent("Die Besprechung gibt es nicht mehr.".to_string())
+        } else {
+            StepError::Transient(format!("Die Besprechung ließ sich nicht lesen ({e})."))
+        }
+    })?;
+    let missing = match content {
+        "minutes" => bundle.minutes_md.is_none().then_some("Protokoll"),
+        "notes" => bundle.enhanced.is_none().then_some("KI-Notizen"),
+        _ => None,
+    };
+    if let Some(what) = missing {
+        return Err(StepError::Permanent(format!(
+            "Zu dieser Besprechung gibt es noch keine {what}; davor muss der Schritt stehen, der sie erzeugt."
+        )));
+    }
+    Ok(export::bundle_to_markdown(&bundle, &export_parts(content)))
+}
+
+/// Dateiname: `name` oder der Titel der Besprechung, mit Endung.
+fn export_file_name(params: &Value, title: &str, format: &str) -> String {
+    let base = text_param(params, "name").unwrap_or(title);
+    let ext = format!(".{format}");
+    if base.to_lowercase().ends_with(&ext) {
+        base.to_string()
+    } else {
+        format!("{base}{ext}")
+    }
+}
+
+impl ExportDocument {
+    /// Ablage in OneDrive (Microsoft 365, `files.write`): das Dokument entsteht in einem
+    /// Wegwerf-Ordner und geht dann hoch, in den eingestellten Ordner des Kontos. Ein gleich-
+    /// namiges Dokument wird nie ueberschrieben (OneDrive vergibt einen freien Namen); ein
+    /// zweiter Durchgang desselben Schritts laedt nicht noch einmal hoch (Provenienz).
+    #[allow(clippy::too_many_arguments)]
+    fn to_onedrive(
+        &self,
+        ctx: &RunCtx<'_>,
+        store: &MeetingStore,
+        meeting: &Meeting,
+        integration: &crate::managers::integrations::model::Integration,
+        format: &str,
+        content: &str,
+        params: &Value,
+    ) -> Result<StepOutput, StepError> {
+        use crate::managers::integrations::m365::drive::{Conflict, UploadRequest, UploadSource};
+        use crate::managers::integrations::m365::{Acct, M365Config};
+
+        if let Some((_, Some(prev))) = previous_result(ctx, SubjectKind::Export, "export_onedrive")
+        {
+            return Ok(onedrive_output(&prev, true));
+        }
+        let markdown = export_markdown(store, &meeting.id, content)?;
+        let file_name = export_file_name(params, &meeting.title, format);
+        let dir = tempfile::tempdir().map_err(|e| {
+            StepError::Transient(format!("Kein Platz für die Zwischendatei ({e})."))
+        })?;
+        let local = dir.path().join(format!("export.{format}"));
+        export::write_document(&local, &markdown).map_err(|e| {
+            StepError::Transient(format!("Das Dokument ließ sich nicht schreiben ({e})."))
+        })?;
+        let bytes = std::fs::read(&local).map_err(|e| {
+            StepError::Transient(format!("Das Dokument ließ sich nicht lesen ({e})."))
+        })?;
+        let cfg = M365Config::from_json(&integration.config_json)
+            .map_err(|e| StepError::Permanent(e.to_string()))?;
+        let req = UploadRequest {
+            name: file_name,
+            subfolder: text_param(params, "subfolder").unwrap_or("").to_string(),
+            conflict: Conflict::Rename,
+            source: UploadSource::Bytes(bytes),
+        };
+        let display = req
+            .display_path(&cfg)
+            .map_err(|e| StepError::Permanent(e.to_string()))?;
+        let svc = super::integration_actions::m365_service(&*self.services)?;
+        let acct = Acct::from_integration(integration.clone())
+            .map_err(|e| StepError::Permanent(e.to_string()))?;
+        let up = tauri::async_runtime::block_on(svc.upload(&acct, &req, Some(ctx.cancel)))
+            .map_err(super::integration_actions::m365_error)?;
+        let data = json!({
+            "onedrive": true,
+            "path": display,
+            "file_name": up.name,
+            "web_url": up.web_url,
+            "id": up.id,
+            "format": format,
+            "bytes": up.size,
+            "target": integration.id,
+            "meeting": meeting.id,
+        });
+        record(
+            ctx,
+            SubjectKind::Export,
+            &ctx.idempotency_key,
+            "export_onedrive",
+            vec![meeting_source(meeting)],
+            data.clone(),
+        );
+        Ok(onedrive_output(&data, false))
+    }
+}
+
+fn onedrive_output(data: &Value, reused: bool) -> StepOutput {
+    let name = data
+        .get("file_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut out = StepOutput::with_data(data.clone());
+    out.summary = Some(if reused {
+        format!("„{name}“ lag schon in OneDrive (Wiederaufnahme).")
+    } else {
+        format!("„{name}“ in OneDrive abgelegt.")
+    });
+    out
 }
 
 fn export_output(

@@ -89,7 +89,111 @@ pub fn request_body(ev: &NewAllDayEvent<'_>) -> Result<Value, M365Error> {
     }))
 }
 
+/// Kuerzeste und laengste Dauer eines Folgetermins (Minuten).
+pub const MIN_MINUTES: u32 = 5;
+pub const MAX_MINUTES: u32 = 8 * 60;
+
+/// Ein Folgetermin mit Uhrzeit (Workflow-Baustein `calendar.followup`). Mit Teilnehmenden
+/// verschickt Outlook Einladungen: das entscheidet der Baustein (Freigabe bei Dritten, E3).
+#[derive(Clone, Debug)]
+pub struct NewTimedEvent<'a> {
+    pub subject: &'a str,
+    /// Beginn in UTC.
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub minutes: u32,
+    /// Klartext, hoechstens [`MAX_NOTE_CHARS`] Zeichen.
+    pub body: &'a str,
+    /// Adressen der Eingeladenen; leer: nur im eigenen Kalender.
+    pub attendees: &'a [String],
+    pub transaction_id: &'a str,
+}
+
+fn check_transaction(tx: &str) -> Result<(), M365Error> {
+    if tx.is_empty()
+        || tx.len() > MAX_TRANSACTION_CHARS
+        || !tx
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(M365Error::Invalid(
+            "Die Kennung der Anfrage ist ungültig.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Der JSON-Rumpf eines Folgetermins (ohne Netz pruefbar).
+pub fn timed_request_body(ev: &NewTimedEvent<'_>) -> Result<Value, M365Error> {
+    let subject = one_line(ev.subject, MAX_SUBJECT_CHARS);
+    if subject.is_empty() {
+        return Err(M365Error::Invalid(
+            "Der Termin braucht einen Betreff.".to_string(),
+        ));
+    }
+    if !(MIN_MINUTES..=MAX_MINUTES).contains(&ev.minutes) {
+        return Err(M365Error::Invalid(format!(
+            "Die Dauer muss zwischen {MIN_MINUTES} und {MAX_MINUTES} Minuten liegen."
+        )));
+    }
+    if ev.body.chars().count() > MAX_NOTE_CHARS {
+        return Err(M365Error::Invalid(format!(
+            "Der Text des Termins ist zu lang (höchstens {MAX_NOTE_CHARS} Zeichen)."
+        )));
+    }
+    check_transaction(ev.transaction_id)?;
+    let end = ev.start + ChronoDuration::minutes(i64::from(ev.minutes));
+    let fmt = |t: chrono::DateTime<chrono::Utc>| t.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let mut body = json!({
+        "subject": subject,
+        "start": { "dateTime": fmt(ev.start), "timeZone": "UTC" },
+        "end": { "dateTime": fmt(end), "timeZone": "UTC" },
+        "body": { "contentType": "text", "content": ev.body },
+        "isReminderOn": true,
+        "reminderMinutesBeforeStart": 15,
+        "transactionId": ev.transaction_id,
+    });
+    if !ev.attendees.is_empty() {
+        body["attendees"] = Value::Array(
+            ev.attendees
+                .iter()
+                .map(|a| json!({"emailAddress": {"address": a}, "type": "required"}))
+                .collect(),
+        );
+    }
+    Ok(body)
+}
+
 impl M365Service {
+    /// Legt einen Folgetermin mit Uhrzeit an (Scope `Calendars.ReadWrite`); mit Teilnehmenden
+    /// verschickt Outlook die Einladungen. Gibt Kennung und Link zurueck.
+    pub async fn create_event(
+        &self,
+        a: &Acct,
+        ev: &NewTimedEvent<'_>,
+    ) -> Result<(String, Option<String>), M365Error> {
+        a.require(Capability::CalendarWrite)?;
+        let body = timed_request_body(ev)?;
+        let url = format!("{}/me/events", self.graph_base());
+        let reply = self
+            .send_authed(a, false, |c, token| {
+                c.post(&url).bearer_auth(token).json(&body)
+            })
+            .await?;
+        if !reply.is_success() {
+            return Err(error_of(&reply, "Kalender"));
+        }
+        let v = reply.json()?;
+        let id = v
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| M365Error::Parse("Antwort ohne Termin-Kennung".to_string()))?;
+        Ok((
+            id,
+            v.get("webLink").and_then(Value::as_str).map(str::to_string),
+        ))
+    }
+
     /// Legt den ganztaegigen Termin an und gibt die Kennung zurueck, die Graph vergab.
     pub async fn create_all_day_event(
         &self,

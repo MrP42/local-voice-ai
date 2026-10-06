@@ -225,6 +225,23 @@ fn start_graph() -> (String, Graph) {
                     }
                 }
             }
+            // Welle 2: Entwurf, Folgetermin, OneDrive.
+            ("POST", "/v1.0/me/messages") => Resp::json(
+                201,
+                json!({"id": "DRAFT-1", "webLink": "https://outlook.office.com/mail/drafts/DRAFT-1"}),
+            ),
+            ("POST", "/v1.0/me/events") => match mode {
+                GraphMode::Drop => Resp::Drop,
+                _ => Resp::json(
+                    201,
+                    json!({"id": "EV-NEU", "webLink": "https://outlook.office.com/calendar/item/EV-NEU"}),
+                ),
+            },
+            ("PUT", p) if p.starts_with("/v1.0/me/drive/root:/") => Resp::json(
+                201,
+                json!({"id": "F-1", "name": "Protokoll.md", "size": 321,
+                       "webUrl": "https://onedrive.live.com/F-1"}),
+            ),
             _ => Resp::empty(404),
         }
     };
@@ -492,7 +509,12 @@ fn world() -> World {
     let cfg = M365Config::new(
         CLIENT,
         "common",
-        &[Capability::MailSend, Capability::CalendarWrite],
+        &[
+            Capability::MailSend,
+            Capability::MailDraft,
+            Capability::CalendarWrite,
+            Capability::FilesWrite,
+        ],
         FilesMode::Full,
         "Local Voice AI",
     )
@@ -2635,5 +2657,260 @@ fn without_the_app_the_blocks_report_that_they_are_not_built_in() {
         matches!(&report.outcomes[0].1, RunOutcome::Failed { code } if code == "not_available"),
         "{report:?} / {}",
         q.run_id
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Welle 2: Outlook-Entwurf, Folgetermin, OneDrive
+// ---------------------------------------------------------------------------
+
+fn gate_of(w: &World, action: &str, context: &Value, params: &Value) -> GateView {
+    let conn = w.conn();
+    let env = GateEnv {
+        conn: &conn,
+        context,
+        planning: false,
+    };
+    action_of(w, action)
+        .gate_view(&env, params)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn a_draft_lands_in_outlook_reaches_nobody_and_is_not_made_twice() {
+    let w = world();
+    let ctx = json!({"trigger": w.trigger("cal-a"), "steps": {}});
+    let params =
+        json!({"via": "m365-1", "to": "participants", "subject": "Nachgang", "body": "Danke!"});
+    let view = gate_of(&w, "mail.draft", &ctx, &params);
+    assert_eq!(
+        view.max_mode, None,
+        "ein Entwurf erreicht niemanden: kein E3"
+    );
+    assert!(view.target.unwrap().starts_with("Entwurf an "));
+
+    let d = Direct::new(ctx);
+    let out = d
+        .run(&w, &*action_of(&w, "mail.draft"), "R1", "d", &params)
+        .unwrap();
+    assert_eq!(out.data["draft"], true);
+    assert_eq!(out.data["id"], "DRAFT-1");
+    let drafts = w.graph.requests("POST", "/v1.0/me/messages");
+    assert_eq!(drafts.len(), 1);
+    let body = drafts[0].json();
+    assert_eq!(body["subject"], "Nachgang");
+    assert!(
+        body.get("saveToSentItems").is_none(),
+        "nur die Nachricht, kein sendMail-Rumpf"
+    );
+    let to: Vec<String> = body["toRecipients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["emailAddress"]["address"].as_str().unwrap().to_string())
+        .collect();
+    assert!(to.contains(&"anna@kunde.de".to_string()), "{to:?}");
+    assert!(w.graph.mails().is_empty(), "nichts gesendet");
+
+    let again = d
+        .run(&w, &*action_of(&w, "mail.draft"), "R1", "d", &params)
+        .unwrap();
+    assert_eq!(again.data["reused"], true);
+    assert_eq!(w.graph.requests("POST", "/v1.0/me/messages").len(), 1);
+}
+
+#[test]
+fn a_draft_needs_a_microsoft_account() {
+    let w = world();
+    let d = Direct::new(json!({"trigger": w.trigger("cal-a"), "steps": {}}));
+    let e = d
+        .run(
+            &w,
+            &*action_of(&w, "mail.draft"),
+            "R1",
+            "d",
+            &json!({"via": "smtp-1", "to": "me", "subject": "x"}),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&e, StepError::Permanent(t) if t.contains("Microsoft-365")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn a_followup_lands_in_my_calendar_in_utc_with_a_transaction_id() {
+    let w = world();
+    let d = Direct::new(json!({"trigger": w.trigger("cal-a"), "steps": {}}));
+    let params = json!({"via": "m365-1", "title": "Nachgespräch Go-Live", "day": "2026-10-12",
+                        "time": "14:30", "minutes": 45, "body": "Offene Punkte"});
+    let out = d
+        .run(&w, &*action_of(&w, "calendar.followup"), "R1", "f", &params)
+        .unwrap();
+    assert_eq!(out.data["id"], "EV-NEU");
+    assert_eq!(out.data["invited"], 0);
+    let sent = w.graph.requests("POST", "/v1.0/me/events");
+    assert_eq!(sent.len(), 1);
+    let body = sent[0].json();
+    let start = crate::managers::workflows::followup_actions::to_utc(
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 12)
+            .unwrap()
+            .and_hms_opt(14, 30, 0)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["start"]["dateTime"],
+        start.format("%Y-%m-%dT%H:%M:%S").to_string()
+    );
+    assert_eq!(
+        body["end"]["dateTime"],
+        (start + chrono::Duration::minutes(45))
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string()
+    );
+    assert!(
+        body.get("attendees").is_none(),
+        "ohne invite: niemand eingeladen"
+    );
+    assert!(body["transactionId"].as_str().unwrap().len() >= 32);
+
+    let again = d
+        .run(&w, &*action_of(&w, "calendar.followup"), "R1", "f", &params)
+        .unwrap();
+    assert_eq!(again.data["reused"], true);
+    assert_eq!(w.graph.requests("POST", "/v1.0/me/events").len(), 1);
+}
+
+#[test]
+fn inviting_participants_to_a_followup_always_asks_first() {
+    let w = world();
+    let ctx = json!({"trigger": w.trigger("cal-a"), "steps": {}});
+    let params = json!({"via": "m365-1", "title": "Nachgespräch", "day": "2026-10-12",
+                        "time": "10:00", "invite": "participants"});
+    let view = gate_of(&w, "calendar.followup", &ctx, &params);
+    assert_eq!(view.max_mode, Some(GrantMode::Ask));
+    let invited = view.args["eingeladen"].as_array().unwrap();
+    assert!(invited.iter().any(|a| a == "anna@kunde.de"), "{invited:?}");
+    assert!(view.target.unwrap().contains("12.10.2026 um 10:00"));
+    // Nur ich: keine Einschraenkung.
+    let mine = json!({"via": "m365-1", "title": "x", "day": "2026-10-12", "invite": "me"});
+    assert_eq!(gate_of(&w, "calendar.followup", &ctx, &mine).max_mode, None);
+}
+
+#[test]
+fn a_followup_with_a_bad_date_or_time_fails_without_a_call() {
+    let w = world();
+    let d = Direct::new(json!({"trigger": w.trigger("cal-a"), "steps": {}}));
+    for (date, time, want) in [
+        ("morgen", "10:00", "kein Datum"),
+        ("2026-10-12", "10 Uhr", "keine Uhrzeit"),
+    ] {
+        let e = d
+            .run(
+                &w,
+                &*action_of(&w, "calendar.followup"),
+                "R1",
+                "f",
+                &json!({"via": "m365-1", "title": "x", "day": date, "time": time}),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&e, StepError::Permanent(t) if t.contains(want)),
+            "{e:?}"
+        );
+    }
+    assert!(w.graph.requests("POST", "/v1.0/me/events").is_empty());
+}
+
+#[test]
+fn the_minutes_go_to_onedrive_once() {
+    let w = world();
+    let d = Direct::new(json!({"meeting": {"id": w.meeting_id}, "steps": {}}));
+    let params = json!({"target": "m365-1", "format": "md", "name": "Protokoll"});
+    let out = d
+        .run(&w, &*action_of(&w, "export.document"), "R1", "x", &params)
+        .unwrap();
+    assert_eq!(out.data["onedrive"], true);
+    assert_eq!(out.data["web_url"], "https://onedrive.live.com/F-1");
+    let puts: Vec<Req> = w
+        .graph
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.method == "PUT")
+        .cloned()
+        .collect();
+    assert_eq!(puts.len(), 1);
+    assert!(
+        puts[0].path().contains("Protokoll.md"),
+        "{}",
+        puts[0].path()
+    );
+    assert!(
+        puts[0].query().contains("conflictBehavior=rename"),
+        "nie überschreiben"
+    );
+    let again = d
+        .run(&w, &*action_of(&w, "export.document"), "R1", "x", &params)
+        .unwrap();
+    assert!(again.summary.unwrap().contains("Wiederaufnahme"));
+    let puts_after = w
+        .graph
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.method == "PUT")
+        .count();
+    assert_eq!(puts_after, 1);
+}
+
+#[test]
+fn an_icloud_followup_has_no_invitations_and_a_plain_view() {
+    let w = world();
+    {
+        let mut n = NewIntegration::new(Kind::Service, "iCloud privat");
+        n.id = Some("icloud-1".to_string());
+        n.config = json!({"service": "icloud", "email": "ich@icloud.com"});
+        integrations_store::create(&w.conn(), &n, T0).unwrap();
+        let mut n = NewIntegration::new(Kind::Service, "Slack");
+        n.id = Some("slack-1".to_string());
+        n.config = json!({"service": "slack", "host": "hooks.slack.com"});
+        integrations_store::create(&w.conn(), &n, T0).unwrap();
+    }
+    let ctx = json!({"trigger": w.trigger("cal-a"), "steps": {}});
+    let plain =
+        json!({"via": "icloud-1", "title": "Nachgespräch", "day": "2026-10-12", "time": "09:30"});
+    let view = gate_of(&w, "calendar.followup", &ctx, &plain);
+    assert_eq!(view.max_mode, None);
+    assert!(view.target.unwrap().contains("12.10.2026 um 09:30"));
+
+    let d = Direct::new(ctx.clone());
+    let invite =
+        json!({"via": "icloud-1", "title": "x", "day": "2026-10-12", "invite": "participants"});
+    let e = d
+        .run(&w, &*action_of(&w, "calendar.followup"), "R1", "f", &invite)
+        .unwrap_err();
+    assert!(
+        matches!(&e, StepError::Permanent(t) if t.contains("nur Outlook")),
+        "{e:?}"
+    );
+
+    let conn = w.conn();
+    let env = GateEnv {
+        conn: &conn,
+        context: &ctx,
+        planning: false,
+    };
+    let slack = json!({"via": "slack-1", "title": "x", "day": "2026-10-12"});
+    let e = action_of(&w, "calendar.followup")
+        .gate_view(&env, &slack)
+        .unwrap_err();
+    assert!(
+        matches!(&e, StepError::Permanent(t) if t.contains("kein Kalender")),
+        "{e:?}"
     );
 }

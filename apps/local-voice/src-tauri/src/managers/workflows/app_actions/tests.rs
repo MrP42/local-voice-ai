@@ -787,7 +787,7 @@ fn export_refuses_a_target_that_is_not_a_folder_or_does_not_exist() {
     }
     let direct = Direct::new(Some(&id));
     let export = action_of(&w, "export.document");
-    for (target, needle) in [("smtp-1", "kein Ordner"), ("folder-nirgends", "gibt es nicht")] {
+    for (target, needle) in [("smtp-1", "weder ein Ordner"), ("folder-nirgends", "gibt es nicht")] {
         let err = direct
             .run(
                 &w,

@@ -3,6 +3,7 @@ import type { Capability } from "@/bindings";
 /** Fähigkeiten, die sich am Microsoft-365-Konto einschalten lassen (Backend: `ENABLEABLE`). */
 export const M365_CAPABILITIES: Capability[] = [
   "mail.send",
+  "mail.draft",
   "files.write",
   "calendar.write",
 ];

@@ -1646,7 +1646,14 @@
         "budget": "Monatsbudget (USD)",
         "budgetNone": "kein Limit",
         "budgetEnforced": "Hartes Budget",
-        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter."
+        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter.",
+        "keyMissing": "Für diese Verbindung ist noch kein API-Schlüssel eingetragen. Bitte oben einfügen und das Feld verlassen, dann erneut laden.",
+        "keyMissingAbo": "Für diese Verbindung ist kein API-Schlüssel eingetragen. Ein API-Schlüssel ist ein eigenes, nach Verbrauch bezahltes Konto beim Anbieter. Für dein Abo stattdessen unten „{{abo}}“ hinzufügen.",
+        "keyRejected": "Der Anbieter lehnt den Schlüssel ab (HTTP {{status}}). Bitte prüfen, ob er vollständig und noch gültig ist.",
+        "aboTemplate": {
+          "claude_cli": "Claude-Abo (Claude Code)",
+          "codex_cli": "ChatGPT-Abo (Codex)"
+        }
       },
       "model": {
         "active": "aktiv",
@@ -4076,6 +4083,45 @@
       },
       "published": {
         "label": "Veröffentlicht"
+      },
+      "description": {
+        "label": "Beschreibung"
+      },
+      "due": {
+        "label": "Fällig am",
+        "hint": "JJJJ-MM-TT; leer: ohne Fälligkeit."
+      },
+      "deadlines": {
+        "label": "Fristen auch als Aufgaben",
+        "hint": "Ohne Angabe: ja. Entscheidungen werden nie zu Aufgaben."
+      },
+      "from": {
+        "label": "Extraktionsschritt",
+        "hint": "Kennung des Schritts „Aufgaben, Fristen und Entscheidungen extrahieren“; leer: extract."
+      },
+      "page": {
+        "label": "Seite (ID)",
+        "hint": "Leer: die Elternseite der Integration."
+      },
+      "contact_email": {
+        "label": "Kontakt (E-Mail)",
+        "hint": "Die Notiz wird an diesen Kontakt geknüpft; nicht gefunden: ohne Verknüpfung."
+      },
+      "fields": {
+        "label": "Felder",
+        "hint": "Feldname und Wert als JSON, z. B. {\"Titel\": \"…\", \"Dauer\": 45}."
+      },
+      "day": {
+        "label": "Tag",
+        "hint": "JJJJ-MM-TT, auch aus einem früheren Schritt."
+      },
+      "time": {
+        "label": "Uhrzeit",
+        "hint": "HH:MM (Ortszeit); leer: 09:00."
+      },
+      "invite": {
+        "label": "Einladen",
+        "hint": "Wer eine Einladung bekommt; ohne Angabe nur dein Kalender. Einladungen an andere brauchen immer deine Freigabe."
       }
     },
     "choices": {
@@ -4120,6 +4166,14 @@
       "mode": {
         "create": "Neu anlegen",
         "append": "Anhängen"
+      },
+      "invite": {
+        "none": "Niemanden",
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur intern",
+        "list": "Feste Liste"
       }
     },
     "triggers": {
@@ -4157,10 +4211,12 @@
         "document": "Dokument ablegen"
       },
       "mail": {
-        "send": "Mail senden"
+        "send": "Mail senden",
+        "draft": "Mail-Entwurf anlegen"
       },
       "calendar": {
-        "note": "Notiz in den Termin schreiben"
+        "note": "Notiz in den Termin schreiben",
+        "followup": "Folgetermin anlegen"
       },
       "obsidian": {
         "note": "Obsidian-Notiz schreiben"
@@ -4186,7 +4242,24 @@
       "webhook": {
         "post": "Webhook senden"
       },
-      "wait": "Warten"
+      "wait": "Warten",
+      "chat": {
+        "post": "In Kanal posten"
+      },
+      "task": {
+        "create": "Aufgabe anlegen",
+        "create_from": "Aufgaben aus der Besprechung anlegen"
+      },
+      "page": {
+        "create": "Seite anlegen",
+        "append": "An Seite anhängen"
+      },
+      "crm": {
+        "note": "CRM-Notiz anlegen"
+      },
+      "record": {
+        "append": "Datensatz anhängen"
+      }
     },
     "effectKinds": {
       "pure": "ändert nichts",
@@ -4281,7 +4354,8 @@
       "caps": {
         "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
         "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
-        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert.",
+        "mail_draft": "Follow-up-Mails als Entwurf in Outlook ablegen, zum Prüfen und Senden von Hand (braucht das Recht Mail.ReadWrite)."
       },
       "panel": {
         "title": "Microsoft-365-Konto",
@@ -4508,7 +4582,8 @@
       "obsidian": "Obsidian-Vault",
       "wissen": "WAI-Wissensbasis",
       "agent": "Agentenzugang",
-      "webhook": "Webhook (n8n)"
+      "webhook": "Webhook (n8n)",
+      "service": "Dienst"
     },
     "calendar": {
       "rights": "Rechte und Richtung"
@@ -4568,6 +4643,37 @@
           "name": "n8n-Webhook",
           "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
           "action": "Webhook einrichten"
+        }
+      },
+      "services": {
+        "title": "Dienste",
+        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt im Windows-Konto.",
+        "connect": "Verbinden",
+        "groups": {
+          "chat": {
+            "title": "Kanäle",
+            "description": "Zusammenfassung oder Aufgaben in einen Kanal posten."
+          },
+          "tasks": {
+            "title": "Aufgaben und Tickets",
+            "description": "Je To-do aus der Besprechung eine Aufgabe anlegen, keine doppelt."
+          },
+          "pages": {
+            "title": "Seiten und Wiki",
+            "description": "Protokoll als Seite anlegen oder Entscheidungen anhängen."
+          },
+          "crm": {
+            "title": "CRM",
+            "description": "Gesprächsnotiz am Kontakt, Folgeaufgaben im CRM."
+          },
+          "records": {
+            "title": "Tabellen",
+            "description": "Jede Besprechung als Zeile im Meeting-Log."
+          },
+          "calendar": {
+            "title": "Kalender",
+            "description": "Folgetermine direkt in deinen iCloud-Kalender schreiben (CalDAV). Lesen geht im Kalender-Bereich über den ICS-Freigabelink."
+          }
         }
       }
     },
@@ -4676,7 +4782,20 @@
       "wissen_tool_error": "Die Wissensbasis meldet einen Fehler.",
       "wissen_token_missing": "Der Zugangsschlüssel fehlt.",
       "wissen_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
-      "wissen_config_invalid": "Die Einstellungen sind unvollständig."
+      "wissen_config_invalid": "Die Einstellungen sind unvollständig.",
+      "service_ok": "Verbindung in Ordnung (es wurde nichts angelegt).",
+      "service_auth": "Der Dienst lehnt den Schlüssel ab.",
+      "service_target_not_found": "Das Ziel (Projekt, Liste, Seite) wurde nicht gefunden.",
+      "service_unreachable": "Der Dienst ist nicht erreichbar.",
+      "service_timeout": "Der Dienst antwortet nicht rechtzeitig.",
+      "service_rate_limited": "Der Dienst bremst gerade (zu viele Anfragen).",
+      "service_status": "Der Dienst hat die Anfrage abgelehnt.",
+      "service_network": "Die Verbindung riss ab.",
+      "service_redirect": "Der Dienst leitet um; Umleitungen folgt die App nie.",
+      "service_config_invalid": "Die Einstellungen sind unvollständig.",
+      "service_bad_response": "Unerwartete Antwort des Dienstes.",
+      "service_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
+      "service_unknown": "Der Dienst dieser Integration ist unbekannt."
     },
     "matrix": {
       "reads": "lesend",
@@ -4757,6 +4876,30 @@
       "workflow_run": {
         "title": "Ablauf starten",
         "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
+      },
+      "chat_post": {
+        "title": "In Kanal posten",
+        "description": "Text in den Kanal des Webhooks schicken (Slack, Teams, Discord)."
+      },
+      "task_create": {
+        "title": "Aufgaben anlegen",
+        "description": "Aufgaben, Tickets oder Karten anlegen (Asana, Jira, Todoist …)."
+      },
+      "page_write": {
+        "title": "Seiten schreiben",
+        "description": "Seiten anlegen oder Text anhängen (Notion, Confluence)."
+      },
+      "crm_write": {
+        "title": "CRM-Notizen anlegen",
+        "description": "Notizen und Aufgaben im CRM anlegen, an Kontakte geknüpft (HubSpot, Pipedrive)."
+      },
+      "record_write": {
+        "title": "Datensätze anlegen",
+        "description": "Eine Zeile an eine Tabelle anhängen (Airtable)."
+      },
+      "mail_draft": {
+        "title": "Mail-Entwürfe anlegen",
+        "description": "Mails als Entwurf in Outlook ablegen; gesendet wird von Hand."
       }
     },
     "approvals": {
@@ -4843,7 +4986,8 @@
       "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
       "obsidian_scan_limit": "Der Vault ist zu groß, um sicher zu prüfen, ob die Notiz schon existiert. Es wurde nichts geschrieben.",
       "export_format_unsupported": "Dieses Format lässt sich nicht ablegen.",
-      "approval_required": "Dafür ist eine Freigabe nötig."
+      "approval_required": "Dafür ist eine Freigabe nötig.",
+      "service_unknown": "Diesen Dienst kennt die App nicht."
     },
     "moved": {
       "open": "Auf der Seite „Integrationen“ verwalten",
@@ -4917,6 +5061,91 @@
         "path": "Ordner",
         "subfolder": "Unterordner für Exporte (optional)",
         "subfolderHint": "Exporte landen in diesem Unterordner der Wurzel; er wird bei Bedarf angelegt."
+      },
+      "service": {
+        "title": "{{service}} verbinden",
+        "titleEdit": "{{service}}-Einstellungen",
+        "description": "Schreibendes fragt standardmäßig nach: Abläufe brauchen deine Freigabe, bis du es in den Rechten anders einstellst.",
+        "loading": "Felder werden geladen …",
+        "optionalLabel": "{{label}} (optional)",
+        "token": "Schlüssel (API-Token)",
+        "tokenWhat": "Geheimnis",
+        "tokenHint": "Der Schlüssel liegt verschlüsselt im Windows-Konto und geht nur an den Server des Dienstes.",
+        "webhookUrl": "Webhook-Adresse",
+        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
+        "help": "So bekommst du den Zugang bei {{service}}",
+        "noTestPost": "„Verbindung testen“ prüft hier nur die Adresse und schickt keine Testnachricht in den Kanal.",
+        "fields": {
+          "parent_page_id": {
+            "label": "Elternseite (ID)",
+            "hint": "Unter dieser Seite entstehen neue Seiten. Die Seite muss mit der Integration geteilt sein (Notion: „Verbindungen“).",
+            "placeholder": "z. B. 1a2b3c4d…"
+          },
+          "site": {
+            "label": "Site",
+            "hint": "Deine Atlassian-Adresse.",
+            "placeholder": "firma.atlassian.net"
+          },
+          "email": {
+            "label": "E-Mail des Kontos",
+            "hint": "Atlassian: E-Mail plus API-Token. iCloud: deine Apple-ID plus app-spezifisches Passwort."
+          },
+          "space_id": {
+            "label": "Bereichs-ID (Space)",
+            "hint": "Die numerische ID des Confluence-Bereichs."
+          },
+          "project_id": {
+            "label": "Projekt-ID",
+            "hint": "Steht in der Adresse des Projekts."
+          },
+          "list_id": {
+            "label": "Listen-ID",
+            "hint": "Die Liste, in der neue Aufgaben bzw. Karten landen."
+          },
+          "project_key": {
+            "label": "Projektschlüssel",
+            "placeholder": "z. B. LV"
+          },
+          "issue_type": {
+            "label": "Vorgangstyp",
+            "hint": "Ohne Angabe: Task.",
+            "placeholder": "Task"
+          },
+          "api_key": {
+            "label": "API-Key (öffentlich)",
+            "hint": "Der Key der Power-Up-Seite; das Token kommt ins Feld darunter."
+          },
+          "board_id": {
+            "label": "Board-ID"
+          },
+          "group_id": {
+            "label": "Gruppen-ID",
+            "hint": "Ohne Angabe: die oberste Gruppe des Boards."
+          },
+          "team_id": {
+            "label": "Team-ID"
+          },
+          "repo": {
+            "label": "Repository",
+            "placeholder": "besitzer/name"
+          },
+          "base_id": {
+            "label": "Base-ID",
+            "placeholder": "app…"
+          },
+          "table": {
+            "label": "Tabelle",
+            "hint": "Name oder ID der Tabelle."
+          },
+          "calendar": {
+            "label": "Kalender (Name)",
+            "hint": "Name wie in der Kalender-App; ohne Angabe der erste Kalender mit Terminen.",
+            "placeholder": "z. B. Privat"
+          }
+        },
+        "tokenFor": {
+          "icloud": "App-spezifisches Passwort"
+        }
       }
     },
     "areas": {

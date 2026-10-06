@@ -558,8 +558,7 @@ static ACTIONS: &[ActionSpec] = &[
             field("body", FieldKind::Text, false),
             // Pfad oder Liste von Pfaden; nur Dateien in den Ordner-Integrationen des Nutzers.
             field("attach", FieldKind::Any, false),
-            // Entwuerfe anlegen ist noch nicht moeglich (Scope `Mail.ReadWrite`); `true` wird
-            // beim Speichern abgelehnt. Die Freigabe mit Vorschau ersetzt den Entwurf.
+            // `true` wird beim Speichern abgelehnt: Entwuerfe legt `mail.draft` an.
             field("draft", FieldKind::Bool, false),
             // `true`: auch an andere als mich ohne Freigabe senden, wenn das Recht „erlaubt“
             // ist (E3: je Ablauf aenderbar). Ohne diese Angabe verlangt jede Mail an Dritte
@@ -798,6 +797,186 @@ static ACTIONS: &[ActionSpec] = &[
         heavy: None,
         needs: NeedsSpec::Cap {
             capability: Capability::WebhookPost,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    // Outlook (Welle 2, `followup_actions`).
+    ActionSpec {
+        id: "mail.draft",
+        title: "Mail-Entwurf anlegen",
+        effect_text: "Entwurf in Outlook ({{p.via}}) an die Empfängerregel „{{p.to}}“ anlegen, Betreff „{{p.subject}}“; gesendet wird von Hand",
+        fields: &[
+            // Wie `mail.send`: Konto und Empfaengerregel fest, nie aus Daten.
+            literal("via", FieldKind::Id, true),
+            literal(
+                "to",
+                FieldKind::Choice(&["me", "participants", "all", "internal", "list"]),
+                true,
+            ),
+            literal("list", FieldKind::TextList, false),
+            field("subject", FieldKind::Text, true),
+            field("body", FieldKind::Text, false),
+            field("attach", FieldKind::Any, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::MailDraft,
+            via: "via",
+            target: Some("to"),
+        },
+    },
+    ActionSpec {
+        id: "calendar.followup",
+        title: "Folgetermin anlegen",
+        effect_text: "Folgetermin „{{p.title}}“ am {{p.day}} um {{p.time}} im Kalender {{p.via}} anlegen",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            // JJJJ-MM-TT und HH:MM (Ortszeit), duerfen aus Schritten kommen.
+            field("day", FieldKind::Text, true),
+            field("time", FieldKind::Text, false),
+            field("minutes", FieldKind::Int { min: 5, max: 480 }, false),
+            field("body", FieldKind::Text, false),
+            // Einladen (Outlook): feste Regel wie bei der Mail; ohne Angabe nur der eigene Kalender.
+            literal(
+                "invite",
+                FieldKind::Choice(&["none", "me", "participants", "all", "internal", "list"]),
+                false,
+            ),
+            literal("list", FieldKind::TextList, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CalendarWrite,
+            via: "via",
+            target: Some("title"),
+        },
+    },
+    // Dienste (Welle 1, `service_actions`): das Ziel ist immer eine feste Dienst-Integration
+    // (`literal`), Inhalte duerfen aus Schritten kommen.
+    ActionSpec {
+        id: "chat.post",
+        title: "In Kanal posten",
+        effect_text: "Text in den Kanal von „{{p.via}}“ posten (Slack, Teams, Discord)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("text", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::ChatPost,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "task.create",
+        title: "Aufgabe anlegen",
+        effect_text: "Aufgabe „{{p.title}}“ in „{{p.via}}“ anlegen",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            field("description", FieldKind::Text, false),
+            // Faellig am (JJJJ-MM-TT).
+            field("due", FieldKind::Text, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::TaskCreate,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "task.create_from",
+        title: "Aufgaben aus der Besprechung anlegen",
+        effect_text: "Je To-do und Frist aus Schritt „{{p.from}}“ eine Aufgabe in „{{p.via}}“ anlegen (höchstens 30, keine doppelt)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Kennung des Extraktionsschritts (`agent.extract`), Vorgabe `extract`.
+            literal("from", FieldKind::Text, false),
+            // Fristen auch als Aufgaben (Vorgabe ja).
+            field("deadlines", FieldKind::Bool, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::TaskCreate,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "page.create",
+        title: "Seite anlegen",
+        effect_text: "Seite „{{p.title}}“ in „{{p.via}}“ anlegen (Notion, Confluence)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            field("content", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::PageWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "page.append",
+        title: "An Seite anhängen",
+        effect_text: "Text an die Seite in „{{p.via}}“ anhängen (Notion, Confluence)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Kennung der Seite; ohne Angabe die Elternseite der Integration.
+            literal("page", FieldKind::Text, false),
+            field("content", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::PageWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "crm.note",
+        title: "CRM-Notiz anlegen",
+        effect_text: "Notiz in „{{p.via}}“ anlegen, mit dem Kontakt {{p.contact_email}} verknüpft (HubSpot, Pipedrive)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("text", FieldKind::Text, true),
+            // Kontakt, an den die Notiz kommt (Suche per E-Mail; nicht gefunden: unverknuepft).
+            field("contact_email", FieldKind::Text, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CrmWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "record.append",
+        title: "Datensatz anhängen",
+        effect_text: "Eine Zeile in „{{p.via}}“ anhängen (Airtable)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Feldname -> Wert (Text, Zahl, Ja/Nein, Liste von Texten).
+            field("fields", FieldKind::Any, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::RecordWrite,
             via: "via",
             target: Some("via"),
         },
