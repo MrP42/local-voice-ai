@@ -914,6 +914,44 @@
       "title": "{{model}}-Einstellungen"
     },
     "models": {
+        "areas": {
+          "llm": "Sprachmodelle",
+          "dictation": "Diktat",
+          "voices": "Vorlesen"
+        },
+        "groups": {
+          "installed": "Installiert",
+          "installedEmpty": "Noch nichts installiert – unten aufklappen und laden.",
+          "folders": "Aus Modellordnern",
+          "foldersBlocked_one": "{{count}} lädt nicht",
+          "foldersBlocked_other": "{{count}} laden nicht",
+          "available": "Zum Laden verfügbar",
+          "runtime": "Laufzeit"
+        },
+        "active": {
+          "llm": "Aktiv",
+          "dictation": "Aktiv",
+          "none": "kein Modell gewählt"
+        },
+        "source": {
+          "app": "App",
+          "ollama": "Ollama",
+          "lmstudio": "LM Studio",
+          "folder": "Ordner"
+        },
+        "row": {
+          "details": "Details zu {{name}}",
+          "more": "Weitere Aktionen für {{name}}",
+          "downloading": "Lädt … {{percentage}} %",
+          "cancel": "Abbrechen",
+          "use": "Verwenden",
+          "download": "Laden",
+          "duplicate": "doppelt"
+        },
+        "runtime": {
+          "summary": "Laufzeit: {{backend}}",
+          "missing": "Laufzeit fehlt – unten unter „Laufzeit“ laden"
+        },
       "title": "Transkriptionsmodelle",
       "description": "Wähle ein Transkriptionsmodell aus oder lade zusätzliche Modelle herunter. Verschiedene Modelle bieten unterschiedliche Genauigkeits- und Geschwindigkeitsstufen.",
       "deleteConfirm": "Bist du sicher, dass du {{modelName}} löschen möchtest? Du musst es erneut herunterladen, um es zu verwenden.",

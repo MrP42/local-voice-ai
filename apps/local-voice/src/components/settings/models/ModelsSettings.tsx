@@ -1,315 +1,42 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ask } from "@tauri-apps/plugin-dialog";
-import { ChevronDown, Globe, RefreshCw, Search } from "lucide-react";
-import type { ModelCardStatus } from "@/components/onboarding";
-import { ModelCard } from "@/components/onboarding";
+import { Search } from "lucide-react";
 import { useModelStore } from "@/stores/modelStore";
-import { useTtsModelStore } from "@/stores/ttsModelStore";
-import { TtsVoiceCard } from "./TtsVoiceCard";
-import { LlmModelCard } from "./LlmModelCard";
-import { LlmModelDirs } from "./LlmModelDirs";
-import type { LlmModelConfig } from "@/bindings";
-import { useLlmLocalStore } from "@/stores/llmLocalStore";
-import { useSettings } from "@/hooks/useSettings";
-import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { PageShell } from "@/components/ui/PageShell";
-import {
-  getLanguageLabel,
-  MODEL_CAPABILITY_LANGUAGES,
-  supportsLanguageCode,
-} from "@/lib/constants/languages.ts";
-import type { ModelInfo } from "@/bindings";
+import { TabList } from "@/components/ui/TabList";
+import { usePersistentState } from "@/hooks/usePersistentState";
+import { LlmSection } from "./LlmSection";
+import { DictationSection } from "./DictationSection";
+import { VoicesSection } from "./VoicesSection";
 
-// check if model supports a language based on its supported_languages list
-const modelSupportsLanguage = (model: ModelInfo, langCode: string): boolean => {
-  return supportsLanguageCode(model.supported_languages, langCode);
-};
+type Area = "llm" | "dictation" | "voices";
+const AREAS: Area[] = ["llm", "dictation", "voices"];
 
-// Legacy models are the blob (Url-sourced) .bin/ONNX downloads, superseded by
-// the catalog GGUFs. They stay runnable when already on disk, but we no longer
-// advertise the download.
-const isLegacyModel = (model: ModelInfo): boolean =>
-  typeof model.source === "object" && "Url" in model.source;
-
+/**
+ * Die Modellseite: drei Bereiche zum Umschalten -- Sprachmodelle (KI),
+ * Diktat, Vorlesen. Jeder zeigt oben das aktive Modell, darunter das
+ * Installierte als Zeilen, und zugeklappt, was man laden kann. Vorher stand
+ * alles untereinander als grosse Karten (06.10.2026: "muss unbedingt
+ * uebersichtlicher").
+ */
 export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
-  const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [languageFilter, setLanguageFilter] = useState("all");
-  const [languageDropdownOpen, setLanguageDropdownOpen] = useState(false);
-  const [languageSearch, setLanguageSearch] = useState("");
-  const languageDropdownRef = useRef<HTMLDivElement>(null);
-  const languageSearchInputRef = useRef<HTMLInputElement>(null);
-  const {
-    models,
-    currentModel,
-    downloadingModels,
-    downloadProgress,
-    downloadStats,
-    verifyingModels,
-    extractingModels,
-    loading,
-    isRescanning,
-    downloadModel,
-    cancelDownload,
-    selectModel,
-    deleteModel,
-    rescanLocalModels,
-  } = useModelStore();
-  const {
-    downloads: ttsDownloads,
-    downloadingIds: ttsDownloadingIds,
-    verifyingIds: ttsVerifyingIds,
-    downloadProgress: ttsDownloadProgress,
-    downloadModel: downloadTtsModel,
-    cancelDownload: cancelTtsDownload,
-    deleteModel: deleteTtsModel,
-  } = useTtsModelStore();
-
-  // Lokales Sprachmodell: eigene Laufzeit, eigene Modelle, eigener Store.
-  const { getSetting, refreshSettings } = useSettings();
-  const llm = useLlmLocalStore();
-  const { initialize: initializeLlm } = llm;
-  useEffect(() => {
-    void initializeLlm();
-  }, [initializeLlm]);
-  const activeLlmModelId = getSetting("llm_active_model_id") ?? null;
-  const activeLocalModelId =
-    (getSetting("llm_models") ?? []).find(
-      (m: LlmModelConfig) =>
-        m.id === activeLlmModelId && m.connection_id === "local",
-    )?.remote_id ?? null;
-  const llmRuntimes = llm.downloads.filter(
-    (d) => d.kind === "runtime" && d.for_this_platform,
+  const { loading } = useModelStore();
+  const [area, setArea] = usePersistentState<Area>(
+    "models.area",
+    "llm",
+    (v) => (AREAS as string[]).includes(v),
   );
-  const llmModels = llm.downloads.filter(
-    (d) => d.kind === "model" && !d.external,
-  );
-  // Modelle aus Modellordnern (Ollama, LM Studio, eigene) -- eigener Block
-  // unter dem Katalog, damit klar bleibt, was die App selbst geladen hat.
-  const llmExternal = llm.downloads.filter(
-    (d) => d.kind === "model" && d.external,
-  );
-  const deleteLlmCopy = async (id: string) => {
-    const info = llmModels.find((m) => m.id === id);
-    if (!info?.replaceable_by) return;
-    const ok = await ask(
-      t("settings.models.llm.replace.confirm", {
-        model: info.name,
-        name: info.replaceable_by,
-      }),
-      { kind: "warning" },
-    );
-    if (ok) await llm.deleteModel(id);
-  };
-  const llmRuntimeInstalled = llmRuntimes.some((d) => d.is_downloaded);
-
-  // click outside handler for language dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        languageDropdownRef.current &&
-        !languageDropdownRef.current.contains(event.target as Node)
-      ) {
-        setLanguageDropdownOpen(false);
-        setLanguageSearch("");
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // focus search input when dropdown opens
-  useEffect(() => {
-    if (languageDropdownOpen && languageSearchInputRef.current) {
-      languageSearchInputRef.current.focus();
-    }
-  }, [languageDropdownOpen]);
-
-  // filtered languages for dropdown (exclude "auto")
-  const filteredLanguages = useMemo(() => {
-    return MODEL_CAPABILITY_LANGUAGES.filter((lang) =>
-      lang.label.toLowerCase().includes(languageSearch.toLowerCase()),
-    );
-  }, [languageSearch]);
-
-  // Get selected language label
-  const selectedLanguageLabel = useMemo(() => {
-    if (languageFilter === "all") {
-      return t("settings.models.filters.allLanguages");
-    }
-    return getLanguageLabel(languageFilter) || "";
-  }, [languageFilter, t]);
-
-  const getModelStatus = (modelId: string): ModelCardStatus => {
-    if (modelId in extractingModels) {
-      return "extracting";
-    }
-    if (modelId in verifyingModels) {
-      return "verifying";
-    }
-    if (modelId in downloadingModels) {
-      return "downloading";
-    }
-    if (switchingModelId === modelId) {
-      return "switching";
-    }
-    if (modelId === currentModel) {
-      return "active";
-    }
-    const model = models.find((m: ModelInfo) => m.id === modelId);
-    if (model?.is_downloaded) {
-      return "available";
-    }
-    return "downloadable";
-  };
-
-  const getDownloadProgress = (modelId: string): number | undefined => {
-    const progress = downloadProgress[modelId];
-    return progress?.percentage;
-  };
-
-  const getDownloadSpeed = (modelId: string): number | undefined => {
-    const stats = downloadStats[modelId];
-    return stats?.speed;
-  };
-
-  const handleModelSelect = async (modelId: string) => {
-    setSwitchingModelId(modelId);
-    try {
-      await selectModel(modelId);
-    } finally {
-      setSwitchingModelId(null);
-    }
-  };
-
-  const handleModelDownload = async (modelId: string) => {
-    await downloadModel(modelId);
-  };
-
-  const handleModelDelete = async (modelId: string) => {
-    const model = models.find((m: ModelInfo) => m.id === modelId);
-    const modelName = model?.name || modelId;
-    const isActive = modelId === currentModel;
-
-    const confirmed = await ask(
-      isActive
-        ? t("settings.models.deleteActiveConfirm", { modelName })
-        : t("settings.models.deleteConfirm", { modelName }),
-      {
-        title: t("settings.models.deleteTitle"),
-        kind: "warning",
-      },
-    );
-
-    if (confirmed) {
-      try {
-        await deleteModel(modelId);
-      } catch (err) {
-        console.error(`Failed to delete model ${modelId}:`, err);
-      }
-    }
-  };
-
-  // Die Piper-Laufzeit, die eine Stimme nachladen kann -- nur wenn es fuer dieses
-  // System ueberhaupt eine gibt (sonst bietet die Stimmenkarte keinen Knopf an).
-  const ttsRuntimeInfo = ttsDownloads.find(
-    (d) => d.kind === "runtime" && !d.unsupported_reason,
-  );
-
-  const ttsDisplayName = (info: (typeof ttsDownloads)[number]): string =>
-    t(
-      info.kind === "runtime"
-        ? "settings.models.ttsVoices.runtime.name"
-        : `settings.models.ttsVoices.voices.${info.id}.name`,
-      { defaultValue: info.name },
-    );
-
-  const handleTtsDelete = async (id: string) => {
-    const info = ttsDownloads.find((d) => d.id === id);
-    const name = info ? ttsDisplayName(info) : id;
-    const confirmed = await ask(
-      t("settings.models.ttsVoices.deleteConfirm", { name }),
-      { title: t("settings.models.ttsVoices.deleteTitle"), kind: "warning" },
-    );
-    if (confirmed) {
-      try {
-        await deleteTtsModel(id);
-      } catch (err) {
-        console.error(`Failed to delete Piper download ${id}:`, err);
-      }
-    }
-  };
-
-  const handleModelCancel = async (modelId: string) => {
-    try {
-      await cancelDownload(modelId);
-    } catch (err) {
-      console.error(`Failed to cancel download for ${modelId}:`, err);
-    }
-  };
-
-  // Filter models by search query (name + description) and language filter
-  const filteredModels = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return models.filter((model: ModelInfo) => {
-      // Hide deprecated legacy (.bin/ONNX) downloads unless already on disk.
-      if (isLegacyModel(model) && !model.is_downloaded) return false;
-      if (languageFilter !== "all") {
-        if (!modelSupportsLanguage(model, languageFilter)) return false;
-      }
-      if (q) {
-        // The id carries the upstream repo name — that is where "ASR", the
-        // parameter count and the vendor's own spelling live. Searching only
-        // name+description meant looking up a model by the name NVIDIA gave it
-        // ("nemotron-3.5-asr") found nothing, because the catalog calls it
-        // something shorter.
-        const haystack =
-          `${model.name} ${model.description} ${model.id}`.toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [models, languageFilter, searchQuery]);
-
-  // Split filtered models into downloaded (including custom) and available sections
-  const { downloadedModels, availableModels } = useMemo(() => {
-    const downloaded: ModelInfo[] = [];
-    const available: ModelInfo[] = [];
-
-    for (const model of filteredModels) {
-      if (
-        model.is_custom ||
-        model.is_downloaded ||
-        model.id in downloadingModels ||
-        model.id in extractingModels
-      ) {
-        downloaded.push(model);
-      } else {
-        available.push(model);
-      }
-    }
-
-    // Sort: active model first, then non-custom, then custom at the bottom
-    downloaded.sort((a, b) => {
-      if (a.id === currentModel) return -1;
-      if (b.id === currentModel) return 1;
-      if (a.is_custom !== b.is_custom) return a.is_custom ? 1 : -1;
-      return 0;
-    });
-
-    return {
-      downloadedModels: downloaded,
-      availableModels: available,
-    };
-  }, [filteredModels, downloadingModels, extractingModels, currentModel]);
+  const [query, setQuery] = useState("");
+  // Beim Wechsel des Bereichs beginnt die Suche von vorn: ein Suchwort aus
+  // "Diktat" ergibt bei den Sprachmodellen meist eine leere Liste.
+  useEffect(() => setQuery(""), [area]);
 
   if (loading) {
     return (
       <div className="w-full">
         <div className="flex items-center justify-center py-16">
-          <div className="w-8 h-8 border-2 border-logo-primary border-t-transparent rounded-full animate-spin" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-logo-primary border-t-transparent" />
         </div>
       </div>
     );
@@ -321,304 +48,37 @@ export const ModelsSettings: React.FC = () => {
       description={t("workspace.modelsHint")}
       help="modelle"
     >
-
-      {/* Search bar — filter the catalog by name or description.
-          The magnifier sits in the flow as a flex sibling rather than being
-          absolutely positioned over the field: an overlay only lines up while
-          the input keeps the exact padding and height it was drawn against,
-          and it did not. A row that lays itself out cannot drift. */}
-      <label className="flex items-center gap-2 w-full px-3 py-2 bg-mid-gray/10 border border-mid-gray/40 rounded-lg focus-within:ring-1 focus-within:ring-logo-primary">
-        <Search className="w-4 h-4 shrink-0 text-text/40" aria-hidden="true" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={t("settings.models.searchPlaceholder")}
-          className="flex-1 min-w-0 bg-transparent text-sm focus:outline-none placeholder:text-text/40"
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-mid-gray/20">
+        <TabList
+          tabs={AREAS.map((id) => ({
+            id,
+            label: t(`settings.models.areas.${id}`),
+          }))}
+          value={area}
+          onChange={setArea}
+          ariaLabel={t("sidebar.models")}
         />
-      </label>
+        {/* Suche im gewaehlten Bereich -- die Lupe als Geschwister im Fluss,
+            nicht als Ueberlagerung (die verrutschte frueher). */}
+        <label className="mb-2 flex w-full items-center gap-2 rounded-lg border border-mid-gray/40 bg-mid-gray/10 px-3 py-1.5 focus-within:ring-1 focus-within:ring-logo-primary sm:w-64">
+          <Search className="h-4 w-4 shrink-0 text-text/40" aria-hidden="true" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("settings.models.searchPlaceholder")}
+            className="min-w-0 flex-1 bg-transparent text-sm placeholder:text-text/40 focus:outline-none"
+          />
+        </label>
+      </div>
 
-      {/* Sprachmodelle in der App: die Laufzeit (llama-server) und die
-          GGUF-Modelle, die sie bedient. Getrennt von den Diktatmodellen oben,
-          weil es eine andere Engine ist -- und vom Anbieter-Reiter in den
-          Einstellungen, weil hier geladen wird und dort verbunden. */}
-      {llm.downloads.length > 0 && (
-        <SettingsGroup
-          title={t("settings.models.llm.title")}
-          description={
-            llmRuntimeInstalled
-              ? t("settings.models.llm.description")
-              : t("settings.models.llm.descriptionNoRuntime")
-          }
-        >
-          {llm.error && (
-            <p className="px-4 pt-3 text-sm text-red-500 break-words" role="alert">
-              {llm.error}
-            </p>
-          )}
-          {llmRuntimes.map((info) => (
-            <LlmModelCard
-              key={info.id}
-              info={info}
-              onDownload={(id) => void llm.downloadModel(id)}
-              onCancel={(id) => void llm.cancelDownload(id)}
-              onDelete={(id) => void llm.deleteModel(id)}
-              isDownloading={info.id in llm.downloadingIds}
-              isVerifying={info.id in llm.verifyingIds}
-              downloadProgress={llm.downloadProgress[info.id]?.percentage}
-            />
-          ))}
-          {llmModels.map((info) => (
-            <LlmModelCard
-              key={info.id}
-              info={info}
-              isActive={activeLocalModelId === info.id}
-              isServing={
-                llm.status?.phase === "ready" && llm.status.model_id === info.id
-              }
-              onDownload={(id) => void llm.downloadModel(id)}
-              onCancel={(id) => void llm.cancelDownload(id)}
-              onDelete={(id) => void llm.deleteModel(id)}
-              onDeleteCopy={(id) => void deleteLlmCopy(id)}
-              onActivate={
-                llmRuntimeInstalled
-                  ? (id) =>
-                      void llm.activate(id).then((ok) => {
-                        if (ok) void refreshSettings();
-                      })
-                  : undefined
-              }
-              isDownloading={info.id in llm.downloadingIds}
-              isVerifying={info.id in llm.verifyingIds}
-              downloadProgress={llm.downloadProgress[info.id]?.percentage}
-            />
-          ))}
-          <LlmModelDirs foundCount={llmExternal.length} />
-          {llmExternal.map((info) => (
-            <LlmModelCard
-              key={info.id}
-              info={info}
-              isActive={activeLocalModelId === info.id}
-              isServing={
-                llm.status?.phase === "ready" && llm.status.model_id === info.id
-              }
-              onDownload={() => {}}
-              onCancel={() => {}}
-              onDelete={() => {}}
-              onProbe={
-                llmRuntimeInstalled
-                  ? (id) => void llm.probeExternal(id)
-                  : undefined
-              }
-              isProbing={info.id in llm.probingIds}
-              onActivate={
-                llmRuntimeInstalled
-                  ? (id) =>
-                      void llm.activate(id).then((ok) => {
-                        if (ok) void refreshSettings();
-                      })
-                  : undefined
-              }
-            />
-          ))}
-        </SettingsGroup>
-      )}
-
-      {/* Piper reading voices (Paket B-E3) — a separate download family (CPU,
-          offline, no GPU) from the ASR transcription models above, so it gets
-          its own group rather than being folded into the search/filter above. */}
-      {ttsDownloads.length > 0 && (
-        <SettingsGroup
-          title={t("settings.models.ttsVoices.title")}
-          description={t("settings.models.ttsVoices.description")}
-        >
-          {ttsDownloads.map((info) => (
-            <TtsVoiceCard
-              key={info.id}
-              info={info}
-              onDownload={downloadTtsModel}
-              onCancel={cancelTtsDownload}
-              onDelete={deleteTtsModel}
-              isDownloading={info.id in ttsDownloadingIds}
-              isVerifying={info.id in ttsVerifyingIds}
-              downloadProgress={ttsDownloadProgress[info.id]?.percentage}
-              onInstallRuntime={
-                info.kind === "voice" && ttsRuntimeInfo
-                  ? () => void downloadTtsModel(ttsRuntimeInfo.id)
-                  : undefined
-              }
-            />
-          ))}
-        </SettingsGroup>
-      )}
-
-      {/* Geklonte und gespeicherte Stimmen gehoeren zu den Vorlesestimmen,
-          nicht unter den Vorlesen-Editor: hier wird angehoert, aufgenommen,
-          importiert und geloescht — ausgewaehlt wird beim Vorlesen. */}
-
-      {filteredModels.length > 0 ? (
-        <div className="space-y-6">
-          {/* Downloaded Models Section — header always visible so filter stays accessible */}
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-medium text-text/60">
-                {t("settings.models.yourModels")}
-              </h2>
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Rescan local sources for models added outside Local Voice AI */}
-                <button
-                  type="button"
-                  onClick={() => rescanLocalModels()}
-                  disabled={isRescanning}
-                  title={t("settings.models.rescan.tooltip")}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <RefreshCw
-                    className={`w-3.5 h-3.5 ${isRescanning ? "animate-spin" : ""}`}
-                  />
-                  <span>{t("settings.models.rescan.label")}</span>
-                </button>
-                {/* Language filter dropdown */}
-                <div className="relative" ref={languageDropdownRef}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLanguageDropdownOpen(!languageDropdownOpen)
-                    }
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                      languageFilter !== "all"
-                        ? "bg-logo-primary/20 text-logo-primary"
-                        : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
-                    }`}
-                  >
-                    <Globe className="w-3.5 h-3.5" />
-                    <span className="max-w-[120px] truncate">
-                      {selectedLanguageLabel}
-                    </span>
-                    <ChevronDown
-                      className={`w-3.5 h-3.5 transition-transform ${
-                        languageDropdownOpen ? "rotate-180" : ""
-                      }`}
-                    />
-                  </button>
-
-                  {languageDropdownOpen && (
-                    <div className="absolute top-full right-0 mt-1 w-56 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
-                      <div className="p-2 border-b border-mid-gray/40">
-                        <input
-                          ref={languageSearchInputRef}
-                          type="text"
-                          value={languageSearch}
-                          onChange={(e) => setLanguageSearch(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (
-                              e.key === "Enter" &&
-                              filteredLanguages.length > 0
-                            ) {
-                              setLanguageFilter(filteredLanguages[0].value);
-                              setLanguageDropdownOpen(false);
-                              setLanguageSearch("");
-                            } else if (e.key === "Escape") {
-                              setLanguageDropdownOpen(false);
-                              setLanguageSearch("");
-                            }
-                          }}
-                          placeholder={t(
-                            "settings.general.language.searchPlaceholder",
-                          )}
-                          className="w-full px-2 py-1 text-sm bg-mid-gray/10 border border-mid-gray/40 rounded-md focus:outline-none focus:ring-1 focus:ring-logo-primary"
-                        />
-                      </div>
-                      <div className="max-h-48 overflow-y-auto">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLanguageFilter("all");
-                            setLanguageDropdownOpen(false);
-                            setLanguageSearch("");
-                          }}
-                          className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
-                            languageFilter === "all"
-                              ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                              : "hover:bg-mid-gray/10"
-                          }`}
-                        >
-                          {t("settings.models.filters.allLanguages")}
-                        </button>
-                        {filteredLanguages.map((lang) => (
-                          <button
-                            key={lang.value}
-                            type="button"
-                            onClick={() => {
-                              setLanguageFilter(lang.value);
-                              setLanguageDropdownOpen(false);
-                              setLanguageSearch("");
-                            }}
-                            className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
-                              languageFilter === lang.value
-                                ? "bg-logo-primary/20 text-logo-primary font-semibold"
-                                : "hover:bg-mid-gray/10"
-                            }`}
-                          >
-                            {lang.label}
-                          </button>
-                        ))}
-                        {filteredLanguages.length === 0 && (
-                          <div className="px-3 py-2 text-sm text-text/50 text-center">
-                            {t("settings.general.language.noResults")}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            {downloadedModels.map((model: ModelInfo) => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                status={getModelStatus(model.id)}
-                onSelect={handleModelSelect}
-                onDownload={handleModelDownload}
-                onDelete={handleModelDelete}
-                onCancel={handleModelCancel}
-                downloadProgress={getDownloadProgress(model.id)}
-                downloadSpeed={getDownloadSpeed(model.id)}
-                showRecommended={false}
-                showOptions
-              />
-            ))}
-          </div>
-
-          {/* Available Models Section */}
-          {availableModels.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-medium text-text/60">
-                {t("settings.models.availableModels")}
-              </h2>
-              {availableModels.map((model: ModelInfo) => (
-                <ModelCard
-                  key={model.id}
-                  model={model}
-                  status={getModelStatus(model.id)}
-                  onSelect={handleModelSelect}
-                  onDownload={handleModelDownload}
-                  onDelete={handleModelDelete}
-                  onCancel={handleModelCancel}
-                  downloadProgress={getDownloadProgress(model.id)}
-                  downloadSpeed={getDownloadSpeed(model.id)}
-                  showRecommended={true}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="text-center py-8 text-text/50">
-          {t("settings.models.noModelsMatch")}
-        </div>
-      )}
+      <div role="tabpanel">
+        {area === "llm" && <LlmSection query={query} />}
+        {area === "dictation" && <DictationSection query={query} />}
+        {area === "voices" && <VoicesSection query={query} />}
+      </div>
     </PageShell>
   );
 };
+
+export default ModelsSettings;
