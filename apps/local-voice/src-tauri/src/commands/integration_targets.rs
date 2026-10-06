@@ -100,6 +100,14 @@ pub async fn integration_create_with_settings(
     view::get_view(&conn, &created.id, &secret_state, now).map_err(gate_err)
 }
 
+/// Die Dienste (Slack, Teams, Jira, Notion, ...) fuer den Dialog „Integration hinzufuegen“:
+/// Anmeldeart, Felder, Faehigkeiten und Hilfe-Link. Ohne Geheimnisse, ohne I/O.
+#[tauri::command]
+#[specta::specta]
+pub fn integration_services() -> Vec<crate::managers::integrations::services::config::ServiceInfo> {
+    crate::managers::integrations::services::config::catalog()
+}
+
 /// Sendet eine Testmail vom SMTP-Postfach an dessen eigene Absenderadresse.
 #[tauri::command]
 #[specta::specta]

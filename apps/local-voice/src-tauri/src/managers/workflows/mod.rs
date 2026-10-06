@@ -211,6 +211,7 @@ pub mod plan;
 pub mod queue_gate; // B3
 pub mod recording; // B2
 pub mod schema;
+pub mod service_actions; // Welle 1 Verbindungen
 pub mod store;
 pub mod templates;
 pub mod toast; // B4

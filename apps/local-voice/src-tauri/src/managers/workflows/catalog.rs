@@ -802,6 +802,132 @@ static ACTIONS: &[ActionSpec] = &[
             target: Some("via"),
         },
     },
+    // Dienste (Welle 1, `service_actions`): das Ziel ist immer eine feste Dienst-Integration
+    // (`literal`), Inhalte duerfen aus Schritten kommen.
+    ActionSpec {
+        id: "chat.post",
+        title: "In Kanal posten",
+        effect_text: "Text in den Kanal von „{{p.via}}“ posten (Slack, Teams, Discord)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("text", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::ChatPost,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "task.create",
+        title: "Aufgabe anlegen",
+        effect_text: "Aufgabe „{{p.title}}“ in „{{p.via}}“ anlegen",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            field("description", FieldKind::Text, false),
+            // Faellig am (JJJJ-MM-TT).
+            field("due", FieldKind::Text, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::TaskCreate,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "task.create_from",
+        title: "Aufgaben aus der Besprechung anlegen",
+        effect_text: "Je To-do und Frist aus Schritt „{{p.from}}“ eine Aufgabe in „{{p.via}}“ anlegen (höchstens 30, keine doppelt)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Kennung des Extraktionsschritts (`agent.extract`), Vorgabe `extract`.
+            literal("from", FieldKind::Text, false),
+            // Fristen auch als Aufgaben (Vorgabe ja).
+            field("deadlines", FieldKind::Bool, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::TaskCreate,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "page.create",
+        title: "Seite anlegen",
+        effect_text: "Seite „{{p.title}}“ in „{{p.via}}“ anlegen (Notion, Confluence)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("title", FieldKind::Text, true),
+            field("content", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::PageWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "page.append",
+        title: "An Seite anhängen",
+        effect_text: "Text an die Seite in „{{p.via}}“ anhängen (Notion, Confluence)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Kennung der Seite; ohne Angabe die Elternseite der Integration.
+            literal("page", FieldKind::Text, false),
+            field("content", FieldKind::Text, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::PageWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "crm.note",
+        title: "CRM-Notiz anlegen",
+        effect_text: "Notiz in „{{p.via}}“ anlegen, mit dem Kontakt {{p.contact_email}} verknüpft (HubSpot, Pipedrive)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            field("text", FieldKind::Text, true),
+            // Kontakt, an den die Notiz kommt (Suche per E-Mail; nicht gefunden: unverknuepft).
+            field("contact_email", FieldKind::Text, false),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::CrmWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
+    ActionSpec {
+        id: "record.append",
+        title: "Datensatz anhängen",
+        effect_text: "Eine Zeile in „{{p.via}}“ anhängen (Airtable)",
+        fields: &[
+            literal("via", FieldKind::Id, true),
+            // Feldname -> Wert (Text, Zahl, Ja/Nein, Liste von Texten).
+            field("fields", FieldKind::Any, true),
+        ],
+        effect: EffectKind::External,
+        heavy: None,
+        needs: NeedsSpec::Cap {
+            capability: Capability::RecordWrite,
+            via: "via",
+            target: Some("via"),
+        },
+    },
     ActionSpec {
         id: "wait",
         title: "Warten",

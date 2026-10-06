@@ -1121,13 +1121,18 @@ impl Action for WebhookPost {
 // Einhaengen
 // ---------------------------------------------------------------------------
 
-/// Alle Integrations-Bausteine dieses Pakets.
+/// Alle Integrations-Bausteine dieses Pakets, dazu die Dienst-Bausteine (`service_actions`).
 pub fn actions(services: Arc<dyn AppServices>) -> Vec<Arc<dyn Action>> {
-    vec![
+    let mut all: Vec<Arc<dyn Action>> = vec![
         Arc::new(MailSend::new(services.clone())),
         Arc::new(CalendarNote::new(services.clone())),
-        Arc::new(WebhookPost::new(services)),
-    ]
+        Arc::new(WebhookPost::new(services.clone())),
+    ];
+    all.extend(super::service_actions::actions(
+        services,
+        super::service_actions::default_exec(),
+    ));
+    all
 }
 
 /// Haengt die Bausteine in die Engine (ersetzt die Katalogbausteine).

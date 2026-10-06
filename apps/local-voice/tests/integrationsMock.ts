@@ -99,6 +99,8 @@ export const installIntegrationsMock = async (
           caps: ["knowledge.search", "knowledge.read"],
         },
         webhook: { directions: ["write"], caps: ["webhook.post"] },
+        // Dienst: die Faehigkeiten haengen am Dienst (`SERVICES`), siehe `toView`.
+        service: { directions: ["write"], caps: [] },
         youtube: { directions: ["read"], caps: ["media.fetch", "youtube.add"] },
         agent: {
           directions: ["read", "write", "both"],
@@ -110,6 +112,136 @@ export const installIntegrationsMock = async (
             "youtube.add",
             "workflow.read",
             "workflow.run",
+          ],
+        },
+      };
+      // Wie `services::config::catalog` (Auszug: Felder, Anmeldung, Hosts der Webhooks).
+      const SERVICES: Record<
+        string,
+        {
+          label: string;
+          auth: string;
+          capabilities: string[];
+          fields: Array<{ key: string; required: boolean }>;
+          hosts?: string[];
+        }
+      > = {
+        slack: {
+          label: "Slack",
+          auth: "webhook_url",
+          capabilities: ["chat.post"],
+          fields: [],
+          hosts: ["hooks.slack.com"],
+        },
+        teams: {
+          label: "Microsoft Teams",
+          auth: "webhook_url",
+          capabilities: ["chat.post"],
+          fields: [],
+          hosts: [".logic.azure.com", ".powerplatform.com"],
+        },
+        discord: {
+          label: "Discord",
+          auth: "webhook_url",
+          capabilities: ["chat.post"],
+          fields: [],
+          hosts: ["discord.com", "discordapp.com"],
+        },
+        notion: {
+          label: "Notion",
+          auth: "bearer",
+          capabilities: ["page.write"],
+          fields: [{ key: "parent_page_id", required: true }],
+        },
+        confluence: {
+          label: "Confluence",
+          auth: "basic_email_token",
+          capabilities: ["page.write"],
+          fields: [
+            { key: "site", required: true },
+            { key: "email", required: true },
+            { key: "space_id", required: true },
+            { key: "parent_page_id", required: false },
+          ],
+        },
+        asana: {
+          label: "Asana",
+          auth: "bearer",
+          capabilities: ["task.create"],
+          fields: [{ key: "project_id", required: true }],
+        },
+        clickup: {
+          label: "ClickUp",
+          auth: "raw_authorization",
+          capabilities: ["task.create"],
+          fields: [{ key: "list_id", required: true }],
+        },
+        jira: {
+          label: "Jira",
+          auth: "basic_email_token",
+          capabilities: ["task.create"],
+          fields: [
+            { key: "site", required: true },
+            { key: "email", required: true },
+            { key: "project_key", required: true },
+            { key: "issue_type", required: false },
+          ],
+        },
+        trello: {
+          label: "Trello",
+          auth: "trello_key_token",
+          capabilities: ["task.create"],
+          fields: [
+            { key: "api_key", required: true },
+            { key: "list_id", required: true },
+          ],
+        },
+        todoist: {
+          label: "Todoist",
+          auth: "bearer",
+          capabilities: ["task.create"],
+          fields: [{ key: "project_id", required: false }],
+        },
+        monday: {
+          label: "monday.com",
+          auth: "raw_authorization",
+          capabilities: ["task.create"],
+          fields: [
+            { key: "board_id", required: true },
+            { key: "group_id", required: false },
+          ],
+        },
+        linear: {
+          label: "Linear",
+          auth: "raw_authorization",
+          capabilities: ["task.create"],
+          fields: [{ key: "team_id", required: true }],
+        },
+        github: {
+          label: "GitHub",
+          auth: "bearer",
+          capabilities: ["task.create"],
+          fields: [{ key: "repo", required: true }],
+        },
+        hubspot: {
+          label: "HubSpot",
+          auth: "bearer",
+          capabilities: ["crm.write", "task.create"],
+          fields: [],
+        },
+        pipedrive: {
+          label: "Pipedrive",
+          auth: "api_token_header",
+          capabilities: ["crm.write", "task.create"],
+          fields: [],
+        },
+        airtable: {
+          label: "Airtable",
+          auth: "bearer",
+          capabilities: ["record.write"],
+          fields: [
+            { key: "base_id", required: true },
+            { key: "table", required: true },
           ],
         },
       };
@@ -191,12 +323,16 @@ export const installIntegrationsMock = async (
         last_ok_at: null,
         last_error: i.last_error,
       });
+      const capsOf = (i: any): string[] =>
+        i.kind === "service"
+          ? (SERVICES[i.config?.service]?.capabilities ?? [])
+          : (KINDS[i.kind] ?? KINDS.folder).caps;
       const toView = (i: any) => {
         const kind = KINDS[i.kind] ?? KINDS.folder;
         return {
           integration: toIntegration(i),
           directions: kind.directions,
-          capabilities: kind.caps.map((cap) => ({
+          capabilities: capsOf(i).map((cap) => ({
             capability: cap,
             writes: !READS.has(cap),
             never_allow: cap === "recording.start",
@@ -227,7 +363,10 @@ export const installIntegrationsMock = async (
             }),
           })),
           secrets:
-            i.kind === "smtp" || i.kind === "wissen" || i.kind === "webhook"
+            i.kind === "smtp" ||
+            i.kind === "wissen" ||
+            i.kind === "webhook" ||
+            i.kind === "service"
               ? [
                   {
                     slot:
@@ -280,6 +419,24 @@ export const installIntegrationsMock = async (
         if (url.protocol !== "https:" && url.protocol !== "http:")
           throw "Der Webhook muss mit https:// beginnen.";
         return url.host;
+      };
+      // Wie `services::config::check_secret`: Webhook-Adressen nur auf den Hosts des Dienstes.
+      const serviceHost = (service: string, raw: unknown): string => {
+        let url: URL;
+        try {
+          url = new URL(String(raw ?? "").trim());
+        } catch {
+          throw "Die Webhook-Adresse ist ungültig (vollständig mit https:// einfügen).";
+        }
+        if (url.protocol !== "https:") throw "Der Dienst muss https verwenden.";
+        const ok = (SERVICES[service].hosts ?? []).some((h) =>
+          h.startsWith(".")
+            ? url.hostname.endsWith(h)
+            : url.hostname === h,
+        );
+        if (!ok)
+          throw `Die Adresse gehört nicht zu diesem Dienst (${url.hostname}).`;
+        return url.hostname;
       };
       const find = (id: string) => {
         const i = state.integrations.find((x: any) => x.id === id);
@@ -371,6 +528,15 @@ export const installIntegrationsMock = async (
                 detail: per.detail ?? null,
               };
             }
+            if (i.kind === "service") {
+              return SERVICES[i.config?.service]?.auth === "webhook_url"
+                ? {
+                    ok: true,
+                    code: "service_ok",
+                    detail: "Adresse geprüft (ohne Testnachricht).",
+                  }
+                : { ok: true, code: "service_ok", detail: "Verbunden (Kundenprojekt)." };
+            }
             const okCode: Record<string, string> = {
               smtp: "smtp_ok",
               obsidian: "vault_ok",
@@ -449,6 +615,15 @@ export const installIntegrationsMock = async (
               decided_at: now,
             };
           }
+          case "integration_services":
+            return Object.entries(SERVICES).map(([id, s]) => ({
+              id,
+              label: s.label,
+              auth: s.auth,
+              capabilities: s.capabilities,
+              fields: s.fields,
+              token_help_url: `https://hilfe.example.org/${id}`,
+            }));
           case "integration_create_with_settings": {
             w.__calls.push({ cmd, args });
             const st = (args.settings ?? {}) as Record<string, any>;
@@ -504,6 +679,27 @@ export const installIntegrationsMock = async (
               // Wie das Backend: die Adresse ist das Geheimnis, in der Konfiguration
               // steht nur der Server.
               Object.assign(cfg, { host: webhookHost(st.secret) });
+              secret = true;
+            } else if (kind === "service") {
+              const svc = SERVICES[String(st.service)];
+              if (!svc) throw "service_unknown";
+              const fields = (st.fields ?? {}) as Record<string, string>;
+              for (const f of svc.fields) {
+                if (f.required && !String(fields[f.key] ?? "").trim())
+                  throw `Für ${svc.label} fehlt das Feld „${f.key}“.`;
+              }
+              if (!st.secret)
+                throw "Der Schlüssel bzw. die Webhook-Adresse fehlt.";
+              cfg.service = st.service;
+              for (const f of svc.fields) {
+                const v = String(fields[f.key] ?? "").trim();
+                if (v) cfg[f.key] = v;
+              }
+              if (svc.auth === "webhook_url") {
+                cfg.host = serviceHost(String(st.service), st.secret);
+              } else if (/\s/.test(String(st.secret).trim())) {
+                throw "Der Schlüssel enthält Leer- oder Steuerzeichen. Bitte nur den Schlüssel einfügen.";
+              }
               secret = true;
             } else {
               throw "kind_not_available";
@@ -562,6 +758,15 @@ export const installIntegrationsMock = async (
             }
             if (i.kind === "webhook" && st.secret) {
               i.config.host = webhookHost(st.secret);
+            }
+            if (i.kind === "service") {
+              for (const [k, v] of Object.entries(
+                (st.fields ?? {}) as Record<string, string>,
+              )) {
+                i.config[k] = v;
+              }
+              if (st.secret && SERVICES[i.config.service]?.auth === "webhook_url")
+                i.config.host = serviceHost(i.config.service, st.secret);
             }
             if (st.secret) i.secret = true;
             audit(i.id, null, {

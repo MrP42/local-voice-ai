@@ -2305,6 +2305,13 @@ async approvalDecide(id: string, approve: boolean, consentConfirmed: boolean) : 
  * Geheimnis geht in den Geheimnisspeicher, nie in die Datenbank. Fehler: Codes
  * (`folder_*`, `vault_path_*`) oder Klartext der Pruefung.
  */
+/**
+ * Die Dienste (Slack, Teams, Jira, Notion, ...) fuer den Dialog „Integration hinzufuegen“:
+ * Anmeldeart, Felder, Faehigkeiten und Hilfe-Link. Ohne Geheimnisse, ohne I/O.
+ */
+async integrationServices() : Promise<ServiceInfo[]> {
+    return await TAURI_INVOKE("integration_services");
+},
 async integrationCreateWithSettings(kind: Kind, label: string, direction: Direction | null, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("integration_create_with_settings", { kind, label, direction, settings }) };
@@ -6011,7 +6018,27 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
  */
-"workflow.run"
+"workflow.run" |
+/**
+ * In einen Kanal posten (Slack, Teams, Discord).
+ */
+"chat.post" |
+/**
+ * Aufgabe/Ticket anlegen (Asana, Jira, Todoist, ...).
+ */
+"task.create" |
+/**
+ * Seite anlegen oder ergaenzen (Notion, Confluence).
+ */
+"page.write" |
+/**
+ * Notiz im CRM (HubSpot, Pipedrive).
+ */
+"crm.write" |
+/**
+ * Datensatz anhaengen (Airtable).
+ */
+"record.write"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -6490,7 +6517,12 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
  * Geheimnisspeicher.
  */
-"webhook"
+"webhook" |
+/**
+ * Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
+ * steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
+ */
+"service"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
@@ -7687,6 +7719,40 @@ export type TagInsertion = { offset_in_original: number; offset_chars: number; t
  * werden ignoriert. `secret` ist das Passwort (SMTP), der Schluessel (Wissen) oder die
  * Adresse (Webhook); leer oder fehlend bedeutet beim Aendern „unveraendert“.
  */
+/**
+ * Wie sich der Dienst anmeldet. Das Geheimnis steht immer im Fach `token`.
+ */
+export type AuthKind =
+/**
+ * Das Geheimnis ist eine Webhook-Adresse (Schluessel im Pfad).
+ */
+"webhook_url" |
+/**
+ * `Authorization: Bearer <token>`.
+ */
+"bearer" |
+/**
+ * `Authorization: <token>` ohne Vorsilbe (ClickUp, monday, Linear-API-Key).
+ */
+"raw_authorization" |
+/**
+ * HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian).
+ */
+"basic_email_token" |
+/**
+ * `x-api-token: <token>` (Pipedrive).
+ */
+"api_token_header" |
+/**
+ * Trello: oeffentlicher API-Key (Feld `api_key`) und Nutzer-Token, als OAuth-Kopfzeile.
+ */
+"trello_key_token"
+export type ServiceField = { key: string; required: boolean }
+export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" | "asana" | "clickup" | "jira" | "trello" | "todoist" | "monday" | "linear" | "github" | "hubspot" | "pipedrive" | "airtable"
+/**
+ * Ein Dienst, wie die Oberflaeche ihn fuer den Dialog „Integration hinzufuegen“ braucht.
+ */
+export type ServiceInfo = { id: ServiceId; label: string; auth: AuthKind; capabilities: string[]; fields: ServiceField[]; token_help_url: string }
 export type TargetSettings = { 
 /**
  * Ordner oder Vault (absoluter Pfad).
@@ -7695,7 +7761,15 @@ path: string | null;
 /**
  * Unterordner (Ordner: fuer Exporte; Vault: fuer neue Notizen).
  */
-subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null }
+subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null;
+/**
+ * Dienst bei der Art `service` (`slack`, `jira`, ...); nur beim Anlegen.
+ */
+service: string | null;
+/**
+ * Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
+ */
+fields: Partial<{ [key in string]: string }> | null }
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.

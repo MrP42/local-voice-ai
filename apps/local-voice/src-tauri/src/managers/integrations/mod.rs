@@ -76,6 +76,7 @@ pub mod obsidian; // A6
 pub mod preview;
 pub mod schema;
 pub mod secrets;
+pub mod services; // Welle 1 Verbindungen
 pub mod smtp; // A6
 pub mod store;
 pub mod targets; // A6

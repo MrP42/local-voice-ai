@@ -4076,6 +4076,33 @@
       },
       "published": {
         "label": "Published"
+      },
+      "description": {
+        "label": "Description"
+      },
+      "due": {
+        "label": "Due on",
+        "hint": "YYYY-MM-DD; empty: no due date."
+      },
+      "deadlines": {
+        "label": "Deadlines as tasks too",
+        "hint": "Default: yes. Decisions never become tasks."
+      },
+      "from": {
+        "label": "Extraction step",
+        "hint": "ID of the step “Extract tasks, deadlines and decisions”; empty: extract."
+      },
+      "page": {
+        "label": "Page (ID)",
+        "hint": "Empty: the integration’s parent page."
+      },
+      "contact_email": {
+        "label": "Contact (email)",
+        "hint": "The note is linked to this contact; not found: unlinked."
+      },
+      "fields": {
+        "label": "Fields",
+        "hint": "Field name and value as JSON, e.g. {\"Title\": \"…\", \"Duration\": 45}."
       }
     },
     "choices": {
@@ -4186,7 +4213,24 @@
       "webhook": {
         "post": "Send webhook"
       },
-      "wait": "Wait"
+      "wait": "Wait",
+      "chat": {
+        "post": "Post to channel"
+      },
+      "task": {
+        "create": "Create task",
+        "create_from": "Create tasks from the meeting"
+      },
+      "page": {
+        "create": "Create page",
+        "append": "Append to page"
+      },
+      "crm": {
+        "note": "Create CRM note"
+      },
+      "record": {
+        "append": "Append record"
+      }
     },
     "effectKinds": {
       "pure": "changes nothing",
@@ -4508,7 +4552,8 @@
       "obsidian": "Obsidian vault",
       "wissen": "WAI knowledge base",
       "agent": "Agent access",
-      "webhook": "Webhook (n8n)"
+      "webhook": "Webhook (n8n)",
+      "service": "Service"
     },
     "calendar": {
       "rights": "Rights and direction"
@@ -4568,6 +4613,33 @@
           "name": "n8n webhook",
           "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted in your Windows account.",
           "action": "Set up webhook"
+        }
+      },
+      "services": {
+        "title": "Services",
+        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted in your Windows account.",
+        "connect": "Connect",
+        "groups": {
+          "chat": {
+            "title": "Channels",
+            "description": "Post a summary or tasks to a channel."
+          },
+          "tasks": {
+            "title": "Tasks and tickets",
+            "description": "One task per to-do from the meeting, never twice."
+          },
+          "pages": {
+            "title": "Pages and wiki",
+            "description": "Create the minutes as a page or append decisions."
+          },
+          "crm": {
+            "title": "CRM",
+            "description": "Meeting note on the contact, follow-up tasks in the CRM."
+          },
+          "records": {
+            "title": "Tables",
+            "description": "Every meeting as a row in the meeting log."
+          }
         }
       }
     },
@@ -4676,7 +4748,20 @@
       "wissen_tool_error": "The knowledge base reports an error.",
       "wissen_token_missing": "The access key is missing.",
       "wissen_token_broken": "The stored key is unreadable.",
-      "wissen_config_invalid": "The settings are incomplete."
+      "wissen_config_invalid": "The settings are incomplete.",
+      "service_ok": "Connection works (nothing was created).",
+      "service_auth": "The service rejects the key.",
+      "service_target_not_found": "The target (project, list, page) was not found.",
+      "service_unreachable": "The service cannot be reached.",
+      "service_timeout": "The service does not answer in time.",
+      "service_rate_limited": "The service is throttling (too many requests).",
+      "service_status": "The service rejected the request.",
+      "service_network": "The connection dropped.",
+      "service_redirect": "The service redirects; the app never follows redirects.",
+      "service_config_invalid": "The settings are incomplete.",
+      "service_bad_response": "Unexpected answer from the service.",
+      "service_token_broken": "The stored key cannot be read.",
+      "service_unknown": "The service of this integration is unknown."
     },
     "matrix": {
       "reads": "reads",
@@ -4757,6 +4842,26 @@
       "workflow_run": {
         "title": "Start a workflow",
         "description": "Start a workflow as a dry run or, if it is armed, for real."
+      },
+      "chat_post": {
+        "title": "Post to channel",
+        "description": "Send text to the webhook’s channel (Slack, Teams, Discord)."
+      },
+      "task_create": {
+        "title": "Create tasks",
+        "description": "Create tasks, tickets or cards (Asana, Jira, Todoist …)."
+      },
+      "page_write": {
+        "title": "Write pages",
+        "description": "Create pages or append text (Notion, Confluence)."
+      },
+      "crm_write": {
+        "title": "Create CRM notes",
+        "description": "Create notes and tasks in the CRM, linked to contacts (HubSpot, Pipedrive)."
+      },
+      "record_write": {
+        "title": "Create records",
+        "description": "Append a row to a table (Airtable)."
       }
     },
     "approvals": {
@@ -4843,7 +4948,8 @@
       "vault_path_not_a_folder": "The path is not a folder.",
       "obsidian_scan_limit": "The vault is too large to check safely whether the note already exists. Nothing was written.",
       "export_format_unsupported": "This format cannot be filed.",
-      "approval_required": "This needs an approval."
+      "approval_required": "This needs an approval.",
+      "service_unknown": "The app does not know this service."
     },
     "moved": {
       "open": "Manage on the “Integrations” page",
@@ -4917,6 +5023,83 @@
         "path": "Folder",
         "subfolder": "Subfolder for exports (optional)",
         "subfolderHint": "Exports land in this subfolder of the root; it is created when needed."
+      },
+      "service": {
+        "title": "Connect {{service}}",
+        "titleEdit": "{{service}} settings",
+        "description": "Writing asks first by default: workflows need your approval until you change the rights.",
+        "loading": "Loading fields …",
+        "optionalLabel": "{{label}} (optional)",
+        "token": "Key (API token)",
+        "tokenWhat": "key",
+        "tokenHint": "The key is stored encrypted in your Windows account and only goes to the service’s server.",
+        "webhookUrl": "Webhook address",
+        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted in your Windows account; later only the server is shown. Only addresses of the service are accepted.",
+        "help": "How to get access in {{service}}",
+        "noTestPost": "“Test connection” only checks the address here and sends no test message to the channel.",
+        "fields": {
+          "parent_page_id": {
+            "label": "Parent page (ID)",
+            "hint": "New pages are created below this page. Share the page with the integration first (Notion: “Connections”).",
+            "placeholder": "e.g. 1a2b3c4d…"
+          },
+          "site": {
+            "label": "Site",
+            "hint": "Your Atlassian address.",
+            "placeholder": "company.atlassian.net"
+          },
+          "email": {
+            "label": "Account email",
+            "hint": "Atlassian signs in with email plus API token."
+          },
+          "space_id": {
+            "label": "Space ID",
+            "hint": "The numeric ID of the Confluence space."
+          },
+          "project_id": {
+            "label": "Project ID",
+            "hint": "Shown in the project’s address."
+          },
+          "list_id": {
+            "label": "List ID",
+            "hint": "The list that receives new tasks or cards."
+          },
+          "project_key": {
+            "label": "Project key",
+            "placeholder": "e.g. LV"
+          },
+          "issue_type": {
+            "label": "Issue type",
+            "hint": "Empty: Task.",
+            "placeholder": "Task"
+          },
+          "api_key": {
+            "label": "API key (public)",
+            "hint": "The key from the Power-Up page; the token goes into the field below."
+          },
+          "board_id": {
+            "label": "Board ID"
+          },
+          "group_id": {
+            "label": "Group ID",
+            "hint": "Empty: the board’s top group."
+          },
+          "team_id": {
+            "label": "Team ID"
+          },
+          "repo": {
+            "label": "Repository",
+            "placeholder": "owner/name"
+          },
+          "base_id": {
+            "label": "Base ID",
+            "placeholder": "app…"
+          },
+          "table": {
+            "label": "Table",
+            "hint": "Name or ID of the table."
+          }
+        }
       }
     },
     "areas": {

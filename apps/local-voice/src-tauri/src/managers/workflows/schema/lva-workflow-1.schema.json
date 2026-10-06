@@ -2023,6 +2023,496 @@
             "additionalProperties": false,
             "properties": {
               "action": {
+                "const": "chat.post"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "In Kanal posten",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "task.create"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "due": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "title"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Aufgabe anlegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "task.create_from"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "deadlines": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "pattern": "\\{\\{",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "from": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Aufgaben aus der Besprechung anlegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "page.create"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "content": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "title": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "title",
+                  "content"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Seite anlegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "page.append"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "content": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "page": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "content"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "An Seite anhängen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "crm.note"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "contact_email": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "text": {
+                    "maxLength": 4000,
+                    "type": "string"
+                  },
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "CRM-Notiz anlegen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "record.append"
+              },
+              "id": {
+                "pattern": "^[a-z][a-z0-9_]{0,31}$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 120,
+                "type": "string"
+              },
+              "on_error": {
+                "enum": [
+                  "fail",
+                  "continue"
+                ]
+              },
+              "params": {
+                "additionalProperties": false,
+                "properties": {
+                  "fields": {},
+                  "via": {
+                    "pattern": "^[A-Za-z0-9_-]{1,40}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "via",
+                  "fields"
+                ],
+                "type": "object"
+              },
+              "retry": {
+                "additionalProperties": false,
+                "properties": {
+                  "backoff_ms": {
+                    "maximum": 3600000,
+                    "minimum": 100,
+                    "type": "integer"
+                  },
+                  "max_attempts": {
+                    "maximum": 10,
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "when": {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "action"
+            ],
+            "title": "Datensatz anhängen",
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
                 "const": "wait"
               },
               "id": {

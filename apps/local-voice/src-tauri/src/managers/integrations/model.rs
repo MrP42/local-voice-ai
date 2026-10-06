@@ -24,10 +24,13 @@ pub enum Kind {
     /// Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
     /// Geheimnisspeicher.
     Webhook,
+    /// Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
+    /// steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
+    Service,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 10] = [
+    pub const ALL: [Kind; 11] = [
         Kind::Youtube,
         Kind::Ics,
         Kind::Graph,
@@ -38,6 +41,7 @@ impl Kind {
         Kind::Wissen,
         Kind::Agent,
         Kind::Webhook,
+        Kind::Service,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -52,6 +56,7 @@ impl Kind {
             Kind::Wissen => "wissen",
             Kind::Agent => "agent",
             Kind::Webhook => "webhook",
+            Kind::Service => "service",
         }
     }
 
@@ -71,7 +76,7 @@ impl Kind {
     pub fn allowed_directions(self) -> &'static [Direction] {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen => &[Direction::Read],
-            Kind::Smtp | Kind::Webhook => &[Direction::Write],
+            Kind::Smtp | Kind::Webhook | Kind::Service => &[Direction::Write],
             Kind::Graph | Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => {
                 &[Direction::Read, Direction::Write, Direction::Both]
             }
@@ -82,12 +87,13 @@ impl Kind {
     pub fn default_direction(self) -> Direction {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen | Kind::Graph => Direction::Read,
-            Kind::Smtp | Kind::Webhook => Direction::Write,
+            Kind::Smtp | Kind::Webhook | Kind::Service => Direction::Write,
             Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => Direction::Both,
         }
     }
 
-    /// Faehigkeiten, die diese Art ueberhaupt anbietet. Rechte gibt es nur dafuer.
+    /// Faehigkeiten, die diese Art ueberhaupt anbietet. Bei `Service` die aller Dienste; was
+    /// eine einzelne Integration kann, sagt `Integration::capabilities`.
     pub fn capabilities(self) -> &'static [Capability] {
         use Capability::*;
         match self {
@@ -109,6 +115,7 @@ impl Kind {
                 WorkflowRun,
             ],
             Kind::Webhook => &[WebhookPost],
+            Kind::Service => &[ChatPost, TaskCreate, PageWrite, CrmWrite, RecordWrite],
         }
     }
 }
@@ -201,10 +208,25 @@ pub enum Capability {
     /// Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
     #[serde(rename = "workflow.run")]
     WorkflowRun,
+    /// In einen Kanal posten (Slack, Teams, Discord).
+    #[serde(rename = "chat.post")]
+    ChatPost,
+    /// Aufgabe/Ticket anlegen (Asana, Jira, Todoist, ...).
+    #[serde(rename = "task.create")]
+    TaskCreate,
+    /// Seite anlegen oder ergaenzen (Notion, Confluence).
+    #[serde(rename = "page.write")]
+    PageWrite,
+    /// Notiz im CRM (HubSpot, Pipedrive).
+    #[serde(rename = "crm.write")]
+    CrmWrite,
+    /// Datensatz anhaengen (Airtable).
+    #[serde(rename = "record.write")]
+    RecordWrite,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 17] = [
+    pub const ALL: [Capability; 22] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -222,6 +244,11 @@ impl Capability {
         Capability::WebhookPost,
         Capability::WorkflowRead,
         Capability::WorkflowRun,
+        Capability::ChatPost,
+        Capability::TaskCreate,
+        Capability::PageWrite,
+        Capability::CrmWrite,
+        Capability::RecordWrite,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -243,6 +270,11 @@ impl Capability {
             Capability::WebhookPost => "webhook.post",
             Capability::WorkflowRead => "workflow.read",
             Capability::WorkflowRun => "workflow.run",
+            Capability::ChatPost => "chat.post",
+            Capability::TaskCreate => "task.create",
+            Capability::PageWrite => "page.write",
+            Capability::CrmWrite => "crm.write",
+            Capability::RecordWrite => "record.write",
         }
     }
 
@@ -356,6 +388,30 @@ pub struct Integration {
     pub updated_at: i64,
     pub last_ok_at: Option<i64>,
     pub last_error: Option<String>,
+}
+
+impl Integration {
+    /// Faehigkeiten DIESER Integration: bei einem Dienst die aus dem Register (Slack kann nur
+    /// posten, Jira nur Aufgaben), sonst die der Art. Ein Dienst mit unbekannter oder
+    /// fehlender Angabe kann nichts.
+    pub fn capabilities(&self) -> &'static [Capability] {
+        match self.kind {
+            Kind::Service => self
+                .service()
+                .map(|s| super::services::registry::def(s).capabilities)
+                .unwrap_or(&[]),
+            k => k.capabilities(),
+        }
+    }
+
+    /// Der Dienst einer `Service`-Integration (aus `config_json.service`).
+    pub fn service(&self) -> Option<super::services::registry::ServiceId> {
+        if self.kind != Kind::Service {
+            return None;
+        }
+        let cfg: serde_json::Value = serde_json::from_str(&self.config_json).ok()?;
+        super::services::registry::ServiceId::parse(cfg.get("service")?.as_str()?)
+    }
 }
 
 /// Was zum Anlegen noetig ist.
