@@ -82,3 +82,34 @@ Trait/Funktionszeiger für Tests ersetzbar.
 
 Neue Sidebar-Einträge, Änderungen an Integrationen, Modell-Preise/-Limits aus dem Netz,
 Kostenfunktionen.
+
+## Festlegungen aus dem Codex-Review (09.10.2026, gpt-6-astra)
+
+Teil 1/2:
+- Deep-Link `TtsSettings.tsx` („Stimmen verwalten") schreibt `readaloud` → wird `output`. Alte IDs werden einmalig
+  abgebildet: `dictation`→`input`, `readaloud`/`sound`→`output`, `postprocessing`→`models`.
+- Der Sprung aus der Fußleiste ist ein Ereignis (`lv-open-settings-tab`, Detail `{tab, anchor}`), das die
+  Seite wechselt UND den Reiter reaktiv setzt, danach zum Anker scrollt; `usePersistentState` allein reicht
+  bei schon geöffneten Einstellungen nicht.
+- Mitzuziehen: Playwright-Selektoren (`llm-connections.spec.ts`, `llm-local.spec.ts` u. a.) und
+  `src/content/help/einstellungen.*.md`.
+
+Teil 3:
+- **Probing nur für aktive, nicht gesperrte Verbindungen** (`enabled` und Compliance ≠ Blocked), auch bei
+  Codex/API/Ollama-Abfragen.
+- **Claude-Probe isoliert** wie der bestehende CLI-Aufruf (kein Nutzerkontext/keine Hooks), Kandidaten
+  höchstens 3 je Start, Einzel-Timeout 30 s, Gesamtbudget 60 s, Abbruch beim ersten Limit-/Auth-Fehler,
+  Start-Prüfung verzögert (nach Fensteranzeige, Hintergrund). Kandidatenmuster
+  `claude-<familie>-<major>-<minor>[-<datum>]`: Nachfolger = Minor+1 und Major+1 mit Minor 0/5; Datumssuffix
+  wird bei Nachfolgern weggelassen.
+- **Ersetzen migriert ALLE Verweise** atomar in einem `write_settings`: `llm_active_model_id`,
+  `post_process_models`-Spiegel (`sync_legacy_from_llm`), `tts_tag_model`, weitere Felder, die `llm_models`-IDs
+  halten (vor Umsetzung per Suche nach `connection_id:remote_id`-Verwendungen vollständig auflisten).
+- **Preise:** Das neue Modell erbt keine Altpreise. Fehlen Preise, ist es als „Preis unbekannt" markiert und
+  zählt für Budgets mit dem Preis des ersetzten Modells als Obergrenze (nie 0).
+- **Laufende Aufrufe:** Verbrauchsbuchung nutzt den beim Aufrufstart bestimmten Modell-Snapshot; Ersetzen
+  wartet nicht, entfernt aber die alte Konfiguration erst, wenn keine Buchung mehr auf sie zeigt (Alias-Eintrag
+  `replaced_by` bleibt in `llm_model_history`).
+- **Erkennungsverlauf:** `llm_model_history` (persistiert): je `connection_id:remote_id` Status
+  `seen`/`replaced`/`dismissed`. Nur nie gesehene Modelle sind „neu"; ersetzte oder bewusst entfernte tauchen
+  nicht erneut auf.
