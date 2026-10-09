@@ -1576,6 +1576,9 @@
     "app": {
       "tabs": {
         "app": "Allgemein",
+        "input": "Eingabe",
+        "output": "Ausgabe",
+        "models": "KI-Modelle & Anbieter",
         "dictation": "Diktat",
         "sound": "Mikrofon & Töne",
         "readAloud": "Vorlesen",

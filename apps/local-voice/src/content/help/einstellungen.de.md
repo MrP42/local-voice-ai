@@ -1,12 +1,12 @@
 # Einstellungen
 
-Jede Einstellung hat einen Reiter. Was du beim Arbeiten wählst, etwa Modell oder Stimme, steht nicht hier, sondern in der Fußleiste oder auf der Seite selbst.
+Die Reiter sind nach Thema sortiert: Eingabe, Ausgabe, KI-Modelle & Anbieter, Allgemein. Was du beim Arbeiten wählst, etwa Modell oder Stimme, steht nicht hier, sondern in der Fußleiste oder auf der Seite selbst.
 
-## Diktat
+## Eingabe
 
-Tastenkürzel, Push-to-Talk oder Umschalten, Sprachaktivitätserkennung, eigene Wörter, Einfügemethode und Verhalten der Zwischenablage. Dazu die Transkriptionssprache und das Modell für Besprechungen.
+Tastenkürzel, Push-to-Talk oder Umschalten, Sprachaktivitätserkennung, eigene Wörter, Einfügemethode und Verhalten der Zwischenablage. Dazu das Mikrofon (Gerät, Pegel), die Prompts der KI-Textverbesserung, die Transkriptionssprache und das Modell für Besprechungen.
 
-## Vorlesen
+## Ausgabe
 
 Maximale Zeichen, Lautstärke, Tempo, Exportformat. Engine und Stimme wählst du auf der Vorlesen-Seite im Stimmen-Dropdown.
 
@@ -18,13 +18,13 @@ Mit eingerichtetem Fish Speech kommen Ordner und Port, Leerlauf-Stopp und Turbo-
 <!--/if:nofish-->
 
 
-## Mikrofon & Töne
+### Töne und Signale
 
-Eingabegerät, Ausgabegerät, Pegel, Start- und Stopp-Töne, Stummschalten während der Aufnahme.
+Ausgabegerät, Lautstärke, Start- und Stopp-Töne.
 
-## KI-Textverbesserung
+## KI-Modelle & Anbieter
 
-Nachbearbeitung des Diktats per Sprachmodell: Anbieter (lokal, Ollama, Cloud), Modelle je Anbieter, Prompts und Budgets. Der Verbrauch je Modell steht in der Übersicht.
+Welches Sprachmodell die App nutzt und woher es kommt: Anbieter (lokal, Ollama, Cloud, Abos), Modelle je Anbieter, Regelwerk und Budgets. Der Verbrauch je Modell steht in der Übersicht.
 
 ## Allgemein
 

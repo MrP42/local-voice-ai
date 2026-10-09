@@ -2,8 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { PageShell } from "../../ui/PageShell";
 import { DictationTab } from "./DictationTab";
-import { ReadAloudTab } from "./ReadAloudTab";
-import { SoundTab } from "./SoundTab";
+import { OutputTab } from "./OutputTab";
 import { AppTab } from "./AppTab";
 import { PostProcessingSettings } from "../post-processing/PostProcessingSettings";
 import { AboutSettings } from "../about/AboutSettings";
@@ -16,11 +15,10 @@ import { usePersistentState } from "../../../hooks/usePersistentState";
  *
  * The sidebar lists what you DO (history, meetings, models, read aloud);
  * everything that merely configures the app is one entry with tabs. The tabs
- * are named after the question you arrive with — dictation, sound,
- * post-processing, the app itself — not after how deep a setting sits in the
- * code. The old split into "General" and "Advanced" told nobody where to look:
- * the microphone was general, the paste method advanced, and both belong to
- * the same act of dictating.
+ * are sorted by topic, not by feature module: Eingabe (what goes in: dictation,
+ * microphone, text enhancement), Ausgabe (what comes out: read aloud, sounds),
+ * KI-Modelle & Anbieter (which language model, from whom, at what cost) and
+ * the app itself.
  *
  * Adding a setting means putting it in the group it belongs to, here. It does
  * not mean a new tab, and never a new sidebar entry. The dictation test sits at
@@ -29,27 +27,20 @@ import { usePersistentState } from "../../../hooks/usePersistentState";
  */
 const TABS = [
   {
-    id: "dictation",
-    labelKey: "settings.app.tabs.dictation",
+    id: "input",
+    labelKey: "settings.app.tabs.input",
     Component: DictationTab,
     enabled: () => true,
   },
   {
-    // Direkt hinter dem Diktat: die beiden Dinge, die die App tut.
-    id: "readaloud",
-    labelKey: "settings.app.tabs.readAloud",
-    Component: ReadAloudTab,
+    id: "output",
+    labelKey: "settings.app.tabs.output",
+    Component: OutputTab,
     enabled: () => true,
   },
   {
-    id: "sound",
-    labelKey: "settings.app.tabs.sound",
-    Component: SoundTab,
-    enabled: () => true,
-  },
-  {
-    id: "postprocessing",
-    labelKey: "settings.app.tabs.postProcessing",
+    id: "models",
+    labelKey: "settings.app.tabs.models",
     Component: PostProcessingSettings,
     enabled: () => true,
   },
@@ -78,12 +69,36 @@ type TabId = (typeof TABS)[number]["id"];
 const isTabId = (value: string): value is TabId =>
   TABS.some((tab) => tab.id === value);
 
+/** Reiter vor der Neugliederung (09.10.2026) -> der Reiter, der ihren Inhalt jetzt traegt. */
+const LEGACY_TABS: Record<string, TabId> = {
+  dictation: "input",
+  readaloud: "output",
+  sound: "output",
+  postprocessing: "models",
+};
+
+/** Schreibt einen gespeicherten alten Reiter einmalig auf den neuen um. */
+const migrateLegacyTab = () => {
+  try {
+    const key = "lva.ui.settings.tab";
+    const stored = window.localStorage.getItem(key);
+    if (stored && stored in LEGACY_TABS) {
+      window.localStorage.setItem(key, LEGACY_TABS[stored]);
+    }
+  } catch {
+    /* ohne Speicher gilt der Vorgabe-Reiter */
+  }
+};
+
 export const AppSettings: React.FC = () => {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  // Vor dem ersten Lesen des gespeicherten Reiters; der Initialisierer von
+  // useState laeuft nur einmal.
+  React.useState(migrateLegacyTab);
   const [tab, setTab] = usePersistentState<TabId>(
     "settings.tab",
-    "dictation",
+    "input",
     isTabId,
   );
 

@@ -1576,6 +1576,9 @@
     "app": {
       "tabs": {
         "app": "General",
+        "input": "Input",
+        "output": "Output",
+        "models": "AI models & providers",
         "dictation": "Dictation",
         "sound": "Microphone & sounds",
         "readAloud": "Read aloud",

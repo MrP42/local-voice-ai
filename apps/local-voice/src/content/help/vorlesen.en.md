@@ -32,7 +32,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 
 - Select in the bar above the player. Piper voices show language and quality there, for example "Thorsten · German · HQ · Piper". Each tab remembers its voice.
 <!--if:fish-->
-- Listen, clone, import and delete: **Settings → Read aloud**, or via "Manage voices …" at the end of the voice list.
+- Listen, clone, import and delete: **Settings → Output**, or via "Manage voices …" at the end of the voice list.
 <!--/if:fish-->
 <!--if:fish-->
 - **Cloning** needs a 10 to 30 second reference. The transcript is generated and can be corrected.
@@ -40,7 +40,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 - Speaker changes in the text work with Fish Speech voices. Piper reads everything in the selected voice.
 <!--/if:fish-->
 <!--if:nofish-->
-- Piper reads the whole text in the selected voice. Speaker changes, cloning and styles belong to **Fish Speech**, an optional extra engine for the graphics card. It is not set up on this computer; enter its folder under **Settings → Read aloud**.
+- Piper reads the whole text in the selected voice. Speaker changes, cloning and styles belong to **Fish Speech**, an optional extra engine for the graphics card. It is not set up on this computer; enter its folder under **Settings → Output**.
 <!--/if:nofish-->
 
 <!--if:fish-->
@@ -53,7 +53,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 | Start | server, 20 to 90 s | instant |
 | Quality | natural, expressive | clear, even |
 
-The engine is chosen under **Settings → Read aloud**. Piper voices are downloaded on the Models page under Reading Voices.
+The engine is chosen under **Settings → Output**. Piper voices are downloaded on the Models page under Reading Voices.
 <!--/if:fish-->
 <!--if:nofish-->
 ## Setting up speech output
@@ -73,7 +73,7 @@ Piper runs on the CPU, starts instantly and needs only a small voice. Download i
 <!--if:fish-->
 - **Start takes long**: close other GPU programs, the server needs free video memory.
 <!--/if:fish-->
-- **Text gets cut**: the limit lives under Settings → Read aloud, maximum characters per job.
+- **Text gets cut**: the limit lives under Settings → Output, maximum characters per job.
 <!--if:fish-->
 - **Blank page or error in the header**: stop the server and start it again. If it persists, check the Fish Speech folder in Settings.
 <!--/if:fish-->

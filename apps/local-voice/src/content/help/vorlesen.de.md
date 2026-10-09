@@ -32,7 +32,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 
 - Ausgewählt wird in der Leiste über dem Player. Piper-Stimmen stehen dort mit Sprache und Qualität, etwa „Thorsten · Deutsch · HQ · Piper". Jeder Reiter merkt sich seine Stimme.
 <!--if:fish-->
-- Anhören, klonen, importieren und löschen: **Einstellungen → Vorlesen**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
+- Anhören, klonen, importieren und löschen: **Einstellungen → Ausgabe**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
 <!--/if:fish-->
 <!--if:fish-->
 - **Klonen** braucht eine Referenz von 10 bis 30 Sekunden. Das Transkript entsteht automatisch und lässt sich korrigieren.
@@ -40,7 +40,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 - Sprecherwechsel im Text funktionieren mit Fish-Speech-Stimmen. Piper liest alles in der gewählten Stimme.
 <!--/if:fish-->
 <!--if:nofish-->
-- Piper liest den ganzen Text in der gewählten Stimme. Sprecherwechsel, Klonen und Stile gehören zu **Fish Speech**, einer optionalen Zusatz-Engine für die Grafikkarte. Sie ist auf diesem Rechner nicht eingerichtet; den Ordner trägst du unter **Einstellungen → Vorlesen** ein.
+- Piper liest den ganzen Text in der gewählten Stimme. Sprecherwechsel, Klonen und Stile gehören zu **Fish Speech**, einer optionalen Zusatz-Engine für die Grafikkarte. Sie ist auf diesem Rechner nicht eingerichtet; den Ordner trägst du unter **Einstellungen → Ausgabe** ein.
 <!--/if:nofish-->
 
 <!--if:fish-->
@@ -53,7 +53,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 | Start | Server, 20 bis 90 s | sofort |
 | Qualität | natürlich, betont | klar, gleichmäßig |
 
-Die Engine steht unter **Einstellungen → Vorlesen**. Piper-Stimmen lädt die Modelle-Seite unter Vorlesestimmen.
+Die Engine steht unter **Einstellungen → Ausgabe**. Piper-Stimmen lädt die Modelle-Seite unter Vorlesestimmen.
 <!--/if:fish-->
 <!--if:nofish-->
 ## Sprachausgabe einrichten
@@ -73,7 +73,7 @@ Piper läuft auf der CPU, startet sofort und braucht nur eine kleine Stimme. Lad
 <!--if:fish-->
 - **Start dauert lange**: andere GPU-Programme schließen, der Server braucht freien Videospeicher.
 <!--/if:fish-->
-- **Text wird gekürzt**: die Grenze steht unter Einstellungen → Vorlesen, maximale Zeichen pro Auftrag.
+- **Text wird gekürzt**: die Grenze steht unter Einstellungen → Ausgabe, maximale Zeichen pro Auftrag.
 <!--if:fish-->
 - **Weiße Seite oder Fehlermeldung im Kopf**: Server stoppen und neu starten. Bleibt es, den Fish-Speech-Ordner in den Einstellungen prüfen.
 <!--/if:fish-->

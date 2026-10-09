@@ -1,14 +1,15 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Issue #5: die Ollama-Glaettung ist eine optionale Einstellung im Reiter
-// Diktat (Gruppe Ausgabe), Standard aus. Sie erscheint nur, wenn die
-// Live-Einfuegung an ist -- ohne sie gibt es nichts zu glaetten.
-async function setup(page: Page, streamInjection: boolean, refine = false) {
+// Einstellungen nach Thema (09.10.2026): Eingabe, Ausgabe, KI-Modelle &
+// Anbieter, Allgemein, Ueber. Ein gespeicherter Reiter aus der alten
+// Gliederung landet auf dem Reiter, der seinen Inhalt jetzt traegt.
+async function setup(page: Page, tab?: string) {
   page.on("pageerror", (error) => {
     throw error;
   });
   await page.addInitScript(
-    ({ streamInjection, refine }) => {
+    ({ tab }) => {
+      if (tab) localStorage.setItem("lva.ui.settings.tab", tab);
       const callbacks = new Map<number, unknown>();
       let callback = 0;
       const w = window as unknown as Record<string, unknown>;
@@ -29,8 +30,6 @@ async function setup(page: Page, streamInjection: boolean, refine = false) {
         post_process_models: {},
         post_process_api_keys: {},
         push_to_talk: true,
-        stream_injection: streamInjection,
-        refine_enabled: refine,
       };
       Object.assign(window, {
         __TAURI_OS_PLUGIN_INTERNALS__: { platform: "windows", os_type: "windows", family: "windows", arch: "x86_64", version: "10.0.26200", eol: "\r\n" },
@@ -63,38 +62,61 @@ async function setup(page: Page, streamInjection: boolean, refine = false) {
         },
       });
     },
-    { streamInjection, refine },
+    { tab },
   );
 }
 
-const openDictation = async (page: Page) => {
+
+const shots = process.env.SCREENS_DIR;
+
+const open = async (page: Page) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
-  await page.getByRole("tab", { name: "Eingabe", exact: true }).click();
-  await expect(page.getByText("Einfügemethode").first()).toBeVisible();
 };
 
-test("without live insertion the refinement switch is not shown at all", async ({ page }) => {
-  await setup(page, false);
-  await openDictation(page);
-  await expect(page.getByText("Live-Text nachträglich mit Ollama glätten")).toHaveCount(0);
+test("die Reiter sind nach Thema sortiert", async ({ page }) => {
+  await setup(page);
+  await open(page);
+  const names = await page.getByRole("tab").allInnerTexts();
+  expect(names).toEqual(["Eingabe", "Ausgabe", "KI-Modelle & Anbieter", "Allgemein", "Über"]);
+  await expect(page.getByRole("tab", { name: "Eingabe", exact: true })).toHaveAttribute("aria-selected", "true");
 });
 
-test("with live insertion the switch is shown, off by default, and writes the setting", async ({ page }) => {
-  await setup(page, true);
-  await openDictation(page);
-  // Der Schalter hat keinen eigenen Namen; die Ueberschrift der Zeile nennt ihn.
-  const toggle = page
-    .getByRole("heading", { name: "Live-Text nachträglich mit Ollama glätten" })
-    .locator("xpath=ancestor::div[.//input[@type='checkbox']][1]")
-    .getByRole("checkbox");
-  await expect(toggle).toBeVisible();
-  await expect(toggle).not.toBeChecked();
-  await toggle.check({ force: true });
-  await expect
-    .poll(async () => {
-      const calls = await page.evaluate(() => (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls);
-      return calls.find(([cmd]) => cmd === "change_refine_enabled_setting")?.[1]?.enabled;
-    })
-    .toBe(true);
+test("Eingabe: Mikrofon und Prompts der Textverbesserung gehoeren dazu", async ({ page }) => {
+  await setup(page);
+  await open(page);
+  await expect(page.getByText("Mikrofon", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Einfügemethode").first()).toBeVisible();
+  await expect(page.getByText("Prompts", { exact: false }).first()).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/einstellungen-eingabe.png`, animations: "disabled" });
 });
+
+test("Ausgabe: Vorlesen und hoerbare Rueckmeldung", async ({ page }) => {
+  await setup(page);
+  await open(page);
+  await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
+  await expect(page.getByText("Hörbare Rückmeldung").first()).toBeVisible();
+  if (shots) await page.screenshot({ path: `${shots}/einstellungen-ausgabe.png`, animations: "disabled" });
+});
+
+test("KI-Modelle & Anbieter: Verbindungen, ohne Prompts", async ({ page }) => {
+  await setup(page);
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
+  await expect(page.getByText("Verbindungen", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Einfügemethode")).toHaveCount(0);
+  if (shots) await page.screenshot({ path: `${shots}/einstellungen-modelle.png`, animations: "disabled" });
+});
+
+for (const [alt, neu] of [
+  ["dictation", "Eingabe"],
+  ["sound", "Ausgabe"],
+  ["readaloud", "Ausgabe"],
+  ["postprocessing", "KI-Modelle & Anbieter"],
+] as const) {
+  test(`gespeicherter alter Reiter ${alt} landet auf ${neu}`, async ({ page }) => {
+    await setup(page, alt);
+    await open(page);
+    await expect(page.getByRole("tab", { name: neu, exact: true })).toHaveAttribute("aria-selected", "true");
+  });
+}

@@ -122,7 +122,7 @@ test.beforeEach(async ({ page }) => {
 async function openTab(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
-  await page.getByRole("tab", { name: "KI-Textverbesserung", exact: true }).click();
+  await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
 }
 
 test("the polish feature has no off switch any more", async ({ page }) => {

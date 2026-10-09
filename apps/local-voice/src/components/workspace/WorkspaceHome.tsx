@@ -21,7 +21,7 @@ export function WorkspaceHome({
   const shortcut = getSetting("bindings")?.transcribe?.current_binding;
   const openDictationSettings = () => {
     try {
-      localStorage.setItem("lva.ui.settings.tab", "dictation");
+      localStorage.setItem("lva.ui.settings.tab", "input");
     } catch {
       /* Navigation still works if browser storage is unavailable. */
     }
