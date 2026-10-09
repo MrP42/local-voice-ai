@@ -98,7 +98,7 @@ Teil 3:
 - **Probing nur für aktive, nicht gesperrte Verbindungen** (`enabled` und Compliance ≠ Blocked), auch bei
   Codex/API/Ollama-Abfragen.
 - **Claude-Probe isoliert** wie der bestehende CLI-Aufruf (kein Nutzerkontext/keine Hooks), Kandidaten
-  höchstens 3 je Start, Einzel-Timeout 30 s, Gesamtbudget 60 s, Abbruch beim ersten Limit-/Auth-Fehler,
+  höchstens 12 je Lauf (alle Familien reihum, nach Wahrscheinlichkeit sortiert), Einzel-Timeout 30 s, Gesamtbudget 90 s, Abbruch beim ersten Limit-/Auth-Fehler,
   Start-Prüfung verzögert (nach Fensteranzeige, Hintergrund). Kandidatenmuster
   `claude-<familie>-<major>-<minor>[-<datum>]`: Nachfolger = Minor+1 und Major+1 mit Minor 0/5; Datumssuffix
   wird bei Nachfolgern weggelassen.

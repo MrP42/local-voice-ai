@@ -49,6 +49,8 @@ export const LlmSelector: React.FC = () => {
   const [contextAt, setContextAt] = useState<{ x: number; y: number } | null>(
     null,
   );
+  /** Suchtext im Menue: filtert beim Tippen nach Name, Kennung und Verbindung. */
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
   const { byModel, refresh: refreshCompliance } = useComplianceStore();
@@ -73,6 +75,16 @@ export const LlmSelector: React.FC = () => {
   }, [connections, models]);
 
   const active = selectable.find((s) => s.model.id === activeId) ?? null;
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? selectable.filter(({ model, connection }) =>
+        [modelLabel(model.remote_id, model.label), model.remote_id, connection.label]
+          .join(" ")
+          .toLowerCase()
+          .includes(needle),
+      )
+    : selectable;
   const defaultEffort = (getSetting("llm_default_effort") ??
     "medium") as string;
   const isCli = (c: LlmConnection) =>
@@ -262,6 +274,10 @@ export const LlmSelector: React.FC = () => {
     setContextAt(null);
     openSettingsTab("models", "connections");
   };
+
+  useEffect(() => {
+    setQuery("");
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -459,12 +475,48 @@ export const LlmSelector: React.FC = () => {
           className="absolute bottom-full start-0 mb-2 w-72 max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
           role="menu"
         >
+          {selectable.length > 0 && (
+            <div className="sticky top-0 z-10 -mt-2 mb-1 bg-background px-3 pb-2 pt-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    if (query) {
+                      e.stopPropagation();
+                      setQuery("");
+                    } else setOpen(false);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    const first = visible.find(
+                      ({ model }) =>
+                        byModel[model.id]?.verdict !== "blocked",
+                    );
+                    if (first) void choose(first.model.id);
+                  }
+                }}
+                autoFocus
+                placeholder={t("llmSelector.search")}
+                aria-label={t("llmSelector.search")}
+                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+                data-llm-search
+              />
+            </div>
+          )}
           {selectable.length === 0 ? (
             <div className="px-3 py-2 text-sm text-text/60">
               {t("llmSelector.empty")}
             </div>
+          ) : visible.length === 0 ? (
+            <div
+              className="px-3 py-2 text-sm text-text/60"
+              data-llm-no-match
+            >
+              {t("llmSelector.noMatch")}
+            </div>
           ) : (
-            selectable.map(({ model, connection }) => {
+            visible.map(({ model, connection }) => {
               const assessment = byModel[model.id];
               // Gesperrt: sichtbar mit Grund, aber nicht waehlbar.
               const blocked = assessment?.verdict === "blocked";

@@ -4,7 +4,7 @@
 - Zweig `feat/einstellungen-themen` (lokal, **nicht gepusht**, kein PR), aufgesetzt auf `feat/protokoll-kopf-kompakt` (#81, Kette #76→#81).
 - Commits: Spezifikation + Codex-Review → Teil 1 → Teil 2 → Teil 3 → Version 0.21.10.
 - Spezifikation: `docs/superpowers/specs/2026-10-09-einstellungen-themen-modell-updates-design.md` (inkl. „Festlegungen aus dem Codex-Review“ und „Umsetzung“).
-- Installer 0.21.10 auf `D:\lv-build\int` gebaut; Kopie samt `.notes.md` im App-Update-Ordner (`…\target\release\bundle\nsis\`).
+- Installer 0.21.11 auf `D:\lv-build\int` gebaut; Kopie samt `.notes.md` im App-Update-Ordner (`…\target\release\bundle\nsis\`).
 
 ## Was drin ist
 1. **Reiter nach Thema:** Eingabe (`input`: Diktat + Mikrofon + Textverbesserungs-Kürzel/Prompts + Besprechungen + Test) · Ausgabe (`output`: Vorlesen + Töne) · KI-Modelle & Anbieter (`models`) · Allgemein (`app`) · Über. Alte gespeicherte IDs werden umgesetzt (`LEGACY_TABS` in `AppSettings.tsx`). `AGENTS.md`-Tabelle, Hilfe (de/en), Tests angepasst.
@@ -25,4 +25,4 @@
 ## Wissenswert
 - Hauptbaum hat kein vollständiges `node_modules`; Prüfen/Bauen in `D:\lv-build\int` (Dateien per Skript vom Hauptbaum kopiert, dort NICHT committen).
 - Andere Sprachen kennen die neuen Schlüssel nicht (Rückfall auf en); `pnpm check:translations` ist vorbestehend rot.
-- Grenzen: Claude-Probelauf höchstens 3 Kandidaten je Start, 30 s je Aufruf, 60 s gesamt, Abbruch bei Limit/Anmeldefehler; `absent` wird nach 7 Tagen neu geprüft.
+- Grenzen: Claude-Probelauf höchstens 12 Kandidaten je Lauf (reihum über die Familien; mit 3 kam Haiku 5.5 erst im vierten Lauf dran), 30 s je Aufruf, 90 s gesamt, Abbruch bei Limit/Anmeldefehler; `absent` wird nach 7 Tagen neu geprüft.

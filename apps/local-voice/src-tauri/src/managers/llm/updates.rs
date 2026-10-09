@@ -22,11 +22,13 @@ use super::cli::{self, Cli};
 use crate::settings::{AppSettings, LlmConnection, LlmModelConfig, LlmModelSeen};
 
 /// Hoechstens so viele Claude-Kandidaten je Lauf (jeder ist ein CLI-Aufruf).
-pub const PROBE_PER_RUN: usize = 3;
+/// Vier Familien mit je drei Nachfolgern passen in einen Lauf; ein Fehlversuch
+/// dauert etwa 4 s (gemessen 09.10.2026), ein Treffer kostet etwa 0,005 $.
+pub const PROBE_PER_RUN: usize = 12;
 /// Zeitgrenze je Kandidat.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Zeitgrenze fuer alle Kandidaten eines Laufs.
-pub const PROBE_BUDGET: Duration = Duration::from_secs(60);
+pub const PROBE_BUDGET: Duration = Duration::from_secs(90);
 /// Ein Kandidat, den der Anbieter nicht kennt, wird fruehestens nach so vielen
 /// Sekunden (7 Tage) erneut ausprobiert.
 pub const ABSENT_RECHECK_SECS: i64 = 7 * 24 * 3600;
@@ -145,10 +147,13 @@ pub fn claude_candidates(known: &[String]) -> Vec<String> {
             None => best.push((fam.to_string(), p.version)),
         }
     }
+    // Reihum nach Wahrscheinlichkeit, nicht Familie fuer Familie: bricht ein Lauf
+    // vorzeitig ab, haben alle Familien ihre naheliegendsten Kandidaten gehabt.
     let mut out = Vec::new();
-    for (fam, v) in best {
-        let (major, minor) = (v[0], v.get(1).copied().unwrap_or(0));
-        for (a, b) in [(major, minor + 1), (major + 1, 0), (major + 1, 5)] {
+    for level in 0..3 {
+        for (fam, v) in &best {
+            let (major, minor) = (v[0], v.get(1).copied().unwrap_or(0));
+            let (a, b) = [(major, minor + 1), (major + 1, 5), (major + 1, 0)][level];
             let name = format!("claude-{fam}-{a}-{b}");
             if !known.contains(&name) && !out.contains(&name) {
                 out.push(name);
@@ -563,6 +568,25 @@ mod tests {
         let c = claude_candidates(&known2);
         assert!(c.contains(&"claude-haiku-5-6".to_string()));
         assert!(!c.contains(&"claude-haiku-4-6".to_string()));
+    }
+
+    /// Fehler vom 09.10.2026: mit Kappung auf drei Kandidaten und Familie fuer
+    /// Familie kam Haiku 5.5 erst im vierten Lauf dran.
+    #[test]
+    fn haiku_5_5_is_among_the_first_candidates_of_the_very_first_run() {
+        let s = settings_with(&[]);
+        let known: Vec<String> = ["fable", "opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let due = due_candidates(&s, "claude", &known, 1);
+        assert!(due.contains(&"claude-haiku-5-5".to_string()), "{due:?}");
+        // Reihum: die ersten vier sind je eine Familie.
+        let first: Vec<&str> = due.iter().take(4).map(|d| d.split('-').nth(1).unwrap()).collect();
+        let mut unique = first.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 4, "{first:?}");
     }
 
     #[test]

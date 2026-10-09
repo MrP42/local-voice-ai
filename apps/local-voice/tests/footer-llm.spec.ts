@@ -223,3 +223,38 @@ test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
   await expect(page.locator("[data-llm-ollama]")).toBeVisible();
   await page.screenshot({ path: `${dir}/fussleiste-sprachmodell-menue.png`, animations: "disabled" });
 });
+
+test("the footer menu has a search box on top that filters while typing", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  const search = page.locator("[data-llm-search]");
+  await expect(search).toBeFocused();
+  await expect(page.locator("[data-llm-option]")).toHaveCount(3);
+  // Nach Modellname, Kennung und Verbindung.
+  await search.fill("mini");
+  await expect(page.locator("[data-llm-option]")).toHaveCount(1);
+  await expect(page.locator('[data-llm-option="openai-1:gpt-4.1-mini"]')).toBeVisible();
+  await search.fill("ollama");
+  await expect(page.locator('[data-llm-option="ol:qwen3.8:27b"]')).toBeVisible();
+  await search.fill("gibtesnicht");
+  await expect(page.locator("[data-llm-no-match]")).toBeVisible();
+  await expect(page.locator("[data-llm-option]")).toHaveCount(0);
+  // Escape leert zuerst die Suche, dann schliesst es das Menue.
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(page.locator("[data-llm-option]")).toHaveCount(3);
+  await search.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("Enter in the search box picks the first match", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  await page.locator("[data-llm-search]").fill("mini");
+  await page.locator("[data-llm-search]").press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.active))
+    .toBe("openai-1:gpt-4.1-mini");
+});

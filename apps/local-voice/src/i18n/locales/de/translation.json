@@ -3602,6 +3602,8 @@
     "added": "{{model}} freigegeben"
   },
   "llmSelector": {
+    "search": "Modell suchen …",
+    "noMatch": "Kein Modell gefunden",
     "providerSettings": "Anbieter-Einstellungen …",
     "title": "Sprachmodell",
     "none": "Kein Sprachmodell",

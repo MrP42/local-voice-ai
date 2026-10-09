@@ -3602,6 +3602,8 @@
     "added": "{{model}} released"
   },
   "llmSelector": {
+    "search": "Search models …",
+    "noMatch": "No model found",
     "providerSettings": "Provider settings …",
     "title": "Language model",
     "none": "No language model",
