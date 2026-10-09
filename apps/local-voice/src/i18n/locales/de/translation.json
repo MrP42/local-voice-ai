@@ -3576,6 +3576,7 @@
     "navExpand": "Menü ausklappen"
   },
   "llmSelector": {
+    "providerSettings": "Anbieter-Einstellungen …",
     "title": "Sprachmodell",
     "none": "Kein Sprachmodell",
     "loading": "{{name}} lädt …",

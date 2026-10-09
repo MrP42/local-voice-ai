@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { PageShell } from "../../ui/PageShell";
 import { DictationTab } from "./DictationTab";
@@ -9,6 +9,10 @@ import { AboutSettings } from "../about/AboutSettings";
 import { DebugSettings } from "../debug/DebugSettings";
 import { useSettings } from "../../../hooks/useSettings";
 import { usePersistentState } from "../../../hooks/usePersistentState";
+import {
+  OPEN_SETTINGS_TAB,
+  scrollToPendingAnchor,
+} from "../../../lib/openSettingsTab";
 
 /**
  * "Einstellungen" — the single place where the app is configured.
@@ -101,6 +105,20 @@ export const AppSettings: React.FC = () => {
     "input",
     isTabId,
   );
+
+  // Sprung von ausserhalb (Fussleiste: "Anbieter-Einstellungen"): Reiter
+  // setzen und zum vorgemerkten Anker scrollen. Beim ersten Oeffnen liest
+  // usePersistentState den Reiter selbst; der Anker wartet auf diese Seite.
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const next = (event as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (next && isTabId(next)) setTab(next);
+      scrollToPendingAnchor();
+    };
+    window.addEventListener(OPEN_SETTINGS_TAB, onOpen);
+    scrollToPendingAnchor();
+    return () => window.removeEventListener(OPEN_SETTINGS_TAB, onOpen);
+  }, [setTab]);
 
   const available = TABS.filter((entry) => entry.enabled(settings));
   // A stored tab can point at one that is hidden again (debug switched off).

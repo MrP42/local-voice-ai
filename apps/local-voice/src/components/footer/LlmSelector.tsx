@@ -11,6 +11,7 @@ import {
 import { useSettings } from "../../hooks/useSettings";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
 import { modelLabel } from "@/lib/modelNames";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import {
   COMPLIANCE_CHANGED,
   notifyComplianceChanged,
@@ -44,6 +45,10 @@ export const LlmSelector: React.FC = () => {
   const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
+  /** Rechtsklick auf das Modellfeld: ein Menue mit dem Sprung zu den Anbietern. */
+  const [contextAt, setContextAt] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const ref = useRef<HTMLDivElement>(null);
   // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
   const { byModel, refresh: refreshCompliance } = useComplianceStore();
@@ -237,6 +242,28 @@ export const LlmSelector: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!contextAt) return;
+    const close = () => setContextAt(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [contextAt]);
+
+  const openProviderSettings = () => {
+    setOpen(false);
+    setContextAt(null);
+    openSettingsTab("models", "connections");
+  };
+
+  useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) setOpen(false);
@@ -363,6 +390,11 @@ export const LlmSelector: React.FC = () => {
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setOpen(false);
+          setContextAt({ x: event.clientX, y: event.clientY });
+        }}
         className="flex items-center gap-2 hover:text-text/80 transition-colors"
         title={title ?? t("llmSelector.title")}
         aria-label={t("llmSelector.title")}
@@ -400,6 +432,28 @@ export const LlmSelector: React.FC = () => {
           />
         </svg>
       </button>
+      {contextAt && (
+        <div
+          className="fixed z-50 min-w-48 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1"
+          style={{
+            left: contextAt.x,
+            bottom: window.innerHeight - contextAt.y,
+          }}
+          role="menu"
+          onMouseDown={(event) => event.stopPropagation()}
+          data-llm-context-menu
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={openProviderSettings}
+            className="w-full px-3 py-2 text-start text-sm text-text/80 hover:bg-mid-gray/10"
+            data-llm-provider-settings
+          >
+            {t("llmSelector.providerSettings")}
+          </button>
+        </div>
+      )}
       {open && (
         <div
           className="absolute bottom-full start-0 mb-2 w-72 max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
@@ -516,6 +570,15 @@ export const LlmSelector: React.FC = () => {
               </button>
             </div>
           )}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={openProviderSettings}
+            className="w-full px-3 py-2 mt-1 border-t border-mid-gray/20 text-start text-sm text-text/70 hover:bg-mid-gray/10"
+            data-llm-provider-settings-link
+          >
+            {t("llmSelector.providerSettings")}
+          </button>
         </div>
       )}
     </div>

@@ -211,7 +211,10 @@ export const LlmConnectionsSettings: React.FC = () => {
         </SettingContainer>
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.llm.connections.title")}>
+      <SettingsGroup
+        title={t("settings.llm.connections.title")}
+        anchor="connections"
+      >
         <div className="px-4 py-3 space-y-3">
           {error && (
             <p className="text-sm text-red-500 break-words" role="alert">

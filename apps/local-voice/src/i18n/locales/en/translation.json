@@ -3576,6 +3576,7 @@
     "navExpand": "Expand menu"
   },
   "llmSelector": {
+    "providerSettings": "Provider settings …",
     "title": "Language model",
     "none": "No language model",
     "loading": "{{name}} loading …",
