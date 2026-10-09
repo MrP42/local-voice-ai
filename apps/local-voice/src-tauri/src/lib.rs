@@ -284,6 +284,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // M5-P5b: Zustand des Hinweisfensters (auch ohne Store verwaltet: die Befehle
     // des Fensters brauchen ihn).
     app_handle.manage(meeting_prompt::MeetingPromptState::default());
+    // Die Codex-CLI aktualisiert sich selbst, wenn sie ein Modell nicht annimmt.
+    managers::llm::cli_update::init(app_handle.clone());
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.

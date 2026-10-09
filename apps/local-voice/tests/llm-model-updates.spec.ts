@@ -36,6 +36,11 @@ async function setup(
       let callback = 0;
       const w = window as unknown as Record<string, unknown>;
       w.__calls = [] as unknown[];
+      w.__listeners = {} as Record<string, number[]>;
+      w.__emit = (name: string, payload: unknown) =>
+        ((w.__listeners as Record<string, number[]>)[name] ?? []).forEach((id) =>
+          (callbacks.get(id) as (e: unknown) => void)?.({ event: name, id: 0, payload }),
+        );
       const settings: Record<string, unknown> = {
         onboarding_completed: true,
         app_language: "de",
@@ -76,7 +81,11 @@ async function setup(
             if (cmd === "plugin:os|locale") return "de-DE";
             if (cmd === "plugin:app|version") return "0.21.10";
             if (cmd.includes("permission")) return true;
-            if (cmd === "plugin:event|listen") return ++callback;
+            if (cmd === "plugin:event|listen") {
+              (w.__listeners as Record<string, number[]>)[String(args?.event)] ??= [];
+              (w.__listeners as Record<string, number[]>)[String(args?.event)].push(Number(args?.handler));
+              return ++callback;
+            }
             if (cmd === "get_selected_model") return "";
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "llm_check_new_models") return check;
@@ -103,6 +112,10 @@ const calls = (page: Page) =>
 const afterStart = async (page: Page) => {
   await page.goto("/");
   await page.clock.fastForward(25_000);
+  // Die Antwort des Backends kommt in Echtzeit; die Uhr danach noch einmal laufen
+  // lassen, damit Dialog und Hinweis (Animation) sichtbar werden.
+  await page.waitForTimeout(300);
+  await page.clock.fastForward(1_000);
 };
 
 test("fragen: der Dialog nennt das neue Modell und das, was es ersetzt", async ({ page }) => {
@@ -181,4 +194,31 @@ test("in der Modellliste einer Verbindung steht neu hinter neuen, nicht freigege
   await page.getByRole("button", { name: "Modelle laden" }).click();
   await expect(page.locator('[data-new-model="qwen9:1b"]')).toContainText("neu");
   await expect(page.locator('[data-new-model="qwen3:8b"]')).toHaveCount(0);
+});
+
+test("die Codex-CLI aktualisiert sich selbst: Hinweise vom Start bis zum Ende", async ({ page }) => {
+  await setup(page, { mode: "off", applied: [], pending: [] });
+  await page.goto("/");
+  await page.waitForFunction(
+    () => ((window as unknown as { __listeners: Record<string, number[]> }).__listeners["cli-update"] ?? []).length > 0,
+  );
+  const emit = (state: string, version: string | null, message: string | null) =>
+    page.evaluate(
+      ([state, version, message]) =>
+        (window as unknown as { __emit: (n: string, p: unknown) => void }).__emit("cli-update", {
+          cli: "codex",
+          state,
+          version,
+          message,
+        }),
+      [state, version, message],
+    ).then(() => page.clock.fastForward(500));
+  await emit("started", null, null);
+  await expect(page.getByText("Die Codex-CLI ist zu alt für dieses Modell")).toBeVisible();
+  await emit("done", "codex-cli 0.162.1", null);
+  await expect(page.getByText("Codex-CLI aktualisiert (codex-cli 0.162.1)")).toBeVisible();
+  await expect(page.getByText("Bitte den Vorgang jetzt noch einmal starten.")).toBeVisible();
+  await emit("manual", null, "Node.js wurde nicht gefunden.");
+  await expect(page.getByText("von Hand aktualisiert werden")).toBeVisible();
+  await expect(page.getByText("Node.js wurde nicht gefunden.")).toBeVisible();
 });

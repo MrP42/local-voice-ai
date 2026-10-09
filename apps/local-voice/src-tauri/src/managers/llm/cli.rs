@@ -561,7 +561,7 @@ pub fn call_with_timeout(
 /// direkt. Fehlt Node im PATH, startet Rusts `Command` das Skript selbst --
 /// es maskiert die Argumente fuer Stapeldateien sicher oder lehnt ab
 /// (Schutz seit Rust 1.77).
-fn launcher(binary: &Path) -> (PathBuf, Vec<String>) {
+pub(crate) fn launcher(binary: &Path) -> (PathBuf, Vec<String>) {
     let is_script = binary
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
@@ -580,7 +580,7 @@ fn launcher(binary: &Path) -> (PathBuf, Vec<String>) {
     (binary.to_path_buf(), Vec::new())
 }
 
-fn find_node() -> Option<PathBuf> {
+pub(crate) fn find_node() -> Option<PathBuf> {
     let name = if cfg!(windows) { "node.exe" } else { "node" };
     std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
@@ -590,7 +590,7 @@ fn find_node() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-fn wait_with_timeout(
+pub(crate) fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
 ) -> Result<std::process::Output, String> {

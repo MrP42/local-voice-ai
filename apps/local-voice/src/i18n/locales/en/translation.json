@@ -3586,6 +3586,13 @@
     "navExpand": "Expand menu"
   },
   "llmUpdate": {
+    "cli": {
+      "started": "The Codex CLI is too old for this model – updating it …",
+      "done": "Codex CLI updated ({{version}})",
+      "retry": "Please start the operation again.",
+      "failed": "The Codex CLI could not be updated",
+      "manual": "The Codex CLI has to be updated by hand (npm i -g @openai/codex@latest)"
+    },
     "title_one": "New language model available",
     "title_other": "{{count}} new language models available",
     "question": "Should the app adopt new models automatically from now on? A new model replaces the older one of the same family; effort and settings are kept.",

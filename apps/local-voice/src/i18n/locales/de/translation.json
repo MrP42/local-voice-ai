@@ -3586,6 +3586,13 @@
     "navExpand": "Menü ausklappen"
   },
   "llmUpdate": {
+    "cli": {
+      "started": "Die Codex-CLI ist zu alt für dieses Modell – sie wird aktualisiert …",
+      "done": "Codex-CLI aktualisiert ({{version}})",
+      "retry": "Bitte den Vorgang jetzt noch einmal starten.",
+      "failed": "Die Codex-CLI konnte nicht aktualisiert werden",
+      "manual": "Die Codex-CLI muss von Hand aktualisiert werden (npm i -g @openai/codex@latest)"
+    },
     "title_one": "Neues Sprachmodell verfügbar",
     "title_other": "{{count}} neue Sprachmodelle verfügbar",
     "question": "Soll die App neue Modelle künftig automatisch übernehmen? Ein neues Modell ersetzt dabei das ältere derselben Familie; Effort und Einstellungen bleiben erhalten.",

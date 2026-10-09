@@ -1295,7 +1295,10 @@ async fn write_blocks(
     if failed.len() == leaves_total {
         return Err(MinutesError::new(
             "llm_failed",
-            format!("kein einziger der {leaves_total} Transkriptbloecke konnte ausgewertet werden"),
+            format!(
+                "kein einziger der {leaves_total} Transkriptbloecke konnte ausgewertet werden{}",
+                crate::managers::llm::cli_update::recent_error_note()
+            ),
         ));
     }
     let gaps: Vec<String> = outcome

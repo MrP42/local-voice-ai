@@ -448,7 +448,17 @@ async fn send_cli(
         cli::call(cli, &binary, &model, system.as_deref(), &user_content)
     })
     .await
-    .map_err(|e| format!("cli_failed: {e}"))??;
+    .map_err(|e| format!("cli_failed: {e}"))?;
+    let reply = match reply {
+        Ok(reply) => reply,
+        Err(e) => {
+            // Ursache merken (fuer die Fehlermeldung des Protokolls) und, wenn
+            // die CLI zu alt ist, das Update anstossen.
+            crate::managers::llm::cli_update::remember_error(&e);
+            crate::managers::llm::cli_update::on_cli_error(cli, &e);
+            return Err(e);
+        }
+    };
     let text = if wants_json {
         strip_code_fence(&reply.text)
     } else {

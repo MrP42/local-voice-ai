@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 import { commands, type ModelUpdate } from "@/bindings";
 import { useSettings } from "@/hooks/useSettings";
 import { modelLabel } from "@/lib/modelNames";
@@ -72,6 +73,35 @@ export const ModelUpdateGate: React.FC = () => {
       window.clearInterval(daily);
     };
   }, [check]);
+
+  // Die Codex-CLI aktualisiert sich selbst, wenn sie ein Modell nicht annimmt
+  // (Backend: managers::llm::cli_update). Hier nur die Rueckmeldung.
+  useEffect(() => {
+    const un = listen<{
+      cli: string;
+      state: "started" | "done" | "failed" | "manual";
+      version: string | null;
+      message: string | null;
+    }>("cli-update", (event) => {
+      const { state, version, message } = event.payload;
+      const id = "cli-update";
+      if (state === "started")
+        toast.loading(t("llmUpdate.cli.started"), { id });
+      else if (state === "done")
+        toast.success(t("llmUpdate.cli.done", { version }), {
+          id,
+          description: t("llmUpdate.cli.retry"),
+          duration: 15000,
+        });
+      else
+        toast.error(t(`llmUpdate.cli.${state}`), {
+          id,
+          description: message ?? undefined,
+          duration: 20000,
+        });
+    });
+    return () => void un.then((off) => off());
+  }, [t]);
 
   const answer = async (choice: "always" | "once" | "never") => {
     setBusy(true);
