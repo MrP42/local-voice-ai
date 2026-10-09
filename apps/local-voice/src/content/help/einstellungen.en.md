@@ -24,7 +24,7 @@ Output device, volume, start and stop sounds.
 
 ## AI models & providers
 
-Which language model the app uses and where it comes from: providers (local, Ollama, cloud, subscriptions), models per provider, rules and budgets. Usage per model is shown in the overview.
+Which language model the app uses and where it comes from: providers (local, Ollama, cloud, subscriptions), models per provider, rules and budgets. After start-up and daily, the app checks whether providers and local services have new models; a new model replaces the older one of the same family (for example Haiku 4.5 by Haiku 5.5). You choose here whether that happens automatically; a right-click on the language model in the footer jumps straight to the provider settings. Usage per model is shown in the overview.
 
 ## General
 

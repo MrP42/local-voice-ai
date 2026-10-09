@@ -20,6 +20,7 @@ import {
   isSidebarSection,
 } from "./components/Sidebar";
 import { WhatsNewGate } from "./components/whats-new";
+import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -360,6 +361,7 @@ function App() {
         className="h-screen flex flex-col select-none cursor-default"
       >
         <WhatsNewGate />
+        <ModelUpdateGate />
         {/* Main content area that takes remaining space */}
         <div className="workspace-shell flex-1 flex overflow-hidden">
           <Sidebar

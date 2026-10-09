@@ -24,7 +24,7 @@ Ausgabegerät, Lautstärke, Start- und Stopp-Töne.
 
 ## KI-Modelle & Anbieter
 
-Welches Sprachmodell die App nutzt und woher es kommt: Anbieter (lokal, Ollama, Cloud, Abos), Modelle je Anbieter, Regelwerk und Budgets. Der Verbrauch je Modell steht in der Übersicht.
+Welches Sprachmodell die App nutzt und woher es kommt: Anbieter (lokal, Ollama, Cloud, Abos), Modelle je Anbieter, Regelwerk und Budgets. Nach dem Start und täglich prüft die App, ob Anbieter und lokale Dienste neue Modelle haben; ein neues Modell ersetzt das ältere derselben Familie (etwa Haiku 4.5 durch Haiku 5.5). Ob das automatisch geschieht, stellst du hier ein; einen Rechtsklick auf das Sprachmodell in der Fußleiste führt direkt zu den Anbieter-Einstellungen. Der Verbrauch je Modell steht in der Übersicht.
 
 ## Allgemein
 

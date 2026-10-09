@@ -113,3 +113,19 @@ Teil 3:
 - **Erkennungsverlauf:** `llm_model_history` (persistiert): je `connection_id:remote_id` Status
   `seen`/`replaced`/`dismissed`. Nur nie gesehene Modelle sind „neu"; ersetzte oder bewusst entfernte tauchen
   nicht erneut auf.
+
+## Umsetzung (09.10.2026) — Abweichungen und Klärungen
+
+- Verlauf `llm_model_history`: Status `seen`, `new`, `replaced`, `absent`. Der erste Durchgang je Verbindung ist eine
+  **Grundlinie** (alles Angebotene gilt als bekannt), sonst wäre jedes Modell einer Altinstallation „neu"; sie läuft
+  VOR dem Claude-Probelauf, damit ein gefundenes Haiku 5.5 danach als neu gilt.
+- Nur Namen mit erkennbarer Version (`claude-<familie>-<major>-<minor>`, `gpt-<version>-<name>`) werden als neu
+  vermerkt; Ollama zusätzlich alle Namen (ein neu gezogenes Modell). API-Anbieter bleiben ohne Hilfsmodelle.
+- `tts_tag_model`, `meeting_model`, `refine_model` verweisen nicht auf `llm_models` und bleiben unangetastet; die
+  Ersetzung zieht nur `llm_active_model_id` und den Spiegel (`sync_legacy_from_llm`) mit.
+- Das neue Modell erbt Limits, Preise, Effort, Fast und Tags des ersetzten (Preise als Obergrenze).
+- Gleichzeitiger Aufruf beim Ersetzen: wie bei einem Wechsel in der Fußleiste wird eine gerade laufende Buchung dem
+  Modell zugeordnet, das beim Antworten aktiv ist; abgefangen wird nur der Zeitpunkt (Start/Tagesprüfung).
+- Schließen des Dialogs ohne Antwort lässt den Fund im Verlauf als `new` stehen; die nächste Prüfung fragt erneut.
+- Probelauf gegen die echte CLI geprüft: `claude-haiku-5-5` antwortet (≈ 0,005 $, 627 Token), `claude-haiku-9-9` liefert
+  „There's an issue with the selected model … may not exist" (is_error, 404) → `absent`.

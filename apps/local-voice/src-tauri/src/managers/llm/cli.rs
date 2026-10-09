@@ -35,6 +35,18 @@ pub const CLAUDE_MODELS: &[&str] = &[
     "claude-sonnet-5-5",
     "claude-haiku-4-5-20251001",
 ];
+/// Claude-Modelle, die ein Probelauf als verfuegbar erkannt hat und die noch
+/// nicht in [`CLAUDE_MODELS`] stehen (`managers::llm::updates`). Der Speicher
+/// liegt hier, weil `Cli::models()` keinen Zugriff auf die Einstellungen hat.
+static CLAUDE_EXTRA: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Setzt die zusaetzlich erkannten Claude-Modelle (ersetzt die bisherigen).
+pub fn set_claude_extra_models(ids: Vec<String>) {
+    if let Ok(mut extra) = CLAUDE_EXTRA.lock() {
+        *extra = ids.into_iter().filter(|i| valid_model_name(i)).collect();
+    }
+}
+
 /// Effort-Stufen von `claude --effort`.
 pub const CLAUDE_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
@@ -211,7 +223,16 @@ impl Cli {
     /// Die Modelle, die diese CLI anbietet (Codex: aus ihrem Katalog).
     pub fn models(self) -> Vec<CliModel> {
         match self {
-            Self::Claude => standard(CLAUDE_MODELS, CLAUDE_EFFORTS),
+            Self::Claude => {
+                let mut models = standard(CLAUDE_MODELS, CLAUDE_EFFORTS);
+                let extra = CLAUDE_EXTRA.lock().map(|e| e.clone()).unwrap_or_default();
+                for id in extra {
+                    if !models.iter().any(|m| m.id == id) {
+                        models.extend(standard(&[id.as_str()], CLAUDE_EFFORTS));
+                    }
+                }
+                models
+            }
             Self::Codex => codex_models_in(codex_home().as_deref()),
         }
     }
@@ -466,6 +487,19 @@ pub fn call(
     system: Option<&str>,
     user: &str,
 ) -> Result<CliReply, String> {
+    call_with_timeout(cli, binary, model, system, user, CALL_TIMEOUT)
+}
+
+/// Wie [`call`] mit eigener Zeitgrenze (der Probelauf fuer neue Modelle
+/// wartet hoechstens Sekunden, nicht Minuten).
+pub fn call_with_timeout(
+    cli: Cli,
+    binary: &Path,
+    model: &str,
+    system: Option<&str>,
+    user: &str,
+    timeout: Duration,
+) -> Result<CliReply, String> {
     // `modell@effort~fast`; auf die Kommandozeile kommt nur, was die Regeln erlaubt.
     let fast = split_fast(model).1;
     let (model, effort) = split_spec(model);
@@ -502,7 +536,7 @@ pub fn call(
             .write_all(stdin_text.as_bytes())
             .map_err(|e| format!("cli_failed: {e}"))?;
     }
-    let output = wait_with_timeout(child, CALL_TIMEOUT)?;
+    let output = wait_with_timeout(child, timeout)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let reply = match cli {
         Cli::Claude => parse_claude(&stdout),

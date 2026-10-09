@@ -287,6 +287,39 @@ async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boole
     return await TAURI_INVOKE("llm_model_offers_fast", { connectionId, remoteId });
 },
 /**
+ * Prueft die Verbindungen auf neue Modelle und uebernimmt sie je nach Einstellung.
+ */
+async llmCheckNewModels() : Promise<Result<ModelCheck, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_check_new_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Antwort auf die Frage nach neuen Modellen: `always`, `once` oder `never`.
+ */
+async llmAnswerModelUpdates(answer: string) : Promise<Result<ModelUpdate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_answer_model_updates", { answer }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stellt `llm_auto_update_models` (`ask`, `on`, `off`).
+ */
+async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_auto_update_models", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
  */
 async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
@@ -5342,6 +5375,14 @@ compliance_profile?: ComplianceProfile;
  */
 llm_default_effort?: string;
 /**
+ * Neue Modelle der Anbieter uebernehmen: `ask`, `on` oder `off`.
+ */
+llm_auto_update_models?: string;
+/**
+ * Erkennungsverlauf der Modelle (`llm_model_history`).
+ */
+llm_model_history?: LlmModelSeen[];
+/**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.
  */
@@ -6676,6 +6717,22 @@ export type LlmDownloadKind = "runtime" | "model"
  * allein mehrdeutig ist: Kontext, Eingabe und Ausgabe sind drei Zahlen.
  * Preise je Million Token; `None` heisst unbekannt, nie null.
  */
+/**
+ * Was die App ueber ein Modell weiss, das ein Anbieter anbietet (`connection_id:remote_id`).
+ * `status`: `seen`, `new`, `replaced`, `dismissed` oder `absent`.
+ */
+export type LlmModelSeen = { key: string; status: string; at?: number; replaced_by?: string | null }
+
+/**
+ * Ein neues Modell, das zur Uebernahme ansteht.
+ */
+export type ModelUpdate = { connection_id: string; connection_label: string; remote_id: string; replaces: string | null; replaces_remote_id: string | null; replaces_active: boolean }
+
+/**
+ * Ergebnis einer Pruefung auf neue Modelle.
+ */
+export type ModelCheck = { mode: string; applied: ModelUpdate[]; pending: ModelUpdate[] }
+
 export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[];
 /**
  * Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex

@@ -252,6 +252,29 @@ pub struct LlmModelConfig {
     pub fast: bool,
 }
 
+/// Was die App ueber ein Modell einer Verbindung weiss, das der Anbieter
+/// anbietet (`connection_id:remote_id`). Nur so unterscheidet sie "neu" von
+/// "kenne ich schon" und von "ersetzt/abgelehnt" -- ein Modell, das nicht in
+/// `llm_models` steht, ist nicht automatisch neu.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+pub struct LlmModelSeen {
+    pub key: String,
+    /// `seen` (bekannt), `new` (neu, noch nicht freigegeben), `replaced`
+    /// (durch ein neueres ersetzt), `dismissed` (abgelehnt), `absent`
+    /// (Kandidat ausprobiert, Anbieter kennt ihn nicht).
+    pub status: String,
+    /// Unix-Sekunden der letzten Aenderung (bei `absent`: wann geprueft).
+    #[serde(default)]
+    pub at: i64,
+    /// Bei `replaced`: der Schluessel des Nachfolgers.
+    #[serde(default)]
+    pub replaced_by: Option<String>,
+}
+
+fn default_llm_auto_update() -> String {
+    "ask".to_string()
+}
+
 fn default_llm_effort() -> String {
     "medium".to_string()
 }
@@ -577,6 +600,14 @@ pub struct AppSettings {
     /// hat (`low` … `max`). Vorgabe `medium`.
     #[serde(default = "default_llm_effort")]
     pub llm_default_effort: String,
+    /// Neue Modelle der Anbieter uebernehmen: `ask` (beim ersten Fund fragen),
+    /// `on` (aelteres derselben Familie ersetzen) oder `off` (nur als "neu"
+    /// kennzeichnen). Siehe `managers::llm::updates`.
+    #[serde(default = "default_llm_auto_update")]
+    pub llm_auto_update_models: String,
+    /// Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
+    #[serde(default)]
+    pub llm_model_history: Vec<LlmModelSeen>,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -1670,6 +1701,8 @@ pub fn get_default_settings() -> AppSettings {
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
         llm_default_effort: default_llm_effort(),
+        llm_auto_update_models: default_llm_auto_update(),
+        llm_model_history: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
