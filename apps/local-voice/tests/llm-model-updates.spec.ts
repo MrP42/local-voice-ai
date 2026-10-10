@@ -90,6 +90,10 @@ async function setup(
             if (cmd === "meetings_is_recording") return false;
             if (cmd === "llm_check_new_models") return check;
             if (cmd === "llm_answer_model_updates") return args?.answer === "never" ? [] : check.pending;
+            if (cmd === "llm_set_cli_auto_update") {
+              settings.cli_auto_update = args?.enabled;
+              return null;
+            }
             if (cmd === "llm_set_auto_update_models") {
               settings.llm_auto_update_models = args?.mode;
               return null;
@@ -111,9 +115,14 @@ const calls = (page: Page) =>
 
 const afterStart = async (page: Page) => {
   await page.goto("/");
+  // Erst wenn die Oberflaeche steht (und damit die Pruefung ihre Uhr gestellt hat).
+  await expect(page.getByRole("button", { name: "Einstellungen", exact: true }).first()).toBeVisible();
   await page.clock.fastForward(25_000);
   // Die Antwort des Backends kommt in Echtzeit; die Uhr danach noch einmal laufen
   // lassen, damit Dialog und Hinweis (Animation) sichtbar werden.
+  await expect
+    .poll(async () => (await calls(page)).some(([c]) => c === "llm_check_new_models"))
+    .toBe(true);
   await page.waitForTimeout(300);
   await page.clock.fastForward(1_000);
 };
@@ -221,4 +230,16 @@ test("die Codex-CLI aktualisiert sich selbst: Hinweise vom Start bis zum Ende", 
   await emit("manual", null, "Node.js wurde nicht gefunden.");
   await expect(page.getByText("von Hand aktualisiert werden")).toBeVisible();
   await expect(page.getByText("Node.js wurde nicht gefunden.")).toBeVisible();
+});
+
+test("die Codex-CLI-Automatik ist an und laesst sich in den Einstellungen abschalten", async ({ page }) => {
+  await setup(page, { mode: "ask", applied: [], pending: [] });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
+  const toggle = page.getByTestId("cli-auto-update");
+  await expect(toggle).toBeChecked();
+  await toggle.evaluate((el: HTMLInputElement) => el.click());
+  const sent = (await calls(page)).filter(([c]) => c === "llm_set_cli_auto_update");
+  expect(sent).toEqual([["llm_set_cli_auto_update", { enabled: false }]]);
 });

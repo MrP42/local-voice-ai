@@ -1720,6 +1720,10 @@
         "title": "Standard-Effort (Abo-Modelle)",
         "description": "Denktiefe für Claude- und ChatGPT-Abo, wenn ein Modell keinen eigenen Effort hat. Höher = gründlicher, aber langsamer und mehr Kontingent."
       },
+      "cliAutoUpdate": {
+        "title": "Codex-CLI selbst aktualisieren",
+        "description": "Lehnt der Server ein Modell von der installierten Codex-CLI ab (z. B. GPT-6.1-Sol), aktualisiert die App die CLI per npm und wiederholt den Aufruf. Aus: die App meldet nur, dass die CLI zu alt ist."
+      },
       "autoUpdate": {
         "title": "Neue Modelle der Anbieter",
         "description": "Die App prüft nach dem Start und täglich, ob Anbieter und lokale Dienste neue Modelle anbieten. Ein neues Modell ersetzt das ältere derselben Familie.",

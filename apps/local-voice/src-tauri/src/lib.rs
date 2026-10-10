@@ -285,7 +285,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // des Fensters brauchen ihn).
     app_handle.manage(meeting_prompt::MeetingPromptState::default());
     // Die Codex-CLI aktualisiert sich selbst, wenn sie ein Modell nicht annimmt.
-    managers::llm::cli_update::init(app_handle.clone());
+    let cli_settings = app_handle.clone();
+    managers::llm::cli_update::init(
+        app_handle.clone(),
+        Arc::new(move || settings::get_settings(&cli_settings).cli_auto_update),
+    );
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -1900,6 +1904,7 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_check_new_models,
             commands::llm::llm_answer_model_updates,
             commands::llm::llm_set_auto_update_models,
+            commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
             commands::llm::llm_model_offers_fast,

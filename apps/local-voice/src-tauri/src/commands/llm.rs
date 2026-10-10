@@ -365,6 +365,16 @@ pub fn llm_answer_model_updates(
     Ok(applied)
 }
 
+/// Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.cli_auto_update = enabled;
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
 /// Stellt die Einstellung `llm_auto_update_models` (`ask`, `on`, `off`).
 #[tauri::command]
 #[specta::specta]

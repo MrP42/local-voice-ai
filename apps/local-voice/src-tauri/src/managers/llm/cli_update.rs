@@ -38,8 +38,16 @@ pub struct CliUpdateEvent {
     pub message: Option<String>,
 }
 
-pub fn init(app: AppHandle) {
+/// Liest die Einstellung `cli_auto_update`. Von aussen gesetzt (wie bei
+/// `managers::usage`): ein Aufruf von `settings::get_settings(&app)` hier
+/// liesse die Test-EXE eine Windows-Bibliothek importieren, die sie nicht
+/// laden kann (STATUS_ENTRYPOINT_NOT_FOUND).
+type AutoUpdateSource = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+static AUTO_UPDATE: OnceLock<AutoUpdateSource> = OnceLock::new();
+
+pub fn init(app: AppHandle, auto_update: AutoUpdateSource) {
     let _ = APP.set(app);
+    let _ = AUTO_UPDATE.set(auto_update);
 }
 
 fn now() -> i64 {
@@ -60,23 +68,53 @@ pub fn may_try(now: i64, last: i64) -> bool {
     last == 0 || now - last >= RETRY_AFTER_SECS
 }
 
-/// Liegt die CLI in einem npm-Ordner (`…\npm\codex.cmd`, `…/npm/bin/codex`)?
+/// Hat npm diese CLI installiert? Windows: `…\npm\codex.cmd` mit dem Paket in
+/// `…\npm\node_modules\@openai\codex`. macOS/Linux: `codex` ist ein Link auf
+/// `…/lib/node_modules/@openai/codex/bin/codex.js` (Homebrew-Node, nvm, npm-Praefix).
 /// Nur dann ist `npm i -g` der richtige Weg, sie zu ersetzen.
 pub fn is_npm_managed(binary: &Path) -> bool {
-    binary
-        .components()
-        .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("npm"))
+    let real = std::fs::canonicalize(binary).unwrap_or_else(|_| binary.to_path_buf());
+    let in_package = |p: &Path| {
+        let parts: Vec<String> = p
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_ascii_lowercase())
+            .collect();
+        parts
+            .windows(2)
+            .any(|w| w[0] == "node_modules" && w[1] == "@openai")
+    };
+    in_package(&real)
+        || binary
+            .parent()
+            .is_some_and(|dir| dir.join("node_modules").join("@openai").join("codex").is_dir())
 }
 
-/// `npm-cli.js` neben der Node-Installation (`<node-ordner>/node_modules/npm/bin`).
+/// `npm-cli.js` zu einer Node-Installation: Windows `<ordner>/node_modules/npm/bin`,
+/// macOS/Linux `<praefix>/lib/node_modules/npm/bin` (Node liegt in `<praefix>/bin`).
 pub fn npm_cli_js(node: &Path) -> Option<PathBuf> {
-    let js = node
-        .parent()?
-        .join("node_modules")
-        .join("npm")
-        .join("bin")
-        .join("npm-cli.js");
-    js.is_file().then_some(js)
+    let mut nodes = vec![node.to_path_buf()];
+    if let Ok(real) = std::fs::canonicalize(node) {
+        nodes.push(real);
+    }
+    for n in nodes {
+        let Some(dir) = n.parent() else { continue };
+        let tail = ["node_modules", "npm", "bin", "npm-cli.js"];
+        let windows = tail.iter().fold(dir.to_path_buf(), |p, c| p.join(c));
+        let unix = tail
+            .iter()
+            .fold(dir.join("..").join("lib"), |p, c| p.join(c));
+        for js in [windows, unix] {
+            if js.is_file() {
+                return Some(js);
+            }
+        }
+    }
+    None
+}
+
+/// Darf die App die CLI von sich aus aktualisieren? (Einstellung `cli_auto_update`)
+fn auto_update_enabled() -> bool {
+    AUTO_UPDATE.get().map(|read| read()).unwrap_or(true)
 }
 
 fn emit(state: &str, version: Option<String>, message: Option<String>) {
@@ -93,29 +131,58 @@ fn emit(state: &str, version: Option<String>, message: Option<String>) {
     }
 }
 
-/// Wird mit dem Fehler eines CLI-Aufrufs gerufen; stoesst bei "CLI zu alt" das
-/// Update an (im Hintergrund, nie auf dem Antwortpfad).
-pub fn on_cli_error(which: Cli, err: &str) {
-    if which == Cli::Codex && is_cli_too_old(err) {
-        start_codex_update();
-    }
+/// Ergebnis des letzten Updates (fuer Aufrufe, die auf ein laufendes Update warten).
+static LAST_OK: AtomicBool = AtomicBool::new(false);
+
+/// Hat dieser Fehler mit einer zu alten Codex-CLI zu tun?
+pub fn on_cli_error(which: Cli, err: &str) -> bool {
+    which == Cli::Codex && is_cli_too_old(err)
 }
 
-pub fn start_codex_update() {
+/// Aktualisiert die Codex-CLI und kehrt erst danach zurueck (blockiert, bis zu
+/// fuenf Minuten -- in einem Blocking-Thread rufen). `true`: die CLI ist jetzt
+/// neu, der Aufruf lohnt einen zweiten Versuch. Laeuft schon ein Update, wartet
+/// der Aufruf darauf; ein Versuch je sechs Stunden, sonst `false`.
+pub fn ensure_codex_updated() -> bool {
+    if !auto_update_enabled() {
+        emit(
+            "manual",
+            None,
+            Some("Das automatische Aktualisieren ist in den Einstellungen ausgeschaltet.".to_string()),
+        );
+        return false;
+    }
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        let started = std::time::Instant::now();
+        while RUNNING.load(Ordering::SeqCst) && started.elapsed() < NPM_TIMEOUT {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        return LAST_OK.load(Ordering::SeqCst);
+    }
     let t = now();
-    if !may_try(t, LAST_TRY.load(Ordering::SeqCst)) || RUNNING.swap(true, Ordering::SeqCst) {
-        return;
+    if !may_try(t, LAST_TRY.load(Ordering::SeqCst)) {
+        RUNNING.store(false, Ordering::SeqCst);
+        return false;
     }
     LAST_TRY.store(t, Ordering::SeqCst);
-    std::thread::spawn(|| {
-        emit("started", None, None);
-        match update_codex() {
-            Ok(version) => emit("done", Some(version), None),
-            Err(Manual(why)) => emit("manual", None, Some(why)),
-            Err(Failed(why)) => emit("failed", None, Some(why)),
+    emit("started", None, None);
+    let ok = match update_codex() {
+        Ok(version) => {
+            emit("done", Some(version), None);
+            true
         }
-        RUNNING.store(false, Ordering::SeqCst);
-    });
+        Err(Manual(why)) => {
+            emit("manual", None, Some(why));
+            false
+        }
+        Err(Failed(why)) => {
+            emit("failed", None, Some(why));
+            false
+        }
+    };
+    LAST_OK.store(ok, Ordering::SeqCst);
+    RUNNING.store(false, Ordering::SeqCst);
+    ok
 }
 
 enum Outcome {
@@ -218,22 +285,35 @@ mod tests {
 
     #[test]
     fn only_npm_installations_are_updated_by_npm() {
-        assert!(is_npm_managed(Path::new(r"C:\Users\x\AppData\Roaming\npm\codex.cmd")));
-        assert!(is_npm_managed(Path::new("/usr/lib/npm/bin/codex")));
+        // macOS/Linux: der Link zeigt in das npm-Paket (hier ohne echte Datei: Pfad zaehlt).
+        assert!(is_npm_managed(Path::new("/usr/local/lib/node_modules/@openai/codex/bin/codex.js")));
+        assert!(!is_npm_managed(Path::new("/opt/homebrew/Caskroom/codex/codex")));
         assert!(!is_npm_managed(Path::new(r"C:\Tools\codex\codex.exe")));
-        assert!(!is_npm_managed(Path::new(r"C:\Users\x\.local\bin\codex")));
+        // Windows: codex.cmd neben dem Paket im npm-Ordner.
+        let dir = std::env::temp_dir().join(format!("lv-npm-managed-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("node_modules").join("@openai").join("codex")).unwrap();
+        assert!(is_npm_managed(&dir.join("codex.cmd")));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn npm_cli_is_looked_up_next_to_node() {
-        let dir = std::env::temp_dir().join(format!("lv-npm-test-{}", std::process::id()));
-        let bin = dir.join("node_modules").join("npm").join("bin");
+    fn npm_cli_is_found_in_the_windows_and_the_unix_layout() {
+        let base = std::env::temp_dir().join(format!("lv-npm-test-{}", std::process::id()));
+        // Windows: node.exe neben node_modules\npm
+        let win = base.join("win");
+        let bin = win.join("node_modules").join("npm").join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        let node = dir.join("node.exe");
-        assert_eq!(npm_cli_js(&node), None, "ohne npm-cli.js");
+        assert_eq!(npm_cli_js(&win.join("node.exe")), None, "ohne npm-cli.js");
         std::fs::write(bin.join("npm-cli.js"), "").unwrap();
-        assert_eq!(npm_cli_js(&node), Some(bin.join("npm-cli.js")));
-        let _ = std::fs::remove_dir_all(dir);
+        assert!(npm_cli_js(&win.join("node.exe")).is_some());
+        // macOS/Linux: <praefix>/bin/node, <praefix>/lib/node_modules/npm
+        let unix = base.join("unix");
+        std::fs::create_dir_all(unix.join("bin")).unwrap();
+        let ubin = unix.join("lib").join("node_modules").join("npm").join("bin");
+        std::fs::create_dir_all(&ubin).unwrap();
+        std::fs::write(ubin.join("npm-cli.js"), "").unwrap();
+        assert!(npm_cli_js(&unix.join("bin").join("node")).is_some());
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

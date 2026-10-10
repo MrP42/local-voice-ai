@@ -605,6 +605,11 @@ pub struct AppSettings {
     /// kennzeichnen). Siehe `managers::llm::updates`.
     #[serde(default = "default_llm_auto_update")]
     pub llm_auto_update_models: String,
+    /// Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`), wenn der
+    /// Server ein Modell von der installierten Version ablehnt
+    /// (`managers::llm::cli_update`). Standard an.
+    #[serde(default = "default_true")]
+    pub cli_auto_update: bool,
     /// Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
     #[serde(default)]
     pub llm_model_history: Vec<LlmModelSeen>,
@@ -1702,6 +1707,7 @@ pub fn get_default_settings() -> AppSettings {
         compliance_profile: Default::default(),
         llm_default_effort: default_llm_effort(),
         llm_auto_update_models: default_llm_auto_update(),
+        cli_auto_update: true,
         llm_model_history: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),

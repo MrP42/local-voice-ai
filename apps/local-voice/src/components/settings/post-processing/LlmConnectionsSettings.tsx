@@ -241,6 +241,17 @@ export const LlmConnectionsSettings: React.FC = () => {
             ))}
           </select>
         </SettingContainer>
+        <ToggleSwitch
+          checked={(getSetting("cli_auto_update") ?? true) as boolean}
+          onChange={(checked) =>
+            void run(() => commands.llmSetCliAutoUpdate(checked))
+          }
+          testId="cli-auto-update"
+          label={t("settings.llm.cliAutoUpdate.title")}
+          description={t("settings.llm.cliAutoUpdate.description")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
       </SettingsGroup>
 
       <SettingsGroup

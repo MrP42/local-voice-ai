@@ -1,10 +1,10 @@
-# Handoff 09.10.2026: Einstellungen nach Thema, Fußleisten-Sprung, Modell-Updates (0.21.12)
+# Handoff 09.10.2026: Einstellungen nach Thema, Fußleisten-Sprung, Modell-Updates (0.21.13)
 
 ## Stand
 - Zweig `feat/einstellungen-themen` (lokal, **nicht gepusht**, kein PR), aufgesetzt auf `feat/protokoll-kopf-kompakt` (#81, Kette #76→#81).
 - Commits: Spezifikation + Codex-Review → Teil 1 → Teil 2 → Teil 3 → Version 0.21.10.
 - Spezifikation: `docs/superpowers/specs/2026-10-09-einstellungen-themen-modell-updates-design.md` (inkl. „Festlegungen aus dem Codex-Review“ und „Umsetzung“).
-- Installer 0.21.12 auf `D:\lv-build\int` gebaut; Kopie samt `.notes.md` im App-Update-Ordner (`…\target\release\bundle\nsis\`).
+- Installer 0.21.13 auf `D:\lv-build\int` gebaut; Kopie samt `.notes.md` im App-Update-Ordner (`…\target\release\bundle\nsis\`).
 
 ## Was drin ist
 1. **Reiter nach Thema:** Eingabe (`input`: Diktat + Mikrofon + Textverbesserungs-Kürzel/Prompts + Besprechungen + Test) · Ausgabe (`output`: Vorlesen + Töne) · KI-Modelle & Anbieter (`models`) · Allgemein (`app`) · Über. Alte gespeicherte IDs werden umgesetzt (`LEGACY_TABS` in `AppSettings.tsx`). `AGENTS.md`-Tabelle, Hilfe (de/en), Tests angepasst.
@@ -31,3 +31,9 @@
 - 0.21.11: Claude-Probelauf prüft alle 12 Kandidaten in einem Lauf, reihum über die Familien (Haiku 5.5 wurde danach gefunden und ersetzte Haiku 4.5, im Verbrauchsprotokoll sichtbar); Suchfeld in der Modellauswahl der Fußleiste.
 - 0.21.12: **GPT-6/6.1 scheiterten an der alten Codex-CLI 0.153.3** (`cli_model_not_in_plan`, 10 von 10 Aufrufen in `usage.db`). CLI per `npm i -g @openai/codex@latest` auf 0.162.1 gehoben (`gpt-6.1-sol` antwortet). Die App stößt das Update jetzt selbst an (`managers/llm/cli_update.rs`: bei `cli_model_not_in_plan`, nur npm-Installation, ohne Shell über `node npm-cli.js`, höchstens alle 6 h, Ereignis `cli-update` → Hinweise in `ModelUpdateGate.tsx`); die Protokoll-Fehlermeldung hängt die Ursache an (`recent_error_note`).
 - Offen: automatischer Wiederholversuch des fehlgeschlagenen Aufrufs nach dem Update (bisher: Hinweis „bitte erneut starten“); kein Schalter zum Abschalten der Auto-Aktualisierung.
+
+## Nachtrag 10.10. (0.21.13)
+- Nach dem CLI-Update wiederholt `send_cli` den Aufruf einmal selbst (`cli_update::ensure_codex_updated`, wartet auf ein laufendes Update). Schalter `cli_auto_update` (Einstellungen → KI-Modelle & Anbieter, Standard an; Befehl `llm_set_cli_auto_update`).
+- Mac-tauglich: npm-Erkennung über `node_modules/@openai`-Pfad (Link-Auflösung) und `npm-cli.js` im Unix-Layout (`<praefix>/lib/node_modules/npm`). Lokal nicht auf macOS gebaut; die DMG (arm64 + x64) entsteht über `.github/workflows/release-macos.yml` beim Tag `app-v*` (oder `workflow_dispatch`) — erst nach Abnahme/Merge/Tag-Freigabe.
+- Falle: `settings::get_settings(&app)` in einem Modul macht die Test-EXE unlauffähig (0xc0000139) → Einstellung von außen per Closure hereinreichen (siehe `cli_update::init`).
+- Playwright-Specs mit gestellter Uhr: erst warten, bis die Oberfläche steht, dann `fastForward` (sonst wackelig unter Last).

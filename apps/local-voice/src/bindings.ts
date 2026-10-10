@@ -309,6 +309,17 @@ async llmAnswerModelUpdates(answer: string) : Promise<Result<ModelUpdate[], stri
 }
 },
 /**
+ * Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+ */
+async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stellt `llm_auto_update_models` (`ask`, `on`, `off`).
  */
 async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
@@ -5378,6 +5389,10 @@ llm_default_effort?: string;
  * Neue Modelle der Anbieter uebernehmen: `ask`, `on` oder `off`.
  */
 llm_auto_update_models?: string;
+/**
+ * Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`).
+ */
+cli_auto_update?: boolean;
 /**
  * Erkennungsverlauf der Modelle (`llm_model_history`).
  */
