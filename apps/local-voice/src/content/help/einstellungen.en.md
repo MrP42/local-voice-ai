@@ -1,12 +1,12 @@
 # Settings
 
-Every setting has a tab. What you choose while working, such as model or voice, is not here but in the footer or on the page itself.
+The tabs are sorted by topic: Input, Output, AI models & providers, General. What you choose while working, such as model or voice, is not here but in the footer or on the page itself.
 
-## Dictation
+## Input
 
-Shortcuts, push-to-talk or toggle, voice activity detection, custom words, paste method and clipboard behaviour. Plus the transcription language and the model for meetings.
+Shortcuts, push-to-talk or toggle, voice activity detection, custom words, paste method and clipboard behaviour. Plus the microphone (device, level), the prompts for AI text improvement, the transcription language and the model for meetings.
 
-## Read aloud
+## Output
 
 Maximum characters, volume, speed, export format. Engine and voice are chosen on the Read aloud page in the voice list.
 
@@ -18,13 +18,13 @@ With Fish Speech set up, the folder and port, idle stop and turbo mode appear to
 <!--/if:nofish-->
 
 
-## Microphone & sounds
+### Sounds and signals
 
-Input device, output device, level, start and stop sounds, mute while recording.
+Output device, volume, start and stop sounds.
 
-## AI text improvement
+## AI models & providers
 
-Post-processing of dictation via a language model: providers (local, Ollama, cloud), models per provider, prompts and budgets. Usage per model is shown in the overview.
+Which language model the app uses and where it comes from: providers (local, Ollama, cloud, subscriptions), models per provider, rules and budgets. After start-up and daily, the app checks whether providers and local services have new models; a new model replaces the older one of the same family (for example Haiku 4.5 by Haiku 5.5). You choose here whether that happens automatically; a right-click on the language model in the footer jumps straight to the provider settings. Usage per model is shown in the overview.
 
 ## General
 

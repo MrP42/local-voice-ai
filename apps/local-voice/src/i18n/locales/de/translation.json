@@ -1576,6 +1576,9 @@
     "app": {
       "tabs": {
         "app": "Allgemein",
+        "input": "Eingabe",
+        "output": "Ausgabe",
+        "models": "KI-Modelle & Anbieter",
         "dictation": "Diktat",
         "sound": "Mikrofon & Töne",
         "readAloud": "Vorlesen",
@@ -1632,6 +1635,7 @@
         "loadModels": "Modelle laden",
         "loading": "Lädt…",
         "remoteEmpty": "Der Anbieter hat keine Modelle gemeldet.",
+        "newBadge": "neu",
         "released": "Freigegebene Modelle",
         "releaseHint": "Nur freigegebene Modelle erscheinen in der Auswahl der App.",
         "releasedCount_one": "{{count}} freigegeben",
@@ -1715,6 +1719,19 @@
       "defaultEffort": {
         "title": "Standard-Effort (Abo-Modelle)",
         "description": "Denktiefe für Claude- und ChatGPT-Abo, wenn ein Modell keinen eigenen Effort hat. Höher = gründlicher, aber langsamer und mehr Kontingent."
+      },
+      "cliAutoUpdate": {
+        "title": "Codex-CLI selbst aktualisieren",
+        "description": "Lehnt der Server ein Modell von der installierten Codex-CLI ab (z. B. GPT-6.1-Sol), aktualisiert die App die CLI per npm und wiederholt den Aufruf. Aus: die App meldet nur, dass die CLI zu alt ist."
+      },
+      "autoUpdate": {
+        "title": "Neue Modelle der Anbieter",
+        "description": "Die App prüft nach dem Start und täglich, ob Anbieter und lokale Dienste neue Modelle anbieten. Ein neues Modell ersetzt das ältere derselben Familie.",
+        "modes": {
+          "ask": "Beim nächsten Fund fragen",
+          "on": "Automatisch übernehmen",
+          "off": "Nur als „neu“ kennzeichnen"
+        }
       }
     }
   },
@@ -3572,7 +3589,33 @@
     "navCollapse": "Menü einklappen",
     "navExpand": "Menü ausklappen"
   },
+  "llmUpdate": {
+    "cli": {
+      "started": "Die Codex-CLI ist zu alt für dieses Modell – sie wird aktualisiert …",
+      "done": "Codex-CLI aktualisiert ({{version}})",
+      "retry": "Bitte den Vorgang jetzt noch einmal starten.",
+      "failed": "Die Codex-CLI konnte nicht aktualisiert werden",
+      "manual": "Die Codex-CLI muss von Hand aktualisiert werden (npm i -g @openai/codex@latest)"
+    },
+    "title_one": "Neues Sprachmodell verfügbar",
+    "title_other": "{{count}} neue Sprachmodelle verfügbar",
+    "question": "Soll die App neue Modelle künftig automatisch übernehmen? Ein neues Modell ersetzt dabei das ältere derselben Familie; Effort und Einstellungen bleiben erhalten.",
+    "replacesActive": "ersetzt das aktive Modell {{old}}",
+    "replacesInList": "ersetzt {{old}} in der Liste",
+    "isNew": "ist neu und wird freigegeben",
+    "always": "Ja, immer",
+    "once": "Nur dieses Mal",
+    "never": "Nein, ich wähle selbst",
+    "close": "Später fragen",
+    "applied_one": "Neues Sprachmodell übernommen",
+    "applied_other": "{{count}} neue Sprachmodelle übernommen",
+    "replaces": "{{model}} ersetzt {{old}}",
+    "added": "{{model}} freigegeben"
+  },
   "llmSelector": {
+    "search": "Modell suchen …",
+    "noMatch": "Kein Modell gefunden",
+    "providerSettings": "Anbieter-Einstellungen …",
     "title": "Sprachmodell",
     "none": "Kein Sprachmodell",
     "loading": "{{name}} lädt …",

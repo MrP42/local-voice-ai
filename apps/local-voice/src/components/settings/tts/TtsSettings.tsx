@@ -1695,7 +1695,7 @@ export const TtsSettings = () => {
                             ]
                           : []),
                         // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
-                        // Einstellungen -> Vorlesen.
+                        // Einstellungen -> Ausgabe.
                         { value: "@manage", label: t("tts.voices.manage") },
                       ]}
                       onChange={(value) => {
@@ -1703,7 +1703,7 @@ export const TtsSettings = () => {
                         if (value === "@manage") {
                           window.localStorage.setItem(
                             "lva.ui.settings.tab",
-                            "readaloud",
+                            "output",
                           );
                           window.dispatchEvent(
                             new CustomEvent("lv-navigate", {

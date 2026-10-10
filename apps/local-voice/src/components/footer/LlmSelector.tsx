@@ -11,6 +11,7 @@ import {
 import { useSettings } from "../../hooks/useSettings";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
 import { modelLabel } from "@/lib/modelNames";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 import {
   COMPLIANCE_CHANGED,
   notifyComplianceChanged,
@@ -44,6 +45,12 @@ export const LlmSelector: React.FC = () => {
   const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
   const [ollamaBusy, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
+  /** Rechtsklick auf das Modellfeld: ein Menue mit dem Sprung zu den Anbietern. */
+  const [contextAt, setContextAt] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  /** Suchtext im Menue: filtert beim Tippen nach Name, Kennung und Verbindung. */
+  const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
   const { byModel, refresh: refreshCompliance } = useComplianceStore();
@@ -68,6 +75,16 @@ export const LlmSelector: React.FC = () => {
   }, [connections, models]);
 
   const active = selectable.find((s) => s.model.id === activeId) ?? null;
+
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? selectable.filter(({ model, connection }) =>
+        [modelLabel(model.remote_id, model.label), model.remote_id, connection.label]
+          .join(" ")
+          .toLowerCase()
+          .includes(needle),
+      )
+    : selectable;
   const defaultEffort = (getSetting("llm_default_effort") ??
     "medium") as string;
   const isCli = (c: LlmConnection) =>
@@ -237,6 +254,32 @@ export const LlmSelector: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!contextAt) return;
+    const close = () => setContextAt(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [contextAt]);
+
+  const openProviderSettings = () => {
+    setOpen(false);
+    setContextAt(null);
+    openSettingsTab("models", "connections");
+  };
+
+  useEffect(() => {
+    setQuery("");
+  }, [open]);
+
+  useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) setOpen(false);
@@ -363,6 +406,11 @@ export const LlmSelector: React.FC = () => {
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setOpen(false);
+          setContextAt({ x: event.clientX, y: event.clientY });
+        }}
         className="flex items-center gap-2 hover:text-text/80 transition-colors"
         title={title ?? t("llmSelector.title")}
         aria-label={t("llmSelector.title")}
@@ -400,17 +448,75 @@ export const LlmSelector: React.FC = () => {
           />
         </svg>
       </button>
+      {contextAt && (
+        <div
+          className="fixed z-50 min-w-48 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1"
+          style={{
+            left: contextAt.x,
+            bottom: window.innerHeight - contextAt.y,
+          }}
+          role="menu"
+          onMouseDown={(event) => event.stopPropagation()}
+          data-llm-context-menu
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={openProviderSettings}
+            className="w-full px-3 py-2 text-start text-sm text-text/80 hover:bg-mid-gray/10"
+            data-llm-provider-settings
+          >
+            {t("llmSelector.providerSettings")}
+          </button>
+        </div>
+      )}
       {open && (
         <div
           className="absolute bottom-full start-0 mb-2 w-72 max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
           role="menu"
         >
+          {selectable.length > 0 && (
+            <div className="sticky top-0 z-10 -mt-2 mb-1 bg-background px-3 pb-2 pt-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    if (query) {
+                      e.stopPropagation();
+                      setQuery("");
+                    } else setOpen(false);
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    const first = visible.find(
+                      ({ model }) =>
+                        byModel[model.id]?.verdict !== "blocked",
+                    );
+                    if (first) void choose(first.model.id);
+                  }
+                }}
+                autoFocus
+                placeholder={t("llmSelector.search")}
+                aria-label={t("llmSelector.search")}
+                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+                data-llm-search
+              />
+            </div>
+          )}
           {selectable.length === 0 ? (
             <div className="px-3 py-2 text-sm text-text/60">
               {t("llmSelector.empty")}
             </div>
+          ) : visible.length === 0 ? (
+            <div
+              className="px-3 py-2 text-sm text-text/60"
+              data-llm-no-match
+            >
+              {t("llmSelector.noMatch")}
+            </div>
           ) : (
-            selectable.map(({ model, connection }) => {
+            visible.map(({ model, connection }) => {
               const assessment = byModel[model.id];
               // Gesperrt: sichtbar mit Grund, aber nicht waehlbar.
               const blocked = assessment?.verdict === "blocked";
@@ -516,6 +622,15 @@ export const LlmSelector: React.FC = () => {
               </button>
             </div>
           )}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={openProviderSettings}
+            className="w-full px-3 py-2 mt-1 border-t border-mid-gray/20 text-start text-sm text-text/70 hover:bg-mid-gray/10"
+            data-llm-provider-settings-link
+          >
+            {t("llmSelector.providerSettings")}
+          </button>
         </div>
       )}
     </div>

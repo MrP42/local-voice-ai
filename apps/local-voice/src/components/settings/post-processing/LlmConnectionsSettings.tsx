@@ -4,6 +4,7 @@ import {
   commands,
   type LlmConnection,
   type LlmModelConfig,
+  type LlmModelSeen,
   type PostProcessProvider,
 } from "@/bindings";
 import {
@@ -209,9 +210,54 @@ export const LlmConnectionsSettings: React.FC = () => {
             ))}
           </select>
         </SettingContainer>
+        <SettingContainer
+          title={t("settings.llm.autoUpdate.title")}
+          description={t("settings.llm.autoUpdate.description")}
+          descriptionMode="tooltip"
+          layout="horizontal"
+          grouped={true}
+        >
+          <select
+            value={(getSetting("llm_auto_update_models") ?? "ask") as string}
+            onChange={(e) =>
+              void run(async () => {
+                const result = await commands.llmSetAutoUpdateModels(
+                  e.target.value,
+                );
+                // Auf "automatisch" gestellt: gleich nachsehen, was schon wartet.
+                if (result.status === "ok" && e.target.value === "on")
+                  await commands.llmCheckNewModels();
+                return result;
+              })
+            }
+            className="w-72 rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+            data-testid="auto-update-models"
+            aria-label={t("settings.llm.autoUpdate.title")}
+          >
+            {["ask", "on", "off"].map((mode) => (
+              <option key={mode} value={mode}>
+                {t(`settings.llm.autoUpdate.modes.${mode}`)}
+              </option>
+            ))}
+          </select>
+        </SettingContainer>
+        <ToggleSwitch
+          checked={(getSetting("cli_auto_update") ?? true) as boolean}
+          onChange={(checked) =>
+            void run(() => commands.llmSetCliAutoUpdate(checked))
+          }
+          testId="cli-auto-update"
+          label={t("settings.llm.cliAutoUpdate.title")}
+          description={t("settings.llm.cliAutoUpdate.description")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.llm.connections.title")}>
+      <SettingsGroup
+        title={t("settings.llm.connections.title")}
+        anchor="connections"
+      >
         <div className="px-4 py-3 space-y-3">
           {error && (
             <p className="text-sm text-red-500 break-words" role="alert">
@@ -282,6 +328,13 @@ const ConnectionRow: React.FC<RowProps> = ({
   const enabled = connection.enabled !== false;
   const keyless = KEYLESS_KINDS.has(connection.kind);
   const released = new Set(models.map((m) => m.remote_id));
+  const { getSetting } = useSettings();
+  // Vom Anbieter neu angeboten, aber noch nicht freigegeben (Pruefung beim Start).
+  const history = (getSetting("llm_model_history") ?? []) as LlmModelSeen[];
+  const isNew = (remoteId: string) =>
+    history.some(
+      (h) => h.key === `${connection.id}:${remoteId}` && h.status === "new",
+    );
 
   const upsert = (patch: Partial<LlmConnection>) =>
     run(() => commands.llmUpsertConnection({ ...connection, ...patch }));
@@ -539,6 +592,13 @@ const ConnectionRow: React.FC<RowProps> = ({
                       onChange={(e) => void release(id, e.target.checked)}
                     />
                     <span className="truncate">{id}</span>
+                    {!released.has(id) && isNew(id) && (
+                      <span data-new-model={id}>
+                        <Badge variant="success">
+                          {t("settings.llm.connections.newBadge")}
+                        </Badge>
+                      </span>
+                    )}
                   </label>
                 </li>
               ))}

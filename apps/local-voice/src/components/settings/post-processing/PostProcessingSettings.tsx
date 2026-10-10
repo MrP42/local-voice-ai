@@ -427,9 +427,12 @@ export const PostProcessingSettingsPrompts = React.memo(
 );
 PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
+/**
+ * Reiter "KI-Modelle & Anbieter": welches Sprachmodell die App nutzt und
+ * woher es kommt. Was mit dem Diktat geschieht (Kuerzel, Prompts), steht
+ * unter Eingabe -- siehe `TextEnhancementGroups`.
+ */
 export const PostProcessingSettings: React.FC = () => {
-  const { t } = useTranslation();
-
   // Kein Aus-Schalter mehr: die KI-Textverbesserung ist Kernfunktion. Ohne
   // sie gab es weder Zusammenfassung noch Uebersetzung noch Protokoll, und
   // der Schalter versteckte obendrein die ganze Anbieter-Einrichtung. Was
@@ -441,7 +444,16 @@ export const PostProcessingSettings: React.FC = () => {
       <LlmConnectionsSettings />
 
       <UsageOverview />
+    </div>
+  );
+};
 
+/** Kuerzel und Prompts der Textverbesserung -- Teil des Reiters "Eingabe". */
+export const TextEnhancementGroups: React.FC = () => {
+  const { t } = useTranslation();
+
+  return (
+    <>
       <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
         <ShortcutInput
           shortcutId="transcribe_with_post_process"
@@ -453,6 +465,6 @@ export const PostProcessingSettings: React.FC = () => {
       <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
         <PostProcessingSettingsPrompts />
       </SettingsGroup>
-    </div>
+    </>
   );
 };

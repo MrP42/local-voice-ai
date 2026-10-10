@@ -8,12 +8,14 @@
 
 pub mod app_usage;
 pub mod cli;
+pub mod cli_update;
 pub mod context;
 pub mod estimate;
 pub mod external;
 pub mod resources;
 pub mod runtime;
 pub mod server;
+pub mod updates;
 pub mod vision;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
