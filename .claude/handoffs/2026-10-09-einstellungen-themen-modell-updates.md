@@ -37,3 +37,9 @@
 - Mac-tauglich: npm-Erkennung über `node_modules/@openai`-Pfad (Link-Auflösung) und `npm-cli.js` im Unix-Layout (`<praefix>/lib/node_modules/npm`). Lokal nicht auf macOS gebaut; die DMG (arm64 + x64) entsteht über `.github/workflows/release-macos.yml` beim Tag `app-v*` (oder `workflow_dispatch`) — erst nach Abnahme/Merge/Tag-Freigabe.
 - Falle: `settings::get_settings(&app)` in einem Modul macht die Test-EXE unlauffähig (0xc0000139) → Einstellung von außen per Closure hereinreichen (siehe `cli_update::init`).
 - Playwright-Specs mit gestellter Uhr: erst warten, bis die Oberfläche steht, dann `fastForward` (sonst wackelig unter Last).
+
+## Nachtrag 12.10. (0.21.14, PR #83 auf #82)
+- Zweig `feat/vorlesen-uebersetzung`: Übersetzung/Zusammenfassung mit Fortschritt + Abbrechen (`tts-transform-progress`, `tts_transform_cancel`), Menü in allen Reitern, Sprechermarken/Tags als Platzhalter geschützt (`translator::translate_blocks`), Fenster „Sprecher tauschen“ (`lib/voices/speakerSwap.ts`, `SpeakerSwapDialog.tsx`), Übersetzungs-Cache-Schlüssel v2.
+- Ursache „Fish statt Thorsten / kein Sprecherwechsel im Englischen“: alte Übersetzung hatte `<Female narrator>`/`<Male narrator>` (unbekannte Sprecher) und der Übersetzungsreiter stand auf „Skript mit Sprechern“.
+- Installer 0.21.14 im App-Update-Ordner. Offen: Abnahme mit echten englischen Fish-Stimmen (Stimmen brauchen `language` = en-*), Merge der Kette #76–#83, Release-Tag (macht auch die Mac-DMG).
+- Build-Ordner: `D:\lv-build\int` (Prüf-/Bau-Baum, groß; bleibt bis zum Merge der Kette, danach aufräumen).
