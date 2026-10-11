@@ -53,6 +53,14 @@ import {
 } from "@/lib/voices/scriptCheck";
 import { useTagProvider } from "./tags/tagProvider";
 import { useSpeakerProvider, useSpeakers } from "./speakers";
+import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
+import {
+  applySwap,
+  speakersInText,
+  suggestSwap,
+  type LangVoice,
+} from "@/lib/voices/speakerSwap";
+import { voiceColor } from "@/lib/voices/palette";
 import { TagPalette } from "./tags";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
@@ -99,6 +107,9 @@ const formatEta = (seconds: number) => {
   }
   return `${minutes}:${secs}`;
 };
+
+/** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
+const TRANSFORM_CANCELLED = "transform_cancelled";
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -231,6 +242,24 @@ export const TtsSettings = () => {
   const [dictating, setDictating] = useState(false);
   const [startingSeconds, setStartingSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
+  /** Fortschritt von Übersetzung/Zusammenfassung (Backend: Block für Block). */
+  const [transformProgress, setTransformProgress] = useState<{
+    kind: "translation" | "summary";
+    done: number;
+    total: number;
+  } | null>(null);
+  useEffect(() => {
+    const un = listen<{
+      kind: "translation" | "summary";
+      done: number;
+      total: number;
+    }>("tts-transform-progress", (e) => setTransformProgress(e.payload));
+    return () => void un.then((off) => off());
+  }, []);
+  /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [langVoices, setLangVoices] = useState<LangVoice[]>([]);
+  const [swapInitial, setSwapInitial] = useState<Record<string, string>>({});
   /** Der Vorlesetext wurde an der Zeichengrenze gekappt. */
   const [truncated, setTruncated] = useState<{
     limit: number;
@@ -1060,14 +1089,69 @@ export const TtsSettings = () => {
     if (!text.trim()) return;
     setLastError(null);
     setTranslating(true);
+    setTransformProgress(null);
     const result = await commands.ttsTranslate(text, targetLang);
     setTranslating(false);
+    setTransformProgress(null);
     if (result.status === "error") {
-      setLastError(result.error);
+      if (result.error === TRANSFORM_CANCELLED) {
+        toast.info(t("tts.transform.cancelled"));
+      } else {
+        setLastError(result.error);
+      }
       return;
     }
     setTranslation(result.data);
     setTab("translation");
+    // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
+    // vorschlagen, sobald es Sprecher gibt.
+    if (speakersInText(result.data, speakers).length > 0) {
+      void openSpeakerSwap(result.data);
+    }
+  };
+
+  const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
+  /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
+  const openSpeakerSwap = async (source: string = translation ?? "") => {
+    const infos = await commands.ttsListVoiceInfos().catch(() => []);
+    const voices: LangVoice[] = infos.map((info) => ({
+      id: info.id,
+      displayName: info.meta.display_name,
+      color: voiceColor(info.meta.color),
+      language: info.meta.language ?? "",
+    }));
+    setLangVoices(voices);
+    const sources = speakersInText(source, voices);
+    if (sources.length === 0) {
+      toast.info(t("tts.speakerSwap.none"));
+      return;
+    }
+    let stored: Record<string, string> = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(swapKey) ?? "{}");
+    } catch {
+      stored = {};
+    }
+    const suggested = suggestSwap(sources, voices, targetLangCode(targetLang));
+    const initial: Record<string, string> = {};
+    for (const s of sources) {
+      const keep = stored[s.id];
+      initial[s.id] =
+        keep && voices.some((v) => v.id === keep) ? keep : suggested[s.id];
+    }
+    setSwapInitial(initial);
+    setSwapOpen(true);
+  };
+
+  const applySpeakerSwap = (mapping: Record<string, string>) => {
+    try {
+      localStorage.setItem(swapKey, JSON.stringify(mapping));
+    } catch {
+      /* gemerkt wird nur zur Bequemlichkeit */
+    }
+    setTranslation((current) => applySwap(current ?? "", mapping, langVoices));
+    // Die Übersetzung liest mit ihren Sprechern ("Skript mit Sprechern").
+    setTabVoices((v) => ({ ...v, translation: "@default" }));
   };
 
   /**
@@ -1247,14 +1331,20 @@ export const TtsSettings = () => {
     if (!text.trim()) return;
     setLastError(null);
     setSummarizing(true);
+    setTransformProgress(null);
     const result = await commands.ttsSummarizeText(text, {
       length: sumLength,
       detail: sumDetail,
       audience: sumAudience,
     });
     setSummarizing(false);
+    setTransformProgress(null);
     if (result.status === "error") {
-      setLastError(result.error);
+      if (result.error === TRANSFORM_CANCELLED) {
+        toast.info(t("tts.transform.cancelled"));
+      } else {
+        setLastError(result.error);
+      }
       return;
     }
     setSummary(result.data);
@@ -1798,6 +1888,11 @@ export const TtsSettings = () => {
                 onTranslate={translateText}
                 summarizing={summarizing}
                 onSummarize={summarize}
+                transformProgress={transformProgress}
+                onCancelTransform={(kind) =>
+                  void commands.ttsTransformCancel(kind)
+                }
+                onSwapSpeakers={() => void openSpeakerSwap()}
                 sumLength={sumLength}
                 onSumLengthChange={setSumLength}
                 sumDetail={sumDetail}
@@ -1916,6 +2011,16 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
 
+          <SpeakerSwapDialog
+            open={swapOpen}
+            onOpenChange={setSwapOpen}
+            sources={speakersInText(translation ?? "", langVoices)}
+            voices={langVoices}
+            targetLang={targetLang}
+            targetCode={targetLangCode(targetLang)}
+            initial={swapInitial}
+            onApply={applySpeakerSwap}
+          />
           <ScriptWorkshopDialog
             open={workshopOpen}
             onOpenChange={setWorkshopOpen}

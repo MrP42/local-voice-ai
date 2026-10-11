@@ -463,8 +463,29 @@ pub async fn tts_summarize_text(
     text: String,
     options: crate::summarizer::SummaryOptions,
 ) -> Result<String, String> {
+    use tauri::Emitter;
     let settings = crate::settings::get_settings(&app);
-    crate::summarizer::summarize(&settings, &text, &options).await
+    let emitter = app.clone();
+    let progress = move |done: usize, total: usize| {
+        let _ = emitter.emit(
+            "tts-transform-progress",
+            serde_json::json!({ "kind": "summary", "done": done, "total": total }),
+        );
+    };
+    crate::summarizer::summarize_with_progress(&settings, &text, &options, &progress).await
+}
+
+/// Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
+/// abbrechen; sie endet nach dem Block, an dem sie gerade arbeitet.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_transform_cancel(kind: String) {
+    use std::sync::atomic::Ordering;
+    match kind.as_str() {
+        "translation" => crate::translator::TRANSLATE_CANCEL.store(true, Ordering::SeqCst),
+        "summary" => crate::summarizer::SUMMARY_CANCEL.store(true, Ordering::SeqCst),
+        _ => {}
+    }
 }
 
 /// Text fürs Vorlesen aufbereiten (Seitenzahlen, Kopfzeilen, Trennungen

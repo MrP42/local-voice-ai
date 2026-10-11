@@ -240,6 +240,49 @@ pub async fn summarize(
     ask_llm(settings, combine_prompt(opts, &partials)).await
 }
 
+/// Abbruch der laufenden Zusammenfassung (`tts_transform_cancel`).
+pub static SUMMARY_CANCEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Wie [`summarize`], mit Fortschritt (`done`, `total`; der letzte Schritt ist
+/// das Zusammenführen) und Abbruch zwischen den Schritten.
+pub async fn summarize_with_progress(
+    settings: &AppSettings,
+    text: &str,
+    opts: &SummaryOptions,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    SUMMARY_CANCEL.store(false, Ordering::SeqCst);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Kein Text zum Zusammenfassen".into());
+    }
+    let chunks = chunk_text(trimmed, CHUNK_CHARS);
+    if chunks.len() <= 1 {
+        progress(0, 1);
+        let out = ask_llm(settings, summary_prompt(opts, trimmed)).await?;
+        progress(1, 1);
+        return Ok(out);
+    }
+    let total = chunks.len() + 1;
+    progress(0, total);
+    let mut partials = Vec::with_capacity(chunks.len());
+    for (i, chunk) in chunks.iter().enumerate() {
+        if SUMMARY_CANCEL.load(Ordering::SeqCst) {
+            return Err(crate::translator::CANCELLED.to_string());
+        }
+        partials.push(ask_llm(settings, summary_prompt(opts, chunk)).await?);
+        progress(i + 1, total);
+    }
+    if SUMMARY_CANCEL.load(Ordering::SeqCst) {
+        return Err(crate::translator::CANCELLED.to_string());
+    }
+    let out = ask_llm(settings, combine_prompt(opts, &partials)).await?;
+    progress(total, total);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

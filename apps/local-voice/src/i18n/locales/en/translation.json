@@ -25,6 +25,27 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "transform": {
+      "translateStarting": "Translating …",
+      "translateBlock": "Translating … block {{done}} of {{total}}",
+      "summaryStarting": "Summarizing …",
+      "summaryBlock": "Summarizing … part {{done}} of {{total}}",
+      "summaryCombine": "Combining the parts …",
+      "cancel": "Cancel",
+      "cancelled": "Cancelled."
+    },
+    "speakerSwap": {
+      "open": "Swap speakers …",
+      "hint": "Replace the translation's speakers with voices of the target language",
+      "title": "Speakers for {{lang}}",
+      "description": "Every speaker of the original gets a voice that speaks {{lang}}. The markers in the translated text are replaced.",
+      "noVoices": "There is no voice with the language {{lang}} yet. Create one under Read aloud → Voices or set a voice's language.",
+      "voiceFor": "Voice for {{name}}",
+      "otherVoices": "Other languages",
+      "apply": "Apply",
+      "cancel": "Cancel",
+      "none": "The translation has no speakers."
+    },
     "title": "Read Aloud",
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",

@@ -4791,6 +4791,13 @@ async ttsExportFormat() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
+ * abbrechen; sie endet nach dem Block, an dem sie gerade arbeitet.
+ */
+async ttsTransformCancel(kind: string) : Promise<void> {
+    await TAURI_INVOKE("tts_transform_cancel", { kind });
+},
 async ttsSummarizeText(text: string, options: SummaryOptions) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_summarize_text", { text, options }) };

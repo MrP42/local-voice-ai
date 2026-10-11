@@ -17,7 +17,8 @@ pub fn translation_prompt(target_lang: &str, text: &str) -> String {
          Preserve the layout of the original exactly: the same line breaks, \
          the same blank lines between paragraphs, one output paragraph for \
          one input paragraph. Never merge paragraphs into a single block of \
-         text.\n\n{text}"
+         text. Tokens like ⟦0⟧ stand for speaker names and sound tags: copy \
+         every such token unchanged, exactly once, at the matching place.\n\n{text}"
     )
 }
 
@@ -140,6 +141,271 @@ pub async fn translate_on(
     // ein abgebrochener Lauf lässt das Modell sonst geladen stehen.
     crate::llm_client::ollama_unload(&provider.base_url, &model).await;
     outcome
+}
+
+// ---- Blockweise Übersetzung mit Fortschritt und geschützten Marken ----------
+
+/// Zielgröße eines Übersetzungsblocks (Zeichen). Ganze Zeilen, nie mitten in
+/// einer Sprecherzeile getrennt.
+pub const BLOCK_CHARS: usize = 2500;
+
+/// Abbruch der laufenden Übersetzung (`tts_transform_cancel`).
+pub static TRANSLATE_CANCEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Fehlercode, wenn der Nutzer abgebrochen hat.
+pub const CANCELLED: &str = "transform_cancelled";
+
+/// Text in Blöcke ganzer Zeilen bis etwa `max` Zeichen. Leerzeilen bleiben
+/// erhalten; zusammengesetzt mit `"\n"` ergibt sich wieder der Ausgangstext.
+pub fn split_blocks(text: &str, max: usize) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut size = 0usize;
+    for line in text.split('\n') {
+        let len = line.chars().count() + 1;
+        if !current.is_empty() && size + len > max {
+            blocks.push(current.join("\n"));
+            current.clear();
+            size = 0;
+        }
+        current.push(line);
+        size += len;
+    }
+    blocks.push(current.join("\n"));
+    blocks
+}
+
+/// Sprechermarken `<Name>`/`<Name:Stil>` und Tags `[…]` (1–60 Zeichen, ohne
+/// Zeilenumbruch) — dieselbe Regel wie die Sprechererkennung beim Vorlesen.
+fn marker_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let bytes: Vec<(usize, char)> = text.char_indices().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        let (start, c) = bytes[i];
+        let close = match c {
+            '<' => '>',
+            '[' => ']',
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let mut j = i + 1;
+        let mut found = None;
+        while j < bytes.len() && j - i <= 61 {
+            let d = bytes[j].1;
+            if d == close {
+                found = Some(j);
+                break;
+            }
+            if d == '\n' || d == c {
+                break;
+            }
+            j += 1;
+        }
+        match found {
+            Some(end) if end > i + 1 => {
+                let end_byte = bytes[end].0 + close.len_utf8();
+                spans.push((start, end_byte));
+                i = end + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    spans
+}
+
+/// Text mit Platzhaltern `⟦n⟧` statt der Marken und die Marken selbst.
+pub fn mask_markers(text: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(text.len());
+    let mut tokens = Vec::new();
+    let mut last = 0;
+    for (s, e) in marker_spans(text) {
+        out.push_str(&text[last..s]);
+        out.push_str(&format!("⟦{}⟧", tokens.len()));
+        tokens.push(text[s..e].to_string());
+        last = e;
+    }
+    out.push_str(&text[last..]);
+    (out, tokens)
+}
+
+/// Platzhalter zurück in Marken. `None`, wenn das Modell einen Platzhalter
+/// verloren, verdoppelt oder erfunden hat — dann stimmt die Zuordnung nicht.
+pub fn unmask_markers(text: &str, tokens: &[String]) -> Option<String> {
+    let mut out = text.to_string();
+    for (n, token) in tokens.iter().enumerate() {
+        let placeholder = format!("⟦{n}⟧");
+        if out.matches(&placeholder).count() != 1 {
+            return None;
+        }
+        out = out.replacen(&placeholder, token, 1);
+    }
+    (!out.contains('⟦')).then_some(out)
+}
+
+/// Text in Marken und Zwischenstücke zerlegen (Rückfall, wenn das Modell die
+/// Platzhalter nicht hält: dann wird nur zwischen den Marken übersetzt).
+fn split_at_markers(text: &str) -> Vec<(bool, String)> {
+    let mut parts = Vec::new();
+    let mut last = 0;
+    for (s, e) in marker_spans(text) {
+        if s > last {
+            parts.push((false, text[last..s].to_string()));
+        }
+        parts.push((true, text[s..e].to_string()));
+        last = e;
+    }
+    if last < text.len() {
+        parts.push((false, text[last..].to_string()));
+    }
+    parts
+}
+
+/// Führende und folgende Leerzeichen eines Stücks beim Übersetzen erhalten.
+fn keep_padding(original: &str, translated: &str) -> String {
+    let lead = &original[..original.len() - original.trim_start().len()];
+    let trail = &original[original.trim_end().len()..];
+    format!("{lead}{}{trail}", translated.trim())
+}
+
+/// Einen Block übersetzen: mit Platzhaltern, bei Verlust einmal neu, danach
+/// Stück für Stück zwischen den Marken. `translate` ist der Modellaufruf.
+pub async fn translate_block<F, Fut>(block: &str, mut translate: F) -> Result<String, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    if block.trim().is_empty() {
+        return Ok(block.to_string());
+    }
+    let (masked, tokens) = mask_markers(block);
+    if tokens.is_empty() {
+        return Ok(keep_padding(block, &translate(masked).await?));
+    }
+    for _ in 0..2 {
+        let reply = translate(masked.clone()).await?;
+        if let Some(text) = unmask_markers(&reply, &tokens) {
+            return Ok(keep_padding(block, &text));
+        }
+        log::warn!("Übersetzung: Platzhalter verloren, neuer Versuch");
+    }
+    log::warn!("Übersetzung: Platzhalter erneut verloren, übersetze zwischen den Marken");
+    let mut out = String::new();
+    for (is_marker, part) in split_at_markers(block) {
+        if is_marker || !part.chars().any(char::is_alphabetic) {
+            out.push_str(&part);
+        } else {
+            out.push_str(&keep_padding(&part, &translate(part.trim().to_string()).await?));
+        }
+    }
+    Ok(out)
+}
+
+/// Ganzer Text, blockweise, mit Fortschritt (`done`, `total`) und Abbruch.
+pub async fn translate_blocks(
+    settings: &AppSettings,
+    text: &str,
+    target_lang: &str,
+    cpu_only: bool,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    TRANSLATE_CANCEL.store(false, Ordering::SeqCst);
+    let blocks = split_blocks(text, BLOCK_CHARS);
+    let total = blocks.len();
+    progress(0, total);
+    let mut out = Vec::with_capacity(total);
+    for (i, block) in blocks.iter().enumerate() {
+        if TRANSLATE_CANCEL.load(Ordering::SeqCst) {
+            return Err(CANCELLED.to_string());
+        }
+        out.push(
+            translate_block(block, |chunk| async move {
+                translate_on(settings, &chunk, target_lang, cpu_only).await
+            })
+            .await?,
+        );
+        progress(i + 1, total);
+    }
+    Ok(out.join("\n"))
+}
+
+#[cfg(test)]
+mod block_tests {
+    use super::*;
+
+    #[test]
+    fn blocks_keep_whole_lines_and_rejoin_to_the_original() {
+        let text = "<A> eins zwei\n\n<B> drei vier\n<A> fünf";
+        let blocks = split_blocks(text, 16);
+        assert!(blocks.len() > 1, "{blocks:?}");
+        assert_eq!(blocks.join("\n"), text);
+        assert!(blocks.iter().all(|b| !b.starts_with(' ')));
+    }
+
+    #[test]
+    fn markers_and_tags_become_placeholders_and_come_back() {
+        let text = "<Erzählerin> Hallo [long pause] Welt <Erzähler:ruhig> Ende";
+        let (masked, tokens) = mask_markers(text);
+        assert_eq!(masked, "⟦0⟧ Hallo ⟦1⟧ Welt ⟦2⟧ Ende");
+        assert_eq!(tokens, ["<Erzählerin>", "[long pause]", "<Erzähler:ruhig>"]);
+        assert_eq!(
+            unmask_markers("⟦0⟧ Hello ⟦1⟧ world ⟦2⟧ end", &tokens).as_deref(),
+            Some("<Erzählerin> Hello [long pause] world <Erzähler:ruhig> end")
+        );
+    }
+
+    #[test]
+    fn a_lost_or_doubled_placeholder_is_detected() {
+        let tokens = vec!["<A>".to_string(), "<B>".to_string()];
+        assert_eq!(unmask_markers("⟦0⟧ Hello", &tokens), None);
+        assert_eq!(unmask_markers("⟦0⟧ ⟦0⟧ ⟦1⟧", &tokens), None);
+        assert_eq!(unmask_markers("⟦0⟧ ⟦1⟧ ⟦2⟧", &tokens), None, "erfunden");
+    }
+
+    #[test]
+    fn no_marker_in_plain_angle_text() {
+        assert!(mask_markers("<>").1.is_empty());
+        assert!(mask_markers("<zeile\nweiter>").1.is_empty());
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn speakers_are_never_translated() {
+        let out = block_on(translate_block("<Erzählerin> Guten Tag.", |s: String| async move {
+            // Ein Modell, das brav die Platzhalter haelt.
+            Ok(s.replace("Guten Tag.", "Good day."))
+        }))
+        .unwrap();
+        assert_eq!(out, "<Erzählerin> Good day.");
+    }
+
+    #[test]
+    fn when_the_model_drops_placeholders_only_the_text_between_markers_is_translated() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let out = block_on(translate_block(
+            "<Erzählerin> Guten Tag. <Erzähler> Hallo.",
+            |s: String| {
+                calls.borrow_mut().push(s.clone());
+                async move {
+                    Ok(if s.contains('⟦') {
+                        "<Female narrator> Good day. <Male narrator> Hello.".to_string()
+                    } else {
+                        s.replace("Guten Tag.", "Good day.").replace("Hallo.", "Hello.")
+                    })
+                }
+            },
+        ))
+        .unwrap();
+        assert_eq!(out, "<Erzählerin> Good day. <Erzähler> Hello.");
+        assert_eq!(calls.borrow().len(), 4, "2 Versuche + 2 Stücke");
+    }
 }
 
 #[cfg(test)]

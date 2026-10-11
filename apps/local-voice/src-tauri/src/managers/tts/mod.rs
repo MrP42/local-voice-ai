@@ -2375,8 +2375,22 @@ impl TtsManager {
         let _ = self
             .app
             .emit("llm-activity", serde_json::json!({ "busy": true }));
-        let outcome =
-            crate::translator::translate_on(&settings, trimmed, target_lang, gpu_busy).await;
+        // Blockweise mit Fortschritt; Sprechermarken und Tags bleiben stehen.
+        let app = self.app.clone();
+        let progress = move |done: usize, total: usize| {
+            let _ = app.emit(
+                "tts-transform-progress",
+                serde_json::json!({ "kind": "translation", "done": done, "total": total }),
+            );
+        };
+        let outcome = crate::translator::translate_blocks(
+            &settings,
+            trimmed,
+            target_lang,
+            gpu_busy,
+            &progress,
+        )
+        .await;
         let _ = self.app.emit(
             "llm-activity",
             serde_json::json!({
@@ -2422,6 +2436,9 @@ impl TtsManager {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);
         target_lang.hash(&mut hasher);
+        // Fassung der Uebersetzung: seit v2 bleiben Sprechermarken und Tags
+        // stehen. Aeltere Eintraege (mit uebersetzten Marken) gelten nicht mehr.
+        "v2-geschuetzte-marken".hash(&mut hasher);
         let key = hasher.finish();
         Some(base.join("translations").join(format!("{key:016x}.txt")))
     }

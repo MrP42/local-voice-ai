@@ -25,6 +25,27 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "transform": {
+      "translateStarting": "Übersetze …",
+      "translateBlock": "Übersetze … Block {{done}} von {{total}}",
+      "summaryStarting": "Fasse zusammen …",
+      "summaryBlock": "Fasse zusammen … Abschnitt {{done}} von {{total}}",
+      "summaryCombine": "Führe die Abschnitte zusammen …",
+      "cancel": "Abbrechen",
+      "cancelled": "Abgebrochen."
+    },
+    "speakerSwap": {
+      "open": "Sprecher tauschen …",
+      "hint": "Die Sprecher der Übersetzung gegen Stimmen der Zielsprache tauschen",
+      "title": "Sprecher für {{lang}}",
+      "description": "Jeder Sprecher des Originals bekommt eine Stimme, die {{lang}} spricht. Die Marken im übersetzten Text werden ersetzt.",
+      "noVoices": "Es gibt noch keine Stimme mit der Sprache {{lang}}. Unter Vorlesen → Stimmen lässt sich eine anlegen oder die Sprache einer Stimme setzen.",
+      "voiceFor": "Stimme für {{name}}",
+      "otherVoices": "Andere Sprachen",
+      "apply": "Übernehmen",
+      "cancel": "Abbrechen",
+      "none": "Die Übersetzung hat keine Sprecher."
+    },
     "title": "Vorlesen",
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
