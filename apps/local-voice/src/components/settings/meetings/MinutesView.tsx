@@ -273,12 +273,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // Word zuerst: das Protokoll geht weiter an Menschen, nicht an einen
     // Editor. Das Format ergibt sich aus der gewählten Endung — deshalb
     // braucht es kein zweites Auswahlfeld neben dem Dialog.
-    // Etappe 2: Word und PDF mit dem eingestellten Briefkopf (Einstellungen > Ausgabe >
+    // Etappe 2/3: Word, PDF und PowerPoint mit dem eingestellten Briefkopf (Einstellungen > Ausgabe >
     // Dokumente); Quelle ist das gespeicherte Dokument samt Korrekturen.
     const target = await save({
       filters: [
         { name: "Word", extensions: ["docx"] },
         { name: "PDF", extensions: ["pdf"] },
+        // Etappe 3: Folien aus dem Dokument (Titel, je Abschnitt Kernaussagen, Tabellen).
+        { name: "PowerPoint", extensions: ["pptx"] },
         { name: "Text", extensions: ["txt"] },
         { name: "Markdown", extensions: ["md"] },
       ],

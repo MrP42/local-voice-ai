@@ -25,6 +25,7 @@ use crate::managers::letterhead::{Letterhead, LogoData};
 
 pub mod docx;
 pub mod pdf;
+pub mod pptx;
 
 /// Ein Baustein des Dokuments.
 #[derive(Clone, Debug, PartialEq)]
@@ -131,9 +132,18 @@ pub struct Design<'a> {
     pub logo: Option<&'a LogoData>,
 }
 
-/// Schreibt `markdown` in das Format der Endung: `md`, `txt`, `docx` (mit Briefkopf),
-/// `pdf` (mit Briefkopf). Andere Endungen: `export_unsupported_format`.
+/// Schreibt `markdown` in das Format der Endung: `md`, `txt`, `docx`, `pdf`, `pptx`
+/// (die drei letzten mit Briefkopf). Andere Endungen: `export_unsupported_format`.
 pub fn write(path: &Path, markdown: &str, design: &Design<'_>) -> Result<(), String> {
+    // PowerPoint kennt der Besprechungs-Export nicht; deshalb hier vor `ExportFormat`.
+    let pptx = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pptx"));
+    if pptx {
+        let bytes = pptx::render(&parse(markdown), design)?;
+        return write_part(path, &bytes);
+    }
     match ExportFormat::from_path(path) {
         ExportFormat::Markdown | ExportFormat::PlainText => {
             super::export::write_document(path, markdown)
@@ -243,8 +253,38 @@ fn probe_letterhead_samples() {
             letterhead: &lh,
             logo: logo.as_ref(),
         };
-        for ext in ["docx", "pdf"] {
+        for ext in ["docx", "pdf", "pptx"] {
             write(&out.join(format!("{}.{ext}", lh.id)), &md, &design).unwrap();
         }
+    }
+}
+
+/// Handprobe ohne Modell: jede `*.md` aus `LVA_SAMPLE_MD_DIR` als `.pptx` (und `.pdf`) im
+/// Briefkopf `LVA_SAMPLE_LETTERHEAD` (Vorgabe `wai`) nach `LVA_SAMPLE_OUT_DIR`.
+#[cfg(test)]
+#[test]
+#[ignore = "Beispieldateien fuer die Sichtpruefung, nur von Hand"]
+fn probe_documents_as_slides() {
+    use crate::managers::letterhead::Store;
+    let src = std::path::PathBuf::from(std::env::var("LVA_SAMPLE_MD_DIR").unwrap());
+    let out = std::path::PathBuf::from(std::env::var("LVA_SAMPLE_OUT_DIR").unwrap());
+    std::fs::create_dir_all(&out).unwrap();
+    let store = Store::new(out.join("briefkoepfe"));
+    let lh = store
+        .get(&std::env::var("LVA_SAMPLE_LETTERHEAD").unwrap_or_else(|_| "wai".into()))
+        .unwrap();
+    let logo = store.logo(&lh).unwrap();
+    let design = Design {
+        letterhead: &lh,
+        logo: logo.as_ref(),
+    };
+    for entry in std::fs::read_dir(&src).unwrap().flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let md = std::fs::read_to_string(&path).unwrap();
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        write(&out.join(format!("{stem}.pptx")), &md, &design).unwrap();
     }
 }

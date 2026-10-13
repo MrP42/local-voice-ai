@@ -304,7 +304,7 @@ async fn probe_real_meeting() {
             .unwrap_or_default();
         std::fs::write(out_dir.join(format!("{key}.md")), &doc.body).unwrap();
         std::fs::write(out_dir.join(format!("{key}.meta.json")), meta).unwrap();
-        for ext in ["docx", "pdf"] {
+        for ext in ["docx", "pdf", "pptx"] {
             crate::managers::meetings::doc_export::write(
                 &out_dir.join(format!("{key}.{ext}")),
                 &doc.body,

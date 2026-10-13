@@ -524,7 +524,7 @@ test("Export: Word/PDF ueber das gespeicherte Dokument mit Briefkopf", async ({
   const names = (
     (dialog.args.options as { filters: { name: string }[] }).filters ?? []
   ).map((f) => f.name);
-  expect(names).toEqual(["Word", "PDF", "Text", "Markdown"]);
+  expect(names).toEqual(["Word", "PDF", "PowerPoint", "Text", "Markdown"]);
   // Der alte Weg (nur Text) wird fuer Protokoll/Dokumente nicht mehr benutzt.
   expect(await calls(page, "meetings_export_document")).toHaveLength(0);
 });
