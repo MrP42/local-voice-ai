@@ -6804,7 +6804,7 @@ export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Ergebnis einer Sendung an den Presenter.
  */
-export type WrittenPackage = { folder: string; files: number; replaced: number }
+export type WrittenPackage = { folder: string; files: number }
 /**
  * Firmenangaben im Kopf.
  */

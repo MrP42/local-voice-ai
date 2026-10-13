@@ -22,7 +22,9 @@ Bibliothek > „Aus Local Voice importieren“ > Ordner wählen, rechnerlokal sp
   antworten/<ULID>.json              LVA schreibt: wai.besprechung-antwort/1
 ```
 
-Ordner, die mit `.` beginnen (`pakete/.tmp-…`), sind Zwischenstände von LVA: nie lesen.
+Ordner, die mit `.` beginnen (`pakete/.tmp-…`), und Dateien `*.tmp` sind Zwischenstände von LVA: nie
+lesen. **LVA löscht im Austauschordner nichts** (Sicherheitsreview 13.10.2026): ältere Pakete und
+liegengebliebene Zwischenstände bleiben, bis jemand sie bewusst entfernt.
 
 ## 2. Katalog lesen (`katalog.json`)
 
@@ -67,8 +69,8 @@ Pflichten beim Import:
 3. **Jede Datei aus `dateien` per SHA-256 prüfen.** Fehlt eine oder stimmt eine Summe nicht
    (OneDrive synchronisiert Dateien einzeln): Paket als „wird noch übertragen“ zeigen, später erneut
    prüfen, nie halb importieren. Pfade in `dateien` nur relativ, ohne `..`, ohne Laufwerk.
-4. Mehrere Pakete derselben `besprechung_id`: das mit dem jüngsten `erstellt` gilt (LVA räumt ältere
-   selbst ab, verlassen darf man sich darauf nicht).
+4. Mehrere Pakete derselben `besprechung_id`: das mit dem jüngsten `erstellt` gilt; ältere bleiben
+   liegen (LVA löscht nichts).
 5. „Als Vortrag anlegen“: neues Projekt `wai.vortrag/1` in der Bibliothek;
    - `auftrag.md` aus `dokumente/vortragsgrundlage.md` (Abschnitte „Thema und Kernbotschaft“,
      „Zielgruppe“, „Ziel“, „Rahmen“, „Offene Punkte“) – fehlt sie, aus `management_summary` oder
@@ -101,7 +103,7 @@ abgelehnt (Code in der Antwort):
 
 | Feld | Regel (sonst Code) |
 |---|---|
-| Dateiname | `<id>.json`, `id` eine ULID (26 Zeichen Crockford-Base32, groß) – `request_id` |
+| Dateiname | `<id>.json`, `id` eine ULID (26 Zeichen Crockford-Base32, groß) – `request_id`; die Zeit in der ULID muss wie `erstellt` im 7-Tage-Fenster liegen – `request_expired` |
 | Größe | höchstens 16 KiB – `request_too_large`; keine unbekannten Felder – `request_json` |
 | `erstellt` | RFC 3339, höchstens 7 Tage alt (`request_expired`), höchstens 5 min in der Zukunft (`request_created`) |
 | `besprechung_id` | `[0-9A-Za-z]{1,64}` – `request_meeting_id`; unbekannt – `meeting_not_found` |
@@ -109,8 +111,11 @@ abgelehnt (Code in der Antwort):
 | `formate` | Teilmenge von `md`, `docx`, `pdf`, `pptx` – `request_format` |
 | `von`, `sprache` | ≤ 64 Zeichen ohne Steuerzeichen; Sprachcode `[a-z]{2,3}` |
 
-Schreiben: erst `anfragen/.<id>.tmp`, dann umbenennen (LVA liest nur `<ULID>.json`). Eine Id nie
-wiederverwenden: LVA bearbeitet jede Id genau einmal. **Abbrechen:** die Anfragedatei löschen.
+Schreiben: erst `anfragen/.<id>.tmp`, dann umbenennen (LVA liest nur `<ULID>.json`). Die Id frisch
+erzeugen (ULID der aktuellen Zeit) und nie wiederverwenden: LVA bearbeitet jede Id genau einmal, auch
+nach einem Neustart. Die Datei nach dem Schreiben nicht mehr ändern: die Freigabe in LVA gilt für ihren
+Inhalt (SHA-256). **Abbrechen:** die Anfragedatei löschen (vor der Freigabe wird sie zurückgezogen,
+während des Laufs stoppt LVA vor dem nächsten Modellaufruf und vor dem Schreiben des Pakets).
 
 ## 5. Antwort lesen (`antworten/<ULID>.json`)
 

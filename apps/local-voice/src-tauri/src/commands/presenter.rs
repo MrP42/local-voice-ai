@@ -242,7 +242,12 @@ pub(crate) fn send(
         move |sandbox, cfg| {
             let written = presenter::write_package(sandbox, &input)?;
             if cfg.catalog {
-                presenter::write_catalog(sandbox, &presenter::catalog_json(&entries, &erstellt))?;
+                // Nebenbei: ein Fehler beim Katalog macht das fertige Paket nicht ungueltig.
+                if let Err(e) =
+                    presenter::write_catalog(sandbox, &presenter::catalog_json(&entries, &erstellt))
+                {
+                    log::warn!("Presenter: Katalog nicht geschrieben: {}", code_of(&e));
+                }
             }
             Ok(written)
         },
@@ -275,11 +280,7 @@ pub async fn presenter_send(
             None,
         )?;
         let written = outcome(out)?;
-        log::info!(
-            "Presenter: Paket geschrieben ({} Dateien, {} ersetzt)",
-            written.files,
-            written.replaced
-        );
+        log::info!("Presenter: Paket geschrieben ({} Dateien)", written.files);
         Ok(written)
     })
     .await
@@ -433,7 +434,7 @@ fn poll(app: &AppHandle, pending: &mut HashMap<String, String>) -> Result<(), St
         return Ok(());
     }
     let path = processed_path(app)?;
-    let mut processed = Processed::load(&path);
+    let mut processed = Processed::load(&path)?;
     for i in presenters {
         let Ok(cfg) = PresenterConfig::from_config_json(&i.config_json) else {
             continue;
@@ -441,22 +442,55 @@ fn poll(app: &AppHandle, pending: &mut HashMap<String, String>) -> Result<(), St
         let Ok(sandbox) = Sandbox::open(&cfg.path) else {
             continue;
         };
-        let ids = match presenter::list_requests(&sandbox) {
+        let prefix = format!("{}:", i.id);
+        let done = |id: &str| processed.contains(&format!("{prefix}{id}"));
+        let ids = match presenter::list_requests(&sandbox, &done) {
             Ok(ids) => ids,
             Err(e) => {
                 log::warn!("Presenter: Anfragen nicht lesbar: {}", code_of(&e));
                 continue;
             }
         };
+        // Wartende Freigaben, deren Anfrage geloescht wurde: zurueckziehen (Review).
+        let gone: Vec<String> = pending
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .filter(|k| !presenter::request_exists(&sandbox, &k[prefix.len()..]))
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some(aid) = pending.remove(&key) {
+                let _ = approvals::withdraw(&conn, &aid, view::now_ms());
+            }
+            answer(
+                &sandbox,
+                &key[prefix.len()..],
+                AnswerState::Abgebrochen,
+                Some("request_withdrawn"),
+                None,
+                None,
+            );
+            processed.mark(&key, view::now_ms(), &path)?;
+        }
         for id in ids {
-            let key = format!("{}:{}", i.id, id);
+            let key = format!("{prefix}{id}");
             if processed.contains(&key) {
                 continue;
             }
-            if handle(app, &store, &conn, &i.id, &sandbox, &id, &key, pending).is_some() {
-                if let Err(e) = processed.mark(&key, view::now_ms(), &path) {
-                    log::warn!("Presenter: Gedaechtnis nicht geschrieben: {}", code_of(&e));
-                }
+            let outcome = handle(
+                app,
+                &store,
+                &conn,
+                &i.id,
+                &sandbox,
+                &id,
+                &key,
+                pending,
+                &mut processed,
+                &path,
+            );
+            if outcome.is_some() && !processed.contains(&key) {
+                processed.mark(&key, view::now_ms(), &path)?;
             }
         }
     }
@@ -474,6 +508,8 @@ fn handle(
     id: &str,
     key: &str,
     pending: &mut HashMap<String, String>,
+    processed: &mut Processed,
+    processed_path: &std::path::Path,
 ) -> Option<AnswerState> {
     let finish = |stand: AnswerState, code: Option<&str>, paket: Option<String>| {
         answer(sandbox, id, stand, code, paket, None);
@@ -524,11 +560,15 @@ fn handle(
         }
     }
     let target = format!("{}/{}", presenter::DIR_PACKAGES, meeting.title);
+    // Die Freigabe gilt genau fuer diese Anfrage: der Hash bindet alle Felder (auch
+    // `sprache`), eine danach veraenderte Datei passt nicht mehr (Review).
     let args = json!({
         "request": id,
+        "request_sha256": presenter::sha256_hex(&bytes),
         "meeting": req.besprechung_id,
         "documents": req.dokumente,
         "formats": req.formate,
+        "language": req.sprache,
         "renew": req.neu_erzeugen,
     });
     let out = targets::send_to_presenter(
@@ -540,7 +580,14 @@ fn handle(
         &args,
         approval.as_deref(),
         now,
-        |sb, cfg| work(app, store, sb, cfg, id, &req),
+        |sb, cfg| {
+            // Vor jeder Nebenwirkung als bearbeitet merken: ein Absturz danach fuehrt nie zu
+            // einer zweiten Ausfuehrung (Review). Scheitert das, laeuft nichts.
+            processed
+                .mark(key, view::now_ms(), processed_path)
+                .map_err(|_| "presenter_processed".to_string())?;
+            work(app, store, sb, cfg, id, &req)
+        },
     );
     match out {
         Ok(GateOutcome::Done(written)) => {
@@ -600,6 +647,9 @@ fn work(
         .filter(|k| req.neu_erzeugen || !docs.iter().any(|d| d.kind == doc_types::doc_kind(k)))
         .collect();
     let total = missing.len() as u32 + 1;
+    if !presenter::request_exists(sandbox, id) {
+        return Err(minutes::CODE_CANCELLED.to_string());
+    }
     let basis = DocBasis {
         variant_id: None,
         output_language: req.sprache.clone(),
@@ -646,10 +696,18 @@ fn work(
         &req.dokumente,
         &req.formate,
     )?;
+    // Letzte Gelegenheit zum Abbrechen vor dem Veroeffentlichen (Review).
+    if !presenter::request_exists(sandbox, id) {
+        return Err(minutes::CODE_CANCELLED.to_string());
+    }
     let written = presenter::write_package(sandbox, &input)?;
     if cfg.catalog {
-        let entries = catalog_entries(store)?;
-        presenter::write_catalog(sandbox, &presenter::catalog_json(&entries, &now_iso()))?;
+        let catalog = catalog_entries(store).and_then(|e| {
+            presenter::write_catalog(sandbox, &presenter::catalog_json(&e, &now_iso()))
+        });
+        if let Err(e) = catalog {
+            log::warn!("Presenter: Katalog nicht geschrieben: {}", code_of(&e));
+        }
     }
     Ok(written)
 }

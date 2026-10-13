@@ -20,10 +20,17 @@
 //!   (`Sandbox::write_bytes_new`), das Manifest zuletzt;
 //! - dann EIN Umbenennen auf den endgueltigen Namen (nie ueber ein vorhandenes Paket: Name
 //!   belegt -> `-v2`, `-v3` ...); der neue Ordner wird danach kanonisch gegen die Wurzel geprueft;
-//! - scheitert etwas, wird nur der eigene Zwischenordner entfernt;
-//! - erst nach Erfolg werden aeltere Pakete DERSELBEN Besprechung entfernt, und nur Ordner
-//!   (keine Verknuepfungen) mit einem gueltigen Manifest dieser App;
+//! - **LVA loescht im Austauschordner nichts** (Review 13.10.2026): weder aeltere Pakete noch
+//!   den eigenen Zwischenordner nach einem Fehler. Ein Loeschen nach Pruefung ist dort, wo
+//!   andere Ordner austauschen koennen, nicht sicher zu machen, und Manifestfelder sind keine
+//!   Herkunftsgarantie. Der Presenter nimmt je Besprechung das juengste Paket (`erstellt`) und
+//!   ignoriert Ordner mit fuehrendem Punkt;
 //! - Lesende pruefen die Prueffsummen: OneDrive synchronisiert Dateien einzeln.
+//!
+//! Restrisiko (benannt, wie bei `folder::Sandbox`): das Umbenennen ist pfadbasiert. Tauscht
+//! jemand mit Schreibrecht im Austauschordner zwischen Pruefung und Umbenennen einen Vorfahren
+//! gegen eine Verknuepfung, kann das Paket ausserhalb landen; die Pruefung danach erkennt das
+//! und meldet `folder_escape`.
 //!
 //! Datenschutz: kein Audio, keine E-Mail-Adressen, keine Notizen; `datenklasse:
 //! vertraulich` im Manifest. Der Katalog nennt nur Titel, Datum, Dauer und vorhandene Typen.
@@ -251,21 +258,12 @@ fn fe(e: FolderError) -> String {
     e.code().to_string()
 }
 
-/// Ist `path` ein echter Ordner (keine Verknuepfung, keine Junction)?
-fn is_plain_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|m| m.is_dir() && !m.file_type().is_symlink())
-        .unwrap_or(false)
-}
-
 /// Ergebnis einer Sendung.
 #[derive(Clone, Debug, PartialEq, Serialize, Type)]
 pub struct WrittenPackage {
     /// Paketordner relativ zum Austauschordner (`pakete/...`).
     pub folder: String,
     pub files: u32,
-    /// Aeltere Pakete derselben Besprechung, die entfernt wurden.
-    pub replaced: u32,
 }
 
 /// Schreibt ein Paket atomar (siehe Moduldoku).
@@ -277,11 +275,6 @@ pub fn write_package(sandbox: &Sandbox, input: &PackageInput) -> Result<WrittenP
     let packages = sandbox.resolve_dir(DIR_PACKAGES, true).map_err(fe)?;
     let tmp_rel = format!("{DIR_PACKAGES}/.tmp-{}", input.paket_id);
     let tmp = sandbox.resolve_dir(&tmp_rel, true).map_err(fe)?;
-    let cleanup = |tmp: &Path| {
-        if sandbox.contains(tmp) && is_plain_dir(tmp) {
-            let _ = std::fs::remove_dir_all(tmp);
-        }
-    };
     let result = (|| -> Result<WrittenPackage, String> {
         for f in &files {
             let (dir, name) = match f.rel.rsplit_once('/') {
@@ -327,24 +320,14 @@ pub fn write_package(sandbox: &Sandbox, input: &PackageInput) -> Result<WrittenP
         Ok(WrittenPackage {
             folder: rel,
             files: files.len() as u32 + 1,
-            replaced: 0,
         })
     })();
-    match result {
-        Ok(mut written) => {
-            written.replaced = remove_older(
-                sandbox,
-                &input.besprechung_id,
-                &input.paket_id,
-                &written.folder,
-            );
-            Ok(written)
-        }
-        Err(e) => {
-            cleanup(&tmp);
-            Err(e)
-        }
+    if result.is_err() {
+        // Nichts loeschen (siehe Moduldoku): der Zwischenordner beginnt mit einem Punkt und
+        // wird von Lesenden ignoriert.
+        log::warn!("Presenter: Paket nicht fertig, Zwischenordner bleibt liegen");
     }
+    result
 }
 
 /// Liest ein Manifest dieser App aus einem Paketordner (begrenzt, ueber das Handle).
@@ -357,31 +340,6 @@ pub fn read_manifest(sandbox: &Sandbox, folder_rel: &str) -> Option<Value> {
     (v.get("schema")?.as_str()? == SCHEMA_PACKAGE
         && v.get("quelle")?.get("app")?.as_str()? == APP_ID)
         .then_some(v)
-}
-
-/// Entfernt aeltere Pakete derselben Besprechung (nur echte Ordner mit eigenem Manifest).
-fn remove_older(sandbox: &Sandbox, meeting: &str, keep_id: &str, keep_rel: &str) -> u32 {
-    let Ok(dir) = sandbox.resolve_dir(DIR_PACKAGES, false) else {
-        return 0;
-    };
-    let mut removed = 0;
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let rel = format!("{DIR_PACKAGES}/{name}");
-        if name.starts_with('.') || rel == keep_rel || !is_plain_dir(&entry.path()) {
-            continue;
-        }
-        let Some(m) = read_manifest(sandbox, &rel) else {
-            continue;
-        };
-        let same = m.get("besprechung_id").and_then(Value::as_str) == Some(meeting)
-            && m.get("paket_id").and_then(Value::as_str) != Some(keep_id);
-        if same && sandbox.contains(&entry.path()) && std::fs::remove_dir_all(entry.path()).is_ok()
-        {
-            removed += 1;
-        }
-    }
-    removed
 }
 
 // ---------------------------------------------------------------------------
@@ -431,11 +389,25 @@ pub fn write_or_replace(
     let path = sandbox.resolve_file(&rel, true).map_err(fe)?;
     if std::fs::symlink_metadata(&path).is_ok() {
         sandbox.replace_bytes(&path, bytes).map_err(fe)?;
-    } else {
-        let placed = sandbox.write_bytes_new(dir, name, bytes).map_err(fe)?;
-        if !placed.rel.ends_with(name) {
-            return Err("presenter_write_collision".to_string());
-        }
+        return Ok(());
+    }
+    // Neu: erst vollstaendig in eine exklusiv angelegte Zwischendatei (`<name>.<ULID>.tmp`,
+    // Lesende ignorieren sie), dann umbenennen -- nie ein halber Stand unter dem Namen.
+    let tmp_name = format!("{name}.{}.tmp", ulid::Ulid::new());
+    let placed = sandbox.write_bytes_new(dir, &tmp_name, bytes).map_err(fe)?;
+    if !placed.rel.ends_with(&tmp_name) {
+        return Err("presenter_write_collision".to_string());
+    }
+    if std::fs::symlink_metadata(&path).is_ok() {
+        // Inzwischen von jemand anderem angelegt: atomar ersetzen, Zwischendatei bleibt
+        // unberuehrt liegen (nichts loeschen).
+        sandbox.replace_bytes(&path, bytes).map_err(fe)?;
+        return Ok(());
+    }
+    std::fs::rename(&placed.path, &path).map_err(|e| format!("presenter_write_failed: {e}"))?;
+    let checked = sandbox.resolve_file(&rel, false).map_err(fe)?;
+    if !sandbox.contains(&checked) {
+        return Err("folder_escape".to_string());
     }
     Ok(())
 }
@@ -466,6 +438,8 @@ pub const MAX_CLOCK_SKEW_SECS: i64 = 5 * 60;
 pub const MAX_REQUEST_DOCS: usize = 5;
 /// Hoechstens so viele Anfragen je Durchlauf (eine Flut verzoegert, blockiert aber nicht).
 pub const MAX_REQUESTS_PER_SCAN: usize = 20;
+/// Hoechstens so viele Eintraege von `anfragen/` werden je Durchlauf angesehen.
+pub const MAX_DIR_ENTRIES: usize = 10_000;
 /// Gedaechtnis der bearbeiteten Anfragen.
 pub const PROCESSED_KEEP_MS: i64 = 30 * 24 * 3600 * 1000;
 
@@ -497,6 +471,19 @@ pub fn is_ulid(s: &str) -> bool {
         })
 }
 
+/// Zeitstempel einer ULID (ms seit 1970, die ersten 10 Zeichen).
+pub fn ulid_ms(s: &str) -> Option<i64> {
+    const ALPHABET: &str = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    if !is_ulid(s) {
+        return None;
+    }
+    let mut v: i64 = 0;
+    for c in s.chars().take(10) {
+        v = v * 32 + ALPHABET.find(c)? as i64;
+    }
+    Some(v)
+}
+
 fn plain_text(s: &str, max: usize) -> bool {
     s.chars().count() <= max && !s.chars().any(char::is_control)
 }
@@ -519,6 +506,12 @@ pub fn parse_request(
     }
     if !is_ulid(&req.id) || req.id != file_id {
         return Err("request_id".into());
+    }
+    // Die Zeit in der ULID muss ins selbe Fenster passen wie `erstellt`: eine Id laesst sich
+    // nach Ablauf des Gedaechtnisses nicht mit frischem `erstellt` wiederverwenden (Review).
+    let id_secs = ulid_ms(&req.id).unwrap_or(0) / 1000;
+    if now_secs - id_secs > MAX_REQUEST_AGE_SECS || id_secs - now_secs > MAX_CLOCK_SKEW_SECS {
+        return Err("request_expired".into());
     }
     let created = chrono::DateTime::parse_from_rfc3339(&req.erstellt)
         .map_err(|_| "request_created".to_string())?
@@ -566,16 +559,22 @@ pub fn parse_request(
 
 /// Ids der wartenden Anfragen (nur `<ULID>.json`, nur echte Dateien), aelteste zuerst,
 /// hoechstens [`MAX_REQUESTS_PER_SCAN`]. Legt `anfragen/` und `antworten/` bei Bedarf an.
-pub fn list_requests(sandbox: &Sandbox) -> Result<Vec<String>, String> {
+pub fn list_requests(
+    sandbox: &Sandbox,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
     let dir = sandbox.resolve_dir(DIR_REQUESTS, true).map_err(fe)?;
     sandbox.resolve_dir(DIR_ANSWERS, true).map_err(fe)?;
     let mut ids: Vec<String> = std::fs::read_dir(&dir)
         .map_err(|e| format!("presenter_read_failed: {e}"))?
+        .take(MAX_DIR_ENTRIES)
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
             let id = name.strip_suffix(".json")?;
-            if !is_ulid(id) {
+            // Erledigte vor der Begrenzung ausschliessen: sonst blockieren 20 liegengebliebene
+            // erledigte Anfragen alle spaeteren (Review).
+            if !is_ulid(id) || skip(id) {
                 return None;
             }
             let meta = std::fs::symlink_metadata(entry.path()).ok()?;
@@ -690,11 +689,14 @@ pub struct Processed {
 }
 
 impl Processed {
-    pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+    /// Fehlt die Datei: leer. Ist sie unlesbar oder kaputt: Fehler -- dann wird nichts
+    /// bearbeitet (fail closed), statt erledigte Anfragen erneut auszufuehren.
+    pub fn load(path: &Path) -> Result<Self, String> {
+        match std::fs::read(path) {
+            Ok(b) => serde_json::from_slice(&b).map_err(|_| "presenter_processed_corrupt".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(format!("presenter_processed_unreadable: {e}")),
+        }
     }
 
     pub fn contains(&self, key: &str) -> bool {
@@ -718,7 +720,8 @@ impl Processed {
 mod request_tests {
     use super::*;
 
-    const ID: &str = "01K7E7Z0000000000000000000";
+    /// ULID mit der Zeit `NOW - 60 s` (die Zeit in der Id muss ins Fenster passen).
+    const ID: &str = "01M3ZYMJX00000000000000000";
     const NOW: i64 = 1_791_000_000;
 
     fn known(t: &str) -> bool {
@@ -766,7 +769,7 @@ mod request_tests {
     fn attacks_and_mistakes_are_refused_with_stable_codes() {
         let cases: Vec<(serde_json::Value, &str)> = vec![
             (json!({ "schema": "wai.vortrag/1" }), "request_schema"),
-            (json!({ "id": "01K7E7Z0000000000000000001" }), "request_id"),
+            (json!({ "id": "01M3ZYMJX00000000000000001" }), "request_id"),
             (json!({ "id": "../../geheim" }), "request_id"),
             (
                 json!({ "erstellt": created(-8 * 24 * 3600) }),
@@ -811,6 +814,20 @@ mod request_tests {
     }
 
     #[test]
+    fn an_old_id_cannot_be_reused_with_a_fresh_created_date() {
+        // Id aus 2025, `erstellt` frisch: abgelehnt.
+        let old = "01JAAAAAAA0000000000000000";
+        let mut v: serde_json::Value = serde_json::from_slice(&body(json!({}))).unwrap();
+        v["id"] = json!(old);
+        let bytes = serde_json::to_vec(&v).unwrap();
+        assert_eq!(
+            parse_request(&bytes, old, NOW, &known).unwrap_err(),
+            "request_expired"
+        );
+        assert!((ulid_ms(ID).unwrap() / 1000 - NOW).abs() < 120);
+    }
+
+    #[test]
     fn ulids_are_strict() {
         assert!(is_ulid(ID));
         assert!(!is_ulid("01k7e7z0000000000000000000"), "klein");
@@ -835,13 +852,18 @@ mod request_tests {
         std::fs::create_dir_all(&req).unwrap();
         std::fs::write(req.join(format!("{ID}.json")), body(json!({}))).unwrap();
         std::fs::write(req.join("notiz.json"), b"{}").unwrap();
-        std::fs::write(req.join("01K7E7Z0000000000000000002.txt"), b"{}").unwrap();
-        std::fs::create_dir_all(req.join("01K7E7Z0000000000000000003.json")).unwrap();
-        let big = "01K7E7Z0000000000000000004";
+        std::fs::write(req.join("01M3ZYMJX00000000000000002.txt"), b"{}").unwrap();
+        std::fs::create_dir_all(req.join("01M3ZYMJX00000000000000003.json")).unwrap();
+        let big = "01M3ZYMJX00000000000000004";
         std::fs::write(req.join(format!("{big}.json")), vec![b' '; 20_000]).unwrap();
         assert_eq!(
-            list_requests(&s).unwrap(),
+            list_requests(&s, &|_| false).unwrap(),
             vec![ID.to_string(), big.to_string()]
+        );
+        // Erledigte zaehlen nicht gegen die Begrenzung.
+        assert_eq!(
+            list_requests(&s, &|id| id == ID).unwrap(),
+            vec![big.to_string()]
         );
         assert!(dir.path().join(DIR_ANSWERS).is_dir());
         assert!(read_request(&s, ID).is_ok());
@@ -862,7 +884,7 @@ mod request_tests {
         let secret = outside.path().join("geheim.json");
         std::fs::write(&secret, body(json!({}))).unwrap();
         std::os::unix::fs::symlink(&secret, req.join(format!("{ID}.json"))).unwrap();
-        assert!(list_requests(&s).unwrap().is_empty());
+        assert!(list_requests(&s, &|_| false).unwrap().is_empty());
         assert!(read_request(&s, ID).is_err());
     }
 
@@ -901,13 +923,16 @@ mod request_tests {
     fn processed_ids_survive_a_restart_and_old_ones_expire() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("presenter").join("verarbeitet.json");
-        let mut p = Processed::load(&path);
+        let mut p = Processed::load(&path).unwrap();
         p.mark("int:A", 1_000, &path).unwrap();
         p.mark("int:B", 1_000 + PROCESSED_KEEP_MS + 1, &path)
             .unwrap();
-        let again = Processed::load(&path);
+        let again = Processed::load(&path).unwrap();
         assert!(!again.contains("int:A"), "abgelaufen");
         assert!(again.contains("int:B"));
+        // Kaputtes Gedaechtnis: fail closed.
+        std::fs::write(&path, b"{kaputt").unwrap();
+        assert!(Processed::load(&path).is_err());
     }
 }
 
@@ -1019,20 +1044,15 @@ mod tests {
             vec!["2026-10-04-uebung-demo-case-ie2s-m1".to_string()]
         );
 
-        // Erneut senden: neuer Name, das alte Paket derselben Besprechung ist weg.
+        // Erneut senden: neuer Name; LVA loescht nichts (Review), das aeltere bleibt.
         let second = write_package(&s, &input("M1", "P2")).unwrap();
         assert_eq!(
             second.folder,
             "pakete/2026-10-04-uebung-demo-case-ie2s-m1-v2"
         );
-        assert_eq!(second.replaced, 1);
-        assert!(!root.exists());
-        // Ein Paket einer anderen Besprechung und ein fremder Ordner bleiben.
-        let other = write_package(&s, &input("M2", "P3")).unwrap();
+        assert!(root.exists());
         std::fs::create_dir_all(dir.path().join("pakete/fremd")).unwrap();
-        let third = write_package(&s, &input("M1", "P4")).unwrap();
-        assert_eq!(third.replaced, 1);
-        assert!(dir.path().join(&other.folder).exists());
+        write_package(&s, &input("M1", "P3")).unwrap();
         assert!(dir.path().join("pakete/fremd").exists());
     }
 
@@ -1044,11 +1064,13 @@ mod tests {
         let dup = i.dokumente[0].clone();
         i.dokumente.push(dup);
         assert!(write_package(&s, &i).is_err());
-        let left: Vec<_> = std::fs::read_dir(dir.path().join(DIR_PACKAGES))
+        // Kein sichtbares Paket: hoechstens ein Zwischenordner mit fuehrendem Punkt.
+        let visible: Vec<_> = std::fs::read_dir(dir.path().join(DIR_PACKAGES))
             .unwrap()
             .flatten()
+            .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
             .collect();
-        assert!(left.is_empty(), "kein Rest");
+        assert!(visible.is_empty(), "kein halbes Paket");
     }
 
     #[test]
