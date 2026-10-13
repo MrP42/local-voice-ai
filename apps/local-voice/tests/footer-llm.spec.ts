@@ -56,7 +56,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:event|listen") return ++callback;
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
-          if (cmd === "tts_server_status") return { phase: "stopped", owns_server: false, message: null };
+          if (cmd === "tts_server_status") return (window as unknown as { __ttsStatus?: unknown }).__ttsStatus ?? { phase: "stopped", owns_server: false, message: null, server_up: false };
           if (cmd === "tts_server_start") { saved.serverStarted = true; return null; }
           if (cmd === "compliance_status")
             return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
@@ -258,3 +258,21 @@ test("Enter in the search box picks the first match", async ({ page }) => {
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.active))
     .toBe("openai-1:gpt-4.1-mini");
 });
+
+// "Bereit" gilt auch fuer das Vorlesen mit Piper (kein Server). Das Symbol darf nur
+// gruen sein, wenn wirklich ein Fish-Server laeuft.
+for (const [up, expected] of [[false, "stopped"], [true, "ready"]] as const) {
+  test(`Fish-Symbol bei Phase bereit und server_up=${up}: ${expected}`, async ({ page }) => {
+    await page.addInitScript((serverUp) => {
+      (window as unknown as { __ttsStatus: unknown }).__ttsStatus = {
+        phase: "ready",
+        owns_server: false,
+        message: null,
+        server_up: serverUp,
+      };
+    }, up);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await expect(page.locator("[data-fish-server]").first()).toHaveAttribute("data-fish-server", expected);
+  });
+}

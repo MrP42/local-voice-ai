@@ -60,6 +60,10 @@ pub struct TtsStatus {
     pub phase: TtsPhase,
     pub owns_server: bool,
     pub message: Option<String>,
+    /// Laeuft wirklich ein Fish-Server (Starten, Bereit, Sprechen)? Die Phase
+    /// gilt auch fuer das Vorlesen mit Piper -- dort gibt es keinen Server, und
+    /// die Fussleiste darf "Server laeuft" nicht aus "Bereit" ablesen.
+    pub server_up: bool,
 }
 
 /// App-unabhängiger Kern: Port, Phase, HTTP, Besitz, Abbruch-Generation.
@@ -429,6 +433,7 @@ impl TtsCore {
             phase,
             owns_server: self.owns_server.load(Ordering::Acquire),
             message,
+            server_up: self.server_up(phase),
         };
         if let Some(cb) = self.on_phase_change.lock().unwrap().as_ref() {
             cb(status);
@@ -444,11 +449,21 @@ impl TtsCore {
     }
 
     pub fn status(&self) -> TtsStatus {
+        let phase = self.phase();
         TtsStatus {
-            phase: self.phase(),
+            phase,
             owns_server: self.owns_server(),
             message: None,
+            server_up: self.server_up(phase),
         }
+    }
+
+    /// Ein Fish-Server laeuft, wenn die Phase aktiv ist UND entweder Fish die
+    /// Engine ist oder die App ihn selbst gestartet hat. Bei Piper-Engine und
+    /// ohne eigenen Server steht "Bereit" fuer das Vorlesen, nicht fuer Fish.
+    fn server_up(&self, phase: TtsPhase) -> bool {
+        !matches!(phase, TtsPhase::Stopped | TtsPhase::Error)
+            && (self.engine_caps().needs_gpu || self.owns_server())
     }
 
     fn idle_for_secs(&self) -> u64 {
@@ -1833,6 +1848,33 @@ impl TtsManager {
                     .map(move |sentence| (sentence, segment.voice.clone()))
             })
             .collect()
+    }
+
+    /// Die gewaehlte Stimme oder Engine hat sich geaendert: Einstellungen sofort
+    /// in den Kern uebernehmen. Laeuft gerade ein Vorlesen, geht es mit dem
+    /// Satz weiter, der gerade zu hoeren ist -- in der neuen Stimme (die schon
+    /// erzeugten Saetze der alten waeren sonst noch zu hoeren). Bei Pause oder
+    /// Stopp genuegt die Uebernahme; Fortsetzen liest ohnehin neu ein.
+    pub async fn voice_changed(self: &Arc<Self>) {
+        self.refresh_from_settings();
+        if self.core.phase() != TtsPhase::Speaking {
+            return;
+        }
+        let (sentences, position) = {
+            let guard = self.speak_session.lock().unwrap();
+            match guard.as_ref() {
+                Some(session) if session.position < session.sentences.len() => {
+                    (session.sentences.clone(), session.position)
+                }
+                _ => return,
+            }
+        };
+        let manager = Arc::clone(self);
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = manager.run_speak_session(sentences, position).await {
+                log::warn!("Stimmenwechsel beim Vorlesen: {e}");
+            }
+        });
     }
 
     /// Pausiertes Freitext-Vorlesen ab dem letzten vollständig gehörten Satz

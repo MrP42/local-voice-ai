@@ -2374,6 +2374,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_export_format,
             commands::tts::tts_summarize_text,
             commands::tts::tts_transform_cancel,
+            commands::tts::tts_voice_changed,
             commands::tts::tts_store_translation,
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,

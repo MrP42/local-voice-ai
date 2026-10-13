@@ -4839,6 +4839,12 @@ async ttsStoreTranslation(text: string, targetLang: string, translation: string)
     await TAURI_INVOKE("tts_store_translation", { text, targetLang, translation });
 },
 /**
+ * Stimme oder Engine wurden umgestellt: sofort gelten lassen, auch mitten im Vorlesen.
+ */
+async ttsVoiceChanged() : Promise<void> {
+    await TAURI_INVOKE("tts_voice_changed");
+},
+/**
  * Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
  * abbrechen; sie endet nach dem Block, an dem sie gerade arbeitet.
  */
@@ -8143,7 +8149,7 @@ platform: string; piper: RuntimeState; fish: RuntimeState;
  * Ordner, in dem Fish erwartet wird (Einstellung `tts_fish_dir`).
  */
 fish_dir: string }
-export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null }
+export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null; server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.

@@ -494,7 +494,8 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           tabular
           ratio={running && running.total > 0 ? running.done / running.total : 0}
           text={
-            !running || running.total === 0
+            // Eine einzige Anfrage (Cloud, API, Abo) hat keine Bloecke zu zaehlen.
+            !running || running.total <= 1
               ? tab === "translation"
                 ? t("tts.transform.translateStarting")
                 : t("tts.transform.summaryStarting")

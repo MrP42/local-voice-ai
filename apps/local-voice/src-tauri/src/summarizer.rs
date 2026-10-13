@@ -12,7 +12,23 @@ use crate::settings::AppSettings;
 
 /// Blockgröße in Zeichen — konservativ gewählt, damit auch kleine lokale
 /// Modelle (8k Kontext) jeden Block samt Prompt verarbeiten können.
+/// Eingabe je Anfrage bei einem LOKALEN Modell (kleiner Kontext).
 const CHUNK_CHARS: usize = 16_000;
+/// Bei Cloud-, API- und Abo-Modellen EINE Anfrage: ein Text von vier Seiten ist
+/// fuer ein Modell mit 200 000 Token Kontext nichts, und viele Anfragen kosten
+/// Zeit und Kontingent. Sicherheitsnetz fuer sehr lange Quellen.
+const CHUNK_CHARS_CLOUD: usize = 300_000;
+/// Aufbereiten gibt den GANZEN Text zurueck: die Ausgabe ist so lang wie die
+/// Eingabe, deshalb eine kleinere Grenze.
+const TIDY_CHARS_CLOUD: usize = 100_000;
+
+fn chunk_chars(settings: &AppSettings) -> usize {
+    if crate::translator::active_model_is_local(settings) {
+        CHUNK_CHARS
+    } else {
+        CHUNK_CHARS_CLOUD
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Type)]
 pub struct SummaryOptions {
@@ -111,7 +127,14 @@ pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> 
     if trimmed.is_empty() {
         return Err("Kein Text zum Aufbereiten".into());
     }
-    let chunks = chunk_text(trimmed, CHUNK_CHARS);
+    let chunks = chunk_text(
+        trimmed,
+        if crate::translator::active_model_is_local(settings) {
+            CHUNK_CHARS
+        } else {
+            TIDY_CHARS_CLOUD
+        },
+    );
     let mut parts = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
         parts.push(ask_llm(settings, tidy_prompt(chunk)).await?.trim().to_string());
@@ -228,7 +251,7 @@ pub async fn summarize(
     if trimmed.is_empty() {
         return Err("Kein Text zum Zusammenfassen".into());
     }
-    let chunks = chunk_text(trimmed, CHUNK_CHARS);
+    let chunks = chunk_text(trimmed, chunk_chars(settings));
     if chunks.len() <= 1 {
         return ask_llm(settings, summary_prompt(opts, trimmed)).await;
     }
@@ -258,7 +281,7 @@ pub async fn summarize_with_progress(
     if trimmed.is_empty() {
         return Err("Kein Text zum Zusammenfassen".into());
     }
-    let chunks = chunk_text(trimmed, CHUNK_CHARS);
+    let chunks = chunk_text(trimmed, chunk_chars(settings));
     if chunks.len() <= 1 {
         progress(0, 1);
         let out = ask_llm(settings, summary_prompt(opts, trimmed)).await?;

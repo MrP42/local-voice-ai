@@ -50,3 +50,10 @@
 - Korrigierte Übersetzung bleibt: `tts_store_translation` schreibt in den Zwischenspeicher (vorher nur Arbeitsspeicher → beim Sprach-/Seitenwechsel kam die Maschinen-Fassung zurück). Offen: „Übersetzen“ liefert bei vorhandener Übersetzung den Zwischenspeicher (auch die korrigierte), keine neue.
 - Wiedergabe-Knopf: `.mediabar:has(.mbtn--lg)` mit Polster in `App.css`.
 - Falle: `memgate.sh` immer mit `&&` verketten; geschützte Kette `scratchpad/chain.sh` (Wächter → Sync → tsc → Rust → Installer).
+
+## Nachtrag 13.10. (0.21.16/0.21.17, PR #83)
+- Cloud-/API-/Abo-Modelle: Übersetzung und Zusammenfassung in EINER Anfrage (`translator::translation_block_chars`, `summarizer::chunk_chars`; lokal blockweise), Wiederholversuch bei „at capacity“/Mengenbegrenzung (`is_transient_error`).
+- Stimme live: `tts_voice_changed` (Frontend ruft es nach `applyVoiceValue`), `TtsManager::voice_changed` startet bei laufendem Vorlesen ab dem aktuellen Satz neu. Fish-Symbol: `TtsStatus.server_up` (Phase „Bereit“ gilt auch für Piper).
+- Sprach-Reiter über dem Übersetzungsfeld (`translatedLangs` im Seitenzustand, Stimme je Sprache `translation:<Sprache>`, Verlauf je Sprache `…:translation:<Sprache>`, `useTextHistory.syncPresent`).
+- Subagent `dokumente-export-presenter` (Worktree `D:\wt\local-voice-project\dokumente`, Zweig `feat/dokumenttypen-export`): Entwurf `docs/superpowers/specs/2026-10-13-dokumenttypen-export-presenter-design.md` gepusht; Etappe 1 (Dokumenttypen) läuft. 11 Owner-Annahmen im Entwurf Abschnitt 10 (nicht von Patrick bestätigt).
+- Offen: Presenter-Fenster-Position (welches Fenster? Chat/Assistent/Regieplan) — Patrick muss das Fenster nennen.

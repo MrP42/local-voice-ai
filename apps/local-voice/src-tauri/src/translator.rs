@@ -145,9 +145,54 @@ pub async fn translate_on(
 
 // ---- Blockweise Übersetzung mit Fortschritt und geschützten Marken ----------
 
-/// Zielgröße eines Übersetzungsblocks (Zeichen). Ganze Zeilen, nie mitten in
-/// einer Sprecherzeile getrennt.
-pub const BLOCK_CHARS: usize = 2500;
+/// Zielgröße eines Übersetzungsblocks bei einem LOKALEN Modell (Zeichen). Ganze
+/// Zeilen, nie mitten in einer Sprecherzeile getrennt. Kleine Modelle verlieren
+/// bei langen Texten den Faden, ausserdem laufen sie ohne Mengenbegrenzung.
+pub const BLOCK_CHARS_LOCAL: usize = 2500;
+/// Bei Cloud-, API- und Abo-Modellen (Kontext ab 200 000 Token) geht der Text in
+/// EINER Anfrage: viele kleine kosten Zeit und Kontingent (Anfragen je Minute und
+/// Stunde) und bringen nichts. Die Grenze ist nur ein Sicherheitsnetz fuer sehr
+/// lange Texte (die Antwort ist so lang wie der Text).
+pub const BLOCK_CHARS_CLOUD: usize = 100_000;
+
+/// Laeuft das aktive Sprachmodell auf diesem Rechner (App-Modell, Ollama, vLLM,
+/// jede Adresse auf localhost)? Alles andere ist ein Cloud-, API- oder Abo-Modell.
+pub fn active_model_is_local(settings: &AppSettings) -> bool {
+    let Some(provider) = settings.active_post_process_provider() else {
+        return false;
+    };
+    if crate::managers::llm::is_local(provider) || matches!(provider.id.as_str(), "ollama" | "vllm")
+    {
+        return true;
+    }
+    let url = provider.base_url.to_ascii_lowercase();
+    let host = url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&url)
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("");
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1" | "0.0.0.0")
+}
+
+/// Blockgroesse fuer die Uebersetzung: lokal klein, sonst eine Anfrage.
+pub fn translation_block_chars(settings: &AppSettings) -> usize {
+    if active_model_is_local(settings) {
+        BLOCK_CHARS_LOCAL
+    } else {
+        BLOCK_CHARS_CLOUD
+    }
+}
+
+/// Vorübergehende Fehler, bei denen ein zweiter Versuch Sinn hat: Modell
+/// ausgelastet, Mengenbegrenzung, kurzer Ausfall.
+pub fn is_transient_error(err: &str) -> bool {
+    let e = err.to_ascii_lowercase();
+    ["at capacity", "overloaded", "rate limit", "rate_limit", "429", "503", "try again", "temporarily"]
+        .iter()
+        .any(|m| e.contains(m))
+}
 
 /// Abbruch der laufenden Übersetzung (`tts_transform_cancel`).
 pub static TRANSLATE_CANCEL: std::sync::atomic::AtomicBool =
@@ -314,7 +359,7 @@ pub async fn translate_blocks(
 ) -> Result<String, String> {
     use std::sync::atomic::Ordering;
     TRANSLATE_CANCEL.store(false, Ordering::SeqCst);
-    let blocks = split_blocks(text, BLOCK_CHARS);
+    let blocks = split_blocks(text, translation_block_chars(settings));
     let total = blocks.len();
     progress(0, total);
     let mut out = Vec::with_capacity(total);
@@ -324,7 +369,24 @@ pub async fn translate_blocks(
         }
         out.push(
             translate_block(block, |chunk| async move {
-                translate_on(settings, &chunk, target_lang, cpu_only).await
+                // Ausgelastetes Modell oder Mengenbegrenzung: zweimal mit Pause neu.
+                let mut attempt = 0;
+                loop {
+                    match translate_on(settings, &chunk, target_lang, cpu_only).await {
+                        Err(e) if attempt < 2 && is_transient_error(&e) => {
+                            log::warn!("Übersetzung: vorübergehender Fehler ({e}), neuer Versuch");
+                            let pause = if attempt == 0 { 3 } else { 8 };
+                            for _ in 0..pause * 4 {
+                                if TRANSLATE_CANCEL.load(Ordering::SeqCst) {
+                                    return Err(CANCELLED.to_string());
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                            }
+                            attempt += 1;
+                        }
+                        other => return other,
+                    }
+                }
             })
             .await?,
         );
@@ -336,6 +398,51 @@ pub async fn translate_blocks(
 #[cfg(test)]
 mod block_tests {
     use super::*;
+
+    fn settings_with(provider: &str, base_url: &str) -> AppSettings {
+        let mut s = crate::settings::get_default_settings();
+        if let Some(p) = s.post_process_providers.iter_mut().find(|p| p.id == provider) {
+            p.base_url = base_url.to_string();
+        }
+        s.post_process_provider_id = provider.to_string();
+        s
+    }
+
+    #[test]
+    fn cloud_models_get_one_request_and_local_ones_small_blocks() {
+        let cloud = settings_with("openai", "https://api.openai.com/v1");
+        assert!(!active_model_is_local(&cloud));
+        assert_eq!(translation_block_chars(&cloud), BLOCK_CHARS_CLOUD);
+        // Vier Seiten Text (~12 000 Zeichen): bei Cloud EIN Block, lokal mehrere.
+        let text = "Ein Satz im Text. ".repeat(700);
+        assert_eq!(split_blocks(&text, translation_block_chars(&cloud)).len(), 1);
+        let local = settings_with("ollama", "http://localhost:11434/v1");
+        assert!(active_model_is_local(&local));
+        assert_eq!(translation_block_chars(&local), BLOCK_CHARS_LOCAL);
+    }
+
+    #[test]
+    fn a_remote_model_behind_a_custom_address_is_not_local() {
+        let set_url = |s: &mut AppSettings, url: &str| {
+            if let Some(p) = s.post_process_providers.iter_mut().find(|p| p.id == "custom") {
+                p.base_url = url.to_string();
+            }
+        };
+        let mut s = crate::settings::get_default_settings();
+        s.post_process_provider_id = "custom".into();
+        set_url(&mut s, "https://llm.example.com/v1");
+        assert!(!active_model_is_local(&s));
+        set_url(&mut s, "http://127.0.0.1:8000/v1");
+        assert!(active_model_is_local(&s));
+    }
+
+    #[test]
+    fn busy_or_rate_limited_models_are_retried_other_errors_are_not() {
+        assert!(is_transient_error("cli_failed: {\"message\":\"Selected model is at capacity. Please try again\"}"));
+        assert!(is_transient_error("Übersetzung fehlgeschlagen: 429 Too Many Requests"));
+        assert!(!is_transient_error("cli_model_not_in_plan: Dieses Modell nimmt der Server nicht an"));
+        assert!(!is_transient_error("Kein Modell eingetragen"));
+    }
 
     #[test]
     fn blocks_keep_whole_lines_and_rejoin_to_the_original() {

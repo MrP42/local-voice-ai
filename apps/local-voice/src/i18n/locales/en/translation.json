@@ -25,6 +25,7 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "langTabs": "Translated languages",
     "transform": {
       "translateStarting": "Translating …",
       "translateBlock": "Translating … block {{done}} of {{total}}",
