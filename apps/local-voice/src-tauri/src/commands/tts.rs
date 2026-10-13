@@ -484,6 +484,15 @@ pub async fn tts_summarize_text(
     crate::summarizer::summarize_with_progress(&settings, &text, &options, &progress).await
 }
 
+/// Stimme oder Engine wurden umgestellt: sofort gelten lassen, auch mitten im
+/// Vorlesen (dann ab dem Satz, der gerade zu hoeren ist).
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_voice_changed(app: AppHandle) {
+    let manager = app.state::<Arc<TtsManager>>().inner().clone();
+    manager.voice_changed().await;
+}
+
 /// Die Piper-Stimme, die diesen Text tatsaechlich liest, wenn die automatische
 /// Spracherkennung eine andere als die gewaehlte nimmt (Thorsten liest kein
 /// Englisch). `None`: es liest die gewaehlte.

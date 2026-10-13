@@ -93,7 +93,7 @@ test.beforeEach(async ({ page }) => {
             return new Promise((resolve, reject) => {
               pending[cmd] = { resolve, reject };
             });
-          if (cmd === "tts_cached_translation") return null;
+          if (cmd === "tts_cached_translation") return (w.__cached as string | undefined) ?? null;
           if (cmd === "tts_list_downloads") return [];
           if (cmd === "llm_ps" || cmd === "tts_reading_list" || cmd === "page_files" || cmd.includes("history") || cmd.includes("models") || cmd.includes("devices") || cmd === "meetings_list") return [];
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
@@ -209,4 +209,43 @@ test("eine unveränderte maschinelle Übersetzung wird nicht noch einmal abgeleg
   const before = (await calls(page)).filter(([c]) => c === "tts_store_translation").length;
   // Unveraenderte maschinelle Uebersetzung: nichts abzulegen.
   expect(before).toBe(0);
+});
+
+test("nach dem Übersetzen steht die Sprache als Reiter über dem Feld", async ({ page }) => {
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await expect(page.getByTestId("translation-lang-tabs")).toHaveCount(0);
+  await page.getByTestId("tts-action-translate").click();
+  await finish(page, "tts_translate", "<Erzählerin> Good day.");
+  const tab = page.getByTestId("lang-tab-English");
+  await expect(tab).toBeVisible();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+});
+
+test("Rückgängig und Wiederherstellen gelten auch in der Übersetzung, mehrere Schritte", async ({ page }) => {
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await page.getByTestId("tts-action-translate").click();
+  await finish(page, "tts_translate", "Good day.");
+  const editor = page.locator("textarea").first();
+  await editor.fill("Good day, everyone.");
+  await editor.fill("Good day, everyone. Welcome.");
+  await editor.press("Control+z");
+  await expect(editor).toHaveValue("Good day, everyone.");
+  await editor.press("Control+z");
+  await expect(editor).toHaveValue("Good day.");
+  await editor.press("Control+y");
+  await expect(editor).toHaveValue("Good day, everyone.");
+});
+
+test("eine aus dem Speicher geladene Übersetzung lässt sich nicht wegundo-n", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __cached: string }).__cached = "Hello there.";
+  });
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  const editor = page.locator("textarea").first();
+  await expect(editor).toHaveValue("Hello there.");
+  await editor.press("Control+z");
+  await expect(editor).toHaveValue("Hello there.");
 });

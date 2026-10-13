@@ -25,6 +25,7 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "langTabs": "Übersetzte Sprachen",
     "transform": {
       "translateStarting": "Übersetze …",
       "translateBlock": "Übersetze … Block {{done}} von {{total}}",

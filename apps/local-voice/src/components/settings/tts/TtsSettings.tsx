@@ -111,6 +111,13 @@ const formatEta = (seconds: number) => {
 /** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
 const TRANSFORM_CANCELLED = "transform_cancelled";
 
+/** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
+ *  haben jeweils ihre eigenen Schritte). */
+const translationHistoryKey = (
+  page: string | null | undefined,
+  lang: string,
+) => `${page ?? "-"}:translation:${lang}`;
+
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
@@ -238,6 +245,10 @@ export const TtsSettings = () => {
   // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
+  /** Sprachen, in die diese Seite uebersetzt ist (Reiter ueber dem Feld). */
+  const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
+  const addTranslatedLang = (lang: string) =>
+    setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
   /** Zu welchem Text/welcher Sprache `translation` gehoert, und was davon schon im Speicher liegt. */
   const translationFor = useRef("");
   const savedTranslation = useRef<string | null>(null);
@@ -402,6 +413,12 @@ export const TtsSettings = () => {
       if (abandoned) return;
       translationFor.current = translationKey(text, targetLang);
       savedTranslation.current = hit;
+      // Geladen, nicht bearbeitet: "Rueckgaengig" darf das nicht leeren.
+      historyRef.current?.syncPresent(
+        translationHistoryKey(activePageRef.current, targetLang),
+        hit ?? "",
+      );
+      if (hit) addTranslatedLang(targetLang);
       setTranslation(hit);
     });
     return () => {
@@ -455,8 +472,12 @@ export const TtsSettings = () => {
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
+            translatedLangs?: string[];
             autoTag?: AutoTagOptions;
           };
+          setTranslatedLangs(
+            Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
+          );
           setText(state.text ?? "");
           setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
@@ -489,6 +510,7 @@ export const TtsSettings = () => {
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
+        setTranslatedLangs([]);
         setTab("original");
       }
       setTranslation(null);
@@ -520,6 +542,7 @@ export const TtsSettings = () => {
             sourceUrl,
             tab,
             voices: tabVoices,
+            translatedLangs,
             autoTag: autoTagOptions ?? undefined,
           }),
         )
@@ -532,7 +555,16 @@ export const TtsSettings = () => {
         });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [activePage, text, summary, sourceUrl, tab, tabVoices, autoTagOptions]);
+  }, [
+    activePage,
+    text,
+    summary,
+    sourceUrl,
+    tab,
+    tabVoices,
+    translatedLangs,
+    autoTagOptions,
+  ]);
 
   // Stimmenliste fuer das Dropdown. Die Verwaltung unten meldet
   // Aenderungen ueber ein Fensterereignis, damit beide nie auseinanderlaufen.
@@ -845,26 +877,36 @@ export const TtsSettings = () => {
      die Engine um, eine Fish-Stimme schaltet zurueck. */
   const applyVoiceValue = useCallback(
     (value: string) => {
-      if (value.startsWith("piper:")) {
-        void updateSetting("tts_piper_voice", value.slice(6));
-        void updateSetting("tts_engine", "piper");
-        return;
-      }
-      if ((getSetting("tts_engine") ?? "fish") === "piper") {
-        void updateSetting("tts_engine", "fish");
-      }
-      void updateSetting("tts_voice", value === "@default" ? null : value);
+      // Erst alle Einstellungen schreiben, dann dem Backend Bescheid geben: ein
+      // laufendes Vorlesen soll die neue Stimme ab dem aktuellen Satz nehmen.
+      void (async () => {
+        if (value.startsWith("piper:")) {
+          await updateSetting("tts_piper_voice", value.slice(6));
+          await updateSetting("tts_engine", "piper");
+        } else {
+          if ((getSetting("tts_engine") ?? "fish") === "piper") {
+            await updateSetting("tts_engine", "fish");
+          }
+          await updateSetting("tts_voice", value === "@default" ? null : value);
+        }
+        await commands.ttsVoiceChanged().catch(() => undefined);
+      })();
     },
     [getSetting, updateSetting],
   );
 
+  // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
+  // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
+  const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
   // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
   useEffect(() => {
-    const wanted = tabVoices[tab];
+    const wanted =
+      tabVoices[voiceKey] ??
+      (tab === "translation" ? tabVoices.translation : undefined);
     if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, tabVoices, applyVoiceValue]);
+  }, [tab, voiceKey, tabVoices, applyVoiceValue]);
 
   /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
      unter dem Dropdown, warum -- und wohin man geht. `noVoiceSetUp`: gar keine
@@ -932,14 +974,23 @@ export const TtsSettings = () => {
     },
     [tab],
   );
-  // Bearbeitungshistorie je Seite und Reiter: Rueckgaengig/Wiederherstellen
+  const historyRef = useRef<{
+    syncPresent: (key: string, value: string) => void;
+  } | null>(null);
+  const activePageRef = useRef<string | null>(null);
+  activePageRef.current = activePage ?? null;
+  // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
   const history = useTextHistory(
-    `${activePage ?? "-"}:${tab}`,
+    tab === "translation"
+      ? translationHistoryKey(activePage, targetLang)
+      : `${activePage ?? "-"}:${tab}`,
     spokenText,
     setSpokenText,
   );
+
+  historyRef.current = history;
 
   /**
    * Skript-Pruefung des aktiven Reiters: Sprechermarker ohne Stimme und
@@ -1112,6 +1163,7 @@ export const TtsSettings = () => {
     }
     translationFor.current = translationKey(text, targetLang);
     savedTranslation.current = result.data;
+    addTranslatedLang(targetLang);
     setTranslation(result.data);
     setTab("translation");
     // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
@@ -1508,6 +1560,41 @@ export const TtsSettings = () => {
                 className="border-b border-mid-gray/20"
               />
 
+              {tab === "translation" && translatedLangs.length > 0 && (
+                <div
+                  role="tablist"
+                  aria-label={t("tts.langTabs")}
+                  className="flex flex-wrap gap-1"
+                  data-testid="translation-lang-tabs"
+                >
+                  {translatedLangs.map((lang) => {
+                    const label =
+                      TTS_TARGET_LANGS.find((l) => l.value === lang)?.label ??
+                      lang;
+                    const active = lang === targetLang;
+                    return (
+                      <button
+                        key={lang}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() =>
+                          void updateSetting("tts_translate_lang", lang)
+                        }
+                        data-testid={`lang-tab-${lang}`}
+                        className={`cursor-pointer rounded-full border px-3 py-0.5 text-xs transition-colors ${
+                          active
+                            ? "border-logo-primary bg-logo-primary/15 text-text"
+                            : "border-mid-gray/30 text-text/70 hover:text-text"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
                 (`[…]`) erscheinen als Chips im Mirror-Overlay. */}
@@ -1859,7 +1946,7 @@ export const TtsSettings = () => {
                         applyVoiceValue(value);
                         setTabVoices((current) => ({
                           ...current,
-                          [tab]: value,
+                          [voiceKey]: value,
                         }));
                       }}
                       isClearable={false}
