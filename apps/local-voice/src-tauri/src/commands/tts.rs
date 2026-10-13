@@ -253,6 +253,15 @@ pub fn tts_cached_translation(app: AppHandle, text: String, target_lang: String)
         .cached_translation(text.trim(), &target_lang)
 }
 
+/// Die vom Nutzer korrigierte Uebersetzung zu diesem Text und dieser Sprache
+/// ablegen; `tts_cached_translation` liefert danach SIE statt der maschinellen.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_store_translation(app: AppHandle, text: String, target_lang: String, translation: String) {
+    app.state::<Arc<TtsManager>>()
+        .save_corrected_translation(&text, &target_lang, &translation);
+}
+
 /// Welche Modelle das lokale Ollama gerade geladen hat.
 ///
 /// Grundlage der Sprachmodell-Anzeige neben dem Serversymbol. Kein lokales
@@ -473,6 +482,17 @@ pub async fn tts_summarize_text(
         );
     };
     crate::summarizer::summarize_with_progress(&settings, &text, &options, &progress).await
+}
+
+/// Die Piper-Stimme, die diesen Text tatsaechlich liest, wenn die automatische
+/// Spracherkennung eine andere als die gewaehlte nimmt (Thorsten liest kein
+/// Englisch). `None`: es liest die gewaehlte.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_piper_voice_for_text(app: AppHandle, text: String) -> Option<String> {
+    // Eine Stichprobe reicht fuer die Sprache; ganze Buecher gehen nicht ueber die Bruecke.
+    let sample: String = text.chars().take(2000).collect();
+    app.state::<Arc<TtsManager>>().piper_replacement_for(&sample)
 }
 
 /// Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)

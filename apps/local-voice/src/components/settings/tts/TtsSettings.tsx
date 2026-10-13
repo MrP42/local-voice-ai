@@ -238,6 +238,10 @@ export const TtsSettings = () => {
   // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
+  /** Zu welchem Text/welcher Sprache `translation` gehoert, und was davon schon im Speicher liegt. */
+  const translationFor = useRef("");
+  const savedTranslation = useRef<string | null>(null);
+  const translationKey = (t: string, lang: string) => `${t}\u0000${lang}`;
   const [translating, setTranslating] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [startingSeconds, setStartingSeconds] = useState(0);
@@ -256,6 +260,8 @@ export const TtsSettings = () => {
     }>("tts-transform-progress", (e) => setTransformProgress(e.payload));
     return () => void un.then((off) => off());
   }, []);
+  /** Piper mit Spracherkennung: die Stimme, die den Text des Reiters WIRKLICH liest. */
+  const [piperReader, setPiperReader] = useState<string | null>(null);
   /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
   const [swapOpen, setSwapOpen] = useState(false);
   const [langVoices, setLangVoices] = useState<LangVoice[]>([]);
@@ -393,7 +399,10 @@ export const TtsSettings = () => {
       return;
     }
     void commands.ttsCachedTranslation(text, targetLang).then((hit) => {
-      if (!abandoned) setTranslation(hit);
+      if (abandoned) return;
+      translationFor.current = translationKey(text, targetLang);
+      savedTranslation.current = hit;
+      setTranslation(hit);
     });
     return () => {
       abandoned = true;
@@ -1101,6 +1110,8 @@ export const TtsSettings = () => {
       }
       return;
     }
+    translationFor.current = translationKey(text, targetLang);
+    savedTranslation.current = result.data;
     setTranslation(result.data);
     setTab("translation");
     // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
@@ -1109,6 +1120,48 @@ export const TtsSettings = () => {
       void openSpeakerSwap(result.data);
     }
   };
+
+  const piperAutoLanguage = getSetting("tts_piper_auto_language") ?? true;
+  useEffect(() => {
+    if (!voiceValue.startsWith("piper:") || !piperAutoLanguage) {
+      setPiperReader(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void commands
+        .ttsPiperVoiceForText(spokenText)
+        .then((id) => alive && setPiperReader(id))
+        .catch(() => alive && setPiperReader(null));
+    }, 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [voiceValue, piperAutoLanguage, spokenText]);
+  const piperReaderVoice = piperReader
+    ? piperVoices.find((v) => v.id === piperReader)
+    : undefined;
+
+  // Korrekturen an der Uebersetzung bleiben: nach kurzer Ruhe in den
+  // Zwischenspeicher schreiben, aus dem sie beim Wechsel von Sprache oder
+  // Seite wieder geladen wird. Nur, wenn der Text zu GENAU diesem Original und
+  // dieser Sprache gehoert -- gleich nach einem Sprachwechsel steht noch die
+  // alte Uebersetzung im Feld und darf nicht unter der neuen Sprache landen.
+  useEffect(() => {
+    if (translation === null) return;
+    if (translationFor.current !== translationKey(text, targetLang)) return;
+    if (translation === savedTranslation.current) return;
+    const forText = text;
+    const forLang = targetLang;
+    const value = translation;
+    const timer = window.setTimeout(() => {
+      void commands.ttsStoreTranslation(forText, forLang, value).then(() => {
+        savedTranslation.current = value;
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [translation, text, targetLang]);
 
   const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
   /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
@@ -1150,8 +1203,9 @@ export const TtsSettings = () => {
       /* gemerkt wird nur zur Bequemlichkeit */
     }
     setTranslation((current) => applySwap(current ?? "", mapping, langVoices));
-    // Die Übersetzung liest mit ihren Sprechern ("Skript mit Sprechern").
-    setTabVoices((v) => ({ ...v, translation: "@default" }));
+    // Welche Stimme liest, bleibt die Wahl des Nutzers im Stimmen-Menü; bei
+    // "Skript mit Sprechern" gelten die getauschten Marken, sonst liest die
+    // gewählte Stimme alles.
   };
 
   /**
@@ -1830,6 +1884,28 @@ export const TtsSettings = () => {
                           {t("tts.voices.setUp")}
                         </button>
                       </div>
+                    )}
+                    {piperReaderVoice && (
+                      <p
+                        className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
+                        data-testid="piper-reader-hint"
+                      >
+                        <span>
+                          {t("tts.voices.autoLanguageReads", {
+                            name: piperVoiceLabel(piperReaderVoice),
+                          })}
+                        </span>
+                        <button
+                          type="button"
+                          className="cursor-pointer underline hover:text-text"
+                          onClick={() =>
+                            void updateSetting("tts_piper_auto_language", false)
+                          }
+                          data-testid="piper-auto-language-off"
+                        >
+                          {t("tts.voices.autoLanguageOff")}
+                        </button>
+                      </p>
                     )}
                     <p
                       id="voice-mode-hint"

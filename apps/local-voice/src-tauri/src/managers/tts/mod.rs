@@ -1801,6 +1801,11 @@ impl TtsManager {
     /// Der Stil aus `<Name:Stil>` wird geparst (und damit aus dem gesprochenen
     /// Text entfernt), aber noch nicht aufgeloest — das ist Paket S5.
     fn utterances(&self, text: &str) -> Vec<Utterance> {
+        // Engine und gewaehlte Stimme zuerst aus den Einstellungen lesen: sonst
+        // entscheidet der Stand des LETZTEN Auftrags, ob Sprechermarken gelten --
+        // wer gerade von "Skript mit Sprechern" auf eine Piper-Stimme gewechselt
+        // hat, bekam beim ersten Vorlesen noch die Sprecher der Fish-Stimmen.
+        self.refresh_from_settings();
         // Eine Engine ohne Stimmwechsel (Piper) darf keinen Marker sprechen,
         // auch keinen unbekannten: alle `<…>`-Kandidaten fallen weg, der
         // Text laeuft in der einen eingestellten Stimme.
@@ -1877,6 +1882,15 @@ impl TtsManager {
     ) -> Result<usize, String> {
         use tauri::Emitter;
         self.refresh_from_settings();
+        // Auch eine schon berechnete Sitzung (Fortsetzen nach Pause, Wechsel
+        // der Stimme mitten im Text) liest mit der JETZT gewaehlten Stimme:
+        // gilt keine Sprecherzuordnung, tragen die Saetze keine eigene Stimme.
+        let single = self.core.voice.lock().unwrap().is_some();
+        let sentences = without_speakers_unless_switching(
+            sentences,
+            self.core.engine_caps().voice_switching,
+            single,
+        );
         let texts: Vec<String> = sentences[start.min(sentences.len())..]
             .iter()
             .map(|(text, _)| text.clone())
@@ -2409,6 +2423,18 @@ impl TtsManager {
         std::fs::read_to_string(path).ok().filter(|s| !s.is_empty())
     }
 
+    /// Eine vom Nutzer korrigierte Uebersetzung ablegen -- an derselben Stelle wie
+    /// die maschinelle. Sonst holt die Oberflaeche beim naechsten Sprach- oder
+    /// Seitenwechsel die urspruengliche Fassung zurueck und ueberschreibt die
+    /// Korrektur (gemeldet 13.10.2026).
+    pub fn save_corrected_translation(&self, text: &str, target_lang: &str, translation: &str) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.store_translation(trimmed, target_lang, translation);
+    }
+
     fn store_translation(&self, text: &str, target_lang: &str, translation: &str) {
         let Some(path) = self.translation_path(text, target_lang) else {
             return;
@@ -2697,6 +2723,21 @@ impl TtsManager {
     /// Basis des App-Datenverzeichnisses (portable-bewusst) — darunter
     /// liegen tts_cache, torchinductor_cache und die Piper-Ablage
     /// (`tts/piper/…`, Vertrag siehe [`piper`]).
+    /// Welche Piper-Stimme liest diesen Text statt der gewaehlten? (siehe
+    /// `PiperEngine::replacement_voice_id`) Nur bei aktiver Piper-Engine.
+    pub fn piper_replacement_for(&self, text: &str) -> Option<String> {
+        let settings = crate::settings::get_settings(&self.app);
+        if TtsEngineKind::from_setting(&settings.tts_engine) != TtsEngineKind::Piper {
+            return None;
+        }
+        piper::PiperEngine::resolve_auto(
+            self.data_base_dir().as_deref(),
+            settings.tts_piper_voice.as_deref(),
+            settings.tts_piper_auto_language,
+        )
+        .replacement_voice_id(text)
+    }
+
     fn data_base_dir(&self) -> Option<std::path::PathBuf> {
         use tauri::Manager;
         crate::portable::data_dir()
@@ -4306,6 +4347,22 @@ fn speaker_markers_apply(voice_switching: bool, single_voice: bool) -> bool {
     voice_switching && !single_voice
 }
 
+/// Saetze ohne eigene Stimme, wenn keine Sprecherzuordnung gilt (Engine ohne
+/// Stimmwechsel oder eine feste Stimme gewaehlt): dann liest die eine
+/// gewaehlte Stimme alles -- auch einen schon berechneten Text, dessen Saetze
+/// noch Sprecher tragen.
+fn without_speakers_unless_switching(
+    sentences: Vec<Utterance>,
+    voice_switching: bool,
+    single_voice: bool,
+) -> Vec<Utterance> {
+    if speaker_markers_apply(voice_switching, single_voice) {
+        sentences
+    } else {
+        sentences.into_iter().map(|(text, _)| (text, None)).collect()
+    }
+}
+
 fn listening_pid(port: u16) -> Option<u32> {
     let output = std::process::Command::new("netstat")
         .args(["-ano", "-p", "TCP"])
@@ -4409,6 +4466,29 @@ mod tests {
         assert!(!speaker_markers_apply(false, false));
         assert!(!speaker_markers_apply(false, true));
     }
+
+    /// Fehler vom 13.10.2026: Eine schon berechnete Sitzung (Saetze mit
+    /// Sprechern der Fish-Stimmen) las nach dem Wechsel auf eine Piper-Stimme
+    /// weiter mit den Sprechern -- die Stimme sprang zwischen Thorsten und den
+    /// Sprecherstimmen hin und her.
+    #[test]
+    fn berechnete_saetze_verlieren_ihre_sprecher_wenn_keine_zuordnung_gilt() {
+        let sitzung: Vec<Utterance> = vec![
+            ("Guten Tag.".into(), Some("erzaehlerin".into())),
+            ("Hallo.".into(), Some("erzaehler".into())),
+            ("Ohne Sprecher.".into(), None),
+        ];
+        // Piper (kann nicht schalten) und Fish mit fester Stimme: alles ohne Sprecher.
+        for (switching, single) in [(false, false), (false, true), (true, true)] {
+            let out = without_speakers_unless_switching(sitzung.clone(), switching, single);
+            assert!(out.iter().all(|(_, v)| v.is_none()), "{switching} {single}");
+            assert_eq!(out.len(), 3);
+        }
+        // "Skript mit Sprechern": unveraendert.
+        let out = without_speakers_unless_switching(sitzung.clone(), true, false);
+        assert_eq!(out, sitzung);
+    }
+
     use std::sync::atomic::AtomicUsize;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

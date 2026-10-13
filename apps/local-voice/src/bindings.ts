@@ -4792,6 +4792,19 @@ async ttsExportFormat() : Promise<Result<string, string>> {
 }
 },
 /**
+ * Die Piper-Stimme, die diesen Text tatsaechlich liest, wenn die automatische
+ * Spracherkennung eine andere als die gewaehlte nimmt.
+ */
+async ttsPiperVoiceForText(text: string) : Promise<string | null> {
+    return await TAURI_INVOKE("tts_piper_voice_for_text", { text });
+},
+/**
+ * Die vom Nutzer korrigierte Uebersetzung ablegen.
+ */
+async ttsStoreTranslation(text: string, targetLang: string, translation: string) : Promise<void> {
+    await TAURI_INVOKE("tts_store_translation", { text, targetLang, translation });
+},
+/**
  * Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
  * abbrechen; sie endet nach dem Block, an dem sie gerade arbeitet.
  */

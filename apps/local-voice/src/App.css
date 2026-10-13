@@ -385,6 +385,11 @@ textarea:focus::-webkit-resizer {
 .mediabar--start {
   justify-content: flex-start;
 }
+/* Der Hauptschalter hebt sich beim Hover um 1 px und wirft einen Schatten;
+   die Spalte, in der er sitzt, schneidet ab, was ueber ihren Rand ragt. */
+.mediabar:has(.mbtn--lg) {
+  padding-block: 0.375rem;
+}
 .mediabar__sep {
   flex: none;
   width: 1px;

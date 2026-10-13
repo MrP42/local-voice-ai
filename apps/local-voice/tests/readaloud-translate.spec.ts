@@ -179,3 +179,34 @@ test("im Reiter Zusammenfassung gibt es das Menü und den Fortschritt", async ({
   await finish(page, "tts_summarize_text", "Kurz gesagt: alles gut.");
   await expect(page.locator("textarea").first()).toHaveValue("Kurz gesagt: alles gut.");
 });
+
+test("eine korrigierte Übersetzung wird abgelegt und beim Neuladen nicht überschrieben", async ({ page }) => {
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await page.getByTestId("tts-action-translate").click();
+  await finish(page, "tts_translate", "<Erzählerin> Good day.");
+  // Das Tausch-Fenster schliessen, dann korrigieren.
+  await page.getByRole("button", { name: "Abbrechen" }).last().click();
+  const editor = page.locator("textarea").first();
+  await editor.fill("<Erzählerin> Good morning, everyone.");
+  await expect
+    .poll(async () => (await calls(page)).filter(([c]) => c === "tts_store_translation").length)
+    .toBeGreaterThan(0);
+  const stored = (await calls(page)).filter(([c]) => c === "tts_store_translation").at(-1)!;
+  expect(stored[1]).toMatchObject({
+    text: ORIGINAL,
+    targetLang: "English",
+    translation: "<Erzählerin> Good morning, everyone.",
+  });
+});
+
+test("eine unveränderte maschinelle Übersetzung wird nicht noch einmal abgelegt", async ({ page }) => {
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await page.getByTestId("tts-action-translate").click();
+  await finish(page, "tts_translate", "Hello there.");
+  await page.waitForTimeout(900);
+  const before = (await calls(page)).filter(([c]) => c === "tts_store_translation").length;
+  // Unveraenderte maschinelle Uebersetzung: nichts abzulegen.
+  expect(before).toBe(0);
+});
