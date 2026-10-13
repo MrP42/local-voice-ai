@@ -261,28 +261,107 @@ async fn probe_real_meeting() {
     }
     let store =
         Arc::new(MeetingStore::open_at(std::path::Path::new(&var("LVA_PROBE_DB"))).unwrap());
+    // `LVA_PROBE_TYPE=all`: jeder erzeugbare Typ des Katalogs.
     let key = std::env::var("LVA_PROBE_TYPE").unwrap_or_else(|_| "management_summary".into());
-    let started = std::time::Instant::now();
-    let doc = generate_document_guarded(
-        &settings,
-        store.clone(),
-        &var("LVA_PROBE_MEETING"),
-        by_key(&key).unwrap(),
-        &DocBasis::default(),
-        Limits::default(),
-        &|p| eprintln!("Fortschritt {:?} {}/{}", p.phase, p.done, p.total),
-    )
-    .await
-    .unwrap_or_else(|e| panic!("Probe fehlgeschlagen: {e}"));
-    let meta = store
-        .document_generation_metadata(&doc.id)
-        .unwrap()
-        .unwrap_or_default();
-    std::fs::write(var("LVA_PROBE_OUT"), &doc.body).unwrap();
-    std::fs::write(format!("{}.meta.json", var("LVA_PROBE_OUT")), meta).unwrap();
-    eprintln!(
-        "fertig in {:?}: {} Zeichen",
-        started.elapsed(),
-        doc.body.len()
+    let keys: Vec<String> = if key == "all" {
+        crate::managers::meetings::doc_types::catalog()
+            .into_iter()
+            .filter(|t| t.engine == crate::managers::meetings::doc_types::DocEngine::Document)
+            .map(|t| t.key.to_string())
+            .collect()
+    } else {
+        vec![key]
+    };
+    // Ausgabe je Typ: `<dir>/<key>.md`, `.meta.json`, `.docx`, `.pdf` (Briefkopf
+    // `LVA_PROBE_LETTERHEAD`, Vorgabe `wai`).
+    let out_dir = std::path::PathBuf::from(var("LVA_PROBE_OUT_DIR"));
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let lh_store = crate::managers::letterhead::Store::new(out_dir.join("briefkoepfe"));
+    let lh = lh_store
+        .get(&std::env::var("LVA_PROBE_LETTERHEAD").unwrap_or_else(|_| "wai".into()))
+        .unwrap();
+    let logo = lh_store.logo(&lh).unwrap();
+    let design = crate::managers::meetings::doc_export::Design {
+        letterhead: &lh,
+        logo: logo.as_ref(),
+    };
+    for key in keys {
+        let started = std::time::Instant::now();
+        let doc = generate_document_guarded(
+            &settings,
+            store.clone(),
+            &var("LVA_PROBE_MEETING"),
+            by_key(&key).unwrap(),
+            &DocBasis::default(),
+            Limits::default(),
+            &|p| eprintln!("{key}: {:?} {}/{}", p.phase, p.done, p.total),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("Probe {key} fehlgeschlagen: {e}"));
+        let meta = store
+            .document_generation_metadata(&doc.id)
+            .unwrap()
+            .unwrap_or_default();
+        std::fs::write(out_dir.join(format!("{key}.md")), &doc.body).unwrap();
+        std::fs::write(out_dir.join(format!("{key}.meta.json")), meta).unwrap();
+        for ext in ["docx", "pdf"] {
+            crate::managers::meetings::doc_export::write(
+                &out_dir.join(format!("{key}.{ext}")),
+                &doc.body,
+                &design,
+            )
+            .unwrap();
+        }
+        eprintln!(
+            "{key}: fertig in {:?}, {} Zeichen",
+            started.elapsed(),
+            doc.body.len()
+        );
+    }
+}
+
+/// Klaerung 3 (Etappe 2): das Protokoll rendert Eintraege mit derselben Funktion wie die
+/// Dokumenttypen -- kein "Wer: null", keine zerrissene Liste.
+#[test]
+fn the_minutes_renderer_drops_placeholder_names_and_keeps_entries_on_one_line() {
+    let head = MinutesHead {
+        title: "Jour fixe".into(),
+        description: String::new(),
+        date_iso: "2026-10-13".into(),
+        duration_ms: 600_000,
+        shares: vec![],
+        single_speaker: true,
+        mixed_channel: false,
+    };
+    let entry = |text: &str, who: &str| MinutesEntry {
+        text: text.into(),
+        assignee: Some(who.into()),
+        due: Some("null".into()),
+    };
+    let sections = vec![
+        MinutesSection {
+            id: "zusammenfassung".into(),
+            title: "Zusammenfassung".into(),
+            kind: SectionKind::Text,
+            entries: vec![MinutesEntry {
+                text: "Erste Zeile\nzweite Zeile".into(),
+                assignee: None,
+                due: None,
+            }],
+        },
+        MinutesSection {
+            id: "aufgaben".into(),
+            title: "Aufgaben".into(),
+            kind: SectionKind::Tasks,
+            entries: vec![entry("Angebot\nschicken", "null"), entry("Notiz", "Anna")],
+        },
+    ];
+    let md = minutes_to_markdown(&head, "Allgemein", None, &sections, &[]);
+    assert!(
+        md.contains("## Zusammenfassung\n\nErste Zeile zweite Zeile\n"),
+        "{md}"
     );
+    assert!(md.contains("- Angebot schicken\n"), "{md}");
+    assert!(md.contains("- Notiz _(Wer: Anna)_\n"), "{md}");
+    assert!(!md.contains("null"), "{md}");
 }

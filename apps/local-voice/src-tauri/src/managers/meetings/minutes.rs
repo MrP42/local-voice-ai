@@ -825,21 +825,11 @@ pub fn validate_sections(sections: &[MinutesSection]) -> Result<(), String> {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/// Eine Zeile eines Eintrags. Dieselbe Funktion wie bei den Dokumenttypen
+/// (`doc_types::entry_line`): Platzhalter wie "null" bei Wer/Bis fallen weg, Zeilenumbrueche
+/// aus der Antwort zerreissen die Liste nicht (Befund 13.10.2026).
 fn entry_line(kind: SectionKind, entry: &MinutesEntry) -> String {
-    let mut line = entry.text.clone();
-    if kind == SectionKind::Tasks {
-        let mut extras = Vec::new();
-        if let Some(assignee) = &entry.assignee {
-            extras.push(format!("Wer: {assignee}"));
-        }
-        if let Some(due) = &entry.due {
-            extras.push(format!("Bis: {due}"));
-        }
-        if !extras.is_empty() {
-            line.push_str(&format!(" _({})_", extras.join(", ")));
-        }
-    }
-    line
+    doc_types::entry_line(kind, entry)
 }
 
 /// Hinweiszeile fuer ein Protokoll, dem Teile des Transkripts fehlen. Nennt die
@@ -900,7 +890,7 @@ pub fn minutes_to_markdown_with_basis(
         match section.entries.as_slice() {
             [] => markdown.push_str("_keine_\n"),
             [only] if section.kind == SectionKind::Text => {
-                markdown.push_str(&format!("{}\n", only.text));
+                markdown.push_str(&format!("{}\n", doc_types::one_line(&only.text)));
             }
             entries => {
                 for entry in entries {

@@ -107,7 +107,33 @@ test.beforeEach(async ({ page }) => {
         post_process_models: {},
         post_process_api_keys: {},
         push_to_talk: true,
+        document_letterhead_id: "neutral",
       };
+      w.__settings = settings;
+      w.__savePath = null; // Antwort des Speichern-Dialogs
+      const colors = {
+        akzent: "#FFDD00",
+        akzent_text: "#111418",
+        text: "#1F2937",
+        titel: "#111418",
+        gedaempft: "#626976",
+        linie: "#E1E6EC",
+      };
+      const builtin = (id: string, name: string) => ({
+        schema: "lva.briefkopf/1",
+        id,
+        name,
+        builtin: true,
+        firma: { name: id === "neutral" ? "" : name, zeilen: [] },
+        logo: null,
+        farben: colors,
+        fusszeile: { zeilen: [], seitenzahl: true },
+      });
+      w.__letterheads = [
+        builtin("neutral", "Neutral"),
+        builtin("wai", "Wolff Applied AI"),
+        builtin("ingenieurbuero", "Ingenieurbüro Wolff"),
+      ];
       w.__calls = [];
       w.__generate = "ok";
       w.__release = null;
@@ -267,6 +293,22 @@ test.beforeEach(async ({ page }) => {
               case "meeting_templates_list":
                 return [];
               case "plugin:dialog|save":
+                return w.__savePath;
+              case "meetings_export_document_as":
+              case "letterhead_export_sample":
+                return null;
+              case "letterheads_list":
+                return w.__letterheads;
+              case "letterhead_save": {
+                const lh = { ...(args.letterhead as any), builtin: false };
+                w.__letterheads = [
+                  ...w.__letterheads.filter((l: any) => l.id !== lh.id),
+                  lh,
+                ];
+                return null;
+              }
+              case "change_document_letterhead_setting":
+                settings.document_letterhead_id = args.id as string;
                 return null;
               case "tts_server_status":
                 return { phase: "stopped", message: null };
@@ -460,4 +502,86 @@ test("Bild fuer die Abnahme (nur mit SCREENS_DIR)", async ({ page }) => {
   await page.getByTestId("doc-new").click();
   await expect(page.getByRole("menu")).toBeVisible();
   await page.screenshot({ path: `${dir}/dokumente-neues-dokument.png` });
+});
+
+test("Export: Word/PDF ueber das gespeicherte Dokument mit Briefkopf", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__savePath = "C:/Ablage/Kundentermin Meyer.pdf";
+  });
+  await openDocuments(page);
+  await page.getByTestId("minutes-export").click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_export_document_as")).length)
+    .toBe(1);
+  const [call] = await calls(page, "meetings_export_document_as");
+  expect(call.args).toEqual({
+    documentId: "p1",
+    path: "C:/Ablage/Kundentermin Meyer.pdf",
+  });
+  const [dialog] = await calls(page, "plugin:dialog|save");
+  const names = (
+    (dialog.args.options as { filters: { name: string }[] }).filters ?? []
+  ).map((f) => f.name);
+  expect(names).toEqual(["Word", "PDF", "Text", "Markdown"]);
+  // Der alte Weg (nur Text) wird fuer Protokoll/Dokumente nicht mehr benutzt.
+  expect(await calls(page, "meetings_export_document")).toHaveLength(0);
+});
+
+const openOutput = async (page: Page) => {
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.goto("/");
+  await page
+    .getByRole("button", { name: "Einstellungen", exact: true })
+    .first()
+    .click();
+  await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
+  await expect(page.getByTestId("documents-settings")).toBeVisible();
+};
+
+test("Einstellungen > Ausgabe > Dokumente: eigenen Briefkopf anlegen und bearbeiten", async ({
+  page,
+}) => {
+  await openOutput(page);
+  await expect(page.getByText("Briefkopf für Word und PDF")).toBeVisible();
+  // Mitgeliefert: kein Formular, nur "Als eigenen Briefkopf anlegen".
+  await expect(page.getByTestId("letterhead-form")).toHaveCount(0);
+  await page.getByTestId("letterhead-copy").click();
+
+  const [saved] = await calls(page, "letterhead_save");
+  const copy = saved.args.letterhead as { id: string; name: string };
+  expect(copy).toMatchObject({
+    id: "kopie-von-neutral",
+    name: "Kopie von Neutral",
+  });
+  await expect
+    .poll(
+      async () =>
+        (await calls(page, "change_document_letterhead_setting")).at(-1)?.args,
+    )
+    .toEqual({ id: "kopie-von-neutral" });
+
+  const form = page.getByTestId("letterhead-form");
+  await expect(form).toBeVisible();
+  await page.getByTestId("letterhead-firm").fill("Muster GmbH");
+  // Zeilenumbrueche lassen sich tippen; leere Zeilen fallen erst beim Speichern weg.
+  const typed = ["Musterstraße 1", "", "12345 Musterstadt "].join("\n");
+  await page.getByTestId("letterhead-lines").fill(typed);
+  await expect(page.getByTestId("letterhead-lines")).toHaveValue(typed);
+  await page.getByTestId("letterhead-save").click();
+  await expect
+    .poll(async () => (await calls(page, "letterhead_save")).length)
+    .toBe(2);
+  const last = (await calls(page, "letterhead_save")).at(-1)!.args
+    .letterhead as { firma: { name: string; zeilen: string[] } };
+  expect(last.firma.name).toBe("Muster GmbH");
+  expect(last.firma.zeilen).toEqual(["Musterstraße 1", "12345 Musterstadt"]);
+
+  const dir = process.env.SCREENS_DIR;
+  if (dir) {
+    await page
+      .getByTestId("documents-settings")
+      .screenshot({ path: `${dir}/einstellungen-dokumente.png` });
+  }
 });

@@ -112,14 +112,14 @@ pub fn write_document(path: &Path, markdown: &str) -> Result<(), String> {
 /// Eine Zeile des Protokolls, so weit ausgewertet, wie beide Zielformate es
 /// brauchen. Mehr Markdown als das erzeugt `minutes.rs` nicht.
 #[derive(Debug, PartialEq)]
-enum Block {
+pub(crate) enum Block {
     Heading(u8, String),
     Bullet(String),
     Paragraph(String),
     Blank,
 }
 
-fn parse_blocks(markdown: &str) -> Vec<Block> {
+pub(crate) fn parse_blocks(markdown: &str) -> Vec<Block> {
     markdown
         .lines()
         .map(|raw| {
@@ -150,10 +150,10 @@ fn parse_blocks(markdown: &str) -> Vec<Block> {
 
 /// Ein Textabschnitt mit seiner Auszeichnung.
 #[derive(Debug, PartialEq, Clone)]
-struct Span {
-    text: String,
-    bold: bool,
-    italic: bool,
+pub(crate) struct Span {
+    pub(crate) text: String,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
 }
 
 /// `**fett**` und `*kursiv*` / `_kursiv_` in Abschnitte zerlegen.
@@ -162,7 +162,7 @@ struct Span {
 /// die Quelle ist unser eigener Protokoll-Generator, nicht beliebiges
 /// Markdown aus dem Netz. Unpaarige Zeichen bleiben stehen, statt den Rest
 /// der Zeile zu verschlucken.
-fn parse_spans(line: &str) -> Vec<Span> {
+pub(crate) fn parse_spans(line: &str) -> Vec<Span> {
     let chars: Vec<char> = line.chars().collect();
     let mut spans = Vec::new();
     let mut current = String::new();
@@ -223,7 +223,7 @@ fn parse_spans(line: &str) -> Vec<Span> {
 
 /// Auszeichnungen entfernen — die Textfassung soll gelesen, nicht geparst
 /// werden.
-fn strip_marks(line: &str) -> String {
+pub(crate) fn strip_marks(line: &str) -> String {
     parse_spans(line)
         .into_iter()
         .map(|s| s.text)
@@ -299,13 +299,13 @@ fn inline_html(line: &str) -> String {
 }
 
 /// Zellen einer Tabellenzeile `| a | b |`.
-fn table_cells(row: &str) -> Vec<String> {
+pub(crate) fn table_cells(row: &str) -> Vec<String> {
     let inner = row.trim().trim_start_matches('|').trim_end_matches('|');
     inner.split('|').map(|c| c.trim().to_string()).collect()
 }
 
 /// Trennzeile `|---|:--:|`.
-fn is_table_separator(row: &str) -> bool {
+pub(crate) fn is_table_separator(row: &str) -> bool {
     let cells = table_cells(row);
     !cells.is_empty()
         && cells
@@ -314,7 +314,7 @@ fn is_table_separator(row: &str) -> bool {
 }
 
 /// Aufgabenpunkt `[ ] text` / `[x] text` → (erledigt, Text).
-fn task_marker(text: &str) -> Option<(bool, &str)> {
+pub(crate) fn task_marker(text: &str) -> Option<(bool, &str)> {
     if let Some(rest) = text.strip_prefix("[ ] ") {
         return Some((false, rest));
     }
@@ -1134,7 +1134,7 @@ pub fn write_export(
 
 /// XML-Sonderzeichen maskieren. Ein Protokoll enthält Namen und Zitate —
 /// ein `&` oder `<` darin darf die Datei nicht unlesbar machen.
-fn xml_escape(text: &str) -> String {
+pub(crate) fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

@@ -867,6 +867,39 @@
     }
   },
   "settings": {
+    "documents": {
+      "title": "Documents",
+      "description": "How exported minutes and documents look in Word and PDF.",
+      "letterhead": "Letterhead for Word and PDF",
+      "letterheadHint": "Logo, company, colours and footer. Built-in letterheads can be copied into your own and then adjusted.",
+      "own": "own",
+      "sample": "Save sample …",
+      "sampleSaved": "Sample saved to {{path}}",
+      "createOwn": "Create own letterhead",
+      "copyName": "Copy of {{name}}",
+      "name": "Name",
+      "firm": "Company",
+      "lines": "Lines below the company (up to 4)",
+      "footer": "Footer (up to 3 lines)",
+      "accent": "Accent colour",
+      "titleColor": "Heading colour",
+      "logoSet": "Logo set",
+      "logoNone": "No logo",
+      "logoPick": "Choose logo …",
+      "logoRemove": "Remove logo",
+      "logoLeft": "Logo left",
+      "logoRight": "Logo right",
+      "save": "Save",
+      "saved": "Saved.",
+      "delete": "Delete letterhead",
+      "errors": {
+        "letterhead_not_found": "This letterhead no longer exists.",
+        "letterhead_read_only": "Built-in letterheads cannot be changed. Create your own.",
+        "letterhead_invalid": "Invalid value: {{error}}",
+        "letterhead_logo_invalid": "The logo must be a PNG or JPEG up to 2 MB and 4000 pixels per side.",
+        "letterhead_io": "Saving failed."
+      }
+    },
     "compliance": {
         "title": "Rule set",
         "profile": "Rules for language models",

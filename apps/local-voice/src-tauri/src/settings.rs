@@ -927,6 +927,10 @@ pub struct AppSettings {
     /// Schluessel (aeltere settings.json) oder leer: "Ich".
     #[serde(default)]
     pub meeting_self_name: Option<String>,
+    /// Briefkopf fuer Word- und PDF-Export (Entwurf 2026-10-13, Etappe 2): Id eines
+    /// Profils `lva.briefkopf/1`. Ohne den Schluessel: `neutral` (Owner-Annahme 3).
+    #[serde(default = "default_document_letterhead_id")]
+    pub document_letterhead_id: String,
     /// M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
     /// 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
     #[serde(default = "default_meeting_reminder_lead_s")]
@@ -990,6 +994,10 @@ pub fn meeting_diarization_enabled(value: &str) -> bool {
 
 fn default_meeting_language() -> String {
     "auto".to_string()
+}
+
+fn default_document_letterhead_id() -> String {
+    crate::managers::letterhead::DEFAULT_ID.to_string()
 }
 
 fn default_meeting_audio_retention() -> crate::managers::meetings::retention::MeetingAudioRetention
@@ -1786,6 +1794,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
         meeting_self_name: None,
+        document_letterhead_id: default_document_letterhead_id(),
         meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,

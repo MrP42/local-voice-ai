@@ -2102,6 +2102,83 @@ async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBas
 }
 },
 /**
+ * Ein gespeichertes Dokument exportieren: Format nach der Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
+ */
+async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Briefkoepfe: mitgelieferte zuerst, dann eigene.
+ */
+async letterheadsList() : Promise<Result<Letterhead[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterheads_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf anlegen oder aendern (mitgelieferte sind schreibgeschuetzt).
+ */
+async letterheadSave(letterhead: Letterhead) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_save", { letterhead }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf entfernen. War er eingestellt, gilt wieder die Vorgabe.
+ */
+async letterheadDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Logo eines eigenen Briefkopfs setzen (PNG/JPEG) oder entfernen (`path = null`).
+ */
+async letterheadSetLogo(id: string, path: string | null) : Promise<Result<Letterhead, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_set_logo", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Beispiel mit einem Briefkopf speichern (Vorschau in der Einstellung).
+ */
+async letterheadExportSample(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_export_sample", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung "Briefkopf fuer Word und PDF". Unbekannte Ids werden abgelehnt.
+ */
+async changeDocumentLetterheadSetting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_document_letterhead_setting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
  * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
  * `empty_entry`). Chronologisch.
@@ -5788,6 +5865,10 @@ meeting_self_emails?: string[];
  */
 meeting_self_name?: string | null; 
 /**
+ * Briefkopf fuer Word- und PDF-Export: Id eines Profils `lva.briefkopf/1`.
+ */
+document_letterhead_id?: string; 
+/**
  * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
  * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
  */
@@ -6686,6 +6767,30 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  */
 "service"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Firmenangaben im Kopf.
+ */
+export type Firma = { name: string; zeilen?: string[] }
+/**
+ * Farben als `#RRGGBB`.
+ */
+export type Farben = { akzent: string; akzent_text: string; text: string; titel: string; gedaempft: string; linie: string }
+/**
+ * Fusszeile.
+ */
+export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
+/**
+ * Wo das Logo steht.
+ */
+export type LogoPosition = "links" | "rechts"
+/**
+ * Logo eines Profils: `logo.png`/`logo.jpg` im Profilordner oder `builtin:<name>`.
+ */
+export type Logo = { datei: string; breite_mm: number; position: LogoPosition }
+/**
+ * Ein Briefkopf (`lva.briefkopf/1`).
+ */
+export type Letterhead = { schema: string; id: string; name: string; builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
  */

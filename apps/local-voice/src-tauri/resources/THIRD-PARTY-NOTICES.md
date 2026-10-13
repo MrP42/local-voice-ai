@@ -1,6 +1,6 @@
 # Third-Party-Notices
 
-Local Voice AI 0.21.1 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
+Local Voice AI 0.21.17 enthält Software und nutzt Modelle Dritter. Diese Datei nennt sie mit ihren Lizenzen und wird mit `apps/local-voice/scripts/gen-notices.mjs` aus `Cargo.lock`, `pnpm-lock.yaml`, dem Modellkatalog und `docs/m2-evidence/ATTRIBUTION.md` erzeugt. Nicht von Hand ändern.
 
 ## Hinweise
 
@@ -86,8 +86,10 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 
 - FLEURS (Google) — CC-BY-4.0 — <https://huggingface.co/datasets/google/fleurs>
 - AMI Meeting Corpus — CC-BY-4.0 — <https://groups.inf.ed.ac.uk/ami/corpus/>
+- IBM Plex Sans (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/IBM/plex>
+- Archivo (Schrift im PDF-Export) — OFL-1.1 — <https://github.com/Omnibus-Type/Archivo>
 
-## Rust-Bibliotheken (676)
+## Rust-Bibliotheken (701)
 
 - Inflector 0.11.4 — BSD-2-Clause
 - adler2 2.0.1 — MIT
@@ -107,6 +109,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - anyhow 1.0.104 — MIT
 - arboard 3.6.1 — MIT
 - argon2 0.5.3 — MIT
+- arrayref 0.3.9 — BSD-2-Clause
 - arrayvec 0.7.6 — MIT
 - async-trait 0.1.89 — MIT
 - atomic-waker 1.1.2 — MIT
@@ -163,6 +166,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - cmake 0.1.57 — MIT
 - cocoa 0.24.1 — MIT
 - cocoa-foundation 0.1.2 — MIT
+- color_quant 1.1.0 — MIT
 - colorchoice 1.0.5 — MIT
 - console 0.16.3 — MIT
 - convert_case 0.4.0 — MIT
@@ -174,6 +178,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - core-graphics 0.25.0 — MIT
 - core-graphics-types 0.1.3 — MIT
 - core-graphics-types 0.2.0 — MIT
+- core_maths 0.1.1 — MIT
 - coreaudio-rs 0.13.0 — MIT
 - cpal 0.16.0 — Apache-2.0
 - cpufeatures 0.2.17 — MIT
@@ -245,9 +250,11 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - filetime 0.2.27 — MIT
 - find-msvc-tools 0.1.9 — MIT
 - flate2 1.1.9 — MIT
+- float-cmp 0.9.0 — MIT
 - fnv 1.0.7 — MIT
 - foldhash 0.1.5 — Zlib
 - foldhash 0.2.0 — Zlib
+- font-types 0.11.3 — MIT
 - foreign-types 0.3.2 — MIT
 - foreign-types 0.5.0 — MIT
 - foreign-types-macros 0.2.3 — MIT
@@ -272,6 +279,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - getrandom 0.2.17 — MIT
 - getrandom 0.3.4 — MIT
 - getrandom 0.4.1 — MIT
+- gif 0.14.2 — MIT
 - glob 0.3.3 — MIT
 - global-hotkey 0.8.0 — MIT
 - h2 0.4.19 — MIT
@@ -314,6 +322,8 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - idna 1.1.0 — MIT
 - idna_adapter 1.2.1 — MIT
 - image 0.25.9 — MIT
+- image-webp 0.2.4 — MIT
+- imagesize 0.14.0 — MIT
 - indenter 0.3.4 — MIT
 - indexmap 1.9.3 — MIT
 - indexmap 2.13.0 — MIT
@@ -329,13 +339,15 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - json-patch 3.0.1 — MIT
 - jsonptr 0.6.3 — MIT
 - keyboard-types 0.7.0 — MIT
+- krilla 0.8.2 — MIT
 - kuchikiki 0.8.8-speedreader — MIT
+- kurbo 0.13.1 — MIT
 - lazy_static 1.5.0 — MIT
 - libc 0.2.182 — MIT
 - libm 0.2.16 — MIT
 - libsqlite3-sys 0.35.0 — MIT
 - litemap 0.8.1 — Unicode-3.0
-- local-voice-ai 0.21.1 — MIT
+- local-voice-ai 0.21.17 — MIT
 - lock_api 0.4.14 — MIT
 - log 0.4.29 — MIT
 - lopdf 0.42.0 — MIT
@@ -416,6 +428,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - pastey 0.1.1 — MIT
 - pathdiff 0.2.3 — MIT
 - pdf-extract 0.12.0 — MIT
+- pdf-writer 0.15.0 — MIT
 - pem-rfc7468 0.7.0 — MIT
 - percent-encoding 2.3.2 — MIT
 - phf 0.10.1 — MIT
@@ -444,6 +457,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - png 0.17.16 — MIT
 - png 0.18.1 — MIT
 - poly1305 0.8.0 — MIT
+- polycool 0.4.0 — MIT
 - pom 1.1.0 — MIT
 - portable-atomic 1.13.1 — MIT
 - postscript 0.14.1 — MIT
@@ -474,6 +488,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - raw-window-handle 0.6.2 — MIT
 - rawpointer 0.2.1 — MIT
 - rdev 0.5.0-2 — MIT
+- read-fonts 0.39.2 — MIT
 - realfft 3.5.0 — MIT
 - regex 1.12.3 — MIT
 - regex-automata 0.4.14 — MIT
@@ -498,6 +513,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - rustls-platform-verifier 0.6.2 — MIT
 - rustls-webpki 0.103.15 — ISC
 - rustversion 1.0.22 — MIT
+- rustybuzz 0.20.1 — MIT
 - ryu 1.0.23 — Apache-2.0
 - same-file 1.0.6 — MIT
 - schannel 0.1.28 — MIT
@@ -531,6 +547,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - simd-adler32 0.3.8 — MIT
 - siphasher 0.3.11 — MIT
 - siphasher 1.0.2 — MIT
+- skrifa 0.42.1 — MIT
 - slab 0.4.12 — MIT
 - smallvec 1.15.1 — MIT
 - socket2 0.6.2 — MIT
@@ -549,6 +566,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - specta-typescript 0.0.9 — MIT
 - stable_deref_trait 1.2.1 — MIT
 - strength_reduce 0.2.4 — MIT
+- strict-num 0.1.1 — MIT
 - string_cache 0.8.9 — MIT
 - string_cache 0.9.0 — MIT
 - string_cache_codegen 0.5.4 — MIT
@@ -557,6 +575,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - strsim 0.11.1 — MIT
 - strum 0.24.1 — MIT
 - strum_macros 0.24.3 — MIT
+- subsetter 0.2.6 — MIT
 - subtle 2.6.1 — BSD-3-Clause
 - swift-rs 1.0.7 — MIT
 - symphonia 0.5.5 — MPL-2.0
@@ -620,6 +639,7 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - time 0.3.47 — MIT
 - time-core 0.1.8 — MIT
 - time-macros 0.2.27 — MIT
+- tiny-skia-path 0.12.0 — BSD-3-Clause
 - tinystr 0.8.2 — Unicode-3.0
 - tinyvec 1.10.0 — MIT
 - tinyvec_macros 0.1.1 — MIT
@@ -656,9 +676,12 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - unic-ucd-ident 0.9.0 — MIT
 - unic-ucd-version 0.9.0 — MIT
 - unicode-bidi 0.3.18 — MIT
+- unicode-bidi-mirroring 0.4.0 — MIT
+- unicode-ccc 0.4.0 — MIT
 - unicode-ident 1.0.24 — MIT, Unicode-3.0
 - unicode-normalization 0.1.25 — MIT
 - unicode-properties 0.1.4 — MIT
+- unicode-script 0.5.8 — MIT
 - unicode-segmentation 1.12.0 — MIT
 - unicode-width 0.2.2 — MIT
 - unicode-xid 0.2.6 — MIT
@@ -746,9 +769,11 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - winnow 0.7.14 — MIT
 - winreg 0.10.1 — MIT
 - winreg 0.55.0 — MIT
+- write-fonts 0.48.1 — MIT
 - writeable 0.6.2 — Unicode-3.0
 - wry 0.55.1 — MIT
 - xattr 1.6.1 — MIT
+- xmp-writer 0.3.3 — MIT
 - yoke 0.8.1 — Unicode-3.0
 - yoke-derive 0.8.1 — Unicode-3.0
 - zerocopy 0.8.39 — MIT
@@ -764,7 +789,9 @@ Weitere Katalogeinträge (Modelle, Stimmen, Laufzeiten) mit eigener, gemischter 
 - zmij 1.0.21 — MIT
 - zopfli 0.8.3 — Apache-2.0
 - zune-core 0.4.12 — MIT
+- zune-core 0.5.3 — MIT
 - zune-jpeg 0.4.21 — MIT
+- zune-jpeg 0.5.15 — MIT
 
 ### Lizenztexte (Rust)
 
@@ -3196,6 +3223,37 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+#### BSD 2-Clause "Simplified" License (BSD-2-Clause) — arrayref 0.3.9
+
+```
+Copyright (c) 2015 David Roundy <roundyd@physics.oregonstate.edu>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the
+   distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 #### BSD 3-Clause "New" or "Revised" License (BSD-3-Clause) — alloc-no-stdlib 2.0.4
 
 ```
@@ -3387,6 +3445,41 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+#### BSD 3-Clause "New" or "Revised" License (BSD-3-Clause) — tiny-skia-path 0.12.0
+
+```
+Copyright (c) 2011 Google Inc. All rights reserved.
+Copyright (c) 2020 Yevhenii Reizner All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 #### Boost Software License 1.0 (BSL-1.0) — clipboard-win 5.4.1
@@ -4366,7 +4459,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — adobe-cmap-parser 0.4.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, libm 0.2.16, local-voice-ai 0.21.1, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, whatlang 0.18.0, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
+#### MIT License (MIT) — adobe-cmap-parser 0.4.1, block 0.1.6, block2 0.6.2, brotli-decompressor 5.0.0, cargo_toml 0.22.3, chrono 0.4.43, chrono-tz 0.10.4, convert_case 0.4.0, dasp_sample 0.11.0, dispatch 0.2.0, dispatch2 0.3.0, dpi 0.1.2, fax 0.2.6, fax_derive 0.2.0, fxhash 0.2.1, krilla 0.8.2, libm 0.2.16, local-voice-ai 0.21.17, mac 0.1.1, macos-accessibility-client 0.0.1, malloc_buf 0.0.6, match_token 0.1.0, minisign-verify 0.2.5, objc2 0.6.4, objc2-app-kit 0.3.2, objc2-audio-toolbox 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-audio 0.3.2, objc2-core-audio-types 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-kit 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, pdf-extract 0.12.0, phf 0.10.1, phf 0.8.0, phf_codegen 0.8.0, phf_generator 0.10.0, phf_generator 0.8.0, phf_macros 0.10.0, phf_shared 0.10.0, phf_shared 0.8.0, postscript 0.14.1, realfft 3.5.0, siphasher 0.3.11, siphasher 1.0.2, specta 2.0.0-rc.22, specta-macros 2.0.0-rc.18, specta-serde 0.0.9, specta-typescript 0.0.9, tauri 2.11.5, tauri-build 2.6.3, tauri-codegen 2.6.3, tauri-macros 2.6.3, tauri-plugin 2.5.3, tauri-plugin-autostart 2.5.1, tauri-plugin-clipboard-manager 2.3.2, tauri-plugin-dialog 2.6.0, tauri-plugin-fs 2.4.5, tauri-plugin-global-shortcut 2.3.2, tauri-plugin-log 2.8.0, tauri-plugin-opener 2.5.3, tauri-plugin-os 2.3.2, tauri-plugin-process 2.3.1, tauri-plugin-single-instance 2.4.0, tauri-plugin-store 2.4.2, tauri-plugin-updater 2.10.1, tauri-plugin-window-state 2.4.1, tauri-runtime 2.11.3, tauri-runtime-wry 2.11.4, tauri-specta 2.0.0-rc.21, tauri-specta-macros 2.0.0-rc.16, tauri-utils 2.9.3, type1-encoding-parser 0.1.1, unic-char-property 0.9.0, unic-char-range 0.9.0, unic-common 0.9.0, unic-ucd-ident 0.9.0, unic-ucd-version 0.9.0, vad-rs 0.1.6, webview2-com 0.38.2, webview2-com-macros 0.8.1, webview2-com-sys 0.38.2, whatlang 0.18.0, windows 0.54.0, windows 0.58.0, windows 0.61.3, windows 0.62.2, windows-collections 0.2.0, windows-collections 0.3.2, windows-core 0.54.0, windows-core 0.58.0, windows-core 0.61.2, windows-core 0.62.2, windows-future 0.2.1, windows-future 0.3.2, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.1.3, windows-link 0.2.1, windows-numerics 0.2.0, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.1.2, windows-result 0.2.0, windows-result 0.3.4, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.4.2, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.1.0, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1, zune-core 0.4.12, zune-jpeg 0.4.21
 
 ```
 MIT License
@@ -5444,6 +5537,32 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — color_quant 1.1.0
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2016 PistonDevelopers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 #### MIT License (MIT) — console 0.16.3, indicatif 0.18.4
 
 ```
@@ -5499,6 +5618,32 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — core_maths 0.1.1
+
+```
+MIT License
+
+Copyright (c) 2024 Robert Bastian
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 #### MIT License (MIT) — coreaudio-rs 0.13.0, rawpointer 0.2.1, serde_with 3.16.1, serde_with_macros 3.16.1
@@ -6179,7 +6324,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-#### MIT License (MIT) — fdeflate 0.3.7, image 0.25.9
+#### MIT License (MIT) — fdeflate 0.3.7, image 0.25.9, image-webp 0.2.4
 
 ```
 MIT License
@@ -6251,10 +6396,64 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — float-cmp 0.9.0
+
+```
+Copyright (c) 2014-2020 Optimal Computing (NZ) Ltd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — fnv 1.0.7
 
 ```
 Copyright (c) 2017 Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — font-types 0.11.3, read-fonts 0.39.2, skrifa 0.42.1, write-fonts 0.48.1
+
+```
+Copyright (c) 2019 Colin Rothfels
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -6546,6 +6745,32 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — gif 0.14.2
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2015 nwin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 #### MIT License (MIT) — global-hotkey 0.8.0, muda 0.19.3, tray-icon 0.24.1
 
 ```
@@ -6602,7 +6827,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-#### MIT License (MIT) — half 2.7.1, ident_case 1.0.1, widestring 1.2.1
+#### MIT License (MIT) — half 2.7.1, ident_case 1.0.1, pdf-writer 0.15.0, subsetter 0.2.6, widestring 1.2.1, xmp-writer 0.3.3
 
 ```
 MIT License
@@ -7193,6 +7418,32 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+#### MIT License (MIT) — imagesize 0.14.0
+
+```
+MIT License
+
+Copyright (c) 2017 Maiddog
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 #### MIT License (MIT) — indexmap 1.9.3, indexmap 2.13.0
 
 ```
@@ -7424,6 +7675,36 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+#### MIT License (MIT) — kurbo 0.13.1, polycool 0.4.0
+
+```
+Copyright (c) 2018 Raph Levien
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — lazy_static 1.5.0
@@ -9082,6 +9363,59 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — rustybuzz 0.20.1
+
+```
+MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
+```
+
+#### MIT License (MIT) — rustybuzz 0.20.1
+
+```
+The MIT License (MIT)
+
+Copyright (c) HarfBuzz developers
+Copyright (c) 2020 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 #### MIT License (MIT) — same-file 1.0.6, winapi-util 0.1.11
 
 ```
@@ -9533,6 +9867,30 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+#### MIT License (MIT) — strict-num 0.1.1
+
+```
+Copyright (c) 2022 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 #### MIT License (MIT) — stringprep 0.1.5
@@ -10373,6 +10731,64 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+#### MIT License (MIT) — unicode-bidi-mirroring 0.4.0, unicode-ccc 0.4.0
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2020 Yevhenii Reizner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### MIT License (MIT) — unicode-script 0.5.8
+
+```
+MIT License
+
+Copyright (c) 2019 Manish Goregaokar
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 #### MIT License (MIT) — unit-prefix 0.5.2
 
 ```
@@ -11018,6 +11434,32 @@ SOFTWARE.
 
 Some files in the "tests/data" subdirectory of this repository are under other
 licences; see files named LICENSE.*.txt for details.
+```
+
+#### MIT License (MIT) — zune-core 0.5.3, zune-jpeg 0.5.15
+
+```
+MIT License
+
+Copyright (c) zune-image developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 #### MIT No Attribution (MIT-0) — dunce 1.0.5

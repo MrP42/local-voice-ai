@@ -21,6 +21,7 @@ pub mod metadata; // U7
 pub mod mic_capture;
 pub mod minutes;
 pub mod doc_types; // Dokumenttypen neben dem Protokoll (Entwurf 2026-10-13)
+pub mod doc_export; // Etappe 2: Word/PDF mit Briefkopf
 pub mod notes;
 pub mod pdf; // M6-P6b
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle

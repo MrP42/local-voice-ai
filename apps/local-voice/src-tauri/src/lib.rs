@@ -2105,6 +2105,13 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_documents::meetings_document_types,
             commands::meeting_documents::meetings_document_meta,
             commands::meeting_documents::meetings_generate_document,
+            commands::meeting_documents::meetings_export_document_as,
+            commands::meeting_documents::letterheads_list,
+            commands::meeting_documents::letterhead_save,
+            commands::meeting_documents::letterhead_delete,
+            commands::meeting_documents::letterhead_set_logo,
+            commands::meeting_documents::letterhead_export_sample,
+            commands::meeting_documents::change_document_letterhead_setting,
             // G3 (#70): Projekt-Protokoll
             commands::project_minutes::project_minutes_candidates,
             commands::project_minutes::project_minutes_list,

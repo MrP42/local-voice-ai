@@ -273,9 +273,12 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // Word zuerst: das Protokoll geht weiter an Menschen, nicht an einen
     // Editor. Das Format ergibt sich aus der gewählten Endung — deshalb
     // braucht es kein zweites Auswahlfeld neben dem Dialog.
+    // Etappe 2: Word und PDF mit dem eingestellten Briefkopf (Einstellungen > Ausgabe >
+    // Dokumente); Quelle ist das gespeicherte Dokument samt Korrekturen.
     const target = await save({
       filters: [
         { name: "Word", extensions: ["docx"] },
+        { name: "PDF", extensions: ["pdf"] },
         { name: "Text", extensions: ["txt"] },
         { name: "Markdown", extensions: ["md"] },
       ],
@@ -284,7 +287,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     if (typeof target !== "string") return;
     // Geschrieben wird im Backend: das fs-Plugin lässt nur $APPDATA zu und
     // scheiterte an jedem Ziel, das der Dialog anbietet ("not allowed by ACL").
-    const result = await commands.meetingsExportDocument(target, doc.body);
+    const result = await commands.meetingsExportDocumentAs(doc.id, target);
     if (result.status !== "ok") {
       setError(t("meetings.minutes.exportError") + `: ${result.error}`);
       return;

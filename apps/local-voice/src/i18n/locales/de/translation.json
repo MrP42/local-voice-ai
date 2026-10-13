@@ -867,6 +867,39 @@
     "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
+    "documents": {
+      "title": "Dokumente",
+      "description": "Wie exportierte Protokolle und Dokumente in Word und PDF aussehen.",
+      "letterhead": "Briefkopf für Word und PDF",
+      "letterheadHint": "Logo, Firma, Farben und Fußzeile. Mitgelieferte Briefköpfe lassen sich als eigener Briefkopf kopieren und dann anpassen.",
+      "own": "eigener",
+      "sample": "Beispiel speichern …",
+      "sampleSaved": "Beispiel gespeichert unter {{path}}",
+      "createOwn": "Als eigenen Briefkopf anlegen",
+      "copyName": "Kopie von {{name}}",
+      "name": "Name",
+      "firm": "Firma",
+      "lines": "Zeilen unter der Firma (höchstens 4)",
+      "footer": "Fußzeile (höchstens 3 Zeilen)",
+      "accent": "Akzentfarbe",
+      "titleColor": "Farbe der Überschriften",
+      "logoSet": "Logo hinterlegt",
+      "logoNone": "Kein Logo",
+      "logoPick": "Logo wählen …",
+      "logoRemove": "Logo entfernen",
+      "logoLeft": "Logo links",
+      "logoRight": "Logo rechts",
+      "save": "Speichern",
+      "saved": "Gespeichert.",
+      "delete": "Briefkopf löschen",
+      "errors": {
+        "letterhead_not_found": "Dieser Briefkopf existiert nicht mehr.",
+        "letterhead_read_only": "Mitgelieferte Briefköpfe lassen sich nicht ändern. Lege einen eigenen an.",
+        "letterhead_invalid": "Angabe ungültig: {{error}}",
+        "letterhead_logo_invalid": "Das Logo muss ein PNG oder JPEG bis 2 MB und 4000 Pixel Kantenlänge sein.",
+        "letterhead_io": "Speichern fehlgeschlagen."
+      }
+    },
     "compliance": {
         "title": "Regelwerk",
         "profile": "Geltende Regeln für Sprachmodelle",

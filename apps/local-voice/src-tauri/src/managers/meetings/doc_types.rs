@@ -238,7 +238,7 @@ pub fn over_length(doc_type: &DocType, words: u32) -> bool {
 
 /// Ein Eintrag als eine Zeile: Zeilenumbrueche aus der Antwort zerreissen sonst die
 /// Markdown-Liste (beobachtet mit einem 4B-Modell, 13.10.2026).
-fn one_line(text: &str) -> String {
+pub(crate) fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -263,7 +263,7 @@ fn named(value: Option<&String>) -> Option<String> {
     (!placeholder).then_some(value)
 }
 
-fn entry_line(kind: SectionKind, entry: &MinutesEntry) -> String {
+pub(crate) fn entry_line(kind: SectionKind, entry: &MinutesEntry) -> String {
     let mut line = one_line(&entry.text);
     if kind == SectionKind::Tasks {
         let mut extras = Vec::new();
