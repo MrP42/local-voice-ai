@@ -43,3 +43,10 @@
 - Ursache „Fish statt Thorsten / kein Sprecherwechsel im Englischen“: alte Übersetzung hatte `<Female narrator>`/`<Male narrator>` (unbekannte Sprecher) und der Übersetzungsreiter stand auf „Skript mit Sprechern“.
 - Installer 0.21.14 im App-Update-Ordner. Offen: Abnahme mit echten englischen Fish-Stimmen (Stimmen brauchen `language` = en-*), Merge der Kette #76–#83, Release-Tag (macht auch die Mac-DMG).
 - Build-Ordner: `D:\lv-build\int` (Prüf-/Bau-Baum, groß; bleibt bis zum Merge der Kette, danach aufräumen).
+
+## Nachtrag 13.10. (0.21.15, PR #83)
+- Stimmenwahl: `utterances()` liest vor dem Berechnen die Einstellungen neu; `run_speak_session` entfernt Sprecher aus schon berechneten Sitzungen, wenn keine Zuordnung gilt (`without_speakers_unless_switching`). Ursache des Springens zwischen Thorsten und Sprecherstimmen.
+- Piper mit „Sprache automatisch erkennen“ (`tts_piper_auto_language`, Vorgabe an) nimmt bei englischem Text eine englische Stimme, im Dropdown stand weiter Thorsten → Hinweis unter dem Menü (`tts_piper_voice_for_text`, `PiperEngine::replacement_voice_id`) mit Klick „Nur die gewählte Stimme verwenden“.
+- Korrigierte Übersetzung bleibt: `tts_store_translation` schreibt in den Zwischenspeicher (vorher nur Arbeitsspeicher → beim Sprach-/Seitenwechsel kam die Maschinen-Fassung zurück). Offen: „Übersetzen“ liefert bei vorhandener Übersetzung den Zwischenspeicher (auch die korrigierte), keine neue.
+- Wiedergabe-Knopf: `.mediabar:has(.mbtn--lg)` mit Polster in `App.css`.
+- Falle: `memgate.sh` immer mit `&&` verketten; geschützte Kette `scratchpad/chain.sh` (Wächter → Sync → tsc → Rust → Installer).
