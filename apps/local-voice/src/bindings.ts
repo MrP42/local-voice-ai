@@ -2068,6 +2068,40 @@ async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateIn
 }
 },
 /**
+ * Der Katalog der Dokumenttypen (Reihenfolge = Anzeige, Protokoll zuerst).
+ */
+async meetingsDocumentTypes() : Promise<Result<DocTypeInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_types") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anzeigedaten des juengsten Dokuments eines Typs (Unvollstaendigkeit, Luecken).
+ */
+async meetingsDocumentMeta(meetingId: string, docType: string) : Promise<Result<MinutesMeta | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_meta", { meetingId, docType }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dokumenttyp erzeugen (neue Version), mit `DocumentEvent`. Fehler sind Codes wie beim
+ * Protokoll (`minutes_busy`, `no_provider`, ...) oder `doc_type_unknown`.
+ */
+async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_document", { meetingId, docType, basis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
  * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
  * `empty_entry`). Chronologisch.
@@ -5278,6 +5312,7 @@ meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
+documentEvent: DocumentEvent,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
@@ -5295,6 +5330,7 @@ meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
+documentEvent: "document-event",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
@@ -7093,6 +7129,34 @@ participant_ids: string[] | null;
  * Projekte (Ordner-IDs).
  */
 folder_ids: string[] | null }
+/**
+ * Wer ein Dokument erzeugt.
+ */
+export type DocEngine =
+/**
+ * Das vorhandene Protokoll (Vorlage der Besprechung, `kind = minutes`).
+ */
+"minutes" |
+/**
+ * Ein Dokumenttyp dieses Katalogs, erzeugt im Protokoll-Motor.
+ */
+"document" |
+/**
+ * Der vorhandene Follow-up-Dialog (`followup.rs`, `mail.rs`); kein eigener Lauf.
+ */
+"followup"
+/**
+ * Was die Oberflaeche ueber einen Typ wissen muss (ohne Prompt-Texte).
+ */
+export type DocTypeInfo = { key: string; title: string; audience: string; length: string; depth: string; engine: DocEngine;
+/**
+ * `kind` der Dokumente dieses Typs (`minutes` oder `doc:<key>`); leer bei `Followup`.
+ */
+kind: string; sections: string[] }
+/**
+ * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
+ */
+export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
 /**
  * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
  * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter

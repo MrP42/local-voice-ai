@@ -17,6 +17,7 @@ pub mod meeting_variants; // A3
 pub mod meeting_language; // G5
 pub mod meeting_enhance;
 pub mod meeting_jobs; // P8a
+pub mod meeting_documents; // Dokumenttypen neben dem Protokoll
 pub mod meeting_minutes; // P1k
 pub mod meeting_queue; // U7
 pub mod meeting_search;

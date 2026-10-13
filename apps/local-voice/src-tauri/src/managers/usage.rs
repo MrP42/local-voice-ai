@@ -75,6 +75,8 @@ pub enum Purpose {
     AgentRoute,
     /// A1: Informationen aus einem Text ziehen (Goal B).
     Extract,
+    /// Dokumenttypen neben dem Protokoll (Management Summary, Kurzfassung, ...).
+    Document,
 }
 
 impl Purpose {
@@ -95,6 +97,7 @@ impl Purpose {
             Purpose::FactCheck => "fact_check",
             Purpose::AgentRoute => "agent_route",
             Purpose::Extract => "extract",
+            Purpose::Document => "document",
         }
     }
 }

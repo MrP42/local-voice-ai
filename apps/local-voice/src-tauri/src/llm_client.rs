@@ -68,6 +68,7 @@ fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option
             Purpose::EnhancedNotes
                 | Purpose::Followup
                 | Purpose::Minutes
+                | Purpose::Document
                 | Purpose::TranscriptMerge
                 | Purpose::TranscriptTranslation
         )

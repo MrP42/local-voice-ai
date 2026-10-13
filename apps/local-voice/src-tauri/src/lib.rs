@@ -2102,6 +2102,9 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::meetings_minutes_cancel,
             commands::meeting_minutes::meetings_minutes_meta,
             commands::meeting_minutes::meetings_get_auto_template,
+            commands::meeting_documents::meetings_document_types,
+            commands::meeting_documents::meetings_document_meta,
+            commands::meeting_documents::meetings_generate_document,
             // G3 (#70): Projekt-Protokoll
             commands::project_minutes::project_minutes_candidates,
             commands::project_minutes::project_minutes_list,
@@ -2426,6 +2429,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::MeetingNotesEvent,
             // P1k
             commands::meeting_minutes::MinutesEvent,
+            commands::meeting_documents::DocumentEvent,
             // G3 (#70)
             commands::project_minutes::ProjectMinutesEvent,
             // D1 (#70, M7)

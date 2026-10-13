@@ -868,6 +868,7 @@ fn every_purpose_has_its_own_stable_snake_case_name() {
         (Purpose::FactCheck, "fact_check"),
         (Purpose::AgentRoute, "agent_route"),
         (Purpose::Extract, "extract"),
+        (Purpose::Document, "document"),
     ];
     let mut seen = std::collections::HashSet::new();
     for (purpose, name) in all {

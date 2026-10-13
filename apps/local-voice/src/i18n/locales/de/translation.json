@@ -1727,7 +1727,8 @@
           "tagging": "Tags",
           "translation": "Übersetzung",
           "enhanced_notes": "KI-Notizen",
-          "followup": "Follow-up-Mail"
+          "followup": "Follow-up-Mail",
+          "document": "Dokumente"
         }
       },
       "effortLevels": {
@@ -2448,6 +2449,14 @@
         "no_transcript_named": "„{{title}}“ hat kein Transkript."
       }
     },
+    "documents": {
+      "typesLabel": "Dokumente dieser Besprechung",
+      "new": "Neues Dokument",
+      "newHint": "Weiteres Dokument aus dem Transkript erzeugen: Management Summary, Zusammenfassung, Statusbericht und mehr",
+      "empty": "Noch kein Dokument „{{title}}“. Für: {{audience}} · {{length}}.",
+      "generating": "„{{title}}“ wird erzeugt…",
+      "copy": "Dokument kopieren"
+    },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",
@@ -2472,6 +2481,7 @@
       "stepOf": "Schritt {{done}} von {{total}}",
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
+        "doc_type_unknown": "Unbekannter Dokumenttyp.",
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
         "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",

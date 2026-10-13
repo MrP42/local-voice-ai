@@ -1727,7 +1727,8 @@
           "tagging": "Tags",
           "translation": "Translation",
           "enhanced_notes": "AI notes",
-          "followup": "Follow-up e-mail"
+          "followup": "Follow-up e-mail",
+          "document": "Documents"
         }
       },
       "effortLevels": {
@@ -2448,6 +2449,14 @@
         "no_transcript_named": "“{{title}}” has no transcript."
       }
     },
+    "documents": {
+      "typesLabel": "Documents of this meeting",
+      "new": "New document",
+      "newHint": "Create another document from the transcript: management summary, summary, status report and more",
+      "empty": "No “{{title}}” yet. For: {{audience}} · {{length}}.",
+      "generating": "Creating “{{title}}”…",
+      "copy": "Copy document"
+    },
     "minutes": {
       "empty": "No minutes generated yet.",
       "generating": "Generating minutes…",
@@ -2472,6 +2481,7 @@
       "stepOf": "Step {{done}} of {{total}}",
       "cancelled": "Generation was cancelled.",
       "errors": {
+        "doc_type_unknown": "Unknown document type.",
         "minutes_busy": "Minutes are already being generated for this meeting.",
         "job_busy": "Another job is already running for this meeting (for example AI notes).",
         "minutes_cancelled": "Generation was cancelled.",
