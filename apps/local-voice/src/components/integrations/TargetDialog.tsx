@@ -54,6 +54,8 @@ const EMPTY_SETTINGS = {
   secret: "",
   /** Felder eines Dienstes (Projekt-ID, Site, ...). */
   fields: {} as Record<string, string>,
+  /** WAI Presenter: Katalog der Besprechungen schreiben. */
+  catalog: true,
 };
 
 type Form = typeof EMPTY_SETTINGS;
@@ -93,7 +95,19 @@ const formFrom = (view: IntegrationView | undefined): Form => {
     tool: c("search_tool") || EMPTY_SETTINGS.tool,
     area: c("area"),
     fields: serviceFieldsOf(view.integration.config_json),
+    catalog: catalogOf(view.integration.config_json),
   };
+};
+
+/** `catalog` der Presenter-Konfiguration (fehlt: an). */
+const catalogOf = (configJson: string): boolean => {
+  try {
+    return (
+      (JSON.parse(configJson) as Record<string, unknown>).catalog !== false
+    );
+  } catch {
+    return true;
+  }
 };
 
 /** Letzter Ordnername eines Pfads, als Vorschlag fuer den Namen. */
@@ -200,10 +214,13 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
       secret: null,
       service: null,
       fields: null,
+      catalog: null,
     };
     switch (kind) {
       case "folder":
         return { ...base, path: form.path.trim(), subfolder: form.subfolder };
+      case "presenter":
+        return { ...base, path: form.path.trim(), catalog: form.catalog };
       case "smtp":
         return {
           ...base,
@@ -284,6 +301,7 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
     if (!editing && !filled(form.name)) return false;
     switch (kind) {
       case "folder":
+      case "presenter":
         return filled(form.path);
       case "smtp":
         return (
@@ -718,6 +736,32 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
                 {t("integrations.target.service.noTestPost")}
               </p>
             )}
+          </>
+        )}
+
+        {kind === "presenter" && (
+          <>
+            {pathField(
+              t("integrations.target.presenter.path"),
+              t("integrations.target.presenter.pathPlaceholder"),
+            )}
+            <p
+              className="text-xs text-text-muted"
+              data-testid="target-presenter-privacy"
+            >
+              {t("integrations.target.presenter.privacy")}
+            </p>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.catalog}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, catalog: e.target.checked }))
+                }
+                data-testid="target-presenter-catalog"
+              />
+              <span>{t("integrations.target.presenter.catalog")}</span>
+            </label>
           </>
         )}
 

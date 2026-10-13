@@ -1911,6 +1911,19 @@
     "unavailable": "Mikrofonpegel nicht verfügbar — Zugriff verweigert oder kein Gerät."
   },
   "meetings": {
+    "presenter": {
+      "button": "An WAI Presenter senden",
+      "title": "An WAI Presenter senden",
+      "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
+      "target": "Austauschordner",
+      "documents": "Dokumente",
+      "noDocuments": "Noch kein Dokument erzeugt; das Paket enthält dann nur das Transkript.",
+      "formats": "Zusätzlich als (Markdown ist immer dabei)",
+      "submit": "Senden",
+      "sending": "Wird gesendet …",
+      "done": "Gesendet: {{folder}} ({{files}} Dateien)",
+      "error": "Senden fehlgeschlagen: {{error}}"
+    },
     "recordingIndicator": "Meeting-Aufnahme läuft",
     "dictationBlocked": "Diktat ist gesperrt, solange eine Meeting-Aufnahme läuft.",
     "title": "Besprechungen",
@@ -4724,6 +4737,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
+      "presenter": "WAI Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -4745,6 +4759,11 @@
       "soon": "bald",
       "auto": "automatisch",
       "items": {
+        "presenter": {
+          "name": "WAI Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "action": "Austauschordner wählen"
+        },
         "calendar_ics": {
           "name": "Kalender (ICS-Adresse)",
           "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
@@ -4960,6 +4979,14 @@
       }
     },
     "capabilities": {
+      "presenter_send": {
+        "title": "Pakete an den Presenter schreiben",
+        "description": "Besprechung, Transkript und gewählte Dokumente als Paket in den Austauschordner legen, dazu den Katalog."
+      },
+      "presenter_request": {
+        "title": "Anfragen des Presenters bearbeiten",
+        "description": "Auf Anfrage des Presenters fehlende Dokumente erzeugen (Sprachmodell) und das Paket schreiben."
+      },
       "calendar_read": {
         "title": "Kalender lesen",
         "description": "Termine und Teilnehmende lesen."
@@ -5152,6 +5179,14 @@
       }
     },
     "target": {
+      "presenter": {
+        "title": "WAI Presenter einrichten",
+        "titleEdit": "WAI-Presenter-Einstellungen",
+        "path": "Austauschordner",
+        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
+        "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
+      },
       "create": "Anlegen",
       "save": "Speichern",
       "name": "Name",

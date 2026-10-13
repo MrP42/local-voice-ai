@@ -1911,6 +1911,19 @@
     "unavailable": "Microphone level unavailable — access denied or no device."
   },
   "meetings": {
+    "presenter": {
+      "button": "Send to WAI Presenter",
+      "title": "Send to WAI Presenter",
+      "description": "Puts a package with the transcript and the chosen documents into the exchange folder. An older package of this meeting is replaced.",
+      "target": "Exchange folder",
+      "documents": "Documents",
+      "noDocuments": "No document yet; the package then contains the transcript only.",
+      "formats": "Also as (Markdown is always included)",
+      "submit": "Send",
+      "sending": "Sending …",
+      "done": "Sent: {{folder}} ({{files}} files)",
+      "error": "Sending failed: {{error}}"
+    },
     "recordingIndicator": "Meeting recording is running",
     "dictationBlocked": "Dictation is blocked while a meeting is recording.",
     "title": "Meetings",
@@ -4724,6 +4737,7 @@
       "agent_local": "Local agent"
     },
     "kinds": {
+      "presenter": "WAI Presenter",
       "youtube": "YouTube",
       "ics": "Calendar (ICS)",
       "graph": "Microsoft 365 calendar",
@@ -4745,6 +4759,11 @@
       "soon": "soon",
       "auto": "automatic",
       "items": {
+        "presenter": {
+          "name": "WAI Presenter",
+          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by WAI Presenter. You choose the folder.",
+          "action": "Choose exchange folder"
+        },
         "calendar_ics": {
           "name": "Calendar (ICS address)",
           "description": "Read appointments from Outlook, Google or Nextcloud through a secret ICS address. Read only.",
@@ -4960,6 +4979,14 @@
       }
     },
     "capabilities": {
+      "presenter_send": {
+        "title": "Write packages for the Presenter",
+        "description": "Put meeting, transcript and chosen documents as a package into the exchange folder, plus the catalog."
+      },
+      "presenter_request": {
+        "title": "Handle Presenter requests",
+        "description": "On request of the Presenter create missing documents (language model) and write the package."
+      },
       "calendar_read": {
         "title": "Read calendar",
         "description": "Read appointments and attendees."
@@ -5152,6 +5179,14 @@
       }
     },
     "target": {
+      "presenter": {
+        "title": "Set up WAI Presenter",
+        "titleEdit": "WAI Presenter settings",
+        "path": "Exchange folder",
+        "pathPlaceholder": "e.g. D:\\Exchange\\WAI Presenter",
+        "privacy": "Packages contain transcripts and documents (confidential). Choose a folder only you use; a shared OneDrive folder only deliberately.",
+        "catalog": "Write the meeting catalog (title, date, duration, existing documents only)"
+      },
       "create": "Create",
       "save": "Save",
       "name": "Name",

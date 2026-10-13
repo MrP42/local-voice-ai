@@ -191,7 +191,7 @@ async fn generate_and_notify(
 use crate::managers::letterhead::{self, Letterhead};
 use crate::managers::meetings::doc_export;
 
-fn letterhead_store(app: &AppHandle) -> Result<letterhead::Store, String> {
+pub(crate) fn letterhead_store(app: &AppHandle) -> Result<letterhead::Store, String> {
     let base = crate::portable::app_data_dir(app).map_err(|e| format!("letterhead_io: {e}"))?;
     Ok(letterhead::Store::new(base.join(letterhead::DIR_NAME)))
 }

@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FilePlus2 } from "lucide-react";
-import { commands, events, type DocTypeInfo } from "@/bindings";
+import { FilePlus2, Presentation } from "lucide-react";
+import {
+  commands,
+  events,
+  type DocTypeInfo,
+  type IntegrationView,
+} from "@/bindings";
+import { IconAction } from "../../../ui/IconAction";
+import { PresenterSendDialog } from "./PresenterSendDialog";
 import { ActionMenu, type ActionMenuItem } from "../../../ui/ActionMenu";
 import type { SlideRefs } from "../../../whats-new/MarkdownContent";
 import { MinutesView } from "../MinutesView";
@@ -39,10 +46,21 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
   const [types, setTypes] = useState<DocTypeInfo[]>([]);
   const [kinds, setKinds] = useState<string[]>([]);
   const [selected, setSelected] = useState<string>(readDocType);
+  // Etappe 4a: eingeschaltete Presenter-Integrationen (Knopf nur, wenn es eine gibt).
+  const [presenters, setPresenters] = useState<IntegrationView[]>([]);
+  const [sendOpen, setSendOpen] = useState(false);
 
   useEffect(() => {
     void commands.meetingsDocumentTypes().then((result) => {
       if (result.status === "ok") setTypes(result.data ?? []);
+    });
+    void commands.integrationsList().then((result) => {
+      if (result.status === "ok")
+        setPresenters(
+          (result.data ?? []).filter(
+            (v) => v.integration.kind === "presenter" && v.integration.enabled,
+          ),
+        );
     });
   }, []);
 
@@ -121,6 +139,16 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
           </button>
         );
       })}
+      {presenters.length > 0 && (
+        <IconAction
+          size="sm"
+          icon={Presentation}
+          label={t("meetings.presenter.button")}
+          description={t("meetings.presenter.description")}
+          testId="presenter-send"
+          onClick={() => setSendOpen(true)}
+        />
+      )}
       {types.length > 0 && (
         <ActionMenu
           trigger={{
@@ -137,8 +165,20 @@ export const DocumentsPanel: React.FC<DocumentsPanelProps> = ({
     </div>
   );
 
+  // Dokumente, die es zu dieser Besprechung gibt (fuer den Sendedialog).
+  const existing = types.filter(
+    (type) => type.engine !== "followup" && kinds.includes(type.kind),
+  );
+
   return (
     <div data-testid="documents-panel">
+      <PresenterSendDialog
+        open={sendOpen}
+        onOpenChange={setSendOpen}
+        meetingId={meetingId}
+        targets={presenters}
+        available={existing}
+      />
       <ProvenanceArea
         key={activeKey}
         subject={{

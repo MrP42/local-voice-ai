@@ -440,6 +440,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         // Erinnerung (`CalendarService::remind_tick`); beendet wird sie bei `RunEvent::Exit`.
         let workflows = managers::workflows::hub::WorkflowHub::start(app_handle, &workflow_store);
         app_handle.manage(workflows);
+        // Etappe 4b: Anfragen des WAI Presenters (Austauschordner der Presenter-Integrationen).
+        commands::presenter::start_watcher(app_handle.clone());
         // A5: Microsoft-365-Konto (Zugriffstoken im Arbeitsspeicher, eine Anmeldung zur Zeit).
         app_handle.manage(Arc::new(
             managers::integrations::m365::M365Service::production(),
@@ -2112,6 +2114,8 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_documents::letterhead_set_logo,
             commands::meeting_documents::letterhead_export_sample,
             commands::meeting_documents::change_document_letterhead_setting,
+            commands::presenter::presenter_send,
+            commands::presenter::presenter_write_catalog,
             // G3 (#70): Projekt-Protokoll
             commands::project_minutes::project_minutes_candidates,
             commands::project_minutes::project_minutes_list,

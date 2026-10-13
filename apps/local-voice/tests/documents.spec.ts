@@ -324,6 +324,13 @@ test.beforeEach(async ({ page }) => {
               case "llm_local_list":
               case "action_items_list":
               case "integrations_list":
+                return w.__integrations ?? [];
+              case "presenter_send":
+                return {
+                  folder: "pakete/2026-10-04-kundentermin-meyer-m1",
+                  files: 6,
+                  replaced: 0,
+                };
               case "provenance_get":
                 return [];
             }
@@ -394,6 +401,8 @@ test("der Reiter zeigt das Protokoll und bietet alle zehn Typen an", async ({
     "true",
   );
   await expect(page.getByTestId("minutes-doc")).toContainText("Ausführlich.");
+  // Ohne Presenter-Integration kein Senden-Knopf.
+  await expect(page.getByTestId("presenter-send")).toHaveCount(0);
 
   await page.getByTestId("doc-new").click();
   const menu = page.getByRole("menu");
@@ -583,5 +592,44 @@ test("Einstellungen > Ausgabe > Dokumente: eigenen Briefkopf anlegen und bearbei
     await page
       .getByTestId("documents-settings")
       .screenshot({ path: `${dir}/einstellungen-dokumente.png` });
+  }
+});
+
+test("An WAI Presenter senden: nur mit Integration, gewaehlte Dokumente und Formate", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).__integrations = [
+      {
+        integration: {
+          id: "int-p",
+          kind: "presenter",
+          label: "WAI Presenter",
+          enabled: true,
+        },
+      },
+    ];
+  });
+  await openDocuments(page);
+  await page.getByTestId("presenter-send").click();
+  const dialog = page.getByTestId("presenter-send-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("presenter-doc-protokoll")).toBeChecked();
+  await expect(page.getByTestId("presenter-format-pdf")).toBeChecked();
+  await page.getByTestId("presenter-format-pptx").check();
+  await page.getByTestId("presenter-send-submit").click();
+  await expect(page.getByTestId("presenter-send-done")).toContainText(
+    "pakete/2026-10-04-kundentermin-meyer-m1",
+  );
+  const [call] = await calls(page, "presenter_send");
+  expect(call.args).toEqual({
+    integrationId: "int-p",
+    meetingId: "m1",
+    docTypes: ["protokoll"],
+    formats: ["pdf", "pptx"],
+  });
+  const dir = process.env.SCREENS_DIR;
+  if (dir) {
+    await page.screenshot({ path: `${dir}/presenter-senden.png` });
   }
 });

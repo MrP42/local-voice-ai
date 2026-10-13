@@ -2546,6 +2546,28 @@ async wissenSuchen(id: string, query: string, limit: number | null, area: string
 }
 },
 /**
+ * "An WAI Presenter senden": Paket der Besprechung mit den gewaehlten, vorhandenen Dokumenten.
+ */
+async presenterSend(integrationId: string, meetingId: string, docTypes: string[], formats: string[]) : Promise<Result<WrittenPackage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_send", { integrationId, meetingId, docTypes, formats }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Katalog neu schreiben (ohne Paket).
+ */
+async presenterWriteCatalog(integrationId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_write_catalog", { integrationId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Legt den Export einer Besprechung in einer Ordner-Integration ab („ablegen in“).
  * Format: `md`, `txt`, `docx`, `html`, `pdf` (die vorhandenen Exporte); Audio nie.
  * Eine vorhandene Datei wird nie ueberschrieben (`Name (2).md`).
@@ -6281,7 +6303,15 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
  */
-"mail.draft"
+"mail.draft" |
+/**
+ * Besprechungspaket in den Austauschordner des Presenters schreiben (Etappe 4).
+ */
+"presenter.send" |
+/**
+ * Anfrage des Presenters bearbeiten: fehlende Dokumente erzeugen und ein Paket schreiben.
+ */
+"presenter.request"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -6765,8 +6795,16 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
  * steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
  */
-"service"
+"service" |
+/**
+ * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete.
+ */
+"presenter"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Ergebnis einer Sendung an den Presenter.
+ */
+export type WrittenPackage = { folder: string; files: number; replaced: number }
 /**
  * Firmenangaben im Kopf.
  */
@@ -8100,7 +8138,11 @@ service: string | null;
 /**
  * Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
  */
-fields: Partial<{ [key in string]: string }> | null }
+fields: Partial<{ [key in string]: string }> | null;
+/**
+ * WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
+ */
+catalog: boolean | null }
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.

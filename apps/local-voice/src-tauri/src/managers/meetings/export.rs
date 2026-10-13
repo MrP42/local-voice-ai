@@ -524,7 +524,7 @@ pub struct ExportBundle {
 }
 
 impl ExportBundle {
-    fn label(&self, segment: &StoredSegment) -> String {
+    pub(crate) fn label(&self, segment: &StoredSegment) -> String {
         match segment.speaker_index {
             // Mit Sprechertrennung: Name oder Nummer aus dem Verzeichnis.
             Some(_) => self.speakers.label(segment),
@@ -535,7 +535,7 @@ impl ExportBundle {
         }
     }
 
-    fn sorted_segments(&self) -> Vec<&StoredSegment> {
+    pub(crate) fn sorted_segments(&self) -> Vec<&StoredSegment> {
         let mut list: Vec<&StoredSegment> = self.segments.iter().collect();
         list.sort_by_key(|s| (s.start_ms, s.segment_index));
         list

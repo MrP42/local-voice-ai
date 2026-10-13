@@ -160,6 +160,17 @@ pub fn write(path: &Path, markdown: &str, design: &Design<'_>) -> Result<(), Str
     }
 }
 
+/// Ein gestaltetes Format als Bytes (`docx`, `pdf`, `pptx`), z. B. fuer ein Presenter-Paket.
+pub fn render_bytes(ext: &str, markdown: &str, design: &Design<'_>) -> Result<Vec<u8>, String> {
+    let items = parse(markdown);
+    match ext {
+        "docx" => docx::render(&items, design),
+        "pdf" => pdf::render(&items, design),
+        "pptx" => pptx::render(&items, design),
+        _ => Err("export_unsupported_format".to_string()),
+    }
+}
+
 /// Schreibt ueber `<ziel>.part` und Umbenennen.
 fn write_part(path: &Path, bytes: &[u8]) -> Result<(), String> {
     crate::managers::letterhead::write_atomic(path, bytes)
