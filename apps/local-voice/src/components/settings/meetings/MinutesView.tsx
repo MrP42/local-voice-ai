@@ -5,6 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import {
   commands,
   events,
+  type DocTypeInfo,
   type MeetingDocument,
   type MinutesMeta,
   type MinutesProgress,
@@ -30,14 +31,25 @@ interface MinutesViewProps {
   meetingTitle: string;
   /** D5: Folienbelege (`[F7]`) im Protokoll anklickbar machen (Sprung zur Folie). */
   slideRefs?: SlideRefs;
+  /**
+   * Dokumenttyp (Management Summary, Kurzfassung, ...). Ohne: das Protokoll. Die
+   * Ansicht bleibt dieselbe; es wechseln nur `kind`, Erzeugen, Ereignis und Dateiname.
+   */
+  docType?: DocTypeInfo;
+  /** Vorne in der Werkzeugzeile (Typleiste der Dokumente): keine eigene Zeile. */
+  toolbarLead?: React.ReactNode;
 }
 
 export const MinutesView: React.FC<MinutesViewProps> = ({
   meetingId,
   meetingTitle,
   slideRefs,
+  docType,
+  toolbarLead,
 }) => {
   const { t, i18n } = useTranslation();
+  const docKind = docType ? docType.kind : "minutes";
+  const docKey = docType?.key ?? null;
   const [doc, setDoc] = useState<MeetingDocument | null>(null);
   const [loading, setLoading] = useState(true);
   // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
@@ -67,15 +79,17 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     }
     setError(null);
     const minutes = result.data
-      .filter((d) => d.kind === "minutes")
+      .filter((d) => d.kind === docKind)
       .sort((a, b) => b.version - a.version);
     setDoc(minutes[0] ?? null);
-  }, [meetingId, t]);
+  }, [meetingId, t, docKind]);
 
   const loadMeta = useCallback(async () => {
-    const result = await commands.meetingsMinutesMeta(meetingId);
+    const result = docKey
+      ? await commands.meetingsDocumentMeta(meetingId, docKey)
+      : await commands.meetingsMinutesMeta(meetingId);
     setMeta(result.status === "ok" ? (result.data ?? null) : null);
-  }, [meetingId]);
+  }, [meetingId, docKey]);
 
   // Beim Einblenden fragen, ob schon ein Lauf besteht (Reiterwechsel).
   const loadRunState = useCallback(async () => {
@@ -103,6 +117,44 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // Fortschritt, Ende und Fehler des Laufs -- auch eines, den ein anderer
   // Aufruf oder ein frueher geoeffneter Reiter gestartet hat.
   useEffect(() => {
+    // Ein Dokumenttyp hoert auf seine eigenen Ereignisse; ein Protokoll-Lauf
+    // belegt dieselbe Besprechung (eine Sperre), deshalb fragt er nach dessen Ende
+    // den Zustand neu ab.
+    if (docKey) {
+      const unDoc = events.documentEvent.listen((event) => {
+        const payload = event.payload;
+        if (payload.meeting_id !== meetingId || payload.doc_type !== docKey)
+          return;
+        if (payload.kind === "progress") {
+          setRunning(true);
+          setProgress({
+            phase: payload.phase,
+            done: payload.done,
+            total: payload.total,
+          });
+        } else if (payload.kind === "done") {
+          setRunning(false);
+          setProgress(null);
+          setError(null);
+          void loadLatest();
+          void loadMeta();
+        } else {
+          setRunning(false);
+          setProgress(null);
+          if (payload.code !== "minutes_cancelled") {
+            setError(errorText(payload.code));
+          }
+        }
+      });
+      const unMinutes = events.minutesEvent.listen((event) => {
+        if (event.payload.meeting_id !== meetingId) return;
+        if (event.payload.kind !== "progress") void loadRunState();
+      });
+      return () => {
+        void unDoc.then((f) => f());
+        void unMinutes.then((f) => f());
+      };
+    }
     const un = events.minutesEvent.listen((event) => {
       const payload = event.payload;
       if (payload.meeting_id !== meetingId) return;
@@ -131,7 +183,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     return () => {
       void un.then((f) => f());
     };
-  }, [meetingId, loadLatest, loadMeta, errorText]);
+  }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, errorText]);
 
   const generate = async () => {
     setRunning(true);
@@ -140,11 +192,17 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setSaved(null);
     // `null`: die Vorlage, die fuer diese Besprechung gewaehlt ist (Menue, Vorlage).
     // G5: aktive Fassung, Sprache = letzte Wahl bzw. die der App.
-    const result = await commands.meetingsGenerateMinutes(
-      meetingId,
-      null,
-      defaultDocBasis(i18n.language),
-    );
+    const result = docKey
+      ? await commands.meetingsGenerateDocument(
+          meetingId,
+          docKey,
+          defaultDocBasis(i18n.language),
+        )
+      : await commands.meetingsGenerateMinutes(
+          meetingId,
+          null,
+          defaultDocBasis(i18n.language),
+        );
     if (result.status === "error") {
       // Ein zweiter Start wird abgewiesen, der erste Lauf laeuft weiter: der
       // Reiter zeigt ihn weiter als laufend, kein Fehler.
@@ -207,14 +265,22 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     if (!doc) return;
     setError(null);
     setSaved(null);
+    const baseName = docType
+      ? `${meetingTitle} \u2013 ${docType.title}`
+      : meetingTitle;
     const safeName =
-      meetingTitle.replace(/[\\/:*?"<>|]/g, "_").trim() || "protokoll";
+      baseName.replace(/[\\/:*?"<>|]/g, "_").trim() || "protokoll";
     // Word zuerst: das Protokoll geht weiter an Menschen, nicht an einen
     // Editor. Das Format ergibt sich aus der gewählten Endung — deshalb
     // braucht es kein zweites Auswahlfeld neben dem Dialog.
+    // Etappe 2/3: Word, PDF und PowerPoint mit dem eingestellten Briefkopf (Einstellungen > Ausgabe >
+    // Dokumente); Quelle ist das gespeicherte Dokument samt Korrekturen.
     const target = await save({
       filters: [
         { name: "Word", extensions: ["docx"] },
+        { name: "PDF", extensions: ["pdf"] },
+        // Etappe 3: Folien aus dem Dokument (Titel, je Abschnitt Kernaussagen, Tabellen).
+        { name: "PowerPoint", extensions: ["pptx"] },
         { name: "Text", extensions: ["txt"] },
         { name: "Markdown", extensions: ["md"] },
       ],
@@ -223,7 +289,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     if (typeof target !== "string") return;
     // Geschrieben wird im Backend: das fs-Plugin lässt nur $APPDATA zu und
     // scheiterte an jedem Ziel, das der Dialog anbietet ("not allowed by ACL").
-    const result = await commands.meetingsExportDocument(target, doc.body);
+    const result = await commands.meetingsExportDocumentAs(doc.id, target);
     if (result.status !== "ok") {
       setError(t("meetings.minutes.exportError") + `: ${result.error}`);
       return;
@@ -250,6 +316,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         data-testid="minutes-toolbar"
         className="flex flex-wrap items-center gap-2"
       >
+        {toolbarLead}
         <IconAction
           size="sm"
           icon={doc ? RefreshCw : Sparkles}
@@ -271,7 +338,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               label={
                 copied
                   ? t("meetings.detail.copied")
-                  : t("meetings.minutes.copy")
+                  : docType
+                    ? t("meetings.documents.copy")
+                    : t("meetings.minutes.copy")
               }
               description={t("meetings.minutes.copyHint")}
               testId="minutes-copy"
@@ -290,7 +359,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         {running && (
           <Badge variant="secondary">
             <span data-testid="minutes-running">
-              {t("meetings.minutes.generating")}
+              {docType
+                ? t("meetings.documents.generating", { title: docType.title })
+                : t("meetings.minutes.generating")}
             </span>
           </Badge>
         )}
@@ -326,7 +397,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         </div>
       ) : (
         !running && (
-          <p className="text-sm text-text/60">{t("meetings.minutes.empty")}</p>
+          <p className="text-sm text-text/60" data-testid="minutes-empty">
+            {docType
+              ? t("meetings.documents.empty", {
+                  title: docType.title,
+                  audience: docType.audience,
+                  length: docType.length,
+                })
+              : t("meetings.minutes.empty")}
+          </p>
         )
       )}
     </div>

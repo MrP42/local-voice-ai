@@ -56,7 +56,7 @@ export const ProjectMinutesRows: React.FC<ProjectMinutesRowsProps> = ({
       data-testid="pm-list"
       className="pb-1"
     >
-      <p className="ms-5 px-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-text/60">
+      <p className="ms-5 px-2 pt-1 text-[11px] font-semibold text-text/60">
         {t("meetings.projectMinutes.list.heading")}
       </p>
       {progress && (

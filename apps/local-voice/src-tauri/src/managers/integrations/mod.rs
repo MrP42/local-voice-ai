@@ -73,6 +73,7 @@ pub mod grants;
 pub mod m365; // A5
 pub mod model;
 pub mod obsidian; // A6
+pub mod presenter; // Etappe 4: WAI Presenter (Austauschordner)
 pub mod preview;
 pub mod schema;
 pub mod secrets;

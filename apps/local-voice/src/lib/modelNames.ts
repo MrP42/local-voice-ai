@@ -14,6 +14,14 @@ const CLAUDE: Record<string, string> = {
   "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
 };
 
+/** `claude-haiku-5-5[-20251001]` -> `Claude Haiku 5.5`; sonst `null`. */
+const claudeFullName = (name: string): string | null => {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/i.exec(name);
+  if (!m) return null;
+  const family = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+  return `Claude ${family} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+};
+
 /** `modell@effort` zerlegen (so ruft die App Abo-Modelle mit Effort auf). */
 export const splitModel = (id: string): [string, string | null] => {
   const at = id.indexOf("@");
@@ -22,7 +30,7 @@ export const splitModel = (id: string): [string, string | null] => {
 
 export const displayModelName = (raw: string): string => {
   const [name] = splitModel(raw.trim());
-  const known = CLAUDE[name.toLowerCase()];
+  const known = CLAUDE[name.toLowerCase()] ?? claudeFullName(name);
   if (known) return known;
   if (/^gpt-/i.test(name))
     return name
@@ -40,7 +48,9 @@ export const displayModelName = (raw: string): string => {
  */
 export const modelLabel = (remoteId: string, label: string): string => {
   const [name] = splitModel(remoteId.trim());
-  return CLAUDE[name.toLowerCase()] || /^gpt-/i.test(name)
+  return CLAUDE[name.toLowerCase()] ||
+    claudeFullName(name) ||
+    /^gpt-/i.test(name)
     ? displayModelName(name)
     : label || displayModelName(name);
 };

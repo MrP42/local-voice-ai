@@ -21,6 +21,9 @@ const audit = (page: Page): Promise<string[]> =>
   page.evaluate(() => {
     const problems: string[] = [];
     const visible = (el: Element) => {
+      // Fluent-Fokuswaechter (tabster) sind unsichtbare Umlenkpunkte der
+      // Fokusfalle, keine Bedienung (Leitlinie §12.4, wie bei axe).
+      if (el.closest("[data-tabster-dummy]")) return false;
       const r = (el as HTMLElement).getBoundingClientRect();
       const s = getComputedStyle(el);
       return (
@@ -198,7 +201,13 @@ const focusIndicator = (page: Page) =>
     const sig = () => {
       const s = getComputedStyle(el);
       const after = getComputedStyle(el, "::after");
+      // Fluent-Felder zeigen den Fokus an der Huelle: Unterstrich im ::after
+      // der Feldhuelle (fui-Input), nicht am <input> selbst.
+      const shell = el.parentElement?.matches(".fui-Input, .fui-Textarea")
+        ? getComputedStyle(el.parentElement, "::after")
+        : null;
       return [
+        shell ? `${shell.transform} ${shell.borderBottomColor}` : "",
         s.outlineStyle === "none"
           ? "none"
           : `${s.outlineWidth} ${s.outlineColor}`,
@@ -489,6 +498,8 @@ test("AK9: Projekt-Dialog per Tastatur - Fokus gefangen, Escape schliesst", asyn
  */
 const axeSevere = async (page: Page): Promise<string[]> => {
   const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
     .analyze();
   return result.violations

@@ -22,7 +22,7 @@ interface ModelRowProps {
   meta?: React.ReactNode;
   /** Die eine naheliegende Aktion (Verwenden, Laden, Pruefen). */
   primary?: React.ReactNode;
-  /** Alles Weitere im Menue hinter "⋯". */
+  /** Alles Weitere im Menue „Weitere Aktionen“. */
   menu?: ActionMenuItem[];
   progress?: RowProgress | null;
   /** Beschreibung, Merkmale, Hinweise -- auf Klick aufgeklappt. */

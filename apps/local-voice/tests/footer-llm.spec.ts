@@ -56,7 +56,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:event|listen") return ++callback;
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
-          if (cmd === "tts_server_status") return { phase: "stopped", owns_server: false, message: null };
+          if (cmd === "tts_server_status") return (window as unknown as { __ttsStatus?: unknown }).__ttsStatus ?? { phase: "stopped", owns_server: false, message: null, server_up: false };
           if (cmd === "tts_server_start") { saved.serverStarted = true; return null; }
           if (cmd === "compliance_status")
             return { level: "green", profile: "eu", active_model: "Qwen3 4B", active: null, checks: [], plaintext_keys: 0 };
@@ -223,3 +223,56 @@ test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
   await expect(page.locator("[data-llm-ollama]")).toBeVisible();
   await page.screenshot({ path: `${dir}/fussleiste-sprachmodell-menue.png`, animations: "disabled" });
 });
+
+test("the footer menu has a search box on top that filters while typing", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  const search = page.locator("[data-llm-search]");
+  await expect(search).toBeFocused();
+  await expect(page.locator("[data-llm-option]")).toHaveCount(3);
+  // Nach Modellname, Kennung und Verbindung.
+  await search.fill("mini");
+  await expect(page.locator("[data-llm-option]")).toHaveCount(1);
+  await expect(page.locator('[data-llm-option="openai-1:gpt-4.1-mini"]')).toBeVisible();
+  await search.fill("ollama");
+  await expect(page.locator('[data-llm-option="ol:qwen3.8:27b"]')).toBeVisible();
+  await search.fill("gibtesnicht");
+  await expect(page.locator("[data-llm-no-match]")).toBeVisible();
+  await expect(page.locator("[data-llm-option]")).toHaveCount(0);
+  // Escape leert zuerst die Suche, dann schliesst es das Menue.
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(page.locator("[data-llm-option]")).toHaveCount(3);
+  await search.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("Enter in the search box picks the first match", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("[data-llm-selector]").click();
+  await page.locator("[data-llm-search]").fill("mini");
+  await page.locator("[data-llm-search]").press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.active))
+    .toBe("openai-1:gpt-4.1-mini");
+});
+
+// "Bereit" gilt auch fuer das Vorlesen mit Piper (kein Server). Das Symbol darf nur
+// gruen sein, wenn wirklich ein Fish-Server laeuft.
+for (const [up, expected] of [[false, "stopped"], [true, "ready"]] as const) {
+  test(`Fish-Symbol bei Phase bereit und server_up=${up}: ${expected}`, async ({ page }) => {
+    await page.addInitScript((serverUp) => {
+      (window as unknown as { __ttsStatus: unknown }).__ttsStatus = {
+        phase: "ready",
+        owns_server: false,
+        message: null,
+        server_up: serverUp,
+      };
+    }, up);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await expect(page.locator("[data-fish-server]").first()).toHaveAttribute("data-fish-server", expected);
+  });
+}

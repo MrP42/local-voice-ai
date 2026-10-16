@@ -500,7 +500,7 @@ pub fn test_integration(
     now_ms: i64,
 ) -> Result<TestResult, IntegrationError> {
     let i = store::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
-    if i.kind != Kind::Folder {
+    if !matches!(i.kind, Kind::Folder | Kind::Presenter) {
         return Ok(TestResult {
             ok: false,
             code: "test_not_available".to_string(),

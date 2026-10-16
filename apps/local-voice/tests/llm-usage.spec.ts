@@ -222,7 +222,7 @@ const openPolishTab = async (page: import("@playwright/test").Page) => {
     .last()
     .click();
   await page
-    .getByRole("tab", { name: "KI-Textverbesserung", exact: true })
+    .getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true })
     .click();
 };
 

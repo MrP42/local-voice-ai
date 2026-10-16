@@ -27,10 +27,12 @@ pub enum Kind {
     /// Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
     /// steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
     Service,
+    /// WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
+    Presenter,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 11] = [
+    pub const ALL: [Kind; 12] = [
         Kind::Youtube,
         Kind::Ics,
         Kind::Graph,
@@ -42,6 +44,7 @@ impl Kind {
         Kind::Agent,
         Kind::Webhook,
         Kind::Service,
+        Kind::Presenter,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -57,6 +60,7 @@ impl Kind {
             Kind::Agent => "agent",
             Kind::Webhook => "webhook",
             Kind::Service => "service",
+            Kind::Presenter => "presenter",
         }
     }
 
@@ -77,9 +81,12 @@ impl Kind {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen => &[Direction::Read],
             Kind::Smtp | Kind::Webhook | Kind::Service => &[Direction::Write],
-            Kind::Graph | Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => {
-                &[Direction::Read, Direction::Write, Direction::Both]
-            }
+            Kind::Graph
+            | Kind::M365
+            | Kind::Folder
+            | Kind::Obsidian
+            | Kind::Agent
+            | Kind::Presenter => &[Direction::Read, Direction::Write, Direction::Both],
         }
     }
 
@@ -88,7 +95,9 @@ impl Kind {
         match self {
             Kind::Youtube | Kind::Ics | Kind::Wissen | Kind::Graph => Direction::Read,
             Kind::Smtp | Kind::Webhook | Kind::Service => Direction::Write,
-            Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent => Direction::Both,
+            Kind::M365 | Kind::Folder | Kind::Obsidian | Kind::Agent | Kind::Presenter => {
+                Direction::Both
+            }
         }
     }
 
@@ -122,6 +131,7 @@ impl Kind {
                 WorkflowRun,
             ],
             Kind::Webhook => &[WebhookPost],
+            Kind::Presenter => &[PresenterSend, PresenterRequest],
             Kind::Service => &[
                 ChatPost,
                 TaskCreate,
@@ -240,10 +250,17 @@ pub enum Capability {
     /// Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
     #[serde(rename = "mail.draft")]
     MailDraft,
+    /// Besprechungspaket in den Austauschordner des Presenters schreiben (Etappe 4).
+    #[serde(rename = "presenter.send")]
+    PresenterSend,
+    /// Anfrage des Presenters bearbeiten: fehlende Dokumente erzeugen (Modellaufruf) und ein
+    /// Paket schreiben. Schreibend, Vorgabe "fragen" (Owner-Annahme 9).
+    #[serde(rename = "presenter.request")]
+    PresenterRequest,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 23] = [
+    pub const ALL: [Capability; 25] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -267,6 +284,8 @@ impl Capability {
         Capability::CrmWrite,
         Capability::RecordWrite,
         Capability::MailDraft,
+        Capability::PresenterSend,
+        Capability::PresenterRequest,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -294,6 +313,8 @@ impl Capability {
             Capability::CrmWrite => "crm.write",
             Capability::RecordWrite => "record.write",
             Capability::MailDraft => "mail.draft",
+            Capability::PresenterSend => "presenter.send",
+            Capability::PresenterRequest => "presenter.request",
         }
     }
 

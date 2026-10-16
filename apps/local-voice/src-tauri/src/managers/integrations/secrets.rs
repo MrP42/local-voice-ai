@@ -30,7 +30,7 @@ pub fn required_slots(kind: Kind) -> &'static [&'static str] {
         Kind::Webhook => &["url"],
         // Webhook-Adresse (Slack, Teams, Discord) oder API-Schluessel.
         Kind::Service => &["token"],
-        Kind::Youtube | Kind::Folder | Kind::Obsidian | Kind::Agent => &[],
+        Kind::Youtube | Kind::Folder | Kind::Obsidian | Kind::Agent | Kind::Presenter => &[],
     }
 }
 

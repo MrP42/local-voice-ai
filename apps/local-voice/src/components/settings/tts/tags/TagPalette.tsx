@@ -377,7 +377,7 @@ export const TagPalette: React.FC<{
           Ueberschrift des Klappbereichs (sie ist selbst 44px hoch). */}
       <div className="sticky top-11 z-[1] rounded-t-lg bg-background pb-1">
         <div className="flex items-center gap-2 px-2 py-1.5">
-          <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-text/50">
+          <span className="shrink-0 text-xs font-semibold text-text/50">
             {t("tts.tags.title")}
           </span>
           {isOpen && (

@@ -284,6 +284,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // M5-P5b: Zustand des Hinweisfensters (auch ohne Store verwaltet: die Befehle
     // des Fensters brauchen ihn).
     app_handle.manage(meeting_prompt::MeetingPromptState::default());
+    // Die Codex-CLI aktualisiert sich selbst, wenn sie ein Modell nicht annimmt.
+    let cli_settings = app_handle.clone();
+    managers::llm::cli_update::init(
+        app_handle.clone(),
+        Arc::new(move || settings::get_settings(&cli_settings).cli_auto_update),
+    );
     // Meetings (M8): the store is shared by recorder and commands. A store
     // that fails to open must not take the whole app down — dictation and TTS
     // work without it, so meetings degrade to "unavailable" instead.
@@ -434,6 +440,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         // Erinnerung (`CalendarService::remind_tick`); beendet wird sie bei `RunEvent::Exit`.
         let workflows = managers::workflows::hub::WorkflowHub::start(app_handle, &workflow_store);
         app_handle.manage(workflows);
+        // Etappe 4b: Anfragen des WAI Presenters (Austauschordner der Presenter-Integrationen).
+        commands::presenter::start_watcher(app_handle.clone());
         // A5: Microsoft-365-Konto (Zugriffstoken im Arbeitsspeicher, eine Anmeldung zur Zeit).
         app_handle.manage(Arc::new(
             managers::integrations::m365::M365Service::production(),
@@ -1895,6 +1903,10 @@ pub fn run(cli_args: CliArgs) {
             commands::llm::llm_remove_model,
             commands::llm::llm_set_active_model,
             commands::llm::llm_list_remote_models,
+            commands::llm::llm_check_new_models,
+            commands::llm::llm_answer_model_updates,
+            commands::llm::llm_set_auto_update_models,
+            commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
             commands::llm::llm_model_offers_fast,
@@ -2092,6 +2104,18 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_minutes::meetings_minutes_cancel,
             commands::meeting_minutes::meetings_minutes_meta,
             commands::meeting_minutes::meetings_get_auto_template,
+            commands::meeting_documents::meetings_document_types,
+            commands::meeting_documents::meetings_document_meta,
+            commands::meeting_documents::meetings_generate_document,
+            commands::meeting_documents::meetings_export_document_as,
+            commands::meeting_documents::letterheads_list,
+            commands::meeting_documents::letterhead_save,
+            commands::meeting_documents::letterhead_delete,
+            commands::meeting_documents::letterhead_set_logo,
+            commands::meeting_documents::letterhead_export_sample,
+            commands::meeting_documents::change_document_letterhead_setting,
+            commands::presenter::presenter_send,
+            commands::presenter::presenter_write_catalog,
             // G3 (#70): Projekt-Protokoll
             commands::project_minutes::project_minutes_candidates,
             commands::project_minutes::project_minutes_list,
@@ -2360,6 +2384,10 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_speak_resume,
             commands::tts::tts_export_format,
             commands::tts::tts_summarize_text,
+            commands::tts::tts_transform_cancel,
+            commands::tts::tts_voice_changed,
+            commands::tts::tts_store_translation,
+            commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
@@ -2413,6 +2441,7 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_enhance::MeetingNotesEvent,
             // P1k
             commands::meeting_minutes::MinutesEvent,
+            commands::meeting_documents::DocumentEvent,
             // G3 (#70)
             commands::project_minutes::ProjectMinutesEvent,
             // D1 (#70, M7)

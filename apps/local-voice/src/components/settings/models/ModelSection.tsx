@@ -45,7 +45,7 @@ export const ModelSection: React.FC<{
         ) : (
           <ChevronRight className="h-4 w-4 text-text/40" />
         ))}
-      <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+      <span className="text-xs font-semibold text-text/60">
         {title}
       </span>
       {count !== undefined && (
