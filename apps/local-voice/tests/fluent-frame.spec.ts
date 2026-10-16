@@ -187,3 +187,36 @@ for (const theme of ["light", "dark"] as const) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+// Statusleiste < 480 px: kompakte Einträge, nichts abgeschnitten, kein
+// verdeckter Querscroll, höchstens zwei Zeilen; genau ein Primärbutton auf Start.
+for (const width of [390, 360]) {
+  test(`Statusleiste schmal ohne Abschnitt (${width})`, async ({ page }) => {
+    await setup(page, "light");
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    const bar = page.locator(".lv-statusbar");
+    await expect(bar).toBeVisible();
+    await expect(page.locator(".lv-btn--primary:visible")).toHaveCount(1);
+    const m = await bar.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const btns = [...el.querySelectorAll("button")].map((b) => {
+        const x = b.getBoundingClientRect();
+        return { l: x.left, r: x.right, t: x.top, b: x.bottom };
+      });
+      const scrolls = [...el.querySelectorAll("*")].filter(
+        (n) => !n.classList.contains("lv-status-label") &&
+          n.scrollWidth > n.clientWidth + 1 &&
+          getComputedStyle(n).overflowX !== "visible",
+      ).length;
+      return { h: r.height, w: r.width, btns, scrolls };
+    });
+    expect(m.btns.length).toBeGreaterThanOrEqual(4);
+    for (const b of m.btns) {
+      expect(b.l).toBeGreaterThanOrEqual(0);
+      expect(b.r).toBeLessThanOrEqual(width);
+    }
+    expect(m.scrolls).toBe(0);
+    expect(m.h).toBeLessThanOrEqual(64);
+  });
+}

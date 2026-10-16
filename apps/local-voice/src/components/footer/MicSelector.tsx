@@ -65,7 +65,7 @@ export const MicSelector: React.FC = () => {
         className="flex items-center gap-2 hover:text-text/80 transition-colors cursor-pointer"
       >
         <Mic className="w-3 h-3 shrink-0" />
-        <span className="max-w-28 truncate">{label}</span>
+        <span className="lv-status-label max-w-28 truncate">{label}</span>
         <ChevronDown
           className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
         />
