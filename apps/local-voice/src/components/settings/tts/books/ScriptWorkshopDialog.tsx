@@ -441,6 +441,7 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
             : undefined
         }
         closeLabel={t("common.close")}
+        className="max-w-xl"
         footer={
           <>
             <Button onClick={() => answerImportAsk(true)}>

@@ -192,12 +192,15 @@ export const Dialog: React.FC<DialogProps> = ({
             </button>
           )}
         </div>
-        <div
-          className={`min-h-0 overflow-y-auto px-4 pb-4 pt-3 ${contentClassName}`}
-          style={contentStyle}
-        >
-          {children}
-        </div>
+        {/* Leerer Inhalt (reine Rückfrage) erzeugt keine leere Zeile zwischen Text und Fußleiste. */}
+        {children !== null && children !== undefined && children !== false && (
+          <div
+            className={`min-h-0 overflow-y-auto px-4 pb-4 pt-3 ${contentClassName}`}
+            style={contentStyle}
+          >
+            {children}
+          </div>
+        )}
         {footer && (
           // flex-wrap: drei lange Knoepfe ("Abbrechen", "Sprache speichern", "Speichern und neu
           // transkribieren") sind breiter als die 32 rem des Dialogs; ohne Umbruch ragte die
