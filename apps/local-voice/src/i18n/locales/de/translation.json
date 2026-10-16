@@ -686,7 +686,10 @@
       "bookFilter": "Buch-Paket",
       "exported": "Buch exportiert: {{path}}",
       "imported": "Buch „{{title}}“ eingespielt",
-      "importVoicesAsk": "Das Buch bringt {{count}} neue Stimme(n) mit. Rechtebestätigung im Paket: {{rights}}. Stimmen mit einspielen?",
+      "importVoicesAsk": "Das Buch bringt {{count}} neue Stimme(n) mit. Rechtebestätigung im Paket: {{rights}}.",
+      "importVoicesTitle": "Stimmen mit einspielen?",
+      "importVoicesWith": "Mit Stimmen einspielen",
+      "importVoicesWithout": "Ohne Stimmen importieren",
       "rightsYes": "ja",
       "rightsNo": "nein – bitte vor der Nutzung klären",
       "charactersIntro": "Figuren mit fester Stimme und kurzer Beschreibung. Im Skript stehen sie als <Name>; die Stimme wird beim Vorlesen automatisch geschaltet.",
@@ -3667,7 +3670,9 @@
     "voiceOptions": "Weitere Einstellungen zum Vorlesen",
     "voices": "Stimmen anhören & verwalten",
     "navCollapse": "Menü einklappen",
-    "navExpand": "Menü ausklappen"
+    "navExpand": "Menü ausklappen",
+    "navOpen": "Menü öffnen",
+    "navClose": "Menü schließen"
   },
   "llmUpdate": {
     "cli": {

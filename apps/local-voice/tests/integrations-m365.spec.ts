@@ -527,6 +527,8 @@ test.describe("Barrierefreiheit", () => {
     await page.getByTestId("catalog-setup-m365").click();
     await expect(page.getByTestId("m365-dialog")).toBeVisible();
     const dialog = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[data-testid="m365-dialog"]')
       .disableRules(["color-contrast"])
       .analyze();
@@ -535,6 +537,8 @@ test.describe("Barrierefreiheit", () => {
     await page.getByTestId("integrations-back").click();
     await openAccount(page);
     const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[data-testid="m365-panel"]')
       .disableRules(["color-contrast"])
       .analyze();

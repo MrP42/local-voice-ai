@@ -112,7 +112,7 @@ export const MeetingChatNotice: React.FC<MeetingChatNoticeProps> = ({
       data-testid={`${testId}-chat-notice`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-mid-gray uppercase tracking-wide">
+        <span className="text-xs font-medium text-mid-gray">
           {t("meetings.record.chatNotice.title")}
         </span>
         <Button

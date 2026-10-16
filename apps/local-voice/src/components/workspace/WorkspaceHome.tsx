@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
+import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
 
 export function WorkspaceHome({
@@ -57,13 +58,14 @@ export function WorkspaceHome({
           ) : (
             <p className="text-sm mt-2">{t("workspace.shortcutMissing")}</p>
           )}
-          <button
-            className="workspace-text-action"
+          <Button
+            variant="primary"
             onClick={openDictationSettings}
+            data-testid="workspace-setup-dictation"
           >
             {t("workspace.setupDictation")}
             <ArrowRight size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       </section>
       <div className="workspace-tasks">

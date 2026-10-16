@@ -122,6 +122,7 @@ export const TranslateDialog: React.FC<TranslateDialogProps> = ({
             {t("meetings.translate.cancel")}
           </Button>
           <Button
+            variant="primary"
             data-testid="translate-start"
             disabled={!target || !source}
             onClick={start}

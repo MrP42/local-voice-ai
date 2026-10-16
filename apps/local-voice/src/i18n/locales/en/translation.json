@@ -686,7 +686,10 @@
       "bookFilter": "Book package",
       "exported": "Book exported: {{path}}",
       "imported": "Book “{{title}}” imported",
-      "importVoicesAsk": "The book brings {{count}} new voice(s). Rights confirmation in the package: {{rights}}. Import the voices too?",
+      "importVoicesAsk": "The book brings {{count}} new voice(s). Rights confirmation in the package: {{rights}}.",
+      "importVoicesTitle": "Import the voices too?",
+      "importVoicesWith": "Import with voices",
+      "importVoicesWithout": "Import without voices",
       "rightsYes": "yes",
       "rightsNo": "no – please clarify before use",
       "charactersIntro": "Characters with a fixed voice and a short description. In the script they appear as <Name>; the voice switches automatically when reading.",
@@ -3667,7 +3670,9 @@
     "voiceOptions": "More read-aloud settings",
     "voices": "Listen to & manage voices",
     "navCollapse": "Collapse menu",
-    "navExpand": "Expand menu"
+    "navExpand": "Expand menu",
+    "navOpen": "Open menu",
+    "navClose": "Close menu"
   },
   "llmUpdate": {
     "cli": {

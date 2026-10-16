@@ -79,7 +79,11 @@ export const LlmSelector: React.FC = () => {
   const needle = query.trim().toLowerCase();
   const visible = needle
     ? selectable.filter(({ model, connection }) =>
-        [modelLabel(model.remote_id, model.label), model.remote_id, connection.label]
+        [
+          modelLabel(model.remote_id, model.label),
+          model.remote_id,
+          connection.label,
+        ]
           .join(" ")
           .toLowerCase()
           .includes(needle),
@@ -418,9 +422,12 @@ export const LlmSelector: React.FC = () => {
         data-llm-selector
       >
         <div className={`w-2 h-2 rounded-full ${light()}`} />
-        <span className="max-w-56 truncate">{label()}</span>
+        <span className="lv-status-label max-w-56 truncate">{label()}</span>
         {spend && spend.month.cost > 0 && (
-          <span className="text-xs tabular-nums text-text/60" data-llm-spend>
+          <span
+            className="lv-status-label text-xs tabular-nums text-text/60"
+            data-llm-spend
+          >
             {usd(spend.month.cost)}
           </span>
         )}
@@ -490,8 +497,7 @@ export const LlmSelector: React.FC = () => {
                   } else if (e.key === "Enter") {
                     e.preventDefault();
                     const first = visible.find(
-                      ({ model }) =>
-                        byModel[model.id]?.verdict !== "blocked",
+                      ({ model }) => byModel[model.id]?.verdict !== "blocked",
                     );
                     if (first) void choose(first.model.id);
                   }
@@ -509,10 +515,7 @@ export const LlmSelector: React.FC = () => {
               {t("llmSelector.empty")}
             </div>
           ) : visible.length === 0 ? (
-            <div
-              className="px-3 py-2 text-sm text-text/60"
-              data-llm-no-match
-            >
+            <div className="px-3 py-2 text-sm text-text/60" data-llm-no-match>
               {t("llmSelector.noMatch")}
             </div>
           ) : (

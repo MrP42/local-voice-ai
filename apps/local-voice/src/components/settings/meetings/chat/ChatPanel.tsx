@@ -608,7 +608,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-mid-gray">
+          <span className="text-xs font-medium text-mid-gray">
             {t("meetings.chat.threads")}
           </span>
           <button
