@@ -784,6 +784,8 @@ test.describe("Aufgaben-Kontrollkaestchen im Protokoll", () => {
       "Tarifblatt 2027",
     );
     const results = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[data-testid="mid-panel-minutes"]')
       .analyze();
     const labelViolations = results.violations.filter((v) => v.id === "label");
@@ -812,7 +814,9 @@ test.describe("Barrierefreiheit", () => {
     await expect(dialog).toBeVisible();
     expect(
       critical(
-        await new AxeBuilder({ page }).include('[role="dialog"]').analyze(),
+        await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]").include('[role="dialog"]').analyze(),
       ),
     ).toEqual([]);
     await page.keyboard.press("Escape");
@@ -820,9 +824,15 @@ test.describe("Barrierefreiheit", () => {
     await expect(
       page.getByRole("dialog", { name: "Übersetzen nach …" }),
     ).toBeVisible();
+    // Fluent blendet Farben über; axe erst nach Ende der Übergänge messen.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((x) => x.playState !== "running"),
+    );
     expect(
       critical(
-        await new AxeBuilder({ page }).include('[role="dialog"]').analyze(),
+        await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]").include('[role="dialog"]').analyze(),
       ),
     ).toEqual([]);
   });
@@ -838,6 +848,8 @@ test.describe("Barrierefreiheit", () => {
     expect(
       critical(
         await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
           .include('[data-testid="sentence-compare"]')
           .analyze(),
       ),
@@ -939,8 +951,15 @@ test.describe("Dialog-Fussleisten", () => {
       name: "Sprache der Besprechung",
     });
     const box = (await dialog.boundingBox())!;
-    // Rechtsbuendig: der letzte Knopf der letzten Zeile endet am rechten Innenrand.
+    // Rechtsbuendig: der letzte Knopf der letzten Zeile endet am rechten
+    // Innenrand (Rand + Innenabstand der Dialogflaeche, Fluent: 1 + 24 px).
+    const inset = await dialog.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return parseFloat(s.borderRightWidth) + parseFloat(s.paddingRight);
+    });
     const last = (await footer.getByRole("button").last().boundingBox())!;
-    expect(box.x + box.width - (last.x + last.width)).toBeLessThanOrEqual(24);
+    expect(
+      Math.abs(box.x + box.width - inset - (last.x + last.width)),
+    ).toBeLessThanOrEqual(1);
   });
 });

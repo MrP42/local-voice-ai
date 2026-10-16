@@ -33,6 +33,7 @@ import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
+import { IconButton } from "../../ui/IconButton";
 import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
@@ -113,10 +114,8 @@ const TRANSFORM_CANCELLED = "transform_cancelled";
 
 /** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
  *  haben jeweils ihre eigenen Schritte). */
-const translationHistoryKey = (
-  page: string | null | undefined,
-  lang: string,
-) => `${page ?? "-"}:translation:${lang}`;
+const translationHistoryKey = (page: string | null | undefined, lang: string) =>
+  `${page ?? "-"}:translation:${lang}`;
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -1478,18 +1477,14 @@ export const TtsSettings = () => {
             onJump={history.jump}
           />
           <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
-          <button
-            type="button"
+          <IconButton
             onClick={() => {
               setRightTab("help");
               setFilesCollapsed("0");
             }}
-            title={t("help.open")}
-            aria-label={t("help.open")}
-            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer text-text/60 hover:text-text"
-          >
-            <HelpCircle width={20} height={20} aria-hidden="true" />
-          </button>
+            label={t("help.open")}
+            icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
+          />
         </>
       }
     >
@@ -1962,14 +1957,15 @@ export const TtsSettings = () => {
                             ? t("tts.voices.noEngineHint")
                             : t("tts.voices.notSetUpHint")}
                         </p>
-                        <button
+                        <Button
                           type="button"
-                          className="underline cursor-pointer"
+                          variant="ghost"
+                          size="sm"
                           data-testid="voice-setup-button"
                           onClick={() => openModelsArea("voices")}
                         >
                           {t("tts.voices.setUp")}
-                        </button>
+                        </Button>
                       </div>
                     )}
                     {piperReaderVoice && (
@@ -1982,16 +1978,17 @@ export const TtsSettings = () => {
                             name: piperVoiceLabel(piperReaderVoice),
                           })}
                         </span>
-                        <button
+                        <Button
                           type="button"
-                          className="cursor-pointer underline hover:text-text"
+                          variant="ghost"
+                          size="sm"
                           onClick={() =>
                             void updateSetting("tts_piper_auto_language", false)
                           }
                           data-testid="piper-auto-language-off"
                         >
                           {t("tts.voices.autoLanguageOff")}
-                        </button>
+                        </Button>
                       </p>
                     )}
                     <p

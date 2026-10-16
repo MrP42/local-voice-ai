@@ -1,15 +1,56 @@
-import React, { useEffect, useId, useRef } from "react";
-import { createPortal } from "react-dom";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  Button as FluentButton,
+  Dialog as FluentDialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Tooltip as FluentTooltip,
+} from "@fluentui/react-components";
+import { useActivateModal } from "@fluentui/react-tabster";
 import { X } from "lucide-react";
+import { releaseBackgroundSoon } from "@/fluent/releaseBackground";
 
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "textarea:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",");
+/** Fokus nach dem Schließen zurück zum Auslöser. Ist er verschwunden, bleibt
+ *  der Fokus auf <body>: Ansichten der App setzen ihn dann selbst (z. B. das
+ *  Notizfeld nach dem Aufnahmestart, das nur greift, wenn niemand sonst den
+ *  Fokus hat). */
+function refocus(opener: HTMLElement | null) {
+  releaseBackgroundSoon();
+  // Die App (oder ein neuer Dialog) hat den Fokus schon gesetzt: stehen lassen.
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  if (opener?.isConnected) opener.focus();
+}
+
+/** Tailwind-Breiten der Aufrufer (`max-w-2xl` …) in rem. Fluent setzt die
+ *  Breite der Dialogfläche selbst (ungeschichtet), Tailwind-Klassen kämen
+ *  dagegen nicht an — deshalb als Inline-Stil. */
+const MAX_WIDTH_REM: Record<string, number> = {
+  sm: 24, md: 28, lg: 32, xl: 36, "2xl": 42, "3xl": 48, "4xl": 56, "5xl": 64, "6xl": 72, "7xl": 80,
+};
+const maxWidthOf = (className: string): string | undefined => {
+  const m = className.match(/(?:^|\s)max-w-(\w+|\[[^\]]+\])(?:\s|$)/);
+  if (!m) return undefined;
+  if (m[1].startsWith("[")) return m[1].slice(1, -1);
+  const rem = MAX_WIDTH_REM[m[1]];
+  return rem ? `${rem}rem` : undefined;
+};
+
+/** Dialogfläche als Ziel für schwebende Listen (react-select `menuPortal`):
+ *  Ein modaler Fluent-Dialog blendet alles außerhalb für Hilfstechnik aus
+ *  (aria-hidden); eine Liste an `document.body` wäre dann unerreichbar. */
+const DialogPortalContext = createContext<HTMLElement | null>(null);
+export const useDialogPortalTarget = () => useContext(DialogPortalContext);
 
 interface DialogProps {
   open: boolean;
@@ -28,21 +69,16 @@ interface DialogProps {
   contentFades?: boolean;
 }
 
-const isVisible = (element: HTMLElement) => {
-  const style = window.getComputedStyle(element);
-  return style.visibility !== "hidden" && style.display !== "none";
-};
-
-const getFocusableElements = (container: HTMLElement) =>
-  Array.from(
-    container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-  ).filter(
-    (element) =>
-      !element.hasAttribute("disabled") &&
-      element.getAttribute("aria-hidden") !== "true" &&
-      isVisible(element),
-  );
-
+/**
+ * Dialog nach Fluent 2 (Leitlinie windows-fluent.md §5): Fluent Dialog mit
+ * Titel als Frage, Fußleiste mit Primär links und Abbrechen rechts (die
+ * Reihenfolge stellt fluent-bridge.css her), Esc schließt, Fokus bleibt im
+ * Dialog und kehrt zum Auslöser zurück.
+ *
+ * Das Verhalten der bisherigen Komponente bleibt: `dismissible={false}`
+ * ignoriert Esc und Hintergrund, `closeOnBackdrop={false}` nur den Hintergrund,
+ * `initialFocusRef` bekommt den ersten Fokus, sonst die Dialogfläche.
+ */
 export const Dialog: React.FC<DialogProps> = ({
   open,
   title,
@@ -59,94 +95,78 @@ export const Dialog: React.FC<DialogProps> = ({
   contentClassName = "",
   contentFades = true,
 }) => {
-  const titleId = useId();
-  const descriptionId = useId();
-  const contentRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const [surface, setSurface] = useState<HTMLElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const descriptionId = React.useId();
+  const activateModal = useActivateModal();
+
+  // Auslöser merken: Layout-Effekt, er läuft, bevor Fluent den Fokus in den
+  // Dialog setzt (ein gewöhnlicher Effekt sähe schon die Dialogfläche).
+  useLayoutEffect(() => {
+    if (open) {
+      previousFocusRef.current =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+          ? document.activeElement
+          : null;
+      return;
+    }
+    const previous = previousFocusRef.current;
+    previousFocusRef.current = null;
+    if (!previous) return;
+    // Sofort zurück zum Auslöser, sofern die App den Fokus nicht schon
+    // woandershin gesetzt hat (z. B. ins Notizfeld nach dem Start); fällt er
+    // danach auf <body>, erneut.
+    const active = document.activeElement;
+    const appMoved =
+      active &&
+      active !== document.body &&
+      !active.closest('[role="dialog"], [role="alertdialog"]');
+    if (!appMoved && previous.isConnected) previous.focus();
+    setTimeout(() => refocus(previous), 0);
+  }, [open]);
+
+  // Offen ausgehängt (Objekt gelöscht, Seite gewechselt): tabster hält das
+  // entfernte Modal sonst für aktiv und lässt aria-hidden am Hintergrund stehen.
+  useLayoutEffect(
+    () => () => {
+      if (!previousFocusRef.current) return;
+      const previous = previousFocusRef.current;
+      previousFocusRef.current = null;
+      activateModal(undefined);
+      setTimeout(() => refocus(previous), 0);
+    },
+    [activateModal],
+  );
 
   useEffect(() => {
     if (!open) return;
-
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    const focusDialog = () => {
-      const fallback = contentRef.current;
-      const target = initialFocusRef?.current ?? fallback;
+    const frame = requestAnimationFrame(() => {
+      const target = initialFocusRef?.current ?? surfaceRef.current;
       target?.focus();
-    };
-
-    const animationFrame = requestAnimationFrame(focusDialog);
-
-    return () => {
-      cancelAnimationFrame(animationFrame);
-      document.body.style.overflow = previousOverflow;
-      previousFocusRef.current?.focus();
-      previousFocusRef.current = null;
-    };
+    });
+    return () => cancelAnimationFrame(frame);
   }, [initialFocusRef, open]);
 
+  // Esc wirkt auch, wenn der Fokus mit einem entfernten Element (z. B. dem
+  // Knopf eines geschlossenen Formulars) auf <body> gefallen ist; Fluent
+  // hört nur an der Dialogfläche.
   useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && dismissible) {
-        event.preventDefault();
-        onOpenChange(false);
-        return;
-      }
-
-      if (event.key !== "Tab" || !contentRef.current) return;
-
-      const focusableElements = getFocusableElements(contentRef.current);
-      if (focusableElements.length === 0) {
-        event.preventDefault();
-        contentRef.current.focus();
-        return;
-      }
-
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
-      const activeElement = document.activeElement;
-
-      if (activeElement === contentRef.current) {
-        event.preventDefault();
-        if (event.shiftKey) {
-          lastElement.focus();
-        } else {
-          firstElement.focus();
-        }
-      } else if (event.shiftKey && activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [dismissible, onOpenChange, open]);
-
-  if (!open) return null;
-
-  const handleBackdropMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (
-      dismissible &&
-      closeOnBackdrop &&
-      event.target === event.currentTarget
-    ) {
+    if (!open || !dismissible) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (modals[modals.length - 1] !== surfaceRef.current) return;
+      event.preventDefault();
       onOpenChange(false);
-    }
-  };
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, dismissible, onOpenChange]);
+
   const contentStyle: React.CSSProperties | undefined = contentFades
     ? {
         maskImage:
@@ -156,64 +176,79 @@ export const Dialog: React.FC<DialogProps> = ({
       }
     : undefined;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 sm:p-6"
-      onMouseDown={handleBackdropMouseDown}
+  const hasChildren =
+    children !== null && children !== undefined && children !== false;
+
+  return (
+    <FluentDialog
+      open={open}
+      modalType={dismissible ? "modal" : "alert"}
+      // Ohne Ein-/Ausblend-Bewegung: der Dialog ist sofort da und sofort weg
+      // (Fokus und Folgeansicht ohne Zwischenzustand, wie bisher).
+      surfaceMotion={null}
+      onOpenChange={(_event, data) => {
+        if (data.open) return;
+        if (!dismissible) return;
+        if (data.type === "backdropClick" && !closeOnBackdrop) return;
+        onOpenChange(false);
+      }}
     >
-      <div
-        ref={contentRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
+      <DialogSurface
+        ref={(el: HTMLDivElement | null) => {
+          (surfaceRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          setSurface(el);
+        }}
         tabIndex={-1}
-        className={`flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-mid-gray/20 bg-background shadow-xl outline-none sm:max-h-[calc(100dvh-3rem)] ${className}`}
+        aria-describedby={description ? descriptionId : undefined}
+        className={`lv-dialog ${className}`}
+        style={{ maxWidth: maxWidthOf(className) }}
       >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-mid-gray/20 px-4 py-2.5">
-          <div className="min-w-0">
-            <h2 id={titleId} className="text-base font-semibold text-text">
-              {title}
-            </h2>
-            {description && (
-              <p id={descriptionId} className="mt-1 text-sm text-mid-gray">
-                {description}
-              </p>
-            )}
-          </div>
-          {dismissible && showCloseButton && (
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              aria-label={closeLabel}
-              className="shrink-0 cursor-pointer rounded-md border border-transparent p-1 text-mid-gray transition-colors hover:border-mid-gray/20 hover:bg-mid-gray/10 hover:text-text focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+        <DialogPortalContext.Provider value={surface}>
+        <DialogBody className="lv-dialog__body">
+          <DialogTitle
+            action={
+              dismissible && showCloseButton ? (
+                <FluentTooltip content={closeLabel} relationship="label">
+                  <FluentButton
+                    appearance="subtle"
+                    size="small"
+                    icon={<X className="h-4 w-4" aria-hidden="true" />}
+                    onClick={() => onOpenChange(false)}
+                  />
+                </FluentTooltip>
+              ) : undefined
+            }
+          >
+            {title}
+          </DialogTitle>
+          {(description || hasChildren) && (
+            <DialogContent
+              className={`lv-dialog__content ${contentClassName}`}
+              style={contentStyle}
             >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
+              {description && (
+                <p
+                  id={descriptionId}
+                  className="lv-dialog__description text-sm text-text-muted"
+                >
+                  {description}
+                </p>
+              )}
+              {hasChildren && children}
+            </DialogContent>
           )}
-        </div>
-        {/* Leerer Inhalt (reine Rückfrage) erzeugt keine leere Zeile zwischen Text und Fußleiste. */}
-        {children !== null && children !== undefined && children !== false && (
-          <div
-            className={`min-h-0 overflow-y-auto px-4 pb-4 pt-3 ${contentClassName}`}
-            style={contentStyle}
-          >
-            {children}
-          </div>
-        )}
-        {footer && (
-          // flex-wrap: drei lange Knoepfe ("Abbrechen", "Sprache speichern", "Speichern und neu
-          // transkribieren") sind breiter als die 32 rem des Dialogs; ohne Umbruch ragte die
-          // Leiste nach links hinaus und "Abbrechen" war abgeschnitten (0.21.0).
-          <div
-            data-testid="dialog-footer"
-            className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-mid-gray/20 px-4 py-3"
-          >
-            {footer}
-          </div>
-        )}
-      </div>
-    </div>,
-    document.body,
+          {footer && (
+            <DialogActions
+              data-testid="dialog-footer"
+              fluid
+              className="lv-dialog__actions"
+            >
+              {footer}
+            </DialogActions>
+          )}
+        </DialogBody>
+        </DialogPortalContext.Provider>
+      </DialogSurface>
+    </FluentDialog>
   );
 };

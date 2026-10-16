@@ -485,6 +485,8 @@ test.describe("Reiter Folien", () => {
     await openSlides(page);
     await card(page, 2).getByTestId("slide-hide").click();
     const panel = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[data-testid="slides-panel"]')
       .analyze();
     expect(
@@ -494,6 +496,8 @@ test.describe("Reiter Folien", () => {
     ).toEqual([]);
     await card(page, 3).getByTestId("slide-open").click();
     const dialog = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[role="dialog"]')
       .analyze();
     expect(

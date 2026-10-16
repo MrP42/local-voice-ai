@@ -645,6 +645,8 @@ test("Zeilen und Kontextmenue anderer Seiten bleiben unveraendert, wenn nichts a
 const axeSevere = async (page: Page) =>
   (
     await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
       .analyze()
   ).violations

@@ -3614,7 +3614,9 @@
     "voiceOptions": "More read-aloud settings",
     "voices": "Listen to & manage voices",
     "navCollapse": "Collapse menu",
-    "navExpand": "Expand menu"
+    "navExpand": "Expand menu",
+    "navOpen": "Open menu",
+    "navClose": "Close menu"
   },
   "llmUpdate": {
     "cli": {
