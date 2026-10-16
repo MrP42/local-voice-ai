@@ -70,7 +70,7 @@ async function setup(page: Page, streamInjection: boolean, refine = false) {
 const openDictation = async (page: Page) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
-  await page.getByRole("tab", { name: "Diktat", exact: true }).click();
+  await page.getByRole("tab", { name: "Eingabe", exact: true }).click();
   await expect(page.getByText("Einfügemethode").first()).toBeVisible();
 };
 
@@ -83,11 +83,10 @@ test("without live insertion the refinement switch is not shown at all", async (
 test("with live insertion the switch is shown, off by default, and writes the setting", async ({ page }) => {
   await setup(page, true);
   await openDictation(page);
-  // Der Schalter hat keinen eigenen Namen; die Ueberschrift der Zeile nennt ihn.
-  const toggle = page
-    .getByRole("heading", { name: "Live-Text nachträglich mit Ollama glätten" })
-    .locator("xpath=ancestor::div[.//input[@type='checkbox']][1]")
-    .getByRole("checkbox");
+  // Fluent Switch: role="switch", die Ueberschrift der Zeile nennt ihn.
+  const toggle = page.getByRole("switch", {
+    name: "Live-Text nachträglich mit Ollama glätten",
+  });
   await expect(toggle).toBeVisible();
   await expect(toggle).not.toBeChecked();
   await toggle.check({ force: true });

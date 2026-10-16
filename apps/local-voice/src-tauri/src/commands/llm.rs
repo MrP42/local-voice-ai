@@ -8,7 +8,8 @@
 
 use tauri::AppHandle;
 
-use crate::settings::{self, LlmConnection, LlmModelConfig, PostProcessProvider};
+use crate::managers::llm::updates::{self, ModelUpdate};
+use crate::settings::{self, AppSettings, LlmConnection, LlmModelConfig, PostProcessProvider};
 
 /// Verbindung anlegen oder ersetzen (nach `id`). Eine leere `id` oder eine
 /// unbekannte Vorlage wird abgewiesen: eine Verbindung ohne Vorlage haette
@@ -107,6 +108,23 @@ pub fn llm_set_active_model(app: AppHandle, id: Option<String>) -> Result<(), St
         if !selectable {
             return Err(format!("Modell nicht waehlbar: {wanted}"));
         }
+        // Regelwerk: ein gesperrtes Modell ist nicht waehlbar -- sonst liefe
+        // jede Funktion gegen die Sperre in `llm_client`.
+        if let Some(c) = s
+            .llm_models
+            .iter()
+            .find(|m| m.id == *wanted)
+            .and_then(|m| s.llm_connections.iter().find(|c| c.id == m.connection_id))
+        {
+            let a = crate::commands::compliance::assess_connection(&s, c);
+            if a.verdict == crate::managers::compliance::Verdict::Blocked {
+                return Err(format!(
+                    "{}: {}",
+                    crate::managers::compliance::CODE_COMPLIANCE_BLOCKED,
+                    a.reasons.join(", ")
+                ));
+            }
+        }
     }
     s.llm_active_model_id = id;
     s.sync_legacy_from_llm();
@@ -117,18 +135,10 @@ pub fn llm_set_active_model(app: AppHandle, id: Option<String>) -> Result<(), St
 /// Die Modelle, die ein Anbieter ueber seine Verbindung anbietet -- zum
 /// Freigeben. Spricht die Vorlage der Verbindung an, aber mit deren Adresse
 /// und Schluessel, damit zwei Konten derselben Art getrennt bleiben.
-#[tauri::command]
-#[specta::specta]
-pub async fn llm_list_remote_models(
-    app: AppHandle,
-    connection_id: String,
+pub(crate) async fn offered_models(
+    s: &AppSettings,
+    connection: &LlmConnection,
 ) -> Result<Vec<String>, String> {
-    let s = settings::get_settings(&app);
-    let connection = s
-        .llm_connections
-        .iter()
-        .find(|c| c.id == connection_id)
-        .ok_or_else(|| format!("Unbekannte Verbindung: {connection_id}"))?;
     let template = s
         .llm_template(connection)
         .ok_or_else(|| format!("Unbekannte Anbieter-Vorlage: {}", connection.kind))?;
@@ -148,6 +158,286 @@ pub async fn llm_list_remote_models(
     crate::llm_client::fetch_models(&provider, api_key).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_list_remote_models(
+    app: AppHandle,
+    connection_id: String,
+) -> Result<Vec<String>, String> {
+    let s = settings::get_settings(&app);
+    let connection = s
+        .llm_connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| format!("Unbekannte Verbindung: {connection_id}"))?;
+    offered_models(&s, connection).await
+}
+
+// ---- Neue Modelle der Anbieter (managers::llm::updates) -------------------
+
+/// Ergebnis einer Pruefung auf neue Modelle.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, specta::Type)]
+pub struct ModelCheck {
+    /// Einstellung `llm_auto_update_models` zum Zeitpunkt der Pruefung.
+    pub mode: String,
+    /// Ohne Rueckfrage uebernommen (nur bei `on`).
+    pub applied: Vec<ModelUpdate>,
+    /// Warten auf die Antwort des Nutzers (nur bei `ask`).
+    pub pending: Vec<ModelUpdate>,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Uebernimmt Verlaufseintraege in die frischen Einstellungen -- ohne eine
+/// Entscheidung zu ueberschreiben, die der Nutzer zwischenzeitlich getroffen hat.
+fn merge_history(s: &mut AppSettings, entries: &[settings::LlmModelSeen]) {
+    for e in entries {
+        let decided = e.status == updates::STATUS_ABSENT
+            && s.llm_model_history
+                .iter()
+                .any(|h| h.key == e.key && h.status != updates::STATUS_ABSENT);
+        if !decided {
+            updates::set_history(
+                &mut s.llm_model_history,
+                &e.key,
+                &e.status,
+                e.at,
+                e.replaced_by.clone(),
+            );
+        }
+    }
+}
+
+static MODEL_CHECK_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+struct RunningGuard;
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        MODEL_CHECK_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Sperre der Modellpruefung: `Some` nur fuer den ersten Aufrufer. Der Guard
+/// entsteht nur dann -- sein Drop gibt die Sperre frei, ein Guard fuer den
+/// zweiten Aufrufer wuerde sie der laufenden Pruefung wegnehmen.
+fn try_start_model_check() -> Option<RunningGuard> {
+    if MODEL_CHECK_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        None
+    } else {
+        Some(RunningGuard)
+    }
+}
+
+/// Fragt die eingeschalteten, nicht gesperrten Verbindungen nach ihren Modellen
+/// (das Claude-Abo durch Ausprobieren der naheliegenden Nachfolger), vermerkt
+/// Neues im Verlauf und uebernimmt es je nach Einstellung. Still bei Fehlern.
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> {
+    use crate::managers::llm::cli::{self, Cli};
+    // Laeuft schon eine Pruefung, antwortet dieser Aufruf nur mit dem Stand.
+    let guard = try_start_model_check();
+    let first = guard.is_some();
+    let now = unix_now();
+    let s0 = settings::get_settings(&app);
+    updates::restore_claude_extras(&s0);
+    let mut touched: Vec<settings::LlmModelSeen> = Vec::new();
+
+    if first {
+        // Arbeitskopie, damit die zweite Runde sieht, was die erste vermerkt hat.
+        let mut work = s0.clone();
+        let connections: Vec<LlmConnection> =
+            s0.llm_connections.iter().filter(|c| c.enabled).cloned().collect();
+        for c in connections {
+            if crate::commands::compliance::assess_connection(&work, &c).verdict
+                == crate::managers::compliance::Verdict::Blocked
+            {
+                continue;
+            }
+            let Some(template) = work.llm_template(&c).cloned() else {
+                continue;
+            };
+            if crate::managers::llm::is_local(&template) {
+                continue;
+            }
+            let Ok(offered) = offered_models(&work, &c).await else {
+                log::debug!("Modellpruefung: {} nicht erreichbar", c.label);
+                continue;
+            };
+            // Erste Runde: das Angebot des Anbieters. Sie setzt auch die
+            // Grundlinie, bevor ein Probelauf etwas "Neues" finden kann.
+            let seen = updates::record_offered(&work, &c, &offered, c.kind == "ollama", now);
+            merge_history(&mut work, &seen);
+            touched.extend(seen);
+
+            if Cli::from_base_url(&c.base_url) != Some(Cli::Claude) {
+                continue;
+            }
+            let mut known = offered.clone();
+            known.extend(
+                work.llm_models
+                    .iter()
+                    .filter(|m| m.connection_id == c.id)
+                    .map(|m| m.remote_id.clone()),
+            );
+            let due = updates::due_candidates(&work, &c.id, &known, now);
+            if due.is_empty() {
+                continue;
+            }
+            let Some(binary) = cli::locate(Cli::Claude) else {
+                continue;
+            };
+            let run = tokio::task::spawn_blocking(move || {
+                updates::run_probes(&due, updates::PROBE_BUDGET, |m| {
+                    updates::probe_claude(&binary, m)
+                })
+            })
+            .await
+            .unwrap_or_default();
+            for name in run.absent {
+                let e = settings::LlmModelSeen {
+                    key: LlmModelConfig::make_id(&c.id, &name),
+                    status: updates::STATUS_ABSENT.to_string(),
+                    at: now,
+                    replaced_by: None,
+                };
+                merge_history(&mut work, std::slice::from_ref(&e));
+                touched.push(e);
+            }
+            // Zweite Runde: was der Probelauf gefunden hat, ist neu.
+            let seen = updates::record_offered(&work, &c, &run.available, false, now);
+            merge_history(&mut work, &seen);
+            touched.extend(seen);
+            updates::restore_claude_extras(&work);
+        }
+    }
+
+    let mut s = settings::get_settings(&app);
+    merge_history(&mut s, &touched);
+    updates::restore_claude_extras(&s);
+    let mode = s.llm_auto_update_models.clone();
+    let mut applied = Vec::new();
+    let mut pending = updates::pending_updates(&s);
+    if mode == updates::MODE_ON {
+        for u in std::mem::take(&mut pending) {
+            match updates::apply(&mut s, &u, now) {
+                Ok(_) => applied.push(u),
+                Err(e) => log::warn!("Modell {} nicht uebernommen: {e}", u.remote_id),
+            }
+        }
+    } else if mode == updates::MODE_OFF {
+        pending.clear();
+    }
+    if !touched.is_empty() || !applied.is_empty() {
+        settings::write_settings(&app, s);
+    }
+    Ok(ModelCheck {
+        mode,
+        applied,
+        pending,
+    })
+}
+
+/// Antwort auf die Frage nach neuen Modellen: `always` (uebernehmen und kuenftig
+/// ohne Rueckfrage), `once` (nur dieses Mal) oder `never` (nicht uebernehmen,
+/// kuenftig selbst waehlen).
+#[tauri::command]
+#[specta::specta]
+pub fn llm_answer_model_updates(
+    app: AppHandle,
+    answer: String,
+) -> Result<Vec<ModelUpdate>, String> {
+    let mut s = settings::get_settings(&app);
+    let now = unix_now();
+    let mut applied = Vec::new();
+    match answer.as_str() {
+        "always" | "once" => {
+            if answer == "always" {
+                s.llm_auto_update_models = updates::MODE_ON.to_string();
+            }
+            for u in updates::pending_updates(&s) {
+                match updates::apply(&mut s, &u, now) {
+                    Ok(_) => applied.push(u),
+                    Err(e) => log::warn!("Modell {} nicht uebernommen: {e}", u.remote_id),
+                }
+            }
+        }
+        "never" => s.llm_auto_update_models = updates::MODE_OFF.to_string(),
+        other => return Err(format!("Unbekannte Antwort: {other}")),
+    }
+    settings::write_settings(&app, s);
+    Ok(applied)
+}
+
+/// Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut s = settings::get_settings(&app);
+    s.cli_auto_update = enabled;
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+/// Stellt die Einstellung `llm_auto_update_models` (`ask`, `on`, `off`).
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_auto_update_models(app: AppHandle, mode: String) -> Result<(), String> {
+    if !updates::valid_mode(&mode) {
+        return Err(format!("Unbekannte Einstellung: {mode}"));
+    }
+    let mut s = settings::get_settings(&app);
+    s.llm_auto_update_models = mode;
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
+/// Effort-Stufen, die ein Modell einer Verbindung annimmt (Abo ueber die CLI:
+/// Claude `--effort`, Codex laut eigenem Katalog). Leer: nicht einstellbar.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_model_efforts(app: AppHandle, connection_id: String, remote_id: String) -> Vec<String> {
+    let s = settings::get_settings(&app);
+    s.llm_connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .and_then(|c| crate::managers::llm::cli::Cli::from_base_url(&c.base_url))
+        .map(|cli| cli.efforts(&remote_id))
+        .unwrap_or_default()
+}
+
+/// Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
+#[tauri::command]
+#[specta::specta]
+pub fn llm_model_offers_fast(app: AppHandle, connection_id: String, remote_id: String) -> bool {
+    let s = settings::get_settings(&app);
+    s.llm_connections
+        .iter()
+        .find(|c| c.id == connection_id)
+        .and_then(|c| crate::managers::llm::cli::Cli::from_base_url(&c.base_url))
+        .is_some_and(|cli| cli.offers_fast(&remote_id))
+}
+
+/// Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_default_effort(app: AppHandle, effort: String) -> Result<(), String> {
+    if !crate::managers::llm::cli::valid_effort(&effort) {
+        return Err(format!("Unbekannte Effort-Stufe: {effort}"));
+    }
+    let mut s = settings::get_settings(&app);
+    s.llm_default_effort = effort;
+    s.sync_legacy_from_llm();
+    settings::write_settings(&app, s);
+    Ok(())
+}
+
 /// Schluessel einer Verbindung setzen. Abgelegt unter der Verbindungs-`id`,
 /// nicht unter der Vorlage -- zwei Konten derselben Art brauchen zwei
 /// Schluessel. Der aeltere Befehl prueft gegen die Vorlagen und wuerde eine
@@ -160,8 +450,7 @@ pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -
         return Err(format!("Unbekannte Verbindung: {connection_id}"));
     }
     s.post_process_api_keys.insert(connection_id, api_key);
-    settings::write_settings(&app, s);
-    Ok(())
+    settings::try_write_settings(&app, s)
 }
 
 // ---- Lokales Sprachmodell: Laufzeit, Modelle, Server ----------------------
@@ -286,6 +575,7 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
                 enabled: true,
                 monthly_budget_usd: None,
                 budget_enforced: false,
+                training_opt_out: false,
             });
             LOCAL_PROVIDER_ID.to_string()
         }
@@ -307,6 +597,8 @@ pub fn llm_local_activate(app: AppHandle, model_id: String) -> Result<(), String
             price_input_per_mtok: Some(0.0),
             price_output_per_mtok: Some(0.0),
             tags: info.tags.clone(),
+            effort: None,
+            fast: false,
         });
     } else if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == id) {
         m.enabled = true;
@@ -434,4 +726,20 @@ pub async fn llm_local_fit(
         on_gpu,
         verdict,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ein zweiter Aufrufer bekommt keinen Guard und laesst die Sperre stehen.
+    #[test]
+    fn second_model_check_does_not_release_the_lock() {
+        let first = try_start_model_check();
+        assert!(first.is_some());
+        assert!(try_start_model_check().is_none());
+        assert!(MODEL_CHECK_RUNNING.load(std::sync::atomic::Ordering::SeqCst));
+        drop(first);
+        assert!(!MODEL_CHECK_RUNNING.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

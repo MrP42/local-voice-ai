@@ -22,6 +22,8 @@ const THEMES = ["light", "dark"] as const;
 /** Befunde der Regel color-contrast (serious/critical), lesbar zusammengefasst. */
 const contrastFindings = async (page: Page): Promise<string[]> => {
   const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
     .withRules(["color-contrast"])
     .analyze();
   return result.violations
@@ -158,6 +160,8 @@ for (const theme of THEMES) {
       document.body.appendChild(host);
     }, MAPPED_TEXT_CLASSES);
     const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include("#contrast-probe")
       .withRules(["color-contrast"])
       .analyze();

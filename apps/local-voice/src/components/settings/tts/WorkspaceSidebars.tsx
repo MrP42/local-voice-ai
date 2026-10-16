@@ -10,6 +10,7 @@ import {
 } from "@/bindings";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Button } from "../../ui/Button";
+import { IconButton } from "../../ui/IconButton";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
 import { TabList } from "../../ui/TabList";
@@ -156,38 +157,26 @@ export const PagesSidebar: React.FC<{
       style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
     >
       <div className="flex items-center justify-between pb-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <span className="text-xs font-semibold text-text/60">
           {t("tts.pages.title")}
         </span>
         <div className="flex items-center">
-          <button
-            type="button"
+          <IconButton
             onClick={create}
-            title={t("tts.pages.create")}
-            aria-label={t("tts.pages.create")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <Plus width={16} height={16} />
-          </button>
-          <button
-            type="button"
+            label={t("tts.pages.create")}
+            icon={<Plus width={16} height={16} />}
+          />
+          <IconButton
             onClick={() => setImportOpen(true)}
-            title={t("tts.pages.package.importTitle")}
-            aria-label={t("tts.pages.package.importTitle")}
+            label={t("tts.pages.package.importTitle")}
             data-testid="page-import-open"
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <PackageOpen width={16} height={16} />
-          </button>
-          <button
-            type="button"
+            icon={<PackageOpen width={16} height={16} />}
+          />
+          <IconButton
             onClick={onToggle}
-            title={t("tts.pages.collapse")}
-            aria-label={t("tts.pages.collapse")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <PanelLeftClose width={16} height={16} />
-          </button>
+            label={t("tts.pages.collapse")}
+            icon={<PanelLeftClose width={16} height={16} />}
+          />
         </div>
       </div>
 
@@ -489,16 +478,12 @@ export const FilesSidebar: React.FC<{
       // sonst links unter der Bedienung klebte; nebeneinander bleibt er am
       // rechten Rand. Gleiche Flaeche (p-1) wie die Knoepfe im Leistenkopf.
       <div className="shrink-0 pt-1 flex justify-end">
-        <button
-          type="button"
+        <IconButton
           onClick={onToggle}
-          title={t("tts.files.expand")}
-          aria-label={t("tts.files.expand")}
+          label={t("tts.files.expand")}
           data-testid="files-expand"
-          className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-        >
-          <PanelRightOpen width={16} height={16} />
-        </button>
+          icon={<PanelRightOpen width={16} height={16} />}
+        />
       </div>
     );
   }
@@ -528,68 +513,50 @@ export const FilesSidebar: React.FC<{
             ariaLabel={t("tts.files.tabsLabel")}
           />
         ) : (
-          <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+          <span className="text-xs font-semibold text-text/60">
             {t("tts.files.title")}
           </span>
         )}
         <div className="flex items-center">
           {tab === "files" && (
             <>
-              <button
-                type="button"
+              <IconButton
                 onClick={addFile}
-                title={t("tts.files.add")}
-                aria-label={t("tts.files.add")}
-                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <FilePlus width={16} height={16} />
-              </button>
-              <button
-                type="button"
+                label={t("tts.files.add")}
+                icon={<FilePlus width={16} height={16} />}
+              />
+              <IconButton
                 onClick={openFolder}
-                title={t("tts.files.openFolder")}
-                aria-label={t("tts.files.openFolder")}
-                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <FolderOpen width={16} height={16} />
-              </button>
-              <button
-                type="button"
+                label={t("tts.files.openFolder")}
+                icon={<FolderOpen width={16} height={16} />}
+              />
+              <IconButton
                 onClick={() => void refresh()}
-                title={t("tts.files.refresh")}
-                aria-label={t("tts.files.refresh")}
-                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-              >
-                <RefreshCw width={16} height={16} />
-              </button>
+                label={t("tts.files.refresh")}
+                icon={<RefreshCw width={16} height={16} />}
+              />
             </>
           )}
           {onLayoutToggle && (
-            <button
-              type="button"
+            <IconButton
               onClick={onLayoutToggle}
               data-testid="layout-toggle"
               aria-pressed={!stacked}
-              title={t("tts.layout.sideBySide")}
-              aria-label={t("tts.layout.sideBySide")}
-              className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-            >
-              {stacked ? (
-                <Rows2 width={16} height={16} />
-              ) : (
-                <Columns2 width={16} height={16} />
-              )}
-            </button>
+              label={t("tts.layout.sideBySide")}
+              icon={
+                stacked ? (
+                  <Rows2 width={16} height={16} />
+                ) : (
+                  <Columns2 width={16} height={16} />
+                )
+              }
+            />
           )}
-          <button
-            type="button"
+          <IconButton
             onClick={onToggle}
-            title={t("tts.files.collapse")}
-            aria-label={t("tts.files.collapse")}
-            className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <PanelRightClose width={16} height={16} />
-          </button>
+            label={t("tts.files.collapse")}
+            icon={<PanelRightClose width={16} height={16} />}
+          />
         </div>
       </div>
 

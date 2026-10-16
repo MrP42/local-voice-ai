@@ -322,12 +322,14 @@ test.describe("Kalender in den Einstellungen", () => {
     await setup(page);
     await openSettings(page);
     await expect(page.getByText("Erinnerung vor Terminen")).toBeVisible();
-    const row = page
-      .getByText("Erinnerung vor Terminen", { exact: true })
-      .locator("xpath=ancestor::div[.//button[contains(@class,'min-w-')]][1]");
-    await row.getByRole("button", { name: "1 Minute vorher" }).click();
-    await row
-      .getByRole("button", { name: "5 Minuten vorher", exact: true })
+    // Fluent-Auswahlliste: der Zeilentitel nennt sie, die Wahl ist eine Option.
+    const lead = page.getByRole("combobox", {
+      name: "Erinnerung vor Terminen",
+    });
+    await expect(lead).toHaveText("1 Minute vorher");
+    await lead.click();
+    await page
+      .getByRole("option", { name: "5 Minuten vorher", exact: true })
       .click();
     await expect
       .poll(
@@ -357,8 +359,8 @@ test.describe("Kalender in den Einstellungen", () => {
     ).toEqual({ enabled: true });
 
     // Bei "Aus" gibt es nichts zu erinnern: der Schalter ist gesperrt.
-    await row.getByRole("button", { name: "5 Minuten vorher" }).click();
-    await row.getByRole("button", { name: "Aus", exact: true }).click();
+    await lead.click();
+    await page.getByRole("option", { name: "Aus", exact: true }).click();
     await expect
       .poll(
         async () =>

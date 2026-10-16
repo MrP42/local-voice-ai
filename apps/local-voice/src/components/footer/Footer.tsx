@@ -6,6 +6,8 @@ import { MicSelector } from "./MicSelector";
 import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
+import { ComplianceShield } from "../compliance/ComplianceShield";
+import { FishServerButton } from "./FishServerButton";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
@@ -38,12 +40,14 @@ const Footer: React.FC = () => {
           <ResourceMeter />
         </div>
 
-        {/* Update Status */}
-        <div className="hidden sm:flex items-center gap-1">
-          <UpdateChecker />
-          <span>•</span>
-          {/* eslint-disable-next-line i18next/no-literal-string */}
-          <span>v{version}</span>
+        {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
+        <div className="flex items-center gap-2">
+          {/* Fish-Speech-Server (Vorlesen): links neben dem Schild. */}
+          <FishServerButton />
+          <ComplianceShield />
+          {/* Version: ein Klick sucht nach Updates; ein gefundenes meldet
+              sich beim Start als Fenster mit den Release-Notes. */}
+          <UpdateChecker version={version} />
         </div>
       </div>
     </div>

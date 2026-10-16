@@ -75,6 +75,8 @@ pub enum Purpose {
     AgentRoute,
     /// A1: Informationen aus einem Text ziehen (Goal B).
     Extract,
+    /// Dokumenttypen neben dem Protokoll (Management Summary, Kurzfassung, ...).
+    Document,
 }
 
 impl Purpose {
@@ -95,6 +97,7 @@ impl Purpose {
             Purpose::FactCheck => "fact_check",
             Purpose::AgentRoute => "agent_route",
             Purpose::Extract => "extract",
+            Purpose::Document => "document",
         }
     }
 }
@@ -263,7 +266,9 @@ impl NewUsageEvent {
         duration_ms: u32,
         result: Result<(), String>,
     ) -> Self {
-        let matching = active.filter(|(c, m)| c.kind == provider.id && m.remote_id == remote_model);
+        // Abo-Modelle reisen als `modell@effort`; zugeordnet wird ueber den Namen.
+        let base_model = crate::managers::llm::cli::split_spec(remote_model).0;
+        let matching = active.filter(|(c, m)| c.kind == provider.id && m.remote_id == base_model);
         let (connection_id, connection_kind, connection_label, model_id, model_label, pin, pout) =
             match matching {
                 Some((c, m)) => (
@@ -479,6 +484,27 @@ impl UsageLedger {
         })
     }
 
+    /// Summe der Kosten bestimmter Ereignisse (Mikro-Dollar), z. B. aller
+    /// Aufrufe, aus denen ein Protokoll entstand.
+    pub fn cost_of(&self, ids: &[i64]) -> Result<i64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ledger lock"))?;
+        let mut total = 0i64;
+        for id in ids.iter().take(500) {
+            let cost: Option<i64> = conn
+                .query_row(
+                    "SELECT cost_micro FROM usage_event WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .ok();
+            total += cost.unwrap_or(0);
+        }
+        Ok(total)
+    }
+
     /// Ausgaben einer Verbindung seit Monatsbeginn (Mikro-Dollar).
     pub fn spent_this_month(&self, connection_id: &str) -> Result<i64> {
         self.spent_since(connection_id, UsageRange::Month.since(Local::now()))
@@ -546,6 +572,12 @@ pub fn install_globals(ledger: Arc<UsageLedger>, settings: SettingsSource) {
 
 pub fn ledger() -> Option<Arc<UsageLedger>> {
     LEDGER.get().cloned()
+}
+
+/// Die aktuellen Einstellungen fuer Module ohne `AppHandle` (Regelwerk).
+/// `None` vor dem Start und in Tests.
+pub fn settings_snapshot() -> Option<AppSettings> {
+    SETTINGS.get().map(|source| source())
 }
 
 // ----------------------------------------------------------------- Capture --
@@ -767,6 +799,7 @@ mod tests {
             enabled: true,
             monthly_budget_usd: budget,
             budget_enforced: enforced,
+            training_opt_out: false,
         }
     }
 
@@ -783,6 +816,8 @@ mod tests {
             price_input_per_mtok: Some(pin),
             price_output_per_mtok: Some(pout),
             tags: Vec::new(),
+            effort: None,
+            fast: false,
         }
     }
 

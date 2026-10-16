@@ -148,6 +148,26 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
+## IBM Plex Sans (Schrift im PDF-Export) - OFL-1.1
+
+Regular, Bold und Italic, eingebettet in Word-/PDF-Exporte der Dokumente (`src-tauri/assets/documents/`,
+unveraendert aus <https://github.com/IBM/plex>). Copyright 2017 IBM Corp., Reserved Font Name "Plex";
+Lizenztext: `src-tauri/assets/documents/IBMPlexSans-OFL.txt`.
+
+## Archivo (Schrift im PDF-Export) - OFL-1.1
+
+Bold, fuer Titel und Ueberschriften im PDF-Export (`src-tauri/assets/documents/`, unveraendert aus
+<https://github.com/Omnibus-Type/Archivo>). Copyright 2020 The Archivo Project Authors;
+Lizenztext: `src-tauri/assets/documents/Archivo-OFL.txt`.
+
+### Bibliotheken (Rust), neu durch den Dokument-Export (Etappe 2, 13.10.2026)
+
+`krilla` 0.8.2 (MIT OR Apache-2.0, PDF-Schreiber) mit `pdf-writer`, `subsetter`, `skrifa`, `read-fonts`,
+`write-fonts`, `font-types`, `rustybuzz`, `kurbo`, `euclid`, `xmp-writer`, `zune-jpeg`, `gif`, `image-webp`,
+`imagesize`, `tiny-skia-path`, `polycool` und weiteren kleinen Crates (Lizenzen MIT, Apache-2.0, BSD, Zlib;
+vollstaendig in `THIRD-PARTY-NOTICES.md` aus `cargo about`). `ttf-parser` 0.25 ist neu als direkte
+Abhaengigkeit, lag aber schon im Lockfile.
+
 ## Entwicklungswerkzeuge
 
 Diese Pakete laufen nur in der Entwicklung (Playwright-Tests, `devDependencies`). Sie sind **nicht** Teil des

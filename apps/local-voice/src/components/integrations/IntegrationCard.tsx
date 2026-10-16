@@ -2,7 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import type { IntegrationView } from "@/bindings";
 import { Button } from "../ui/Button";
-import { folderPathOf } from "./model";
+import { folderPathOf, iconKey, kindName } from "./model";
 import { KindIcon } from "./KindIcon";
 
 interface IntegrationCardProps {
@@ -25,14 +25,12 @@ export const IntegrationCard: React.FC<IntegrationCardProps> = ({
       data-integration-id={integration.id}
     >
       <div className="flex items-start gap-3">
-        <KindIcon kind={integration.kind} />
+        <KindIcon kind={iconKey(integration)} />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold break-words">
             {integration.label}
           </h3>
-          <p className="text-xs text-text-muted">
-            {t(`integrations.kinds.${integration.kind}`)}
-          </p>
+          <p className="text-xs text-text-muted">{kindName(t, integration)}</p>
           {path && (
             <p className="mt-1 text-xs text-text-muted break-all">{path}</p>
           )}

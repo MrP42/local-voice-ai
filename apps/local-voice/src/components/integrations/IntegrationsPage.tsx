@@ -20,6 +20,7 @@ import { IntegrationDetail } from "./IntegrationDetail";
 import { TargetDialog } from "./TargetDialog";
 import { M365Dialog } from "./M365Dialog";
 import { isTargetKind, type CatalogEntry, type TargetKind } from "./model";
+import type { ServiceId } from "@/bindings";
 import { useIntegrations, usePendingApprovals } from "./useIntegrations";
 
 type Screen =
@@ -52,6 +53,7 @@ export const IntegrationsPage: React.FC = () => {
   const [calendarDialog, setCalendarDialog] = useState(false);
   const [folderDialog, setFolderDialog] = useState(false);
   const [targetKind, setTargetKind] = useState<TargetKind | null>(null);
+  const [serviceId, setServiceId] = useState<ServiceId | null>(null);
   const [m365Dialog, setM365Dialog] = useState(false);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   // B7: wird hochgezaehlt, wenn eine Freigabe entschieden wurde, damit die Automationen
@@ -89,7 +91,8 @@ export const IntegrationsPage: React.FC = () => {
       (entry.id === "smtp" ||
         entry.id === "obsidian" ||
         entry.id === "wissen" ||
-        entry.id === "webhook") &&
+        entry.id === "webhook" ||
+        entry.id === "presenter") &&
       isTargetKind(entry.kind)
     ) {
       setTargetKind(entry.kind);
@@ -172,7 +175,14 @@ export const IntegrationsPage: React.FC = () => {
       )}
 
       {screen.name === "catalog" && (
-        <IntegrationCatalog onBack={toList} onSetup={setup} />
+        <IntegrationCatalog
+          onBack={toList}
+          onSetup={setup}
+          onSetupService={(id) => {
+            setServiceId(id);
+            setTargetKind("service");
+          }}
+        />
       )}
 
       {screen.name === "detail" && detail && (
@@ -304,6 +314,7 @@ export const IntegrationsPage: React.FC = () => {
           if (!next) setTargetKind(null);
         }}
         kind={targetKind ?? "smtp"}
+        serviceId={serviceId}
         onSaved={(view) => {
           upsert(view);
           setTab("connections");

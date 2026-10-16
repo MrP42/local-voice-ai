@@ -1363,6 +1363,8 @@ test.describe("Barrierefreiheit der neuen Formulare", () => {
       });
       await page.waitForTimeout(250);
       const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
         .withTags(["wcag2a", "wcag2aa"])
         .exclude("input.peer")
         .analyze();
@@ -1411,7 +1413,7 @@ test.describe("Darstellung", () => {
         );
       // Schmal liegt „Integrationen“ hinter „Mehr“.
       if (width < 768) {
-        await nav(page).getByRole("button", { name: "Mehr" }).click();
+        await page.getByRole("button", { name: "Menü öffnen" }).click();
       }
       await openIntegrations(page);
       expect(await overflow()).toBeLessThanOrEqual(0);
@@ -1465,6 +1467,8 @@ for (const theme of ["light", "dark"] as const) {
       // keinen eigenen Namen (die Beschriftung steht daneben, nicht daran) - ein
       // vorbestehender Befund der Komponente, nicht dieser Seite.
       const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
         .withTags(["wcag2a", "wcag2aa"])
         .exclude("input.peer")
         .analyze();

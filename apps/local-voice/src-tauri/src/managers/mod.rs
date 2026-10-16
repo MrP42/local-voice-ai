@@ -1,7 +1,9 @@
 pub mod audio;
 pub mod calendar; // M5-P5a
+pub mod compliance; // Regelwerk fuer Cloud-Modelle
 pub mod gguf_meta;
 pub mod history;
+pub mod letterhead; // Briefkopf-Profile fuer den Dokument-Export (lva.briefkopf/1)
 pub mod integrations; // A1 (Goal Integrationen)
 pub mod llm;
 pub mod meeting_detect; // M5-P5c

@@ -66,6 +66,14 @@ pub fn init_dir(dir: PathBuf) {
     *SECRETS_DIR.write().unwrap_or_else(|e| e.into_inner()) = Some(dir);
 }
 
+/// Ist der Geheimnisordner schon festgelegt?
+pub fn dir_initialized() -> bool {
+    SECRETS_DIR
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
+}
+
 fn current_dir() -> Result<PathBuf, String> {
     SECRETS_DIR
         .read()

@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   commands,
   type IntegrationView,
   type Security,
+  type ServiceId,
+  type ServiceInfo,
   type TargetSettings,
 } from "@/bindings";
 import { Button } from "../ui/Button";
@@ -13,9 +16,11 @@ import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import {
   CONTEXT_AREAS,
+  SERVICE_LABELS,
   TIERS,
   configText,
   errorText,
+  serviceOf,
   type TargetKind,
 } from "./model";
 
@@ -26,6 +31,8 @@ interface TargetDialogProps {
   kind: TargetKind;
   /** Gesetzt: vorhandene Integration bearbeiten (Einstellungen), sonst neu anlegen. */
   editing?: IntegrationView;
+  /** Bei der Art `service`: welcher Dienst neu angelegt wird. */
+  serviceId?: ServiceId | null;
   onSaved: (view: IntegrationView) => void;
 }
 
@@ -45,9 +52,28 @@ const EMPTY_SETTINGS = {
   tool: "wissen_suchen",
   area: "",
   secret: "",
+  /** Felder eines Dienstes (Projekt-ID, Site, ...). */
+  fields: {} as Record<string, string>,
+  /** WAI Presenter: Katalog der Besprechungen schreiben. */
+  catalog: true,
 };
 
 type Form = typeof EMPTY_SETTINGS;
+
+/** Felder eines Dienstes aus der Konfiguration (alles Text ausser Dienst und Server). */
+const serviceFieldsOf = (configJson: string): Record<string, string> => {
+  try {
+    const parsed = JSON.parse(configJson) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (e): e is [string, string] =>
+          typeof e[1] === "string" && e[0] !== "service" && e[0] !== "host",
+      ),
+    );
+  } catch {
+    return {};
+  }
+};
 
 const formFrom = (view: IntegrationView | undefined): Form => {
   if (!view) return { ...EMPTY_SETTINGS };
@@ -68,7 +94,20 @@ const formFrom = (view: IntegrationView | undefined): Form => {
     endpoint: c("endpoint"),
     tool: c("search_tool") || EMPTY_SETTINGS.tool,
     area: c("area"),
+    fields: serviceFieldsOf(view.integration.config_json),
+    catalog: catalogOf(view.integration.config_json),
   };
+};
+
+/** `catalog` der Presenter-Konfiguration (fehlt: an). */
+const catalogOf = (configJson: string): boolean => {
+  try {
+    return (
+      (JSON.parse(configJson) as Record<string, unknown>).catalog !== false
+    );
+  } catch {
+    return true;
+  }
 };
 
 /** Letzter Ordnername eines Pfads, als Vorschlag fuer den Namen. */
@@ -95,6 +134,7 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
   onOpenChange,
   kind,
   editing,
+  serviceId,
   onSaved,
 }) => {
   const { t } = useTranslation();
@@ -102,6 +142,25 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameTouched, setNameTouched] = useState(false);
+  const [services, setServices] = useState<ServiceInfo[]>([]);
+
+  // Dienst: beim Bearbeiten aus der Konfiguration, beim Anlegen aus dem Katalog.
+  const currentService: ServiceId | null =
+    kind === "service"
+      ? editing
+        ? serviceOf(editing.integration.config_json)
+        : (serviceId ?? null)
+      : null;
+  const info = services.find((s) => s.id === currentService);
+  const serviceLabel = currentService ? SERVICE_LABELS[currentService] : "";
+
+  useEffect(() => {
+    if (!isOpen || kind !== "service" || services.length) return;
+    commands
+      .integrationServices()
+      .then(setServices)
+      .catch(() => setServices([]));
+  }, [isOpen, kind, services.length]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -153,10 +212,15 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
       search_tool: null,
       area: null,
       secret: null,
+      service: null,
+      fields: null,
+      catalog: null,
     };
     switch (kind) {
       case "folder":
         return { ...base, path: form.path.trim(), subfolder: form.subfolder };
+      case "presenter":
+        return { ...base, path: form.path.trim(), catalog: form.catalog };
       case "smtp":
         return {
           ...base,
@@ -188,6 +252,19 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
         // Die Adresse ist das Geheimnis (n8n traegt den Schluessel im Pfad); leer beim
         // Bearbeiten = unveraendert.
         return { ...base, secret: form.secret.trim() || null };
+      case "service":
+        // Nur die Felder dieses Dienstes; der Dienst selbst steht nach dem Anlegen fest.
+        return {
+          ...base,
+          service: editing ? null : currentService,
+          fields: Object.fromEntries(
+            (info?.fields ?? []).map((f) => [
+              f.key,
+              (form.fields[f.key] ?? "").trim(),
+            ]),
+          ),
+          secret: form.secret.trim() || null,
+        };
     }
   };
 
@@ -224,6 +301,7 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
     if (!editing && !filled(form.name)) return false;
     switch (kind) {
       case "folder":
+      case "presenter":
         return filled(form.path);
       case "smtp":
         return (
@@ -237,14 +315,23 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
         return filled(form.endpoint) && (!!editing || filled(form.secret));
       case "webhook":
         return !!editing || filled(form.secret);
+      case "service":
+        return (
+          !!info &&
+          info.fields.every(
+            (f) => !f.required || filled(form.fields[f.key] ?? ""),
+          ) &&
+          (!!editing || filled(form.secret))
+        );
     }
   })();
 
   const title = editing
     ? t(`integrations.target.${kind}.titleEdit`, {
         defaultValue: t("integrations.target.folder.title"),
+        service: serviceLabel,
       })
-    : t(`integrations.target.${kind}.title`);
+    : t(`integrations.target.${kind}.title`, { service: serviceLabel });
 
   const field = (
     id: string,
@@ -305,7 +392,11 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
       onOpenChange={onOpenChange}
       title={title}
       description={
-        editing ? undefined : t(`integrations.target.${kind}.description`)
+        editing
+          ? undefined
+          : t(`integrations.target.${kind}.description`, {
+              service: serviceLabel,
+            })
       }
       closeLabel={t("integrations.close")}
       footer={
@@ -556,6 +647,121 @@ export const TargetDialog: React.FC<TargetDialogProps> = ({
             >
               {t("integrations.target.webhook.n8nHint")}
             </p>
+          </>
+        )}
+
+        {kind === "service" && !info && (
+          <p className="text-sm text-text-muted">
+            {t("integrations.target.service.loading")}
+          </p>
+        )}
+
+        {kind === "service" && info && (
+          <>
+            {info.fields.map((f) =>
+              field(
+                `svc-${f.key}`,
+                f.required
+                  ? t(`integrations.target.service.fields.${f.key}.label`, {
+                      defaultValue: f.key,
+                    })
+                  : t("integrations.target.service.optionalLabel", {
+                      label: t(
+                        `integrations.target.service.fields.${f.key}.label`,
+                        { defaultValue: f.key },
+                      ),
+                    }),
+                <Input
+                  id={`svc-${f.key}`}
+                  className="w-full"
+                  value={form.fields[f.key] ?? ""}
+                  autoComplete="off"
+                  spellCheck={false}
+                  maxLength={300}
+                  placeholder={t(
+                    `integrations.target.service.fields.${f.key}.placeholder`,
+                    { defaultValue: "" },
+                  )}
+                  onChange={(e) =>
+                    set("fields", { ...form.fields, [f.key]: e.target.value })
+                  }
+                  data-testid={`target-svc-${f.key}`}
+                />,
+                t(`integrations.target.service.fields.${f.key}.hint`, {
+                  defaultValue: "",
+                }) || undefined,
+              ),
+            )}
+            {field(
+              "secret",
+              info.auth === "webhook_url"
+                ? t("integrations.target.service.webhookUrl")
+                : t(`integrations.target.service.tokenFor.${info.id}`, {
+                    defaultValue: t("integrations.target.service.token"),
+                  }),
+              text("secret", "secret", {
+                type: "password",
+                autoComplete: "new-password",
+                spellCheck: false,
+                placeholder: editing
+                  ? t("integrations.target.secretKeep", {
+                      what:
+                        info.auth === "webhook_url"
+                          ? t("integrations.target.webhook.urlWhat")
+                          : t("integrations.target.service.tokenWhat"),
+                    })
+                  : undefined,
+              }),
+              info.auth === "webhook_url"
+                ? t("integrations.target.service.webhookHint")
+                : t("integrations.target.service.tokenHint"),
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void openUrl(info.token_help_url)}
+                data-testid="target-svc-help"
+              >
+                {t("integrations.target.service.help", {
+                  service: serviceLabel,
+                })}
+              </Button>
+            </div>
+            {info.auth === "webhook_url" && (
+              <p
+                className="text-xs text-text-muted"
+                data-testid="target-svc-no-test-post"
+              >
+                {t("integrations.target.service.noTestPost")}
+              </p>
+            )}
+          </>
+        )}
+
+        {kind === "presenter" && (
+          <>
+            {pathField(
+              t("integrations.target.presenter.path"),
+              t("integrations.target.presenter.pathPlaceholder"),
+            )}
+            <p
+              className="text-xs text-text-muted"
+              data-testid="target-presenter-privacy"
+            >
+              {t("integrations.target.presenter.privacy")}
+            </p>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.catalog}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, catalog: e.target.checked }))
+                }
+                data-testid="target-presenter-catalog"
+              />
+              <span>{t("integrations.target.presenter.catalog")}</span>
+            </label>
           </>
         )}
 

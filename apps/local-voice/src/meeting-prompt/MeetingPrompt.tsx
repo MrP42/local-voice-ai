@@ -184,7 +184,7 @@ const MeetingPrompt: React.FC = () => {
           <div className="space-y-0.5">
             {workflow && (
               <p
-                className="text-xs font-semibold uppercase tracking-wide text-logo-primary"
+                className="text-xs font-semibold text-logo-primary"
                 data-testid="prompt-workflow-title"
               >
                 {t(`${wk}.title`)}

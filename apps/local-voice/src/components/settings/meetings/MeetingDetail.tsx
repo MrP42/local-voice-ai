@@ -30,7 +30,6 @@ import {
   AudioPlayerGroup,
   type AudioPlayerHandle,
 } from "../../ui/AudioPlayer";
-import { MinutesView } from "./MinutesView";
 import type { SlideRefs } from "../../whats-new/MarkdownContent";
 import { MyNotesView } from "./notes/MyNotesView";
 import { EnhancedNotesView } from "./notes/EnhancedNotesView";
@@ -73,6 +72,7 @@ import {
   visibleSlides,
 } from "@/lib/meetingSlides";
 import { FollowupDialog } from "./FollowupDialog";
+import { DocumentsPanel } from "./documents/DocumentsPanel";
 import { MeetingExportDialog } from "./MeetingExportDialog";
 import { PeopleDialog } from "./people/PeopleDialog";
 import type { PersonRef } from "./people/PersonPopover";
@@ -261,6 +261,9 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
   slidesRef.current = slides;
   const centerTabs = [
     { id: "transcript" as const, label: t("meetings.detail.transcriptTab") },
+    // Owner-Annahme 1 (Entwurf 2026-10-13, offen): der Reiter soll "Dokumente" heissen.
+    // Bis Patrick entscheidet, bleibt "Protokoll" (rund 30 Test-Locators haengen am
+    // Namen); die Dokumenttypen stehen als Leiste im Reiter (`DocumentsPanel`).
     { id: "minutes" as const, label: t("meetings.detail.minutesTab") },
     ...(slides.length > 0
       ? [{ id: "slides" as const, label: t("meetings.slides.tab") }]
@@ -1435,17 +1438,13 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           data-testid="mid-panel-minutes"
           className="min-h-[5rem] min-w-0 flex-1 overflow-y-auto"
         >
-          <ProvenanceArea
-            subject={{ type: "document", meetingId, docKind: "minutes" }}
-            testId="prov-area-minutes"
+          <DocumentsPanel
+            meetingId={meetingId}
+            meetingTitle={meetingTitle}
+            slideRefs={slideRefs}
             onOpenSlide={(id) => setSlideJump({ id })}
-          >
-            <MinutesView
-              meetingId={meetingId}
-              meetingTitle={meetingTitle}
-              slideRefs={slideRefs}
-            />
-          </ProvenanceArea>
+            onFollowup={() => setFollowupOpen(true)}
+          />
         </div>
       )}
       {centerTab === "slides" && (
@@ -1520,16 +1519,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       {hasAudio && !live && (
         <AudioPlayerGroup>
           {meeting.mic_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player">
-              {meeting.system_audio_path && (
-                <p className="text-xs text-text/60">
-                  {meeting.source === "import"
-                    ? t("meetings.meta.audioImport")
-                    : t("meetings.live.me")}
-                </p>
-              )}
+            <div data-testid="rec-player">
               <AudioPlayer
-                compact
+                dense
+                label={
+                  meeting.system_audio_path
+                    ? meeting.source === "import"
+                      ? t("meetings.meta.audioImport")
+                      : t("meetings.live.me")
+                    : undefined
+                }
                 controlRef={micPlayerRef}
                 onTimeChange={onPlayTime}
                 src={convertFileSrc(meeting.mic_audio_path, "asset")}
@@ -1538,14 +1537,12 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             </div>
           )}
           {meeting.system_audio_path && (
-            <div className="space-y-0.5" data-testid="rec-player-system">
-              {meeting.mic_audio_path && (
-                <p className="text-xs text-text/60">
-                  {t("meetings.live.remote")}
-                </p>
-              )}
+            <div data-testid="rec-player-system">
               <AudioPlayer
-                compact
+                dense
+                label={
+                  meeting.mic_audio_path ? t("meetings.live.remote") : undefined
+                }
                 controlRef={systemPlayerRef}
                 src={convertFileSrc(meeting.system_audio_path, "asset")}
                 className="w-full"
