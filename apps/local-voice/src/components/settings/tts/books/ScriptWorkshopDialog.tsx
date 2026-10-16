@@ -66,6 +66,11 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
   const { t, i18n } = useTranslation();
   const uiLang = uiLangOf(i18n.language);
   const [step, setStep] = useState<Step>("book");
+  const [importAsk, setImportAsk] = useState<{
+    picked: string;
+    count: number;
+    rightsConfirmed: boolean;
+  } | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
   const [bookId, setBookId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
@@ -366,16 +371,20 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
       setError(info.error);
       return;
     }
-    const importVoices = info.data.voices.some((v) => !v.present)
-      ? window.confirm(
-          t("tts.workshop.importVoicesAsk", {
-            count: info.data.voices.filter((v) => !v.present).length,
-            rights: info.data.rights_confirmed
-              ? t("tts.workshop.rightsYes")
-              : t("tts.workshop.rightsNo"),
-          }),
-        )
-      : false;
+    const missing = info.data.voices.filter((v) => !v.present).length;
+    if (missing > 0) {
+      // Rueckfrage als Dialog (kein window.confirm): die Antwort startet den Import.
+      setImportAsk({
+        picked,
+        count: missing,
+        rightsConfirmed: info.data.rights_confirmed,
+      });
+      return;
+    }
+    await finishImport(picked, false);
+  };
+
+  const finishImport = async (picked: string, importVoices: boolean) => {
     setBusy(true);
     const r = await commands.booksImport(picked, importVoices);
     setBusy(false);
@@ -387,6 +396,12 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
     setBookId(r.data.id);
     onPagesChanged();
     toast.success(t("tts.workshop.imported", { title: r.data.title }));
+  };
+
+  const answerImportAsk = (importVoices: boolean) => {
+    const ask = importAsk;
+    setImportAsk(null);
+    if (ask) void finishImport(ask.picked, importVoices);
   };
 
   const voiceOptions = [
@@ -405,9 +420,44 @@ export const ScriptWorkshopDialog: React.FC<ScriptWorkshopDialogProps> = ({
       onOpenChange={onOpenChange}
       title={t("tts.workshop.title")}
       closeLabel={t("common.close")}
+      dismissible={importAsk === null}
       className="max-w-4xl"
       contentClassName="min-h-[28rem]"
     >
+      <Dialog
+        open={importAsk !== null}
+        onOpenChange={(o) => {
+          if (!o) setImportAsk(null);
+        }}
+        title={t("tts.workshop.importVoicesTitle")}
+        description={
+          importAsk
+            ? t("tts.workshop.importVoicesAsk", {
+                count: importAsk.count,
+                rights: importAsk.rightsConfirmed
+                  ? t("tts.workshop.rightsYes")
+                  : t("tts.workshop.rightsNo"),
+              })
+            : undefined
+        }
+        closeLabel={t("common.close")}
+        className="max-w-xl"
+        footer={
+          <>
+            <Button onClick={() => answerImportAsk(true)}>
+              {t("tts.workshop.importVoicesWith")}
+            </Button>
+            <Button variant="secondary" onClick={() => answerImportAsk(false)}>
+              {t("tts.workshop.importVoicesWithout")}
+            </Button>
+            <Button variant="secondary" onClick={() => setImportAsk(null)}>
+              {t("common.cancel")}
+            </Button>
+          </>
+        }
+      >
+        {null}
+      </Dialog>
       <div className="flex gap-4 text-sm">
         {/* Schritte links */}
         <nav

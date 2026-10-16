@@ -273,6 +273,85 @@ async llmSetActiveModel(id: string | null) : Promise<Result<null, string>> {
  * Freigeben. Spricht die Vorlage der Verbindung an, aber mit deren Adresse
  * und Schluessel, damit zwei Konten derselben Art getrennt bleiben.
  */
+/**
+ * Effort-Stufen, die ein Modell einer Verbindung annimmt (Abo ueber die CLI:
+ * Claude `--effort`, Codex laut eigenem Katalog). Leer: nicht einstellbar.
+ */
+async llmModelEfforts(connectionId: string, remoteId: string) : Promise<string[]> {
+    return await TAURI_INVOKE("llm_model_efforts", { connectionId, remoteId });
+},
+/**
+ * Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
+ */
+async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("llm_model_offers_fast", { connectionId, remoteId });
+},
+/**
+ * Prueft die Verbindungen auf neue Modelle und uebernimmt sie je nach Einstellung.
+ */
+async llmCheckNewModels() : Promise<Result<ModelCheck, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_check_new_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Antwort auf die Frage nach neuen Modellen: `always`, `once` oder `never`.
+ */
+async llmAnswerModelUpdates(answer: string) : Promise<Result<ModelUpdate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_answer_model_updates", { answer }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+ */
+async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stellt `llm_auto_update_models` (`ask`, `on`, `off`).
+ */
+async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_auto_update_models", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).
+ */
+async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_default_effort", { effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Kosten einer Reihe von Aufrufen (Mikro-Dollar), etwa der eines Protokolls.
+ */
+async usageCostOf(ids: number[]) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("usage_cost_of", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmListRemoteModels(connectionId: string) : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_list_remote_models", { connectionId }) };
@@ -1989,6 +2068,117 @@ async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateIn
 }
 },
 /**
+ * Der Katalog der Dokumenttypen (Reihenfolge = Anzeige, Protokoll zuerst).
+ */
+async meetingsDocumentTypes() : Promise<Result<DocTypeInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_types") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anzeigedaten des juengsten Dokuments eines Typs (Unvollstaendigkeit, Luecken).
+ */
+async meetingsDocumentMeta(meetingId: string, docType: string) : Promise<Result<MinutesMeta | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_meta", { meetingId, docType }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dokumenttyp erzeugen (neue Version), mit `DocumentEvent`. Fehler sind Codes wie beim
+ * Protokoll (`minutes_busy`, `no_provider`, ...) oder `doc_type_unknown`.
+ */
+async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_document", { meetingId, docType, basis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein gespeichertes Dokument exportieren: Format nach der Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
+ */
+async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Briefkoepfe: mitgelieferte zuerst, dann eigene.
+ */
+async letterheadsList() : Promise<Result<Letterhead[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterheads_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf anlegen oder aendern (mitgelieferte sind schreibgeschuetzt).
+ */
+async letterheadSave(letterhead: Letterhead) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_save", { letterhead }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf entfernen. War er eingestellt, gilt wieder die Vorgabe.
+ */
+async letterheadDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Logo eines eigenen Briefkopfs setzen (PNG/JPEG) oder entfernen (`path = null`).
+ */
+async letterheadSetLogo(id: string, path: string | null) : Promise<Result<Letterhead, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_set_logo", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Beispiel mit einem Briefkopf speichern (Vorschau in der Einstellung).
+ */
+async letterheadExportSample(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_export_sample", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung "Briefkopf fuer Word und PDF". Unbekannte Ids werden abgelehnt.
+ */
+async changeDocumentLetterheadSetting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_document_letterhead_setting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
  * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
  * `empty_entry`). Chronologisch.
@@ -2305,6 +2495,13 @@ async approvalDecide(id: string, approve: boolean, consentConfirmed: boolean) : 
  * Geheimnis geht in den Geheimnisspeicher, nie in die Datenbank. Fehler: Codes
  * (`folder_*`, `vault_path_*`) oder Klartext der Pruefung.
  */
+/**
+ * Die Dienste (Slack, Teams, Jira, Notion, ...) fuer den Dialog „Integration hinzufuegen“:
+ * Anmeldeart, Felder, Faehigkeiten und Hilfe-Link. Ohne Geheimnisse, ohne I/O.
+ */
+async integrationServices() : Promise<ServiceInfo[]> {
+    return await TAURI_INVOKE("integration_services");
+},
 async integrationCreateWithSettings(kind: Kind, label: string, direction: Direction | null, settings: TargetSettings) : Promise<Result<IntegrationView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("integration_create_with_settings", { kind, label, direction, settings }) };
@@ -2343,6 +2540,28 @@ async integrationSendTestMail(id: string) : Promise<Result<null, string>> {
 async wissenSuchen(id: string, query: string, limit: number | null, area: string | null) : Promise<Result<WissenHit[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("wissen_suchen", { id, query, limit, area }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "An WAI Presenter senden": Paket der Besprechung mit den gewaehlten, vorhandenen Dokumenten.
+ */
+async presenterSend(integrationId: string, meetingId: string, docTypes: string[], formats: string[]) : Promise<Result<WrittenPackage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_send", { integrationId, meetingId, docTypes, formats }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Katalog neu schreiben (ohne Paket).
+ */
+async presenterWriteCatalog(integrationId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_write_catalog", { integrationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4705,6 +4924,32 @@ async ttsExportFormat() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Die Piper-Stimme, die diesen Text tatsaechlich liest, wenn die automatische
+ * Spracherkennung eine andere als die gewaehlte nimmt.
+ */
+async ttsPiperVoiceForText(text: string) : Promise<string | null> {
+    return await TAURI_INVOKE("tts_piper_voice_for_text", { text });
+},
+/**
+ * Die vom Nutzer korrigierte Uebersetzung ablegen.
+ */
+async ttsStoreTranslation(text: string, targetLang: string, translation: string) : Promise<void> {
+    await TAURI_INVOKE("tts_store_translation", { text, targetLang, translation });
+},
+/**
+ * Stimme oder Engine wurden umgestellt: sofort gelten lassen, auch mitten im Vorlesen.
+ */
+async ttsVoiceChanged() : Promise<void> {
+    await TAURI_INVOKE("tts_voice_changed");
+},
+/**
+ * Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)
+ * abbrechen; sie endet nach dem Block, an dem sie gerade arbeitet.
+ */
+async ttsTransformCancel(kind: string) : Promise<void> {
+    await TAURI_INVOKE("tts_transform_cancel", { kind });
+},
 async ttsSummarizeText(text: string, options: SummaryOptions) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_summarize_text", { text, options }) };
@@ -5172,6 +5417,7 @@ meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
+documentEvent: DocumentEvent,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
@@ -5189,6 +5435,7 @@ meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
+documentEvent: "document-event",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
@@ -5294,6 +5541,23 @@ llm_model_dirs?: string[];
  * oder keine Einschraenkung.
  */
 compliance_profile?: ComplianceProfile;
+/**
+ * Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
+ * hat (`low` … `max`). Vorgabe `medium`.
+ */
+llm_default_effort?: string;
+/**
+ * Neue Modelle der Anbieter uebernehmen: `ask`, `on` oder `off`.
+ */
+llm_auto_update_models?: string;
+/**
+ * Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`).
+ */
+cli_auto_update?: boolean;
+/**
+ * Erkennungsverlauf der Modelle (`llm_model_history`).
+ */
+llm_model_history?: LlmModelSeen[];
 /**
  * Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
  * Kept so older stores still deserialize; no longer read by the audio path.
@@ -5622,6 +5886,10 @@ meeting_self_emails?: string[];
  * Schluessel (aeltere settings.json) oder leer: "Ich".
  */
 meeting_self_name?: string | null; 
+/**
+ * Briefkopf fuer Word- und PDF-Export: Id eines Profils `lva.briefkopf/1`.
+ */
+document_letterhead_id?: string; 
 /**
  * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
  * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
@@ -6011,7 +6279,39 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
  */
-"workflow.run"
+"workflow.run" |
+/**
+ * In einen Kanal posten (Slack, Teams, Discord).
+ */
+"chat.post" |
+/**
+ * Aufgabe/Ticket anlegen (Asana, Jira, Todoist, ...).
+ */
+"task.create" |
+/**
+ * Seite anlegen oder ergaenzen (Notion, Confluence).
+ */
+"page.write" |
+/**
+ * Notiz im CRM (HubSpot, Pipedrive).
+ */
+"crm.write" |
+/**
+ * Datensatz anhaengen (Airtable).
+ */
+"record.write" |
+/**
+ * Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
+ */
+"mail.draft" |
+/**
+ * Besprechungspaket in den Austauschordner des Presenters schreiben (Etappe 4).
+ */
+"presenter.send" |
+/**
+ * Anfrage des Presenters bearbeiten: fehlende Dokumente erzeugen und ein Paket schreiben.
+ */
+"presenter.request"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -6490,8 +6790,45 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * Webhook als Ziel (B5): Adresse eines n8n-Ablaufs o. ae., die Adresse liegt im
  * Geheimnisspeicher.
  */
-"webhook"
+"webhook" |
+/**
+ * Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
+ * steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
+ */
+"service" |
+/**
+ * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete.
+ */
+"presenter"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Ergebnis einer Sendung an den Presenter.
+ */
+export type WrittenPackage = { folder: string; files: number }
+/**
+ * Firmenangaben im Kopf.
+ */
+export type Firma = { name: string; zeilen?: string[] }
+/**
+ * Farben als `#RRGGBB`.
+ */
+export type Farben = { akzent: string; akzent_text: string; text: string; titel: string; gedaempft: string; linie: string }
+/**
+ * Fusszeile.
+ */
+export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
+/**
+ * Wo das Logo steht.
+ */
+export type LogoPosition = "links" | "rechts"
+/**
+ * Logo eines Profils: `logo.png`/`logo.jpg` im Profilordner oder `builtin:<name>`.
+ */
+export type Logo = { datei: string; breite_mm: number; position: LogoPosition }
+/**
+ * Ein Briefkopf (`lva.briefkopf/1`).
+ */
+export type Letterhead = { schema: string; id: string; name: string; builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
  */
@@ -6600,13 +6937,44 @@ export type LlmDownloadKind = "runtime" | "model"
  * allein mehrdeutig ist: Kontext, Eingabe und Ausgabe sind drei Zahlen.
  * Preise je Million Token; `None` heisst unbekannt, nie null.
  */
-export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[] }
+/**
+ * Was die App ueber ein Modell weiss, das ein Anbieter anbietet (`connection_id:remote_id`).
+ * `status`: `seen`, `new`, `replaced`, `dismissed` oder `absent`.
+ */
+export type LlmModelSeen = { key: string; status: string; at?: number; replaced_by?: string | null }
+
+/**
+ * Ein neues Modell, das zur Uebernahme ansteht.
+ */
+export type ModelUpdate = { connection_id: string; connection_label: string; remote_id: string; replaces: string | null; replaces_remote_id: string | null; replaces_active: boolean }
+
+/**
+ * Ergebnis einer Pruefung auf neue Modelle.
+ */
+export type ModelCheck = { mode: string; applied: ModelUpdate[]; pending: ModelUpdate[] }
+
+export type LlmModelConfig = { id: string; connection_id: string; remote_id: string; label: string; enabled?: boolean; context_limit?: number | null; max_input_tokens?: number | null; max_output_tokens?: number | null; price_input_per_mtok?: number | null; price_output_per_mtok?: number | null; tags?: string[];
+/**
+ * Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
+ * auch `ultra`); `None` = Vorgabe der CLI.
+ */
+effort?: string | null;
+/**
+ * Fast-Modus der Codex-Modelle (`service_tier = "fast"`: schneller, verbraucht
+ * mehr vom Abo-Kontingent); nur wirksam, wo der Codex-Katalog ihn anbietet.
+ */
+fast?: boolean }
 export type LocalLlmPhase = "stopped" | "starting" | "ready" | "error"
 /**
  * Zustand fuer die Oberflaeche: was laeuft, wo, mit welchem Backend.
  */
 export type LocalLlmStatus = { phase: LocalLlmPhase; model_id: string | null; backend: string | null; port: number | null; message: string | null }
-export type LocalUpdate = { version: string; path: string; file_name: string }
+export type LocalUpdate = { version: string; path: string; file_name: string;
+/**
+ * Release-Notes (Markdown) aus `<installer>.notes.md` neben dem Installer, fuer
+ * alle Versionen seit der installierten (neueste zuerst); `None` ohne Datei.
+ */
+notes: string | null }
 /**
  * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
  */
@@ -6910,6 +7278,34 @@ participant_ids: string[] | null;
  * Projekte (Ordner-IDs).
  */
 folder_ids: string[] | null }
+/**
+ * Wer ein Dokument erzeugt.
+ */
+export type DocEngine =
+/**
+ * Das vorhandene Protokoll (Vorlage der Besprechung, `kind = minutes`).
+ */
+"minutes" |
+/**
+ * Ein Dokumenttyp dieses Katalogs, erzeugt im Protokoll-Motor.
+ */
+"document" |
+/**
+ * Der vorhandene Follow-up-Dialog (`followup.rs`, `mail.rs`); kein eigener Lauf.
+ */
+"followup"
+/**
+ * Was die Oberflaeche ueber einen Typ wissen muss (ohne Prompt-Texte).
+ */
+export type DocTypeInfo = { key: string; title: string; audience: string; length: string; depth: string; engine: DocEngine;
+/**
+ * `kind` der Dokumente dieses Typs (`minutes` oder `doc:<key>`); leer bei `Followup`.
+ */
+kind: string; sections: string[] }
+/**
+ * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
+ */
+export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
 /**
  * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
  * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter
@@ -7687,6 +8083,45 @@ export type TagInsertion = { offset_in_original: number; offset_chars: number; t
  * werden ignoriert. `secret` ist das Passwort (SMTP), der Schluessel (Wissen) oder die
  * Adresse (Webhook); leer oder fehlend bedeutet beim Aendern „unveraendert“.
  */
+/**
+ * Wie sich der Dienst anmeldet. Das Geheimnis steht immer im Fach `token`.
+ */
+export type AuthKind =
+/**
+ * Das Geheimnis ist eine Webhook-Adresse (Schluessel im Pfad).
+ */
+"webhook_url" |
+/**
+ * `Authorization: Bearer <token>`.
+ */
+"bearer" |
+/**
+ * `Authorization: <token>` ohne Vorsilbe (ClickUp, monday, Linear-API-Key).
+ */
+"raw_authorization" |
+/**
+ * HTTP Basic mit E-Mail (Feld `email`) und Token (Atlassian; iCloud: Apple-ID und
+ * app-spezifisches Passwort).
+ */
+"basic_email_token" |
+/**
+ * `x-api-token: <token>` (Pipedrive).
+ */
+"api_token_header" |
+/**
+ * Trello: oeffentlicher API-Key (Feld `api_key`) und Nutzer-Token, als OAuth-Kopfzeile.
+ */
+"trello_key_token"
+export type ServiceField = { key: string; required: boolean }
+export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" | "asana" | "clickup" | "jira" | "trello" | "todoist" | "monday" | "linear" | "github" | "hubspot" | "pipedrive" | "airtable" |
+/**
+ * iCloud-Kalender per CalDAV (Welle 3): Folgetermine schreiben.
+ */
+"icloud"
+/**
+ * Ein Dienst, wie die Oberflaeche ihn fuer den Dialog „Integration hinzufuegen“ braucht.
+ */
+export type ServiceInfo = { id: ServiceId; label: string; auth: AuthKind; capabilities: string[]; fields: ServiceField[]; token_help_url: string }
 export type TargetSettings = { 
 /**
  * Ordner oder Vault (absoluter Pfad).
@@ -7695,7 +8130,19 @@ path: string | null;
 /**
  * Unterordner (Ordner: fuer Exporte; Vault: fuer neue Notizen).
  */
-subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null }
+subfolder: string | null; host: string | null; port: number | null; security: Security | null; username: string | null; from_address: string | null; from_name: string | null; context_area: string | null; tier: string | null; endpoint: string | null; search_tool: string | null; area: string | null; secret: string | null;
+/**
+ * Dienst bei der Art `service` (`slack`, `jira`, ...); nur beim Anlegen.
+ */
+service: string | null;
+/**
+ * Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
+ */
+fields: Partial<{ [key in string]: string }> | null;
+/**
+ * WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
+ */
+catalog: boolean | null }
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
@@ -7849,7 +8296,7 @@ platform: string; piper: RuntimeState; fish: RuntimeState;
  * Ordner, in dem Fish erwartet wird (Einstellung `tts_fish_dir`).
  */
 fish_dir: string }
-export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null }
+export type TtsStatus = { phase: TtsPhase; owns_server: boolean; message: string | null; server_up: boolean }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * Eine Zeile der Auswertung: Summen je Modell, je Zweck oder je Tag.

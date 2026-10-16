@@ -289,7 +289,7 @@ impl MailSend {
     }
 
     /// Bildet die Mail aus den eingesetzten Parametern und dem Laufkontext (siehe Moduldoku).
-    fn build(
+    pub(super) fn build(
         &self,
         conn: &Connection,
         context: &Value,
@@ -375,13 +375,13 @@ impl MailSend {
 }
 
 /// Eine fertig gebildete Mail.
-struct Built {
-    integration: Integration,
-    rule: Rule,
-    to: Vec<String>,
-    subject: String,
-    body: String,
-    attachments: Vec<Checked>,
+pub(super) struct Built {
+    pub(super) integration: Integration,
+    pub(super) rule: Rule,
+    pub(super) to: Vec<String>,
+    pub(super) subject: String,
+    pub(super) body: String,
+    pub(super) attachments: Vec<Checked>,
     /// Plan: die Pfade stehen noch als `{{...}}` da.
     attachments_pending: bool,
     auto: bool,
@@ -393,7 +393,7 @@ impl Built {
     /// diesen Durchgang geprueft hat und an die die Freigabe gebunden ist (`RunCtx::gate_args`).
     /// Abweichung: der Schritt wird abgelehnt (`Permanent`, Audit `denied`), gesendet wird nichts.
     /// Ohne Tor-Argumente (Direktaufruf in Tests) gibt es nichts, wogegen man pruefen koennte.
-    fn check_bound(&self, conn: &Connection, ctx: &RunCtx<'_>) -> Result<(), StepError> {
+    pub(super) fn check_bound(&self, conn: &Connection, ctx: &RunCtx<'_>) -> Result<(), StepError> {
         let Some(bound) = ctx.gate_args else {
             return Ok(());
         };
@@ -438,7 +438,7 @@ impl Built {
     }
 
     /// Was das Tor sieht und der Nutzer in der Freigabe (siehe Moduldoku).
-    fn view(&self) -> GateView {
+    pub(super) fn view(&self) -> GateView {
         let mut args = json!({
             "via": self.integration.id,
             "rule": self.rule.as_str(),
@@ -567,7 +567,7 @@ impl Action for MailSend {
     fn validate(&self, params: &Map<String, Value>) -> Result<(), String> {
         if params.get("draft").and_then(Value::as_bool) == Some(true) {
             return Err(
-                "draft: Entwürfe lassen sich noch nicht anlegen (dafür fehlt dem Konto das Recht Mail.ReadWrite); die Freigabe mit Vorschau ersetzt den Entwurf."
+                "draft: Entwürfe legt der Baustein „Mail-Entwurf anlegen“ (mail.draft) an; „Mail senden“ sendet immer."
                     .to_string(),
             );
         }
@@ -1121,13 +1121,19 @@ impl Action for WebhookPost {
 // Einhaengen
 // ---------------------------------------------------------------------------
 
-/// Alle Integrations-Bausteine dieses Pakets.
+/// Alle Integrations-Bausteine dieses Pakets, dazu die Dienst-Bausteine (`service_actions`).
 pub fn actions(services: Arc<dyn AppServices>) -> Vec<Arc<dyn Action>> {
-    vec![
+    let mut all: Vec<Arc<dyn Action>> = vec![
         Arc::new(MailSend::new(services.clone())),
         Arc::new(CalendarNote::new(services.clone())),
-        Arc::new(WebhookPost::new(services)),
-    ]
+        Arc::new(WebhookPost::new(services.clone())),
+    ];
+    all.extend(super::followup_actions::actions(services.clone()));
+    all.extend(super::service_actions::actions(
+        services,
+        super::service_actions::default_exec(),
+    ));
+    all
 }
 
 /// Haengt die Bausteine in die Engine (ersetzt die Katalogbausteine).

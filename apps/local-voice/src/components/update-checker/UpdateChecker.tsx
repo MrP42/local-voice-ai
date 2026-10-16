@@ -5,11 +5,16 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ProgressBar } from "../shared";
+import { Button } from "../ui/Button";
+import { Dialog } from "../ui/Dialog";
+import { MarkdownContent } from "../whats-new/MarkdownContent";
 import { useSettings } from "../../hooks/useSettings";
 import { commands, type LocalUpdate } from "../../bindings";
 
 interface UpdateCheckerProps {
   className?: string;
+  /** Laufende Version; ein Klick darauf sucht nach Updates. */
+  version: string;
 }
 
 /** Semver-Vergleich der numerischen Teile: > 0 wenn a neuer als b. */
@@ -29,7 +34,16 @@ export const compareVersions = (a: string, b: string): number => {
   return 0;
 };
 
-const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
+/**
+ * Version in der Fußleiste: ein Klick sucht nach Updates (online und im lokalen
+ * Ordner). Findet die Suche beim Start eine neuere Version, fragt ein Fenster,
+ * ob sie installiert werden soll — mit den Release-Notes (online aus dem
+ * Release, lokal aus `<installer>.notes.md`). Ohne Update steht nur die Version da.
+ */
+const UpdateChecker: React.FC<UpdateCheckerProps> = ({
+  className = "",
+  version,
+}) => {
   const { t } = useTranslation();
   // Update checking state
   const [isChecking, setIsChecking] = useState(false);
@@ -49,6 +63,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   // koennen: es wird immer das NEUERE angeboten. Vorher gewann der lokale
   // Ordner unbesehen — 0.18.17 lokal verdeckte 0.19.0 auf GitHub (17.09.2026).
   const [githubVersion, setGithubVersion] = useState<string | null>(null);
+  /** Release-Notes des Online-Updates (Markdown). */
+  const [githubNotes, setGithubNotes] = useState<string | null>(null);
+  /** Fenster „neue Version installieren?“. */
+  const [dialogOpen, setDialogOpen] = useState(false);
+  /** Das Fenster erscheint von selbst hoechstens einmal je Programmlauf. */
+  const promptedRef = useRef(false);
   const localUpdate =
     localUpdateFound &&
     (githubVersion === null ||
@@ -107,6 +127,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       const result = await commands.localUpdateCheck();
       const found = result.status === "ok" ? result.data : null;
       setLocalUpdateFound(found);
+      if (found && !promptedRef.current) {
+        promptedRef.current = true;
+        setDialogOpen(true);
+      }
       return found !== null;
     } catch (error) {
       console.error("Failed to check local update folder:", error);
@@ -134,7 +158,12 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       if (update) {
         setUpdateAvailable(true);
         setGithubVersion(update.version);
+        setGithubNotes(update.body ?? null);
         setShowUpToDate(false);
+        if (!promptedRef.current || isManualCheckRef.current) {
+          promptedRef.current = true;
+          setDialogOpen(true);
+        }
       } else {
         setUpdateAvailable(false);
         setGithubVersion(null);
@@ -161,6 +190,31 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     if (!updateChecksEnabled) return;
     isManualCheckRef.current = true;
     checkForUpdates();
+  };
+
+  /** Klick auf die Version: vorhandenes Update zeigen, sonst suchen. */
+  const onVersionClick = async () => {
+    if (isChecking || isInstalling) return;
+    if (localUpdate || updateAvailable) {
+      setDialogOpen(true);
+      return;
+    }
+    if (updateChecksEnabled) {
+      handleManualUpdateCheck();
+      return;
+    }
+    // Online-Suche aus: nur der lokale Ordner.
+    const found = await checkLocalUpdate();
+    if (found) {
+      setDialogOpen(true);
+    } else {
+      setShowUpToDate(true);
+      if (upToDateTimeoutRef.current) clearTimeout(upToDateTimeoutRef.current);
+      upToDateTimeoutRef.current = setTimeout(
+        () => setShowUpToDate(false),
+        3000,
+      );
+    }
   };
 
   const installLocalUpdate = async () => {
@@ -230,17 +284,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     }
   };
 
-  // Update status functions
-  const getUpdateStatusText = () => {
-    if (isInstalling && localUpdate) {
-      return t("footer.localInstalling");
-    }
-    if (localUpdate && !isInstalling) {
-      return t("footer.localUpdateAvailable", { version: localUpdate.version });
-    }
-    if (!updateChecksEnabled) {
-      return t("footer.updateCheckingDisabled");
-    }
+  // Status neben der Version nur, solange etwas passiert.
+  const getUpdateStatusText = (): string | null => {
+    if (isInstalling && localUpdate) return t("footer.localInstalling");
     if (isInstalling) {
       return downloadProgress > 0 && downloadProgress < 100
         ? t("footer.downloading", {
@@ -252,27 +298,18 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     }
     if (isChecking) return t("footer.checkingUpdates");
     if (showUpToDate) return t("footer.upToDate");
-    if (updateAvailable) return t("footer.updateAvailableShort");
-    return t("footer.checkForUpdates");
+    return null;
   };
 
-  const getUpdateStatusAction = () => {
-    if (localUpdate && !isInstalling) return installLocalUpdate;
-    // Online-Suche aus: ein Klick prueft trotzdem den lokalen Ordner.
-    if (!updateChecksEnabled) return () => void checkLocalUpdate();
-    if (updateAvailable && !isInstalling) return installUpdate;
-    if (!isChecking && !isInstalling && !updateAvailable)
-      return handleManualUpdateCheck;
-    return undefined;
-  };
-
-  const isUpdateDisabled = isChecking || isInstalling;
-  const isUpdateClickable =
-    !isUpdateDisabled &&
-    (localUpdate !== null ||
-      updateAvailable ||
-      !updateChecksEnabled ||
-      (!isChecking && !showUpToDate));
+  const offered = localUpdate
+    ? { version: localUpdate.version, notes: localUpdate.notes }
+    : updateAvailable && githubVersion
+      ? { version: githubVersion, notes: githubNotes }
+      : null;
+  const status = getUpdateStatusText();
+  const versionTitle = offered
+    ? t("footer.updateAvailableTitle", { version: offered.version })
+    : t("footer.checkForUpdates");
 
   return (
     <>
@@ -307,25 +344,47 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
           </div>
         </div>
       )}
-      <div className={`flex items-center gap-3 ${className}`}>
-        {isUpdateClickable ? (
-          <button
-            onClick={getUpdateStatusAction()}
-            disabled={isUpdateDisabled}
-            className={`transition-colors disabled:opacity-50 tabular-nums ${
-              updateAvailable || localUpdate
-                ? "text-logo-primary hover:text-logo-primary/80 font-medium"
-                : "text-text/60 hover:text-text/80"
-            }`}
+      {offered && (
+        <Dialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          title={t("footer.updateDialog.title", { version: offered.version })}
+          description={t("footer.updateDialog.description", {
+            current: version,
+            version: offered.version,
+          })}
+          closeLabel={t("footer.updateDialog.later")}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setDialogOpen(false)}>
+                {t("footer.updateDialog.later")}
+              </Button>
+              <Button
+                onClick={() => {
+                  setDialogOpen(false);
+                  void (localUpdate ? installLocalUpdate() : installUpdate());
+                }}
+                data-testid="update-install"
+              >
+                {t("footer.updateDialog.install")}
+              </Button>
+            </>
+          }
+        >
+          <div
+            className="max-h-[50vh] overflow-y-auto text-sm"
+            data-testid="update-notes"
           >
-            {getUpdateStatusText()}
-          </button>
-        ) : (
-          <span className="text-text/60 tabular-nums">
-            {getUpdateStatusText()}
-          </span>
-        )}
-
+            {offered.notes ? (
+              <MarkdownContent markdown={offered.notes} />
+            ) : (
+              <p className="text-text/60">{t("footer.updateDialog.noNotes")}</p>
+            )}
+          </div>
+        </Dialog>
+      )}
+      <div className={`flex items-center gap-2 ${className}`}>
+        {status && <span className="text-text/60 tabular-nums">{status}</span>}
         {isInstalling && downloadProgress > 0 && downloadProgress < 100 && (
           <ProgressBar
             progress={[
@@ -337,6 +396,26 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
             size="large"
           />
         )}
+        <button
+          type="button"
+          onClick={() => void onVersionClick()}
+          disabled={isChecking || isInstalling}
+          title={versionTitle}
+          aria-label={versionTitle}
+          className={`tabular-nums transition-colors disabled:opacity-50 ${
+            offered
+              ? "text-logo-primary font-medium hover:text-logo-primary/80"
+              : "text-text/60 hover:text-text/80"
+          }`}
+          data-testid="footer-version"
+        >
+          {`v${version}`}
+          {offered && (
+            <span className="ms-1" aria-hidden="true">
+              ↑
+            </span>
+          )}
+        </button>
       </div>
     </>
   );

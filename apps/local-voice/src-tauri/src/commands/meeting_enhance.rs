@@ -112,10 +112,13 @@ pub async fn enhance_and_notify(
     template_id: Option<&str>,
     doc_basis: &DocBasis,
 ) -> Result<MeetingDocument, String> {
+    // KI-Notizen sind seit 06.10.2026 immer knapp (Ergebnisse, Entscheidungen,
+    // Aufgaben), unabhaengig von der Protokoll-Vorlage der Besprechung.
+    let _ = template_id;
     let (job_app, job_meeting, job_template, job_basis) = (
         app.clone(),
         meeting_id.to_string(),
-        template_id.map(str::to_string),
+        Some(crate::managers::meetings::notes::templates::NOTES_TEMPLATE_ID.to_string()),
         doc_basis.clone(),
     );
     let result = big_stack::run_result("meeting-enhance", move || async move {
@@ -222,6 +225,8 @@ pub enum AutoEnhanceSkip {
     NoProvider(&'static str),
     /// Eine neue Aufnahme laeuft schon und der Anbieter ist lokal.
     RecordingActive,
+    /// Waehrend der Besprechung wurde nichts notiert (06.10.2026).
+    NoUserNotes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +242,7 @@ pub fn auto_enhance_decision(
     settings: &crate::settings::AppSettings,
     source: &str,
     recording_active: bool,
+    has_user_notes: bool,
 ) -> AutoEnhanceDecision {
     use AutoEnhanceDecision::{Run, Skip};
     if !settings.meeting_auto_enhance {
@@ -244,6 +250,11 @@ pub fn auto_enhance_decision(
     }
     if source != "live" {
         return Skip(AutoEnhanceSkip::NotLive);
+    }
+    // Nur wer waehrend der Besprechung selbst notiert hat, bekommt KI-Notizen
+    // von selbst; sonst gibt es sie nur auf Knopfdruck.
+    if !has_user_notes {
+        return Skip(AutoEnhanceSkip::NoUserNotes);
     }
     match resolve_provider_coded(settings) {
         Err(e) => Skip(AutoEnhanceSkip::NoProvider(e.code)),
@@ -299,7 +310,11 @@ fn on_transcript_final(app: &AppHandle, meeting_id: String) {
         _ => return,
     };
     let settings = crate::settings::get_settings(app);
-    match auto_enhance_decision(&settings, &source, recording_active) {
+    let has_user_notes = store
+        .get_notes(&meeting_id)
+        .map(|n| n.blocks.iter().any(|b| !b.text.trim().is_empty()))
+        .unwrap_or(false);
+    match auto_enhance_decision(&settings, &source, recording_active, has_user_notes) {
         AutoEnhanceDecision::Run => {}
         AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider(code)) => {
             log::info!("KI-Notizen: Auto-Lauf uebersprungen ({code})");
@@ -538,8 +553,17 @@ mod tests {
     fn auto_enhance_runs_for_a_live_meeting_with_a_provider() {
         let settings = provider_settings(true);
         assert_eq!(
-            auto_enhance_decision(&settings, "live", false),
+            auto_enhance_decision(&settings, "live", false, true),
             AutoEnhanceDecision::Run
+        );
+    }
+
+    #[test]
+    fn auto_enhance_needs_notes_taken_during_the_meeting() {
+        let settings = provider_settings(false);
+        assert_eq!(
+            auto_enhance_decision(&settings, "live", false, false),
+            AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoUserNotes)
         );
     }
 
@@ -548,7 +572,7 @@ mod tests {
         let mut settings = provider_settings(true);
         settings.meeting_auto_enhance = false;
         assert_eq!(
-            auto_enhance_decision(&settings, "live", false),
+            auto_enhance_decision(&settings, "live", false, true),
             AutoEnhanceDecision::Skip(AutoEnhanceSkip::Disabled)
         );
     }
@@ -558,7 +582,7 @@ mod tests {
         let settings = provider_settings(true);
         for source in ["import", "subtitle"] {
             assert_eq!(
-                auto_enhance_decision(&settings, source, false),
+                auto_enhance_decision(&settings, source, false, true),
                 AutoEnhanceDecision::Skip(AutoEnhanceSkip::NotLive),
                 "{source}"
             );
@@ -570,7 +594,7 @@ mod tests {
         let mut settings = get_default_settings();
         settings.post_process_provider_id = "gibt-es-nicht".into();
         assert_eq!(
-            auto_enhance_decision(&settings, "live", false),
+            auto_enhance_decision(&settings, "live", false, true),
             AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider("no_provider"))
         );
         // Anbieter ohne Modell: ebenfalls kein Lauf, eigener Code.
@@ -578,7 +602,7 @@ mod tests {
         settings.post_process_provider_id = "custom".into();
         settings.post_process_models.remove("custom");
         assert_eq!(
-            auto_enhance_decision(&settings, "live", false),
+            auto_enhance_decision(&settings, "live", false, true),
             AutoEnhanceDecision::Skip(AutoEnhanceSkip::NoProvider("no_model"))
         );
     }
@@ -586,11 +610,11 @@ mod tests {
     #[test]
     fn auto_enhance_waits_for_a_running_recording_only_with_a_local_provider() {
         assert_eq!(
-            auto_enhance_decision(&provider_settings(true), "live", true),
+            auto_enhance_decision(&provider_settings(true), "live", true, true),
             AutoEnhanceDecision::Skip(AutoEnhanceSkip::RecordingActive)
         );
         assert_eq!(
-            auto_enhance_decision(&provider_settings(false), "live", true),
+            auto_enhance_decision(&provider_settings(false), "live", true, true),
             AutoEnhanceDecision::Run,
             "entfernter Anbieter konkurriert nicht um die Maschine"
         );

@@ -39,12 +39,13 @@ use super::{secrets, store};
 /// Arten, die die Oberflaeche selbst anlegen darf. A6 ergaenzt SMTP, Obsidian und die
 /// Wissensbasis, B5 den Webhook (seine Adresse ist das Geheimnis); ihr Geheimnis (Passwort, Schluessel) legt `targets::create_with_secret`
 /// ab, die Konfiguration pruefen `targets::normalize_config` und die Art selbst.
-pub const UI_CREATABLE: [Kind; 5] = [
+pub const UI_CREATABLE: [Kind; 6] = [
     Kind::Folder,
     Kind::Smtp,
     Kind::Obsidian,
     Kind::Wissen,
     Kind::Webhook,
+    Kind::Service,
 ];
 
 /// Aufrufer-Spalten der Rechte-Matrix, in Anzeigereihenfolge.
@@ -134,7 +135,6 @@ fn view_of(
 ) -> Result<IntegrationView, IntegrationError> {
     let grants: GrantSet = store::grants_for(conn, &i.id)?;
     let capabilities = i
-        .kind
         .capabilities()
         .iter()
         .map(|cap| {
@@ -286,7 +286,7 @@ pub fn create_from_ui(
                 json!({ "path": path, "subfolder": subfolder })
             }
         }
-        Kind::Smtp | Kind::Obsidian | Kind::Wissen | Kind::Webhook => {
+        Kind::Smtp | Kind::Obsidian | Kind::Wissen | Kind::Webhook | Kind::Service => {
             let (checked, hint) = super::targets::normalize_config(kind, &config)?;
             n.account_hint = hint;
             checked
@@ -500,7 +500,7 @@ pub fn test_integration(
     now_ms: i64,
 ) -> Result<TestResult, IntegrationError> {
     let i = store::get(conn, id)?.ok_or_else(|| IntegrationError::NotFound(id.to_string()))?;
-    if i.kind != Kind::Folder {
+    if !matches!(i.kind, Kind::Folder | Kind::Presenter) {
         return Ok(TestResult {
             ok: false,
             code: "test_not_available".to_string(),

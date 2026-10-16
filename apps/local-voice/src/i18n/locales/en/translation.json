@@ -25,6 +25,28 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "langTabs": "Translated languages",
+    "transform": {
+      "translateStarting": "Translating …",
+      "translateBlock": "Translating … block {{done}} of {{total}}",
+      "summaryStarting": "Summarizing …",
+      "summaryBlock": "Summarizing … part {{done}} of {{total}}",
+      "summaryCombine": "Combining the parts …",
+      "cancel": "Cancel",
+      "cancelled": "Cancelled."
+    },
+    "speakerSwap": {
+      "open": "Swap speakers …",
+      "hint": "Replace the translation's speakers with voices of the target language",
+      "title": "Speakers for {{lang}}",
+      "description": "Every speaker of the original gets a voice that speaks {{lang}}. The markers in the translated text are replaced.",
+      "noVoices": "There is no voice with the language {{lang}} yet. Create one under Read aloud → Voices or set a voice's language.",
+      "voiceFor": "Voice for {{name}}",
+      "otherVoices": "Other languages",
+      "apply": "Apply",
+      "cancel": "Cancel",
+      "none": "The translation has no speakers."
+    },
     "title": "Read Aloud",
     "serverTitle": "Voice & playback",
     "description": "Local text-to-speech via Fish Speech on your own GPU. The server starts on demand and is stopped again after idle time to free VRAM.",
@@ -174,7 +196,9 @@
       },
       "previewSentence": "Every preview speaks the same sentence so that voices, not recordings, are compared.",
       "previewNeedsEngine": "No sample yet — creating one starts the speech engine once.",
-      "piperOption": "{{name}} · Piper",
+      "autoLanguageReads": "This text is read by “{{name}}” (language detected automatically).",
+        "autoLanguageOff": "Use only the selected voice",
+        "piperOption": "{{name}} · Piper",
       "piperNoVoice": "Piper – no voice selected",
       "piperVoiceMissing": "Piper – voice “{{id}}” unavailable",
       "piperNotSetUp": "{{name}} · Piper – not set up",
@@ -662,7 +686,10 @@
       "bookFilter": "Book package",
       "exported": "Book exported: {{path}}",
       "imported": "Book “{{title}}” imported",
-      "importVoicesAsk": "The book brings {{count}} new voice(s). Rights confirmation in the package: {{rights}}. Import the voices too?",
+      "importVoicesAsk": "The book brings {{count}} new voice(s). Rights confirmation in the package: {{rights}}.",
+      "importVoicesTitle": "Import the voices too?",
+      "importVoicesWith": "Import with voices",
+      "importVoicesWithout": "Import without voices",
       "rightsYes": "yes",
       "rightsNo": "no – please clarify before use",
       "charactersIntro": "Characters with a fixed voice and a short description. In the script they appear as <Name>; the voice switches automatically when reading.",
@@ -843,6 +870,39 @@
     }
   },
   "settings": {
+    "documents": {
+      "title": "Documents",
+      "description": "How exported minutes and documents look in Word and PDF.",
+      "letterhead": "Letterhead for Word and PDF",
+      "letterheadHint": "Logo, company, colours and footer. Built-in letterheads can be copied into your own and then adjusted.",
+      "own": "own",
+      "sample": "Save sample …",
+      "sampleSaved": "Sample saved to {{path}}",
+      "createOwn": "Create own letterhead",
+      "copyName": "Copy of {{name}}",
+      "name": "Name",
+      "firm": "Company",
+      "lines": "Lines below the company (up to 4)",
+      "footer": "Footer (up to 3 lines)",
+      "accent": "Accent colour",
+      "titleColor": "Heading colour",
+      "logoSet": "Logo set",
+      "logoNone": "No logo",
+      "logoPick": "Choose logo …",
+      "logoRemove": "Remove logo",
+      "logoLeft": "Logo left",
+      "logoRight": "Logo right",
+      "save": "Save",
+      "saved": "Saved.",
+      "delete": "Delete letterhead",
+      "errors": {
+        "letterhead_not_found": "This letterhead no longer exists.",
+        "letterhead_read_only": "Built-in letterheads cannot be changed. Create your own.",
+        "letterhead_invalid": "Invalid value: {{error}}",
+        "letterhead_logo_invalid": "The logo must be a PNG or JPEG up to 2 MB and 4000 pixels per side.",
+        "letterhead_io": "Saving failed."
+      }
+    },
     "compliance": {
         "title": "Rule set",
         "profile": "Rules for language models",
@@ -1576,6 +1636,9 @@
     "app": {
       "tabs": {
         "app": "General",
+        "input": "Input",
+        "output": "Output",
+        "models": "AI models & providers",
         "dictation": "Dictation",
         "sound": "Microphone & sounds",
         "readAloud": "Read aloud",
@@ -1600,11 +1663,6 @@
       }
     },
     "llm": {
-        "connections": {
-          "region": "Region",
-          "trainingOptOut": "Training turned off in my account",
-          "trainingOptOutDescription": "Only confirm once you have turned off training on your data in the provider's account settings. Under the \"EU\" rule set the provider is blocked otherwise."
-        },
         "cli": {
           "claude_cli": "Uses your Claude subscription (Pro/Max) through the installed Claude Code. Sign in inside Claude Code itself (claude, then /login) – the app never sees credentials. Personal use only. Blocked under the \"EU\" rule set (USA, no DPA).",
           "codex_cli": "Uses your ChatGPT subscription (Plus/Pro) through the installed Codex CLI. Sign in inside Codex itself (codex login). Note: OpenAI's terms recommend API keys for programmatic use; going through the subscription is a grey area. Blocked under the \"EU\" rule set (USA, no DPA)."
@@ -1637,6 +1695,7 @@
         "loadModels": "Load models",
         "loading": "Loading…",
         "remoteEmpty": "The provider reported no models.",
+        "newBadge": "new",
         "released": "Released models",
         "releaseHint": "Only released models appear in the app's selection.",
         "releasedCount_one": "{{count}} released",
@@ -1646,7 +1705,17 @@
         "budget": "Monthly budget (USD)",
         "budgetNone": "no limit",
         "budgetEnforced": "Hard budget",
-        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running."
+        "budgetEnforcedDescription": "At 100 % calls are refused instead of just warned about. Off: the footer warns from 80 %, everything keeps running.",
+        "keyMissing": "No API key has been entered for this connection yet. Paste it above, leave the field, then load again.",
+        "keyMissingAbo": "No API key has been entered for this connection. An API key is a separate, pay-per-use account with the provider. For your subscription, add “{{abo}}” below instead.",
+        "keyRejected": "The provider rejects the key (HTTP {{status}}). Please check that it is complete and still valid.",
+        "aboTemplate": {
+          "claude_cli": "Claude subscription (Claude Code)",
+          "codex_cli": "ChatGPT subscription (Codex)"
+        },
+        "region": "Region",
+        "trainingOptOut": "Training turned off in my account",
+        "trainingOptOutDescription": "Only confirm once you have turned off training on your data in the provider's account settings. Under the \"EU\" rule set the provider is blocked otherwise."
       },
       "model": {
         "active": "active",
@@ -1655,7 +1724,12 @@
         "context": "Context (tokens)",
         "maxOutput": "Max. output (tokens)",
         "priceIn": "Price input / M",
-        "priceOut": "Price output / M"
+        "priceOut": "Price output / M",
+        "effort": "Effort",
+        "effortDefault": "Default ({{level}})",
+        "fast": "Fast mode",
+        "fastOn": "Fast mode on: 1.5–2× faster, uses more of your plan allowance. Click to turn off.",
+        "fastOff": "Fast mode off. Click for 1.5–2× speed at a higher plan usage."
       },
       "usage": {
         "title": "Usage",
@@ -1690,7 +1764,34 @@
           "tagging": "Tags",
           "translation": "Translation",
           "enhanced_notes": "AI notes",
-          "followup": "Follow-up e-mail"
+          "followup": "Follow-up e-mail",
+          "document": "Documents"
+        }
+      },
+      "effortLevels": {
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "extra high",
+        "max": "max",
+        "ultra": "ultra (with delegation)"
+      },
+      "defaultEffort": {
+        "title": "Default effort (subscription models)",
+        "description": "Reasoning depth for the Claude and ChatGPT subscriptions when a model has no effort of its own. Higher = more thorough, but slower and uses more quota."
+      },
+      "cliAutoUpdate": {
+        "title": "Update the Codex CLI automatically",
+        "description": "If the server rejects a model from the installed Codex CLI (e.g. GPT-6.1-Sol), the app updates the CLI via npm and repeats the call. Off: the app only reports that the CLI is too old."
+      },
+      "autoUpdate": {
+        "title": "New models from providers",
+        "description": "After start-up and daily, the app checks whether providers and local services offer new models. A new model replaces the older one of the same family.",
+        "modes": {
+          "ask": "Ask when one is found",
+          "on": "Adopt automatically",
+          "off": "Only mark as “new”"
         }
       }
     }
@@ -1708,7 +1809,15 @@
     "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
     "portableUpdateButton": "Open GitHub Releases",
     "localUpdateAvailable": "Update {{version}} available locally",
-    "localInstalling": "Starting installer…"
+    "localInstalling": "Starting installer…",
+    "updateAvailableTitle": "Version {{version}} is available – click to install",
+    "updateDialog": {
+      "title": "Version {{version}} is available",
+      "description": "You are on {{current}}. Install now? The app restarts afterwards.",
+      "install": "Install now",
+      "later": "Later",
+      "noNotes": "No release notes for this version."
+    }
   },
   "whatsNew": {
     "title": "New in Local Voice AI v{{version}}"
@@ -1805,6 +1914,19 @@
     "unavailable": "Microphone level unavailable — access denied or no device."
   },
   "meetings": {
+    "presenter": {
+      "button": "Send to WAI Presenter",
+      "title": "Send to WAI Presenter",
+      "description": "Puts a package with the transcript and the chosen documents into the exchange folder. An older package of this meeting is replaced.",
+      "target": "Exchange folder",
+      "documents": "Documents",
+      "noDocuments": "No document yet; the package then contains the transcript only.",
+      "formats": "Also as (Markdown is always included)",
+      "submit": "Send",
+      "sending": "Sending …",
+      "done": "Sent: {{folder}} ({{files}} files)",
+      "error": "Sending failed: {{error}}"
+    },
     "recordingIndicator": "Meeting recording is running",
     "dictationBlocked": "Dictation is blocked while a meeting is recording.",
     "title": "Meetings",
@@ -2377,6 +2499,14 @@
         "no_transcript_named": "“{{title}}” has no transcript."
       }
     },
+    "documents": {
+      "typesLabel": "Documents of this meeting",
+      "new": "New document",
+      "newHint": "Create another document from the transcript: management summary, summary, status report and more",
+      "empty": "No “{{title}}” yet. For: {{audience}} · {{length}}.",
+      "generating": "Creating “{{title}}”…",
+      "copy": "Copy document"
+    },
     "minutes": {
       "empty": "No minutes generated yet.",
       "generating": "Generating minutes…",
@@ -2401,6 +2531,7 @@
       "stepOf": "Step {{done}} of {{total}}",
       "cancelled": "Generation was cancelled.",
       "errors": {
+        "doc_type_unknown": "Unknown document type.",
         "minutes_busy": "Minutes are already being generated for this meeting.",
         "job_busy": "Another job is already running for this meeting (for example AI notes).",
         "minutes_cancelled": "Generation was cancelled.",
@@ -3172,7 +3303,9 @@
         "confirmTitle": "Send excerpts to {{provider}}?",
         "confirmBody": "To answer, excerpts from transcript and notes are sent to {{provider}}. This confirmation applies to this provider and will not be asked again.",
         "confirm": "Send",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "short": "Cloud: {{provider}}",
+        "minimize": "Collapse notice"
       },
       "errors": {
         "no_provider": "No AI provider set up (Settings → Post-processing).",
@@ -3492,6 +3625,16 @@
         "agent_external": "External agent",
         "agent_local": "Local agent"
       }
+    },
+    "docUsage": {
+      "model": "Model",
+      "effort": "Effort",
+      "tokens": "Tokens",
+      "tokensHint": "Input {{input}} · Output {{output}}",
+      "cost": "Cost",
+      "subscriptionHint": "* Billed via your subscription – no API costs incurred.",
+      "localHint": "* Local model – no costs incurred.",
+      "costUnknown": "Cost not recorded (no price set or older minutes)."
     }
   },
   "micSelector": {
@@ -3527,9 +3670,37 @@
     "voiceOptions": "More read-aloud settings",
     "voices": "Listen to & manage voices",
     "navCollapse": "Collapse menu",
-    "navExpand": "Expand menu"
+    "navExpand": "Expand menu",
+    "navOpen": "Open menu",
+    "navClose": "Close menu"
+  },
+  "llmUpdate": {
+    "cli": {
+      "started": "The Codex CLI is too old for this model – updating it …",
+      "done": "Codex CLI updated ({{version}})",
+      "retry": "Please start the operation again.",
+      "failed": "The Codex CLI could not be updated",
+      "manual": "The Codex CLI has to be updated by hand (npm i -g @openai/codex@latest)"
+    },
+    "title_one": "New language model available",
+    "title_other": "{{count}} new language models available",
+    "question": "Should the app adopt new models automatically from now on? A new model replaces the older one of the same family; effort and settings are kept.",
+    "replacesActive": "replaces the active model {{old}}",
+    "replacesInList": "replaces {{old}} in the list",
+    "isNew": "is new and will be released",
+    "always": "Yes, always",
+    "once": "Just this time",
+    "never": "No, I'll choose myself",
+    "close": "Ask me later",
+    "applied_one": "New language model adopted",
+    "applied_other": "{{count}} new language models adopted",
+    "replaces": "{{model}} replaces {{old}}",
+    "added": "{{model}} released"
   },
   "llmSelector": {
+    "search": "Search models …",
+    "noMatch": "No model found",
+    "providerSettings": "Provider settings …",
     "title": "Language model",
     "none": "No language model",
     "loading": "{{name}} loading …",
@@ -3537,7 +3708,12 @@
     "empty": "No model released — download one under Models and press “Use”, or connect a provider in Settings.",
     "unload": "Unload from memory",
     "budget": "Budget: {{spent}} of {{limit}} USD ({{percent}} %) this month",
-    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)"
+    "budgetExceeded": "Monthly budget exhausted: {{spent}} of {{limit}} USD ({{percent}} %)",
+    "ollamaLoaded": "Ollama keeps in memory: {{models}}",
+    "ollamaEmpty": "Ollama: nothing in memory (loads on demand)",
+    "ollamaWarmHint": "Loads the model for ten minutes so the next job starts without loading time.",
+    "ollamaUnloadHint": "Frees the memory right away; the next job loads again and takes longer.",
+    "spendTitle": "This month: {{monthCalls}} calls · tokens in {{monthIn}} / out {{monthOut}} · {{monthCost}}\nTotal: {{allCalls}} calls · tokens in {{allIn}} / out {{allOut}} · {{allCost}}"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
@@ -4076,6 +4252,45 @@
       },
       "published": {
         "label": "Published"
+      },
+      "description": {
+        "label": "Description"
+      },
+      "due": {
+        "label": "Due on",
+        "hint": "YYYY-MM-DD; empty: no due date."
+      },
+      "deadlines": {
+        "label": "Deadlines as tasks too",
+        "hint": "Default: yes. Decisions never become tasks."
+      },
+      "from": {
+        "label": "Extraction step",
+        "hint": "ID of the step “Extract tasks, deadlines and decisions”; empty: extract."
+      },
+      "page": {
+        "label": "Page (ID)",
+        "hint": "Empty: the integration’s parent page."
+      },
+      "contact_email": {
+        "label": "Contact (email)",
+        "hint": "The note is linked to this contact; not found: unlinked."
+      },
+      "fields": {
+        "label": "Fields",
+        "hint": "Field name and value as JSON, e.g. {\"Title\": \"…\", \"Duration\": 45}."
+      },
+      "day": {
+        "label": "Day",
+        "hint": "YYYY-MM-DD, also from an earlier step."
+      },
+      "time": {
+        "label": "Time",
+        "hint": "HH:MM (local time); empty: 09:00."
+      },
+      "invite": {
+        "label": "Invite",
+        "hint": "Who gets an invitation; empty: only your calendar. Invitations to others always need your approval."
       }
     },
     "choices": {
@@ -4120,6 +4335,14 @@
       "mode": {
         "create": "Create new",
         "append": "Append"
+      },
+      "invite": {
+        "none": "Nobody",
+        "me": "Only me",
+        "participants": "Attendees",
+        "all": "Everyone",
+        "internal": "Internal only",
+        "list": "Fixed list"
       }
     },
     "triggers": {
@@ -4157,10 +4380,12 @@
         "document": "Save document"
       },
       "mail": {
-        "send": "Send mail"
+        "send": "Send mail",
+        "draft": "Create mail draft"
       },
       "calendar": {
-        "note": "Write note into the event"
+        "note": "Write note into the event",
+        "followup": "Create follow-up meeting"
       },
       "obsidian": {
         "note": "Write Obsidian note"
@@ -4186,7 +4411,24 @@
       "webhook": {
         "post": "Send webhook"
       },
-      "wait": "Wait"
+      "wait": "Wait",
+      "chat": {
+        "post": "Post to channel"
+      },
+      "task": {
+        "create": "Create task",
+        "create_from": "Create tasks from the meeting"
+      },
+      "page": {
+        "create": "Create page",
+        "append": "Append to page"
+      },
+      "crm": {
+        "note": "Create CRM note"
+      },
+      "record": {
+        "append": "Append record"
+      }
     },
     "effectKinds": {
       "pure": "changes nothing",
@@ -4281,7 +4523,8 @@
       "caps": {
         "mail_send": "Send follow-up mails and reports as mail from your mailbox.",
         "files_write": "Put minutes and files into a OneDrive folder, large files in chunks.",
-        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged."
+        "calendar_write": "Attach a note to the Outlook event of a meeting; the invitation stays unchanged.",
+        "mail_draft": "Save follow-up mails as drafts in Outlook to review and send yourself (needs the Mail.ReadWrite permission)."
       },
       "panel": {
         "title": "Microsoft 365 account",
@@ -4499,6 +4742,7 @@
       "agent_local": "Local agent"
     },
     "kinds": {
+      "presenter": "WAI Presenter",
       "youtube": "YouTube",
       "ics": "Calendar (ICS)",
       "graph": "Microsoft 365 calendar",
@@ -4508,7 +4752,8 @@
       "obsidian": "Obsidian vault",
       "wissen": "WAI knowledge base",
       "agent": "Agent access",
-      "webhook": "Webhook (n8n)"
+      "webhook": "Webhook (n8n)",
+      "service": "Service"
     },
     "calendar": {
       "rights": "Rights and direction"
@@ -4519,6 +4764,11 @@
       "soon": "soon",
       "auto": "automatic",
       "items": {
+        "presenter": {
+          "name": "WAI Presenter",
+          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by WAI Presenter. You choose the folder.",
+          "action": "Choose exchange folder"
+        },
         "calendar_ics": {
           "name": "Calendar (ICS address)",
           "description": "Read appointments from Outlook, Google or Nextcloud through a secret ICS address. Read only.",
@@ -4568,6 +4818,37 @@
           "name": "n8n webhook",
           "description": "Send data from a workflow to n8n (or another webhook). The address is a secret and is stored encrypted in your Windows account.",
           "action": "Set up webhook"
+        }
+      },
+      "services": {
+        "title": "Services",
+        "description": "Send minutes, tasks and decisions straight into your team’s tools. Sign-in uses a key (API token) or a webhook address; both are stored encrypted in your Windows account.",
+        "connect": "Connect",
+        "groups": {
+          "chat": {
+            "title": "Channels",
+            "description": "Post a summary or tasks to a channel."
+          },
+          "tasks": {
+            "title": "Tasks and tickets",
+            "description": "One task per to-do from the meeting, never twice."
+          },
+          "pages": {
+            "title": "Pages and wiki",
+            "description": "Create the minutes as a page or append decisions."
+          },
+          "crm": {
+            "title": "CRM",
+            "description": "Meeting note on the contact, follow-up tasks in the CRM."
+          },
+          "records": {
+            "title": "Tables",
+            "description": "Every meeting as a row in the meeting log."
+          },
+          "calendar": {
+            "title": "Calendar",
+            "description": "Write follow-up meetings straight into your iCloud calendar (CalDAV). Reading works in the calendar area via the ICS sharing link."
+          }
         }
       }
     },
@@ -4676,7 +4957,20 @@
       "wissen_tool_error": "The knowledge base reports an error.",
       "wissen_token_missing": "The access key is missing.",
       "wissen_token_broken": "The stored key is unreadable.",
-      "wissen_config_invalid": "The settings are incomplete."
+      "wissen_config_invalid": "The settings are incomplete.",
+      "service_ok": "Connection works (nothing was created).",
+      "service_auth": "The service rejects the key.",
+      "service_target_not_found": "The target (project, list, page) was not found.",
+      "service_unreachable": "The service cannot be reached.",
+      "service_timeout": "The service does not answer in time.",
+      "service_rate_limited": "The service is throttling (too many requests).",
+      "service_status": "The service rejected the request.",
+      "service_network": "The connection dropped.",
+      "service_redirect": "The service redirects; the app never follows redirects.",
+      "service_config_invalid": "The settings are incomplete.",
+      "service_bad_response": "Unexpected answer from the service.",
+      "service_token_broken": "The stored key cannot be read.",
+      "service_unknown": "The service of this integration is unknown."
     },
     "matrix": {
       "reads": "reads",
@@ -4690,6 +4984,14 @@
       }
     },
     "capabilities": {
+      "presenter_send": {
+        "title": "Write packages for the Presenter",
+        "description": "Put meeting, transcript and chosen documents as a package into the exchange folder, plus the catalog."
+      },
+      "presenter_request": {
+        "title": "Handle Presenter requests",
+        "description": "On request of the Presenter create missing documents (language model) and write the package."
+      },
       "calendar_read": {
         "title": "Read calendar",
         "description": "Read appointments and attendees."
@@ -4757,6 +5059,30 @@
       "workflow_run": {
         "title": "Start a workflow",
         "description": "Start a workflow as a dry run or, if it is armed, for real."
+      },
+      "chat_post": {
+        "title": "Post to channel",
+        "description": "Send text to the webhook’s channel (Slack, Teams, Discord)."
+      },
+      "task_create": {
+        "title": "Create tasks",
+        "description": "Create tasks, tickets or cards (Asana, Jira, Todoist …)."
+      },
+      "page_write": {
+        "title": "Write pages",
+        "description": "Create pages or append text (Notion, Confluence)."
+      },
+      "crm_write": {
+        "title": "Create CRM notes",
+        "description": "Create notes and tasks in the CRM, linked to contacts (HubSpot, Pipedrive)."
+      },
+      "record_write": {
+        "title": "Create records",
+        "description": "Append a row to a table (Airtable)."
+      },
+      "mail_draft": {
+        "title": "Create mail drafts",
+        "description": "Save mails as drafts in Outlook; you send them yourself."
       }
     },
     "approvals": {
@@ -4843,7 +5169,8 @@
       "vault_path_not_a_folder": "The path is not a folder.",
       "obsidian_scan_limit": "The vault is too large to check safely whether the note already exists. Nothing was written.",
       "export_format_unsupported": "This format cannot be filed.",
-      "approval_required": "This needs an approval."
+      "approval_required": "This needs an approval.",
+      "service_unknown": "The app does not know this service."
     },
     "moved": {
       "open": "Manage on the “Integrations” page",
@@ -4857,6 +5184,14 @@
       }
     },
     "target": {
+      "presenter": {
+        "title": "Set up WAI Presenter",
+        "titleEdit": "WAI Presenter settings",
+        "path": "Exchange folder",
+        "pathPlaceholder": "e.g. D:\\Exchange\\WAI Presenter",
+        "privacy": "Packages contain transcripts and documents (confidential). Choose a folder only you use; a shared OneDrive folder only deliberately.",
+        "catalog": "Write the meeting catalog (title, date, duration, existing documents only)"
+      },
       "create": "Create",
       "save": "Save",
       "name": "Name",
@@ -4917,6 +5252,91 @@
         "path": "Folder",
         "subfolder": "Subfolder for exports (optional)",
         "subfolderHint": "Exports land in this subfolder of the root; it is created when needed."
+      },
+      "service": {
+        "title": "Connect {{service}}",
+        "titleEdit": "{{service}} settings",
+        "description": "Writing asks first by default: workflows need your approval until you change the rights.",
+        "loading": "Loading fields …",
+        "optionalLabel": "{{label}} (optional)",
+        "token": "Key (API token)",
+        "tokenWhat": "key",
+        "tokenHint": "The key is stored encrypted in your Windows account and only goes to the service’s server.",
+        "webhookUrl": "Webhook address",
+        "webhookHint": "The address is a secret (it carries the key). It is stored encrypted in your Windows account; later only the server is shown. Only addresses of the service are accepted.",
+        "help": "How to get access in {{service}}",
+        "noTestPost": "“Test connection” only checks the address here and sends no test message to the channel.",
+        "fields": {
+          "parent_page_id": {
+            "label": "Parent page (ID)",
+            "hint": "New pages are created below this page. Share the page with the integration first (Notion: “Connections”).",
+            "placeholder": "e.g. 1a2b3c4d…"
+          },
+          "site": {
+            "label": "Site",
+            "hint": "Your Atlassian address.",
+            "placeholder": "company.atlassian.net"
+          },
+          "email": {
+            "label": "Account email",
+            "hint": "Atlassian: email plus API token. iCloud: your Apple ID plus an app-specific password."
+          },
+          "space_id": {
+            "label": "Space ID",
+            "hint": "The numeric ID of the Confluence space."
+          },
+          "project_id": {
+            "label": "Project ID",
+            "hint": "Shown in the project’s address."
+          },
+          "list_id": {
+            "label": "List ID",
+            "hint": "The list that receives new tasks or cards."
+          },
+          "project_key": {
+            "label": "Project key",
+            "placeholder": "e.g. LV"
+          },
+          "issue_type": {
+            "label": "Issue type",
+            "hint": "Empty: Task.",
+            "placeholder": "Task"
+          },
+          "api_key": {
+            "label": "API key (public)",
+            "hint": "The key from the Power-Up page; the token goes into the field below."
+          },
+          "board_id": {
+            "label": "Board ID"
+          },
+          "group_id": {
+            "label": "Group ID",
+            "hint": "Empty: the board’s top group."
+          },
+          "team_id": {
+            "label": "Team ID"
+          },
+          "repo": {
+            "label": "Repository",
+            "placeholder": "owner/name"
+          },
+          "base_id": {
+            "label": "Base ID",
+            "placeholder": "app…"
+          },
+          "table": {
+            "label": "Table",
+            "hint": "Name or ID of the table."
+          },
+          "calendar": {
+            "label": "Calendar (name)",
+            "hint": "Name as in the Calendar app; empty: the first calendar with events.",
+            "placeholder": "e.g. Personal"
+          }
+        },
+        "tokenFor": {
+          "icloud": "App-specific password"
+        }
       }
     },
     "areas": {

@@ -325,7 +325,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                 <>
                   {favorites.length > 0 && (
                     <>
-                      <p className="px-2 pt-1 pb-0.5 text-xs font-semibold uppercase tracking-wide text-text/40">
+                      <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-text/40">
                         {t("tts.tags.favorites")}
                       </p>
                       {favorites.map((tag) => (
@@ -341,7 +341,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                   )}
                   {TAG_CATEGORIES.map((category) => (
                     <React.Fragment key={category.id}>
-                      <p className="px-2 pt-1 pb-0.5 text-xs font-semibold uppercase tracking-wide text-text/40">
+                      <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-text/40">
                         {t(`tts.tags.categories.${category.id}`)}
                       </p>
                       {TAG_REGISTRY.filter(

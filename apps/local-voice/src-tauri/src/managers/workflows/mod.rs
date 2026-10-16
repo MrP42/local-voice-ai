@@ -199,6 +199,7 @@ pub mod cli;
 pub mod consent; // B2
 pub mod engine;
 pub mod expr;
+pub mod followup_actions; // Welle 2 Verbindungen (Outlook)
 pub mod heavy;
 pub mod hub; // B2
 pub mod import; // B3
@@ -211,6 +212,7 @@ pub mod plan;
 pub mod queue_gate; // B3
 pub mod recording; // B2
 pub mod schema;
+pub mod service_actions; // Welle 1 Verbindungen
 pub mod store;
 pub mod templates;
 pub mod toast; // B4

@@ -1424,8 +1424,9 @@ async fn map_reduce(
         return Err(EnhanceError::new(
             "llm_failed",
             format!(
-                "kein einziger der {} Transkriptbloecke konnte ausgewertet werden",
-                leaves.len()
+                "kein einziger der {} Transkriptbloecke konnte ausgewertet werden{}",
+                leaves.len(),
+                crate::managers::llm::cli_update::recent_error_note()
             ),
         ));
     }
