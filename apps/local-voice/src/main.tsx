@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { platform } from "@tauri-apps/plugin-os";
 import App from "./App";
+import { FluentRoot } from "./fluent/FluentRoot";
 import {
   applyTheme,
   getStoredTheme,
@@ -29,6 +30,8 @@ useTtsModelStore.getState().initialize();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <FluentRoot>
+      <App />
+    </FluentRoot>
   </React.StrictMode>,
 );

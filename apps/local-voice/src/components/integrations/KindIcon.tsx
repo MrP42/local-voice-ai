@@ -4,11 +4,18 @@ import {
   Bot,
   CalendarDays,
   Cloud,
+  FileText,
   Folder,
   Library,
+  ListChecks,
   Mail,
+  MessageSquare,
   Play,
+  Plug,
+  Table2,
+  Users,
   Webhook,
+  Presentation,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,6 +34,27 @@ const ICONS: Record<string, LucideIcon> = {
   agent: Bot,
   mcp: Bot,
   webhook: Webhook,
+  // Etappe 4: WAI Presenter (Austauschordner).
+  presenter: Presentation,
+  // Dienste (Welle 1): Symbol nach Zweck, keine Markenlogos.
+  service: Plug,
+  slack: MessageSquare,
+  teams: MessageSquare,
+  discord: MessageSquare,
+  notion: FileText,
+  confluence: FileText,
+  asana: ListChecks,
+  clickup: ListChecks,
+  jira: ListChecks,
+  trello: ListChecks,
+  todoist: ListChecks,
+  monday: ListChecks,
+  linear: ListChecks,
+  github: ListChecks,
+  hubspot: Users,
+  pipedrive: Users,
+  airtable: Table2,
+  icloud: CalendarDays,
 };
 
 export const KindIcon: React.FC<{ kind: string; size?: number }> = ({

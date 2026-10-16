@@ -2491,3 +2491,67 @@ fn the_gate_arguments_name_the_attachments_but_never_carry_their_content() {
         "auch nicht im Debug-Text"
     );
 }
+
+#[test]
+fn drafts_ask_for_mail_read_write_and_nothing_else() {
+    let cfg = M365Config::new(
+        CLIENT,
+        "common",
+        &[Capability::MailDraft],
+        FilesMode::Full,
+        "",
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.scope_string(),
+        "offline_access User.Read Mail.ReadWrite"
+    );
+    assert_eq!(
+        scope_of(Capability::MailDraft, FilesMode::Full),
+        Some("Mail.ReadWrite")
+    );
+}
+
+#[test]
+fn a_timed_followup_has_utc_times_attendees_only_when_asked_and_a_sane_length() {
+    use super::event_create::{timed_request_body, NewTimedEvent};
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 10, 12)
+        .unwrap()
+        .and_hms_opt(12, 30, 0)
+        .unwrap()
+        .and_utc();
+    let ev = NewTimedEvent {
+        subject: "Nachgespräch\nmit Zeilenumbruch",
+        start,
+        minutes: 45,
+        body: "Offene Punkte",
+        attendees: &[],
+        transaction_id: "abc-123",
+    };
+    let b = timed_request_body(&ev).unwrap();
+    assert_eq!(b["subject"], "Nachgespräch mit Zeilenumbruch");
+    assert_eq!(b["start"]["dateTime"], "2026-10-12T12:30:00");
+    assert_eq!(b["end"]["dateTime"], "2026-10-12T13:15:00");
+    assert_eq!(b["start"]["timeZone"], "UTC");
+    assert!(b.get("attendees").is_none());
+    let people = ["anna@kunde.de".to_string()];
+    let with = timed_request_body(&NewTimedEvent {
+        attendees: &people,
+        ..ev.clone()
+    })
+    .unwrap();
+    assert_eq!(
+        with["attendees"][0]["emailAddress"]["address"],
+        "anna@kunde.de"
+    );
+    assert!(timed_request_body(&NewTimedEvent {
+        minutes: 2,
+        ..ev.clone()
+    })
+    .is_err());
+    assert!(timed_request_body(&NewTimedEvent {
+        transaction_id: "a b",
+        ..ev
+    })
+    .is_err());
+}

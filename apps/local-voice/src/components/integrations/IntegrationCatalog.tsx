@@ -1,14 +1,22 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft } from "lucide-react";
+import type { ServiceId } from "@/bindings";
 import { Button } from "../ui/Button";
-import { CATALOG, type CatalogEntry } from "./model";
+import {
+  CATALOG,
+  SERVICE_GROUPS,
+  SERVICE_LABELS,
+  type CatalogEntry,
+} from "./model";
 import { KindIcon } from "./KindIcon";
 
 interface IntegrationCatalogProps {
   onBack: () => void;
   /** Richtet eine Art ein (Dialog, Assistent oder Sprung zum Abschnitt). */
   onSetup: (entry: CatalogEntry) => void;
+  /** Richtet einen Dienst ein (Slack, Jira, Notion, ...). */
+  onSetupService: (id: ServiceId) => void;
 }
 
 /**
@@ -19,6 +27,7 @@ interface IntegrationCatalogProps {
 export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
   onBack,
   onSetup,
+  onSetupService,
 }) => {
   const { t } = useTranslation();
   return (
@@ -99,6 +108,50 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
           </li>
         ))}
       </ul>
+
+      <section className="space-y-3" data-testid="catalog-services">
+        <div>
+          <h2 className="text-lg font-semibold">
+            {t("integrations.catalog.services.title")}
+          </h2>
+          <p className="text-sm text-text-muted">
+            {t("integrations.catalog.services.description")}
+          </p>
+        </div>
+        {SERVICE_GROUPS.map(({ group, ids }) => (
+          <div key={group} className="space-y-2">
+            <h3 className="text-sm font-semibold">
+              {t(`integrations.catalog.services.groups.${group}.title`)}
+            </h3>
+            <p className="text-xs text-text-muted">
+              {t(`integrations.catalog.services.groups.${group}.description`)}
+            </p>
+            <ul className="grid gap-2 sm:grid-cols-2">
+              {ids.map((id) => (
+                <li
+                  key={id}
+                  className="flex items-center gap-3 rounded-lg border border-mid-gray/20 p-2"
+                  data-testid="catalog-service"
+                  data-service={id}
+                >
+                  <KindIcon kind={id} size={18} />
+                  <span className="min-w-0 flex-1 text-sm font-medium break-words">
+                    {SERVICE_LABELS[id]}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => onSetupService(id)}
+                    data-testid={`catalog-setup-service-${id}`}
+                  >
+                    {t("integrations.catalog.services.connect")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </section>
     </div>
   );
 };

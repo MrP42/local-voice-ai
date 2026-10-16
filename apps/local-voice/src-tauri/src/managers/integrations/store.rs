@@ -382,7 +382,7 @@ pub fn set_grant(
             "Für den Nutzer in der Oberfläche gibt es keine Rechte: er braucht keine Freigabe.",
         );
     }
-    if !i.kind.capabilities().contains(&cap) {
+    if !i.capabilities().contains(&cap) {
         return invalid("Diese Integration bietet die Fähigkeit nicht an.");
     }
     if cap.never_allow() && mode == GrantMode::Allow {

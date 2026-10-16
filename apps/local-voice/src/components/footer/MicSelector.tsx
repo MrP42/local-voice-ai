@@ -65,7 +65,7 @@ export const MicSelector: React.FC = () => {
         className="flex items-center gap-2 hover:text-text/80 transition-colors cursor-pointer"
       >
         <Mic className="w-3 h-3 shrink-0" />
-        <span className="max-w-28 truncate">{label}</span>
+        <span className="lv-status-label max-w-28 truncate">{label}</span>
         <ChevronDown
           className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
         />
@@ -74,7 +74,7 @@ export const MicSelector: React.FC = () => {
       {open && (
         <div className="absolute bottom-full mb-2 start-0 w-72 bg-background border border-mid-gray/40 rounded-lg shadow-lg z-50 overflow-hidden">
           <div className="px-3 pt-3 pb-2 border-b border-mid-gray/20">
-            <p className="text-xs font-medium uppercase tracking-wide text-text/50 mb-2">
+            <p className="text-xs font-medium text-text/50 mb-2">
               {t("micSelector.level")}
             </p>
             <MicLevelMeter compact />

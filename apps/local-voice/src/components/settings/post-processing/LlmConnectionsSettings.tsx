@@ -1,13 +1,25 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import {
   commands,
   type LlmConnection,
   type LlmModelConfig,
+  type LlmModelSeen,
   type PostProcessProvider,
 } from "@/bindings";
-import { ChevronDown, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  Trash2,
+  Zap,
+} from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
+import { modelLabel } from "@/lib/modelNames";
+
+/// Stufen fuer den Standard-Effort (alle Abo-Modelle kennen sie).
+const DEFAULT_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Select } from "../../ui/Select";
@@ -32,6 +44,23 @@ const KEYLESS_KINDS = new Set([
   "claude_cli",
   "codex_cli",
 ]);
+
+/// API-Vorlagen, zu denen es ein Abo gibt: ohne Schluessel auf die Abo-Vorlage verweisen.
+const SUBSCRIPTION_OF: Record<string, string> = {
+  anthropic: "claude_cli",
+  openai: "codex_cli",
+  openai_eu: "codex_cli",
+};
+
+/// Fehler beim Laden der Modelle als Klartext: abgelehnter Schluessel statt Roh-JSON.
+const remoteErrorText = (
+  t: (key: string, options?: Record<string, unknown>) => string,
+  raw: string,
+): string => {
+  const status = raw.match(/\((40[13])[^)]*\)/)?.[1];
+  if (status) return t("settings.llm.connections.keyRejected", { status });
+  return raw;
+};
 
 /// Anbieter, bei denen sich das Training im Konto abschalten laesst -- dort
 /// zaehlt die Bestaetigung fuer das Regelwerk.
@@ -102,7 +131,8 @@ export const LlmConnectionsSettings: React.FC = () => {
 
   const labelFor = (m: LlmModelConfig) => {
     const conn = connections.find((c) => c.id === m.connection_id);
-    return conn ? `${m.label} · ${conn.label}` : m.label;
+    const name = modelLabel(m.remote_id, m.label);
+    return conn ? `${name} · ${conn.label}` : name;
   };
 
   const addConnection = async (kind: string) => {
@@ -158,9 +188,77 @@ export const LlmConnectionsSettings: React.FC = () => {
             )}
           </div>
         </SettingContainer>
+        <SettingContainer
+          title={t("settings.llm.defaultEffort.title")}
+          description={t("settings.llm.defaultEffort.description")}
+          descriptionMode="tooltip"
+          layout="horizontal"
+          grouped={true}
+        >
+          <FluentSelect
+            value={(getSetting("llm_default_effort") ?? "medium") as string}
+            onChange={(e) =>
+              void run(() => commands.llmSetDefaultEffort(e.target.value))
+            }
+            className="w-72"
+            data-testid="default-effort"
+            aria-label={t("settings.llm.defaultEffort.title")}
+          >
+            {DEFAULT_EFFORTS.map((level) => (
+              <option key={level} value={level}>
+                {t(`settings.llm.effortLevels.${level}`)}
+              </option>
+            ))}
+          </FluentSelect>
+        </SettingContainer>
+        <SettingContainer
+          title={t("settings.llm.autoUpdate.title")}
+          description={t("settings.llm.autoUpdate.description")}
+          descriptionMode="tooltip"
+          layout="horizontal"
+          grouped={true}
+        >
+          <FluentSelect
+            value={(getSetting("llm_auto_update_models") ?? "ask") as string}
+            onChange={(e) =>
+              void run(async () => {
+                const result = await commands.llmSetAutoUpdateModels(
+                  e.target.value,
+                );
+                // Auf "automatisch" gestellt: gleich nachsehen, was schon wartet.
+                if (result.status === "ok" && e.target.value === "on")
+                  await commands.llmCheckNewModels();
+                return result;
+              })
+            }
+            className="w-72"
+            data-testid="auto-update-models"
+            aria-label={t("settings.llm.autoUpdate.title")}
+          >
+            {["ask", "on", "off"].map((mode) => (
+              <option key={mode} value={mode}>
+                {t(`settings.llm.autoUpdate.modes.${mode}`)}
+              </option>
+            ))}
+          </FluentSelect>
+        </SettingContainer>
+        <ToggleSwitch
+          checked={(getSetting("cli_auto_update") ?? true) as boolean}
+          onChange={(checked) =>
+            void run(() => commands.llmSetCliAutoUpdate(checked))
+          }
+          testId="cli-auto-update"
+          label={t("settings.llm.cliAutoUpdate.title")}
+          description={t("settings.llm.cliAutoUpdate.description")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.llm.connections.title")}>
+      <SettingsGroup
+        title={t("settings.llm.connections.title")}
+        anchor="connections"
+      >
         <div className="px-4 py-3 space-y-3">
           {error && (
             <p className="text-sm text-red-500 break-words" role="alert">
@@ -231,17 +329,36 @@ const ConnectionRow: React.FC<RowProps> = ({
   const enabled = connection.enabled !== false;
   const keyless = KEYLESS_KINDS.has(connection.kind);
   const released = new Set(models.map((m) => m.remote_id));
+  const { getSetting } = useSettings();
+  // Vom Anbieter neu angeboten, aber noch nicht freigegeben (Pruefung beim Start).
+  const history = (getSetting("llm_model_history") ?? []) as LlmModelSeen[];
+  const isNew = (remoteId: string) =>
+    history.some(
+      (h) => h.key === `${connection.id}:${remoteId}` && h.status === "new",
+    );
 
   const upsert = (patch: Partial<LlmConnection>) =>
     run(() => commands.llmUpsertConnection({ ...connection, ...patch }));
 
   const loadModels = async () => {
-    setLoading(true);
     setRemoteError(null);
+    // Ohne Schluessel gar nicht erst fragen: der Anbieter antwortet nur mit 401.
+    if (!keyless && !apiKey.trim()) {
+      const abo = SUBSCRIPTION_OF[connection.kind];
+      setRemoteError(
+        abo
+          ? t("settings.llm.connections.keyMissingAbo", {
+              abo: t(`settings.llm.connections.aboTemplate.${abo}`),
+            })
+          : t("settings.llm.connections.keyMissing"),
+      );
+      return;
+    }
+    setLoading(true);
     const result = await commands.llmListRemoteModels(connection.id);
     setLoading(false);
     if (result.status === "ok") setRemote(result.data);
-    else setRemoteError(String(result.error));
+    else setRemoteError(remoteErrorText(t, String(result.error)));
   };
 
   const release = (remoteId: string, on: boolean) =>
@@ -476,6 +593,13 @@ const ConnectionRow: React.FC<RowProps> = ({
                       onChange={(e) => void release(id, e.target.checked)}
                     />
                     <span className="truncate">{id}</span>
+                    {!released.has(id) && isNew(id) && (
+                      <span data-new-model={id}>
+                        <Badge variant="success">
+                          {t("settings.llm.connections.newBadge")}
+                        </Badge>
+                      </span>
+                    )}
                   </label>
                 </li>
               ))}
@@ -484,7 +608,7 @@ const ConnectionRow: React.FC<RowProps> = ({
 
           {models.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs uppercase tracking-wide text-text/50">
+              <p className="text-xs text-text/50">
                 {t("settings.llm.connections.released")}
               </p>
               {models.map((m) => (
@@ -513,7 +637,36 @@ const ModelRow: React.FC<{
 }> = ({ model, isActive, run }) => {
   const { t } = useTranslation();
   const assessment = useComplianceStore((s) => s.byModel[model.id]);
+  const { getSetting } = useSettings();
+  const defaultEffort = (getSetting("llm_default_effort") ??
+    "medium") as string;
   const [details, setDetails] = useState(false);
+  // Effort-Stufen (nur Abo-Modelle ueber die CLI kennen welche).
+  const [efforts, setEfforts] = useState<string[]>([]);
+  // Fast-Modus (nur Codex-Modelle, die ihn laut Katalog anbieten).
+  const [offersFast, setOffersFast] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    commands
+      .llmModelEfforts(model.connection_id, model.remote_id)
+      .then((list) => {
+        if (!cancelled) setEfforts(list ?? []);
+      })
+      .catch(() => {
+        // Ohne Backend: keine Auswahl.
+      });
+    commands
+      .llmModelOffersFast(model.connection_id, model.remote_id)
+      .then((offers) => {
+        if (!cancelled) setOffersFast(offers === true);
+      })
+      .catch(() => {
+        // Ohne Backend: keine Auswahl.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [model.connection_id, model.remote_id]);
 
   const num = (value: string): number | null => {
     const n = Number(value.replace(",", "."));
@@ -548,12 +701,64 @@ const ModelRow: React.FC<{
   return (
     <div className="rounded border border-mid-gray/15 px-2 py-1.5">
       <div className="flex items-center gap-2 text-sm">
-        <span className="font-medium truncate">{model.label}</span>
+        <span className="font-medium truncate" title={model.remote_id}>
+          {modelLabel(model.remote_id, model.label)}
+        </span>
         <ModelBadges assessment={assessment} />
         {isActive && (
           <Badge variant="success">{t("settings.llm.model.active")}</Badge>
         )}
         <span className="flex-1" />
+        {efforts.length > 0 && (
+          <label className="flex items-center gap-1 text-xs text-text/60">
+            {t("settings.llm.model.effort")}
+            <FluentSelect
+              value={model.effort ?? ""}
+              onChange={(e) => void save({ effort: e.target.value || null })}
+              size="small"
+              data-effort-select={model.id}
+            >
+              <option value="">
+                {t("settings.llm.model.effortDefault", {
+                  level: t(`settings.llm.effortLevels.${defaultEffort}`, {
+                    defaultValue: defaultEffort,
+                  }),
+                })}
+              </option>
+              {efforts.map((level) => (
+                <option key={level} value={level}>
+                  {t(`settings.llm.effortLevels.${level}`, {
+                    defaultValue: level,
+                  })}
+                </option>
+              ))}
+            </FluentSelect>
+          </label>
+        )}
+        {offersFast && (
+          <button
+            type="button"
+            onClick={() => void save({ fast: !model.fast })}
+            aria-pressed={!!model.fast}
+            title={t(
+              model.fast
+                ? "settings.llm.model.fastOn"
+                : "settings.llm.model.fastOff",
+            )}
+            aria-label={t("settings.llm.model.fast")}
+            className={`rounded p-1 transition-colors ${
+              model.fast
+                ? "bg-yellow-400/20 text-yellow-500"
+                : "text-text/40 hover:bg-mid-gray/10 hover:text-text/70"
+            }`}
+            data-fast-toggle={model.id}
+          >
+            <Zap
+              className="h-4 w-4"
+              fill={model.fast ? "currentColor" : "none"}
+            />
+          </button>
+        )}
         <Button
           size="sm"
           variant="secondary"

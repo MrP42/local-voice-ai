@@ -464,9 +464,7 @@ test.describe("Zugänge der Agentenbrücke", () => {
       clients: [{ ...FRESH, last_used_at: NOW - 60_000 }],
     });
     await page.setViewportSize({ width: 390, height: 900 });
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Mehr" })
+    await page.getByRole("button", { name: "Menü öffnen" })
       .click();
     await page
       .getByRole("navigation")
@@ -487,6 +485,8 @@ test.describe("Zugänge der Agentenbrücke", () => {
     );
     expect(overflow).toBeLessThanOrEqual(1);
     const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .withTags(["wcag2a", "wcag2aa"])
       .include('[data-testid="agent-clients"]')
       .analyze();

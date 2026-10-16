@@ -43,10 +43,13 @@ test.beforeEach(async ({ page }) => {
       post_process_selected_prompt_id: null,
       custom_words: [],
       post_process_models: {},
-      post_process_api_keys: { "openai-1": "sk-alt" },
+      post_process_api_keys: { "openai-1": "sk-alt", "mistral-1": "falsch" },
       llm_connections: [
         { id: "openai-1", kind: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", enabled: true },
         { id: "ollama-1", kind: "ollama", label: "Ollama (lokal)", base_url: "http://127.0.0.1:11434/v1", enabled: true },
+        // Ohne Schluessel (wie nach „Anbieter hinzufuegen“) und mit abgelehntem Schluessel.
+        { id: "anthropic-1", kind: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com/v1", enabled: true },
+        { id: "mistral-1", kind: "mistral", label: "Mistral", base_url: "https://api.mistral.ai/v1", enabled: true },
       ],
       llm_models: [
         { id: "openai-1:gpt-4.1-mini", connection_id: "openai-1", remote_id: "gpt-4.1-mini", label: "gpt-4.1-mini", enabled: true, tags: [] },
@@ -77,12 +80,22 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
           // Der Anbieter meldet drei Modelle; freigegeben ist eines.
+          if (cmd === "llm_list_remote_models") {
+            ((saved.listCalls as string[]) ??= []).push(String(args?.connectionId));
+            if (args?.connectionId === "mistral-1")
+              throw 'Model list request failed (401 Unauthorized): {"message":"Unauthorized"}';
+          }
           if (cmd === "llm_list_remote_models")
             return args?.connectionId === "ollama-1"
               ? ["qwen3:4b", "gemma3:4b", "nomic-embed-text"]
               : ["gpt-4.1-mini", "gpt-4.1"];
+          if (cmd === "llm_model_efforts")
+            return args?.connectionId === "openai-1" ? ["low", "medium", "high", "xhigh", "max"] : [];
+          if (cmd === "llm_model_offers_fast") return args?.connectionId === "openai-1";
           if (cmd === "llm_upsert_model") {
-            const model = args?.model as { connection_id: string; remote_id: string };
+            const model = args?.model as { connection_id: string; remote_id: string; effort?: string | null; fast?: boolean };
+            if (model.effort !== undefined) saved.effort = model.effort;
+            if (model.fast !== undefined) saved.fast = model.fast;
             const id = `${model.connection_id}:${model.remote_id}`;
             saved.upsertModel = id;
             const list = settings.llm_models as unknown[];
@@ -109,7 +122,7 @@ test.beforeEach(async ({ page }) => {
 async function openTab(page: import("@playwright/test").Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
-  await page.getByRole("tab", { name: "KI-Textverbesserung", exact: true }).click();
+  await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
 }
 
 test("the polish feature has no off switch any more", async ({ page }) => {
@@ -122,8 +135,9 @@ test("the polish feature has no off switch any more", async ({ page }) => {
 
 test("only released models are offered as active model", async ({ page }) => {
   await openTab(page);
-  const active = page.locator(".w-72").first();
-  await expect(active).toContainText("gpt-4.1-mini");
+  // Die Regelwerk-Auswahl (#76) steht davor und hat dieselbe Breite.
+  const active = page.locator(".w-72:not([data-compliance-profile])").first();
+  await expect(active).toContainText("GPT-4.1-Mini");
   await active.click();
   // Die zweite Verbindung hat nichts freigegeben -- nichts von ihr im Menue.
   await expect(page.getByText("qwen3:4b")).toHaveCount(0);
@@ -165,4 +179,51 @@ test("the api key is stored under the connection, not the template", async ({ pa
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.apiKey))
     .toEqual(["openai-1", "sk-neu"]);
+});
+
+test("without a key nothing is requested and the hint points to the subscription", async ({ page }) => {
+  await openTab(page);
+  await page.getByRole("button", { name: "Anthropic", exact: true }).click();
+  await page.getByRole("button", { name: "Modelle laden" }).click();
+  await expect(page.getByText(/kein API-Schlüssel eingetragen/)).toBeVisible();
+  await expect(page.getByText(/„Claude-Abo \(Claude Code\)“ hinzufügen/)).toBeVisible();
+  await expect(page.getByText(/x-api-key|401/)).toHaveCount(0);
+  const calls = await page.evaluate(
+    () => (window as unknown as { saved: Record<string, unknown> }).saved.listCalls ?? [],
+  );
+  expect(calls).toEqual([]);
+});
+
+test("a rejected key is explained instead of the raw provider JSON", async ({ page }) => {
+  await openTab(page);
+  await page.getByRole("button", { name: "Mistral", exact: true }).click();
+  await page.getByRole("button", { name: "Modelle laden" }).click();
+  await expect(page.getByText("Der Anbieter lehnt den Schlüssel ab (HTTP 401)", { exact: false })).toBeVisible();
+  await expect(page.getByText(/Unauthorized/)).toHaveCount(0);
+});
+
+test("subscription models offer an effort per released model", async ({ page }) => {
+  await openTab(page);
+  // gpt-4.1-mini gehoert zu openai-1; die Attrappe meldet fuer sie Stufen wie bei einem Abo-Modell.
+  await page.getByRole("button", { name: "OpenAI", exact: true }).click();
+  const select = page.locator('[data-effort-select="openai-1:gpt-4.1-mini"]');
+  await expect(select).toBeVisible();
+  await select.selectOption("high");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.effort))
+    .toBe("high");
+});
+
+test("models with a fast mode get a lightning switch", async ({ page }) => {
+  await openTab(page);
+  await page.getByRole("button", { name: "OpenAI", exact: true }).click();
+  const fast = page.locator('[data-fast-toggle="openai-1:gpt-4.1-mini"]');
+  await expect(fast).toBeVisible();
+  await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await fast.click();
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.fast))
+    .toBe(true);
+  // Ohne Angebot (Ollama) kein Schalter.
+  await expect(page.locator('[data-fast-toggle^="ollama-1:"]')).toHaveCount(0);
 });

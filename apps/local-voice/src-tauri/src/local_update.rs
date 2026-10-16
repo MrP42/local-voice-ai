@@ -18,6 +18,27 @@ pub struct LocalUpdate {
     pub version: String,
     pub path: String,
     pub file_name: String,
+    /// Release-Notes (Markdown) aus `<installer>.notes.md` neben dem Installer, fuer
+    /// alle Versionen seit der installierten (neueste zuerst); `None` ohne Datei.
+    pub notes: Option<String>,
+}
+
+/// Groesste Notizdatei, die gelesen wird.
+const MAX_NOTES_BYTES: u64 = 32 * 1024;
+
+/// Notizen zu einem Installer: `Local Voice AI_0.21.9_x64-setup.exe` ->
+/// `Local Voice AI_0.21.9_x64-setup.notes.md`.
+fn notes_for(installer: &Path) -> Option<String> {
+    let stem = installer.file_stem()?.to_string_lossy().to_string();
+    let path = installer.with_file_name(format!("{stem}.notes.md"));
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_NOTES_BYTES {
+        return None;
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// `X.Y.Z` (optional mit fuehrendem `v`), sonst `None`.
@@ -55,6 +76,8 @@ pub(crate) fn version_from_file_name(name: &str, app_name: &str) -> Option<Strin
 pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Option<LocalUpdate> {
     let current = parse_version(current)?;
     let mut best: Option<((u64, u64, u64), LocalUpdate)> = None;
+    // Notizen aller neueren Installer im Ordner, um sie gesammelt zu zeigen.
+    let mut all_notes: Vec<((u64, u64, u64), String, String)> = Vec::new();
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let file_name = entry.file_name().to_string_lossy().to_string();
         let Some(version) = version_from_file_name(&file_name, app_name) else {
@@ -66,6 +89,9 @@ pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Op
         if parsed <= current {
             continue;
         }
+        if let Some(n) = notes_for(&entry.path()) {
+            all_notes.push((parsed, version.clone(), n));
+        }
         if best.as_ref().is_none_or(|(b, _)| parsed > *b) {
             best = Some((
                 parsed,
@@ -73,11 +99,24 @@ pub(crate) fn find_local_update(dir: &Path, current: &str, app_name: &str) -> Op
                     version,
                     path: entry.path().to_string_lossy().to_string(),
                     file_name,
+                    notes: None,
                 },
             ));
         }
     }
-    best.map(|(_, update)| update)
+    all_notes.sort_by(|a, b| b.0.cmp(&a.0));
+    best.map(|(_, mut update)| {
+        if !all_notes.is_empty() {
+            update.notes = Some(
+                all_notes
+                    .into_iter()
+                    .map(|(_, v, n)| format!("### {v}\n\n{n}"))
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            );
+        }
+        update
+    })
 }
 
 /// Ordner fuer lokale Updates: die Einstellung, sonst Fallbacks, die auf
@@ -249,6 +288,25 @@ mod tests {
         assert_eq!(version_from_file_name("Other_App_x64-setup.exe", app), None);
         // Der Vorfall vom 15.09.: fremdes Programm, passendes Muster.
         assert_eq!(version_from_file_name("Anarlog_1.4.10_x64-setup.exe", app), None);
+    }
+
+    #[test]
+    fn notes_of_all_newer_installers_come_along_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        for v in ["0.21.7", "0.21.8", "0.21.9"] {
+            std::fs::write(dir.path().join(format!("Local Voice AI_{v}_x64-setup.exe")), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("Local Voice AI_0.21.9_x64-setup.notes.md"), "- Neu: Fusszeile").unwrap();
+        std::fs::write(dir.path().join("Local Voice AI_0.21.8_x64-setup.notes.md"), "- Neu: Effort").unwrap();
+        std::fs::write(dir.path().join("Local Voice AI_0.21.7_x64-setup.notes.md"), "- alt").unwrap();
+        let u = find_local_update(dir.path(), "0.21.7", "Local Voice AI").unwrap();
+        assert_eq!(u.version, "0.21.9");
+        let notes = u.notes.unwrap();
+        assert!(notes.starts_with("### 0.21.9"), "{notes}");
+        assert!(notes.contains("### 0.21.8
+
+- Neu: Effort"), "{notes}");
+        assert!(!notes.contains("alt"), "installierte Version gehoert nicht dazu");
     }
 
     #[test]

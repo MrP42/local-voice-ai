@@ -165,12 +165,13 @@ test("System-Audio im Startdialog ist ein ToggleSwitch mit Beschreibung, kein ro
     .click();
   const dialog = page.getByRole("dialog", { name: "Aufnahme starten" });
   const box = dialog.getByTestId("capture-system");
-  const toggle = dialog
-    .locator("label")
-    .filter({ has: page.getByTestId("capture-system") });
+  // Fluent Switch: das Eingabefeld traegt role="switch" und den Namen.
+  const toggle = dialog.getByRole("switch", {
+    name: "System-Audio (Gegenseite) mitschneiden",
+  });
   await expect(box).toBeChecked();
   // Der Schalter der Oberflaeche (Design-System), nicht das Browser-Kontrollkaestchen.
-  await expect(box).toHaveClass(/sr-only/);
+  await expect(box).toHaveAttribute("role", "switch");
   await expect(box).not.toHaveClass(/accent-logo-primary/);
   await expect(toggle).toBeVisible();
   await expect(dialog).toContainText("System-Audio (Gegenseite) mitschneiden");

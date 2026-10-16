@@ -25,6 +25,28 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "langTabs": "Übersetzte Sprachen",
+    "transform": {
+      "translateStarting": "Übersetze …",
+      "translateBlock": "Übersetze … Block {{done}} von {{total}}",
+      "summaryStarting": "Fasse zusammen …",
+      "summaryBlock": "Fasse zusammen … Abschnitt {{done}} von {{total}}",
+      "summaryCombine": "Führe die Abschnitte zusammen …",
+      "cancel": "Abbrechen",
+      "cancelled": "Abgebrochen."
+    },
+    "speakerSwap": {
+      "open": "Sprecher tauschen …",
+      "hint": "Die Sprecher der Übersetzung gegen Stimmen der Zielsprache tauschen",
+      "title": "Sprecher für {{lang}}",
+      "description": "Jeder Sprecher des Originals bekommt eine Stimme, die {{lang}} spricht. Die Marken im übersetzten Text werden ersetzt.",
+      "noVoices": "Es gibt noch keine Stimme mit der Sprache {{lang}}. Unter Vorlesen → Stimmen lässt sich eine anlegen oder die Sprache einer Stimme setzen.",
+      "voiceFor": "Stimme für {{name}}",
+      "otherVoices": "Andere Sprachen",
+      "apply": "Übernehmen",
+      "cancel": "Abbrechen",
+      "none": "Die Übersetzung hat keine Sprecher."
+    },
     "title": "Vorlesen",
     "serverTitle": "Stimme & Wiedergabe",
     "description": "Lokale Sprachausgabe über Fish Speech auf der eigenen GPU. Der Server startet bei Bedarf und wird nach Leerlauf wieder gestoppt, um VRAM freizugeben.",
@@ -174,7 +196,9 @@
       },
       "previewSentence": "Alle Hörproben sprechen denselben Satz: „Guten Tag. So klingt diese Stimme: ein kurzer Satz, damit Sie Klangfarbe, Tempo und Betonung vergleichen können.“",
       "previewNeedsEngine": "Noch keine Hörprobe — Erzeugen startet einmalig die Sprach-Engine.",
-      "piperOption": "{{name}} · Piper",
+      "autoLanguageReads": "Dieser Text wird mit „{{name}}“ gelesen (Sprache automatisch erkannt).",
+        "autoLanguageOff": "Nur die gewählte Stimme verwenden",
+        "piperOption": "{{name}} · Piper",
       "piperNoVoice": "Piper – keine Stimme gewählt",
       "piperVoiceMissing": "Piper – Stimme „{{id}}“ nicht verfügbar",
       "piperNotSetUp": "{{name}} · Piper – nicht eingerichtet",
@@ -662,7 +686,10 @@
       "bookFilter": "Buch-Paket",
       "exported": "Buch exportiert: {{path}}",
       "imported": "Buch „{{title}}“ eingespielt",
-      "importVoicesAsk": "Das Buch bringt {{count}} neue Stimme(n) mit. Rechtebestätigung im Paket: {{rights}}. Stimmen mit einspielen?",
+      "importVoicesAsk": "Das Buch bringt {{count}} neue Stimme(n) mit. Rechtebestätigung im Paket: {{rights}}.",
+      "importVoicesTitle": "Stimmen mit einspielen?",
+      "importVoicesWith": "Mit Stimmen einspielen",
+      "importVoicesWithout": "Ohne Stimmen importieren",
       "rightsYes": "ja",
       "rightsNo": "nein – bitte vor der Nutzung klären",
       "charactersIntro": "Figuren mit fester Stimme und kurzer Beschreibung. Im Skript stehen sie als <Name>; die Stimme wird beim Vorlesen automatisch geschaltet.",
@@ -843,6 +870,39 @@
     "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
+    "documents": {
+      "title": "Dokumente",
+      "description": "Wie exportierte Protokolle und Dokumente in Word und PDF aussehen.",
+      "letterhead": "Briefkopf für Word und PDF",
+      "letterheadHint": "Logo, Firma, Farben und Fußzeile. Mitgelieferte Briefköpfe lassen sich als eigener Briefkopf kopieren und dann anpassen.",
+      "own": "eigener",
+      "sample": "Beispiel speichern …",
+      "sampleSaved": "Beispiel gespeichert unter {{path}}",
+      "createOwn": "Als eigenen Briefkopf anlegen",
+      "copyName": "Kopie von {{name}}",
+      "name": "Name",
+      "firm": "Firma",
+      "lines": "Zeilen unter der Firma (höchstens 4)",
+      "footer": "Fußzeile (höchstens 3 Zeilen)",
+      "accent": "Akzentfarbe",
+      "titleColor": "Farbe der Überschriften",
+      "logoSet": "Logo hinterlegt",
+      "logoNone": "Kein Logo",
+      "logoPick": "Logo wählen …",
+      "logoRemove": "Logo entfernen",
+      "logoLeft": "Logo links",
+      "logoRight": "Logo rechts",
+      "save": "Speichern",
+      "saved": "Gespeichert.",
+      "delete": "Briefkopf löschen",
+      "errors": {
+        "letterhead_not_found": "Dieser Briefkopf existiert nicht mehr.",
+        "letterhead_read_only": "Mitgelieferte Briefköpfe lassen sich nicht ändern. Lege einen eigenen an.",
+        "letterhead_invalid": "Angabe ungültig: {{error}}",
+        "letterhead_logo_invalid": "Das Logo muss ein PNG oder JPEG bis 2 MB und 4000 Pixel Kantenlänge sein.",
+        "letterhead_io": "Speichern fehlgeschlagen."
+      }
+    },
     "compliance": {
         "title": "Regelwerk",
         "profile": "Geltende Regeln für Sprachmodelle",
@@ -914,6 +974,44 @@
       "title": "{{model}}-Einstellungen"
     },
     "models": {
+        "areas": {
+          "llm": "Sprachmodelle",
+          "dictation": "Diktat",
+          "voices": "Vorlesen"
+        },
+        "groups": {
+          "installed": "Installiert",
+          "installedEmpty": "Noch nichts installiert – unten aufklappen und laden.",
+          "folders": "Aus Modellordnern",
+          "foldersBlocked_one": "{{count}} lädt nicht",
+          "foldersBlocked_other": "{{count}} laden nicht",
+          "available": "Zum Laden verfügbar",
+          "runtime": "Laufzeit"
+        },
+        "active": {
+          "llm": "Aktiv",
+          "dictation": "Aktiv",
+          "none": "kein Modell gewählt"
+        },
+        "source": {
+          "app": "App",
+          "ollama": "Ollama",
+          "lmstudio": "LM Studio",
+          "folder": "Ordner"
+        },
+        "row": {
+          "details": "Details zu {{name}}",
+          "more": "Weitere Aktionen für {{name}}",
+          "downloading": "Lädt … {{percentage}} %",
+          "cancel": "Abbrechen",
+          "use": "Verwenden",
+          "download": "Laden",
+          "duplicate": "doppelt"
+        },
+        "runtime": {
+          "summary": "Laufzeit: {{backend}}",
+          "missing": "Laufzeit fehlt – unten unter „Laufzeit“ laden"
+        },
       "title": "Transkriptionsmodelle",
       "description": "Wähle ein Transkriptionsmodell aus oder lade zusätzliche Modelle herunter. Verschiedene Modelle bieten unterschiedliche Genauigkeits- und Geschwindigkeitsstufen.",
       "deleteConfirm": "Bist du sicher, dass du {{modelName}} löschen möchtest? Du musst es erneut herunterladen, um es zu verwenden.",
@@ -1538,6 +1636,9 @@
     "app": {
       "tabs": {
         "app": "Allgemein",
+        "input": "Eingabe",
+        "output": "Ausgabe",
+        "models": "KI-Modelle & Anbieter",
         "dictation": "Diktat",
         "sound": "Mikrofon & Töne",
         "readAloud": "Vorlesen",
@@ -1562,11 +1663,6 @@
       }
     },
     "llm": {
-        "connections": {
-          "region": "Region",
-          "trainingOptOut": "Training im Konto abgeschaltet",
-          "trainingOptOutDescription": "Bestätige erst, wenn du das Training mit deinen Daten in den Konto-Einstellungen des Anbieters abgeschaltet hast. Unter dem Regelwerk „EU“ ist der Anbieter sonst gesperrt."
-        },
         "cli": {
           "claude_cli": "Nutzt dein Claude-Abo (Pro/Max) über das installierte Claude Code. Angemeldet wird in Claude Code selbst (claude, dann /login) – die App sieht keine Zugangsdaten. Nur für die eigene Nutzung. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV).",
           "codex_cli": "Nutzt dein ChatGPT-Abo (Plus/Pro) über die installierte Codex CLI. Angemeldet wird in Codex selbst (codex login). Achtung: Die Nutzungsbedingungen von OpenAI empfehlen für programmgesteuerte Nutzung API-Schlüssel; der Weg über das Abo ist eine Grauzone. Unter dem Regelwerk „EU“ gesperrt (USA, kein AVV)."
@@ -1599,6 +1695,7 @@
         "loadModels": "Modelle laden",
         "loading": "Lädt…",
         "remoteEmpty": "Der Anbieter hat keine Modelle gemeldet.",
+        "newBadge": "neu",
         "released": "Freigegebene Modelle",
         "releaseHint": "Nur freigegebene Modelle erscheinen in der Auswahl der App.",
         "releasedCount_one": "{{count}} freigegeben",
@@ -1608,7 +1705,17 @@
         "budget": "Monatsbudget (USD)",
         "budgetNone": "kein Limit",
         "budgetEnforced": "Hartes Budget",
-        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter."
+        "budgetEnforcedDescription": "Bei 100 % werden Aufrufe verweigert statt nur gewarnt. Aus: die Fußleiste warnt ab 80 %, alles läuft weiter.",
+        "keyMissing": "Für diese Verbindung ist noch kein API-Schlüssel eingetragen. Bitte oben einfügen und das Feld verlassen, dann erneut laden.",
+        "keyMissingAbo": "Für diese Verbindung ist kein API-Schlüssel eingetragen. Ein API-Schlüssel ist ein eigenes, nach Verbrauch bezahltes Konto beim Anbieter. Für dein Abo stattdessen unten „{{abo}}“ hinzufügen.",
+        "keyRejected": "Der Anbieter lehnt den Schlüssel ab (HTTP {{status}}). Bitte prüfen, ob er vollständig und noch gültig ist.",
+        "aboTemplate": {
+          "claude_cli": "Claude-Abo (Claude Code)",
+          "codex_cli": "ChatGPT-Abo (Codex)"
+        },
+        "region": "Region",
+        "trainingOptOut": "Training im Konto abgeschaltet",
+        "trainingOptOutDescription": "Bestätige erst, wenn du das Training mit deinen Daten in den Konto-Einstellungen des Anbieters abgeschaltet hast. Unter dem Regelwerk „EU“ ist der Anbieter sonst gesperrt."
       },
       "model": {
         "active": "aktiv",
@@ -1617,7 +1724,12 @@
         "context": "Kontext (Token)",
         "maxOutput": "Max. Ausgabe (Token)",
         "priceIn": "Preis Eingabe / Mio.",
-        "priceOut": "Preis Ausgabe / Mio."
+        "priceOut": "Preis Ausgabe / Mio.",
+        "effort": "Effort",
+        "effortDefault": "Standard ({{level}})",
+        "fast": "Fast-Modus",
+        "fastOn": "Fast-Modus an: 1,5–2× schneller, verbraucht mehr vom Abo-Kontingent. Klicken zum Ausschalten.",
+        "fastOff": "Fast-Modus aus. Klicken: 1,5–2× schneller, verbraucht dafür mehr vom Abo-Kontingent."
       },
       "usage": {
         "title": "Verbrauch",
@@ -1652,7 +1764,34 @@
           "tagging": "Tags",
           "translation": "Übersetzung",
           "enhanced_notes": "KI-Notizen",
-          "followup": "Follow-up-Mail"
+          "followup": "Follow-up-Mail",
+          "document": "Dokumente"
+        }
+      },
+      "effortLevels": {
+        "minimal": "minimal",
+        "low": "niedrig",
+        "medium": "mittel",
+        "high": "hoch",
+        "xhigh": "sehr hoch",
+        "max": "maximal",
+        "ultra": "ultra (mit Delegation)"
+      },
+      "defaultEffort": {
+        "title": "Standard-Effort (Abo-Modelle)",
+        "description": "Denktiefe für Claude- und ChatGPT-Abo, wenn ein Modell keinen eigenen Effort hat. Höher = gründlicher, aber langsamer und mehr Kontingent."
+      },
+      "cliAutoUpdate": {
+        "title": "Codex-CLI selbst aktualisieren",
+        "description": "Lehnt der Server ein Modell von der installierten Codex-CLI ab (z. B. GPT-6.1-Sol), aktualisiert die App die CLI per npm und wiederholt den Aufruf. Aus: die App meldet nur, dass die CLI zu alt ist."
+      },
+      "autoUpdate": {
+        "title": "Neue Modelle der Anbieter",
+        "description": "Die App prüft nach dem Start und täglich, ob Anbieter und lokale Dienste neue Modelle anbieten. Ein neues Modell ersetzt das ältere derselben Familie.",
+        "modes": {
+          "ask": "Beim nächsten Fund fragen",
+          "on": "Automatisch übernehmen",
+          "off": "Nur als „neu“ kennzeichnen"
         }
       }
     }
@@ -1670,7 +1809,15 @@
     "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
     "portableUpdateButton": "GitHub Releases öffnen",
     "localUpdateAvailable": "Update {{version}} lokal verfügbar",
-    "localInstalling": "Installer wird gestartet…"
+    "localInstalling": "Installer wird gestartet…",
+    "updateAvailableTitle": "Version {{version}} ist verfügbar – klicken zum Installieren",
+    "updateDialog": {
+      "title": "Version {{version}} ist verfügbar",
+      "description": "Du nutzt {{current}}. Jetzt installieren? Die App startet danach neu.",
+      "install": "Jetzt installieren",
+      "later": "Später",
+      "noNotes": "Zu dieser Version sind keine Release-Notes hinterlegt."
+    }
   },
   "common": {
     "loading": "Wird geladen...",
@@ -1767,6 +1914,19 @@
     "unavailable": "Mikrofonpegel nicht verfügbar — Zugriff verweigert oder kein Gerät."
   },
   "meetings": {
+    "presenter": {
+      "button": "An WAI Presenter senden",
+      "title": "An WAI Presenter senden",
+      "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
+      "target": "Austauschordner",
+      "documents": "Dokumente",
+      "noDocuments": "Noch kein Dokument erzeugt; das Paket enthält dann nur das Transkript.",
+      "formats": "Zusätzlich als (Markdown ist immer dabei)",
+      "submit": "Senden",
+      "sending": "Wird gesendet …",
+      "done": "Gesendet: {{folder}} ({{files}} Dateien)",
+      "error": "Senden fehlgeschlagen: {{error}}"
+    },
     "recordingIndicator": "Meeting-Aufnahme läuft",
     "dictationBlocked": "Diktat ist gesperrt, solange eine Meeting-Aufnahme läuft.",
     "title": "Besprechungen",
@@ -2339,6 +2499,14 @@
         "no_transcript_named": "„{{title}}“ hat kein Transkript."
       }
     },
+    "documents": {
+      "typesLabel": "Dokumente dieser Besprechung",
+      "new": "Neues Dokument",
+      "newHint": "Weiteres Dokument aus dem Transkript erzeugen: Management Summary, Zusammenfassung, Statusbericht und mehr",
+      "empty": "Noch kein Dokument „{{title}}“. Für: {{audience}} · {{length}}.",
+      "generating": "„{{title}}“ wird erzeugt…",
+      "copy": "Dokument kopieren"
+    },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",
@@ -2363,6 +2531,7 @@
       "stepOf": "Schritt {{done}} von {{total}}",
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
+        "doc_type_unknown": "Unbekannter Dokumenttyp.",
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
         "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
@@ -3134,7 +3303,9 @@
         "confirmTitle": "Ausschnitte an {{provider}} senden?",
         "confirmBody": "Für die Antwort gehen Ausschnitte aus Transkript und Notizen an {{provider}}. Diese Bestätigung gilt für diesen Anbieter und wird nicht erneut abgefragt.",
         "confirm": "Senden",
-        "cancel": "Abbrechen"
+        "cancel": "Abbrechen",
+        "short": "Cloud: {{provider}}",
+        "minimize": "Hinweis einklappen"
       },
       "errors": {
         "no_provider": "Kein KI-Anbieter eingerichtet (Einstellungen → Nachbearbeitung).",
@@ -3454,6 +3625,16 @@
         "agent_external": "Externer Agent",
         "agent_local": "Lokaler Agent"
       }
+    },
+    "docUsage": {
+      "model": "Modell",
+      "effort": "Effort",
+      "tokens": "Token",
+      "tokensHint": "Eingabe {{input}} · Ausgabe {{output}}",
+      "cost": "Kosten",
+      "subscriptionHint": "* Über dein Abo abgerechnet – es sind keine API-Kosten angefallen.",
+      "localHint": "* Lokales Modell – es sind keine Kosten angefallen.",
+      "costUnknown": "Kosten nicht erfasst (kein Preis hinterlegt oder älteres Protokoll)."
     }
   },
   "micSelector": {
@@ -3489,9 +3670,37 @@
     "voiceOptions": "Weitere Einstellungen zum Vorlesen",
     "voices": "Stimmen anhören & verwalten",
     "navCollapse": "Menü einklappen",
-    "navExpand": "Menü ausklappen"
+    "navExpand": "Menü ausklappen",
+    "navOpen": "Menü öffnen",
+    "navClose": "Menü schließen"
+  },
+  "llmUpdate": {
+    "cli": {
+      "started": "Die Codex-CLI ist zu alt für dieses Modell – sie wird aktualisiert …",
+      "done": "Codex-CLI aktualisiert ({{version}})",
+      "retry": "Bitte den Vorgang jetzt noch einmal starten.",
+      "failed": "Die Codex-CLI konnte nicht aktualisiert werden",
+      "manual": "Die Codex-CLI muss von Hand aktualisiert werden (npm i -g @openai/codex@latest)"
+    },
+    "title_one": "Neues Sprachmodell verfügbar",
+    "title_other": "{{count}} neue Sprachmodelle verfügbar",
+    "question": "Soll die App neue Modelle künftig automatisch übernehmen? Ein neues Modell ersetzt dabei das ältere derselben Familie; Effort und Einstellungen bleiben erhalten.",
+    "replacesActive": "ersetzt das aktive Modell {{old}}",
+    "replacesInList": "ersetzt {{old}} in der Liste",
+    "isNew": "ist neu und wird freigegeben",
+    "always": "Ja, immer",
+    "once": "Nur dieses Mal",
+    "never": "Nein, ich wähle selbst",
+    "close": "Später fragen",
+    "applied_one": "Neues Sprachmodell übernommen",
+    "applied_other": "{{count}} neue Sprachmodelle übernommen",
+    "replaces": "{{model}} ersetzt {{old}}",
+    "added": "{{model}} freigegeben"
   },
   "llmSelector": {
+    "search": "Modell suchen …",
+    "noMatch": "Kein Modell gefunden",
+    "providerSettings": "Anbieter-Einstellungen …",
     "title": "Sprachmodell",
     "none": "Kein Sprachmodell",
     "loading": "{{name}} lädt …",
@@ -3499,7 +3708,12 @@
     "empty": "Kein Modell freigegeben — unter Modelle ein Sprachmodell laden und „Verwenden“, oder in den Einstellungen einen Anbieter verbinden.",
     "unload": "Aus dem Speicher entladen",
     "budget": "Budget: {{spent}} von {{limit}} USD ({{percent}} %) in diesem Monat",
-    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)"
+    "budgetExceeded": "Monatsbudget ausgeschöpft: {{spent}} von {{limit}} USD ({{percent}} %)",
+    "ollamaLoaded": "Ollama hält im Speicher: {{models}}",
+    "ollamaEmpty": "Ollama: nichts im Speicher (lädt bei Bedarf)",
+    "ollamaWarmHint": "Lädt das Modell für zehn Minuten, damit der nächste Auftrag ohne Ladezeit beginnt.",
+    "ollamaUnloadHint": "Gibt den Speicher sofort frei; der nächste Auftrag lädt neu und dauert länger.",
+    "spendTitle": "Dieser Monat: {{monthCalls}} Aufrufe · Token ein {{monthIn}} / aus {{monthOut}} · {{monthCost}}\nGesamt: {{allCalls}} Aufrufe · Token ein {{allIn}} / aus {{allOut}} · {{allCost}}"
   },
   "resourceMeter": {
     "ram": "RAM {{used}} / {{total}} GB",
@@ -4038,6 +4252,45 @@
       },
       "published": {
         "label": "Veröffentlicht"
+      },
+      "description": {
+        "label": "Beschreibung"
+      },
+      "due": {
+        "label": "Fällig am",
+        "hint": "JJJJ-MM-TT; leer: ohne Fälligkeit."
+      },
+      "deadlines": {
+        "label": "Fristen auch als Aufgaben",
+        "hint": "Ohne Angabe: ja. Entscheidungen werden nie zu Aufgaben."
+      },
+      "from": {
+        "label": "Extraktionsschritt",
+        "hint": "Kennung des Schritts „Aufgaben, Fristen und Entscheidungen extrahieren“; leer: extract."
+      },
+      "page": {
+        "label": "Seite (ID)",
+        "hint": "Leer: die Elternseite der Integration."
+      },
+      "contact_email": {
+        "label": "Kontakt (E-Mail)",
+        "hint": "Die Notiz wird an diesen Kontakt geknüpft; nicht gefunden: ohne Verknüpfung."
+      },
+      "fields": {
+        "label": "Felder",
+        "hint": "Feldname und Wert als JSON, z. B. {\"Titel\": \"…\", \"Dauer\": 45}."
+      },
+      "day": {
+        "label": "Tag",
+        "hint": "JJJJ-MM-TT, auch aus einem früheren Schritt."
+      },
+      "time": {
+        "label": "Uhrzeit",
+        "hint": "HH:MM (Ortszeit); leer: 09:00."
+      },
+      "invite": {
+        "label": "Einladen",
+        "hint": "Wer eine Einladung bekommt; ohne Angabe nur dein Kalender. Einladungen an andere brauchen immer deine Freigabe."
       }
     },
     "choices": {
@@ -4082,6 +4335,14 @@
       "mode": {
         "create": "Neu anlegen",
         "append": "Anhängen"
+      },
+      "invite": {
+        "none": "Niemanden",
+        "me": "Nur ich",
+        "participants": "Teilnehmende",
+        "all": "Alle",
+        "internal": "Nur intern",
+        "list": "Feste Liste"
       }
     },
     "triggers": {
@@ -4119,10 +4380,12 @@
         "document": "Dokument ablegen"
       },
       "mail": {
-        "send": "Mail senden"
+        "send": "Mail senden",
+        "draft": "Mail-Entwurf anlegen"
       },
       "calendar": {
-        "note": "Notiz in den Termin schreiben"
+        "note": "Notiz in den Termin schreiben",
+        "followup": "Folgetermin anlegen"
       },
       "obsidian": {
         "note": "Obsidian-Notiz schreiben"
@@ -4148,7 +4411,24 @@
       "webhook": {
         "post": "Webhook senden"
       },
-      "wait": "Warten"
+      "wait": "Warten",
+      "chat": {
+        "post": "In Kanal posten"
+      },
+      "task": {
+        "create": "Aufgabe anlegen",
+        "create_from": "Aufgaben aus der Besprechung anlegen"
+      },
+      "page": {
+        "create": "Seite anlegen",
+        "append": "An Seite anhängen"
+      },
+      "crm": {
+        "note": "CRM-Notiz anlegen"
+      },
+      "record": {
+        "append": "Datensatz anhängen"
+      }
     },
     "effectKinds": {
       "pure": "ändert nichts",
@@ -4243,7 +4523,8 @@
       "caps": {
         "mail_send": "Follow-up-Mails und Berichte als Mail aus deinem Postfach senden.",
         "files_write": "Protokolle und Dateien in einen OneDrive-Ordner legen, große Dateien in Stücken.",
-        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert."
+        "calendar_write": "Eine Notiz an den Outlook-Termin einer Besprechung hängen; die Einladung bleibt unverändert.",
+        "mail_draft": "Follow-up-Mails als Entwurf in Outlook ablegen, zum Prüfen und Senden von Hand (braucht das Recht Mail.ReadWrite)."
       },
       "panel": {
         "title": "Microsoft-365-Konto",
@@ -4461,6 +4742,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
+      "presenter": "WAI Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -4470,7 +4752,8 @@
       "obsidian": "Obsidian-Vault",
       "wissen": "WAI-Wissensbasis",
       "agent": "Agentenzugang",
-      "webhook": "Webhook (n8n)"
+      "webhook": "Webhook (n8n)",
+      "service": "Dienst"
     },
     "calendar": {
       "rights": "Rechte und Richtung"
@@ -4481,6 +4764,11 @@
       "soon": "bald",
       "auto": "automatisch",
       "items": {
+        "presenter": {
+          "name": "WAI Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "action": "Austauschordner wählen"
+        },
         "calendar_ics": {
           "name": "Kalender (ICS-Adresse)",
           "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
@@ -4530,6 +4818,37 @@
           "name": "n8n-Webhook",
           "description": "Daten aus einem Ablauf an n8n (oder einen anderen Webhook) senden. Die Adresse ist ein Geheimnis und liegt verschlüsselt im Windows-Konto.",
           "action": "Webhook einrichten"
+        }
+      },
+      "services": {
+        "title": "Dienste",
+        "description": "Protokolle, Aufgaben und Entscheidungen direkt in die Werkzeuge deines Teams. Angemeldet wird mit einem Schlüssel (API-Token) oder einer Webhook-Adresse; beides liegt verschlüsselt im Windows-Konto.",
+        "connect": "Verbinden",
+        "groups": {
+          "chat": {
+            "title": "Kanäle",
+            "description": "Zusammenfassung oder Aufgaben in einen Kanal posten."
+          },
+          "tasks": {
+            "title": "Aufgaben und Tickets",
+            "description": "Je To-do aus der Besprechung eine Aufgabe anlegen, keine doppelt."
+          },
+          "pages": {
+            "title": "Seiten und Wiki",
+            "description": "Protokoll als Seite anlegen oder Entscheidungen anhängen."
+          },
+          "crm": {
+            "title": "CRM",
+            "description": "Gesprächsnotiz am Kontakt, Folgeaufgaben im CRM."
+          },
+          "records": {
+            "title": "Tabellen",
+            "description": "Jede Besprechung als Zeile im Meeting-Log."
+          },
+          "calendar": {
+            "title": "Kalender",
+            "description": "Folgetermine direkt in deinen iCloud-Kalender schreiben (CalDAV). Lesen geht im Kalender-Bereich über den ICS-Freigabelink."
+          }
         }
       }
     },
@@ -4638,7 +4957,20 @@
       "wissen_tool_error": "Die Wissensbasis meldet einen Fehler.",
       "wissen_token_missing": "Der Zugangsschlüssel fehlt.",
       "wissen_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
-      "wissen_config_invalid": "Die Einstellungen sind unvollständig."
+      "wissen_config_invalid": "Die Einstellungen sind unvollständig.",
+      "service_ok": "Verbindung in Ordnung (es wurde nichts angelegt).",
+      "service_auth": "Der Dienst lehnt den Schlüssel ab.",
+      "service_target_not_found": "Das Ziel (Projekt, Liste, Seite) wurde nicht gefunden.",
+      "service_unreachable": "Der Dienst ist nicht erreichbar.",
+      "service_timeout": "Der Dienst antwortet nicht rechtzeitig.",
+      "service_rate_limited": "Der Dienst bremst gerade (zu viele Anfragen).",
+      "service_status": "Der Dienst hat die Anfrage abgelehnt.",
+      "service_network": "Die Verbindung riss ab.",
+      "service_redirect": "Der Dienst leitet um; Umleitungen folgt die App nie.",
+      "service_config_invalid": "Die Einstellungen sind unvollständig.",
+      "service_bad_response": "Unerwartete Antwort des Dienstes.",
+      "service_token_broken": "Der gespeicherte Schlüssel ist unlesbar.",
+      "service_unknown": "Der Dienst dieser Integration ist unbekannt."
     },
     "matrix": {
       "reads": "lesend",
@@ -4652,6 +4984,14 @@
       }
     },
     "capabilities": {
+      "presenter_send": {
+        "title": "Pakete an den Presenter schreiben",
+        "description": "Besprechung, Transkript und gewählte Dokumente als Paket in den Austauschordner legen, dazu den Katalog."
+      },
+      "presenter_request": {
+        "title": "Anfragen des Presenters bearbeiten",
+        "description": "Auf Anfrage des Presenters fehlende Dokumente erzeugen (Sprachmodell) und das Paket schreiben."
+      },
       "calendar_read": {
         "title": "Kalender lesen",
         "description": "Termine und Teilnehmende lesen."
@@ -4719,6 +5059,30 @@
       "workflow_run": {
         "title": "Ablauf starten",
         "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
+      },
+      "chat_post": {
+        "title": "In Kanal posten",
+        "description": "Text in den Kanal des Webhooks schicken (Slack, Teams, Discord)."
+      },
+      "task_create": {
+        "title": "Aufgaben anlegen",
+        "description": "Aufgaben, Tickets oder Karten anlegen (Asana, Jira, Todoist …)."
+      },
+      "page_write": {
+        "title": "Seiten schreiben",
+        "description": "Seiten anlegen oder Text anhängen (Notion, Confluence)."
+      },
+      "crm_write": {
+        "title": "CRM-Notizen anlegen",
+        "description": "Notizen und Aufgaben im CRM anlegen, an Kontakte geknüpft (HubSpot, Pipedrive)."
+      },
+      "record_write": {
+        "title": "Datensätze anlegen",
+        "description": "Eine Zeile an eine Tabelle anhängen (Airtable)."
+      },
+      "mail_draft": {
+        "title": "Mail-Entwürfe anlegen",
+        "description": "Mails als Entwurf in Outlook ablegen; gesendet wird von Hand."
       }
     },
     "approvals": {
@@ -4805,7 +5169,8 @@
       "vault_path_not_a_folder": "Der Pfad ist kein Ordner.",
       "obsidian_scan_limit": "Der Vault ist zu groß, um sicher zu prüfen, ob die Notiz schon existiert. Es wurde nichts geschrieben.",
       "export_format_unsupported": "Dieses Format lässt sich nicht ablegen.",
-      "approval_required": "Dafür ist eine Freigabe nötig."
+      "approval_required": "Dafür ist eine Freigabe nötig.",
+      "service_unknown": "Diesen Dienst kennt die App nicht."
     },
     "moved": {
       "open": "Auf der Seite „Integrationen“ verwalten",
@@ -4819,6 +5184,14 @@
       }
     },
     "target": {
+      "presenter": {
+        "title": "WAI Presenter einrichten",
+        "titleEdit": "WAI-Presenter-Einstellungen",
+        "path": "Austauschordner",
+        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
+        "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
+      },
       "create": "Anlegen",
       "save": "Speichern",
       "name": "Name",
@@ -4879,6 +5252,91 @@
         "path": "Ordner",
         "subfolder": "Unterordner für Exporte (optional)",
         "subfolderHint": "Exporte landen in diesem Unterordner der Wurzel; er wird bei Bedarf angelegt."
+      },
+      "service": {
+        "title": "{{service}} verbinden",
+        "titleEdit": "{{service}}-Einstellungen",
+        "description": "Schreibendes fragt standardmäßig nach: Abläufe brauchen deine Freigabe, bis du es in den Rechten anders einstellst.",
+        "loading": "Felder werden geladen …",
+        "optionalLabel": "{{label}} (optional)",
+        "token": "Schlüssel (API-Token)",
+        "tokenWhat": "Geheimnis",
+        "tokenHint": "Der Schlüssel liegt verschlüsselt im Windows-Konto und geht nur an den Server des Dienstes.",
+        "webhookUrl": "Webhook-Adresse",
+        "webhookHint": "Die Adresse ist ein Geheimnis (sie trägt den Schlüssel). Sie liegt verschlüsselt im Windows-Konto; angezeigt wird später nur der Server. Nur Adressen des Dienstes werden angenommen.",
+        "help": "So bekommst du den Zugang bei {{service}}",
+        "noTestPost": "„Verbindung testen“ prüft hier nur die Adresse und schickt keine Testnachricht in den Kanal.",
+        "fields": {
+          "parent_page_id": {
+            "label": "Elternseite (ID)",
+            "hint": "Unter dieser Seite entstehen neue Seiten. Die Seite muss mit der Integration geteilt sein (Notion: „Verbindungen“).",
+            "placeholder": "z. B. 1a2b3c4d…"
+          },
+          "site": {
+            "label": "Site",
+            "hint": "Deine Atlassian-Adresse.",
+            "placeholder": "firma.atlassian.net"
+          },
+          "email": {
+            "label": "E-Mail des Kontos",
+            "hint": "Atlassian: E-Mail plus API-Token. iCloud: deine Apple-ID plus app-spezifisches Passwort."
+          },
+          "space_id": {
+            "label": "Bereichs-ID (Space)",
+            "hint": "Die numerische ID des Confluence-Bereichs."
+          },
+          "project_id": {
+            "label": "Projekt-ID",
+            "hint": "Steht in der Adresse des Projekts."
+          },
+          "list_id": {
+            "label": "Listen-ID",
+            "hint": "Die Liste, in der neue Aufgaben bzw. Karten landen."
+          },
+          "project_key": {
+            "label": "Projektschlüssel",
+            "placeholder": "z. B. LV"
+          },
+          "issue_type": {
+            "label": "Vorgangstyp",
+            "hint": "Ohne Angabe: Task.",
+            "placeholder": "Task"
+          },
+          "api_key": {
+            "label": "API-Key (öffentlich)",
+            "hint": "Der Key der Power-Up-Seite; das Token kommt ins Feld darunter."
+          },
+          "board_id": {
+            "label": "Board-ID"
+          },
+          "group_id": {
+            "label": "Gruppen-ID",
+            "hint": "Ohne Angabe: die oberste Gruppe des Boards."
+          },
+          "team_id": {
+            "label": "Team-ID"
+          },
+          "repo": {
+            "label": "Repository",
+            "placeholder": "besitzer/name"
+          },
+          "base_id": {
+            "label": "Base-ID",
+            "placeholder": "app…"
+          },
+          "table": {
+            "label": "Tabelle",
+            "hint": "Name oder ID der Tabelle."
+          },
+          "calendar": {
+            "label": "Kalender (Name)",
+            "hint": "Name wie in der Kalender-App; ohne Angabe der erste Kalender mit Terminen.",
+            "placeholder": "z. B. Privat"
+          }
+        },
+        "tokenFor": {
+          "icloud": "App-spezifisches Passwort"
+        }
       }
     },
     "areas": {

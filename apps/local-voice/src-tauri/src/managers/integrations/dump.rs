@@ -39,7 +39,7 @@ fn integration_json(
         })
         .collect();
     let mut effective = Map::new();
-    for cap in i.kind.capabilities() {
+    for cap in i.capabilities() {
         let mut by_caller = Map::new();
         for caller in Caller::GRANTABLE {
             by_caller.insert(

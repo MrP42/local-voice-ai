@@ -20,7 +20,9 @@ import {
   configText,
   errorText,
   folderPathOf,
+  iconKey,
   isTargetKind,
+  kindName,
 } from "./model";
 import { KindIcon } from "./KindIcon";
 import { AgentClientsPanel } from "./AgentClientsPanel";
@@ -240,13 +242,13 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
       </div>
 
       <header className="flex items-start gap-3">
-        <KindIcon kind={integration.kind} size={28} />
+        <KindIcon kind={iconKey(integration)} size={28} />
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold break-words">
             {integration.label}
           </h2>
           <p className="text-sm text-text-muted">
-            {t(`integrations.kinds.${integration.kind}`)}
+            {kindName(t, integration)}
             {path && <span className="break-all"> · {path}</span>}
           </p>
         </div>
@@ -395,7 +397,11 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
             )}
             {testResult?.detail && (
               <p
-                className="rounded-lg bg-red-500/10 px-3 py-2 text-sm break-words text-status-red"
+                className={`rounded-lg px-3 py-2 text-sm break-words ${
+                  testResult.ok
+                    ? "bg-green-500/10 text-status-green"
+                    : "bg-red-500/10 text-status-red"
+                }`}
                 data-testid="integration-test-detail"
               >
                 {testResult.detail}

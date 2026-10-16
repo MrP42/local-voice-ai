@@ -1,6 +1,6 @@
 [package]
 name = "local-voice-ai"
-version = "0.21.3"
+version = "0.21.18"
 description = "Local Voice AI - lokale Sprach-KI (Diktat, Vorlesen, Stimmen, Übersetzung)"
 authors = ["Patrick Wolff"]
 edition = "2021"
@@ -127,6 +127,11 @@ hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downl
 ] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.12.0"
+# Dokument-Export (Entwurf 2026-10-13): PDF mit Briefkopf, plattformgleich ohne Browser.
+# MIT OR Apache-2.0. Standardfunktionen: Text mit Shaping (rustybuzz), PNG/JPEG-Logos.
+krilla = "0.8"
+# Zeichenbreiten fuer den Zeilenumbruch im PDF (schon ueber krilla/whisper im Lock).
+ttf-parser = "0.25"
 tempfile = "3"
 ulid = "1"
 # MP3-Export mit waehlbarer Bitrate. Bringt LAME als vendored C-Quellen mit

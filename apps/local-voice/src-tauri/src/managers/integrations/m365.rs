@@ -7,6 +7,7 @@
 //! | Faehigkeit        | Was                                    | Scope                         |
 //! |-------------------|----------------------------------------|-------------------------------|
 //! | `mail.send`       | Mail senden (`POST /me/sendMail`)      | `Mail.Send`                   |
+//! | `mail.draft`      | Entwurf anlegen (`POST /me/messages`)  | `Mail.ReadWrite`              |
 //! | `files.write`     | Datei in OneDrive (PUT / Upload-Sitzung)| `Files.ReadWrite` oder `Files.ReadWrite.AppFolder` |
 //! | `calendar.write`  | Notiz an einen Termin                  | `Calendars.ReadWrite`         |
 //!

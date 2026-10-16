@@ -172,10 +172,11 @@ test("a downloaded Piper voice without a complete runtime is marked not set up, 
   await page.keyboard.press("Escape");
   const hint = page.getByTestId("voice-setup-hint");
   await expect(hint).toContainText("Noch keine Sprachausgabe eingerichtet");
-  // Der Weg zum Einrichten fuehrt auf die Modelle-Seite.
+  // Der Weg zum Einrichten fuehrt auf die Modelle-Seite, gleich in den
+  // Bereich Vorlesen.
   await page.getByTestId("voice-setup-button").click();
-  await expect(page.getByText("Vorlesestimmen", { exact: true }).first()).toBeVisible();
-  const card = page.locator("div.px-4.py-3", { hasText: "Thorsten" }).first();
+  await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
+  const card = page.locator("[data-tts-download]", { hasText: "Thorsten" }).first();
   await expect(card.getByText("Programm fehlt – nicht nutzbar")).toBeVisible();
   await card.getByRole("button", { name: "Programm installieren" }).click();
   const calls = await page.evaluate(() => (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls);
@@ -257,14 +258,29 @@ test("models: an unsupported Piper runtime is not offered for download, with the
     runtime: { ...runtimeState(false, false), platform: "macos-x64" },
     models: [],
   });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
-  const note = page.getByTestId("tts-unsupported-note");
-  await expect(note).toContainText("unvollständig");
-  const runtimeCard = page.locator("div.px-4.py-3", { has: note });
+  await openModelsArea(page, "Vorlesen");
+  await openGroup(page, "tts-available");
+  const runtimeCard = page.locator('[data-tts-download="piper-runtime"]');
   await expect(runtimeCard.getByRole("button", { name: "Herunterladen" })).toHaveCount(0);
   await expect(runtimeCard.getByText("Auf diesem System nicht verfügbar")).toBeVisible();
+  await openRow(runtimeCard);
+  await expect(page.getByTestId("tts-unsupported-note")).toContainText("unvollständig");
 });
+
+/** Modellseite, gewuenschter Bereich (seit 06.10.2026 drei Bereiche). */
+async function openModelsArea(page: import("@playwright/test").Page, area: string) {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await page.getByRole("tab", { name: area }).click();
+}
+async function openGroup(page: import("@playwright/test").Page, id: string) {
+  const header = page.locator(`[data-model-section="${id}"] > div button[aria-expanded]`).first();
+  if ((await header.getAttribute("aria-expanded")) === "false") await header.click();
+}
+async function openRow(row: import("@playwright/test").Locator) {
+  const toggle = row.locator("button[aria-expanded]").first();
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+}
 
 test("models: non-commercial Piper voices and Canary 1B carry a clear license warning", async ({ page }) => {
   const canary = {
@@ -304,17 +320,25 @@ test("models: non-commercial Piper voices and Canary 1B carry a clear license wa
     runtime: runtimeState(false, false),
     models: [canary, whisper],
   });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await openModelsArea(page, "Diktat");
+  await openGroup(page, "asr-available");
+  // Das Kennzeichen steht schon in der zugeklappten Zeile ...
+  const canaryCard = page.locator(`[data-asr-model="${canary.id}"]`);
+  await expect(canaryCard.getByText("Nur nicht-kommerziell").first()).toBeVisible();
+  const whisperCard = page.locator(`[data-asr-model="${whisper.id}"]`);
+  await expect(whisperCard.getByText("Nur nicht-kommerziell")).toHaveCount(0);
+  // ... die Begruendung im Detail.
+  await openRow(canaryCard);
   const note = page.getByTestId("model-nc-note");
   await expect(note).toHaveCount(1);
   await expect(note).toContainText("CC-BY-NC-4.0");
   await expect(note).toContainText("nur für nicht-kommerzielle Nutzung");
-  const canaryCard = page.locator('div[role="button"]', { hasText: "Canary 1B" }).first();
-  await expect(canaryCard.getByText("Nur nicht-kommerziell").first()).toBeVisible();
-  const whisperCard = page.locator('div[role="button"]', { hasText: "Whisper Small" }).first();
-  await expect(whisperCard.getByText("Nur nicht-kommerziell")).toHaveCount(0);
   // Auch die nicht-kommerzielle Stimme warnt.
+  await page.getByRole("tab", { name: "Vorlesen" }).click();
+  await openGroup(page, "tts-available");
+  const ryan = page.locator('[data-tts-download="en_US-ryan-high"]');
+  await expect(ryan.getByText("Nur nicht-kommerziell")).toBeVisible();
+  await openRow(ryan);
   await expect(page.getByTestId("tts-nc-note")).toContainText("CC-BY-NC-SA-4.0");
 });
 
@@ -333,18 +357,19 @@ test("models: Piper voices derived from a research/NC voice are marked non-comme
     runtime: runtimeState(false, false),
     models: [],
   });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
-  const notes = page.getByTestId("tts-nc-note");
-  await expect(notes).toHaveCount(2);
-  await expect(notes.nth(0)).toContainText("von der Lessac-Stimme abgeleitet");
-  await expect(notes.nth(0)).toContainText("Blizzard 2013");
-  await expect(notes.nth(1)).toContainText("von der Ryan-Stimme abgeleitet");
-  await expect(notes.nth(1)).toContainText("CC-BY-NC-SA-4.0");
-  const thorsten = page.locator("div.px-4.py-3", { has: notes.nth(0) });
+  await openModelsArea(page, "Vorlesen");
+  await openGroup(page, "tts-available");
+  const thorsten = page.locator('[data-tts-download="de_DE-thorsten-high"]');
+  const kerstin = page.locator('[data-tts-download="de_DE-kerstin-low"]');
   await expect(thorsten.getByText("Nur nicht-kommerziell").first()).toBeVisible();
-  const eva = page.locator("div.px-4.py-3", { hasText: "Eva K." });
+  const eva = page.locator('[data-tts-download="de_DE-eva_k-x_low"]');
   await expect(eva.getByText("Nur nicht-kommerziell")).toHaveCount(0);
+  await openRow(thorsten);
+  await openRow(kerstin);
+  await expect(thorsten.getByTestId("tts-nc-note")).toContainText("von der Lessac-Stimme abgeleitet");
+  await expect(thorsten.getByTestId("tts-nc-note")).toContainText("Blizzard 2013");
+  await expect(kerstin.getByTestId("tts-nc-note")).toContainText("von der Ryan-Stimme abgeleitet");
+  await expect(kerstin.getByTestId("tts-nc-note")).toContainText("CC-BY-NC-SA-4.0");
 });
 
 test("help hides Fish content when Fish is not set up and shows it when it is", async ({ page }) => {

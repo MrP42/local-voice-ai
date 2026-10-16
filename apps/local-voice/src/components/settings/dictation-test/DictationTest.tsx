@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { Button } from "../../ui/Button";
 import { compareTranscript, type WordDiff } from "./compare";
 
 const PHRASES = [
@@ -77,22 +78,15 @@ export const DictationTest: React.FC = () => {
           />
           <div className="flex flex-wrap gap-2">
             {PHRASES.map((p, i) => (
-              <button
-                key={i}
-                onClick={() => setReference(p)}
-                className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:border-mid-gray/60"
-              >
+              <Button size="sm" key={i} onClick={() => setReference(p)}>
                 {t("dictationTest.phrase")} {i + 1}
-              </button>
+              </Button>
             ))}
-            <button
-              onClick={readAloud}
-              className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:border-mid-gray/60"
-            >
+            <Button size="sm" onClick={readAloud}>
               {speaking
                 ? t("dictationTest.reading")
                 : t("dictationTest.readAloud")}
-            </button>
+            </Button>
           </div>
         </div>
       </SettingsGroup>
@@ -108,18 +102,12 @@ export const DictationTest: React.FC = () => {
             onChange={(e) => setHeard(e.target.value)}
           />
           <div className="flex gap-2">
-            <button
-              onClick={() => targetRef.current?.focus()}
-              className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:border-mid-gray/60"
-            >
+            <Button size="sm" onClick={() => targetRef.current?.focus()}>
               {t("dictationTest.focusField")}
-            </button>
-            <button
-              onClick={() => setHeard("")}
-              className="text-xs px-2 py-1 rounded border border-mid-gray/30 hover:border-mid-gray/60"
-            >
+            </Button>
+            <Button size="sm" onClick={() => setHeard("")}>
               {t("dictationTest.clear")}
-            </button>
+            </Button>
           </div>
         </div>
       </SettingsGroup>

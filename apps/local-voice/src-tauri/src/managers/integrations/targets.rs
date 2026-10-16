@@ -23,6 +23,7 @@ use super::model::{
     AuditOutcome, Caller, Capability, Direction, Integration, IntegrationError, Kind, NewAudit,
 };
 use super::obsidian::{self, NoteInput, ObsidianConfig, ObsidianError, SaveResult};
+use super::services::{config as service_config, http as service_http, ops as service_ops};
 use super::smtp::{self, ConnectOpts, MailMessage, SendReceipt, SmtpConfig};
 use super::view::{self, TestResult};
 use super::webhook;
@@ -43,6 +44,8 @@ pub fn secret_slot(kind: Kind) -> Option<&'static str> {
         Kind::Wissen => Some("token"),
         // Die Adresse des Webhooks (B5): sie traegt oft den Schluessel im Pfad.
         Kind::Webhook => Some("url"),
+        // Dienst: API-Schluessel oder Webhook-Adresse (Slack, Teams, Discord).
+        Kind::Service => Some("token"),
         _ => None,
     }
 }
@@ -68,6 +71,12 @@ pub struct TargetSettings {
     pub search_tool: Option<String>,
     pub area: Option<String>,
     pub secret: Option<String>,
+    /// Dienst bei der Art `service` (`slack`, `jira`, ...); nur beim Anlegen.
+    pub service: Option<String>,
+    /// Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
+    pub fields: Option<std::collections::BTreeMap<String, String>>,
+    /// WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
+    pub catalog: Option<bool>,
 }
 
 fn opt(s: &Option<String>) -> Option<String> {
@@ -95,6 +104,13 @@ pub fn config_from_settings(kind: Kind, s: &TargetSettings, existing: Option<&Va
         Kind::Folder => json!({
             "path": text(opt(&s.path), "path"),
             "subfolder": text(opt(&s.subfolder), "subfolder"),
+        }),
+        Kind::Presenter => json!({
+            "path": text(opt(&s.path), "path"),
+            "catalog": s
+                .catalog
+                .or_else(|| old("catalog").and_then(|v| v.as_bool()))
+                .unwrap_or(true),
         }),
         Kind::Smtp => {
             let security = s
@@ -142,6 +158,32 @@ pub fn config_from_settings(kind: Kind, s: &TargetSettings, existing: Option<&Va
                 .unwrap_or_default();
             json!({ "host": host })
         }
+        // Dienst: Felder ueber die alten legen; der Dienst selbst steht nach dem Anlegen fest
+        // (ein anderer Dienst braeuchte einen anderen Schluessel).
+        Kind::Service => {
+            let mut cfg = existing
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            if existing.is_none() {
+                if let Some(sv) = opt(&s.service) {
+                    cfg.insert("service".into(), json!(sv));
+                }
+            }
+            for (k, v) in s.fields.iter().flatten() {
+                cfg.insert(k.clone(), json!(v.trim()));
+            }
+            let service = service_config::service_of(&Value::Object(cfg.clone()));
+            if let (Some(id), Some(secret)) = (
+                service,
+                s.secret.as_deref().filter(|v| !v.trim().is_empty()),
+            ) {
+                if let Some(host) = service_config::webhook_host(id, secret) {
+                    cfg.insert("host".into(), json!(host));
+                }
+            }
+            Value::Object(cfg)
+        }
         _ => existing.cloned().unwrap_or_else(|| json!({})),
     }
 }
@@ -185,15 +227,30 @@ pub fn normalize_config(kind: Kind, raw: &Value) -> Result<(Value, Option<String
             }
             Ok((json!({ "host": host }), Some(host)))
         }
+        Kind::Service => service_config::normalize(raw),
+        Kind::Presenter => {
+            let cfg = super::presenter::PresenterConfig::from_config_json(&text)?;
+            let path = folder::check_root_text(&cfg.path).map_err(|e| e.code().to_string())?;
+            Ok((json!({ "path": path, "catalog": cfg.catalog }), None))
+        }
         _ => Err(view::ERR_KIND_NOT_AVAILABLE.to_string()),
     }
 }
 
-/// Prueft das Geheimnis, wo es selbst eine Eingabe ist (Webhook: die Adresse): eine falsche
-/// Adresse wird beim Eintragen abgelehnt, nicht erst beim ersten Lauf.
-fn check_secret_input(kind: Kind, secret: Option<&str>) -> Result<(), String> {
-    if let (Kind::Webhook, Some(value)) = (kind, secret) {
-        webhook::parse_url(value).map_err(|e| e.to_string())?;
+/// Prueft das Geheimnis, wo es selbst eine Eingabe ist (Webhook: die Adresse; Dienst: Adresse
+/// gegen die Hosts des Dienstes bzw. Schluessel ohne Leerzeichen): eine falsche Eingabe wird beim
+/// Eintragen abgelehnt, nicht erst beim ersten Lauf.
+fn check_secret_input(kind: Kind, config: &Value, secret: Option<&str>) -> Result<(), String> {
+    match (kind, secret) {
+        (Kind::Webhook, Some(value)) => {
+            webhook::parse_url(value).map_err(|e| e.to_string())?;
+        }
+        (Kind::Service, Some(value)) => {
+            let id = service_config::service_of(config)
+                .ok_or_else(|| service_config::ERR_SERVICE_UNKNOWN.to_string())?;
+            service_config::check_secret(id, value)?;
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -206,7 +263,7 @@ fn needs_secret(kind: Kind, config: &Value) -> bool {
             .get("username")
             .and_then(Value::as_str)
             .is_some_and(|u| !u.is_empty()),
-        Kind::Wissen | Kind::Webhook => true,
+        Kind::Wissen | Kind::Webhook | Kind::Service => true,
         _ => false,
     }
 }
@@ -215,6 +272,7 @@ fn missing_secret_text(kind: Kind) -> String {
     match kind {
         Kind::Smtp => smtp::SmtpError::PasswordMissing.to_string(),
         Kind::Webhook => webhook::WebhookError::UrlMissing.to_string(),
+        Kind::Service => "Der Schlüssel bzw. die Webhook-Adresse fehlt.".to_string(),
         _ => wissen::WissenError::TokenMissing.to_string(),
     }
 }
@@ -235,7 +293,7 @@ pub fn create_with_secret(
     if needs_secret(kind, &raw) && secret.is_none() {
         return Err(missing_secret_text(kind));
     }
-    check_secret_input(kind, secret)?;
+    check_secret_input(kind, &raw, secret)?;
     let created = view::create_from_ui(conn, kind, label, direction, raw, now_ms)?;
     if let (Some(slot), Some(value)) = (secret_slot(kind), secret) {
         if let Err(e) = put(&created, slot, value) {
@@ -265,7 +323,7 @@ pub fn update_settings(
     let raw = config_from_settings(current.kind, settings, Some(&existing));
     let (config, hint) = normalize_config(current.kind, &raw)?;
     let secret = settings.secret.as_deref().filter(|s| !s.is_empty());
-    check_secret_input(current.kind, secret)?;
+    check_secret_input(current.kind, &config, secret)?;
     if let (Some(slot), Some(value)) = (secret_slot(current.kind), secret) {
         put(&current, slot, value)?;
     }
@@ -323,7 +381,7 @@ pub fn test_target(
         Ok(secret(&i, slot)?.unwrap_or_default())
     };
     let outcome: Result<(), (String, String)> = match i.kind {
-        Kind::Folder => return view::test_integration(conn, id, now_ms),
+        Kind::Folder | Kind::Presenter => return view::test_integration(conn, id, now_ms),
         Kind::Smtp => SmtpConfig::from_config_json(&i.config_json)
             .map_err(|e| (e.code().to_string(), e.to_string()))
             .and_then(|cfg| {
@@ -342,6 +400,9 @@ pub fn test_target(
                     .map_err(|e| (e.code().to_string(), e.to_string()))
             })
             .map(|_| ()),
+        Kind::Service => {
+            return test_service(conn, &i, &lookup, http_opts, now_ms);
+        }
         _ => return Ok(result(false, "test_not_available", None)),
     };
     let ok_code = match i.kind {
@@ -356,6 +417,50 @@ pub fn test_target(
         }
         Err((code, text)) => {
             store::mark_error(conn, id, &text, now_ms)?;
+            result(false, &code, Some(audit::sanitize_audit_text(&text, 400)))
+        }
+    })
+}
+
+/// „Verbindung testen“ fuer einen Dienst: ein lesender Aufruf (`ops::check`), der Schluessel
+/// und Ziel prueft und nichts anlegt; bei Slack, Teams und Discord nur die Adresse (keine
+/// Testnachricht in den Kanal).
+fn test_service(
+    conn: &Connection,
+    i: &Integration,
+    lookup: &dyn Fn(&str) -> Result<Zeroizing<String>, String>,
+    http_opts: &HttpOpts,
+    now_ms: i64,
+) -> Result<TestResult, IntegrationError> {
+    let outcome = (|| -> Result<String, (String, String)> {
+        let id = i.service().ok_or_else(|| {
+            (
+                service_config::ERR_SERVICE_UNKNOWN.to_string(),
+                "Der Dienst dieser Integration ist unbekannt.".to_string(),
+            )
+        })?;
+        let token = lookup("token").map_err(|e| ("service_token_broken".to_string(), e))?;
+        let settings: serde_json::Map<String, Value> =
+            serde_json::from_str(&i.config_json).unwrap_or_default();
+        let acc = service_ops::Account {
+            service: id,
+            token: &token,
+            settings: &settings,
+        };
+        let opts = webhook::HttpOpts {
+            timeout: http_opts.timeout,
+            ..webhook::HttpOpts::default()
+        };
+        let mut exec = |r: service_http::ApiRequest| service_http::execute(&r, &opts);
+        service_ops::check(&acc, &mut exec).map_err(|e| (e.code().to_string(), e.to_string()))
+    })();
+    Ok(match outcome {
+        Ok(msg) => {
+            store::mark_ok(conn, &i.id, now_ms)?;
+            result(true, "service_ok", Some(msg))
+        }
+        Err((code, text)) => {
+            store::mark_error(conn, &i.id, &text, now_ms)?;
             result(false, &code, Some(audit::sanitize_audit_text(&text, 400)))
         }
     })
@@ -540,6 +645,39 @@ pub fn place_export(
             sandbox
                 .write_new(&cfg.subfolder, what.file_name, writer)
                 .map_err(|e| e.to_string())
+        },
+    )
+}
+
+/// WAI Presenter (Etappe 4): schreibt ein Besprechungspaket und, wenn eingeschaltet, den
+/// Katalog in den Austauschordner (`presenter.send`). `build` bekommt die Sandbox der Wurzel
+/// und schreibt nur darueber (`presenter::write_package`, `presenter::write_catalog`).
+#[allow(clippy::too_many_arguments)]
+pub fn send_to_presenter<T>(
+    conn: &Connection,
+    caller: Caller,
+    integration_id: &str,
+    capability: Capability,
+    target: &str,
+    args: &Value,
+    approval_id: Option<&str>,
+    now_ms: i64,
+    build: impl FnOnce(&Sandbox, &super::presenter::PresenterConfig) -> Result<T, String>,
+) -> Result<GateOutcome<T>, IntegrationError> {
+    let i = load(conn, integration_id, Kind::Presenter)?;
+    gated(
+        conn,
+        caller,
+        integration_id,
+        capability,
+        target,
+        args,
+        approval_id,
+        now_ms,
+        || {
+            let cfg = super::presenter::PresenterConfig::from_config_json(&i.config_json)?;
+            let sandbox = Sandbox::open(&cfg.path).map_err(|e| e.code().to_string())?;
+            build(&sandbox, &cfg)
         },
     )
 }
