@@ -14,6 +14,7 @@ import {
   SpellCheck,
   Tags,
   Upload,
+  Users,
   WandSparkles,
   Zap,
 } from "lucide-react";
@@ -85,6 +86,15 @@ export interface ReadAloudActionsProps {
   onSumDetailChange: (value: string) => void;
   sumAudience: string;
   onSumAudienceChange: (value: string) => void;
+  /** Fortschritt von Übersetzung/Zusammenfassung (Block x von y). */
+  transformProgress: {
+    kind: "translation" | "summary";
+    done: number;
+    total: number;
+  } | null;
+  onCancelTransform: (kind: "translation" | "summary") => void;
+  /** Sprecher der Übersetzung gegen Stimmen der Zielsprache tauschen. */
+  onSwapSpeakers: () => void;
 }
 
 /** Fortschrittsbalken mit Text und Abbrechen — die Zeilen unter den Knöpfen. */
@@ -222,6 +232,47 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     },
   ];
 
+  // Übersetzung und Zusammenfassung: dasselbe Menü, aber nur, was auf den
+  // Text DIESES Reiters wirkt. Aufbereiten und Auto-Tagging arbeiten am
+  // Original und bleiben dort.
+  const otherTabItems: ActionMenuItem[] = [
+    ...menuItems.filter((item) => item.id === "workshop" || item.id === "script-check"),
+    ...(tab === "translation"
+      ? [
+          {
+            id: "speaker-swap",
+            label: t("tts.speakerSwap.open"),
+            icon: Users,
+            onSelect: props.onSwapSpeakers,
+            disabled: !hasSpokenText,
+            testId: "speaker-swap-open",
+            title: t("tts.speakerSwap.hint"),
+          },
+        ]
+      : []),
+  ];
+  const otherTabMenu = (
+    <ActionMenu
+      trigger={{
+        icon: Menu,
+        label: t("tts.actions.menu"),
+        description: t("tts.actions.menuHint"),
+        testId: `tts-action-menu-${tab}`,
+        badge: errorCount > 0 ? errorCount : undefined,
+      }}
+      menuLabel={t("tts.actions.menu")}
+      items={otherTabItems}
+      align="end"
+    />
+  );
+  const running =
+    props.transformProgress && props.transformProgress.kind === tab
+      ? props.transformProgress
+      : null;
+  const transformBusy =
+    (tab === "translation" && props.translating) ||
+    (tab === "summary" && props.summarizing);
+
   // Speichern und Vorab-Erzeugen gehören in jedem Reiter dazu.
   const saveButton = (
     <IconAction
@@ -342,6 +393,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
             </TooltipTrigger>
             {saveButton}
             {prewarmButton}
+            {otherTabMenu}
           </>
         )}
         {tab === "summary" && (
@@ -432,9 +484,39 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
             <span className="flex-1" />
             {saveButton}
             {prewarmButton}
+            {otherTabMenu}
           </>
         )}
       </div>
+
+      {transformBusy && (
+        <ProgressLine
+          tabular
+          ratio={running && running.total > 0 ? running.done / running.total : 0}
+          text={
+            // Eine einzige Anfrage (Cloud, API, Abo) hat keine Bloecke zu zaehlen.
+            !running || running.total <= 1
+              ? tab === "translation"
+                ? t("tts.transform.translateStarting")
+                : t("tts.transform.summaryStarting")
+              : tab === "translation"
+                ? t("tts.transform.translateBlock", {
+                    done: Math.min(running.done + 1, running.total),
+                    total: running.total,
+                  })
+                : running.done >= running.total - 1 && running.total > 1
+                  ? t("tts.transform.summaryCombine")
+                  : t("tts.transform.summaryBlock", {
+                      done: Math.min(running.done + 1, running.total),
+                      total: running.total,
+                    })
+          }
+          cancelLabel={t("tts.transform.cancel")}
+          onCancel={() =>
+            props.onCancelTransform(tab === "translation" ? "translation" : "summary")
+          }
+        />
+      )}
 
       {saving && (
         <ProgressLine

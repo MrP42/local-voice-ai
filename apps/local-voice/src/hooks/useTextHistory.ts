@@ -98,6 +98,14 @@ export function useTextHistory(
     e.initializing = value !== e.present;
   }, [key]);
 
+  /** Ein geladener Text (aus dem Zwischenspeicher, von einer anderen Seite) ist
+   *  kein Bearbeitungsschritt: als aktuellen Stand eintragen, bevor er gesetzt
+   *  wird -- sonst machte "Rueckgaengig" nach dem Laden den Text leer. */
+  const syncPresent = useCallback((forKey: string, next: string) => {
+    const e = entries.current.get(forKey);
+    if (e) e.present = next;
+  }, []);
+
   const undo = useCallback(() => {
     const e = entryFor(key);
     const prev = e.past.pop();
@@ -148,6 +156,7 @@ export function useTextHistory(
     undo,
     redo,
     jump,
+    syncPresent,
     /** Zustaende vor dem jetzigen, neuester zuerst. */
     past: [...(e?.past ?? [])].reverse(),
     /** Zurueckgenommene Zustaende, naechster zuerst. */

@@ -1,7 +1,14 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
+import { usePageHeaderSlot } from "../shell/PageHeaderSlot";
 import { useTranslation } from "react-i18next";
 import { HelpCircle, X } from "lucide-react";
 import { HelpPanel } from "../help/HelpPanel";
+import { IconButton } from "./IconButton";
+import {
+  ToggleButton,
+  Tooltip as FluentTooltip,
+} from "@fluentui/react-components";
 
 interface PageShellProps {
   /** Seitentitel — eine Zeile, dieselbe Groesse auf jeder Seite. */
@@ -38,40 +45,43 @@ export const PageShell: React.FC<PageShellProps> = ({
 }) => {
   const { t } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
+  const slot = usePageHeaderSlot();
+  const head = (
+    <header className="page-shell__head flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h1 id="page-title" className="page-shell__title text-text">
+          {title}
+        </h1>
+      </div>
+      {(actions || help) && (
+        <div className="page-shell__actions flex items-center gap-1 shrink-0">
+          {help && (
+            <FluentTooltip content={t("help.open")} relationship="label">
+              <ToggleButton
+                appearance="subtle"
+                checked={helpOpen}
+                onClick={() => setHelpOpen((open) => !open)}
+                aria-pressed={helpOpen}
+                icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
+              />
+            </FluentTooltip>
+          )}
+          {actions}
+        </div>
+      )}
+    </header>
+  );
   return (
     <section
       className={`page-shell w-full ${fill ? "page-shell--fill flex flex-col gap-4" : "space-y-4"}`}
       aria-labelledby="page-title"
     >
-      <header className="page-shell__head flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 id="page-title" className="text-xl font-semibold text-text">
-            {title}
-          </h1>
-          {description && (
-            <p className="text-sm text-text/60 mt-1">{description}</p>
-          )}
-        </div>
-        {(actions || help) && (
-          <div className="page-shell__actions flex items-center gap-1 shrink-0">
-            {help && (
-              <button
-                type="button"
-                onClick={() => setHelpOpen((open) => !open)}
-                title={t("help.open")}
-                aria-label={t("help.open")}
-                aria-pressed={helpOpen}
-                className={`p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer ${
-                  helpOpen ? "text-text" : "text-text/60 hover:text-text"
-                }`}
-              >
-                <HelpCircle width={20} height={20} aria-hidden="true" />
-              </button>
-            )}
-            {actions}
-          </div>
-        )}
-      </header>
+      {slot ? createPortal(head, slot) : head}
+      {description && (
+        <p className="page-shell__description text-sm text-text-muted">
+          {description}
+        </p>
+      )}
       {help && helpOpen ? (
         <div
           className={`flex gap-4 ${fill ? "flex-1 min-h-0 items-stretch" : "items-start"}`}
@@ -86,18 +96,14 @@ export const PageShell: React.FC<PageShellProps> = ({
             aria-label={t("help.title")}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+              <span className="text-xs font-semibold text-text/50">
                 {t("help.title")}
               </span>
-              <button
-                type="button"
+              <IconButton
                 onClick={() => setHelpOpen(false)}
-                title={t("help.close")}
-                aria-label={t("help.close")}
-                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 cursor-pointer"
-              >
-                <X width={14} height={14} />
-              </button>
+                label={t("help.close")}
+                icon={<X width={14} height={14} />}
+              />
             </div>
             <HelpPanel section={help} />
           </aside>

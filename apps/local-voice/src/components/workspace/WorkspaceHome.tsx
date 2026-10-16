@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
+import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
 
 export function WorkspaceHome({
@@ -21,7 +22,7 @@ export function WorkspaceHome({
   const shortcut = getSetting("bindings")?.transcribe?.current_binding;
   const openDictationSettings = () => {
     try {
-      localStorage.setItem("lva.ui.settings.tab", "dictation");
+      localStorage.setItem("lva.ui.settings.tab", "input");
     } catch {
       /* Navigation still works if browser storage is unavailable. */
     }
@@ -57,13 +58,14 @@ export function WorkspaceHome({
           ) : (
             <p className="text-sm mt-2">{t("workspace.shortcutMissing")}</p>
           )}
-          <button
-            className="workspace-text-action"
+          <Button
+            variant="primary"
             onClick={openDictationSettings}
+            data-testid="workspace-setup-dictation"
           >
             {t("workspace.setupDictation")}
             <ArrowRight size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       </section>
       <div className="workspace-tasks">

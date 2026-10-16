@@ -120,17 +120,18 @@ export const LlmModelDirs: React.FC<LlmModelDirsProps> = ({ foundCount }) => {
       {openSuggestions.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {openSuggestions.map((s) => (
-            <button
+            <Button
               key={s}
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => void save([...dirs, s])}
               disabled={rescanning}
-              className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-mid-gray/40 text-text/70 hover:bg-mid-gray/10 hover:text-text disabled:opacity-50"
+              icon={<Plus className="w-3 h-3" />}
               data-suggested-dir={s}
             >
-              <Plus className="w-3 h-3" />
               {t("settings.models.llm.dirs.suggest", { path: s })}
-            </button>
+            </Button>
           ))}
         </div>
       )}

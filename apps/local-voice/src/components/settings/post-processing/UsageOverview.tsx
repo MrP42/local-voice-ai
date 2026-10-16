@@ -232,7 +232,7 @@ const BucketTable: React.FC<{
   const { t } = useTranslation();
   return (
     <div data-usage-table={testId}>
-      <p className="text-xs uppercase tracking-wide text-text/50 mb-1">
+      <p className="text-xs text-text/50 mb-1">
         {title}
       </p>
       <table className="w-full text-sm">

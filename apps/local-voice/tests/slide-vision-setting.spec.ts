@@ -69,9 +69,8 @@ test("Bildanalyse ist standardmäßig aus und lässt sich einschalten", async ({
   const toggle = page.getByTestId("slide-vision-toggle");
   await expect(toggle).not.toBeChecked();
   await expect(page.getByTestId("slide-vision-state")).toHaveText("Bereit");
-  await page
-    .locator("label", { has: page.getByTestId("slide-vision-toggle") })
-    .click();
+  // Fluent Switch: Klick auf den sichtbaren Schalter.
+  await toggle.click();
   await expect(toggle).toBeChecked();
   const sent = await calls(page, "change_meeting_slide_vision_setting");
   expect(sent.map((c) => c.args)).toEqual([{ enabled: true }]);

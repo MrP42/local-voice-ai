@@ -83,6 +83,37 @@ fn eu_blocks_providers_without_documented_facts() {
 }
 
 #[test]
+fn eu_facts_need_the_official_host_over_https() {
+    let t = "2026-10-06";
+    let eu = |id: &str, url: &str| assess(ComplianceProfile::Eu, &provider(id, url), false, t);
+    for url in [
+        "https://llm.example.com/v1",
+        "http://eu.api.openai.com/v1",
+        "https://eu.api.openai.com.evil.example/v1",
+        "not a url",
+    ] {
+        let a = eu("openai_eu", url);
+        assert_eq!(a.verdict, Verdict::Blocked, "{url}");
+        assert_eq!(a.reasons, vec!["facts_unknown"], "{url}");
+    }
+    assert!(facts_for("mistral", "https://mistral.example.com/v1").is_none());
+    assert!(facts_for("claude_cli", "https://claude/v1").is_none());
+    assert!(facts_for(
+        "bedrock_mantle",
+        "https://bedrock-mantle.xx-evil-1.api.aws/v1"
+    )
+    .is_none());
+    assert_eq!(
+        facts_for(
+            "bedrock_mantle",
+            "https://bedrock-mantle.us-west-2.api.aws/v1"
+        )
+        .map(|f| f.countries),
+        Some(&["US"][..])
+    );
+}
+
+#[test]
 fn eu_rule_matrix() {
     use Tri::*;
     let today = "2026-10-06";

@@ -15,27 +15,25 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { IconButton } from "../../ui/IconButton";
 
-const IconButton: React.FC<{
+/** Zeilen-Symbol: gemeinsamer IconButton (Tooltip, aria-label); `active` = Akzentfarbe. */
+const HistoryIconButton: React.FC<{
   onClick: () => void;
   title: string;
   disabled?: boolean;
   active?: boolean;
   children: React.ReactNode;
 }> = ({ onClick, title, disabled, active, children }) => (
-  <button
+  <IconButton
     onClick={onClick}
     disabled={disabled}
-    aria-label={title}
-    className={`min-h-11 min-w-11 p-2 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:text-text/20 ${
-      active
-        ? "text-logo-primary hover:text-logo-primary/80"
-        : "text-text/50 hover:text-logo-primary"
-    }`}
-    title={title}
-  >
-    {children}
-  </button>
+    label={title}
+    icon={children}
+    size="md"
+    aria-pressed={active}
+    className={active ? "lv-icon-active" : undefined}
+  />
 );
 
 const PAGE_SIZE = 30;
@@ -361,7 +359,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
       <div className="flex justify-between items-center">
         <p className="text-sm font-medium">{formattedDate}</p>
         <div className="flex items-center">
-          <IconButton
+          <HistoryIconButton
             onClick={handleCopyText}
             disabled={!hasTranscription || retrying}
             title={t("settings.history.copyToClipboard")}
@@ -371,8 +369,8 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             ) : (
               <Copy width={16} height={16} />
             )}
-          </IconButton>
-          <IconButton
+          </HistoryIconButton>
+          <HistoryIconButton
             onClick={onToggleSaved}
             disabled={retrying}
             active={entry.saved}
@@ -387,8 +385,8 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
               height={16}
               fill={entry.saved ? "currentColor" : "none"}
             />
-          </IconButton>
-          <IconButton
+          </HistoryIconButton>
+          <HistoryIconButton
             onClick={handleRetranscribe}
             disabled={retrying}
             title={t("settings.history.retranscribe")}
@@ -402,14 +400,14 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
                   : undefined
               }
             />
-          </IconButton>
-          <IconButton
+          </HistoryIconButton>
+          <HistoryIconButton
             onClick={handleDeleteEntry}
             disabled={retrying}
             title={t("settings.history.delete")}
           >
             <Trash2 width={16} height={16} />
-          </IconButton>
+          </HistoryIconButton>
         </div>
       </div>
 

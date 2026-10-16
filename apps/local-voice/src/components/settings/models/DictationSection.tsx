@@ -294,18 +294,21 @@ export const DictationSection: React.FC<{ query: string }> = ({ query }) => {
         collapsible={false}
         actions={
           <>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => rescanLocalModels()}
               disabled={isRescanning}
               title={t("settings.models.rescan.tooltip")}
-              className="flex items-center gap-1.5 rounded-lg bg-mid-gray/10 px-2.5 py-1 text-xs font-medium text-text/60 hover:bg-mid-gray/20 disabled:opacity-50"
+              icon={
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${isRescanning ? "animate-spin" : ""}`}
+                />
+              }
             >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${isRescanning ? "animate-spin" : ""}`}
-              />
               {t("settings.models.rescan.label")}
-            </button>
+            </Button>
             <LanguageFilter
               value={languageFilter}
               onChange={setLanguageFilter}
@@ -368,23 +371,22 @@ const LanguageFilter: React.FC<{
   };
   return (
     <div className="relative" ref={ref}>
-      <button
+      <Button
         type="button"
+        variant={value !== "all" ? "secondary" : "ghost"}
+        size="sm"
         onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium ${
-          value !== "all"
-            ? "bg-logo-primary/20 text-logo-primary"
-            : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
-        }`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        icon={<Globe className="h-3.5 w-3.5" />}
       >
-        <Globe className="h-3.5 w-3.5" />
         <span className="max-w-[120px] truncate">
           {value === "all"
             ? t("settings.models.filters.allLanguages")
             : getLanguageLabel(value)}
         </span>
         <ChevronDown className={`h-3.5 w-3.5 ${open ? "rotate-180" : ""}`} />
-      </button>
+      </Button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-mid-gray/80 bg-background shadow-lg">
           <div className="border-b border-mid-gray/40 p-2">

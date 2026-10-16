@@ -16,8 +16,8 @@ export type ProvenanceSubject =
   | {
       type: "document";
       meetingId: string;
-      /** `minutes` (Protokoll mit Zusammenfassung) oder `enhanced_notes` (KI-Notizen). */
-      docKind: "minutes" | "enhanced_notes";
+      /** `minutes` (Protokoll), `enhanced_notes` (KI-Notizen) oder `doc:<typ>` (Dokumenttypen). */
+      docKind: string;
     };
 
 /** Liest die Herkunft des Inhalts; leer, wenn es keine gibt. */

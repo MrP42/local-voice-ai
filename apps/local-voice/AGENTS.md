@@ -61,13 +61,18 @@ sidebar lists what the user *does* — history, meetings, models, read aloud —
 plus a single **Einstellungen** entry. Everything configurable lives in that
 entry's tabs (`src/components/settings/app-settings/`):
 
-| Tab | What belongs there |
+| Tab (id) | What belongs there |
 |---|---|
-| `DictationTab` | Shortcuts, recognition, how the text is inserted, and the dictation test at its foot |
-| `SoundTab` | Input/output devices, audible feedback |
-| `PostProcessingSettings` | The LLM provider, its switch, the prompts |
-| `AppTab` | Appearance, start-up, storage and files, updates, experimental |
-| `AboutSettings` / `DebugSettings` | Information and diagnostics |
+| Eingabe (`input`, `DictationTab`) | Shortcuts, microphone, recognition, how the text is inserted, shortcut and prompts of the text enhancement, meetings, and the dictation test at its foot |
+| Ausgabe (`output`, `OutputTab`) | Read aloud (`ReadAloudTab`) and audible feedback (`SoundTab`) |
+| KI-Modelle & Anbieter (`models`, `PostProcessingSettings`) | Rules (compliance), active model, default effort, connections, usage |
+| Allgemein (`app`, `AppTab`) | Appearance, start-up, storage and files, updates, experimental |
+| Über / Debug | Information and diagnostics |
+
+The tabs are sorted by **topic** (what goes in, what comes out, which AI model),
+not by feature module. Since 09.10.2026 a stored tab id from the old layout
+(`dictation`, `sound`, `readaloud`, `postprocessing`) is mapped to its successor
+in `AppSettings.tsx` (`LEGACY_TABS`); code that opens a tab writes the new id.
 
 A new setting goes into the group inside one of these tabs where a user would
 go looking for it. If none fits, that is a signal the grouping is wrong — fix

@@ -613,3 +613,10 @@ fn provenance_operations_are_valid_tokens() {
     }
     assert!(valid(&item_op("0123456789abcdef")));
 }
+
+#[test]
+fn record_field_names_that_clean_to_the_same_stay_apart() {
+    let out = record_fields(&json!({"fields": {"a  b": 1, "a\nb": 2, "a b": 3}})).unwrap();
+    assert_eq!(out.len(), 3);
+    assert!(out.contains_key("a b") && out.contains_key("a b (2)") && out.contains_key("a b (3)"));
+}

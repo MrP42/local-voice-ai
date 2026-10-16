@@ -330,7 +330,15 @@ fn record_fields(params: &Value) -> Result<Map<String, Value>, StepError> {
             Value::String(s) => Value::String(multi_line(s)),
             other => other.clone(),
         };
-        out.insert(key, v);
+        // Zwei Namen, die nach der Bereinigung gleich sind ("a\nb", "a b"),
+        // ueberschreiben sich nicht still: der spaetere bekommt " (2)", " (3)" ...
+        let mut unique = key.clone();
+        let mut n = 2;
+        while out.contains_key(&unique) {
+            unique = format!("{key} ({n})");
+            n += 1;
+        }
+        out.insert(unique, v);
     }
     if Value::Object(out.clone()).to_string().len() > MAX_RECORD_BYTES {
         return Err(permanent("Der Datensatz ist zu groß (höchstens 64 KiB)."));
