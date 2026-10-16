@@ -436,6 +436,12 @@ impl Store {
 
     /// Speichert ein eigenes Profil (neu oder geaendert).
     pub fn save(&self, lh: &Letterhead) -> Result<(), String> {
+        let _lock = profile_lock();
+        self.save_locked(lh)
+    }
+
+    /// [`Self::save`] fuer Aufrufer, die [`PROFILE_LOCK`] schon halten.
+    fn save_locked(&self, lh: &Letterhead) -> Result<(), String> {
         if is_builtin(&lh.id) {
             return Err(CODE_READ_ONLY.to_string());
         }
@@ -466,6 +472,7 @@ impl Store {
         if is_builtin(id) {
             return Err(CODE_READ_ONLY.to_string());
         }
+        let _lock = profile_lock();
         let mut lh = self.get(id)?;
         let dir = self.dir(id)?;
         let previous_file = lh
@@ -501,7 +508,7 @@ impl Store {
                 Some(name)
             }
         };
-        if let Err(e) = self.save(&lh) {
+        if let Err(e) = self.save_locked(&lh) {
             if let Some(new) = &keep {
                 let _ = std::fs::remove_file(dir.join(new));
             }
@@ -557,6 +564,17 @@ fn valid_logo_file(name: &str) -> bool {
     stem.strip_prefix("logo-").is_some_and(|u| {
         (1..=40).contains(&u.len()) && u.chars().all(|c| c.is_ascii_alphanumeric())
     })
+}
+
+/// Prozessweite Sperre fuer jedes Schreiben eines Profils: Logo ersetzen,
+/// Profil speichern und altes Logo loeschen laufen als ein Schritt, ein
+/// paralleles `save` schreibt keinen alten Verweis dazwischen zurueck.
+static PROFILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn profile_lock() -> std::sync::MutexGuard<'static, ()> {
+    PROFILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Ist das eine mitgelieferte Id?

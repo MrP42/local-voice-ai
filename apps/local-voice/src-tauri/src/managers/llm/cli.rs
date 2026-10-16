@@ -663,6 +663,9 @@ pub(crate) fn run_with_timeout(
     use std::time::Instant;
 
     let deadline = Instant::now() + timeout;
+    // Grenze: das Job-Objekt wird erst nach dem Start zugeordnet -- was das
+    // Kind davor schon startet, faengt es nicht. Ausserhalb von Windows wird
+    // bei Zeitueberschreitung nur das Kind beendet, nicht seine Kinder.
     let job = crate::process_guard::ProcessGuard::attach(&child, None, 100);
     let kill_tree = |child: &mut std::process::Child,
                      job: Option<crate::process_guard::ProcessGuard>| {
@@ -808,8 +811,9 @@ pub(crate) fn supports_ignore_user_config(exec_help: &str) -> bool {
 }
 
 /// `-c mcp_servers.<name>.enabled=false` fuer jeden Server aus
-/// `codex mcp list --json`. Ein Name, der nicht sicher auf die Kommandozeile
-/// passt, ist ein Fehler -- lieber kein Aufruf als ein Server, der an bleibt.
+/// `codex mcp list --json`. Nur Namen aus `[A-Za-z0-9_-]+`: ein Punkt wuerde
+/// als Konfigurationspfad gelesen und traefe einen anderen Server. Jeder andere
+/// Name bricht ab (kein Quoting) -- lieber kein Aufruf als ein Server, der an bleibt.
 pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
     let v: serde_json::Value = serde_json::from_str(list_json.trim())
         .map_err(|e| format!("cli_failed: MCP-Liste von Codex unlesbar ({e})"))?;
@@ -819,7 +823,11 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     for s in servers {
         let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        if !valid_model_name(name) {
+        let plain = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !plain {
             return Err(format!(
                 "cli_failed: MCP-Server mit unerwartetem Namen, Aufruf abgebrochen ({name:?})"
             ));
@@ -895,6 +903,8 @@ mod tests {
         );
         assert!(mcp_disable_args("[]").unwrap().is_empty());
         assert!(mcp_disable_args(r#"[{"name":"a b=true"}]"#).is_err());
+        assert!(mcp_disable_args(r#"[{"name":"a.b"}]"#).is_err());
+        assert!(mcp_disable_args(r#"[{"name":""}]"#).is_err());
         assert!(mcp_disable_args("kein json").is_err());
     }
 
