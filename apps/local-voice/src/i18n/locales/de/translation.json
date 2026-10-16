@@ -870,6 +870,39 @@
     "nonCommercialHint": "Lizenz {{license}}: nur für nicht-kommerzielle Nutzung erlaubt. Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen."
   },
   "settings": {
+    "documents": {
+      "title": "Dokumente",
+      "description": "Wie exportierte Protokolle und Dokumente in Word und PDF aussehen.",
+      "letterhead": "Briefkopf für Word und PDF",
+      "letterheadHint": "Logo, Firma, Farben und Fußzeile. Mitgelieferte Briefköpfe lassen sich als eigener Briefkopf kopieren und dann anpassen.",
+      "own": "eigener",
+      "sample": "Beispiel speichern …",
+      "sampleSaved": "Beispiel gespeichert unter {{path}}",
+      "createOwn": "Als eigenen Briefkopf anlegen",
+      "copyName": "Kopie von {{name}}",
+      "name": "Name",
+      "firm": "Firma",
+      "lines": "Zeilen unter der Firma (höchstens 4)",
+      "footer": "Fußzeile (höchstens 3 Zeilen)",
+      "accent": "Akzentfarbe",
+      "titleColor": "Farbe der Überschriften",
+      "logoSet": "Logo hinterlegt",
+      "logoNone": "Kein Logo",
+      "logoPick": "Logo wählen …",
+      "logoRemove": "Logo entfernen",
+      "logoLeft": "Logo links",
+      "logoRight": "Logo rechts",
+      "save": "Speichern",
+      "saved": "Gespeichert.",
+      "delete": "Briefkopf löschen",
+      "errors": {
+        "letterhead_not_found": "Dieser Briefkopf existiert nicht mehr.",
+        "letterhead_read_only": "Mitgelieferte Briefköpfe lassen sich nicht ändern. Lege einen eigenen an.",
+        "letterhead_invalid": "Angabe ungültig: {{error}}",
+        "letterhead_logo_invalid": "Das Logo muss ein PNG oder JPEG bis 2 MB und 4000 Pixel Kantenlänge sein.",
+        "letterhead_io": "Speichern fehlgeschlagen."
+      }
+    },
     "compliance": {
         "title": "Regelwerk",
         "profile": "Geltende Regeln für Sprachmodelle",
@@ -1731,7 +1764,8 @@
           "tagging": "Tags",
           "translation": "Übersetzung",
           "enhanced_notes": "KI-Notizen",
-          "followup": "Follow-up-Mail"
+          "followup": "Follow-up-Mail",
+          "document": "Dokumente"
         }
       },
       "effortLevels": {
@@ -1880,6 +1914,19 @@
     "unavailable": "Mikrofonpegel nicht verfügbar — Zugriff verweigert oder kein Gerät."
   },
   "meetings": {
+    "presenter": {
+      "button": "An WAI Presenter senden",
+      "title": "An WAI Presenter senden",
+      "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
+      "target": "Austauschordner",
+      "documents": "Dokumente",
+      "noDocuments": "Noch kein Dokument erzeugt; das Paket enthält dann nur das Transkript.",
+      "formats": "Zusätzlich als (Markdown ist immer dabei)",
+      "submit": "Senden",
+      "sending": "Wird gesendet …",
+      "done": "Gesendet: {{folder}} ({{files}} Dateien)",
+      "error": "Senden fehlgeschlagen: {{error}}"
+    },
     "recordingIndicator": "Meeting-Aufnahme läuft",
     "dictationBlocked": "Diktat ist gesperrt, solange eine Meeting-Aufnahme läuft.",
     "title": "Besprechungen",
@@ -2452,6 +2499,14 @@
         "no_transcript_named": "„{{title}}“ hat kein Transkript."
       }
     },
+    "documents": {
+      "typesLabel": "Dokumente dieser Besprechung",
+      "new": "Neues Dokument",
+      "newHint": "Weiteres Dokument aus dem Transkript erzeugen: Management Summary, Zusammenfassung, Statusbericht und mehr",
+      "empty": "Noch kein Dokument „{{title}}“. Für: {{audience}} · {{length}}.",
+      "generating": "„{{title}}“ wird erzeugt…",
+      "copy": "Dokument kopieren"
+    },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",
@@ -2476,6 +2531,7 @@
       "stepOf": "Schritt {{done}} von {{total}}",
       "cancelled": "Die Erzeugung wurde abgebrochen.",
       "errors": {
+        "doc_type_unknown": "Unbekannter Dokumenttyp.",
         "minutes_busy": "Für diese Besprechung wird schon ein Protokoll erzeugt.",
         "job_busy": "Für diese Besprechung läuft schon eine andere Verarbeitung (zum Beispiel KI-Notizen).",
         "minutes_cancelled": "Die Erzeugung wurde abgebrochen.",
@@ -4686,6 +4742,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
+      "presenter": "WAI Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -4707,6 +4764,11 @@
       "soon": "bald",
       "auto": "automatisch",
       "items": {
+        "presenter": {
+          "name": "WAI Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "action": "Austauschordner wählen"
+        },
         "calendar_ics": {
           "name": "Kalender (ICS-Adresse)",
           "description": "Termine aus Outlook, Google oder Nextcloud lesen, über eine geheime ICS-Adresse. Nur lesend.",
@@ -4922,6 +4984,14 @@
       }
     },
     "capabilities": {
+      "presenter_send": {
+        "title": "Pakete an den Presenter schreiben",
+        "description": "Besprechung, Transkript und gewählte Dokumente als Paket in den Austauschordner legen, dazu den Katalog."
+      },
+      "presenter_request": {
+        "title": "Anfragen des Presenters bearbeiten",
+        "description": "Auf Anfrage des Presenters fehlende Dokumente erzeugen (Sprachmodell) und das Paket schreiben."
+      },
       "calendar_read": {
         "title": "Kalender lesen",
         "description": "Termine und Teilnehmende lesen."
@@ -5114,6 +5184,14 @@
       }
     },
     "target": {
+      "presenter": {
+        "title": "WAI Presenter einrichten",
+        "titleEdit": "WAI-Presenter-Einstellungen",
+        "path": "Austauschordner",
+        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
+        "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
+      },
       "create": "Anlegen",
       "save": "Speichern",
       "name": "Name",

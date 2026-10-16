@@ -223,6 +223,17 @@ impl Drop for RunningGuard {
     }
 }
 
+/// Sperre der Modellpruefung: `Some` nur fuer den ersten Aufrufer. Der Guard
+/// entsteht nur dann -- sein Drop gibt die Sperre frei, ein Guard fuer den
+/// zweiten Aufrufer wuerde sie der laufenden Pruefung wegnehmen.
+fn try_start_model_check() -> Option<RunningGuard> {
+    if MODEL_CHECK_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        None
+    } else {
+        Some(RunningGuard)
+    }
+}
+
 /// Fragt die eingeschalteten, nicht gesperrten Verbindungen nach ihren Modellen
 /// (das Claude-Abo durch Ausprobieren der naheliegenden Nachfolger), vermerkt
 /// Neues im Verlauf und uebernimmt es je nach Einstellung. Still bei Fehlern.
@@ -230,10 +241,9 @@ impl Drop for RunningGuard {
 #[specta::specta]
 pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> {
     use crate::managers::llm::cli::{self, Cli};
-    use std::sync::atomic::Ordering;
-    let first = !MODEL_CHECK_RUNNING.swap(true, Ordering::SeqCst);
     // Laeuft schon eine Pruefung, antwortet dieser Aufruf nur mit dem Stand.
-    let _guard = first.then_some(RunningGuard);
+    let guard = try_start_model_check();
+    let first = guard.is_some();
     let now = unix_now();
     let s0 = settings::get_settings(&app);
     updates::restore_claude_extras(&s0);
@@ -440,8 +450,7 @@ pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -
         return Err(format!("Unbekannte Verbindung: {connection_id}"));
     }
     s.post_process_api_keys.insert(connection_id, api_key);
-    settings::write_settings(&app, s);
-    Ok(())
+    settings::try_write_settings(&app, s)
 }
 
 // ---- Lokales Sprachmodell: Laufzeit, Modelle, Server ----------------------
@@ -717,4 +726,20 @@ pub async fn llm_local_fit(
         on_gpu,
         verdict,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ein zweiter Aufrufer bekommt keinen Guard und laesst die Sperre stehen.
+    #[test]
+    fn second_model_check_does_not_release_the_lock() {
+        let first = try_start_model_check();
+        assert!(first.is_some());
+        assert!(try_start_model_check().is_none());
+        assert!(MODEL_CHECK_RUNNING.load(std::sync::atomic::Ordering::SeqCst));
+        drop(first);
+        assert!(!MODEL_CHECK_RUNNING.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

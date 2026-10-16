@@ -99,6 +99,11 @@ export const installIntegrationsMock = async (
           caps: ["knowledge.search", "knowledge.read"],
         },
         webhook: { directions: ["write"], caps: ["webhook.post"] },
+        // Etappe 4: WAI Presenter (Austauschordner).
+        presenter: {
+          directions: ["read", "write", "both"],
+          caps: ["presenter.send", "presenter.request"],
+        },
         // Dienst: die Faehigkeiten haengen am Dienst (`SERVICES`), siehe `toView`.
         service: { directions: ["write"], caps: [] },
         youtube: { directions: ["read"], caps: ["media.fetch", "youtube.add"] },
@@ -658,6 +663,10 @@ export const installIntegrationsMock = async (
                 from_name: st.from_name ?? "",
               });
               secret = !!st.secret;
+            } else if (kind === "presenter") {
+              const path = String(st.path ?? "").trim();
+              if (!path) throw "folder_path_missing";
+              Object.assign(cfg, { path, catalog: st.catalog !== false });
             } else if (kind === "obsidian") {
               const path = String(st.path ?? "").trim();
               if (!path) throw "vault_path_missing";

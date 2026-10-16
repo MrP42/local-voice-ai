@@ -15,6 +15,7 @@ import {
   Table2,
   Users,
   Webhook,
+  Presentation,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,8 @@ const ICONS: Record<string, LucideIcon> = {
   agent: Bot,
   mcp: Bot,
   webhook: Webhook,
+  // Etappe 4: WAI Presenter (Austauschordner).
+  presenter: Presentation,
   // Dienste (Welle 1): Symbol nach Zweck, keine Markenlogos.
   service: Plug,
   slack: MessageSquare,

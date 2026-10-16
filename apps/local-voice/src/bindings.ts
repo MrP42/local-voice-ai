@@ -2068,6 +2068,117 @@ async meetingsGetAutoTemplate(meetingId: string) : Promise<Result<AutoTemplateIn
 }
 },
 /**
+ * Der Katalog der Dokumenttypen (Reihenfolge = Anzeige, Protokoll zuerst).
+ */
+async meetingsDocumentTypes() : Promise<Result<DocTypeInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_types") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anzeigedaten des juengsten Dokuments eines Typs (Unvollstaendigkeit, Luecken).
+ */
+async meetingsDocumentMeta(meetingId: string, docType: string) : Promise<Result<MinutesMeta | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_document_meta", { meetingId, docType }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dokumenttyp erzeugen (neue Version), mit `DocumentEvent`. Fehler sind Codes wie beim
+ * Protokoll (`minutes_busy`, `no_provider`, ...) oder `doc_type_unknown`.
+ */
+async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBasis | null) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_generate_document", { meetingId, docType, basis }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein gespeichertes Dokument exportieren: Format nach der Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
+ */
+async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle Briefkoepfe: mitgelieferte zuerst, dann eigene.
+ */
+async letterheadsList() : Promise<Result<Letterhead[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterheads_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf anlegen oder aendern (mitgelieferte sind schreibgeschuetzt).
+ */
+async letterheadSave(letterhead: Letterhead) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_save", { letterhead }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Briefkopf entfernen. War er eingestellt, gilt wieder die Vorgabe.
+ */
+async letterheadDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Logo eines eigenen Briefkopfs setzen (PNG/JPEG) oder entfernen (`path = null`).
+ */
+async letterheadSetLogo(id: string, path: string | null) : Promise<Result<Letterhead, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_set_logo", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Beispiel mit einem Briefkopf speichern (Vorschau in der Einstellung).
+ */
+async letterheadExportSample(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("letterhead_export_sample", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung "Briefkopf fuer Word und PDF". Unbekannte Ids werden abgelehnt.
+ */
+async changeDocumentLetterheadSetting(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_document_letterhead_setting", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Welche Aufnahmen eines Projekts in ein Projekt-Protokoll eingehen koennen, mit
  * dem Grund bei den anderen (`meeting_not_finished`, `no_transcript`,
  * `empty_entry`). Chronologisch.
@@ -2429,6 +2540,28 @@ async integrationSendTestMail(id: string) : Promise<Result<null, string>> {
 async wissenSuchen(id: string, query: string, limit: number | null, area: string | null) : Promise<Result<WissenHit[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("wissen_suchen", { id, query, limit, area }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "An WAI Presenter senden": Paket der Besprechung mit den gewaehlten, vorhandenen Dokumenten.
+ */
+async presenterSend(integrationId: string, meetingId: string, docTypes: string[], formats: string[]) : Promise<Result<WrittenPackage, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_send", { integrationId, meetingId, docTypes, formats }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Katalog neu schreiben (ohne Paket).
+ */
+async presenterWriteCatalog(integrationId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("presenter_write_catalog", { integrationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5284,6 +5417,7 @@ meetingNotesEvent: MeetingNotesEvent,
 meetingPromptEvent: MeetingPromptEvent,
 meetingSlidesEvent: MeetingSlidesEvent,
 minutesEvent: MinutesEvent,
+documentEvent: DocumentEvent,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
@@ -5301,6 +5435,7 @@ meetingNotesEvent: "meeting-notes-event",
 meetingPromptEvent: "meeting-prompt-event",
 meetingSlidesEvent: "meeting-slides-event",
 minutesEvent: "minutes-event",
+documentEvent: "document-event",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
@@ -5752,6 +5887,10 @@ meeting_self_emails?: string[];
  */
 meeting_self_name?: string | null; 
 /**
+ * Briefkopf fuer Word- und PDF-Export: Id eines Profils `lva.briefkopf/1`.
+ */
+document_letterhead_id?: string; 
+/**
  * M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
  * 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
  */
@@ -6164,7 +6303,15 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
 /**
  * Mail als Entwurf im Postfach ablegen (Outlook, Scope `Mail.ReadWrite`); geht an niemanden.
  */
-"mail.draft"
+"mail.draft" |
+/**
+ * Besprechungspaket in den Austauschordner des Presenters schreiben (Etappe 4).
+ */
+"presenter.send" |
+/**
+ * Anfrage des Presenters bearbeiten: fehlende Dokumente erzeugen und ein Paket schreiben.
+ */
+"presenter.request"
 /**
  * Eine Zeile der Rechte-Matrix.
  */
@@ -6648,8 +6795,40 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * Ein Dienst aus dem Register `services::registry` (Slack, Notion, Jira, ...): welcher,
  * steht in `config_json.service`; Schluessel oder Webhook-Adresse im Fach `token`.
  */
-"service"
+"service" |
+/**
+ * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete.
+ */
+"presenter"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * Ergebnis einer Sendung an den Presenter.
+ */
+export type WrittenPackage = { folder: string; files: number }
+/**
+ * Firmenangaben im Kopf.
+ */
+export type Firma = { name: string; zeilen?: string[] }
+/**
+ * Farben als `#RRGGBB`.
+ */
+export type Farben = { akzent: string; akzent_text: string; text: string; titel: string; gedaempft: string; linie: string }
+/**
+ * Fusszeile.
+ */
+export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
+/**
+ * Wo das Logo steht.
+ */
+export type LogoPosition = "links" | "rechts"
+/**
+ * Logo eines Profils: `logo.png`/`logo.jpg` im Profilordner oder `builtin:<name>`.
+ */
+export type Logo = { datei: string; breite_mm: number; position: LogoPosition }
+/**
+ * Ein Briefkopf (`lva.briefkopf/1`).
+ */
+export type Letterhead = { schema: string; id: string; name: string; builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
 /**
  * Was der Chip im Kopf der Besprechung braucht.
  */
@@ -7099,6 +7278,34 @@ participant_ids: string[] | null;
  * Projekte (Ordner-IDs).
  */
 folder_ids: string[] | null }
+/**
+ * Wer ein Dokument erzeugt.
+ */
+export type DocEngine =
+/**
+ * Das vorhandene Protokoll (Vorlage der Besprechung, `kind = minutes`).
+ */
+"minutes" |
+/**
+ * Ein Dokumenttyp dieses Katalogs, erzeugt im Protokoll-Motor.
+ */
+"document" |
+/**
+ * Der vorhandene Follow-up-Dialog (`followup.rs`, `mail.rs`); kein eigener Lauf.
+ */
+"followup"
+/**
+ * Was die Oberflaeche ueber einen Typ wissen muss (ohne Prompt-Texte).
+ */
+export type DocTypeInfo = { key: string; title: string; audience: string; length: string; depth: string; engine: DocEngine;
+/**
+ * `kind` der Dokumente dieses Typs (`minutes` oder `doc:<key>`); leer bei `Followup`.
+ */
+kind: string; sections: string[] }
+/**
+ * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
+ */
+export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
 /**
  * Ereignis eines Protokoll-Laufs. `code` von `Failed` ist einer der Codes aus
  * `minutes::ALL_CODES`; die Oberflaeche uebersetzt ihn. Ein abgewiesener zweiter
@@ -7931,7 +8138,11 @@ service: string | null;
 /**
  * Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
  */
-fields: Partial<{ [key in string]: string }> | null }
+fields: Partial<{ [key in string]: string }> | null;
+/**
+ * WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
+ */
+catalog: boolean | null }
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.

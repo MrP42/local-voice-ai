@@ -570,8 +570,18 @@ pub fn page_append(
                 .pointer("/version/number")
                 .and_then(Value::as_u64)
                 .ok_or(ServiceError::BadResponse("Seite ohne Versionsnummer"))?;
-            let title = s(&cur, "/title").unwrap_or_default();
-            let old = s(&cur, "/body/storage/value").unwrap_or_default();
+            // Ohne bisherigen Inhalt (oder Titel) wuerde der PUT die Seite
+            // ueberschreiben -- dann lieber abbrechen.
+            let title = s(&cur, "/title")
+                .filter(|t| !t.trim().is_empty())
+                .ok_or(ServiceError::BadResponse("Seite ohne Titel"))?;
+            let old = cur
+                .pointer("/body/storage/value")
+                .and_then(Value::as_str)
+                .ok_or(ServiceError::BadResponse(
+                    "Seiteninhalt fehlt in der Antwort",
+                ))?
+                .to_string();
             let put = acc.auth(
                 ApiRequest::new(
                     Method::Put,
