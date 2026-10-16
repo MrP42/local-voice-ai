@@ -220,3 +220,111 @@ for (const width of [390, 360]) {
     expect(m.h).toBeLessThanOrEqual(64);
   });
 }
+
+// Forced Colors (Windows-Kontrastdesigns): Fokus bleibt sichtbar, die aktive
+// Navigationsseite ist ohne Farbe erkennbar. Reflow 400 % (WCAG 1.4.10): bei
+// 320 px Breite scrollt die Seite nicht horizontal.
+const REFLOW_PAGES: [string, string][] = [
+  ["Start", "home"],
+  ["Einstellungen", "settings"],
+  ["Vorlesen", "tts"],
+];
+
+test("Forced Colors: Fokus sichtbar, Navigationsauswahl erkennbar", async ({ page }) => {
+  await setup(page, "light");
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+  for (const [label, id] of REFLOW_PAGES) {
+    await nav.getByRole("button", { name: label, exact: true }).click();
+    // Auswahl: aktiver Eintrag unterscheidet sich vom inaktiven in Rand,
+    // Kontur, Fläche oder Markierungsbalken (nicht nur in der Textfarbe).
+    const marks = await nav.evaluate((el) => {
+      const sig = (b: Element) => {
+        const cs = getComputedStyle(b);
+        const p1 = getComputedStyle(b, "::before");
+        const p2 = getComputedStyle(b, "::after");
+        return [
+          cs.borderLeftWidth, cs.borderLeftStyle, cs.outlineStyle,
+          cs.backgroundColor, cs.boxShadow,
+          p1.content, p1.width, p1.backgroundColor,
+          p2.content, p2.width, p2.backgroundColor,
+        ].join("|");
+      };
+      const cur = el.querySelector('[aria-current="page"]')!;
+      const other = [...el.querySelectorAll("button")].find(
+        (b) => b !== cur && !b.hasAttribute("aria-current"),
+      )!;
+      return { cur: sig(cur), other: sig(other) };
+    });
+    expect(marks.cur, `Navigation ${label}`).not.toBe(marks.other);
+    await page.screenshot({
+      path: `test-results/fluent/forced-1440-${id}.png`,
+      animations: "disabled",
+    });
+  }
+  // Fokus: per Tab erreichte Elemente sehen fokussiert anders aus als
+  // unfokussiert (Pixelvergleich des Elementbereichs), die ersten fünf Ziele.
+  await page.goto("/");
+  await expect(page.locator(".lv-titlebar")).toBeVisible();
+  for (let i = 0; i < 5; i++) {
+    await page.keyboard.press("Tab");
+    const box = await page.evaluate(() => {
+      const a = document.activeElement as HTMLElement;
+      const r = a.getBoundingClientRect();
+      return {
+        tag: a.tagName,
+        x: Math.max(0, r.x - 6),
+        y: Math.max(0, r.y - 6),
+        width: r.width + 12,
+        height: r.height + 12,
+      };
+    });
+    expect(box.tag).not.toBe("BODY");
+    const { tag, ...clip } = box;
+    const focused = await page.screenshot({ clip, animations: "disabled" });
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    const plain = await page.screenshot({ clip, animations: "disabled" });
+    expect(focused.equals(plain), `Fokus ${i + 1} (${tag}) sichtbar`).toBe(false);
+    // Fokus zurück, damit der nächste Tab am richtigen Element weitergeht.
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+  }
+});
+
+for (const [label, id] of REFLOW_PAGES) {
+  test(`Reflow 320 px ohne Querscroll: ${label}`, async ({ page }) => {
+    await setup(page, "light");
+    await page.setViewportSize({ width: 320, height: 640 });
+    await page.goto("/");
+    if (id !== "home") {
+      await page.getByRole("button", { name: "Menü öffnen" }).click();
+      await page
+        .getByRole("navigation", { name: "Hauptnavigation" })
+        .getByRole("button", { name: label, exact: true })
+        .click();
+    }
+    await expect(page.locator(".lv-titlebar")).toBeVisible();
+    await page.waitForTimeout(300);
+    const m = await page.evaluate(() => ({
+      over:
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+      body: document.body.scrollWidth - document.body.clientWidth,
+    }));
+    await page.screenshot({
+      path: `test-results/fluent/reflow-320-${id}.png`,
+      animations: "disabled",
+    });
+    // Der Hauptbereich selbst scrollt nie seitlich; Reiterleisten und
+    // Chip-Reihen dürfen in sich scrollen (eigene Bedienelemente).
+    const mainOver = await page.evaluate(() => {
+      const el = document.querySelector(".workspace-main") as HTMLElement;
+      return el.scrollWidth - el.clientWidth;
+    });
+    expect(mainOver).toBeLessThanOrEqual(0);
+    expect(m.over).toBeLessThanOrEqual(0);
+    expect(m.body).toBeLessThanOrEqual(0);
+  });
+}

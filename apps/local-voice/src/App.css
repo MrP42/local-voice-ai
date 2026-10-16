@@ -416,7 +416,7 @@ html[data-fluent] .lva-logo__accent {
   height: var(--_mb-size);
   padding: 0;
   font: inherit;
-  color: var(--color-text);
+  color: var(--colorNeutralForeground1);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 50%;
@@ -431,13 +431,13 @@ html[data-fluent] .lva-logo__accent {
   display: block;
 }
 .mbtn:hover {
-  background: color-mix(in srgb, var(--color-mid-gray), transparent 80%);
+  background: var(--colorSubtleBackgroundHover);
 }
 .mbtn:active {
-  background: color-mix(in srgb, var(--color-mid-gray), transparent 65%);
+  background: var(--colorSubtleBackgroundPressed);
 }
 .mbtn:focus-visible {
-  outline: 2px solid var(--color-logo-primary);
+  outline: 2px solid var(--colorStrokeFocus2);
   outline-offset: 2px;
 }
 .mbtn--sm {
@@ -462,41 +462,25 @@ html[data-fluent] .lva-logo__accent {
   padding-top: 0.18em;
 }
 
-/* Genau EIN Hauptschalter je Player (Play/Pause): gelbe Scheibe mit
-   Ink-Glyph. Auf Hell dreht sich die Kombination um, weil Gelb einen dunklen
-   Träger braucht — Weiß auf Gelb bleibt auch hier verboten. */
+/* Genau EIN Hauptschalter je Player (Play/Pause): Akzentscheibe wie der
+   Fluent-Primaerbutton (Brand-Flaeche, Vordergrund "OnBrand"). */
 .mbtn--primary {
-  background: var(--color-logo-primary);
-  border-color: var(--color-logo-primary);
-  color: var(--color-on-accent);
+  background: var(--colorBrandBackground);
+  border-color: var(--colorBrandBackground);
+  color: var(--colorNeutralForegroundOnBrand);
 }
 .mbtn--primary:hover {
-  background: var(--color-logo-primary);
-  color: var(--color-on-accent);
+  background: var(--colorBrandBackgroundHover);
+  color: var(--colorNeutralForegroundOnBrand);
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
 }
-/* Ohne :root, damit die Umkehrung auch in einer hellen Insel innerhalb einer
-   dunklen Seite greift — das Attribut darf auf jedem Vorfahren sitzen. */
-[data-theme="light"] .mbtn--primary {
-  background: var(--color-logo-stroke);
-  border-color: var(--color-logo-stroke);
-  color: var(--color-logo-primary);
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .mbtn--primary {
-    background: var(--color-logo-stroke);
-    border-color: var(--color-logo-stroke);
-    color: var(--color-logo-primary);
-  }
-}
-
 /* Dauerzustand (Ton aus, Tempo gesetzt) — NICHT für Play/Pause: das ist ein
    Glyphwechsel, kein Schalter. */
 .mbtn[aria-pressed="true"],
 .mbtn.is-active {
-  background: color-mix(in srgb, var(--color-logo-primary), transparent 82%);
-  border-color: color-mix(in srgb, var(--color-logo-primary), transparent 55%);
-  color: var(--color-logo-primary);
+  background: var(--colorBrandBackground2);
+  border-color: var(--colorBrandStroke2);
+  color: var(--colorBrandForeground1);
 }
 .mbtn[disabled],
 .mbtn.is-disabled {

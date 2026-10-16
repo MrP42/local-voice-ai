@@ -366,3 +366,33 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .lv-dialog.lv-dialog {
   transform: none !important;
 }
+
+/* Umgeschalteter Symbol-Button (z. B. Verlauf: gemerkt) – Akzentfarbe statt Fläche. */
+.lv-btn.lv-btn.lv-icon-active {
+  color: var(--colorBrandForeground1);
+}
+
+/* Reflow 320 px (WCAG 1.4.10): Einstellungszeilen brechen unter 480 px um –
+   Bezeichnung oben, Bedienelement darunter – statt die Seite seitlich zu
+   weiten. Regler und Auswahlfelder nutzen dann die volle Zeilenbreite. */
+@media (max-width: 480px) {
+  .lv-setting-row {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .lv-setting-row > :first-child {
+    max-width: 100%;
+  }
+  .lv-setting-row > :last-child {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .lv-setting-row > :last-child:has(input[type="range"]),
+  .lv-setting-row > :last-child:has(.lv-dropdown) {
+    flex: 1 1 100%;
+  }
+  .lv-dropdown.lv-dropdown {
+    min-width: 0;
+    width: 100%;
+  }
+}
