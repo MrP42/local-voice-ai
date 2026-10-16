@@ -824,6 +824,10 @@ test.describe("Barrierefreiheit", () => {
     await expect(
       page.getByRole("dialog", { name: "Übersetzen nach …" }),
     ).toBeVisible();
+    // Fluent blendet Farben über; axe erst nach Ende der Übergänge messen.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((x) => x.playState !== "running"),
+    );
     expect(
       critical(
         await new AxeBuilder({ page })
