@@ -538,16 +538,6 @@ html[data-fluent] .lva-logo__accent {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.workspace-text-action {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  font-size: 14px;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-  cursor: pointer;
-}
 .workspace-tasks,
 .workspace-tools {
   display: grid;

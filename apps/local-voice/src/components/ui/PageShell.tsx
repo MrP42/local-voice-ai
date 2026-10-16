@@ -4,6 +4,7 @@ import { usePageHeaderSlot } from "../shell/PageHeaderSlot";
 import { useTranslation } from "react-i18next";
 import { HelpCircle, X } from "lucide-react";
 import { HelpPanel } from "../help/HelpPanel";
+import { IconButton } from "./IconButton";
 import {
   ToggleButton,
   Tooltip as FluentTooltip,
@@ -47,27 +48,27 @@ export const PageShell: React.FC<PageShellProps> = ({
   const slot = usePageHeaderSlot();
   const head = (
     <header className="page-shell__head flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 id="page-title" className="page-shell__title text-text">
-            {title}
-          </h1>
+      <div className="min-w-0">
+        <h1 id="page-title" className="page-shell__title text-text">
+          {title}
+        </h1>
+      </div>
+      {(actions || help) && (
+        <div className="page-shell__actions flex items-center gap-1 shrink-0">
+          {help && (
+            <FluentTooltip content={t("help.open")} relationship="label">
+              <ToggleButton
+                appearance="subtle"
+                checked={helpOpen}
+                onClick={() => setHelpOpen((open) => !open)}
+                aria-pressed={helpOpen}
+                icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
+              />
+            </FluentTooltip>
+          )}
+          {actions}
         </div>
-        {(actions || help) && (
-          <div className="page-shell__actions flex items-center gap-1 shrink-0">
-            {help && (
-              <FluentTooltip content={t("help.open")} relationship="label">
-                <ToggleButton
-                  appearance="subtle"
-                  checked={helpOpen}
-                  onClick={() => setHelpOpen((open) => !open)}
-                  aria-pressed={helpOpen}
-                  icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
-                />
-              </FluentTooltip>
-            )}
-            {actions}
-          </div>
-        )}
+      )}
     </header>
   );
   return (
@@ -98,15 +99,11 @@ export const PageShell: React.FC<PageShellProps> = ({
               <span className="text-xs font-semibold text-text/50">
                 {t("help.title")}
               </span>
-              <button
-                type="button"
+              <IconButton
                 onClick={() => setHelpOpen(false)}
-                title={t("help.close")}
-                aria-label={t("help.close")}
-                className="p-1 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 cursor-pointer"
-              >
-                <X width={14} height={14} />
-              </button>
+                label={t("help.close")}
+                icon={<X width={14} height={14} />}
+              />
             </div>
             <HelpPanel section={help} />
           </aside>

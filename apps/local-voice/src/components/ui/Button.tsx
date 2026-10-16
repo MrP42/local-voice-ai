@@ -24,6 +24,8 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
     | "danger-ghost"
     | "ghost";
   size?: "sm" | "md" | "lg";
+  /** Symbol vor dem Text; ohne Kinder entsteht ein quadratischer Icon-Button. */
+  icon?: React.ReactNode;
 }
 
 const APPEARANCE: Record<
