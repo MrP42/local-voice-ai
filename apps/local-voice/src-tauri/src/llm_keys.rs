@@ -7,9 +7,9 @@
 //! eingesetzt -- fuer alle, die `post_process_api_keys` lesen, aendert sich
 //! nichts.
 //!
-//! Scheitert das Verschluesseln (kein Windows, Ordner nicht bereit), bleibt
-//! der Schluessel, wo er war: lieber unverschluesselt (das Schild wird gelb)
-//! als verloren.
+//! Scheitert das Verschluesseln (kein Windows, Ordner nicht bereit), meldet
+//! `seal` einen Fehler und der Schluessel wird nicht gespeichert -- nie im
+//! Klartext in der Datei. Alte Klartext-Dateien zaehlt weiter das Schild.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -42,9 +42,27 @@ pub fn ensure_dir(app: &tauri::AppHandle) {
 }
 
 /// Fuer die Datei: Schluessel in den Geheimnisspeicher, Leerwert zurueck.
-/// Ein geleerter Schluessel loescht auch das Geheimnis.
-pub fn seal(map: &SecretMap) -> SecretMap {
+/// Ein geleerter Schluessel loescht auch das Geheimnis. Laesst sich ein
+/// Schluessel nicht verschluesseln, kommt `Err` mit den betroffenen
+/// Verbindungen -- die Datei bekommt dann [`blanked`], nie den Klartext.
+pub fn seal(map: &SecretMap) -> Result<SecretMap, String> {
+    seal_with(map, |id, key| secret::secret_put_ref(&secret_ref(id), key))
+}
+
+/// Alle Werte geleert: was in die Datei darf, wenn `seal` scheitert. Bereits
+/// versiegelte Schluessel holt `unseal` aus dem Geheimnisspeicher zurueck.
+pub fn blanked(map: &SecretMap) -> SecretMap {
     let mut out = map.clone();
+    out.values_mut().for_each(String::clear);
+    out
+}
+
+fn seal_with(
+    map: &SecretMap,
+    put: impl Fn(&str, &[u8]) -> Result<(), String>,
+) -> Result<SecretMap, String> {
+    let mut out = map.clone();
+    let mut failed = Vec::new();
     for (id, value) in out.iter_mut() {
         let key = value.trim().to_string();
         if key.is_empty() {
@@ -56,13 +74,24 @@ pub fn seal(map: &SecretMap) -> SecretMap {
             continue;
         }
         let unchanged = with_cache(|c| c.get(id) == Some(&key));
-        let stored = unchanged || secret::secret_put_ref(&secret_ref(id), key.as_bytes()).is_ok();
-        if stored {
-            with_cache(|c| c.insert(id.clone(), key));
-            value.clear();
+        if !unchanged {
+            if let Err(e) = put(id, key.as_bytes()) {
+                failed.push(format!("{id}: {e}"));
+                value.clear();
+                continue;
+            }
         }
+        with_cache(|c| c.insert(id.clone(), key));
+        value.clear();
     }
-    out
+    if failed.is_empty() {
+        Ok(out)
+    } else {
+        Err(format!(
+            "API-Schluessel nicht verschluesselbar, nicht gespeichert ({})",
+            failed.join("; ")
+        ))
+    }
 }
 
 /// Nach dem Laden: Leerwerte aus dem Geheimnisspeicher fuellen.
@@ -127,7 +156,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         secret::init_dir(dir.path().to_path_buf());
         let id = "mistral-test1";
-        let sealed = seal(&map(&[(id, "sk-geheim-123"), ("openai", "")]));
+        let sealed = seal(&map(&[(id, "sk-geheim-123"), ("openai", "")])).unwrap();
         assert_eq!(sealed.get(id).map(String::as_str), Some(""));
         let file = dir.path().join(format!("int-llm-{id}-apikey.bin"));
         assert!(file.is_file());
@@ -143,12 +172,24 @@ mod tests {
         assert_eq!(loaded.get(id).map(String::as_str), Some("sk-geheim-123"));
         assert_eq!(loaded.get("openai").map(String::as_str), Some(""));
 
-        let cleared = seal(&map(&[(id, "")]));
+        let cleared = seal(&map(&[(id, "")])).unwrap();
         assert_eq!(cleared.get(id).map(String::as_str), Some(""));
         assert!(
             !file.exists(),
             "geleerter Schluessel muss das Geheimnis loeschen"
         );
+    }
+
+    /// Scheitert das Verschluesseln, gibt es einen Fehler -- und auch der
+    /// Ersatzwert fuer die Datei enthaelt keinen Klartext.
+    #[test]
+    fn failed_sealing_never_keeps_plaintext() {
+        let id = "sealfail-test1";
+        let input = map(&[(id, "sk-geheim-456")]);
+        let err = seal_with(&input, |_, _| Err("kaputt".into())).unwrap_err();
+        assert!(err.contains(id) && !err.contains("sk-geheim-456"), "{err}");
+        assert_eq!(blanked(&input).get(id).map(String::as_str), Some(""));
+        assert!(with_cache(|c| !c.contains_key(id)));
     }
 
     #[test]

@@ -357,6 +357,16 @@ fn args_without_effort(cli: Cli, model: &str, system: Option<&str>) -> Vec<Strin
             }
             a
         }
+        // Haertung gegen eingeschleuste Anweisungen im Transkript: `codex exec`
+        // kennt keinen Schalter "keine Werkzeuge", also schalten wir jedes
+        // bekannte Werkzeug einzeln ab -- Shell (`shell_tool`, `unified_exec`),
+        // Bildbetrachter (liest lokale Dateien), Websuche, Browser/Computer,
+        // Plugins/Apps, MCP. Dazu Read-only-Sandbox und ein frischer, leerer
+        // Arbeitsordner je Aufruf (`call_with_timeout`).
+        // Was das NICHT leistet: ein Werkzeug, das eine kuenftige Codex-Version
+        // neu einfuehrt, ist hier nicht abgeschaltet; die Sandbox verbietet
+        // Schreiben, nicht Lesen; der leere Ordner haelt nur relative Pfade
+        // fern. Geprueft gegen codex-cli 0.162.1 (`codex features list`).
         Cli::Codex => [
             "exec",
             "--json",
@@ -368,6 +378,26 @@ fn args_without_effort(cli: Cli, model: &str, system: Option<&str>) -> Vec<Strin
             model,
             "-c",
             "mcp_servers={}",
+            "-c",
+            "features.shell_tool=false",
+            "-c",
+            "features.unified_exec=false",
+            "-c",
+            "features.view_image=false",
+            "-c",
+            "features.browser_use=false",
+            "-c",
+            "features.in_app_browser=false",
+            "-c",
+            "features.computer_use=false",
+            "-c",
+            "features.image_generation=false",
+            "-c",
+            "features.plugins=false",
+            "-c",
+            "features.apps=false",
+            "-c",
+            "web_search=\"disabled\"",
             "-",
         ]
         .iter()
@@ -412,6 +442,7 @@ pub(crate) fn parse_claude(stdout: &str) -> Result<CliReply, String> {
 pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
     let mut text = None;
     let mut error = None;
+    let mut failed = None;
     let (mut pin, mut pout) = (0, 0);
     for line in stdout.lines() {
         let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -439,11 +470,19 @@ pub(crate) fn parse_codex(stdout: &str) -> Result<CliReply, String> {
                 pin = n("input_tokens");
                 pout = n("output_tokens");
             }
-            Some("error") | Some("turn.failed") => {
+            Some("error") => {
                 error = Some(ev.to_string());
+            }
+            // Ein gescheiterter Zug ist nie ein Erfolg, auch wenn vorher schon
+            // eine (Teil-)Antwort kam.
+            Some("turn.failed") => {
+                failed = Some(ev.to_string());
             }
             _ => {}
         }
+    }
+    if let Some(e) = failed {
+        return Err(classify_error(&e));
     }
     match (text, error) {
         (Some(text), _) => Ok(CliReply {
@@ -509,8 +548,11 @@ pub fn call_with_timeout(
     if let Some(e) = effort.filter(|e| !valid_effort(e)) {
         return Err(format!("cli_failed: unbekannte Effort-Stufe {e}"));
     }
-    let work = std::env::temp_dir().join("local-voice-cli");
-    std::fs::create_dir_all(&work).map_err(|e| format!("cli_failed: {e}"))?;
+    // Frischer, leerer Arbeitsordner je Aufruf; wird beim Verlassen geloescht.
+    let work = tempfile::Builder::new()
+        .prefix("local-voice-cli-")
+        .tempdir()
+        .map_err(|e| format!("cli_failed: {e}"))?;
     // Codex erhaelt den Systemtext vor der Aufgabe -- `exec` kennt keinen
     // eigenen Systemprompt.
     let stdin_text = match (cli, system) {
@@ -521,7 +563,7 @@ pub fn call_with_timeout(
     argv.extend(args_with(cli, model, effort, fast, system));
     let mut cmd = Command::new(program);
     cmd.args(&argv)
-        .current_dir(&work)
+        .current_dir(work.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -531,10 +573,13 @@ pub fn call_with_timeout(
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     let mut child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
+    // Eigener Thread: liest die CLI stdin nicht, blockiert sonst das Schreiben
+    // und die Zeitgrenze griffe nie. Endet spaetestens, wenn der Prozess
+    // beendet (oder nach der Zeitgrenze abgeschossen) ist.
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(stdin_text.as_bytes())
-            .map_err(|e| format!("cli_failed: {e}"))?;
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(stdin_text.as_bytes());
+        });
     }
     let output = wait_with_timeout(child, timeout)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -595,19 +640,19 @@ pub(crate) fn wait_with_timeout(
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
     use std::io::Read;
-    let mut out = child.stdout.take();
-    let mut err = child.stderr.take();
-    let reader = std::thread::spawn(move || {
-        let mut o = Vec::new();
-        let mut e = Vec::new();
-        if let Some(s) = out.as_mut() {
-            let _ = s.read_to_end(&mut o);
-        }
-        if let Some(s) = err.as_mut() {
-            let _ = s.read_to_end(&mut e);
-        }
-        (o, e)
-    });
+    // stdout und stderr je in eigenem Thread: nacheinander gelesen blockiert
+    // eine volle stderr-Pipe die CLI, waehrend wir noch auf stdout warten.
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    }
+    let out_reader = drain(child.stdout.take());
+    let err_reader = drain(child.stderr.take());
     let started = std::time::Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -621,9 +666,9 @@ pub(crate) fn wait_with_timeout(
             Err(e) => return Err(format!("cli_failed: {e}")),
         }
     };
-    let (stdout, stderr) = reader
-        .join()
-        .map_err(|_| "cli_failed: Ausgabe unlesbar".to_string())?;
+    let unreadable = |_| "cli_failed: Ausgabe unlesbar".to_string();
+    let stdout = out_reader.join().map_err(unreadable)?;
+    let stderr = err_reader.join().map_err(unreadable)?;
     Ok(std::process::Output {
         status,
         stdout,
@@ -662,10 +707,37 @@ mod tests {
         let r = parse_codex(out).unwrap();
         assert_eq!(r.text, "Release am Freitag; Anna repariert die Tests.");
         assert_eq!((r.prompt_tokens, r.completion_tokens), (20744, 18));
+        let failed = concat!(
+            r#"{"type":"item.completed","item":{"type":"agent_message","text":"halb fertig"}}"#,
+            "\n",
+            r#"{"type":"turn.failed","error":{"message":"stream disconnected"}}"#,
+            "\n",
+        );
+        assert!(parse_codex(failed).unwrap_err().starts_with("cli_failed"));
         let refused = r#"{"type":"error","message":"The 'gpt-6' model is not supported when using Codex with a ChatGPT account."}"#;
         assert!(parse_codex(refused)
             .unwrap_err()
             .starts_with("cli_model_not_in_plan"));
+    }
+
+    /// Viel stderr bei leerem stdout: nacheinander gelesen haengt das bis zur
+    /// Zeitgrenze (volle stderr-Pipe), parallel gelesen nicht.
+    #[cfg(windows)]
+    #[test]
+    fn full_stderr_does_not_block_the_reader() {
+        let child = Command::new("cmd")
+            .args([
+                "/C",
+                "for /L %i in (1,1,6000) do @echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1>&2",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = wait_with_timeout(child, Duration::from_secs(60)).unwrap();
+        assert!(out.stdout.is_empty());
+        assert!(out.stderr.len() > 200_000, "{}", out.stderr.len());
     }
 
     #[test]
@@ -689,6 +761,19 @@ mod tests {
         assert!(c
             .windows(2)
             .any(|w| w[0] == "--sandbox" && w[1] == "read-only"));
+        for off in [
+            "features.shell_tool=false",
+            "features.unified_exec=false",
+            "features.view_image=false",
+            "web_search=\"disabled\"",
+        ] {
+            assert!(
+                c.windows(2).any(|w| w[0] == "-c" && w[1] == off),
+                "{off} fehlt"
+            );
+        }
+        assert!(c.iter().any(|x| x == "--skip-git-repo-check"));
+        assert_eq!(c.last().map(String::as_str), Some("-"));
     }
 
     /// Gegen die echten CLIs mit dem Login des Nutzers (nur von Hand):

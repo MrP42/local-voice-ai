@@ -2194,7 +2194,11 @@ pub fn stored_plaintext_key_count(app: &AppHandle) -> usize {
 /// (`llm_keys`), alles andere wie es ist.
 fn to_store_value(settings: &AppSettings) -> serde_json::Value {
     let mut sealed = settings.clone();
-    sealed.post_process_api_keys = crate::llm_keys::seal(&settings.post_process_api_keys);
+    sealed.post_process_api_keys = crate::llm_keys::seal(&settings.post_process_api_keys)
+        .unwrap_or_else(|e| {
+            log::error!("{e}");
+            crate::llm_keys::blanked(&settings.post_process_api_keys)
+        });
     serde_json::to_value(&sealed).unwrap()
 }
 

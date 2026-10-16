@@ -467,11 +467,13 @@ impl Store {
         }
         let mut lh = self.get(id)?;
         let dir = self.dir(id)?;
-        for old in ["logo.png", "logo.jpg"] {
-            let _ = std::fs::remove_file(dir.join(old));
-        }
-        match source {
-            None => lh.logo = None,
+        // Erst den Ersatz pruefen und schreiben, dann das Alte entfernen: ein
+        // ungueltiger Ersatz laesst das bisherige Logo stehen.
+        let keep = match source {
+            None => {
+                lh.logo = None;
+                None
+            }
             Some(path) => {
                 let size = std::fs::metadata(path)
                     .map_err(|e| format!("{CODE_IO}: {e}"))?
@@ -485,13 +487,19 @@ impl Store {
                 write_atomic(&dir.join(&name), &bytes)?;
                 let previous = lh.logo.take();
                 lh.logo = Some(Logo {
-                    datei: name,
+                    datei: name.clone(),
                     breite_mm: previous.as_ref().map(|l| l.breite_mm).unwrap_or(30.0),
                     position: previous.map(|l| l.position).unwrap_or(LogoPosition::Rechts),
                 });
+                Some(name)
+            }
+        };
+        self.save(&lh)?;
+        for old in ["logo.png", "logo.jpg"] {
+            if keep.as_deref() != Some(old) {
+                let _ = std::fs::remove_file(dir.join(old));
             }
         }
-        self.save(&lh)?;
         Ok(lh)
     }
 
@@ -522,20 +530,41 @@ pub fn is_builtin(id: &str) -> bool {
     builtins().iter().any(|b| b.id == id)
 }
 
-/// Schreibt ueber `<ziel>.part` und Umbenennen: ein Abbruch laesst das Ziel unberuehrt.
+/// Schreibt ueber eine eindeutige Zwischendatei im selben Ordner
+/// (`.<name>.<zufall>.part`) und Umbenennen: ein Abbruch laesst das Ziel
+/// unberuehrt, parallele Schreiber kommen sich nicht in die Quere.
 pub fn write_atomic(target: &Path, bytes: &[u8]) -> Result<(), String> {
-    let part = target.with_extension(format!(
-        "{}.part",
-        target
-            .extension()
-            .map(|e| e.to_string_lossy().to_string())
-            .unwrap_or_default()
-    ));
-    std::fs::write(&part, bytes).map_err(|e| format!("{CODE_IO}: {e}"))?;
-    std::fs::rename(&part, target).map_err(|e| {
-        let _ = std::fs::remove_file(&part);
-        format!("{CODE_IO}: {e}")
-    })
+    use std::io::Write;
+    let io = |e: std::io::Error| format!("{CODE_IO}: {e}");
+    let dir = match target.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let mut part = tempfile::Builder::new()
+        .prefix(&format!(".{name}."))
+        .suffix(".part")
+        .tempfile_in(dir)
+        .map_err(io)?;
+    part.write_all(bytes).map_err(io)?;
+    // Windows lehnt das Umbenennen ab, solange ein anderer Schreiber dasselbe
+    // Ziel gerade ersetzt: kurz warten und erneut versuchen. Scheitert es
+    // endgueltig, loescht `part` beim Verlassen die Zwischendatei.
+    for _ in 0..10 {
+        match part.persist(target) {
+            Ok(_) => return Ok(()),
+            Err(e) if e.error.kind() == std::io::ErrorKind::PermissionDenied => {
+                part = e.file;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(io(e.error)),
+        }
+    }
+    part.persist(target).map_err(|e| io(e.error))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -556,6 +585,31 @@ mod tests {
             logo: None,
             ..builtins().remove(0)
         }
+    }
+
+    #[test]
+    fn parallel_atomic_writes_do_not_mix() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("brief.pdf");
+        let writers: Vec<_> = (0..8u8)
+            .map(|i| {
+                let t = target.clone();
+                std::thread::spawn(move || write_atomic(&t, &vec![i; 200_000]))
+            })
+            .collect();
+        // Windows kann ein gleichzeitiges Umbenennen auf dasselbe Ziel ablehnen
+        // ("Zugriff verweigert") -- dann sauber als Fehler, nie vermischt.
+        let ok = writers
+            .into_iter()
+            .map(|w| w.join().unwrap())
+            .filter(Result::is_ok)
+            .count();
+        assert!(ok >= 1);
+        let got = std::fs::read(&target).unwrap();
+        assert_eq!(got.len(), 200_000);
+        assert!(got.iter().all(|b| *b == got[0]), "Inhalte vermischt");
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "Zwischendateien liegen geblieben");
     }
 
     #[test]
@@ -640,6 +694,10 @@ mod tests {
             s.set_logo("f", Some(&fake)).unwrap_err(),
             "letterhead_logo_invalid:format"
         );
+        // Ein ungueltiger Ersatz laesst das bisherige Logo stehen.
+        let kept = s.get("f").unwrap();
+        assert_eq!(kept.logo.as_ref().unwrap().datei, "logo.png");
+        assert!(s.logo(&kept).unwrap().is_some());
         let lh = s.set_logo("f", None).unwrap();
         assert!(lh.logo.is_none());
         assert!(!dir

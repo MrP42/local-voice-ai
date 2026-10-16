@@ -285,6 +285,10 @@ pub async fn summarize_with_progress(
     if chunks.len() <= 1 {
         progress(0, 1);
         let out = ask_llm(settings, summary_prompt(opts, trimmed)).await?;
+        // Abgebrochen, waehrend das Modell lief: Ergebnis verwerfen.
+        if SUMMARY_CANCEL.load(Ordering::SeqCst) {
+            return Err(crate::translator::CANCELLED.to_string());
+        }
         progress(1, 1);
         return Ok(out);
     }
@@ -302,6 +306,9 @@ pub async fn summarize_with_progress(
         return Err(crate::translator::CANCELLED.to_string());
     }
     let out = ask_llm(settings, combine_prompt(opts, &partials)).await?;
+    if SUMMARY_CANCEL.load(Ordering::SeqCst) {
+        return Err(crate::translator::CANCELLED.to_string());
+    }
     progress(total, total);
     Ok(out)
 }

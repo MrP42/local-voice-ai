@@ -18,7 +18,9 @@ pub enum Tri {
 pub struct ProviderFacts {
     /// Vorlagenkennung (`openai`, `anthropic`, `mistral`, `claude_cli`, …).
     pub provider: &'static str,
-    /// Nur bei passender Adresse (z. B. EU-Endpunkt); `None` = Standard.
+    /// Offizieller Host des Endpunkts (bei `cli://` der CLI-Name). `None` nur
+    /// fuer die Bedrock-Sammelzeile: gilt dann fuer jeden Host der Form
+    /// `bedrock-mantle.<region>.api.aws` mit Region aus [`BEDROCK_REGIONS`].
     pub host: Option<&'static str>,
     /// Serverstandorte, ISO-3166-Kuerzel; "EU" fuer EU-weit.
     pub countries: &'static [&'static str],
@@ -49,7 +51,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // Training ohne Opt-in; DPA in den Commercial Terms.
     ProviderFacts {
         provider: "anthropic",
-        host: None,
+        host: Some("api.anthropic.com"),
         countries: &["US"],
         eu_processing: Tri::No,
         dpf_certified: Tri::Unknown,
@@ -66,7 +68,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // Schalter (abschaltbar), keine DPA -- Anthropic ist Verantwortlicher.
     ProviderFacts {
         provider: "claude_cli",
-        host: None,
+        host: Some("claude"),
         countries: &["US"],
         eu_processing: Tri::No,
         dpf_certified: Tri::Unknown,
@@ -83,7 +85,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // OpenAI API, Standard: USA; kein Training mit API-Daten; DPA.
     ProviderFacts {
         provider: "openai",
-        host: None,
+        host: Some("api.openai.com"),
         countries: &["US"],
         eu_processing: Tri::No,
         dpf_certified: Tri::Unknown,
@@ -101,7 +103,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // Endpunkt ab).
     ProviderFacts {
         provider: "openai_eu",
-        host: None,
+        host: Some("eu.api.openai.com"),
         countries: &["EU"],
         eu_processing: Tri::Yes,
         dpf_certified: Tri::Unknown,
@@ -115,7 +117,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // keine DPA.
     ProviderFacts {
         provider: "codex_cli",
-        host: None,
+        host: Some("codex"),
         countries: &["US"],
         eu_processing: Tri::No,
         dpf_certified: Tri::Unknown,
@@ -134,7 +136,7 @@ pub static FACTS: &[ProviderFacts] = &[
     // DPA mit SCC.
     ProviderFacts {
         provider: "mistral",
-        host: None,
+        host: Some("api.mistral.ai"),
         countries: &["EU"],
         eu_processing: Tri::Yes,
         dpf_certified: Tri::Unknown,
@@ -233,18 +235,32 @@ pub const BEDROCK_REGIONS: &[&str] = &[
     "us-west-2",
 ];
 
-/// Angaben zu Vorlage und Adresse: zuerst ein Eintrag mit passendem Host,
-/// sonst der Standard der Vorlage, sonst `None` (unbekannt).
+/// Angaben zu Vorlage und Adresse. Die Kennung allein reicht nie: die Adresse
+/// muss `https://` (bei CLI-Vorlagen `cli://`) sein und ihr Host zur Zeile
+/// passen -- sonst `None` (unbekannt). Ein `openai_eu` mit fremdem Host oder
+/// `http://` gilt also nicht als EU-Verarbeitung.
 pub fn facts_for(provider: &str, base_url: &str) -> Option<&'static ProviderFacts> {
-    let host = url::Url::parse(base_url.trim())
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
-    FACTS
-        .iter()
-        .find(|f| f.provider == provider && f.host.is_some() && f.host.map(str::to_string) == host)
-        .or_else(|| {
-            FACTS
-                .iter()
-                .find(|f| f.provider == provider && f.host.is_none())
-        })
+    let url = url::Url::parse(base_url.trim()).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    let scheme = if provider.ends_with("_cli") {
+        "cli"
+    } else {
+        "https"
+    };
+    if url.scheme() != scheme {
+        return None;
+    }
+    let rows = || FACTS.iter().filter(move |f| f.provider == provider);
+    rows().find(|f| f.host == Some(host.as_str())).or_else(|| {
+        rows()
+            .find(|f| f.host.is_none())
+            .filter(|_| is_bedrock_region_host(&host))
+    })
+}
+
+/// `bedrock-mantle.<region>.api.aws` mit einer Region aus [`BEDROCK_REGIONS`].
+fn is_bedrock_region_host(host: &str) -> bool {
+    host.strip_prefix("bedrock-mantle.")
+        .and_then(|h| h.strip_suffix(".api.aws"))
+        .is_some_and(|region| BEDROCK_REGIONS.contains(&region))
 }
