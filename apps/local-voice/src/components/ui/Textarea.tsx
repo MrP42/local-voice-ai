@@ -1,27 +1,25 @@
 import React from "react";
+import {
+  Textarea as FluentTextarea,
+  type TextareaProps as FluentTextareaProps,
+} from "@fluentui/react-components";
 
-interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextareaProps
+  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   variant?: "default" | "compact";
 }
 
+/** Mehrzeiliges Feld als Fluent Textarea (Leitlinie §6), vertikal größenverstellbar. */
 export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className = "", variant = "default", ...props }, ref) => {
-    const baseClasses =
-      "px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 rounded-md text-start transition-[background-color,border-color] duration-150 hover:bg-logo-primary/10 hover:border-logo-primary focus:outline-none focus:bg-logo-primary/10 focus:border-logo-primary resize-y";
-
-    const variantClasses = {
-      default: "px-3 py-2 min-h-[100px]",
-      compact: "px-2 py-1 min-h-[80px]",
-    };
-
-    return (
-      <textarea
-        ref={ref}
-        className={`${baseClasses} ${variantClasses[variant]} ${className}`}
-        {...props}
-      />
-    );
-  },
+  ({ className = "", variant = "default", ...props }, ref) => (
+    <FluentTextarea
+      ref={ref}
+      {...(props as FluentTextareaProps)}
+      resize="vertical"
+      size={variant === "compact" ? "small" : "medium"}
+      className={`lv-textarea lv-textarea--${variant} ${className}`.trim()}
+    />
+  ),
 );
 
 Textarea.displayName = "Textarea";

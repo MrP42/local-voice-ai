@@ -1,35 +1,28 @@
 import React from "react";
+import {
+  Input as FluentInput,
+  type InputProps as FluentInputProps,
+} from "@fluentui/react-components";
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface InputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "size"> {
   variant?: "default" | "compact";
 }
 
-/// forwardRef, weil ein Suchfeld fokussiert werden muss. Ohne das griffen
-/// zwei Stellen im Projekt zum rohen <input> zurueck — die Luecke im
-/// Baustein war die Ursache, nicht Nachlaessigkeit an der Aufrufstelle.
+/**
+ * Eingabefeld als Fluent Input (Leitlinie §6). `ref` zeigt auf das <input>
+ * (Suchfelder werden fokussiert), `className` auf die Feldhülle.
+ * Beschriftung über dem Feld: mit Fluent `Field` oder einem <label>.
+ */
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className = "", variant = "default", disabled, ...props }, ref) => {
-    const baseClasses =
-      "px-2 py-1 text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 rounded-md text-start transition-all duration-150";
-
-    const interactiveClasses = disabled
-      ? "opacity-60 cursor-not-allowed bg-mid-gray/10 border-mid-gray/40"
-      : "hover:bg-logo-primary/10 hover:border-logo-primary focus:outline-none focus:bg-logo-primary/20 focus:border-logo-primary";
-
-    const variantClasses = {
-      default: "px-3 py-2",
-      compact: "px-2 py-1",
-    } as const;
-
-    return (
-      <input
-        ref={ref}
-        className={`${baseClasses} ${variantClasses[variant]} ${interactiveClasses} ${className}`}
-        disabled={disabled}
-        {...props}
-      />
-    );
-  },
+  ({ className = "", variant = "default", ...props }, ref) => (
+    <FluentInput
+      ref={ref}
+      {...(props as Omit<FluentInputProps, "size">)}
+      size={variant === "compact" ? "small" : "medium"}
+      className={`lv-input ${className}`.trim()}
+    />
+  ),
 );
 
 Input.displayName = "Input";

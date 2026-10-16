@@ -907,6 +907,8 @@ test.describe("Protokoll und KI-Notizen kompakt", () => {
     await page.getByTestId("participants-chip").click();
     await expect(page.getByTestId("participants-popover")).toBeVisible();
     const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
       .analyze();
     const severe = result.violations

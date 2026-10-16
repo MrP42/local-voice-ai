@@ -1,5 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
+import {
+  Dropdown as FluentDropdown,
+  Option,
+} from "@fluentui/react-components";
 
 export interface DropdownOption {
   value: string;
@@ -15,103 +19,60 @@ interface DropdownProps {
   placeholder?: string;
   disabled?: boolean;
   onRefresh?: () => void;
+  /** Zugänglicher Name, wenn keine sichtbare Beschriftung verbunden ist. */
+  ariaLabel?: string;
 }
 
+/**
+ * Auswahlliste als Fluent Dropdown (Leitlinie §6: Liste → Dropdown).
+ * Auslöser `role="combobox"`, Einträge `role="option"`.
+ */
 export const Dropdown: React.FC<DropdownProps> = ({
   options,
   selectedValue,
   onSelect,
   className = "",
-  placeholder = "Select an option...",
+  placeholder,
   disabled = false,
   onRefresh,
+  ariaLabel,
 }) => {
   const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
   const selectedOption = options.find(
     (option) => option.value === selectedValue,
   );
 
-  const handleSelect = (value: string) => {
-    onSelect(value);
-    setIsOpen(false);
-  };
-
-  const handleToggle = () => {
-    if (disabled) return;
-    if (!isOpen && onRefresh) onRefresh();
-    setIsOpen(!isOpen);
-  };
-
   return (
-    <div className={`relative ${className}`} ref={dropdownRef}>
-      <button
-        type="button"
-        className={`px-2 py-[5px] text-sm font-semibold bg-mid-gray/10 border border-mid-gray/80 rounded-md min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 ${
-          disabled
-            ? "opacity-50 cursor-not-allowed"
-            : "hover:bg-logo-primary/10 cursor-pointer hover:border-logo-primary"
-        }`}
-        onClick={handleToggle}
-        disabled={disabled}
-      >
-        <span className="truncate">{selectedOption?.label || placeholder}</span>
-        <svg
-          className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "transform rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
-      </button>
-      {isOpen && !disabled && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-mid-gray/80 rounded-md shadow-lg z-50 max-h-60 overflow-y-auto">
-          {options.length === 0 ? (
-            <div className="px-2 py-1 text-sm text-mid-gray">
-              {t("common.noOptionsFound")}
-            </div>
-          ) : (
-            options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`w-full px-2 py-1 text-sm text-start hover:bg-logo-primary/10 transition-colors duration-150 ${
-                  selectedValue === option.value
-                    ? "bg-logo-primary/20 font-semibold"
-                    : ""
-                } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                onClick={() => handleSelect(option.value)}
-                disabled={option.disabled}
-              >
-                <span className="whitespace-normal break-words">
-                  {option.label}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+    <FluentDropdown
+      className={`lv-dropdown ${className}`}
+      value={selectedOption?.label ?? ""}
+      selectedOptions={selectedValue ? [selectedValue] : []}
+      placeholder={placeholder}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      onOpenChange={(_e, data) => {
+        if (data.open && onRefresh) onRefresh();
+      }}
+      onOptionSelect={(_e, data) => {
+        if (data.optionValue !== undefined) onSelect(data.optionValue);
+      }}
+    >
+      {options.length === 0 ? (
+        <Option value="" disabled text={t("common.noOptionsFound")}>
+          {t("common.noOptionsFound")}
+        </Option>
+      ) : (
+        options.map((option) => (
+          <Option
+            key={option.value}
+            value={option.value}
+            disabled={option.disabled}
+            text={option.label}
+          >
+            {option.label}
+          </Option>
+        ))
       )}
-    </div>
+    </FluentDropdown>
   );
 };

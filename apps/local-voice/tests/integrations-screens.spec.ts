@@ -68,7 +68,7 @@ const setup = async (page: Page, width = 1280, height = 900) => {
   await page.setViewportSize({ width, height });
   await page.goto("/");
   const nav = page.getByRole("navigation");
-  if (narrow) await nav.getByRole("button", { name: "Mehr" }).click();
+  if (narrow) await page.getByRole("button", { name: "Menü öffnen" }).click();
   await nav.getByRole("button", { name: "Integrationen", exact: true }).click();
   await expect(page.getByTestId("integration-card").first()).toBeVisible();
 };

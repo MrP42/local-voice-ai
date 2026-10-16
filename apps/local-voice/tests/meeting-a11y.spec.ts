@@ -489,6 +489,8 @@ test("AK9: Projekt-Dialog per Tastatur - Fokus gefangen, Escape schliesst", asyn
  */
 const axeSevere = async (page: Page): Promise<string[]> => {
   const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
     .analyze();
   return result.violations

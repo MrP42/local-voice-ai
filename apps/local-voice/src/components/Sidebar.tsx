@@ -1,18 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Cog,
-  History,
-  Cpu,
-  Plug,
-  Users,
-  Volume2,
-  House,
-  MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-} from "lucide-react";
-import { usePersistentState } from "../hooks/usePersistentState";
+  Nav,
+  NavDivider,
+  NavItem,
+  OverlayDrawer,
+  DrawerHeader,
+  DrawerHeaderTitle,
+  Button as FluentButton,
+  Tooltip as FluentTooltip,
+} from "@fluentui/react-components";
+import { Cog, History, Cpu, Plug, Users, Volume2, House, X } from "lucide-react";
 import {
   AppSettings,
   HistorySettings,
@@ -20,6 +18,7 @@ import {
   TtsSettings,
   MeetingsSettings,
 } from "./settings";
+import { APP_NAME } from "./shell/frame";
 import { IntegrationsPage } from "./integrations/IntegrationsPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -84,125 +83,111 @@ export const isSidebarSection = (value: string): value is SidebarSection =>
 interface SidebarProps {
   activeSection: SidebarSection;
   onSectionChange: (section: SidebarSection) => void;
+  /** Eingeklappt: nur Symbole, Name als Tooltip und aria-label. */
+  collapsed: boolean;
+  /** Schmales Fenster: Navigation als Overlay-Drawer (Leitlinie §3). */
+  narrow: boolean;
+  drawerOpen: boolean;
+  onDrawerOpenChange: (open: boolean) => void;
 }
 
+const PRIMARY = ["home", "history", "meetings", "tts"] as const;
+// Fußeinträge vor „Einstellungen“ (Leitlinie §3: Einstellungen unten zuletzt).
+const UTILITIES = ["models", "integrations"] as const;
+
+/**
+ * Navigationsbereich nach Fluent 2 (Leitlinie windows-fluent.md §2/§3):
+ * Fluent Nav mit Auswahl-Pill, Arbeitsbereiche oben, Modelle und
+ * Integrationen als Fußeinträge, Einstellungen ganz unten. Ein Tab-Stopp,
+ * darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
+ * Titelleiste); schmal öffnet der Hamburger einen Overlay-Drawer.
+ */
 export const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSectionChange,
+  collapsed,
+  narrow,
+  drawerOpen,
+  onDrawerOpenChange,
 }) => {
   const { t } = useTranslation();
-
-  // Eingeklappt bleibt eingeklappt — auch nach einem Neustart. Beim ersten
-  // Start ist die Leiste offen: wer die App noch nicht kennt, soll die
-  // Bereiche lesen koennen, nicht Symbole raten.
-  const [collapsedValue, setCollapsedValue] = usePersistentState<string>(
-    "sidebar.collapsed",
-    "0",
-  );
-  const collapsed = collapsedValue === "1";
-  const setCollapsed = (next: boolean) => setCollapsedValue(next ? "1" : "0");
-
-  const [moreOpen, setMoreOpen] = useState(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!moreOpen) return;
-    const close = (event: PointerEvent) => {
-      if (!moreRef.current?.contains(event.target as Node)) setMoreOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMoreOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [moreOpen]);
+  const iconOnly = collapsed && !narrow;
 
   const item = (id: SidebarSection) => {
     const { icon: Icon, labelKey } = SECTIONS_CONFIG[id];
+    const label = t(labelKey);
     return (
-      <button
+      <NavItem
         key={id}
-        type="button"
+        value={id}
         className="workspace-nav__item"
         aria-current={activeSection === id ? "page" : undefined}
-        // Eingeklappt bleibt nur das Symbol; der Name muss dann wenigstens
-        // im Tooltip und fuer Screenreader dastehen.
-        title={collapsed ? t(labelKey) : undefined}
-        aria-label={collapsed ? t(labelKey) : undefined}
-        onClick={() => {
-          onSectionChange(id);
-          setMoreOpen(false);
-        }}
+        // Eingeklappt bleibt nur das Symbol; der Name steht dann im Tooltip
+        // (title) und für Screenreader im aria-label.
+        title={iconOnly ? label : undefined}
+        aria-label={iconOnly ? label : undefined}
       >
         <Icon size={20} aria-hidden="true" />
-        <span>{t(labelKey)}</span>
-      </button>
+        <span className="workspace-nav__label">{label}</span>
+      </NavItem>
     );
   };
-  return (
+
+  const nav = (
     <nav
       className="workspace-nav"
       aria-label={t("sidebar.ariaLabel")}
-      data-collapsed={collapsed}
+      data-collapsed={iconOnly}
+      data-narrow={narrow || undefined}
     >
-      <div className="workspace-nav__primary" id="workspace-nav-items">
-        {(["home", "history", "meetings", "tts"] as const).map(item)}
-      </div>
-      <div className="workspace-nav__secondary" ref={moreRef}>
-        <button
-          ref={triggerRef}
-          type="button"
-          className="workspace-nav__item workspace-nav__more"
-          aria-label={t("workspace.more")}
-          aria-expanded={moreOpen}
-          aria-controls="workspace-more"
-          data-active={
-            activeSection === "models" ||
-            activeSection === "integrations" ||
-            activeSection === "settings"
-          }
-          onClick={() => setMoreOpen(!moreOpen)}
-        >
-          <MoreHorizontal size={20} aria-hidden="true" />
-          <span>{t("workspace.more")}</span>
-        </button>
-        <div
-          id="workspace-more"
-          className="workspace-nav__utilities"
-          data-open={moreOpen}
-        >
-          {(["models", "integrations", "settings"] as const).map(item)}
+      <Nav
+        selectedValue={activeSection}
+        onNavItemSelect={(_event, data) => {
+          onSectionChange(data.value as SidebarSection);
+          if (narrow) onDrawerOpenChange(false);
+        }}
+        className="workspace-nav__fluent"
+      >
+        <div className="workspace-nav__primary" id="workspace-nav-items">
+          {PRIMARY.map(item)}
         </div>
-        {/* Der Schalter sitzt ganz unten, als letzter Eintrag: oben wuerde er
-            die Bereiche eine Zeile nach unten druecken, und genau dort soll
-            "Start" stehen. Kein Logo mehr darueber — die Kopfzeile des
-            Fensters traegt es bereits. */}
-        <button
-          type="button"
-          className="workspace-nav__item workspace-nav__toggle"
-          onClick={() => setCollapsed(!collapsed)}
-          aria-expanded={!collapsed}
-          aria-controls="workspace-nav-items"
-          title={collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")}
-          aria-label={
-            collapsed ? t("workspace.navExpand") : t("workspace.navCollapse")
+        <div className="workspace-nav__secondary">
+          <div id="workspace-more" className="workspace-nav__utilities">
+            {UTILITIES.map(item)}
+            <NavDivider className="workspace-nav__divider" />
+            {item("settings")}
+          </div>
+        </div>
+      </Nav>
+    </nav>
+  );
+
+  if (!narrow) return nav;
+
+  return (
+    <OverlayDrawer
+      position="start"
+      open={drawerOpen}
+      onOpenChange={(_event, data) => onDrawerOpenChange(data.open)}
+      aria-label={t("sidebar.ariaLabel")}
+      className="workspace-nav__drawer"
+    >
+      <DrawerHeader>
+        <DrawerHeaderTitle
+          action={
+            <FluentTooltip content={t("workspace.navClose")} relationship="label">
+              <FluentButton
+                appearance="subtle"
+                icon={<X size={20} aria-hidden="true" />}
+                onClick={() => onDrawerOpenChange(false)}
+              />
+            </FluentTooltip>
           }
         >
-          {collapsed ? (
-            <PanelLeftOpen size={20} aria-hidden="true" />
-          ) : (
-            <PanelLeftClose size={20} aria-hidden="true" />
-          )}
-          <span>{t("workspace.navCollapse")}</span>
-        </button>
-      </div>
-    </nav>
+          {APP_NAME}
+        </DrawerHeaderTitle>
+      </DrawerHeader>
+      {nav}
+    </OverlayDrawer>
   );
 };

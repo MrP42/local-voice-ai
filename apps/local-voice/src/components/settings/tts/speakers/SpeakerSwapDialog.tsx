@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { Dialog } from "../../../ui/Dialog";
 import { Button } from "../../../ui/Button";
@@ -92,7 +93,7 @@ export const SpeakerSwapDialog: React.FC<Props> = ({
               {source.displayName}
             </span>
             <span aria-hidden="true">→</span>
-            <select
+            <FluentSelect
               value={mapping[source.id] ?? source.id}
               onChange={(e) =>
                 setMapping((m) => ({ ...m, [source.id]: e.target.value }))
@@ -101,7 +102,7 @@ export const SpeakerSwapDialog: React.FC<Props> = ({
                 name: source.displayName,
               })}
               data-testid={`speaker-swap-${source.id}`}
-              className="w-56 rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+              className="w-56"
             >
               {ordered.fits.length > 0 && (
                 <optgroup label={targetLang}>
@@ -119,7 +120,7 @@ export const SpeakerSwapDialog: React.FC<Props> = ({
                   </option>
                 ))}
               </optgroup>
-            </select>
+            </FluentSelect>
           </li>
         ))}
       </ul>

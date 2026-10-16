@@ -751,6 +751,8 @@ for (const theme of ["light", "dark"] as const) {
       });
       await page.waitForTimeout(250);
       const result = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
         .withTags(["wcag2a", "wcag2aa"])
         .exclude("input.peer")
         .analyze();

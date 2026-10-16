@@ -417,6 +417,8 @@ test("die Dauer wird aus dem Player nachgetragen, wenn sie fehlt", async ({
 const axeSevere = async (page: Page) =>
   (
     await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
       .analyze()
   ).violations

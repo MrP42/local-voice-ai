@@ -3614,7 +3614,9 @@
     "voiceOptions": "Weitere Einstellungen zum Vorlesen",
     "voices": "Stimmen anhören & verwalten",
     "navCollapse": "Menü einklappen",
-    "navExpand": "Menü ausklappen"
+    "navExpand": "Menü ausklappen",
+    "navOpen": "Menü öffnen",
+    "navClose": "Menü schließen"
   },
   "llmUpdate": {
     "cli": {

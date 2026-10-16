@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import {
   commands,
@@ -194,12 +195,12 @@ export const LlmConnectionsSettings: React.FC = () => {
           layout="horizontal"
           grouped={true}
         >
-          <select
+          <FluentSelect
             value={(getSetting("llm_default_effort") ?? "medium") as string}
             onChange={(e) =>
               void run(() => commands.llmSetDefaultEffort(e.target.value))
             }
-            className="w-72 rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+            className="w-72"
             data-testid="default-effort"
             aria-label={t("settings.llm.defaultEffort.title")}
           >
@@ -208,7 +209,7 @@ export const LlmConnectionsSettings: React.FC = () => {
                 {t(`settings.llm.effortLevels.${level}`)}
               </option>
             ))}
-          </select>
+          </FluentSelect>
         </SettingContainer>
         <SettingContainer
           title={t("settings.llm.autoUpdate.title")}
@@ -217,7 +218,7 @@ export const LlmConnectionsSettings: React.FC = () => {
           layout="horizontal"
           grouped={true}
         >
-          <select
+          <FluentSelect
             value={(getSetting("llm_auto_update_models") ?? "ask") as string}
             onChange={(e) =>
               void run(async () => {
@@ -230,7 +231,7 @@ export const LlmConnectionsSettings: React.FC = () => {
                 return result;
               })
             }
-            className="w-72 rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+            className="w-72"
             data-testid="auto-update-models"
             aria-label={t("settings.llm.autoUpdate.title")}
           >
@@ -239,7 +240,7 @@ export const LlmConnectionsSettings: React.FC = () => {
                 {t(`settings.llm.autoUpdate.modes.${mode}`)}
               </option>
             ))}
-          </select>
+          </FluentSelect>
         </SettingContainer>
         <ToggleSwitch
           checked={(getSetting("cli_auto_update") ?? true) as boolean}
@@ -711,10 +712,10 @@ const ModelRow: React.FC<{
         {efforts.length > 0 && (
           <label className="flex items-center gap-1 text-xs text-text/60">
             {t("settings.llm.model.effort")}
-            <select
+            <FluentSelect
               value={model.effort ?? ""}
               onChange={(e) => void save({ effort: e.target.value || null })}
-              className="rounded border border-mid-gray/30 bg-background px-1.5 py-0.5 text-xs text-text"
+              size="small"
               data-effort-select={model.id}
             >
               <option value="">
@@ -731,7 +732,7 @@ const ModelRow: React.FC<{
                   })}
                 </option>
               ))}
-            </select>
+            </FluentSelect>
           </label>
         )}
         {offersFast && (

@@ -784,6 +784,8 @@ test.describe("Aufgaben-Kontrollkaestchen im Protokoll", () => {
       "Tarifblatt 2027",
     );
     const results = await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
       .include('[data-testid="mid-panel-minutes"]')
       .analyze();
     const labelViolations = results.violations.filter((v) => v.id === "label");
@@ -812,7 +814,9 @@ test.describe("Barrierefreiheit", () => {
     await expect(dialog).toBeVisible();
     expect(
       critical(
-        await new AxeBuilder({ page }).include('[role="dialog"]').analyze(),
+        await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]").include('[role="dialog"]').analyze(),
       ),
     ).toEqual([]);
     await page.keyboard.press("Escape");
@@ -822,7 +826,9 @@ test.describe("Barrierefreiheit", () => {
     ).toBeVisible();
     expect(
       critical(
-        await new AxeBuilder({ page }).include('[role="dialog"]').analyze(),
+        await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]").include('[role="dialog"]').analyze(),
       ),
     ).toEqual([]);
   });
@@ -838,6 +844,8 @@ test.describe("Barrierefreiheit", () => {
     expect(
       critical(
         await new AxeBuilder({ page })
+      // Fluent-Fokuswächter (Leitlinie §12.4)
+      .exclude("[data-tabster-dummy]")
           .include('[data-testid="sentence-compare"]')
           .analyze(),
       ),
