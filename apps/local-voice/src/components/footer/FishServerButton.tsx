@@ -41,7 +41,14 @@ export const FishServerButton: React.FC = () => {
     };
   }, [loadRuntime]);
 
-  const phase = status?.phase ?? "stopped";
+  // "Bereit" gilt auch fuer das Vorlesen mit Piper -- dort laeuft kein Server.
+  // Ohne laufenden Fish-Server zeigt das Symbol "aus", nicht "laeuft".
+  const reported = status?.phase ?? "stopped";
+  const phase =
+    status && status.server_up === false &&
+    (reported === "ready" || reported === "speaking")
+      ? "stopped"
+      : reported;
   // Unbekannt gilt als vorhanden (kein Aufblitzen beim Start); ein laufender
   // oder startender Server (auch ein fremd gestarteter) gilt immer als
   // eingerichtet.

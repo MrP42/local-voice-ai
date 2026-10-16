@@ -965,5 +965,9 @@
       "likeDictation": "Same as dictation (default)",
       "description": "Dedicated model for meetings and imports. Streaming models are tuned for live dictation — meetings transcribe in batches and profit from batch models like Parakeet V3."
     }
+  },
+  "workspace": {
+    "navOpen": "메뉴 열기",
+    "navClose": "메뉴 닫기"
   }
 }

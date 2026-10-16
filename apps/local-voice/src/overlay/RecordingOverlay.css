@@ -325,8 +325,7 @@
   cursor: pointer;
   transition:
     background-color 150ms ease,
-    color 150ms ease,
-    transform 100ms ease;
+    color 150ms ease;
 }
 .sx svg {
   width: 9px;
@@ -336,10 +335,10 @@
 .sx:hover {
   background: var(--s-accent-soft);
   color: var(--color-text);
-  transform: scale(1.05);
 }
 .sx:active {
-  transform: scale(0.95);
+  background: color-mix(in srgb, var(--s-accent-soft), var(--color-text) 12%);
+  color: var(--color-text);
 }
 
 /* working state (transcribing / polishing) — spinner + label */

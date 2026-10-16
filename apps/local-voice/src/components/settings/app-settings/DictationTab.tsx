@@ -19,11 +19,17 @@ import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { AutoSubmit } from "../AutoSubmit";
 import { RefineStream } from "../RefineStream";
 import { useSettings } from "../../../hooks/useSettings";
+import { MicrophoneSelector } from "../MicrophoneSelector";
+import { MicLevelMeter } from "../MicLevelMeter";
+import { MicSensitivity } from "../MicSensitivity";
+import { DictationAudio } from "../DictationAudio";
+import { TextEnhancementGroups } from "../post-processing/PostProcessingSettings";
 import { DictationTest } from "../dictation-test/DictationTest";
 
 /**
- * Everything about turning speech into text in another application, in the
- * order it happens: press a key, speak, get text inserted.
+ * Reiter "Eingabe": alles, was Sprache zu Text macht, in der Reihenfolge, in
+ * der es geschieht: Taste druecken, ins Mikrofon sprechen, Text einfuegen,
+ * Text verbessern lassen.
  *
  * The model's own options are deliberately absent — they live on the model
  * card under "Modelle" (see ModelOptions), because they belong to the model,
@@ -52,6 +58,17 @@ export const DictationTab: React.FC = () => {
         )}
       </SettingsGroup>
 
+      <SettingsGroup title={t("settings.app.groups.input")}>
+        <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+        {/* Right below the picker: whether the device you just chose actually
+            hears you is the first thing you want to know about it. */}
+        <div className="px-3 pb-3">
+          <MicLevelMeter compact />
+        </div>
+        <MicSensitivity />
+        <DictationAudio descriptionMode="tooltip" grouped={true} />
+      </SettingsGroup>
+
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
         <CustomWords descriptionMode="tooltip" grouped />
@@ -69,6 +86,8 @@ export const DictationTab: React.FC = () => {
           <RefineStream descriptionMode="tooltip" grouped={true} />
         )}
       </SettingsGroup>
+
+      <TextEnhancementGroups />
 
       <SettingsGroup title={t("meetings.title")}>
         <MeetingLanguageSetting />

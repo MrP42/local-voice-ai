@@ -151,7 +151,7 @@ export function useMeetingImport(
     if (paths.length > 0) await ask(paths);
   }, [ask]);
 
-  const confirm = async () => {
+  const confirmImport = async () => {
     const current = request;
     if (!current || current.paths.length === 0) return;
     setRequest(null);
@@ -194,7 +194,7 @@ export function useMeetingImport(
           <Button variant="secondary" onClick={() => setRequest(null)}>
             {t("meetings.consent.cancel")}
           </Button>
-          <Button onClick={() => void confirm()} data-testid="import-confirm">
+          <Button onClick={() => void confirmImport()} data-testid="import-confirm">
             {t("meetings.consent.confirm")}
           </Button>
         </>

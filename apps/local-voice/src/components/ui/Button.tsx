@@ -1,5 +1,20 @@
 import React from "react";
+import {
+  Button as FluentButton,
+  type ButtonProps as FluentButtonProps,
+} from "@fluentui/react-components";
 
+/**
+ * Schaltfläche nach Fluent 2 (Leitlinie windows-fluent.md §4).
+ *
+ * Hierarchie: `secondary` ist der Standard jedes Buttons; `primary` nur für die
+ * EINE nächste Aktion je Ansicht/Dialog. `ghost` = Fluent `subtle` (Werkzeug-
+ * und Listenzeilen), `danger` = endgültig zerstörend nach Bestätigung.
+ * `primary-soft` bleibt als Name für Bestandsaufrufe und ist optisch Standard.
+ *
+ * Größen: sm 24 · md 32 (Standard) · lg 40 px. Gedrückt = dunklere Fläche,
+ * nie skalieren.
+ */
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?:
     | "primary"
@@ -9,50 +24,52 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
     | "danger-ghost"
     | "ghost";
   size?: "sm" | "md" | "lg";
+  /** Symbol vor dem Text; ohne Kinder entsteht ein quadratischer Icon-Button. */
+  icon?: React.ReactNode;
 }
 
-export const Button: React.FC<ButtonProps> = ({
-  children,
-  className = "",
-  variant = "primary",
-  size = "md",
-  ...props
-}) => {
-  // inline-flex, not the default inline-block: a button with an icon plus a
-  // label must put the icon BESIDE the text, not above it. Without this the
-  // SVG is a block-level child and the label wraps under it.
-  const baseClasses =
-    "inline-flex items-center justify-center gap-1.5 whitespace-nowrap font-medium rounded-lg border focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+const APPEARANCE: Record<
+  NonNullable<ButtonProps["variant"]>,
+  FluentButtonProps["appearance"]
+> = {
+  primary: "primary",
+  "primary-soft": "secondary",
+  secondary: "secondary",
+  danger: "primary",
+  "danger-ghost": "subtle",
+  ghost: "subtle",
+};
 
-  const variantClasses = {
-    primary:
-      // Design-System-Regel: Auf Signalgelb steht IMMER Ink (--color-on-accent),
-      // nie Weiß — Weiß auf Gelb hat ~1,1:1 Kontrast.
-      "text-on-accent bg-background-ui border-background-ui hover:bg-background-ui/80 hover:border-background-ui/80 focus:ring-1 focus:ring-background-ui",
-    "primary-soft":
-      "text-text bg-logo-primary/20 border-transparent hover:bg-logo-primary/30 focus:ring-1 focus:ring-logo-primary",
-    secondary:
-      "bg-mid-gray/10 border-mid-gray/20 hover:bg-background-ui/30 hover:border-logo-primary focus:outline-none",
-    danger:
-      "text-white bg-red-600 border-mid-gray/20 hover:bg-red-700 hover:border-red-700 focus:ring-1 focus:ring-red-500",
-    "danger-ghost":
-      "text-red-400 border-transparent hover:text-red-300 hover:bg-red-500/10 focus:bg-red-500/20",
-    ghost:
-      "text-current border-transparent hover:bg-mid-gray/10 hover:border-logo-primary focus:bg-mid-gray/20",
-  };
+const SIZE = { sm: "small", md: "medium", lg: "large" } as const;
 
-  const sizeClasses = {
-    sm: "px-2 py-1 text-xs",
-    md: "px-4 py-[5px] text-sm",
-    lg: "px-4 py-2 text-base",
-  };
-
-  return (
-    <button
-      className={`${baseClasses} ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}
-      {...props}
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  (
+    {
+      children,
+      className = "",
+      variant = "secondary",
+      size = "md",
+      // Wie das native <button>: ohne Angabe "submit" (Formulare senden per
+      // Enter weiter); Fluent setzte sonst "button".
+      type = "submit",
+      ...props
+    },
+    ref,
+  ) => (
+    <FluentButton
+      ref={ref}
+      {...({
+        ...props,
+        type,
+        appearance: APPEARANCE[variant],
+        size: SIZE[size],
+        "data-variant": variant,
+        className: `lv-btn lv-btn--${variant} ${className}`.trim(),
+      } as unknown as FluentButtonProps)}
     >
       {children}
-    </button>
-  );
-};
+    </FluentButton>
+  ),
+);
+
+Button.displayName = "Button";

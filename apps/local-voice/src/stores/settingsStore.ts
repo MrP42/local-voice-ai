@@ -272,6 +272,9 @@ const settingUpdaters: {
   // U8
   meeting_self_name: (value) =>
     commands.changeMeetingSelfNameSetting((value as string | null) ?? null),
+  // Dokument-Export: Briefkopf fuer Word und PDF
+  document_letterhead_id: (value) =>
+    commands.changeDocumentLetterheadSetting((value as string) || "neutral"),
   // M5-P5b
   meeting_reminder_lead_s: (value) =>
     commands.changeMeetingReminderLeadSetting(value as number),

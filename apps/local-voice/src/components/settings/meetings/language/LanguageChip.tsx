@@ -139,8 +139,8 @@ export const LanguageChip: React.FC<LanguageChipProps> = ({
           className="shrink-0"
         />
         {/* Schmal nur der Code; der volle Name steht im Namen für Hilfsmittel. */}
-        <span aria-hidden="true" className="@[34rem]:hidden uppercase">
-          {code ?? "?"}
+        <span aria-hidden="true" className="@[34rem]:hidden">
+          {code?.toUpperCase() ?? "?"}
         </span>
         <span aria-hidden="true" className="hidden @[34rem]:inline">
           {name ?? t("meetings.langChip.unknownShort")}
