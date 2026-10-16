@@ -8,6 +8,7 @@ import {
   PanelRightOpen,
   X,
 } from "lucide-react";
+import { IconButton } from "../../ui/IconButton";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { TabList } from "../../ui/TabList";
 import type { LowerTab } from "@/lib/meetingTabs";
@@ -204,7 +205,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       style={sessionsColumn ? { width: `${sessions.width}px` } : undefined}
     >
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <h2 className="text-xs font-semibold text-text/60">
           {projectsTitle}
         </h2>
         <div className="flex items-center gap-1">
@@ -214,26 +215,20 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
             data-testid="projects-actions"
           />
           {drawerOpen ? (
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              title={t("meetings.projects.close")}
-              aria-label={t("meetings.projects.close")}
+            <IconButton
+ label={t("meetings.projects.close")}
               onClick={() => setDrawerOpen(false)}
-            >
-              <X width={16} height={16} aria-hidden="true" />
-            </button>
+            
+ icon={<X width={16} height={16} aria-hidden="true" />}
+ />
           ) : (
-            <button
-              type="button"
-              className={ICON_BUTTON}
-              title={t("meetings.projects.collapse")}
-              aria-label={t("meetings.projects.collapse")}
+            <IconButton
+ label={t("meetings.projects.collapse")}
               data-testid="sessions-collapse"
               onClick={() => sessions.setCollapsed(true)}
-            >
-              <PanelLeftClose width={16} height={16} aria-hidden="true" />
-            </button>
+            
+ icon={<PanelLeftClose width={16} height={16} aria-hidden="true" />}
+ />
           )}
         </div>
       </div>
@@ -261,16 +256,13 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
         className="flex min-h-0 shrink-0 flex-col items-center pt-1"
         style={{ width: `${sessions.width}px` }}
       >
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          title={t("meetings.projects.expand")}
-          aria-label={t("meetings.projects.expand")}
+        <IconButton
+ label={t("meetings.projects.expand")}
           data-testid="sessions-expand"
           onClick={openProjects}
-        >
-          <PanelLeftOpen width={16} height={16} aria-hidden="true" />
-        </button>
+        
+ icon={<PanelLeftOpen width={16} height={16} aria-hidden="true" />}
+ />
         {projectsRail(openProjects)}
       </div>
     ) : null;
@@ -381,21 +373,18 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       style={{ width: `${right.width}px`, flexShrink: 0 }}
     >
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <h2 className="text-xs font-semibold text-text/60">
           {t("meetings.layout.controls")}
         </h2>
-        <button
-          type="button"
-          className={ICON_BUTTON}
-          title={t("meetings.layout.rightCollapse")}
-          aria-label={t("meetings.layout.rightCollapse")}
+        <IconButton
+ label={t("meetings.layout.rightCollapse")}
           data-testid="right-collapse"
           // Waehrend einer Aufnahme sitzt dort der Stopp-Knopf.
           disabled={layout.recording}
           onClick={() => right.setCollapsed(true)}
-        >
-          <PanelRightClose width={16} height={16} aria-hidden="true" />
-        </button>
+        
+ icon={<PanelRightClose width={16} height={16} aria-hidden="true" />}
+ />
       </div>
       <div
         className="flex min-h-0 flex-col"
@@ -418,16 +407,13 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       className="flex shrink-0 flex-col items-center pt-1"
       style={{ width: `${right.width}px` }}
     >
-      <button
-        type="button"
-        className={ICON_BUTTON}
-        title={t("meetings.layout.rightExpand")}
-        aria-label={t("meetings.layout.rightExpand")}
+      <IconButton
+ label={t("meetings.layout.rightExpand")}
         data-testid="right-expand"
         onClick={() => right.setCollapsed(false)}
-      >
-        <PanelRightOpen width={16} height={16} aria-hidden="true" />
-      </button>
+      
+ icon={<PanelRightOpen width={16} height={16} aria-hidden="true" />}
+ />
     </div>
   );
 

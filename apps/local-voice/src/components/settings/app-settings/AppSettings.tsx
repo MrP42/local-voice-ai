@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { PageShell } from "../../ui/PageShell";
+import { TabList } from "../../ui/TabList";
 import { DictationTab } from "./DictationTab";
 import { OutputTab } from "./OutputTab";
 import { AppTab } from "./AppTab";
@@ -133,57 +134,18 @@ export const AppSettings: React.FC = () => {
     >
       {/* Scrolls rather than wraps: on a narrow window a wrapped strip pushes
           the content down by a whole row for no gain. */}
-      <div
-        role="tablist"
-        aria-label={t("sidebar.settings")}
-        className="flex gap-1 border-b border-mid-gray/20 overflow-x-auto"
-      >
-        {available.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            role="tab"
-            id={`settings-tab-${entry.id}`}
-            aria-controls="settings-panel"
-            tabIndex={entry.id === active.id ? 0 : -1}
-            onKeyDown={(event) => {
-              const keys = ["ArrowRight", "ArrowLeft", "Home", "End"];
-              if (!keys.includes(event.key)) return;
-              event.preventDefault();
-              const index = available.findIndex((item) => item.id === entry.id);
-              const rtl =
-                event.currentTarget.closest("[dir]")?.getAttribute("dir") ===
-                "rtl";
-              const step =
-                (event.key === "ArrowRight" ? 1 : -1) * (rtl ? -1 : 1);
-              const next =
-                event.key === "Home"
-                  ? 0
-                  : event.key === "End"
-                    ? available.length - 1
-                    : (index + step + available.length) % available.length;
-              setTab(available[next].id);
-              document
-                .getElementById(`settings-tab-${available[next].id}`)
-                ?.focus();
-            }}
-            aria-selected={entry.id === active.id}
-            onClick={() => setTab(entry.id)}
-            /* `first:pl-0`: der erste Reiter beginnt buendig mit den Karten
-               darunter. Mit Innenabstand sass seine Beschriftung elf Pixel
-               weiter rechts als jeder Inhalt der Seite — genug, dass die
-               Leiste verrutscht aussieht, zu wenig, um wie Absicht zu
-               wirken. */
-            className={`min-h-11 px-3 first:pl-0 py-2 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
-              entry.id === active.id
-                ? "border-logo-primary text-text"
-                : "border-transparent text-text/60 hover:text-text"
-            }`}
-          >
-            {t(entry.labelKey)}
-          </button>
-        ))}
-      </div>
+      <TabList
+        tabs={available.map((entry) => ({
+          id: entry.id,
+          label: t(entry.labelKey),
+        }))}
+        value={active.id}
+        onChange={(id) => setTab(id)}
+        ariaLabel={t("sidebar.settings")}
+        idPrefix="settings-tab"
+        controls="settings-panel"
+        className="overflow-x-auto"
+      />
       <div
         role="tabpanel"
         id="settings-panel"

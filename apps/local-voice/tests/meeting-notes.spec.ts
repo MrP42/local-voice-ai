@@ -1232,7 +1232,7 @@ test.describe("Systemton Vorgabe", () => {
       page.getByText("Standardvorlage", { exact: true }),
     ).toBeVisible();
     // Standard: beide Schalter an.
-    const toggles = page.locator("label:has(input.peer)");
+    const toggles = page.getByRole("switch");
     const capture = page
       .getByText("Systemton standardmäßig aufnehmen")
       .locator("xpath=ancestor::div[.//input[@type='checkbox']][1]")

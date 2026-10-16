@@ -20,6 +20,8 @@
     "check:speakers": "node scripts/check-speaker-markers.mjs"
   },
   "dependencies": {
+    "@fluentui/react-components": "9.74.9",
+    "@fluentui/react-tabster": "9.26.18",
     "@tailwindcss/vite": "^4.1.16",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-autostart": "~2.5.1",

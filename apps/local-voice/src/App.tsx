@@ -20,6 +20,13 @@ import {
   isSidebarSection,
 } from "./components/Sidebar";
 import { WhatsNewGate } from "./components/whats-new";
+import {
+  Button as FluentButton,
+  Tooltip as FluentTooltip,
+} from "@fluentui/react-components";
+import { Menu } from "lucide-react";
+import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
+import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
@@ -27,6 +34,10 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
+import {
+  releaseBackground,
+  releaseBackgroundSoon,
+} from "@/fluent/releaseBackground";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -55,6 +66,52 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
+  // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
+  // (bleibt über Neustarts), schmal als Overlay-Drawer.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
+    "sidebar.collapsed",
+    "0",
+  );
+  const navCollapsed = navCollapsedValue === "1";
+  const narrow = useIsNarrow();
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const drawerWasOpen = useRef(false);
+  // Drawer zu (Esc, Hintergrund, Ziel gewählt): Hintergrund für Hilfstechnik
+  // freigeben und den Fokus zum Menüknopf zurückgeben (Leitlinie §7), sofern
+  // er nicht schon woanders steht.
+  useEffect(() => {
+    if (navDrawerOpen) {
+      drawerWasOpen.current = true;
+      return;
+    }
+    if (!drawerWasOpen.current) return;
+    drawerWasOpen.current = false;
+    // Der Drawer blendet noch aus (Fluent-Bewegung): Fokus sofort heraus,
+    // aria-hidden erst nach dem Aushängen aufräumen.
+    releaseBackgroundSoon();
+    const late = setTimeout(releaseBackground, 700);
+    const timer = setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        !active ||
+        active === document.body ||
+        !active.isConnected ||
+        active.closest(".workspace-nav__drawer")
+      )
+        hamburgerRef.current?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(late);
+    };
+  }, [navDrawerOpen]);
+  const hamburgerLabel = narrow
+    ? t("workspace.navOpen")
+    : navCollapsed
+      ? t("workspace.navExpand")
+      : t("workspace.navCollapse");
 
   useEffect(() => {
     checkOnboardingStatus();
@@ -362,14 +419,45 @@ function App() {
       >
         <WhatsNewGate />
         <ModelUpdateGate />
-        {/* Main content area that takes remaining space */}
+        {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
+            daneben der Seitentitel mit den Aktionen der Seite (PageShell). */}
+        <header className="lv-titlebar" data-tauri-drag-region>
+          <FluentTooltip content={hamburgerLabel} relationship="label">
+            <FluentButton
+              ref={hamburgerRef}
+              appearance="subtle"
+              className="lv-titlebar__hamburger"
+              icon={<Menu size={20} aria-hidden="true" />}
+              aria-expanded={narrow ? navDrawerOpen : !navCollapsed}
+              aria-controls={narrow ? undefined : "workspace-nav-items"}
+              onClick={() =>
+                narrow
+                  ? setNavDrawerOpen(true)
+                  : setNavCollapsedValue(navCollapsed ? "0" : "1")
+              }
+            />
+          </FluentTooltip>
+          <span className="lv-titlebar__app" data-tauri-drag-region>
+            <AppMark />
+            <span className="lv-titlebar__name">{APP_NAME}</span>
+          </span>
+          <span className="lv-titlebar__sep" aria-hidden="true" />
+          <div ref={setHeaderSlot} className="lv-titlebar__slot" />
+          <span className="lv-titlebar__fallback">
+            {t(SECTIONS_CONFIG[currentSection].labelKey)}
+          </span>
+        </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
           <Sidebar
             activeSection={currentSection}
             onSectionChange={setCurrentSection}
+            collapsed={navCollapsed}
+            narrow={narrow}
+            drawerOpen={navDrawerOpen}
+            onDrawerOpenChange={setNavDrawerOpen}
           />
-          {/* Scrollable content area */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          {/* Inhaltsschicht (heller, Radius 8 oben links), nur sie scrollt */}
+          <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
               className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" ? "workspace-main--fill" : ""} ${currentSection === "meetings" ? "workspace-main--fixed" : ""}`}
@@ -408,18 +496,21 @@ function App() {
                 )}
               </div>
             </main>
-            <Footer />
           </div>
         </div>
+        {/* Statusleiste (Leitlinie §2): Modell, Mikrofon, Sprachmodell, Version */}
+        <footer className="lv-statusbar">
+          <Footer />
+        </footer>
       </div>
     );
   }
 
   return (
-    <>
+    <PageHeaderSlotContext.Provider value={headerSlot}>
       {toaster}
       {content}
-    </>
+    </PageHeaderSlotContext.Provider>
   );
 }
 
