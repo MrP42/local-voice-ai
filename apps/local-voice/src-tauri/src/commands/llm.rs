@@ -450,8 +450,7 @@ pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -
         return Err(format!("Unbekannte Verbindung: {connection_id}"));
     }
     s.post_process_api_keys.insert(connection_id, api_key);
-    settings::write_settings(&app, s);
-    Ok(())
+    settings::try_write_settings(&app, s)
 }
 
 // ---- Lokales Sprachmodell: Laufzeit, Modelle, Server ----------------------

@@ -8,8 +8,11 @@
 //! nichts.
 //!
 //! Scheitert das Verschluesseln (kein Windows, Ordner nicht bereit), meldet
-//! `seal` einen Fehler und der Schluessel wird nicht gespeichert -- nie im
-//! Klartext in der Datei. Alte Klartext-Dateien zaehlt weiter das Schild.
+//! `seal` einen Fehler: der neue Schluessel wird nicht gespeichert -- nie im
+//! Klartext --, die Datei behaelt fuer ihn ihren bisherigen Wert, ein alter
+//! verschluesselter Schluessel bleibt unberuehrt (`settings::try_write_settings`
+//! laesst das Speichern sichtbar scheitern). Alte Klartext-Dateien zaehlt
+//! weiter das Schild.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -41,26 +44,28 @@ pub fn ensure_dir(app: &tauri::AppHandle) {
     }
 }
 
-/// Fuer die Datei: Schluessel in den Geheimnisspeicher, Leerwert zurueck.
-/// Ein geleerter Schluessel loescht auch das Geheimnis. Laesst sich ein
-/// Schluessel nicht verschluesseln, kommt `Err` mit den betroffenen
-/// Verbindungen -- die Datei bekommt dann [`blanked`], nie den Klartext.
-pub fn seal(map: &SecretMap) -> Result<SecretMap, String> {
-    seal_with(map, |id, key| secret::secret_put_ref(&secret_ref(id), key))
+/// `seal` ist fuer mindestens einen Schluessel gescheitert.
+#[derive(Debug)]
+pub struct SealFailure {
+    /// Wie `seal` es sonst liefert; die gescheiterten Eintraege sind leer --
+    /// der Aufrufer setzt dort den bisherigen Dateiwert ein.
+    pub sealed: SecretMap,
+    pub failed_ids: Vec<String>,
+    pub message: String,
 }
 
-/// Alle Werte geleert: was in die Datei darf, wenn `seal` scheitert. Bereits
-/// versiegelte Schluessel holt `unseal` aus dem Geheimnisspeicher zurueck.
-pub fn blanked(map: &SecretMap) -> SecretMap {
-    let mut out = map.clone();
-    out.values_mut().for_each(String::clear);
-    out
+/// Fuer die Datei: Schluessel in den Geheimnisspeicher, Leerwert zurueck.
+/// Ein geleerter Schluessel loescht auch das Geheimnis. Laesst sich ein
+/// Schluessel nicht verschluesseln, kommt [`SealFailure`] -- nie der Klartext,
+/// und das bisherige Geheimnis dieser Verbindung bleibt unberuehrt.
+pub fn seal(map: &SecretMap) -> Result<SecretMap, SealFailure> {
+    seal_with(map, |id, key| secret::secret_put_ref(&secret_ref(id), key))
 }
 
 fn seal_with(
     map: &SecretMap,
     put: impl Fn(&str, &[u8]) -> Result<(), String>,
-) -> Result<SecretMap, String> {
+) -> Result<SecretMap, SealFailure> {
     let mut out = map.clone();
     let mut failed = Vec::new();
     for (id, value) in out.iter_mut() {
@@ -76,7 +81,7 @@ fn seal_with(
         let unchanged = with_cache(|c| c.get(id) == Some(&key));
         if !unchanged {
             if let Err(e) = put(id, key.as_bytes()) {
-                failed.push(format!("{id}: {e}"));
+                failed.push((id.clone(), e));
                 value.clear();
                 continue;
             }
@@ -85,13 +90,21 @@ fn seal_with(
         value.clear();
     }
     if failed.is_empty() {
-        Ok(out)
-    } else {
-        Err(format!(
-            "API-Schluessel nicht verschluesselbar, nicht gespeichert ({})",
-            failed.join("; ")
-        ))
+        return Ok(out);
     }
+    let message = format!(
+        "API-Schluessel nicht verschluesselbar, nicht gespeichert ({})",
+        failed
+            .iter()
+            .map(|(id, e)| format!("{id}: {e}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    Err(SealFailure {
+        sealed: out,
+        failed_ids: failed.into_iter().map(|(id, _)| id).collect(),
+        message,
+    })
 }
 
 /// Nach dem Laden: Leerwerte aus dem Geheimnisspeicher fuellen.
@@ -187,8 +200,10 @@ mod tests {
         let id = "sealfail-test1";
         let input = map(&[(id, "sk-geheim-456")]);
         let err = seal_with(&input, |_, _| Err("kaputt".into())).unwrap_err();
-        assert!(err.contains(id) && !err.contains("sk-geheim-456"), "{err}");
-        assert_eq!(blanked(&input).get(id).map(String::as_str), Some(""));
+        let msg = &err.message;
+        assert!(msg.contains(id) && !msg.contains("sk-geheim-456"), "{msg}");
+        assert_eq!(err.failed_ids, vec![id.to_string()]);
+        assert_eq!(err.sealed.get(id).map(String::as_str), Some(""));
         assert!(with_cache(|c| !c.contains_key(id)));
     }
 

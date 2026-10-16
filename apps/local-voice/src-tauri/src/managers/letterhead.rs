@@ -58,8 +58,9 @@ pub enum LogoPosition {
     Rechts,
 }
 
-/// Logo eines Profils: Datei im Profilordner (`logo.png`/`logo.jpg`) oder, bei
-/// mitgelieferten Profilen, `builtin:<name>`.
+/// Logo eines Profils: Datei im Profilordner (`logo-<ulid>.png|jpg`, aeltere
+/// Profile `logo.png`/`logo.jpg`) oder, bei mitgelieferten Profilen,
+/// `builtin:<name>`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 pub struct Logo {
     pub datei: String,
@@ -263,8 +264,8 @@ pub fn validate(lh: &Letterhead) -> Result<(), String> {
         }
     }
     if let Some(logo) = &lh.logo {
-        let ok_file = matches!(logo.datei.as_str(), "logo.png" | "logo.jpg")
-            || (lh.builtin && logo.datei.starts_with("builtin:"));
+        let ok_file =
+            valid_logo_file(&logo.datei) || (lh.builtin && logo.datei.starts_with("builtin:"));
         if !ok_file {
             return bad("logo");
         }
@@ -467,8 +468,14 @@ impl Store {
         }
         let mut lh = self.get(id)?;
         let dir = self.dir(id)?;
-        // Erst den Ersatz pruefen und schreiben, dann das Alte entfernen: ein
-        // ungueltiger Ersatz laesst das bisherige Logo stehen.
+        let previous_file = lh
+            .logo
+            .as_ref()
+            .map(|l| l.datei.clone())
+            .filter(|d| valid_logo_file(d));
+        // Der Ersatz bekommt einen neuen, eindeutigen Namen: das bisherige Logo
+        // wird nie ueberschrieben. Erst pruefen und schreiben, dann das Profil
+        // speichern, dann aufraeumen.
         let keep = match source {
             None => {
                 lh.logo = None;
@@ -483,7 +490,7 @@ impl Store {
                 }
                 let bytes = std::fs::read(path).map_err(|e| format!("{CODE_IO}: {e}"))?;
                 let (kind, _, _) = check_logo(&bytes)?;
-                let name = format!("logo.{}", kind.extension());
+                let name = format!("logo-{}.{}", ulid::Ulid::new(), kind.extension());
                 write_atomic(&dir.join(&name), &bytes)?;
                 let previous = lh.logo.take();
                 lh.logo = Some(Logo {
@@ -494,9 +501,18 @@ impl Store {
                 Some(name)
             }
         };
-        self.save(&lh)?;
-        for old in ["logo.png", "logo.jpg"] {
-            if keep.as_deref() != Some(old) {
+        if let Err(e) = self.save(&lh) {
+            if let Some(new) = &keep {
+                let _ = std::fs::remove_file(dir.join(new));
+            }
+            return Err(e);
+        }
+        // Nur das vorher referenzierte Logo loeschen, und nur wenn das Profil
+        // auf der Platte jetzt auf das neue zeigt -- ein paralleler Wechsel
+        // hat sonst gewonnen, und dessen Logo bleibt stehen.
+        if let Some(old) = previous_file.filter(|o| Some(o) != keep.as_ref()) {
+            let now = self.get(id).ok().and_then(|l| l.logo).map(|l| l.datei);
+            if now == keep {
                 let _ = std::fs::remove_file(dir.join(old));
             }
         }
@@ -511,7 +527,7 @@ impl Store {
         let bytes = match logo.datei.as_str() {
             "builtin:wai" => WAI_LOGO.to_vec(),
             "builtin:ingenieurbuero" => IB_LOGO.to_vec(),
-            "logo.png" | "logo.jpg" => std::fs::read(self.dir(&lh.id)?.join(&logo.datei))
+            d if valid_logo_file(d) => std::fs::read(self.dir(&lh.id)?.join(d))
                 .map_err(|e| format!("{CODE_LOGO}:missing ({e})"))?,
             _ => return Err(format!("{CODE_INVALID}:logo")),
         };
@@ -523,6 +539,24 @@ impl Store {
             height_px,
         }))
     }
+}
+
+/// Dateiname eines eigenen Logos: `logo.png`/`logo.jpg` (aeltere Profile) oder
+/// `logo-<ulid>.png|jpg`. Nur ASCII-Buchstaben und Ziffern dazwischen -- kein
+/// Pfad, kein `..`.
+fn valid_logo_file(name: &str) -> bool {
+    if matches!(name, "logo.png" | "logo.jpg") {
+        return true;
+    }
+    let Some(stem) = name
+        .strip_suffix(".png")
+        .or_else(|| name.strip_suffix(".jpg"))
+    else {
+        return false;
+    };
+    stem.strip_prefix("logo-").is_some_and(|u| {
+        (1..=40).contains(&u.len()) && u.chars().all(|c| c.is_ascii_alphanumeric())
+    })
 }
 
 /// Ist das eine mitgelieferte Id?
@@ -684,7 +718,11 @@ mod tests {
         let png = dir.path().join("in.png");
         std::fs::write(&png, WAI_LOGO).unwrap();
         let lh = s.set_logo("f", Some(&png)).unwrap();
-        assert_eq!(lh.logo.as_ref().unwrap().datei, "logo.png");
+        let first = lh.logo.as_ref().unwrap().datei.clone();
+        assert!(
+            first.starts_with("logo-") && first.ends_with(".png"),
+            "{first}"
+        );
         let data = s.logo(&lh).unwrap().unwrap();
         assert_eq!((data.width_px, data.height_px), (223, 169));
 
@@ -696,16 +734,22 @@ mod tests {
         );
         // Ein ungueltiger Ersatz laesst das bisherige Logo stehen.
         let kept = s.get("f").unwrap();
-        assert_eq!(kept.logo.as_ref().unwrap().datei, "logo.png");
+        assert_eq!(kept.logo.as_ref().unwrap().datei, first);
         assert!(s.logo(&kept).unwrap().is_some());
+        // Ein gueltiger Ersatz bekommt einen neuen Namen; das alte Logo geht
+        // erst, wenn das Profil auf das neue zeigt.
+        let lh = s.set_logo("f", Some(&png)).unwrap();
+        let second = lh.logo.as_ref().unwrap().datei.clone();
+        assert_ne!(second, first);
+        let pdir = dir.path().join(DIR_NAME).join("f");
+        assert!(pdir.join(&second).is_file());
+        assert!(!pdir.join(&first).exists());
         let lh = s.set_logo("f", None).unwrap();
         assert!(lh.logo.is_none());
-        assert!(!dir
-            .path()
-            .join(DIR_NAME)
-            .join("f")
-            .join("logo.png")
-            .exists());
+        assert!(!pdir.join(&second).exists());
+        assert!(valid_logo_file("logo.jpg"));
+        assert!(!valid_logo_file("logo-../x.png"));
+        assert!(!valid_logo_file("logo-.png"));
     }
 
     #[test]

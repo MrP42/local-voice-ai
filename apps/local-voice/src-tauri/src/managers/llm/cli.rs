@@ -363,6 +363,11 @@ fn args_without_effort(cli: Cli, model: &str, system: Option<&str>) -> Vec<Strin
         // Bildbetrachter (liest lokale Dateien), Websuche, Browser/Computer,
         // Plugins/Apps, MCP. Dazu Read-only-Sandbox und ein frischer, leerer
         // Arbeitsordner je Aufruf (`call_with_timeout`).
+        // `mcp_servers={}` allein reicht NICHT: Codex fuehrt Tabellen rekursiv
+        // zusammen, eine leere Tabelle loescht die Server der Nutzerkonfiguration
+        // nicht. Deshalb setzt `call_with_timeout` zusaetzlich
+        // [`codex_isolation_args`] ein (`--ignore-user-config` oder jeden
+        // Server einzeln aus).
         // Was das NICHT leistet: ein Werkzeug, das eine kuenftige Codex-Version
         // neu einfuehrt, ist hier nicht abgeschaltet; die Sandbox verbietet
         // Schreiben, nicht Lesen; der leere Ordner haelt nur relative Pfade
@@ -560,7 +565,13 @@ pub fn call_with_timeout(
         _ => user.to_string(),
     };
     let (program, mut argv) = launcher(binary);
+    let prefix = argv.clone();
     argv.extend(args_with(cli, model, effort, fast, system));
+    if cli == Cli::Codex {
+        // Vor dem abschliessenden "-" (Prompt aus stdin).
+        let at = argv.len() - 1;
+        argv.splice(at..at, codex_isolation_args(&program, &prefix)?);
+    }
     let mut cmd = Command::new(program);
     cmd.args(&argv)
         .current_dir(work.path())
@@ -572,16 +583,8 @@ pub fn call_with_timeout(
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
-    // Eigener Thread: liest die CLI stdin nicht, blockiert sonst das Schreiben
-    // und die Zeitgrenze griffe nie. Endet spaetestens, wenn der Prozess
-    // beendet (oder nach der Zeitgrenze abgeschossen) ist.
-    if let Some(mut stdin) = child.stdin.take() {
-        std::thread::spawn(move || {
-            let _ = stdin.write_all(stdin_text.as_bytes());
-        });
-    }
-    let output = wait_with_timeout(child, timeout)?;
+    let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
+    let output = run_with_timeout(child, Some(stdin_text.into_bytes()), timeout)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let reply = match cli {
         Cli::Claude => parse_claude(&stdout),
@@ -636,14 +639,57 @@ pub(crate) fn find_node() -> Option<PathBuf> {
 }
 
 pub(crate) fn wait_with_timeout(
+    child: std::process::Child,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    run_with_timeout(child, None, timeout)
+}
+
+/// Wartet auf `child`, schreibt dabei `input` nach stdin und liest stdout und
+/// stderr -- alles in eigenen Threads und alles unter EINER Zeitgrenze ab
+/// Start. Laeuft sie ab (auch weil ein Enkelprozess eine Pipe offen haelt),
+/// wird der Prozessbaum beendet: unter Windows ueber ein Job-Objekt mit
+/// KILL_ON_JOB_CLOSE (faengt auch Enkel, die nach dem Start entstehen;
+/// scheitert das Anhaengen, `taskkill /T` auf die eigene Kind-PID). Ausserhalb
+/// von Windows nur das Kind selbst. Ein unvollstaendig geschriebener Prompt
+/// ist ein Fehler, nie ein Erfolg.
+pub(crate) fn run_with_timeout(
     mut child: std::process::Child,
+    input: Option<Vec<u8>>,
     timeout: Duration,
 ) -> Result<std::process::Output, String> {
     use std::io::Read;
-    // stdout und stderr je in eigenem Thread: nacheinander gelesen blockiert
-    // eine volle stderr-Pipe die CLI, waehrend wir noch auf stdout warten.
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let deadline = Instant::now() + timeout;
+    let job = crate::process_guard::ProcessGuard::attach(&child, None, 100);
+    let kill_tree = |child: &mut std::process::Child,
+                     job: Option<crate::process_guard::ProcessGuard>| {
+        #[cfg(windows)]
+        if job.is_none() && matches!(child.try_wait(), Ok(None)) {
+            let _ = Command::new("taskkill")
+                .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+        }
+        // Drop des Job-Objekts beendet den ganzen Baum.
+        drop(job);
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+
+    fn spawn_into<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx
+    }
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> mpsc::Receiver<Vec<u8>> {
+        spawn_into(move || {
             let mut buf = Vec::new();
             if let Some(mut p) = pipe {
                 let _ = p.read_to_end(&mut buf);
@@ -651,29 +697,137 @@ pub(crate) fn wait_with_timeout(
             buf
         })
     }
-    let out_reader = drain(child.stdout.take());
-    let err_reader = drain(child.stderr.take());
-    let started = std::time::Instant::now();
+    // Eigener Thread: liest die CLI stdin nicht, blockierte sonst das
+    // Schreiben vor der Zeitueberwachung.
+    let writer = match (input, child.stdin.take()) {
+        (Some(data), Some(mut stdin)) => Some(spawn_into(move || stdin.write_all(&data))),
+        _ => None,
+    };
+    let out_rx = drain(child.stdout.take());
+    let err_rx = drain(child.stderr.take());
+
+    let timed_out = || -> Result<std::process::Output, String> {
+        Err("cli_timeout: Die CLI hat nicht rechtzeitig geantwortet".to_string())
+    };
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("cli_timeout: Die CLI hat nicht rechtzeitig geantwortet".into());
+            Ok(None) if Instant::now() >= deadline => {
+                kill_tree(&mut child, job);
+                return timed_out();
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(e) => return Err(format!("cli_failed: {e}")),
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => {
+                kill_tree(&mut child, job);
+                return Err(format!("cli_failed: {e}"));
+            }
         }
     };
-    let unreadable = |_| "cli_failed: Ausgabe unlesbar".to_string();
-    let stdout = out_reader.join().map_err(unreadable)?;
-    let stderr = err_reader.join().map_err(unreadable)?;
+    let left = || deadline.saturating_duration_since(Instant::now());
+    let (Ok(stdout), Ok(stderr)) = (out_rx.recv_timeout(left()), err_rx.recv_timeout(left()))
+    else {
+        // Das Kind ist fertig, aber jemand haelt die Pipe offen (Enkelprozess).
+        kill_tree(&mut child, job);
+        return timed_out();
+    };
+    if let Some(w) = writer {
+        match w.recv_timeout(left()) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "cli_failed: Die Eingabe kam nicht vollstaendig bei der CLI an ({e})"
+                ))
+            }
+            Err(_) => {
+                kill_tree(&mut child, job);
+                return timed_out();
+            }
+        }
+    }
+    drop(job);
     Ok(std::process::Output {
         status,
         stdout,
         stderr,
     })
+}
+
+/// Haelt `codex exec` von der Konfiguration des Nutzers fern (MCP-Server,
+/// Plugins, Hooks, `notify`). Bevorzugt `--ignore-user-config`: laut
+/// `codex exec --help` (0.162.1) wird dann `$CODEX_HOME/config.toml` nicht
+/// geladen, die Anmeldung kommt weiter aus `CODEX_HOME` -- die App liest oder
+/// beruehrt `auth.json` nie. Kennt die installierte CLI den Schalter nicht,
+/// wird jeder Server aus `codex mcp list --json` einzeln abgeschaltet
+/// (`mcp_servers.<name>.enabled=false`). Grenze dieses Rueckfalls: er wirkt
+/// nur auf MCP-Server, nicht auf Plugins/Hooks der Nutzerkonfiguration.
+/// Scheitert beides, wird nicht aufgerufen (Fehler statt ungeschuetzt).
+fn codex_isolation_args(program: &Path, prefix: &[String]) -> Result<Vec<String>, String> {
+    static SUPPORTS: std::sync::Mutex<Vec<(PathBuf, bool)>> = std::sync::Mutex::new(Vec::new());
+    let probe = |args: &[&str]| -> Result<String, String> {
+        let mut cmd = Command::new(program);
+        cmd.args(prefix)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let child = cmd.spawn().map_err(|e| format!("cli_missing: {e}"))?;
+        let out = wait_with_timeout(child, Duration::from_secs(30))?;
+        if !out.status.success() {
+            return Err(format!("cli_failed: codex {} scheiterte", args.join(" ")));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let cached = SUPPORTS
+        .lock()
+        .ok()
+        .and_then(|c| c.iter().find(|(p, _)| p == program).map(|(_, s)| *s));
+    let supports = match cached {
+        Some(s) => s,
+        None => {
+            let s = supports_ignore_user_config(&probe(&["exec", "--help"])?);
+            if let Ok(mut c) = SUPPORTS.lock() {
+                c.push((program.to_path_buf(), s));
+            }
+            s
+        }
+    };
+    if supports {
+        return Ok(vec!["--ignore-user-config".to_string()]);
+    }
+    mcp_disable_args(&probe(&["mcp", "list", "--json"])?)
+}
+
+/// Kennt `codex exec` den Schalter `--ignore-user-config`?
+pub(crate) fn supports_ignore_user_config(exec_help: &str) -> bool {
+    exec_help.contains("--ignore-user-config")
+}
+
+/// `-c mcp_servers.<name>.enabled=false` fuer jeden Server aus
+/// `codex mcp list --json`. Ein Name, der nicht sicher auf die Kommandozeile
+/// passt, ist ein Fehler -- lieber kein Aufruf als ein Server, der an bleibt.
+pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(list_json.trim())
+        .map_err(|e| format!("cli_failed: MCP-Liste von Codex unlesbar ({e})"))?;
+    let servers = v
+        .as_array()
+        .ok_or_else(|| "cli_failed: MCP-Liste von Codex unlesbar".to_string())?;
+    let mut out = Vec::new();
+    for s in servers {
+        let name = s.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if !valid_model_name(name) {
+            return Err(format!(
+                "cli_failed: MCP-Server mit unerwartetem Namen, Aufruf abgebrochen ({name:?})"
+            ));
+        }
+        out.push("-c".to_string());
+        out.push(format!("mcp_servers.{name}.enabled=false"));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -718,6 +872,64 @@ mod tests {
         assert!(parse_codex(refused)
             .unwrap_err()
             .starts_with("cli_model_not_in_plan"));
+    }
+
+    #[test]
+    fn codex_isolation_prefers_ignore_user_config_else_disables_each_server() {
+        assert!(supports_ignore_user_config(
+            "      --ignore-user-config\n          Do not load `$CODEX_HOME/config.toml`"
+        ));
+        assert!(!supports_ignore_user_config("      --ephemeral\n"));
+        let a = mcp_disable_args(
+            r#"[{"name":"node_repl","enabled":true},{"name":"code-review","enabled":false}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            a,
+            [
+                "-c",
+                "mcp_servers.node_repl.enabled=false",
+                "-c",
+                "mcp_servers.code-review.enabled=false"
+            ]
+        );
+        assert!(mcp_disable_args("[]").unwrap().is_empty());
+        assert!(mcp_disable_args(r#"[{"name":"a b=true"}]"#).is_err());
+        assert!(mcp_disable_args("kein json").is_err());
+    }
+
+    /// Ein Enkelprozess haelt stdout offen, das Kind ist laengst fertig: die
+    /// Zeitgrenze greift trotzdem, und der Baum wird beendet.
+    #[cfg(windows)]
+    #[test]
+    fn a_grandchild_holding_the_pipe_hits_the_timeout() {
+        let child = Command::new("cmd")
+            .args(["/C", "start /B ping -n 60 127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let t = std::time::Instant::now();
+        let err = wait_with_timeout(child, Duration::from_secs(3)).unwrap_err();
+        assert!(err.starts_with("cli_timeout"), "{err}");
+        assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
+    }
+
+    /// Liest die CLI den Prompt nicht vollstaendig, ist das ein Fehler.
+    #[cfg(windows)]
+    #[test]
+    fn an_incomplete_prompt_is_an_error() {
+        let child = Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let err = run_with_timeout(child, Some(vec![b'x'; 8 << 20]), Duration::from_secs(30))
+            .unwrap_err();
+        assert!(err.starts_with("cli_failed"), "{err}");
     }
 
     /// Viel stderr bei leerem stdout: nacheinander gelesen haengt das bis zur
