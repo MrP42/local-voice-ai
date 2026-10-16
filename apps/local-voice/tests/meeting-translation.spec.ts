@@ -947,8 +947,15 @@ test.describe("Dialog-Fussleisten", () => {
       name: "Sprache der Besprechung",
     });
     const box = (await dialog.boundingBox())!;
-    // Rechtsbuendig: der letzte Knopf der letzten Zeile endet am rechten Innenrand.
+    // Rechtsbuendig: der letzte Knopf der letzten Zeile endet am rechten
+    // Innenrand (Rand + Innenabstand der Dialogflaeche, Fluent: 1 + 24 px).
+    const inset = await dialog.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return parseFloat(s.borderRightWidth) + parseFloat(s.paddingRight);
+    });
     const last = (await footer.getByRole("button").last().boundingBox())!;
-    expect(box.x + box.width - (last.x + last.width)).toBeLessThanOrEqual(24);
+    expect(
+      Math.abs(box.x + box.width - inset - (last.x + last.width)),
+    ).toBeLessThanOrEqual(1);
   });
 });

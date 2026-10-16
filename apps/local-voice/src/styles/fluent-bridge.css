@@ -61,7 +61,10 @@ html[data-fluent] body {
 
 /* FluentProvider füllt das Fenster; sein eigener Hintergrund ist Background1.
    Die Basisschicht (Titel-, Navigations-, Statusleiste) ist Background3. */
-.lv-fluent-root {
+/* Nicht für Portal-Knoten: Fluent kopiert die Provider-Klasse auf jedes
+   Portal (Listen, Tooltips); mit Fensterhöhe und Fläche läge es deckend über
+   der App und finge alle Klicks ab. */
+.lv-fluent-root:not([data-portal-node]) {
   min-height: 100vh;
   background-color: var(--colorNeutralBackground3);
 }
@@ -86,6 +89,11 @@ html[data-fluent] body {
 }
 .lv-btn--danger-ghost.lv-btn--danger-ghost {
   color: var(--colorStatusDangerForeground1);
+}
+/* Dunkel erreicht Foreground1 (#DC626D auf #292929) nur 4,2:1; die hellere
+   Stufe hält Text 4,5:1 (§8). */
+html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-ghost {
+  color: var(--colorStatusDangerForeground3);
 }
 
 /* Dialog: Primärbutton links, Abbrechen rechts (§4, §5) — unabhängig von der

@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useEffect, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Button as FluentButton,
   Dialog as FluentDialog,
@@ -9,7 +16,21 @@ import {
   DialogTitle,
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
+import { useActivateModal } from "@fluentui/react-tabster";
 import { X } from "lucide-react";
+import { releaseBackgroundSoon } from "@/fluent/releaseBackground";
+
+/** Fokus nach dem Schließen zurück zum Auslöser. Ist er verschwunden, bleibt
+ *  der Fokus auf <body>: Ansichten der App setzen ihn dann selbst (z. B. das
+ *  Notizfeld nach dem Aufnahmestart, das nur greift, wenn niemand sonst den
+ *  Fokus hat). */
+function refocus(opener: HTMLElement | null) {
+  releaseBackgroundSoon();
+  // Die App (oder ein neuer Dialog) hat den Fokus schon gesetzt: stehen lassen.
+  const active = document.activeElement;
+  if (active && active !== document.body && active.isConnected) return;
+  if (opener?.isConnected) opener.focus();
+}
 
 /** Tailwind-Breiten der Aufrufer (`max-w-2xl` …) in rem. Fluent setzt die
  *  Breite der Dialogfläche selbst (ungeschichtet), Tailwind-Klassen kämen
@@ -78,24 +99,73 @@ export const Dialog: React.FC<DialogProps> = ({
   const [surface, setSurface] = useState<HTMLElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const descriptionId = React.useId();
+  const activateModal = useActivateModal();
+
+  // Auslöser merken: Layout-Effekt, er läuft, bevor Fluent den Fokus in den
+  // Dialog setzt (ein gewöhnlicher Effekt sähe schon die Dialogfläche).
+  useLayoutEffect(() => {
+    if (open) {
+      previousFocusRef.current =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+          ? document.activeElement
+          : null;
+      return;
+    }
+    const previous = previousFocusRef.current;
+    previousFocusRef.current = null;
+    if (!previous) return;
+    // Sofort zurück zum Auslöser, sofern die App den Fokus nicht schon
+    // woandershin gesetzt hat (z. B. ins Notizfeld nach dem Start); fällt er
+    // danach auf <body>, erneut.
+    const active = document.activeElement;
+    const appMoved =
+      active &&
+      active !== document.body &&
+      !active.closest('[role="dialog"], [role="alertdialog"]');
+    if (!appMoved && previous.isConnected) previous.focus();
+    setTimeout(() => refocus(previous), 0);
+  }, [open]);
+
+  // Offen ausgehängt (Objekt gelöscht, Seite gewechselt): tabster hält das
+  // entfernte Modal sonst für aktiv und lässt aria-hidden am Hintergrund stehen.
+  useLayoutEffect(
+    () => () => {
+      if (!previousFocusRef.current) return;
+      const previous = previousFocusRef.current;
+      previousFocusRef.current = null;
+      activateModal(undefined);
+      setTimeout(() => refocus(previous), 0);
+    },
+    [activateModal],
+  );
 
   useEffect(() => {
     if (!open) return;
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
     const frame = requestAnimationFrame(() => {
       const target = initialFocusRef?.current ?? surfaceRef.current;
       target?.focus();
     });
-    return () => {
-      cancelAnimationFrame(frame);
-      const previous = previousFocusRef.current;
-      previousFocusRef.current = null;
-      if (previous?.isConnected) previous.focus();
-    };
+    return () => cancelAnimationFrame(frame);
   }, [initialFocusRef, open]);
+
+  // Esc wirkt auch, wenn der Fokus mit einem entfernten Element (z. B. dem
+  // Knopf eines geschlossenen Formulars) auf <body> gefallen ist; Fluent
+  // hört nur an der Dialogfläche.
+  useEffect(() => {
+    if (!open || !dismissible) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const modals = document.querySelectorAll('[aria-modal="true"]');
+      if (modals[modals.length - 1] !== surfaceRef.current) return;
+      event.preventDefault();
+      onOpenChange(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, dismissible, onOpenChange]);
 
   const contentStyle: React.CSSProperties | undefined = contentFades
     ? {

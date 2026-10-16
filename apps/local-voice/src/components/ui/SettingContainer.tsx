@@ -1,4 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Tooltip } from "./Tooltip";
 
 interface SettingContainerProps {
@@ -12,7 +18,18 @@ interface SettingContainerProps {
   tooltipPosition?: "top" | "bottom";
 }
 
-export const SettingContainer: React.FC<SettingContainerProps> = ({
+/** Titel der umgebenden Einstellungszeile: Bedienelemente ohne eigene
+ *  Beschriftung (Auswahlliste, Schalter) tragen ihn als zugänglichen Namen. */
+const SettingLabelContext = createContext<string | null>(null);
+export const useSettingLabel = () => useContext(SettingLabelContext);
+
+export const SettingContainer: React.FC<SettingContainerProps> = (props) => (
+  <SettingLabelContext.Provider value={props.title}>
+    <SettingContainerBody {...props} />
+  </SettingLabelContext.Provider>
+);
+
+const SettingContainerBody: React.FC<SettingContainerProps> = ({
   title,
   description,
   children,

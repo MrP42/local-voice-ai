@@ -34,6 +34,10 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
+import {
+  releaseBackground,
+  releaseBackgroundSoon,
+} from "@/fluent/releaseBackground";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -72,6 +76,37 @@ function App() {
   const navCollapsed = navCollapsedValue === "1";
   const narrow = useIsNarrow();
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const drawerWasOpen = useRef(false);
+  // Drawer zu (Esc, Hintergrund, Ziel gewählt): Hintergrund für Hilfstechnik
+  // freigeben und den Fokus zum Menüknopf zurückgeben (Leitlinie §7), sofern
+  // er nicht schon woanders steht.
+  useEffect(() => {
+    if (navDrawerOpen) {
+      drawerWasOpen.current = true;
+      return;
+    }
+    if (!drawerWasOpen.current) return;
+    drawerWasOpen.current = false;
+    // Der Drawer blendet noch aus (Fluent-Bewegung): Fokus sofort heraus,
+    // aria-hidden erst nach dem Aushängen aufräumen.
+    releaseBackgroundSoon();
+    const late = setTimeout(releaseBackground, 700);
+    const timer = setTimeout(() => {
+      const active = document.activeElement;
+      if (
+        !active ||
+        active === document.body ||
+        !active.isConnected ||
+        active.closest(".workspace-nav__drawer")
+      )
+        hamburgerRef.current?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(late);
+    };
+  }, [navDrawerOpen]);
   const hamburgerLabel = narrow
     ? t("workspace.navOpen")
     : navCollapsed
@@ -389,6 +424,7 @@ function App() {
         <header className="lv-titlebar" data-tauri-drag-region>
           <FluentTooltip content={hamburgerLabel} relationship="label">
             <FluentButton
+              ref={hamburgerRef}
               appearance="subtle"
               className="lv-titlebar__hamburger"
               icon={<Menu size={20} aria-hidden="true" />}

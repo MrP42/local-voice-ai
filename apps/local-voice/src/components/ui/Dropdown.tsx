@@ -4,6 +4,7 @@ import {
   Dropdown as FluentDropdown,
   Option,
 } from "@fluentui/react-components";
+import { useSettingLabel } from "./SettingContainer";
 
 export interface DropdownOption {
   value: string;
@@ -38,6 +39,8 @@ export const Dropdown: React.FC<DropdownProps> = ({
   ariaLabel,
 }) => {
   const { t } = useTranslation();
+  // In einer Einstellungszeile nennt deren Titel die Liste.
+  const settingLabel = useSettingLabel();
   const selectedOption = options.find(
     (option) => option.value === selectedValue,
   );
@@ -49,7 +52,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
       selectedOptions={selectedValue ? [selectedValue] : []}
       placeholder={placeholder}
       disabled={disabled}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? settingLabel ?? undefined}
       onOpenChange={(_e, data) => {
         if (data.open && onRefresh) onRefresh();
       }}

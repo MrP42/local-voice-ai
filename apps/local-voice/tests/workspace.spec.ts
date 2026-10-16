@@ -142,24 +142,25 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  // Fluent 2 (Leitlinie §3): schmal ist die Navigation ein Overlay-Drawer
+  // hinter dem Menüknopf der Titelleiste, mit allen Zielen samt Beschriftung.
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+  const menu = page.getByRole("button", { name: "Menü öffnen", exact: true });
+  await expect(menu).toBeVisible();
+  await expect(nav).toBeHidden();
+  await menu.click();
   await expect(
     nav.getByRole("button", { name: "Start", exact: true }),
   ).toBeVisible();
   await expect(
     nav.getByRole("button", { name: "Modelle", exact: true }),
-  ).toBeHidden();
-  await nav.getByRole("button", { name: "Mehr", exact: true }).click();
+  ).toBeVisible();
   await expect(
-    nav.getByRole("button", { name: "Modelle", exact: true }),
+    nav.getByRole("button", { name: "Einstellungen", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(
-    nav.getByRole("button", { name: "Mehr", exact: true }),
-  ).toBeFocused();
-  await expect(
-    nav.getByRole("button", { name: "Modelle", exact: true }),
-  ).toBeHidden();
+  await expect(nav).toBeHidden();
+  await expect(menu).toBeFocused();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -241,6 +242,8 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
 }) => {
   await page.setViewportSize({ width: 700, height: 900 });
   await page.goto("/");
+  // Unter 768 px liegt die Navigation im Drawer hinter dem Menüknopf.
+  await page.getByRole("button", { name: "Menü öffnen", exact: true }).click();
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })

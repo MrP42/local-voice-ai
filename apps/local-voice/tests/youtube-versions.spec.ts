@@ -414,8 +414,13 @@ test("die Dauer wird aus dem Player nachgetragen, wenn sie fehlt", async ({
 // Barrierefreiheit der neuen Teile (axe, inkl. color-contrast seit G2e)
 // ---------------------------------------------------------------------------
 
-const axeSevere = async (page: Page) =>
-  (
+const axeSevere = async (page: Page) => {
+  // Fluent-Knöpfe blenden Farbwechsel 100 ms über (gesperrt → frei); axe
+  // soll den Endzustand prüfen, nicht eine Zwischenfarbe.
+  await page.addStyleTag({
+    content: "*,*::before,*::after{transition:none!important}",
+  });
+  return (
     await new AxeBuilder({ page })
       // Fluent-Fokuswächter (Leitlinie §12.4)
       .exclude("[data-tabster-dummy]")
@@ -426,6 +431,7 @@ const axeSevere = async (page: Page) =>
     .map(
       (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
     );
+};
 
 test.describe("axe", () => {
   test("Fassungs-Chip, Vergleich und Werkzeuge ohne schwere Befunde", async ({

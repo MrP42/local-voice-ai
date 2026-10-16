@@ -169,6 +169,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       position="start"
       open={drawerOpen}
       onOpenChange={(_event, data) => onDrawerOpenChange(data.open)}
+      // Ohne Ein-/Ausblend-Bewegung wie der Dialog: nach der Wahl eines Ziels
+      // liegt kein ausblendender Hintergrund mehr über der neuen Seite.
+      surfaceMotion={null}
+      backdropMotion={null}
       aria-label={t("sidebar.ariaLabel")}
       className="workspace-nav__drawer"
     >
