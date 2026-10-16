@@ -607,7 +607,7 @@ const ConnectionRow: React.FC<RowProps> = ({
 
           {models.length > 0 && (
             <div className="space-y-2">
-              <p className="text-xs uppercase tracking-wide text-text/50">
+              <p className="text-xs text-text/50">
                 {t("settings.llm.connections.released")}
               </p>
               {models.map((m) => (

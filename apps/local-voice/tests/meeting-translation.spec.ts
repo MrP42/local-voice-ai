@@ -135,7 +135,7 @@ test.describe("Sprach-Chip", () => {
     page,
   }) => {
     await setup(page, {}, 480, 800);
-    await expect(chip(page)).toContainText("en");
+    await expect(chip(page)).toContainText("EN");
     await expect(chip(page)).toHaveAccessibleName(/Englisch/);
   });
 

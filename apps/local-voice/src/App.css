@@ -417,8 +417,7 @@ textarea:focus::-webkit-resizer {
   cursor: pointer;
   transition:
     background-color 150ms ease,
-    color 150ms ease,
-    transform 150ms ease;
+    color 150ms ease;
 }
 .mbtn svg {
   width: var(--_mb-ico);
@@ -427,10 +426,9 @@ textarea:focus::-webkit-resizer {
 }
 .mbtn:hover {
   background: color-mix(in srgb, var(--color-mid-gray), transparent 80%);
-  transform: translateY(-1px);
 }
 .mbtn:active {
-  transform: translateY(0);
+  background: color-mix(in srgb, var(--color-mid-gray), transparent 65%);
 }
 .mbtn:focus-visible {
   outline: 2px solid var(--color-logo-primary);

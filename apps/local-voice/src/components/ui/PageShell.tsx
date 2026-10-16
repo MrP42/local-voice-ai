@@ -86,7 +86,7 @@ export const PageShell: React.FC<PageShellProps> = ({
             aria-label={t("help.title")}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-text/50">
+              <span className="text-xs font-semibold text-text/50">
                 {t("help.title")}
               </span>
               <button

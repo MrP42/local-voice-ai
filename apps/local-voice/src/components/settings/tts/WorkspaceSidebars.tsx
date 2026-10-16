@@ -156,7 +156,7 @@ export const PagesSidebar: React.FC<{
       style={width ? ({ "--tts-w": `${width}px` } as CSSProperties) : undefined}
     >
       <div className="flex items-center justify-between pb-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <span className="text-xs font-semibold text-text/60">
           {t("tts.pages.title")}
         </span>
         <div className="flex items-center">
@@ -528,7 +528,7 @@ export const FilesSidebar: React.FC<{
             ariaLabel={t("tts.files.tabsLabel")}
           />
         ) : (
-          <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+          <span className="text-xs font-semibold text-text/60">
             {t("tts.files.title")}
           </span>
         )}

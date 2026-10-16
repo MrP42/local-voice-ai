@@ -22,7 +22,7 @@ export const Button: React.FC<ButtonProps> = ({
   // label must put the icon BESIDE the text, not above it. Without this the
   // SVG is a block-level child and the label wraps under it.
   const baseClasses =
-    "inline-flex items-center justify-center gap-1.5 whitespace-nowrap font-medium rounded-lg border focus:outline-none transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+    "inline-flex items-center justify-center gap-1.5 whitespace-nowrap font-medium rounded-lg border focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-logo-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
 
   const variantClasses = {
     primary:

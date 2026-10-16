@@ -18,7 +18,7 @@ export const ActiveBar: React.FC<{
       className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-logo-primary/30 bg-logo-primary/5 px-3 py-2"
       data-active-bar
     >
-      <span className="text-xs font-semibold uppercase tracking-wide text-text/60">
+      <span className="text-xs font-semibold text-text/60">
         {label}
       </span>
       <span className="text-sm font-semibold text-text" data-active-name>

@@ -281,7 +281,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
           />
           <Button
             onClick={handleStartCreate}
-            variant="primary"
+            variant="secondary"
             size="md"
             disabled={isCreating}
             className="shrink-0"

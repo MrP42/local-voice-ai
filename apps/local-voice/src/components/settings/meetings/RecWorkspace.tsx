@@ -204,7 +204,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       style={sessionsColumn ? { width: `${sessions.width}px` } : undefined}
     >
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <h2 className="text-xs font-semibold text-text/60">
           {projectsTitle}
         </h2>
         <div className="flex items-center gap-1">
@@ -381,7 +381,7 @@ export const RecWorkspace: React.FC<RecWorkspaceProps> = ({
       style={{ width: `${right.width}px`, flexShrink: 0 }}
     >
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-text/60">
+        <h2 className="text-xs font-semibold text-text/60">
           {t("meetings.layout.controls")}
         </h2>
         <button

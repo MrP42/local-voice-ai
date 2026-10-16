@@ -282,7 +282,7 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
 
         {drafts.length > 0 && (
           <div className="space-y-1 border-t border-mid-gray/15 pt-2">
-            <p className="text-xs font-semibold tracking-wide text-text/40 uppercase">
+            <p className="text-xs font-semibold text-text/40">
               {t("tts.builder.drafts")}
             </p>
             {drafts.map((d) => (
@@ -444,7 +444,7 @@ export const VoiceBuilder: React.FC<{ onSaved: (voiceId: string) => void }> = ({
           {t("tts.builder.trimHint")}
         </p>
 
-        <p className="text-xs font-semibold tracking-wide text-text/40 uppercase">
+        <p className="text-xs font-semibold text-text/40">
           {t("tts.builder.candidates")}
         </p>
         {draft.candidates.length === 0 ? (
