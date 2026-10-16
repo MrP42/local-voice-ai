@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { Tab, TabList as FluentTabList } from "@fluentui/react-components";
 
 export interface TabListItem<T extends string> {
   id: T;
@@ -6,8 +7,7 @@ export interface TabListItem<T extends string> {
 }
 
 /**
- * Reiterleiste im Stil der Einstellungen (AppSettings.tsx): Unterstrich statt
- * Pille, `role="tablist"`/`"tab"`, ein Tabstopp (roving tabIndex), Pfeiltasten
+ * Reiterleiste als Fluent TabList (Leitlinie §3): Unterstrich statt Pille, `role="tablist"`/`"tab"`, ein Tabstopp (roving tabIndex), Pfeiltasten
  * sowie Pos1/Ende, in RTL-Oberflächen gespiegelt. Ein Reiter-Stil für die ganze
  * App: die Vorlesen-Seite hatte drei (Unterstrich, graue Pillen, gelbe Pillen).
  *
@@ -22,6 +22,8 @@ export function TabList<T extends string>({
   compact = false,
   ariaLabel,
   className = "",
+  idPrefix,
+  controls,
 }: {
   tabs: TabListItem<T>[];
   value: T;
@@ -30,6 +32,10 @@ export function TabList<T extends string>({
   ariaLabel?: string;
   /** Rahmen und Abstände der Leiste, z. B. eine Unterlinie unter allen Reitern. */
   className?: string;
+  /** Gesetzt: Reiter bekommen die id `<idPrefix>-<id>` (für aria-labelledby). */
+  idPrefix?: string;
+  /** id des Reiterinhalts (aria-controls). */
+  controls?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -58,35 +64,32 @@ export function TabList<T extends string>({
   };
 
   return (
-    <div
+    <FluentTabList
       ref={listRef}
-      role="tablist"
       aria-label={ariaLabel}
-      className={`flex gap-1 ${className}`}
+      selectedValue={value}
+      onTabSelect={(_e, data) => onChange(data.value as T)}
+      size={compact ? "small" : "medium"}
+      // Ohne verdeckte Zweitbeschriftung (Fluent reserviert sonst die Breite
+      // der fetten Schrift mit einem zweiten Text im Reiter).
+      reserveSelectedTabSpace={false}
+      className={`lv-tablist ${className}`}
     >
-      {tabs.map((tab, index) => {
-        const active = tab.id === value;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            tabIndex={active ? 0 : -1}
-            onClick={() => onChange(tab.id)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-            className={`${
-              compact ? "min-h-9 px-2 py-1" : "min-h-11 px-3 py-2"
-            } first:pl-0 text-sm font-medium border-b-2 cursor-pointer whitespace-nowrap transition-colors ${
-              active
-                ? "border-logo-primary text-text"
-                : "border-transparent text-text/60 hover:text-text"
-            }`}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
-    </div>
+      {tabs.map((tab, index) => (
+        <Tab
+          key={tab.id}
+          value={tab.id}
+          id={idPrefix ? `${idPrefix}-${tab.id}` : undefined}
+          aria-controls={controls}
+          onKeyDown={(event) => onKeyDown(event, index)}
+          // Auswahl folgt dem Fokus (Pfeiltasten bewegt Fluent/tabster)
+          onFocus={() => {
+            if (tab.id !== value) onChange(tab.id);
+          }}
+        >
+          {tab.label}
+        </Tab>
+      ))}
+    </FluentTabList>
   );
 }

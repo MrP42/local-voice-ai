@@ -53,7 +53,7 @@ export const ModelOptions: React.FC<{ model: ModelInfo }> = ({ model }) => {
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-text/50 mb-1">
+      <p className="text-xs font-medium text-text/50 mb-1">
         {t("settings.models.options.title")}
       </p>
       {showsLanguageSelector(model) && (

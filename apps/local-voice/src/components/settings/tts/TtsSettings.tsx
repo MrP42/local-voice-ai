@@ -33,6 +33,7 @@ import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
+import { IconButton } from "../../ui/IconButton";
 import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
@@ -53,6 +54,14 @@ import {
 } from "@/lib/voices/scriptCheck";
 import { useTagProvider } from "./tags/tagProvider";
 import { useSpeakerProvider, useSpeakers } from "./speakers";
+import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
+import {
+  applySwap,
+  speakersInText,
+  suggestSwap,
+  type LangVoice,
+} from "@/lib/voices/speakerSwap";
+import { voiceColor } from "@/lib/voices/palette";
 import { TagPalette } from "./tags";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
@@ -65,7 +74,7 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { BrainCircuit, HelpCircle, Server } from "lucide-react";
+import { HelpCircle } from "lucide-react";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -99,6 +108,14 @@ const formatEta = (seconds: number) => {
   }
   return `${minutes}:${secs}`;
 };
+
+/** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
+const TRANSFORM_CANCELLED = "transform_cancelled";
+
+/** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
+ *  haben jeweils ihre eigenen Schritte). */
+const translationHistoryKey = (page: string | null | undefined, lang: string) =>
+  `${page ?? "-"}:translation:${lang}`;
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -227,26 +244,43 @@ export const TtsSettings = () => {
   // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
+  /** Sprachen, in die diese Seite uebersetzt ist (Reiter ueber dem Feld). */
+  const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
+  const addTranslatedLang = (lang: string) =>
+    setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
+  /** Zu welchem Text/welcher Sprache `translation` gehoert, und was davon schon im Speicher liegt. */
+  const translationFor = useRef("");
+  const savedTranslation = useRef<string | null>(null);
+  const translationKey = (t: string, lang: string) => `${t}\u0000${lang}`;
   const [translating, setTranslating] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [startingSeconds, setStartingSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
-  /** Rueckmeldung des harten Beendens — was gefunden und beendet wurde. */
-  const [killNotice, setKillNotice] = useState<string | null>(null);
+  /** Fortschritt von Übersetzung/Zusammenfassung (Backend: Block für Block). */
+  const [transformProgress, setTransformProgress] = useState<{
+    kind: "translation" | "summary";
+    done: number;
+    total: number;
+  } | null>(null);
+  useEffect(() => {
+    const un = listen<{
+      kind: "translation" | "summary";
+      done: number;
+      total: number;
+    }>("tts-transform-progress", (e) => setTransformProgress(e.payload));
+    return () => void un.then((off) => off());
+  }, []);
+  /** Piper mit Spracherkennung: die Stimme, die den Text des Reiters WIRKLICH liest. */
+  const [piperReader, setPiperReader] = useState<string | null>(null);
+  /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
+  const [swapOpen, setSwapOpen] = useState(false);
+  const [langVoices, setLangVoices] = useState<LangVoice[]>([]);
+  const [swapInitial, setSwapInitial] = useState<Record<string, string>>({});
   /** Der Vorlesetext wurde an der Zeichengrenze gekappt. */
   const [truncated, setTruncated] = useState<{
     limit: number;
     total: number;
   } | null>(null);
-  /** Sprachmodell-Anzeige: was Ollama geladen hat, ob gerade uebersetzt
-   *  wird, und der letzte Fehler. */
-  const [llmLoaded, setLlmLoaded] = useState<string[]>([]);
-  const [llmBusy, setLlmBusy] = useState(false);
-  const [llmError, setLlmError] = useState<string | null>(null);
-  const [llmDialog, setLlmDialog] = useState(false);
-  const [llmWorking, setLlmWorking] = useState(false);
-  /** Offene Rueckfrage vor dem Beenden des Servers. */
-  const [confirmStop, setConfirmStop] = useState(false);
   const [speakProgress, setSpeakProgress] = useState<{
     position: number;
     total: number;
@@ -375,7 +409,16 @@ export const TtsSettings = () => {
       return;
     }
     void commands.ttsCachedTranslation(text, targetLang).then((hit) => {
-      if (!abandoned) setTranslation(hit);
+      if (abandoned) return;
+      translationFor.current = translationKey(text, targetLang);
+      savedTranslation.current = hit;
+      // Geladen, nicht bearbeitet: "Rueckgaengig" darf das nicht leeren.
+      historyRef.current?.syncPresent(
+        translationHistoryKey(activePageRef.current, targetLang),
+        hit ?? "",
+      );
+      if (hit) addTranslatedLang(targetLang);
+      setTranslation(hit);
     });
     return () => {
       abandoned = true;
@@ -428,8 +471,12 @@ export const TtsSettings = () => {
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
+            translatedLangs?: string[];
             autoTag?: AutoTagOptions;
           };
+          setTranslatedLangs(
+            Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
+          );
           setText(state.text ?? "");
           setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
@@ -462,6 +509,7 @@ export const TtsSettings = () => {
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
+        setTranslatedLangs([]);
         setTab("original");
       }
       setTranslation(null);
@@ -493,6 +541,7 @@ export const TtsSettings = () => {
             sourceUrl,
             tab,
             voices: tabVoices,
+            translatedLangs,
             autoTag: autoTagOptions ?? undefined,
           }),
         )
@@ -505,73 +554,16 @@ export const TtsSettings = () => {
         });
     }, 500);
     return () => window.clearTimeout(handle);
-  }, [activePage, text, summary, sourceUrl, tab, tabVoices, autoTagOptions]);
-
-  // Sprachmodell-Anzeige: Ereignis waehrend der Uebersetzung, dazu eine
-  // Abfrage alle zehn Sekunden — billig (lokaler Aufruf mit kurzem Timeout)
-  // und noetig, weil auch Ollamas eigene Frist ein Modell entlaedt, ohne
-  // dass die App davon erfuehre.
-  useEffect(() => {
-    const poll = () => {
-      void commands.llmPs().then(setLlmLoaded);
-    };
-    poll();
-    const timer = window.setInterval(poll, 10_000);
-    const un = listen<{ busy: boolean; error?: string | null }>(
-      "llm-activity",
-      (e) => {
-        setLlmBusy(e.payload.busy);
-        if (!e.payload.busy) {
-          setLlmError(e.payload.error ?? null);
-          poll();
-        }
-      },
-    );
-    return () => {
-      window.clearInterval(timer);
-      un.then((f) => f());
-    };
-  }, []);
-
-  /** Farbe des Sprachmodell-Symbols — dieselbe Sprache wie das Serversymbol:
-   *  grau aus, gelb pulsierend arbeitet, gruen geladen, orange Fehler. */
-  const llmIconClass = llmBusy
-    ? "text-yellow-400 animate-pulse"
-    : llmError
-      ? "text-orange-500 animate-pulse"
-      : llmLoaded.length > 0
-        ? "text-green-500"
-        : "text-text/40";
-
-  const llmTitle = llmBusy
-    ? t("tts.llm.busy")
-    : llmError
-      ? llmError
-      : llmLoaded.length > 0
-        ? t("tts.llm.loaded", { models: llmLoaded.join(", ") })
-        : t("tts.llm.idle");
-
-  const llmUnloadNow = async () => {
-    setLlmWorking(true);
-    setLlmError(null);
-    const result = await commands.llmUnload();
-    setLlmWorking(false);
-    setLlmDialog(false);
-    if (result.status === "error") setLlmError(result.error);
-    setLlmLoaded(await commands.llmPs());
-  };
-
-  const llmWarmNow = async () => {
-    setLlmWorking(true);
-    setLlmError(null);
-    setLlmDialog(false);
-    setLlmBusy(true);
-    const result = await commands.llmWarm();
-    setLlmBusy(false);
-    setLlmWorking(false);
-    if (result.status === "error") setLlmError(result.error);
-    setLlmLoaded(await commands.llmPs());
-  };
+  }, [
+    activePage,
+    text,
+    summary,
+    sourceUrl,
+    tab,
+    tabVoices,
+    translatedLangs,
+    autoTagOptions,
+  ]);
 
   // Stimmenliste fuer das Dropdown. Die Verwaltung unten meldet
   // Aenderungen ueber ein Fensterereignis, damit beide nie auseinanderlaufen.
@@ -884,26 +876,36 @@ export const TtsSettings = () => {
      die Engine um, eine Fish-Stimme schaltet zurueck. */
   const applyVoiceValue = useCallback(
     (value: string) => {
-      if (value.startsWith("piper:")) {
-        void updateSetting("tts_piper_voice", value.slice(6));
-        void updateSetting("tts_engine", "piper");
-        return;
-      }
-      if ((getSetting("tts_engine") ?? "fish") === "piper") {
-        void updateSetting("tts_engine", "fish");
-      }
-      void updateSetting("tts_voice", value === "@default" ? null : value);
+      // Erst alle Einstellungen schreiben, dann dem Backend Bescheid geben: ein
+      // laufendes Vorlesen soll die neue Stimme ab dem aktuellen Satz nehmen.
+      void (async () => {
+        if (value.startsWith("piper:")) {
+          await updateSetting("tts_piper_voice", value.slice(6));
+          await updateSetting("tts_engine", "piper");
+        } else {
+          if ((getSetting("tts_engine") ?? "fish") === "piper") {
+            await updateSetting("tts_engine", "fish");
+          }
+          await updateSetting("tts_voice", value === "@default" ? null : value);
+        }
+        await commands.ttsVoiceChanged().catch(() => undefined);
+      })();
     },
     [getSetting, updateSetting],
   );
 
+  // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
+  // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
+  const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
   // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
   useEffect(() => {
-    const wanted = tabVoices[tab];
+    const wanted =
+      tabVoices[voiceKey] ??
+      (tab === "translation" ? tabVoices.translation : undefined);
     if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, tabVoices, applyVoiceValue]);
+  }, [tab, voiceKey, tabVoices, applyVoiceValue]);
 
   /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
      unter dem Dropdown, warum -- und wohin man geht. `noVoiceSetUp`: gar keine
@@ -952,55 +954,6 @@ export const TtsSettings = () => {
     [t, uiLang],
   );
 
-  const startServer = async () => {
-    setLastError(null);
-    const result = await commands.ttsServerStart();
-    if (result.status === "error") setLastError(result.error);
-  };
-
-  /**
-   * Harter Ausweg: beendet, was auf dem TTS-Port lauscht, ohne vorher zu
-   * fragen, ob es antwortet. Meldet zurueck, was gefunden wurde — "nichts
-   * gefunden" ist ein Ergebnis und kein Fehler, deshalb steht es als Hinweis
-   * und nicht als Fehlermeldung.
-   */
-  const killServer = async () => {
-    setLastError(null);
-    const result = await commands.ttsServerKill();
-    if (result.status === "error") {
-      setLastError(result.error);
-      return;
-    }
-    setKillNotice(result.data);
-    window.setTimeout(() => setKillNotice(null), 4000);
-  };
-
-  /**
-   * Farbe des Serversymbols. Nur Farbe, kein zweites Symbol: die Form soll
-   * ueber alle Zustaende gleich bleiben, damit man sie an derselben Stelle
-   * wiederfindet — was sich aendert, ist der Zustand, nicht die Sache.
-   *
-   * Der Fehlerzustand blinkt als einziger. Er ist der einzige, der eine
-   * Handlung verlangt, die nicht aufschiebbar ist.
-   */
-  const serverIconClass =
-    phase === "starting"
-      ? "text-yellow-400 animate-pulse"
-      : phase === "error"
-        ? "text-orange-500 animate-pulse"
-        : phase === "stopped"
-          ? "text-text/40"
-          : "text-green-500";
-
-  const serverTitle =
-    phase === "stopped"
-      ? t("tts.serverIconStart")
-      : phase === "starting"
-        ? t("tts.serverIconStarting")
-        : phase === "error"
-          ? (status?.message ?? t("tts.serverIconError"))
-          : t("tts.serverIconStop");
-
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
    * spricht. Das Original wird NIE ueberschrieben: die Uebersetzung liegt
@@ -1020,14 +973,23 @@ export const TtsSettings = () => {
     },
     [tab],
   );
-  // Bearbeitungshistorie je Seite und Reiter: Rueckgaengig/Wiederherstellen
+  const historyRef = useRef<{
+    syncPresent: (key: string, value: string) => void;
+  } | null>(null);
+  const activePageRef = useRef<string | null>(null);
+  activePageRef.current = activePage ?? null;
+  // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
   const history = useTextHistory(
-    `${activePage ?? "-"}:${tab}`,
+    tab === "translation"
+      ? translationHistoryKey(activePage, targetLang)
+      : `${activePage ?? "-"}:${tab}`,
     spokenText,
     setSpokenText,
   );
+
+  historyRef.current = history;
 
   /**
    * Skript-Pruefung des aktiven Reiters: Sprechermarker ohne Stimme und
@@ -1186,14 +1148,115 @@ export const TtsSettings = () => {
     if (!text.trim()) return;
     setLastError(null);
     setTranslating(true);
+    setTransformProgress(null);
     const result = await commands.ttsTranslate(text, targetLang);
     setTranslating(false);
+    setTransformProgress(null);
     if (result.status === "error") {
-      setLastError(result.error);
+      if (result.error === TRANSFORM_CANCELLED) {
+        toast.info(t("tts.transform.cancelled"));
+      } else {
+        setLastError(result.error);
+      }
       return;
     }
+    translationFor.current = translationKey(text, targetLang);
+    savedTranslation.current = result.data;
+    addTranslatedLang(targetLang);
     setTranslation(result.data);
     setTab("translation");
+    // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
+    // vorschlagen, sobald es Sprecher gibt.
+    if (speakersInText(result.data, speakers).length > 0) {
+      void openSpeakerSwap(result.data);
+    }
+  };
+
+  const piperAutoLanguage = getSetting("tts_piper_auto_language") ?? true;
+  useEffect(() => {
+    if (!voiceValue.startsWith("piper:") || !piperAutoLanguage) {
+      setPiperReader(null);
+      return;
+    }
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void commands
+        .ttsPiperVoiceForText(spokenText)
+        .then((id) => alive && setPiperReader(id))
+        .catch(() => alive && setPiperReader(null));
+    }, 400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [voiceValue, piperAutoLanguage, spokenText]);
+  const piperReaderVoice = piperReader
+    ? piperVoices.find((v) => v.id === piperReader)
+    : undefined;
+
+  // Korrekturen an der Uebersetzung bleiben: nach kurzer Ruhe in den
+  // Zwischenspeicher schreiben, aus dem sie beim Wechsel von Sprache oder
+  // Seite wieder geladen wird. Nur, wenn der Text zu GENAU diesem Original und
+  // dieser Sprache gehoert -- gleich nach einem Sprachwechsel steht noch die
+  // alte Uebersetzung im Feld und darf nicht unter der neuen Sprache landen.
+  useEffect(() => {
+    if (translation === null) return;
+    if (translationFor.current !== translationKey(text, targetLang)) return;
+    if (translation === savedTranslation.current) return;
+    const forText = text;
+    const forLang = targetLang;
+    const value = translation;
+    const timer = window.setTimeout(() => {
+      void commands.ttsStoreTranslation(forText, forLang, value).then(() => {
+        savedTranslation.current = value;
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [translation, text, targetLang]);
+
+  const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
+  /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
+  const openSpeakerSwap = async (source: string = translation ?? "") => {
+    const infos = await commands.ttsListVoiceInfos().catch(() => []);
+    const voices: LangVoice[] = infos.map((info) => ({
+      id: info.id,
+      displayName: info.meta.display_name,
+      color: voiceColor(info.meta.color),
+      language: info.meta.language ?? "",
+    }));
+    setLangVoices(voices);
+    const sources = speakersInText(source, voices);
+    if (sources.length === 0) {
+      toast.info(t("tts.speakerSwap.none"));
+      return;
+    }
+    let stored: Record<string, string> = {};
+    try {
+      stored = JSON.parse(localStorage.getItem(swapKey) ?? "{}");
+    } catch {
+      stored = {};
+    }
+    const suggested = suggestSwap(sources, voices, targetLangCode(targetLang));
+    const initial: Record<string, string> = {};
+    for (const s of sources) {
+      const keep = stored[s.id];
+      initial[s.id] =
+        keep && voices.some((v) => v.id === keep) ? keep : suggested[s.id];
+    }
+    setSwapInitial(initial);
+    setSwapOpen(true);
+  };
+
+  const applySpeakerSwap = (mapping: Record<string, string>) => {
+    try {
+      localStorage.setItem(swapKey, JSON.stringify(mapping));
+    } catch {
+      /* gemerkt wird nur zur Bequemlichkeit */
+    }
+    setTranslation((current) => applySwap(current ?? "", mapping, langVoices));
+    // Welche Stimme liest, bleibt die Wahl des Nutzers im Stimmen-Menü; bei
+    // "Skript mit Sprechern" gelten die getauschten Marken, sonst liest die
+    // gewählte Stimme alles.
   };
 
   /**
@@ -1373,48 +1436,24 @@ export const TtsSettings = () => {
     if (!text.trim()) return;
     setLastError(null);
     setSummarizing(true);
+    setTransformProgress(null);
     const result = await commands.ttsSummarizeText(text, {
       length: sumLength,
       detail: sumDetail,
       audience: sumAudience,
     });
     setSummarizing(false);
+    setTransformProgress(null);
     if (result.status === "error") {
-      setLastError(result.error);
+      if (result.error === TRANSFORM_CANCELLED) {
+        toast.info(t("tts.transform.cancelled"));
+      } else {
+        setLastError(result.error);
+      }
       return;
     }
     setSummary(result.data);
     setTab("summary");
-  };
-
-  /**
-   * Ein Klick tut, was im jeweiligen Zustand ansteht. Beim laufenden Server
-   * ist das Beenden — und weil damit ein Modellstart von bis zu zwei Minuten
-   * verfaellt und laufendes Vorlesen abbricht, wird vorher gefragt.
-   */
-  const onServerIconClick = () => {
-    // IMMER der Dialog, in jeder Phase — wie beim Sprachmodell daneben.
-    // Frueher startete ein Klick bei gestopptem Server sofort: ein
-    // versehentlicher Klick belegte damit ungefragt 17 GB Grafikspeicher
-    // und zwei Minuten Ladezeit. Starten ist eine Entscheidung, keine
-    // Beruehrung.
-    setConfirmStop(true);
-  };
-
-  /**
-   * Neu starten = beenden und sofort wieder hochfahren. Der Weg, wenn der
-   * Server zwar laeuft, aber nicht mehr vernuenftig antwortet (etwa mit 500);
-   * ohne ihn muesste man zweimal klicken und dazwischen raten, wann er
-   * wirklich unten ist.
-   */
-  const restartServer = async () => {
-    setLastError(null);
-    const killed = await commands.ttsServerKill();
-    if (killed.status === "error") {
-      setLastError(killed.error);
-      return;
-    }
-    await startServer();
   };
 
   const showVramHint =
@@ -1438,57 +1477,14 @@ export const TtsSettings = () => {
             onJump={history.jump}
           />
           <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
-          <button
-            type="button"
+          <IconButton
             onClick={() => {
               setRightTab("help");
               setFilesCollapsed("0");
             }}
-            title={t("help.open")}
-            aria-label={t("help.open")}
-            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer text-text/60 hover:text-text"
-          >
-            <HelpCircle width={20} height={20} aria-hidden="true" />
-          </button>
-          {/* Das Sprachmodell der Nachbearbeitung (Uebersetzen,
-            Zusammenfassen), in derselben Farbsprache wie der Server
-            daneben. Klick: entladen oder vorwaermen. */}
-          <button
-            type="button"
-            onClick={() => setLlmDialog(true)}
-            title={llmTitle}
-            aria-label={llmTitle}
-            className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <BrainCircuit
-              width={20}
-              height={20}
-              className={llmIconClass}
-              aria-hidden="true"
-            />
-          </button>
-          {/* Ein einziges Element traegt Zustand UND Bedienung. Die Farbe
-          sagt, woran man ist — grau (aus), gelb (faehrt hoch), gruen
-          (laeuft), orange blinkend (Fehler) —, der Klick tut, was in
-          diesem Zustand ansteht. Das Wort daneben war eine zweite
-          Anzeige derselben Sache; es steht jetzt im Tooltip, wo es nur
-          stoert, wenn man es sucht. */}
-          {fishReady && (
-            <button
-              type="button"
-              onClick={onServerIconClick}
-              title={serverTitle}
-              aria-label={serverTitle}
-              className="p-1.5 rounded-md hover:bg-mid-gray/20 transition-colors cursor-pointer"
-            >
-              <Server
-                width={20}
-                height={20}
-                className={serverIconClass}
-                aria-hidden="true"
-              />
-            </button>
-          )}
+            label={t("help.open")}
+            icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
+          />
         </>
       }
     >
@@ -1530,9 +1526,6 @@ export const TtsSettings = () => {
                 })}
               </p>
             )}
-            {killNotice && (
-              <p className="px-4 pb-2 text-sm text-text/70">{killNotice}</p>
-            )}
             {showVramHint && (
               <p className="px-4 pb-2 text-sm text-text/70">
                 {t("tts.vramHint")}
@@ -1561,6 +1554,41 @@ export const TtsSettings = () => {
                 ariaLabel={t("tts.tabsLabel")}
                 className="border-b border-mid-gray/20"
               />
+
+              {tab === "translation" && translatedLangs.length > 0 && (
+                <div
+                  role="tablist"
+                  aria-label={t("tts.langTabs")}
+                  className="flex flex-wrap gap-1"
+                  data-testid="translation-lang-tabs"
+                >
+                  {translatedLangs.map((lang) => {
+                    const label =
+                      TTS_TARGET_LANGS.find((l) => l.value === lang)?.label ??
+                      lang;
+                    const active = lang === targetLang;
+                    return (
+                      <button
+                        key={lang}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() =>
+                          void updateSetting("tts_translate_lang", lang)
+                        }
+                        data-testid={`lang-tab-${lang}`}
+                        className={`cursor-pointer rounded-full border px-3 py-0.5 text-xs transition-colors ${
+                          active
+                            ? "border-logo-primary bg-logo-primary/15 text-text"
+                            : "border-mid-gray/30 text-text/70 hover:text-text"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Der Chip-Editor ist Drop-in für die frühere Textarea: die
                 native textarea darin bleibt die einzige Wahrheit, Tags
@@ -1893,7 +1921,7 @@ export const TtsSettings = () => {
                             ]
                           : []),
                         // Kein Wert, ein Sprung: zur Stimmenverwaltung unter
-                        // Einstellungen -> Vorlesen.
+                        // Einstellungen -> Ausgabe.
                         { value: "@manage", label: t("tts.voices.manage") },
                       ]}
                       onChange={(value) => {
@@ -1901,7 +1929,7 @@ export const TtsSettings = () => {
                         if (value === "@manage") {
                           window.localStorage.setItem(
                             "lva.ui.settings.tab",
-                            "readaloud",
+                            "output",
                           );
                           window.dispatchEvent(
                             new CustomEvent("lv-navigate", {
@@ -1913,7 +1941,7 @@ export const TtsSettings = () => {
                         applyVoiceValue(value);
                         setTabVoices((current) => ({
                           ...current,
-                          [tab]: value,
+                          [voiceKey]: value,
                         }));
                       }}
                       isClearable={false}
@@ -1929,15 +1957,39 @@ export const TtsSettings = () => {
                             ? t("tts.voices.noEngineHint")
                             : t("tts.voices.notSetUpHint")}
                         </p>
-                        <button
+                        <Button
                           type="button"
-                          className="underline cursor-pointer"
+                          variant="ghost"
+                          size="sm"
                           data-testid="voice-setup-button"
                           onClick={() => openModelsArea("voices")}
                         >
                           {t("tts.voices.setUp")}
-                        </button>
+                        </Button>
                       </div>
+                    )}
+                    {piperReaderVoice && (
+                      <p
+                        className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
+                        data-testid="piper-reader-hint"
+                      >
+                        <span>
+                          {t("tts.voices.autoLanguageReads", {
+                            name: piperVoiceLabel(piperReaderVoice),
+                          })}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            void updateSetting("tts_piper_auto_language", false)
+                          }
+                          data-testid="piper-auto-language-off"
+                        >
+                          {t("tts.voices.autoLanguageOff")}
+                        </Button>
+                      </p>
                     )}
                     <p
                       id="voice-mode-hint"
@@ -1996,6 +2048,11 @@ export const TtsSettings = () => {
                 onTranslate={translateText}
                 summarizing={summarizing}
                 onSummarize={summarize}
+                transformProgress={transformProgress}
+                onCancelTransform={(kind) =>
+                  void commands.ttsTransformCancel(kind)
+                }
+                onSwapSpeakers={() => void openSpeakerSwap()}
                 sumLength={sumLength}
                 onSumLengthChange={setSumLength}
                 sumDetail={sumDetail}
@@ -2114,40 +2171,16 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
 
-          <Dialog
-            open={llmDialog}
-            onOpenChange={setLlmDialog}
-            title={t("tts.llm.dialogTitle")}
-            closeLabel={t("tts.stopConfirmCancel")}
-            footer={
-              <>
-                <Button variant="secondary" onClick={() => setLlmDialog(false)}>
-                  {t("tts.stopConfirmCancel")}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={llmWarmNow}
-                  disabled={llmWorking}
-                >
-                  {t("tts.llm.warm")}
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={llmUnloadNow}
-                  disabled={llmWorking || llmLoaded.length === 0}
-                >
-                  {t("tts.llm.unload")}
-                </Button>
-              </>
-            }
-          >
-            <p className="text-sm text-text/80">
-              {llmLoaded.length > 0
-                ? t("tts.llm.dialogLoaded", { models: llmLoaded.join(", ") })
-                : t("tts.llm.dialogEmpty")}
-            </p>
-          </Dialog>
-
+          <SpeakerSwapDialog
+            open={swapOpen}
+            onOpenChange={setSwapOpen}
+            sources={speakersInText(translation ?? "", langVoices)}
+            voices={langVoices}
+            targetLang={targetLang}
+            targetCode={targetLangCode(targetLang)}
+            initial={swapInitial}
+            onApply={applySpeakerSwap}
+          />
           <ScriptWorkshopDialog
             open={workshopOpen}
             onOpenChange={setWorkshopOpen}
@@ -2195,72 +2228,6 @@ export const TtsSettings = () => {
                 }
               }}
             />
-          </Dialog>
-
-          <Dialog
-            open={confirmStop}
-            onOpenChange={setConfirmStop}
-            title={
-              phase === "stopped" || phase === "error"
-                ? t("tts.serverStartTitle")
-                : t("tts.stopConfirmTitle")
-            }
-            closeLabel={t("tts.stopConfirmCancel")}
-            footer={
-              phase === "stopped" || phase === "error" ? (
-                <>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setConfirmStop(false)}
-                  >
-                    {t("tts.stopConfirmCancel")}
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void startServer();
-                    }}
-                  >
-                    {t("tts.serverStart")}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setConfirmStop(false)}
-                  >
-                    {t("tts.stopConfirmCancel")}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void restartServer();
-                    }}
-                  >
-                    {t("tts.stopConfirmRestart")}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => {
-                      setConfirmStop(false);
-                      void killServer();
-                    }}
-                  >
-                    {t("tts.stopConfirmAccept")}
-                  </Button>
-                </>
-              )
-            }
-          >
-            <p className="text-sm text-text/80">
-              {phase === "stopped" || phase === "error"
-                ? t("tts.serverStartBody")
-                : phase === "starting"
-                  ? t("tts.stopConfirmBodyStarting")
-                  : t("tts.stopConfirmBody")}
-            </p>
           </Dialog>
         </div>
       </div>

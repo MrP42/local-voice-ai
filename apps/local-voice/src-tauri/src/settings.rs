@@ -242,6 +242,41 @@ pub struct LlmModelConfig {
     pub price_output_per_mtok: Option<f64>,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Effort (Denktiefe) fuer Abo-Modelle ueber die CLI: `low` bis `max` (Codex
+    /// auch `ultra`); `None` = Vorgabe der CLI.
+    #[serde(default)]
+    pub effort: Option<String>,
+    /// Fast-Modus der Codex-Modelle (`service_tier = "fast"`: schneller, verbraucht
+    /// mehr vom Abo-Kontingent); nur wirksam, wo der Codex-Katalog ihn anbietet.
+    #[serde(default)]
+    pub fast: bool,
+}
+
+/// Was die App ueber ein Modell einer Verbindung weiss, das der Anbieter
+/// anbietet (`connection_id:remote_id`). Nur so unterscheidet sie "neu" von
+/// "kenne ich schon" und von "ersetzt/abgelehnt" -- ein Modell, das nicht in
+/// `llm_models` steht, ist nicht automatisch neu.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
+pub struct LlmModelSeen {
+    pub key: String,
+    /// `seen` (bekannt), `new` (neu, noch nicht freigegeben), `replaced`
+    /// (durch ein neueres ersetzt), `dismissed` (abgelehnt), `absent`
+    /// (Kandidat ausprobiert, Anbieter kennt ihn nicht).
+    pub status: String,
+    /// Unix-Sekunden der letzten Aenderung (bei `absent`: wann geprueft).
+    #[serde(default)]
+    pub at: i64,
+    /// Bei `replaced`: der Schluessel des Nachfolgers.
+    #[serde(default)]
+    pub replaced_by: Option<String>,
+}
+
+fn default_llm_auto_update() -> String {
+    "ask".to_string()
+}
+
+fn default_llm_effort() -> String {
+    "medium".to_string()
 }
 
 fn default_true() -> bool {
@@ -561,6 +596,23 @@ pub struct AppSettings {
     /// bekommen keine Anfrage.
     #[serde(default)]
     pub compliance_profile: crate::managers::compliance::ComplianceProfile,
+    /// Effort fuer Abo-Modelle ueber die CLI, wenn das Modell keinen eigenen
+    /// hat (`low` … `max`). Vorgabe `medium`.
+    #[serde(default = "default_llm_effort")]
+    pub llm_default_effort: String,
+    /// Neue Modelle der Anbieter uebernehmen: `ask` (beim ersten Fund fragen),
+    /// `on` (aelteres derselben Familie ersetzen) oder `off` (nur als "neu"
+    /// kennzeichnen). Siehe `managers::llm::updates`.
+    #[serde(default = "default_llm_auto_update")]
+    pub llm_auto_update_models: String,
+    /// Die App darf die Codex-CLI selbst aktualisieren (`npm i -g`), wenn der
+    /// Server ein Modell von der installierten Version ablehnt
+    /// (`managers::llm::cli_update`). Standard an.
+    #[serde(default = "default_true")]
+    pub cli_auto_update: bool,
+    /// Erkennungsverlauf der Modelle, siehe [`LlmModelSeen`].
+    #[serde(default)]
+    pub llm_model_history: Vec<LlmModelSeen>,
     /// Superseded by `dictation_audio` (schema 4 migrates `true` to `Mute`).
     /// Kept so older stores still deserialize; no longer read by the audio path.
     #[serde(default)]
@@ -875,6 +927,10 @@ pub struct AppSettings {
     /// Schluessel (aeltere settings.json) oder leer: "Ich".
     #[serde(default)]
     pub meeting_self_name: Option<String>,
+    /// Briefkopf fuer Word- und PDF-Export (Entwurf 2026-10-13, Etappe 2): Id eines
+    /// Profils `lva.briefkopf/1`. Ohne den Schluessel: `neutral` (Owner-Annahme 3).
+    #[serde(default = "default_document_letterhead_id")]
+    pub document_letterhead_id: String,
     /// M5-P5b (E11): Vorlauf der Erinnerung vor einem Termin in Sekunden;
     /// 0 = Erinnerung aus. Ohne den Schluessel (aeltere settings.json) gilt 60.
     #[serde(default = "default_meeting_reminder_lead_s")]
@@ -938,6 +994,10 @@ pub fn meeting_diarization_enabled(value: &str) -> bool {
 
 fn default_meeting_language() -> String {
     "auto".to_string()
+}
+
+fn default_document_letterhead_id() -> String {
+    crate::managers::letterhead::DEFAULT_ID.to_string()
 }
 
 fn default_meeting_audio_retention() -> crate::managers::meetings::retention::MeetingAudioRetention
@@ -1653,6 +1713,10 @@ pub fn get_default_settings() -> AppSettings {
         llm_active_model_id: None,
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
+        llm_default_effort: default_llm_effort(),
+        llm_auto_update_models: default_llm_auto_update(),
+        cli_auto_update: true,
+        llm_model_history: Vec::new(),
         mute_while_recording: false,
         dictation_audio: DictationAudio::default(),
         dictation_audio_duck_percent: default_dictation_audio_duck_percent(),
@@ -1730,6 +1794,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_detect_ignored_apps: Vec::new(),
         meeting_self_emails: Vec::new(),
         meeting_self_name: None,
+        document_letterhead_id: default_document_letterhead_id(),
         meeting_reminder_lead_s: default_meeting_reminder_lead_s(),
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
@@ -1779,7 +1844,22 @@ impl AppSettings {
         };
         let kind = connection.kind.clone();
         let base_url = connection.base_url.clone();
-        let remote = model.remote_id.clone();
+        // Abo-Modelle ueber die CLI: Effort reist als `modell@effort` mit
+        // (`cli::call` trennt es wieder); andere Anbieter bekommen den Namen.
+        let effort = model
+            .effort
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .or(Some(self.llm_default_effort.as_str()).filter(|e| !e.is_empty()));
+        let cli = crate::managers::llm::cli::Cli::from_base_url(&base_url);
+        let mut remote = match (cli, effort) {
+            (Some(_), Some(effort)) => format!("{}@{effort}", model.remote_id),
+            _ => model.remote_id.clone(),
+        };
+        // Fast reist als Endung `~fast` mit (`cli::split_spec` trennt sie).
+        if cli == Some(crate::managers::llm::cli::Cli::Codex) && model.fast {
+            remote.push_str(crate::managers::llm::cli::FAST_SUFFIX);
+        }
         self.post_process_provider_id = kind.clone();
         if let Some(template) = self.post_process_provider_mut(&kind) {
             template.base_url = base_url;
@@ -1866,13 +1946,17 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         }
 
         if updated {
-            store.set("settings", to_store_value(&settings));
+            let (value, error) = to_store_value(&settings, Some(&settings_value));
+            if let Some(e) = error {
+                log::error!("{e}");
+            }
+            store.set("settings", value);
         }
 
         settings
     } else {
         let default_settings = get_default_settings();
-        store.set("settings", to_store_value(&default_settings));
+        store.set("settings", to_store_value(&default_settings, None).0);
         default_settings
     };
 
@@ -1884,7 +1968,12 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
         .map(|v| crate::llm_keys::plaintext_count(&v))
         .unwrap_or(0);
     if ensure_post_process_defaults(&mut settings) || plaintext > 0 {
-        store.set("settings", to_store_value(&settings));
+        let previous = store.get("settings");
+        let (value, error) = to_store_value(&settings, previous.as_ref());
+        if let Some(e) = error {
+            log::error!("{e}");
+        }
+        store.set("settings", value);
     }
 
     settings
@@ -1974,6 +2063,8 @@ fn migrate_legacy_providers_to_connections(settings: &mut AppSettings) {
                 price_input_per_mtok: None,
                 price_output_per_mtok: None,
                 tags: Vec::new(),
+                effort: None,
+                fast: false,
             });
         }
     }
@@ -2095,7 +2186,28 @@ pub fn write_settings(app: &AppHandle, settings: AppSettings) {
         .store(crate::portable::store_path(SETTINGS_STORE_PATH))
         .expect("Failed to initialize store");
     crate::llm_keys::ensure_dir(app);
-    store.set("settings", to_store_value(&settings));
+    let (value, error) = to_store_value(&settings, store.get("settings").as_ref());
+    if let Some(e) = error {
+        log::error!("{e}");
+    }
+    store.set("settings", value);
+}
+
+/// Wie [`write_settings`], aber ein nicht verschluesselbarer API-Schluessel
+/// laesst das Speichern scheitern (nichts wird geschrieben) -- fuer die
+/// Befehle, die einen Schluessel setzen, damit die Oberflaeche es sieht.
+pub fn try_write_settings(app: &AppHandle, settings: AppSettings) -> Result<(), String> {
+    let store = app
+        .store(crate::portable::store_path(SETTINGS_STORE_PATH))
+        .map_err(|e| e.to_string())?;
+    crate::llm_keys::ensure_dir(app);
+    match to_store_value(&settings, store.get("settings").as_ref()) {
+        (_, Some(e)) => Err(e),
+        (value, None) => {
+            store.set("settings", value);
+            Ok(())
+        }
+    }
 }
 
 /// Wie viele API-Schluessel stehen in `settings_store.json` noch im Klartext?
@@ -2109,11 +2221,43 @@ pub fn stored_plaintext_key_count(app: &AppHandle) -> usize {
 }
 
 /// Was in `settings_store.json` landet: API-Schluessel versiegelt
-/// (`llm_keys`), alles andere wie es ist.
-fn to_store_value(settings: &AppSettings) -> serde_json::Value {
+/// (`llm_keys`), alles andere wie es ist. Laesst sich ein Schluessel nicht
+/// versiegeln, kommt der Fehler mit zurueck.
+fn to_store_value(
+    settings: &AppSettings,
+    previous: Option<&serde_json::Value>,
+) -> (serde_json::Value, Option<String>) {
+    store_value_with(settings, previous, crate::llm_keys::seal)
+}
+
+/// Kern von [`to_store_value`]. Fuer einen nicht versiegelbaren Schluessel
+/// bleibt der bisherige Dateiwert stehen: Leerwert (ein alter verschluesselter
+/// Schluessel bleibt so gueltig und unberuehrt) oder ein schon vorher dort
+/// liegender Klartext -- nie der neue Schluessel im Klartext.
+fn store_value_with(
+    settings: &AppSettings,
+    previous: Option<&serde_json::Value>,
+    seal: impl Fn(&SecretMap) -> Result<SecretMap, crate::llm_keys::SealFailure>,
+) -> (serde_json::Value, Option<String>) {
     let mut sealed = settings.clone();
-    sealed.post_process_api_keys = crate::llm_keys::seal(&settings.post_process_api_keys);
-    serde_json::to_value(&sealed).unwrap()
+    let mut error = None;
+    sealed.post_process_api_keys = match seal(&settings.post_process_api_keys) {
+        Ok(map) => map,
+        Err(f) => {
+            let mut map = f.sealed;
+            for id in &f.failed_ids {
+                let old = previous
+                    .and_then(|v| v.get("post_process_api_keys"))
+                    .and_then(|m| m.get(id))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                map.insert(id.clone(), old.to_string());
+            }
+            error = Some(f.message);
+            map
+        }
+    };
+    (serde_json::to_value(&sealed).unwrap(), error)
 }
 
 pub fn get_bindings(app: &AppHandle) -> HashMap<String, ShortcutBinding> {
@@ -2517,6 +2661,8 @@ mod tests {
             price_input_per_mtok: None,
             price_output_per_mtok: None,
             tags: Vec::new(),
+            effort: None,
+            fast: false,
         }
     }
 
@@ -2702,6 +2848,50 @@ mod tests {
         );
     }
 
+    /// Abo-Modelle: Effort (sonst der Standard) und Fast reisen im Modellnamen
+    /// mit; Fast nur bei Codex.
+    #[test]
+    fn sync_legacy_carries_effort_and_fast_for_cli_models() {
+        let mut settings = get_default_settings();
+        for (id, url) in [("codex_cli", "cli://codex"), ("claude_cli", "cli://claude")] {
+            settings.llm_connections.push(LlmConnection {
+                id: id.into(),
+                kind: id.into(),
+                label: id.into(),
+                base_url: url.into(),
+                enabled: true,
+                monthly_budget_usd: None,
+                budget_enforced: false,
+                training_opt_out: false,
+            });
+        }
+        let mut gpt = llm_model("codex:gpt-6.1-sol", "codex_cli", "gpt-6.1-sol", true);
+        gpt.fast = true;
+        let mut sonnet = llm_model("claude:sonnet", "claude_cli", "sonnet", true);
+        sonnet.fast = true;
+        sonnet.effort = Some("high".into());
+        settings.llm_models.extend([gpt, sonnet]);
+
+        settings.llm_active_model_id = Some("codex:gpt-6.1-sol".into());
+        settings.sync_legacy_from_llm();
+        assert_eq!(
+            settings
+                .post_process_models
+                .get("codex_cli")
+                .map(String::as_str),
+            Some("gpt-6.1-sol@medium~fast")
+        );
+        settings.llm_active_model_id = Some("claude:sonnet".into());
+        settings.sync_legacy_from_llm();
+        assert_eq!(
+            settings
+                .post_process_models
+                .get("claude_cli")
+                .map(String::as_str),
+            Some("sonnet@high")
+        );
+    }
+
     /// Ein abgeschaltetes oder nicht mehr freigegebenes Modell ist kein
     /// aktives Modell -- und der Spiegel laesst die alten Felder in Ruhe.
     #[test]
@@ -2774,6 +2964,39 @@ mod tests {
             TranscribeAcceleratorSetting::Gpu
         );
         assert_eq!(settings.transcribe_gpu_device, 2);
+    }
+
+    /// Laesst sich ein Schluessel nicht versiegeln, landet er nicht in der
+    /// Datei: dort bleibt der bisherige Wert (leer = alter verschluesselter
+    /// Schluessel unberuehrt), und der Fehler kommt zurueck.
+    #[test]
+    fn unsealable_key_keeps_the_previous_file_value_and_reports() {
+        let mut settings = get_default_settings();
+        settings
+            .post_process_api_keys
+            .insert("neu".to_string(), "sk-neu-123".to_string());
+        settings
+            .post_process_api_keys
+            .insert("alt".to_string(), "sk-alt-456".to_string());
+        let previous = serde_json::json!({ "post_process_api_keys": { "alt": "" } });
+        let failing = |m: &SecretMap| {
+            let mut sealed = m.clone();
+            sealed.values_mut().for_each(String::clear);
+            Err(crate::llm_keys::SealFailure {
+                sealed,
+                failed_ids: vec!["neu".into(), "alt".into()],
+                message: "nicht verschluesselbar".into(),
+            })
+        };
+        let (value, error) = store_value_with(&settings, Some(&previous), failing);
+        assert_eq!(error.as_deref(), Some("nicht verschluesselbar"));
+        let text = value.to_string();
+        assert!(
+            !text.contains("sk-neu-123") && !text.contains("sk-alt-456"),
+            "{text}"
+        );
+        assert_eq!(value["post_process_api_keys"]["alt"], "");
+        assert_eq!(value["post_process_api_keys"]["neu"], "");
     }
 
     #[test]

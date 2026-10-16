@@ -75,6 +75,8 @@ pub enum Purpose {
     AgentRoute,
     /// A1: Informationen aus einem Text ziehen (Goal B).
     Extract,
+    /// Dokumenttypen neben dem Protokoll (Management Summary, Kurzfassung, ...).
+    Document,
 }
 
 impl Purpose {
@@ -95,6 +97,7 @@ impl Purpose {
             Purpose::FactCheck => "fact_check",
             Purpose::AgentRoute => "agent_route",
             Purpose::Extract => "extract",
+            Purpose::Document => "document",
         }
     }
 }
@@ -263,7 +266,9 @@ impl NewUsageEvent {
         duration_ms: u32,
         result: Result<(), String>,
     ) -> Self {
-        let matching = active.filter(|(c, m)| c.kind == provider.id && m.remote_id == remote_model);
+        // Abo-Modelle reisen als `modell@effort`; zugeordnet wird ueber den Namen.
+        let base_model = crate::managers::llm::cli::split_spec(remote_model).0;
+        let matching = active.filter(|(c, m)| c.kind == provider.id && m.remote_id == base_model);
         let (connection_id, connection_kind, connection_label, model_id, model_label, pin, pout) =
             match matching {
                 Some((c, m)) => (
@@ -477,6 +482,27 @@ impl UsageLedger {
             by_purpose,
             by_day,
         })
+    }
+
+    /// Summe der Kosten bestimmter Ereignisse (Mikro-Dollar), z. B. aller
+    /// Aufrufe, aus denen ein Protokoll entstand.
+    pub fn cost_of(&self, ids: &[i64]) -> Result<i64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("ledger lock"))?;
+        let mut total = 0i64;
+        for id in ids.iter().take(500) {
+            let cost: Option<i64> = conn
+                .query_row(
+                    "SELECT cost_micro FROM usage_event WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .ok();
+            total += cost.unwrap_or(0);
+        }
+        Ok(total)
     }
 
     /// Ausgaben einer Verbindung seit Monatsbeginn (Mikro-Dollar).
@@ -790,6 +816,8 @@ mod tests {
             price_input_per_mtok: Some(pin),
             price_output_per_mtok: Some(pout),
             tags: Vec::new(),
+            effort: None,
+            fast: false,
         }
     }
 

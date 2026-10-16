@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PanelLeftOpen } from "lucide-react";
 import { toast } from "sonner";
+import { IconButton } from "../../ui/IconButton";
 import { PageShell } from "../../ui/PageShell";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { useRecordingActive } from "../../../hooks/useRecordingActive";
@@ -643,16 +644,13 @@ export const MeetingsSettings: React.FC = () => {
       help="aufnahmen"
       actions={
         layout.mode === "narrow" ? (
-          <button
-            type="button"
+          <IconButton
+            label={t("meetings.projects.open")}
             onClick={() => layout.drawer.setOpen(true)}
-            title={t("meetings.projects.open")}
-            aria-label={t("meetings.projects.open")}
             data-testid="sessions-open"
-            className="p-1.5 rounded-md text-text/60 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-          >
-            <PanelLeftOpen width={20} height={20} aria-hidden="true" />
-          </button>
+            size="md"
+            icon={<PanelLeftOpen width={20} height={20} aria-hidden="true" />}
+          />
         ) : undefined
       }
     >

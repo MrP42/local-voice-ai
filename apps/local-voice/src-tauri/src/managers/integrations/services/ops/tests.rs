@@ -511,6 +511,28 @@ fn confluence_append_reads_version_then_puts_next_version() {
     assert_eq!(b["body"]["value"], "<p>alt</p><ul><li>neu</li></ul>");
 }
 
+#[test]
+fn confluence_append_without_current_body_does_not_overwrite() {
+    let st = settings(&[
+        ("site", "firma.atlassian.net"),
+        ("email", "p@x.de"),
+        ("parent_page_id", "11"),
+    ]);
+    let acc = Account {
+        service: ServiceId::Confluence,
+        token: "t",
+        settings: &st,
+    };
+    let mut f = Fake::new(vec![
+        json!({"id": "11", "title": "Entscheidungen", "version": {"number": 4}}),
+        json!({"id": "11"}),
+    ]);
+    let r = page_append(&acc, None, "- neu", &mut f.exec());
+    assert!(matches!(r, Err(ServiceError::BadResponse(_))));
+    assert_eq!(f.calls.len(), 1, "kein PUT ohne bisherigen Inhalt");
+    assert_eq!(f.calls[0].method, Method::Get);
+}
+
 // --- CRM / Datensatz --------------------------------------------------------
 
 #[test]

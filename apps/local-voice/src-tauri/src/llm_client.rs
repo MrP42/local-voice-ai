@@ -68,6 +68,7 @@ fn deterministic_sampling(local: bool, purpose: Purpose) -> (Option<f32>, Option
             Purpose::EnhancedNotes
                 | Purpose::Followup
                 | Purpose::Minutes
+                | Purpose::Document
                 | Purpose::TranscriptMerge
                 | Purpose::TranscriptTranslation
         )
@@ -444,11 +445,38 @@ async fn send_cli(
         None => system_prompt,
     };
     let model = model.to_string();
-    let reply = tokio::task::spawn_blocking(move || {
-        cli::call(cli, &binary, &model, system.as_deref(), &user_content)
-    })
-    .await
-    .map_err(|e| format!("cli_failed: {e}"))??;
+    let first = {
+        let (binary, model, system, user_content) =
+            (binary.clone(), model.clone(), system.clone(), user_content.clone());
+        tokio::task::spawn_blocking(move || {
+            cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+        })
+        .await
+        .map_err(|e| format!("cli_failed: {e}"))?
+    };
+    let reply = match first {
+        Ok(reply) => reply,
+        Err(e) => {
+            // Ursache merken (fuer die Fehlermeldung des Protokolls).
+            crate::managers::llm::cli_update::remember_error(&e);
+            // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
+            let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
+                && tokio::task::spawn_blocking(crate::managers::llm::cli_update::ensure_codex_updated)
+                    .await
+                    .unwrap_or(false);
+            if !retry {
+                return Err(e);
+            }
+            // Die aktualisierte CLI liegt am selben Ort; neu suchen, falls der Pfad wechselte.
+            let binary = cli::locate(cli).unwrap_or(binary);
+            tokio::task::spawn_blocking(move || {
+                cli::call(cli, &binary, &model, system.as_deref(), &user_content)
+            })
+            .await
+            .map_err(|e| format!("cli_failed: {e}"))?
+            .inspect_err(|e| crate::managers::llm::cli_update::remember_error(e))?
+        }
+    };
     let text = if wants_json {
         strip_code_fence(&reply.text)
     } else {
@@ -488,7 +516,7 @@ pub async fn fetch_models(
         return Ok(crate::managers::llm::downloaded_model_ids());
     }
     if let Some(cli) = crate::managers::llm::cli::Cli::from_base_url(&provider.base_url) {
-        return Ok(cli.models().iter().map(|m| m.to_string()).collect());
+        return Ok(cli.models().into_iter().map(|m| m.id).collect());
     }
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/models", base_url);
