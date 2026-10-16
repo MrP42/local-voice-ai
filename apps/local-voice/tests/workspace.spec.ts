@@ -178,11 +178,13 @@ test("WAI home in light and dark at desktop size", async ({ page }) => {
   await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
   });
-  await expect(
-    page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Start", exact: true }),
-  ).toHaveCSS("background-color", "rgb(255, 221, 0)");
+  // Fluent Nav: Auswahl als neutrale Fläche mit Pill (kein Markengelb mehr).
+  const start = page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Start", exact: true });
+  await expect(start).toHaveAttribute("aria-current", "page");
+  await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+  await expect(start).not.toHaveCSS("background-color", "rgb(255, 221, 0)");
   await page.screenshot({
     path: "test-results/workspace-dark.png",
     animations: "disabled",

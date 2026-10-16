@@ -113,6 +113,9 @@ export const Dialog: React.FC<DialogProps> = ({
     <FluentDialog
       open={open}
       modalType={dismissible ? "modal" : "alert"}
+      // Ohne Ein-/Ausblend-Bewegung: der Dialog ist sofort da und sofort weg
+      // (Fokus und Folgeansicht ohne Zwischenzustand, wie bisher).
+      surfaceMotion={null}
       onOpenChange={(_event, data) => {
         if (data.open) return;
         if (!dismissible) return;

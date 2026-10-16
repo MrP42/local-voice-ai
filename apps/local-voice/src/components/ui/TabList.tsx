@@ -70,6 +70,9 @@ export function TabList<T extends string>({
       selectedValue={value}
       onTabSelect={(_e, data) => onChange(data.value as T)}
       size={compact ? "small" : "medium"}
+      // Ohne verdeckte Zweitbeschriftung (Fluent reserviert sonst die Breite
+      // der fetten Schrift mit einem zweiten Text im Reiter).
+      reserveSelectedTabSpace={false}
       className={`lv-tablist ${className}`}
     >
       {tabs.map((tab, index) => (
@@ -79,6 +82,10 @@ export function TabList<T extends string>({
           id={idPrefix ? `${idPrefix}-${tab.id}` : undefined}
           aria-controls={controls}
           onKeyDown={(event) => onKeyDown(event, index)}
+          // Auswahl folgt dem Fokus (Pfeiltasten bewegt Fluent/tabster)
+          onFocus={() => {
+            if (tab.id !== value) onChange(tab.id);
+          }}
         >
           {tab.label}
         </Tab>
