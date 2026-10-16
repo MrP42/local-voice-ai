@@ -122,7 +122,7 @@ export const NextUp: React.FC<NextUpProps> = ({ onPrepare }) => {
       data-testid="next-up"
       className="shrink-0 border-t border-mid-gray/20 px-1 pt-2"
     >
-      <h3 className="px-1 pb-1 text-xs font-semibold uppercase tracking-wide text-text/60">
+      <h3 className="px-1 pb-1 text-xs font-semibold text-text/60">
         {t("meetings.projects.nextUp.title")}
       </h3>
       {event ? (

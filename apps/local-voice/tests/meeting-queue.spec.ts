@@ -460,12 +460,13 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
     exact: true,
   });
   await expect(title).toBeVisible();
-  const dropdown = fresh.getByRole("button", { name: /1 \(Standard\)/ });
-  await expect(dropdown).toBeVisible();
+  // Fluent-Auswahlliste: der Zeilentitel nennt sie, der Wert steht darin.
+  const dropdown = fresh.getByRole("combobox", {
+    name: "Gleichzeitige Transkriptionen",
+  });
+  await expect(dropdown).toHaveText(/1 \(Standard\)/);
   await dropdown.click();
-  await fresh
-    .getByRole("button", { name: "2", exact: true })
-    .evaluate((el) => (el as HTMLElement).click());
+  await fresh.getByRole("option", { name: "2", exact: true }).click();
   await expect
     .poll(
       async () =>
@@ -476,9 +477,7 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
     (await calls(fresh, "change_meeting_import_parallel_setting"))[0].args,
   ).toEqual({ value: 2 });
   // Die Auswahl zeigt jetzt "2".
-  await expect(
-    fresh.getByRole("button", { name: "2", exact: true }),
-  ).toBeVisible();
+  await expect(dropdown).toHaveText("2");
   // Die Beschreibung (Tooltip am Info-Symbol) nennt die Bedingung: Speicher, sonst wartet die Datei.
   await title
     .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")

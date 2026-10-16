@@ -70,7 +70,7 @@ interface MeetingActionsProps extends MeetingActionHandlers {
   /** Die Besprechung wird gerade aufgenommen: Löschen ist gesperrt. */
   live?: boolean;
   /**
-   * `toolbar`: Symbolzeile der Bedienspalte; `menu`: das Menü "☰" mit den
+   * `toolbar`: Symbolzeile der Bedienspalte; `menu`: das Menü „Weitere Aktionen“ mit den
    * selteneren Aktionen (steht im Kopf neben "Details"); `menu-all`: das Menü
    * trägt zusätzlich die Aktionen der Symbolzeile (schmales Fenster).
    */
@@ -79,7 +79,7 @@ interface MeetingActionsProps extends MeetingActionHandlers {
 
 /**
  * Symbolzeile der Bedienspalte (Exportieren, Follow-up-Mail, Kopieren,
- * Personen, Fragen) und das Menü "☰" mit den selteneren Aktionen. Alle
+ * Personen, Fragen) und das Menü „Weitere Aktionen“ mit den selteneren Aktionen. Alle
  * Knöpfe sind `IconAction`: gleich groß, Name und Kurzerklärung im Tooltip (Maus
  * und Tastatur), Name im aria-label.
  */

@@ -401,6 +401,25 @@ impl PiperEngine {
             .unwrap_or(chosen))
     }
 
+    /// Die Stimme, die diesen Text WIRKLICH liest, wenn es nicht die gewaehlte
+    /// ist: bei Auto-Sprache die geladene Stimme der erkannten Sprache. `None`:
+    /// die gewaehlte liest (Auto-Sprache aus, Sprache unklar, gleiche Sprache,
+    /// keine passende Stimme geladen).
+    pub fn replacement_voice_id(&self, text: &str) -> Option<String> {
+        if !self.auto_language {
+            return None;
+        }
+        let lang = super::lang::detect_language(text)?;
+        let chosen_lang = self.voice_id.as_deref().and_then(language_of_voice_id);
+        if chosen_lang.as_deref() == Some(lang) {
+            return None;
+        }
+        self.alternatives
+            .iter()
+            .find(|(_, l, _)| l == lang)
+            .map(|(id, _, _)| id.clone())
+    }
+
     /// Warum die Engine nicht einsatzbereit ist (None = bereit) — Grundlage
     /// der Warnzeile beim Engine-Wechsel in `TtsCore::set_engine`.
     pub fn unavailable_reason(&self) -> Option<&'static str> {
@@ -781,6 +800,35 @@ mod tests {
         let paths = fake_paths(dir.path(), Fake::Broken);
         let err = run_piper_blocking(&paths, "Hallo.", None, PIPER_TIMEOUT).unwrap_err();
         assert!(err.contains("kein WAV"), "war: {err}");
+    }
+
+    /// Anzeige im Stimmen-Menue: bei englischem Text liest mit Auto-Sprache
+    /// eine englische Stimme, nicht die gewaehlte deutsche (Thorsten).
+    #[test]
+    fn die_ersatzstimme_wird_nur_bei_abweichender_sprache_genannt() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = fake_paths(dir.path(), Fake::Ok);
+        let engine = |auto: bool| PiperEngine {
+            voice_id: Some("de_DE-thorsten-high".into()),
+            resolved: Ok(paths.clone()),
+            auto_language: auto,
+            alternatives: vec![
+                ("de_DE-thorsten-high".into(), "de".into(), paths.clone()),
+                ("en_US-amy-medium".into(), "en".into(), paths.clone()),
+            ],
+        };
+        let english = "Welcome to the podcast. On Monday we meet at twelve thirty and talk about the architecture.";
+        let german = "Willkommen zum Podcast. Am Montag treffen wir uns um halb eins und sprechen ueber die Architektur.";
+        assert_eq!(
+            engine(true).replacement_voice_id(english).as_deref(),
+            Some("en_US-amy-medium")
+        );
+        assert_eq!(engine(true).replacement_voice_id(german), None);
+        assert_eq!(engine(false).replacement_voice_id(english), None, "Auto aus");
+        // Ohne geladene englische Stimme liest die gewaehlte -- nichts zu melden.
+        let mut only_german = engine(true);
+        only_german.alternatives.truncate(1);
+        assert_eq!(only_german.replacement_voice_id(english), None);
     }
 
     /// Der ganze Trait-Pfad asynchron: eine startklare Engine spricht über

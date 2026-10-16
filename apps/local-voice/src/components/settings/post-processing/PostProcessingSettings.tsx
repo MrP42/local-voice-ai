@@ -281,7 +281,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
           />
           <Button
             onClick={handleStartCreate}
-            variant="primary"
+            variant="secondary"
             size="md"
             disabled={isCreating}
             className="shrink-0"
@@ -396,7 +396,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
             <div className="flex gap-2 pt-2">
               <Button
                 onClick={handleCreatePrompt}
-                variant="primary"
+                variant="primary" // ui-check: ok (Neu und Bearbeiten schließen sich aus)
                 size="md"
                 disabled={!draftName.trim() || !draftText.trim()}
               >

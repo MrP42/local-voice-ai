@@ -180,8 +180,6 @@ async function expectKeyboardTabs(page: Page, tabs: Locator[]): Promise<void> {
         "aria-selected",
         i === index ? "true" : "false",
       );
-      // Roving tabIndex: nur der gewählte Reiter ist ein Tabstopp.
-      await expect(tab).toHaveAttribute("tabindex", i === index ? "0" : "-1");
     }
     await expect(tabs[index]).toBeFocused();
   };
@@ -199,6 +197,10 @@ async function expectKeyboardTabs(page: Page, tabs: Locator[]): Promise<void> {
   await selected(tabs.length - 1);
   await page.keyboard.press("Home");
   await selected(0);
+  // Ein Tabstopp (Fluent/tabster statt tabIndex-Attribut): Tab verlässt die
+  // Leiste, statt zum nächsten Reiter zu springen.
+  await page.keyboard.press("Tab");
+  for (const tab of tabs) await expect(tab).not.toBeFocused();
 }
 
 test("editor tabs are real tabs with keyboard navigation and standard height", async ({
@@ -222,9 +224,16 @@ test("editor tabs are real tabs with keyboard navigation and standard height", a
   for (const tab of [original, translation, summary]) {
     expect((await size(tab)).height).toBeGreaterThanOrEqual(40);
   }
-  await expect(original).toHaveCSS("font-weight", "500");
-  // Inaktiver Reiter wie in den Einstellungen: text/60 statt text/50.
-  await expect(translation).toHaveClass(/text-text\/60/);
+  // Fluent 2 (Leitlinie §8: nur Regular und Semibold): gewählt Semibold,
+  // inaktiv Regular.
+  await expect(original.locator(".fui-Tab__content")).toHaveCSS(
+    "font-weight",
+    "600",
+  );
+  await expect(translation.locator(".fui-Tab__content")).toHaveCSS(
+    "font-weight",
+    "400",
+  );
 });
 
 test("files/help tabs are real tabs with keyboard navigation", async ({
@@ -249,8 +258,16 @@ test("files/help tabs are real tabs with keyboard navigation", async ({
 
   // In der schmalen Leiste darf es kompakter sein, aber nicht unter 32 px.
   expect((await size(dateien)).height).toBeGreaterThanOrEqual(32);
-  // Unterstrich statt Pille: kein Hintergrund, font-medium, keine Großbuchstaben.
-  await expect(dateien).toHaveCSS("font-weight", "500");
+  // Unterstrich statt Pille: kein Hintergrund, keine Großbuchstaben; inaktiv
+  // Regular (Fluent 2, Leitlinie §8), gewählt Semibold.
+  await expect(dateien.locator(".fui-Tab__content")).toHaveCSS(
+    "font-weight",
+    "400",
+  );
+  await expect(hilfe.locator(".fui-Tab__content")).toHaveCSS(
+    "font-weight",
+    "600",
+  );
   await expect(dateien).toHaveCSS("text-transform", "none");
   await expect(dateien).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 });

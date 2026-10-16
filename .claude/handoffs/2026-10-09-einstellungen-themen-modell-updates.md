@@ -37,3 +37,29 @@
 - Mac-tauglich: npm-Erkennung über `node_modules/@openai`-Pfad (Link-Auflösung) und `npm-cli.js` im Unix-Layout (`<praefix>/lib/node_modules/npm`). Lokal nicht auf macOS gebaut; die DMG (arm64 + x64) entsteht über `.github/workflows/release-macos.yml` beim Tag `app-v*` (oder `workflow_dispatch`) — erst nach Abnahme/Merge/Tag-Freigabe.
 - Falle: `settings::get_settings(&app)` in einem Modul macht die Test-EXE unlauffähig (0xc0000139) → Einstellung von außen per Closure hereinreichen (siehe `cli_update::init`).
 - Playwright-Specs mit gestellter Uhr: erst warten, bis die Oberfläche steht, dann `fastForward` (sonst wackelig unter Last).
+
+## Nachtrag 12.10. (0.21.14, PR #83 auf #82)
+- Zweig `feat/vorlesen-uebersetzung`: Übersetzung/Zusammenfassung mit Fortschritt + Abbrechen (`tts-transform-progress`, `tts_transform_cancel`), Menü in allen Reitern, Sprechermarken/Tags als Platzhalter geschützt (`translator::translate_blocks`), Fenster „Sprecher tauschen“ (`lib/voices/speakerSwap.ts`, `SpeakerSwapDialog.tsx`), Übersetzungs-Cache-Schlüssel v2.
+- Ursache „Fish statt Thorsten / kein Sprecherwechsel im Englischen“: alte Übersetzung hatte `<Female narrator>`/`<Male narrator>` (unbekannte Sprecher) und der Übersetzungsreiter stand auf „Skript mit Sprechern“.
+- Installer 0.21.14 im App-Update-Ordner. Offen: Abnahme mit echten englischen Fish-Stimmen (Stimmen brauchen `language` = en-*), Merge der Kette #76–#83, Release-Tag (macht auch die Mac-DMG).
+- Build-Ordner: `D:\lv-build\int` (Prüf-/Bau-Baum, groß; bleibt bis zum Merge der Kette, danach aufräumen).
+
+## Nachtrag 13.10. (0.21.15, PR #83)
+- Stimmenwahl: `utterances()` liest vor dem Berechnen die Einstellungen neu; `run_speak_session` entfernt Sprecher aus schon berechneten Sitzungen, wenn keine Zuordnung gilt (`without_speakers_unless_switching`). Ursache des Springens zwischen Thorsten und Sprecherstimmen.
+- Piper mit „Sprache automatisch erkennen“ (`tts_piper_auto_language`, Vorgabe an) nimmt bei englischem Text eine englische Stimme, im Dropdown stand weiter Thorsten → Hinweis unter dem Menü (`tts_piper_voice_for_text`, `PiperEngine::replacement_voice_id`) mit Klick „Nur die gewählte Stimme verwenden“.
+- Korrigierte Übersetzung bleibt: `tts_store_translation` schreibt in den Zwischenspeicher (vorher nur Arbeitsspeicher → beim Sprach-/Seitenwechsel kam die Maschinen-Fassung zurück). Offen: „Übersetzen“ liefert bei vorhandener Übersetzung den Zwischenspeicher (auch die korrigierte), keine neue.
+- Wiedergabe-Knopf: `.mediabar:has(.mbtn--lg)` mit Polster in `App.css`.
+- Falle: `memgate.sh` immer mit `&&` verketten; geschützte Kette `scratchpad/chain.sh` (Wächter → Sync → tsc → Rust → Installer).
+
+## Nachtrag 13.10. (0.21.16/0.21.17, PR #83)
+- Cloud-/API-/Abo-Modelle: Übersetzung und Zusammenfassung in EINER Anfrage (`translator::translation_block_chars`, `summarizer::chunk_chars`; lokal blockweise), Wiederholversuch bei „at capacity“/Mengenbegrenzung (`is_transient_error`).
+- Stimme live: `tts_voice_changed` (Frontend ruft es nach `applyVoiceValue`), `TtsManager::voice_changed` startet bei laufendem Vorlesen ab dem aktuellen Satz neu. Fish-Symbol: `TtsStatus.server_up` (Phase „Bereit“ gilt auch für Piper).
+- Sprach-Reiter über dem Übersetzungsfeld (`translatedLangs` im Seitenzustand, Stimme je Sprache `translation:<Sprache>`, Verlauf je Sprache `…:translation:<Sprache>`, `useTextHistory.syncPresent`).
+- Subagent `dokumente-export-presenter` (Worktree `D:\wt\local-voice-project\dokumente`, Zweig `feat/dokumenttypen-export`): Entwurf `docs/superpowers/specs/2026-10-13-dokumenttypen-export-presenter-design.md` gepusht; Etappe 1 (Dokumenttypen) läuft. 11 Owner-Annahmen im Entwurf Abschnitt 10 (nicht von Patrick bestätigt).
+- Offen: Presenter-Fenster-Position (welches Fenster? Chat/Assistent/Regieplan) — Patrick muss das Fenster nennen.
+
+## Nachtrag 14.10. (0.21.18, PR #84 auf #83)
+- Subagent `dokumente-export-presenter` (Opus, ~850 kTok) hat Etappen 0–4 geliefert: Dokumenttypen (10), Export Word/PDF(krilla)/PowerPoint mit Briefkopf `lva.briefkopf/1`, Presenter-Übergabe über Austauschordner (`wai.besprechung/1`, Anfragen einzeln freigegeben), Codex-Sicherheitsreview eingearbeitet. Entwurf: `docs/superpowers/specs/2026-10-13-dokumenttypen-export-presenter-design.md` (Owner-Annahmen Abschnitt 10, nicht bestätigt); Auftrag an die Presenter-Seite: `docs/presenter-uebergabe-auftrag.md`.
+- PR #84 (`feat/dokumenttypen-export` → `feat/vorlesen-uebersetzung`), Installer 0.21.18 im App-Update-Ordner. Geprüft: Rust 552, Playwright 76. Nicht geprüft: Durchlauf Anfrage → Freigabe → Modellaufruf → Paket; kein macOS-Build.
+- Offen: Reiter „Protokoll“ → „Dokumente“ (bewusst nicht umbenannt, ~30 Test-Locators); eigene Word-Vorlage als Briefkopf nicht gebaut; Presenter-Seite (Import/Anfrage) muss in `D:\wai-presenter` gebaut werden; Presenter-Fenster-Position (Patrick muss das Fenster nennen).
+- Ordner mit Grund (Ordnungspflicht): `D:\wt\local-voice-project\dokumente` (Worktree des PR #84, bis Merge), `D:\lv-build\target-dokumente` (25 GB, gemeinsames Build-Ziel dieses Zweigs), `D:\lv-build\int` (Prüf-/Bau-Baum, jetzt auf Zweig `int/dokumente`; groß). Nach Merge der Kette: Worktree entfernen (`git worktree remove`), beide Build-Ordner löschen.

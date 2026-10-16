@@ -49,7 +49,13 @@ export const configText = (configJson: string, key: string): string => {
 
 /** Arten mit eigenem Einstellungsformular (A6, K1): Konto oder Ziel mit Pfad/Adresse. */
 export type TargetKind =
-  "folder" | "smtp" | "obsidian" | "wissen" | "webhook" | "service";
+  | "folder"
+  | "smtp"
+  | "obsidian"
+  | "wissen"
+  | "webhook"
+  | "service"
+  | "presenter";
 
 export const TARGET_KINDS: readonly Kind[] = [
   "folder",
@@ -58,6 +64,7 @@ export const TARGET_KINDS: readonly Kind[] = [
   "wissen",
   "webhook",
   "service",
+  "presenter",
 ];
 
 export const isTargetKind = (kind: Kind): kind is TargetKind =>
@@ -104,6 +111,8 @@ export const CATALOG: CatalogEntry[] = [
   { id: "obsidian", kind: "obsidian", status: "available" },
   { id: "wissen", kind: "wissen", status: "available" },
   { id: "webhook", kind: "webhook", status: "available" },
+  // Etappe 4: Austauschordner fuer den WAI Presenter.
+  { id: "presenter", kind: "presenter", status: "available" },
 ];
 
 /** Dienste (Welle 1) im Katalog, nach Zweck gruppiert. Felder und Anmeldung liefert das

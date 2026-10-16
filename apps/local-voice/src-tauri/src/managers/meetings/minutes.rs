@@ -43,6 +43,7 @@ use serde_json::{json, Map, Value};
 use specta::Type;
 
 use super::basis::{self, DocBasis};
+use super::doc_types::{self, DocHead, DocProfile};
 use super::llm_call::{
     ask_json, build_head_with, duration_label, head_facts_block, is_splittable_error,
     is_truncation_error, mm_ss, resolve_provider_coded, retry_chunk, should_retry, sorted_segments,
@@ -824,21 +825,11 @@ pub fn validate_sections(sections: &[MinutesSection]) -> Result<(), String> {
 // Rendering
 // ---------------------------------------------------------------------------
 
+/// Eine Zeile eines Eintrags. Dieselbe Funktion wie bei den Dokumenttypen
+/// (`doc_types::entry_line`): Platzhalter wie "null" bei Wer/Bis fallen weg, Zeilenumbrueche
+/// aus der Antwort zerreissen die Liste nicht (Befund 13.10.2026).
 fn entry_line(kind: SectionKind, entry: &MinutesEntry) -> String {
-    let mut line = entry.text.clone();
-    if kind == SectionKind::Tasks {
-        let mut extras = Vec::new();
-        if let Some(assignee) = &entry.assignee {
-            extras.push(format!("Wer: {assignee}"));
-        }
-        if let Some(due) = &entry.due {
-            extras.push(format!("Bis: {due}"));
-        }
-        if !extras.is_empty() {
-            line.push_str(&format!(" _({})_", extras.join(", ")));
-        }
-    }
-    line
+    doc_types::entry_line(kind, entry)
 }
 
 /// Hinweiszeile fuer ein Protokoll, dem Teile des Transkripts fehlen. Nennt die
@@ -899,7 +890,7 @@ pub fn minutes_to_markdown_with_basis(
         match section.entries.as_slice() {
             [] => markdown.push_str("_keine_\n"),
             [only] if section.kind == SectionKind::Text => {
-                markdown.push_str(&format!("{}\n", only.text));
+                markdown.push_str(&format!("{}\n", doc_types::one_line(&only.text)));
             }
             entries => {
                 for entry in entries {
@@ -967,6 +958,19 @@ fn ask_options() -> AskOptions<'static> {
     }
 }
 
+/// Dokumenttypen: Zweck und Wort aus dem Profil, sonst wie [`ask_options`].
+fn ask_options_for(profile: &DocProfile) -> AskOptions<'static> {
+    if profile.is_document() {
+        AskOptions {
+            purpose: profile.purpose(),
+            noun: profile.noun(),
+            redact_parse_errors: true,
+        }
+    } else {
+        ask_options()
+    }
+}
+
 type Reporter<'a> = &'a (dyn Fn(MinutesPhase, u32, u32) + Send + Sync);
 
 /// Alles, was ein Lauf an Eingaben braucht.
@@ -992,6 +996,8 @@ struct Ctx<'a> {
     entry_cap: bool,
     cancel: Arc<AtomicBool>,
     report: Reporter<'a>,
+    /// Protokoll oder Dokumenttyp (Regeln, Eintragsgrenze, Zweck).
+    profile: &'a DocProfile,
 }
 
 impl Ctx<'_> {
@@ -1010,11 +1016,30 @@ impl Ctx<'_> {
 
     /// D5: System-Prompts samt Folienregeln, wenn Folien im Transkript stehen.
     fn system_prompt(&self) -> String {
-        minutes_system_prompt_with(self.slides.is_some())
+        format!(
+            "{}{}",
+            minutes_system_prompt_with(self.slides.is_some()),
+            self.profile.rules()
+        )
     }
 
     fn map_system(&self) -> String {
-        map_system_prompt_with(self.slides.is_some())
+        format!(
+            "{}{}",
+            map_system_prompt_with(self.slides.is_some()),
+            self.profile.rules()
+        )
+    }
+
+    /// Prompt des Einzeldurchlaufs; ein Dokumenttyp nennt seine Eintragsgrenze.
+    fn single_prompt(&self) -> String {
+        let prompt = minutes_user_prompt(&self.head, &self.spec, &self.transcript());
+        match self.profile.cap(None) {
+            Some(n) if self.profile.is_document() => {
+                format!("{prompt}\n\nWrite at most {n} entries in total (all sections together).")
+            }
+            _ => prompt,
+        }
     }
 
     fn free_mb(&self) -> u64 {
@@ -1033,10 +1058,10 @@ fn classify_llm_error(err: String, free_mb: u64) -> MinutesError {
 }
 
 async fn single_pass(ctx: &Ctx<'_>) -> Result<RawMinutes, String> {
-    let prompt = minutes_user_prompt(&ctx.head, &ctx.spec, &ctx.transcript());
+    let prompt = ctx.single_prompt();
     ask_json::<RawMinutes>(
         ctx.settings,
-        &ask_options(),
+        &ask_options_for(ctx.profile),
         &ctx.system_prompt(),
         &|local| minutes_schema(&ctx.spec, local),
         &prompt,
@@ -1051,7 +1076,7 @@ async fn single_pass(ctx: &Ctx<'_>) -> Result<RawMinutes, String> {
 async fn fits_single_pass(ctx: &Ctx<'_>, payload_chars: usize, budget_chars: usize) -> bool {
     match ctx.tokens.as_ref().filter(|plan| plan.is_exact()) {
         Some(plan) => {
-            let prompt = minutes_user_prompt(&ctx.head, &ctx.spec, &ctx.transcript());
+            let prompt = ctx.single_prompt();
             let tokens = plan.prompt_tokens(&ctx.system_prompt(), &prompt).await;
             let fits = plan.budget.fits(tokens);
             log::info!(
@@ -1139,8 +1164,10 @@ async fn map_step(
         total_blocks,
         // Mit Grenze, wenn lokal -- oder nach einem Abschneiden: dann lief die
         // Antwort weg, und die Haelften sollen es nicht wieder tun.
-        (ctx.entry_cap || !work.path.is_empty())
-            .then(|| budget::minutes_entry_cap(chunk.chars().count())),
+        ctx.profile.cap(
+            (ctx.entry_cap || !work.path.is_empty())
+                .then(|| budget::minutes_entry_cap(chunk.chars().count())),
+        ),
         &chunk,
     );
     let system = ctx.map_system();
@@ -1158,6 +1185,7 @@ async fn map_step(
         }
     }
     let (settings, spec, prompt_ref, system_ref) = (ctx.settings, &ctx.spec, &prompt, &system);
+    let profile = ctx.profile;
     let result = retry_chunk(
         "Protokoll",
         work.block_index,
@@ -1169,7 +1197,7 @@ async fn map_step(
         move || async move {
             ask_json::<MapOutput>(
                 settings,
-                &ask_options(),
+                &ask_options_for(profile),
                 system_ref,
                 &|local| map_schema(spec, local),
                 prompt_ref,
@@ -1329,8 +1357,10 @@ async fn write_blocks(
             &ctx.spec,
             &lines,
             &gaps,
-            ctx.entry_cap
-                .then(|| budget::minutes_entry_cap(transcript_chars)),
+            ctx.profile.cap(
+                ctx.entry_cap
+                    .then(|| budget::minutes_entry_cap(transcript_chars)),
+            ),
         );
         let fits = match ctx.tokens.as_ref().filter(|plan| plan.is_exact()) {
             Some(plan) => {
@@ -1351,6 +1381,7 @@ async fn write_blocks(
         }
         Some(prompt) => {
             let (settings, spec, prompt_ref) = (ctx.settings, &ctx.spec, &prompt);
+            let profile = ctx.profile;
             let system = ctx.system_prompt();
             let system_ref = &system;
             let result = retry_chunk(
@@ -1362,7 +1393,7 @@ async fn write_blocks(
                 move || async move {
                     ask_json::<RawMinutes>(
                         settings,
-                        &ask_options(),
+                        &ask_options_for(profile),
                         system_ref,
                         &|local| minutes_schema(spec, local),
                         prompt_ref,
@@ -1490,6 +1521,7 @@ fn meta_json(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_minutes(
     settings: &AppSettings,
     store: Arc<MeetingStore>,
@@ -1499,6 +1531,7 @@ async fn run_minutes(
     limits: Limits,
     guard: &MinutesRunGuard,
     on_progress: ProgressFn<'_>,
+    profile: &DocProfile,
 ) -> Result<MeetingDocument, MinutesError> {
     let started = std::time::Instant::now();
     let meeting = store
@@ -1556,27 +1589,41 @@ async fn run_minutes(
 
     let labels = SpeakerDirectory::load(&store, meeting_id);
     // Vorlage: Nutzerwahl vor Automatik. Bei "Automatisch" ein kurzer Modellaufruf.
+    // Ein Dokumenttyp bringt seine Abschnitte selbst mit: keine Vorlagenwahl.
     stopped()?;
     report(MinutesPhase::Template, 0, 0);
-    let resolved = classify::resolve_template(
-        &ResolveInput {
-            settings,
-            purpose: Purpose::Minutes,
-            store: &store,
-            meeting_id,
-            title: &meeting.title,
-            segments: &segments,
-            labels: &labels,
-            timeout: limits.classify_timeout,
-        },
-        template_id,
-    )
-    .await
-    .map_err(|e| match e {
-        ResolveError::NotFound => MinutesError::code_only("template_not_found"),
-        ResolveError::Store(message) => store_err(message),
-    })?;
-    let (info, auto) = (resolved.info, resolved.auto);
+    let (info, auto) = if let Some(doc_type) = profile.doc_type.as_ref() {
+        (
+            TemplateInfo {
+                id: doc_type.template_id(),
+                title: doc_type.title.to_string(),
+                builtin: true,
+                spec: doc_type.spec.clone(),
+                updated_at: 0,
+            },
+            None,
+        )
+    } else {
+        let resolved = classify::resolve_template(
+            &ResolveInput {
+                settings,
+                purpose: Purpose::Minutes,
+                store: &store,
+                meeting_id,
+                title: &meeting.title,
+                segments: &segments,
+                labels: &labels,
+                timeout: limits.classify_timeout,
+            },
+            template_id,
+        )
+        .await
+        .map_err(|e| match e {
+            ResolveError::NotFound => MinutesError::code_only("template_not_found"),
+            ResolveError::Store(message) => store_err(message),
+        })?;
+        (resolved.info, resolved.auto)
+    };
     stopped()?;
 
     // Lokal rechnet der Lauf in Token (Kontext, `/tokenize`); eine feste
@@ -1612,6 +1659,7 @@ async fn run_minutes(
         entry_cap: local,
         cancel: guard.cancel_token(),
         report: &report,
+        profile,
     };
     let budget_chars = match (limits.budget_chars, &ctx.tokens) {
         (Some(chars), _) => chars,
@@ -1676,15 +1724,36 @@ async fn run_minutes(
     let basis_line = basis_resolved
         .variant
         .is_some()
-        .then(|| basis_resolved.header_line());
-    let body = minutes_to_markdown_with_basis(
-        &ctx.head,
-        &info.title,
-        auto.as_ref().map(|d| d.outcome),
-        &sections,
-        &gaps,
-        basis_line.as_deref(),
-    );
+        .then(|| basis_resolved.header_line())
+        // `basis_line` spricht vom Protokoll; ein Dokumenttyp ist keines.
+        .map(|line| {
+            if profile.is_document() {
+                line.replacen(" · Protokoll ", " · Dokument ", 1)
+            } else {
+                line
+            }
+        });
+    let body = match profile.doc_type.as_ref() {
+        Some(doc_type) => doc_types::document_to_markdown(
+            doc_type,
+            &DocHead {
+                meeting_title: &ctx.head.title,
+                date_iso: &ctx.head.date_iso,
+                duration: &duration_label(ctx.head.duration_ms),
+                basis_line: basis_line.as_deref(),
+            },
+            &sections,
+            &gaps,
+        ),
+        None => minutes_to_markdown_with_basis(
+            &ctx.head,
+            &info.title,
+            auto.as_ref().map(|d| d.outcome),
+            &sections,
+            &gaps,
+            basis_line.as_deref(),
+        ),
+    };
     let mut metadata = meta_json(
         &model,
         &provider.id,
@@ -1698,6 +1767,16 @@ async fn run_minutes(
     if let (Value::Object(map), Value::Object(extra)) = (&mut metadata, basis_resolved.metadata()) {
         map.extend(extra);
     }
+    // Dokumenttyp, gemessene Laenge und Ueberlaenge (Hinweis, nie Kuerzung).
+    if let (Value::Object(map), Some(doc_type)) = (&mut metadata, profile.doc_type.as_ref()) {
+        let words = doc_types::word_count(&sections);
+        map.insert("doc_type".to_string(), json!(doc_type.key));
+        map.insert("words".to_string(), json!(words));
+        map.insert(
+            "over_length".to_string(),
+            json!(doc_types::over_length(doc_type, words)),
+        );
+    }
     // D5: nur mit Folien ein Block `slides` (Zaehler, nie Inhalt); ohne bleibt es wie vorher.
     if let (Value::Object(map), Some(slides)) = (&mut metadata, ctx.slides.as_ref()) {
         map.insert("slides".to_string(), slides_meta(slides, &stats));
@@ -1707,7 +1786,7 @@ async fn run_minutes(
     let document_id = store
         .insert_document(
             meeting_id,
-            DOC_KIND,
+            &profile.kind(),
             "markdown@1",
             &body,
             Some(&info.id),
@@ -1723,7 +1802,7 @@ async fn run_minutes(
             subject_kind: crate::managers::provenance::SubjectKind::Document,
             subject_id: &document_id,
             subject_revision: None,
-            operation: "minutes",
+            operation: profile.operation(),
             actor_kind: crate::managers::provenance::ActorKind::User,
             actor_ref: None,
             started,
@@ -1808,6 +1887,54 @@ pub(crate) async fn generate_guarded_with(
     limits: Limits,
     on_progress: ProgressFn<'_>,
 ) -> Result<MeetingDocument, MinutesError> {
+    generate_profiled(
+        settings,
+        store,
+        meeting_id,
+        template_id,
+        doc_basis,
+        limits,
+        on_progress,
+        &DocProfile::minutes(),
+    )
+    .await
+}
+
+/// Dokumenttyp im Protokoll-Motor: dieselbe Sperre je Besprechung, dasselbe
+/// Zeitlimit, derselbe Erfassungsbereich fuer die Provenienz.
+pub(crate) async fn generate_document_guarded(
+    settings: &AppSettings,
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+    doc_type: doc_types::DocType,
+    doc_basis: &DocBasis,
+    limits: Limits,
+    on_progress: ProgressFn<'_>,
+) -> Result<MeetingDocument, MinutesError> {
+    generate_profiled(
+        settings,
+        store,
+        meeting_id,
+        None,
+        doc_basis,
+        limits,
+        on_progress,
+        &DocProfile::document(doc_type),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn generate_profiled(
+    settings: &AppSettings,
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+    template_id: Option<&str>,
+    doc_basis: &DocBasis,
+    limits: Limits,
+    on_progress: ProgressFn<'_>,
+    profile: &DocProfile,
+) -> Result<MeetingDocument, MinutesError> {
     let guard = MinutesRunGuard::acquire(meeting_id)?;
     let output_language = doc_basis
         .output_language
@@ -1829,6 +1956,7 @@ pub(crate) async fn generate_guarded_with(
                 limits,
                 &guard,
                 on_progress,
+                profile,
             ),
         )),
     )
@@ -1883,15 +2011,48 @@ pub async fn generate_minutes_with_basis(
     .map_err(String::from)
 }
 
+/// Dokumenttyp erzeugen und als neue Version seines `kind` ablegen. Anders als
+/// [`generate_minutes`] keine Datei neben der Aufnahme und KEINE Neuberechnung der
+/// Audio-Aufbewahrung: "Audio loeschen nach dem Protokoll" haengt am Protokoll allein.
+pub async fn generate_document_with_settings(
+    settings: &AppSettings,
+    store: Arc<MeetingStore>,
+    meeting_id: &str,
+    doc_type: doc_types::DocType,
+    doc_basis: &DocBasis,
+    on_progress: ProgressFn<'_>,
+) -> Result<MeetingDocument, String> {
+    generate_document_guarded(
+        settings,
+        store,
+        meeting_id,
+        doc_type,
+        doc_basis,
+        Limits::default(),
+        on_progress,
+    )
+    .await
+    .map_err(String::from)
+}
+
 /// Die Anzeigedaten des jüngsten Protokolls einer Besprechung (aus den
 /// Metadaten seiner Dokumentversion). Ältere Protokolle (vor P1k) tragen keine
 /// Vorlage und ggf. `chunks_failed`; sie gelten mit den Blöcken als unvollständig.
 pub fn latest_meta(store: &MeetingStore, meeting_id: &str) -> Option<MinutesMeta> {
+    latest_meta_of_kind(store, meeting_id, DOC_KIND)
+}
+
+/// Wie [`latest_meta`] fuer einen beliebigen `kind` (Dokumenttypen: `doc:<key>`).
+pub fn latest_meta_of_kind(
+    store: &MeetingStore,
+    meeting_id: &str,
+    kind: &str,
+) -> Option<MinutesMeta> {
     let latest = store
         .get_documents(meeting_id)
         .ok()?
         .into_iter()
-        .filter(|d| d.kind == DOC_KIND)
+        .filter(|d| d.kind == kind)
         .max_by_key(|d| d.version)?;
     let metadata: Value = store
         .document_generation_metadata(&latest.id)
@@ -2055,6 +2216,9 @@ pub async fn generate_minutes(
 
 #[cfg(test)]
 mod basis_tests;
+
+#[cfg(test)]
+mod document_tests;
 
 #[cfg(test)]
 mod slides_tests;

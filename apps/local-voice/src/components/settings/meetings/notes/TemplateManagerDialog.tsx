@@ -353,7 +353,7 @@ export const TemplateManagerDialog: React.FC<TemplateManagerDialogProps> = ({
           </label>
 
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-mid-gray">
+            <p className="text-xs font-medium text-mid-gray">
               {t("meetings.templates.sectionsTitle")}
             </p>
             {draft.spec.sections.map((section, index) => (

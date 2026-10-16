@@ -75,6 +75,8 @@ pub struct TargetSettings {
     pub service: Option<String>,
     /// Felder des Dienstes (Projekt-ID, Site, E-Mail, ...), siehe `services::registry`.
     pub fields: Option<std::collections::BTreeMap<String, String>>,
+    /// WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
+    pub catalog: Option<bool>,
 }
 
 fn opt(s: &Option<String>) -> Option<String> {
@@ -102,6 +104,13 @@ pub fn config_from_settings(kind: Kind, s: &TargetSettings, existing: Option<&Va
         Kind::Folder => json!({
             "path": text(opt(&s.path), "path"),
             "subfolder": text(opt(&s.subfolder), "subfolder"),
+        }),
+        Kind::Presenter => json!({
+            "path": text(opt(&s.path), "path"),
+            "catalog": s
+                .catalog
+                .or_else(|| old("catalog").and_then(|v| v.as_bool()))
+                .unwrap_or(true),
         }),
         Kind::Smtp => {
             let security = s
@@ -219,6 +228,11 @@ pub fn normalize_config(kind: Kind, raw: &Value) -> Result<(Value, Option<String
             Ok((json!({ "host": host }), Some(host)))
         }
         Kind::Service => service_config::normalize(raw),
+        Kind::Presenter => {
+            let cfg = super::presenter::PresenterConfig::from_config_json(&text)?;
+            let path = folder::check_root_text(&cfg.path).map_err(|e| e.code().to_string())?;
+            Ok((json!({ "path": path, "catalog": cfg.catalog }), None))
+        }
         _ => Err(view::ERR_KIND_NOT_AVAILABLE.to_string()),
     }
 }
@@ -367,7 +381,7 @@ pub fn test_target(
         Ok(secret(&i, slot)?.unwrap_or_default())
     };
     let outcome: Result<(), (String, String)> = match i.kind {
-        Kind::Folder => return view::test_integration(conn, id, now_ms),
+        Kind::Folder | Kind::Presenter => return view::test_integration(conn, id, now_ms),
         Kind::Smtp => SmtpConfig::from_config_json(&i.config_json)
             .map_err(|e| (e.code().to_string(), e.to_string()))
             .and_then(|cfg| {
@@ -631,6 +645,39 @@ pub fn place_export(
             sandbox
                 .write_new(&cfg.subfolder, what.file_name, writer)
                 .map_err(|e| e.to_string())
+        },
+    )
+}
+
+/// WAI Presenter (Etappe 4): schreibt ein Besprechungspaket und, wenn eingeschaltet, den
+/// Katalog in den Austauschordner (`presenter.send`). `build` bekommt die Sandbox der Wurzel
+/// und schreibt nur darueber (`presenter::write_package`, `presenter::write_catalog`).
+#[allow(clippy::too_many_arguments)]
+pub fn send_to_presenter<T>(
+    conn: &Connection,
+    caller: Caller,
+    integration_id: &str,
+    capability: Capability,
+    target: &str,
+    args: &Value,
+    approval_id: Option<&str>,
+    now_ms: i64,
+    build: impl FnOnce(&Sandbox, &super::presenter::PresenterConfig) -> Result<T, String>,
+) -> Result<GateOutcome<T>, IntegrationError> {
+    let i = load(conn, integration_id, Kind::Presenter)?;
+    gated(
+        conn,
+        caller,
+        integration_id,
+        capability,
+        target,
+        args,
+        approval_id,
+        now_ms,
+        || {
+            let cfg = super::presenter::PresenterConfig::from_config_json(&i.config_json)?;
+            let sandbox = Sandbox::open(&cfg.path).map_err(|e| e.code().to_string())?;
+            build(&sandbox, &cfg)
         },
     )
 }
