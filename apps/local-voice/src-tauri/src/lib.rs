@@ -2608,6 +2608,14 @@ pub fn run(cli_args: CliArgs) {
             .plugin(
                 tauri_plugin_window_state::Builder::default()
                     .with_denylist(&["recording_overlay"])
+                    // Never restore the frame flag: the main window is
+                    // frameless (`decorations(false)` below) and a state file
+                    // saved by an older, framed build would otherwise bring
+                    // the native title bar back on top of the in-app one.
+                    .with_state_flags(
+                        tauri_plugin_window_state::StateFlags::all()
+                            .difference(tauri_plugin_window_state::StateFlags::DECORATIONS),
+                    )
                     .build(),
             );
     }
