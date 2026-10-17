@@ -766,3 +766,41 @@ test("Einrichtung mit erteilten Rechten springt ohne Schleife weiter", async ({ 
   await page.waitForTimeout(1500);
   expect(loops).toEqual([]);
 });
+
+test.describe("Navigation eingeklappt", () => {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Klick aufs Symbol wählt, Auswahllinie am linken Rand (${theme})`, async ({ page }) => {
+      await setup(page, theme);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto("/");
+      await page.getByRole("button", { name: "Menü einklappen" }).click();
+      const nav = page.locator('.workspace-nav[data-collapsed="true"]');
+      await expect(nav).toBeVisible();
+      const items = nav.locator(".workspace-nav__item");
+      const anzahl = await items.count();
+      expect(anzahl).toBeGreaterThan(3);
+      // von hinten: der erste Eintrag (Start) ist schon gewählt, jeder Klick muss also wirklich umschalten
+      for (let i = anzahl - 1; i >= 0; i--) {
+        const item = items.nth(i);
+        // genau in die Mitte des Symbols klicken – eingeklappt die typische Stelle
+        const svg = item.locator("svg").first();
+        const box = await svg.boundingBox();
+        if (!box) throw new Error("Symbol ohne Fläche");
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        await expect(item).toHaveAttribute("aria-current", "page");
+        // Auswahllinie: am linken Rand des Eintrags, vertikal mittig, nicht über dem Symbol
+        const linie = await item.evaluate((el) => {
+          const s = getComputedStyle(el, "::after");
+          const r = el.getBoundingClientRect();
+          return { content: s.content, links: parseFloat(s.left), breite: parseFloat(s.width), hoehe: parseFloat(s.height), top: parseFloat(s.top) + (parseFloat(s.marginTop) || 0), itemHoehe: r.height };
+        });
+        expect(linie.content).not.toBe("none");
+        expect(linie.links).toBeLessThanOrEqual(1);
+        expect(Math.abs(linie.top + linie.hoehe / 2 - linie.itemHoehe / 2)).toBeLessThanOrEqual(2);
+        const svgLinks = box.x - (await item.boundingBox())!.x;
+        expect(linie.links + linie.breite).toBeLessThanOrEqual(svgLinks);
+      }
+      await page.screenshot({ path: `docs/belege/fluent-rahmen/nav-eingeklappt-${theme}.png`, clip: { x: 0, y: 0, width: 400, height: 500 } });
+    });
+  }
+});
