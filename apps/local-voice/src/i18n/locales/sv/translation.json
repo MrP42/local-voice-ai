@@ -995,6 +995,23 @@
     "accentHighContrast": "Vid hög kontrast pausas accentfärger.",
     "accentSelected": "Valt:",
     "saveFailed": "Utseendet kunde inte sparas. Det försöks igen vid nästa ändring.",
+    "accentGroup": "{akzent} för {design}",
+    "accentLocked": "Accentfärgen följer designen.",
+    "accentNames": {
+      "standard": "Som designen",
+      "blau": "Blå",
+      "petrol": "Petrol",
+      "gruen": "Grön",
+      "violett": "Violett",
+      "orange": "Orange",
+      "beere": "Bär",
+      "rot": "Röd",
+      "graphit": "Grafit"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Standard: Fluent 2 med neutral grå och blå, i linje med systemets gränssnitt.",
       "wai": "Wolff Applied AI: marinblå i ljust läge, signalgul i mörkt läge."

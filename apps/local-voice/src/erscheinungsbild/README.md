@@ -1,4 +1,4 @@
-# Erscheinungsbild (`@wai/ui erscheinungsbild v1`)
+# Erscheinungsbild (`@wai/ui erscheinungsbild v1.1`)
 
 Standard-Baustein für alle WAI-Apps (ADR-0006, Nachtrag 17.10.2026): Windows-11-/Fluent-2-Aufbau, dazu wählbare
 Designs mit Vorschaukarten, Akzentfarben, Farbschema, Kontrast und Animationen. Standard ist das Microsoft-Design
@@ -47,7 +47,44 @@ Texte überschreiben: `<ErscheinungsbildEinstellungen texte={{ titel: "Darstellu
 5. Rahmenlose Fenster (Tauri): `<Fensterknoepfe minimieren={() => w.minimize()} maximierenUmschalten={() => w.toggleMaximize()}
    schliessen={() => w.close()} istMaximiert={() => w.isMaximized()} beiGroessenaenderung={(cb) => w.onResized(cb)} />`
    mit `const w = getCurrentWindow()`.
-6. Kopfkommentar `@wai/ui erscheinungsbild v1` stehen lassen; bei Updates den Ordner komplett ersetzen.
+6. Kopfkommentar `@wai/ui erscheinungsbild v1.1` stehen lassen; bei Updates den Ordner komplett ersetzen.
+
+## Neu in v1.1
+
+**Slot `vorDesign`** – App-Zeilen direkt vor der Design-Karte, z. B. die Quelle des Designs im Presenter:
+
+```tsx
+<ErscheinungsbildEinstellungen
+  vorDesign={<EinstellungsKarte kopf="Design der App kommt aus" steuerung={<Dropdown …/>} />}
+/>
+```
+
+**Design-Sperre `designGesperrt={{ hinweis }}`** – Design-Karten und Akzentfarben sind nicht wählbar und nicht
+fokussierbar (`aria-disabled`, `tabIndex=-1`); der Hinweis steht über den Karten und beschreibt die Gruppe. Die
+Sperre der Akzente durch Kontrast „Hoch“ bleibt eigenständig: Gilt einer der beiden Gründe, sind die Akzente
+gesperrt, gelten beide, stehen beide Hinweise im Hilfetext.
+
+```tsx
+<ErscheinungsbildEinstellungen designGesperrt={folgtVorlage ? { hinweis: `Folgt der Vorlage „${name}“.` } : undefined} />
+```
+
+**Mehrsprachigkeit** – `texte` ist typisiert (`ErscheinungsbildTexte`) und partiell überschreibbar; Standard bleibt
+Deutsch. Neben allen Zeilentiteln, Hilfen und Optionen:
+- `akzentNamen` je Kennung (`standard`, `blau`, `petrol`, `gruen`, `violett`, `orange`, `beere`, `rot`, `graphit`),
+  fehlende bleiben deutsch;
+- `akzentGruppe` (zugänglicher Name der Farbfelder, Platzhalter `{akzent}` und `{design}`), `akzentGewaehlt`
+  („Gewählt:“), `akzentGesperrt`, `akzentHochKontrast`;
+- `designs` je Kennung `{ name, beschreibung }`, auch für die eingebauten `microsoft` und `wai`.
+- Fensterknöpfe: `texte={{ gruppe, minimieren, maximieren, wiederherstellen, schliessen }}` gilt für
+  Beschriftung (`aria-label`) und Titel.
+
+```tsx
+const EN: Partial<ErscheinungsbildTexte> = {
+  titel: "Appearance", akzent: "Accent color", akzentGruppe: "{akzent} for {design}", akzentGewaehlt: "Selected:",
+  akzentNamen: { standard: "Match theme", blau: "Blue" },
+  designs: { microsoft: { name: "Fluent", beschreibung: "Neutral grey and blue, like the system." } },
+};
+```
 
 ## Eigene Designs registrieren
 

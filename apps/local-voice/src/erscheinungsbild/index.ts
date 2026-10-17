@@ -1,10 +1,15 @@
 /**
- * @wai/ui erscheinungsbild v1 — index.ts
+ * @wai/ui erscheinungsbild v1.1 — index.ts
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild. Selbsttragender Baustein „Erscheinungsbild“:
  * nur react, @fluentui/react-components; zum 1:1-Kopieren in Apps ohne @wai/ui (siehe README.md).
  */
 export { AkzentAuswahl, type AkzentAuswahlProps, akzentVorschau } from "./AkzentAuswahl";
-export { DesignAuswahl, type DesignAuswahlProps } from "./DesignAuswahl";
+export {
+  DesignAuswahl,
+  type DesignAuswahlProps,
+  type DesignTexte,
+  designText,
+} from "./DesignAuswahl";
 export { DesignVorschau, type DesignVorschauProps, MiniOberflaeche } from "./DesignVorschau";
 export {
   AKZENT_STANDARD,
@@ -28,6 +33,7 @@ export {
   ErscheinungsbildEinstellungen,
   type ErscheinungsbildEinstellungenProps,
   type ErscheinungsbildTexte,
+  erscheinungsbildTexte,
   STANDARD_TEXTE as ERSCHEINUNGSBILD_TEXTE,
 } from "./ErscheinungsbildEinstellungen";
 export {

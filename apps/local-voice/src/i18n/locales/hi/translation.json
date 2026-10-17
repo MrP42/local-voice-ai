@@ -995,6 +995,23 @@
     "accentHighContrast": "उच्च कंट्रास्ट में एक्सेंट रंग रुके रहते हैं।",
     "accentSelected": "चुना गया:",
     "saveFailed": "रूप-रंग सहेजा नहीं जा सका। अगले बदलाव पर फिर से कोशिश की जाएगी।",
+    "accentGroup": "{design} के लिए {akzent}",
+    "accentLocked": "एक्सेंट रंग डिज़ाइन के अनुसार है।",
+    "accentNames": {
+      "standard": "डिज़ाइन जैसा",
+      "blau": "नीला",
+      "petrol": "टील",
+      "gruen": "हरा",
+      "violett": "बैंगनी",
+      "orange": "नारंगी",
+      "beere": "बेरी",
+      "rot": "लाल",
+      "graphit": "ग्रेफ़ाइट"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "डिफ़ॉल्ट: न्यूट्रल ग्रे और नीले के साथ Fluent 2, सिस्टम इंटरफ़ेस से मेल खाता।",
       "wai": "Wolff Applied AI: हल्के मोड में नेवी, गहरे मोड में सिग्नल पीला।"

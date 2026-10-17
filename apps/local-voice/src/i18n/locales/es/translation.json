@@ -995,6 +995,23 @@
     "accentHighContrast": "Con contraste alto, los colores de énfasis quedan en pausa.",
     "accentSelected": "Seleccionado:",
     "saveFailed": "No se pudo guardar la apariencia. Se volverá a intentar con el próximo cambio.",
+    "accentGroup": "{akzent} para {design}",
+    "accentLocked": "El color de énfasis sigue el diseño.",
+    "accentNames": {
+      "standard": "Como el diseño",
+      "blau": "Azul",
+      "petrol": "Verde azulado",
+      "gruen": "Verde",
+      "violett": "Violeta",
+      "orange": "Naranja",
+      "beere": "Baya",
+      "rot": "Rojo",
+      "graphit": "Grafito"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Predeterminado: Fluent 2 con gris neutro y azul, a juego con la interfaz del sistema.",
       "wai": "Wolff Applied AI: azul marino en modo claro, amarillo señal en modo oscuro."

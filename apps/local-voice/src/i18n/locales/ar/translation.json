@@ -995,6 +995,23 @@
     "accentHighContrast": "تتوقف ألوان التمييز في وضع التباين العالي.",
     "accentSelected": "المحدد:",
     "saveFailed": "تعذّر حفظ المظهر. ستُعاد المحاولة عند التغيير التالي.",
+    "accentGroup": "{akzent} لـ {design}",
+    "accentLocked": "يتبع لون التمييز إعداد التصميم.",
+    "accentNames": {
+      "standard": "مثل التصميم",
+      "blau": "أزرق",
+      "petrol": "أزرق مخضر",
+      "gruen": "أخضر",
+      "violett": "بنفسجي",
+      "orange": "برتقالي",
+      "beere": "توتي",
+      "rot": "أحمر",
+      "graphit": "جرافيت"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "الافتراضي: Fluent 2 بالرمادي المحايد والأزرق، متناسق مع واجهة النظام.",
       "wai": "Wolff Applied AI: كحلي في الوضع الفاتح، أصفر إشاري في الوضع الداكن."

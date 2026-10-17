@@ -35,6 +35,22 @@ export const AppearanceSettings: React.FC = () => {
       akzentHilfe: t("appearance.accentHelp"),
       akzentHochKontrast: t("appearance.accentHighContrast"),
       akzentGewaehlt: t("appearance.accentSelected"),
+      akzentGesperrt: t("appearance.accentLocked"),
+      // SDK-Platzhalter {akzent}/{design} (einfache Klammern, i18next lässt sie stehen)
+      akzentGruppe: t("appearance.accentGroup"),
+      akzentNamen: t("appearance.accentNames", {
+        returnObjects: true,
+      }) as Record<string, string>,
+      designs: {
+        microsoft: {
+          name: t("appearance.designNames.fluent"),
+          beschreibung: t("appearance.designs.fluent"),
+        },
+        wai: {
+          name: t("appearance.designNames.wai"),
+          beschreibung: t("appearance.designs.wai"),
+        },
+      },
     }),
     [t],
   );

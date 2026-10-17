@@ -5439,6 +5439,23 @@
     "accentHighContrast": "Accent colors are paused in high contrast.",
     "accentSelected": "Selected:",
     "saveFailed": "Appearance could not be saved. It will be retried with the next change.",
+    "accentGroup": "{akzent} for {design}",
+    "accentLocked": "The accent color follows the design setting.",
+    "accentNames": {
+      "standard": "Match design",
+      "blau": "Blue",
+      "petrol": "Teal",
+      "gruen": "Green",
+      "violett": "Violet",
+      "orange": "Orange",
+      "beere": "Berry",
+      "rot": "Red",
+      "graphit": "Graphite"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Default: Fluent 2 with neutral gray and blue, matching the system interface.",
       "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."

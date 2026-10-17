@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — designs.ts
+ * @wai/ui erscheinungsbild v1.1 — designs.ts
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, erscheinungsbild/designs.ts).
  * Selbsttragend: importiert nur ./farbe. Zum Kopieren in Apps ohne @wai/ui geeignet.
  *

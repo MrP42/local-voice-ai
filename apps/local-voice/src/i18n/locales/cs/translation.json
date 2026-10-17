@@ -995,6 +995,23 @@
     "accentHighContrast": "Při vysokém kontrastu jsou barvy zvýraznění pozastaveny.",
     "accentSelected": "Vybráno:",
     "saveFailed": "Vzhled se nepodařilo uložit. Při další změně se to zkusí znovu.",
+    "accentGroup": "{akzent} pro {design}",
+    "accentLocked": "Barva zvýraznění se řídí vzhledem.",
+    "accentNames": {
+      "standard": "Podle vzhledu",
+      "blau": "Modrá",
+      "petrol": "Petrolejová",
+      "gruen": "Zelená",
+      "violett": "Fialová",
+      "orange": "Oranžová",
+      "beere": "Bobulová",
+      "rot": "Červená",
+      "graphit": "Grafitová"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Výchozí: Fluent 2 s neutrální šedou a modrou, ladí se systémovým rozhraním.",
       "wai": "Wolff Applied AI: námořnická modrá ve světlém režimu, signální žlutá v tmavém."

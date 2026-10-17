@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — Fensterknoepfe.tsx
+ * @wai/ui erscheinungsbild v1.1 — Fensterknoepfe.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: Poststelle, komponenten/Fensterknoepfe.tsx).
  * Selbsttragend: importiert nur react und @fluentui/react-components; keine Tauri-Abhaengigkeit.
  *

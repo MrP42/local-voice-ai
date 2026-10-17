@@ -995,6 +995,23 @@
     "accentHighContrast": "高對比下輔色暫停生效。",
     "accentSelected": "已選取：",
     "saveFailed": "無法儲存外觀。下次變更時將重試。",
+    "accentGroup": "{design} 的{akzent}",
+    "accentLocked": "輔色依照設計設定。",
+    "accentNames": {
+      "standard": "依照設計",
+      "blau": "藍色",
+      "petrol": "藍綠色",
+      "gruen": "綠色",
+      "violett": "紫色",
+      "orange": "橘色",
+      "beere": "莓紅",
+      "rot": "紅色",
+      "graphit": "石墨"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "預設：Fluent 2，中性灰與藍色，與系統介面一致。",
       "wai": "Wolff Applied AI：淺色模式為海軍藍，深色模式為訊號黃。"

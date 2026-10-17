@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — theme.ts
+ * @wai/ui erscheinungsbild v1.1 — theme.ts
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild.
  * Selbsttragend: importiert nur @fluentui/react-components und ./designs, ./farbe.
  *

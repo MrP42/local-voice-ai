@@ -995,6 +995,23 @@
     "accentHighContrast": "Com contraste alto, as cores de destaque ficam em pausa.",
     "accentSelected": "Selecionado:",
     "saveFailed": "Não foi possível salvar a aparência. Será tentado novamente na próxima alteração.",
+    "accentGroup": "{akzent} para {design}",
+    "accentLocked": "A cor de destaque segue o design.",
+    "accentNames": {
+      "standard": "Como o design",
+      "blau": "Azul",
+      "petrol": "Azul-petróleo",
+      "gruen": "Verde",
+      "violett": "Violeta",
+      "orange": "Laranja",
+      "beere": "Frutos silvestres",
+      "rot": "Vermelho",
+      "graphit": "Grafite"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Padrão: Fluent 2 com cinza neutro e azul, combinando com a interface do sistema.",
       "wai": "Wolff Applied AI: azul-marinho no modo claro, amarelo sinal no modo escuro."

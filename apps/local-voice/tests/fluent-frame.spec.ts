@@ -17,12 +17,14 @@ async function setup(
     appearance?: string;
     /** localStorage vor dem ersten Start */
     local?: Record<string, string>;
+    /** App-Sprache (Standard de) */
+    lang?: string;
   } = {},
 ) {
   page.on("pageerror", (error) => {
     throw error;
   });
-  await page.addInitScript(({ THEME, DESKTOP, ONBOARDING, APPEARANCE, LOCAL }) => {
+  await page.addInitScript(({ THEME, DESKTOP, ONBOARDING, APPEARANCE, LOCAL, LANG }) => {
     const changes: [string, unknown][] = [];
     (window as any).__changes = changes;
     const callbacks = new Map<number, unknown>();
@@ -33,7 +35,7 @@ async function setup(
     let callback = 0;
     const settings = {
       onboarding_completed: !ONBOARDING,
-      app_language: "de",
+      app_language: LANG,
       theme: THEME,
       appearance: APPEARANCE,
       show_whats_new_on_update: false,
@@ -175,6 +177,7 @@ async function setup(
     DESKTOP: !!opts.desktop,
     ONBOARDING: !!opts.onboarding,
     APPEARANCE: opts.appearance ?? null,
+    LANG: opts.lang ?? "de",
     LOCAL: opts.local ?? {},
   });
 }
@@ -697,6 +700,32 @@ test.describe("Erscheinungsbild", () => {
         ["change_appearance_setting", "wai"],
         ["change_theme_setting", "dark"],
       ]);
+  });
+
+  // v1.1: alle Texte der Komponente aus der App-i18n (Akzent- und Designnamen)
+  test("Einstellungen auf Englisch: Akzent- und Designtexte übersetzt", async ({ page }) => {
+    await setup(page, "light", { lang: "en" });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.goto("/");
+    await page
+      .getByRole("navigation")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    await page.getByRole("tab", { name: "General", exact: true }).click();
+    await expect(page.getByRole("radiogroup", { name: "Design" })).toBeVisible();
+    await page
+      .getByRole("heading", { name: "Appearance", exact: true })
+      .evaluate((el) => el.scrollIntoView({ block: "start" }));
+    await expect(page.getByRole("radiogroup", { name: "Accent color for Fluent" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Green" })).toBeVisible();
+    await expect(page.getByText("Selected: Match design")).toBeVisible();
+    await expect(page.getByText("Default: Fluent 2 with neutral gray and blue", { exact: false })).toBeVisible();
+    await expect(page.getByText("Grün")).toHaveCount(0);
+    await page.screenshot({
+      path: "test-results/erscheinungsbild/einstellungen-englisch.png",
+      fullPage: true,
+      animations: "disabled",
+    });
   });
 
   for (const [name, appearance] of [

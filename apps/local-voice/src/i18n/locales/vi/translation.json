@@ -995,6 +995,23 @@
     "accentHighContrast": "Ở độ tương phản cao, màu nhấn tạm dừng.",
     "accentSelected": "Đã chọn:",
     "saveFailed": "Không thể lưu giao diện. Sẽ thử lại ở lần thay đổi tiếp theo.",
+    "accentGroup": "{akzent} cho {design}",
+    "accentLocked": "Màu nhấn theo thiết lập của thiết kế.",
+    "accentNames": {
+      "standard": "Theo thiết kế",
+      "blau": "Xanh lam",
+      "petrol": "Xanh mòng két",
+      "gruen": "Xanh lá",
+      "violett": "Tím",
+      "orange": "Cam",
+      "beere": "Quả mọng",
+      "rot": "Đỏ",
+      "graphit": "Than chì"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Mặc định: Fluent 2 với xám trung tính và xanh lam, hợp với giao diện hệ thống.",
       "wai": "Wolff Applied AI: xanh hải quân ở chế độ sáng, vàng tín hiệu ở chế độ tối."

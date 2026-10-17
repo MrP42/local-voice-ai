@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — zustand.ts
+ * @wai/ui erscheinungsbild v1.1 — zustand.ts
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, erscheinungsbild/einstellungen.ts).
  * Selbsttragend: importiert nur react, @fluentui/react-components (Typen) und Nachbardateien.
  *

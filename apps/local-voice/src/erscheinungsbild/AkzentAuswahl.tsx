@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — AkzentAuswahl.tsx
+ * @wai/ui erscheinungsbild v1.1 — AkzentAuswahl.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, einstellungen/bausteine.tsx Farbfelder).
  * Selbsttragend: importiert nur react, @fluentui/react-components und Nachbardateien.
  *
@@ -55,7 +55,10 @@ export interface AkzentAuswahlProps {
   label?: string;
   /** Vorsatz vor dem gewaehlten Namen. */
   gewaehltText?: string;
+  /** Gesperrt (Kontrast hoch, Design-Vorgabe): nicht waehlbar und nicht fokussierbar. */
   deaktiviert?: boolean;
+  /** Uebersetzte Akzentnamen je Kennung; fehlende kommen aus `akzente`. */
+  akzentNamen?: Readonly<Partial<Record<string, string>>>;
   className?: string;
 }
 
@@ -68,14 +71,17 @@ export function AkzentAuswahl({
   label = "Akzentfarbe",
   gewaehltText = "Gewählt:",
   deaktiviert = false,
+  akzentNamen = {},
   className,
 }: AkzentAuswahlProps) {
   const s = useStyles();
   const radio = useRadiogruppe(
     akzente.map((a) => a.id),
     wert,
-    deaktiviert ? () => undefined : beiWechsel,
+    beiWechsel,
+    deaktiviert,
   );
+  const name = (a: AkzentDef) => akzentNamen[a.id] ?? a.name;
   const gewaehlt = akzente.find((a) => a.id === wert) ?? akzente[0];
   return (
     <div className={className}>
@@ -97,8 +103,9 @@ export function AkzentAuswahl({
               role="radio"
               aria-checked={r["aria-checked"]}
               tabIndex={r.tabIndex}
-              aria-label={a.name}
-              title={a.name}
+              aria-disabled={r["aria-disabled"]}
+              aria-label={name(a)}
+              title={name(a)}
               data-akzent={a.id}
               className={mergeClasses(s.feld, an && s.an)}
               style={{ background: farbe, color: textAuf(farbe) }}
@@ -109,7 +116,7 @@ export function AkzentAuswahl({
         })}
       </div>
       <p className={s.name} aria-live="polite">
-        {gewaehltText} {gewaehlt.name}
+        {gewaehltText} {name(gewaehlt)}
       </p>
     </div>
   );
