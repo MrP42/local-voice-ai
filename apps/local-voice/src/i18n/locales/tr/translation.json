@@ -995,6 +995,23 @@
     "accentHighContrast": "Yüksek karşıtlıkta vurgu renkleri duraklatılır.",
     "accentSelected": "Seçili:",
     "saveFailed": "Görünüm kaydedilemedi. Bir sonraki değişiklikte yeniden denenecek.",
+    "accentGroup": "{design} için {akzent}",
+    "accentLocked": "Vurgu rengi tasarımı izler.",
+    "accentNames": {
+      "standard": "Tasarıma uygun",
+      "blau": "Mavi",
+      "petrol": "Petrol",
+      "gruen": "Yeşil",
+      "violett": "Mor",
+      "orange": "Turuncu",
+      "beere": "Böğürtlen",
+      "rot": "Kırmızı",
+      "graphit": "Grafit"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Varsayılan: Sistem arayüzüne uygun, nötr gri ve mavi ile Fluent 2.",
       "wai": "Wolff Applied AI: açık modda lacivert, koyu modda sinyal sarısı."

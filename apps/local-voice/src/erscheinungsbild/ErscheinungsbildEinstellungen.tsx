@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — ErscheinungsbildEinstellungen.tsx
+ * @wai/ui erscheinungsbild v1.1 — ErscheinungsbildEinstellungen.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, einstellungen/Erscheinungsbild.tsx).
  * Selbsttragend: importiert nur react, @fluentui/react-components und Nachbardateien.
  *
@@ -17,7 +17,8 @@ import {
 } from "@fluentui/react-components";
 import { type ReactNode, useId } from "react";
 import { AkzentAuswahl } from "./AkzentAuswahl";
-import { DesignAuswahl } from "./DesignAuswahl";
+import { DesignAuswahl, type DesignTexte, designText } from "./DesignAuswahl";
+import { AKZENTE } from "./designs";
 import { useErscheinungsbildKontext } from "./ErscheinungsbildProvider";
 import type { Kontrast } from "./theme";
 import type { Erscheinungsbild, Modus } from "./zustand";
@@ -43,7 +44,16 @@ export interface ErscheinungsbildTexte {
   akzent: string;
   akzentHilfe: string;
   akzentHochKontrast: string;
+  /** Hilfetext der Akzentzeile, solange das Design gesperrt ist. */
+  akzentGesperrt: string;
+  /** Vorsatz vor dem gewaehlten Akzentnamen („Gewählt:“). */
   akzentGewaehlt: string;
+  /** Zugaenglicher Name der Farbfelder; `{akzent}` = Zeilentitel, `{design}` = Designname. */
+  akzentGruppe: string;
+  /** Akzentnamen je Kennung (blau, petrol, …; „standard“ = „Wie das Design“). */
+  akzentNamen: Readonly<Record<string, string>>;
+  /** Namen/Beschreibungen je Design-Kennung (eingebaute: microsoft, wai); fehlend = Werte des Designs. */
+  designs: DesignTexte;
 }
 
 export const STANDARD_TEXTE: ErscheinungsbildTexte = {
@@ -70,8 +80,24 @@ export const STANDARD_TEXTE: ErscheinungsbildTexte = {
   akzentHilfe:
     "Für Knöpfe, Links und Auswahl. Jede Farbe wird so angepasst, dass Text darauf gut lesbar bleibt.",
   akzentHochKontrast: "Bei hohem Kontrast ruhen Akzentfarben.",
+  akzentGesperrt: "Die Akzentfarbe folgt der Design-Vorgabe.",
   akzentGewaehlt: "Gewählt:",
+  akzentGruppe: "{akzent} für {design}",
+  akzentNamen: Object.fromEntries(AKZENTE.map((a) => [a.id, a.name])),
+  designs: {},
 };
+
+/** Texte mit Vorgaben zusammenfuehren; Akzentnamen und Designtexte werden je Schluessel ergaenzt. */
+export function erscheinungsbildTexte(
+  teil: Partial<ErscheinungsbildTexte> = {},
+): ErscheinungsbildTexte {
+  return {
+    ...STANDARD_TEXTE,
+    ...teil,
+    akzentNamen: { ...STANDARD_TEXTE.akzentNamen, ...teil.akzentNamen },
+    designs: { ...STANDARD_TEXTE.designs, ...teil.designs },
+  };
+}
 
 const useStyles = makeStyles({
   abschnitt: { display: "grid", gap: tokens.spacingVerticalXS, maxWidth: "1000px" },
@@ -111,7 +137,13 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL} ${tokens.spacingVerticalL}`,
     borderTop: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
   },
-  ruht: { opacity: 0.5 },
+  ruht: { opacity: 0.5, cursor: "not-allowed" },
+  hinweis: {
+    margin: `0 0 ${tokens.spacingVerticalM}`,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    color: tokens.colorNeutralForeground2,
+  },
 });
 
 export interface EinstellungsKarteProps {
@@ -164,6 +196,13 @@ export interface ErscheinungsbildEinstellungenProps {
   texte?: Partial<ErscheinungsbildTexte>;
   /** App-Zusaetze (weitere Karten-Zeilen) am Ende des Abschnitts. */
   zusatz?: ReactNode;
+  /** App-Zeilen direkt vor der Design-Karte (z. B. „Design der App kommt aus …“). */
+  vorDesign?: ReactNode;
+  /**
+   * Design-Wahl gesperrt (z. B. Design folgt einer Vorlage): Karten und Akzent sind nicht waehlbar und nicht
+   * fokussierbar; `hinweis` steht ueber den Karten. Unabhaengig von der Sperre durch Kontrast „Hoch“.
+   */
+  designGesperrt?: { hinweis: ReactNode };
   /** Ueberschrift ausblenden, wenn die Seite selbst schon „Erscheinungsbild“ heisst. */
   ohneTitel?: boolean;
   className?: string;
@@ -173,6 +212,8 @@ export function ErscheinungsbildEinstellungen({
   zustand,
   texte,
   zusatz,
+  vorDesign,
+  designGesperrt,
   ohneTitel = false,
   className,
 }: ErscheinungsbildEinstellungenProps) {
@@ -184,7 +225,7 @@ export function ErscheinungsbildEinstellungen({
     throw new Error(
       "ErscheinungsbildEinstellungen braucht einen ErscheinungsbildProvider oder `zustand`.",
     );
-  const t = { ...STANDARD_TEXTE, ...texte };
+  const t = erscheinungsbildTexte(texte);
   const ids = (k: string) => ({ kopfId: `${id}-${k}`, hilfeId: `${id}-${k}-h` });
   const modusText: Record<Modus, string> = {
     system: t.modusSystem,
@@ -196,6 +237,14 @@ export function ErscheinungsbildEinstellungen({
     hoch: t.kontrastHoch,
   };
   const hoch = z.kontrast === "hoch";
+  const gesperrt = designGesperrt !== undefined;
+  // Beide Gruende sperren den Akzent; keiner hebt den anderen auf.
+  const akzentGesperrt = hoch || gesperrt;
+  const akzentHilfe =
+    [hoch ? t.akzentHochKontrast : "", gesperrt ? t.akzentGesperrt : ""]
+      .filter(Boolean)
+      .join(" ") || t.akzentHilfe;
+  const designName = designText(z.design, t.designs).name;
   const titelId = `${id}-titel`;
 
   return (
@@ -266,30 +315,37 @@ export function ErscheinungsbildEinstellungen({
         }
       />
 
+      {vorDesign}
+
       <EinstellungsKarte kopf={t.design} hilfe={t.designHilfe} {...ids("design")}>
+        {gesperrt ? (
+          <div id={`${id}-sperre`} className={s.hinweis}>
+            {designGesperrt.hinweis}
+          </div>
+        ) : null}
         <DesignAuswahl
           designs={z.designs}
           wert={z.design.id}
           beiWechsel={z.setzeDesign}
           akzent={z.akzent}
           labelledBy={ids("design").kopfId}
+          describedBy={gesperrt ? `${id}-sperre` : undefined}
+          gesperrt={gesperrt}
+          designTexte={t.designs}
         />
       </EinstellungsKarte>
 
-      <EinstellungsKarte
-        kopf={t.akzent}
-        hilfe={hoch ? t.akzentHochKontrast : t.akzentHilfe}
-        {...ids("akzent")}
-      >
+      <EinstellungsKarte kopf={t.akzent} hilfe={akzentHilfe} {...ids("akzent")}>
         <AkzentAuswahl
-          className={hoch ? s.ruht : undefined}
+          className={akzentGesperrt ? s.ruht : undefined}
           design={z.design}
           schema={z.schema}
           wert={z.akzentAktuell}
           beiWechsel={(a) => z.setzeAkzent(a)}
-          label={`${t.akzent} für ${z.design.name}`}
+          label={t.akzentGruppe.replace("{akzent}", t.akzent).replace("{design}", designName)}
           gewaehltText={t.akzentGewaehlt}
-          deaktiviert={hoch}
+          akzentNamen={t.akzentNamen}
+          deaktiviert={akzentGesperrt}
         />
       </EinstellungsKarte>
 

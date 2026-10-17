@@ -995,6 +995,23 @@
     "accentHighContrast": "高コントラストではアクセント カラーは一時停止します。",
     "accentSelected": "選択中:",
     "saveFailed": "外観を保存できませんでした。次の変更時に再試行します。",
+    "accentGroup": "{design} の{akzent}",
+    "accentLocked": "アクセント カラーはデザインの設定に従います。",
+    "accentNames": {
+      "standard": "デザインに合わせる",
+      "blau": "青",
+      "petrol": "ティール",
+      "gruen": "緑",
+      "violett": "紫",
+      "orange": "オレンジ",
+      "beere": "ベリー",
+      "rot": "赤",
+      "graphit": "グラファイト"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "既定: ニュートラルなグレーと青の Fluent 2。システムの UI になじみます。",
       "wai": "Wolff Applied AI: ライト モードはネイビー、ダーク モードはシグナル イエロー。"

@@ -995,6 +995,23 @@
     "accentHighContrast": "고대비에서는 강조색이 일시 중지됩니다.",
     "accentSelected": "선택됨:",
     "saveFailed": "모양을 저장하지 못했습니다. 다음 변경 시 다시 시도합니다.",
+    "accentGroup": "{design}의 {akzent}",
+    "accentLocked": "강조색은 디자인 설정을 따릅니다.",
+    "accentNames": {
+      "standard": "디자인과 동일",
+      "blau": "파랑",
+      "petrol": "청록",
+      "gruen": "초록",
+      "violett": "보라",
+      "orange": "주황",
+      "beere": "베리",
+      "rot": "빨강",
+      "graphit": "흑연"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "기본값: 중립 회색과 파란색의 Fluent 2, 시스템 인터페이스와 어울립니다.",
       "wai": "Wolff Applied AI: 밝은 모드는 네이비, 어두운 모드는 시그널 옐로."

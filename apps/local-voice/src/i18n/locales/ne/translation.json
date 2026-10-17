@@ -995,6 +995,23 @@
     "accentHighContrast": "उच्च कन्ट्रास्टमा एक्सेन्ट रङ रोकिन्छन्।",
     "accentSelected": "चयन गरिएको:",
     "saveFailed": "रूप सुरक्षित गर्न सकिएन। अर्को परिवर्तनमा फेरि प्रयास गरिनेछ।",
+    "accentGroup": "{design} का लागि {akzent}",
+    "accentLocked": "एक्सेन्ट रङ डिजाइनअनुसार हुन्छ।",
+    "accentNames": {
+      "standard": "डिजाइनजस्तै",
+      "blau": "निलो",
+      "petrol": "टिल",
+      "gruen": "हरियो",
+      "violett": "बैजनी",
+      "orange": "सुन्तला",
+      "beere": "बेरी",
+      "rot": "रातो",
+      "graphit": "ग्राफाइट"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "पूर्वनिर्धारित: तटस्थ खैरो र निलोसहित Fluent 2, प्रणाली इन्टरफेससँग मिल्दो।",
       "wai": "Wolff Applied AI: उज्यालो मोडमा नेभी, अँध्यारो मोडमा सिग्नल पहेँलो।"

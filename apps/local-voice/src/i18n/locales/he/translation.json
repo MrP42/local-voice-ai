@@ -995,6 +995,23 @@
     "accentHighContrast": "בניגודיות גבוהה צבעי ההדגשה מושהים.",
     "accentSelected": "נבחר:",
     "saveFailed": "לא ניתן היה לשמור את המראה. ייעשה ניסיון נוסף בשינוי הבא.",
+    "accentGroup": "{akzent} עבור {design}",
+    "accentLocked": "צבע ההדגשה נקבע לפי העיצוב.",
+    "accentNames": {
+      "standard": "כמו העיצוב",
+      "blau": "כחול",
+      "petrol": "טורקיז",
+      "gruen": "ירוק",
+      "violett": "סגול",
+      "orange": "כתום",
+      "beere": "פטל",
+      "rot": "אדום",
+      "graphit": "גרפיט"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "ברירת מחדל: Fluent 2 באפור ניטרלי וכחול, בהתאם לממשק המערכת.",
       "wai": "Wolff Applied AI: כחול כהה במצב בהיר, צהוב אות במצב כהה."

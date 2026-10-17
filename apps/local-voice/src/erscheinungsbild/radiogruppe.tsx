@@ -1,17 +1,19 @@
 /**
- * @wai/ui erscheinungsbild v1 — radiogruppe.tsx
+ * @wai/ui erscheinungsbild v1.1 — radiogruppe.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild.
  * Selbsttragend: importiert nur react.
  *
  * Tastaturmodell einer Radiogruppe nach WAI-ARIA: ein Tab-Stopp (die gewaehlte Option), Pfeiltasten
  * wechseln Wahl und Fokus (mit Umlauf), Pos1/Ende springen an den Rand, Leertaste/Eingabe waehlt.
  */
-import { type KeyboardEvent, useCallback, useRef } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useRef } from "react";
 
 export interface RadioProps {
   role: "radio";
   "aria-checked": boolean;
-  tabIndex: 0 | -1;
+  /** Gesperrt: undefined, damit die Option weder per Tab noch per Klick/`.focus()` Fokus erhaelt. */
+  tabIndex: 0 | -1 | undefined;
+  "aria-disabled": true | undefined;
   ref: (el: HTMLElement | null) => void;
   onKeyDown: (ev: KeyboardEvent<HTMLElement>) => void;
   onClick: () => void;
@@ -21,9 +23,20 @@ export function useRadiogruppe<T extends string>(
   werte: readonly T[],
   wert: T,
   beiWechsel: (w: T) => void,
+  /** Gesperrt: keine Wahl, kein Tab-Stopp, aria-disabled an jeder Option. */
+  gesperrt = false,
 ): (w: T) => RadioProps {
   const elemente = useRef(new Map<T, HTMLElement>());
   const fokusWert = werte.includes(wert) ? wert : werte[0];
+
+  // Beim nachtraeglichen Sperren einen bestehenden Fokus auf einer Option zuruecknehmen.
+  useEffect(() => {
+    if (!gesperrt) return;
+    const aktiv = document.activeElement;
+    for (const el of elemente.current.values()) {
+      if (el === aktiv && el instanceof HTMLElement) el.blur();
+    }
+  }, [gesperrt]);
 
   const taste = useCallback(
     (ev: KeyboardEvent<HTMLElement>, aktuell: T) => {
@@ -64,13 +77,18 @@ export function useRadiogruppe<T extends string>(
   return (w: T) => ({
     role: "radio",
     "aria-checked": w === wert,
-    tabIndex: w === fokusWert ? 0 : -1,
+    tabIndex: gesperrt ? undefined : w === fokusWert ? 0 : -1,
+    "aria-disabled": gesperrt || undefined,
     ref: (el) => {
       if (el) elemente.current.set(w, el);
       else elemente.current.delete(w);
     },
-    onKeyDown: (ev) => taste(ev, w),
-    onClick: () => beiWechsel(w),
+    onKeyDown: (ev) => {
+      if (!gesperrt) taste(ev, w);
+    },
+    onClick: () => {
+      if (!gesperrt) beiWechsel(w);
+    },
   });
 }
 

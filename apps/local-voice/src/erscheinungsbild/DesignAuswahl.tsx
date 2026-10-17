@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — DesignAuswahl.tsx
+ * @wai/ui erscheinungsbild v1.1 — DesignAuswahl.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, einstellungen/bausteine.tsx Kartenauswahl).
  * Selbsttragend: importiert nur react, @fluentui/react-components und Nachbardateien.
  *
@@ -38,6 +38,12 @@ const useStyles = makeStyles({
       outline: `${tokens.strokeWidthThick} solid ${tokens.colorStrokeFocus2}`,
       outlineOffset: "2px",
     },
+  },
+  gesperrt: {
+    cursor: "not-allowed",
+    opacity: 0.55,
+    ":hover": { backgroundColor: tokens.colorNeutralBackground1 },
+    ":active": { backgroundColor: tokens.colorNeutralBackground1 },
   },
   gewaehlt: {
     border: `${tokens.strokeWidthThin} solid ${tokens.colorCompoundBrandStroke}`,
@@ -87,7 +93,26 @@ export interface DesignAuswahlProps {
   label?: string;
   /** Alternativ: Id eines sichtbaren Titels. */
   labelledBy?: string;
+  /** Id eines Hinweises zur Gruppe (z. B. Grund der Sperre). */
+  describedBy?: string;
+  /** Gesperrt: Karten nicht waehlbar und nicht fokussierbar (aria-disabled). */
+  gesperrt?: boolean;
+  /** Uebersetzte Namen/Beschreibungen je Design-Kennung; fehlende Werte kommen aus dem Design. */
+  designTexte?: DesignTexte;
   className?: string;
+}
+
+/** Texte je Design-Kennung, z. B. `{ microsoft: { name: "Fluent", beschreibung: "…" } }`. */
+export type DesignTexte = Readonly<
+  Partial<Record<string, { name?: string; beschreibung?: string }>>
+>;
+
+/** Name und Beschreibung eines Designs mit Uebersetzung. */
+export function designText(d: AppDesign, texte: DesignTexte = {}) {
+  return {
+    name: texte[d.id]?.name ?? d.name,
+    beschreibung: texte[d.id]?.beschreibung ?? d.beschreibung,
+  };
 }
 
 export function DesignAuswahl({
@@ -97,6 +122,9 @@ export function DesignAuswahl({
   akzent = {},
   label = "Design",
   labelledBy,
+  describedBy,
+  gesperrt = false,
+  designTexte,
   className,
 }: DesignAuswahlProps) {
   const s = useStyles();
@@ -105,12 +133,15 @@ export function DesignAuswahl({
     designs.map((d) => d.id),
     wert,
     beiWechsel,
+    gesperrt,
   );
   return (
     <div
       role="radiogroup"
       aria-label={labelledBy ? undefined : label}
       aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      aria-disabled={gesperrt || undefined}
       className={mergeClasses(s.gitter, className)}
     >
       {designs.map((d) => {
@@ -118,6 +149,7 @@ export function DesignAuswahl({
         const nameId = `${basis}-${d.id}-n`;
         const textId = `${basis}-${d.id}-b`;
         const r = radio(d.id);
+        const text = designText(d, designTexte);
         return (
           // biome-ignore lint/a11y/useSemanticElements: Karten-Radio mit Vorschau; natives input kann keinen Karteninhalt tragen
           <div
@@ -126,19 +158,20 @@ export function DesignAuswahl({
             role="radio"
             aria-checked={r["aria-checked"]}
             tabIndex={r.tabIndex}
+            aria-disabled={r["aria-disabled"]}
             aria-labelledby={nameId}
             aria-describedby={textId}
             data-design-karte={d.id}
-            className={mergeClasses(s.karte, an && s.gewaehlt)}
+            className={mergeClasses(s.karte, an && s.gewaehlt, gesperrt && s.gesperrt)}
           >
             <DesignVorschau design={d} akzent={akzent[d.id]} />
             <span className={s.fuss}>
               <span className={s.text}>
                 <span id={nameId} className={s.name}>
-                  {d.name}
+                  {text.name}
                 </span>
                 <span id={textId} className={s.beschreibung}>
-                  {d.beschreibung}
+                  {text.beschreibung}
                 </span>
               </span>
               <span className={mergeClasses(s.kreis, an && s.kreisAn)} aria-hidden="true">

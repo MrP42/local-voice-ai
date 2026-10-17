@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — DesignVorschau.tsx
+ * @wai/ui erscheinungsbild v1.1 — DesignVorschau.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild (Vorbild: WAI Presenter, einstellungen/Vorschau.tsx).
  * Selbsttragend: importiert nur react, @fluentui/react-components und Nachbardateien.
  *

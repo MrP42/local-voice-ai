@@ -995,6 +995,23 @@
     "accentHighContrast": "Przy wysokim kontraście kolory akcentu są wstrzymane.",
     "accentSelected": "Wybrano:",
     "saveFailed": "Nie udało się zapisać wyglądu. Ponowna próba nastąpi przy następnej zmianie.",
+    "accentGroup": "{akzent} dla {design}",
+    "accentLocked": "Kolor akcentu wynika z motywu.",
+    "accentNames": {
+      "standard": "Jak motyw",
+      "blau": "Niebieski",
+      "petrol": "Morski",
+      "gruen": "Zielony",
+      "violett": "Fioletowy",
+      "orange": "Pomarańczowy",
+      "beere": "Jagodowy",
+      "rot": "Czerwony",
+      "graphit": "Grafitowy"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Domyślny: Fluent 2 z neutralną szarością i niebieskim, dopasowany do interfejsu systemu.",
       "wai": "Wolff Applied AI: granat w trybie jasnym, sygnałowa żółć w trybie ciemnym."

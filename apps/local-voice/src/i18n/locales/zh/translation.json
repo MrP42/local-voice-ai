@@ -995,6 +995,23 @@
     "accentHighContrast": "高对比度下主题色暂停生效。",
     "accentSelected": "已选择：",
     "saveFailed": "无法保存外观。下次更改时将重试。",
+    "accentGroup": "{design} 的{akzent}",
+    "accentLocked": "主题色跟随设计设置。",
+    "accentNames": {
+      "standard": "跟随设计",
+      "blau": "蓝色",
+      "petrol": "青色",
+      "gruen": "绿色",
+      "violett": "紫色",
+      "orange": "橙色",
+      "beere": "莓红",
+      "rot": "红色",
+      "graphit": "石墨"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "默认：Fluent 2，中性灰与蓝色，与系统界面一致。",
       "wai": "Wolff Applied AI：浅色模式为海军蓝，深色模式为信号黄。"

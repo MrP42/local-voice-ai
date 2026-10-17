@@ -995,6 +995,23 @@
     "accentHighContrast": "Con il contrasto alto i colori principali sono sospesi.",
     "accentSelected": "Selezionato:",
     "saveFailed": "Impossibile salvare l’aspetto. Verrà ritentato alla prossima modifica.",
+    "accentGroup": "{akzent} per {design}",
+    "accentLocked": "Il colore principale segue il design.",
+    "accentNames": {
+      "standard": "Come il design",
+      "blau": "Blu",
+      "petrol": "Verde acqua",
+      "gruen": "Verde",
+      "violett": "Viola",
+      "orange": "Arancione",
+      "beere": "Frutti di bosco",
+      "rot": "Rosso",
+      "graphit": "Grafite"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Predefinito: Fluent 2 con grigio neutro e blu, in linea con l’interfaccia di sistema.",
       "wai": "Wolff Applied AI: blu navy in modalità chiara, giallo segnale in modalità scura."

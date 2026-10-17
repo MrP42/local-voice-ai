@@ -5439,6 +5439,23 @@
     "accentHighContrast": "Bei hohem Kontrast ruhen Akzentfarben.",
     "accentSelected": "Gewählt:",
     "saveFailed": "Erscheinungsbild konnte nicht gespeichert werden. Beim nächsten Wechsel wird es erneut versucht.",
+    "accentGroup": "{akzent} für {design}",
+    "accentLocked": "Die Akzentfarbe folgt der Design-Vorgabe.",
+    "accentNames": {
+      "standard": "Wie das Design",
+      "blau": "Blau",
+      "petrol": "Petrol",
+      "gruen": "Grün",
+      "violett": "Violett",
+      "orange": "Orange",
+      "beere": "Beere",
+      "rot": "Rot",
+      "graphit": "Graphit"
+    },
+    "designNames": {
+      "fluent": "Fluent",
+      "wai": "WAI"
+    },
     "designs": {
       "fluent": "Standard: Fluent 2 mit neutralem Grau und Blau, passend zur Systemoberfläche.",
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."

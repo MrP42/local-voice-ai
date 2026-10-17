@@ -1,5 +1,5 @@
 /**
- * @wai/ui erscheinungsbild v1 — ErscheinungsbildProvider.tsx
+ * @wai/ui erscheinungsbild v1.1 — ErscheinungsbildProvider.tsx
  * Quelle: WAI-SDK packages/ui/src/erscheinungsbild.
  * Selbsttragend: importiert nur react, @fluentui/react-components und Nachbardateien.
  *
