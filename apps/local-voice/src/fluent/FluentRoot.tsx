@@ -101,24 +101,48 @@ export function FluentRoot({ children }: { children: ReactNode }) {
   // trotzdem — es gibt kein Ereignis, das verloren gehen könnte.
   const zRef = useRef(z);
   zRef.current = z;
+  // Für den Hinweis nach dem letzten Ladeversuch; ein Sprachwechsel startet den Abgleich nicht neu.
+  const tRef = useRef(t);
+  tRef.current = t;
   const savedRef = useRef<Saved | null>(null);
   const [synced, setSynced] = useState(false);
+  // Scheitert das Laden, wird es mit wachsendem Abstand wiederholt; erst nach
+  // dem letzten Versuch erscheint ein Hinweis. Ohne Abgleich wird nicht
+  // gespeichert, damit der Backend-Stand nicht blind überschrieben wird.
   useEffect(() => {
     let cancelled = false;
-    const { modus, kontrast, animationen, designId, akzent } = zRef.current;
-    void loadAppearance({ modus, kontrast, animationen, designId, akzent }).then(
-      (loaded) => {
-        if (cancelled || !loaded) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pausen = [1000, 3000, 10000, 30000];
+    const versuch = (n: number) => {
+      const { modus, kontrast, animationen, designId, akzent } = zRef.current;
+      void loadAppearance({
+        modus,
+        kontrast,
+        animationen,
+        designId,
+        akzent,
+      }).then((loaded) => {
+        if (cancelled) return;
+        if (!loaded) {
+          if (n < pausen.length)
+            timer = setTimeout(() => versuch(n + 1), pausen[n]);
+          else toast.error(tRef.current("appearance.saveFailed"));
+          return;
+        }
         uebernehmen(zRef.current, loaded.stand);
         savedRef.current = {
-          appearance: loaded.migrated ? null : serializeAppearance(loaded.stand),
+          appearance: loaded.migrated
+            ? null
+            : serializeAppearance(loaded.stand),
           theme: loaded.theme,
         };
         setSynced(true);
-      },
-    );
+      });
+    };
+    versuch(0);
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
