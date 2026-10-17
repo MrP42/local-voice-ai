@@ -5418,5 +5418,30 @@
         "blocked_calls": "Blocked calls in the last 24 hours: {{detail}}",
         "cloud_errors": "{{detail}} failed cloud calls in the last 24 hours."
       }
+  },
+  "appearance": {
+    "title": "Appearance",
+    "scheme": "Color scheme",
+    "schemeHelp": "Light, dark, or as set in Windows.",
+    "contrast": "Contrast",
+    "contrastHelp": "High uses the Fluent contrast palette with strong borders. Design and accent are paused.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "High",
+    "animations": "Animations",
+    "animationsHelp": "Smooth transitions in the interface.",
+    "animationsSystem": "Your operating system is set to reduce animations – animations stay off.",
+    "on": "On",
+    "off": "Off",
+    "design": "Design",
+    "designHelp": "Each card shows light mode on the left and dark mode on the right.",
+    "accent": "Accent color",
+    "accentHelp": "For buttons, links and selection. Each color is adjusted so text on it stays readable.",
+    "accentHighContrast": "Accent colors are paused in high contrast.",
+    "accentSelected": "Selected:",
+    "saveFailed": "Appearance could not be saved. It will be retried with the next change.",
+    "designs": {
+      "fluent": "Default: Fluent 2 with neutral gray and blue, matching the system interface.",
+      "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."
+    }
   }
 }

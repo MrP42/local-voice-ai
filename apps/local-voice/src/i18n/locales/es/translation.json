@@ -974,5 +974,30 @@
     "windowMaximize": "Maximizar",
     "windowRestore": "Restaurar",
     "windowClose": "Cerrar"
+  },
+  "appearance": {
+    "title": "Apariencia",
+    "scheme": "Esquema de color",
+    "schemeHelp": "Claro, oscuro o según la configuración de Windows.",
+    "contrast": "Contraste",
+    "contrastHelp": "Alto usa la paleta de contraste de Fluent con bordes marcados. El diseño y el acento quedan en pausa.",
+    "contrastStandard": "Estándar",
+    "contrastHigh": "Alto",
+    "animations": "Animaciones",
+    "animationsHelp": "Transiciones suaves en la interfaz.",
+    "animationsSystem": "El sistema operativo tiene activado reducir animaciones: las animaciones permanecen desactivadas.",
+    "on": "Activado",
+    "off": "Desactivado",
+    "design": "Diseño",
+    "designHelp": "Cada tarjeta muestra el modo claro a la izquierda y el oscuro a la derecha.",
+    "accent": "Color de énfasis",
+    "accentHelp": "Para botones, enlaces y selección. Cada color se ajusta para que el texto siga siendo legible.",
+    "accentHighContrast": "Con contraste alto, los colores de énfasis quedan en pausa.",
+    "accentSelected": "Seleccionado:",
+    "saveFailed": "No se pudo guardar la apariencia. Se volverá a intentar con el próximo cambio.",
+    "designs": {
+      "fluent": "Predeterminado: Fluent 2 con gris neutro y azul, a juego con la interfaz del sistema.",
+      "wai": "Wolff Applied AI: azul marino en modo claro, amarillo señal en modo oscuro."
+    }
   }
 }

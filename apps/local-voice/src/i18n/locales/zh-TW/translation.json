@@ -974,5 +974,30 @@
     "windowMaximize": "最大化",
     "windowRestore": "還原",
     "windowClose": "關閉"
+  },
+  "appearance": {
+    "title": "外觀",
+    "scheme": "色彩模式",
+    "schemeHelp": "淺色、深色或依照 Windows 設定。",
+    "contrast": "對比",
+    "contrastHelp": "高對比使用具明顯框線的 Fluent 對比色盤，此時設計與輔色暫停生效。",
+    "contrastStandard": "標準",
+    "contrastHigh": "高",
+    "animations": "動畫",
+    "animationsHelp": "介面中的流暢轉場。",
+    "animationsSystem": "作業系統已設定減少動畫，動畫維持關閉。",
+    "on": "開啟",
+    "off": "關閉",
+    "design": "設計",
+    "designHelp": "每張卡片左側為淺色模式，右側為深色模式。",
+    "accent": "輔色",
+    "accentHelp": "用於按鈕、連結與選取。每種色彩都會調整，確保其上的文字清晰易讀。",
+    "accentHighContrast": "高對比下輔色暫停生效。",
+    "accentSelected": "已選取：",
+    "saveFailed": "無法儲存外觀。下次變更時將重試。",
+    "designs": {
+      "fluent": "預設：Fluent 2，中性灰與藍色，與系統介面一致。",
+      "wai": "Wolff Applied AI：淺色模式為海軍藍，深色模式為訊號黃。"
+    }
   }
 }

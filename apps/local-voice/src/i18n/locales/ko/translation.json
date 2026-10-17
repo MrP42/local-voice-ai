@@ -974,5 +974,30 @@
     "windowMaximize": "최대화",
     "windowRestore": "이전 크기로 복원",
     "windowClose": "닫기"
+  },
+  "appearance": {
+    "title": "모양",
+    "scheme": "색 구성표",
+    "schemeHelp": "밝게, 어둡게 또는 Windows 설정에 따름.",
+    "contrast": "대비",
+    "contrastHelp": "높음은 테두리가 뚜렷한 Fluent 대비 팔레트를 사용합니다. 디자인과 강조색은 일시 중지됩니다.",
+    "contrastStandard": "표준",
+    "contrastHigh": "높음",
+    "animations": "애니메이션",
+    "animationsHelp": "인터페이스의 부드러운 전환.",
+    "animationsSystem": "운영 체제에서 애니메이션 줄이기가 설정되어 있어 애니메이션이 꺼진 상태로 유지됩니다.",
+    "on": "켬",
+    "off": "끔",
+    "design": "디자인",
+    "designHelp": "각 카드는 왼쪽에 밝은 모드, 오른쪽에 어두운 모드를 보여 줍니다.",
+    "accent": "강조색",
+    "accentHelp": "단추, 링크, 선택에 사용됩니다. 각 색은 위의 텍스트가 잘 읽히도록 조정됩니다.",
+    "accentHighContrast": "고대비에서는 강조색이 일시 중지됩니다.",
+    "accentSelected": "선택됨:",
+    "saveFailed": "모양을 저장하지 못했습니다. 다음 변경 시 다시 시도합니다.",
+    "designs": {
+      "fluent": "기본값: 중립 회색과 파란색의 Fluent 2, 시스템 인터페이스와 어울립니다.",
+      "wai": "Wolff Applied AI: 밝은 모드는 네이비, 어두운 모드는 시그널 옐로."
+    }
   }
 }

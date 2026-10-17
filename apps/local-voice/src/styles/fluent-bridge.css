@@ -1,8 +1,10 @@
 /* ==========================================================================
    Variablenbrücke Fluent 2 (Leitlinie windows-fluent.md §1, §10)
 
-   FluentRoot schreibt die Tokens von webLightTheme/webDarkTheme auf :root und
-   setzt html[data-fluent]. Ab dann zeigen die App-Farben (Tailwind-Theme in
+   FluentRoot schreibt die Tokens des wirksamen Themes (Erscheinungsbild:
+   Design, Akzent, Schema, Kontrast — Standard webLightTheme/webDarkTheme)
+   auf :root und setzt html[data-fluent], [data-scheme], [data-design]. Jeder
+   Wechsel schreibt die Tokens neu; die Brücke verweist nur auf Variablen. Ab dann zeigen die App-Farben (Tailwind-Theme in
    App.css: text, background, logo-primary, mid-gray …) auf Fluent-Tokens —
    die gesamte Oberfläche zieht mit, ohne jede Stelle anzufassen.
 
@@ -10,9 +12,9 @@
    und die Medienabfrage in theme.css. Ohne FluentRoot (Overlay-Fenster vor dem
    ersten Render) gelten die alten Werte aus theme.css.
 
-   Markengelb ist KEINE Flächenfarbe mehr (Microsoft-Palette Standard). Es
-   bleibt nur im App-Symbol (--lv-brand-yellow), wie bei Office: Wiedererkennung
-   über Name und Symbol in der Titelleiste.
+   Im Fluent-Design ist Markengelb KEINE Flächenfarbe; es bleibt im App-Symbol
+   (--lv-brand-yellow). Das WAI-Design bringt Navy/Signalgelb über die
+   Markentokens (colorBrand…) mit.
    ========================================================================== */
 html:root[data-fluent] {
   --lv-brand-yellow: #ffdd00;
@@ -42,11 +44,11 @@ html:root[data-fluent] {
   background-color: var(--colorNeutralBackground3);
 }
 
-/* Dunkel: Fluent-Fläche #292929 ist heller als das alte Schwarz; Schrift in
-   Statusfarben eine Stufe heller, damit sie auch auf Tönungen
-   (bg-mid-gray/30) 4,5:1 erreicht. */
+/* Dunkel: Akzent- und Statusschrift eine Stufe heller, damit sie auch auf
+   Tönungen (bg-mid-gray/30) 4,5:1 erreicht. Die Akzentschrift bleibt ein
+   Token (Fluent: #96c6fa) und folgt so Design und Akzent. */
 html:root[data-fluent][data-scheme="dark"] {
-  --color-accent-text: #96c6fa;
+  --color-accent-text: var(--colorBrandForeground2Hover);
   --color-status-red: #fca5a5;
   --color-status-orange: #fdba74;
   --color-status-amber: #fcd34d;

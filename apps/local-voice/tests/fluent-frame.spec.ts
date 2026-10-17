@@ -10,12 +10,21 @@ import { test, expect, type Page } from "@playwright/test";
 async function setup(
   page: Page,
   theme: "light" | "dark",
-  opts: { desktop?: boolean; onboarding?: boolean } = {},
+  opts: {
+    desktop?: boolean;
+    onboarding?: boolean;
+    /** AppSettings.appearance (JSON) */
+    appearance?: string;
+    /** localStorage vor dem ersten Start */
+    local?: Record<string, string>;
+  } = {},
 ) {
   page.on("pageerror", (error) => {
     throw error;
   });
-  await page.addInitScript(({ THEME, DESKTOP, ONBOARDING }) => {
+  await page.addInitScript(({ THEME, DESKTOP, ONBOARDING, APPEARANCE, LOCAL }) => {
+    const changes: [string, unknown][] = [];
+    (window as any).__changes = changes;
     const callbacks = new Map<number, unknown>();
     const resizeHandlers: number[] = [];
     const win = { calls: [] as string[], maximized: false };
@@ -26,6 +35,7 @@ async function setup(
       onboarding_completed: !ONBOARDING,
       app_language: "de",
       theme: THEME,
+      appearance: APPEARANCE,
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -67,6 +77,16 @@ async function setup(
         unregisterCallback: (id: number) => callbacks.delete(id),
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: any) => {
+          if (cmd === "change_appearance_setting" || cmd === "change_theme_setting") {
+            changes.push([cmd, args]);
+            // Fehler gezielt einspielen: __fail[cmd] = Anzahl Fehlversuche
+            const fail = (window as any).__fail ?? {};
+            if (fail[cmd] > 0) {
+              fail[cmd]--;
+              throw "simulierter Fehler";
+            }
+            return null;
+          }
           if (cmd.startsWith("plugin:window|")) {
             const name = cmd.slice("plugin:window|".length);
             win.calls.push(name);
@@ -146,7 +166,17 @@ async function setup(
       },
     });
     localStorage.setItem("lva.ui.settings.tab", "dictation");
-  }, { THEME: theme, DESKTOP: !!opts.desktop, ONBOARDING: !!opts.onboarding });
+    if (!sessionStorage.getItem("__seeded")) {
+      sessionStorage.setItem("__seeded", "1");
+      for (const [k, v] of Object.entries(LOCAL)) localStorage.setItem(k, v);
+    }
+  }, {
+    THEME: theme,
+    DESKTOP: !!opts.desktop,
+    ONBOARDING: !!opts.onboarding,
+    APPEARANCE: opts.appearance ?? null,
+    LOCAL: opts.local ?? {},
+  });
 }
 
 const PAGES: [string, string][] = [
@@ -469,4 +499,241 @@ test.describe("Fensterrahmen", () => {
       animations: "disabled",
     });
   });
+});
+
+// Erscheinungsbild (SDK-Standard): Migration des alten Farbschemas, Design-
+// und Akzentwechsel zur Laufzeit, Speicherung in AppSettings. Belege unter
+// test-results/erscheinungsbild/ (abgenommen: docs/belege/erscheinungsbild/).
+const KEY = "local-voice.erscheinungsbild.v1";
+const rootVar = (page: Page, name: string) =>
+  page.evaluate(
+    (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(),
+    name,
+  );
+const changes = (page: Page) =>
+  page.evaluate(() => (window as any).__changes as [string, any][]);
+
+async function openAppSettings(page: Page) {
+  await page
+    .getByRole("navigation", { name: "Hauptnavigation" })
+    .getByRole("button", { name: "Einstellungen", exact: true })
+    .click();
+  await page.getByRole("tab", { name: "Allgemein", exact: true }).click();
+  await expect(page.getByRole("radiogroup", { name: "Design" })).toBeVisible();
+  // Abschnitt nach oben holen (Beleg zeigt Design und Akzent ganz)
+  await page
+    .getByRole("heading", { name: "Erscheinungsbild", exact: true })
+    .evaluate((el) => el.scrollIntoView({ block: "start" }));
+}
+
+test.describe("Erscheinungsbild", () => {
+  test("Migration: altes Farbschema wird übernommen und gespeichert", async ({ page }) => {
+    await setup(page, "dark", { local: { "handy.theme": "dark" } });
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-design", "microsoft");
+    // Fluent-Design ohne Akzent = webDarkTheme unverändert
+    expect(await rootVar(page, "--colorBrandBackground")).toBe("#115ea3");
+    // Nur appearance wird geschrieben; theme steht schon auf „dark“.
+    await expect
+      .poll(async () => (await changes(page)).map(([c]) => c))
+      .toEqual(["change_appearance_setting"]);
+    const [[, a]] = await changes(page);
+    expect(JSON.parse(a.appearance)).toMatchObject({ modus: "dunkel", designId: "microsoft" });
+    const local = await page.evaluate((k) => localStorage.getItem(k), KEY);
+    expect(JSON.parse(local!)).toMatchObject({ modus: "dunkel" });
+  });
+
+  test("Migration vor dem Abgleich: handy.theme gilt sofort", async ({ page }) => {
+    await setup(page, "light", { local: { "handy.theme": "dark" } });
+    await page.addInitScript(() => {
+      // Einstellungen kommen nie an: nur der lokale Stand wirkt
+      const i = (window as any).__TAURI_INTERNALS__;
+      const o = i.invoke;
+      i.invoke = (c: string, a: unknown) =>
+        c === "get_app_settings" ? new Promise(() => {}) : o(c, a);
+    });
+    await page.goto("/");
+    await expect
+      .poll(() => page.evaluate((k) => localStorage.getItem(k), KEY))
+      .toContain("\"modus\":\"dunkel\"");
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+    expect(await changes(page)).toEqual([]);
+  });
+
+  test("gespeichertes WAI-Design aus AppSettings färbt die Oberfläche", async ({ page }) => {
+    await setup(page, "dark", {
+      appearance: JSON.stringify({ modus: "dunkel", designId: "wai" }),
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai");
+    await expect.poll(() => rootVar(page, "--colorBrandBackground")).toBe("#FFDD00");
+    expect(await rootVar(page, "--colorNeutralBackground3")).toBe("#0B0B0C");
+    // Brücke: Tailwind-Farben folgen dem Design
+    const bg = await page
+      .locator(".lv-statusbar")
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).toBe("rgb(11, 11, 12)");
+    // Bestehender Wert wird nicht überschrieben
+    expect(await changes(page)).toEqual([]);
+    await page.screenshot({
+      path: "test-results/erscheinungsbild/wai-dunkel-start.png",
+      animations: "disabled",
+    });
+  });
+
+  test("Design, Akzent und Farbschema wechseln zur Laufzeit und werden gespeichert", async ({ page }) => {
+    await setup(page, "light");
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.goto("/");
+    await openAppSettings(page);
+    await expect(page.locator("html")).toHaveAttribute("data-design", "microsoft");
+    expect(await rootVar(page, "--colorBrandBackground")).toBe("#0f6cbd");
+    await page.screenshot({
+      path: "test-results/erscheinungsbild/einstellungen-fluent-hell.png",
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await page.getByRole("radio", { name: "WAI" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai");
+    await expect.poll(() => rootVar(page, "--colorNeutralBackground2")).toBe("#F8F9FB");
+    const navy = await rootVar(page, "--colorBrandBackground");
+    expect(navy).not.toBe("#0f6cbd");
+
+    await page.getByRole("radio", { name: "Grün" }).click();
+    await expect.poll(() => rootVar(page, "--colorBrandBackground")).not.toBe(navy);
+
+    await page.getByRole("combobox", { name: "Farbschema" }).click();
+    await page.getByRole("option", { name: "Dunkel" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+    await expect
+      .poll(async () =>
+        (await changes(page)).filter(([c]) => c === "change_theme_setting").at(-1)?.[1],
+      )
+      .toEqual({ theme: "dark" });
+    const last = (await changes(page))
+      .filter(([c]) => c === "change_appearance_setting")
+      .at(-1)![1];
+    expect(JSON.parse(last.appearance)).toMatchObject({
+      modus: "dunkel",
+      designId: "wai",
+      akzent: { wai: "gruen" },
+    });
+    const local = await page.evaluate((k) => localStorage.getItem(k), KEY);
+    expect(JSON.parse(local!)).toMatchObject({ designId: "wai", akzent: { wai: "gruen" } });
+  });
+
+  // Review #88: Backend führend, auch wenn die Antwort spät kommt
+  test("späte Settings-Antwort gilt und wird nicht überschrieben", async ({ page }) => {
+    await setup(page, "dark", {
+      appearance: JSON.stringify({ modus: "dunkel", designId: "wai" }),
+      local: { [KEY]: JSON.stringify({ modus: "hell", designId: "microsoft" }) },
+    });
+    await page.addInitScript(() => {
+      const i = (window as any).__TAURI_INTERNALS__;
+      const o = i.invoke;
+      i.invoke = (c: string, a: unknown) =>
+        c === "get_app_settings"
+          ? new Promise((r) => setTimeout(() => r(o(c, a)), 1500))
+          : o(c, a);
+    });
+    await page.goto("/");
+    await expect(page.locator(".lv-titlebar")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai", { timeout: 15000 });
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+    await page.waitForTimeout(500);
+    expect(await changes(page)).toEqual([]);
+  });
+
+  test("gesperrter localStorage: Backend-Stand gilt, nichts wird überschrieben", async ({ page }) => {
+    await setup(page, "dark", {
+      appearance: JSON.stringify({ modus: "dunkel", designId: "wai", akzent: { wai: "gruen" } }),
+    });
+    await page.addInitScript((key) => {
+      const set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k: string, v: string) {
+        if (k === key) throw new DOMException("voll", "QuotaExceededError");
+        return set.call(this, k, v);
+      };
+    }, KEY);
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai");
+    await page.waitForTimeout(500);
+    expect(await changes(page)).toEqual([]);
+    // Wechsel funktioniert weiter und landet im Backend
+    await openAppSettings(page);
+    await page.getByRole("radio", { name: "Fluent" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-design", "microsoft");
+    await expect
+      .poll(async () => (await changes(page)).map(([, a]) => JSON.parse(a.appearance ?? "{}").designId))
+      .toEqual(["microsoft"]);
+  });
+
+  test("fehlgeschlagenes Speichern meldet sich und wird beim nächsten Wechsel wiederholt", async ({ page }) => {
+    await setup(page, "light", {
+      appearance: JSON.stringify({ modus: "hell", designId: "microsoft" }),
+    });
+    await page.addInitScript(() => {
+      (window as any).__fail = { change_appearance_setting: 1, change_theme_setting: 1 };
+    });
+    await page.goto("/");
+    await openAppSettings(page);
+    await page.getByRole("combobox", { name: "Farbschema" }).click();
+    await page.getByRole("option", { name: "Dunkel" }).click();
+    await expect(
+      page.getByText("Erscheinungsbild konnte nicht gespeichert werden", { exact: false }),
+    ).toBeVisible();
+    // Nächster Wechsel schreibt Erscheinungsbild UND den Theme-Spiegel erneut
+    await page.getByRole("radio", { name: "WAI" }).click();
+    await expect
+      .poll(async () => (await changes(page)).map(([c, a]) => [c, a.theme ?? JSON.parse(a.appearance).designId]))
+      .toEqual([
+        ["change_appearance_setting", "microsoft"],
+        ["change_theme_setting", "dark"],
+        ["change_appearance_setting", "wai"],
+        ["change_theme_setting", "dark"],
+      ]);
+  });
+
+  for (const [name, appearance] of [
+    ["einstellungen-fluent-dunkel", { modus: "dunkel" }],
+    ["einstellungen-wai-dunkel", { modus: "dunkel", designId: "wai" }],
+  ] as const) {
+    test(`Beleg ${name}`, async ({ page }) => {
+      await setup(page, "dark", { appearance: JSON.stringify(appearance) });
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.goto("/");
+      await openAppSettings(page);
+      await page.screenshot({
+        path: `test-results/erscheinungsbild/${name}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    });
+  }
+});
+
+// Einrichtung mit bereits erteilten Rechten: der Assistent springt einmal
+// weiter zur Modellauswahl, ohne Render-Schleife (Effekt hing an der
+// wechselnden onComplete-Referenz).
+test("Einrichtung mit erteilten Rechten springt ohne Schleife weiter", async ({ page }) => {
+  const loops: string[] = [];
+  page.on("console", (m) => {
+    if (m.text().includes("Maximum update depth")) loops.push(m.text());
+  });
+  await setup(page, "light", { onboarding: true });
+  await page.addInitScript(() => {
+    const i = (window as any).__TAURI_INTERNALS__;
+    const o = i.invoke;
+    i.invoke = (c: string, a: unknown) => (c.includes("permission") ? Promise.resolve(true) : o(c, a));
+  });
+  await page.goto("/");
+  await expect(page.locator(".lv-titlebar--plain")).toBeVisible();
+  await expect(page.getByText("Berechtigungen erforderlich")).toHaveCount(0);
+  await page.waitForTimeout(1500);
+  expect(loops).toEqual([]);
 });

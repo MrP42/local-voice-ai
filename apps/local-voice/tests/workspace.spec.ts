@@ -176,8 +176,13 @@ test("WAI home in light and dark at desktop size", async ({ page }) => {
     page.getByRole("heading", { name: "Was möchtest du tun?" }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/workspace-light.png" });
+  // Farbschema über das Erscheinungsbild (localStorage + storage-Ereignis,
+  // wie ein Wechsel aus einem anderen Fenster).
   await page.evaluate(() => {
-    document.documentElement.dataset.theme = "dark";
+    const key = "local-voice.erscheinungsbild.v1";
+    const s = JSON.parse(localStorage.getItem(key) ?? "{}");
+    localStorage.setItem(key, JSON.stringify({ ...s, modus: "dunkel" }));
+    window.dispatchEvent(new StorageEvent("storage", { key }));
   });
   // Fluent Nav: Auswahl als neutrale Fläche mit Pill (kein Markengelb mehr).
   const start = page

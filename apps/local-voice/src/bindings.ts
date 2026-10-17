@@ -61,6 +61,19 @@ async changeThemeSetting(theme: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stores the appearance (design, accent, contrast, animations, scheme) as a
+ * JSON object. Only shape and size are checked here; the UI normalises the
+ * values (unknown designs or accents fall back to the defaults).
+ */
+async changeAppearanceSetting(appearance: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_appearance_setting", { appearance }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeStartHiddenSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_start_hidden_setting", { enabled }) };
@@ -5566,7 +5579,14 @@ mute_while_recording?: boolean; dictation_audio?: DictationAudio;
 /**
  * Target master volume in percent while dictating with `Duck`.
  */
-dictation_audio_duck_percent?: number; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+dictation_audio_duck_percent?: number; append_trailing_space?: boolean; app_language?: string; theme?: Theme; 
+/**
+ * Erscheinungsbild (SDK-Baustein „Erscheinungsbild“): Farbschema,
+ * Kontrast, Animationen, Design und Akzent als JSON-Objekt. Die
+ * Oberfläche prüft und normalisiert den Inhalt; `theme` bleibt der
+ * Spiegel des Farbschemas für Fensterrahmen und Nebenfenster.
+ */
+appearance?: string | null; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Emit each spoken sentence as soon as the speaker pauses, instead of
  * pasting the whole dictation in one block when recording stops.

@@ -974,5 +974,30 @@
     "windowMaximize": "Maximaliseren",
     "windowRestore": "Vorig formaat",
     "windowClose": "Sluiten"
+  },
+  "appearance": {
+    "title": "Weergave",
+    "scheme": "Kleurenschema",
+    "schemeHelp": "Licht, donker of zoals ingesteld in Windows.",
+    "contrast": "Contrast",
+    "contrastHelp": "Hoog gebruikt het Fluent-contrastpalet met sterke randen. Ontwerp en accent worden dan gepauzeerd.",
+    "contrastStandard": "Standaard",
+    "contrastHigh": "Hoog",
+    "animations": "Animaties",
+    "animationsHelp": "Vloeiende overgangen in de interface.",
+    "animationsSystem": "Het besturingssysteem beperkt animaties – animaties blijven uit.",
+    "on": "Aan",
+    "off": "Uit",
+    "design": "Ontwerp",
+    "designHelp": "Elke kaart toont links de lichte en rechts de donkere modus.",
+    "accent": "Accentkleur",
+    "accentHelp": "Voor knoppen, koppelingen en selectie. Elke kleur wordt aangepast zodat tekst leesbaar blijft.",
+    "accentHighContrast": "Bij hoog contrast worden accentkleuren gepauzeerd.",
+    "accentSelected": "Gekozen:",
+    "saveFailed": "Weergave kon niet worden opgeslagen. Bij de volgende wijziging wordt het opnieuw geprobeerd.",
+    "designs": {
+      "fluent": "Standaard: Fluent 2 met neutraal grijs en blauw, passend bij de systeeminterface.",
+      "wai": "Wolff Applied AI: marineblauw in de lichte modus, signaalgeel in de donkere modus."
+    }
   }
 }

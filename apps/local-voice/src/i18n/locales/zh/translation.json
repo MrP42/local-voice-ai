@@ -974,5 +974,30 @@
     "windowMaximize": "最大化",
     "windowRestore": "还原",
     "windowClose": "关闭"
+  },
+  "appearance": {
+    "title": "外观",
+    "scheme": "颜色模式",
+    "schemeHelp": "浅色、深色或跟随 Windows 设置。",
+    "contrast": "对比度",
+    "contrastHelp": "高对比度使用带醒目边框的 Fluent 对比度调色板，此时设计和主题色暂停生效。",
+    "contrastStandard": "标准",
+    "contrastHigh": "高",
+    "animations": "动画",
+    "animationsHelp": "界面中的平滑过渡。",
+    "animationsSystem": "操作系统已设置为减少动画，动画保持关闭。",
+    "on": "开",
+    "off": "关",
+    "design": "设计",
+    "designHelp": "每张卡片左侧为浅色模式，右侧为深色模式。",
+    "accent": "主题色",
+    "accentHelp": "用于按钮、链接和选择。每种颜色都会调整，确保其上的文字清晰可读。",
+    "accentHighContrast": "高对比度下主题色暂停生效。",
+    "accentSelected": "已选择：",
+    "saveFailed": "无法保存外观。下次更改时将重试。",
+    "designs": {
+      "fluent": "默认：Fluent 2，中性灰与蓝色，与系统界面一致。",
+      "wai": "Wolff Applied AI：浅色模式为海军蓝，深色模式为信号黄。"
+    }
   }
 }

@@ -974,5 +974,30 @@
     "windowMaximize": "Maximalizovat",
     "windowRestore": "Obnovit",
     "windowClose": "Zavřít"
+  },
+  "appearance": {
+    "title": "Vzhled",
+    "scheme": "Barevné schéma",
+    "schemeHelp": "Světlé, tmavé nebo podle nastavení Windows.",
+    "contrast": "Kontrast",
+    "contrastHelp": "Vysoký používá kontrastní paletu Fluent s výraznými okraji. Vzhled a zvýraznění se pozastaví.",
+    "contrastStandard": "Standardní",
+    "contrastHigh": "Vysoký",
+    "animations": "Animace",
+    "animationsHelp": "Plynulé přechody v rozhraní.",
+    "animationsSystem": "Operační systém omezuje animace – zůstávají vypnuté.",
+    "on": "Zapnuto",
+    "off": "Vypnuto",
+    "design": "Vzhled",
+    "designHelp": "Každá karta ukazuje vlevo světlý a vpravo tmavý režim.",
+    "accent": "Barva zvýraznění",
+    "accentHelp": "Pro tlačítka, odkazy a výběr. Každá barva se upraví tak, aby text zůstal čitelný.",
+    "accentHighContrast": "Při vysokém kontrastu jsou barvy zvýraznění pozastaveny.",
+    "accentSelected": "Vybráno:",
+    "saveFailed": "Vzhled se nepodařilo uložit. Při další změně se to zkusí znovu.",
+    "designs": {
+      "fluent": "Výchozí: Fluent 2 s neutrální šedou a modrou, ladí se systémovým rozhraním.",
+      "wai": "Wolff Applied AI: námořnická modrá ve světlém režimu, signální žlutá v tmavém."
+    }
   }
 }
