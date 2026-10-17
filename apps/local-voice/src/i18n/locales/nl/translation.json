@@ -994,6 +994,7 @@
     "accentHelp": "Voor knoppen, koppelingen en selectie. Elke kleur wordt aangepast zodat tekst leesbaar blijft.",
     "accentHighContrast": "Bij hoog contrast worden accentkleuren gepauzeerd.",
     "accentSelected": "Gekozen:",
+    "saveFailed": "Weergave kon niet worden opgeslagen. Bij de volgende wijziging wordt het opnieuw geprobeerd.",
     "designs": {
       "fluent": "Standaard: Fluent 2 met neutraal grijs en blauw, passend bij de systeeminterface.",
       "wai": "Wolff Applied AI: marineblauw in de lichte modus, signaalgeel in de donkere modus."

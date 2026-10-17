@@ -994,6 +994,7 @@
     "accentHelp": "För knappar, länkar och markering. Varje färg justeras så att text förblir läsbar.",
     "accentHighContrast": "Vid hög kontrast pausas accentfärger.",
     "accentSelected": "Valt:",
+    "saveFailed": "Utseendet kunde inte sparas. Det försöks igen vid nästa ändring.",
     "designs": {
       "fluent": "Standard: Fluent 2 med neutral grå och blå, i linje med systemets gränssnitt.",
       "wai": "Wolff Applied AI: marinblå i ljust läge, signalgul i mörkt läge."

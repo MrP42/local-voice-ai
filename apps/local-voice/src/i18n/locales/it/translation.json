@@ -994,6 +994,7 @@
     "accentHelp": "Per pulsanti, collegamenti e selezione. Ogni colore viene adattato perché il testo resti leggibile.",
     "accentHighContrast": "Con il contrasto alto i colori principali sono sospesi.",
     "accentSelected": "Selezionato:",
+    "saveFailed": "Impossibile salvare l’aspetto. Verrà ritentato alla prossima modifica.",
     "designs": {
       "fluent": "Predefinito: Fluent 2 con grigio neutro e blu, in linea con l’interfaccia di sistema.",
       "wai": "Wolff Applied AI: blu navy in modalità chiara, giallo segnale in modalità scura."

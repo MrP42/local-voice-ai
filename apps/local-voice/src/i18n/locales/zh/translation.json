@@ -994,6 +994,7 @@
     "accentHelp": "用于按钮、链接和选择。每种颜色都会调整，确保其上的文字清晰可读。",
     "accentHighContrast": "高对比度下主题色暂停生效。",
     "accentSelected": "已选择：",
+    "saveFailed": "无法保存外观。下次更改时将重试。",
     "designs": {
       "fluent": "默认：Fluent 2，中性灰与蓝色，与系统界面一致。",
       "wai": "Wolff Applied AI：浅色模式为海军蓝，深色模式为信号黄。"

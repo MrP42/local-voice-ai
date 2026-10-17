@@ -994,6 +994,7 @@
     "accentHelp": "Düğmeler, bağlantılar ve seçim için. Her renk, üzerindeki metin okunaklı kalacak şekilde ayarlanır.",
     "accentHighContrast": "Yüksek karşıtlıkta vurgu renkleri duraklatılır.",
     "accentSelected": "Seçili:",
+    "saveFailed": "Görünüm kaydedilemedi. Bir sonraki değişiklikte yeniden denenecek.",
     "designs": {
       "fluent": "Varsayılan: Sistem arayüzüne uygun, nötr gri ve mavi ile Fluent 2.",
       "wai": "Wolff Applied AI: açık modda lacivert, koyu modda sinyal sarısı."

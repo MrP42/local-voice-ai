@@ -994,6 +994,7 @@
     "accentHelp": "Pro tlačítka, odkazy a výběr. Každá barva se upraví tak, aby text zůstal čitelný.",
     "accentHighContrast": "Při vysokém kontrastu jsou barvy zvýraznění pozastaveny.",
     "accentSelected": "Vybráno:",
+    "saveFailed": "Vzhled se nepodařilo uložit. Při další změně se to zkusí znovu.",
     "designs": {
       "fluent": "Výchozí: Fluent 2 s neutrální šedou a modrou, ladí se systémovým rozhraním.",
       "wai": "Wolff Applied AI: námořnická modrá ve světlém režimu, signální žlutá v tmavém."

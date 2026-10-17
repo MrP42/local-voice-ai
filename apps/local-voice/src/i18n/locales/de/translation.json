@@ -5438,6 +5438,7 @@
     "accentHelp": "Für Knöpfe, Links und Auswahl. Jede Farbe wird so angepasst, dass Text darauf gut lesbar bleibt.",
     "accentHighContrast": "Bei hohem Kontrast ruhen Akzentfarben.",
     "accentSelected": "Gewählt:",
+    "saveFailed": "Erscheinungsbild konnte nicht gespeichert werden. Beim nächsten Wechsel wird es erneut versucht.",
     "designs": {
       "fluent": "Standard: Fluent 2 mit neutralem Grau und Blau, passend zur Systemoberfläche.",
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."

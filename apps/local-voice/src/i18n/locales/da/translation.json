@@ -994,6 +994,7 @@
     "accentHelp": "Til knapper, links og markering. Hver farve tilpasses, så tekst forbliver læsbar.",
     "accentHighContrast": "Ved høj kontrast er accentfarver sat på pause.",
     "accentSelected": "Valgt:",
+    "saveFailed": "Udseendet kunne ikke gemmes. Der prøves igen ved næste ændring.",
     "designs": {
       "fluent": "Standard: Fluent 2 med neutral grå og blå, der passer til systemets brugerflade.",
       "wai": "Wolff Applied AI: marineblå i lys tilstand, signalgul i mørk tilstand."

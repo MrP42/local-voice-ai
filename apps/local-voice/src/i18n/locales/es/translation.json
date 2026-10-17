@@ -994,6 +994,7 @@
     "accentHelp": "Para botones, enlaces y selección. Cada color se ajusta para que el texto siga siendo legible.",
     "accentHighContrast": "Con contraste alto, los colores de énfasis quedan en pausa.",
     "accentSelected": "Seleccionado:",
+    "saveFailed": "No se pudo guardar la apariencia. Se volverá a intentar con el próximo cambio.",
     "designs": {
       "fluent": "Predeterminado: Fluent 2 con gris neutro y azul, a juego con la interfaz del sistema.",
       "wai": "Wolff Applied AI: azul marino en modo claro, amarillo señal en modo oscuro."

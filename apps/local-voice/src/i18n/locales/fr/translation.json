@@ -994,6 +994,7 @@
     "accentHelp": "Pour les boutons, liens et sélections. Chaque couleur est ajustée pour que le texte reste lisible.",
     "accentHighContrast": "Les couleurs d’accentuation sont suspendues en contraste élevé.",
     "accentSelected": "Sélection :",
+    "saveFailed": "L’apparence n’a pas pu être enregistrée. Nouvelle tentative à la prochaine modification.",
     "designs": {
       "fluent": "Par défaut : Fluent 2 avec gris neutre et bleu, assorti à l’interface du système.",
       "wai": "Wolff Applied AI : bleu marine en mode clair, jaune signal en mode sombre."

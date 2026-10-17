@@ -994,6 +994,7 @@
     "accentHelp": "Cho nút, liên kết và vùng chọn. Mỗi màu được điều chỉnh để chữ trên đó vẫn dễ đọc.",
     "accentHighContrast": "Ở độ tương phản cao, màu nhấn tạm dừng.",
     "accentSelected": "Đã chọn:",
+    "saveFailed": "Không thể lưu giao diện. Sẽ thử lại ở lần thay đổi tiếp theo.",
     "designs": {
       "fluent": "Mặc định: Fluent 2 với xám trung tính và xanh lam, hợp với giao diện hệ thống.",
       "wai": "Wolff Applied AI: xanh hải quân ở chế độ sáng, vàng tín hiệu ở chế độ tối."

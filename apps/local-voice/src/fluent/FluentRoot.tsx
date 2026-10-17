@@ -1,6 +1,14 @@
 import type { Theme } from "@fluentui/react-components";
-import { type ReactNode, useEffect, useLayoutEffect, useMemo } from "react";
+import {
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
   type AppDesign,
   ErscheinungsbildProvider,
@@ -11,8 +19,12 @@ import {
 import { applyTheme } from "@/lib/utils/theme";
 import {
   APPEARANCE_STORAGE_KEY,
+  loadAppearance,
   persistAppearance,
+  type Saved,
+  serializeAppearance,
   themeFromModus,
+  uebernehmen,
 } from "./appearance";
 
 /**
@@ -84,10 +96,46 @@ export function FluentRoot({ children }: { children: ReactNode }) {
     applyTheme(themeFromModus(z.modus));
   }, [z.modus]);
 
-  const { modus, kontrast, animationen, designId, akzent } = z;
+  // Abgleich mit AppSettings (führend): nach dem Laden direkt in den Hook
+  // übernehmen, erst danach speichern. Kommt die Antwort spät, gilt sie
+  // trotzdem — es gibt kein Ereignis, das verloren gehen könnte.
+  const zRef = useRef(z);
+  zRef.current = z;
+  const savedRef = useRef<Saved | null>(null);
+  const [synced, setSynced] = useState(false);
   useEffect(() => {
-    void persistAppearance({ modus, kontrast, animationen, designId, akzent });
-  }, [modus, kontrast, animationen, designId, akzent]);
+    let cancelled = false;
+    const { modus, kontrast, animationen, designId, akzent } = zRef.current;
+    void loadAppearance({ modus, kontrast, animationen, designId, akzent }).then(
+      (loaded) => {
+        if (cancelled || !loaded) return;
+        uebernehmen(zRef.current, loaded.stand);
+        savedRef.current = {
+          appearance: loaded.migrated ? null : serializeAppearance(loaded.stand),
+          theme: loaded.theme,
+        };
+        setSynced(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Speichern: nur Abweichungen vom nachweislich gespeicherten Stand, der
+  // Reihe nach. Fehlgeschlagenes bleibt abweichend und wird beim nächsten
+  // Wechsel erneut geschrieben.
+  const json = serializeAppearance(z);
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  useEffect(() => {
+    if (!synced) return;
+    chain.current = chain.current.then(async () => {
+      if (!savedRef.current) return;
+      const r = await persistAppearance(JSON.parse(json), savedRef.current);
+      savedRef.current = r.saved;
+      if (!r.ok) toast.error(t("appearance.saveFailed"));
+    });
+  }, [synced, json, t]);
 
   return (
     <ErscheinungsbildProvider zustand={z} className="lv-fluent-root">

@@ -79,6 +79,12 @@ async function setup(
         invoke: async (cmd: string, args?: any) => {
           if (cmd === "change_appearance_setting" || cmd === "change_theme_setting") {
             changes.push([cmd, args]);
+            // Fehler gezielt einspielen: __fail[cmd] = Anzahl Fehlversuche
+            const fail = (window as any).__fail ?? {};
+            if (fail[cmd] > 0) {
+              fail[cmd]--;
+              throw "simulierter Fehler";
+            }
             return null;
           }
           if (cmd.startsWith("plugin:window|")) {
@@ -528,12 +534,12 @@ test.describe("Erscheinungsbild", () => {
     await expect(page.locator("html")).toHaveAttribute("data-design", "microsoft");
     // Fluent-Design ohne Akzent = webDarkTheme unverändert
     expect(await rootVar(page, "--colorBrandBackground")).toBe("#115ea3");
+    // Nur appearance wird geschrieben; theme steht schon auf „dark“.
     await expect
       .poll(async () => (await changes(page)).map(([c]) => c))
-      .toEqual(["change_appearance_setting", "change_theme_setting"]);
-    const [[, a], [, th]] = await changes(page);
+      .toEqual(["change_appearance_setting"]);
+    const [[, a]] = await changes(page);
     expect(JSON.parse(a.appearance)).toMatchObject({ modus: "dunkel", designId: "microsoft" });
-    expect(th).toEqual({ theme: "dark" });
     const local = await page.evaluate((k) => localStorage.getItem(k), KEY);
     expect(JSON.parse(local!)).toMatchObject({ modus: "dunkel" });
   });
@@ -619,6 +625,78 @@ test.describe("Erscheinungsbild", () => {
     });
     const local = await page.evaluate((k) => localStorage.getItem(k), KEY);
     expect(JSON.parse(local!)).toMatchObject({ designId: "wai", akzent: { wai: "gruen" } });
+  });
+
+  // Review #88: Backend führend, auch wenn die Antwort spät kommt
+  test("späte Settings-Antwort gilt und wird nicht überschrieben", async ({ page }) => {
+    await setup(page, "dark", {
+      appearance: JSON.stringify({ modus: "dunkel", designId: "wai" }),
+      local: { [KEY]: JSON.stringify({ modus: "hell", designId: "microsoft" }) },
+    });
+    await page.addInitScript(() => {
+      const i = (window as any).__TAURI_INTERNALS__;
+      const o = i.invoke;
+      i.invoke = (c: string, a: unknown) =>
+        c === "get_app_settings"
+          ? new Promise((r) => setTimeout(() => r(o(c, a)), 1500))
+          : o(c, a);
+    });
+    await page.goto("/");
+    await expect(page.locator(".lv-titlebar")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai", { timeout: 15000 });
+    await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+    await page.waitForTimeout(500);
+    expect(await changes(page)).toEqual([]);
+  });
+
+  test("gesperrter localStorage: Backend-Stand gilt, nichts wird überschrieben", async ({ page }) => {
+    await setup(page, "dark", {
+      appearance: JSON.stringify({ modus: "dunkel", designId: "wai", akzent: { wai: "gruen" } }),
+    });
+    await page.addInitScript((key) => {
+      const set = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k: string, v: string) {
+        if (k === key) throw new DOMException("voll", "QuotaExceededError");
+        return set.call(this, k, v);
+      };
+    }, KEY);
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-design", "wai");
+    await page.waitForTimeout(500);
+    expect(await changes(page)).toEqual([]);
+    // Wechsel funktioniert weiter und landet im Backend
+    await openAppSettings(page);
+    await page.getByRole("radio", { name: "Fluent" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-design", "microsoft");
+    await expect
+      .poll(async () => (await changes(page)).map(([, a]) => JSON.parse(a.appearance ?? "{}").designId))
+      .toEqual(["microsoft"]);
+  });
+
+  test("fehlgeschlagenes Speichern meldet sich und wird beim nächsten Wechsel wiederholt", async ({ page }) => {
+    await setup(page, "light", {
+      appearance: JSON.stringify({ modus: "hell", designId: "microsoft" }),
+    });
+    await page.addInitScript(() => {
+      (window as any).__fail = { change_appearance_setting: 1, change_theme_setting: 1 };
+    });
+    await page.goto("/");
+    await openAppSettings(page);
+    await page.getByRole("combobox", { name: "Farbschema" }).click();
+    await page.getByRole("option", { name: "Dunkel" }).click();
+    await expect(
+      page.getByText("Erscheinungsbild konnte nicht gespeichert werden", { exact: false }),
+    ).toBeVisible();
+    // Nächster Wechsel schreibt Erscheinungsbild UND den Theme-Spiegel erneut
+    await page.getByRole("radio", { name: "WAI" }).click();
+    await expect
+      .poll(async () => (await changes(page)).map(([c, a]) => [c, a.theme ?? JSON.parse(a.appearance).designId]))
+      .toEqual([
+        ["change_appearance_setting", "microsoft"],
+        ["change_theme_setting", "dark"],
+        ["change_appearance_setting", "wai"],
+        ["change_theme_setting", "dark"],
+      ]);
   });
 
   for (const [name, appearance] of [

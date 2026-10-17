@@ -3,18 +3,15 @@ import ReactDOM from "react-dom/client";
 import { platform } from "@tauri-apps/plugin-os";
 import App from "./App";
 import { FluentRoot } from "./fluent/FluentRoot";
-import {
-  migrateLocalAppearance,
-  syncAppearanceFromSettings,
-} from "./fluent/appearance";
+import { migrateLocalAppearance } from "./fluent/appearance";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
 document.documentElement.dataset.platform = platform();
 
 // Erscheinungsbild: zuletzt bekannten Stand sofort (localStorage, bei Bedarf
-// aus dem alten `handy.theme` übernommen), dann mit AppSettings abgleichen.
+// aus dem alten `handy.theme` übernommen); den Abgleich mit AppSettings
+// macht FluentRoot.
 migrateLocalAppearance();
-void syncAppearanceFromSettings();
 
 // Initialize i18n
 import "./i18n";
