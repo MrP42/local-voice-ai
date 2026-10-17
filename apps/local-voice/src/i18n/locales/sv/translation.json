@@ -974,5 +974,29 @@
     "windowMaximize": "Maximera",
     "windowRestore": "Återställ",
     "windowClose": "Stäng"
+  },
+  "appearance": {
+    "title": "Utseende",
+    "scheme": "Färgschema",
+    "schemeHelp": "Ljust, mörkt eller enligt inställningen i Windows.",
+    "contrast": "Kontrast",
+    "contrastHelp": "Hög använder Fluents kontrastpalett med tydliga kanter. Design och accent pausas då.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "Hög",
+    "animations": "Animeringar",
+    "animationsHelp": "Mjuka övergångar i gränssnittet.",
+    "animationsSystem": "Operativsystemet är inställt på att minska animeringar – de förblir avstängda.",
+    "on": "På",
+    "off": "Av",
+    "design": "Design",
+    "designHelp": "Varje kort visar ljust läge till vänster och mörkt läge till höger.",
+    "accent": "Accentfärg",
+    "accentHelp": "För knappar, länkar och markering. Varje färg justeras så att text förblir läsbar.",
+    "accentHighContrast": "Vid hög kontrast pausas accentfärger.",
+    "accentSelected": "Valt:",
+    "designs": {
+      "fluent": "Standard: Fluent 2 med neutral grå och blå, i linje med systemets gränssnitt.",
+      "wai": "Wolff Applied AI: marinblå i ljust läge, signalgul i mörkt läge."
+    }
   }
 }

@@ -974,5 +974,29 @@
     "windowMaximize": "הגדל",
     "windowRestore": "שחזר",
     "windowClose": "סגור"
+  },
+  "appearance": {
+    "title": "מראה",
+    "scheme": "ערכת צבעים",
+    "schemeHelp": "בהיר, כהה או לפי ההגדרה ב-Windows.",
+    "contrast": "ניגודיות",
+    "contrastHelp": "גבוהה משתמשת בלוח הניגודיות של Fluent עם מסגרות בולטות. העיצוב וצבע ההדגשה מושהים.",
+    "contrastStandard": "רגילה",
+    "contrastHigh": "גבוהה",
+    "animations": "אנימציות",
+    "animationsHelp": "מעברים חלקים בממשק.",
+    "animationsSystem": "מערכת ההפעלה מוגדרת להפחתת אנימציות – האנימציות נשארות כבויות.",
+    "on": "מופעל",
+    "off": "כבוי",
+    "design": "עיצוב",
+    "designHelp": "כל כרטיס מציג משמאל את המצב הבהיר ומימין את הכהה.",
+    "accent": "צבע הדגשה",
+    "accentHelp": "ללחצנים, קישורים ובחירה. כל צבע מותאם כך שהטקסט עליו יישאר קריא.",
+    "accentHighContrast": "בניגודיות גבוהה צבעי ההדגשה מושהים.",
+    "accentSelected": "נבחר:",
+    "designs": {
+      "fluent": "ברירת מחדל: Fluent 2 באפור ניטרלי וכחול, בהתאם לממשק המערכת.",
+      "wai": "Wolff Applied AI: כחול כהה במצב בהיר, צהוב אות במצב כהה."
+    }
   }
 }

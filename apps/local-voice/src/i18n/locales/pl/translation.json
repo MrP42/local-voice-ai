@@ -974,5 +974,29 @@
     "windowMaximize": "Maksymalizuj",
     "windowRestore": "Przywróć",
     "windowClose": "Zamknij"
+  },
+  "appearance": {
+    "title": "Wygląd",
+    "scheme": "Schemat kolorów",
+    "schemeHelp": "Jasny, ciemny lub zgodnie z ustawieniem systemu Windows.",
+    "contrast": "Kontrast",
+    "contrastHelp": "Wysoki używa palety kontrastowej Fluent z wyraźnymi krawędziami. Motyw i akcent są wtedy wstrzymane.",
+    "contrastStandard": "Standardowy",
+    "contrastHigh": "Wysoki",
+    "animations": "Animacje",
+    "animationsHelp": "Płynne przejścia w interfejsie.",
+    "animationsSystem": "System operacyjny ogranicza animacje – pozostają wyłączone.",
+    "on": "Wł.",
+    "off": "Wył.",
+    "design": "Motyw",
+    "designHelp": "Każda karta pokazuje po lewej tryb jasny, a po prawej ciemny.",
+    "accent": "Kolor akcentu",
+    "accentHelp": "Dla przycisków, linków i zaznaczenia. Każdy kolor jest dostosowywany, aby tekst pozostał czytelny.",
+    "accentHighContrast": "Przy wysokim kontraście kolory akcentu są wstrzymane.",
+    "accentSelected": "Wybrano:",
+    "designs": {
+      "fluent": "Domyślny: Fluent 2 z neutralną szarością i niebieskim, dopasowany do interfejsu systemu.",
+      "wai": "Wolff Applied AI: granat w trybie jasnym, sygnałowa żółć w trybie ciemnym."
+    }
   }
 }

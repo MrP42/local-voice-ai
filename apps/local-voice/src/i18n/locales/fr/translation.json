@@ -974,5 +974,29 @@
     "windowMaximize": "Agrandir",
     "windowRestore": "Niveau inférieur",
     "windowClose": "Fermer"
+  },
+  "appearance": {
+    "title": "Apparence",
+    "scheme": "Jeu de couleurs",
+    "schemeHelp": "Clair, sombre ou selon le réglage de Windows.",
+    "contrast": "Contraste",
+    "contrastHelp": "Élevé utilise la palette de contraste Fluent avec des bordures marquées. Le design et l’accent sont alors suspendus.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "Élevé",
+    "animations": "Animations",
+    "animationsHelp": "Transitions fluides dans l’interface.",
+    "animationsSystem": "Le système d’exploitation réduit les animations – elles restent désactivées.",
+    "on": "Activé",
+    "off": "Désactivé",
+    "design": "Design",
+    "designHelp": "Chaque carte montre le mode clair à gauche et le mode sombre à droite.",
+    "accent": "Couleur d’accentuation",
+    "accentHelp": "Pour les boutons, liens et sélections. Chaque couleur est ajustée pour que le texte reste lisible.",
+    "accentHighContrast": "Les couleurs d’accentuation sont suspendues en contraste élevé.",
+    "accentSelected": "Sélection :",
+    "designs": {
+      "fluent": "Par défaut : Fluent 2 avec gris neutre et bleu, assorti à l’interface du système.",
+      "wai": "Wolff Applied AI : bleu marine en mode clair, jaune signal en mode sombre."
+    }
   }
 }

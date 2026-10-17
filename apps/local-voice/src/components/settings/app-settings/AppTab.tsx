@@ -3,7 +3,7 @@ import { MeetingRetentionSetting } from "../meetings/MeetingRetentionSetting";
 import { useTranslation } from "react-i18next";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { AppLanguageSelector } from "../AppLanguageSelector";
-import { ThemeSelector } from "../ThemeSelector";
+import { AppearanceSettings } from "../AppearanceSettings";
 import { StartHidden } from "../StartHidden";
 import { AutostartToggle } from "../AutostartToggle";
 import { ShowTrayIcon } from "../ShowTrayIcon";
@@ -38,9 +38,11 @@ export const AppTab: React.FC = () => {
       {/* Konto & Geraete zuerst: das ist die Einstellung, die andere Geraete betrifft. */}
       <SyncAccountCard />
 
-      <SettingsGroup title={t("settings.app.groups.appearance")}>
+      {/* SDK-Standard „Erscheinungsbild“: Farbschema, Kontrast, Animationen,
+          Design-Karten, Akzent. Sprache und Overlay direkt darunter. */}
+      <AppearanceSettings />
+      <SettingsGroup>
         <AppLanguageSelector descriptionMode="tooltip" grouped={true} />
-        <ThemeSelector descriptionMode="tooltip" grouped={true} />
         <ShowOverlay descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

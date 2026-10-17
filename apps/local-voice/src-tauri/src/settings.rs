@@ -628,6 +628,12 @@ pub struct AppSettings {
     pub app_language: String,
     #[serde(default = "default_theme")]
     pub theme: Theme,
+    /// Erscheinungsbild (SDK-Baustein „Erscheinungsbild“): Farbschema,
+    /// Kontrast, Animationen, Design und Akzent als JSON-Objekt. Die
+    /// Oberfläche prüft und normalisiert den Inhalt; `theme` bleibt der
+    /// Spiegel des Farbschemas für Fensterrahmen und Nebenfenster.
+    #[serde(default)]
+    pub appearance: Option<String>,
     #[serde(default)]
     pub experimental_enabled: bool,
     #[serde(default)]
@@ -1723,6 +1729,7 @@ pub fn get_default_settings() -> AppSettings {
         append_trailing_space: false,
         app_language: default_app_language(),
         theme: default_theme(),
+        appearance: None,
         experimental_enabled: false,
         lazy_stream_close: true,
         keyboard_implementation: KeyboardImplementation::default(),

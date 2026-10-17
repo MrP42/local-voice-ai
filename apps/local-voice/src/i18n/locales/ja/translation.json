@@ -974,5 +974,29 @@
     "windowMaximize": "最大化",
     "windowRestore": "元に戻す",
     "windowClose": "閉じる"
+  },
+  "appearance": {
+    "title": "外観",
+    "scheme": "カラー スキーム",
+    "schemeHelp": "ライト、ダーク、または Windows の設定に従います。",
+    "contrast": "コントラスト",
+    "contrastHelp": "高では、くっきりした枠線を持つ Fluent のコントラスト パレットを使います。デザインとアクセントは一時停止します。",
+    "contrastStandard": "標準",
+    "contrastHigh": "高",
+    "animations": "アニメーション",
+    "animationsHelp": "インターフェイスの滑らかな切り替え。",
+    "animationsSystem": "OS でアニメーションを減らす設定になっているため、アニメーションはオフのままです。",
+    "on": "オン",
+    "off": "オフ",
+    "design": "デザイン",
+    "designHelp": "各カードの左がライト モード、右がダーク モードです。",
+    "accent": "アクセント カラー",
+    "accentHelp": "ボタン、リンク、選択に使います。各色は、上の文字が読みやすいように調整されます。",
+    "accentHighContrast": "高コントラストではアクセント カラーは一時停止します。",
+    "accentSelected": "選択中:",
+    "designs": {
+      "fluent": "既定: ニュートラルなグレーと青の Fluent 2。システムの UI になじみます。",
+      "wai": "Wolff Applied AI: ライト モードはネイビー、ダーク モードはシグナル イエロー。"
+    }
   }
 }

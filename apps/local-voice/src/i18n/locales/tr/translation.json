@@ -974,5 +974,29 @@
     "windowMaximize": "Ekranı kapla",
     "windowRestore": "Önceki boyut",
     "windowClose": "Kapat"
+  },
+  "appearance": {
+    "title": "Görünüm",
+    "scheme": "Renk düzeni",
+    "schemeHelp": "Açık, koyu veya Windows ayarına göre.",
+    "contrast": "Karşıtlık",
+    "contrastHelp": "Yüksek, belirgin kenarlıklı Fluent karşıtlık paletini kullanır. Tasarım ve vurgu duraklatılır.",
+    "contrastStandard": "Standart",
+    "contrastHigh": "Yüksek",
+    "animations": "Animasyonlar",
+    "animationsHelp": "Arayüzde yumuşak geçişler.",
+    "animationsSystem": "İşletim sistemi animasyonları azaltacak şekilde ayarlı – animasyonlar kapalı kalır.",
+    "on": "Açık",
+    "off": "Kapalı",
+    "design": "Tasarım",
+    "designHelp": "Her kart solda açık, sağda koyu modu gösterir.",
+    "accent": "Vurgu rengi",
+    "accentHelp": "Düğmeler, bağlantılar ve seçim için. Her renk, üzerindeki metin okunaklı kalacak şekilde ayarlanır.",
+    "accentHighContrast": "Yüksek karşıtlıkta vurgu renkleri duraklatılır.",
+    "accentSelected": "Seçili:",
+    "designs": {
+      "fluent": "Varsayılan: Sistem arayüzüne uygun, nötr gri ve mavi ile Fluent 2.",
+      "wai": "Wolff Applied AI: açık modda lacivert, koyu modda sinyal sarısı."
+    }
   }
 }

@@ -974,5 +974,29 @@
     "windowMaximize": "Ingrandisci",
     "windowRestore": "Ripristina",
     "windowClose": "Chiudi"
+  },
+  "appearance": {
+    "title": "Aspetto",
+    "scheme": "Combinazione colori",
+    "schemeHelp": "Chiaro, scuro o come impostato in Windows.",
+    "contrast": "Contrasto",
+    "contrastHelp": "Alto usa la tavolozza a contrasto di Fluent con bordi marcati. Design e accento vengono sospesi.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "Alto",
+    "animations": "Animazioni",
+    "animationsHelp": "Transizioni fluide nell’interfaccia.",
+    "animationsSystem": "Il sistema operativo riduce le animazioni: restano disattivate.",
+    "on": "Attivato",
+    "off": "Disattivato",
+    "design": "Design",
+    "designHelp": "Ogni scheda mostra a sinistra la modalità chiara e a destra quella scura.",
+    "accent": "Colore principale",
+    "accentHelp": "Per pulsanti, collegamenti e selezione. Ogni colore viene adattato perché il testo resti leggibile.",
+    "accentHighContrast": "Con il contrasto alto i colori principali sono sospesi.",
+    "accentSelected": "Selezionato:",
+    "designs": {
+      "fluent": "Predefinito: Fluent 2 con grigio neutro e blu, in linea con l’interfaccia di sistema.",
+      "wai": "Wolff Applied AI: blu navy in modalità chiara, giallo segnale in modalità scura."
+    }
   }
 }

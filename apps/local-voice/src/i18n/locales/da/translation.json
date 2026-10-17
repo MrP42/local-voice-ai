@@ -974,5 +974,29 @@
     "windowMaximize": "Maksimer",
     "windowRestore": "Gendan",
     "windowClose": "Luk"
+  },
+  "appearance": {
+    "title": "Udseende",
+    "scheme": "Farveskema",
+    "schemeHelp": "Lyst, mørkt eller som indstillet i Windows.",
+    "contrast": "Kontrast",
+    "contrastHelp": "Høj bruger Fluents kontrastpalet med kraftige kanter. Design og accent sættes på pause.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "Høj",
+    "animations": "Animationer",
+    "animationsHelp": "Bløde overgange i brugerfladen.",
+    "animationsSystem": "Operativsystemet er indstillet til at reducere animationer – de forbliver slået fra.",
+    "on": "Til",
+    "off": "Fra",
+    "design": "Design",
+    "designHelp": "Hvert kort viser lys tilstand til venstre og mørk tilstand til højre.",
+    "accent": "Accentfarve",
+    "accentHelp": "Til knapper, links og markering. Hver farve tilpasses, så tekst forbliver læsbar.",
+    "accentHighContrast": "Ved høj kontrast er accentfarver sat på pause.",
+    "accentSelected": "Valgt:",
+    "designs": {
+      "fluent": "Standard: Fluent 2 med neutral grå og blå, der passer til systemets brugerflade.",
+      "wai": "Wolff Applied AI: marineblå i lys tilstand, signalgul i mørk tilstand."
+    }
   }
 }

@@ -5418,5 +5418,29 @@
         "blocked_calls": "Gesperrte Aufrufe in den letzten 24 Stunden: {{detail}}",
         "cloud_errors": "{{detail}} fehlgeschlagene Cloud-Aufrufe in den letzten 24 Stunden."
       }
+  },
+  "appearance": {
+    "title": "Erscheinungsbild",
+    "scheme": "Farbschema",
+    "schemeHelp": "Hell, Dunkel oder wie in Windows eingestellt.",
+    "contrast": "Kontrast",
+    "contrastHelp": "Hoch nutzt die Fluent-Kontrastpalette mit kräftigen Rändern. Design und Akzent ruhen dann.",
+    "contrastStandard": "Standard",
+    "contrastHigh": "Hoch",
+    "animations": "Animationen",
+    "animationsHelp": "Weiche Übergänge in der Oberfläche.",
+    "animationsSystem": "Im Betriebssystem ist „Animationen reduzieren“ eingestellt – Animationen bleiben aus.",
+    "on": "Ein",
+    "off": "Aus",
+    "design": "Design",
+    "designHelp": "Jede Karte zeigt links den hellen und rechts den dunklen Modus.",
+    "accent": "Akzentfarbe",
+    "accentHelp": "Für Knöpfe, Links und Auswahl. Jede Farbe wird so angepasst, dass Text darauf gut lesbar bleibt.",
+    "accentHighContrast": "Bei hohem Kontrast ruhen Akzentfarben.",
+    "accentSelected": "Gewählt:",
+    "designs": {
+      "fluent": "Standard: Fluent 2 mit neutralem Grau und Blau, passend zur Systemoberfläche.",
+      "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
+    }
   }
 }

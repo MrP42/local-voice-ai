@@ -974,5 +974,29 @@
     "windowMaximize": "Phóng to",
     "windowRestore": "Khôi phục",
     "windowClose": "Đóng"
+  },
+  "appearance": {
+    "title": "Giao diện",
+    "scheme": "Bảng màu",
+    "schemeHelp": "Sáng, tối hoặc theo cài đặt của Windows.",
+    "contrast": "Độ tương phản",
+    "contrastHelp": "Cao dùng bảng màu tương phản Fluent với viền rõ nét. Thiết kế và màu nhấn sẽ tạm dừng.",
+    "contrastStandard": "Tiêu chuẩn",
+    "contrastHigh": "Cao",
+    "animations": "Hiệu ứng động",
+    "animationsHelp": "Chuyển tiếp mượt mà trong giao diện.",
+    "animationsSystem": "Hệ điều hành đang bật giảm hiệu ứng động – hiệu ứng động vẫn tắt.",
+    "on": "Bật",
+    "off": "Tắt",
+    "design": "Thiết kế",
+    "designHelp": "Mỗi thẻ hiển thị chế độ sáng ở bên trái và chế độ tối ở bên phải.",
+    "accent": "Màu nhấn",
+    "accentHelp": "Cho nút, liên kết và vùng chọn. Mỗi màu được điều chỉnh để chữ trên đó vẫn dễ đọc.",
+    "accentHighContrast": "Ở độ tương phản cao, màu nhấn tạm dừng.",
+    "accentSelected": "Đã chọn:",
+    "designs": {
+      "fluent": "Mặc định: Fluent 2 với xám trung tính và xanh lam, hợp với giao diện hệ thống.",
+      "wai": "Wolff Applied AI: xanh hải quân ở chế độ sáng, vàng tín hiệu ở chế độ tối."
+    }
   }
 }

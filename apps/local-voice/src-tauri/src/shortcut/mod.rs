@@ -529,6 +529,25 @@ pub fn change_theme_setting(app: AppHandle, theme: String) -> Result<(), String>
     Ok(())
 }
 
+/// Stores the appearance (design, accent, contrast, animations, scheme) as a
+/// JSON object. Only shape and size are checked here; the UI normalises the
+/// values (unknown designs or accents fall back to the defaults).
+#[tauri::command]
+#[specta::specta]
+pub fn change_appearance_setting(app: AppHandle, appearance: String) -> Result<(), String> {
+    if appearance.len() > 4096 {
+        return Err("appearance too large".into());
+    }
+    match serde_json::from_str::<serde_json::Value>(&appearance) {
+        Ok(serde_json::Value::Object(_)) => {}
+        _ => return Err("appearance must be a JSON object".into()),
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.appearance = Some(appearance);
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// Applies the appearance setting to the Windows title bar, which CSS
 /// `data-theme` cannot reach. `System` clears the override so the window follows
 /// Windows. Call this on startup and whenever the setting changes to keep the
