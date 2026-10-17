@@ -195,6 +195,53 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .lv-titlebar__slot:not(:empty) + .lv-titlebar__fallback {
   display: none;
 }
+/* Fensterknöpfe (rahmenloses Hauptfenster): Windows 11, 46×48, bündig am
+   rechten Rand; Schließen-Hover in Systemrot. */
+.lv-titlebar:has(.lv-window-controls) {
+  padding-inline-end: 0;
+}
+.lv-titlebar--plain {
+  justify-content: flex-end;
+}
+.lv-window-controls {
+  display: flex;
+  align-self: stretch;
+  flex-shrink: 0;
+  margin-inline-start: 8px;
+}
+.lv-window-button {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--colorNeutralForeground1);
+  cursor: default;
+}
+.lv-window-button:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+.lv-window-button:active {
+  background: var(--colorSubtleBackgroundPressed);
+}
+.lv-window-button--close:hover,
+.lv-window-button--close:active {
+  background: #c42b1c;
+  color: #fff;
+}
+.lv-window-button:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: -2px;
+}
+@media (forced-colors: active) {
+  .lv-window-button--close:hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
 /* Seitenkopf in der Titelleiste: Titel links (Subtitle 2, 16/22),
    Seitenaktionen rechts */
 .lv-titlebar .page-shell__head {

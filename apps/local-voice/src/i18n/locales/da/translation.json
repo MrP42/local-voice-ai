@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Åbn menu",
-    "navClose": "Luk menu"
+    "navClose": "Luk menu",
+    "windowControls": "Vinduesknapper",
+    "windowMinimize": "Minimer",
+    "windowMaximize": "Maksimer",
+    "windowRestore": "Gendan",
+    "windowClose": "Luk"
   }
 }

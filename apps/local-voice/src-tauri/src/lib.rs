@@ -3057,6 +3057,12 @@ pub fn run(cli_args: CliArgs) {
                     .min_inner_size(480.0, 420.0)
                     .resizable(true)
                     .maximizable(true)
+                    // Frameless: the in-app title bar (App.tsx) is the only
+                    // one and carries its own Windows 11 caption buttons, so
+                    // the product name is not shown twice. Its close button
+                    // calls `close()`, which runs the same CloseRequested
+                    // handler below as the native X (hide to tray).
+                    .decorations(false)
                     // Centred rather than wherever Windows would cascade it.
                     // The window is built hidden and shown later, so this is
                     // the placement the user sees on first appearance.

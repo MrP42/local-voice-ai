@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Otevřít nabídku",
-    "navClose": "Zavřít nabídku"
+    "navClose": "Zavřít nabídku",
+    "windowControls": "Ovládání okna",
+    "windowMinimize": "Minimalizovat",
+    "windowMaximize": "Maximalizovat",
+    "windowRestore": "Obnovit",
+    "windowClose": "Zavřít"
   }
 }

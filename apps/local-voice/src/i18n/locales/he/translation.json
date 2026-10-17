@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "פתיחת התפריט",
-    "navClose": "סגירת התפריט"
+    "navClose": "סגירת התפריט",
+    "windowControls": "פקדי חלון",
+    "windowMinimize": "מזער",
+    "windowMaximize": "הגדל",
+    "windowRestore": "שחזר",
+    "windowClose": "סגור"
   }
 }

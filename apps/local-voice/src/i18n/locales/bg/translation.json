@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Отваряне на менюто",
-    "navClose": "Затваряне на менюто"
+    "navClose": "Затваряне на менюто",
+    "windowControls": "Управление на прозореца",
+    "windowMinimize": "Минимизиране",
+    "windowMaximize": "Максимизиране",
+    "windowRestore": "Възстановяване",
+    "windowClose": "Затваряне"
   }
 }

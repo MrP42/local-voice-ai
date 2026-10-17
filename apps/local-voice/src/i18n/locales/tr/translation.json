@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Menüyü aç",
-    "navClose": "Menüyü kapat"
+    "navClose": "Menüyü kapat",
+    "windowControls": "Pencere denetimleri",
+    "windowMinimize": "Simge durumuna küçült",
+    "windowMaximize": "Ekranı kapla",
+    "windowRestore": "Önceki boyut",
+    "windowClose": "Kapat"
   }
 }

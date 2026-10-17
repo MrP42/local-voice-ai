@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Öppna menyn",
-    "navClose": "Stäng menyn"
+    "navClose": "Stäng menyn",
+    "windowControls": "Fönsterknappar",
+    "windowMinimize": "Minimera",
+    "windowMaximize": "Maximera",
+    "windowRestore": "Återställ",
+    "windowClose": "Stäng"
   }
 }

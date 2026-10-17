@@ -3672,7 +3672,12 @@
     "navCollapse": "Collapse menu",
     "navExpand": "Expand menu",
     "navOpen": "Open menu",
-    "navClose": "Close menu"
+    "navClose": "Close menu",
+    "windowControls": "Window controls",
+    "windowMinimize": "Minimize",
+    "windowMaximize": "Maximize",
+    "windowRestore": "Restore",
+    "windowClose": "Close"
   },
   "llmUpdate": {
     "cli": {

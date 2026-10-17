@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "मेनु खोल्नुहोस्",
-    "navClose": "मेनु बन्द गर्नुहोस्"
+    "navClose": "मेनु बन्द गर्नुहोस्",
+    "windowControls": "विन्डो नियन्त्रण",
+    "windowMinimize": "सानो बनाउनुहोस्",
+    "windowMaximize": "ठूलो बनाउनुहोस्",
+    "windowRestore": "पुनर्स्थापना गर्नुहोस्",
+    "windowClose": "बन्द गर्नुहोस्"
   }
 }

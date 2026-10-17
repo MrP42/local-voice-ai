@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "فتح القائمة",
-    "navClose": "إغلاق القائمة"
+    "navClose": "إغلاق القائمة",
+    "windowControls": "عناصر تحكم النافذة",
+    "windowMinimize": "تصغير",
+    "windowMaximize": "تكبير",
+    "windowRestore": "استعادة",
+    "windowClose": "إغلاق"
   }
 }

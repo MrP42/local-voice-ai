@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "메뉴 열기",
-    "navClose": "메뉴 닫기"
+    "navClose": "메뉴 닫기",
+    "windowControls": "창 컨트롤",
+    "windowMinimize": "최소화",
+    "windowMaximize": "최대화",
+    "windowRestore": "이전 크기로 복원",
+    "windowClose": "닫기"
   }
 }
