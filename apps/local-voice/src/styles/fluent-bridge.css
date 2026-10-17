@@ -329,6 +329,21 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 }
 .workspace-nav__item svg {
   flex-shrink: 0;
+  /* Fluents NavItem wählt nur bei Klick auf ein HTML-Element; ein Klick direkt
+     aufs SVG (eingeklappt fast die ganze Fläche) ginge sonst ins Leere. */
+  pointer-events: none;
+}
+/* Auswahllinie: Fluent setzt sie als ::after mit position:absolute, aber ohne
+   Anker – sie stünde an der Fluss-Position minus 16px und wanderte eingeklappt
+   (Symbol zentriert) in den Knopf. Fest an den linken Rand, vertikal mittig. */
+.workspace-nav__item.workspace-nav__item {
+  position: relative;
+}
+.workspace-nav__item.workspace-nav__item::after {
+  inset-inline-start: 0;
+  inset-block: 0;
+  margin-inline-start: 0;
+  margin-block: auto;
 }
 .workspace-nav[data-collapsed="true"] .workspace-nav__item {
   justify-content: center;
