@@ -5,15 +5,25 @@ import { test, expect, type Page } from "@playwright/test";
 // je Ansicht höchstens ein Primärbutton. Schreibt Abnahme-Screenshots der
 // Hauptseiten hell/dunkel bei 1440 und 390 px nach test-results/fluent/.
 
-async function setup(page: Page, theme: "light" | "dark") {
+// `desktop`: wie in der Tauri-App (window.isTauri), mit protokollierten
+// Fensterbefehlen; `onboarding`: Einrichtung noch nicht abgeschlossen.
+async function setup(
+  page: Page,
+  theme: "light" | "dark",
+  opts: { desktop?: boolean; onboarding?: boolean } = {},
+) {
   page.on("pageerror", (error) => {
     throw error;
   });
-  await page.addInitScript((THEME) => {
+  await page.addInitScript(({ THEME, DESKTOP, ONBOARDING }) => {
     const callbacks = new Map<number, unknown>();
+    const resizeHandlers: number[] = [];
+    const win = { calls: [] as string[], maximized: false };
+    (window as any).__win = win;
+    if (DESKTOP) (window as any).isTauri = true;
     let callback = 0;
     const settings = {
-      onboarding_completed: true,
+      onboarding_completed: !ONBOARDING,
       app_language: "de",
       theme: THEME,
       show_whats_new_on_update: false,
@@ -56,7 +66,30 @@ async function setup(page: Page, theme: "light" | "dark") {
         },
         unregisterCallback: (id: number) => callbacks.delete(id),
         convertFileSrc: (path: string) => path,
-        invoke: async (cmd: string) => {
+        invoke: async (cmd: string, args?: any) => {
+          if (cmd.startsWith("plugin:window|")) {
+            const name = cmd.slice("plugin:window|".length);
+            win.calls.push(name);
+            if (name === "is_maximized") return win.maximized;
+            if (name === "toggle_maximize") {
+              win.maximized = !win.maximized;
+              for (const id of resizeHandlers)
+                (callbacks.get(id) as (e: unknown) => void)?.({
+                  event: "tauri://resize",
+                  id: 0,
+                  payload: { width: 1440, height: 900 },
+                });
+            }
+            return null;
+          }
+          // Einrichtung: Berechtigungen noch offen, damit der Bildschirm
+          // „Berechtigungen“ stehen bleibt (mit allen Rechten springt der
+          // Assistent sofort weiter).
+          if (ONBOARDING && cmd.includes("permission")) return false;
+          if (cmd === "plugin:event|listen" && args?.event === "tauri://resize") {
+            resizeHandlers.push(args.handler);
+            return ++callback;
+          }
           if (cmd === "get_app_settings" || cmd === "get_default_settings")
             return settings;
           if (cmd === "plugin:os|locale") return "de-DE";
@@ -113,7 +146,7 @@ async function setup(page: Page, theme: "light" | "dark") {
       },
     });
     localStorage.setItem("lva.ui.settings.tab", "dictation");
-  }, theme);
+  }, { THEME: theme, DESKTOP: !!opts.desktop, ONBOARDING: !!opts.onboarding });
 }
 
 const PAGES: [string, string][] = [
@@ -328,3 +361,112 @@ for (const [label, id] of REFLOW_PAGES) {
     expect(m.body).toBeLessThanOrEqual(0);
   });
 }
+
+// Rahmenloses Hauptfenster (Windows 11): die eigene Titelleiste ist die
+// einzige, rechts die Fensterknöpfe. Belege hell/dunkel unter
+// test-results/fluent-rahmen/ (abgenommene Fassung: docs/belege/fluent-rahmen/).
+test.describe("Fensterrahmen", () => {
+  test("ohne Tauri keine Fensterknöpfe", async ({ page }) => {
+    await setup(page, "light");
+    await page.goto("/");
+    await expect(page.locator(".lv-titlebar")).toBeVisible();
+    await expect(page.locator(".lv-window-controls")).toHaveCount(0);
+  });
+
+  test("Knöpfe rufen die Fenster-API, Maximieren wechselt zu Wiederherstellen", async ({ page }) => {
+    await setup(page, "light", { desktop: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const bar = page.locator(".lv-titlebar");
+    await expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
+    const group = bar.getByRole("group", { name: "Fenster" });
+    await expect(group.getByRole("button")).toHaveCount(3);
+    // bündig rechts, 46×48
+    const box = await group.getByRole("button", { name: "Schließen" }).boundingBox();
+    expect(box).toMatchObject({ width: 46, height: 48, y: 0 });
+    expect(box!.x + box!.width).toBe(1440);
+    // Produktname genau einmal sichtbar
+    await expect(page.getByText("Local Voice AI", { exact: true }).filter({ visible: true })).toHaveCount(1);
+
+    await group.getByRole("button", { name: "Minimieren" }).click();
+    await group.getByRole("button", { name: "Maximieren" }).click();
+    await expect(group.getByRole("button", { name: "Wiederherstellen" })).toBeVisible();
+    await group.getByRole("button", { name: "Wiederherstellen" }).click();
+    await expect(group.getByRole("button", { name: "Maximieren" })).toBeVisible();
+    await group.getByRole("button", { name: "Schließen" }).click();
+    // Die Befehle laufen asynchron (Fenster-API wird nachgeladen)
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          ((window as any).__win.calls as string[]).filter((c) => c !== "is_maximized"),
+        ),
+      )
+      .toEqual([
+      "minimize",
+      "toggle_maximize",
+      "toggle_maximize",
+      "close",
+    ]);
+
+    // Schließen-Hover in Systemrot
+    const close = group.getByRole("button", { name: "Schließen" });
+    await close.hover();
+    await expect(close).toHaveCSS("background-color", "rgb(196, 43, 28)");
+  });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`Beleg Titelleiste (${theme})`, async ({ page }) => {
+      await setup(page, theme, { desktop: true });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto("/");
+      await page
+        .getByRole("navigation", { name: "Hauptnavigation" })
+        .getByRole("button", { name: "Vorlesen", exact: true })
+        .click();
+      await expect(page.locator(".lv-titlebar #page-title")).toBeVisible();
+      await page.locator(".lv-titlebar__app").hover();
+      await page.screenshot({
+        path: `test-results/fluent-rahmen/${theme}-1440-tts.png`,
+        animations: "disabled",
+      });
+      await page.getByRole("button", { name: "Schließen" }).hover();
+      await page.screenshot({
+        path: `test-results/fluent-rahmen/${theme}-titelleiste-schliessen-hover.png`,
+        clip: { x: 0, y: 0, width: 1440, height: 48 },
+        animations: "disabled",
+      });
+    });
+
+    test(`schmal ohne Querscroll mit Fensterknöpfen (${theme}, 390)`, async ({ page }) => {
+      await setup(page, theme, { desktop: true });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto("/");
+      const group = page.getByRole("group", { name: "Fenster" });
+      await expect(group).toBeVisible();
+      const r = await group.boundingBox();
+      expect(r!.x + r!.width).toBe(390);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+      await page.screenshot({
+        path: `test-results/fluent-rahmen/${theme}-390-home.png`,
+        animations: "disabled",
+      });
+    });
+  }
+
+  test("Einrichtung: Ziehleiste mit Fensterknöpfen", async ({ page }) => {
+    await setup(page, "light", { desktop: true, onboarding: true });
+    await page.setViewportSize({ width: 800, height: 600 });
+    await page.goto("/");
+    const bar = page.locator(".lv-titlebar--plain");
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
+    await expect(bar.getByRole("group", { name: "Fenster" }).getByRole("button")).toHaveCount(3);
+    await page.screenshot({
+      path: "test-results/fluent-rahmen/light-800-einrichtung.png",
+      animations: "disabled",
+    });
+  });
+});

@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Mở menu",
-    "navClose": "Đóng menu"
+    "navClose": "Đóng menu",
+    "windowControls": "Điều khiển cửa sổ",
+    "windowMinimize": "Thu nhỏ",
+    "windowMaximize": "Phóng to",
+    "windowRestore": "Khôi phục",
+    "windowClose": "Đóng"
   }
 }

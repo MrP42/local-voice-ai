@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "Apri menu",
-    "navClose": "Chiudi menu"
+    "navClose": "Chiudi menu",
+    "windowControls": "Controlli finestra",
+    "windowMinimize": "Riduci a icona",
+    "windowMaximize": "Ingrandisci",
+    "windowRestore": "Ripristina",
+    "windowClose": "Chiudi"
   }
 }

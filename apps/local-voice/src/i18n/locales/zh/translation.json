@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "打开菜单",
-    "navClose": "关闭菜单"
+    "navClose": "关闭菜单",
+    "windowControls": "窗口控件",
+    "windowMinimize": "最小化",
+    "windowMaximize": "最大化",
+    "windowRestore": "还原",
+    "windowClose": "关闭"
   }
 }

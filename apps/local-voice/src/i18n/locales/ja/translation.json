@@ -968,6 +968,11 @@
   },
   "workspace": {
     "navOpen": "メニューを開く",
-    "navClose": "メニューを閉じる"
+    "navClose": "メニューを閉じる",
+    "windowControls": "ウィンドウ操作",
+    "windowMinimize": "最小化",
+    "windowMaximize": "最大化",
+    "windowRestore": "元に戻す",
+    "windowClose": "閉じる"
   }
 }

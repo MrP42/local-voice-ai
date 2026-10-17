@@ -27,6 +27,7 @@ import {
 import { Menu } from "lucide-react";
 import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
+import { WindowControls } from "./components/shell/WindowControls";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
@@ -405,12 +406,27 @@ function App() {
   // stable wrapper around this node, so crossing between onboarding steps and
   // the main app never remounts it (which would drop any in-flight toast).
   let content: ReactNode;
-  if (onboardingStep === "accessibility") {
+  if (onboardingStep === "accessibility" || onboardingStep === "model") {
+    // Bildschirme vor der App: schlichte Titelleiste nur zum Ziehen und mit
+    // den Fensterknöpfen (rahmenloses Fenster). Der Produktname steht als
+    // Logo im Inhalt, deshalb hier kein zweiter Titel.
     content = (
-      <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
+      <div className="h-screen flex flex-col">
+        <header
+          className="lv-titlebar lv-titlebar--plain"
+          data-tauri-drag-region="deep"
+        >
+          <WindowControls />
+        </header>
+        <div className="flex-1 min-h-0 overflow-auto">
+          {onboardingStep === "accessibility" ? (
+            <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
+          ) : (
+            <Onboarding onModelSelected={handleModelSelected} />
+          )}
+        </div>
+      </div>
     );
-  } else if (onboardingStep === "model") {
-    content = <Onboarding onModelSelected={handleModelSelected} />;
   } else {
     content = (
       <div
@@ -420,8 +436,12 @@ function App() {
         <WhatsNewGate />
         <ModelUpdateGate />
         {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
-            daneben der Seitentitel mit den Aktionen der Seite (PageShell). */}
-        <header className="lv-titlebar" data-tauri-drag-region>
+            daneben der Seitentitel mit den Aktionen der Seite (PageShell),
+            rechts die Fensterknöpfe. Das Hauptfenster ist rahmenlos, dies ist
+            die einzige Titelleiste: freie Flächen ziehen das Fenster, ein
+            Doppelklick maximiert ("deep" = ganzer Teilbaum, Bedienelemente
+            ausgenommen). */}
+        <header className="lv-titlebar" data-tauri-drag-region="deep">
           <FluentTooltip content={hamburgerLabel} relationship="label">
             <FluentButton
               ref={hamburgerRef}
@@ -437,7 +457,7 @@ function App() {
               }
             />
           </FluentTooltip>
-          <span className="lv-titlebar__app" data-tauri-drag-region>
+          <span className="lv-titlebar__app">
             <AppMark />
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
@@ -446,6 +466,7 @@ function App() {
           <span className="lv-titlebar__fallback">
             {t(SECTIONS_CONFIG[currentSection].labelKey)}
           </span>
+          <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
           <Sidebar
