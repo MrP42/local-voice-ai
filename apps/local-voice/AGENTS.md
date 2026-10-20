@@ -114,6 +114,21 @@ artifact with the `TAURI_SIGNING_PRIVATE_KEY` repository secret, publishes the
 release and attaches `latest.json`. The workflow refuses to run if the tag and
 `tauri.conf.json` disagree.
 
+**macOS is built locally, not in CI.** macOS runners bill at 10× the Linux
+rate and exhausted the account's included Actions quota within days, so there
+is no macOS workflow any more. After the tag push and the Windows release, run
+on the MacBook (from `apps/local-voice`, tag checked out,
+`TAURI_SIGNING_PRIVATE_KEY` exported):
+
+```bash
+scripts/release-macos-local.sh          # aarch64 + x86_64; or: aarch64 | x86_64
+```
+
+It builds both DMGs, uploads DMG, `.app.tar.gz` and `.sig` to the release and
+merges the `darwin-*` entries into the release's `latest.json`. The Apple
+(iOS/watchOS) validation formerly in `apple.yml` is
+`apps/apple/scripts/validate_local.sh`.
+
 Requirements for the update path to work at all: the repository (or at least
 its releases) must be **public** — the updater fetches
 `releases/latest/download/latest.json` unauthenticated — and the release must
