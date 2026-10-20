@@ -55,8 +55,10 @@ CONF_BACKUP="$WORK/tauri.conf.json"
 cp src-tauri/tauri.conf.json "$CONF_BACKUP"
 trap 'cp "$CONF_BACKUP" src-tauri/tauri.conf.json; rm -rf "$WORK"' EXIT
 
-gh release download "$TAG" -R "$REPO" -p latest.json -D "$WORK" --clobber
 PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# latest.json schreibt release-windows.yml erst am Ende; fehlt sie noch, mit leerem Geruest starten.
+empty_latest() { jq -n --arg v "$VERSION" --arg d "$PUB_DATE" '{version: $v, notes: "", pub_date: $d, platforms: {}}'; }
+gh release download "$TAG" -R "$REPO" -p latest.json -D "$WORK" --clobber 2>/dev/null || empty_latest > "$WORK/latest.json"
 
 build_one() {
   local arch="$1" triple="$1-apple-darwin"
@@ -106,7 +108,7 @@ esac
 
 # Kurz vor dem Hochladen neu holen und nur die darwin-Eintraege uebernehmen,
 # damit ein spaeter fertig gewordener Windows-Eintrag nicht verloren geht.
-gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/remote.json" --clobber
+gh release download "$TAG" -R "$REPO" -p latest.json -O "$WORK/remote.json" --clobber 2>/dev/null || empty_latest > "$WORK/remote.json"
 mkdir -p "$WORK/upload"
 jq -s '.[0] * {platforms: (.[0].platforms + (.[1].platforms | with_entries(select(.key | startswith("darwin")))))}' \
   "$WORK/remote.json" "$WORK/latest.json" > "$WORK/upload/latest.json"
