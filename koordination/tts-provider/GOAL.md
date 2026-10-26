@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/tts-provider
 iteration: 1
 erstellt: 2026-10-26
-aktualisiert: 2026-10-26T22:01
+aktualisiert: 2026-10-26T22:06
 ---
 
 # Goal: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
@@ -106,11 +106,13 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - B2 [offen] 2026-10-26T21:34 Ursache: Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz · Owner: Patrick · entsperrt, wenn: ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
+- 2026-10-26 (Patrick): O1 entschieden: HF-Bedingungen gradium/phonon-40m-de angenommen (CC BY-NC 4.0, nur nichtkommerzielle Evaluation). Modelle lokal: D:\lv-build\phonon\models\phonon-40m-de @79cfc7b47fcfc0b666657b981eb366415023a862, phonon-31m-en @92741c5b07d085ff840e26fea8ce43110b87852f (nur model.q8.gguf, Tokenizer, Konfig, Standardstimme).
+- 2026-10-26: B3 geklaert (thorsten-high von lessac/Blizzard 2013 abgeleitet; Katalog non_commercial korrekt).
 - 2026-10-26: Basis `origin/main` (Kette #76–#86 ist gemergt).
 - 2026-10-26: Neue dyn-Anbieterschicht neben dem bestehenden `TtsEngine`-Trait statt dessen Umbau (Rückwärtskompatibilität, Cache-Tags bleiben).
 
 ## Nächste empfohlene Aktion
-Patrick: Permission-Regel fuer ptts.exe + Merge setzen oder selbst ausfuehren; HF-Bedingungen phonon-40m-de annehmen; dann P2L
+Patrick: ptts.exe-Ausfuehrung erlauben (Permission-Regel) und PR #94 mergen; dann P2L mit --tts-model D:/lv-build/phonon/models/phonon-40m-de --tts-lang de
 
 ## Verlauf
 - 2026-10-26T14:42 DISCOVERY — Goal State angelegt
@@ -128,4 +130,5 @@ Patrick: Permission-Regel fuer ptts.exe + Merge setzen oder selbst ausfuehren; H
 - 2026-10-26T19:16 REWORK (Runde 1) — Budget ~4,6 MTok (131 %); P7n abgenommen c21d9fab; P6 Messlauf laeuft exklusiv
 - 2026-10-26T21:34 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz
 - 2026-10-26T22:01 BLOCKED (Runde 1) — 26.10. abends: B3 geklaert (326af9ae). Weiter gesperrt: ptts.exe (Code from External), PR-Merge (Merge Without Review), HF-Bedingungen (Chrome nicht bei HF angemeldet)
+- 2026-10-26T22:06 BLOCKED (Runde 1) — O1 erledigt (HF-Bedingungen angenommen, Modelle lokal geladen)
 
