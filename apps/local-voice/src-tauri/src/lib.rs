@@ -40,6 +40,7 @@ mod transcription_coordinator;
 mod translator;
 mod tray;
 mod tray_i18n;
+mod tts_cli; // P3b (Goal tts-provider)
 mod utils;
 
 pub use cli::CliArgs;
@@ -2493,6 +2494,9 @@ pub fn run(cli_args: CliArgs) {
         || cli_args.list_devices
         || cli_args.list_models
         || cli_args.tts_test
+        || cli_args.tts_providers // P3b
+        || cli_args.tts_voices // P3b
+        || cli_args.tts_bench // P3b
         || cli_args.import_meeting.is_some()
         || !cli_args.import_queue.is_empty() // U7
         || cli_args.dump_meeting.is_some()
@@ -2662,12 +2666,24 @@ pub fn run(cli_args: CliArgs) {
                 // TTS-Selbsttest: braucht weder Modelle noch Mikrofon — nur den
                 // TtsManager. Misst Serverstart und Synthese, validiert das WAV
                 // und beendet den Prozess mit einem CI-tauglichen Exit-Code.
-                if cli_args.tts_test {
+                if cli_args.tts_test
+                    || cli_args.tts_providers
+                    || cli_args.tts_voices
+                    || cli_args.tts_bench
+                {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
                         let code = run_headless_guarded(|| {
                             crate::selftest::begin_headless_run();
+                            // P3b: Anbieter-Betriebsarten (--tts-providers, --tts-voices,
+                            // --tts-bench, --tts-test mit --tts-provider). Ohne sie läuft
+                            // das bisherige Fish-Selbsttest unverändert weiter.
+                            if let Some(code) =
+                                crate::tts_cli::run_provider_modes(&app_handle, &args)
+                            {
+                                return code;
+                            }
                             let tts = managers::tts::TtsManager::new(&app_handle);
                             let text = args.tts_text.clone().unwrap_or_else(|| {
                                 "Dies ist der Selbsttest der lokalen Sprachausgabe.".to_string()

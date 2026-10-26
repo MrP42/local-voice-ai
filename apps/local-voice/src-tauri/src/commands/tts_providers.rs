@@ -18,6 +18,11 @@
 //! Schalter in der Konfiguration), und das Einstellungsfeld `tts_providers`
 //! hat bewusst keinen allgemeinen Setter.
 //!
+//! Die Agentenbrücke (Paket P3b) nutzt davon nur [`select_provider`] (Anbieter
+//! und Stimme wählen: prüft `check_use`, setzt nie eine Freigabe) und die
+//! lesenden Kernfunktionen ([`build_entries`]); die CLI kennt gar keinen
+//! dieser Befehle.
+//!
 //! ## Ereignis
 //!
 //! `tts-provider-preview` ([`TtsProviderPreview`]): `started` →
@@ -355,9 +360,20 @@ pub async fn tts_provider_select(
     id: String,
     voice: Option<String>,
 ) -> Result<(), TtsError> {
-    let tts = manager(&app);
+    select_provider(&app, &id, voice).await
+}
+
+/// Der Weg hinter `tts_provider_select` — auch für die Agentenbrücke: Momentaufnahme,
+/// `check_use`, Einstellungen schreiben (unter der Sperre), Stimmwechsel anstoßen.
+/// Setzt nie Opt-in, Zustimmung oder Fernzugriff.
+pub(crate) async fn select_provider(
+    app: &AppHandle,
+    id: &str,
+    voice: Option<String>,
+) -> Result<(), TtsError> {
+    let tts = manager(app);
     let snapshot = tts.provider_snapshot();
-    mutate_settings(&app, |s| select_in(s, &snapshot, &id, voice))?;
+    mutate_settings(app, |s| select_in(s, &snapshot, id, voice))?;
     tts.voice_changed().await;
     Ok(())
 }

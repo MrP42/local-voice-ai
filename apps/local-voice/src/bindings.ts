@@ -6451,6 +6451,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  */
 "recording.start" | "transcribe.file" | "tts.render" | 
 /**
+ * Sprachausgabe-Anbieter, Stimmen, Gesundheit und Benchmark-Ergebnisse lesen
+ * (Goal tts-provider, P3b). Nur lesend: Freigaben der Anbieter setzt kein Werkzeug.
+ */
+"tts.read" | 
+/**
  * Daten an einen Webhook senden (B5, n8n-Bruecke).
  */
 "webhook.post" | 

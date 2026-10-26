@@ -112,7 +112,9 @@ pub struct CliArgs {
     pub tts_text: Option<String>,
 
     /// Reference voice id for --tts-test (a folder under <fish_dir>/references).
-    /// Overrides the persisted tts_voice setting for this run only.
+    /// Overrides the persisted tts_voice setting for this run only. With
+    /// --tts-provider (--tts-test, --tts-bench): the voice of that provider (a
+    /// piper voice id, or the voice name of phonon, openai-speech, ollama-speech).
     #[arg(long, value_name = "ID")]
     pub tts_voice: Option<String>,
 
@@ -542,4 +544,87 @@ pub struct CliArgs {
     /// registered. Exit 0 ended, 1 error, 2 no sandbox.
     #[arg(long, hide = true)]
     pub agent_bridge_serve: bool,
+
+    // P3b (Goal tts-provider)
+    /// List every text-to-speech provider and exit: tier, capabilities, license,
+    /// health (time-limited probe) and the release state taken from the app
+    /// settings (enabled, license acknowledged, remote allowed, blocked and why).
+    /// Read-only. Honors --json (a JSON array, one object per provider) and --out.
+    /// Exit 0.
+    #[arg(long)]
+    pub tts_providers: bool,
+
+    /// List the voices of --tts-provider (optionally only --tts-lang) and exit.
+    /// A provider that the app settings do not release is refused (exit 3).
+    /// Honors --json and --out. Exit 0 ok, 1 error, 2 bad input, 3 blocked.
+    #[arg(long)]
+    pub tts_voices: bool,
+
+    /// Provider id for --tts-voices, --tts-test and --tts-bench (fish, piper,
+    /// phonon, openai-speech, ollama-speech). With --tts-test the self-test runs
+    /// through this provider instead of the local fish-speech server (without the
+    /// option --tts-test behaves exactly as before). The command line has NO switch
+    /// for opt-in, license acknowledgement or remote access: a provider that the
+    /// app does not release ends with exit 3 and says what is missing in the app.
+    #[arg(long, value_name = "ID")]
+    pub tts_provider: Option<String>,
+
+    /// Language code for --tts-voices (filter), --tts-test and --tts-bench
+    /// (default: detected for --tts-test, `de` for --tts-bench).
+    #[arg(long, value_name = "CODE")]
+    pub tts_lang: Option<String>,
+
+    /// Override the executable of --tts-provider phonon for this run (precedence:
+    /// argument > environment LVA_TTS_<PROVIDER>_EXE_PATH > settings). Never
+    /// written to the settings.
+    #[arg(long, value_name = "PATH")]
+    pub tts_exe: Option<PathBuf>,
+
+    /// Override the model of --tts-provider phonon, openai-speech or ollama-speech
+    /// for this run (argument > environment LVA_TTS_<PROVIDER>_MODEL > settings).
+    #[arg(long, value_name = "MODEL")]
+    pub tts_model: Option<String>,
+
+    /// Override the server address of --tts-provider openai-speech or
+    /// ollama-speech for this run (argument > environment
+    /// LVA_TTS_<PROVIDER>_BASE_URL > settings). An address outside this computer
+    /// stays blocked unless the app settings allow remote access.
+    #[arg(long, value_name = "URL")]
+    pub tts_base_url: Option<String>,
+
+    /// Benchmark one provider and exit (interface to scripts/bench/tts, schema in
+    /// scripts/bench/tts/schema/README.md). Needs --tts-provider, --bench-corpus
+    /// and --bench-out; optional --tts-voice, --tts-lang, --bench-subset,
+    /// --bench-warm, --bench-cold and --tts-exe/--tts-model/--tts-base-url. Per
+    /// sentence it runs --bench-cold cold syntheses (fresh provider state; for
+    /// fish the self-started server is restarted, a foreign one is left alone)
+    /// and --bench-warm warm ones (after one unrecorded warm-up), one after the
+    /// other, and writes rows.jsonl (one row per synthesis, failures included),
+    /// env.json and wav/<utterance_id>.wav to --bench-out. Ctrl+C stops cleanly.
+    /// Honors --json (summary on stdout) and --out. Exit 0 rows written, 1 error
+    /// or provider not ready, 2 bad input, 3 blocked, 4 aborted after repeated
+    /// failures (rows kept), 130 interrupted.
+    #[arg(long)]
+    pub tts_bench: bool,
+
+    /// JSONL corpus for --tts-bench (fields id, text, smoke).
+    #[arg(long, value_name = "FILE")]
+    pub bench_corpus: Option<PathBuf>,
+
+    /// Subset of the corpus for --tts-bench: `smoke` (sentences marked smoke) or
+    /// `full` (default).
+    #[arg(long, value_name = "NAME")]
+    pub bench_subset: Option<String>,
+
+    /// Warm syntheses per sentence for --tts-bench (default 3).
+    #[arg(long, value_name = "N")]
+    pub bench_warm: Option<u32>,
+
+    /// Cold syntheses per sentence for --tts-bench (default 1).
+    #[arg(long, value_name = "N")]
+    pub bench_cold: Option<u32>,
+
+    /// Output directory of --tts-bench (rows.jsonl, env.json, wav/).
+    #[arg(long, value_name = "DIR")]
+    pub bench_out: Option<PathBuf>,
 }

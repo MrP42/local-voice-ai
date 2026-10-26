@@ -40,6 +40,10 @@
 //!   `EngineImpl::Provider`). Paket P3a.
 //! * [`preview`] — Probestimme mit Stream-Wiedergabe, Abbruch und dem Ereignis
 //!   `tts-provider-preview`. Paket P3a.
+//! * [`bench`] — die Benchmark-Schleife (`--tts-bench`, Schnittstelle zum
+//!   Python-Harness `scripts/bench/tts`): Korpus, Messung über
+//!   `stream_synthesize`, `rows.jsonl`/`env.json`/WAVs. Rein, mit
+//!   injizierter Registry. Paket P3b.
 //! * [`host`] — der `TtsManager` als Gastgeber (Fish-Synthese, Momentaufnahme
 //!   für die Befehle in `commands/tts_providers.rs`). Paket P3a.
 //! * `contract_tests` (nur Tests) — `contract_suite`, der Vertragstest-Satz,
@@ -102,6 +106,7 @@
 //! P2/P3 — der Vertrag ist trotzdem vollständig und getestet.
 #![allow(dead_code, unused_imports)]
 
+pub mod bench;
 pub mod builtin;
 pub mod contract;
 pub mod host;

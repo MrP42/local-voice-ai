@@ -85,6 +85,42 @@ pub const CATALOG: &[CatalogEntry] = &[
         description: "Erzeugt aus einer Vorlesen-Seite eine Audiodatei.",
     },
     CatalogEntry {
+        name: "tts_providers_list",
+        capability: Capability::TtsRead,
+        title: "Sprachausgabe-Anbieter auflisten",
+        description: "Listet die Sprachausgabe-Anbieter mit Fähigkeiten, Lizenz, Gesundheit und Sperrstatus.",
+    },
+    CatalogEntry {
+        name: "tts_provider_capabilities",
+        capability: Capability::TtsRead,
+        title: "Fähigkeiten eines Anbieters lesen",
+        description: "Liefert Sprachen, Streaming, Geräte, Plattformen und Lizenz eines Sprachausgabe-Anbieters.",
+    },
+    CatalogEntry {
+        name: "tts_provider_voices",
+        capability: Capability::TtsRead,
+        title: "Stimmen eines Anbieters auflisten",
+        description: "Listet die Stimmen eines Anbieters; ein gesperrter Anbieter antwortet mit dem Sperrgrund.",
+    },
+    CatalogEntry {
+        name: "tts_provider_health",
+        capability: Capability::TtsRead,
+        title: "Gesundheit eines Anbieters prüfen",
+        description: "Prüft mit Frist, ob ein Sprachausgabe-Anbieter bereit ist, und nennt sonst den Grund.",
+    },
+    CatalogEntry {
+        name: "tts_benchmark_results",
+        capability: Capability::TtsRead,
+        title: "Benchmark-Ergebnisse lesen",
+        description: "Listet die Zusammenfassungen der Sprachausgabe-Benchmarks und liefert eine results.json.",
+    },
+    CatalogEntry {
+        name: "tts_provider_select",
+        capability: Capability::TtsRender,
+        title: "Anbieter und Stimme wählen",
+        description: "Wählt Anbieter und Stimme fürs Vorlesen; ein gesperrter Anbieter lässt sich nicht wählen, Freigaben setzt nur der Nutzer.",
+    },
+    CatalogEntry {
         name: "list_workflows",
         capability: Capability::WorkflowRead,
         title: "Automationen auflisten",

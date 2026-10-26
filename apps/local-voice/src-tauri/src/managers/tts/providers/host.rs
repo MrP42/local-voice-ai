@@ -20,6 +20,7 @@ use std::sync::{Arc, Weak};
 
 use tauri_specta::Event;
 
+use super::bench::ColdReset;
 use super::builtin::SynthFn;
 use super::contract::{AudioClip, CancelToken, ProviderDescriptor, SynthesisOptions, TtsError};
 use super::policy::{
@@ -113,9 +114,64 @@ impl ProviderSnapshot {
 }
 
 impl TtsManager {
+    /// Die Fish-Synthese für eine EIGENE Registry (CLI-Benchmark, `--tts-test
+    /// --tts-provider fish`): dieselbe Closure, die auch die Registry des
+    /// Managers benutzt. Die Registry der CLI hat ihre eigene Konfiguration
+    /// (mit Overrides) und berührt die langlebige Registry des Managers nicht.
+    pub(crate) fn fish_synth_fn(self: &Arc<Self>) -> SynthFn {
+        fish_synth(Arc::downgrade(self))
+    }
+
+    /// Kaltstart des Fish-Servers für den Benchmark. Beendet NUR einen
+    /// SELBST gestarteten Server (er ist dann der Kaltstart-Fall) und startet
+    /// ihn neu; die Zeit bis „bereit“ ist `process_start_ms`. Läuft ein
+    /// fremd gestarteter Server, bleibt er unberührt (`foreign_server_kept`):
+    /// der Kaltlauf ist dann keiner, und der Aufrufer vermerkt das. Der Start
+    /// läuft über `ensure_server` — also mit RAM-Start-Gate und Job-Objekt.
+    pub(crate) async fn bench_cold_reset(&self) -> Result<ColdReset, TtsError> {
+        self.refresh_from_settings();
+        let owned = self.core.owns_server();
+        if owned {
+            self.stop_owned_server();
+        } else {
+            let port = *self.core.port.lock().unwrap();
+            if self.core.health_ok(port).await {
+                return Ok(ColdReset {
+                    process_start_ms: None,
+                    kind: "foreign_server_kept",
+                });
+            }
+        }
+        let started = std::time::Instant::now();
+        self.ensure_server().await.map_err(TtsError::unavailable)?;
+        Ok(ColdReset {
+            process_start_ms: Some(started.elapsed().as_secs_f64() * 1000.0),
+            kind: if owned {
+                "server_restarted"
+            } else {
+                "server_started"
+            },
+        })
+    }
+
+    /// Beendet AUSSCHLIESSLICH den selbst gestarteten Fish-Server (samt
+    /// Prozessbaum); ein fremder bleibt unberührt. `true`: es gab einen eigenen.
+    pub(crate) fn stop_owned_server(&self) -> bool {
+        let owned = self.core.owns_server();
+        if owned {
+            self.kill_owned_child();
+            self.core
+                .owns_server
+                .store(false, std::sync::atomic::Ordering::Release);
+            self.core.set_phase(TtsPhase::Stopped, None);
+        }
+        owned
+    }
+
     /// Registry auf den Stand der Einstellungen bringen und die wirksame
     /// Konfiguration liefern (Umgebung eingerechnet, keine Overrides — die
-    /// gibt es nur für die CLI, Paket P3b). Billig, wenn nichts geändert ist.
+    /// gibt es nur für die CLI, die ihre eigene Registry baut: `tts_cli`, P3b).
+    /// Billig, wenn nichts geändert ist.
     pub(crate) fn sync_providers(
         &self,
         providers: &TtsProvidersSettings,

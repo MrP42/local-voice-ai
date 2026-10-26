@@ -77,6 +77,12 @@ Inhalte, nur Angaben zur Entstehung.
 | `add_youtube_source` | Besprechung mit Quelle YouTube für einen **einzelnen** Video-Link | nur ein oEmbed-Abruf (Titel, Kanal); **kein Download**, kein `yt-dlp`; keine Playlists |
 | `tts_page_create` | Seite der Vorlesen-Bibliothek mit Text, liefert `page_id` | Text bis 20 000 Zeichen |
 | `tts_render_audio` | erzeugt aus dem Text einer Seite eine Audiodatei im Ordner der Seite (Stimme und Format wie in der App eingestellt, Standard WAV) | ein Lauf zugleich; eine vorhandene Datei wird nie überschrieben; Dauer je nach Länge und Engine |
+| `tts_providers_list` | listet die Sprachausgabe-Anbieter mit Stufe, Fähigkeiten, Lizenz, Gesundheit, Freigabestand (`enabled`, `license_acked`, `allow_remote`) und Sperrgrund (`blocked`) | nur lesend, eigenes Recht **Sprachausgabe lesen** (`tts.read`); Gesundheit mit Frist (4 s je Anbieter) |
+| `tts_provider_capabilities` | Fähigkeiten, Lizenz und Freigabestand EINES Anbieters (`id`) | nur lesend (`tts.read`) |
+| `tts_provider_voices` | Stimmen eines Anbieters (`id`, optional `language`) | nur lesend (`tts.read`); gilt als Nutzung: ein nicht freigegebener Anbieter antwortet mit dem Sperrgrund; höchstens 200 Stimmen |
+| `tts_provider_health` | Gesundheit eines Anbieters (`id`) mit Frist, bei „nicht bereit“ mit Grund und Hinweis | nur lesend (`tts.read`) |
+| `tts_provider_select` | wählt Anbieter (`id`) und Stimme (`voice`) fürs Vorlesen | Recht wie `tts_render_audio` (`tts.render`); **nur wenn die Freigaben in der App es erlauben**: Opt-in, Lizenz-Bestätigung und Fernzugriff setzt ausschließlich der Nutzer, nie ein Werkzeug; die Stimme muss in `tts_provider_voices` stehen, ohne `voice` bleibt die bisherige |
+| `tts_benchmark_results` | ohne Argument: Liste der Benchmark-Zusammenfassungen; mit `run_dir` (Kennung, kein Pfad; optional `source` `docs` oder `bench`): deren `results.json` | nur lesend (`tts.read`); nur `docs/tts/benchmarks/<Datum>/` und der Messordner (`%LOCALAPPDATA%\lva-bench\tts\<Lauf>\report\`); höchstens 512 KiB |
 | `start_recording` | Aufnahme starten | **nie ohne deine Einwilligung in der App** (siehe unten); Ende nach `max_minutes` (Vorgabe 480, höchstens 720) |
 | `stop_recording` | laufende Aufnahme beenden | gleiches Recht wie „Aufnahme starten“, braucht also immer eine Freigabe |
 | `get_action_status` | Stand einer Freigabe (`pending`, `approved`, `denied`, `expired`, `used`) | nur die eigenen Freigaben |
