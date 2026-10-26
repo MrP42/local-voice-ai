@@ -1,15 +1,15 @@
 ---
 thema: tts-provider
 titel: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
-state: REWORK
-vorzustand: -
+state: BLOCKED
+vorzustand: REWORK
 pausengrund: -
 issue: 93
 repo: MrP42/local-voice-ai
 branch: feat/tts-provider
 iteration: 1
 erstellt: 2026-10-26
-aktualisiert: 2026-10-26T21:33
+aktualisiert: 2026-10-26T21:34
 ---
 
 # Goal: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
@@ -48,9 +48,9 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 ## Quality Gates
 - [x] QG1 — Tests grün: `cargo test --lib managers::tts agent_bridge settings::` + `npx tsc --noEmit` + `pytest scripts/bench/tts`
 - [ ] QG2 — Integration läuft: CLI-Ausgabe `--tts-providers` + Phonon-WAV + Benchmark-Lauf aus dem gebauten Binary
-- [ ] QG3 — Doku + Handoff aktualisiert: `docs/tts/`, `.claude/handoffs/2026-10-26-tts-provider.md`
+- [x] QG3 — Doku + Handoff aktualisiert: `docs/tts/`, `.claude/handoffs/2026-10-26-tts-provider.md`
 - [x] QG4 — Sicherheit/Lizenz: kein Default-Download, NC-Anbieter nur mit Opt-in, Nicht-Loopback-URLs nur mit ausdrücklicher Freigabe, unabhängiges Review ohne kritische Befunde
-- [ ] QG5 — Git: Zweig gepusht, PR gegen `main` offen (Regel AGENTS.md), keine fremden Dateien formatiert
+- [x] QG5 — Git: Zweig gepusht, PR gegen `main` offen (Regel AGENTS.md), keine fremden Dateien formatiert
 
 ## Constraints
 - Builds/Tests nur auf D: (`CARGO_TARGET_DIR=D:\lv-build\target-dokumente`), Idle-Priorität, `CARGO_BUILD_JOBS=2`, `memgate.sh` vor rustc; Rust-Lanes nacheinander
@@ -98,16 +98,19 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - 2026-10-26T21:32 AK10 erfüllt — docs/tts: README, provider-research, implementation-plan, adapter-contract, installation-troubleshooting, licenses, cli-and-automation, benchmark, CHANGELOG; README-Verweise Wurzel + App (Commit 9d4d2a20)
 - 2026-10-26T21:33 QG1 erfüllt — cargo test Filter 1396 passed; npx tsc --noEmit ok; pytest scripts/bench/tts 73 passed; Playwright 100 passed (9d4d2a20)
 - 2026-10-26T21:33 QG4 erfüllt — P7 unabhaengiges Review: 0 kritisch, 1 hoch + 3 mittel + 5 niedrig + B10 in P7n (c21d9fab) behoben; kein Default-Download, NC-Anbieter nur mit Opt-in+Fingerabdruck, Loopback-Pflicht
+- 2026-10-26T21:33 QG5 erfüllt — feat/tts-provider gepusht, PR #94 gegen main offen; HEAD..origin/main leer vor Push; keine fremden Dateien formatiert
+- 2026-10-26T21:34 QG3 erfüllt — docs/tts/* + Handoff C:/Users/wolff/local-voice-project/.claude/handoffs/2026-10-26-tts-provider.md + GLOBAL.md fortgeschrieben
 
 ## Blocker
 - B1 [offen] [P2L] 2026-10-26T14:54 Ursache: Auto-Mode-Klassifikator sperrt das Ausfuehren der heruntergeladenen ptts.exe (Code from External); deutsche 40m-Gewichte zusaetzlich gated + CC BY-NC · Owner: Patrick · entsperrt, wenn: Patrick erlaubt die Ausfuehrung von D:\lv-build\phonon\bin\...\ptts.exe (Permission-Regel oder manueller Lauf) und entscheidet O1 (HF-Bedingungen phonon-40m-de annehmen, HF_TOKEN) · nächste Prüfung: beim nächsten Sessionstart
+- B2 [offen] 2026-10-26T21:34 Ursache: Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz · Owner: Patrick · entsperrt, wenn: ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt · nächste Prüfung: beim nächsten Sessionstart
 
 ## Entscheidungen
 - 2026-10-26: Basis `origin/main` (Kette #76–#86 ist gemergt).
 - 2026-10-26: Neue dyn-Anbieterschicht neben dem bestehenden `TtsEngine`-Trait statt dessen Umbau (Rückwärtskompatibilität, Cache-Tags bleiben).
 
 ## Nächste empfohlene Aktion
-P6 validieren; AK2 Regression (Playwright readaloud) nach dem Messlauf; Push + PR; Handoff; P2L bleibt Owner-Blocker
+B2 auflösen (Patrick): ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt. Dann `goal.py resolve-blocker --id B2 --beleg …` und `goal.py set --state PLANNING`.
 
 ## Verlauf
 - 2026-10-26T14:42 DISCOVERY — Goal State angelegt
@@ -123,4 +126,5 @@ P6 validieren; AK2 Regression (Playwright readaloud) nach dem Messlauf; Push + P
 - 2026-10-26T18:08 VALIDATING (Runde 1) — P7 Review: 1 hoch, 3 mittel, 5 niedrig (B7-B9)
 - 2026-10-26T18:08 REWORK (Runde 1) — P7n Nacharbeit laeuft
 - 2026-10-26T19:16 REWORK (Runde 1) — Budget ~4,6 MTok (131 %); P7n abgenommen c21d9fab; P6 Messlauf laeuft exklusiv
+- 2026-10-26T21:34 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz
 
