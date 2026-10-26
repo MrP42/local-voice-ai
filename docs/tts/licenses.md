@@ -42,8 +42,11 @@ Phonon (`VoiceDescriptor.license` ist optional, contract.rs:206).
   das mit der Ableitung (Feinabstimmung von der englischen Lessac-Stimme, deren Trainingsdaten Blizzard 2013 nur zur
   Forschung freigegeben sind) und nennt die Lizenzlage des Modells „ungeklärt“ (catalog.json:5223-5230). Konsequenz: die
   Hülle bleibt konservativ, `verified = false`, `non_commercial` aus dem Katalog (builtin.rs:268-287, BEFUNDE.md B3).
-  **Beide Aussagen können zugleich stimmen** (Datensatz CC0, Modell abgeleitet); geklärt ist die Auslieferbarkeit damit
-  nicht. Entscheidung beim Owner. Status: offen.
+  **Geklärt 26.10.2026: kein Widerspruch.** Die MODEL_CARD von `thorsten/high` nennt „License: CC0“ für den Datensatz
+  und „Finetuned from U.S. English lessac voice (high quality)“; die lessac-MODEL_CARD verweist auf die Blizzard-2013-Lizenz
+  (https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html). Der Katalogwert
+  `non_commercial: true` ist damit die richtige, vorsichtige Einordnung; die Recherche-Aussage „Piper kommerziell sauber“
+  ist korrigiert (provider-research.md, Konsequenzen 2). Kommerzielle Auslieferung nur nach Prüfung der Blizzard-Lizenz.
 * **Fish ist nichtkommerziell (korrigiert, Paket P7n)**: Der Plan (implementation-plan.md §4) nannte „Code Apache-2.0“ und die
   Gewichte „laut Model Card prüfen“; beides war falsch bzw. offen. Belegt ist lokal: `C:\AI\fish-speech\LICENSE` (Repo-Code)
   UND `checkpoints\s2-pro\LICENSE.md` (Gewichte) stehen beide unter der **Fish Audio Research License** (Last Updated

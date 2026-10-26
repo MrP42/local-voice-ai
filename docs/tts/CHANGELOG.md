@@ -74,5 +74,5 @@ Messlauf 26.10.2026 (Piper CPU, Fish CUDA, deutscher Korpus `de-v1`, Debug-Build
   und `HF_TOKEN` setzen. Vorschlag laut Goal: nur interne, nichtkommerzielle Evaluation, kein Ausliefern.
 * **P2L Ausführung `ptts.exe`**: der Auto-Mode-Klassifikator sperrt das Ausführen der heruntergeladenen `ptts.exe`
   (Befund B1); der Live-Lauf von Phonon (WAV-Beleg, Benchmark-Zeile) wartet auf die Erlaubnis.
-* **B3 thorsten-Lizenzwiderspruch**: Datensatz CC0 laut Model Card, im App-Katalog zugleich `non_commercial: true`
+* **B3 thorsten (geklaert 26.10.: Modell von lessac/Blizzard-2013 abgeleitet, Katalog non_commercial korrekt)**: Datensatz CC0 laut Model Card, im App-Katalog zugleich `non_commercial: true`
   (Ableitung von der Lessac-Stimme); die Auslieferbarkeit ist nicht geklärt. Siehe [licenses.md](licenses.md), §2.

@@ -13,7 +13,7 @@ eine Zeile `- Status: offen` bzw. `- Status: erledigt (<Paket/Commit>)`. Offene 
 - Beobachtung: provider-research.md nennt den thorsten-Datensatz CC0, der App-Katalog fuehrt thorsten-high als non_commercial (Ableitung von lessac).
 - Beleg: P1-Report, Risiko 4; models.rs-Test.
 - Konsequenz: Huelle bleibt konservativ (Katalogwert, verified=false); Widerspruch in docs/tts mit Quellen benennen, Owner klaert.
-- Status: offen
+- Status: erledigt (geklaert: thorsten-high ist von lessac/Blizzard 2013 feinabgestimmt; Katalog non_commercial korrekt; Recherche korrigiert)
 
 ## B4 — vorbestehend: commands::meeting_notes::tests::import_rejects_bad_files_with_stable_codes rot
 - Beobachtung: assert 9 == 8 (mitgelieferte Besprechungsvorlagen), meeting_notes.rs:335.

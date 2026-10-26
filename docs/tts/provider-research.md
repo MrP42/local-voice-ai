@@ -156,9 +156,13 @@ Kokoro-FastAPI). Bei Ollama stattdessen `/api/show` → `voices`.
    WAV-Header-Probleme (Maximal-Längen bei Ollama und Phonon), und alle drei Server liefern Streaming.
 2. **Deutsch hängt an der Lizenz:** Die einzigen deutschen Phonon-Gewichte (`40m-de`, `40m-multilingual`)
    sind **CC BY-NC 4.0** und gated (HF-Token). Für eine kommerziell vertriebene App sind sie nicht nutzbar,
-   ebenso wenig XTTS-v2 (CPML) und alle F5-German-Finetunes (CC-BY-NC). **Kommerziell sauber auf Deutsch
-   bleibt nur Piper** (Code GPL-3.0; Stimmen wie thorsten/kerstin mit CC0-Datensatz). Die GPL betrifft
-   die Einbettung als Bibliothek, ein separater Prozess ist zu prüfen.
+   ebenso wenig XTTS-v2 (CPML) und alle F5-German-Finetunes (CC-BY-NC). **Auch Piper ist nicht pauschal
+   kommerziell sauber** (Nachtrag 26.10.2026): Der thorsten-Datensatz steht unter CC0, das Modell
+   `de_DE-thorsten-high` ist laut MODEL_CARD aber „Finetuned from U.S. English lessac voice (high quality)“,
+   und die lessac-Daten (Blizzard 2013) stehen unter einer eigenen Forschungslizenz
+   (https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html). Kommerziell ist
+   je Stimme die Abstammung zu prüfen. Die GPL des Piper-Codes betrifft die Einbettung als Bibliothek;
+   ein separater Prozess ist zu prüfen.
 3. **Phonon unter Windows:** Das fertige `ptts.exe` läuft nur auf der CPU (x86-64-v3/AVX2). Die 4090
    nützt nur bei einem Eigenbau mit Feature `cuda`, und q8 läuft ohnehin auf der CPU. Bei 31–40M Parametern
    ist CPU-Betrieb vermutlich ausreichend (Latenz **nicht verifiziert**). Der OpenAI-Server ist offiziell
