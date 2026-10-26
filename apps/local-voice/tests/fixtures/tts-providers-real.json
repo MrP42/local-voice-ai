@@ -1,0 +1,302 @@
+[
+  {
+    "allow_remote": false,
+    "blocked": null,
+    "descriptor": {
+      "caps": {
+        "cloning": true,
+        "devices": [
+          "cuda"
+        ],
+        "formats": [
+          "wav"
+        ],
+        "languages": [
+          "und"
+        ],
+        "platforms": [
+          "windows-x64",
+          "macos-aarch64",
+          "linux-x64"
+        ],
+        "sample_rates": [
+          44100
+        ],
+        "streaming": "sentence",
+        "style_tags": true
+      },
+      "id": "fish",
+      "label": "Fish Speech",
+      "license": {
+        "code": "Apache-2.0",
+        "non_commercial": false,
+        "note": "Model Card prüfen: Lizenz der Gewichte (s2-pro) ist nicht verifiziert; die Code-Lizenz stammt aus dem Umsetzungsplan, nicht aus einer gegengeprüften Quelle.",
+        "source_url": "https://github.com/fishaudio/fish-speech",
+        "verified": false,
+        "verified_on": null,
+        "weights": "s2-pro: Lizenz laut Model Card prüfen"
+      },
+      "opt_in": false,
+      "tier": "supported"
+    },
+    "enabled": true,
+    "fingerprint": "9b3b5da8e6c016c74faa20a1ac00f65b",
+    "health": {
+      "available": true,
+      "checked_ms": 0,
+      "device": "cuda",
+      "hint": null,
+      "reason": null,
+      "version": null
+    },
+    "license_acked": false,
+    "license_needs_ack": false,
+    "remote": false,
+    "selected": true,
+    "voice": null
+  },
+  {
+    "allow_remote": false,
+    "blocked": null,
+    "descriptor": {
+      "caps": {
+        "cloning": false,
+        "devices": [
+          "cpu"
+        ],
+        "formats": [
+          "wav"
+        ],
+        "languages": [
+          "de",
+          "en"
+        ],
+        "platforms": [
+          "windows-x64",
+          "macos-x64",
+          "macos-aarch64"
+        ],
+        "sample_rates": [
+          16000,
+          22050
+        ],
+        "streaming": "sentence",
+        "style_tags": false
+      },
+      "id": "piper",
+      "label": "Piper",
+      "license": {
+        "code": "GPL-3.0",
+        "non_commercial": false,
+        "note": "Code-Lizenz GPL-3.0 (provider-research.md, 26.10.2026); läuft als separater Prozess, die Auswirkung auf die App-Lizenz ist juristisch offen. Stimmenlizenzen gelten je Stimme und sind nicht alle geprüft.",
+        "source_url": "https://github.com/OHF-Voice/piper1-gpl",
+        "verified": false,
+        "verified_on": null,
+        "weights": "je Stimme (siehe Stimmenliste)"
+      },
+      "opt_in": false,
+      "tier": "supported"
+    },
+    "enabled": true,
+    "fingerprint": "39726cfc0f26726c4f4f68cdfc88f1b7",
+    "health": {
+      "available": true,
+      "checked_ms": 0,
+      "device": "cpu",
+      "hint": null,
+      "reason": null,
+      "version": null
+    },
+    "license_acked": false,
+    "license_needs_ack": false,
+    "remote": false,
+    "selected": false,
+    "voice": "en_US-ryan-high"
+  },
+  {
+    "allow_remote": false,
+    "blocked": {
+      "kind": "license_blocked",
+      "message": "Phonon (ptts) ist nicht freigeschaltet (Opt-in fehlt). In den Einstellungen unter Sprachausgabe-Anbieter einschalten.",
+      "retryable": false
+    },
+    "descriptor": {
+      "caps": {
+        "cloning": false,
+        "devices": [
+          "cpu"
+        ],
+        "formats": [
+          "wav"
+        ],
+        "languages": [
+          "de"
+        ],
+        "platforms": [
+          "windows-x64",
+          "linux-x64",
+          "linux-aarch64",
+          "macos-aarch64",
+          "macos-x64"
+        ],
+        "sample_rates": [
+          24000
+        ],
+        "streaming": "sentence",
+        "style_tags": false
+      },
+      "id": "phonon",
+      "label": "Phonon (ptts)",
+      "license": {
+        "code": "MIT OR Apache-2.0",
+        "non_commercial": true,
+        "note": "Die Code-Lizenz (MIT OR Apache-2.0) ist belegt (README von gradium-ai/xn-ptts, 26.10.2026); die Lizenz der Gewichte von '' ist nicht belegt und wird vorsorglich als nichtkommerziell behandelt. Stimmen haben eigene Lizenzen (docs/cli.md).",
+        "source_url": "https://github.com/gradium-ai/xn-ptts",
+        "verified": false,
+        "verified_on": null,
+        "weights": "unbekannt: Model Card des Checkpoints prüfen (Phonon 31m: Apache-2.0, Phonon 40m: CC BY-NC 4.0)"
+      },
+      "opt_in": true,
+      "tier": "experimental"
+    },
+    "enabled": false,
+    "fingerprint": "53dccea71bf676cb6875f3bf9be8f058",
+    "health": {
+      "available": false,
+      "checked_ms": 0,
+      "device": "cpu",
+      "hint": "Phonon-Einstellungen prüfen (exe_path, model, lang).",
+      "reason": "exe_path fehlt: Pfad zur ptts-Programmdatei eintragen",
+      "version": null
+    },
+    "license_acked": false,
+    "license_needs_ack": true,
+    "remote": false,
+    "selected": false,
+    "voice": null
+  },
+  {
+    "allow_remote": false,
+    "blocked": {
+      "kind": "license_blocked",
+      "message": "OpenAI-kompatibler Sprachserver ist nicht freigeschaltet (Opt-in fehlt). In den Einstellungen unter Sprachausgabe-Anbieter einschalten.",
+      "retryable": false
+    },
+    "descriptor": {
+      "caps": {
+        "cloning": false,
+        "devices": [
+          "remote"
+        ],
+        "formats": [
+          "pcm16_le",
+          "wav"
+        ],
+        "languages": [
+          "und"
+        ],
+        "platforms": [
+          "windows-x64",
+          "linux-x64",
+          "macos-aarch64",
+          "macos-x64"
+        ],
+        "sample_rates": [
+          24000
+        ],
+        "streaming": "chunk",
+        "style_tags": false
+      },
+      "id": "openai-speech",
+      "label": "OpenAI-kompatibler Sprachserver",
+      "license": {
+        "code": "unbekannt",
+        "non_commercial": false,
+        "note": "Lizenz des Servers und der Gewichte nicht geprüft: vor dem Einsatz die Lizenz des betriebenen Servers und Modells nachlesen (Recherche: docs/tts/provider-research.md, D).",
+        "source_url": "https://github.com/openai/openai-openapi",
+        "verified": false,
+        "verified_on": null,
+        "weights": "unbekannt (hängt am Server und Modell)"
+      },
+      "opt_in": true,
+      "tier": "experimental"
+    },
+    "enabled": false,
+    "fingerprint": "eacbd447a21b8cf3bc12133d91300c9a",
+    "health": {
+      "available": false,
+      "checked_ms": 0,
+      "device": "remote",
+      "hint": "Einstellungen des Sprachservers prüfen.",
+      "reason": "model fehlt (wird dem Server immer mitgesendet)",
+      "version": null
+    },
+    "license_acked": false,
+    "license_needs_ack": true,
+    "remote": false,
+    "selected": false,
+    "voice": null
+  },
+  {
+    "allow_remote": false,
+    "blocked": {
+      "kind": "license_blocked",
+      "message": "Ollama Sprachausgabe ist nicht freigeschaltet (Opt-in fehlt). In den Einstellungen unter Sprachausgabe-Anbieter einschalten.",
+      "retryable": false
+    },
+    "descriptor": {
+      "caps": {
+        "cloning": false,
+        "devices": [
+          "remote"
+        ],
+        "formats": [
+          "pcm16_le",
+          "wav"
+        ],
+        "languages": [
+          "und"
+        ],
+        "platforms": [
+          "windows-x64",
+          "linux-x64",
+          "macos-aarch64",
+          "macos-x64"
+        ],
+        "sample_rates": [
+          24000
+        ],
+        "streaming": "chunk",
+        "style_tags": false
+      },
+      "id": "ollama-speech",
+      "label": "Ollama Sprachausgabe",
+      "license": {
+        "code": "MIT OR Apache-2.0 (Phonon-Code, Gradium)",
+        "non_commercial": true,
+        "note": "Die Lizenz dieses Ollama-Modells ist nicht belegt. Der 31M-Checkpoint von Gradium steht unter Apache-2.0, die Lizenz seiner Ollama-Fassung wurde nicht gegengeprüft; vorsorglich wird das Modell als nichtkommerziell behandelt.",
+        "source_url": "https://ollama.com/library/phonon",
+        "verified": false,
+        "verified_on": null,
+        "weights": "unbekannt: Lizenz des Ollama-Modells 'phonon' prüfen (40M-Checkpoints CC BY-NC 4.0)"
+      },
+      "opt_in": true,
+      "tier": "experimental"
+    },
+    "enabled": false,
+    "fingerprint": "c01db0b21d52323ac7b6b45f933f81c8",
+    "health": {
+      "available": false,
+      "checked_ms": 2013,
+      "device": "remote",
+      "hint": "Ollama starten oder die Adresse prüfen.",
+      "reason": "Ollama ist nicht erreichbar: Der Sprachserver http://127.0.0.1:11434/v1 antwortet nicht innerhalb der Frist",
+      "version": null
+    },
+    "license_acked": false,
+    "license_needs_ack": true,
+    "remote": false,
+    "selected": false,
+    "voice": null
+  }
+]

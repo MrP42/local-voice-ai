@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // Goal tts-provider, Paket P4: Gruppe "Sprachausgabe-Anbieter" im Reiter
 // Ausgabe. Liste mit Stufe/Zustand/Gerät/Lizenz, Freigabe-Ablauf (Aktivieren,
@@ -7,15 +9,40 @@ import { test, expect, type Page } from "@playwright/test";
 // Abbruch. Dazu: das Stimmen-Dropdown der Vorlesen-Seite bleibt heil, wenn
 // `tts_engine = provider:<id>` gilt. Die Attrappe führt den Zustand der
 // Anbieter selbst (Freigaben wirken wie im Backend).
+//
+// Anbieterdaten: `tests/fixtures/tts-providers-real.json` ist die UNVERAENDERTE
+// Ausgabe von `local-voice-ai.exe --tts-providers --json` (26.10.2026). Die
+// Attrappe kopiert sie und aendert je Test nur ZUSTAND (enabled, license_acked,
+// remote, health.available/reason/hint/version, Fingerabdruck), nie Geraet,
+// Streaming-Art oder Lizenzangaben. Echte Werte: Phonon = CPU, satzweise;
+// Piper und Phonon sind nicht lizenzverifiziert; echtes Streaming hat nur
+// openai-speech (Art "chunk").
 
-type Cfg = { engine: string };
+type Over = {
+  enabled?: boolean;
+  license_acked?: boolean;
+  remote?: boolean;
+  fingerprint?: string;
+  health?: Record<string, unknown>;
+};
+type Cfg = { engine: string; over?: Record<string, Over> };
+type Arg = { cfg: Cfg; real: unknown[] };
+
+const REAL = JSON.parse(
+  readFileSync(
+    resolve(process.cwd(), "tests", "fixtures", "tts-providers-real.json"),
+    "utf8",
+  ),
+) as unknown[];
 
 async function setup(page: Page, cfg: Cfg) {
   page.on("pageerror", (error) => {
     throw error;
   });
   await page.setViewportSize({ width: 1100, height: 1500 });
-  await page.addInitScript((cfg: Cfg) => {
+  const initArg: Arg = { cfg, real: REAL };
+  await page.addInitScript((arg: Arg) => {
+    const { cfg, real } = arg;
     const callbacks = new Map<number, unknown>();
     let callback = 0;
     const w = window as unknown as Record<string, unknown>;
@@ -30,174 +57,17 @@ async function setup(page: Page, cfg: Cfg) {
         }),
       );
 
-    const caps = (over: Record<string, unknown> = {}) => ({
-      languages: ["de", "en"],
-      streaming: "sentence",
-      formats: ["wav"],
-      sample_rates: [22050],
-      cloning: false,
-      devices: ["cpu"],
-      platforms: ["windows-x64"],
-      style_tags: false,
-      ...over,
+    // Echte Anbieterdaten kopieren, nur Zustand abwandeln.
+    const entries = (JSON.parse(JSON.stringify(real)) as any[]).map((e) => {
+      const o = cfg.over?.[e.descriptor.id] ?? {};
+      const { health: healthOver, ...state } = o;
+      Object.assign(e, state);
+      if (healthOver) Object.assign(e.health, healthOver);
+      e.selected =
+        cfg.engine === e.descriptor.id ||
+        cfg.engine === `provider:${e.descriptor.id}`;
+      return e;
     });
-    const license = (over: Record<string, unknown> = {}) => ({
-      code: "MIT",
-      weights: "Apache-2.0",
-      non_commercial: false,
-      verified: true,
-      source_url: "https://example.org/lizenz",
-      verified_on: "2026-10-26",
-      note: "",
-      ...over,
-    });
-    const health = (over: Record<string, unknown> = {}) => ({
-      available: true,
-      reason: null,
-      hint: null,
-      device: "cpu",
-      version: "1.0.0",
-      checked_ms: 12,
-      ...over,
-    });
-    const entry = (
-      over: Record<string, unknown>,
-      descriptor: Record<string, unknown>,
-    ) => ({
-      descriptor: {
-        id: "x",
-        label: "X",
-        tier: "supported",
-        opt_in: false,
-        caps: caps(),
-        license: license(),
-        ...descriptor,
-      },
-      health: health(),
-      enabled: true,
-      license_needs_ack: false,
-      license_acked: false,
-      allow_remote: false,
-      remote: false,
-      fingerprint: "fp-x",
-      blocked: null,
-      selected: false,
-      voice: null,
-      ...over,
-    });
-    const entries = [
-      entry(
-        {
-          selected: cfg.engine === "fish",
-          fingerprint: "fp-fish",
-          health: health({ device: "cuda", version: "s2-pro" }),
-        },
-        {
-          id: "fish",
-          label: "Fish Speech",
-          caps: caps({
-            cloning: true,
-            devices: ["cuda"],
-            languages: ["de", "en", "und"],
-          }),
-          license: license({
-            code: "Apache-2.0",
-            weights: "laut Model Card prüfen",
-            verified: false,
-            verified_on: null,
-          }),
-        },
-      ),
-      entry(
-        {
-          fingerprint: "fp-piper",
-          health: health({ device: "cpu", version: "2023.11" }),
-        },
-        {
-          id: "piper",
-          label: "Piper",
-          caps: caps(),
-          license: license({ code: "GPL-3.0", weights: "je Stimme" }),
-        },
-      ),
-      entry(
-        {
-          enabled: false,
-          license_needs_ack: true,
-          fingerprint: "fp-phonon-1",
-          health: health({ device: "cuda", version: "0.3.1" }),
-          selected: cfg.engine === "provider:phonon",
-        },
-        {
-          id: "phonon",
-          label: "Phonon",
-          tier: "experimental",
-          opt_in: true,
-          caps: caps({ streaming: "chunk", devices: ["cpu", "cuda"] }),
-          license: license({
-            code: "MIT",
-            weights: "CC BY-NC 4.0",
-            non_commercial: true,
-            verified: false,
-            verified_on: null,
-            note: "Deutsche Gewichte sind gesperrt und nichtkommerziell.",
-          }),
-        },
-      ),
-      entry(
-        {
-          enabled: false,
-          remote: true,
-          fingerprint: "fp-openai",
-          health: health({ device: "remote", version: null }),
-        },
-        {
-          id: "openai-speech",
-          label: "OpenAI-kompatibler Sprachserver",
-          tier: "experimental",
-          opt_in: true,
-          caps: caps({
-            streaming: "chunk",
-            devices: ["remote"],
-            languages: ["und"],
-          }),
-          license: license({
-            code: "je Server",
-            weights: "je Modell",
-            verified: false,
-            verified_on: null,
-          }),
-        },
-      ),
-      entry(
-        {
-          enabled: false,
-          license_needs_ack: true,
-          fingerprint: "fp-ollama",
-          health: health({
-            available: false,
-            reason: "Ollama-Dienst nicht erreichbar.",
-            hint: "Dienst starten oder Adresse prüfen.",
-            device: null,
-            version: null,
-          }),
-        },
-        {
-          id: "ollama-speech",
-          label: "Ollama Speech",
-          tier: "experimental",
-          opt_in: true,
-          caps: caps({ streaming: "chunk" }),
-          license: license({
-            code: "MIT",
-            weights: "CC BY-NC",
-            non_commercial: true,
-            verified: false,
-            verified_on: null,
-          }),
-        },
-      ),
-    ];
     // Wie das Backend: aus Freigaben folgt die Sperre.
     const recompute = (e: any) => {
       if (e.descriptor.opt_in && !e.enabled)
@@ -220,7 +90,9 @@ async function setup(page: Page, cfg: Cfg) {
         };
       else e.blocked = null;
     };
-    entries.forEach(recompute);
+    entries.forEach((e) => {
+      if (cfg.over?.[e.descriptor.id]) recompute(e);
+    });
     w.__entries = entries;
     w.__previewReject = null;
     w.__previewEarly = true;
@@ -471,7 +343,7 @@ async function setup(page: Page, cfg: Cfg) {
     } catch {
       /* egal */
     }
-  }, cfg);
+  }, initArg);
 }
 
 type Call = [string, Record<string, unknown> | undefined];
@@ -504,7 +376,10 @@ const openGroup = async (page: Page) => {
 test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz je Anbieter", async ({
   page,
 }) => {
-  await setup(page, { engine: "fish" });
+  await setup(page, {
+    engine: "fish",
+    over: { piper: { health: { version: "2023.11" } } },
+  });
   await openGroup(page);
 
   const fish = page.getByTestId("tts-provider-fish");
@@ -530,17 +405,30 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
   await expect(page.getByTestId("tts-provider-cloning-piper")).toHaveText(
     "nein",
   );
+  // Echte Daten: auch Piper ist (noch) nicht lizenzverifiziert.
   await expect(page.getByTestId("tts-provider-verified-piper")).toContainText(
-    "verifiziert am 2026-10-26",
+    "nicht verifiziert",
+  );
+  await expect(page.getByTestId("tts-provider-device-piper")).toContainText(
+    "CPU",
   );
 
   const phonon = page.getByTestId("tts-provider-phonon");
   await expect(page.getByTestId("tts-provider-tier-phonon")).toHaveText(
     "Experimentell",
   );
-  await expect(phonon).toContainText("echtes Streaming");
+  // Echte Daten: Phonon läuft auf der CPU und liefert satzweise.
+  await expect(phonon).toContainText("satzweise");
+  await expect(phonon).not.toContainText("echtes Streaming");
   await expect(page.getByTestId("tts-provider-device-phonon")).toContainText(
-    "CUDA",
+    "CPU",
+  );
+  await expect(
+    page.getByTestId("tts-provider-device-phonon"),
+  ).not.toContainText("CUDA");
+  // Echtes Streaming (Art "chunk") hat nur der OpenAI-kompatible Sprachserver.
+  await expect(page.getByTestId("tts-provider-openai-speech")).toContainText(
+    "echtes Streaming",
   );
   await expect(
     page.getByTestId("tts-provider-noncommercial-phonon"),
@@ -549,8 +437,8 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
 
   // Nicht verfügbar: Grund und Hinweis aus der Gesundheitsprüfung.
   const reason = page.getByTestId("tts-provider-reason-ollama-speech");
-  await expect(reason).toContainText("Ollama-Dienst nicht erreichbar.");
-  await expect(reason).toContainText("Dienst starten oder Adresse prüfen.");
+  await expect(reason).toContainText("Ollama ist nicht erreichbar");
+  await expect(reason).toContainText("Ollama starten oder die Adresse prüfen.");
   await expect(
     page.getByTestId("tts-provider-health-ollama-speech"),
   ).toHaveText("Nicht bereit");
@@ -591,7 +479,7 @@ test("Aktivieren führt über den Lizenzdialog (Fingerabdruck) bis zur Freigabe"
   // Lizenzdialog mit Zusammenfassung, Quell-Link, ausdrücklicher Bestätigung.
   const dialog = page.getByTestId("tts-provider-license-dialog");
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("CC BY-NC 4.0");
+  await expect(dialog).toContainText("Phonon 40m: CC BY-NC 4.0");
   await expect(dialog).toContainText("nichtkommerzielle Nutzung");
   await expect(dialog).toContainText("nicht verifiziert");
   await expect(dialog.getByTestId("tts-provider-license-source")).toBeVisible();
@@ -610,7 +498,7 @@ test("Aktivieren führt über den Lizenzdialog (Fingerabdruck) bis zur Freigabe"
   expect((await calls(page, "tts_provider_acknowledge_license"))[0][1]).toEqual(
     {
       id: "phonon",
-      fingerprint: "fp-phonon-1",
+      fingerprint: "53dccea71bf676cb6875f3bf9be8f058",
     },
   );
   await expect(dialog).toHaveCount(0);
@@ -623,11 +511,15 @@ test("Aktivieren führt über den Lizenzdialog (Fingerabdruck) bis zur Freigabe"
 test("Fernzugriff: Aktivieren eines entfernten Anbieters verlangt die Freigabe mit Warnung", async ({
   page,
 }) => {
-  await setup(page, { engine: "fish" });
+  // Zustand: Lizenz schon bestätigt, Server steht auf einem fremden Rechner.
+  await setup(page, {
+    engine: "fish",
+    over: { "openai-speech": { license_acked: true, remote: true } },
+  });
   await openGroup(page);
 
   await page.getByTestId("tts-provider-enable-openai-speech").click();
-  // Kein Lizenzdialog nötig (keine Bestätigung verlangt), aber Fernzugriff.
+  // Lizenz ist bestätigt: kein Lizenzdialog, aber Fernzugriff.
   const dialog = page.getByTestId("tts-provider-remote-dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("verlässt dann diesen Rechner");
@@ -670,7 +562,7 @@ test("Veraltete Lizenzbestätigung (bad_request) bleibt im Dialog und lädt die 
         __entries: { descriptor: { id: string }; fingerprint: string }[];
       }
     ).__entries.find((x) => x.descriptor.id === "phonon")!;
-    e.fingerprint = "fp-phonon-2";
+    e.fingerprint = "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f";
   });
   await page.getByTestId("tts-provider-license-checkbox").check();
   const listCallsBefore = (await calls(page, "tts_providers_list")).length;
@@ -687,7 +579,7 @@ test("Veraltete Lizenzbestätigung (bad_request) bleibt im Dialog und lädt die 
   const acks = await calls(page, "tts_provider_acknowledge_license");
   expect(acks[acks.length - 1][1]).toEqual({
     id: "phonon",
-    fingerprint: "fp-phonon-2",
+    fingerprint: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
   });
 });
 
@@ -846,7 +738,7 @@ test("Probestimme: Phase, Zeit bis zum ersten Ton, Abbrechen (started kommt vor 
     .toBe(1);
   expect((await calls(page, "tts_provider_preview"))[0][1]).toMatchObject({
     id: "piper",
-    voice: null,
+    voice: "en_US-ryan-high", // echte Daten: Piper hat bereits eine Stimme gewählt
   });
   const status = page.getByTestId("tts-provider-preview-status-piper");
   await expect(status).toHaveAttribute("data-phase", "started");
@@ -982,7 +874,7 @@ test("Vorlesen-Seite: tts_engine = provider:phonon zeigt benannten Eintrag statt
   await expect(select).not.toContainText("Skript mit Sprechern");
   const hint = page.getByTestId("voice-provider-hint");
   await expect(hint).toContainText(
-    "Anbieter: Phonon (Einstellungen → Sprachausgabe-Anbieter)",
+    "Anbieter: Phonon (ptts) (Einstellungen → Sprachausgabe-Anbieter)",
   );
   // Kein Fish-"nicht eingerichtet"-Hinweis.
   await expect(page.getByTestId("voice-setup-hint")).toHaveCount(0);
@@ -1010,7 +902,21 @@ test("Vorlesen-Seite: bei Fish bleibt alles wie zuvor (kein Anbieter-Hinweis)", 
 test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   const dir = process.env.SCREENS_DIR;
   test.skip(!dir, "nur mit SCREENS_DIR");
-  await setup(page, { engine: "provider:phonon" });
+  // Zustand: Phonon läuft (Version 0.4.2, bereit); Gerät, Streaming und
+  // Lizenzangaben bleiben die der echten Daten (CPU, satzweise, nicht verifiziert).
+  await setup(page, {
+    engine: "provider:phonon",
+    over: {
+      phonon: {
+        health: {
+          available: true,
+          reason: null,
+          hint: null,
+          version: "0.4.2",
+        },
+      },
+    },
+  });
   // Hoch genug, damit die ganze Gruppe ohne Rollen auf ein Bild passt.
   await page.setViewportSize({ width: 1100, height: 2700 });
   await openGroup(page);

@@ -4878,6 +4878,30 @@
           "title": "Create audio",
           "description": "Creates an audio file from a read-aloud page."
         },
+        "tts_providers_list": {
+          "title": "List speech providers",
+          "description": "Lists the text-to-speech providers with capabilities, license, health and block status."
+        },
+        "tts_provider_capabilities": {
+          "title": "Read a provider's capabilities",
+          "description": "Returns the languages, streaming, devices, platforms and license of a text-to-speech provider."
+        },
+        "tts_provider_voices": {
+          "title": "List a provider's voices",
+          "description": "Lists the voices of a provider; a blocked provider answers with the reason it is blocked."
+        },
+        "tts_provider_health": {
+          "title": "Check a provider's health",
+          "description": "Checks, with a deadline, whether a text-to-speech provider is ready and otherwise names the reason."
+        },
+        "tts_benchmark_results": {
+          "title": "Read benchmark results",
+          "description": "Lists the summaries of the text-to-speech benchmarks and returns a results.json."
+        },
+        "tts_provider_select": {
+          "title": "Choose provider and voice",
+          "description": "Chooses the provider and voice for read-aloud; a blocked provider cannot be chosen, and only the user grants approvals."
+        },
         "list_workflows": {
           "title": "List automations",
           "description": "Lists the automation workflows with trigger, switch state and last run."
@@ -5205,6 +5229,10 @@
       "transcribe_file": {
         "title": "Transcribe file",
         "description": "Transcribe an audio or video file."
+      },
+      "tts_read": {
+        "title": "Read speech output",
+        "description": "Read the text-to-speech providers, voices, health and benchmark results (changes nothing)."
       },
       "tts_render": {
         "title": "Render read-aloud audio",

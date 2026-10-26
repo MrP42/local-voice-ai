@@ -4878,6 +4878,30 @@
           "title": "Audio erzeugen",
           "description": "Erzeugt aus einer Vorlesen-Seite eine Audiodatei."
         },
+        "tts_providers_list": {
+          "title": "Sprachausgabe-Anbieter auflisten",
+          "description": "Listet die Sprachausgabe-Anbieter mit Fähigkeiten, Lizenz, Gesundheit und Sperrstatus."
+        },
+        "tts_provider_capabilities": {
+          "title": "Fähigkeiten eines Anbieters lesen",
+          "description": "Liefert Sprachen, Streaming, Geräte, Plattformen und Lizenz eines Sprachausgabe-Anbieters."
+        },
+        "tts_provider_voices": {
+          "title": "Stimmen eines Anbieters auflisten",
+          "description": "Listet die Stimmen eines Anbieters; ein gesperrter Anbieter antwortet mit dem Sperrgrund."
+        },
+        "tts_provider_health": {
+          "title": "Gesundheit eines Anbieters prüfen",
+          "description": "Prüft mit Frist, ob ein Sprachausgabe-Anbieter bereit ist, und nennt sonst den Grund."
+        },
+        "tts_benchmark_results": {
+          "title": "Benchmark-Ergebnisse lesen",
+          "description": "Listet die Zusammenfassungen der Sprachausgabe-Benchmarks und liefert eine results.json."
+        },
+        "tts_provider_select": {
+          "title": "Anbieter und Stimme wählen",
+          "description": "Wählt Anbieter und Stimme fürs Vorlesen; ein gesperrter Anbieter lässt sich nicht wählen, Freigaben setzt nur der Nutzer."
+        },
         "list_workflows": {
           "title": "Automationen auflisten",
           "description": "Listet die Abläufe der Automationen mit Auslöser, Schaltzustand und letztem Lauf."
@@ -5205,6 +5229,10 @@
       "transcribe_file": {
         "title": "Datei transkribieren",
         "description": "Eine Audio- oder Videodatei transkribieren."
+      },
+      "tts_read": {
+        "title": "Sprachausgabe lesen",
+        "description": "Anbieter, Stimmen, Gesundheit und Benchmark-Ergebnisse der Sprachausgabe lesen (ändert nichts)."
       },
       "tts_render": {
         "title": "Vorlesen als Audio erzeugen",
