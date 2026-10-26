@@ -225,7 +225,7 @@ test("settings: without Fish only a compact optional entry remains, with Fish th
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
-  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByText("Fish Speech (optional, nicht eingerichtet)")).toBeVisible();
   await expect(page.getByTestId("fish-dir-input")).toBeVisible();
   await expect(page.getByText("Server-Port")).toHaveCount(0);
@@ -242,7 +242,7 @@ test("settings: with Fish set up the port and server details are shown", async (
   });
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
-  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByText("Server-Port")).toBeVisible();
   await expect(page.getByText("Fish Speech (optional, nicht eingerichtet)")).toHaveCount(0);
 });

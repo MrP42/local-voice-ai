@@ -25,6 +25,163 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "providers": {
+      "title": "Sprachausgabe-Anbieter",
+      "description": "Weitere Sprachausgaben neben Fish Speech und Piper. Experimentelle Anbieter bleiben aus, bis Sie sie freigeben; was an Lizenz oder Netzzugriff fehlt, steht bei jedem Anbieter.",
+      "recheckAll": "Alle erneut prüfen",
+      "recheck": "Erneut prüfen",
+      "checking": "Anbieter werden geprüft …",
+      "loadError": "Die Anbieterliste konnte nicht geladen werden: {{message}}",
+      "empty": "Keine Anbieter bekannt.",
+      "unknown": "unbekannt",
+      "yes": "ja",
+      "no": "nein",
+      "languageAny": "sprachunabhängig",
+      "selected": "Liest vor",
+      "enable": "Aktivieren",
+      "tier": {
+        "supported": "Unterstützt",
+        "experimental": "Experimentell",
+        "benchmark_only": "Nur Benchmark",
+        "unavailable": "Nicht verfügbar"
+      },
+      "availability": {
+        "available": "Bereit",
+        "unavailable": "Nicht bereit"
+      },
+      "facts": {
+        "device": "Gerät",
+        "version": "Version",
+        "streaming": "Streaming",
+        "languages": "Sprachen",
+        "cloning": "Stimmen klonen",
+        "license": "Lizenz"
+      },
+      "device": {
+        "cpu": "CPU",
+        "cuda": "CUDA (NVIDIA-Grafikkarte)",
+        "metal": "Metal (Apple)",
+        "remote": "Entfernter Server"
+      },
+      "streaming": {
+        "none": "keins",
+        "sentence": "satzweise",
+        "chunk": "echtes Streaming"
+      },
+      "license": {
+        "code": "Code",
+        "weights": "Gewichte",
+        "nonCommercial": "nichtkommerziell",
+        "verifiedOn": "verifiziert am {{date}}",
+        "notVerified": "nicht verifiziert",
+        "source": "Quelle"
+      },
+      "blocked": {
+        "title": "Gesperrt:",
+        "notEnabled": "Der Anbieter ist nicht aktiviert. Mit dem Schalter „Aktivieren“ freigeben.",
+        "needsLicense": "Die Lizenz ist noch nicht bestätigt.",
+        "needsRemote": "Die Adresse liegt außerhalb dieses Rechners; der Fernzugriff ist nicht freigegeben.",
+        "confirmLicense": "Lizenz ansehen und bestätigen …",
+        "allowRemote": "Fernzugriff freigeben …"
+      },
+      "remote": {
+        "allowed": "Fernzugriff freigegeben: der Text verlässt diesen Rechner.",
+        "revoke": "Zurücknehmen"
+      },
+      "details": {
+        "show": "Einstellungen, Stimme und Probestimme von {{name}} anzeigen",
+        "hide": "Einstellungen von {{name}} ausblenden"
+      },
+      "config": {
+        "title": "Einstellungen",
+        "none": "Dieser Anbieter hat hier keine eigenen Einstellungen.",
+        "loadError": "Die Einstellungen konnten nicht geladen werden: {{message}}",
+        "save": "Speichern",
+        "saved": "Gespeichert.",
+        "choiceNone": "keine Angabe",
+        "number_required": "„{{field}}“ braucht eine Zahl.",
+        "number_invalid": "„{{field}}“ ist keine gültige Zahl."
+      },
+      "fields": {
+        "exe_path": "Programmdatei (ptts)",
+        "model": "Modell",
+        "quant": "Quantisierung",
+        "lang": "Sprache der Textaufbereitung",
+        "voice": "Stimme",
+        "threads": "Rechen-Threads",
+        "hf_home": "Hugging-Face-Ordner (HF_HOME)",
+        "base_url": "Adresse",
+        "sample_rate": "Abtastrate (Hz)",
+        "languages": "Sprachen (durch Komma getrennt)",
+        "probe_speech": "Mini-Probe statt Plattformsperre"
+      },
+      "fieldHints": {
+        "model": "Lokaler Modellordner oder hf://BESITZER/MODELL.",
+        "quant": "q8 läuft immer auf der CPU.",
+        "base_url": "Adressen außerhalb dieses Rechners brauchen eine eigene Freigabe.",
+        "probe_speech": "Lädt dabei das Sprachmodell in Ollama."
+      },
+      "voices": {
+        "title": "Stimme",
+        "language": "Sprache",
+        "voice": "Stimme",
+        "allLanguages": "Alle Sprachen",
+        "default": "Vorgabe des Anbieters",
+        "none": "Der Anbieter nennt für diese Sprache keine Stimmen.",
+        "blocked": "Die Stimmen sind erst nach der Freigabe abrufbar.",
+        "use": "Als Vorlese-Stimme verwenden",
+        "usedNow": "Dieser Anbieter liest jetzt vor.",
+        "license": "Stimme: Lizenz {{license}}"
+      },
+      "preview": {
+        "title": "Probestimme",
+        "text": "Probetext",
+        "defaultText": "Guten Tag. Dies ist ein kurzer Probesatz, damit Sie Klang, Tempo und Betonung dieser Stimme beurteilen können.",
+        "play": "Probe anhören",
+        "cancel": "Abbrechen",
+        "phase": {
+          "started": "Startet …",
+          "first_audio": "Spielt – erster Ton nach {{ms}} ms",
+          "done": "Fertig.",
+          "doneTtfa": "Fertig – erster Ton nach {{ms}} ms",
+          "cancelled": "Abgebrochen."
+        }
+      },
+      "errors": {
+        "unavailable": "Anbieter nicht verfügbar: {{message}}",
+        "invalid_config": "Einstellung ungültig: {{message}}",
+        "license_blocked": "Lizenz oder Freigabe fehlt: {{message}}",
+        "privacy_blocked": "Fernzugriff nicht freigegeben: {{message}}",
+        "timeout": "Zeitüberschreitung: {{message}}",
+        "cancelled": "Abgebrochen: {{message}}",
+        "bad_request": "Anfrage abgelehnt: {{message}}",
+        "backend": "Fehler beim Anbieter: {{message}}",
+        "network": "Netzwerkfehler: {{message}}"
+      },
+      "dialog": {
+        "close": "Schließen",
+        "cancel": "Abbrechen"
+      },
+      "licenseDialog": {
+        "title": "Lizenz von {{name}} bestätigen?",
+        "intro": "Bitte prüfen Sie die Lizenzangaben, bevor dieser Anbieter benutzt wird. Die Bestätigung gilt nur für genau diesen Stand von Modell und Lizenzangabe.",
+        "nonCommercial": "Diese Lizenz erlaubt nur nichtkommerzielle Nutzung. Für geschäftliche Zwecke darf der Anbieter nicht verwendet werden.",
+        "notVerified": "Die Lizenzangabe ist nicht verifiziert. Prüfen Sie die Lizenz an der Quelle, bevor Sie bestätigen.",
+        "checkbox": "Ich habe die Lizenz von {{name}} gelesen und bestätige, dass meine Nutzung zulässig ist.",
+        "confirm": "Lizenz bestätigen"
+      },
+      "remoteDialog": {
+        "title": "Fernzugriff für {{name}} freigeben?",
+        "warning": "Der Text, der vorgelesen werden soll, verlässt dann diesen Rechner und geht an einen Server unter der eingestellten Adresse.",
+        "detail": "Geben Sie das nur frei, wenn Sie dem Server vertrauen und der Text vertraulich genug ist. Die Freigabe lässt sich jederzeit zurücknehmen.",
+        "confirm": "Fernzugriff freigeben"
+      },
+      "dropdown": {
+        "entry": "Anbieter: {{name}}",
+        "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
+        "open": "Anbieter-Einstellungen öffnen"
+      }
+    },
     "langTabs": "Übersetzte Sprachen",
     "transform": {
       "translateStarting": "Übersetze …",

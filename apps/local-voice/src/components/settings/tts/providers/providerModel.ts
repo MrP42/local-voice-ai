@@ -1,0 +1,219 @@
+import type { TtsError, TtsProviderEntry } from "@/bindings";
+
+/**
+ * Reine Logik der Gruppe "Sprachausgabe-Anbieter" (ohne Oberflaeche, ohne
+ * Tauri): Freigabe-Schritte, Konfigurationsfelder und Fehlertexte. Die
+ * Oberflaeche liest nur Faehigkeiten und Zustaende des Anbieters -- es gibt
+ * keine Zweige auf eine bestimmte Anbieter-Kennung.
+ */
+
+/** Der naechste Schritt der Freigabe, den der Nutzer noch tun muss. */
+export type ApprovalStep = "license" | "remote" | null;
+
+/**
+ * Welcher Dialog als Naechstes faellig ist. Reihenfolge wie im Ablauf:
+ * Lizenz bestaetigen, danach Fernzugriff freigeben. Ohne Opt-in gibt es
+ * keinen Schritt (erst der Schalter "Aktivieren").
+ */
+export function nextApprovalStep(entry: TtsProviderEntry): ApprovalStep {
+  if (entry.descriptor.opt_in && !entry.enabled) return null;
+  if (entry.license_needs_ack && !entry.license_acked) return "license";
+  if (entry.remote && !entry.allow_remote) return "remote";
+  return null;
+}
+
+/** Hat der Anbieter einen Schalter "Aktivieren"? */
+export function hasEnableSwitch(entry: TtsProviderEntry): boolean {
+  return entry.descriptor.opt_in && entry.descriptor.tier !== "unavailable";
+}
+
+/** Darf der Anbieter ueberhaupt gewaehlt werden (nur Stufe, nicht Sperre)? */
+export function isSelectableTier(entry: TtsProviderEntry): boolean {
+  return (
+    entry.descriptor.tier === "supported" ||
+    entry.descriptor.tier === "experimental"
+  );
+}
+
+/** Eine Zeile "Quelle" nur fuer echte Web-Adressen (kein `file:` o. ae.). */
+export function safeSourceUrl(url: string): string | null {
+  return /^https?:\/\//i.test(url.trim()) ? url.trim() : null;
+}
+
+// ---------------------------------------------------------------------------
+// Konfiguration (JSON-Text der Befehle ttsProviderGetConfig/-SetConfig)
+// ---------------------------------------------------------------------------
+
+/**
+ * Felder, die NICHT als Eingabe erscheinen: Freigaben wirken nur ueber den
+ * Freigabe-Ablauf (die Konfiguration kann sie nicht setzen), Kennung und
+ * Beschriftung gehoeren zur Identitaet, Lizenzangaben und der Name der
+ * Schluessel-Umgebungsvariable sind verschachtelt bzw. gehoeren nicht hierher.
+ */
+export const HIDDEN_FIELDS: ReadonlySet<string> = new Set([
+  "allow_remote",
+  "allow_network",
+  "id",
+  "label",
+  "license",
+  "api_key_env",
+]);
+
+/** Zahlfelder (der JSON-Wert allein verraet bei `null` den Typ nicht). */
+const NUMBER_FIELDS: ReadonlySet<string> = new Set(["threads", "sample_rate"]);
+
+/** Felder mit festem Wertevorrat; `""` steht fuer "keine Angabe" (`null`). */
+const CHOICE_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  quant: ["", "q8"],
+  lang: ["de", "en", "fr", "es", "pt", "none"],
+};
+
+export type FieldKind = "text" | "number" | "bool" | "list" | "choice";
+
+export interface ConfigField {
+  key: string;
+  kind: FieldKind;
+  /** Nur bei `choice`. */
+  choices?: readonly string[];
+  /** Ein leeres Feld bedeutet `null` (Original war `null`). */
+  nullable: boolean;
+}
+
+export type FieldValue = string | boolean;
+
+export type ParsedConfig = {
+  original: Record<string, unknown>;
+  fields: ConfigField[];
+  values: Record<string, FieldValue>;
+};
+
+function fieldOf(key: string, value: unknown): ConfigField | null {
+  if (HIDDEN_FIELDS.has(key)) return null;
+  const nullable = value === null;
+  if (typeof value === "boolean") return { key, kind: "bool", nullable };
+  if (Array.isArray(value) && value.every((v) => typeof v === "string"))
+    return { key, kind: "list", nullable: false };
+  if (CHOICE_FIELDS[key])
+    return { key, kind: "choice", choices: CHOICE_FIELDS[key], nullable };
+  if (typeof value === "number" || NUMBER_FIELDS.has(key))
+    return { key, kind: "number", nullable };
+  if (typeof value === "string" || value === null)
+    return { key, kind: "text", nullable };
+  // Verschachteltes (Objekte): nicht als Feld anbieten.
+  return null;
+}
+
+function valueOf(field: ConfigField, raw: unknown): FieldValue {
+  if (field.kind === "bool") return raw === true;
+  if (field.kind === "list") return (raw as string[]).join(", ");
+  if (raw === null || raw === undefined) return "";
+  return String(raw);
+}
+
+/** Konfigurations-JSON in Felder und Eingabewerte zerlegen. */
+export function parseConfig(json: string): ParsedConfig {
+  const parsed: unknown = JSON.parse(json);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("Konfiguration ist kein Objekt");
+  const original = parsed as Record<string, unknown>;
+  const fields: ConfigField[] = [];
+  const values: Record<string, FieldValue> = {};
+  for (const [key, raw] of Object.entries(original)) {
+    const field = fieldOf(key, raw);
+    if (!field) continue;
+    fields.push(field);
+    values[key] = valueOf(field, raw);
+  }
+  return { original, fields, values };
+}
+
+export class ConfigInputError extends Error {
+  constructor(
+    public readonly key: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Eingaben zurueck in das JSON: nicht angebotene Felder bleiben unveraendert
+ * (auch die Freigaben -- das Backend ignoriert sie ohnehin).
+ */
+export function buildConfig(
+  parsed: ParsedConfig,
+  values: Record<string, FieldValue>,
+): string {
+  const out: Record<string, unknown> = { ...parsed.original };
+  for (const field of parsed.fields) {
+    const raw = values[field.key];
+    switch (field.kind) {
+      case "bool":
+        out[field.key] = raw === true;
+        break;
+      case "list":
+        out[field.key] = String(raw)
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        break;
+      case "number": {
+        const text = String(raw).trim();
+        if (text === "") {
+          if (!field.nullable)
+            throw new ConfigInputError(field.key, "number_required");
+          out[field.key] = null;
+        } else {
+          const n = Number(text);
+          if (!Number.isFinite(n))
+            throw new ConfigInputError(field.key, "number_invalid");
+          out[field.key] = n;
+        }
+        break;
+      }
+      default: {
+        const text = String(raw).trim();
+        out[field.key] = text === "" && field.nullable ? null : text;
+      }
+    }
+  }
+  return JSON.stringify(out);
+}
+
+// ---------------------------------------------------------------------------
+// Fehler
+// ---------------------------------------------------------------------------
+
+/**
+ * Das Backend liefert deutsche, lesbare Meldungen; die Klasse (`kind`) gibt
+ * nur die Ueberschrift vor. Ein unbekannter Fehler (kein `TtsError`) wird
+ * als Text durchgereicht.
+ */
+export function asTtsError(error: unknown): TtsError {
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "kind" in error &&
+    "message" in error
+  ) {
+    return error as TtsError;
+  }
+  return {
+    kind: "backend",
+    retryable: false,
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+/** Der Probetext, mit dem die Probestimme startet (deutsch). */
+export const DEFAULT_PREVIEW_KEY = "tts.providers.preview.defaultText";
+
+/** Wert fuer "keine Stimme gewaehlt" in der Auswahlliste. */
+export const VOICE_DEFAULT = "@default";
+/** Wert fuer "alle Sprachen" in der Sprachauswahl. */
+export const LANG_ALL = "@all";
+
+/** Aktiv heisst: die Probestimme laeuft noch (Abbrechen ist sinnvoll). */
+export function previewIsActive(phase: string | undefined): boolean {
+  return phase === "starting" || phase === "started" || phase === "first_audio";
+}
