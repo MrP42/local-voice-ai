@@ -1,0 +1,6 @@
+{"id": "en-v1-funktion-001", "category": "funktion", "text": "Good morning, how are you doing today?", "expected_normalized": "good morning how are you doing today", "smoke": true}
+{"id": "en-v1-funktion-002", "category": "funktion", "text": "The meeting starts at 10:30 and lasts about two hours.", "expected_normalized": "the meeting starts at 10 uhr 30 and lasts about two hours", "smoke": true}
+{"id": "en-v1-funktion-003", "category": "funktion", "text": "Please send the report to the team by Friday.", "expected_normalized": "please send the report to the team by friday", "smoke": true}
+{"id": "en-v1-funktion-004", "category": "funktion", "text": "This model runs locally on your own computer.", "expected_normalized": "this model runs locally on your own computer", "smoke": true}
+{"id": "en-v1-funktion-005", "category": "funktion", "text": "Wow, that is absolutely wonderful news!", "expected_normalized": "wow that is absolutely wonderful news", "smoke": true}
+{"id": "en-v1-funktion-006", "category": "funktion", "text": "Could you repeat that a little more slowly, please?", "expected_normalized": "could you repeat that a little more slowly please", "smoke": true}
