@@ -58,18 +58,33 @@ Phonon (`VoiceDescriptor.license` ist optional, contract.rs:206).
 
 ## 3. Durchsetzung in der App
 
-Im Deskriptor vorhanden und getestet: `opt_in`, `tier`, `LicenseInfo` mit `verified`/`verified_on`/`note`, Loopback-Sperre
-(`PrivacyBlocked`) und `LicenseBlocked` bei gesperrten Modellen. **Geplant in P3a (im Code noch nicht vorhanden):**
+Umgesetzt (P3a, `apps/local-voice/src-tauri/src/managers/tts/providers/policy.rs`, hier **P/**) und getestet:
 
-* Guardrails in `commands`, nicht im Adapter, damit sie kein Aufrufer umgeht: Anbieter mit `opt_in && (non_commercial ||
-  !verified)` brauchen `license_ack`; Nicht-Loopback-URLs brauchen `allow_remote`; beide nur über die UI setzbar, nie über
-  Agentenbrücke oder CLI-Agentenmodus (implementation-plan.md §3).
-* `license_ack` mit **Fingerprint**: die Bestätigung gilt für den Stand der Lizenzangabe; ändert sich Modell oder Lizenz,
-  wird erneut bestätigt. Die genaue Form des Fingerprints ist **offen** (im Plan nicht festgelegt, im Code nicht vorhanden).
-* Die Sperre hängt nicht allein an `!verified`: Fish und Piper sind keine Opt-in-Anbieter und würden sonst fälschlich
-  gesperrt (builtin.rs:22-27).
+* **Eine Prüfstelle**: `check_use` (P/policy.rs:513) entscheidet vor jeder Nutzung (Vorlesen, Probestimme, Stimmenliste,
+  Auswahl, CLI, Brückenwerkzeuge), nicht im Adapter und nicht erst im Tauri-Befehl. Reihenfolge:
+  1. `opt_in`: Kennung muss in `enabled` stehen, sonst `LicenseBlocked`.
+  2. `opt_in && (non_commercial || !verified)` (`license_needs_ack`, P/policy.rs:484): ein `license_ack` mit aktuellem
+     Fingerabdruck, sonst `LicenseBlocked`.
+  3. Adresse außerhalb von Loopback: Kennung in `allow_remote`, sonst `PrivacyBlocked` (unabhängig von `opt_in`).
+* **Fingerabdruck** (`license_fingerprint`, P/policy.rs:461): SHA-256 über längenpräfixierte Teile von Kennung,
+  Gewichts-Lizenz (`weights`), `nc`/`c` und Modell, erste 32 Hexzeichen. Ändert sich Modell oder Lizenzangabe, gilt die
+  Zustimmung nicht mehr und wird erneut verlangt. Der Algorithmus ist durch einen Referenzwert-Test festgeschrieben.
+  Bestätigt wird nur zum **aktuellen** Fingerabdruck (`acknowledge_in`, `commands/tts_providers.rs:145`).
+* **Nur über die UI setzbar**: `tts_provider_set_enabled`, `tts_provider_acknowledge_license`,
+  `tts_provider_set_allow_remote` (`commands/tts_providers.rs:305, 318, 342`). Weder Agentenbrücke noch CLI noch
+  Umgebungsvariable noch `tts_provider_set_config` können sie setzen (P/policy.rs:25-29, 39-44). Die CLI meldet einen
+  gesperrten Anbieter mit Exit 3 und nennt die fehlende Freigabe ([cli-and-automation.md](cli-and-automation.md)).
+* Die Sperre hängt nicht allein an `!verified`: Fish und Piper (`opt_in = false`) sind nie gesperrt (P/policy.rs:479-483;
+  builtin.rs:22-27). Neue Anbieter sind alle `opt_in = true`.
+* Wirkung auf die Tabelle oben: `phonon` 40m-de und `ollama-speech` (`phonon:de`) sind nichtkommerziell, brauchen also
+  Opt-in **und** Lizenz-Bestätigung; `phonon` 31m-en (verifiziert, Apache-2.0) braucht nur das Opt-in; `openai-speech` ist
+  nie `verified` und braucht daher immer die Bestätigung.
 
-Bis P3a gemerged ist, gibt es keine Durchsetzung außerhalb der Adapter; neue Anbieter sind aber alle `opt_in = true`.
+**Grenzen der Umsetzung** (siehe auch [CHANGELOG.md](CHANGELOG.md)):
+
+* Es gibt **keinen Widerruf-Befehl** für eine Lizenz-Zustimmung. Ein Opt-out nimmt nur die Freischaltung zurück; die
+  gespeicherte Zustimmung bleibt, gilt aber nur bei unverändertem Fingerabdruck.
+* Die Zustimmung bestätigt, dass der Nutzer die Angabe gesehen hat, nicht dass die Lizenz rechtlich geprüft ist.
 
 ## 4. Pflege
 

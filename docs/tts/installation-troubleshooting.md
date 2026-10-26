@@ -3,8 +3,8 @@
 Stand 26.10.2026 · Goal `tts-provider` (Paket D1). Meldungen und Verhalten stammen aus dem Code unter
 `apps/local-voice/src-tauri/src/managers/tts/providers/` (**P/**) und `managers/tts/availability.rs`; Quellen und
 Abrufdaten zu den Anbietern: [provider-research.md](provider-research.md). Zahlen ohne Fundstelle sind als „laut Auftrag“
-gekennzeichnet. Einbindung in Einstellungen/UI folgt mit Paket P3/P4 (siehe [adapter-contract.md](adapter-contract.md), §11);
-bis dahin sind die Adapter nur über Code und Tests ansprechbar. **Die App lädt nie selbst Programme oder Modelle für
+gekennzeichnet. Einbindung in Einstellungen, UI, CLI und Agentenbrücke: [adapter-contract.md](adapter-contract.md), §11, und
+[cli-and-automation.md](cli-and-automation.md). **Die App lädt nie selbst Programme oder Modelle für
 die Experimental-Anbieter** (phonon.rs:679-694, ollama_speech.rs:505-510).
 
 ## 1. Fish Speech (`fish`, unterstützt)
@@ -112,7 +112,7 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
 
 * **B2 Piper-Abbruch**: `run_piper_blocking` läuft auf einem Blocking-Thread. Ein Abbruch beendet das Warten sofort, den
   Piper-Prozess aber erst nach seiner eigenen Frist (Auftragsfrist + 2 s, `PIPER_KILL_GRACE`, builtin.rs:57,394,
-  mod.rs:72-75). Kein Ressourcenleck, da die Frist begrenzt ist; ein echtes Kill bräuchte eine Änderung an `piper.rs`
+  mod.rs:97-100). Kein Ressourcenleck, da die Frist begrenzt ist; ein echtes Kill bräuchte eine Änderung an `piper.rs`
   (außerhalb des Pakets). Status laut BEFUNDE.md: offen.
 * **R1 Phonon-CLI nur satzweise**: das CLI schreibt nur Dateien, daher `StreamingMode::Sentence` und ein Prozess je Satz
   (phonon.rs:3-7). Echtes Chunk-Streaming gibt es bei Phonon nur über die Server (ptts-openai-server, WebSocket) oder Ollama.
