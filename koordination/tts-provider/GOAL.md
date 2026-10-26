@@ -9,7 +9,7 @@ repo: MrP42/local-voice-ai
 branch: feat/tts-provider
 iteration: 1
 erstellt: 2026-10-26
-aktualisiert: 2026-10-26T21:34
+aktualisiert: 2026-10-26T22:01
 ---
 
 # Goal: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
@@ -110,7 +110,7 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - 2026-10-26: Neue dyn-Anbieterschicht neben dem bestehenden `TtsEngine`-Trait statt dessen Umbau (Rückwärtskompatibilität, Cache-Tags bleiben).
 
 ## Nächste empfohlene Aktion
-B2 auflösen (Patrick): ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt. Dann `goal.py resolve-blocker --id B2 --beleg …` und `goal.py set --state PLANNING`.
+Patrick: Permission-Regel fuer ptts.exe + Merge setzen oder selbst ausfuehren; HF-Bedingungen phonon-40m-de annehmen; dann P2L
 
 ## Verlauf
 - 2026-10-26T14:42 DISCOVERY — Goal State angelegt
@@ -127,4 +127,5 @@ B2 auflösen (Patrick): ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeil
 - 2026-10-26T18:08 REWORK (Runde 1) — P7n Nacharbeit laeuft
 - 2026-10-26T19:16 REWORK (Runde 1) — Budget ~4,6 MTok (131 %); P7n abgenommen c21d9fab; P6 Messlauf laeuft exklusiv
 - 2026-10-26T21:34 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz
+- 2026-10-26T22:01 BLOCKED (Runde 1) — 26.10. abends: B3 geklaert (326af9ae). Weiter gesperrt: ptts.exe (Code from External), PR-Merge (Merge Without Review), HF-Bedingungen (Chrome nicht bei HF angemeldet)
 
