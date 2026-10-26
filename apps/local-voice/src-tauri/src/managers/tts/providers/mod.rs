@@ -28,6 +28,20 @@
 //!   dem OpenAI-Adapter, mit Version-/Modell-/Plattformprüfung, Paket P2.
 //!   Alle drei sind `Experimental` + `opt_in`; sie werden von P3 registriert,
 //!   nicht hier.
+//! * [`policy`] — Einstellungen `tts_providers` (Opt-in, Lizenz-Zustimmungen,
+//!   Fernzugriffs-Freigaben), Konfigurationsvorrang (Override > Umgebung >
+//!   Einstellungen > Adaptervorgabe) und die Guardrails [`check_use`] — rein,
+//!   ohne `AppHandle`. Paket P3a.
+//! * [`setup`] — baut die Registry aus den aufgelösten Konfigurationen
+//!   (alle fünf Anbieter immer registriert) und hält sie aktuell
+//!   ([`ProviderHost`]). Paket P3a.
+//! * [`pipeline`] — [`ProviderEngine`]: ein Registry-Anbieter als Engine der
+//!   Vorlese-Pipeline (`tts_engine = "provider:<id>"`, Variante
+//!   `EngineImpl::Provider`). Paket P3a.
+//! * [`preview`] — Probestimme mit Stream-Wiedergabe, Abbruch und dem Ereignis
+//!   `tts-provider-preview`. Paket P3a.
+//! * [`host`] — der `TtsManager` als Gastgeber (Fish-Synthese, Momentaufnahme
+//!   für die Befehle in `commands/tts_providers.rs`). Paket P3a.
 //! * `contract_tests` (nur Tests) — `contract_suite`, der Vertragstest-Satz,
 //!   den jeder Adapter in seinen Tests aufruft; `test_http` (Fake-HTTP-Server)
 //!   und `phonon_fake` (Fake-`ptts`, mit `rustc` gebaut) sind ihre Testhilfen.
@@ -66,6 +80,13 @@
 //! | Absturz/Hänger eines Kindprozesses oder Anbieters | Frist ergibt `Timeout`; Registry fängt Panik/Hänger in `health_all` (`catch_unwind` + Zeitgrenze); Piper-Prozess endet spätestens nach Frist + 2 s (siehe Grenzen) |
 //! | Wiederholung erzeugt doppeltes Audio | `with_retry` nur bei `retryable`, nur ohne gelieferten Chunk, hart begrenzt (1–5 Versuche), Pause abbrechbar |
 //! | Kaputtes/abgeschnittenes WAV | `parse_wav` ohne Panik (Präfix- und Müll-Tests), Streaming-Header (`0xFFFFFFFF`) verkraftet |
+//! | Einstellungsänderung während eines Auftrags (P3a) | `ProviderHost::sync` ersetzt Anbieter an Ort und Stelle, die Auftragstabelle bleibt; laufende Aufträge halten ihren Anbieter und bleiben abbrechbar; Test `ein_neuaufbau_waehrend_eines_auftrags…` |
+//! | Abbruch der Probestimme (P3a) | Synthese-Marke UND Wiedergabe-Flag; kein Audio mehr nach `cancel`, genau ein Abschlussereignis; Tests in `preview` |
+//! | Kein Ausgabegerät / Player-Fehler (P3a) | `error` (`unavailable`) mit dem Grund des Players, die Synthese wird beendet; Test `ohne_ausgabegeraet…` |
+//! | Zu langer Probetext/zu viel Audio (P3a) | 1000 Zeichen, 8 Mio. Abtastwerte, 120 s Frist; Test `zu_langes_audio_wird_begrenzt` |
+//! | Abbruch mitten im Satz beim Vorlesen (P3a) | `ProviderEngine::synthesize` hört auf das Abbruch-Flag, lässt das Anbieter-Future fallen; Test `abbruch_mitten_in_der_synthese…` |
+//! | Guardrail-Umgehung (P3a) | `check_use` an JEDER Nutzung (Vorlesen vor dem Cache, Probestimme, Stimmenliste, Wahl); Konfiguration kann `allow_remote` nicht setzen; Tests in `policy`, `pipeline`, `preview`, `commands::tts_providers` |
+//! | Alte/kaputte Einstellungsdatei (P3a) | `tts_providers` mit `#[serde(default)]`; ein kaputtes Feld verwirft `salvage_settings`; Tests in `settings` |
 //!
 //! ## Grenzen (bewusst, im Report genannt)
 //!
@@ -83,11 +104,16 @@
 
 pub mod builtin;
 pub mod contract;
+pub mod host;
 pub mod mock;
 pub mod ollama_speech;
 pub mod openai_speech;
 pub mod phonon;
+pub mod pipeline;
+pub mod policy;
+pub mod preview;
 pub mod registry;
+pub mod setup;
 pub mod wav;
 
 #[cfg(test)]
@@ -108,6 +134,13 @@ pub use mock::{MockFailure, MockProvider};
 pub use ollama_speech::{OllamaSpeechConfig, OllamaSpeechProvider};
 pub use openai_speech::{is_loopback_url, LicenseConfig, OpenAiSpeechConfig, OpenAiSpeechProvider};
 pub use phonon::{PhononConfig, PhononProvider};
+pub use pipeline::ProviderEngine;
+pub use policy::{
+    check_use, license_fingerprint, resolve_provider_configs, LicenseAck, ProviderOverride,
+    ProviderOverrides, ResolvedConfigs, TtsProvidersSettings, UseSubject,
+};
+pub use preview::{PreviewPhase, PreviewService, TtsProviderPreview};
 pub use registry::{
     stream_with_retry, with_retry, DeliveryTracker, ProviderRegistry, RequestGuard, RetryPolicy,
 };
+pub use setup::{build_registry, sync_registry, ProviderHost, ProviderPaths};

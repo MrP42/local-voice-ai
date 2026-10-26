@@ -2431,6 +2431,18 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_inspect_voice_archive,
             commands::tts::tts_import_voice_archive,
             commands::tts::tts_rename_voice_id,
+            // Sprachausgabe-Anbieter (Goal tts-provider, P3a)
+            commands::tts_providers::tts_providers_list,
+            commands::tts_providers::tts_provider_health,
+            commands::tts_providers::tts_provider_voices,
+            commands::tts_providers::tts_provider_get_config,
+            commands::tts_providers::tts_provider_set_config,
+            commands::tts_providers::tts_provider_set_enabled,
+            commands::tts_providers::tts_provider_acknowledge_license,
+            commands::tts_providers::tts_provider_set_allow_remote,
+            commands::tts_providers::tts_provider_select,
+            commands::tts_providers::tts_provider_preview,
+            commands::tts_providers::tts_provider_cancel,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
@@ -2460,6 +2472,8 @@ pub fn run(cli_args: CliArgs) {
             meeting_prompt::MeetingPromptEvent,
             commands::people::BriefRequestEvent,
             managers::transcription::StreamTextEvent,
+            // Goal tts-provider, P3a: Verlauf der Probestimme
+            managers::tts::providers::preview::TtsProviderPreview,
             managers::transcription::StreamPhaseEvent,
         ]);
 

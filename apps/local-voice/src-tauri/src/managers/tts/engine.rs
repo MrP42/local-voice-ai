@@ -30,16 +30,59 @@
 pub enum TtsEngineKind {
     Fish,
     Piper,
+    /// Ein Anbieter aus der Registry (`"provider:<id>"`, Paket P3a); welcher,
+    /// steht in der Engine selbst, nicht in der Art.
+    Provider,
 }
+
+/// Präfix der Engine-Wahl für Registry-Anbieter in `tts_engine`.
+pub const PROVIDER_PREFIX: &str = "provider:";
 
 impl TtsEngineKind {
     /// Settings-Wert (`tts_engine`) in eine Engine-Art übersetzen.
     /// Unbekannte Werte fallen auf Fish zurück — der sichere Standard.
+    /// `provider:<id>` wählt einen Registry-Anbieter; `provider:fish` und
+    /// `provider:piper` sind Schreibweisen der eingebauten Engines.
     pub fn from_setting(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
-            "piper" => Self::Piper,
+            "piper" | "provider:piper" => Self::Piper,
+            "fish" | "provider:fish" => Self::Fish,
+            other if provider_id_from_setting(other).is_some() => Self::Provider,
             _ => Self::Fish,
         }
+    }
+}
+
+/// Kennung des gewählten Registry-Anbieters aus `tts_engine`. `None` für
+/// alles, was keine (gültige) `provider:<id>`-Wahl ist — auch für
+/// `provider:fish`/`provider:piper`, die über ihre eigenen Pfade laufen.
+pub fn provider_id_from_setting(value: &str) -> Option<String> {
+    let lowered = value.trim().to_ascii_lowercase();
+    let id = lowered.strip_prefix(PROVIDER_PREFIX)?;
+    if id == "fish" || id == "piper" || !super::providers::contract::is_valid_provider_id(id) {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// Ist `value` ein Wert, den der Einstellungs-Setter annehmen darf? `fish`,
+/// `piper` oder `provider:<id>` in kanonischer Schreibweise (Kleinbuchstaben,
+/// gültige Kennung). Ob der Anbieter existiert oder benutzt werden darf, prüft
+/// erst die Nutzung (Guardrails) — der Setter ist kein Freigabeweg.
+pub fn is_valid_engine_setting(value: &str) -> bool {
+    match value {
+        "fish" | "piper" => true,
+        other => provider_id_from_setting(other).is_some_and(|id| engine_setting_for(&id) == other),
+    }
+}
+
+/// Wert für `tts_engine`, der diesen Anbieter wählt: `fish` und `piper`
+/// bleiben ihre alten Werte (ältere Fassungen verstehen sie), alles andere
+/// ist `provider:<id>`.
+pub fn engine_setting_for(provider_id: &str) -> String {
+    match provider_id {
+        "fish" | "piper" => provider_id.to_string(),
+        other => format!("{PROVIDER_PREFIX}{other}"),
     }
 }
 
@@ -123,6 +166,27 @@ pub fn fish_cache_tag(_voice: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn der_setter_nimmt_nur_kanonische_engine_werte_an() {
+        for ok in ["fish", "piper", "provider:phonon", "provider:openai-speech"] {
+            assert!(is_valid_engine_setting(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "kokoro",
+            "Fish",
+            "provider:",
+            "provider:Phonon",
+            "provider:fish",
+            "provider:piper",
+            "provider:bad id",
+            " piper",
+            "provider:phonon ",
+        ] {
+            assert!(!is_valid_engine_setting(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn unbekannte_settings_werte_fallen_auf_fish_zurueck() {

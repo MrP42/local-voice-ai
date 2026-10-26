@@ -150,6 +150,10 @@ enum EngineImpl {
     Fish,
     /// Piper als CPU-Subprozess; trägt seine aufgelösten Pfade selbst.
     Piper(piper::PiperEngine),
+    /// Ein Anbieter aus der Registry (Paket P3a, `tts_engine = "provider:<id>"`):
+    /// trägt Anbieter, Stimme und den Stand der Guardrails selbst
+    /// (siehe `providers::pipeline`).
+    Provider(providers::pipeline::ProviderEngine),
     /// Austauschbare Engine für Tests: beweist, dass die Naht trägt.
     #[cfg(test)]
     Mock(Arc<tests::MockEngine>),
@@ -160,6 +164,7 @@ impl EngineImpl {
         match self {
             Self::Fish => TtsEngineKind::Fish,
             Self::Piper(p) => p.kind(),
+            Self::Provider(_) => TtsEngineKind::Provider,
             #[cfg(test)]
             Self::Mock(mock) => mock.kind(),
         }
@@ -169,6 +174,7 @@ impl EngineImpl {
         match self {
             Self::Fish => engine::FISH_CAPS,
             Self::Piper(p) => p.caps(),
+            Self::Provider(p) => p.caps(),
             #[cfg(test)]
             Self::Mock(mock) => mock.caps(),
         }
@@ -178,6 +184,8 @@ impl EngineImpl {
         match self {
             Self::Fish => engine::fish_cache_tag(voice),
             Self::Piper(p) => p.cache_tag(voice),
+            // Der Tag kommt vom Anbieter; die Fish-Referenzstimme zählt nicht.
+            Self::Provider(p) => p.cache_tag(),
             #[cfg(test)]
             Self::Mock(mock) => mock.cache_tag(voice),
         }
@@ -345,6 +353,12 @@ impl TtsCore {
                 // eine Engine, die ihren Fehlgrund kennt.
                 piper.unwrap_or_else(|| piper::PiperEngine::resolve(None, None)),
             ),
+            // Registry-Anbieter kommen über `set_provider_engine`; ohne Anbieter
+            // gibt es nichts zu bauen — Fish bleibt der sichere Standard.
+            TtsEngineKind::Provider => {
+                log::warn!("set_engine(Provider) ohne Anbieter aufgerufen, Fish bleibt gewählt");
+                EngineImpl::Fish
+            }
         };
         let mut slot = self.engine.lock().unwrap();
         if slot.availability() != chosen.availability() {
@@ -353,6 +367,13 @@ impl TtsCore {
             }
         }
         *slot = chosen;
+    }
+
+    /// Registry-Anbieter als aktive Engine setzen (Paket P3a). Der Manager baut
+    /// die Engine vor jedem Auftrag aus den Einstellungen neu — damit gilt
+    /// immer der aktuelle Stand der Guardrails.
+    pub(crate) fn set_provider_engine(&self, engine: providers::pipeline::ProviderEngine) {
+        *self.engine.lock().unwrap() = EngineImpl::Provider(engine);
     }
 
     /// Cache-Tag der aktiven Engine (siehe [`WavCache::key`]).
@@ -376,6 +397,7 @@ impl TtsCore {
         seed: i64,
         text: &str,
         voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
         let req = engine::SynthesisRequest {
             text,
@@ -389,6 +411,8 @@ impl TtsCore {
         match engine {
             EngineImpl::Fish => self.fish_synthesize(port, req).await,
             EngineImpl::Piper(p) => p.synthesize(req).await,
+            // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
+            EngineImpl::Provider(p) => p.synthesize(text, cancel).await,
             #[cfg(test)]
             EngineImpl::Mock(mock) => mock.synthesize(req).await,
         }
@@ -589,6 +613,21 @@ impl TtsCore {
         text: &str,
         voice: Option<&str>,
     ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_cancellable(port, seed, text, voice, None)
+            .await
+    }
+
+    /// Wie [`Self::fetch_wav`], mit dem Abbruch-Flag des laufenden Auftrags:
+    /// ein Registry-Anbieter bricht damit auch mitten im Satz ab (Fish und
+    /// Piper laufen den Satz wie bisher zu Ende).
+    async fn fetch_wav_cancellable(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
         let voice = match voice {
             Some(explicit) => Some(explicit.to_string()),
             None => self.voice.lock().unwrap().clone(),
@@ -598,6 +637,12 @@ impl TtsCore {
         // Settings-Wechsel währenddessen kann keine Bytes mehr unter
         // fremdem Tag ablegen (TOCTOU-Befund aus dem A3/E1-Review).
         let engine = self.engine_snapshot();
+        // Guardrails eines Registry-Anbieters VOR dem Cache: auch schon
+        // synthetisiertes Audio eines inzwischen gesperrten Anbieters wird
+        // nicht mehr ausgeliefert (Lizenz-Opt-in, Zustimmung, Fernzugriff).
+        if let EngineImpl::Provider(p) = &engine {
+            p.guard().map_err(String::from)?;
+        }
         // Ohne Stil-Tags (Piper) fliegen die `[…]`-Tags raus, BEVOR der
         // Cache-Schluessel entsteht — sonst laese die Engine „calm" vor.
         let stripped;
@@ -630,7 +675,7 @@ impl TtsCore {
         // Cache-Miss: durch den Engine-Schnappschuss (Fish: der bisherige
         // HTTP-POST; Piper: ein Subprozess).
         let bytes = self
-            .engine_synthesize(&engine, port, seed, text, voice.as_deref())
+            .engine_synthesize(&engine, port, seed, text, voice.as_deref(), cancel)
             .await?;
         self.wav_cache
             .lock()
@@ -800,7 +845,16 @@ impl TtsCore {
                         // deshalb faellt ein Stimmwechsel nicht als Pause auf,
                         // solange der Server die Referenz im Speicher haelt
                         // (`use_memory_cache`).
-                        match self.fetch_wav(port, seed, text, voice.as_deref()).await {
+                        match self
+                            .fetch_wav_cancellable(
+                                port,
+                                seed,
+                                text,
+                                voice.as_deref(),
+                                Some(&cancelled),
+                            )
+                            .await
+                        {
                             Ok(bytes) => {
                                 let rate = wav_sample_rate(&bytes).unwrap_or(44_100);
                                 last_rate = Some(rate);
@@ -829,6 +883,9 @@ impl TtsCore {
                                     scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
                                 blobs.push((bytes, gain));
                             }
+                            // Ein Abbruch mitten in der Synthese (Anbieter) ist
+                            // kein Fehler des Vorlesens.
+                            Err(_) if cancelled.load(Ordering::Acquire) => break,
                             Err(e) => {
                                 failure = Some(e);
                                 break;
@@ -960,6 +1017,10 @@ pub struct TtsManager {
     export_cancel: Mutex<Arc<AtomicBool>>,
     /// Abbruch-Flag der Vorab-Erzeugung (eigenes Flag, wie beim Export).
     prewarm_cancel: Mutex<Arc<AtomicBool>>,
+    /// Registry der Sprachausgabe-Anbieter (Goal tts-provider, P3a).
+    provider_host: providers::setup::ProviderHost,
+    /// Probestimme der Anbieter (streamt; siehe `providers::preview`).
+    provider_preview: providers::preview::PreviewService,
 }
 
 struct SpeakSession {
@@ -1514,16 +1575,28 @@ impl TtsManager {
             }
         }));
 
-        let manager = Arc::new(Self {
-            core,
-            app: app.clone(),
-            child: Mutex::new(None),
-            child_guard: Mutex::new(None),
-            pending_reference: Mutex::new(None),
-            reading: Mutex::new(None),
-            speak_session: Mutex::new(None),
-            export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
-            prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+        // `new_cyclic`: die Fish-Hülle der Anbieter-Registry braucht einen
+        // schwachen Verweis auf den Manager (Server sicherstellen + HTTP-Pfad),
+        // ohne dass die Registry den Manager am Leben hält.
+        let manager = Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
+            let provider_host = providers::setup::ProviderHost::new(Some(
+                providers::host::fish_synth(weak.clone()),
+            ));
+            let provider_preview =
+                providers::host::preview_service(app, &core, provider_host.registry());
+            Self {
+                core,
+                app: app.clone(),
+                child: Mutex::new(None),
+                child_guard: Mutex::new(None),
+                pending_reference: Mutex::new(None),
+                reading: Mutex::new(None),
+                speak_session: Mutex::new(None),
+                export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                provider_host,
+                provider_preview,
+            }
         });
         manager.refresh_from_settings();
 
@@ -1652,7 +1725,29 @@ impl TtsManager {
                 settings.tts_piper_auto_language,
             )
         });
-        self.core.set_engine(kind, piper_engine);
+        // Anbieter-Registry auf den Stand der Einstellungen bringen (billig,
+        // wenn sich nichts geändert hat). Wählt `tts_engine` einen Registry-
+        // Anbieter (`provider:<id>`), entsteht daraus die Engine — mit dem
+        // JETZIGEN Stand der Guardrails, den `fetch_wav` je Satz prüft.
+        let resolved = self.sync_providers(
+            &settings.tts_providers,
+            &settings.tts_fish_dir,
+            settings.tts_piper_voice.as_deref(),
+            settings.tts_piper_auto_language,
+        );
+        match engine::provider_id_from_setting(&settings.tts_engine) {
+            Some(id) if kind == TtsEngineKind::Provider => {
+                self.core
+                    .set_provider_engine(providers::pipeline::ProviderEngine::new(
+                        self.provider_host.registry().clone(),
+                        &id,
+                        resolved.voice_for(&id),
+                        resolved.subject(&id),
+                        Arc::new(settings.tts_providers.clone()),
+                    ));
+            }
+            _ => self.core.set_engine(kind, piper_engine),
+        }
         // Beim Umschalten die gemessenen Faktoren verwerfen: sonst hinge der
         // Pegel an einer Messung aus der Zeit vor dem Umschalten.
         let previous = self
@@ -1913,6 +2008,7 @@ impl TtsManager {
         match self.core.engine_snapshot() {
             EngineImpl::Fish => self.ensure_server().await,
             EngineImpl::Piper(p) => p.ensure_ready().await,
+            EngineImpl::Provider(p) => p.ensure_ready().await,
             #[cfg(test)]
             EngineImpl::Mock(mock) => mock.ensure_ready().await,
         }
@@ -1925,6 +2021,9 @@ impl TtsManager {
     ) -> Result<usize, String> {
         use tauri::Emitter;
         self.refresh_from_settings();
+        // Das Vorlesen gewinnt: eine laufende Probestimme eines Anbieters
+        // verstummt, statt sich mit ihm zu überlagern.
+        self.provider_preview.cancel_active();
         // Auch eine schon berechnete Sitzung (Fortsetzen nach Pause, Wechsel
         // der Stimme mitten im Text) liest mit der JETZT gewaehlten Stimme:
         // gilt keine Sprecherzuordnung, tragen die Saetze keine eigene Stimme.
@@ -2681,7 +2780,10 @@ impl TtsManager {
     /// komplett an der Engine vorbei und hätte den GPU-Server gestartet.
     pub async fn synthesize_to_file(&self, text: &str, out_path: &str) -> Result<usize, String> {
         self.refresh_from_settings();
-        if self.core.engine_kind() == TtsEngineKind::Piper {
+        if matches!(
+            self.core.engine_kind(),
+            TtsEngineKind::Piper | TtsEngineKind::Provider
+        ) {
             return self.piper_synthesize_to_file(text, out_path).await;
         }
         self.ensure_server().await?;
@@ -2726,8 +2828,13 @@ impl TtsManager {
         self.ensure_engine_ready().await?;
         let format = self.core.export_format.lock().unwrap().clone();
         if format != "wav" {
+            let engine = if self.core.engine_kind() == TtsEngineKind::Provider {
+                "Die gewählte Anbieter-Engine"
+            } else {
+                "Die Piper-Engine"
+            };
             return Err(format!(
-                "Die Piper-Engine exportiert nur WAV — eingestellt ist {format}"
+                "{engine} exportiert nur WAV — eingestellt ist {format}"
             ));
         }
         let prepared = {

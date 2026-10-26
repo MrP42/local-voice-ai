@@ -803,6 +803,14 @@ pub struct AppSettings {
     /// Gewählte Piper-Stimme (Modellkennung) oder None = keine gewählt.
     #[serde(default)]
     pub tts_piper_voice: Option<String>,
+    /// Sprachausgabe-Anbieter (Goal tts-provider, P3a): Konfiguration von
+    /// phonon / openai-speech / ollama-speech samt Opt-in, Lizenz-
+    /// Zustimmungen und Fernzugriffs-Freigaben. Optional — eine Datei ohne
+    /// das Feld bleibt gültig, alles ist dann aus bzw. leer. Freigaben nur
+    /// über die `tts_provider_*`-Befehle, nie über diesen Schlüssel (siehe
+    /// `managers::tts::providers::policy`).
+    #[serde(default)]
+    pub tts_providers: crate::managers::tts::providers::policy::TtsProvidersSettings,
     /// Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
     #[serde(default = "default_tts_piper_auto_language")]
     pub tts_piper_auto_language: bool,
@@ -1776,6 +1784,7 @@ pub fn get_default_settings() -> AppSettings {
         tts_engine: default_tts_engine(),
         tts_preview_engine: String::new(),
         tts_piper_voice: None,
+        tts_providers: Default::default(),
         tts_piper_auto_language: default_tts_piper_auto_language(),
         tts_script_check: default_tts_script_check(),
         tts_tag_favorites: Vec::new(),
@@ -3076,6 +3085,57 @@ mod tests {
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
         assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+    }
+
+    /// P3a: das Feld `tts_providers` ist optional. Eine Datei aus der Zeit
+    /// davor (auch mit anderen tts_-Schlüsseln) lädt, alles ist aus bzw.
+    /// leer, und die Engine bleibt Fish.
+    #[test]
+    fn tts_providers_fehlt_in_alten_dateien_und_ist_dann_aus() {
+        let old: AppSettings = serde_json::from_value(serde_json::json!({
+            "tts_engine": "piper",
+            "tts_piper_voice": "de_DE-thorsten-high",
+        }))
+        .unwrap();
+        assert_eq!(old.tts_providers, Default::default());
+        assert!(old.tts_providers.enabled.is_empty());
+        assert!(old.tts_providers.license_acks.is_empty());
+        assert!(old.tts_providers.allow_remote.is_empty());
+        assert_eq!(old.tts_engine, "piper", "die alte Wahl bleibt");
+
+        let d = get_default_settings();
+        assert_eq!(d.tts_providers, Default::default());
+        assert_eq!(d.tts_engine, "fish", "der Standard bleibt Fish");
+    }
+
+    /// Eine Datei mit einem Teil des Feldes lädt mit Vorgaben für den Rest;
+    /// und das Feld überlebt Schreiben und Lesen.
+    #[test]
+    fn tts_providers_teilweise_und_nach_dem_speichern() {
+        let s: AppSettings = serde_json::from_value(serde_json::json!({
+            "tts_providers": { "enabled": ["phonon"], "phonon": { "lang": "en" } }
+        }))
+        .unwrap();
+        assert_eq!(s.tts_providers.enabled, ["phonon"]);
+        assert_eq!(s.tts_providers.phonon.lang, "en");
+        assert!(s.tts_providers.license_acks.is_empty());
+        let json = serde_json::to_value(&s).unwrap();
+        let back: AppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.tts_providers, s.tts_providers);
+    }
+
+    /// Ein kaputtes Feld (falscher Typ) darf nicht die ganzen Einstellungen
+    /// kosten: `salvage_settings` verwirft nur dieses Feld, der Rest bleibt.
+    #[test]
+    fn ein_kaputtes_tts_providers_feld_kostet_nicht_die_einstellungen() {
+        let stored = serde_json::json!({
+            "tts_engine": "piper",
+            "tts_providers": { "enabled": 5 },
+        });
+        assert!(serde_json::from_value::<AppSettings>(stored.clone()).is_err());
+        let salvaged = salvage_settings(&stored);
+        assert_eq!(salvaged.tts_engine, "piper", "der Rest bleibt erhalten");
+        assert_eq!(salvaged.tts_providers, Default::default());
     }
 
     #[test]
