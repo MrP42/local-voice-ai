@@ -20,6 +20,7 @@ pub mod lang;
 pub mod player;
 pub mod portable;
 pub mod protocol;
+pub mod providers;
 pub mod registry;
 pub mod state;
 pub mod voices;
