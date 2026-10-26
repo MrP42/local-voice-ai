@@ -190,7 +190,8 @@ test("Reihenfolge des Hinzufuegens: jede Datei beginnt erst, wenn die davor fert
     .poll(async () => await snapshot(page))
     .toMatchObject({ running: [], waiting: [], blocked: null });
   for (const id of ["m-imp1", "m-imp2", "m-imp3"]) {
-    await expect(rowOf(page, id)).toContainText("Fertig");
+    await expect(rowOf(page, id)).not.toContainText("Wartet");
+    await expect(rowOf(page, id).getByTestId("row-status")).toHaveCount(0);
   }
 });
 

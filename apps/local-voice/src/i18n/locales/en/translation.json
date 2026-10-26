@@ -2664,6 +2664,15 @@
       "generating": "Creating “{{title}}”…",
       "copy": "Copy document"
     },
+    "readAloud": {
+      "speak": "Read aloud",
+      "speakHint": "Reads the text shown here with the read-aloud voice",
+      "stop": "Stop reading",
+      "stopHint": "Stops the playback",
+      "empty": "There is no text to read aloud.",
+      "error": "Read aloud failed: {{error}}",
+      "truncated": "Only the first {{limit}} of {{total}} characters are read aloud. The limit is under Settings > Output > Read aloud."
+    },
     "minutes": {
       "empty": "No minutes generated yet.",
       "generating": "Generating minutes…",

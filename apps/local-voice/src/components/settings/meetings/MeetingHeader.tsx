@@ -28,6 +28,17 @@ const CHIP =
   "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-mid-gray/30 px-2 text-xs text-text/80";
 
 /**
+ * "Fertig" ist der Normalfall und braucht keinen Hinweis: Kopf und Liste zeigen den
+ * Status nur, solange die Aufnahme läuft, wartet oder verarbeitet wird, und wenn etwas
+ * schiefging. Ein leerer Eintrag (`empty`) behält seinen Chip "Leer".
+ */
+export const isSettledStatus = (
+  meeting: Pick<Meeting, "status"> & Partial<Pick<Meeting, "source">>,
+  progress?: LiveProgress,
+): boolean =>
+  meeting.status === "ready" && !progress && meeting.source !== "empty";
+
+/**
  * Status der Besprechung als Chip: Laufzustand der Aufnahme, Fortschritt der
  * Verarbeitung (P8a: Phase, kleiner Balken, Prozent), abgebrochen, fehlerhaft
  * oder fertig. Gleicher Baustein im Detailkopf und im Details-Dialog.
@@ -139,7 +150,9 @@ export const StatusChip: React.FC<{
   return (
     <span
       className={`${CHIP} ${
-        meeting.status === "failed" ? "border-red-500/50 text-red-500" : ""
+        meeting.status === "failed"
+          ? "border-red-500/50 bg-red-500/15 font-medium text-red-500"
+          : ""
       }`}
       data-testid="status-chip"
       data-state={meeting.status}
@@ -383,7 +396,9 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
           data-testid="rec-detail-chips-main"
           className="flex h-6 items-center gap-1.5 overflow-hidden"
         >
-          <StatusChip meeting={meeting} progress={progress} queue={queue} />
+          {!isSettledStatus(meeting, progress) && (
+            <StatusChip meeting={meeting} progress={progress} queue={queue} />
+          )}
           <span className={CHIP} title={sourceFull} data-testid="source-chip">
             <SourceIcon width={12} height={12} aria-hidden="true" />
             <span className="hidden @[34rem]:inline">{sourceLabel}</span>

@@ -273,7 +273,7 @@ test.describe("Besprechungsliste", () => {
     await bar.click();
     await expect(page.getByTestId("job-panel")).toHaveCount(0);
 
-    // Fertig: Balken weg, Chip "Fertig".
+    // Fertig: Balken weg, und kein Chip "Fertig" (nur Laufendes und Fehler stehen da).
     await setMeetings(page, { status: "ready" });
     await emit(page, {
       kind: "state",
@@ -282,7 +282,8 @@ test.describe("Besprechungsliste", () => {
       paused: false,
     });
     await expect(row.getByTestId("job-bar")).toHaveCount(0);
-    await expect(row.getByText("Fertig", { exact: true })).toBeVisible();
+    await expect(row.getByText("Fertig", { exact: true })).toHaveCount(0);
+    await expect(row.getByTestId("row-status")).toHaveCount(0);
   });
 
   test("pausiert und gestoppt: die Liste sagt es, ein abgebrochener Import trägt den Chip Abgebrochen", async ({

@@ -105,7 +105,8 @@ test.describe("Detailkopf", () => {
     await expect(
       content.getByRole("heading", { name: TITLE_M2 }),
     ).toBeVisible();
-    await expect(page.getByTestId("status-chip")).toHaveText("Fertig");
+    // Fertig ist der Normalfall: kein Status-Chip im Kopf.
+    await expect(page.getByTestId("status-chip")).toHaveCount(0);
     await expect(page.getByTestId("source-chip")).toHaveAttribute(
       "title",
       "Datei-Import",
