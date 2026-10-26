@@ -50,6 +50,7 @@ import { Alert } from "../../../ui/Alert";
 import { Dropdown } from "../../../ui/Dropdown";
 import { IconAction } from "../../../ui/IconAction";
 import { InstructionBar } from "./InstructionBar";
+import { ReadAloudButton } from "../ReadAloudButton";
 import { SourceChips } from "./SourceChips";
 import { TaskChecklist } from "./TaskChecklist";
 
@@ -750,6 +751,21 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
             description={t("meetings.enhanced.export")}
             testId="enhanced-export"
             onClick={() => void exportMarkdown()}
+          />
+        )}
+        {selected && (
+          <ReadAloudButton
+            speakKey={`enhanced:${meeting.id}:${selected.id}`}
+            getMarkdown={async () => {
+              await flush();
+              const markdown = await commands.meetingNotesMarkdown(selected.id);
+              if (markdown.status === "error") {
+                setError(markdown.error);
+                return null;
+              }
+              return markdown.data;
+            }}
+            testId="enhanced-readaloud"
           />
         )}
         {docs.length > 1 && (

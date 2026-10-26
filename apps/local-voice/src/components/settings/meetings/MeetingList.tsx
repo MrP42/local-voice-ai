@@ -41,6 +41,7 @@ import { useMeetingProgress } from "@/hooks/useMeetingJobs";
 import { useImportQueue } from "@/hooks/useImportQueue";
 import { heldForRecording, queuePlace } from "@/lib/meetingQueue";
 import { QueueChip } from "./QueueStatus";
+import { isSettledStatus } from "./MeetingHeader";
 import { notifyMeetingsChanged, useMeetingsChanged } from "@/lib/meetingsBus";
 import type { BriefInfo } from "@/bindings";
 import { ProjectRow } from "./projects/ProjectRow";
@@ -83,6 +84,8 @@ const statusChipClass = (status: string, source?: string) => {
       return "bg-green-500/20 text-green-400";
     case "recording":
       return "bg-logo-primary text-on-accent";
+    case "failed":
+      return "border border-red-500/50 bg-red-500/15 text-red-500";
     default:
       return "bg-mid-gray/20 text-text/70";
   }
@@ -675,6 +678,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
             <QueueChip place={place} />
           ) : (
             !reason &&
+            !isSettledStatus(meeting) &&
             !(
               progress &&
               (meeting.status === "processing" ||

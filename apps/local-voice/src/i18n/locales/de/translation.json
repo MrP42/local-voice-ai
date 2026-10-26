@@ -2664,6 +2664,15 @@
       "generating": "„{{title}}“ wird erzeugt…",
       "copy": "Dokument kopieren"
     },
+    "readAloud": {
+      "speak": "Vorlesen",
+      "speakHint": "Liest den angezeigten Text mit der Vorlesen-Stimme vor",
+      "stop": "Vorlesen beenden",
+      "stopHint": "Hält die Wiedergabe an",
+      "empty": "Es gibt keinen Text zum Vorlesen.",
+      "error": "Vorlesen fehlgeschlagen: {{error}}",
+      "truncated": "Nur die ersten {{limit}} von {{total}} Zeichen werden vorgelesen. Die Grenze steht unter Einstellungen > Ausgabe > Vorlesen."
+    },
     "minutes": {
       "empty": "Noch kein Protokoll erzeugt.",
       "generating": "Protokoll wird erzeugt…",

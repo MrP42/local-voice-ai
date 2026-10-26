@@ -23,6 +23,7 @@ import { Dialog } from "../../../ui/Dialog";
 import { IconAction } from "../../../ui/IconAction";
 import { MarkdownContent } from "../../../whats-new/MarkdownContent";
 import { JobPanel } from "../JobProgress";
+import { ReadAloudButton } from "../ReadAloudButton";
 
 /** Was die Arbeitsflaeche zeigt: ein gespeichertes Dokument oder den laufenden Lauf. */
 export type OpenProjectMinutes =
@@ -197,6 +198,11 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
             description={t("meetings.projectMinutes.view.downloadHint")}
             testId="pm-export"
             onClick={() => void download()}
+          />
+          <ReadAloudButton
+            speakKey={`project-minutes:${doc.id}`}
+            getMarkdown={() => doc.body}
+            testId="pm-readaloud"
           />
           <IconAction
             size="sm"

@@ -599,10 +599,8 @@ test("AK7: Import per Symbol geht in das links gewaehlte Projekt, Fortschritt an
     targetMeetingId: null,
   });
   await releaseImport(page);
-  await expect(page.getByTestId("status-chip")).toHaveAttribute(
-    "data-state",
-    "ready",
-  );
+  // Fertig: der Chip verschwindet (nur Laufendes und Fehler werden gemeldet).
+  await expect(page.getByTestId("status-chip")).toHaveCount(0);
 });
 
 /** Datei-Ablage, wie Tauri sie meldet (physische Pixel; Playwright hat Faktor 1). */
