@@ -18,10 +18,14 @@
 //! (`commands::tts_providers`, Moduldoku). Dieses Modul hat dafür weder ein Werkzeug noch ein
 //! Argument, und der Zugriff auf die App ([`TtsProviderAccess`]) kennt keine solche Methode: er
 //! kann lesen und Anbieter/Stimme wählen — mehr nicht. `tts_provider_select` prüft die
-//! Guardrails (`check_use`) zweimal: vor der Stimmenliste und noch einmal beim Schreiben der
-//! Einstellungen (`select_in`), sodass der Stand im Moment des Schreibens zählt. Auch
+//! Guardrails (`check_use`) zweimal: vor der Stimmenliste (gegen die Momentaufnahme) und noch
+//! einmal beim Schreiben der Einstellungen: `select_in` prüft unter der Schreibsperre gegen den
+//! Stand dieses Moments und löst Modell und Adresse aus genau diesem Stand NEU auf — ein
+//! zwischenzeitlicher Widerruf oder Modellwechsel lässt die Wahl scheitern (Test
+//! `select_prueft_den_stand_im_moment_des_schreibens…` in `commands::tts_providers`). Auch
 //! `tts_render_audio` hält die Sperren ein: bei `tts_engine = provider:<id>` läuft jeder Satz
-//! durch `ProviderEngine::guard` (siehe `managers::tts::providers::pipeline`).
+//! durch `ProviderEngine::guard`, der den gemeinsamen, aktuellen Stand der Freigaben liest
+//! (siehe `managers::tts::providers::pipeline`).
 //!
 //! # Fehlerfälle und ihre Absicherung (Tests in `tts_providers/tests.rs`)
 //!
@@ -102,8 +106,22 @@ pub struct BenchRoots {
 
 /// Orte aus Umgebung und Programmpfad: `LVA_BENCH_DIR` (sonst `%LOCALAPPDATA%\lva-bench`) +
 /// `tts`; die veröffentlichten Zusammenfassungen unter `LVA_TTS_BENCH_DOCS`, sonst
-/// `docs/tts/benchmarks` oberhalb des Programms (nur in einem Repo-Build vorhanden).
+/// `docs/tts/benchmarks` oberhalb des Programms (nur im Entwicklungsbau, siehe [`bench_roots_with`]).
 pub fn bench_roots_from(env: &dyn Fn(&str) -> Option<String>, exe: Option<&Path>) -> BenchRoots {
+    bench_roots_with(env, exe, cfg!(debug_assertions))
+}
+
+/// Wie [`bench_roots_from`]; `search_exe_ancestors` schaltet die Suche nach
+/// `docs/tts/benchmarks` oberhalb des Programms ein. Sie gilt NUR im
+/// Entwicklungsbau ([`bench_roots_from`] übergibt `cfg!(debug_assertions)`): eine
+/// installierte App würde sonst bis zu acht Ebenen über sich nach einem Ordner
+/// `docs/tts/benchmarks` suchen (auch `C:\docs\…`) und daraus lesen. Dort bleibt
+/// `LVA_TTS_BENCH_DOCS` der ausdrückliche Weg.
+pub fn bench_roots_with(
+    env: &dyn Fn(&str) -> Option<String>,
+    exe: Option<&Path>,
+    search_exe_ancestors: bool,
+) -> BenchRoots {
     let non_empty = |name: &str| env(name).filter(|v| !v.trim().is_empty());
     let bench = non_empty("LVA_BENCH_DIR")
         .map(PathBuf::from)
@@ -112,6 +130,9 @@ pub fn bench_roots_from(env: &dyn Fn(&str) -> Option<String>, exe: Option<&Path>
     let docs = non_empty("LVA_TTS_BENCH_DOCS")
         .map(PathBuf::from)
         .or_else(|| {
+            if !search_exe_ancestors {
+                return None;
+            }
             exe.and_then(|e| {
                 e.ancestors()
                     .skip(1)

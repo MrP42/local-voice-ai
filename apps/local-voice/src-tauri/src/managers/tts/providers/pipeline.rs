@@ -17,11 +17,19 @@
 //!
 //! ## Guardrails
 //!
-//! [`ProviderEngine::guard`] ruft [`check_use`] gegen den Einstellungsstand,
-//! mit dem die Engine gebaut wurde (der Manager baut sie vor jedem Auftrag
-//! neu), und läuft in `fetch_wav` VOR dem Cache-Lookup: auch bereits
-//! synthetisiertes Audio eines inzwischen gesperrten Anbieters wird nicht
-//! mehr ausgeliefert.
+//! [`ProviderEngine::guard`] ruft [`check_use`] gegen den AKTUELLEN Stand der
+//! Freigaben ([`LiveApprovals`]: der Manager und die Befehle der Oberfläche
+//! halten ihn gemeinsam, jede Prüfung liest ihn neu — kein beim Auftragsstart
+//! eingefrorener Stand), und läuft in `fetch_wav` VOR dem Cache-Lookup: auch
+//! bereits synthetisiertes Audio eines inzwischen gesperrten Anbieters wird
+//! nicht mehr ausgeliefert. Ein Widerruf (Opt-in aus, Fernzugriff zurück,
+//! Zustimmung entfallen) wirkt damit ab dem nächsten Satz, und `synthesize`
+//! bricht auch einen gerade laufenden Satz binnen [`REVOKE_POLL`] ab.
+//!
+//! Der Gegenstand der Prüfung (Modell, Adresse) stammt aus derselben Instanz,
+//! die synthetisiert ([`TtsProvider::use_subject`]); die Engine holt Instanz und
+//! Gegenstand in einem Zug aus der Registry (kein Auseinanderlaufen, wenn die
+//! Registry zwischendurch neu gebaut wird).
 //!
 //! ## Abbruch
 //!
@@ -40,7 +48,7 @@ use super::contract::{
     guarded, AudioEncoding, CancelToken, ProviderDescriptor, StreamingMode, SynthesisOptions,
     TtsError, TtsProvider,
 };
-use super::policy::{check_use, TtsProvidersSettings, UseSubject};
+use super::policy::{check_use, LiveApprovals, UseSubject};
 use super::registry::{with_retry, DeliveryTracker, ProviderRegistry, RetryPolicy};
 use crate::managers::tts::engine::EngineCaps;
 use crate::managers::tts::lang::detect_language;
@@ -51,6 +59,9 @@ pub const SENTENCE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const READY_TIMEOUT: Duration = Duration::from_secs(8);
 /// Wie oft das Abbruch-Flag während der Synthese angesehen wird.
 const CANCEL_POLL: Duration = Duration::from_millis(25);
+/// Wie oft während eines laufenden Satzes geprüft wird, ob die Nutzung inzwischen
+/// gesperrt ist (Widerruf der Freigabe).
+const REVOKE_POLL: Duration = Duration::from_millis(200);
 /// Sicherheitsnetz über der Auftragsfrist (wie in der Registry).
 const SAFETY_GRACE: Duration = Duration::from_secs(2);
 
@@ -109,24 +120,33 @@ pub struct ProviderEngine {
     provider: Option<Arc<dyn TtsProvider>>,
     descriptor: Option<ProviderDescriptor>,
     voice: Option<String>,
+    /// Aus DERSELBEN Instanz wie `provider` ([`TtsProvider::use_subject`]),
+    /// im selben Zug geholt: Prüfgegenstand und Instanz stammen nie aus
+    /// verschiedenen Ständen.
     subject: UseSubject,
-    settings: Arc<TtsProvidersSettings>,
+    /// Gemeinsamer, aktueller Stand der Freigaben — je Satz neu gelesen.
+    approvals: LiveApprovals,
     ready_timeout: Duration,
 }
 
 impl ProviderEngine {
-    /// Engine für `id` aus der Registry, mit gewählter Stimme, wirksamer
-    /// Konfiguration (für die Guardrails) und dem Einstellungsstand der
-    /// Freigaben.
+    /// Engine für `id` aus der Registry, mit gewählter Stimme und dem
+    /// gemeinsamen Stand der Freigaben. Der Gegenstand der Guardrails (Modell,
+    /// Adresse) kommt aus der gefundenen Instanz selbst.
     pub fn new(
         registry: Arc<ProviderRegistry>,
         id: &str,
         voice: Option<String>,
-        subject: UseSubject,
-        settings: Arc<TtsProvidersSettings>,
+        approvals: LiveApprovals,
     ) -> Self {
+        // EIN Zugriff auf die Registry: Instanz, Beschreibung und Gegenstand
+        // der Prüfung gehören zusammen.
         let provider = registry.get(id);
         let descriptor = provider.as_ref().map(|p| p.descriptor());
+        let subject = provider
+            .as_ref()
+            .map(|p| p.use_subject())
+            .unwrap_or_default();
         Self {
             id: id.to_string(),
             registry,
@@ -134,7 +154,7 @@ impl ProviderEngine {
             descriptor,
             voice,
             subject,
-            settings,
+            approvals,
             ready_timeout: READY_TIMEOUT,
         }
     }
@@ -173,12 +193,24 @@ impl ProviderEngine {
         ))
     }
 
-    /// Die Guardrails dieser Engine ([`check_use`]).
+    /// Die Guardrails dieser Engine ([`check_use`]) gegen den AKTUELLEN Stand
+    /// der Freigaben — jeder Aufruf liest ihn neu.
     pub fn guard(&self) -> Result<(), TtsError> {
         let Some(desc) = &self.descriptor else {
             return Err(self.unknown());
         };
-        check_use(desc, &self.subject, &self.settings)
+        self.approvals.check(desc, &self.subject)
+    }
+
+    /// Wartet, bis die Nutzung gesperrt ist (Widerruf mitten im Satz), und
+    /// liefert den Sperrgrund. Endet nie, solange die Nutzung erlaubt bleibt.
+    async fn wait_revoked(&self) -> TtsError {
+        loop {
+            tokio::time::sleep(REVOKE_POLL).await;
+            if let Err(e) = self.guard() {
+                return e;
+            }
+        }
     }
 
     /// Bereit für einen Auftrag? Guardrails, dann Gesundheit mit Frist; ein
@@ -245,10 +277,24 @@ impl ProviderEngine {
                         token.cancel();
                         return Err(CANCELLED_MESSAGE.to_string());
                     }
+                    blocked = self.wait_revoked() => {
+                        // Widerruf mitten im Satz: nichts mehr ausliefern.
+                        token.cancel();
+                        return Err(blocked.message);
+                    }
                     r = work => r,
                 }
             }
-            None => work.await,
+            None => {
+                tokio::select! {
+                    biased;
+                    blocked = self.wait_revoked() => {
+                        token.cancel();
+                        return Err(blocked.message);
+                    }
+                    r = work => r,
+                }
+            }
         };
         result.map(|clip| clip.data).map_err(|e| e.message)
     }
@@ -262,7 +308,7 @@ mod tests {
         AudioClip, ProviderHealth, TtsErrorKind, VoiceDescriptor,
     };
     use crate::managers::tts::providers::mock::{MockFailure, MockProvider};
-    use crate::managers::tts::providers::policy::license_fingerprint;
+    use crate::managers::tts::providers::policy::{license_fingerprint, TtsProvidersSettings};
     use crate::managers::tts::state::TtsPhase;
     use crate::managers::tts::{EngineImpl, TtsCore};
     use futures_util::future::BoxFuture;
@@ -285,12 +331,22 @@ mod tests {
         Arc::new(s)
     }
 
+    /// Engine mit einem FESTEN Stand der Freigaben (für Tests ohne Widerruf).
     fn engine_for(
         reg: &Arc<ProviderRegistry>,
         id: &str,
         settings: Arc<TtsProvidersSettings>,
     ) -> ProviderEngine {
-        ProviderEngine::new(reg.clone(), id, None, UseSubject::default(), settings)
+        ProviderEngine::new(
+            reg.clone(),
+            id,
+            None,
+            LiveApprovals::new(settings.as_ref().clone()),
+        )
+    }
+
+    fn live_with(ids: &[&str]) -> LiveApprovals {
+        LiveApprovals::new(settings_with(ids).as_ref().clone())
     }
 
     fn core_with(engine: ProviderEngine) -> TtsCore {
@@ -469,13 +525,8 @@ mod tests {
             last: Mutex::new(None),
         });
         let reg = registry_with(rec.clone());
-        let engine = ProviderEngine::new(
-            reg,
-            "zzz",
-            Some("mock-de".to_string()),
-            UseSubject::default(),
-            settings_with(&["zzz"]),
-        );
+        let engine =
+            ProviderEngine::new(reg, "zzz", Some("mock-de".to_string()), live_with(&["zzz"]));
         let core = core_with(engine);
         // Die Fish-Referenzstimme des Kerns darf nicht beim Anbieter landen.
         *core.voice.lock().unwrap() = Some("fish-referenz".to_string());
@@ -562,24 +613,32 @@ mod tests {
         fn cache_tag(&self, v: Option<&str>) -> String {
             self.0.cache_tag(v)
         }
+        fn use_subject(&self) -> UseSubject {
+            self.0.use_subject()
+        }
     }
 
     #[tokio::test]
     async fn nichtkommerziell_laeuft_erst_mit_zustimmung_zum_aktuellen_modell() {
-        let nc = Nc(MockProvider::new().with_id("zzz"));
-        let desc = nc.descriptor();
-        let reg = registry_with(Arc::new(nc));
-        let subj = UseSubject {
-            model: "modell-a".into(),
-            base_url: None,
-        };
+        // Das Modell gehört zur Instanz (`use_subject`), nicht zu einem
+        // getrennt mitgereichten Stand.
+        let nc_for = |model: &str| Nc(MockProvider::new().with_id("zzz").with_subject(model, None));
+        let nc_a = nc_for("modell-a");
+        let desc = nc_a.descriptor();
+        let subj = nc_a.use_subject();
+        assert_eq!(subj.model, "modell-a");
         let mut settings = TtsProvidersSettings::default();
         settings.set_enabled("zzz", true);
-        let mk = |s: &TtsProvidersSettings, subj: &UseSubject| {
-            ProviderEngine::new(reg.clone(), "zzz", None, subj.clone(), Arc::new(s.clone()))
+        let mk = |provider: Nc, s: &TtsProvidersSettings| {
+            ProviderEngine::new(
+                registry_with(Arc::new(provider)),
+                "zzz",
+                None,
+                LiveApprovals::new(s.clone()),
+            )
         };
         // Ohne Zustimmung gesperrt.
-        let core = core_with(mk(&settings, &subj));
+        let core = core_with(mk(nc_for("modell-a"), &settings));
         assert!(core
             .speak_core(TEXT)
             .await
@@ -591,19 +650,182 @@ mod tests {
             &license_fingerprint(&desc, &subj),
             "2026-10-26T00:00:00Z",
         );
-        let core = core_with(mk(&settings, &subj));
+        let core = core_with(mk(nc_for("modell-a"), &settings));
         assert!(core.speak_core(TEXT).await.is_ok());
         // Modellwechsel: die alte Zustimmung gilt nicht mehr.
-        let other = UseSubject {
-            model: "modell-b".into(),
-            base_url: None,
-        };
-        let core = core_with(mk(&settings, &other));
+        let core = core_with(mk(nc_for("modell-b"), &settings));
         assert!(core
             .speak_core(TEXT)
             .await
             .unwrap_err()
             .contains("geändert"));
+    }
+
+    // ---- Widerruf wirkt auf laufende Aufträge (Befund 1) ------------------------------
+
+    /// Hörbuch über einen Anbieter, dem der Nutzer mitten im Auftrag die
+    /// Freischaltung nimmt: der nächste Satz scheitert, der Anbieter wird nicht
+    /// mehr gerufen — und die Engine wurde dafür NICHT neu gebaut.
+    #[tokio::test]
+    async fn ein_entzogenes_opt_in_stoppt_den_naechsten_satz_ohne_neue_engine() {
+        let mock = Arc::new(MockProvider::new().with_id("zzz"));
+        let reg = registry_with(mock.clone());
+        let live = live_with(&["zzz"]);
+        let core = core_with(ProviderEngine::new(reg.clone(), "zzz", None, live.clone()));
+        let first = "Der erste Satz kommt noch durch.";
+        let second = "Der zweite Satz darf nicht mehr durch.";
+        core.fetch_wav(1, 42, first, None)
+            .await
+            .expect("vor dem Widerruf ist der Anbieter frei");
+        assert_eq!(mock.attempts(), 1);
+
+        live.set(TtsProvidersSettings::default());
+
+        let err = core.fetch_wav(1, 42, second, None).await.unwrap_err();
+        assert!(err.contains("nicht freigeschaltet"), "{err}");
+        assert_eq!(mock.attempts(), 1, "kein weiterer Aufruf des Anbieters");
+        // Schon Synthetisiertes (liegt im Cache) wird ebenfalls nicht mehr ausgeliefert.
+        assert!(core.fetch_wav(1, 42, first, None).await.is_err());
+        // Nach erneuter Freigabe geht es ohne Neuaufbau wieder.
+        live.set(settings_with(&["zzz"]).as_ref().clone());
+        core.fetch_wav(1, 42, second, None).await.unwrap();
+        assert_eq!(mock.attempts(), 2);
+    }
+
+    /// Die Fernzugriff-Zusicherung: Hörbuch über einen LAN-Server, der Nutzer
+    /// nimmt den Fernzugriff zurück → ab dem nächsten Satz geht nichts mehr hinaus.
+    #[tokio::test]
+    async fn ein_zurueckgenommener_fernzugriff_stoppt_ein_hoerbuch_ueber_den_lan_server() {
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .with_subject("m", Some("http://192.168.1.20:8880/v1")),
+        );
+        let reg = registry_with(mock.clone());
+        let mut allowed = TtsProvidersSettings::default();
+        allowed.set_enabled("zzz", true);
+        allowed.set_remote_allowed("zzz", true);
+        let live = LiveApprovals::new(allowed.clone());
+        let engine = ProviderEngine::new(reg, "zzz", None, live.clone());
+        let core = core_with(engine.clone());
+        core.fetch_wav(1, 42, "Der erste Satz geht ins Netz.", None)
+            .await
+            .expect("mit Fernzugriff frei");
+        assert!(engine.guard().is_ok());
+
+        let mut withdrawn = allowed;
+        withdrawn.set_remote_allowed("zzz", false);
+        live.set(withdrawn);
+
+        assert_eq!(
+            engine.guard().unwrap_err().kind,
+            TtsErrorKind::PrivacyBlocked
+        );
+        let err = core
+            .fetch_wav(1, 42, "Der zweite Satz bleibt zu Hause.", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("außerhalb dieses Rechners"), "{err}");
+        assert_eq!(mock.attempts(), 1, "nach dem Entzug nichts mehr gesendet");
+    }
+
+    /// Auch ein GERADE LAUFENDER Satz endet beim Widerruf (nicht erst der nächste).
+    #[tokio::test]
+    async fn ein_widerruf_beendet_auch_den_gerade_laufenden_satz() {
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .latency(Duration::from_secs(30)),
+        );
+        let reg = registry_with(mock.clone());
+        let live = live_with(&["zzz"]);
+        let engine = ProviderEngine::new(reg, "zzz", None, live.clone());
+        let runner = {
+            let engine = engine.clone();
+            tokio::spawn(async move { engine.synthesize(TEXT, None).await })
+        };
+        let started = Instant::now();
+        while mock.in_flight() == 0 && started.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(mock.in_flight(), 1, "die Synthese läuft");
+
+        live.set(TtsProvidersSettings::default());
+
+        let result = tokio::time::timeout(Duration::from_secs(3), runner)
+            .await
+            .expect("der Widerruf wirkt binnen Sekunden, nicht erst nach 30 s")
+            .unwrap();
+        assert!(result.unwrap_err().contains("nicht freigeschaltet"));
+        assert_eq!(
+            mock.in_flight(),
+            0,
+            "das Anbieter-Future wurde fallengelassen"
+        );
+    }
+
+    /// Wer den Stand VOR dem Auftrag fest einbaut, behält das alte Verhalten
+    /// (Regression: ein fester Stand bleibt fest).
+    #[tokio::test]
+    async fn ein_fester_stand_aendert_sich_nicht_von_selbst() {
+        let mock = Arc::new(MockProvider::new().with_id("zzz"));
+        let reg = registry_with(mock.clone());
+        let engine = engine_for(&reg, "zzz", settings_with(&["zzz"]));
+        assert!(engine.guard().is_ok());
+        assert!(engine.synthesize(TEXT, None).await.is_ok());
+        let blocked = engine_for(&reg, "zzz", settings_with(&[]));
+        assert!(blocked.guard().is_err());
+        assert!(blocked.synthesize(TEXT, None).await.is_err());
+        assert_eq!(mock.attempts(), 1);
+    }
+
+    // ---- Instanz und Gegenstand der Prüfung kommen zusammen (Befund 2) ----------------
+
+    /// Die Engine hält die Instanz UND deren Gegenstand: wird die Registry
+    /// zwischendurch mit einer anderen Konfiguration neu gebaut, prüft die alte
+    /// Engine weiter, was ihre Instanz wirklich anspricht — und die neue Engine,
+    /// was die neue Instanz anspricht. Nichts wird aus einem dritten Stand gemischt.
+    #[tokio::test]
+    async fn der_gegenstand_der_pruefung_stammt_aus_der_instanz_die_synthetisiert() {
+        let remote = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .with_subject("m", Some("https://tts.example.org/v1")),
+        );
+        let reg = registry_with(remote.clone());
+        let live = live_with(&["zzz"]);
+        let old_engine = ProviderEngine::new(reg.clone(), "zzz", None, live.clone());
+        // Kein Aufrufer reicht einen Gegenstand herein: die Sperre kommt allein aus der Instanz.
+        assert_eq!(
+            old_engine.guard().unwrap_err().kind,
+            TtsErrorKind::PrivacyBlocked
+        );
+
+        // Neuaufbau der Registry: dieselbe Kennung, jetzt eine Loopback-Instanz.
+        let local = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .with_subject("m", Some("http://127.0.0.1:8880/v1")),
+        );
+        reg.register(local.clone()).unwrap();
+        let new_engine = ProviderEngine::new(reg.clone(), "zzz", None, live.clone());
+
+        // Die alte Engine spricht weiter die ALTE (entfernte) Instanz an und bleibt gesperrt;
+        // sie fällt nie auf den Gegenstand der neuen zurück und umgeht so die Sperre nicht.
+        assert_eq!(
+            old_engine.guard().unwrap_err().kind,
+            TtsErrorKind::PrivacyBlocked
+        );
+        assert!(old_engine.synthesize(TEXT, None).await.is_err());
+        assert_eq!(
+            remote.attempts(),
+            0,
+            "die entfernte Instanz wurde nie gerufen"
+        );
+        // Die neue Engine passt zu ihrer Instanz.
+        assert!(new_engine.guard().is_ok());
+        assert!(new_engine.synthesize(TEXT, None).await.is_ok());
+        assert_eq!(local.attempts(), 1);
     }
 
     // ---- Abbruch, Bereitschaft ------------------------------------------------------

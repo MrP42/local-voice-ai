@@ -14,7 +14,7 @@ Prüfdatum (`source_url`, `verified_on`); sonst `false` mit `note`, was noch zu 
 
 | Anbieter / Modell | Code-Lizenz | Gewichte / Stimmen | nichtkommerziell | verifiziert (Quelle, Datum) | Auslieferung erlaubt? |
 |---|---|---|---|---|---|
-| `fish` / s2-pro | Apache-2.0 (aus dem Plan, **nicht** gegengeprüft; builtin.rs:133-146) | ungeprüft: Model Card nötig | unbekannt (im Code `false`) | **nein** (kein Datum, builtin.rs:133-139) | **nicht entschieden** |
+| `fish` / s2-pro | Fish Audio Research License (installierte Fassung, Stand 07.03.2026; lokale `LICENSE` des Repo-Codes) | Fish Audio Research License (lokale `checkpoints/s2-pro/LICENSE.md`; Model Card: `license: other`, `fish-audio-research-license`) | **ja** („research and non-commercial uses … Any Commercial use … requires a separate license from Fish Audio“) | ja, `https://huggingface.co/fishaudio/s2-pro`, 2026-10-26 (builtin.rs, `FishProvider::descriptor`) | **nein ohne separate Lizenz von Fish Audio**; Entscheidung über Sperre oder Auslieferung beim Owner |
 | `piper` (Programm) | GPL-3.0 (piper1-gpl, provider-research.md, C; 26.10.2026) | je Stimme | je Stimme | Code ja (Recherche), im Deskriptor `false` (builtin.rs:320-332) | offen: GPL bei separatem Prozess juristisch zu klären |
 | Piper `de_DE-thorsten-high` | siehe Programm | Katalog: `CC0-1.0`, `non_commercial: true` (catalog.json:5223-5230) | ja (Katalogwert) | **Widerspruch** (Abschnitt 2) | nein, bis geklärt |
 | Piper thorsten/kerstin (HF-Karten) | siehe Programm | Dataset CC0 laut Model Card | nicht festgestellt | ja (Recherche C, 26.10.2026), im Code nie `verified` (builtin.rs:273-287) | offen |
@@ -44,9 +44,16 @@ Phonon (`VoiceDescriptor.license` ist optional, contract.rs:206).
   Hülle bleibt konservativ, `verified = false`, `non_commercial` aus dem Katalog (builtin.rs:268-287, BEFUNDE.md B3).
   **Beide Aussagen können zugleich stimmen** (Datensatz CC0, Modell abgeleitet); geklärt ist die Auslieferbarkeit damit
   nicht. Entscheidung beim Owner. Status: offen.
-* **Fish-Gewichte ungeprüft**: Code-Lizenz Apache-2.0 stammt aus dem Plan, nicht aus einer gegengeprüften Quelle; Lizenz der
-  s2-pro-Gewichte steht „laut Model Card prüfen“ aus (builtin.rs:133-146, implementation-plan.md §4). Im Plan-Katalog hat
-  Fish keinen Lizenzeintrag (implementation-plan.md §1).
+* **Fish ist nichtkommerziell (korrigiert, Paket P7n)**: Der Plan (implementation-plan.md §4) nannte „Code Apache-2.0“ und die
+  Gewichte „laut Model Card prüfen“; beides war falsch bzw. offen. Belegt ist lokal: `C:\AI\fish-speech\LICENSE` (Repo-Code)
+  UND `checkpoints\s2-pro\LICENSE.md` (Gewichte) stehen beide unter der **Fish Audio Research License** (Last Updated
+  March 7, 2026): „This Agreement is intended to allow research and non-commercial uses of the Materials free of charge. Any
+  Commercial use of the Materials requires a separate license from Fish Audio.“ Die Model Card von s2-pro nennt
+  `license: other` / `license_name: fish-audio-research-license`. Der Deskriptor führt das jetzt so (`non_commercial = true`,
+  `verified = true`, `verified_on` 2026-10-26, Quelle die Model Card). **Fish wird dadurch nicht gesperrt**: es ist der
+  bestehende Standard (`opt_in = false`, Stufe `Supported`), und die Sperre greift nur bei `opt_in`-Anbietern
+  (`license_needs_ack`, Test `die_nichtkommerzielle_fish_lizenz_sperrt_fish_nicht`). Ob und wie Fish bei kommerzieller Nutzung
+  eingeschränkt wird, entscheidet der Owner; die App zeigt nur die Lizenzlage.
 * **Phonon 40m (Deutsch)**: die einzigen deutschen Phonon-Gewichte sind nichtkommerziell und gated; eine kommerzielle Lizenz
   bei Gradium wurde nicht gefunden (provider-research.md, Offene Punkte). Owner-Entscheidung (Goal O1, implementation-plan.md §7).
 * **Übrige deutsche Piper-Stimmen**: Lizenzen einzeln zu prüfen.
@@ -84,6 +91,13 @@ Umgesetzt (P3a, `apps/local-voice/src-tauri/src/managers/tts/providers/policy.rs
 
 * Es gibt **keinen Widerruf-Befehl** für eine Lizenz-Zustimmung. Ein Opt-out nimmt nur die Freischaltung zurück; die
   gespeicherte Zustimmung bleibt, gilt aber nur bei unverändertem Fingerabdruck.
+* **Widerrufe wirken auf laufende Aufträge** (P7n): Vorlesen, Export, Vorwärmen und Probestimme prüfen `check_use` je Satz
+  bzw. je Teil gegen den gemeinsamen, aktuellen Stand der Freigaben (`LiveApprovals`), nicht gegen eine beim Start
+  eingefrorene Kopie. Nimmt der Nutzer Opt-in, Zustimmung oder Fernzugriff zurück, scheitert der nächste Satz mit
+  `license_blocked`/`privacy_blocked`, ein gerade laufender Satz des Vorlesens endet binnen 200 ms, eine laufende Probestimme
+  endet sofort mit dem Sperrgrund, und der Anbieter bekommt keinen weiteren Aufruf. Auch schon synthetisiertes Audio kommt
+  aus dem Cache nicht mehr heraus. Der Gegenstand der Prüfung (Modell, Adresse) stammt aus der Instanz, die synthetisiert
+  (`TtsProvider::use_subject`), nicht aus einem getrennt aufgelösten Stand.
 * Die Zustimmung bestätigt, dass der Nutzer die Angabe gesehen hat, nicht dass die Lizenz rechtlich geprüft ist.
 
 ## 4. Pflege

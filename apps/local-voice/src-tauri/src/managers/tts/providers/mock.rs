@@ -21,7 +21,8 @@ use tokio::sync::mpsc;
 use super::contract::{
     guarded, language_matches, send_chunk, AudioChunk, AudioClip, AudioEncoding, AudioFormat,
     CancelToken, Device, LicenseInfo, ProviderCaps, ProviderDescriptor, ProviderHealth,
-    ProviderTier, StreamingMode, SynthesisOptions, TtsError, TtsProvider, VoiceDescriptor,
+    ProviderTier, StreamingMode, SynthesisOptions, TtsError, TtsProvider, UseSubject,
+    VoiceDescriptor,
 };
 use super::wav::wav_from_pcm;
 
@@ -85,6 +86,7 @@ pub struct MockProvider {
     attempts: AtomicU32,
     sent: AtomicU32,
     in_flight: Arc<AtomicU32>,
+    subject: UseSubject,
 }
 
 impl Default for MockProvider {
@@ -112,11 +114,21 @@ impl MockProvider {
             attempts: AtomicU32::new(0),
             sent: AtomicU32::new(0),
             in_flight: Arc::new(AtomicU32::new(0)),
+            subject: UseSubject::default(),
         }
     }
 
     pub fn with_id(mut self, id: &str) -> Self {
         self.id = id.to_string();
+        self
+    }
+
+    /// Modell und Adresse, die [`TtsProvider::use_subject`] meldet (Guardrail-Tests).
+    pub fn with_subject(mut self, model: &str, base_url: Option<&str>) -> Self {
+        self.subject = UseSubject {
+            model: model.to_string(),
+            base_url: base_url.map(String::from),
+        };
         self
     }
 
@@ -389,5 +401,9 @@ impl TtsProvider for MockProvider {
 
     fn cache_tag(&self, voice: Option<&str>) -> String {
         format!("{}:synthetic:{}", self.id, voice.unwrap_or("default"))
+    }
+
+    fn use_subject(&self) -> UseSubject {
+        self.subject.clone()
     }
 }

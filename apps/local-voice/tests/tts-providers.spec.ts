@@ -394,9 +394,12 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     "CUDA",
   );
   await expect(page.getByTestId("tts-provider-cloning-fish")).toHaveText("ja");
-  // Fish: Lizenz NICHT verifiziert, deutlich benannt.
+  // Fish: Lizenz belegt (Fish Audio Research License) und nichtkommerziell.
   await expect(page.getByTestId("tts-provider-verified-fish")).toContainText(
-    "nicht verifiziert",
+    "verifiziert am 2026-10-26",
+  );
+  await expect(page.getByTestId("tts-provider-fish")).toContainText(
+    "nichtkommerziell",
   );
 
   const piper = page.getByTestId("tts-provider-piper");

@@ -130,9 +130,11 @@ registry.rs:25,38-55,75-108) und nie nach Abbruch; die Pause ist abbrechbar. Fü
 
 ## 7. Fristen
 
-Auftragsfrist `opts.timeout` (Vorgabe 60 s). Health und Stimmenliste kurz: ptts `--version` 5 s, `--list-voices` 20 s
-(phonon.rs:89-91); HTTP-Health und -Stimmen 3 s (openai_speech.rs:83); Ollama Version 2 s, Modelle 3 s, Probe 10 s
-(ollama_speech.rs:77-79). Antwortdeckel 256 MiB (openai_speech.rs:81, phonon.rs:95).
+Auftragsfrist `opts.timeout` (Vorgabe 60 s). Health und Stimmenliste kurz: ptts `--version` 5 s, `--list-voices` **7 s**
+(`LIST_VOICES_TIMEOUT`, phonon.rs; unter den 10 s der Stimmenliste von Oberfläche und Brücke, ein Test hält das fest: läuft
+die innere Frist ab, kommt die lokale Teilliste); HTTP-Health und -Stimmen 3 s (openai_speech.rs:83); Ollama Version 2 s,
+Modelle 3 s, Probe 10 s in eigener Task, die Gesundheit wartet darauf höchstens 3 s und meldet „Probe läuft“
+(ollama_speech.rs). Antwortdeckel 256 MiB (openai_speech.rs:81, phonon.rs:95).
 
 ## 8. Lizenzfelder und Privacy
 
@@ -145,13 +147,18 @@ Auftragsfrist `opts.timeout` (Vorgabe 60 s). Health und Stimmenliste kurz: ptts 
   Hosts ergeben `PrivacyBlocked`, außer `allow_remote`. Keine Umleitungen, kein System-Proxy für Loopback; API-Schlüssel
   nie in der Konfiguration, nur der Name der Umgebungsvariable (`api_key_env`), nie in Meldungen
   (openai_speech.rs:23-32, 213).
-* Subprozess-Adapter erzeugen keine stillen Downloads (`HF_HUB_OFFLINE=1`, Cache-Vorprüfung, phonon.rs:52-67).
+* Subprozess-Adapter erzeugen keine stillen Downloads (`HF_HUB_OFFLINE=1`, Cache-Vorprüfung, phonon.rs:52-67). Auch
+  `--voice` lädt ohne `allow_network` nichts nach: erlaubt sind `default`, Stimmen aus `<Modell>/voices/` und vorhandene
+  `.safetensors`-Pfade (`PhononProvider::voice_problem`); jeder andere Name endet vor dem Prozessstart mit `Unavailable`.
 
 ## 9. Cache-Tag-Regel
 
-Neue Anbieter: `"<id>:<modell>:<stimme>"` (contract.rs:572-575). Belege: `openai-speech:kokoro:af_bella`
-(openai_speech.rs:1236-1243, Test :2076), `ollama-speech:phonon:Zoey` (Test ollama_speech.rs:1335), Phonon
-`phonon:<modell>~<hash>:<stimme>` mit Hash über Modell, Quantisierung und Sprache (phonon.rs:1201-1228). **Fish behält
+Neue Anbieter: `"<id>:<modell>:<stimme>"` (contract.rs); Server-Anbieter hängen einen Hash an das Modell:
+`<id>:<modell>~<hash>:<stimme>`, Hash (32 Bit, FNV-1a) über die **normalisierte Adresse und die Abtastrate** — zwei Server
+oder Raten mit gleichem Modell und gleicher Stimme teilen sich keine Cache-Einträge (`OpenAiSpeechProvider::endpoint_hash`;
+Tests `der_cache_tag_trennt_adresse_und_abtastrate`, `der_cache_tag_trennt_ollama_dienste_und_modelle`). Belege:
+`openai-speech:kokoro~1a2b3c4d:af_bella`, `ollama-speech:phonon:de~…:Zoey`, Phonon
+`phonon:<modell>~<hash>:<stimme>` mit Hash über Modell, Quantisierung und Sprache (phonon.rs). **Fish behält
 den leeren Tag** (Legacy-Regel `engine::fish_cache_tag`, builtin.rs:211); Piper `piper/<stimme>`. Die Suite verlangt:
 deterministisch; wenn nicht leer, mit der Kennung beginnend und je Stimme verschieden (contract_tests.rs:199-213).
 
@@ -253,9 +260,17 @@ Hexzeichen. Er wird gespeichert; ein Test hält einen Referenzwert fest, der Alg
 Modell oder Lizenzangabe, wird erneut bestätigt. `acknowledge_in` nimmt nur den **aktuellen** Fingerabdruck an
 (A/commands/tts_providers.rs:145-170). `UseState` (P/policy.rs:587) reicht ihn mit dem Sperrgrund an die Oberfläche.
 
-**Wo geprüft wird** (Aufrufer, nicht Adapter): Vorlesen (`ProviderEngine::guard`, vor dem Cache-Lookup, P/pipeline.rs:177),
-Probestimme (P/preview.rs:186), Stimmenliste und Auswahl (P/host.rs:102), CLI (`Plan::authorize`, A/tts_cli.rs:353) und die
-Brückenwerkzeuge (über dieselbe Momentaufnahme).
+**Wo geprüft wird** (Aufrufer, nicht Adapter): Vorlesen (`ProviderEngine::guard`, vor dem Cache-Lookup, P/pipeline.rs),
+Probestimme (`PreviewService`, P/preview.rs), Stimmenliste und Auswahl (`ProviderSnapshot::checked`, P/host.rs), CLI
+(`Plan::authorize`, A/tts_cli.rs) und die Brückenwerkzeuge (über dieselbe Momentaufnahme).
+
+**Widerruf wirkt auf laufende Aufträge** (P7n): Engine, Probestimme und die Probe des Ollama-Anbieters prüfen gegen den
+gemeinsamen, aktuellen Stand der Freigaben (`LiveApprovals`, gehalten vom `ProviderHost`; die Befehle setzen ihn nach dem
+Speichern und rufen `TtsManager::providers_changed`), nicht gegen eine beim Auftragsstart eingefrorene Kopie. Der Gegenstand
+der Prüfung (Modell, Adresse) kommt aus derselben Instanz, die synthetisiert (`TtsProvider::use_subject`). Nimmt der Nutzer
+Opt-in, Zustimmung oder Fernzugriff zurück, scheitert der nächste Satz mit `license_blocked`/`privacy_blocked`, ein laufender
+Satz endet binnen 200 ms, eine laufende Probestimme endet sofort (`PreviewService::enforce`, Ereignis `error`).
+`select_in` prüft beim Schreiben gegen den Stand dieses Moments und löst Modell und Adresse neu auf.
 
 ### Engine-Wert `provider:<id>`
 

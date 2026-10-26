@@ -64,6 +64,8 @@
 //! | Absturz/Fehlercode des Kindprozesses | Exit ≠ 0 → `Backend` (mit stderr-Auszug), gesperrtes Modell → `LicenseBlocked`, fehlendes Modell → `Unavailable`; Exit 0 ohne/mit kaputter/leerer Datei → `Backend`; Test `fehlschlaege_…` |
 //! | Hänger des Kindprozesses | Frist (`opts.timeout`) → `Timeout` und Kill; `ptts --version` im Health mit 5-s-Frist |
 //! | Stille Downloads | `HF_HUB_OFFLINE=1`, Cache-Vorprüfung, `allow_network` standardmäßig aus; Tests `offline_…` |
+//! | Stille Downloads über `--voice` | ohne `allow_network` nur `default`, Stimmen aus `<Modell>/voices/` und vorhandene `.safetensors`-Pfade; jeder andere Name endet vor dem Start mit `Unavailable` und Hinweis (die Gesundheit meldet es für die konfigurierte Stimme früh); Tests `ohne_netzfreigabe_sind_nur_default_…` |
+//! | Katalog hängt | `--list-voices` hat 7 s (unter den 10 s der Oberfläche); danach kommt die lokale Teilliste; Test `haengt_der_stimmenkatalog_…` |
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -80,15 +82,18 @@ use tempfile::TempDir;
 use super::contract::{
     guarded, language_matches, AudioClip, AudioEncoding, CancelToken, Device, LicenseInfo,
     ProviderCaps, ProviderDescriptor, ProviderHealth, ProviderTier, StreamingMode,
-    SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, VoiceDescriptor,
+    SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, UseSubject, VoiceDescriptor,
 };
 use crate::process_guard::{self, ProcessGuard};
 
 pub const PHONON_ID: &str = "phonon";
 /// Frist für `ptts --version` im Health-Check.
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
-/// Frist für `ptts --list-voices` (Katalog aus dem Netz).
-const LIST_VOICES_TIMEOUT: Duration = Duration::from_secs(20);
+/// Frist für `ptts --list-voices` (Katalog aus dem Netz). Sie liegt UNTER der
+/// äußeren Frist der Stimmenliste (Oberfläche und Agentenbrücke: je 10 s; ein
+/// Test hält das fest): läuft sie ab, liefert `list_voices` die lokale Teilliste,
+/// statt dass die äußere Frist die ganze Antwort verwirft.
+pub(crate) const LIST_VOICES_TIMEOUT: Duration = Duration::from_secs(7);
 /// Obergrenze des Texts je Aufruf (Zeichen).
 const MAX_TEXT_CHARS: usize = 8000;
 /// Obergrenze der Ausgabedatei (ein Satz ist nie so groß).
@@ -532,6 +537,7 @@ pub struct PhononProvider {
     temp_base: Option<PathBuf>,
     max_wav_bytes: u64,
     env_get: fn(&str) -> Option<String>,
+    list_voices_timeout: Duration,
 }
 
 /// Warum der Anbieter nicht bereit ist: Fehler plus Hinweis für die Anzeige.
@@ -559,6 +565,7 @@ impl PhononProvider {
             temp_base: None,
             max_wav_bytes: MAX_WAV_BYTES,
             env_get: real_env,
+            list_voices_timeout: LIST_VOICES_TIMEOUT,
         }
     }
 
@@ -603,6 +610,12 @@ impl PhononProvider {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_list_voices_timeout(mut self, t: Duration) -> Self {
+        self.list_voices_timeout = t;
+        self
+    }
+
     fn voice_language(&self) -> String {
         let l = self.cfg.lang_arg();
         if l == "none" {
@@ -627,8 +640,15 @@ impl PhononProvider {
             verified_on: None,
             note: format!(
                 "Die Code-Lizenz (MIT OR Apache-2.0) ist belegt (README von gradium-ai/xn-ptts, 26.10.2026); \
-                 die Lizenz der Gewichte von '{model}' ist nicht belegt und wird vorsorglich als \
-                 nichtkommerziell behandelt. Stimmen haben eigene Lizenzen (docs/cli.md)."
+                 {which} und wird vorsorglich als nichtkommerziell behandelt. Stimmen haben \
+                 eigene Lizenzen (docs/cli.md).",
+                which = if model.is_empty() {
+                    "es ist kein Modell eingetragen, die Lizenz der Gewichte lässt sich ohne \
+                     Modell nicht belegen"
+                        .to_string()
+                } else {
+                    format!("die Lizenz der Gewichte von '{model}' ist nicht belegt")
+                }
             ),
         }
         };
@@ -692,6 +712,47 @@ impl PhononProvider {
         };
         self.check_model()?;
         Ok(exe)
+    }
+
+    /// Darf `ptts` diese Stimme OHNE Netzfreigabe laden? `None` = ja; sonst der
+    /// Grund für den Nutzer. Ein Katalogname (`--voice Zoey`) ließe `ptts` die
+    /// Stimme von Hugging Face holen, und `HF_HUB_OFFLINE` ist für `ptts` nicht
+    /// dokumentiert — darum ist ohne `allow_network` nur erlaubt:
+    /// * `default` (kein `--voice`, das prüft der Aufrufer),
+    /// * der Pfad einer vorhandenen `.safetensors`-Datei,
+    /// * ein schlichter Name (kein Pfadtrenner, kein `..`), zu dem es in
+    ///   `<Modellordner>/voices/` eine `.safetensors`-Datei gibt.
+    fn voice_problem(&self, voice: &str) -> Option<String> {
+        if self.cfg.allow_network || voice == "default" {
+            return None;
+        }
+        let is_file = |p: &Path| p.is_file();
+        let low = voice.to_ascii_lowercase();
+        // Ein Netzwerkpfad (UNC) ist selbst ein Zugriff über das Netz: nicht einmal
+        // nachsehen, ob es die Datei gibt.
+        let network_path = voice.starts_with("\\\\") || voice.starts_with("//");
+        if !network_path && low.ends_with(".safetensors") && is_file(Path::new(voice)) {
+            return None;
+        }
+        let plain = !voice.contains(['/', '\\']) && !voice.contains("..");
+        if plain {
+            if let Ok(ModelSpec::Local(dir)) = parse_model(&self.cfg.model) {
+                let file = if low.ends_with(".safetensors") {
+                    voice.to_string()
+                } else {
+                    format!("{voice}.safetensors")
+                };
+                if is_file(&Path::new(dir).join("voices").join(file)) {
+                    return None;
+                }
+            }
+        }
+        Some(format!(
+            "Die Stimme '{voice}' ist ohne Netzfreigabe nicht ladbar: ptts würde sie von Hugging \
+             Face holen. Erlaubt sind 'default', eine Stimme aus dem Ordner voices/ des lokalen \
+             Modellordners oder der Pfad einer vorhandenen .safetensors-Datei — oder allow_network \
+             aktivieren."
+        ))
     }
 
     /// Modell prüfen; `Ok(Some(hinweis))` = bereit, mit Hinweis für die Anzeige.
@@ -1082,6 +1143,20 @@ impl TtsProvider for PhononProvider {
                 Ok(hint) => hint,
                 Err(p) => return fail(p.error.message, p.hint),
             };
+            if let Some(why) = self
+                .cfg
+                .configured_voice()
+                .and_then(|v| self.voice_problem(v))
+            {
+                return fail(
+                    why,
+                    Some(
+                        "Eine Stimme aus dem Ordner voices/ des Modellordners eintragen, die \
+                         Stimme leer lassen (Standardstimme) oder allow_network aktivieren."
+                            .to_string(),
+                    ),
+                );
+            }
             let version =
                 match tokio::time::timeout(self.version_timeout, self.query_version(&exe)).await {
                     Err(_) => {
@@ -1156,7 +1231,7 @@ impl TtsProvider for PhononProvider {
             // Den Hugging-Face-Katalog nur mit Netzfreigabe.
             if self.cfg.allow_network {
                 let listed = tokio::time::timeout(
-                    LIST_VOICES_TIMEOUT,
+                    self.list_voices_timeout,
                     self.run(&exe, |_| vec![OsString::from("--list-voices")]),
                 )
                 .await;
@@ -1183,6 +1258,13 @@ impl TtsProvider for PhononProvider {
             let exe = self.check_ready().map_err(|p| p.error)?;
             let text = prepare_text(text)?;
             let voice = self.effective_voice(opts.voice.as_deref())?;
+            // Ohne Netzfreigabe lädt `ptts` keine Stimme nach: Katalognamen scheitern
+            // hier, ohne Prozessstart.
+            if let Some(v) = voice.as_deref() {
+                if let Some(why) = self.voice_problem(v) {
+                    return Err(TtsError::unavailable(why));
+                }
+            }
             // Start-Gate: bei knappem RAM startet ptts gar nicht erst.
             (self.ram_gate)(RAM_NEED_MB).map_err(TtsError::unavailable)?;
             guarded(
@@ -1228,6 +1310,14 @@ impl TtsProvider for PhononProvider {
             .or_else(|| self.cfg.configured_voice())
             .unwrap_or("default");
         format!("{PHONON_ID}:{base}~{:08x}:{voice}", hash & 0xffff_ffff)
+    }
+
+    /// Modell dieser Instanz; `ptts` ist ein lokales Programm (keine Adresse).
+    fn use_subject(&self) -> UseSubject {
+        UseSubject {
+            model: self.cfg.model.trim().to_string(),
+            base_url: None,
+        }
     }
 }
 
@@ -1544,7 +1634,8 @@ mod tests {
 
     #[tokio::test]
     async fn aufruf_enthaelt_alle_optionen_in_der_vorgesehenen_reihenfolge() {
-        let model = model_dir(&[]);
+        // Ohne Netzfreigabe sind nur Stimmen aus `<Modell>/voices/` erlaubt.
+        let model = model_dir(&["Ava", "Ben"]);
         let fake = fake_ptts(FakeOpts::default());
         let mut c = cfg(&fake, &model);
         c.quant = Some("q8".into());
@@ -1856,6 +1947,220 @@ mod tests {
         let h = p.health_check().await;
         assert!(h.available);
         assert!(h.hint.unwrap().contains("aus dem Netz"));
+    }
+
+    // ---- Stimmen ohne Netzfreigabe (Befund 4) ---------------------------------
+
+    /// Ohne `allow_network` darf `--voice` nichts nachladen: erlaubt sind
+    /// `default`, ein Name aus `<Modell>/voices/` und ein existierender
+    /// `.safetensors`-Pfad. Jeder Katalogname könnte `ptts` sonst von Hugging
+    /// Face holen lassen (`HF_HUB_OFFLINE` ist für ptts nicht dokumentiert).
+    #[tokio::test]
+    async fn ohne_netzfreigabe_sind_nur_default_modellstimmen_und_pfade_erlaubt() {
+        let model = model_dir(&["Ava"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = provider(&fake, &model);
+        let say = |voice: Option<&str>| {
+            let mut o = opts();
+            o.voice = voice.map(String::from);
+            let p = &p;
+            async move { p.synthesize("Hallo.", &o, &CancelToken::detached()).await }
+        };
+
+        // Ein Katalogname: nicht verfügbar, ohne Prozessstart, mit Hinweis.
+        let e = say(Some("Zoey")).await.unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::Unavailable, "{e:?}");
+        assert!(e.message.contains("Zoey"), "{}", e.message);
+        assert!(
+            e.message.contains("allow_network") && e.message.contains("voices"),
+            "der Hinweis nennt den Ausweg: {}",
+            e.message
+        );
+        assert!(fake.calls().is_empty(), "kein Aufruf von ptts");
+
+        // Pfadtricks sind kein Modellname: weder `../` noch Unterordner.
+        for tricky in [
+            "../Ava",
+            "sub/Ava",
+            "..\\Ava",
+            "Ava.safetensors/..",
+            // Netzwerkpfade sind selbst ein Zugriff über das Netz.
+            "\\\\server\\freigabe\\Ava.safetensors",
+            "//server/freigabe/Ava.safetensors",
+        ] {
+            let e = say(Some(tricky)).await.unwrap_err();
+            assert_eq!(e.kind, TtsErrorKind::Unavailable, "{tricky}: {e:?}");
+        }
+        // Ein `.safetensors`-Pfad, den es nicht gibt.
+        let missing = model.path().join("gibt-es-nicht.safetensors");
+        let e = say(Some(&missing.display().to_string())).await.unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::Unavailable, "{e:?}");
+        assert!(fake.calls().is_empty(), "weiterhin kein Aufruf von ptts");
+
+        // Erlaubt: Standardstimme, Stimme des Modellordners, vorhandene Datei.
+        say(Some("default")).await.unwrap();
+        say(Some("Ava")).await.unwrap();
+        let file = model.path().join("voices").join("Ava.safetensors");
+        say(Some(&file.display().to_string())).await.unwrap();
+        say(None).await.unwrap();
+        let calls = fake.synth_calls();
+        assert_eq!(calls.len(), 4);
+        assert!(!calls[0].has("--voice"), "default = kein --voice");
+        assert_eq!(calls[1].value_of("--voice"), Some("Ava"));
+        assert_eq!(
+            calls[2].value_of("--voice"),
+            Some(file.display().to_string().as_str())
+        );
+        assert!(!calls[3].has("--voice"));
+    }
+
+    /// Die konfigurierte Stimme folgt derselben Regel; die Gesundheit sagt es früh.
+    #[tokio::test]
+    async fn eine_konfigurierte_katalogstimme_ohne_netzfreigabe_ist_nicht_verfuegbar() {
+        let model = model_dir(&["Ava"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let mut c = cfg(&fake, &model);
+        c.voice = Some("Zoey".into());
+        let p = PhononProvider::new(c.clone()).with_ram_gate(|_| Ok(64 * 1024));
+        let e = p
+            .synthesize("Hallo.", &opts(), &CancelToken::detached())
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::Unavailable);
+        assert!(fake.calls().is_empty());
+        let h = p.health_check().await;
+        assert!(!h.available);
+        assert!(h.reason.unwrap().contains("Zoey"));
+        // Eine Stimme des Modellordners ist in Ordnung (auch in der Gesundheit).
+        c.voice = Some("Ava".into());
+        let p = PhononProvider::new(c).with_ram_gate(|_| Ok(64 * 1024));
+        assert!(p.health_check().await.available);
+        p.synthesize("Hallo.", &opts(), &CancelToken::detached())
+            .await
+            .unwrap();
+    }
+
+    /// Mit `allow_network` bleibt es wie bisher: der Katalog darf laden.
+    /// Bei einem `hf://`-Modell ohne Netzfreigabe gibt es keinen Modellordner —
+    /// dort nur `default` und Dateipfade.
+    #[tokio::test]
+    async fn mit_netzfreigabe_darf_jede_stimme_ohne_sie_nicht_bei_einem_hf_modell() {
+        let model = model_dir(&[]);
+        let fake = fake_ptts(FakeOpts::default());
+        let mut c = cfg(&fake, &model);
+        c.allow_network = true;
+        let p = PhononProvider::new(c).with_ram_gate(|_| Ok(64 * 1024));
+        let mut o = opts();
+        o.voice = Some("Zoey".into());
+        p.synthesize("Hallo.", &o, &CancelToken::detached())
+            .await
+            .unwrap();
+        assert_eq!(fake.synth_calls()[0].value_of("--voice"), Some("Zoey"));
+
+        // hf://-Modell, im Cache vorhanden, Downloads aus.
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let cached = hf_cache_with("gradium", "phonon-40m-de", commit, &[("main", commit)]);
+        let offline = PhononProvider::new(PhononConfig {
+            exe_path: fake.exe.display().to_string(),
+            model: "hf://gradium/phonon-40m-de".into(),
+            hf_home: Some(cached.path().display().to_string()),
+            ..Default::default()
+        })
+        .with_ram_gate(|_| Ok(64 * 1024))
+        .with_env(no_env);
+        let before = fake.synth_calls().len();
+        let e = offline
+            .synthesize("Hallo.", &o, &CancelToken::detached())
+            .await
+            .unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::Unavailable, "{e:?}");
+        assert_eq!(fake.synth_calls().len(), before, "kein Prozessstart");
+        let mut d = opts();
+        d.voice = Some("default".into());
+        offline
+            .synthesize("Hallo.", &d, &CancelToken::detached())
+            .await
+            .unwrap();
+        assert_eq!(fake.synth_calls().len(), before + 1);
+    }
+
+    // ---- Katalog-Frist und Lizenznotiz (Befunde 7, 10) -----------------------
+
+    /// Befund 7: hängt der Katalog (`--list-voices`), kommt nach der INNEREN
+    /// Frist die lokale Teilliste — nicht erst nichts nach der äußeren.
+    #[tokio::test]
+    async fn haengt_der_stimmenkatalog_kommt_die_lokale_teilliste_nach_der_inneren_frist() {
+        let model = model_dir(&["Lokal"]);
+        let fake = fake_ptts(FakeOpts {
+            voices_out: Some("Ava de\nBen en\n".to_string()),
+            voices_delay_ms: Some(4000),
+            ..Default::default()
+        });
+        let mut c = cfg(&fake, &model);
+        c.allow_network = true;
+        let p = PhononProvider::new(c)
+            .with_ram_gate(|_| Ok(64 * 1024))
+            .with_list_voices_timeout(Duration::from_millis(300));
+        let started = Instant::now();
+        let v = p.list_voices(None).await.unwrap();
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_secs(3),
+            "die innere Frist greift: {took:?}"
+        );
+        // Der Katalog wurde versucht: die Liste wartete die innere Frist ab. (Das
+        // Protokoll des Fakes taugt dafür nicht — auf einem ausgelasteten Rechner
+        // startet der Prozess manchmal erst NACH der 300-ms-Frist.)
+        assert!(
+            took >= Duration::from_millis(250),
+            "die Liste wartete die innere Frist ab: {took:?}"
+        );
+        let ids: Vec<&str> = v.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, ["default", "Lokal"], "nur die lokale Teilliste");
+    }
+
+    /// Befund 10: ohne Modell steht in der Lizenznotiz nicht „von '' …“.
+    #[test]
+    fn die_lizenznotiz_ohne_modell_sagt_kein_modell_eingetragen() {
+        for model in ["", "   "] {
+            let l = PhononProvider::new(PhononConfig {
+                model: model.into(),
+                ..Default::default()
+            })
+            .descriptor()
+            .license;
+            assert!(
+                !l.note.contains("''"),
+                "leeres Modell in Anführungszeichen: {}",
+                l.note
+            );
+            assert!(l.note.contains("kein Modell eingetragen"), "{}", l.note);
+            assert!(!l.verified && l.non_commercial);
+        }
+        // Mit Modell bleibt der Name in der Notiz.
+        let l = PhononProvider::new(PhononConfig {
+            model: "C:/Modelle/x".into(),
+            ..Default::default()
+        })
+        .descriptor()
+        .license;
+        assert!(l.note.contains("C:/Modelle/x"), "{}", l.note);
+    }
+
+    /// Befund 2: der Gegenstand der Guardrails ist das Modell dieser Instanz.
+    #[test]
+    fn die_instanz_meldet_ihr_modell_als_gegenstand_der_pruefung() {
+        let p = PhononProvider::new(PhononConfig {
+            model: "  hf://gradium/phonon-31m-en  ".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            p.use_subject(),
+            UseSubject {
+                model: "hf://gradium/phonon-31m-en".into(),
+                base_url: None
+            }
+        );
     }
 
     // ---- Modell und Gesundheit ------------------------------------------------

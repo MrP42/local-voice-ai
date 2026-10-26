@@ -20,9 +20,12 @@
 //! ## Lizenzangaben
 //!
 //! `verified` ist nur dort `true`, wo `docs/tts/provider-research.md` Quelle
-//! UND Abrufdatum nennt. Fish und Piper stehen auf `false`: bei Fish sind die
-//! Gewichte ungeprüft, bei Piper hängt die Lizenz je Stimme (siehe `note`).
-//! Beide sind keine Opt-in-Anbieter (`opt_in = false`) — eine Lizenz-Sperre
+//! UND Abrufdatum nennt — oder wo die lokal installierte Lizenzdatei den Beleg
+//! liefert (Fish: `LICENSE` und `checkpoints/s2-pro/LICENSE.md`, Fish Audio
+//! Research License vom 07.03.2026, nichtkommerziell, `verified_on` 2026-10-26).
+//! Piper steht auf `false`: dort hängt die Lizenz je Stimme (siehe `note`).
+//! Beide sind keine Opt-in-Anbieter (`opt_in = false`) — auch Fish mit
+//! nichtkommerzieller Lizenz bleibt frei, es ist der bestehende Standard; eine Lizenz-Sperre
 //! (`license_ack`) darf deshalb nicht allein an `!verified` hängen, sondern
 //! nur an `opt_in && (non_commercial || !verified)`.
 
@@ -131,15 +134,20 @@ impl TtsProvider for FishProvider {
                 style_tags: engine::FISH_CAPS.style_tags,
             },
             license: LicenseInfo {
-                code: "Apache-2.0".to_string(),
-                weights: "s2-pro: Lizenz laut Model Card prüfen".to_string(),
-                non_commercial: false,
-                verified: false,
-                source_url: "https://github.com/fishaudio/fish-speech".to_string(),
-                verified_on: None,
-                note: "Model Card prüfen: Lizenz der Gewichte (s2-pro) ist nicht verifiziert; \
-                       die Code-Lizenz stammt aus dem Umsetzungsplan, nicht aus einer \
-                       gegengeprüften Quelle."
+                code: "Fish Audio Research License (installierte Fassung, Stand 07.03.2026)"
+                    .to_string(),
+                weights: "s2-pro: Fish Audio Research License".to_string(),
+                non_commercial: true,
+                verified: true,
+                source_url: "https://huggingface.co/fishaudio/s2-pro".to_string(),
+                verified_on: Some("2026-10-26".to_string()),
+                note: "Belegt durch die lokal installierte LICENSE (Repo-Code) und \
+                       checkpoints/s2-pro/LICENSE.md (Gewichte): beide stehen unter der Fish \
+                       Audio Research License, zuletzt geändert am 07.03.2026; die Model Card \
+                       nennt license: other / fish-audio-research-license. Erlaubt sind \
+                       Forschung und nichtkommerzielle Nutzung; kommerzielle Nutzung nur mit \
+                       separater Lizenz von Fish Audio. Fish bleibt der bestehende Standard \
+                       und wird deshalb nicht gesperrt (kein Opt-in)."
                     .to_string(),
             },
         }
@@ -537,11 +545,47 @@ mod tests {
         assert_eq!(d.caps.streaming, StreamingMode::Sentence);
         assert!(d.caps.cloning && d.caps.style_tags);
         assert_eq!(d.caps.devices, vec![Device::Cuda]);
-        assert!(!d.license.verified);
-        assert!(d.license.verified_on.is_none());
-        assert!(d.license.note.contains("Model Card prüfen"));
+        // Lizenz belegt (Befund 11): Fish Audio Research License, nichtkommerziell,
+        // lokale LICENSE/LICENSE.md und Model Card als Quelle.
+        let l = &d.license;
+        assert!(
+            l.non_commercial,
+            "Fish-Lizenz erlaubt nur Forschung/nichtkommerziell"
+        );
+        assert!(l.verified);
+        assert_eq!(l.verified_on.as_deref(), Some("2026-10-26"));
+        assert_eq!(l.source_url, "https://huggingface.co/fishaudio/s2-pro");
+        assert!(l.code.contains("Fish Audio Research License"), "{}", l.code);
+        assert!(!l.code.contains("Apache"), "{}", l.code);
+        assert!(
+            l.weights.contains("Fish Audio Research License"),
+            "{}",
+            l.weights
+        );
+        assert!(l.note.contains("LICENSE.md"), "{}", l.note);
+        assert!(l.note.contains("separate"), "{}", l.note);
         // Legacy-Regel: leerer Cache-Tag, egal welche Stimme.
         assert_eq!(FishProvider::new("x").cache_tag(Some("patrick")), "");
+    }
+
+    /// Die korrigierte Lizenz sperrt Fish NICHT: Fish ist der bestehende Standard
+    /// (`opt_in = false`); über eine Sperre entscheidet der Owner, nicht diese Angabe.
+    #[test]
+    fn die_nichtkommerzielle_fish_lizenz_sperrt_fish_nicht() {
+        use crate::managers::tts::providers::policy::{
+            check_use, license_needs_ack, use_state, TtsProvidersSettings, UseSubject,
+        };
+        let d = FishProvider::new("x").descriptor();
+        assert!(d.license.non_commercial && !d.opt_in);
+        assert_eq!(d.tier, ProviderTier::Supported);
+        assert!(
+            !license_needs_ack(&d),
+            "keine Zustimmung nötig, kein Opt-in"
+        );
+        let settings = TtsProvidersSettings::default();
+        assert!(check_use(&d, &UseSubject::default(), &settings).is_ok());
+        let state = use_state(&d, &UseSubject::default(), &settings);
+        assert!(state.enabled && !state.license_needs_ack && state.blocked.is_none());
     }
 
     // ---- Piper ------------------------------------------------------------

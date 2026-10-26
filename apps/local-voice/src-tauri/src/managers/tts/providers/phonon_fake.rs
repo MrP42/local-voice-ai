@@ -19,6 +19,7 @@
 //! | `version_out` | Ausgabe von `--version` (Standard `ptts 0.4.2`) |
 //! | `version_code`, `version_delay_ms` | `--version` endet mit diesem Code bzw. schläft vorher (danach entsteht der Marker) |
 //! | `voices_out` | Ausgabe von `--list-voices` |
+//! | `voices_delay_ms` | `--list-voices` schläft so lange, bevor es etwas ausgibt |
 //! | `delay_ms` | so lange schlafen, bevor etwas geschrieben wird |
 //! | `marker` | Datei, die NACH der Verzögerung entsteht (fehlt sie, wurde der Prozess vorher beendet) |
 //! | `fail_code`, `fail_stderr` | mit diesem Code und dieser Meldung auf stderr enden |
@@ -85,6 +86,9 @@ fn main() {
         return;
     }
     if args.iter().any(|a| a == "--list-voices") {
+        if let Some(ms) = get("voices_delay_ms") {
+            std::thread::sleep(std::time::Duration::from_millis(ms.parse().unwrap_or(0)));
+        }
         print!("{}", get("voices_out").unwrap_or_else(|| "Ava de\nBen en\n".to_string()));
         return;
     }
@@ -195,6 +199,7 @@ pub(crate) struct FakeOpts {
     pub version_code: Option<i32>,
     pub version_delay_ms: Option<u64>,
     pub voices_out: Option<String>,
+    pub voices_delay_ms: Option<u64>,
     pub mode: Option<String>,
 }
 
@@ -319,6 +324,9 @@ pub(crate) fn fake_ptts(opts: FakeOpts) -> FakePtts {
     }
     if let Some(v) = opts.voices_out {
         put("voices_out", v);
+    }
+    if let Some(v) = opts.voices_delay_ms {
+        put("voices_delay_ms", v.to_string());
     }
     if let Some(v) = opts.mode {
         put("mode", v);

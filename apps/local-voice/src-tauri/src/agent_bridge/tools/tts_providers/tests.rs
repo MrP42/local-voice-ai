@@ -24,8 +24,8 @@ use crate::managers::tts::providers::contract::{ProviderTier, SynthesisOptions};
 use crate::managers::tts::providers::mock::MockProvider;
 use crate::managers::tts::providers::pipeline::ProviderEngine;
 use crate::managers::tts::providers::policy::{
-    license_fingerprint, resolve_provider_configs, ProviderOverrides, TtsProvidersSettings,
-    UseSubject,
+    license_fingerprint, resolve_provider_configs, LiveApprovals, ProviderOverrides,
+    TtsProvidersSettings,
 };
 use crate::managers::tts::providers::registry::ProviderRegistry;
 use crate::managers::tts::providers::setup::{build_registry, ProviderPaths};
@@ -762,13 +762,8 @@ fn render_audio_honours_the_locks_of_a_provider_engine() {
         if enabled {
             settings.set_enabled("zzz", true);
         }
-        let engine = ProviderEngine::new(
-            registry.clone(),
-            "zzz",
-            None,
-            UseSubject::default(),
-            Arc::new(settings),
-        );
+        let engine =
+            ProviderEngine::new(registry.clone(), "zzz", None, LiveApprovals::new(settings));
         let tools = AppTools::new(
             store.clone(),
             Arc::new(RenderHost {
@@ -802,7 +797,7 @@ fn render_audio_honours_the_locks_of_a_provider_engine() {
     reg.register(nc.clone()).unwrap();
     let mut settings = TtsProvidersSettings::default();
     settings.set_enabled("nc", true);
-    let engine = ProviderEngine::new(reg, "nc", None, UseSubject::default(), Arc::new(settings));
+    let engine = ProviderEngine::new(reg, "nc", None, LiveApprovals::new(settings));
     let tools = AppTools::new(
         store,
         Arc::new(RenderHost {
@@ -1139,6 +1134,50 @@ fn bench_roots_follow_the_environment_then_the_program_path() {
     let roots = bench_roots_from(&env(&[]), Some(&exe));
     assert_eq!(roots.docs, Some(benchmarks));
     assert_eq!(roots.bench, None);
+}
+
+/// Befund 9: eine installierte App sucht NICHT oberhalb ihres Programms nach
+/// `docs/tts/benchmarks` (sonst fände sie `C:\docs\tts\benchmarks` eines
+/// beliebigen Ordners, auf den sie dann liest). Die Suche gibt es nur im
+/// Entwicklungsbau; ausdrücklich gesetzte Umgebungsvariablen gelten immer.
+#[test]
+fn an_installed_app_does_not_search_above_its_program_for_docs() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        }
+    };
+    let dir = tempfile::tempdir().unwrap();
+    // Ein fremder `docs/tts/benchmarks`-Ordner oberhalb der Installation.
+    let foreign = dir.path().join("docs/tts/benchmarks");
+    std::fs::create_dir_all(&foreign).unwrap();
+    let exe = dir.path().join("Programme/LocalVoice/local-voice-ai.exe");
+
+    let installed = bench_roots_with(&env(&[]), Some(&exe), false);
+    assert_eq!(installed.docs, None, "kein Suchen oberhalb des Programms");
+    assert_eq!(installed.bench, None);
+
+    // Im Entwicklungsbau (Repo): dieselbe Anordnung wird gefunden.
+    let dev = bench_roots_with(&env(&[]), Some(&exe), true);
+    assert_eq!(dev.docs, Some(foreign.clone()));
+
+    // Der ausdrückliche Weg gilt in beiden Fällen.
+    let explicit = bench_roots_with(
+        &env(&[("LVA_TTS_BENCH_DOCS", "D:/repo/docs/tts/benchmarks")]),
+        Some(&exe),
+        false,
+    );
+    assert_eq!(
+        explicit.docs,
+        Some(PathBuf::from("D:/repo/docs/tts/benchmarks"))
+    );
+
+    // Der Standardweg folgt dem Bautyp: Entwicklungsbau sucht, Release nie.
+    let default_docs = bench_roots_from(&env(&[]), Some(&exe)).docs;
+    assert_eq!(default_docs.is_some(), cfg!(debug_assertions));
 }
 
 // ---------------------------------------------------------------------------

@@ -67,6 +67,8 @@ pub(crate) enum Reply {
     Hang,
     /// Verbindung ohne Antwort schließen.
     Close,
+    /// Erst nach `delay` mit `then` antworten (z. B. ein Modell, das erst lädt).
+    Delayed { delay: Duration, then: Box<Reply> },
 }
 
 impl Reply {
@@ -103,6 +105,14 @@ impl Reply {
             gap,
             content_type: "audio/pcm",
             end,
+        }
+    }
+
+    /// Erst nach `delay` antworten (vor dem ersten Byte).
+    pub fn delayed(delay: Duration, then: Reply) -> Self {
+        Self::Delayed {
+            delay,
+            then: Box::new(then),
         }
     }
 
@@ -254,7 +264,13 @@ async fn handle(
     };
     log.lock().unwrap().push(req.clone());
 
-    match handler(&req) {
+    let mut reply = handler(&req);
+    while let Reply::Delayed { delay, then } = reply {
+        tokio::time::sleep(delay).await;
+        reply = *then;
+    }
+    match reply {
+        Reply::Delayed { .. } => unreachable!("oben aufgelöst"),
         Reply::Hang => std::future::pending::<()>().await,
         Reply::Close => {}
         Reply::Bytes {

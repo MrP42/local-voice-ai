@@ -16,9 +16,29 @@
 //! `POST /v1/audio/speech`. Einzige Ausnahme mit Nebenwirkung: die
 //! Probe-Synthese bei `probe_speech = true` — sie lädt das Sprachmodell in
 //! Ollama (das kann ein geladenes LLM aus dem Speicher drängen). Darum ist sie
-//! standardmäßig aus, braucht die ausdrückliche Einstellung und wird für
-//! 5 Minuten zwischengespeichert, damit ein oft aktualisierter Status nicht
-//! jedes Mal rechnet.
+//! standardmäßig aus und braucht die ausdrückliche Einstellung.
+//!
+//! ### Die Probe ist eine Nutzung (Befund 3)
+//!
+//! * **Nur mit Freigabe.** Die Probe startet nur, wenn die Prüffunktion der
+//!   Guardrails ([`OllamaSpeechProvider::with_use_gate`], gespeist aus dem
+//!   gemeinsamen Stand der Freigaben) die Nutzung erlaubt — Opt-in, bei einem
+//!   nichtkommerziellen oder ungeprüften Modell die Zustimmung zur Lizenz,
+//!   Fernzugriff. Gewählt wurde diese Variante (statt die Probe aus der
+//!   Gesundheit herauszunehmen und über einen eigenen UI-Aufruf auszulösen),
+//!   weil sie ohne neuen Befehl, ohne neue Oberfläche und ohne Änderung der
+//!   Anbieterschnittstelle auskommt und die Freigabe bei JEDEM Aufruf neu liest.
+//!   Ohne Prüffunktion (Aufrufer ohne Freigabestand) gibt es keine Probe. Ohne
+//!   Freigabe meldet die Gesundheit „Probe nicht gestartet“ mit dem Grund; an
+//!   Ollama geht dann keine Sprachanfrage.
+//! * **Eigene Task, eigene Frist, immer zwischengespeichert.** Die Probe läuft in
+//!   einer eigenen Task (Frist 10 s) und schreibt ihr Ergebnis — Erfolg wie
+//!   Fehlschlag — für 5 Minuten in den Zwischenspeicher, auch wenn die Prüfung,
+//!   die sie angestoßen hat, schon von der Frist der Oberfläche (4 s) verworfen
+//!   wurde. Gleichzeitige Prüfungen teilen sich EINE Probe.
+//! * **Die Prüfung wartet nicht auf das Modell.** Sie wartet höchstens 3 s auf die
+//!   Probe und meldet dann „Probe läuft“ (nicht verfügbar, mit Hinweis); der
+//!   nächste Aufruf sieht das Ergebnis.
 //!
 //! ## Health in Stufen (jede mit eigenem Grund)
 //!
@@ -40,12 +60,13 @@
 //! |---|---|
 //! | Gleichzeitige Aufträge | wie `openai_speech`; der Probe-Zwischenspeicher liegt hinter einem `Mutex`, nie über ein `await` gehalten |
 //! | Abbruch mitten im Vorgang | `guarded` im Unterbau (Verbindung wird geschlossen); Vertragstest mit hängendem Server |
-//! | Voller Speicher | Antwortdeckel im Unterbau; die Probe lädt das Modell nur bei ausdrücklicher Freigabe und einmal je 5 Minuten |
+//! | Voller Speicher | Antwortdeckel im Unterbau; die Probe lädt das Modell nur bei ausdrücklicher Einstellung UND Freigabe (Opt-in/Lizenz) und einmal je 5 Minuten, auch wenn die Prüfung verworfen wird |
+//! | Probe ohne Freigabe oder bei verworfener Prüfung (P7n) | `probe_allowed` fragt bei jedem Aufruf die Guardrails; die Probe läuft in eigener Task und wird immer zwischengespeichert; Tests `ohne_freigabe_startet_die_probe_nicht_…`, `eine_verworfene_gesundheitspruefung_…`, `die_gesundheit_meldet_probe_laeuft_…` |
 //! | Fehlender Dienst/Version/Modell/Plattform | Health in Stufen mit Grund und Hinweis; `synthesize` meldet die Plattformsperre ohne Anfrage als `Unavailable`; ein 404 des Dienstes heißt „Modell fehlt oder Ollama zu alt“ (`Unavailable`) |
 //! | Hänger des Dienstes | Fristen 2 s (Version), 3 s (Modelle, Stimmen), 10 s (Probe), `opts.timeout` (Synthese) |
 //! | Datenabfluss | Loopback-Pflicht (`allow_remote`), keine Umleitungen, kein Proxy für Loopback (Unterbau) |
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
@@ -57,9 +78,10 @@ use tokio::sync::mpsc;
 
 use super::contract::{
     language_matches, AudioChunk, AudioClip, CancelToken, Device, LicenseInfo, ProviderDescriptor,
-    ProviderHealth, SynthesisOptions, TtsError, TtsProvider, VoiceDescriptor,
+    ProviderHealth, SynthesisOptions, TtsError, TtsProvider, UseSubject, VoiceDescriptor,
 };
 use super::openai_speech::{parse_voices, OpenAiSpeechConfig, OpenAiSpeechProvider};
+use super::policy::UseGate;
 
 pub const OLLAMA_ID: &str = "ollama-speech";
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
@@ -78,6 +100,11 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const PROBE_TTL: Duration = Duration::from_secs(300);
+/// So lange wartet die Gesundheitsprüfung höchstens auf die Probe (unter der
+/// Frist der Oberfläche von 4 s); danach meldet sie „Probe läuft“.
+const PROBE_WAIT: Duration = Duration::from_secs(3);
+/// Wie oft die Gesundheitsprüfung nach dem Ergebnis der Probe sieht.
+const PROBE_POLL: Duration = Duration::from_millis(25);
 /// Wenige Zeichen genügen: es geht nur darum, ob überhaupt Audio entsteht.
 const PROBE_TEXT: &str = "Hallo.";
 const SOURCE_URL: &str = "https://ollama.com/library/phonon";
@@ -284,14 +311,67 @@ fn find_voices(v: &Value, depth: u8) -> Option<&Value> {
 
 // ---- Provider ----------------------------------------------------------------------
 
+/// Zustand der Probe-Synthese. Hinter einem `Mutex`, nie über ein `await` gehalten.
+enum ProbeState {
+    /// Noch nie gelaufen.
+    Idle,
+    /// Läuft in ihrer eigenen Task (genau eine zur Zeit).
+    Running,
+    /// Fertig; das Ergebnis gilt `probe_ttl` lang — Erfolg wie Fehlschlag.
+    Done(Instant, Result<(), String>),
+}
+
+struct ProbeSlot(Mutex<ProbeState>);
+
+impl ProbeSlot {
+    fn lock(&self) -> MutexGuard<'_, ProbeState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Wacht über die Task der Probe: endet sie, ohne ein Ergebnis zu schreiben
+/// (Panik), wird der Zustand auf einen Fehler gesetzt — „läuft“ bleibt nie
+/// für immer stehen.
+struct ProbeRun {
+    slot: Arc<ProbeSlot>,
+    finished: bool,
+}
+
+impl Drop for ProbeRun {
+    fn drop(&mut self) {
+        if !self.finished {
+            let mut state = self.slot.lock();
+            if matches!(*state, ProbeState::Running) {
+                *state = ProbeState::Done(
+                    Instant::now(),
+                    Err("Die Probe wurde unerwartet beendet".to_string()),
+                );
+            }
+        }
+    }
+}
+
+/// Was die Gesundheitsprüfung von der Probe erfährt.
+enum Probe {
+    Ok,
+    Failed(String),
+    /// Läuft noch (die Prüfung wartet höchstens `probe_wait`).
+    Pending,
+    /// Nicht gestartet, weil die Guardrails die Nutzung nicht erlauben.
+    NotAllowed(String),
+}
+
 /// Ollama-Sprachanbieter (siehe Moduldoku).
 pub struct OllamaSpeechProvider {
     cfg: OllamaSpeechConfig,
     root: String,
-    inner: OpenAiSpeechProvider,
+    inner: Arc<OpenAiSpeechProvider>,
     host_os: String,
     probe_ttl: Duration,
-    probe_cache: Mutex<Option<(Instant, Result<(), String>)>>,
+    probe: Arc<ProbeSlot>,
+    use_gate: Option<UseGate>,
+    probe_wait: Duration,
+    probe_timeout: Duration,
 }
 
 impl OllamaSpeechProvider {
@@ -305,11 +385,22 @@ impl OllamaSpeechProvider {
         Self {
             root: ollama_root(&cfg.base_url),
             cfg,
-            inner,
+            inner: Arc::new(inner),
             host_os: std::env::consts::OS.to_string(),
             probe_ttl: PROBE_TTL,
-            probe_cache: Mutex::new(None),
+            probe: Arc::new(ProbeSlot(Mutex::new(ProbeState::Idle))),
+            use_gate: None,
+            probe_wait: PROBE_WAIT,
+            probe_timeout: PROBE_TIMEOUT,
         }
+    }
+
+    /// Prüffunktion der Guardrails: die Probe lädt ein Modell in Ollama und
+    /// startet nur, wenn sie die Nutzung erlaubt. Ohne Prüffunktion gibt es
+    /// keine Probe.
+    pub fn with_use_gate(mut self, gate: UseGate) -> Self {
+        self.use_gate = Some(gate);
+        self
     }
 
     /// Wie [`new`](Self::new), aber mit sofortiger Prüfung.
@@ -331,6 +422,18 @@ impl OllamaSpeechProvider {
     #[cfg(test)]
     pub(crate) fn with_probe_ttl(mut self, ttl: Duration) -> Self {
         self.probe_ttl = ttl;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_probe_wait(mut self, wait: Duration) -> Self {
+        self.probe_wait = wait;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_probe_timeout(mut self, t: Duration) -> Self {
+        self.probe_timeout = t;
         self
     }
 
@@ -359,27 +462,82 @@ impl OllamaSpeechProvider {
         h
     }
 
-    /// Ergebnis der Probe, höchstens alle `probe_ttl` neu gerechnet.
-    async fn probe_cached(&self) -> Result<(), String> {
-        let cached = {
-            let guard = self.probe_cache.lock().unwrap_or_else(|e| e.into_inner());
-            guard
-                .as_ref()
-                .filter(|(at, _)| at.elapsed() < self.probe_ttl)
-                .map(|(_, result)| result.clone())
-        };
-        if let Some(result) = cached {
-            return result;
+    /// Darf die Probe starten? Sie lädt das Sprachmodell in Ollama (das kann ein
+    /// geladenes LLM verdrängen) und ist damit eine NUTZUNG des Anbieters: nur
+    /// mit Opt-in und — bei nichtkommerziellen oder ungeprüften Modellen — der
+    /// Zustimmung zur Lizenz, nur gegen eine erlaubte Adresse. Die Prüfung
+    /// liest den aktuellen Stand der Freigaben bei JEDEM Aufruf. Ohne
+    /// angebundene Prüffunktion gibt es keine Probe.
+    fn probe_allowed(&self) -> Result<(), String> {
+        match &self.use_gate {
+            None => Err(
+                "keine Prüfung der Freigabe angebunden: die Probe lädt ein Modell in Ollama \
+                 und startet nie ohne sie"
+                    .to_string(),
+            ),
+            Some(gate) => gate(&self.descriptor(), &self.use_subject()).map_err(|e| e.message),
         }
-        let result = self
-            .inner
-            .probe(PROBE_TEXT, PROBE_TIMEOUT)
-            .await
-            .map(|_| ())
-            .map_err(|e| e.message);
-        *self.probe_cache.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some((Instant::now(), result.clone()));
-        result
+    }
+
+    /// Die Probe in ihrer EIGENEN Task mit eigener Frist: sie läuft zu Ende und
+    /// schreibt ihr Ergebnis in den Zwischenspeicher, auch wenn die
+    /// Gesundheitsprüfung, die sie angestoßen hat, längst von der Frist der
+    /// Oberfläche verworfen wurde (sonst rechnete jeder Listenaufruf neu und lüde
+    /// das Modell immer wieder).
+    fn spawn_probe(&self) {
+        let inner = self.inner.clone();
+        let slot = self.probe.clone();
+        let timeout = self.probe_timeout;
+        tokio::spawn(async move {
+            let mut run = ProbeRun {
+                slot: slot.clone(),
+                finished: false,
+            };
+            let result = inner
+                .probe(PROBE_TEXT, timeout)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.message);
+            *slot.lock() = ProbeState::Done(Instant::now(), result);
+            run.finished = true;
+        });
+    }
+
+    /// Stand der Probe für die Gesundheitsprüfung: erst die Guardrails, dann ein
+    /// frisches Ergebnis aus dem Zwischenspeicher oder die (einzige) laufende
+    /// bzw. neu gestartete Probe — auf die höchstens `probe_wait` gewartet wird.
+    async fn probe_outcome(&self) -> Probe {
+        if let Err(why) = self.probe_allowed() {
+            return Probe::NotAllowed(why);
+        }
+        let from = |r: &Result<(), String>| match r {
+            Ok(()) => Probe::Ok,
+            Err(why) => Probe::Failed(why.clone()),
+        };
+        let start = {
+            let mut state = self.probe.lock();
+            match &*state {
+                ProbeState::Done(at, r) if at.elapsed() < self.probe_ttl => return from(r),
+                ProbeState::Running => false,
+                _ => {
+                    *state = ProbeState::Running;
+                    true
+                }
+            }
+        };
+        if start {
+            self.spawn_probe();
+        }
+        let deadline = Instant::now() + self.probe_wait;
+        loop {
+            if let ProbeState::Done(_, r) = &*self.probe.lock() {
+                return from(r);
+            }
+            if Instant::now() >= deadline {
+                return Probe::Pending;
+            }
+            tokio::time::sleep(PROBE_POLL).await;
+        }
     }
 
     async fn staged_health(&self) -> ProviderHealth {
@@ -521,12 +679,30 @@ impl OllamaSpeechProvider {
             );
         }
         if self.cfg.probe_speech {
-            if let Err(why) = self.probe_cached().await {
-                return self.fail(
-                    format!("Probe der Sprachausgabe gescheitert: {why}"),
-                    "Ollama-Protokoll prüfen; auf dieser Plattform ist Sprachausgabe laut Upstream nicht zugesagt.",
-                    Some(raw_version),
-                );
+            match self.probe_outcome().await {
+                Probe::Ok => {}
+                Probe::Failed(why) => {
+                    return self.fail(
+                        format!("Probe der Sprachausgabe gescheitert: {why}"),
+                        "Ollama-Protokoll prüfen; auf dieser Plattform ist Sprachausgabe laut Upstream nicht zugesagt.",
+                        Some(raw_version),
+                    );
+                }
+                Probe::Pending => {
+                    return self.fail(
+                        "Probe läuft: die Sprachprobe lädt das Modell in Ollama und ist noch nicht fertig"
+                            .to_string(),
+                        "In einem Moment noch einmal prüfen; das Ergebnis wird gemerkt, die Probe läuft nicht bei jeder Prüfung neu.",
+                        Some(raw_version),
+                    );
+                }
+                Probe::NotAllowed(why) => {
+                    return self.fail(
+                        format!("Probe der Sprachausgabe nicht gestartet: {why}"),
+                        "Die Probe lädt das Sprachmodell in Ollama und startet deshalb nur, wenn der Anbieter freigegeben ist: in den Einstellungen freischalten (Opt-in) und die Lizenz bestätigen.",
+                        Some(raw_version),
+                    );
+                }
             }
         }
         let mut h = ProviderHealth::ok();
@@ -633,6 +809,14 @@ impl TtsProvider for OllamaSpeechProvider {
     fn cache_tag(&self, voice: Option<&str>) -> String {
         self.inner.cache_tag(voice)
     }
+
+    /// Modell und Adresse dieser Instanz (wie `ResolvedConfigs::subject`).
+    fn use_subject(&self) -> UseSubject {
+        UseSubject {
+            model: self.cfg.model.trim().to_string(),
+            base_url: Some(self.cfg.base_url.trim().to_string()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -640,6 +824,9 @@ mod tests {
     use super::*;
     use crate::managers::tts::providers::contract::{StreamingMode, TtsErrorKind};
     use crate::managers::tts::providers::contract_tests::{contract_suite, ContractExpect};
+    use crate::managers::tts::providers::policy::{
+        license_fingerprint, LiveApprovals, TtsProvidersSettings,
+    };
     use crate::managers::tts::providers::test_http::{speech_reply, FakeServer, Reply, Req};
     use std::sync::Arc;
 
@@ -651,6 +838,8 @@ mod tests {
         /// Antwort auf `/v1/audio/speech`: `None` = Sprache, sonst fester Status.
         speech_status: Option<u16>,
         hang_speech: bool,
+        /// So lange dauert die Sprachantwort (die Probe lädt ein Modell).
+        speech_delay: Duration,
     }
 
     impl Ollama {
@@ -660,6 +849,7 @@ mod tests {
                 models: vec!["llama3:8b", "phonon:latest"],
                 speech_status: None,
                 hang_speech: false,
+                speech_delay: Duration::from_millis(1),
             }
         }
 
@@ -684,7 +874,10 @@ mod tests {
                         } else if let Some(status) = self.speech_status {
                             Reply::json(status, json!({"error": "model 'phonon' not found"}))
                         } else {
-                            speech_reply(req, Duration::from_millis(1))
+                            Reply::delayed(
+                                self.speech_delay,
+                                speech_reply(req, Duration::from_millis(1)),
+                            )
                         }
                     }
                     _ => Reply::json(404, json!({"error": "not found"})),
@@ -692,6 +885,11 @@ mod tests {
             })
             .await
         }
+    }
+
+    /// Prüffunktion, die jede Nutzung erlaubt (für Tests der Probe selbst).
+    fn allow_all() -> UseGate {
+        Arc::new(|_, _| Ok(()))
     }
 
     fn cfg_for(server: &FakeServer) -> OllamaSpeechConfig {
@@ -1005,7 +1203,9 @@ mod tests {
         let server = Ollama::ok().start().await;
         let mut cfg = cfg_for(&server);
         cfg.probe_speech = true;
-        let p = OllamaSpeechProvider::new(cfg.clone()).with_host_os("windows");
+        let p = OllamaSpeechProvider::new(cfg.clone())
+            .with_host_os("windows")
+            .with_use_gate(allow_all());
         let h = p.health_check().await;
         assert!(h.available, "{h:?}");
         assert!(h.reason.is_none());
@@ -1031,6 +1231,7 @@ mod tests {
         // Ohne Zwischenspeicher (TTL 0) rechnet jeder Aufruf.
         let p0 = OllamaSpeechProvider::new(cfg.clone())
             .with_host_os("windows")
+            .with_use_gate(allow_all())
             .with_probe_ttl(Duration::ZERO);
         p0.health_check().await;
         p0.health_check().await;
@@ -1054,6 +1255,7 @@ mod tests {
         cfg.probe_speech = true;
         let h = OllamaSpeechProvider::new(cfg.clone())
             .with_host_os("windows")
+            .with_use_gate(allow_all())
             .health_check()
             .await;
         assert!(!h.available);
@@ -1074,6 +1276,7 @@ mod tests {
         cfg.probe_speech = true;
         let h = OllamaSpeechProvider::new(cfg)
             .with_host_os("windows")
+            .with_use_gate(allow_all())
             .health_check()
             .await;
         assert!(!h.available);
@@ -1090,18 +1293,266 @@ mod tests {
         .await;
         let mut cfg = cfg_for(&server);
         cfg.probe_speech = true;
+        // Die Probe hat ihre EIGENE Frist (hier kurz); die Gesundheit wartet nicht darauf.
+        let p = OllamaSpeechProvider::new(cfg)
+            .with_host_os("linux")
+            .with_use_gate(allow_all())
+            .with_probe_timeout(Duration::from_millis(400))
+            .with_probe_wait(Duration::from_secs(5));
         let started = Instant::now();
-        let h = tokio::time::timeout(
-            Duration::from_secs(15),
-            OllamaSpeechProvider::new(cfg)
-                .with_host_os("linux")
-                .health_check(),
-        )
-        .await
-        .expect("Probe hängt");
+        let h = tokio::time::timeout(Duration::from_secs(15), p.health_check())
+            .await
+            .expect("Probe hängt");
         assert!(!h.available);
         assert!(h.reason.unwrap().contains("Keine Antwort auf die Probe"));
-        assert!(started.elapsed() < Duration::from_secs(13));
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    // ---- Probe nur mit Freigabe, in eigener Task, immer zwischengespeichert (Befund 3) -----
+
+    /// Gate aus der echten Policy gegen einen Stand der Freigaben.
+    fn real_gate(approvals: &LiveApprovals) -> UseGate {
+        approvals.gate()
+    }
+
+    /// Opt-in UND Zustimmung zum aktuellen Modell dieser Instanz.
+    fn approval_for(p: &OllamaSpeechProvider) -> TtsProvidersSettings {
+        let mut s = TtsProvidersSettings::default();
+        s.set_enabled(OLLAMA_ID, true);
+        s.record_ack(
+            OLLAMA_ID,
+            &license_fingerprint(&p.descriptor(), &p.use_subject()),
+            "2026-10-26T00:00:00Z",
+        );
+        s
+    }
+
+    /// Das Modell ist nichtkommerziell: ohne Opt-in und Zustimmung darf die
+    /// Probe es nicht laden — weder mit einer verweigernden Prüffunktion noch
+    /// ganz ohne eine.
+    #[tokio::test]
+    async fn ohne_freigabe_startet_die_probe_nicht_und_ollama_bekommt_keine_sprachanfrage() {
+        let server = Ollama::ok().start().await;
+        let mut cfg = cfg_for(&server);
+        cfg.probe_speech = true;
+
+        // Ohne Prüffunktion: keine Probe.
+        let bare = OllamaSpeechProvider::new(cfg.clone()).with_host_os("windows");
+        let h = bare.health_check().await;
+        assert!(!h.available);
+        assert!(h.reason.unwrap().contains("Probe"), "Grund nennt die Probe");
+        assert_eq!(server.count("/v1/audio/speech"), 0);
+
+        // Mit der echten Policy, nichts freigegeben.
+        let approvals = LiveApprovals::default();
+        let gated = OllamaSpeechProvider::new(cfg.clone())
+            .with_host_os("windows")
+            .with_use_gate(real_gate(&approvals));
+        let h = gated.health_check().await;
+        assert!(!h.available);
+        let reason = h.reason.unwrap();
+        assert!(reason.contains("nicht freigeschaltet"), "{reason}");
+        assert!(reason.contains("Probe"), "{reason}");
+        assert!(h.hint.unwrap().contains("freischalten"));
+        assert_eq!(
+            server.count("/v1/audio/speech"),
+            0,
+            "Ollama wurde nie nach Sprache gefragt, das Modell nicht geladen"
+        );
+
+        // Opt-in, aber die Lizenz des nichtkommerziellen Modells ist nicht bestätigt.
+        let mut only_optin = TtsProvidersSettings::default();
+        only_optin.set_enabled(OLLAMA_ID, true);
+        approvals.set(only_optin);
+        let h = gated.health_check().await;
+        assert!(!h.available);
+        assert!(h.reason.unwrap().contains("Probe"));
+        assert_eq!(server.count("/v1/audio/speech"), 0);
+
+        // Erst mit Opt-in UND Zustimmung zum aktuellen Modell läuft die Probe.
+        approvals.set(approval_for(&gated));
+        let h = gated.health_check().await;
+        assert!(h.available, "{h:?}");
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+    }
+
+    /// Zurückgenommene Freigabe: ein früheres Ergebnis wird nicht mehr als
+    /// „verfügbar“ gemeldet, und es gibt keine neue Probe.
+    #[tokio::test]
+    async fn die_probe_prueft_die_freigabe_bei_jedem_aufruf_neu() {
+        let server = Ollama::ok().start().await;
+        let mut cfg = cfg_for(&server);
+        cfg.probe_speech = true;
+        let approvals = LiveApprovals::default();
+        let p = OllamaSpeechProvider::new(cfg)
+            .with_host_os("windows")
+            .with_use_gate(real_gate(&approvals));
+        approvals.set(approval_for(&p));
+        assert!(p.health_check().await.available);
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+        approvals.set(TtsProvidersSettings::default());
+        let h = p.health_check().await;
+        assert!(
+            !h.available,
+            "ein zwischengespeichertes Ergebnis zählt ohne Freigabe nicht"
+        );
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+    }
+
+    /// Nimmt die Oberfläche ihre Frist (4 s) und verwirft die Gesundheitsprüfung,
+    /// läuft die Probe in ihrer eigenen Task zu Ende und wird zwischengespeichert:
+    /// der nächste Aufruf rechnet NICHT noch einmal (und lädt das Modell nicht noch einmal).
+    #[tokio::test]
+    async fn eine_verworfene_gesundheitspruefung_laesst_die_probe_zu_ende_laufen_und_cacht_sie() {
+        let server = Ollama {
+            speech_delay: Duration::from_millis(700),
+            ..Ollama::ok()
+        }
+        .start()
+        .await;
+        let mut cfg = cfg_for(&server);
+        cfg.probe_speech = true;
+        let p = OllamaSpeechProvider::new(cfg)
+            .with_host_os("windows")
+            .with_use_gate(allow_all());
+        // Die äußere Frist verwirft die Prüfung, bevor die Probe fertig ist.
+        let first = tokio::time::timeout(Duration::from_millis(300), p.health_check()).await;
+        assert!(first.is_err(), "die äußere Frist hat die Prüfung verworfen");
+        // Die Probe läuft in ihrer eigenen Task zu Ende.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let h = p.health_check().await;
+        assert!(h.available, "{h:?}");
+        assert_eq!(
+            server.count("/v1/audio/speech"),
+            1,
+            "das Ergebnis der ersten Probe wurde zwischengespeichert"
+        );
+        // Wiederholte Aufrufe rechnen nicht neu.
+        for _ in 0..3 {
+            assert!(p.health_check().await.available);
+        }
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+    }
+
+    /// Die Gesundheit wartet höchstens bis zu ihrem Limit und meldet „Probe
+    /// läuft“; zwei gleichzeitige Prüfungen teilen sich EINE Probe.
+    #[tokio::test]
+    async fn die_gesundheit_meldet_probe_laeuft_und_zwei_pruefungen_teilen_sich_eine_probe() {
+        let server = Ollama {
+            speech_delay: Duration::from_millis(900),
+            ..Ollama::ok()
+        }
+        .start()
+        .await;
+        let mut cfg = cfg_for(&server);
+        cfg.probe_speech = true;
+        let p = OllamaSpeechProvider::new(cfg)
+            .with_host_os("windows")
+            .with_use_gate(allow_all())
+            .with_probe_wait(Duration::from_millis(150));
+        let started = Instant::now();
+        let (a, b) = tokio::join!(p.health_check(), p.health_check());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "kein Warten auf die ganze Probe"
+        );
+        for h in [&a, &b] {
+            assert!(!h.available);
+            let reason = h.reason.as_deref().unwrap();
+            assert!(reason.contains("Probe läuft"), "{reason}");
+            assert!(!reason.contains("gescheitert"), "{reason}");
+        }
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(p.health_check().await.available);
+        assert_eq!(server.count("/v1/audio/speech"), 1, "eine Probe für alle");
+    }
+
+    /// Auch ein Fehlschlag der Probe wird zwischengespeichert (kein neuer
+    /// Modellaufruf bei jedem Listenaufruf).
+    #[tokio::test]
+    async fn auch_eine_gescheiterte_probe_wird_nicht_bei_jedem_aufruf_wiederholt() {
+        let server = Ollama {
+            speech_status: Some(400),
+            ..Ollama::ok()
+        }
+        .start()
+        .await;
+        let mut cfg = cfg_for(&server);
+        cfg.probe_speech = true;
+        let p = OllamaSpeechProvider::new(cfg)
+            .with_host_os("windows")
+            .with_use_gate(allow_all());
+        for _ in 0..4 {
+            let h = p.health_check().await;
+            assert!(!h.available);
+            assert!(h.reason.unwrap().contains("gescheitert"));
+        }
+        assert_eq!(server.count("/v1/audio/speech"), 1);
+    }
+
+    /// Absturz der Probe-Task (Panik): „läuft“ bleibt nicht für immer stehen, der
+    /// Wächter schreibt einen Fehler; eine regulär beendete Probe bleibt unberührt.
+    #[test]
+    fn eine_abgestuerzte_probe_bleibt_nicht_fuer_immer_auf_laeuft() {
+        let slot = Arc::new(ProbeSlot(Mutex::new(ProbeState::Running)));
+        drop(ProbeRun {
+            slot: slot.clone(),
+            finished: false,
+        });
+        match &*slot.lock() {
+            ProbeState::Done(_, Err(why)) => assert!(why.contains("unerwartet"), "{why}"),
+            _ => panic!("die abgestürzte Probe muss als Fehler enden"),
+        }
+        let slot = Arc::new(ProbeSlot(Mutex::new(ProbeState::Done(
+            Instant::now(),
+            Ok(()),
+        ))));
+        drop(ProbeRun {
+            slot: slot.clone(),
+            finished: true,
+        });
+        assert!(matches!(&*slot.lock(), ProbeState::Done(_, Ok(()))));
+    }
+
+    /// Befund 5: der Tag trennt Ollama-Dienste (Adresse) und Modelle.
+    #[test]
+    fn der_cache_tag_trennt_ollama_dienste_und_modelle() {
+        let tag = |base: &str, model: &str| {
+            OllamaSpeechProvider::new(OllamaSpeechConfig {
+                base_url: base.into(),
+                model: model.into(),
+                ..Default::default()
+            })
+            .cache_tag(None)
+        };
+        let a = tag("http://127.0.0.1:11434", "phonon");
+        assert!(a.starts_with("ollama-speech:phonon~"), "{a}");
+        assert_ne!(a, tag("http://127.0.0.1:11435", "phonon"), "anderer Port");
+        assert_ne!(a, tag("http://localhost:11434", "phonon"), "anderer Host");
+        assert_ne!(
+            a,
+            tag("http://127.0.0.1:11434", "phonon:de"),
+            "anderes Modell"
+        );
+        // Dieselbe Wurzel in anderer Schreibweise: gleicher Tag.
+        assert_eq!(a, tag("http://127.0.0.1:11434/v1", "phonon"));
+        assert_eq!(a, tag("http://127.0.0.1:11434/", "phonon"));
+    }
+
+    #[test]
+    fn die_instanz_meldet_modell_und_adresse_als_gegenstand_der_pruefung() {
+        let p = OllamaSpeechProvider::new(OllamaSpeechConfig {
+            base_url: " http://127.0.0.1:11434 ".into(),
+            model: " phonon:de ".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            p.use_subject(),
+            UseSubject {
+                model: "phonon:de".into(),
+                base_url: Some("http://127.0.0.1:11434".into()),
+            }
+        );
     }
 
     // ---- Synthese -----------------------------------------------------------------
@@ -1334,14 +1785,20 @@ mod tests {
     #[test]
     fn cache_tag_nennt_modell_und_stimme() {
         let p = OllamaSpeechProvider::new(OllamaSpeechConfig::default());
-        assert_eq!(p.cache_tag(None), "ollama-speech:phonon:default");
-        assert_eq!(p.cache_tag(Some("Zoey")), "ollama-speech:phonon:Zoey");
+        // `<id>:<modell>~<hash(adresse,rate)>:<stimme>` (Befund 5); das Modell
+        // `phonon:de` behält seinen Doppelpunkt.
+        let tag = p.cache_tag(None);
+        assert!(tag.starts_with("ollama-speech:phonon~"), "{tag}");
+        assert!(tag.ends_with(":default"), "{tag}");
+        assert_eq!(p.cache_tag(Some("Zoey")), tag.replace(":default", ":Zoey"));
         let q = OllamaSpeechProvider::new(OllamaSpeechConfig {
             model: "phonon:de".into(),
             voice: Some("Freya".into()),
             ..Default::default()
         });
-        assert_eq!(q.cache_tag(None), "ollama-speech:phonon:de:Freya");
+        let qt = q.cache_tag(None);
+        assert!(qt.starts_with("ollama-speech:phonon:de~"), "{qt}");
+        assert!(qt.ends_with(":Freya"), "{qt}");
     }
 
     #[test]

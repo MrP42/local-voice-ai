@@ -255,6 +255,16 @@ pub trait BenchBackend: Send + Sync {
     fn cold_reset(&self) -> BoxFuture<'_, Result<ColdReset, TtsError>> {
         Box::pin(async { Ok(ColdReset::rebuilt()) })
     }
+
+    /// Einmal VOR den Warmläufen: alles bereitmachen, was sonst je Synthese
+    /// Zeit kosten würde (Fish: Einstellungen lesen und den Server
+    /// sicherstellen, samt Health-HTTP). Die Schleife ruft es genau einmal,
+    /// nie je Satz und nie innerhalb der gemessenen Zeit; Kaltläufe bereiten
+    /// sich über [`cold_reset`](Self::cold_reset) vor, dessen Startzeit als
+    /// `process_start_ms` getrennt gemessen wird. Der Standard tut nichts.
+    fn prepare(&self) -> BoxFuture<'_, Result<(), TtsError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Registry für die Messung: OHNE Wiederholung, damit ein Fehlschlag sichtbar bleibt.
@@ -1051,8 +1061,25 @@ pub async fn run_bench(
         }
     }
     if opts.warm > 0 && outcome == Outcome::Complete {
-        if let Some(o) = run.warm_phase(registry).await? {
-            outcome = o;
+        // Server und Einstellungen EINMAL bereitmachen, bevor die Uhr läuft: die
+        // Warmläufe messen dann nur die Synthese, nicht je Satz einen Gesundheitsaufruf.
+        match backend.prepare().await {
+            Err(e) => {
+                (log)(&format!(
+                    "Vorbereitung der Warmläufe fehlgeschlagen ({}): {}",
+                    e.kind.as_str(),
+                    e.message
+                ));
+                outcome = Outcome::Aborted(format!(
+                    "Vorbereitung der Warmläufe fehlgeschlagen: {}",
+                    e.message
+                ));
+            }
+            Ok(()) => {
+                if let Some(o) = run.warm_phase(registry).await? {
+                    outcome = o;
+                }
+            }
         }
     }
 
@@ -1461,6 +1488,124 @@ mod tests {
         }
         // 4 kalt + 1 Aufwärmen (ohne Zeile) + 2 warm.
         assert_eq!(mock.attempts(), 7);
+    }
+
+    /// Anbindung, die festhält, WANN `prepare` lief (Befund 6): wie viele
+    /// Synthesen des Anbieters da schon gelaufen waren.
+    struct PreparingBackend {
+        mock: Arc<MockProvider>,
+        prepared_after_attempts: std::sync::Mutex<Vec<u32>>,
+        fail_prepare: bool,
+    }
+
+    impl PreparingBackend {
+        fn new(mock: Arc<MockProvider>, fail_prepare: bool) -> Self {
+            Self {
+                mock,
+                prepared_after_attempts: std::sync::Mutex::new(Vec::new()),
+                fail_prepare,
+            }
+        }
+
+        fn prepares(&self) -> Vec<u32> {
+            self.prepared_after_attempts.lock().unwrap().clone()
+        }
+    }
+
+    impl BenchBackend for PreparingBackend {
+        fn fresh_registry(&self) -> Result<Arc<ProviderRegistry>, TtsError> {
+            let registry = bench_registry();
+            registry.register(self.mock.clone())?;
+            Ok(Arc::new(registry))
+        }
+
+        fn cold_reset(&self) -> BoxFuture<'_, Result<ColdReset, TtsError>> {
+            Box::pin(async { Ok(ColdReset::rebuilt()) })
+        }
+
+        fn prepare(&self) -> BoxFuture<'_, Result<(), TtsError>> {
+            self.prepared_after_attempts
+                .lock()
+                .unwrap()
+                .push(self.mock.attempts());
+            let fail = self.fail_prepare;
+            Box::pin(async move {
+                if fail {
+                    Err(TtsError::unavailable("Server startet nicht"))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn die_vorbereitung_laeuft_einmal_vor_den_warmlaeufen_nicht_je_satz() {
+        let dir = tempfile::tempdir().unwrap();
+        let mock = Arc::new(MockProvider::new());
+        let backend = PreparingBackend::new(mock.clone(), false);
+        let mut o = opts(dir.path());
+        o.warm = 3;
+        o.cold = 0;
+        let summary = run_bench(&backend, &o, &items(4), &CancelToken::new("t"), &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(summary.outcome, Outcome::Complete);
+        assert_eq!(summary.rows_ok, 12);
+        // Genau einmal, und bevor irgendeine Synthese lief (auch das Aufwärmen
+        // kommt danach): die gemessene Zeit enthält keine Vorbereitung.
+        assert_eq!(backend.prepares(), vec![0]);
+        // 1 Aufwärmen + 12 Messungen, ohne dass `prepare` je Satz wiederholt wurde.
+        assert_eq!(mock.attempts(), 13);
+    }
+
+    #[tokio::test]
+    async fn kaltlaeufe_bereiten_sich_selbst_vor_und_die_vorbereitung_kommt_danach_einmal() {
+        let dir = tempfile::tempdir().unwrap();
+        let mock = Arc::new(MockProvider::new());
+        let backend = PreparingBackend::new(mock.clone(), false);
+        let mut o = opts(dir.path());
+        o.warm = 1;
+        o.cold = 1;
+        run_bench(&backend, &o, &items(2), &CancelToken::new("t"), &|_| {})
+            .await
+            .unwrap();
+        // Nach den zwei Kaltläufen, einmal; kein `prepare` mitten in den Kaltläufen,
+        // deren Start getrennt als `process_start_ms` gemessen wird.
+        assert_eq!(backend.prepares(), vec![2]);
+
+        // Nur Kaltläufe: keine Vorbereitung nötig.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = PreparingBackend::new(Arc::new(MockProvider::new()), false);
+        let mut o = opts(dir.path());
+        o.warm = 0;
+        o.cold = 2;
+        run_bench(&backend, &o, &items(1), &CancelToken::new("t"), &|_| {})
+            .await
+            .unwrap();
+        assert!(backend.prepares().is_empty());
+    }
+
+    #[tokio::test]
+    async fn eine_gescheiterte_vorbereitung_bricht_die_warmlaeufe_ab_und_laesst_die_kaltzeilen_stehen(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let mock = Arc::new(MockProvider::new());
+        let backend = PreparingBackend::new(mock.clone(), true);
+        let mut o = opts(dir.path());
+        o.warm = 2;
+        o.cold = 1;
+        let summary = run_bench(&backend, &o, &items(2), &CancelToken::new("t"), &|_| {})
+            .await
+            .unwrap();
+        match &summary.outcome {
+            Outcome::Aborted(why) => assert!(why.contains("Server startet nicht"), "{why}"),
+            other => panic!("erwartet Aborted, war {other:?}"),
+        }
+        let rows = read_rows(dir.path());
+        assert_eq!(rows.len(), 2, "nur die Kaltzeilen");
+        assert!(rows.iter().all(|r| r["run_kind"] == "cold"));
+        assert_eq!(mock.attempts(), 2, "keine Warmsynthese nach dem Fehlschlag");
     }
 
     #[tokio::test]

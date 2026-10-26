@@ -89,6 +89,8 @@
 //! | Kein Ausgabegerät / Player-Fehler (P3a) | `error` (`unavailable`) mit dem Grund des Players, die Synthese wird beendet; Test `ohne_ausgabegeraet…` |
 //! | Zu langer Probetext/zu viel Audio (P3a) | 1000 Zeichen, 8 Mio. Abtastwerte, 120 s Frist; Test `zu_langes_audio_wird_begrenzt` |
 //! | Abbruch mitten im Satz beim Vorlesen (P3a) | `ProviderEngine::synthesize` hört auf das Abbruch-Flag, lässt das Anbieter-Future fallen; Test `abbruch_mitten_in_der_synthese…` |
+//! | Widerruf einer Freigabe während eines Auftrags (P7n) | Engine, Probestimme und Probe des Ollama-Anbieters prüfen `check_use` gegen den gemeinsamen, aktuellen Stand [`LiveApprovals`] — je Satz bzw. Teil, nicht gegen einen beim Start eingefrorenen; `ProviderEngine::synthesize` bricht den laufenden Satz binnen 200 ms ab, `PreviewService::enforce` beendet die Probestimme; die Befehle der Oberfläche setzen den Stand nach dem Speichern und rufen `refresh_from_settings`; Tests `ein_entzogenes_opt_in_stoppt…`, `ein_zurueckgenommener_fernzugriff…`, `ein_widerruf_beendet…` |
+//! | Instanz und Prüfgegenstand aus verschiedenen Ständen (P7n) | Modell und Adresse liefert die Instanz selbst ([`TtsProvider::use_subject`]); Engine, Probestimme und Momentaufnahme holen beides aus EINEM Zugriff auf die Registry; Tests `der_gegenstand_der_pruefung_stammt_aus_der_instanz…`, `die_instanz_meldet_denselben_gegenstand…` |
 //! | Guardrail-Umgehung (P3a) | `check_use` an JEDER Nutzung (Vorlesen vor dem Cache, Probestimme, Stimmenliste, Wahl); Konfiguration kann `allow_remote` nicht setzen; Tests in `policy`, `pipeline`, `preview`, `commands::tts_providers` |
 //! | Alte/kaputte Einstellungsdatei (P3a) | `tts_providers` mit `#[serde(default)]`; ein kaputtes Feld verwirft `salvage_settings`; Tests in `settings` |
 //!
@@ -141,11 +143,12 @@ pub use openai_speech::{is_loopback_url, LicenseConfig, OpenAiSpeechConfig, Open
 pub use phonon::{PhononConfig, PhononProvider};
 pub use pipeline::ProviderEngine;
 pub use policy::{
-    check_use, license_fingerprint, resolve_provider_configs, LicenseAck, ProviderOverride,
-    ProviderOverrides, ResolvedConfigs, TtsProvidersSettings, UseSubject,
+    check_use, license_fingerprint, resolve_provider_configs, LicenseAck, LiveApprovals,
+    ProviderOverride, ProviderOverrides, ResolvedConfigs, TtsProvidersSettings, UseGate,
+    UseSubject,
 };
 pub use preview::{PreviewPhase, PreviewService, TtsProviderPreview};
 pub use registry::{
     stream_with_retry, with_retry, DeliveryTracker, ProviderRegistry, RequestGuard, RetryPolicy,
 };
-pub use setup::{build_registry, sync_registry, ProviderHost, ProviderPaths};
+pub use setup::{build_registry, sync_registry, sync_registry_gated, ProviderHost, ProviderPaths};

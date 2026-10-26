@@ -29,7 +29,7 @@
 //! `first_audio` (`ttfa_ms`) → `done` | `cancelled` | `error`
 //! (`error_kind`, `message`); siehe `providers::preview`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -47,9 +47,11 @@ use crate::managers::tts::TtsManager;
 use crate::settings::{self, AppSettings};
 
 /// Frist der Gesundheitsprüfung je Anbieter (Anbieter laufen parallel).
-const HEALTH_LIMIT: Duration = Duration::from_secs(4);
-/// Frist der Stimmenliste.
-const VOICES_LIMIT: Duration = Duration::from_secs(10);
+pub(crate) const HEALTH_LIMIT: Duration = Duration::from_secs(4);
+/// Frist der Stimmenliste. Die inneren Fristen der Anbieter (Phonon: Katalog,
+/// Ollama: Probe) liegen UNTER diesen Grenzen, damit eine Teilliste bzw. ein
+/// Zwischenstand noch ankommt, statt dass die äußere Frist alles verwirft.
+pub(crate) const VOICES_LIMIT: Duration = Duration::from_secs(10);
 
 /// Ein Anbieter in der Liste der Oberfläche.
 #[derive(Debug, Clone, Serialize, Type)]
@@ -88,12 +90,14 @@ pub fn build_entries(
 ) -> Vec<TtsProviderEntry> {
     let mut health: std::collections::HashMap<String, ProviderHealth> =
         health.into_iter().collect();
+    // Je Instanz EIN Zugriff: Beschreibung und Freigabezustand (mit dem Gegenstand
+    // aus der Instanz selbst) stammen aus demselben Stand der Registry.
     snapshot
         .registry
-        .descriptors()
+        .list()
         .into_iter()
-        .map(|descriptor| {
-            let state = snapshot.use_state(&descriptor);
+        .map(|provider| {
+            let (descriptor, state) = snapshot.use_state_of(provider.as_ref());
             let health = health
                 .remove(&descriptor.id)
                 .unwrap_or_else(|| ProviderHealth::unavailable("Nicht geprüft".to_string(), None));
@@ -187,13 +191,38 @@ pub fn set_allow_remote_in(
 /// Stimme am passenden Ort (`tts_voice`, `tts_piper_voice` oder
 /// `tts_providers.voices`). Bei einem Fehler bleibt `settings` unverändert
 /// (rein, testbar).
+///
+/// Geprüft wird gegen den Stand von `settings` — den Stand IM MOMENT DES
+/// SCHREIBENS (der Aufrufer liest ihn unter [`SETTINGS_LOCK`]) —, mit dem
+/// Gegenstand (Modell, Adresse) NEU aufgelöst aus genau diesen Einstellungen.
+/// `snapshot` liefert nur die Registry (welche Anbieter es gibt). Wurde
+/// zwischen der Momentaufnahme und dem Schreiben eine Freigabe widerrufen oder
+/// das Modell gewechselt, lehnt die Wahl ab.
 pub fn select_in(
     settings: &mut AppSettings,
     snapshot: &ProviderSnapshot,
     id: &str,
     voice: Option<String>,
 ) -> Result<(), TtsError> {
-    snapshot.checked(id)?;
+    select_in_with_env(settings, snapshot, id, voice, &policy::process_env)
+}
+
+/// Wie [`select_in`], mit eigener Umgebung (Tests).
+pub fn select_in_with_env(
+    settings: &mut AppSettings,
+    snapshot: &ProviderSnapshot,
+    id: &str,
+    voice: Option<String>,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<(), TtsError> {
+    let desc = snapshot.descriptor(id)?;
+    let subject = policy::resolve_provider_configs(
+        &settings.tts_providers,
+        env,
+        &policy::ProviderOverrides::default(),
+    )
+    .subject(id);
+    policy::check_use(&desc, &subject, &settings.tts_providers)?;
     let voice = voice
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
@@ -213,19 +242,35 @@ pub fn select_in(
     Ok(())
 }
 
-/// Schreibzugriffe auf die Einstellungen der Anbieter nacheinander: zwei
-/// Befehle (z. B. Opt-in und Bestätigung kurz hintereinander) dürfen sich
-/// nicht gegenseitig überschreiben (Lesen–Ändern–Schreiben).
-static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+// Schreibzugriffe auf die Einstellungen der Anbieter nacheinander: zwei
+// Befehle (z. B. Opt-in und Bestätigung kurz hintereinander) dürfen sich
+// nicht gegenseitig überschreiben (Lesen–Ändern–Schreiben). Dieselbe Sperre
+// schützt den Abgleich des gemeinsamen Stands der Freigaben mit der Datei.
+use crate::managers::tts::providers::host::SETTINGS_LOCK;
 
+/// Lesen–Ändern–Schreiben unter der Sperre. Nach dem Schreiben — noch unter der
+/// Sperre — gilt der neue Stand der Freigaben sofort für jede laufende Nutzung
+/// (Engine, Probestimme, Probe); danach baut `providers_changed` Registry und
+/// Engine neu und beendet eine laufende Probestimme, deren Anbieter jetzt
+/// gesperrt ist. Ein Widerruf wirkt damit auch auf laufende Aufträge.
 fn mutate_settings<T>(
     app: &AppHandle,
     change: impl FnOnce(&mut AppSettings) -> Result<T, TtsError>,
 ) -> Result<T, TtsError> {
-    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut current = settings::get_settings(app);
-    let out = change(&mut current)?;
-    settings::write_settings(app, current);
+    let out = {
+        let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut current = settings::get_settings(app);
+        let out = change(&mut current)?;
+        let providers = current.tts_providers.clone();
+        settings::write_settings(app, current);
+        if let Some(tts) = app.try_state::<Arc<TtsManager>>() {
+            tts.live_approvals().set(providers);
+        }
+        out
+    };
+    if let Some(tts) = app.try_state::<Arc<TtsManager>>() {
+        tts.providers_changed();
+    }
     Ok(out)
 }
 
@@ -321,7 +366,7 @@ pub fn tts_provider_acknowledge_license(
     fingerprint: String,
 ) -> Result<LicenseAck, TtsError> {
     let snapshot = manager(&app).provider_snapshot();
-    let subject = snapshot.resolved.subject(&id);
+    let subject = snapshot.subject(&id);
     let now = chrono::Utc::now().to_rfc3339();
     mutate_settings(&app, |s| {
         acknowledge_in(
@@ -642,9 +687,11 @@ mod tests {
         let subj = probe.resolved.subject("phonon");
         let desc = probe.descriptor("phonon").unwrap();
         p.record_ack("phonon", &license_fingerprint(&desc, &subj), "t");
-        let snap = snapshot(p, "fish");
+        let snap = snapshot(p.clone(), "fish");
 
         let mut s = crate::settings::get_default_settings();
+        // Der Stand der Einstellungen im Moment des Schreibens (dort wird geprüft).
+        s.tts_providers = p;
         // Anbieter mit Stimme.
         select_in(&mut s, &snap, "phonon", Some(" Zoey ".into())).unwrap();
         assert_eq!(s.tts_engine, "provider:phonon");
@@ -689,6 +736,147 @@ mod tests {
             before
         );
         assert_eq!(s.tts_engine, "fish", "der Standard bleibt");
+    }
+
+    /// Beschreibung: ein Anbieter mit Opt-in, Lizenz-Zustimmung und aktuellem Modell.
+    fn approved_phonon() -> (TtsProvidersSettings, ProviderSnapshot) {
+        let mut p = TtsProvidersSettings::default();
+        p.set_enabled("phonon", true);
+        let probe = snapshot(p.clone(), "fish");
+        let subj = probe.resolved.subject("phonon");
+        let desc = probe.descriptor("phonon").unwrap();
+        p.record_ack("phonon", &license_fingerprint(&desc, &subj), "t");
+        let snap = snapshot(p.clone(), "fish");
+        assert!(snap.checked("phonon").is_ok());
+        (p, snap)
+    }
+
+    /// Befund 8: die „zweite Prüfung beim Schreiben“ gilt dem Stand im Moment
+    /// des Schreibens, nicht dem der Momentaufnahme. Hat der Nutzer das Opt-in
+    /// zwischen Momentaufnahme und Schreiben zurückgenommen, lehnt `select_in` ab
+    /// und ändert nichts.
+    #[test]
+    fn select_prueft_den_stand_im_moment_des_schreibens_nicht_den_der_momentaufnahme() {
+        let (p, snap) = approved_phonon();
+        let mut current = crate::settings::get_default_settings();
+        let mut revoked = p;
+        revoked.set_enabled("phonon", false);
+        current.tts_providers = revoked;
+        let before = (
+            current.tts_engine.clone(),
+            current.tts_voice.clone(),
+            current.tts_providers.clone(),
+        );
+        let e = select_in_with_env(&mut current, &snap, "phonon", Some("Zoey".into()), &|_| {
+            None
+        })
+        .unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::LicenseBlocked, "{e:?}");
+        assert_eq!(
+            (
+                current.tts_engine.clone(),
+                current.tts_voice.clone(),
+                current.tts_providers.clone()
+            ),
+            before,
+            "bei einer Ablehnung bleibt alles unverändert"
+        );
+    }
+
+    /// Der Gegenstand wird neu aufgelöst: wurde das Modell nach der
+    /// Momentaufnahme gewechselt, gilt die Zustimmung zum alten Modell nicht.
+    #[test]
+    fn select_loest_modell_und_adresse_aus_dem_aktuellen_stand_neu_auf() {
+        let mut p = TtsProvidersSettings::default();
+        p.ollama_speech.model = "phonon:de".into();
+        p.set_enabled("ollama-speech", true);
+        let probe = snapshot(p.clone(), "fish");
+        let subj = probe.resolved.subject("ollama-speech");
+        let desc = probe.descriptor("ollama-speech").unwrap();
+        p.record_ack("ollama-speech", &license_fingerprint(&desc, &subj), "t");
+        let snap = snapshot(p.clone(), "fish");
+        assert!(snap.checked("ollama-speech").is_ok());
+
+        // Modellwechsel nach der Momentaufnahme.
+        let mut current = crate::settings::get_default_settings();
+        current.tts_providers = p.clone();
+        current.tts_providers.ollama_speech.model = "phonon:en".into();
+        let e =
+            select_in_with_env(&mut current, &snap, "ollama-speech", None, &|_| None).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::LicenseBlocked);
+        assert!(e.message.contains("geändert"), "{}", e.message);
+
+        // Adresse nach der Momentaufnahme auf einen fremden Rechner gestellt.
+        let mut current = crate::settings::get_default_settings();
+        current.tts_providers = p;
+        current.tts_providers.ollama_speech.base_url = "http://192.168.1.20:11434".into();
+        let e =
+            select_in_with_env(&mut current, &snap, "ollama-speech", None, &|_| None).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::PrivacyBlocked);
+
+        // Stimmt der aktuelle Stand, geht die Wahl durch.
+        let (p, snap) = approved_phonon();
+        let mut current = crate::settings::get_default_settings();
+        current.tts_providers = p;
+        select_in_with_env(&mut current, &snap, "phonon", None, &|_| None).unwrap();
+        assert_eq!(current.tts_engine, "provider:phonon");
+    }
+
+    /// Befund 7: die inneren Fristen der Anbieter liegen unter den äußeren
+    /// Grenzen (sonst verwirft die äußere Frist die Teilliste).
+    #[test]
+    fn die_stimmenfrist_der_oberflaeche_liegt_ueber_der_inneren_katalogfrist_von_phonon() {
+        use crate::managers::tts::providers::phonon::LIST_VOICES_TIMEOUT;
+        assert!(
+            LIST_VOICES_TIMEOUT < VOICES_LIMIT,
+            "innere Frist {LIST_VOICES_TIMEOUT:?} muss unter {VOICES_LIMIT:?} liegen"
+        );
+        assert!(
+            LIST_VOICES_TIMEOUT < crate::agent_bridge::tools::tts_providers::VOICES_LIMIT,
+            "auch unter der Frist der Agentenbrücke"
+        );
+    }
+
+    /// Befund 2: Beschreibung und Freigabezustand der Liste kommen aus derselben
+    /// Instanz; die Liste ändert sich nicht, wenn `resolved` einen anderen Stand
+    /// trägt als die Registry.
+    #[test]
+    fn die_liste_nimmt_den_gegenstand_aus_der_instanz_nicht_aus_resolved() {
+        // Registry gebaut mit Modell A (bestätigt); `resolved` trägt Modell B.
+        let mut a = TtsProvidersSettings::default();
+        a.ollama_speech.model = "phonon:de".into();
+        a.set_enabled("ollama-speech", true);
+        let probe = snapshot(a.clone(), "fish");
+        let desc = probe.descriptor("ollama-speech").unwrap();
+        a.record_ack(
+            "ollama-speech",
+            &license_fingerprint(&desc, &probe.resolved.subject("ollama-speech")),
+            "t",
+        );
+        let mut snap = snapshot(a.clone(), "fish");
+        let mut other = a;
+        other.ollama_speech.model = "phonon:en".into();
+        snap.resolved = Arc::new(resolve_provider_configs(
+            &other,
+            &|_| None,
+            &ProviderOverrides::default(),
+        ));
+        assert_ne!(
+            snap.resolved.subject("ollama-speech"),
+            snap.subject("ollama-speech")
+        );
+        assert_eq!(snap.subject("ollama-speech").model, "phonon:de");
+        let entries = build_entries(&snap, healthy(&snap));
+        let e = entries
+            .iter()
+            .find(|e| e.descriptor.id == "ollama-speech")
+            .unwrap();
+        assert!(
+            e.license_acked,
+            "die Zustimmung gilt der Instanz mit Modell A"
+        );
+        assert!(e.blocked.is_none(), "{:?}", e.blocked);
+        assert!(snap.checked("ollama-speech").is_ok());
     }
 
     #[test]

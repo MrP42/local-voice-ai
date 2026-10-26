@@ -1582,8 +1582,12 @@ impl TtsManager {
             let provider_host = providers::setup::ProviderHost::new(Some(
                 providers::host::fish_synth(weak.clone()),
             ));
-            let provider_preview =
-                providers::host::preview_service(app, &core, provider_host.registry());
+            let provider_preview = providers::host::preview_service(
+                app,
+                &core,
+                provider_host.registry(),
+                provider_host.approvals(),
+            );
             Self {
                 core,
                 app: app.clone(),
@@ -1685,6 +1689,10 @@ impl TtsManager {
     /// Settings in den Kern spiegeln. Vor jedem Auftrag aufgerufen, damit
     /// Änderungen ohne App-Neustart wirken.
     pub fn refresh_from_settings(&self) {
+        // Zuerst den gemeinsamen Stand der Freigaben aus der Datei übernehmen
+        // (unter der Sperre der Befehle): jede Prüfung während eines Auftrags
+        // liest ihn, nicht eine beim Start eingefrorene Kopie.
+        self.sync_live_approvals();
         let settings = crate::settings::get_settings(&self.app);
         *self.core.port.lock().unwrap() = settings.tts_port;
         *self.core.seed.lock().unwrap() = settings.tts_seed;
@@ -1727,8 +1735,9 @@ impl TtsManager {
         });
         // Anbieter-Registry auf den Stand der Einstellungen bringen (billig,
         // wenn sich nichts geändert hat). Wählt `tts_engine` einen Registry-
-        // Anbieter (`provider:<id>`), entsteht daraus die Engine — mit dem
-        // JETZIGEN Stand der Guardrails, den `fetch_wav` je Satz prüft.
+        // Anbieter (`provider:<id>`), entsteht daraus die Engine; sie prüft die
+        // Guardrails je Satz gegen den gemeinsamen, aktuellen Stand der Freigaben
+        // (`fetch_wav`) und nicht gegen eine Kopie von jetzt.
         let resolved = self.sync_providers(
             &settings.tts_providers,
             &settings.tts_fish_dir,
@@ -1742,8 +1751,7 @@ impl TtsManager {
                         self.provider_host.registry().clone(),
                         &id,
                         resolved.voice_for(&id),
-                        resolved.subject(&id),
-                        Arc::new(settings.tts_providers.clone()),
+                        self.provider_host.approvals().clone(),
                     ));
             }
             _ => self.core.set_engine(kind, piper_engine),

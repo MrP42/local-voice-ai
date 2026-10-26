@@ -29,6 +29,14 @@
 //! läuft alles über EINEN Ausgabestrom (kein Spalt zwischen den Teilen);
 //! ein Player ohne eigene Stream-Fähigkeit spielt gesammelt am Ende.
 //!
+//! ## Widerruf der Freigabe
+//!
+//! Der Dienst hält den gemeinsamen Stand der Freigaben ([`LiveApprovals`]) und
+//! prüft ihn nicht nur beim Start, sondern auch je eintreffendem Teil. Nach einer
+//! Änderung der Freigaben ruft der Manager [`PreviewService::enforce`]: ist die
+//! laufende Probestimme jetzt gesperrt, endet sie sofort (Synthese und
+//! Wiedergabe) mit `error` und `license_blocked`/`privacy_blocked`.
+//!
 //! ## Abbruch
 //!
 //! `cancel` setzt das Abbruch-Flag der Wiedergabe (Player stoppt binnen 50 ms,
@@ -65,7 +73,7 @@ use super::contract::{
     AudioChunk, AudioEncoding, SynthesisOptions, TtsError, TtsErrorKind, TtsProvider,
 };
 use super::pipeline::next_request_id;
-use super::policy::{check_use, TtsProvidersSettings, UseSubject};
+use super::policy::LiveApprovals;
 use super::registry::{stream_with_retry, ProviderRegistry, RequestGuard, RetryPolicy};
 use super::wav::parse_wav;
 use crate::managers::tts::lang::detect_language;
@@ -106,22 +114,28 @@ pub struct TtsProviderPreview {
 
 pub type EmitFn = Arc<dyn Fn(TtsProviderPreview) + Send + Sync>;
 
-/// Auftrag für [`PreviewService::start`].
+/// Auftrag für [`PreviewService::start`]. Die Guardrails prüft der Dienst
+/// selbst: Gegenstand aus der Instanz ([`TtsProvider::use_subject`]), Freigaben
+/// aus dem gemeinsamen, aktuellen Stand ([`LiveApprovals`]).
 pub struct PreviewRequest {
     pub provider_id: String,
     pub text: String,
     pub voice: Option<String>,
-    /// Wirksame Konfiguration (für die Guardrails).
-    pub subject: UseSubject,
-    /// Einstellungsstand der Freigaben (für die Guardrails).
-    pub settings: Arc<TtsProvidersSettings>,
     /// Ausgabegerät (`None` = Standard).
     pub device: Option<String>,
 }
 
+/// Prüfung der Guardrails für EINE laufende Probestimme: Instanz und
+/// Gegenstand sind die des Starts, die Freigaben immer die aktuellen.
+type GuardFn = Arc<dyn Fn() -> Result<(), TtsError> + Send + Sync>;
+
 struct Active {
     request_id: String,
     playback_cancel: Arc<AtomicBool>,
+    guard: GuardFn,
+    /// Gesetzt, wenn ein Widerruf die Probestimme beendet hat (der Abschluss
+    /// meldet dann `error` mit dem Sperrgrund statt `cancelled`).
+    revoked: Arc<Mutex<Option<TtsError>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -134,6 +148,7 @@ pub struct PreviewService {
     player: Arc<dyn Player>,
     controls: Arc<PlaybackControls>,
     emit: EmitFn,
+    approvals: LiveApprovals,
     active: Arc<Mutex<Option<Active>>>,
     max_samples: u64,
 }
@@ -144,12 +159,14 @@ impl PreviewService {
         player: Arc<dyn Player>,
         controls: Arc<PlaybackControls>,
         emit: EmitFn,
+        approvals: LiveApprovals,
     ) -> Self {
         Self {
             registry,
             player,
             controls,
             emit,
+            approvals,
             active: Arc::new(Mutex::new(None)),
             max_samples: MAX_PREVIEW_SAMPLES,
         }
@@ -182,8 +199,16 @@ impl PreviewService {
         let provider = self.registry.get(&req.provider_id).ok_or_else(|| {
             TtsError::bad_request(format!("Unbekannter Anbieter '{}'", req.provider_id))
         })?;
-        // Die Guardrails: wie bei jeder Nutzung, vor dem ersten Aufruf.
-        check_use(&provider.descriptor(), &req.subject, &req.settings)?;
+        // Die Guardrails: wie bei jeder Nutzung, vor dem ersten Aufruf. Instanz,
+        // Beschreibung und Gegenstand kommen aus EINEM Zugriff; die Freigaben
+        // sind die aktuellen und werden während der Probe weiter geprüft.
+        let descriptor = provider.descriptor();
+        let subject = provider.use_subject();
+        self.approvals.check(&descriptor, &subject)?;
+        let guard: GuardFn = {
+            let approvals = self.approvals.clone();
+            Arc::new(move || approvals.check(&descriptor, &subject))
+        };
 
         let opts = SynthesisOptions {
             language: detect_language(&text).unwrap_or("de").to_string(),
@@ -195,22 +220,25 @@ impl PreviewService {
             timeout: PREVIEW_TIMEOUT,
         };
         let playback_cancel = Arc::new(AtomicBool::new(false));
+        let revoked: Arc<Mutex<Option<TtsError>>> = Arc::new(Mutex::new(None));
 
         // „Letzter gewinnt“: Vorgänger abbrechen und den neuen eintragen unter
         // EINER Sperre, damit zwei gleichzeitige Starts nie beide aktiv bleiben.
-        let (request_id, guard) = {
+        let (request_id, request_guard) = {
             let mut slot = lock(&self.active);
             if let Some(previous) = slot.take() {
                 previous.playback_cancel.store(true, Ordering::Release);
                 self.registry.cancel(&previous.request_id);
             }
             let request_id = next_request_id("preview");
-            let guard = self.registry.begin_request(&request_id)?;
+            let request_guard = self.registry.begin_request(&request_id)?;
             *slot = Some(Active {
                 request_id: request_id.clone(),
                 playback_cancel: playback_cancel.clone(),
+                guard: guard.clone(),
+                revoked: revoked.clone(),
             });
-            (request_id, guard)
+            (request_id, request_guard)
         };
 
         let run = Run {
@@ -218,7 +246,9 @@ impl PreviewService {
             request_id: request_id.clone(),
             text,
             opts,
-            guard,
+            guard: request_guard,
+            use_guard: guard,
+            revoked,
             playback_cancel,
             device: req.device,
             controls: self.controls.clone(),
@@ -252,6 +282,32 @@ impl PreviewService {
         let id = lock(&self.active).as_ref().map(|a| a.request_id.clone());
         id.is_some_and(|id| self.cancel(&id))
     }
+
+    /// Nach einer Änderung der Freigaben: ist die laufende Probestimme jetzt
+    /// gesperrt, wird sie sofort beendet (Synthese UND Wiedergabe) und meldet
+    /// `error` mit dem Sperrgrund (`license_blocked`/`privacy_blocked`). `true`:
+    /// sie wurde beendet. Ohne laufende Probestimme oder bei weiterhin erlaubter
+    /// Nutzung geschieht nichts.
+    pub fn enforce(&self) -> bool {
+        let blocked = {
+            let slot = lock(&self.active);
+            let Some(active) = slot.as_ref() else {
+                return false;
+            };
+            match (active.guard)() {
+                Ok(()) => return false,
+                Err(e) => {
+                    // Der Grund steht VOR dem Abbruch-Flag da, damit der Abschluss
+                    // ihn sieht.
+                    *lock(&active.revoked) = Some(e);
+                    (active.request_id.clone(), active.playback_cancel.clone())
+                }
+            }
+        };
+        blocked.1.store(true, Ordering::Release);
+        self.registry.cancel(&blocked.0);
+        true
+    }
 }
 
 /// Alles, was die Aufgabe einer Probestimme braucht.
@@ -261,6 +317,9 @@ struct Run {
     text: String,
     opts: SynthesisOptions,
     guard: RequestGuard,
+    /// Guardrails (aktuelle Freigaben), je Teil des Streams neu geprüft.
+    use_guard: GuardFn,
+    revoked: Arc<Mutex<Option<TtsError>>>,
     playback_cancel: Arc<AtomicBool>,
     device: Option<String>,
     controls: Arc<PlaybackControls>,
@@ -374,6 +433,11 @@ impl Run {
                 if this.playback_cancel.load(Ordering::Acquire) {
                     break;
                 }
+                // Widerruf der Freigabe mitten im Strom: nichts mehr abspielen.
+                if let Err(blocked) = (this.use_guard)() {
+                    consume_token.cancel();
+                    return Err(blocked);
+                }
                 let segment = match to_segment(&chunk) {
                     Ok(s) => s,
                     Err(e) => {
@@ -421,7 +485,12 @@ impl Run {
             Ok(Err(msg)) => Some(msg),
             Err(join) => Some(join.to_string()),
         };
-        let outcome = if cancelled_outside {
+        // Ein Widerruf (Befehl der Oberfläche) hat Vorrang vor „abgebrochen“:
+        // der Nutzer soll erfahren, WARUM es still wurde.
+        let revoked = lock(&self.revoked).take();
+        let outcome = if let Some(blocked) = revoked {
+            Outcome::Error(blocked)
+        } else if cancelled_outside {
             Outcome::Cancelled
         } else if let Some(msg) = play_error {
             Outcome::Error(TtsError::unavailable(format!(
@@ -461,6 +530,7 @@ mod tests {
     use super::*;
     use crate::managers::tts::providers::contract::{StreamingMode, TtsProvider};
     use crate::managers::tts::providers::mock::{MockFailure, MockProvider, MOCK_SAMPLE_RATE};
+    use crate::managers::tts::providers::policy::TtsProvidersSettings;
 
     /// Player, der jedes Stück samt Ankunftszeit festhält (und wie der echte
     /// auf `cancelled` hört).
@@ -538,33 +608,43 @@ mod tests {
 
     type Events = Arc<Mutex<Vec<TtsProviderPreview>>>;
 
+    /// Dienst mit freigeschaltetem Anbieter `zzz`.
     fn service(
         mock: Arc<MockProvider>,
         player: Arc<StreamRecorder>,
     ) -> (PreviewService, Events, Arc<ProviderRegistry>) {
+        let (svc, events, registry, _) = service_live(mock, player);
+        (svc, events, registry)
+    }
+
+    /// Wie [`service`], mit dem Zugriff auf den gemeinsamen Stand der Freigaben.
+    fn service_live(
+        mock: Arc<MockProvider>,
+        player: Arc<StreamRecorder>,
+    ) -> (PreviewService, Events, Arc<ProviderRegistry>, LiveApprovals) {
         let registry = Arc::new(ProviderRegistry::new());
         registry.register(mock).unwrap();
         let events: Events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
         let emit: EmitFn = Arc::new(move |e| lock(&sink).push(e));
+        let mut enabled = TtsProvidersSettings::default();
+        enabled.set_enabled("zzz", true);
+        let approvals = LiveApprovals::new(enabled);
         let svc = PreviewService::new(
             registry.clone(),
             player,
             Arc::new(PlaybackControls::default()),
             emit,
+            approvals.clone(),
         );
-        (svc, events, registry)
+        (svc, events, registry, approvals)
     }
 
-    fn request(id: &str, text: &str, enabled: bool) -> PreviewRequest {
-        let mut settings = TtsProvidersSettings::default();
-        settings.set_enabled(id, enabled);
+    fn request(id: &str, text: &str) -> PreviewRequest {
         PreviewRequest {
             provider_id: id.to_string(),
             text: text.to_string(),
             voice: None,
-            subject: UseSubject::default(),
-            settings: Arc::new(settings),
             device: None,
         }
     }
@@ -607,7 +687,7 @@ mod tests {
         let mock = Arc::new(MockProvider::new().with_id("zzz"));
         let player = StreamRecorder::new();
         let (svc, events, reg) = service(mock.clone(), player.clone());
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         finished(&events, &id).await;
 
         assert_eq!(
@@ -646,7 +726,7 @@ mod tests {
         assert_eq!(mock.descriptor().caps.streaming, StreamingMode::Chunk);
         let player = StreamRecorder::new();
         let (svc, events, _reg) = service(mock, player.clone());
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         finished(&events, &id).await;
 
         let seg = lock(&player.segments);
@@ -675,7 +755,7 @@ mod tests {
         );
         let player = StreamRecorder::new();
         let (svc, events, reg) = service(mock.clone(), player.clone());
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         wait_for("erstes Audio beim Player", 5, || player.count() >= 1).await;
 
         assert!(
@@ -725,7 +805,7 @@ mod tests {
         );
         let player = StreamRecorder::new();
         let (svc, events, _reg) = service(mock.clone(), player.clone());
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         wait_for("Anbieter gestartet", 5, || mock.in_flight() == 1).await;
         let t0 = Instant::now();
         assert!(svc.cancel(&id));
@@ -742,22 +822,131 @@ mod tests {
     #[tokio::test]
     async fn die_guardrails_gelten_auch_fuer_die_probestimme() {
         let mock = Arc::new(MockProvider::new().with_id("zzz"));
-        let (svc, events, reg) = service(mock.clone(), StreamRecorder::new());
+        let (svc, events, reg, approvals) = service_live(mock.clone(), StreamRecorder::new());
         // Nicht freigeschaltet: kein Auftrag, kein Ereignis, kein Anbieteraufruf.
-        let e = svc.start(request("zzz", TEXT, false)).unwrap_err();
+        approvals.set(TtsProvidersSettings::default());
+        let e = svc.start(request("zzz", TEXT)).unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::LicenseBlocked);
-        // Entfernte Adresse ohne Freigabe.
-        let mut req = request("zzz", TEXT, true);
-        req.subject = UseSubject {
-            model: "m".into(),
-            base_url: Some("https://tts.example.org/v1".into()),
-        };
-        let e = svc.start(req).unwrap_err();
-        assert_eq!(e.kind, TtsErrorKind::PrivacyBlocked);
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(lock(&events).is_empty());
         assert_eq!(mock.attempts(), 0);
         assert_eq!(reg.active_requests(), 0);
+
+        // Entfernte Adresse ohne Freigabe: der Gegenstand kommt aus der Instanz.
+        let remote = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .with_subject("m", Some("https://tts.example.org/v1")),
+        );
+        let (svc, events, reg, _) = service_live(remote.clone(), StreamRecorder::new());
+        let e = svc.start(request("zzz", TEXT)).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::PrivacyBlocked);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(lock(&events).is_empty());
+        assert_eq!(remote.attempts(), 0);
+        assert_eq!(reg.active_requests(), 0);
+    }
+
+    /// Widerruf mitten in der Probestimme (Befund 1): der Befehl der
+    /// Oberfläche ruft `enforce`; die Probe endet sofort mit `error` und dem
+    /// Sperrgrund, das Anbieter-Future fällt, kein weiteres Audio kommt an.
+    #[tokio::test]
+    async fn ein_widerruf_beendet_die_laufende_probestimme_mit_dem_sperrgrund() {
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .chunked(40, Duration::from_millis(40)),
+        );
+        let player = StreamRecorder::new();
+        let (svc, events, reg, approvals) = service_live(mock.clone(), player.clone());
+        let id = svc.start(request("zzz", TEXT)).unwrap();
+        wait_for("erstes Audio beim Player", 5, || player.count() >= 1).await;
+
+        // Solange nichts widerrufen ist, tut `enforce` nichts.
+        assert!(!svc.enforce());
+        assert!(svc.is_active());
+
+        approvals.set(TtsProvidersSettings::default());
+        assert!(svc.enforce(), "die Probestimme wird beendet");
+        finished(&events, &id).await;
+
+        let ev = lock(&events);
+        let last = ev.last().unwrap();
+        assert_eq!(last.phase, PreviewPhase::Error, "{:?}", phases_of(&ev, &id));
+        assert_eq!(last.error_kind, Some(TtsErrorKind::LicenseBlocked));
+        assert!(last
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("nicht freigeschaltet"));
+        assert!(!ev.iter().any(|e| e.phase == PreviewPhase::Done));
+        drop(ev);
+        let after = player.count();
+        assert!(after < 40, "nicht alle Teile: {after}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(player.count(), after, "danach kommt kein Audio mehr an");
+        wait_for("Anbieter beendet", 5, || mock.in_flight() == 0).await;
+        wait_for("Auftrag ausgetragen", 5, || reg.active_requests() == 0).await;
+        assert!(!svc.is_active());
+    }
+
+    /// Auch ohne `enforce` (z. B. weil nur die Datei geändert wurde): das
+    /// nächste Teil des Streams prüft die aktuellen Freigaben.
+    #[tokio::test]
+    async fn die_probestimme_prueft_die_freigaben_je_teil_auch_ohne_enforce() {
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .chunked(40, Duration::from_millis(40)),
+        );
+        let player = StreamRecorder::new();
+        let (svc, events, _reg, approvals) = service_live(mock.clone(), player.clone());
+        let id = svc.start(request("zzz", TEXT)).unwrap();
+        wait_for("erstes Audio beim Player", 5, || player.count() >= 1).await;
+        approvals.set(TtsProvidersSettings::default());
+        finished(&events, &id).await;
+        let ev = lock(&events);
+        let last = ev.last().unwrap();
+        assert_eq!(last.phase, PreviewPhase::Error);
+        assert_eq!(last.error_kind, Some(TtsErrorKind::LicenseBlocked));
+        drop(ev);
+        wait_for("Anbieter beendet", 5, || mock.in_flight() == 0).await;
+        assert!(mock.chunks_sent() < 40, "die Synthese lief nicht zu Ende");
+    }
+
+    /// Fernzugriff zurückgenommen: dieselbe Wirkung, mit `privacy_blocked`.
+    #[tokio::test]
+    async fn der_entzug_des_fernzugriffs_beendet_die_probestimme_mit_privacy_blocked() {
+        let mock = Arc::new(
+            MockProvider::new()
+                .with_id("zzz")
+                .chunked(40, Duration::from_millis(40))
+                .with_subject("m", Some("http://192.168.1.20:8880/v1")),
+        );
+        let player = StreamRecorder::new();
+        let (svc, events, _reg, approvals) = service_live(mock.clone(), player.clone());
+        let mut allowed = TtsProvidersSettings::default();
+        allowed.set_enabled("zzz", true);
+        allowed.set_remote_allowed("zzz", true);
+        approvals.set(allowed.clone());
+        let id = svc.start(request("zzz", TEXT)).unwrap();
+        wait_for("erstes Audio beim Player", 5, || player.count() >= 1).await;
+        allowed.set_remote_allowed("zzz", false);
+        approvals.set(allowed);
+        assert!(svc.enforce());
+        finished(&events, &id).await;
+        let ev = lock(&events);
+        assert_eq!(
+            ev.last().unwrap().error_kind,
+            Some(TtsErrorKind::PrivacyBlocked)
+        );
+    }
+
+    fn phases_of(ev: &[TtsProviderPreview], id: &str) -> Vec<PreviewPhase> {
+        ev.iter()
+            .filter(|e| e.request_id == id)
+            .map(|e| e.phase)
+            .collect()
     }
 
     #[tokio::test]
@@ -765,18 +954,16 @@ mod tests {
         let mock = Arc::new(MockProvider::new().with_id("zzz"));
         let (svc, events, _reg) = service(mock.clone(), StreamRecorder::new());
         assert_eq!(
-            svc.start(request("zzz", "   ", true)).unwrap_err().kind,
+            svc.start(request("zzz", "   ")).unwrap_err().kind,
             TtsErrorKind::BadRequest
         );
         assert_eq!(
-            svc.start(request("gibt-es-nicht", TEXT, true))
-                .unwrap_err()
-                .kind,
+            svc.start(request("gibt-es-nicht", TEXT)).unwrap_err().kind,
             TtsErrorKind::BadRequest
         );
         let long = "a".repeat(MAX_PREVIEW_CHARS + 1);
         assert_eq!(
-            svc.start(request("zzz", &long, true)).unwrap_err().kind,
+            svc.start(request("zzz", &long)).unwrap_err().kind,
             TtsErrorKind::BadRequest
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -798,7 +985,7 @@ mod tests {
         );
         let player = StreamRecorder::new();
         let (svc, events, reg) = service(mock, player.clone());
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         finished(&events, &id).await;
         let ev = lock(&events);
         let last = ev.last().unwrap();
@@ -819,7 +1006,7 @@ mod tests {
         );
         let player = StreamRecorder::failing("kein Ausgabegerät gefunden");
         let (svc, events, _reg) = service(mock.clone(), player);
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         finished(&events, &id).await;
         let ev = lock(&events);
         let last = ev.last().unwrap();
@@ -848,7 +1035,7 @@ mod tests {
         let player = StreamRecorder::new();
         let (svc, events, _reg) = service(mock, player.clone());
         let svc = svc.with_max_samples(2_000);
-        let id = svc.start(request("zzz", TEXT, true)).unwrap();
+        let id = svc.start(request("zzz", TEXT)).unwrap();
         finished(&events, &id).await;
         let ev = lock(&events);
         let last = ev.last().unwrap();
@@ -867,9 +1054,9 @@ mod tests {
         );
         let player = StreamRecorder::new();
         let (svc, events, reg) = service(slow, player);
-        let a = svc.start(request("zzz", TEXT, true)).unwrap();
+        let a = svc.start(request("zzz", TEXT)).unwrap();
         wait_for("A läuft", 5, || phases(&events, &a).len() >= 2).await;
-        let b = svc.start(request("zzz", TEXT, true)).unwrap();
+        let b = svc.start(request("zzz", TEXT)).unwrap();
         assert_ne!(a, b);
         finished(&events, &a).await;
         assert_eq!(phases(&events, &a).last(), Some(&PreviewPhase::Cancelled));

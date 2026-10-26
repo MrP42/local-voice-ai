@@ -28,19 +28,19 @@
       "id": "fish",
       "label": "Fish Speech",
       "license": {
-        "code": "Apache-2.0",
-        "non_commercial": false,
-        "note": "Model Card prüfen: Lizenz der Gewichte (s2-pro) ist nicht verifiziert; die Code-Lizenz stammt aus dem Umsetzungsplan, nicht aus einer gegengeprüften Quelle.",
-        "source_url": "https://github.com/fishaudio/fish-speech",
-        "verified": false,
-        "verified_on": null,
-        "weights": "s2-pro: Lizenz laut Model Card prüfen"
+        "code": "Fish Audio Research License (installierte Fassung, Stand 07.03.2026)",
+        "non_commercial": true,
+        "note": "Belegt durch die lokal installierte LICENSE (Repo-Code) und checkpoints/s2-pro/LICENSE.md (Gewichte): beide stehen unter der Fish Audio Research License, zuletzt geändert am 07.03.2026; die Model Card nennt license: other / fish-audio-research-license. Erlaubt sind Forschung und nichtkommerzielle Nutzung; kommerzielle Nutzung nur mit separater Lizenz von Fish Audio. Fish bleibt der bestehende Standard und wird deshalb nicht gesperrt (kein Opt-in).",
+        "source_url": "https://huggingface.co/fishaudio/s2-pro",
+        "verified": true,
+        "verified_on": "2026-10-26",
+        "weights": "s2-pro: Fish Audio Research License"
       },
       "opt_in": false,
       "tier": "supported"
     },
     "enabled": true,
-    "fingerprint": "9b3b5da8e6c016c74faa20a1ac00f65b",
+    "fingerprint": "248ad9cbf39b5ec18f5d1e289c49104e",
     "health": {
       "available": true,
       "checked_ms": 0,
@@ -101,7 +101,7 @@
     "fingerprint": "39726cfc0f26726c4f4f68cdfc88f1b7",
     "health": {
       "available": true,
-      "checked_ms": 0,
+      "checked_ms": 1,
       "device": "cpu",
       "hint": null,
       "reason": null,
@@ -150,7 +150,7 @@
       "license": {
         "code": "MIT OR Apache-2.0",
         "non_commercial": true,
-        "note": "Die Code-Lizenz (MIT OR Apache-2.0) ist belegt (README von gradium-ai/xn-ptts, 26.10.2026); die Lizenz der Gewichte von '' ist nicht belegt und wird vorsorglich als nichtkommerziell behandelt. Stimmen haben eigene Lizenzen (docs/cli.md).",
+        "note": "Die Code-Lizenz (MIT OR Apache-2.0) ist belegt (README von gradium-ai/xn-ptts, 26.10.2026); es ist kein Modell eingetragen, die Lizenz der Gewichte lässt sich ohne Modell nicht belegen und wird vorsorglich als nichtkommerziell behandelt. Stimmen haben eigene Lizenzen (docs/cli.md).",
         "source_url": "https://github.com/gradium-ai/xn-ptts",
         "verified": false,
         "verified_on": null,
@@ -287,7 +287,7 @@
     "fingerprint": "c01db0b21d52323ac7b6b45f933f81c8",
     "health": {
       "available": false,
-      "checked_ms": 2013,
+      "checked_ms": 2016,
       "device": "remote",
       "hint": "Ollama starten oder die Adresse prüfen.",
       "reason": "Ollama ist nicht erreichbar: Der Sprachserver http://127.0.0.1:11434/v1 antwortet nicht innerhalb der Frist",

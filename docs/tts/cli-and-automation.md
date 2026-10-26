@@ -92,8 +92,11 @@ Ressourcenmessung, ASR-Rücklesung und Berichte mit. Das Zeilenformat steht in `
 
 Jede Synthese läuft über `stream_synthesize` der Registry, **ohne Wiederholung** (ein Fehlschlag wird als Zeile
 gemeldet), strikt nacheinander. `cold`: je Satz zuerst Zurücksetzen (Fish: ein **selbst gestarteter** Server wird neu
-gestartet, ein fremder bleibt unberührt und wird in der Zeile vermerkt), dann frisch gebaute Registry; `warm`: eine
-Aufwärm-Synthese ohne Zeile, dann alle Läufe. Bei Piper, Phonon und den Servern ist `process_start_ms` nicht messbar
+gestartet, ein fremder bleibt unberührt und wird in der Zeile vermerkt; die Startzeit ist `process_start_ms`), dann frisch
+gebaute Registry; `warm`: vorher EINMAL `prepare` (Fish: Einstellungen lesen und den Server sicherstellen, außerhalb der
+Messung), dann eine Aufwärm-Synthese ohne Zeile, dann alle Läufe. Die Fish-Synthese der Messschleife macht je Satz nur den
+HTTP-Aufruf — kein `refresh_from_settings` und kein Gesundheitsaufruf in der gemessenen Zeit (der Vorlese-Pfad der App
+bleibt unverändert). Bei Piper, Phonon und den Servern ist `process_start_ms` nicht messbar
 (Hinweis in `env.json`, A/tts_cli.rs:396-410). Je Synthese höchstens `MAX_AUDIO_BYTES`; `rows.jsonl` wird zeilenweise
 geschrieben, WAV und `env.json` über `.part` und Umbenennen.
 
@@ -118,7 +121,7 @@ A/agent_bridge/catalog.rs:76-122, Handler A/agent_bridge/tools/tts_providers.rs.
   gab es schon. Die Namen stehen in der Rechteliste der Brücke.
 * **Lesbare Orte** von `tts_benchmark_results`: `%LOCALAPPDATA%\lva-bench\tts\<Lauf>\report\results.json` (Umgebung
   `LVA_BENCH_DIR` ersetzt `%LOCALAPPDATA%\lva-bench`) und `docs/tts/benchmarks/<Datum>/results.json` (`LVA_TTS_BENCH_DOCS`
-  ersetzt den Ort); Kennung ohne Pfadanteile, der aufgelöste Pfad muss im Ordner liegen, auch bei Verknüpfungen
+  setzt den Ort; ohne die Variable sucht nur der **Entwicklungsbau** oberhalb des Programms, eine installierte App nie); Kennung ohne Pfadanteile, der aufgelöste Pfad muss im Ordner liegen, auch bei Verknüpfungen
   (A/agent_bridge/tools/tts_providers.rs, `bench_roots_from`).
 * **Absicherung** (Fehlerfälle-Tabelle in der Moduldoku, Tests in `tools/tts_providers/tests.rs`): gleichzeitige Wahl unter
   derselben Sperre wie die App; `tts_provider_select` prüft die Guardrails zweimal (vor der Stimmenliste und beim

@@ -68,7 +68,7 @@ use super::contract::{
     guarded, is_valid_provider_id, language_matches, send_chunk, AudioChunk, AudioClip,
     AudioEncoding, AudioFormat, CancelToken, Device, LicenseInfo, ProviderCaps, ProviderDescriptor,
     ProviderHealth, ProviderTier, StreamingMode, SynthesisOptions, TtsError, TtsErrorKind,
-    TtsProvider, VoiceDescriptor,
+    TtsProvider, UseSubject, VoiceDescriptor,
 };
 use super::wav::{parse_wav, wav_from_pcm};
 
@@ -704,6 +704,20 @@ impl OpenAiSpeechProvider {
             .filter(|v| !v.is_empty())
     }
 
+    /// Hash (32 Bit) über die normalisierte Adresse und die Abtastrate: zwei
+    /// Server (oder zwei Raten) mit gleichem Modell und gleicher Stimme dürfen
+    /// im Satz-Cache nicht dieselben Einträge teilen. Die normalisierte Form
+    /// ist die der Anfragen (Schrägstrich am Ende, Groß-/Kleinschreibung des
+    /// Hosts, Standardport); bei ungültiger Adresse die getrimmte Eingabe.
+    fn endpoint_hash(&self) -> u32 {
+        let base = match &self.setup {
+            Ok(s) => s.base.clone(),
+            Err(_) => self.cfg.base_url.trim().trim_end_matches('/').to_string(),
+        };
+        let h = super::phonon::fnv1a64(&format!("{base}|{}", self.cfg.sample_rate));
+        (h & 0xffff_ffff) as u32
+    }
+
     /// `opts.voice` vor der Konfiguration.
     fn voice_for<'a>(&'a self, opts: &'a SynthesisOptions) -> Option<&'a str> {
         opts.voice
@@ -1239,7 +1253,21 @@ impl TtsProvider for OpenAiSpeechProvider {
             .filter(|v| !v.is_empty())
             .or_else(|| self.configured_voice())
             .unwrap_or("default");
-        format!("{}:{}:{}", self.cfg.id, self.cfg.model.trim(), voice)
+        format!(
+            "{}:{}~{:08x}:{}",
+            self.cfg.id,
+            self.cfg.model.trim(),
+            self.endpoint_hash(),
+            voice
+        )
+    }
+
+    /// Modell und Adresse dieser Instanz, wie sie gebaut wurde.
+    fn use_subject(&self) -> UseSubject {
+        UseSubject {
+            model: self.cfg.model.trim().to_string(),
+            base_url: Some(self.cfg.base_url.trim().to_string()),
+        }
     }
 }
 
@@ -2079,13 +2107,85 @@ mod tests {
             voice: Some("af_bella".into()),
             ..Default::default()
         });
-        assert_eq!(p.cache_tag(None), "openai-speech:kokoro:af_bella");
-        assert_eq!(p.cache_tag(Some("x")), "openai-speech:kokoro:x");
+        // `<id>:<modell>~<hash(adresse,rate)>:<stimme>` (Befund 5).
+        let tag = p.cache_tag(None);
+        assert!(tag.starts_with("openai-speech:kokoro~"), "{tag}");
+        assert!(tag.ends_with(":af_bella"), "{tag}");
+        assert_eq!(
+            p.cache_tag(Some("x")),
+            tag.replace(":af_bella", ":x"),
+            "nur die Stimme wechselt"
+        );
         let q = OpenAiSpeechProvider::new(OpenAiSpeechConfig {
             model: "kokoro".into(),
             ..Default::default()
         });
-        assert_eq!(q.cache_tag(None), "openai-speech:kokoro:default");
+        assert!(
+            q.cache_tag(None).ends_with(":default"),
+            "{}",
+            q.cache_tag(None)
+        );
+    }
+
+    /// Befund 5: zwei Server (oder zwei Abtastraten) mit gleichem Modell und
+    /// gleicher Stimme dürfen im Satz-Cache nicht dieselben Einträge teilen.
+    #[test]
+    fn der_cache_tag_trennt_adresse_und_abtastrate() {
+        let tag = |base: &str, rate: u32| {
+            OpenAiSpeechProvider::new(OpenAiSpeechConfig {
+                base_url: base.into(),
+                model: "kokoro".into(),
+                voice: Some("af_bella".into()),
+                sample_rate: rate,
+                ..Default::default()
+            })
+            .cache_tag(None)
+        };
+        let base = tag("http://127.0.0.1:8880/v1", 24_000);
+        assert_ne!(
+            base,
+            tag("http://127.0.0.1:8881/v1", 24_000),
+            "anderer Port"
+        );
+        assert_ne!(
+            base,
+            tag("http://localhost:8880/v1", 24_000),
+            "anderer Host"
+        );
+        assert_ne!(
+            base,
+            tag("http://127.0.0.1:8880/v2", 24_000),
+            "anderer Pfad"
+        );
+        assert_ne!(base, tag("http://127.0.0.1:8880/v1", 22_050), "andere Rate");
+        // Gleiche Adresse in anderer Schreibweise: derselbe Server, derselbe Tag.
+        assert_eq!(base, tag("http://127.0.0.1:8880/v1/", 24_000));
+        assert_eq!(base, tag("  http://127.0.0.1:8880/v1  ", 24_000));
+        assert_eq!(base, tag("HTTP://127.0.0.1:8880/v1", 24_000));
+        // Der Tag verrät die Adresse nicht im Klartext (Cache-Dateien liegen auf der Platte).
+        assert!(
+            !base.contains("127.0.0.1") && !base.contains("8880"),
+            "{base}"
+        );
+        // Eine ungültige Adresse gibt trotzdem einen stabilen Tag (Eingabe getrimmt).
+        assert_eq!(tag("kein url", 24_000), tag(" kein url ", 24_000));
+    }
+
+    /// Befund 2: Modell und Adresse der Instanz sind der Gegenstand der Guardrails.
+    #[test]
+    fn die_instanz_meldet_modell_und_adresse_als_gegenstand_der_pruefung() {
+        let p = OpenAiSpeechProvider::new(OpenAiSpeechConfig {
+            base_url: " https://tts.example.org/v1 ".into(),
+            model: " kokoro ".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            p.use_subject(),
+            UseSubject {
+                model: "kokoro".into(),
+                base_url: Some("https://tts.example.org/v1".into()),
+            }
+        );
     }
 
     #[test]

@@ -50,6 +50,9 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
   ohne `ptts` zu starten (phonon.rs:52-67, 698-754). Einmal laden: `allow_network` aktivieren, vorlesen lassen, wieder
   ausschalten. Die Cache-Layout-Annahme (`models--OWNER--NAME/snapshots/<commit>`) ist für das Rust-Tool nicht belegt;
   sie kann nur zu „Modell fehlt“ führen, nie zu einem stillen Download (phonon.rs:60-66).
+* **Stimmen offline**: ohne `allow_network` sind nur `default`, Stimmen aus `<Modellordner>/voices/` und der Pfad einer
+  vorhandenen `.safetensors`-Datei erlaubt; ein Katalogname (`Zoey`) würde `ptts` von Hugging Face holen lassen und endet
+  deshalb vor dem Start mit „nicht verfügbar“ und Hinweis. Die Gesundheit meldet es für die konfigurierte Stimme früh.
 * **Lokaler Modellordner**: statt `hf://` ein Ordner mit `config.json`, `tokenizer.json` und Gewichten (phonon.rs:702-720).
 * **Gerät**: Release-Builds laufen nur auf der CPU, `--quant q8` immer; CUDA nur im Eigenbau (`--features cuda`), unter
   Windows **nicht verifiziert** (provider-research.md, A). Der Adapter meldet nur `Device::Cpu` (phonon.rs:1049-1052).
@@ -63,7 +66,10 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
 * **Plattform**: laut Release-Notes nur **macOS** („Ollama can now generate speech on macOS“). Auf anderen Systemen ist der
   Anbieter „nicht verfügbar“ mit Grund (ollama_speech.rs:337-347). Ob es unter Windows geht, ist **offen**; mit
   `probe_speech = true` entscheidet eine Mini-Probe (nur echtes Audio zählt). Die Probe lädt das Sprachmodell in Ollama und
-  kann ein geladenes LLM verdrängen; sie ist standardmäßig aus und wird 5 Minuten zwischengespeichert.
+  kann ein geladenes LLM verdrängen; sie ist standardmäßig aus und startet **nur, wenn der Anbieter in der App freigegeben
+  ist** (Opt-in, bei nichtkommerziellem oder ungeprüftem Modell die Lizenz-Bestätigung); ohne Freigabe meldet die Gesundheit
+  „Probe nicht gestartet“ und Ollama bekommt keine Sprachanfrage. Sie läuft in eigener Task (Frist 10 s), ihr Ergebnis
+  (auch ein Fehlschlag) wird 5 Minuten zwischengespeichert; die Gesundheit wartet höchstens 3 s und meldet sonst „Probe läuft“.
 * **Modell**: Vorgabe `phonon` (31M englisch); für Deutsch `phonon:de` (CC BY-NC, 141 MB laut Bibliothek). Laden macht der
   Nutzer selbst: `ollama pull <modell>` (die App ändert nichts an Ollama).
 * **Diagnosestufen** des Health (ollama_speech.rs:20-33, 385-530): 1 Dienst erreichbar (`/api/version`, 2 s) → 2 Version

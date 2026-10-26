@@ -57,11 +57,11 @@ use crate::managers::tts::providers::contract::{
 use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::providers::phonon::PHONON_ID;
 use crate::managers::tts::providers::policy::{
-    self, ConfigSlot, ProviderOverride, ProviderOverrides, ResolvedConfigs, TtsProvidersSettings,
-    FISH_ID, PIPER_ID,
+    self, ConfigSlot, LiveApprovals, ProviderOverride, ProviderOverrides, ResolvedConfigs,
+    TtsProvidersSettings, FISH_ID, PIPER_ID,
 };
 use crate::managers::tts::providers::registry::ProviderRegistry;
-use crate::managers::tts::providers::setup::{sync_registry, ProviderPaths};
+use crate::managers::tts::providers::setup::{sync_registry_gated, ProviderPaths};
 use crate::managers::tts::providers::SynthFn;
 use crate::managers::tts::TtsManager;
 
@@ -333,7 +333,10 @@ impl Plan {
     /// Registry mit den fünf Anbietern, OHNE Wiederholung (Messung, Probe).
     pub fn registry(&self, synth: Option<&SynthFn>) -> Result<Arc<ProviderRegistry>, TtsError> {
         let registry = bench::bench_registry();
-        sync_registry(&registry, &self.resolved, &self.paths, synth)?;
+        // Die Prüffunktion der Guardrails gegen die Einstellungen der Datei: der
+        // Ollama-Anbieter macht seine Probe nur, wenn die App sie freigegeben hat.
+        let gate = LiveApprovals::new((*self.providers).clone()).gate();
+        sync_registry_gated(&registry, &self.resolved, &self.paths, synth, Some(&gate))?;
         Ok(Arc::new(registry))
     }
 
@@ -421,7 +424,8 @@ pub fn listing_snapshot(
     ));
     let paths = paths_for(cs, cs.piper_voice.clone(), cs.piper_auto_language);
     let registry = Arc::new(bench::bench_registry());
-    sync_registry(&registry, &resolved, &paths, None)?;
+    let gate = LiveApprovals::new(cs.providers.clone()).gate();
+    sync_registry_gated(&registry, &resolved, &paths, None, Some(&gate))?;
     Ok(ProviderSnapshot {
         settings: Arc::new(cs.providers.clone()),
         resolved,
@@ -714,7 +718,9 @@ impl BenchBackend for Backend {
     fn fresh_registry(&self) -> Result<Arc<ProviderRegistry>, TtsError> {
         match self {
             Self::Plain(plan) => plan.registry(None),
-            Self::Fish { plan, tts } => plan.registry(Some(&tts.fish_synth_fn())),
+            // Ohne `refresh_from_settings`/`ensure_server` je Satz: beides macht
+            // `prepare` bzw. `cold_reset` einmal VOR der gemessenen Zeit.
+            Self::Fish { plan, tts } => plan.registry(Some(&tts.fish_bench_synth_fn())),
         }
     }
 
@@ -722,6 +728,13 @@ impl BenchBackend for Backend {
         match self {
             Self::Plain(_) => Box::pin(async { Ok(ColdReset::rebuilt()) }),
             Self::Fish { tts, .. } => Box::pin(tts.bench_cold_reset()),
+        }
+    }
+
+    fn prepare(&self) -> BoxFuture<'_, Result<(), TtsError>> {
+        match self {
+            Self::Plain(_) => Box::pin(async { Ok(()) }),
+            Self::Fish { tts, .. } => Box::pin(tts.bench_prepare()),
         }
     }
 }

@@ -44,6 +44,7 @@
 //! Lizenz- und Datenschutzsperre selbst aufheben.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -444,14 +445,61 @@ fn stored_voice(
 
 // ---- Guardrails -----------------------------------------------------------------------
 
-/// Die wirksame Konfiguration, soweit die Guardrails sie brauchen.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
-pub struct UseSubject {
-    /// Modell/Gewichte-Kennung (geht in den Fingerabdruck ein).
-    pub model: String,
-    /// Adresse, die der Anbieter anspricht (`None` = lokal/Programm).
-    pub base_url: Option<String>,
+/// Die wirksame Konfiguration, soweit die Guardrails sie brauchen (Typ in
+/// `contract`, weil ihn die Instanz liefert: [`TtsProvider::use_subject`]).
+pub use super::contract::UseSubject;
+
+/// Gemeinsamer, jederzeit AKTUELLER Stand der Freigaben (Opt-in, Zustimmungen,
+/// Fernzugriff). Der `TtsManager` hält ihn, die Befehle der Oberfläche
+/// aktualisieren ihn nach dem Speichern, und jede laufende Nutzung (Engine,
+/// Probestimme, Probe des Ollama-Anbieters) prüft [`check_use`] je Satz bzw.
+/// je Teil dagegen — nicht gegen einen Stand, der beim Start des Auftrags
+/// eingefroren wurde. Ein Widerruf wirkt damit auch auf laufende Aufträge.
+///
+/// Lesen kostet einen kurzen Lesezugriff ohne Wartezeit (kein I/O, keine
+/// Allokation außer dem `Arc`-Zähler); der Audio-Echtzeitpfad ruft das nicht.
+/// `Default` = nichts freigegeben (sicherer Anfangszustand).
+#[derive(Clone, Default)]
+pub struct LiveApprovals(Arc<RwLock<Arc<TtsProvidersSettings>>>);
+
+impl LiveApprovals {
+    pub fn new(settings: TtsProvidersSettings) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(settings))))
+    }
+
+    /// Der aktuelle Stand.
+    pub fn get(&self) -> Arc<TtsProvidersSettings> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Neuen Stand setzen (nach dem Speichern der Einstellungen).
+    pub fn set(&self, settings: TtsProvidersSettings) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(settings);
+    }
+
+    /// [`check_use`] gegen den AKTUELLEN Stand.
+    pub fn check(&self, desc: &ProviderDescriptor, subject: &UseSubject) -> Result<(), TtsError> {
+        check_use(desc, subject, &self.get())
+    }
+
+    /// Dieselbe Prüfung als weitergebbare Funktion (für Anbieter mit
+    /// Nebenwirkung, z. B. die Probe des Ollama-Anbieters).
+    pub fn gate(&self) -> UseGate {
+        let live = self.clone();
+        Arc::new(move |desc, subject| live.check(desc, subject))
+    }
 }
+
+impl std::fmt::Debug for LiveApprovals {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LiveApprovals(..)")
+    }
+}
+
+/// Eine Prüffunktion ([`check_use`] gegen einen bestimmten Stand der
+/// Freigaben), die ein Anbieter vor Nebenwirkungen fragen kann.
+pub type UseGate =
+    Arc<dyn Fn(&ProviderDescriptor, &UseSubject) -> Result<(), TtsError> + Send + Sync>;
 
 /// Fingerabdruck der Lizenzlage: Kennung + Gewichts-Lizenz (Text und
 /// „nichtkommerziell“) + Modell. Ändert sich eines davon, gilt eine frühere
@@ -1250,9 +1298,12 @@ mod tests {
         let piper = PiperProvider::new(None).descriptor();
         for d in [&fish, &piper] {
             assert!(!d.opt_in, "{}", d.id);
+            // Fish: nichtkommerziell (Fish Audio Research License, belegt),
+            // Piper: ungeprüft — beides würde bei einem Opt-in-Anbieter sperren,
+            // bei den eingebauten Standards darf es das nie.
             assert!(
-                !d.license.verified,
-                "{}: die Lizenz ist ungeprüft, und trotzdem darf nichts sperren",
+                d.license.non_commercial || !d.license.verified,
+                "{}: die Lizenz würde einen Opt-in-Anbieter sperren, und trotzdem darf hier nichts sperren",
                 d.id
             );
             assert!(!license_needs_ack(d));

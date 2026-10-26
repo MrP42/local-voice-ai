@@ -128,6 +128,18 @@ pub struct LicenseInfo {
     pub note: String,
 }
 
+/// Die wirksame Konfiguration eines Anbieters, soweit die Guardrails sie
+/// brauchen. Gehört zum INSTANZ-Stand: [`TtsProvider::use_subject`] liefert sie
+/// aus der Konfiguration, mit der die Instanz gebaut wurde — Prüfgegenstand und
+/// Instanz können deshalb nie aus verschiedenen Ständen stammen.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct UseSubject {
+    /// Modell/Gewichte-Kennung (geht in den Fingerabdruck ein).
+    pub model: String,
+    /// Adresse, die der Anbieter anspricht (`None` = lokal/Programm).
+    pub base_url: Option<String>,
+}
+
 /// Was ein Anbieter kann.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ProviderCaps {
@@ -574,6 +586,14 @@ pub trait TtsProvider: Send + Sync {
     /// `"<id>:<modell>:<stimme>"`; Fish behält den leeren Tag (Legacy-Regel,
     /// siehe `engine::fish_cache_tag`), Piper `"piper/<stimme>"`.
     fn cache_tag(&self, voice: Option<&str>) -> String;
+
+    /// Wohin diese INSTANZ spricht und mit welchem Modell: der Gegenstand der
+    /// Guardrails ([`super::policy::check_use`]). Kommt aus der Konfiguration,
+    /// mit der die Instanz gebaut wurde — nie aus einem anderen Stand. Vorgabe:
+    /// leer (Fish, Piper: kein Modell, keine Adresse).
+    fn use_subject(&self) -> UseSubject {
+        UseSubject::default()
+    }
 }
 
 #[cfg(test)]

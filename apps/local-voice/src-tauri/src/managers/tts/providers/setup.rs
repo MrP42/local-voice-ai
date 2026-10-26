@@ -24,7 +24,7 @@ use super::contract::{TtsError, TtsProvider};
 use super::ollama_speech::OllamaSpeechProvider;
 use super::openai_speech::OpenAiSpeechProvider;
 use super::phonon::PhononProvider;
-use super::policy::ResolvedConfigs;
+use super::policy::{LiveApprovals, ResolvedConfigs, UseGate};
 use super::registry::ProviderRegistry;
 
 /// Orte und Einstellungen, die die Hüllen für Fish und Piper brauchen.
@@ -39,11 +39,14 @@ pub struct ProviderPaths {
     pub piper_auto_language: bool,
 }
 
-/// Alle Anbieter dieser Fassung in fester Reihenfolge.
+/// Alle Anbieter dieser Fassung in fester Reihenfolge. `gate`: die Prüfung der
+/// Guardrails für Anbieter mit Nebenwirkung (Probe des Ollama-Anbieters); ohne
+/// sie verweigert dieser Anbieter die Probe.
 fn build_providers(
     resolved: &ResolvedConfigs,
     paths: &ProviderPaths,
     fish_synth: Option<&SynthFn>,
+    gate: Option<&UseGate>,
 ) -> Vec<Arc<dyn TtsProvider>> {
     let mut fish = FishProvider::new(paths.fish_dir.clone());
     if let Some(synth) = fish_synth {
@@ -52,25 +55,45 @@ fn build_providers(
     let piper = PiperProvider::new(paths.app_data.clone())
         .with_voice(paths.piper_voice.clone())
         .with_auto_language(paths.piper_auto_language);
+    let mut ollama = OllamaSpeechProvider::new(resolved.ollama_speech.clone());
+    if let Some(gate) = gate {
+        ollama = ollama.with_use_gate(gate.clone());
+    }
     vec![
         Arc::new(fish),
         Arc::new(piper),
         Arc::new(PhononProvider::new(resolved.phonon.clone())),
         Arc::new(OpenAiSpeechProvider::new(resolved.openai_speech.clone())),
-        Arc::new(OllamaSpeechProvider::new(resolved.ollama_speech.clone())),
+        Arc::new(ollama),
     ]
 }
 
 /// Trägt alle Anbieter in `registry` ein (vorhandene werden ersetzt) und
 /// liefert deren Kennungen. Entfernt wird hier nichts: fremde Einträge
-/// (Testanbieter) bleiben, Aufräumen ist Sache des [`ProviderHost`].
+/// (Testanbieter) bleiben, Aufräumen ist Sache des [`ProviderHost`]. Ohne
+/// Prüffunktion: der Ollama-Anbieter macht keine Probe (siehe
+/// [`sync_registry_gated`]).
 pub fn sync_registry(
     registry: &ProviderRegistry,
     resolved: &ResolvedConfigs,
     paths: &ProviderPaths,
     fish_synth: Option<&SynthFn>,
 ) -> Result<Vec<String>, TtsError> {
-    let providers = build_providers(resolved, paths, fish_synth);
+    sync_registry_gated(registry, resolved, paths, fish_synth, None)
+}
+
+/// Wie [`sync_registry`], mit der Prüffunktion der Guardrails: Anbieter mit
+/// Nebenwirkung (die Probe des Ollama-Anbieters lädt ein Modell) fragen sie,
+/// bevor sie etwas tun — gegen den Stand, den der Aufrufer hält (die App:
+/// [`LiveApprovals::gate`], die CLI: die Einstellungen der Datei).
+pub fn sync_registry_gated(
+    registry: &ProviderRegistry,
+    resolved: &ResolvedConfigs,
+    paths: &ProviderPaths,
+    fish_synth: Option<&SynthFn>,
+    gate: Option<&UseGate>,
+) -> Result<Vec<String>, TtsError> {
+    let providers = build_providers(resolved, paths, fish_synth, gate);
     let wanted: Vec<String> = providers.iter().map(|p| p.descriptor().id).collect();
     for provider in providers {
         registry.register(provider)?;
@@ -102,24 +125,37 @@ struct Built {
     ids: Vec<String>,
 }
 
-/// Besitzer der langlebigen Registry (lebt im `TtsManager`).
+/// Besitzer der langlebigen Registry (lebt im `TtsManager`) und des
+/// gemeinsamen, aktuellen Stands der Freigaben ([`LiveApprovals`]), gegen den
+/// jede Nutzung (Engine, Probestimme, Probe des Ollama-Anbieters) prüft.
 pub struct ProviderHost {
     registry: Arc<ProviderRegistry>,
     fish_synth: Option<SynthFn>,
+    approvals: LiveApprovals,
+    gate: UseGate,
     last: Mutex<Option<Built>>,
 }
 
 impl ProviderHost {
     pub fn new(fish_synth: Option<SynthFn>) -> Self {
+        let approvals = LiveApprovals::default();
         Self {
             registry: Arc::new(ProviderRegistry::new()),
             fish_synth,
+            gate: approvals.gate(),
+            approvals,
             last: Mutex::new(None),
         }
     }
 
     pub fn registry(&self) -> &Arc<ProviderRegistry> {
         &self.registry
+    }
+
+    /// Der gemeinsame Stand der Freigaben. Wer die Einstellungen der Anbieter
+    /// speichert, setzt ihn danach neu (`TtsManager::providers_changed`).
+    pub fn approvals(&self) -> &LiveApprovals {
+        &self.approvals
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Built>> {
@@ -138,7 +174,13 @@ impl ProviderHost {
         if last.as_ref().is_some_and(|b| b.key == key) {
             return false;
         }
-        match sync_registry(&self.registry, resolved, paths, self.fish_synth.as_ref()) {
+        match sync_registry_gated(
+            &self.registry,
+            resolved,
+            paths,
+            self.fish_synth.as_ref(),
+            Some(&self.gate),
+        ) {
             Ok(ids) => {
                 // Was der vorige Aufbau eingetragen hat und jetzt nicht mehr
                 // existiert (z. B. eine geänderte openai-speech-Kennung), geht.
@@ -239,6 +281,107 @@ mod tests {
             .unwrap()
             .cache_tag(None)
             .contains("kokoro"));
+    }
+
+    /// Befund 2: jede Instanz meldet als Gegenstand der Guardrails genau das,
+    /// was `ResolvedConfigs::subject` für ihre Konfiguration liefert — die zwei
+    /// Wege können nie auseinanderlaufen.
+    #[test]
+    fn die_instanz_meldet_denselben_gegenstand_wie_die_aufgeloeste_konfiguration() {
+        let mut s = TtsProvidersSettings::default();
+        s.phonon.model = "  hf://gradium/phonon-31m-en ".into();
+        s.openai_speech.model = " kokoro ".into();
+        s.openai_speech.base_url = " http://127.0.0.1:8880/v1 ".into();
+        s.ollama_speech.model = " phonon:de ".into();
+        s.ollama_speech.base_url = " http://127.0.0.1:11434 ".into();
+        let check = |s: &TtsProvidersSettings| {
+            let r = resolved(s);
+            let reg = build_registry(&r, &paths(), None).unwrap();
+            for d in reg.descriptors() {
+                assert_eq!(
+                    reg.get(&d.id).unwrap().use_subject(),
+                    r.subject(&d.id),
+                    "{}",
+                    d.id
+                );
+            }
+            reg
+        };
+        let reg = check(&s);
+        assert_eq!(
+            reg.get("phonon").unwrap().use_subject().model,
+            "hf://gradium/phonon-31m-en"
+        );
+        assert_eq!(
+            reg.get("ollama-speech")
+                .unwrap()
+                .use_subject()
+                .base_url
+                .as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+        // Auch mit eigener Kennung des OpenAI-Anbieters.
+        s.openai_speech.id = "kokoro".into();
+        let reg = check(&s);
+        assert_eq!(reg.get("kokoro").unwrap().use_subject().model, "kokoro");
+    }
+
+    /// Befund 3: der Host reicht den gemeinsamen Stand der Freigaben an die
+    /// Probe des Ollama-Anbieters — ohne Freigabe kein Modellaufruf, nach der
+    /// Freigabe läuft die Probe.
+    #[tokio::test]
+    async fn der_host_gibt_die_freigaben_an_die_probe_des_ollama_anbieters_weiter() {
+        use crate::managers::tts::providers::ollama_speech::OLLAMA_ID;
+        use crate::managers::tts::providers::policy::license_fingerprint;
+        use crate::managers::tts::providers::test_http::{speech_reply, FakeServer, Reply, Req};
+        if std::env::consts::OS == "macos" {
+            return; // dort entfällt die Probe (Plattform wird unterstützt)
+        }
+        let server =
+            FakeServer::start(|req: &Req| match (req.method.as_str(), req.path.as_str()) {
+                ("GET", "/api/version") => {
+                    Reply::json(200, serde_json::json!({"version": "0.40.11"}))
+                }
+                ("GET", "/api/tags") => Reply::json(
+                    200,
+                    serde_json::json!({"models": [{"name": "phonon:latest"}]}),
+                ),
+                ("POST", "/v1/audio/speech") => speech_reply(req, Duration::from_millis(1)),
+                _ => Reply::json(404, serde_json::json!({"error": "not found"})),
+            })
+            .await;
+        let host = ProviderHost::new(None);
+        let mut s = TtsProvidersSettings::default();
+        s.ollama_speech.base_url = server.root.clone();
+        s.ollama_speech.probe_speech = true;
+        host.sync(&resolved(&s), &paths());
+
+        let health = || async {
+            host.registry()
+                .health("ollama-speech", Duration::from_secs(4))
+                .await
+                .unwrap()
+        };
+        let h = health().await;
+        assert!(!h.available, "{h:?}");
+        assert_eq!(
+            server.count("/v1/audio/speech"),
+            0,
+            "ohne Freigabe lädt die Probe nichts in Ollama"
+        );
+
+        let provider = host.registry().get("ollama-speech").unwrap();
+        let mut approved = TtsProvidersSettings::default();
+        approved.set_enabled(OLLAMA_ID, true);
+        approved.record_ack(
+            OLLAMA_ID,
+            &license_fingerprint(&provider.descriptor(), &provider.use_subject()),
+            "2026-10-26T00:00:00Z",
+        );
+        host.approvals().set(approved);
+        let h = health().await;
+        assert!(h.available, "{h:?}");
+        assert_eq!(server.count("/v1/audio/speech"), 1);
     }
 
     #[test]
