@@ -42,11 +42,16 @@ Die Commit-Nachrichten nennen keine Testzahlen; **Zahlen siehe PR**. Belegbar im
   `settings.rs` (alte Einstellungsdateien) und `agent_bridge/tools/tts_providers/tests.rs`.
 * Playwright: `apps/local-voice/tests/tts-providers.spec.ts`, angepasst `voice-availability.spec.ts`.
 * Benchmark-Harness: `scripts/bench/tts/test_tts_bench.py` (pytest, ohne App, Netz und GPU).
-* Nicht gelaufen: Live-Läufe echter Anbieter (siehe Grenzen, Messlauf P6).
+* Live-Läufe echter Anbieter: Messlauf P6 vom 26.10.2026 (Piper und Fish), siehe „Benchmark-Ergebnisse“; Phonon nicht gemessen.
 
 ## Benchmark-Ergebnisse
 
-<!-- P6 -->
+Messlauf 26.10.2026 (Piper CPU, Fish CUDA, deutscher Korpus `de-v1`, Debug-Build 0.21.18, GPU nicht exklusiv), je 0 Fehler:
+
+* Piper `de_DE-thorsten-high`: TTFA = Gesamtdauer, Median 1069 ms (P95 2155 ms), RTF 0,255; WER 6,64 %, CER 3,10 %.
+* Fish `s2-pro`: TTFA Median 3733 ms (P95 13616 ms), RTF 0,820; Serverstart kalt Median 68 s; WER 4,85 %, CER 2,33 %; VRAM-Delta 20,3 GB.
+* Keine der Zielwerte TTFA < 200 ms und RTF < 0,2 erreicht; WER < 5 % nur von Fish. Phonon, Ollama-Speech, Kokoro, XTTS-v2, F5-TTS nicht gemessen (Gründe im Bericht).
+* Methode, Grenzen, Befehle: [benchmark.md](benchmark.md); Rohbericht: [benchmarks/2026-10-26/report.md](benchmarks/2026-10-26/report.md). Hörtest-Paket erzeugt, noch nicht bewertet.
 
 ## Bekannte Grenzen
 

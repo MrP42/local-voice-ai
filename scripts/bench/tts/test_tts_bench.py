@@ -274,6 +274,14 @@ def test_default_config_has_required_rows_and_reasons():
     assert all(c.warm_runs == 30 and c.cold_runs == 3 for c in cfgs.values() if c.id in ("piper-thorsten-high-cpu", "fish-s2-pro-cuda"))
 
 
+def test_fish_job_cap_leaves_room_for_the_model_load():
+    # Messlauf 26.10.2026: mit 16 GB Job-Deckel starb der Fish-Server beim Laden mit 0xc0000005
+    # (er braucht kurzzeitig ~48 GB Commit, vgl. process_guard.rs). Der Deckel muss darueber liegen.
+    cfgs = {c.id: c for c in cfgmod.load()}
+    assert cfgs["fish-s2-pro-cuda"].memory_limit_mb >= 49152
+    assert cfgs["piper-thorsten-high-cpu"].memory_limit_mb <= 16384
+
+
 def test_config_validation(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text('[[config]]\nid="a"\nprovider="x"\nstatus="kaputt"\n', encoding="utf-8")
@@ -627,6 +635,19 @@ def test_asr_app_cli_end_to_end_resamples_and_records_engine(bench_env, monkeypa
     assert item["hyp"] == "das ist ein test"
     src = run_dir / "piper-x" / "wavs" / item["wav"]
     assert abs(calls[0]["audio_secs"] - sf.info(str(src)).duration) < 0.01  # Resampling erhält die Dauer
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Attrappe ist ein .cmd (Windows)")
+def test_report_after_app_cli_asr_has_no_version_field(bench_env, monkeypatch):
+    # Messlauf 26.10.2026: app-cli liefert keine ASR-"version" (nur app_version/exe); der Bericht brach mit KeyError ab.
+    _fake_run(bench_env, "appasr2")
+    monkeypatch.setenv("FAKE_ASR_TEXT", "das ist ein test")
+    exe = _fake_asr_exe(bench_env)
+    assert tts_bench.main(["asr", "--run", "appasr2", "--engine", "app-cli", "--exe", str(exe), "--min-free-ram-mb", "1"]) == 0
+    out = bench_env / "rep"
+    assert tts_bench.main(["report", "--runs", "appasr2", "--out", str(out)]) == 0
+    md = (out / "report.md").read_text(encoding="utf-8")
+    assert "app-cli" in md and "whisper-large-v3-turbo-Q8_0.gguf" in md and "vNone" not in md
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Attrappe ist ein .cmd (Windows)")

@@ -248,6 +248,20 @@ def _stat_row(label: str, s: dict | None, nd: int, n_fail: str) -> list[str]:
     return [label, str(s["n"]), n_fail] + [de(s[k], nd) for k in _STAT_KEYS]
 
 
+def _asr_label(a: dict) -> str:
+    """ASR-Zeile: Engine, Modell, Compute-Typ, Geraet, Version; app-cli hat keine `version`, dann App-Version bzw. Exe-Stand."""
+    ver = a.get("version")
+    if ver:
+        stand = f"v{ver}"
+    elif a.get("app_version"):
+        stand = f"App {a['app_version']}"
+    elif a.get("exe_mtime"):
+        stand = f"Exe vom {a['exe_mtime']}"
+    else:
+        stand = "Version unbekannt"
+    return f"{a.get('engine')} {a.get('model')} ({a.get('compute_type')}, {a.get('device')}, {stand})"
+
+
 def render_markdown(results: dict) -> str:
     L: list[str] = []
     measured = [c for c in results["configs"] if c["status"] == "measured"]
@@ -306,7 +320,7 @@ def render_markdown(results: dict) -> str:
         for c in measured:
             q = c["quality"]
             if q:
-                qrows.append([c["id"], f"{q['asr']['engine']} {q['asr']['model']} ({q['asr']['compute_type']}, {q['asr']['device']}, v{q['asr']['version']})",
+                qrows.append([c["id"], _asr_label(q["asr"]),
                               str(q["n"]), de(100 * q["wer"], 2), de(100 * q["cer"], 2)])
                 cats += [k for k in q["by_category"] if k not in cats]
             else:

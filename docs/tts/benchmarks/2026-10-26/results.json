@@ -1,0 +1,1108 @@
+{
+  "schema": "tts-bench-results/1",
+  "generated_at": "2026-10-26T20:29:00.243Z",
+  "harness_version": "tts-bench/1.0.0",
+  "norm_version": "norm-v1",
+  "runs": [
+    {
+      "run_id": "2026-10-26-piper-lat",
+      "source": "app",
+      "created_at": "2026-10-26T18:16:52.495Z",
+      "finished_at": "2026-10-26T18:24:19.941Z",
+      "overrides": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-piper-full",
+      "source": "app",
+      "created_at": "2026-10-26T19:52:00.225Z",
+      "finished_at": "2026-10-26T19:54:22.923Z",
+      "overrides": {
+        "warm": 1,
+        "cold": 0,
+        "subset": "full",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-fish-lat",
+      "source": "app",
+      "created_at": "2026-10-26T18:36:28.287Z",
+      "finished_at": "2026-10-26T19:51:29.813Z",
+      "overrides": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-fish-full",
+      "source": "app",
+      "created_at": "2026-10-26T19:54:23.443Z",
+      "finished_at": "2026-10-26T20:03:24.966Z",
+      "overrides": {
+        "warm": 1,
+        "cold": 0,
+        "subset": "full",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-status",
+      "source": "app",
+      "created_at": "2026-10-26T20:28:01.186Z",
+      "finished_at": "2026-10-26T20:28:01.189Z",
+      "overrides": {
+        "warm": null,
+        "cold": null,
+        "subset": null,
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    }
+  ],
+  "corpora": {
+    "de-v1": {
+      "name": "de-v1",
+      "sha256": "370572db1ae15baa2915b9c8f38667341d187b2eabe6acc09b939de95acb0c22",
+      "count": 123,
+      "smoke_count": 12,
+      "snapshot": "corpus/de-v1.jsonl"
+    }
+  },
+  "host": {
+    "os": "Windows 10 (10.0.26200)",
+    "machine": "AMD64",
+    "cpu": "13th Gen Intel(R) Core(TM) i9-13900K",
+    "cpu_logical": 32,
+    "cpu_physical": 24,
+    "ram_total_mb": 65299,
+    "gpu": {
+      "available": true,
+      "gpus": [
+        {
+          "index": 0,
+          "name": "NVIDIA GeForce RTX 4090",
+          "driver": "621.01",
+          "memory_total_mb": 24564.0,
+          "memory_used_mb": 8313.0,
+          "util_pct": 0.0
+        }
+      ],
+      "cuda_version": "13.5",
+      "cuda_reason": null
+    },
+    "python": "3.11.9",
+    "git": {
+      "commit": "c21d9fabfcfa095745b434e97fa9236e562e083b",
+      "branch": "feat/tts-provider",
+      "dirty_harness": false
+    },
+    "timestamp": "2026-10-26T18:16:52.493Z"
+  },
+  "targets": {
+    "ttfa_ms": 200.0,
+    "rtf": 0.2,
+    "wer": 0.05,
+    "note": "Ziele aus dem Goal, keine Zusagen (TTFA < 200 ms, RTF < 0,2, WER < 5 %)"
+  },
+  "configs": [
+    {
+      "id": "piper-thorsten-high-cpu",
+      "provider": "piper",
+      "voice": "de_DE-thorsten-high",
+      "language": "de",
+      "device_expected": "cpu",
+      "status": "measured",
+      "reason": null,
+      "note": "Referenz: lokaler Subprozess je Satz, kein Streaming.",
+      "runs": [
+        "2026-10-26-piper-lat",
+        "2026-10-26-piper-full"
+      ],
+      "metrics": {
+        "rows_total": 519,
+        "rows_ok": 519,
+        "rows_failed": 0,
+        "errors_by_kind": {},
+        "warm": {
+          "n": 483,
+          "ttfa_ms": {
+            "n": 483,
+            "median": 1069.1,
+            "p90": 1286.7780000000005,
+            "p95": 2154.5209999999997,
+            "mean": 1128.6808488612844,
+            "stdev": 337.53226980121735,
+            "min": 539.78,
+            "max": 2313.15
+          },
+          "total_ms": {
+            "n": 483,
+            "median": 1069.1,
+            "p90": 1286.7780000000005,
+            "p95": 2154.5209999999997,
+            "mean": 1128.6808488612844,
+            "stdev": 337.53226980121735,
+            "min": 539.78,
+            "max": 2313.15
+          },
+          "rtf": {
+            "n": 483,
+            "median": 0.2554282968863816,
+            "p90": 0.28981411330492046,
+            "p95": 0.2978697171496162,
+            "mean": 0.2573848767315949,
+            "stdev": 0.028172152560742965,
+            "min": 0.1930706870621034,
+            "max": 0.43767483722401057
+          },
+          "audio_ms": {
+            "n": 483,
+            "median": 4240.27,
+            "p90": 5361.796,
+            "p95": 10725.606,
+            "mean": 4553.998778467909,
+            "stdev": 1976.5217958279502,
+            "min": 1233.29,
+            "max": 11241.09
+          },
+          "max_gap_ms": {
+            "n": 483,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          }
+        },
+        "cold": {
+          "n": 36,
+          "ttfa_ms": {
+            "n": 36,
+            "median": 1080.885,
+            "p90": 1182.2399999999998,
+            "p95": 2085.535,
+            "mean": 1123.0655555555556,
+            "stdev": 335.3992513361134,
+            "min": 838.53,
+            "max": 2258.08
+          },
+          "total_ms": {
+            "n": 36,
+            "median": 1080.885,
+            "p90": 1182.2399999999998,
+            "p95": 2085.535,
+            "mean": 1123.0655555555556,
+            "stdev": 335.3992513361134,
+            "min": 838.53,
+            "max": 2258.08
+          },
+          "rtf": {
+            "n": 36,
+            "median": 0.2523263013183805,
+            "p90": 0.2852328152511046,
+            "p95": 0.2871240592713494,
+            "mean": 0.2531761694231517,
+            "stdev": 0.02600024487925281,
+            "min": 0.19233681617325654,
+            "max": 0.3140574850053265
+          },
+          "audio_ms": {
+            "n": 36,
+            "median": 4398.32,
+            "p90": 5047.165,
+            "p95": 10797.0075,
+            "mean": 4609.221944444445,
+            "stdev": 2058.851551834274,
+            "min": 2919.37,
+            "max": 11183.04
+          },
+          "max_gap_ms": {
+            "n": 36,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "process_start_ms": null
+        },
+        "chunked_rows": 0,
+        "rtf_mismatch_rows": 0,
+        "definitions": "RTF = total_ms / audio_ms; TTFA = Anfrage bis erstes Audio; Perzentile linear interpoliert; nur erfolgreiche Zeilen"
+      },
+      "quality": {
+        "asr": {
+          "engine": "app-cli",
+          "model": "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf",
+          "exe": "D:\\lv-build\\target-dokumente\\debug\\local-voice-ai.exe",
+          "exe_size_bytes": 152503296,
+          "exe_mtime": "2026-10-26T18:11:49Z",
+          "app_version": null,
+          "device": "CPU",
+          "compute_type": "gguf",
+          "bound_backend": "CPU",
+          "language": "App-Einstellung (CLI ohne Sprachoption)",
+          "input": "16 kHz mono PCM16 (vom Harness resampelt)",
+          "resampled_files": 123,
+          "files": 123
+        },
+        "norm_version": "norm-v1",
+        "n": 123,
+        "wer": 0.0664451827242525,
+        "cer": 0.031011137803013757,
+        "ref_words": 1505,
+        "by_category": {
+          "akronyme": {
+            "n": 13,
+            "wer": 0.03597122302158273,
+            "cer": 0.01935483870967742
+          },
+          "alltag": {
+            "n": 12,
+            "wer": 0.0078125,
+            "cer": 0.003931847968545216
+          },
+          "ausdruck": {
+            "n": 12,
+            "wer": 0.02962962962962963,
+            "cer": 0.00997506234413965
+          },
+          "codeswitch": {
+            "n": 12,
+            "wer": 0.1419753086419753,
+            "cer": 0.0472193074501574
+          },
+          "datum": {
+            "n": 13,
+            "wer": 0.07142857142857142,
+            "cer": 0.0351493848857645
+          },
+          "email_url": {
+            "n": 12,
+            "wer": 0.2,
+            "cer": 0.13463751438434982
+          },
+          "fachbegriffe": {
+            "n": 13,
+            "wer": 0.1103448275862069,
+            "cer": 0.024509803921568627
+          },
+          "fragen": {
+            "n": 12,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "lang": {
+            "n": 11,
+            "wer": 0.025,
+            "cer": 0.011981566820276499
+          },
+          "zahlen": {
+            "n": 13,
+            "wer": 0.049019607843137254,
+            "cer": 0.043782837127845885
+          }
+        },
+        "note": "WER/CER sind ein Verständlichkeits-Proxy (ASR liest die Synthese zurück), kein Natürlichkeitsmaß; ASR-Fehler fließen in die Werte ein."
+      },
+      "quality_reason": null,
+      "resources": {
+        "interval_ms": 200,
+        "probe": "psutil",
+        "samples": 646,
+        "ram_peak_mb": 371.89453125,
+        "ram_avg_mb": 229.2786982391641,
+        "ram_reason": null,
+        "ram_note": "Working Set des App-Prozessbaums; extern gestartete Server nicht enthalten",
+        "cpu_avg_pct_of_machine": 45.60979083608247,
+        "cpu_peak_pct_of_machine": 79.49765958618448,
+        "cpu_avg_cores": 14.59513306754637,
+        "cpu_reason": null,
+        "logical_cpus": 32,
+        "gpu": {
+          "available": true,
+          "vram_peak_mb": 3440.0,
+          "vram_baseline_mb": 3433.0,
+          "vram_delta_peak_mb": 7.0,
+          "util_avg_pct": 0.07758620689655173,
+          "util_peak_pct": 23.0,
+          "samples": 696,
+          "reason": null,
+          "note": "VRAM = Gesamtbelegung der GPU (alle Prozesse); Delta gegen Basis vor dem Start"
+        }
+      },
+      "targets": {
+        "ttfa_ms": {
+          "target": 200.0,
+          "value": 1069.1,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "rtf": {
+          "target": 0.2,
+          "value": 0.2554282968863816,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "wer": {
+          "target": 0.05,
+          "value": 0.0664451827242525,
+          "basis": "Korpus-WER (Summe Fehler / Summe Referenzwörter)",
+          "met": false
+        },
+        "note": "Zielwerte sind Ziele aus dem Goal, keine Zusagen."
+      },
+      "device_actual": "cpu",
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      },
+      "env": {
+        "app_version": "0.21.18",
+        "device": "cpu",
+        "language": "de",
+        "model": "de_DE-thorsten-high.onnx",
+        "notes": "Der Anbieter startet je Satz einen eigenen Prozess: Kalt- und Warmläufe unterscheiden sich nur durch den Dateicache, process_start_ms ist nicht messbar.",
+        "provider": "piper",
+        "provider_version": null,
+        "schema": "tts-bench-env/1",
+        "voice": "de_DE-thorsten-high"
+      }
+    },
+    {
+      "id": "fish-s2-pro-cuda",
+      "provider": "fish",
+      "voice": null,
+      "language": "de",
+      "device_expected": "cuda",
+      "status": "measured",
+      "reason": null,
+      "note": "Externer Python-HTTP-Server (C:\\AI\\fish-speech); Server-RAM liegt außerhalb des App-Prozessbaums (siehe README, Grenzen).",
+      "runs": [
+        "2026-10-26-fish-lat",
+        "2026-10-26-fish-full"
+      ],
+      "metrics": {
+        "rows_total": 519,
+        "rows_ok": 519,
+        "rows_failed": 0,
+        "errors_by_kind": {},
+        "warm": {
+          "n": 483,
+          "ttfa_ms": {
+            "n": 483,
+            "median": 3732.81,
+            "p90": 5071.04,
+            "p95": 13616.034999999998,
+            "mean": 4517.080848861287,
+            "stdev": 3018.7183366662766,
+            "min": 1358.74,
+            "max": 15580.12
+          },
+          "total_ms": {
+            "n": 483,
+            "median": 3732.81,
+            "p90": 5071.04,
+            "p95": 13616.034999999998,
+            "mean": 4517.080848861287,
+            "stdev": 3018.7183366662766,
+            "min": 1358.74,
+            "max": 15580.12
+          },
+          "rtf": {
+            "n": 483,
+            "median": 0.8198860512895862,
+            "p90": 1.1363285816191302,
+            "p95": 1.440549032146504,
+            "mean": 0.9177492341147865,
+            "stdev": 0.21114172314956656,
+            "min": 0.6519447176354883,
+            "max": 1.4738713813567892
+          },
+          "audio_ms": {
+            "n": 483,
+            "median": 4365.35,
+            "p90": 5804.99,
+            "p95": 12027.94,
+            "mean": 4803.5965838509355,
+            "stdev": 2351.434417824929,
+            "min": 1718.28,
+            "max": 13885.53
+          },
+          "max_gap_ms": {
+            "n": 483,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          }
+        },
+        "cold": {
+          "n": 36,
+          "ttfa_ms": {
+            "n": 36,
+            "median": 6237.4400000000005,
+            "p90": 7980.825000000001,
+            "p95": 15067.6975,
+            "mean": 6785.3775,
+            "stdev": 2701.705545566541,
+            "min": 4537.12,
+            "max": 15188.65
+          },
+          "total_ms": {
+            "n": 36,
+            "median": 6237.4400000000005,
+            "p90": 7980.825000000001,
+            "p95": 15067.6975,
+            "mean": 6785.3775,
+            "stdev": 2701.705545566541,
+            "min": 4537.12,
+            "max": 15188.65
+          },
+          "rtf": {
+            "n": 36,
+            "median": 1.39559270601766,
+            "p90": 1.514400613662915,
+            "p95": 1.6215980377315227,
+            "mean": 1.436980320256036,
+            "stdev": 0.15168723891028016,
+            "min": 1.262906587382333,
+            "max": 2.1663292131101453
+          },
+          "audio_ms": {
+            "n": 36,
+            "median": 4388.57,
+            "p90": 5781.77,
+            "p95": 11192.02,
+            "mean": 4807.819166666665,
+            "stdev": 2131.3422119920783,
+            "min": 2925.71,
+            "max": 11331.34
+          },
+          "max_gap_ms": {
+            "n": 36,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "process_start_ms": {
+            "n": 36,
+            "median": 68357.38500000001,
+            "p90": 71206.86,
+            "p95": 72692.1725,
+            "mean": 70083.50666666667,
+            "stdev": 7316.403065096947,
+            "min": 66891.45,
+            "max": 111623.56
+          }
+        },
+        "chunked_rows": 0,
+        "rtf_mismatch_rows": 0,
+        "definitions": "RTF = total_ms / audio_ms; TTFA = Anfrage bis erstes Audio; Perzentile linear interpoliert; nur erfolgreiche Zeilen"
+      },
+      "quality": {
+        "asr": {
+          "engine": "app-cli",
+          "model": "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf",
+          "exe": "D:\\lv-build\\target-dokumente\\debug\\local-voice-ai.exe",
+          "exe_size_bytes": 152503296,
+          "exe_mtime": "2026-10-26T18:11:49Z",
+          "app_version": null,
+          "device": "CPU",
+          "compute_type": "gguf",
+          "bound_backend": "CPU",
+          "language": "App-Einstellung (CLI ohne Sprachoption)",
+          "input": "16 kHz mono PCM16 (vom Harness resampelt)",
+          "resampled_files": 123,
+          "files": 123
+        },
+        "norm_version": "norm-v1",
+        "n": 123,
+        "wer": 0.04850498338870432,
+        "cer": 0.02325835335226032,
+        "ref_words": 1505,
+        "by_category": {
+          "akronyme": {
+            "n": 13,
+            "wer": 0.04316546762589928,
+            "cer": 0.016774193548387096
+          },
+          "alltag": {
+            "n": 12,
+            "wer": 0.0078125,
+            "cer": 0.003931847968545216
+          },
+          "ausdruck": {
+            "n": 12,
+            "wer": 0.014814814814814815,
+            "cer": 0.012468827930174564
+          },
+          "codeswitch": {
+            "n": 12,
+            "wer": 0.030864197530864196,
+            "cer": 0.005246589716684155
+          },
+          "datum": {
+            "n": 13,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "email_url": {
+            "n": 12,
+            "wer": 0.18,
+            "cer": 0.12197928653624857
+          },
+          "fachbegriffe": {
+            "n": 13,
+            "wer": 0.11724137931034483,
+            "cer": 0.027450980392156862
+          },
+          "fragen": {
+            "n": 12,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "lang": {
+            "n": 11,
+            "wer": 0.015625,
+            "cer": 0.002304147465437788
+          },
+          "zahlen": {
+            "n": 13,
+            "wer": 0.09803921568627451,
+            "cer": 0.07530647985989491
+          }
+        },
+        "note": "WER/CER sind ein Verständlichkeits-Proxy (ASR liest die Synthese zurück), kein Natürlichkeitsmaß; ASR-Fehler fließen in die Werte ein."
+      },
+      "quality_reason": null,
+      "resources": {
+        "interval_ms": 200,
+        "probe": "psutil",
+        "samples": 2477,
+        "ram_peak_mb": 24120.64453125,
+        "ram_avg_mb": 21540.13725493288,
+        "ram_reason": null,
+        "ram_note": "Working Set des App-Prozessbaums; extern gestartete Server nicht enthalten",
+        "cpu_avg_pct_of_machine": 2.906832797450159,
+        "cpu_peak_pct_of_machine": 32.63643136916403,
+        "cpu_avg_cores": 0.9301864951840515,
+        "cpu_reason": null,
+        "logical_cpus": 32,
+        "gpu": {
+          "available": true,
+          "vram_peak_mb": 23732.0,
+          "vram_baseline_mb": 3434.0,
+          "vram_delta_peak_mb": 20298.0,
+          "util_avg_pct": 79.97281993204983,
+          "util_peak_pct": 100.0,
+          "samples": 2649,
+          "reason": null,
+          "note": "VRAM = Gesamtbelegung der GPU (alle Prozesse); Delta gegen Basis vor dem Start"
+        }
+      },
+      "targets": {
+        "ttfa_ms": {
+          "target": 200.0,
+          "value": 3732.81,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "rtf": {
+          "target": 0.2,
+          "value": 0.8198860512895862,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "wer": {
+          "target": 0.05,
+          "value": 0.04850498338870432,
+          "basis": "Korpus-WER (Summe Fehler / Summe Referenzwörter)",
+          "met": true
+        },
+        "note": "Zielwerte sind Ziele aus dem Goal, keine Zusagen."
+      },
+      "device_actual": "cuda",
+      "device_mismatch": false,
+      "gpu_exclusive": {
+        "exclusive": false,
+        "reason": "51 Compute-Prozess(e) auf der GPU",
+        "other_processes": [
+          {
+            "pid": 9968,
+            "name": "C:\\WINDOWS\\System32\\ShellHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 16112,
+            "name": "C:\\WINDOWS\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 17036,
+            "name": "C:\\WINDOWS\\explorer.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 18436,
+            "name": "C:\\WINDOWS\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 18196,
+            "name": "C:\\WINDOWS\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 23616,
+            "name": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\155.0.4283.62\\msedgewebview2.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 18500,
+            "name": "C:\\Program Files\\LogiOptionsPlus\\logioptionsplus_agent.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 26308,
+            "name": "C:\\Program Files\\NVIDIA Corporation\\NVIDIA app\\CEF\\NVIDIA Overlay.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 28344,
+            "name": "C:\\WINDOWS\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 27200,
+            "name": "C:\\Program Files\\WindowsApps\\Microsoft.YourPhone_1.26082.121.0_x64__8wekyb3d8bbwe\\PhoneExperienceHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 29084,
+            "name": "C:\\Program Files\\WindowsApps\\Microsoft.CommandPalette_0.7.3225.0_x64__8wekyb3d8bbwe\\Microsoft.CmdPal.UI.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 25844,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\PowerToys\\PowerToys.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 29096,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\PowerToys\\WinUI3Apps\\PowerToys.Peek.UI.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 28976,
+            "name": "C:\\Program Files (x86)\\Samsung\\Samsung Magician\\SamsungMagician.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 31192,
+            "name": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\155.0.4283.62\\msedgewebview2.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 34760,
+            "name": "C:\\Program Files\\LGHUB\\system_tray\\lghub_system_tray.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 28000,
+            "name": "C:\\Program Files\\Elgato\\StreamDeck\\StreamDeck.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 35836,
+            "name": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\155.0.4283.62\\msedgewebview2.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 37964,
+            "name": "C:\\Program Files\\WindowsApps\\AppleInc.iCloud_15.10.39.0_x64__nzyj5cx40ttqa\\iCloud\\iCloudHome.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 37076,
+            "name": "C:\\Program Files\\WindowsApps\\Microsoft.6365217CE6EB4_102.2608.18002.0_x64__8wekyb3d8bbwe\\MicrosoftSecurityApp\\MicrosoftSecurityApp.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 4696,
+            "name": "C:\\WINDOWS\\System32\\mmgaserver.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 37284,
+            "name": "C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1021.3705.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 43192,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\1fb7137c46617d50\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 44336,
+            "name": "C:\\Program Files (x86)\\Dropbox\\Client\\Dropbox.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 43736,
+            "name": "C:\\Program Files\\Intel\\Intel Graphics Software\\IntelGraphicsSoftware.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 32088,
+            "name": "C:\\WINDOWS\\System32\\ApplicationFrameHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 45604,
+            "name": "C:\\WINDOWS\\ImmersiveControlPanel\\SystemSettings.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 30160,
+            "name": "C:\\Program Files\\WindowsApps\\Microsoft.ZuneVideo_10.26091.10011.0_x64__8wekyb3d8bbwe\\Video.UI.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 17392,
+            "name": "C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE",
+            "used_mb": null
+          },
+          {
+            "pid": 18884,
+            "name": "C:\\WINDOWS\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 48760,
+            "name": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 26776,
+            "name": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 47780,
+            "name": "C:\\Program Files\\WindowsApps\\5319275A.WhatsAppDesktop_2.2640.100.0_x64__cv1g1gvanyjgm\\WhatsApp.Root.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 10300,
+            "name": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\155.0.4283.62\\msedgewebview2.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 36688,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\Local Voice AI\\local-voice-ai.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 60868,
+            "name": "C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+            "used_mb": null
+          },
+          {
+            "pid": 43504,
+            "name": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 57336,
+            "name": "C:\\Program Files\\WindowsApps\\Microsoft.ScreenSketch_11.2608.41.0_x64__8wekyb3d8bbwe\\SnippingTool\\SnippingTool.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 35564,
+            "name": "C:\\Program Files\\WindowsApps\\RealtekSemiconductorCorp.RealtekAudioControl_1.53.385.0_x64__dt26b99r8h8gj\\RtkUWP.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 19864,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\PowerToys\\PowerToys.PowerLauncher.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 65532,
+            "name": "C:\\Program Files\\WindowsApps\\MSTeams_26260.1723.5246.2360_x64__8wekyb3d8bbwe\\ms-teams.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 70600,
+            "name": "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\155.0.4283.62\\msedgewebview2.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 68028,
+            "name": "C:\\Program Files\\WindowsApps\\MSTeams_26260.1723.5246.2360_x64__8wekyb3d8bbwe\\ms-teams.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 50996,
+            "name": "C:\\Program Files\\WindowsApps\\MSTeams_26260.1723.5246.2360_x64__8wekyb3d8bbwe\\ms-teams.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 50856,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 72544,
+            "name": "C:\\Program Files\\WindowsApps\\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\\app\\claude.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 65620,
+            "name": "C:\\Program Files\\WindowsApps\\Claude_3.6556.2.0_x64__pzs8sxrjxfjjc\\app\\claude.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 32000,
+            "name": "D:\\Spiele\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 27816,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\PowerToys\\PowerToys.ColorPickerUI.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 20848,
+            "name": "C:\\Program Files\\NVIDIA Corporation\\NVIDIA app\\CEF\\NVIDIA Overlay.exe",
+            "used_mb": null
+          },
+          {
+            "pid": 28688,
+            "name": "C:\\Users\\wolff\\AppData\\Local\\PowerToys\\PowerToys.FancyZones.exe",
+            "used_mb": null
+          }
+        ],
+        "util_pct_before": 0.0,
+        "mem_used_mb_before": 3434.0,
+        "note": "Unter Windows (WDDM) listet nvidia-smi nicht alle Prozesse; Auslastung/VRAM vor dem Lauf zusätzlich geprüft."
+      },
+      "flags": [
+        "GPU nicht exklusiv: 51 Compute-Prozess(e) auf der GPU"
+      ],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      },
+      "env": {
+        "app_version": "0.21.18",
+        "device": "cuda",
+        "language": "de",
+        "model": "s2-pro",
+        "notes": null,
+        "provider": "fish",
+        "provider_version": null,
+        "schema": "tts-bench-env/1",
+        "voice": null
+      }
+    },
+    {
+      "id": "phonon-31m-en-cpu",
+      "provider": "phonon",
+      "voice": null,
+      "language": "en",
+      "device_expected": "cpu",
+      "status": "not_tested",
+      "reason": "In diesem Messlauf nicht gemessen: Das Ausführen der heruntergeladenen ptts.exe ist in dieser Umgebung gesperrt (Owner-Freigabe P2L steht aus). Nur Funktionsnachweis (englisch, ohne WER/CER) vorgesehen.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 3,
+        "cold": 1,
+        "subset": "full",
+        "corpus": "en-func-v1"
+      }
+    },
+    {
+      "id": "phonon-40m-de",
+      "provider": "phonon",
+      "voice": null,
+      "language": "de",
+      "device_expected": "cpu",
+      "status": "license_restricted",
+      "reason": "Gewichte gated und CC BY-NC 4.0 (nichtkommerziell): Owner-Entscheidung O1 steht aus, nicht heruntergeladen, nicht gemessen.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      }
+    },
+    {
+      "id": "ollama-speech-windows",
+      "provider": "ollama-speech",
+      "voice": null,
+      "language": "de",
+      "device_expected": "any",
+      "status": "unsupported",
+      "reason": "Speech-Endpunkt laut Ollama-Release-Notes v0.40.11 unter Windows nicht unterstützt; lokaler Client ist 0.34.2, Dienst aus.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      }
+    },
+    {
+      "id": "kokoro",
+      "provider": "kokoro",
+      "voice": null,
+      "language": "de",
+      "device_expected": "any",
+      "status": "unsupported",
+      "reason": "Kein deutsches Modell (Sprachen laut Modellkarte ohne Deutsch); über openai-speech anbindbar, aber für den deutschen Korpus nicht messbar.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      }
+    },
+    {
+      "id": "xtts-v2",
+      "provider": "xtts-v2",
+      "voice": null,
+      "language": "de",
+      "device_expected": "cuda",
+      "status": "not_tested",
+      "reason": "Nicht installiert; Gewichte unter Coqui Public Model License (nichtkommerziell). Kein Adapter im Standard.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      }
+    },
+    {
+      "id": "f5-tts",
+      "provider": "f5-tts",
+      "voice": null,
+      "language": "de",
+      "device_expected": "cuda",
+      "status": "not_tested",
+      "reason": "Nicht installiert; Gewichte CC-BY-NC, Deutsch nur über Community-Finetunes (ebenfalls CC-BY-NC-4.0). Kein Adapter im Standard.",
+      "note": "",
+      "runs": [
+        "2026-10-26-status"
+      ],
+      "metrics": null,
+      "quality": null,
+      "quality_reason": null,
+      "resources": null,
+      "targets": null,
+      "device_actual": null,
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      }
+    }
+  ]
+}

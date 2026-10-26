@@ -30,6 +30,7 @@ id = "fish-s2-pro-cuda"
 provider = "fish"
 voice = ""                 # Standardstimme ohne Referenz; Referenzstimmen als eigene Konfiguration
 device = "cuda"
+memory_limit_mb = 57344    # 56 GB: der Fish-Server braucht beim Laden kurzzeitig ~48 GB Commit; 16 GB endeten mit 0xc0000005
 status = "run"
 note = "Externer Python-HTTP-Server (C:\\AI\\fish-speech); Server-RAM liegt außerhalb des App-Prozessbaums (siehe README, Grenzen)."
 
