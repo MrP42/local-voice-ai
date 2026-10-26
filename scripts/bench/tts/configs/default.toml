@@ -45,16 +45,17 @@ warm_runs = 3
 cold_runs = 1
 device = "cpu"
 quality = false
-status = "run"
+status = "not_tested"
+reason = "Nicht gemessen: das deutsche 40m-Modell wurde gemessen; der englische Funktionsnachweis ist damit entbehrlich (Modell liegt lokal unter D:/lv-build/phonon/models/phonon-31m-en)."
 note = "Nur Funktionsnachweis: englisches Modell, kein Deutsch, daher keine WER/CER und kein Vergleich mit den deutschen Reihen. Nicht installiert -> Ergebnis 'fehlgeschlagen' mit Grund."
 
 [[config]]
-id = "phonon-40m-de"
+id = "phonon-40m-de-cpu"
 provider = "phonon"
-voice = ""
+voice = ""                 # Standardstimme des Checkpoints ("default", laut HF-Karte Anton)
 device = "cpu"
-status = "license_restricted"
-reason = "Gewichte gated und CC BY-NC 4.0 (nichtkommerziell): Owner-Entscheidung O1 steht aus, nicht heruntergeladen, nicht gemessen."
+status = "run"
+note = "Gewichte gradium/phonon-40m-de @79cfc7b4 (CC BY-NC 4.0, Bedingungen am 26.10.2026 vom Owner angenommen, nur nichtkommerzielle Evaluation), lokaler Modellordner, q8, offline; Modell/EXE kommen aus den App-Einstellungen (tts_providers.phonon)."
 
 [[config]]
 id = "ollama-speech-windows"

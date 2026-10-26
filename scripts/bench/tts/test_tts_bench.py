@@ -265,8 +265,9 @@ def test_default_config_has_required_rows_and_reasons():
     assert cfgs["piper-thorsten-high-cpu"].provider == "piper" and cfgs["piper-thorsten-high-cpu"].device == "cpu"
     assert cfgs["piper-thorsten-high-cpu"].voice == "de_DE-thorsten-high"
     assert cfgs["fish-s2-pro-cuda"].device == "cuda" and cfgs["fish-s2-pro-cuda"].status == "run"
-    assert cfgs["phonon-31m-en-cpu"].status == "run" and cfgs["phonon-31m-en-cpu"].quality is False
-    assert cfgs["phonon-40m-de"].status == "license_restricted" and "CC BY-NC" in cfgs["phonon-40m-de"].reason
+    assert cfgs["phonon-31m-en-cpu"].status == "not_tested" and cfgs["phonon-31m-en-cpu"].quality is False
+    # O1 (26.10.2026): Bedingungen angenommen -> Deutsch wird gemessen, Lizenz bleibt im Hinweis sichtbar
+    assert cfgs["phonon-40m-de-cpu"].status == "run" and "CC BY-NC" in cfgs["phonon-40m-de-cpu"].note
     assert cfgs["ollama-speech-windows"].status == "unsupported" and "0.40.11" in cfgs["ollama-speech-windows"].reason
     assert cfgs["kokoro"].status == "unsupported" and "Deutsch" in cfgs["kokoro"].reason
     assert cfgs["xtts-v2"].status == "not_tested" and cfgs["f5-tts"].status == "not_tested"
@@ -548,7 +549,7 @@ def test_report_merges_latency_and_quality_runs(bench_env):
 def test_run_dry_run_starts_nothing(bench_env, capsys):
     assert tts_bench.main(["run", "--dry-run", "--source", "fake"]) == 0
     out = capsys.readouterr().out
-    assert "piper-thorsten-high-cpu" in out and "license_restricted" in out
+    assert "piper-thorsten-high-cpu" in out and "not_tested" in out and "unsupported" in out
     assert not (runner.tts_root()).exists() or not any(runner.tts_root().glob("*/run.json"))
 
 

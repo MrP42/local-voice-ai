@@ -38,6 +38,7 @@ Latenz, warm, Median / P90 / P95, Fehler = fehlgeschlagene Zeilen (alle 0):
 |---|---|---|---|
 | Piper `de_DE-thorsten-high`, CPU | 1069 / 1287 / 2155 | 0,255 / 0,290 / 0,298 | 0 von 483 |
 | Fish `s2-pro`, CUDA, Standardstimme | 3733 / 5071 / 13616 | 0,820 / 1,136 / 1,441 | 0 von 483 |
+| Phonon `phonon-40m-de` q8, CPU, Standardstimme | 999 / 1567 / 2080 | 0,240 / 0,312 / 0,332 | 0 von 483 |
 
 Kaltstart (36 Zeilen je Anbieter, alle ok): Piper erste Synthese Median 1081 ms (Prozessstart nicht messbar). Fish Serverstart
 Median 68,4 s (Max 111,6 s, der erste Start des Laufs mit kaltem Cache), erste Synthese danach Median 6237 ms.
@@ -48,28 +49,29 @@ Verständlichkeit (123 Sätze, ASR `app-cli`, Whisper large-v3-turbo Q8_0 aus de
 |---|---|---|---|
 | Piper | 6,64 % | 3,10 % | E-Mail/URL 20,0 %, Codeswitch 14,2 %, Fachbegriffe 11,0 % |
 | Fish | 4,85 % | 2,33 % | E-Mail/URL 18,0 %, Fachbegriffe 11,7 %, Zahlen 9,8 % |
+| Phonon 40m-de | 2,26 % | 1,15 % | Fachbegriffe 7,6 %, E-Mail/URL 7,3 %, Codeswitch 2,5 % |
 
 Ressourcen (Peak): Piper RAM 372 MB, CPU im Mittel 45,6 % der Maschine, VRAM-Delta 7 MB. Fish RAM 24,1 GB (enthält offenbar den von der App
 selbst gestarteten Server), VRAM-Delta 20,3 GB (Gesamtwert 23,7 GB), GPU-Last im Mittel 80 %.
 
 ## Zielwerte (Ziele, keine Zusagen)
 
-| Ziel | Piper | Fish |
-|---|---|---|
-| TTFA < 200 ms | nein (1069 ms) | nein (3733 ms) |
-| RTF < 0,2 | nein (0,255) | nein (0,820) |
-| WER < 5 % | nein (6,64 %) | ja (4,85 %; knapp, ASR-abhängig) |
+| Ziel | Piper | Fish | Phonon 40m-de |
+|---|---|---|---|
+| TTFA < 200 ms | nein (1069 ms) | nein (3733 ms) | nein (999 ms) |
+| RTF < 0,2 | nein (0,255) | nein (0,820) | nein (0,240) |
+| WER < 5 % | nein (6,64 %) | ja (4,85 %; knapp, ASR-abhängig) | ja (2,26 %) |
+
+Phonon (Nachlauf 26.10.2026 abends, nach Owner-Freigabe O1/P2L): Kaltlauf Median 1246 ms, RAM-Peak 333 MB, CPU im Mittel 45,9 %. Der Adapter startet `ptts.exe` je Satz neu (Modell laden + ganze Datei, satzweise); `ptts` selbst meldete im Direkttest „first chunk 166ms“ und RTF 0,26. Ein Streaming-Weg (z. B. `ptts-openai-server` über den Anbieter `openai-speech`) könnte den ersten Ton deutlich früher liefern; nicht gemessen.
 
 Hinweis: Bei Satz-Streaming ohne Teil-Audio ist TTFA die ganze Synthesedauer; die TTFA-Zeile misst das nicht anders.
 
 ## Nicht gemessen (mit Grund)
 
-- **Phonon 31m-en:** in diesem Lauf nicht gemessen, weil das Ausführen der heruntergeladenen `ptts.exe` in dieser Umgebung
-  gesperrt ist (Owner-Freigabe P2L steht aus).
-- **Phonon 40m-de:** Lizenz eingeschränkt (CC BY-NC 4.0, Owner-Entscheidung O1 offen), nicht geladen.
+- **Phonon 31m-en:** nicht gemessen; das deutsche 40m-Modell wurde gemessen, der englische Funktionsnachweis ist entbehrlich.
 - **Ollama-Speech:** unter Windows nicht unterstützt (Release Notes v0.40.11; lokal 0.34.2).
 - **Kokoro:** kein deutsches Modell. **XTTS-v2, F5-TTS:** nicht installiert, nichtkommerzielle Gewichte, nicht getestet.
-- Blindhörtest: Paket erzeugt (40 Proben, Seed 20261026, Schlüssel getrennt), **nicht bewertet**; es gibt keine Natürlichkeitswerte.
+- Blindhörtest: Paket erzeugt (60 Proben, Piper/Fish/Phonon, Seed 20261026, Schlüssel getrennt), **nicht bewertet**; es gibt keine Natürlichkeitswerte.
 
 ## Grenzen
 

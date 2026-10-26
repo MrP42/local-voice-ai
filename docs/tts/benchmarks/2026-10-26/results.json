@@ -1,6 +1,6 @@
 {
   "schema": "tts-bench-results/1",
-  "generated_at": "2026-10-26T20:29:00.243Z",
+  "generated_at": "2026-10-26T21:41:58.825Z",
   "harness_version": "tts-bench/1.0.0",
   "norm_version": "norm-v1",
   "runs": [
@@ -57,10 +57,36 @@
       "harness_version": "tts-bench/1.0.0"
     },
     {
-      "run_id": "2026-10-26-status",
+      "run_id": "2026-10-26-phonon-lat",
       "source": "app",
-      "created_at": "2026-10-26T20:28:01.186Z",
-      "finished_at": "2026-10-26T20:28:01.189Z",
+      "created_at": "2026-10-26T21:18:21.599Z",
+      "finished_at": "2026-10-26T21:25:54.433Z",
+      "overrides": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-phonon-full2",
+      "source": "app",
+      "created_at": "2026-10-26T21:26:14.667Z",
+      "finished_at": "2026-10-26T21:28:40.571Z",
+      "overrides": {
+        "warm": 1,
+        "cold": 0,
+        "subset": "full",
+        "seed": 1
+      },
+      "harness_version": "tts-bench/1.0.0"
+    },
+    {
+      "run_id": "2026-10-26-status2",
+      "source": "app",
+      "created_at": "2026-10-26T21:41:58.464Z",
+      "finished_at": "2026-10-26T21:41:58.465Z",
       "overrides": {
         "warm": null,
         "cold": null,
@@ -937,16 +963,289 @@
       }
     },
     {
+      "id": "phonon-40m-de-cpu",
+      "provider": "phonon",
+      "voice": null,
+      "language": "de",
+      "device_expected": "cpu",
+      "status": "measured",
+      "reason": null,
+      "note": "Gewichte gradium/phonon-40m-de @79cfc7b4 (CC BY-NC 4.0, Bedingungen am 26.10.2026 vom Owner angenommen, nur nichtkommerzielle Evaluation), lokaler Modellordner, q8, offline; Modell/EXE kommen aus den App-Einstellungen (tts_providers.phonon).",
+      "runs": [
+        "2026-10-26-phonon-lat",
+        "2026-10-26-phonon-full2"
+      ],
+      "metrics": {
+        "rows_total": 519,
+        "rows_ok": 519,
+        "rows_failed": 0,
+        "errors_by_kind": {},
+        "warm": {
+          "n": 483,
+          "ttfa_ms": {
+            "n": 483,
+            "median": 999.28,
+            "p90": 1567.478,
+            "p95": 2080.056,
+            "mean": 1130.0831677018632,
+            "stdev": 364.4965456810102,
+            "min": 573.66,
+            "max": 2694.8
+          },
+          "total_ms": {
+            "n": 483,
+            "median": 999.28,
+            "p90": 1567.478,
+            "p95": 2080.056,
+            "mean": 1130.0831677018632,
+            "stdev": 364.4965456810102,
+            "min": 573.66,
+            "max": 2694.8
+          },
+          "rtf": {
+            "n": 483,
+            "median": 0.23994927536231883,
+            "p90": 0.3120672727272727,
+            "p95": 0.33233986765922247,
+            "mean": 0.2505550110067632,
+            "stdev": 0.040227688325317576,
+            "min": 0.1630100806451613,
+            "max": 0.3977027027027027
+          },
+          "audio_ms": {
+            "n": 483,
+            "median": 4320.0,
+            "p90": 5104.000000000001,
+            "p95": 10560.0,
+            "mean": 4635.031055900621,
+            "stdev": 1874.4179038535246,
+            "min": 1840.0,
+            "max": 11120.0
+          },
+          "max_gap_ms": {
+            "n": 483,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          }
+        },
+        "cold": {
+          "n": 36,
+          "ttfa_ms": {
+            "n": 36,
+            "median": 1246.29,
+            "p90": 1516.905,
+            "p95": 2812.71,
+            "mean": 1366.231111111111,
+            "stdev": 490.1171948525768,
+            "min": 817.25,
+            "max": 2921.01
+          },
+          "total_ms": {
+            "n": 36,
+            "median": 1246.29,
+            "p90": 1516.905,
+            "p95": 2812.71,
+            "mean": 1366.231111111111,
+            "stdev": 490.1171948525768,
+            "min": 817.25,
+            "max": 2921.01
+          },
+          "rtf": {
+            "n": 36,
+            "median": 0.2973904449884792,
+            "p90": 0.3295793981481482,
+            "p95": 0.3581108630952381,
+            "mean": 0.2984849856061918,
+            "stdev": 0.029749490431218616,
+            "min": 0.2269818181818182,
+            "max": 0.3710119047619047
+          },
+          "audio_ms": {
+            "n": 36,
+            "median": 4360.0,
+            "p90": 4960.0,
+            "p95": 10560.0,
+            "mean": 4640.0,
+            "stdev": 1893.8215333024386,
+            "min": 3120.0,
+            "max": 10560.0
+          },
+          "max_gap_ms": {
+            "n": 36,
+            "median": 0.0,
+            "p90": 0.0,
+            "p95": 0.0,
+            "mean": 0.0,
+            "stdev": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "process_start_ms": null
+        },
+        "chunked_rows": 0,
+        "rtf_mismatch_rows": 0,
+        "definitions": "RTF = total_ms / audio_ms; TTFA = Anfrage bis erstes Audio; Perzentile linear interpoliert; nur erfolgreiche Zeilen"
+      },
+      "quality": {
+        "asr": {
+          "engine": "app-cli",
+          "model": "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf",
+          "exe": "D:\\lv-build\\target-dokumente\\debug\\local-voice-ai.exe",
+          "exe_size_bytes": 152503296,
+          "exe_mtime": "2026-10-26T18:11:49Z",
+          "app_version": null,
+          "device": "CPU",
+          "compute_type": "gguf",
+          "bound_backend": "CPU",
+          "language": "App-Einstellung (CLI ohne Sprachoption)",
+          "input": "16 kHz mono PCM16 (vom Harness resampelt)",
+          "resampled_files": 123,
+          "files": 123
+        },
+        "norm_version": "norm-v1",
+        "n": 123,
+        "wer": 0.022591362126245847,
+        "cer": 0.011465385455339594,
+        "ref_words": 1505,
+        "by_category": {
+          "akronyme": {
+            "n": 13,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "alltag": {
+            "n": 12,
+            "wer": 0.0078125,
+            "cer": 0.003931847968545216
+          },
+          "ausdruck": {
+            "n": 12,
+            "wer": 0.014814814814814815,
+            "cer": 0.007481296758104738
+          },
+          "codeswitch": {
+            "n": 12,
+            "wer": 0.024691358024691357,
+            "cer": 0.002098635886673662
+          },
+          "datum": {
+            "n": 13,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "email_url": {
+            "n": 12,
+            "wer": 0.07333333333333333,
+            "cer": 0.07019562715765247
+          },
+          "fachbegriffe": {
+            "n": 13,
+            "wer": 0.07586206896551724,
+            "cer": 0.016666666666666666
+          },
+          "fragen": {
+            "n": 12,
+            "wer": 0.0,
+            "cer": 0.0
+          },
+          "lang": {
+            "n": 11,
+            "wer": 0.015625,
+            "cer": 0.007373271889400922
+          },
+          "zahlen": {
+            "n": 13,
+            "wer": 0.0,
+            "cer": 0.0
+          }
+        },
+        "note": "WER/CER sind ein Verständlichkeits-Proxy (ASR liest die Synthese zurück), kein Natürlichkeitsmaß; ASR-Fehler fließen in die Werte ein."
+      },
+      "quality_reason": null,
+      "resources": {
+        "interval_ms": 200,
+        "probe": "psutil",
+        "samples": 651,
+        "ram_peak_mb": 332.68359375,
+        "ram_avg_mb": 220.1848358294931,
+        "ram_reason": null,
+        "ram_note": "Working Set des App-Prozessbaums; extern gestartete Server nicht enthalten",
+        "cpu_avg_pct_of_machine": 45.92523924470967,
+        "cpu_peak_pct_of_machine": 95.56711676457702,
+        "cpu_avg_cores": 14.696076558307082,
+        "cpu_reason": null,
+        "logical_cpus": 32,
+        "gpu": {
+          "available": true,
+          "vram_peak_mb": 7402.0,
+          "vram_baseline_mb": 7402.0,
+          "vram_delta_peak_mb": 0.0,
+          "util_avg_pct": 1.050420168067227,
+          "util_peak_pct": 14.0,
+          "samples": 714,
+          "reason": null,
+          "note": "VRAM = Gesamtbelegung der GPU (alle Prozesse); Delta gegen Basis vor dem Start"
+        }
+      },
+      "targets": {
+        "ttfa_ms": {
+          "target": 200.0,
+          "value": 999.28,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "rtf": {
+          "target": 0.2,
+          "value": 0.23994927536231883,
+          "basis": "Median, warm",
+          "met": false
+        },
+        "wer": {
+          "target": 0.05,
+          "value": 0.022591362126245847,
+          "basis": "Korpus-WER (Summe Fehler / Summe Referenzwörter)",
+          "met": true
+        },
+        "note": "Zielwerte sind Ziele aus dem Goal, keine Zusagen."
+      },
+      "device_actual": "cpu",
+      "device_mismatch": false,
+      "gpu_exclusive": null,
+      "flags": [],
+      "effective": {
+        "warm": 30,
+        "cold": 3,
+        "subset": "smoke",
+        "corpus": "de-v1"
+      },
+      "env": {
+        "app_version": "0.21.18",
+        "device": "cpu",
+        "language": "de",
+        "model": "D:/lv-build/phonon/models/phonon-40m-de",
+        "notes": "Der Anbieter startet je Satz einen eigenen Prozess: Kalt- und Warmläufe unterscheiden sich nur durch den Dateicache, process_start_ms ist nicht messbar.",
+        "provider": "phonon",
+        "provider_version": "0.4.2",
+        "schema": "tts-bench-env/1",
+        "voice": null
+      }
+    },
+    {
       "id": "phonon-31m-en-cpu",
       "provider": "phonon",
       "voice": null,
       "language": "en",
       "device_expected": "cpu",
       "status": "not_tested",
-      "reason": "In diesem Messlauf nicht gemessen: Das Ausführen der heruntergeladenen ptts.exe ist in dieser Umgebung gesperrt (Owner-Freigabe P2L steht aus). Nur Funktionsnachweis (englisch, ohne WER/CER) vorgesehen.",
+      "reason": "Nicht gemessen: Das deutsche Modell phonon-40m-de wurde gemessen; der englische Funktionsnachweis ist damit entbehrlich (Modell liegt lokal unter D:/lv-build/phonon/models/phonon-31m-en).",
       "note": "",
       "runs": [
-        "2026-10-26-status"
+        "2026-10-26-status2"
       ],
       "metrics": null,
       "quality": null,
@@ -965,34 +1264,6 @@
       }
     },
     {
-      "id": "phonon-40m-de",
-      "provider": "phonon",
-      "voice": null,
-      "language": "de",
-      "device_expected": "cpu",
-      "status": "license_restricted",
-      "reason": "Gewichte gated und CC BY-NC 4.0 (nichtkommerziell): Owner-Entscheidung O1 steht aus, nicht heruntergeladen, nicht gemessen.",
-      "note": "",
-      "runs": [
-        "2026-10-26-status"
-      ],
-      "metrics": null,
-      "quality": null,
-      "quality_reason": null,
-      "resources": null,
-      "targets": null,
-      "device_actual": null,
-      "device_mismatch": false,
-      "gpu_exclusive": null,
-      "flags": [],
-      "effective": {
-        "warm": 30,
-        "cold": 3,
-        "subset": "smoke",
-        "corpus": "de-v1"
-      }
-    },
-    {
       "id": "ollama-speech-windows",
       "provider": "ollama-speech",
       "voice": null,
@@ -1002,7 +1273,7 @@
       "reason": "Speech-Endpunkt laut Ollama-Release-Notes v0.40.11 unter Windows nicht unterstützt; lokaler Client ist 0.34.2, Dienst aus.",
       "note": "",
       "runs": [
-        "2026-10-26-status"
+        "2026-10-26-status2"
       ],
       "metrics": null,
       "quality": null,
@@ -1030,7 +1301,7 @@
       "reason": "Kein deutsches Modell (Sprachen laut Modellkarte ohne Deutsch); über openai-speech anbindbar, aber für den deutschen Korpus nicht messbar.",
       "note": "",
       "runs": [
-        "2026-10-26-status"
+        "2026-10-26-status2"
       ],
       "metrics": null,
       "quality": null,
@@ -1058,7 +1329,7 @@
       "reason": "Nicht installiert; Gewichte unter Coqui Public Model License (nichtkommerziell). Kein Adapter im Standard.",
       "note": "",
       "runs": [
-        "2026-10-26-status"
+        "2026-10-26-status2"
       ],
       "metrics": null,
       "quality": null,
@@ -1086,7 +1357,7 @@
       "reason": "Nicht installiert; Gewichte CC-BY-NC, Deutsch nur über Community-Finetunes (ebenfalls CC-BY-NC-4.0). Kein Adapter im Standard.",
       "note": "",
       "runs": [
-        "2026-10-26-status"
+        "2026-10-26-status2"
       ],
       "metrics": null,
       "quality": null,

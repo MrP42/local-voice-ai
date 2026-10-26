@@ -42,7 +42,7 @@ Die Commit-Nachrichten nennen keine Testzahlen; **Zahlen siehe PR**. Belegbar im
   `settings.rs` (alte Einstellungsdateien) und `agent_bridge/tools/tts_providers/tests.rs`.
 * Playwright: `apps/local-voice/tests/tts-providers.spec.ts`, angepasst `voice-availability.spec.ts`.
 * Benchmark-Harness: `scripts/bench/tts/test_tts_bench.py` (pytest, ohne App, Netz und GPU).
-* Live-Läufe echter Anbieter: Messlauf P6 vom 26.10.2026 (Piper und Fish), siehe „Benchmark-Ergebnisse“; Phonon nicht gemessen.
+* Live-Läufe echter Anbieter: Messlauf P6 vom 26.10.2026 (Piper und Fish) und Phonon-Nachlauf am Abend (nach Owner-Freigabe), siehe „Benchmark-Ergebnisse“.
 
 ## Benchmark-Ergebnisse
 
@@ -50,7 +50,8 @@ Messlauf 26.10.2026 (Piper CPU, Fish CUDA, deutscher Korpus `de-v1`, Debug-Build
 
 * Piper `de_DE-thorsten-high`: TTFA = Gesamtdauer, Median 1069 ms (P95 2155 ms), RTF 0,255; WER 6,64 %, CER 3,10 %.
 * Fish `s2-pro`: TTFA Median 3733 ms (P95 13616 ms), RTF 0,820; Serverstart kalt Median 68 s; WER 4,85 %, CER 2,33 %; VRAM-Delta 20,3 GB.
-* Keine der Zielwerte TTFA < 200 ms und RTF < 0,2 erreicht; WER < 5 % nur von Fish. Phonon, Ollama-Speech, Kokoro, XTTS-v2, F5-TTS nicht gemessen (Gründe im Bericht).
+* Phonon `phonon-40m-de` q8 (CPU, CC BY-NC 4.0, nichtkommerzielle Evaluation): TTFA = Gesamtdauer, Median 999 ms (P95 2080 ms), RTF 0,240; WER 2,26 %, CER 1,15 %.
+* Keine der Zielwerte TTFA < 200 ms und RTF < 0,2 erreicht; WER < 5 % von Fish und Phonon. Ollama-Speech, Kokoro, XTTS-v2, F5-TTS nicht gemessen (Gründe im Bericht).
 * Methode, Grenzen, Befehle: [benchmark.md](benchmark.md); Rohbericht: [benchmarks/2026-10-26/report.md](benchmarks/2026-10-26/report.md). Hörtest-Paket erzeugt, noch nicht bewertet.
 
 ## Bekannte Grenzen
@@ -70,9 +71,7 @@ Messlauf 26.10.2026 (Piper CPU, Fish CUDA, deutscher Korpus `de-v1`, Debug-Build
 
 ## Offene Entscheidungen (Owner)
 
-* **O1 Phonon `40m-de`**: einzige deutsche Phonon-Gewichte, gated und CC BY-NC 4.0; Bedingungen auf Hugging Face annehmen
-  und `HF_TOKEN` setzen. Vorschlag laut Goal: nur interne, nichtkommerzielle Evaluation, kein Ausliefern.
-* **P2L Ausführung `ptts.exe`**: der Auto-Mode-Klassifikator sperrt das Ausführen der heruntergeladenen `ptts.exe`
-  (Befund B1); der Live-Lauf von Phonon (WAV-Beleg, Benchmark-Zeile) wartet auf die Erlaubnis.
+* **O1 Phonon `40m-de`** (entschieden 26.10.2026): Bedingungen angenommen, nur interne, nichtkommerzielle Evaluation, kein Ausliefern; Modell lokal `D:/lv-build/phonon/models/phonon-40m-de` @79cfc7b4.
+* **Ältere installierte App verwirft `tts_providers`**: Läuft eine App-Version ohne dieses Feld parallel, entfernt sie es beim nächsten Speichern der Einstellungen (beobachtet 26.10.2026, Opt-in und Zustimmung waren danach weg, die Sperre griff korrekt). Erst nach dem Update aller laufenden Instanzen verlässlich.
 * **B3 thorsten (geklaert 26.10.: Modell von lessac/Blizzard-2013 abgeleitet, Katalog non_commercial korrekt)**: Datensatz CC0 laut Model Card, im App-Katalog zugleich `non_commercial: true`
   (Ableitung von der Lessac-Stimme); die Auslieferbarkeit ist nicht geklärt. Siehe [licenses.md](licenses.md), §2.

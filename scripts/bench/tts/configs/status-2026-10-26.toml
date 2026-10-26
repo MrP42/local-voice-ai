@@ -1,7 +1,8 @@
 # Statuszeilen des Messlaufs vom 26.10.2026 (Goal tts-provider, Paket P6).
 # Diese Datei misst NICHTS: sie haelt fest, welche Konfigurationen in diesem Lauf bewusst nicht gemessen wurden und warum.
 # Aufruf:  tts_bench.py run --config scripts/bench/tts/configs/status-2026-10-26.toml --run-id 2026-10-26-status
-# Die Zeilen entsprechen default.toml; nur phonon-31m-en-cpu steht hier auf not_tested (dort: run).
+# Statuszeilen ohne Messung (entsprechen default.toml). phonon-40m-de wird seit O1 (26.10.2026) gemessen
+# (Konfiguration phonon-40m-de-cpu) und steht deshalb nicht mehr hier.
 
 [defaults]
 corpus = "de-v1"
@@ -21,15 +22,7 @@ cold_runs = 1
 device = "cpu"
 quality = false
 status = "not_tested"
-reason = "In diesem Messlauf nicht gemessen: Das Ausführen der heruntergeladenen ptts.exe ist in dieser Umgebung gesperrt (Owner-Freigabe P2L steht aus). Nur Funktionsnachweis (englisch, ohne WER/CER) vorgesehen."
-
-[[config]]
-id = "phonon-40m-de"
-provider = "phonon"
-voice = ""
-device = "cpu"
-status = "license_restricted"
-reason = "Gewichte gated und CC BY-NC 4.0 (nichtkommerziell): Owner-Entscheidung O1 steht aus, nicht heruntergeladen, nicht gemessen."
+reason = "Nicht gemessen: Das deutsche Modell phonon-40m-de wurde gemessen; der englische Funktionsnachweis ist damit entbehrlich (Modell liegt lokal unter D:/lv-build/phonon/models/phonon-31m-en)."
 
 [[config]]
 id = "ollama-speech-windows"

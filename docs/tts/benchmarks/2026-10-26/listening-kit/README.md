@@ -1,6 +1,6 @@
 # Blindhörtest: Anleitung
 
-Sie hören 40 kurze Sprachproben. Die Proben stammen von verschiedenen Sprachausgaben, **welche das ist, wird
+Sie hören 60 kurze Sprachproben. Die Proben stammen von verschiedenen Sprachausgaben, **welche das ist, wird
 Ihnen nicht gesagt** (und steht nicht in diesem Ordner). Die Reihenfolge ist gemischt, die Dateinamen sind
 Zufalls-IDs.
 
