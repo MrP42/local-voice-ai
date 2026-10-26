@@ -14,8 +14,8 @@ Nacharbeit = neues Paket mit Bezug (z. B. P2n), kein Rücksprung. Jede Zeile beg
 | P3b | M1 | CLI (--tts-providers, --tts-voices, --tts-provider, --tts-bench nach row.schema) + Agentenbruecke | `--tts-providers --json` >=5 Anbieter; Bridge-Tests | abgenommen | 1ad486f5 |
 | P4 | M2 | UI-Gruppe im Reiter Ausgabe, Probestimme + Abbrechen, Playwright + Screenshot, i18n de/en | `tts-providers.spec.ts` grün + Screenshot | abgenommen | 2b527389 |
 | P6 | M3 | Messlauf seriell + Ergebnisse + Doku docs/tts | docs/tts/benchmarks/<datum>/ JSON/CSV/MD | abgenommen | 9d4d2a20 |
-| P7 | M4 | Unabhängiges Review | keine kritischen Befunde offen | abgenommen | review-only |
-| P2L | M1 | Phonon live: ptts.exe 0.4.2 (D:\lv-build\phonon, SHA256 geprueft) + phonon-31m-en@92741c5 real ausfuehren, WAV-Beleg, Benchmark-Zeile | WAV + rows.jsonl aus echtem Lauf | blockiert | |
+| P7 | M4 | Unabhängiges Review | keine kritischen Befunde offen | abgenommen | c21d9fab |
+| P2L | M1 | Phonon live: ptts.exe 0.4.2 (D:\lv-build\phonon, SHA256 geprueft) + phonon-31m-en@92741c5 real ausfuehren, WAV-Beleg, Benchmark-Zeile | WAV + rows.jsonl aus echtem Lauf | abgenommen | 1c3b6c24 |
 | P5n | M3 | ASR-Engine app-cli (Whisper large-v3-turbo Q8 ueber App-Binary, ohne Download) | pytest scripts/bench/tts gruen, asr --engine app-cli mit Attrappe | abgenommen | 3a035ed4 |
 | D1 | M4 | Doku adapter-contract, installation-troubleshooting, licenses (docs/tts) | Dateien vorhanden, Fundstellen stimmen | abgenommen | 178d18e0 |
 | P4n | M2 | Playwright-Attrappe aus echter `--tts-providers --json`-Ausgabe ableiten (Phonon CPU/satzweise/0.4.2, Piper unverifiziert), Screenshot neu | Spec gruen, Screenshot zeigt reale Deskriptoren | abgenommen | 328d747b |

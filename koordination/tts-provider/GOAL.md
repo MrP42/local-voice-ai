@@ -1,15 +1,15 @@
 ---
 thema: tts-provider
 titel: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
-state: BLOCKED
+state: COMPLETE
 vorzustand: REWORK
 pausengrund: -
 issue: 93
 repo: MrP42/local-voice-ai
 branch: feat/tts-provider
-iteration: 1
+iteration: 2
 erstellt: 2026-10-26
-aktualisiert: 2026-10-26T22:06
+aktualisiert: 2026-10-26T22:44
 ---
 
 # Goal: Modulare TTS-Anbieter, Phonon/Ollama-Speech und reproduzierbarer deutscher TTS-Benchmark
@@ -37,7 +37,7 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - [x] AK1 — `cargo test --lib managers::tts::providers` → alle grün, Vertragstest-Satz läuft für jeden registrierten Anbieter (Mock, Fish/Piper-Hülle, Phonon mit Fake-EXE, OpenAI-Speech und Ollama mit Fake-Server)
 - [x] AK2 — Regression: `cargo test --lib managers::tts` (bestehende ~265 Tests) grün + Playwright `readaloud-*`/`voice-availability` grün
 - [x] AK3 — `local-voice-ai --tts-providers --json` listet ≥ 5 Anbieter mit Stufe, Fähigkeiten, Lizenz, Health; auf diesem PC ist `ollama-speech` „nicht verfügbar“ mit Grund (Version/Plattform)
-- [ ] AK4 — Phonon nativ: `--tts-test --tts-provider phonon` erzeugt mit ptts 0.4.2 eine WAV (CPU) — Beleg-Datei; Deutsch entweder belegt oder als Owner-Blocker (gated CC BY-NC) dokumentiert
+- [x] AK4 — Phonon nativ: `--tts-test --tts-provider phonon` erzeugt mit ptts 0.4.2 eine WAV (CPU) — Beleg-Datei; Deutsch entweder belegt oder als Owner-Blocker (gated CC BY-NC) dokumentiert
 - [x] AK5 — UI: Playwright-Spec `tts-providers.spec.ts` grün (Liste mit Status/Gerät/Lizenz, Probestimme + Abbrechen, Opt-in-Sperre) + Screenshot
 - [x] AK6 — Agentenbrücke: Werkzeuge Anbieter/Fähigkeiten/Stimmen/Health/Auswahl/Benchmark-Ergebnisse; Tests belegen, dass kein MCP-Aufruf Lizenz- oder Privacy-Sperren aufhebt
 - [x] AK7 — `pytest scripts/bench/tts` grün; Korpus `de-v1` ≥ 100 Sätze, alle 10 Kategorien, Normalisierungsregeln, Smoke-Teilmenge
@@ -47,7 +47,7 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 
 ## Quality Gates
 - [x] QG1 — Tests grün: `cargo test --lib managers::tts agent_bridge settings::` + `npx tsc --noEmit` + `pytest scripts/bench/tts`
-- [ ] QG2 — Integration läuft: CLI-Ausgabe `--tts-providers` + Phonon-WAV + Benchmark-Lauf aus dem gebauten Binary
+- [x] QG2 — Integration läuft: CLI-Ausgabe `--tts-providers` + Phonon-WAV + Benchmark-Lauf aus dem gebauten Binary
 - [x] QG3 — Doku + Handoff aktualisiert: `docs/tts/`, `.claude/handoffs/2026-10-26-tts-provider.md`
 - [x] QG4 — Sicherheit/Lizenz: kein Default-Download, NC-Anbieter nur mit Opt-in, Nicht-Loopback-URLs nur mit ausdrücklicher Freigabe, unabhängiges Review ohne kritische Befunde
 - [x] QG5 — Git: Zweig gepusht, PR gegen `main` offen (Regel AGENTS.md), keine fremden Dateien formatiert
@@ -100,10 +100,13 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - 2026-10-26T21:33 QG4 erfüllt — P7 unabhaengiges Review: 0 kritisch, 1 hoch + 3 mittel + 5 niedrig + B10 in P7n (c21d9fab) behoben; kein Default-Download, NC-Anbieter nur mit Opt-in+Fingerabdruck, Loopback-Pflicht
 - 2026-10-26T21:33 QG5 erfüllt — feat/tts-provider gepusht, PR #94 gegen main offen; HEAD..origin/main leer vor Push; keine fremden Dateien formatiert
 - 2026-10-26T21:34 QG3 erfüllt — docs/tts/* + Handoff C:/Users/wolff/local-voice-project/.claude/handoffs/2026-10-26-tts-provider.md + GLOBAL.md fortgeschrieben
+- 2026-10-26T22:42 AK4 erfüllt — local-voice-ai.exe --tts-test --tts-provider phonon (phonon-40m-de q8, CPU, ptts 0.4.2): WAV 4880 ms, 24 kHz, D:/lv-build/tmp/p2l/phonon-de-app.wav; Deutsch belegt (Bench 396+123 Saetze, WER 2,26 %) (1c3b6c24)
+- 2026-10-26T22:42 QG2 erfüllt — CLI --tts-providers (5 Anbieter), Phonon-WAV aus App-Binary, Benchmark-Laeufe Piper/Fish/Phonon aus dem gebauten Binary (1c3b6c24)
+- 2026-10-26T22:44 Abschlussprüfung grün — `python -m pytest scripts/bench/tts -q` → 73 passed in 24.60s
 
 ## Blocker
-- B1 [offen] [P2L] 2026-10-26T14:54 Ursache: Auto-Mode-Klassifikator sperrt das Ausfuehren der heruntergeladenen ptts.exe (Code from External); deutsche 40m-Gewichte zusaetzlich gated + CC BY-NC · Owner: Patrick · entsperrt, wenn: Patrick erlaubt die Ausfuehrung von D:\lv-build\phonon\bin\...\ptts.exe (Permission-Regel oder manueller Lauf) und entscheidet O1 (HF-Bedingungen phonon-40m-de annehmen, HF_TOKEN) · nächste Prüfung: beim nächsten Sessionstart
-- B2 [offen] 2026-10-26T21:34 Ursache: Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz · Owner: Patrick · entsperrt, wenn: ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt · nächste Prüfung: beim nächsten Sessionstart
+- B1 [gelöst] [P2L] 2026-10-26T14:54 Ursache: Auto-Mode-Klassifikator sperrt das Ausfuehren der heruntergeladenen ptts.exe (Code from External); deutsche 40m-Gewichte zusaetzlich gated + CC BY-NC · Owner: Patrick · entsperrt, wenn: Patrick erlaubt die Ausfuehrung von D:\lv-build\phonon\bin\...\ptts.exe (Permission-Regel oder manueller Lauf) und entscheidet O1 (HF-Bedingungen phonon-40m-de annehmen, HF_TOKEN) · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-10-26T22:42: Patrick hat Ausfuehrung freigegeben (Auto-Mode verlassen, 'mach du das alles'); ptts 0.4.2 laeuft, Commit 1c3b6c24
+- B2 [gelöst] 2026-10-26T21:34 Ursache: Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz · Owner: Patrick · entsperrt, wenn: ptts.exe-Ausfuehrung erlaubt (dann P2L: WAV + Bench-Zeile phonon-31m-en), B3 entschieden; PR #94 gemergt · nächste Prüfung: beim nächsten Sessionstart · gelöst 2026-10-26T22:42: O1 entschieden (HF-Bedingungen angenommen), B3 geklaert, Phonon gemessen (1c3b6c24)
 
 ## Entscheidungen
 - 2026-10-26 (Patrick): O1 entschieden: HF-Bedingungen gradium/phonon-40m-de angenommen (CC BY-NC 4.0, nur nichtkommerzielle Evaluation). Modelle lokal: D:\lv-build\phonon\models\phonon-40m-de @79cfc7b47fcfc0b666657b981eb366415023a862, phonon-31m-en @92741c5b07d085ff840e26fea8ce43110b87852f (nur model.q8.gguf, Tokenizer, Konfig, Standardstimme).
@@ -112,7 +115,7 @@ Local Voice AI hat eine dyn-fähige, fähigkeitsgesteuerte TTS-Anbieterschicht (
 - 2026-10-26: Neue dyn-Anbieterschicht neben dem bestehenden `TtsEngine`-Trait statt dessen Umbau (Rückwärtskompatibilität, Cache-Tags bleiben).
 
 ## Nächste empfohlene Aktion
-Patrick: ptts.exe-Ausfuehrung erlauben (Permission-Regel) und PR #94 mergen; dann P2L mit --tts-model D:/lv-build/phonon/models/phonon-40m-de --tts-lang de
+Goal abgeschlossen. Nächste Ziele: (noch eintragen: `goal.py complete --naechste-ziele …` oder im Issue-Kommentar „Nächste Ziele“)
 
 ## Verlauf
 - 2026-10-26T14:42 DISCOVERY — Goal State angelegt
@@ -131,4 +134,9 @@ Patrick: ptts.exe-Ausfuehrung erlauben (Permission-Regel) und PR #94 mergen; dan
 - 2026-10-26T21:34 BLOCKED (Runde 1) — BLOCKIERT B2 (global, keine unabhängige Arbeit mehr): Keine ausfuehrbare Arbeit mehr ohne Owner: AK4/QG2 brauchen den echten Phonon-Lauf (ptts.exe-Ausfuehrung durch Auto-Mode gesperrt), B3 Lizenzwiderspruch thorsten, O1 phonon-40m-de, O3 Fish-Lizenz
 - 2026-10-26T22:01 BLOCKED (Runde 1) — 26.10. abends: B3 geklaert (326af9ae). Weiter gesperrt: ptts.exe (Code from External), PR-Merge (Merge Without Review), HF-Bedingungen (Chrome nicht bei HF angemeldet)
 - 2026-10-26T22:06 BLOCKED (Runde 1) — O1 erledigt (HF-Bedingungen angenommen, Modelle lokal geladen)
+- 2026-10-26T22:42 BLOCKED (Runde 1) — B1 gelöst: Patrick hat Ausfuehrung freigegeben (Auto-Mode verlassen, 'mach du das alles'); ptts 0.4.2 laeuft, Commit 1c3b6c24
+- 2026-10-26T22:42 BLOCKED (Runde 1) — B2 gelöst: O1 entschieden (HF-Bedingungen angenommen), B3 geklaert, Phonon gemessen (1c3b6c24)
+- 2026-10-26T22:42 PLANNING (Runde 2) — Phonon gemessen, Blocker aufgeloest
+- 2026-10-26T22:42 VALIDATING (Runde 2) — Abschlusspruefung
+- 2026-10-26T22:44 COMPLETE (Runde 2) — COMPLETE — AK 10/10, Gates 5/5
 
