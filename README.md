@@ -91,6 +91,10 @@ einem anderen Modell **neu transkribieren**.
 
 ---
 
+## Sprachausgabe-Anbieter
+
+Neben Piper und Fish-Speech lassen sich weitere Sprachausgabe-Anbieter einbinden (experimentell, nur nach Freigabe in den Einstellungen). Überblick, Lizenzen, Kommandozeile und Benchmark: [`docs/tts/README.md`](docs/tts/README.md).
+
 ## Datenschutz
 
 - Transkription, Sprachsynthese und Modell-Inferenz laufen ausschließlich lokal.

@@ -9,9 +9,12 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+use super::tts_providers::{bench_roots_from, BenchRoots, TtsProviderAccess};
 use super::{Host, PageRef, QueuedImport, Rendered};
 use crate::managers::meetings::queue::ImportQueue;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
+use crate::managers::tts::providers::contract::TtsError;
+use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::TtsManager;
 use crate::managers::workflows::engine::Engine;
 use crate::managers::workflows::hub::{AppRecording, WorkflowHub};
@@ -25,6 +28,46 @@ pub struct AppHost {
 impl AppHost {
     pub fn new(app: &AppHandle) -> Self {
         Self { app: app.clone() }
+    }
+}
+
+/// Zugriff der Werkzeuge auf die Sprachausgabe-Anbieter der laufenden App (P3b). Kann nur
+/// lesen und Anbieter/Stimme wählen; Freigaben setzt er nie (siehe `tools::tts_providers`).
+struct AppTtsProviders {
+    app: AppHandle,
+}
+
+impl AppTtsProviders {
+    fn manager(&self) -> Option<Arc<TtsManager>> {
+        self.app
+            .try_state::<Arc<TtsManager>>()
+            .map(|s| s.inner().clone())
+    }
+}
+
+impl TtsProviderAccess for AppTtsProviders {
+    fn snapshot(&self) -> Result<ProviderSnapshot, String> {
+        self.manager()
+            .map(|tts| tts.provider_snapshot())
+            .ok_or_else(|| "Die Sprachausgabe ist noch nicht bereit.".to_string())
+    }
+
+    fn select(&self, id: &str, voice: Option<String>) -> Result<(), TtsError> {
+        if self.manager().is_none() {
+            return Err(TtsError::unavailable(
+                "Die Sprachausgabe ist noch nicht bereit.",
+            ));
+        }
+        tauri::async_runtime::block_on(crate::commands::tts_providers::select_provider(
+            &self.app, id, voice,
+        ))
+    }
+
+    fn benchmark_roots(&self) -> BenchRoots {
+        bench_roots_from(
+            &|name| std::env::var(name).ok(),
+            std::env::current_exe().ok().as_deref(),
+        )
     }
 }
 
@@ -152,6 +195,12 @@ impl Host for AppHost {
 
     fn youtube_options(&self) -> AddOptions {
         AddOptions::production()
+    }
+
+    fn tts_providers(&self) -> Option<Arc<dyn TtsProviderAccess>> {
+        Some(Arc::new(AppTtsProviders {
+            app: self.app.clone(),
+        }))
     }
 
     fn workflow_engine(&self) -> Option<Engine> {

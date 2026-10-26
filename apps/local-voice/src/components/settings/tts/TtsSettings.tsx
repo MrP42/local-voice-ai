@@ -75,6 +75,8 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import { HelpCircle } from "lucide-react";
+import { useProviderLabel } from "./providers/useProviderLabel";
+import { openSettingsTab } from "@/lib/openSettingsTab";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -867,8 +869,18 @@ export const TtsSettings = () => {
 
   /* Der Wert des Stimmen-Dropdowns aus den Einstellungen: Piper-Stimme als
      "piper:<id>", sonst Fish-Stimme oder Standard. */
-  const voiceValue =
-    (getSetting("tts_engine") ?? "fish") === "piper"
+  const ttsEngineSetting = getSetting("tts_engine") ?? "fish";
+  /* Liest ein Anbieter vor (`provider:<id>`, Goal tts-provider), gehoert die
+     Stimme dem Anbieter und wird in dessen Einstellungen gewaehlt: das
+     Dropdown zeigt dann nur einen benannten Eintrag statt faelschlich die
+     Fish-Standardstimme. */
+  const providerEngineId = ttsEngineSetting.startsWith("provider:")
+    ? ttsEngineSetting.slice("provider:".length)
+    : null;
+  const providerLabel = useProviderLabel(providerEngineId);
+  const voiceValue = providerEngineId
+    ? `provider:${providerEngineId}`
+    : ttsEngineSetting === "piper"
       ? `piper:${getSetting("tts_piper_voice") ?? ""}`
       : (getSetting("tts_voice") ?? "@default");
 
@@ -883,7 +895,7 @@ export const TtsSettings = () => {
           await updateSetting("tts_piper_voice", value.slice(6));
           await updateSetting("tts_engine", "piper");
         } else {
-          if ((getSetting("tts_engine") ?? "fish") === "piper") {
+          if ((getSetting("tts_engine") ?? "fish") !== "fish") {
             await updateSetting("tts_engine", "fish");
           }
           await updateSetting("tts_voice", value === "@default" ? null : value);
@@ -914,9 +926,11 @@ export const TtsSettings = () => {
     ? piperVoices.find((v) => `piper:${v.id}` === voiceValue)
     : undefined;
   const anyPiperUsable = piperVoices.some((v) => v.usable);
-  const selectedVoiceNotSetUp = voiceValue.startsWith("piper:")
-    ? !selectedPiper || !selectedPiper.usable
-    : !fishReady;
+  const selectedVoiceNotSetUp = providerEngineId
+    ? false
+    : voiceValue.startsWith("piper:")
+      ? !selectedPiper || !selectedPiper.usable
+      : !fishReady;
   const noVoiceSetUp = !fishReady && !anyPiperUsable;
 
   /* Beschriftung einer Piper-Stimme in der Auswahl: Name, Sprache, Qualitaet
@@ -1893,7 +1907,9 @@ export const TtsSettings = () => {
                         // Die gewählte Fish-Stimme, obwohl Fish nicht
                         // eingerichtet ist: sichtbar benannt statt still
                         // durch eine andere ersetzt. Nicht wählbar.
-                        ...(!fishReady && !voiceValue.startsWith("piper:")
+                        ...(!fishReady &&
+                        !providerEngineId &&
+                        !voiceValue.startsWith("piper:")
                           ? [
                               {
                                 value: voiceValue,
@@ -1916,6 +1932,19 @@ export const TtsSettings = () => {
                                     : t("tts.voices.piperVoiceMissing", {
                                         id: voiceValue.slice(6),
                                       }),
+                                isDisabled: true,
+                              },
+                            ]
+                          : []),
+                        // Ein Anbieter liest vor: benannter Eintrag, nicht
+                        // wählbar (die Wahl steht in den Anbieter-Einstellungen).
+                        ...(providerEngineId
+                          ? [
+                              {
+                                value: voiceValue,
+                                label: t("tts.providers.dropdown.entry", {
+                                  name: providerLabel ?? providerEngineId,
+                                }),
                                 isDisabled: true,
                               },
                             ]
@@ -1946,6 +1975,30 @@ export const TtsSettings = () => {
                       }}
                       isClearable={false}
                     />
+                    {providerEngineId && (
+                      <div
+                        role="status"
+                        data-testid="voice-provider-hint"
+                        className="mt-1 text-xs text-text/70"
+                      >
+                        <p>
+                          {t("tts.providers.dropdown.hint", {
+                            name: providerLabel ?? providerEngineId,
+                          })}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          data-testid="voice-provider-open"
+                          onClick={() =>
+                            openSettingsTab("output", "tts-providers")
+                          }
+                        >
+                          {t("tts.providers.dropdown.open")}
+                        </Button>
+                      </div>
+                    )}
                     {selectedVoiceNotSetUp && (
                       <div
                         role="status"

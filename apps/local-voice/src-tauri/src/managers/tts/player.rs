@@ -52,6 +52,15 @@ impl PlaybackControls {
     }
 }
 
+/// Ein Stück Audio für die Stream-Wiedergabe ([`Player::play_stream`]):
+/// verschachtelte Abtastwerte (`channels` je Frame), Wertebereich -1,0 bis 1,0.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PcmSegment {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub samples: Vec<f32>,
+}
+
 pub trait Player: Send + Sync {
     /// Spielt einen kompletten WAV-Blob ab; kehrt erst nach Ende oder Abbruch
     /// zurück. `cancelled` wird von cancel()/neuen Aufträgen gesetzt.
@@ -67,9 +76,87 @@ pub trait Player: Send + Sync {
         controls: Arc<PlaybackControls>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), String>;
+
+    /// Spielt Audio ab, SOBALD es eintrifft (Probestimme der Anbieter-Schicht,
+    /// Paket P3a): `segments` liefert Stücke, die Wiedergabe endet, wenn der
+    /// Sender fallengelassen ist und alles gespielt wurde — oder bei
+    /// `cancelled` (dann sofort, ohne weiteres Audio). Blockiert bis dahin.
+    ///
+    /// Die Standardumsetzung ist NICHT streamend: sie sammelt alle Stücke zu
+    /// EINEM WAV und spielt es über [`Self::play`] (Verhalten für Player ohne
+    /// eigene Stream-Fähigkeit; gleiche Abtastrate und Kanalzahl vorausgesetzt).
+    /// [`RodioPlayer`] überschreibt sie mit echter Stream-Wiedergabe.
+    fn play_stream(
+        &self,
+        segments: std::sync::mpsc::Receiver<PcmSegment>,
+        device: Option<String>,
+        controls: Arc<PlaybackControls>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        use std::sync::mpsc::RecvTimeoutError;
+        let mut format: Option<(u32, u16)> = None;
+        let mut pcm: Vec<u8> = Vec::new();
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            match segments.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(seg) => {
+                    match format {
+                        None => format = Some((seg.sample_rate, seg.channels)),
+                        Some(f) if f != (seg.sample_rate, seg.channels) => {
+                            return Err("Abtastrate oder Kanalzahl wechselt mitten im Stream".into())
+                        }
+                        Some(_) => {}
+                    }
+                    for sample in seg.samples {
+                        pcm.extend_from_slice(&sample.to_le_bytes());
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let Some((rate, channels)) = format else {
+            return Ok(());
+        };
+        let wav = crate::managers::tts::providers::wav::wav_from_pcm(
+            crate::managers::tts::providers::contract::AudioEncoding::F32Le,
+            rate,
+            channels,
+            &pcm,
+        )
+        .map_err(|e| e.message)?;
+        self.play(wav, device, 1.0, controls, cancelled)
+    }
 }
 
 pub struct RodioPlayer;
+
+/// Ausgabestrom auf dem gewählten Gerät öffnen (Default-Fallback wie
+/// `audio_feedback::play_audio_file`).
+fn open_output_stream(device: Option<String>) -> Result<rodio::OutputStream, String> {
+    use rodio::OutputStreamBuilder;
+    let stream_builder = match device {
+        Some(name) if name != "Default" => {
+            use cpal::traits::{DeviceTrait, HostTrait};
+            let host = crate::audio_toolkit::get_cpal_host();
+            let found = host
+                .output_devices()
+                .map_err(|e| e.to_string())?
+                .find(|d| d.name().map(|n| n == name).unwrap_or(false));
+            match found {
+                Some(d) => OutputStreamBuilder::from_device(d).map_err(|e| e.to_string())?,
+                None => {
+                    log::warn!("TTS output device '{name}' not found, using default");
+                    OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?
+                }
+            }
+        }
+        _ => OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?,
+    };
+    stream_builder.open_stream().map_err(|e| e.to_string())
+}
 
 impl Player for RodioPlayer {
     fn play(
@@ -80,27 +167,7 @@ impl Player for RodioPlayer {
         controls: Arc<PlaybackControls>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), String> {
-        use rodio::OutputStreamBuilder;
-        // Geräteauswahl wie audio_feedback::play_audio_file (Default-Fallback).
-        let stream_builder = match device {
-            Some(name) if name != "Default" => {
-                use cpal::traits::{DeviceTrait, HostTrait};
-                let host = crate::audio_toolkit::get_cpal_host();
-                let found = host
-                    .output_devices()
-                    .map_err(|e| e.to_string())?
-                    .find(|d| d.name().map(|n| n == name).unwrap_or(false));
-                match found {
-                    Some(d) => OutputStreamBuilder::from_device(d).map_err(|e| e.to_string())?,
-                    None => {
-                        log::warn!("TTS output device '{name}' not found, using default");
-                        OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?
-                    }
-                }
-            }
-            _ => OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?,
-        };
-        let stream = stream_builder.open_stream().map_err(|e| e.to_string())?;
+        let stream = open_output_stream(device)?;
         let sink =
             rodio::play(stream.mixer(), std::io::Cursor::new(wav)).map_err(|e| e.to_string())?;
 
@@ -127,6 +194,70 @@ impl Player for RodioPlayer {
                 sink.set_speed(wanted_speed);
                 applied_speed = wanted_speed;
             }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
+    /// Echte Stream-Wiedergabe: EIN Ausgabestrom, jedes eintreffende Stück
+    /// wird sofort an die laufende Wiedergabe angehängt — kein Warten auf das
+    /// Ende der Synthese. Abbruch wirkt binnen 50 ms und verwirft alles noch
+    /// nicht Gespielte. Lautstärke und Tempo folgen den Reglern live.
+    fn play_stream(
+        &self,
+        segments: std::sync::mpsc::Receiver<PcmSegment>,
+        device: Option<String>,
+        controls: Arc<PlaybackControls>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        use std::sync::mpsc::RecvTimeoutError;
+        let stream = open_output_stream(device)?;
+        let sink = rodio::Sink::connect_new(stream.mixer());
+        let mut applied_volume = controls.volume();
+        let mut applied_speed = controls.speed();
+        sink.set_volume(applied_volume);
+        sink.set_speed(applied_speed);
+        let mut follow_controls = |sink: &rodio::Sink| {
+            let volume = controls.volume();
+            if (volume - applied_volume).abs() > f32::EPSILON {
+                sink.set_volume(volume);
+                applied_volume = volume;
+            }
+            let speed = controls.speed();
+            if (speed - applied_speed).abs() > f32::EPSILON {
+                sink.set_speed(speed);
+                applied_speed = speed;
+            }
+        };
+        // Annehmen, solange der Sender lebt.
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                sink.stop();
+                return Ok(());
+            }
+            follow_controls(&sink);
+            match segments.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(seg) => {
+                    if seg.channels == 0 || seg.sample_rate == 0 || seg.samples.is_empty() {
+                        continue;
+                    }
+                    sink.append(rodio::buffer::SamplesBuffer::new(
+                        seg.channels,
+                        seg.sample_rate,
+                        seg.samples,
+                    ));
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        // Ausspielen, was noch angehängt ist.
+        while !sink.empty() {
+            if cancelled.load(Ordering::Acquire) {
+                sink.stop();
+                break;
+            }
+            follow_controls(&sink);
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         Ok(())
@@ -179,5 +310,66 @@ mod tests {
             .join()
             .unwrap();
         assert_eq!(c.speed(), 1.75);
+    }
+
+    /// Ein leiser Sinus-Ton als Stück (24 kHz mono).
+    fn tone(samples: usize) -> PcmSegment {
+        PcmSegment {
+            sample_rate: 24_000,
+            channels: 1,
+            samples: (0..samples)
+                .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 24_000.0).sin())
+                .collect(),
+        }
+    }
+
+    /// Rauchtest der echten Stream-Wiedergabe. Braucht ein Ausgabegerät und
+    /// spielt kurz einen leisen Ton: `cargo test --lib -- --ignored rodio_stream`.
+    /// Prüft, dass die Wiedergabe bis zum Ende der Stücke läuft und dass ein
+    /// Abbruch binnen weniger hundert Millisekunden wirkt.
+    #[test]
+    #[ignore = "braucht ein Ausgabegerät"]
+    fn rodio_stream_spielt_bis_zum_ende_und_bricht_ab() {
+        use std::time::{Duration, Instant};
+        let controls = Arc::new(PlaybackControls::default());
+        controls.set_volume(0.15);
+
+        // 1) Vier Stücke à 0,15 s, mit Lücke dazwischen geliefert: Gesamtdauer 0,6 s.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let feeder = std::thread::spawn(move || {
+            for _ in 0..4 {
+                tx.send(tone(3600)).unwrap();
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        });
+        let t0 = Instant::now();
+        RodioPlayer
+            .play_stream(rx, None, controls.clone(), Arc::new(AtomicBool::new(false)))
+            .unwrap();
+        let took = t0.elapsed();
+        feeder.join().unwrap();
+        assert!(
+            took >= Duration::from_millis(550),
+            "endete zu früh: {took:?}"
+        );
+        assert!(took < Duration::from_secs(3), "hing: {took:?}");
+
+        // 2) Ein 3-Sekunden-Stück, nach 200 ms abgebrochen.
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(tone(24_000 * 3)).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            flag.store(true, Ordering::Release);
+        });
+        let t0 = Instant::now();
+        RodioPlayer.play_stream(rx, None, controls, cancel).unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_millis(800),
+            "{:?}",
+            t0.elapsed()
+        );
+        drop(tx);
     }
 }

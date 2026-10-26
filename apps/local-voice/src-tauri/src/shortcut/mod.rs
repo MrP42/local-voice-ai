@@ -772,16 +772,20 @@ pub fn change_tts_volume_setting(app: AppHandle, value: f32) -> Result<(), Strin
     Ok(())
 }
 
-/// Engine des Vorlesens: "fish" (Grafikkarte) oder "piper" (CPU).
+/// Engine des Vorlesens: "fish" (Grafikkarte), "piper" (CPU) oder
+/// "provider:<id>" (Anbieter der Registry, Goal tts-provider).
 ///
 /// Unbekannte Werte werden abgewiesen, statt still auf Fish zurueckzufallen:
 /// ein Schalter, der etwas anderes tut als er sagt, ist schlimmer als ein
-/// Fehler. Angewendet wird die Wahl beim naechsten Auftrag
+/// Fehler. Der Setter ist KEIN Freigabeweg: ob ein Anbieter benutzt werden
+/// darf (Opt-in, Lizenz, Fernzugriff), prueft jede Nutzung selbst
+/// (`providers::policy::check_use`); die Oberflaeche waehlt ueber
+/// `tts_provider_select`. Angewendet wird die Wahl beim naechsten Auftrag
 /// (`TtsManager::refresh_from_settings`), ohne Neustart.
 #[tauri::command]
 #[specta::specta]
 pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), String> {
-    if value != "fish" && value != "piper" {
+    if !crate::managers::tts::engine::is_valid_engine_setting(&value) {
         return Err(format!("Unbekannte Vorlese-Engine: {value}"));
     }
     let mut settings = settings::get_settings(&app);

@@ -131,6 +131,16 @@ const settingUpdaters: {
     commands.changeTtsTranslateLangSetting(value as string),
   tts_volume: (value) => commands.changeTtsVolumeSetting(value as number),
   tts_engine: (value) => commands.changeTtsEngineSetting(value as string),
+  // `tts_providers` hat bewusst KEINEN allgemeinen Setter: Opt-in, Lizenz-
+  // Zustimmung und Fernzugriff werden nur ueber die tts_provider_*-Befehle
+  // gesetzt (ein Klick des Nutzers, nie Agentenbruecke/CLI). Ein Schreibversuch
+  // ueber updateSetting wird abgewiesen, der Store stellt den alten Wert wieder her.
+  tts_providers: () =>
+    Promise.reject(
+      new Error(
+        "tts_providers is changed only via the tts_provider_* commands",
+      ),
+    ),
   tts_piper_voice: (value) =>
     commands.changeTtsPiperVoiceSetting(value as string | null),
   tts_piper_auto_language: (value) =>

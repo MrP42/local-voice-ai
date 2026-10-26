@@ -11,6 +11,9 @@
 //! | `create_session` / `create_meeting` | Ordner bzw. leere Besprechung | nur Titel/Name, Obergrenzen |
 //! | `add_youtube_source` | Besprechung mit Quelle YouTube | ein oEmbed-Abruf, nie yt-dlp, nie ein Download |
 //! | `tts_page_create` / `tts_render_audio` | Seite der Vorlesen-Bibliothek, Audiodatei darin | ein Lauf zugleich, Textgrenze, nur im Seitenordner |
+//! | `tts_providers_list` / `tts_provider_capabilities` / `tts_provider_voices` / `tts_provider_health` | Anbieter, Fähigkeiten, Stimmen, Gesundheit der Sprachausgabe (Recht `tts.read`) | nur lesend; ein gesperrter Anbieter nennt den Sperrgrund, Stimmen nur bei erlaubtem Anbieter |
+//! | `tts_provider_select` | wählt Anbieter und Stimme fürs Vorlesen (Recht `tts.render`) | nur wenn die Guardrails des Anbieters es erlauben; setzt NIE Opt-in, Lizenz-Zustimmung oder Fernzugriff |
+//! | `tts_benchmark_results` | Zusammenfassungen und `results.json` der Benchmarks (Recht `tts.read`) | nur die zwei Ergebnisordner, Kennung ohne Pfadanteile, höchstens 512 KiB |
 //! | `start_recording` | Aufnahme | NUR nach der Zustimmung des Nutzers in der App (`ctx.approved`) |
 //! | `stop_recording` | beendet die laufende Aufnahme | |
 //!
@@ -33,6 +36,7 @@
 pub mod app_host;
 pub mod paths;
 pub mod sandbox;
+pub mod tts_providers; // P3b
 pub mod workflows; // B8
 
 use std::collections::BTreeMap;
@@ -107,6 +111,11 @@ pub trait Host: Send + Sync {
     /// Die Engine der Automationen (B8); `None`, wenn es hier keine gibt oder sie noch nicht
     /// bereit ist. Die Werkzeuge melden das als Klartext.
     fn workflow_engine(&self) -> Option<Engine> {
+        None
+    }
+    /// Zugriff auf die Sprachausgabe-Anbieter (P3b); `None`, wenn es hier keinen gibt
+    /// (headless Sandbox). Die Werkzeuge melden das als Klartext.
+    fn tts_providers(&self) -> Option<Arc<dyn tts_providers::TtsProviderAccess>> {
         None
     }
 }
@@ -392,6 +401,7 @@ pub fn all_specs() -> Vec<ToolSpec> {
         ),
     ]
     .into_iter()
+    .chain(tts_providers::specs())
     .chain(workflows::specs())
     .collect()
 }
@@ -644,6 +654,12 @@ impl ToolHandler for AppTools {
             "tts_render_audio" => self.tts_render_audio(ctx, a),
             "start_recording" => self.start_recording(ctx, a),
             "stop_recording" => self.stop_recording(a),
+            "tts_providers_list" => self.tts_providers_list(a),
+            "tts_provider_capabilities" => self.tts_provider_capabilities(a),
+            "tts_provider_voices" => self.tts_provider_voices(a),
+            "tts_provider_health" => self.tts_provider_health(a),
+            "tts_provider_select" => self.tts_provider_select(a),
+            "tts_benchmark_results" => self.tts_benchmark_results(a),
             "list_workflows" => self.list_workflows(a),
             "run_workflow" => self.run_workflow(ctx, a),
             "get_run" => self.get_run(a),

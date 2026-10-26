@@ -25,6 +25,163 @@
     "ariaLabel": "Main navigation"
   },
   "tts": {
+    "providers": {
+      "title": "Speech providers",
+      "description": "More speech outputs besides Fish Speech and Piper. Experimental providers stay off until you enable them; each provider shows what is still missing for its license or network access.",
+      "recheckAll": "Check all again",
+      "recheck": "Check again",
+      "checking": "Checking providers …",
+      "loadError": "The provider list could not be loaded: {{message}}",
+      "empty": "No providers known.",
+      "unknown": "unknown",
+      "yes": "yes",
+      "no": "no",
+      "languageAny": "language independent",
+      "selected": "Reading aloud",
+      "enable": "Enable",
+      "tier": {
+        "supported": "Supported",
+        "experimental": "Experimental",
+        "benchmark_only": "Benchmark only",
+        "unavailable": "Not available"
+      },
+      "availability": {
+        "available": "Ready",
+        "unavailable": "Not ready"
+      },
+      "facts": {
+        "device": "Device",
+        "version": "Version",
+        "streaming": "Streaming",
+        "languages": "Languages",
+        "cloning": "Voice cloning",
+        "license": "License"
+      },
+      "device": {
+        "cpu": "CPU",
+        "cuda": "CUDA (NVIDIA GPU)",
+        "metal": "Metal (Apple)",
+        "remote": "Remote server"
+      },
+      "streaming": {
+        "none": "none",
+        "sentence": "sentence by sentence",
+        "chunk": "true streaming"
+      },
+      "license": {
+        "code": "Code",
+        "weights": "Weights",
+        "nonCommercial": "non-commercial",
+        "verifiedOn": "verified on {{date}}",
+        "notVerified": "not verified",
+        "source": "Source"
+      },
+      "blocked": {
+        "title": "Blocked:",
+        "notEnabled": "The provider is not enabled. Use the “Enable” switch to allow it.",
+        "needsLicense": "The license is not confirmed yet.",
+        "needsRemote": "The address is outside this computer and remote access is not allowed.",
+        "confirmLicense": "Review and confirm license …",
+        "allowRemote": "Allow remote access …"
+      },
+      "remote": {
+        "allowed": "Remote access allowed: the text leaves this computer.",
+        "revoke": "Withdraw"
+      },
+      "details": {
+        "show": "Show settings, voice and voice preview of {{name}}",
+        "hide": "Hide settings of {{name}}"
+      },
+      "config": {
+        "title": "Settings",
+        "none": "This provider has no settings of its own here.",
+        "loadError": "The settings could not be loaded: {{message}}",
+        "save": "Save",
+        "saved": "Saved.",
+        "choiceNone": "not set",
+        "number_required": "“{{field}}” needs a number.",
+        "number_invalid": "“{{field}}” is not a valid number."
+      },
+      "fields": {
+        "exe_path": "Program file (ptts)",
+        "model": "Model",
+        "quant": "Quantization",
+        "lang": "Text normalization language",
+        "voice": "Voice",
+        "threads": "Compute threads",
+        "hf_home": "Hugging Face folder (HF_HOME)",
+        "base_url": "Address",
+        "sample_rate": "Sample rate (Hz)",
+        "languages": "Languages (comma separated)",
+        "probe_speech": "Mini probe instead of platform block"
+      },
+      "fieldHints": {
+        "model": "Local model folder or hf://OWNER/MODEL.",
+        "quant": "q8 always runs on the CPU.",
+        "base_url": "Addresses outside this computer need their own approval.",
+        "probe_speech": "This loads the speech model in Ollama."
+      },
+      "voices": {
+        "title": "Voice",
+        "language": "Language",
+        "voice": "Voice",
+        "allLanguages": "All languages",
+        "default": "Provider default",
+        "none": "The provider lists no voices for this language.",
+        "blocked": "Voices can only be listed after the provider is approved.",
+        "use": "Use as reading voice",
+        "usedNow": "This provider now reads aloud.",
+        "license": "Voice: license {{license}}"
+      },
+      "preview": {
+        "title": "Voice preview",
+        "text": "Sample text",
+        "defaultText": "Guten Tag. Dies ist ein kurzer Probesatz, damit Sie Klang, Tempo und Betonung dieser Stimme beurteilen können.",
+        "play": "Play sample",
+        "cancel": "Cancel",
+        "phase": {
+          "started": "Starting …",
+          "first_audio": "Playing – first sound after {{ms}} ms",
+          "done": "Done.",
+          "doneTtfa": "Done – first sound after {{ms}} ms",
+          "cancelled": "Cancelled."
+        }
+      },
+      "errors": {
+        "unavailable": "Provider not available: {{message}}",
+        "invalid_config": "Invalid setting: {{message}}",
+        "license_blocked": "License or approval missing: {{message}}",
+        "privacy_blocked": "Remote access not allowed: {{message}}",
+        "timeout": "Timeout: {{message}}",
+        "cancelled": "Cancelled: {{message}}",
+        "bad_request": "Request rejected: {{message}}",
+        "backend": "Provider error: {{message}}",
+        "network": "Network error: {{message}}"
+      },
+      "dialog": {
+        "close": "Close",
+        "cancel": "Cancel"
+      },
+      "licenseDialog": {
+        "title": "Confirm the license of {{name}}?",
+        "intro": "Please review the license details before this provider is used. The confirmation only covers this exact state of model and license information.",
+        "nonCommercial": "This license allows non-commercial use only. The provider must not be used for business purposes.",
+        "notVerified": "The license information is not verified. Check the license at its source before you confirm.",
+        "checkbox": "I have read the license of {{name}} and confirm that my use is permitted.",
+        "confirm": "Confirm license"
+      },
+      "remoteDialog": {
+        "title": "Allow remote access for {{name}}?",
+        "warning": "The text to be read aloud will then leave this computer and go to a server at the configured address.",
+        "detail": "Only allow this if you trust the server and the text is not too confidential. You can withdraw the approval at any time.",
+        "confirm": "Allow remote access"
+      },
+      "dropdown": {
+        "entry": "Provider: {{name}}",
+        "hint": "Provider: {{name}} (Settings → Speech providers)",
+        "open": "Open provider settings"
+      }
+    },
     "langTabs": "Translated languages",
     "transform": {
       "translateStarting": "Translating …",
@@ -4721,6 +4878,30 @@
           "title": "Create audio",
           "description": "Creates an audio file from a read-aloud page."
         },
+        "tts_providers_list": {
+          "title": "List speech providers",
+          "description": "Lists the text-to-speech providers with capabilities, license, health and block status."
+        },
+        "tts_provider_capabilities": {
+          "title": "Read a provider's capabilities",
+          "description": "Returns the languages, streaming, devices, platforms and license of a text-to-speech provider."
+        },
+        "tts_provider_voices": {
+          "title": "List a provider's voices",
+          "description": "Lists the voices of a provider; a blocked provider answers with the reason it is blocked."
+        },
+        "tts_provider_health": {
+          "title": "Check a provider's health",
+          "description": "Checks, with a deadline, whether a text-to-speech provider is ready and otherwise names the reason."
+        },
+        "tts_benchmark_results": {
+          "title": "Read benchmark results",
+          "description": "Lists the summaries of the text-to-speech benchmarks and returns a results.json."
+        },
+        "tts_provider_select": {
+          "title": "Choose provider and voice",
+          "description": "Chooses the provider and voice for read-aloud; a blocked provider cannot be chosen, and only the user grants approvals."
+        },
         "list_workflows": {
           "title": "List automations",
           "description": "Lists the automation workflows with trigger, switch state and last run."
@@ -5048,6 +5229,10 @@
       "transcribe_file": {
         "title": "Transcribe file",
         "description": "Transcribe an audio or video file."
+      },
+      "tts_read": {
+        "title": "Read speech output",
+        "description": "Read the text-to-speech providers, voices, health and benchmark results (changes nothing)."
       },
       "tts_render": {
         "title": "Render read-aloud audio",

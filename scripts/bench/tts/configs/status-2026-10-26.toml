@@ -1,0 +1,53 @@
+# Statuszeilen des Messlaufs vom 26.10.2026 (Goal tts-provider, Paket P6).
+# Diese Datei misst NICHTS: sie haelt fest, welche Konfigurationen in diesem Lauf bewusst nicht gemessen wurden und warum.
+# Aufruf:  tts_bench.py run --config scripts/bench/tts/configs/status-2026-10-26.toml --run-id 2026-10-26-status
+# Statuszeilen ohne Messung (entsprechen default.toml). phonon-40m-de wird seit O1 (26.10.2026) gemessen
+# (Konfiguration phonon-40m-de-cpu) und steht deshalb nicht mehr hier.
+
+[defaults]
+corpus = "de-v1"
+subset = "smoke"
+language = "de"
+warm_runs = 30
+cold_runs = 3
+
+[[config]]
+id = "phonon-31m-en-cpu"
+provider = "phonon"
+language = "en"
+corpus = "en-func-v1"
+subset = "full"
+warm_runs = 3
+cold_runs = 1
+device = "cpu"
+quality = false
+status = "not_tested"
+reason = "Nicht gemessen: Das deutsche Modell phonon-40m-de wurde gemessen; der englische Funktionsnachweis ist damit entbehrlich (Modell liegt lokal unter D:/lv-build/phonon/models/phonon-31m-en)."
+
+[[config]]
+id = "ollama-speech-windows"
+provider = "ollama-speech"
+device = "any"
+status = "unsupported"
+reason = "Speech-Endpunkt laut Ollama-Release-Notes v0.40.11 unter Windows nicht unterstützt; lokaler Client ist 0.34.2, Dienst aus."
+
+[[config]]
+id = "kokoro"
+provider = "kokoro"
+device = "any"
+status = "unsupported"
+reason = "Kein deutsches Modell (Sprachen laut Modellkarte ohne Deutsch); über openai-speech anbindbar, aber für den deutschen Korpus nicht messbar."
+
+[[config]]
+id = "xtts-v2"
+provider = "xtts-v2"
+device = "cuda"
+status = "not_tested"
+reason = "Nicht installiert; Gewichte unter Coqui Public Model License (nichtkommerziell). Kein Adapter im Standard."
+
+[[config]]
+id = "f5-tts"
+provider = "f5-tts"
+device = "cuda"
+status = "not_tested"
+reason = "Nicht installiert; Gewichte CC-BY-NC, Deutsch nur über Community-Finetunes (ebenfalls CC-BY-NC-4.0). Kein Adapter im Standard."

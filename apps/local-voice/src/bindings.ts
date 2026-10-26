@@ -649,11 +649,15 @@ async syncHubStatus() : Promise<Result<HubStatus, string>> {
 }
 },
 /**
- * Engine des Vorlesens: "fish" (Grafikkarte) oder "piper" (CPU).
+ * Engine des Vorlesens: "fish" (Grafikkarte), "piper" (CPU) oder
+ * "provider:<id>" (Anbieter der Registry, Goal tts-provider).
  * 
  * Unbekannte Werte werden abgewiesen, statt still auf Fish zurueckzufallen:
  * ein Schalter, der etwas anderes tut als er sagt, ist schlimmer als ein
- * Fehler. Angewendet wird die Wahl beim naechsten Auftrag
+ * Fehler. Der Setter ist KEIN Freigabeweg: ob ein Anbieter benutzt werden
+ * darf (Opt-in, Lizenz, Fernzugriff), prueft jede Nutzung selbst
+ * (`providers::policy::check_use`); die Oberflaeche waehlt ueber
+ * `tts_provider_select`. Angewendet wird die Wahl beim naechsten Auftrag
  * (`TtsManager::refresh_from_settings`), ohne Neustart.
  */
 async changeTtsEngineSetting(value: string) : Promise<Result<null, string>> {
@@ -5401,6 +5405,148 @@ async ttsRenameVoiceId(oldId: string, newDisplayName: string) : Promise<Result<s
 }
 },
 /**
+ * Alle Anbieter mit Beschreibung, Gesundheit (parallel, mit Frist je
+ * Anbieter), Freigabestand und Auswahl. Dauert höchstens etwa die Frist des
+ * langsamsten Anbieters, nie die Summe.
+ */
+async ttsProvidersList() : Promise<Result<TtsProviderEntry[], TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_providers_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gesundheit EINES Anbieters (mit Frist).
+ */
+async ttsProviderHealth(id: string) : Promise<Result<ProviderHealth, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_health", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stimmen eines Anbieters, optional auf eine Sprache eingegrenzt. Gilt als
+ * Nutzung: gesperrte Anbieter (kein Opt-in, keine Zustimmung, Fernzugriff
+ * nicht erlaubt) antworten mit dem Sperrgrund.
+ */
+async ttsProviderVoices(id: string, language: string | null) : Promise<Result<VoiceDescriptor[], TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_voices", { id, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gespeicherte Konfiguration eines Anbieters als JSON-Text (Felder wie in
+ * `PhononConfig`/`OpenAiSpeechConfig`/`OllamaSpeechConfig`). Fish, Piper:
+ * `bad_request` (keine Konfiguration).
+ */
+async ttsProviderGetConfig(id: string) : Promise<Result<string, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_get_config", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Konfiguration eines Anbieters speichern. Der Adapter prüft vorher
+ * (`validate()`: Pfade, Adresse, Bereiche); ein Fehler kommt als
+ * `invalid_config` mit lesbarem Grund zurück und ändert nichts. Die Schalter
+ * `allow_remote` in der Konfiguration werden NICHT übernommen (siehe
+ * Moduldoku); eine entfernte Adresse lässt sich speichern, benutzen darf man
+ * sie erst nach `tts_provider_set_allow_remote`.
+ */
+async ttsProviderSetConfig(id: string, json: string) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_config", { id, json }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Opt-in eines Anbieters setzen oder zurücknehmen. NUR OBERFLÄCHE (siehe Moduldoku).
+ */
+async ttsProviderSetEnabled(id: string, enabled: boolean) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Lizenz eines Anbieters bestätigen. `fingerprint` ist der Wert aus
+ * [`TtsProviderEntry::fingerprint`], der dem Nutzer zur Bestätigung gezeigt
+ * wurde; hat sich der Stand seitdem geändert, wird abgelehnt. Die Bestätigung
+ * gilt nur für genau dieses Modell/diese Lizenzangabe. NUR OBERFLÄCHE.
+ */
+async ttsProviderAcknowledgeLicense(id: string, fingerprint: string) : Promise<Result<LicenseAck, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_acknowledge_license", { id, fingerprint }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fernzugriff (Adresse außerhalb dieses Rechners) für einen Anbieter erlauben
+ * oder zurücknehmen. Der Text der Anfrage verlässt dann das Gerät. NUR OBERFLÄCHE.
+ */
+async ttsProviderSetAllowRemote(id: string, allow: boolean) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_allow_remote", { id, allow }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anbieter (und Stimme) fürs Vorlesen wählen. Prüft die Guardrails: ein
+ * gesperrter Anbieter lässt sich nicht wählen (`license_blocked`/
+ * `privacy_blocked`). Wirkt auch mitten im Vorlesen (wie ein Stimmwechsel).
+ */
+async ttsProviderSelect(id: string, voice: string | null) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_select", { id, voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Probestimme: der Anbieter spricht `text`, das Audio wird abgespielt, sobald
+ * es eintrifft. Liefert die `request_id`; Verlauf über das Ereignis
+ * `tts-provider-preview`. Läuft das Vorlesen, wird abgelehnt (`bad_request`);
+ * eine laufende Probestimme wird abgelöst. Gilt als Nutzung: Guardrails wie
+ * beim Vorlesen.
+ */
+async ttsProviderPreview(id: string, text: string, voice: string | null) : Promise<Result<string, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_preview", { id, text, voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Probestimme abbrechen (Synthese UND Wiedergabe). `false`: lief nicht mehr.
+ */
+async ttsProviderCancel(requestId: string) : Promise<Result<boolean, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_cancel", { requestId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -5434,7 +5580,8 @@ documentEvent: DocumentEvent,
 projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
-streamTextEvent: StreamTextEvent
+streamTextEvent: StreamTextEvent,
+ttsProviderPreview: TtsProviderPreview
 }>({
 briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
@@ -5452,7 +5599,8 @@ documentEvent: "document-event",
 projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
-streamTextEvent: "stream-text-event"
+streamTextEvent: "stream-text-event",
+ttsProviderPreview: "tts-provider-preview"
 })
 
 /** user-defined constants **/
@@ -5752,6 +5900,15 @@ tts_preview_engine?: string;
  */
 tts_piper_voice?: string | null; 
 /**
+ * Sprachausgabe-Anbieter (Goal tts-provider, P3a): Konfiguration von
+ * phonon / openai-speech / ollama-speech samt Opt-in, Lizenz-
+ * Zustimmungen und Fernzugriffs-Freigaben. Optional — eine Datei ohne
+ * das Feld bleibt gültig, alles ist dann aus bzw. leer. Freigaben nur
+ * über die `tts_provider_*`-Befehle, nie über diesen Schlüssel (siehe
+ * `managers::tts::providers::policy`).
+ */
+tts_providers?: TtsProvidersSettings; 
+/**
  * Piper: Sprache je Satz erkennen und die passende geladene Stimme nehmen.
  */
 tts_piper_auto_language?: boolean; 
@@ -5987,6 +6144,11 @@ email: string | null; name: string | null; organizer: boolean;
  */
 is_self: boolean; partstat: string | null }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
+/**
+ * Kodierung von Audiodaten: rohes PCM (16 Bit little endian bzw. 32 Bit
+ * Float) oder ein vollständiger WAV-Container.
+ */
+export type AudioEncoding = "pcm16_le" | "f32_le" | "wav"
 export type AudioNote = { 
 /**
  * Der Text, aus dem die Aufnahme entstand — vollstaendig, damit er
@@ -6289,6 +6451,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  */
 "recording.start" | "transcribe.file" | "tts.render" | 
 /**
+ * Sprachausgabe-Anbieter, Stimmen, Gesundheit und Benchmark-Ergebnisse lesen
+ * (Goal tts-provider, P3b). Nur lesend: Freigaben der Anbieter setzt kein Werkzeug.
+ */
+"tts.read" | 
+/**
  * Daten an einen Webhook senden (B5, n8n-Bruecke).
  */
 "webhook.post" | 
@@ -6456,6 +6623,10 @@ export type DetectMode =
  * Jedes Programm mit Mikrofonzugriff, auch ausserhalb des Katalogs.
  */
 "all_apps"
+/**
+ * Wo gerechnet wird.
+ */
+export type Device = "cpu" | "cuda" | "metal" | "remote"
 /**
  * What happens to the system's audio output while a dictation runs, so
  * music or a video neither disturbs the speaker nor ends up in the recording.
@@ -6877,6 +7048,39 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+/**
+ * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
+ * solange `fingerprint` dem aktuellen Stand entspricht (siehe
+ * [`license_fingerprint`]).
+ */
+export type LicenseAck = { provider_id: string; fingerprint: string; 
+/**
+ * RFC 3339, UTC.
+ */
+acked_at: string }
+/**
+ * Vom Nutzer angegebene Lizenzdaten des Servers/Modells. Sie gelten immer
+ * als UNGEPRÜFT (`verified = false`): die Angabe ersetzt keine Prüfung.
+ */
+export type LicenseConfig = { code: string; weights: string; non_commercial: boolean; source_url: string; note: string }
+/**
+ * Lizenzangaben. `verified` heißt: Quelle UND Datum der Prüfung sind
+ * bekannt (`source_url`, `verified_on`). Alles andere ist `false` und
+ * braucht eine `note`, die sagt, was noch zu prüfen ist.
+ */
+export type LicenseInfo = { 
+/**
+ * Lizenz des Codes (SPDX-Kennung bzw. Klartext).
+ */
+code: string; 
+/**
+ * Lizenz der Gewichte/Stimmen.
+ */
+weights: string; non_commercial: boolean; verified: boolean; source_url: string; 
+/**
+ * Datum der Prüfung (`JJJJ-MM-TT`), nur zusammen mit `verified`.
+ */
+verified_on: string | null; note: string }
 /**
  * Eine konfigurierte Verbindung zu einem Sprachmodell-Anbieter.
  * 
@@ -7466,6 +7670,75 @@ export type NewAgentClient = { client: AgentClient; token: string }
  */
 export type NoteBlock = { id: string; kind: NoteBlockKind; text: string; at_ms: number | null; checked: boolean }
 export type NoteBlockKind = "paragraph" | "bullet" | "heading" | "todo"
+/**
+ * Einstellungen des Ollama-Sprachanbieters.
+ */
+export type OllamaSpeechConfig = { 
+/**
+ * Adresse des Ollama-Dienstes (ohne `/v1`; ein angehängtes `/v1` wird toleriert).
+ */
+base_url: string; 
+/**
+ * Modell in Ollama (Standard `phonon`; z. B. `phonon:de`).
+ */
+model: string; 
+/**
+ * Stimme; `None` = Vorgabe des Modells.
+ */
+voice: string | null; 
+/**
+ * Statt der Plattformsperre eine Mini-Probe gegen den Dienst machen
+ * (lädt das Sprachmodell in Ollama; Standard: aus).
+ */
+probe_speech: boolean; 
+/**
+ * Dienst außerhalb von Loopback erlauben (Standard: nein).
+ */
+allow_remote: boolean; 
+/**
+ * Sprachen des Modells (`und`, wenn leer: Ollama nennt sie nicht).
+ */
+languages: string[] }
+/**
+ * Einstellungen des generischen Sprachserver-Adapters.
+ */
+export type OpenAiSpeechConfig = { 
+/**
+ * Kennung des Anbieters (`[a-z0-9][a-z0-9_-]*`).
+ */
+id: string; label: string; 
+/**
+ * Basis ohne `/audio/speech`, z. B. `http://127.0.0.1:8880/v1`.
+ */
+base_url: string; 
+/**
+ * Wird immer gesendet (OpenAI-Pflichtfeld); manche Server ignorieren es.
+ */
+model: string; 
+/**
+ * Stimme; `None` = nicht senden (Servervorgabe).
+ */
+voice: string | null; 
+/**
+ * Abtastrate der Rohdaten (`pcm`); bei `wav` zählt der Kopf.
+ */
+sample_rate: number; 
+/**
+ * Sprachkürzel, die der Server spricht (`und` = alle).
+ */
+languages: string[]; 
+/**
+ * Server außerhalb von Loopback erlauben (Standard: nein).
+ */
+allow_remote: boolean; 
+/**
+ * NAME einer Umgebungsvariablen mit dem API-Schlüssel (nie der Schlüssel selbst).
+ */
+api_key_env: string | null; 
+/**
+ * Lizenzangaben des Nutzers (immer ungeprüft).
+ */
+license: LicenseConfig | null }
 export type Origin = "user" | "ai"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "top" | "bottom"
@@ -7547,10 +7820,51 @@ is_self: boolean;
  */
 meeting_count: number }
 /**
+ * Einstellungen des Phonon-Adapters.
+ */
+export type PhononConfig = { 
+/**
+ * Pfad zur `ptts`-Programmdatei (oder ein Name im `PATH`).
+ */
+exe_path: string; 
+/**
+ * Lokaler Modellordner (mit `config.json`, `tokenizer.json`, Gewichten)
+ * oder `hf://OWNER/MODEL[@REVISION]`.
+ */
+model: string; 
+/**
+ * `None` (f32) oder `"q8"` (q8-GGUF, läuft immer auf der CPU).
+ */
+quant: string | null; 
+/**
+ * Sprache der Textnormalisierung: de, en, fr, es, pt oder none.
+ */
+lang: string; 
+/**
+ * Stimme (Name, `.safetensors`-Pfad); `None` = Standardstimme des Modells.
+ */
+voice: string | null; 
+/**
+ * Rechen-Threads (`--threads`); `None` = Vorgabe des Programms.
+ */
+threads: number | null; 
+/**
+ * Ort des Hugging-Face-Caches (`HF_HOME`); `None` = Umgebung/Standard.
+ */
+hf_home: string | null; 
+/**
+ * Downloads vom Hugging Face erlauben (Standard: nein).
+ */
+allow_network: boolean }
+/**
  * Wohin der Export kam (Pfad relativ zum Ordner).
  */
 export type PlacedInfo = { rel: string; bytes: number }
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
+/**
+ * Phase im Ereignis [`TtsProviderPreview`].
+ */
+export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
 /**
  * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
  */
@@ -7679,6 +7993,63 @@ params_json: string | null; origin: ProvenanceOrigin }
  * Transkripts) rekonstruiert und traegt nur, was dort stand.
  */
 export type ProvenanceOrigin = "recorded" | "derived"
+/**
+ * Was ein Anbieter kann.
+ */
+export type ProviderCaps = { 
+/**
+ * Sprachkürzel (`de`, `en`, …); `und` = sprachunabhängig/mehrsprachig.
+ */
+languages: string[]; streaming: StreamingMode; 
+/**
+ * Kodierungen, die `SynthesisOptions::format` für den Stream annimmt.
+ */
+formats: AudioEncoding[]; sample_rates: number[]; cloning: boolean; devices: Device[]; 
+/**
+ * Plattformkennungen wie im Katalog (`windows-x64`, `macos-aarch64`, …).
+ */
+platforms: string[]; style_tags: boolean }
+/**
+ * Statische Beschreibung eines Anbieters.
+ */
+export type ProviderDescriptor = { 
+/**
+ * Stabile Kennung, `[a-z0-9][a-z0-9_-]*`.
+ */
+id: string; label: string; tier: ProviderTier; 
+/**
+ * Nur nach Freischaltung durch den Nutzer anbieten (Guardrails in `commands`).
+ */
+opt_in: boolean; caps: ProviderCaps; license: LicenseInfo }
+/**
+ * Ergebnis einer Gesundheitsprüfung. Nicht verfügbar heißt immer: `reason`
+ * sagt warum (für den Nutzer lesbar), `hint` was zu tun ist.
+ */
+export type ProviderHealth = { available: boolean; reason: string | null; hint: string | null; device: Device | null; version: string | null; 
+/**
+ * Dauer der Prüfung in Millisekunden (die Registry setzt den gemessenen Wert).
+ */
+checked_ms: number }
+/**
+ * Wie verbindlich ein Anbieter angeboten wird.
+ */
+export type ProviderTier = 
+/**
+ * Teil des Standardumfangs (Fish, Piper).
+ */
+"supported" | 
+/**
+ * Nur nach ausdrücklichem Opt-in sichtbar.
+ */
+"experimental" | 
+/**
+ * Nur für Benchmark/Tests (Mock).
+ */
+"benchmark_only" | 
+/**
+ * Bekannt, aber hier nicht benutzbar (nur Statuszeile).
+ */
+"unavailable"
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
@@ -7983,6 +8354,12 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+/**
+ * Wie ein Anbieter Audio liefert. Ehrlich gemeint: nur ECHTE Teil-Audios
+ * vor dem Ende der Synthese sind `Chunk`; ein Anbieter, der erst den ganzen
+ * Satz berechnet, ist `Sentence`.
+ */
+export type StreamingMode = "none" | "sentence" | "chunk"
 /**
  * Wie stark die Kette eingreift.
  */
@@ -8306,7 +8683,98 @@ license: string | null; license_url: string | null;
  */
 license_non_commercial: boolean }
 export type TtsDownloadKind = "runtime" | "voice"
+/**
+ * Fehler eines Anbieters. `retryable`: ein erneuter Versuch kann gelingen
+ * (Netzwerkaussetzer, 5xx). Abbruch, Fristablauf, Konfigurations-, Lizenz-
+ * und Anfragefehler sind NIE wiederholbar — dafür sorgen die Konstruktoren;
+ * `with_retryable` ist nur für `Network`/`Backend` gedacht.
+ */
+export type TtsError = { kind: TtsErrorKind; retryable: boolean; message: string }
+/**
+ * Fehlerklassen. Die Klasse entscheidet über Wiederholung, Anzeige und
+ * Abbruchverhalten — nicht der Meldungstext.
+ */
+export type TtsErrorKind = "unavailable" | "invalid_config" | "license_blocked" | "privacy_blocked" | "timeout" | "cancelled" | "bad_request" | "backend" | "network"
 export type TtsPhase = "stopped" | "starting" | "ready" | "speaking" | "error"
+/**
+ * Ein Anbieter in der Liste der Oberfläche.
+ */
+export type TtsProviderEntry = { descriptor: ProviderDescriptor; 
+/**
+ * Ergebnis der Prüfung (mit Frist; ein hängender Anbieter ist „nicht
+ * verfügbar“ mit Grund).
+ */
+health: ProviderHealth; 
+/**
+ * Opt-in erteilt (Anbieter ohne Opt-in: immer `true`).
+ */
+enabled: boolean; license_needs_ack: boolean; 
+/**
+ * Gültige Zustimmung zum AKTUELLEN Stand (Modell/Lizenz) liegt vor.
+ */
+license_acked: boolean; 
+/**
+ * Fernzugriff ausdrücklich erlaubt.
+ */
+allow_remote: boolean; 
+/**
+ * Die wirksame Adresse liegt außerhalb von Loopback.
+ */
+remote: boolean; 
+/**
+ * Aktueller Fingerabdruck der Lizenzlage — beim Bestätigen zurückgeben.
+ */
+fingerprint: string; 
+/**
+ * Warum die Nutzung jetzt gesperrt ist (`None` = erlaubt).
+ */
+blocked: TtsError | null; 
+/**
+ * Dieser Anbieter liest vor (`tts_engine`).
+ */
+selected: boolean; 
+/**
+ * Gewählte Stimme (leer = Vorgabe des Anbieters).
+ */
+voice: string | null }
+/**
+ * Ereignis `tts-provider-preview` (siehe Moduldoku).
+ */
+export type TtsProviderPreview = { request_id: string; phase: PreviewPhase; 
+/**
+ * Nur bei `first_audio`: Millisekunden vom Start bis zum ersten Teil.
+ */
+ttfa_ms: number | null; 
+/**
+ * Nur bei `error`.
+ */
+error_kind: TtsErrorKind | null; 
+/**
+ * Nur bei `error`: Text für den Nutzer.
+ */
+message: string | null }
+/**
+ * Einstellungsfeld `tts_providers` (optional: alte Dateien ohne das Feld
+ * bleiben gültig, alles ist aus bzw. leer).
+ */
+export type TtsProvidersSettings = { phonon: PhononConfig; openai_speech: OpenAiSpeechConfig; ollama_speech: OllamaSpeechConfig; 
+/**
+ * Opt-in je Anbieter-Kennung. Nur über `tts_provider_set_enabled`.
+ */
+enabled: string[]; 
+/**
+ * Lizenz-Zustimmungen. Nur über `tts_provider_acknowledge_license`.
+ */
+license_acks: LicenseAck[]; 
+/**
+ * Anbieter, deren Server/Netzzugriff außerhalb von Loopback liegen darf.
+ * Nur über `tts_provider_set_allow_remote`.
+ */
+allow_remote: string[]; 
+/**
+ * Letzte Stimmenauswahl je Anbieter-Kennung (`tts_provider_select`).
+ */
+voices: Partial<{ [key in string]: string }> }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
@@ -8352,6 +8820,18 @@ rel: string;
  * `created`, `updated` oder `unchanged`.
  */
 result: string }
+/**
+ * Eine wählbare Stimme.
+ */
+export type VoiceDescriptor = { id: string; label: string; 
+/**
+ * Sprachkürzel; `und` = beliebige Sprache (z. B. geklonte Fish-Stimme).
+ */
+language: string; gender: string | null; 
+/**
+ * Eigene Lizenz der Stimme, wenn sie von der des Anbieters abweicht.
+ */
+license: LicenseInfo | null }
 /**
  * Eine Stimme mit ihren Metadaten, für die Stimmenübersicht.
  */

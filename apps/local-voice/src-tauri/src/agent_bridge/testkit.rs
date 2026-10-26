@@ -82,7 +82,7 @@ impl ToolHandler for TestHandler {
 }
 
 /// Alle Katalogwerkzeuge.
-pub const ALL_TOOLS: [&str; 11] = [
+pub const ALL_TOOLS: [&str; 17] = [
     "add_youtube_source",
     "start_recording",
     "stop_recording",
@@ -91,6 +91,12 @@ pub const ALL_TOOLS: [&str; 11] = [
     "create_meeting",
     "tts_page_create",
     "tts_render_audio",
+    "tts_providers_list",
+    "tts_provider_capabilities",
+    "tts_provider_voices",
+    "tts_provider_health",
+    "tts_benchmark_results",
+    "tts_provider_select",
     "list_workflows",
     "run_workflow",
     "get_run",

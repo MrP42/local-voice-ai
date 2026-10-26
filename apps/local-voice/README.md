@@ -53,6 +53,10 @@ scripts/                    dev.ps1, set-version.mjs, gen_catalog.py, Prüfskrip
 tests/                      Playwright-Tests der Oberfläche
 ```
 
+## Sprachausgabe-Anbieter
+
+Das Vorlesen kennt austauschbare Anbieter (Fish, Piper, experimentell Phonon, OpenAI-kompatible Server, Ollama). Vertrag, Einstellungen, Freigaben, Kommandozeile (`--tts-providers`, `--tts-bench`) und Benchmark: [`docs/tts/README.md`](../../docs/tts/README.md).
+
 ## Konventionen
 
 - Zweig anlegen, PR öffnen, nie direkt auf `main` — Regeln für alle Beteiligten

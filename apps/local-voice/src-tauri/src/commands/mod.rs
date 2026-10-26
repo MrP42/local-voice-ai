@@ -33,6 +33,7 @@ pub mod project_minutes; // G3 (#70)
 pub mod provenance; // A1
 pub mod transcription;
 pub mod tts;
+pub mod tts_providers;
 pub mod youtube; // A2
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};

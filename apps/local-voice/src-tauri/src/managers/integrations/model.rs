@@ -126,6 +126,7 @@ impl Kind {
                 RecordingStart,
                 TranscribeFile,
                 TtsRender,
+                TtsRead,
                 YoutubeAdd,
                 WorkflowRead,
                 WorkflowRun,
@@ -223,6 +224,10 @@ pub enum Capability {
     TranscribeFile,
     #[serde(rename = "tts.render")]
     TtsRender,
+    /// Sprachausgabe-Anbieter, Stimmen, Gesundheit und Benchmark-Ergebnisse lesen
+    /// (Goal tts-provider, P3b). Nur lesend: Freigaben der Anbieter setzt kein Werkzeug.
+    #[serde(rename = "tts.read")]
+    TtsRead,
     /// Daten an einen Webhook senden (B5, n8n-Bruecke).
     #[serde(rename = "webhook.post")]
     WebhookPost,
@@ -260,7 +265,7 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 25] = [
+    pub const ALL: [Capability; 26] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -275,6 +280,7 @@ impl Capability {
         Capability::RecordingStart,
         Capability::TranscribeFile,
         Capability::TtsRender,
+        Capability::TtsRead,
         Capability::WebhookPost,
         Capability::WorkflowRead,
         Capability::WorkflowRun,
@@ -304,6 +310,7 @@ impl Capability {
             Capability::RecordingStart => "recording.start",
             Capability::TranscribeFile => "transcribe.file",
             Capability::TtsRender => "tts.render",
+            Capability::TtsRead => "tts.read",
             Capability::WebhookPost => "webhook.post",
             Capability::WorkflowRead => "workflow.read",
             Capability::WorkflowRun => "workflow.run",
@@ -331,6 +338,7 @@ impl Capability {
             | Capability::KnowledgeSearch
             | Capability::KnowledgeRead
             | Capability::MediaFetch
+            | Capability::TtsRead
             | Capability::WorkflowRead => Access::Read,
             _ => Access::Write,
         }

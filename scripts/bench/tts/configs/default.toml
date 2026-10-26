@@ -1,0 +1,86 @@
+# Messkonfigurationen des TTS-Benchmarks (Stand 26.10.2026, Goal tts-provider).
+# Jede [[config]] ist EINE Messreihe; der Harness ruft das App-Binary je Konfiguration seriell auf.
+#
+# status: run | not_tested | unsupported | license_restricted
+#   Alles außer "run" wird NICHT gemessen, erscheint im Bericht mit Grund und OHNE Zahlen.
+# warm_runs / cold_runs gelten JE SATZ der Teilmenge (Latenzlauf: smoke, 12 Sätze).
+#   Qualitätslauf (WER/CER, Hörtest): `run --subset full --warm 1 --cold 0`.
+# device: erwartetes Gerät (cpu | cuda | metal | remote | any). Meldet env.json ein anderes,
+#   vermerkt der Bericht "Gerät weicht ab" - gemessen wird trotzdem, nie raten.
+
+[defaults]
+corpus = "de-v1"
+subset = "smoke"
+language = "de"
+warm_runs = 30
+cold_runs = 3
+memory_limit_mb = 16384   # Job-Objekt-Deckel für App + Kindprozesse (Systemschutz)
+max_processes = 24
+
+[[config]]
+id = "piper-thorsten-high-cpu"
+provider = "piper"
+voice = "de_DE-thorsten-high"
+device = "cpu"
+status = "run"
+note = "Referenz: lokaler Subprozess je Satz, kein Streaming."
+
+[[config]]
+id = "fish-s2-pro-cuda"
+provider = "fish"
+voice = ""                 # Standardstimme ohne Referenz; Referenzstimmen als eigene Konfiguration
+device = "cuda"
+memory_limit_mb = 57344    # 56 GB: der Fish-Server braucht beim Laden kurzzeitig ~48 GB Commit; 16 GB endeten mit 0xc0000005
+status = "run"
+note = "Externer Python-HTTP-Server (C:\\AI\\fish-speech); Server-RAM liegt außerhalb des App-Prozessbaums (siehe README, Grenzen)."
+
+[[config]]
+id = "phonon-31m-en-cpu"
+provider = "phonon"
+voice = ""
+language = "en"
+corpus = "en-func-v1"
+subset = "full"
+warm_runs = 3
+cold_runs = 1
+device = "cpu"
+quality = false
+status = "not_tested"
+reason = "Nicht gemessen: das deutsche 40m-Modell wurde gemessen; der englische Funktionsnachweis ist damit entbehrlich (Modell liegt lokal unter D:/lv-build/phonon/models/phonon-31m-en)."
+note = "Nur Funktionsnachweis: englisches Modell, kein Deutsch, daher keine WER/CER und kein Vergleich mit den deutschen Reihen. Nicht installiert -> Ergebnis 'fehlgeschlagen' mit Grund."
+
+[[config]]
+id = "phonon-40m-de-cpu"
+provider = "phonon"
+voice = ""                 # Standardstimme des Checkpoints ("default", laut HF-Karte Anton)
+device = "cpu"
+status = "run"
+note = "Gewichte gradium/phonon-40m-de @79cfc7b4 (CC BY-NC 4.0, Bedingungen am 26.10.2026 vom Owner angenommen, nur nichtkommerzielle Evaluation), lokaler Modellordner, q8, offline; Modell/EXE kommen aus den App-Einstellungen (tts_providers.phonon)."
+
+[[config]]
+id = "ollama-speech-windows"
+provider = "ollama-speech"
+device = "any"
+status = "unsupported"
+reason = "Speech-Endpunkt laut Ollama-Release-Notes v0.40.11 unter Windows nicht unterstützt; lokaler Client ist 0.34.2, Dienst aus."
+
+[[config]]
+id = "kokoro"
+provider = "kokoro"
+device = "any"
+status = "unsupported"
+reason = "Kein deutsches Modell (Sprachen laut Modellkarte ohne Deutsch); über openai-speech anbindbar, aber für den deutschen Korpus nicht messbar."
+
+[[config]]
+id = "xtts-v2"
+provider = "xtts-v2"
+device = "cuda"
+status = "not_tested"
+reason = "Nicht installiert; Gewichte unter Coqui Public Model License (nichtkommerziell). Kein Adapter im Standard."
+
+[[config]]
+id = "f5-tts"
+provider = "f5-tts"
+device = "cuda"
+status = "not_tested"
+reason = "Nicht installiert; Gewichte CC-BY-NC, Deutsch nur über Community-Finetunes (ebenfalls CC-BY-NC-4.0). Kein Adapter im Standard."

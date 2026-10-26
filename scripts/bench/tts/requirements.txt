@@ -1,0 +1,8 @@
+# Pflicht (wie scripts/bench/requirements.txt)
+numpy
+soundfile
+pytest
+# optional
+psutil            # genauere RAM/CPU-Messung; ohne psutil nutzt der Harness die Windows-API (ctypes)
+scipy             # nur für `asr --engine app-cli` (Resampling auf 16 kHz)
+faster-whisper    # nur für `asr` (getestet mit 1.1.1); Tests nutzen --engine fake

@@ -113,6 +113,7 @@ export const installIntegrationsMock = async (
             "meeting.create",
             "recording.start",
             "transcribe.file",
+            "tts.read",
             "tts.render",
             "youtube.add",
             "workflow.read",
