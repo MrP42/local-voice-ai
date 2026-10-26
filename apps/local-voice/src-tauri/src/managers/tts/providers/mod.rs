@@ -20,8 +20,17 @@
 //!   Zeitgrenze je Anbieter, `request_id → CancelToken`, [`with_retry`].
 //! * [`mock`] — deterministischer Testanbieter (Sinus/Stille, 24 kHz mono).
 //! * [`builtin`] — [`FishProvider`] und [`PiperProvider`].
+//! * [`phonon`] — [`PhononProvider`]: Phonon über das CLI `ptts` (Prozess je
+//!   Satz, Job-Objekt, Offline-Umgebung), Paket P2.
+//! * [`openai_speech`] — [`OpenAiSpeechProvider`]: jeder Server mit
+//!   `POST /audio/speech` (echtes Chunk-Streaming, Loopback-Pflicht), Paket P2.
+//! * [`ollama_speech`] — [`OllamaSpeechProvider`]: Ollama-Sprachausgabe auf
+//!   dem OpenAI-Adapter, mit Version-/Modell-/Plattformprüfung, Paket P2.
+//!   Alle drei sind `Experimental` + `opt_in`; sie werden von P3 registriert,
+//!   nicht hier.
 //! * `contract_tests` (nur Tests) — `contract_suite`, der Vertragstest-Satz,
-//!   den jeder Adapter in seinen Tests aufruft.
+//!   den jeder Adapter in seinen Tests aufruft; `test_http` (Fake-HTTP-Server)
+//!   und `phonon_fake` (Fake-`ptts`, mit `rustc` gebaut) sind ihre Testhilfen.
 //!
 //! ## Entscheidung: async ohne `async-trait`, aber dyn-fähig
 //!
@@ -75,11 +84,18 @@
 pub mod builtin;
 pub mod contract;
 pub mod mock;
+pub mod ollama_speech;
+pub mod openai_speech;
+pub mod phonon;
 pub mod registry;
 pub mod wav;
 
 #[cfg(test)]
 pub(crate) mod contract_tests;
+#[cfg(test)]
+pub(crate) mod phonon_fake;
+#[cfg(test)]
+pub(crate) mod test_http;
 
 pub use builtin::{FishProvider, PiperProvider, SynthFn};
 pub use contract::{
@@ -89,6 +105,9 @@ pub use contract::{
     VoiceDescriptor,
 };
 pub use mock::{MockFailure, MockProvider};
+pub use ollama_speech::{OllamaSpeechConfig, OllamaSpeechProvider};
+pub use openai_speech::{is_loopback_url, LicenseConfig, OpenAiSpeechConfig, OpenAiSpeechProvider};
+pub use phonon::{PhononConfig, PhononProvider};
 pub use registry::{
     stream_with_retry, with_retry, DeliveryTracker, ProviderRegistry, RequestGuard, RetryPolicy,
 };
