@@ -64,10 +64,40 @@ python -m pytest scripts/bench/tts -q
 |---|---|
 | `validate-corpus [name\|pfad]` | Schema, ≥ 100 Sätze, Kategorien ≥ 10, eindeutige IDs, Smoke 12 mit allen Kategorien, `normalize(text)` = `expected_normalized`, Beispiel-Domains, keine Telefonnummern |
 | `run` | `--config`, `--configs`, `--source app\|fake`, `--exe`, `--warm`, `--cold`, `--subset smoke\|full`, `--run-id`, `--resume`, `--dry-run`, `--require-exclusive`, `--min-free-ram-mb`, `--sample-ms`, `--strict` |
-| `asr` | `--run`, `--engine faster-whisper\|fake`, `--model auto` (large-v3-turbo, sonst lokal vorhandenes größtes), `--device auto\|cpu\|cuda`, `--compute-type`, `--all-runs`, `--allow-download` |
+| `asr` | `--run`, `--engine faster-whisper\|app-cli\|auto\|fake`, `--exe`, `--model auto` (faster-whisper: large-v3-turbo, sonst lokal vorhandenes größtes; app-cli: Whisper large-v3-turbo Q8 der App), `--device auto\|cpu\|cuda`, `--compute-type`, `--min-free-ram-mb`, `--all-runs`, `--allow-download` – Details im Abschnitt „ASR-Engines“ |
 | `report` | `--runs`, `--out`, `--publish`, `--publish-dir`, `--date` → `results.json`, `results.csv`, `report.md` |
 | `listening-kit` | `--run`, `--configs`, `--subset`, `--max-per-config`, `--seed`, `--out`, `--key-out`, `--no-loudness-match` |
 | `listening-eval` | `--key`, `--sheets` (ausgefüllte Bögen), `--out` |
+
+## ASR-Engines (WER/CER)
+
+`asr` liest die WAVs eines Laufs nachträglich zurück (nie parallel zu Messungen, gemeinsame Sperre mit `run`).
+
+| Engine | Was | Voraussetzung |
+|---|---|---|
+| `app-cli` | das **lokal installierte** Whisper large-v3-turbo Q8 (`handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf`) über das App-Binary: `<exe> -f <wav> --model <id> --json --out <r.json>`, Ergebnis-Feld `text`. Kein Download. | App-Binary (`--exe`, sonst `LVA_BENCH_CLI`, sonst `src-tauri/target/release\|debug`), Modell in der App installiert, `scipy` |
+| `faster-whisper` | Python-ASR (Standard-Engine, `--model auto` = large-v3-turbo, sonst größtes lokal vorhandenes) | `faster-whisper`; Modell lokal oder `--allow-download` |
+| `auto` | `app-cli`, wenn das Binary existiert, sonst `faster-whisper` (die Wahl steht in der Konsole und im Ergebnis) | – |
+| `fake` | deterministisch gestörte Referenz, nur Selbsttest | – |
+
+```
+python scripts/bench/tts/tts_bench.py asr --run 2026-10-qualitaet --engine app-cli [--exe <pfad\local-voice-ai.exe>] [--model <App-Modell-ID>]
+```
+
+- **Resampling:** Die App-CLI verlangt 16 kHz, mono, 16-bit-PCM und lehnt alles andere mit Exit 2 ab (sie resampelt nicht selbst;
+  `lib.rs`, `--transcribe-file`). Der Harness wandelt daher TTS-Ausgaben (22,05/24/44,1 kHz) vor dem Aufruf in eine temporäre
+  Kopie um (Mehrkanal gemittelt, Polyphasen-Resampling mit Tiefpass über `scipy`); die Original-WAVs bleiben unverändert.
+  Schon passende Dateien gehen unverändert hinein. Die Zahl der umgewandelten Dateien steht im Ergebnis.
+- **Systemschutz:** Je WAV ein Prozess im Job-Objekt (`benchlib.LimitedRunner`: RAM-Deckel 8 GB, BelowNormal, nie parallel),
+  davor das RAM-Start-Gate (`--min-free-ram-mb`, Standard 4096). Bei knappem RAM startet nichts. Das Modell wird je Aufruf neu
+  geladen (einige Sekunden je Satz; 123 Sätze dauern entsprechend), dafür bleibt kein Prozess zwischen den Aufrufen liegen.
+- **Im Ergebnis** (`asr.json` → `asr`): `engine`, `model` (Modell-ID), `exe`, `exe_size_bytes`, `exe_mtime`, `app_version`
+  (nur lesbar, wenn die Exe in einem Repo-Build unter `src-tauri/target/` liegt, sonst `null`), `bound_backend` bzw. `device`
+  (vom Binary gemeldet, z. B. CPU/Vulkan/CUDA; `null`, wenn die JSON es nicht liefert), `resampled_files`, `files`.
+- **Grenzen:** Die CLI hat keine Sprachoption – Sprache und Nachbearbeitung (z. B. eigene Wörter, Füllwörter) kommen aus den
+  App-Einstellungen und können den Text vom reinen Whisper-Ergebnis abweichen lassen; die Referenzsprache der Konfiguration
+  wird nicht übergeben. Werte verschiedener Engines/Modelle/Exe-Stände nicht vergleichen. Auch hier gilt: **WER/CER sind ein
+  Verständlichkeits-Proxy** (ASR liest die Synthese zurück, ASR-Fehler fließen ein), kein Natürlichkeitsmaß – dafür der Hörtest.
 
 ## Konfiguration
 
@@ -120,8 +150,8 @@ Latenzen schwanken mit der Systemlast: GPU exklusiv, nichts anderes Schweres par
 
 ## Grenzen
 
-- **WER/CER** messen Verständlichkeit über ein ASR (Standard `large-v3-turbo`, sonst das größte lokal vorhandene Modell –
-  steht im Ergebnis; Werte verschiedener ASR-Modelle nicht vergleichen). ASR-Fehler fließen ein. Normalisierungsgrenzen:
+- **WER/CER** messen Verständlichkeit über ein ASR (`app-cli`: App-Whisper large-v3-turbo Q8; `faster-whisper`: Standard
+  `large-v3-turbo`, sonst das größte lokal vorhandene Modell – steht im Ergebnis; Werte verschiedener ASR-Modelle nicht vergleichen). ASR-Fehler fließen ein. Normalisierungsgrenzen:
   `corpus/normalization.md`. Natürlichkeit, Prosodie und Artefakte nur über den Hörtest.
 - **RAM** ist der Working Set des Prozessbaums der App. Extern gestartete Server (z. B. der Fish-HTTP-Server) liegen außerhalb;
   dafür zeigt die VRAM-Messung den Systemwert (Gesamt-VRAM, nicht pro Prozess – unter Windows/WDDM nicht zuverlässig

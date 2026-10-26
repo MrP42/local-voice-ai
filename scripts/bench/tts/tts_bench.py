@@ -135,8 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("asr", help="WER/CER für die WAVs eines Laufs (nach dem Lauf)")
     s.add_argument("--run", required=True, help="Lauf-ID oder -Ordner")
-    s.add_argument("--engine", choices=("faster-whisper", "fake"), default="faster-whisper")
-    s.add_argument("--model", default="auto", help="auto = large-v3-turbo, sonst lokal vorhandenes (siehe README)")
+    s.add_argument("--engine", choices=("faster-whisper", "app-cli", "auto", "fake"), default="faster-whisper",
+                   help="app-cli = lokal installiertes Whisper large-v3-turbo Q8 über das App-Binary; "
+                        "auto = app-cli, wenn das Binary existiert, sonst faster-whisper")
+    s.add_argument("--exe", help="app-cli: App-Binary (Standard: LVA_BENCH_CLI, sonst target/release|debug)")
+    s.add_argument("--min-free-ram-mb", type=int, default=4096, help="app-cli: RAM-Start-Gate")
+    s.add_argument("--model", default="auto", help="faster-whisper: auto = large-v3-turbo, sonst lokal vorhandenes; "
+                                                   "app-cli: App-Modell-ID (auto = Whisper large-v3-turbo Q8)")
     s.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     s.add_argument("--compute-type", default="auto")
     s.add_argument("--all-runs", action="store_true", help="alle WAVs transkribieren, nicht eine je Satz")

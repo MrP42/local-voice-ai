@@ -578,6 +578,89 @@ def test_asr_refuses_while_a_measurement_runs(bench_env):
     assert not runner.lock_path().exists()
 
 
+# --------------------------------------------------------------------------- ASR-Engine app-cli (Attrappe)
+
+
+def _fake_asr_exe(tmp_path) -> Path:
+    exe = tmp_path / "fake-asr-app.cmd"
+    exe.write_text(f'@echo off\r\n"{sys.executable}" "{HERE / "fake_asr_cli.py"}" %*\r\n', encoding="utf-8")
+    return exe
+
+
+def test_to_16k_mono_resamples_other_rates_and_keeps_duration(tmp_path):
+    from ttsbench import asr
+    t = np.arange(24000) / 24000.0
+    stereo = np.stack([0.3 * np.sin(2 * np.pi * 440 * t)] * 2, axis=1)
+    src, dst = tmp_path / "a24k.wav", tmp_path / "out.wav"
+    sf.write(str(src), stereo, 24000, subtype="PCM_16")
+    assert asr.to_16k_mono_pcm16(src, dst) is True
+    i = sf.info(str(dst))
+    assert (i.samplerate, i.channels, i.subtype, i.frames) == (16000, 1, "PCM_16", 16000)
+    ok = tmp_path / "ok.wav"
+    sf.write(str(ok), np.zeros(1600, dtype="float32"), 16000, subtype="PCM_16")
+    assert asr.to_16k_mono_pcm16(ok, tmp_path / "none.wav") is False and not (tmp_path / "none.wav").exists()
+    odd = tmp_path / "odd.wav"  # 22,05 kHz (Piper): ungerades Verhaeltnis 160/441
+    sf.write(str(odd), np.zeros(22050, dtype="float32"), 22050, subtype="PCM_16")
+    asr.to_16k_mono_pcm16(odd, dst)
+    assert sf.info(str(dst)).frames == 16000
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Attrappe ist ein .cmd (Windows)")
+def test_asr_app_cli_end_to_end_resamples_and_records_engine(bench_env, monkeypatch):
+    run_dir = _fake_run(bench_env, "appasr")
+    log = bench_env / "asr_calls.jsonl"
+    monkeypatch.setenv("FAKE_ASR_LOG", str(log))
+    monkeypatch.setenv("FAKE_ASR_TEXT", "das ist ein test")
+    exe = _fake_asr_exe(bench_env)
+    assert tts_bench.main(["asr", "--run", "appasr", "--engine", "app-cli", "--exe", str(exe),
+                           "--min-free-ram-mb", "1"]) == 0
+    asr_json = json.loads((run_dir / "asr.json").read_text(encoding="utf-8"))
+    a = asr_json["asr"]
+    assert a["engine"] == "app-cli" and a["model"].endswith("whisper-large-v3-turbo-Q8_0.gguf")
+    assert a["exe"] == str(exe) and a["exe_size_bytes"] == exe.stat().st_size and a["exe_mtime"].endswith("Z")
+    assert a["bound_backend"] == "CPU (Attrappe)" and a["device"] == "CPU (Attrappe)"
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    n = sum(len(c["items"]) for c in asr_json["configs"].values())
+    assert len(calls) == n == a["files"] > 0 and a["resampled_files"] == n  # Synthese hat 22,05/24 kHz
+    assert {c["samplerate"] for c in calls} == {16000} and {c["model"] for c in calls} == {a["model"]}
+    item = asr_json["configs"]["piper-x"]["items"][0]
+    assert item["hyp"] == "das ist ein test"
+    src = run_dir / "piper-x" / "wavs" / item["wav"]
+    assert abs(calls[0]["audio_secs"] - sf.info(str(src)).duration) < 0.01  # Resampling erhält die Dauer
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Attrappe ist ein .cmd (Windows)")
+def test_asr_app_cli_custom_model_and_failure_is_a_clear_error(bench_env, monkeypatch):
+    _fake_run(bench_env, "appfail")
+    exe = _fake_asr_exe(bench_env)
+    monkeypatch.setenv("FAKE_ASR_MODE", "fail")
+    with pytest.raises(SystemExit, match="App-CLI fehlgeschlagen"):
+        tts_bench.main(["asr", "--run", "appfail", "--engine", "app-cli", "--exe", str(exe), "--min-free-ram-mb", "1",
+                        "--model", "parakeet-tdt-0.6b-v3"])
+    assert not runner.lock_path().exists()  # Sperre wird auch bei Fehler frei
+    with pytest.raises(SystemExit, match="App-Binary nicht gefunden"):
+        tts_bench.main(["asr", "--run", "appfail", "--engine", "app-cli", "--exe", str(bench_env / "nix.exe")])
+
+
+def test_asr_auto_prefers_app_cli_only_when_binary_exists(bench_env, monkeypatch):
+    import argparse
+    from ttsbench import asr
+
+    class _Stub:
+        name = "faster-whisper"
+
+        def __init__(self, *a, **k):
+            pass
+    monkeypatch.setattr(asr, "FasterWhisperEngine", _Stub)
+    ns = lambda exe: argparse.Namespace(engine="auto", exe=exe, model="auto", device="auto", compute_type="auto",  # noqa: E731
+                                        allow_download=False, min_free_ram_mb=1)
+    assert isinstance(asr.make_engine(ns(str(bench_env / "gibt-es-nicht.exe"))), _Stub)
+    exe = bench_env / "da.exe"
+    exe.write_bytes(b"MZ")
+    eng = asr.make_engine(ns(str(exe)))
+    assert isinstance(eng, asr.AppCliEngine) and eng.exe == exe and eng.model_name == asr.APP_CLI_MODEL
+
+
 # --------------------------------------------------------------------------- App-Quelle (Attrappe des Binarys)
 
 
