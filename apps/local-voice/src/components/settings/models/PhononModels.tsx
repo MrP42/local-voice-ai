@@ -31,9 +31,12 @@ const hfRepo = (source: string | null | undefined): string | null =>
   source?.match(/^hf:\/\/([^@]+)/)?.[1] ?? null;
 
 /**
- * Phonon (experimentell): Programm `ptts`, Modelle und Stimmen auf der
- * Modellseite installieren und entfernen -- wie Piper. Der Katalog liefert
- * Groesse, SHA-256 und Lizenz; das Backend prueft jede Datei.
+ * Phonon (experimentell): Programm `ptts` und Modelle auf der Modellseite
+ * installieren und entfernen -- wie Piper. Die Stimmen der Sprache gehoeren
+ * zum Modell (laden mit, loeschen mit, in der Groesse enthalten) und stehen
+ * hier nicht als eigene Zeilen. Fehlen bei einem installierten Modell Stimmen
+ * (aelterer Stand), bietet seine Zeile "Stimmen nachladen" an. Der Katalog
+ * liefert Groesse, SHA-256 und Lizenz; das Backend prueft jede Datei.
  */
 export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
   const { t } = useTranslation();
@@ -103,6 +106,11 @@ export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
       info.is_downloaded && !info.is_usable && missing?.kind === "runtime";
     const language = info.language ? getLanguageLabel(info.language) : null;
     const repo = hfRepo(info.source);
+    // Stimmen des Modells (aeltere Mocks ohne die Felder: keine).
+    const voicesTotal = info.bundled_voices ?? 0;
+    const voicesPresent = info.bundled_voices_present ?? 0;
+    const voicesMissing =
+      info.is_downloaded && voicesTotal > 0 && voicesPresent < voicesTotal;
     const menu: ActionMenuItem[] = info.is_downloaded
       ? [
           {
@@ -149,6 +157,20 @@ export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
                 {t("settings.models.ttsVoices.status.runtimeMissing")}
               </RowChip>
             )}
+            {voicesMissing && (
+              <RowChip
+                tone="warning"
+                title={t("settings.models.phonon.voices.detail", {
+                  total: voicesTotal,
+                  present: voicesPresent,
+                })}
+              >
+                {t("settings.models.phonon.voices.missingChip", {
+                  present: voicesPresent,
+                  total: voicesTotal,
+                })}
+              </RowChip>
+            )}
             {unsupported && (
               <RowChip tone="warning">
                 {t("settings.models.ttsVoices.status.unsupported")}
@@ -178,6 +200,13 @@ export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
               </span>
             )}
             <span className="tabular-nums">{formatBytes(info.size_bytes)}</span>
+            {voicesTotal > 0 && (
+              <span data-testid={`phonon-voices-count-${info.id}`}>
+                {t("settings.models.phonon.voices.included", {
+                  count: voicesTotal,
+                })}
+              </span>
+            )}
           </>
         }
         primary={
@@ -191,6 +220,18 @@ export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
                   : t("settings.models.phonon.actions.installModel"),
               )
             )
+          ) : voicesMissing && !downloading ? (
+            // Das Modell bleibt, wie es ist: geladen werden nur die fehlenden Stimmen.
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void downloadModel(info.id)}
+              className="flex items-center gap-1.5"
+              data-testid={`phonon-voices-reload-${info.id}`}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("settings.models.phonon.voices.reload")}
+            </Button>
           ) : !info.is_downloaded && !downloading && !unsupported ? (
             <Button
               variant="secondary"
@@ -209,6 +250,18 @@ export const PhononModels: React.FC<{ query: string }> = ({ query }) => {
         details={
           <>
             <p>{descriptionOf(info)}</p>
+            {voicesTotal > 0 && (
+              <p data-testid={`phonon-voices-detail-${info.id}`}>
+                {info.is_downloaded
+                  ? t("settings.models.phonon.voices.detail", {
+                      total: voicesTotal,
+                      present: voicesPresent,
+                    })
+                  : t("settings.models.phonon.voices.detailNew", {
+                      total: voicesTotal,
+                    })}
+              </p>
+            )}
             {info.license_non_commercial && (
               <p
                 className="text-amber-700 dark:text-amber-400"

@@ -8,6 +8,15 @@
 //! * Stimme: `models/<modell>/voices/<Name>.safetensors` plus `voices/SOURCE.json`
 //!   (`{"source", "license", "voices": [Zeilen aus voices.jsonl]}`).
 //!
+//! ## Stimmen gehoeren zum Modell (seit 27.10.2026)
+//!
+//! Die Stimmen der Sprache eines Modells (Katalog: `purpose: phonon-voice`, `parent` = Modell) sind
+//! KEINE eigenen Zeilen der Oberflaeche mehr, sondern Teil ihres Modells: `install_model` laedt sie mit
+//! (Groessenanzeige = Modell + Stimmen), `delete` entfernt sie mit dem Modellordner. Ein schon
+//! installiertes Modell ohne (alle) Stimmen wird beim naechsten Installieren ergaenzt, ohne das Modell
+//! neu zu laden (`install_missing_voices`); die Oberflaeche bietet das als „Stimmen nachladen“ an.
+//! Einzeln installierte Stimmen (aeltere Staende) liegen am selben Zielpfad und bleiben gueltig.
+//!
 //! ## Fehlerfaelle und ihre Absicherung
 //!
 //! | Fall | Absicherung |
@@ -129,6 +138,9 @@ impl PhononDirs {
     }
 }
 
+/// Unterordner fuer die Stimmen in einem Modellordner (auch im Zwischenordner).
+const VOICES_SUBDIR: &str = "voices";
+
 fn file_has_size(path: &Path, size: u64) -> bool {
     fs::metadata(path)
         .map(|m| m.is_file() && m.len() == size)
@@ -168,6 +180,14 @@ fn voice_entries() -> Vec<TtsCatalogEntry> {
 
 fn model_entry(id: &str) -> Option<TtsCatalogEntry> {
     model_entries().into_iter().find(|e| e.id == id)
+}
+
+/// Die Stimmen, die mit dem Modell `model_id` geliefert werden (Katalogreihenfolge).
+pub(crate) fn bundled_voices(model_id: &str) -> Vec<TtsCatalogEntry> {
+    voice_entries()
+        .into_iter()
+        .filter(|e| e.parent.as_deref() == Some(model_id))
+        .collect()
 }
 
 /// Gehoert die Kennung zu Phonon (Programmzeile, Modell oder Stimme)?
@@ -243,6 +263,29 @@ fn voice_installed(dirs: &PhononDirs, entry: &TtsCatalogEntry) -> bool {
     }
 }
 
+/// Steht die Stimme in `voices/SOURCE.json` (Name, Geschlecht, Beschreibung fuer die Anzeige)?
+fn voice_listed(source: Option<&VoiceSource>, entry: &TtsCatalogEntry) -> bool {
+    match (source, entry.voice.as_ref()) {
+        (Some(doc), Some(meta)) => doc.voices.iter().any(|v| v.name == meta.name),
+        _ => false,
+    }
+}
+
+/// Wie viele der mitgelieferten Stimmen sind vollstaendig da (Datei in richtiger Groesse UND
+/// Eintrag in `SOURCE.json`)? Fehlt eines von beiden, gilt die Stimme als fehlend und wird beim
+/// Nachladen ergaenzt (Dateien, die schon stimmen, werden nicht neu geladen).
+fn voices_present(dirs: &PhononDirs, model_id: &str, voices: &[TtsCatalogEntry]) -> usize {
+    let source = read_voice_source(&dirs.voices_dir(model_id));
+    voices
+        .iter()
+        .filter(|v| voice_installed(dirs, v) && voice_listed(source.as_ref(), v))
+        .count()
+}
+
+fn files_bytes(entry: &TtsCatalogEntry) -> u64 {
+    entry.files.iter().map(|f| f.size_bytes).sum()
+}
+
 // ---- Liste fuer die Oberflaeche -------------------------------------------------------------
 
 fn base_info(
@@ -277,10 +320,12 @@ fn base_info(
             None
         },
         license_note: entry.license_note.clone(),
+        bundled_voices: 0,
+        bundled_voices_present: 0,
     }
 }
 
-/// Programmzeile, dann Modelle, dann Stimmen. `is_downloading` fragt den laufenden Zustand
+/// Programmzeile, dann Modelle. Die Stimmen sind Teil ihres Modells (Groesse, Zaehler), keine Zeilen. `is_downloading` fragt den laufenden Zustand
 /// (er braucht den Manager; hier wird er hereingereicht, damit die Liste ohne App testbar ist).
 pub(crate) fn build_downloads(
     dirs: &PhononDirs,
@@ -301,37 +346,22 @@ pub(crate) fn build_downloads(
     }
     let runtime_id = runtime.as_ref().map(|_| RUNTIME_ID.to_string());
 
-    let mut ready_models: Vec<String> = Vec::new();
     for entry in model_entries() {
         let complete = model_complete(dirs, &entry);
-        if complete {
-            ready_models.push(entry.id.clone());
-        }
+        let voices = bundled_voices(&entry.id);
         let mut info = base_info(
             &entry,
             &entry.id,
             TtsDownloadKind::Model,
             runtime_id.clone(),
         );
+        // Anzeige: Modell plus Stimmen, so gross wie die ganze Installation.
+        info.size_bytes += voices.iter().map(files_bytes).sum::<u64>();
+        info.size_mb = info.size_bytes / (1024 * 1024);
+        info.bundled_voices = voices.len() as u32;
+        info.bundled_voices_present = voices_present(dirs, &entry.id, &voices) as u32;
         info.is_downloaded = complete;
         info.is_usable = complete && runtime_ready;
-        info.is_downloading = is_downloading(&entry.id);
-        out.push(info);
-    }
-    for entry in voice_entries() {
-        let present = voice_installed(dirs, &entry);
-        let model_ready = entry
-            .parent
-            .as_ref()
-            .is_some_and(|p| ready_models.contains(p));
-        let mut info = base_info(
-            &entry,
-            &entry.id,
-            TtsDownloadKind::Voice,
-            entry.parent.clone(),
-        );
-        info.is_downloaded = present;
-        info.is_usable = present && model_ready && runtime_ready;
         info.is_downloading = is_downloading(&entry.id);
         out.push(info);
     }
@@ -872,24 +902,35 @@ fn write_voice_source(voices_dir: &Path, doc: &VoiceSource) -> Result<()> {
     Ok(())
 }
 
-/// Traegt die Zeile der Stimme in `SOURCE.json` ein (ersetzt eine gleichnamige).
-fn add_voice_row(voices_dir: &Path, entry: &TtsCatalogEntry) -> Result<()> {
-    let Some(meta) = entry.voice.clone() else {
-        return Ok(());
-    };
-    let mut doc = read_voice_source(voices_dir).unwrap_or(VoiceSource {
+/// Traegt die Zeilen der Stimmen in `base` ein (ersetzt gleichnamige; Reihenfolge wie im Katalog).
+fn merge_voice_rows(base: Option<VoiceSource>, entries: &[TtsCatalogEntry]) -> VoiceSource {
+    let mut doc = base.unwrap_or(VoiceSource {
         source: String::new(),
         license: String::new(),
         voices: Vec::new(),
     });
-    doc.source = entry.source.clone().unwrap_or_default();
-    doc.license = entry
-        .license
-        .clone()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    doc.voices.retain(|v| v.name != meta.name);
-    doc.voices.push(meta);
+    for entry in entries {
+        let Some(meta) = entry.voice.clone() else {
+            continue;
+        };
+        doc.source = entry.source.clone().unwrap_or_default();
+        doc.license = entry
+            .license
+            .clone()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        doc.voices.retain(|v| v.name != meta.name);
+        doc.voices.push(meta);
+    }
+    doc
+}
+
+/// Traegt die Zeile der Stimme in `SOURCE.json` ein (ersetzt eine gleichnamige).
+fn add_voice_row(voices_dir: &Path, entry: &TtsCatalogEntry) -> Result<()> {
+    if entry.voice.is_none() {
+        return Ok(());
+    }
+    let doc = merge_voice_rows(read_voice_source(voices_dir), std::slice::from_ref(entry));
     write_voice_source(voices_dir, &doc)
 }
 
@@ -1081,19 +1122,38 @@ fn outcome_is_cancelled(o: &HttpDownloadOutcome) -> bool {
     matches!(o, HttpDownloadOutcome::Cancelled)
 }
 
+/// Installiert das Modell mit den Stimmen seiner Sprache (siehe Moduldoku). Ist das Modell schon
+/// vollstaendig da und fehlen nur Stimmen, kommen nur diese dazu: das Modell wird nicht neu geladen.
 pub(crate) async fn install_model(
     env: &InstallEnv<'_>,
     entry: &TtsCatalogEntry,
 ) -> Result<Outcome, String> {
+    install_model_with_voices(env, entry, &bundled_voices(&entry.id)).await
+}
+
+/// Wie [`install_model`], mit gegebenen Stimmen (getrennt, damit Tests Stimmen mit Fake-Adresse nehmen).
+async fn install_model_with_voices(
+    env: &InstallEnv<'_>,
+    entry: &TtsCatalogEntry,
+    voices: &[TtsCatalogEntry],
+) -> Result<Outcome, String> {
     ensure_safe_entry(entry)?;
+    for voice in voices {
+        ensure_safe_entry(voice)?;
+    }
     if model_complete(env.dirs, entry) {
-        return Ok(Outcome::Installed);
+        return install_missing_voices(env, entry, voices).await;
     }
     // Ohne Token gar nicht erst anfangen (gesperrtes Modell): der Hinweis kommt sofort.
     let auth = auth_for(env, entry)?;
     let staging = env.dirs.staging_dir(&entry.id);
     fs::create_dir_all(&staging).map_err(|e| io_message(&entry.name, &e))?;
-    let total: u64 = entry.files.iter().map(|f| f.size_bytes).sum();
+    // Stimmen, die schon am Zielort liegen (aeltere Einzelinstallation, Reparatur), werden nicht neu geladen.
+    let missing: Vec<&TtsCatalogEntry> = voices
+        .iter()
+        .filter(|v| !voice_installed(env.dirs, v))
+        .collect();
+    let total: u64 = files_bytes(entry) + missing.iter().map(|v| files_bytes(v)).sum::<u64>();
     let done = AtomicU64::new(0);
     for file in &entry.files {
         let dest = staging.join(&file.filename);
@@ -1112,20 +1172,107 @@ pub(crate) async fn install_model(
         }
         done.fetch_add(file.size_bytes, Ordering::Relaxed);
     }
+    // Die Stimmen sind oeffentlich (Apache-2.0): nie ein Token, auch nicht beim gesperrten Modell.
+    let staging_voices = staging.join(VOICES_SUBDIR);
+    if !missing.is_empty() {
+        fs::create_dir_all(&staging_voices).map_err(|e| io_message(&entry.name, &e))?;
+    }
+    for voice in &missing {
+        let file = voice
+            .files
+            .first()
+            .ok_or_else(|| format!("{}: Katalogeintrag ohne Datei", voice.id))?;
+        let outcome = fetch_file(
+            env,
+            voice,
+            file,
+            &staging_voices.join(&file.filename),
+            done.load(Ordering::Relaxed),
+            total,
+            None,
+        )
+        .await?;
+        if outcome == Outcome::Cancelled {
+            return Ok(Outcome::Cancelled);
+        }
+        done.fetch_add(file.size_bytes, Ordering::Relaxed);
+    }
+    // Ab hier nur noch Dateisystem: SOURCE.json, Marke (zuletzt) und Einsetzen unter der Sperre.
+    let _guard = env.voices_lock.lock().unwrap_or_else(|e| e.into_inner());
+    if !voices.is_empty() {
+        fs::create_dir_all(&staging_voices).map_err(|e| io_message(&entry.name, &e))?;
+        let base = read_voice_source(&env.dirs.voices_dir(&entry.id));
+        write_voice_source(&staging_voices, &merge_voice_rows(base, voices))
+            .map_err(|e| format!("{}: {e}", entry.name))?;
+    }
     write_marker(&staging, entry).map_err(|e| format!("{}: {e}", entry.name))?;
     commit_model(env.dirs, entry)
         .map_err(|e| format!("{} lässt sich nicht einsetzen: {e}", entry.name))?;
     Ok(Outcome::Installed)
 }
 
+/// Das Modell ist da, es fehlen Stimmen (oder ihre Eintraege in `SOURCE.json`): nur diese laden.
+/// Die Marke des Modells und seine Dateien bleiben unberuehrt.
+async fn install_missing_voices(
+    env: &InstallEnv<'_>,
+    entry: &TtsCatalogEntry,
+    voices: &[TtsCatalogEntry],
+) -> Result<Outcome, String> {
+    if voices_present(env.dirs, &entry.id, voices) == voices.len() {
+        return Ok(Outcome::Installed);
+    }
+    let missing: Vec<&TtsCatalogEntry> = voices
+        .iter()
+        .filter(|v| !voice_installed(env.dirs, v))
+        .collect();
+    let voices_dir = env.dirs.voices_dir(&entry.id);
+    fs::create_dir_all(&voices_dir).map_err(|e| io_message(&entry.name, &e))?;
+    let total: u64 = missing.iter().map(|v| files_bytes(v)).sum();
+    let mut done = 0u64;
+    for voice in &missing {
+        let file = voice
+            .files
+            .first()
+            .ok_or_else(|| format!("{}: Katalogeintrag ohne Datei", voice.id))?;
+        let dest = voice_file(env.dirs, voice)
+            .ok_or_else(|| format!("{}: kein Modell angegeben", voice.id))?;
+        let outcome = fetch_file(env, voice, file, &dest, done, total, None).await?;
+        if outcome == Outcome::Cancelled {
+            return Ok(Outcome::Cancelled); // fertige Stimmen bleiben
+        }
+        done += file.size_bytes;
+    }
+    // Die Eintraege sind eine Zugabe: scheitern sie, bleiben die Stimmen benutzbar.
+    let _guard = env.voices_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let doc = merge_voice_rows(read_voice_source(&voices_dir), voices);
+    if let Err(e) = write_voice_source(&voices_dir, &doc) {
+        log::warn!("SOURCE.json der Phonon-Stimmen nicht aktualisiert: {e}");
+    }
+    Ok(Outcome::Installed)
+}
+
 /// Setzt den geprueften Zwischenordner als Modellordner ein. Gibt es den Ordner schon (Reparatur, schon
-/// installierte Stimmen), kommen die Dateien einzeln hinein, die Marke zuletzt; `voices/` bleibt.
+/// installierte Stimmen), kommen die Dateien einzeln hinein: erst die Stimmen samt `SOURCE.json`, dann
+/// die Modelldateien, die Marke zuletzt; vorhandene Stimmen bleiben.
 fn commit_model(dirs: &PhononDirs, entry: &TtsCatalogEntry) -> Result<()> {
     let staging = dirs.staging_dir(&entry.id);
     let dest = dirs.model_dir(&entry.id);
     if !dest.exists() {
         fs::rename(&staging, &dest)?;
         return Ok(());
+    }
+    let staged_voices = staging.join(VOICES_SUBDIR);
+    if staged_voices.is_dir() {
+        let dest_voices = dest.join(VOICES_SUBDIR);
+        fs::create_dir_all(&dest_voices)?;
+        for item in fs::read_dir(&staged_voices)? {
+            let item = item?;
+            let name = item.file_name();
+            if name.to_string_lossy().ends_with(".partial") {
+                continue;
+            }
+            fs::rename(item.path(), dest_voices.join(&name))?;
+        }
     }
     for name in entry
         .files

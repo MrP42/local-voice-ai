@@ -150,6 +150,16 @@
         "blocked": "Die Stimmen sind erst nach der Freigabe abrufbar.",
         "use": "Als Vorlese-Stimme verwenden",
         "usedNow": "Dieser Anbieter liest jetzt vor.",
+        "visible": {
+          "title": "Im Vorlesen anzeigen",
+          "hint": "Welche Stimmen im Dropdown der Vorlesen-Seite und in der Wiedergabeleiste der Aufnahmen stehen. Die Vorgabe des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar.",
+          "all": "Alle",
+          "none": "Keine",
+          "count": "{{shown}} von {{total}} sichtbar",
+          "current": "gewählt",
+          "empty": "Keine Stimmen zum Auswählen.",
+          "toggle": "{{name}} im Vorlesen anzeigen"
+        },
         "license": "Stimme: Lizenz {{license}}",
         "gender": {
           "female": "weiblich",
@@ -201,6 +211,7 @@
       },
       "dropdown": {
         "entry": "Anbieter: {{name}}",
+        "voice": "{{provider}}: {{name}}",
         "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
         "open": "Anbieter-Einstellungen öffnen"
       }
@@ -1221,7 +1232,7 @@
       },
       "phonon": {
         "title": "Phonon (experimentell)",
-        "description": "Phonon ist eine lokal laufende Sprachausgabe auf der CPU (Gradium). Hier installierst du das Programm, die Modelle und die Stimmen. Benutzt wird Phonon erst, nachdem du es unter Einstellungen > Ausgabe freigegeben hast.",
+        "description": "Phonon ist eine lokal laufende Sprachausgabe auf der CPU (Gradium). Hier installierst du das Programm und die Modelle; die Stimmen der Sprache werden mit dem Modell geladen. Benutzt wird Phonon erst, nachdem du es unter Einstellungen > Ausgabe freigegeben hast.",
         "gated": {
           "chip": "Anmeldung nötig",
           "title": "Gesperrtes Modell: Bedingungen annehmen und bei Hugging Face anmelden",
@@ -1232,6 +1243,14 @@
           "installModel": "Modell installieren"
         },
         "source": "Quelle: {{source}}",
+        "voices": {
+          "included_one": "{{count}} Stimme enthalten",
+          "included_other": "{{count}} Stimmen enthalten",
+          "missingChip": "Stimmen fehlen ({{present}} von {{total}})",
+          "reload": "Stimmen nachladen",
+          "detailNew": "Zum Modell gehören {{total}} Stimmen. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein.",
+          "detail": "Zum Modell gehören {{total}} Stimmen, {{present}} davon sind installiert. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein."
+        },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Mehrere Dateien: Größe und SHA-256 je Datei stehen im Katalog der App und werden beim Laden geprüft.",
         "nonCommercial": {

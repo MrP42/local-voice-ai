@@ -35,18 +35,30 @@ Fortschritt, Abbruch und Löschen:
 | Eintrag | Inhalt | Größe | Lizenz |
 |---|---|---|---|
 | Phonon-Programm (`phonon-runtime`) | `ptts` 0.4.2 für die eigene Plattform (Windows x64, macOS Intel/Apple Silicon, Linux x64/ARM64); entpackt werden nur das Programm und `LICENSE-MIT`, `LICENSE-APACHE`, `README.md` | Windows 7 766 316 Byte, SHA-256 `699f3452…8b8a07` | MIT OR Apache-2.0 |
-| `phonon-40m-de` (Deutsch, q8) | sieben Dateien, Commit `79cfc7b4`; **gesperrt** | 75 158 617 Byte | CC BY-NC 4.0, nur nicht-kommerziell |
-| `phonon-31m-en` (Englisch, q8) | sieben Dateien, Commit `92741c5b`; öffentlich | 65 116 929 Byte | Apache-2.0 |
-| 13 deutsche Stimmen (`phonon-voice-de-<name>`) | je eine `.safetensors` aus `gradium/phonon-voices` (Commit `0ee17205`), je 256 136 Byte | 3,3 MB gesamt | Apache-2.0 |
+| `phonon-40m-de` (Deutsch, q8) | sieben Dateien, Commit `79cfc7b4`; **gesperrt**; dazu die **13 deutschen Stimmen** | 75 158 617 Byte + 13 × 256 136 Byte (zusammen 78 488 385 Byte) | CC BY-NC 4.0, nur nicht-kommerziell (Stimmen: Apache-2.0) |
+| `phonon-31m-en` (Englisch, q8) | sieben Dateien, Commit `92741c5b`; öffentlich; dazu die **37 englischen Stimmen** (25 Sprecher, 12 Figurenstimmen) | 65 116 929 Byte + 37 × 256 136 Byte (zusammen 74 593 961 Byte) | Apache-2.0 |
+
+**Stimmen gehören zum Modell.** Sie stehen auf der Modellseite nicht als eigene Zeilen: „Modell installieren“ lädt die
+Stimmen der Sprache mit (je eine `.safetensors` aus `gradium/phonon-voices`, Commit `0ee17205`, je 256 136 Byte, Katalog
+`purpose: phonon-voice` mit `parent` = Modell; immer ohne Token, auch beim gesperrten Modell). Die Größenanzeige des
+Modells ist Modell plus Stimmen, „Löschen“ entfernt beides. Die Modellzeile nennt „13 Stimmen enthalten“ bzw. „37 …“.
 
 * **Ablage**: `<Datenordner>/tts/phonon/<plattform>/ptts(.exe)`, `…/models/<id>/` (die sieben Dateien plus Marke
   `.lva-install.json`), `…/models/<modell>/voices/<Name>.safetensors` mit `voices/SOURCE.json`
-  (`{"source", "license", "voices": [Zeilen aus voices.jsonl]}`). Ohne die Marke gilt ein Ordner nicht als über die
-  Modellseite installiert.
+  (`{"source", "license", "voices": [Zeilen aus voices.jsonl]}`; bei Figurenstimmen ohne Geschlecht und Alter steht
+  `null`). Der Dateiname ist der Stimmenname, Leerzeichen als `-` (`Captain-Silas-Blackwater.safetensors`); die
+  Stimmenkennung im Adapter ist dieser Dateiname. Ohne die Marke gilt ein Ordner nicht als über die Modellseite
+  installiert.
 * **Prüfung**: Größe und SHA-256 je Datei (Dateien ohne LFS, bei denen die Hugging-Face-API kein SHA-256 nennt:
   Git-Blob-Kennung). Jede Datei kommt als `.partial` (fortsetzbar), ein Modell entsteht erst in `<id>.installing/` und
   wird nach der Prüfung aller Dateien als Ganzes eingesetzt; Abbruch und Fehler lassen eine vorhandene Installation
-  unberührt. Eine Stimme braucht das installierte Modell, ein Modell das Programm (die Oberfläche bietet es an).
+  unberührt. Ein Modell braucht das Programm (die Oberfläche bietet es an). Beim ersten Installieren liegen die Stimmen
+  im Zwischenordner `<id>.installing/voices/`, `SOURCE.json` wird dort mitgeschrieben, die Marke kommt zuletzt.
+* **Stimmen nachladen (Bestand ohne Stimmen)**: Wer das Modell schon vor der Bündelung installiert hat (oder nur einzelne
+  Stimmen aus 0.21.20), sieht in der Modellzeile „Stimmen fehlen (n von m)“ und den Knopf „Stimmen nachladen“. Er ruft
+  dieselbe Installation auf: ist das Modell vollständig, werden **nur** die fehlenden Stimmen geladen (Datei in richtiger
+  Größe = vorhanden, nicht neu geladen; fehlt nur der Eintrag in `SOURCE.json`, wird er ohne Download ergänzt). Das Modell
+  und seine Marke bleiben unberührt. Einzeln installierte Stimmen aus 0.21.20 haben denselben Zielpfad und bleiben gültig.
 * **Gesperrtes Modell (40m-de)**: Bedingungen auf `huggingface.co/gradium/phonon-40m-de` annehmen und anmelden
   (`hf auth login`) oder `HF_TOKEN` setzen. Die App liest das Token aus `HF_TOKEN`, sonst aus `$HF_HOME/token`,
   `$XDG_CACHE_HOME/huggingface/token` bzw. `~/.cache/huggingface/token`. Es geht **nur an `https://huggingface.co`**;
@@ -61,8 +73,17 @@ Fortschritt, Abbruch und Löschen:
   Die Lizenz installierter Katalog-Modelle kommt aus dem Katalog (verifiziert, Quelle und Datum 27.10.2026), aber nur für
   Ordner mit passender Marke; andere Ordner bleiben „unbekannt“ und vorsorglich nichtkommerziell.
 * Ist nichts installiert, nennt die Gesundheit „Phonon ist nicht installiert“ und als Hinweis die Modellseite.
-* Die deutschen Stimmen sind laut Karte für die Modellgrößen 31m, 40m, 56m und 98m gedacht; mit dem englischen Modell
-  geprüft (anderes Audio als die Standardstimme).
+* Die Stimmen sind laut Karte für die Modellgrößen 31m, 40m, 56m und 98m gedacht; mit dem englischen Modell geprüft
+  (Stimme Everly: anderes Audio als die Standardstimme, echter Download am 27.10.2026).
+* **Welche Stimmen im Vorlesen erscheinen**: Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon, Abschnitt „Stimme“,
+  „Im Vorlesen anzeigen“: eine Liste aller Stimmen des Anbieters (Name, weiblich/männlich, Kurzbeschreibung) mit Haken,
+  „Alle“ und „Keine“. Gespeichert in `tts_providers.visible_voices` (je Anbieterkennung eine Liste von Stimmenkennungen;
+  fehlt der Eintrag oder ist er leer, sind alle sichtbar; „Keine“ steht als `["default"]`). Das Vorlesen-Dropdown
+  (Vorlesen-Seite und Wiedergabeleiste der Aufnahmen) bietet die sichtbaren Stimmen freigegebener Anbieter als eigene
+  Einträge „Phonon (ptts): Nele · weiblich“ an (Wert `provider:<anbieter>:<stimme>`, Wahl wie `tts_provider_select`).
+  Die Standardstimme des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar (der Haken der gewählten Stimme
+  ist gesetzt und gesperrt). Das gilt für jeden Anbieter mit Stimmenliste außer Fish und Piper, die ihre eigenen Einträge
+  im Dropdown haben; Anbieter ohne Freigabe oder mit Sperre erscheinen dort nicht.
 
 **Von Hand (Alternative)**: die folgenden Angaben gelten für ein selbst geladenes Programm und Modell.
 
@@ -132,7 +153,8 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
 | „Phonon ist nicht installiert: …“ (phonon.rs, `validate`) | `exe_path` leer und nichts über die Modellseite installiert | Modelle > Vorlesen > Phonon: Programm und Modell installieren |
 | „… ist gesperrt … Bedingungen auf huggingface.co/… annehmen und anmelden (hf auth login)“ (phonon_models.rs) | Modellseite: kein Token gefunden oder HTTP 401/403 | Bedingungen annehmen, `hf auth login` oder `HF_TOKEN` setzen, erneut installieren |
 | „Das Archiv enthält einen unzulässigen Pfad“ / „… Verknüpfung statt einer Datei“ (phonon_models.rs) | Programm-Archiv mit `..`, absolutem Pfad oder Symlink (kommt trotz SHA-256 nur bei geänderter Quelle vor) | nichts wird installiert; Quelle prüfen, Meldung melden |
-| „… ist beschädigt (Prüfsumme weicht ab)“ / „file is corrupt“ | Datei stimmt nicht mit Katalog überein | die Datei wurde gelöscht; erneut installieren |
+| „… ist beschädigt (Prüfsumme weicht ab)“ / „file is corrupt“ | Datei stimmt nicht mit Katalog überein | die Datei wurde gelöscht; erneut installieren (bei einer Stimme des Bündels bleibt das Modell, wie es war, bzw. wird nicht eingesetzt) |
+| „Stimmen fehlen (n von m)“ in der Modellzeile | Modell wurde vor der Bündelung installiert, Stimmen einzeln oder nie geladen, Datei gelöscht | „Stimmen nachladen“: lädt nur die fehlenden Stimmen, nicht das Modell |
 | „ptts wurde nicht gefunden: …“ (phonon.rs:687) | `exe_path` falsch, Datei fehlt | Programm auf der Modellseite installieren oder Pfad eintragen |
 | „`ptts --version` antwortet nicht innerhalb von 5 s“ (phonon.rs:1090) | falsche Datei oder CPU ohne x86-64-v3 | Datei und CPU prüfen |
 | ptts-Versionsabfrage scheitert (phonon.rs:1104) | Datei beschädigt | neu laden, `SHA256SUMS` prüfen |

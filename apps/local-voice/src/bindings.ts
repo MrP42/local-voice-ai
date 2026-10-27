@@ -5530,6 +5530,31 @@ async ttsProviderSetAllowRemote(id: string, allow: boolean) : Promise<Result<nul
 }
 },
 /**
+ * Welche Stimmen eines Anbieters im Vorlesen-Dropdown stehen. Leere Liste: alle. „Keine“ ist
+ * `["default"]` (die Standardstimme steht immer da). Ändert weder Freigaben noch die laufende
+ * Wiedergabe, darum ohne Neuaufbau der Anbieter (anders als [`mutate_settings`]).
+ */
+async ttsProviderSetVisibleVoices(id: string, voices: string[]) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_visible_voices", { id, voices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die Stimmen der freigegebenen Anbieter für das Vorlesen-Dropdown (nur die gewählten, siehe
+ * [`voice_options`]). Anbieter ohne Freigabe, mit Sperre oder ohne Antwort fehlen.
+ */
+async ttsProviderVoiceOptions() : Promise<Result<ProviderVoiceOption[], TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_voice_options") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Anbieter (und Stimme) fürs Vorlesen wählen. Prüft die Guardrails: ein
  * gesperrter Anbieter lässt sich nicht wählen (`license_blocked`/
  * `privacy_blocked`). Wirkt auch mitten im Vorlesen (wie ein Stimmwechsel).
@@ -8089,6 +8114,10 @@ export type ProviderTier =
  */
 "unavailable"
 /**
+ * Eine Stimme eines Anbieters für das Vorlesen-Dropdown.
+ */
+export type ProviderVoiceOption = { provider_id: string; provider_label: string; voice: VoiceDescriptor }
+/**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
  */
@@ -8748,7 +8777,17 @@ sha256: string | null;
 /**
  * Herkunfts- und Lizenzhinweis aus dem Katalog.
  */
-license_note: string | null }
+license_note: string | null;
+/**
+ * Phonon-Modell: so viele Stimmen werden mit dem Modell geliefert (Piper und Programm: 0).
+ * Ihre Groesse steckt schon in `size_bytes`.
+ */
+bundled_voices: number;
+/**
+ * Davon sind vollstaendig installiert. Weniger als `bundled_voices` bei installiertem Modell:
+ * „Stimmen fehlen“, die Oberflaeche bietet „Stimmen nachladen“ an.
+ */
+bundled_voices_present: number }
 export type TtsDownloadKind = "runtime" | "voice" | "model"
 /**
  * Fehler eines Anbieters. `retryable`: ein erneuter Versuch kann gelingen
@@ -8803,7 +8842,12 @@ selected: boolean;
 /**
  * Gewählte Stimme (leer = Vorgabe des Anbieters).
  */
-voice: string | null }
+voice: string | null;
+/**
+ * Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
+ * [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
+ */
+visible_voices: string[] }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
@@ -8841,7 +8885,14 @@ allow_remote: string[];
 /**
  * Letzte Stimmenauswahl je Anbieter-Kennung (`tts_provider_select`).
  */
-voices: Partial<{ [key in string]: string }> }
+voices: Partial<{ [key in string]: string }>;
+/**
+ * Welche Stimmen eines Anbieters im Vorlesen-Dropdown stehen (nur
+ * `tts_provider_set_visible_voices`). Kein Eintrag oder eine leere Liste: alle sichtbar.
+ * Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
+ * Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
+ */
+visible_voices: Partial<{ [key in string]: string[] }> }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).

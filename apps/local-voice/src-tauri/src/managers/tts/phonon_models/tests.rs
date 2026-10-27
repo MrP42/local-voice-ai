@@ -101,11 +101,16 @@ fn nur_phonon_kennungen_gehoeren_zu_phonon() {
 // ---- Liste --------------------------------------------------------------------------------------
 
 #[test]
-fn die_liste_nennt_programm_modelle_und_13_stimmen_und_nichts_ist_installiert() {
+fn die_liste_nennt_programm_und_modelle_ohne_einzelne_stimmen_und_nichts_ist_installiert() {
     let tmp = TempDir::new().unwrap();
     let dirs = PhononDirs::new(tmp.path());
     let rows = build_downloads(&dirs, Some("windows-x64"), |_| false);
-    assert_eq!(rows.len(), 1 + 2 + 13);
+    assert_eq!(
+        rows.len(),
+        1 + 2,
+        "Programm und zwei Modelle, keine Stimmenzeilen"
+    );
+    assert!(rows.iter().all(|r| r.kind != TtsDownloadKind::Voice));
     assert!(rows.iter().all(|r| r.engine == "phonon"));
     assert!(rows
         .iter()
@@ -143,16 +148,15 @@ fn die_liste_nennt_programm_modelle_und_13_stimmen_und_nichts_ist_installiert() 
     let en = rows.iter().find(|r| r.id == "phonon-31m-en").unwrap();
     assert!(!en.gated && !en.license_non_commercial);
 
-    let nele = rows
-        .iter()
-        .find(|r| r.id == "phonon-voice-de-nele")
-        .unwrap();
-    assert_eq!(nele.kind, TtsDownloadKind::Voice);
-    assert_eq!(nele.name, "Nele");
-    assert_eq!(nele.requires.as_deref(), Some("phonon-40m-de"));
-    assert_eq!(nele.size_bytes, 256_136);
-    assert!(nele.sha256.is_some());
-    assert_eq!(nele.license.as_deref(), Some("Apache-2.0"));
+    // Die Groesse eines Modells ist die ganze Installation: Modell plus Stimmen.
+    let model_bytes = |id: &str| files_bytes(&model_entry(id).unwrap());
+    assert_eq!(de.size_bytes, 75_158_617 + 13 * 256_136);
+    assert_eq!(model_bytes("phonon-40m-de"), 75_158_617);
+    assert_eq!(en.size_bytes, 65_116_929 + 37 * 256_136);
+    assert_eq!(de.size_mb, de.size_bytes / (1024 * 1024));
+    assert_eq!((de.bundled_voices, de.bundled_voices_present), (13, 0));
+    assert_eq!((en.bundled_voices, en.bundled_voices_present), (37, 0));
+    assert_eq!(rt.bundled_voices, 0);
 
     // Ohne Programm fuer das System: keine Programmzeile, Modelle ohne Voraussetzung.
     let rows = build_downloads(&dirs, None, |id| id == "phonon-40m-de");
@@ -250,21 +254,6 @@ fn programm_und_modell_der_liste_folgen_dem_zustand_auf_der_platte() {
     write_marker(&rt_dir, &rt).unwrap();
     let rows = build_downloads(&dirs, Some(platform), |_| false);
     assert!(rows[0].is_downloaded && rows[0].is_usable);
-
-    // Eine Stimme ohne Modell: da, aber nicht nutzbar.
-    let nele = voice_entries()
-        .into_iter()
-        .find(|e| e.id == "phonon-voice-de-nele")
-        .unwrap();
-    let vfile = voice_file(&dirs, &nele).unwrap();
-    fs::create_dir_all(vfile.parent().unwrap()).unwrap();
-    fs::File::create(&vfile).unwrap().set_len(256_136).unwrap();
-    let rows = build_downloads(&dirs, Some(platform), |_| false);
-    let row = rows.iter().find(|r| r.id == nele.id).unwrap();
-    assert!(
-        row.is_downloaded && !row.is_usable,
-        "ohne Modell nicht nutzbar"
-    );
 }
 
 // ---- Aufloesung "installiert" --------------------------------------------------------------------
@@ -1532,8 +1521,8 @@ fn voice_fixture(host: &FakeHost, name: &str, body: &[u8]) -> TtsCatalogEntry {
         voice_id: format!("ID{name}"),
         language: "de".into(),
         locale: "de-de".into(),
-        gender: "female".into(),
-        age: "Adult".into(),
+        gender: Some("female".into()),
+        age: Some("Adult".into()),
         description: format!("Stimme {name}"),
     });
     e.files = vec![catalog::TtsCatalogFile {
@@ -1646,6 +1635,359 @@ async fn eine_beschaedigte_stimme_wird_nicht_eingetragen() {
     assert!(!voices.join("SOURCE.json").exists());
 }
 
+// ---- Stimmen gehoeren zum Modell -------------------------------------------------------------------------------------------
+
+/// Modell auf dem Fake-Host samt zwei Stimmen (`/voices/Nele`, `/voices/Anton`).
+async fn bundle_host() -> (
+    FakeHost,
+    TtsCatalogEntry,
+    Vec<TtsCatalogEntry>,
+    Vec<(&'static str, Vec<u8>)>,
+) {
+    let (_, bodies) = model_on(&fake_host(vec![]).await, false);
+    let mut routes: Vec<(String, Reply)> = routes_for(&bodies);
+    routes.push(("/voices/Nele".into(), Reply::Body(b"nele-bytes".to_vec())));
+    routes.push((
+        "/voices/Anton".into(),
+        Reply::Body(b"anton-bytes!".to_vec()),
+    ));
+    let host = fake_host(
+        routes
+            .iter()
+            .map(|(p, r)| (p.as_str(), r.clone()))
+            .collect(),
+    )
+    .await;
+    let (entry, bodies) = model_on(&host, false);
+    let voices = vec![
+        voice_fixture(&host, "Nele", b"nele-bytes"),
+        voice_fixture(&host, "Anton", b"anton-bytes!"),
+    ];
+    (host, entry, voices, bodies)
+}
+
+fn source_names(dirs: &PhononDirs) -> Vec<String> {
+    let doc: serde_json::Value = serde_json::from_slice(
+        &fs::read(dirs.voices_dir("phonon-test").join("SOURCE.json")).unwrap(),
+    )
+    .unwrap();
+    doc["voices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn die_mitgelieferten_stimmen_kommen_aus_dem_katalog_je_modell() {
+    let de = bundled_voices("phonon-40m-de");
+    let en = bundled_voices("phonon-31m-en");
+    assert_eq!((de.len(), en.len()), (13, 37));
+    assert!(de
+        .iter()
+        .all(|v| v.parent.as_deref() == Some("phonon-40m-de")));
+    assert!(bundled_voices("phonon-unbekannt").is_empty());
+    assert!(bundled_voices("").is_empty());
+}
+
+#[tokio::test]
+async fn ein_modell_laedt_seine_stimmen_mit_und_oeffentliche_stimmen_bekommen_nie_ein_token() {
+    let (host, mut entry, voices, bodies) = bundle_host().await;
+    entry.gated = true; // gesperrtes Modell: das Token gilt nur fuer dessen Dateien
+    let h = Harness::new(Some(TOKEN), None);
+
+    let out = install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+
+    assert_eq!(out, Outcome::Installed);
+    let dir = h.dirs.model_dir("phonon-test");
+    for (name, body) in &bodies {
+        assert_eq!(&fs::read(dir.join(name)).unwrap(), body, "{name}");
+    }
+    let vdir = h.dirs.voices_dir("phonon-test");
+    assert_eq!(
+        fs::read(vdir.join("Nele.safetensors")).unwrap(),
+        b"nele-bytes"
+    );
+    assert_eq!(
+        fs::read(vdir.join("Anton.safetensors")).unwrap(),
+        b"anton-bytes!"
+    );
+    assert_eq!(source_names(&h.dirs), ["Nele", "Anton"]);
+    assert!(model_complete(&h.dirs, &entry));
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 2);
+    assert!(
+        !h.dirs.staging_dir("phonon-test").exists(),
+        "Zwischenordner ist weg"
+    );
+    // Das Token ging nur an die Modelldateien, nie an die Stimmen.
+    for hit in host.hits() {
+        if hit.path.starts_with("/voices/") {
+            assert!(hit.auth.is_none(), "{hit:?}");
+        } else {
+            assert_eq!(
+                hit.auth.as_deref(),
+                Some(format!("Bearer {TOKEN}").as_str())
+            );
+        }
+    }
+    // Ein Fortschritt ueber Modell UND Stimmen, nie rueckwaerts, am Ende voll.
+    let total: u64 = bodies.iter().map(|(_, b)| b.len() as u64).sum::<u64>() + 10 + 12;
+    let progress = h.progress.lock().unwrap().clone();
+    assert!(progress.iter().all(|(_, t)| *t == total), "{progress:?}");
+    assert!(
+        progress.windows(2).all(|w| w[0].0 <= w[1].0),
+        "{progress:?}"
+    );
+    assert_eq!(progress.last().copied(), Some((total, total)));
+    assert_eq!(
+        h.verified.load(Ordering::SeqCst),
+        5,
+        "jede Datei, auch jede Stimme, wird geprueft"
+    );
+}
+
+#[tokio::test]
+async fn eine_beschaedigte_stimme_installiert_das_modell_nicht_und_die_marke_fehlt() {
+    let (host, entry, mut voices, _) = bundle_host().await;
+    // Anton kommt mit anderen Bytes an, als der Katalog verspricht.
+    voices[1].files[0].sha256 = Some(sha_hex(b"ganz-anderes"));
+    let h = Harness::new(None, None);
+
+    let err = install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap_err();
+
+    assert!(err.contains("Anton"), "die Meldung nennt die Stimme: {err}");
+    assert!(
+        !h.dirs.model_dir("phonon-test").exists(),
+        "nichts am Zielort"
+    );
+    assert!(!model_complete(&h.dirs, &entry));
+    let staging = h.dirs.staging_dir("phonon-test");
+    assert!(
+        !staging.join(MARKER_FILE).exists(),
+        "die Marke kommt zuletzt"
+    );
+    assert!(!staging.join("voices").join("Anton.safetensors").exists());
+}
+
+#[tokio::test]
+async fn abbruch_bei_den_stimmen_und_wiederaufnahme_laedt_fertiges_nicht_neu() {
+    let (host, entry, voices, _) = bundle_host().await;
+    // Abbruch nach vier geprueften Dateien: drei Modelldateien und die erste Stimme.
+    let h = Harness::new(None, Some(4));
+    let out = install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+    assert_eq!(out, Outcome::Cancelled);
+    assert!(!h.dirs.model_dir("phonon-test").exists());
+    let staging = h.dirs.staging_dir("phonon-test");
+    assert!(staging.join("voices").join("Nele.safetensors").is_file());
+    assert!(!staging.join(MARKER_FILE).exists());
+
+    let cancel = CancellationToken::new();
+    let progress_cb = |_: HttpDownloadEvent<'_>| {};
+    let token = || -> Option<Secret> { None };
+    let lock = Mutex::new(());
+    let env = InstallEnv {
+        dirs: &h.dirs,
+        platform: Some("windows-x64"),
+        cancel: &cancel,
+        emit: &progress_cb,
+        event_id: "phonon-test",
+        token: &token,
+        auth_origin: host.origin(),
+        voices_lock: &lock,
+    };
+    assert_eq!(
+        install_model_with_voices(&env, &entry, &voices)
+            .await
+            .unwrap(),
+        Outcome::Installed
+    );
+    assert_eq!(
+        host.count("/files/model.q8.gguf"),
+        1,
+        "Modell nicht erneut geladen"
+    );
+    assert_eq!(
+        host.count("/voices/Nele"),
+        1,
+        "fertige Stimme nicht erneut geladen"
+    );
+    assert_eq!(host.count("/voices/Anton"), 1);
+    assert_eq!(source_names(&h.dirs), ["Nele", "Anton"]);
+}
+
+#[tokio::test]
+async fn ein_installiertes_modell_ohne_stimmen_wird_ergaenzt_ohne_das_modell_neu_zu_laden() {
+    let (host, entry, voices, _) = bundle_host().await;
+    let h = Harness::new(None, None);
+    // Stand von Patrick: Modell ohne Stimmen (frueherer Installer).
+    install_model_with_voices(&h.env(host.origin()), &entry, &[])
+        .await
+        .unwrap();
+    let dir = h.dirs.model_dir("phonon-test");
+    assert!(!dir.join("voices").exists());
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 0);
+    let marker_before = fs::read(dir.join(MARKER_FILE)).unwrap();
+    let model_hits = host.hits().len();
+    assert_eq!(model_hits, 3);
+
+    // Nochmal installieren: es kommen nur die Stimmen dazu.
+    let out = install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+
+    assert_eq!(out, Outcome::Installed);
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 2);
+    assert_eq!(source_names(&h.dirs), ["Nele", "Anton"]);
+    assert_eq!(
+        host.count("/files/model.q8.gguf"),
+        1,
+        "Modell nicht neu geladen"
+    );
+    assert_eq!(host.count("/files/config.json"), 1);
+    assert_eq!(host.hits().len(), model_hits + 2, "nur die zwei Stimmen");
+    assert_eq!(
+        fs::read(dir.join(MARKER_FILE)).unwrap(),
+        marker_before,
+        "die Marke des Modells bleibt unberuehrt"
+    );
+    assert!(model_complete(&h.dirs, &entry));
+
+    // Vollstaendig: ein weiterer Aufruf macht nichts mehr.
+    let before = host.hits().len();
+    install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+    assert_eq!(host.hits().len(), before);
+}
+
+#[tokio::test]
+async fn einzeln_installierte_stimmen_bleiben_gueltig_und_nur_der_rest_wird_nachgeladen() {
+    let (host, entry, voices, _) = bundle_host().await;
+    let h = Harness::new(None, None);
+    install_model_with_voices(&h.env(host.origin()), &entry, &[])
+        .await
+        .unwrap();
+    // Aeltere Einzelinstallation: Nele ueber den alten Weg, mit eigenem Eintrag.
+    install_voice(&h.env(host.origin()), &voices[0], &entry)
+        .await
+        .unwrap();
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 1);
+
+    install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+
+    assert_eq!(host.count("/voices/Nele"), 1, "Nele nicht erneut geladen");
+    assert_eq!(host.count("/voices/Anton"), 1);
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 2);
+    assert_eq!(source_names(&h.dirs), ["Nele", "Anton"]);
+}
+
+#[tokio::test]
+async fn fehlt_nur_der_eintrag_in_source_json_wird_er_ohne_neuen_download_ergaenzt() {
+    let (host, entry, voices, _) = bundle_host().await;
+    let h = Harness::new(None, None);
+    install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+    fs::remove_file(h.dirs.voices_dir("phonon-test").join("SOURCE.json")).unwrap();
+    assert_eq!(
+        voices_present(&h.dirs, "phonon-test", &voices),
+        0,
+        "ohne Eintrag unvollstaendig"
+    );
+    let before = host.hits().len();
+
+    install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        host.hits().len(),
+        before,
+        "die Dateien stimmen, nichts wird geladen"
+    );
+    assert_eq!(voices_present(&h.dirs, "phonon-test", &voices), 2);
+}
+
+#[tokio::test]
+async fn eine_neuinstallation_ueber_ein_unvollstaendiges_modell_mit_alten_stimmen_behaelt_und_ergaenzt(
+) {
+    let (host, entry, voices, _) = bundle_host().await;
+    let h = Harness::new(None, None);
+    // Modellordner ohne Marke (unterbrochen) mit schon liegender Stimme Nele samt Eintrag.
+    let dir = h.dirs.model_dir("phonon-test");
+    fs::create_dir_all(dir.join("voices")).unwrap();
+    fs::write(dir.join("voices").join("Nele.safetensors"), b"nele-bytes").unwrap();
+    add_voice_row(&dir.join("voices"), &voices[0]).unwrap();
+    fs::write(dir.join("config.json"), b"alt").unwrap();
+
+    install_model_with_voices(&h.env(host.origin()), &entry, &voices)
+        .await
+        .unwrap();
+
+    assert_eq!(host.count("/voices/Nele"), 0, "Nele lag schon da");
+    assert_eq!(host.count("/voices/Anton"), 1);
+    assert_eq!(fs::read(dir.join("config.json")).unwrap(), b"{\"a\":1}");
+    assert_eq!(source_names(&h.dirs), ["Nele", "Anton"]);
+    assert!(model_complete(&h.dirs, &entry));
+    assert!(!h.dirs.staging_dir("phonon-test").exists());
+}
+
+#[test]
+fn der_zaehler_der_liste_folgt_den_stimmen_auf_der_platte_und_entfernen_nimmt_sie_mit() {
+    let tmp = TempDir::new().unwrap();
+    let dirs = PhononDirs::new(tmp.path());
+    let lock = Mutex::new(());
+    make_model(&dirs, "phonon-31m-en");
+    let row = |dirs: &PhononDirs| {
+        build_downloads(dirs, None, |_| false)
+            .into_iter()
+            .find(|r| r.id == "phonon-31m-en")
+            .unwrap()
+    };
+    let r = row(&dirs);
+    assert!(r.is_downloaded);
+    assert_eq!((r.bundled_voices, r.bundled_voices_present), (37, 0));
+
+    // Drei Stimmen: Datei + Eintrag zaehlt; Datei ohne Eintrag und falsche Groesse zaehlen nicht.
+    let voices = bundled_voices("phonon-31m-en");
+    for v in &voices[..3] {
+        let path = voice_file(&dirs, v).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::File::create(&path).unwrap().set_len(256_136).unwrap();
+        add_voice_row(path.parent().unwrap(), v).unwrap();
+    }
+    assert_eq!(row(&dirs).bundled_voices_present, 3);
+    let extra = voice_file(&dirs, &voices[3]).unwrap();
+    fs::File::create(&extra).unwrap().set_len(256_136).unwrap();
+    assert_eq!(
+        row(&dirs).bundled_voices_present,
+        3,
+        "ohne Eintrag unvollstaendig"
+    );
+    add_voice_row(extra.parent().unwrap(), &voices[3]).unwrap();
+    assert_eq!(row(&dirs).bundled_voices_present, 4);
+    fs::File::create(&extra).unwrap().set_len(5).unwrap();
+    assert_eq!(
+        row(&dirs).bundled_voices_present,
+        3,
+        "falsche Groesse zaehlt nicht"
+    );
+
+    // Das Modell entfernen nimmt den ganzen Ordner mit: Stimmen und SOURCE.json.
+    delete(&dirs, None, &lock, "phonon-31m-en").unwrap();
+    assert!(!dirs.model_dir("phonon-31m-en").exists());
+    assert_eq!(voices_present(&dirs, "phonon-31m-en", &voices), 0);
+}
+
 // ---- Entfernen --------------------------------------------------------------------------------------------------------------
 
 #[test]
@@ -1704,6 +2046,8 @@ fn modell_und_programm_entfernen_und_unbekanntes_ablehnen() {
     // Modell samt Stimmen und liegengebliebenem Zwischenordner.
     let model = dirs.model_dir("phonon-31m-en");
     fs::create_dir_all(model.join("voices")).unwrap();
+    fs::write(model.join("voices").join("Everly.safetensors"), b"v").unwrap();
+    fs::write(model.join("voices").join("SOURCE.json"), b"{}").unwrap();
     fs::write(model.join("config.json"), b"{}").unwrap();
     fs::create_dir_all(dirs.staging_dir("phonon-31m-en")).unwrap();
     delete(&dirs, None, &lock, "phonon-31m-en").unwrap();
@@ -1800,12 +2144,19 @@ async fn echt_programm_modell_und_stimme_installieren_und_sprechen() {
         fs::metadata(&exe).unwrap().len()
     );
 
-    // 2. Oeffentliches Modell (sieben Dateien, SHA-256 bzw. Git-Blob je Datei geprueft).
+    // 2. Oeffentliches Modell (sieben Dateien, SHA-256 bzw. Git-Blob je Datei geprueft) samt EINER
+    // englischen Stimme aus dem Bundle (nicht alle 37: der Test soll klein bleiben).
+    let model_entry_en = model_entry("phonon-31m-en").unwrap();
+    let everly = bundled_voices("phonon-31m-en")
+        .into_iter()
+        .find(|v| v.name == "Everly")
+        .expect("Everly gehoert zum englischen Modell");
     assert_eq!(
-        install(&env, "phonon-31m-en").await.unwrap(),
+        install_model_with_voices(&env, &model_entry_en, std::slice::from_ref(&everly))
+            .await
+            .unwrap(),
         Outcome::Installed
     );
-    let model = h.dirs.model_dir("phonon-31m-en");
     assert!(model_complete(
         &h.dirs,
         &model_entry("phonon-31m-en").unwrap()
@@ -1817,27 +2168,24 @@ async fn echt_programm_modell_und_stimme_installieren_und_sprechen() {
         progress.last()
     );
 
-    // 3. Eine Stimme in den Ordner des englischen Modells (der Katalogeintrag gehoert zum deutschen:
-    // hier mit dem englischen als Ziel, damit nichts Gesperrtes noetig ist).
-    let mut nele = voice_entries()
-        .into_iter()
-        .find(|e| e.id == "phonon-voice-de-nele")
-        .unwrap();
-    nele.parent = Some("phonon-31m-en".to_string());
-    let parent = model_entry("phonon-31m-en").unwrap();
-    assert_eq!(
-        install_voice(&env, &nele, &parent).await.unwrap(),
-        Outcome::Installed
-    );
+    // 3. Die Stimme liegt im Modellordner, mit Eintrag in SOURCE.json.
     let voices = h.dirs.voices_dir("phonon-31m-en");
     assert_eq!(
-        fs::metadata(voices.join("Nele.safetensors")).unwrap().len(),
+        fs::metadata(voices.join("Everly.safetensors"))
+            .unwrap()
+            .len(),
         256_136
     );
     let doc: serde_json::Value =
         serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
-    assert_eq!(doc["voices"][0]["name"], "Nele");
+    assert_eq!(doc["voices"][0]["name"], "Everly");
     eprintln!("SOURCE.json: {doc}");
+    // Mit nur einer von 37 Stimmen fehlen die anderen (Zaehler der Oberflaeche).
+    let row = build_downloads(&h.dirs, Some(platform), |_| false)
+        .into_iter()
+        .find(|r| r.id == "phonon-31m-en")
+        .unwrap();
+    assert_eq!((row.bundled_voices, row.bundled_voices_present), (37, 1));
 
     // 4. Der Adapter spricht mit dem Installierten (ProcessGuard, RAM-Start-Gate wie im Betrieb).
     let paths = installed_paths(h._tmp.path());
@@ -1864,7 +2212,7 @@ async fn echt_programm_modell_und_stimme_installieren_und_sprechen() {
     assert!(health.available, "{health:?}");
     eprintln!("Version laut ptts: {:?}", health.version);
     let mut clips = Vec::new();
-    for voice in [None, Some("Nele".to_string())] {
+    for voice in [None, Some("Everly".to_string())] {
         let opts = SynthesisOptions {
             language: "en".into(),
             voice: voice.clone(),
@@ -1886,7 +2234,7 @@ async fn echt_programm_modell_und_stimme_installieren_und_sprechen() {
     // Die installierte Stimme wirkt wirklich: anderes Audio als die Standardstimme.
     assert_ne!(
         clips[0], clips[1],
-        "die Stimme Nele aus voices/ wurde nicht verwendet"
+        "die Stimme Everly aus voices/ wurde nicht verwendet"
     );
 }
 

@@ -2443,6 +2443,8 @@ pub fn run(cli_args: CliArgs) {
             commands::tts_providers::tts_provider_set_enabled,
             commands::tts_providers::tts_provider_acknowledge_license,
             commands::tts_providers::tts_provider_set_allow_remote,
+            commands::tts_providers::tts_provider_set_visible_voices,
+            commands::tts_providers::tts_provider_voice_options,
             commands::tts_providers::tts_provider_select,
             commands::tts_providers::tts_provider_preview,
             commands::tts_providers::tts_provider_cancel,
