@@ -7,8 +7,8 @@ import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 import type { SelectOption } from "../../ui/Select";
-import { useSpeakers } from "./speakers";
-import { useProviderLabel } from "./providers/useProviderLabel";
+import { useFishSpeakers } from "./speakers";
+import { useProviderInfo } from "./providers/useProviderLabel";
 import {
   PROVIDER_DEFAULT_VOICE,
   asTtsError,
@@ -35,7 +35,10 @@ export const VOICE_MANAGE = "@manage";
  * *sichtbaren*: welche das sind, stellt man unter Einstellungen > Ausgabe >
  * Sprachausgabe-Anbieter ein (`tts_provider_voice_options` liefert nur diese; die
  * gerade gewaehlte Stimme bleibt immer dabei). Die Wahl setzt Engine und Stimme
- * wie `tts_provider_select`.
+ * wie `tts_provider_select`. Wechselt der Anbieter die Stimme je Satz
+ * (`voice_switching`), heisst seine Standardstimme "Skript mit Sprechern" -- wie bei
+ * Fish der Eintrag `@default`: die Marker im Skript schalten, Text ohne Marker liest
+ * seine Standardstimme; jede benannte Stimme liest dagegen alles (`scriptMode`).
  *
  * `phase`: Phase des Sprachservers (Fish); ein laufender oder startender Server gilt
  * immer als eingerichtet.
@@ -44,7 +47,9 @@ export function useVoiceChoice(phase: string) {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, refreshSettings } = useSettings();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
-  const speakers = useSpeakers();
+  // Die Fish-Stimmen mit ihren Anzeigenamen (nicht die Sprecher des Skripts: die
+  // wechseln mit dem Anbieter, siehe `useSpeakers`).
+  const speakers = useFishSpeakers();
   const [voices, setVoices] = useState<string[]>([]);
   /* Anbieter-Wahl, die gerade unterwegs ist: die Reiter-Logik der Vorlesen-Seite ruft
      `applyVoiceValue` mit demselben Wert noch einmal, bevor die Einstellungen neu geladen
@@ -118,7 +123,10 @@ export function useVoiceChoice(phase: string) {
   const providerEngineId = ttsEngineSetting.startsWith("provider:")
     ? ttsEngineSetting.slice("provider:".length)
     : null;
-  const providerLabel = useProviderLabel(providerEngineId);
+  const providerInfo = useProviderInfo(providerEngineId);
+  const providerLabel = providerEngineId
+    ? (providerInfo?.label ?? providerEngineId)
+    : null;
   /* Die gemerkte Stimme des liest-vor-Anbieters (`tts_providers.voices`); leer = Vorgabe. */
   const providerVoice = providerEngineId
     ? (getSetting("tts_providers")?.voices?.[providerEngineId] ??
@@ -160,6 +168,15 @@ export function useVoiceChoice(phase: string) {
     : ttsEngineSetting === "piper"
       ? `piper:${getSetting("tts_piper_voice") ?? ""}`
       : (getSetting("tts_voice") ?? "@default");
+
+  /* "Skript mit Sprechern": die Marker im Text schalten die Stimme (Fish: `@default`;
+     Anbieter mit Stimmwechsel: seine Standardstimme). Sonst liest die gewaehlte Stimme
+     alles. Haengt an der Faehigkeit des Anbieters, nicht an seinem Namen. */
+  const scriptMode =
+    voiceValue === "@default" ||
+    (providerEngineId !== null &&
+      providerVoice === PROVIDER_DEFAULT_VOICE &&
+      providerInfo?.voiceSwitching === true);
 
   /* Eine Dropdown-Wahl in die Einstellungen schreiben: Piper-Stimme schaltet
      die Engine um, eine Fish-Stimme schaltet zurueck. */
@@ -249,20 +266,33 @@ export function useVoiceChoice(phase: string) {
     [t, uiLang],
   );
 
-  /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch. */
+  /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch.
+     Bei einem Anbieter mit Stimmwechsel ist die Standardstimme der Eintrag "Skript mit Sprechern". */
   const providerVoiceItems: SelectOption[] = sortVoicesByLabel(
     providerVoices.map((option) => {
       const name = shortVoiceName(option.voice.label);
-      return {
+      const script =
+        option.voice_switching === true &&
+        option.voice.id === PROVIDER_DEFAULT_VOICE;
+      const item: SelectOption = {
         value: providerVoiceValue(option.provider_id, option.voice.id),
-        label: t("tts.providers.dropdown.voice", {
-          provider: option.provider_label,
-          name,
-        }),
+        label: script
+          ? t("tts.providers.dropdown.script", {
+              provider: option.provider_label,
+            })
+          : t("tts.providers.dropdown.voice", {
+              provider: option.provider_label,
+              name,
+            }),
+      };
+      // "Skript mit Sprechern" steht in der Gruppe seines Anbieters vor den Stimmen.
+      return {
+        item,
+        sortKey: script ? `${option.provider_label} · ` : item.label,
       };
     }),
-    (o) => o.label,
-  );
+    (entry) => entry.sortKey,
+  ).map((entry) => entry.item);
 
   /** Die Eintraege des Stimmen-Dropdowns, in der Reihenfolge der Vorlesen-Seite. */
   const options: SelectOption[] = [
@@ -355,6 +385,7 @@ export function useVoiceChoice(phase: string) {
     providerEngineId,
     providerLabel,
     voiceValue,
+    scriptMode,
     applyVoiceValue,
     selectedVoiceNotSetUp,
     noVoiceSetUp,

@@ -7,9 +7,10 @@ import React, {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Trash2, Users } from "lucide-react";
-import { commands } from "@/bindings";
+import { commands, type ProviderSpeaker } from "@/bindings";
 import { Input } from "@/components/ui/Input";
-import { voiceColor } from "@/lib/voices/palette";
+import { useSettings } from "@/hooks/useSettings";
+import { VOICE_PALETTE, voiceColor } from "@/lib/voices/palette";
 import {
   scanSpeakerMarkers,
   speakerMarkerText,
@@ -21,14 +22,19 @@ import type {
   ChipPopoverApi,
   ChipProvider,
 } from "../editor/TtsChipEditor";
+import { providerIdOfEngine } from "../useEngineCaps";
+import { PROVIDER_VOICES_CHANGED } from "../providers/VisibleVoices";
 
 /**
- * Alle Stimmen als Sprecher — Anzeigename und Farbe kommen aus der
+ * Alle aufgenommenen Fish-Stimmen als Sprecher — Anzeigename und Farbe kommen aus der
  * `meta.json` je Stimme (Registry), nicht aus der id. Die Verwaltung meldet
  * Änderungen über dasselbe Fensterereignis wie die Stimmenliste, damit
  * Chips und Verwaltung nie auseinanderlaufen.
+ *
+ * Immer die Fish-Stimmen, auch wenn ein Anbieter vorliest: die Stimmenwahl braucht
+ * ihre Anzeigenamen. Welche Sprecher im Skript gelten, sagt [`useSpeakers`].
  */
-export function useSpeakers(): SpeakerRef[] {
+export function useFishSpeakers(): SpeakerRef[] {
   const [speakers, setSpeakers] = useState<SpeakerRef[]>([]);
   useEffect(() => {
     let alive = true;
@@ -42,6 +48,7 @@ export function useSpeakers(): SpeakerRef[] {
               id: info.id,
               displayName: info.meta.display_name,
               color: voiceColor(info.meta.color),
+              language: info.meta.language ?? "",
             })),
           );
         })
@@ -55,6 +62,86 @@ export function useSpeakers(): SpeakerRef[] {
     };
   }, []);
   return speakers;
+}
+
+/** Farbe eines Anbieter-Sprechers: stabil je Kennung (Hash in die Palette), wie die
+ *  Standardfarbe der Fish-Stimmen. */
+export function providerSpeakerColor(id: string): string {
+  let hash = 0;
+  for (const ch of id) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  const keys = Object.keys(VOICE_PALETTE);
+  return voiceColor(keys[hash % keys.length]);
+}
+
+/** Die Sprecher eines Anbieters (`tts_provider_speakers`) als `SpeakerRef`. */
+export function providerSpeakerRefs(list: ProviderSpeaker[]): SpeakerRef[] {
+  return list.map((speaker) => ({
+    id: speaker.id,
+    displayName: speaker.name,
+    aliases: speaker.aliases,
+    gender: speaker.gender,
+    language: speaker.language,
+    color: providerSpeakerColor(speaker.id),
+  }));
+}
+
+/**
+ * Die Sprecher des Anbieters, der gerade vorliest -- genau die Liste, nach der das
+ * Backend Marker im Text schaltet (`tts_provider_speakers`). Leer ohne Anbieter und bei
+ * einem Anbieter ohne Stimmwechsel.
+ *
+ * Neu geladen, wenn sich Anbieter, gewaehlte Stimme oder die Auswahl "im Vorlesen
+ * anzeigen" aendern (dann sind auch die Sprecher andere) oder die Stimmenverwaltung
+ * etwas meldet.
+ */
+export function useProviderSpeakers(providerId: string | null): SpeakerRef[] {
+  const { getSetting } = useSettings();
+  const [speakers, setSpeakers] = useState<SpeakerRef[]>([]);
+  const chosenVoice = providerId
+    ? (getSetting("tts_providers")?.voices?.[providerId] ?? "")
+    : "";
+  useEffect(() => {
+    if (!providerId) {
+      setSpeakers([]);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      void commands
+        .ttsProviderSpeakers()
+        .then((result) => {
+          if (!alive) return;
+          setSpeakers(
+            result.status === "ok" && Array.isArray(result.data)
+              ? providerSpeakerRefs(result.data)
+              : [],
+          );
+        })
+        .catch(() => alive && setSpeakers([]));
+    };
+    load();
+    window.addEventListener("lv-voices-changed", load);
+    window.addEventListener(PROVIDER_VOICES_CHANGED, load);
+    return () => {
+      alive = false;
+      window.removeEventListener("lv-voices-changed", load);
+      window.removeEventListener(PROVIDER_VOICES_CHANGED, load);
+    };
+  }, [providerId, chosenVoice]);
+  return speakers;
+}
+
+/**
+ * Die Sprecher, die im Skript gelten: bei Fish die aufgenommenen Stimmen, bei einem
+ * Anbieter mit Stimmwechsel (Phonon u. a.) seine sichtbaren Stimmen. Eine Quelle fuer
+ * Editor (Chips, "Sprecher einfuegen"), Skript-Pruefung und Sprecher-Tausch.
+ */
+export function useSpeakers(): SpeakerRef[] {
+  const { getSetting } = useSettings();
+  const providerId = providerIdOfEngine(getSetting("tts_engine") ?? "fish");
+  const fish = useFishSpeakers();
+  const provider = useProviderSpeakers(providerId);
+  return providerId ? provider : fish;
 }
 
 /**
@@ -109,32 +196,60 @@ const SpeakerSearchField: React.FC<{
   );
 };
 
-/** Ein Sprecher in einer Liste: Farbpunkt + Name, 44 px hoch (Touch). */
+/** "weiblich"/"männlich" für das Geschlecht, das ein Anbieter meldet (wie in der
+ *  Stimmenverwaltung der Anbieter); `null` ohne Angabe. */
+export function useGenderLabel(): (
+  gender: string | null | undefined,
+) => string | null {
+  const { t } = useTranslation();
+  return useCallback(
+    (gender) =>
+      gender
+        ? t(`tts.providers.voices.gender.${gender}`, { defaultValue: gender })
+        : null,
+    [t],
+  );
+}
+
+/** Ein Sprecher in einer Liste: Farbpunkt + Name (+ Geschlecht bei Anbieter-Stimmen),
+ *  44 px hoch (Touch). */
 const SpeakerRow: React.FC<{
   speaker: SpeakerRef;
   current?: boolean;
   onPick: (speaker: SpeakerRef) => void;
-}> = ({ speaker, current = false, onPick }) => (
-  <button
-    type="button"
-    role="menuitem"
-    aria-current={current || undefined}
-    onClick={() => onPick(speaker)}
-    className={`flex min-h-[44px] w-full cursor-pointer items-center gap-2 rounded-md px-2 text-start text-sm hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none ${
-      current ? "text-text" : "text-text/80"
-    }`}
-  >
-    <span
-      aria-hidden="true"
-      className="size-2.5 shrink-0 rounded-full"
-      style={{ backgroundColor: speaker.color }}
-    />
-    <span className="min-w-0 flex-1 truncate">{speaker.displayName}</span>
-    <span className="shrink-0 text-xs text-text/45">
-      {speakerMarkerText(speaker)}
-    </span>
-  </button>
-);
+}> = ({ speaker, current = false, onPick }) => {
+  const genderLabel = useGenderLabel();
+  const gender = genderLabel(speaker.gender);
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      aria-current={current || undefined}
+      onClick={() => onPick(speaker)}
+      className={`flex min-h-[44px] w-full cursor-pointer items-center gap-2 rounded-md px-2 text-start text-sm hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none ${
+        current ? "text-text" : "text-text/80"
+      }`}
+    >
+      <span
+        aria-hidden="true"
+        className="size-2.5 shrink-0 rounded-full"
+        style={{ backgroundColor: speaker.color }}
+      />
+      <span className="min-w-0 flex-1 truncate">{speaker.displayName}</span>
+      {gender && (
+        <span
+          className="shrink-0 text-xs text-text/45"
+          data-testid="speaker-gender"
+        >
+          {gender}
+        </span>
+      )}
+      <span className="shrink-0 text-xs text-text/45">
+        {speakerMarkerText(speaker)}
+      </span>
+    </button>
+  );
+};
 
 /**
  * Popover eines Sprecher-Chips: der aktuelle Sprecher oben, darunter alle

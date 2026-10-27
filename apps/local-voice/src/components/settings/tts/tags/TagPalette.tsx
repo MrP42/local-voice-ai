@@ -194,7 +194,13 @@ export const TagPalette: React.FC<{
    *  (zählt dann für „Zuletzt"). */
   onDragInsert?: (x: number, y: number, tagText: string) => boolean;
   uiLang: string;
-}> = ({ onInsert, onDragInsert, uiLang }) => {
+  /** Nur Pausen anbieten: die Engine (ein Anbieter wie Phonon) setzt keine Stil-Tags
+   *  um und liest sie nicht vor, sondern laesst sie weg. Pausen erzeugt die App selbst
+   *  und wirken immer. Ohne Favoriten, Zuletzt und Freitext -- das waeren Stil-Tags. */
+  pausesOnly?: boolean;
+  /** Name der Engine fuer den Hinweis bei `pausesOnly`. */
+  engineLabel?: string;
+}> = ({ onInsert, onDragInsert, uiLang, pausesOnly = false, engineLabel }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
 
@@ -329,6 +335,15 @@ export const TagPalette: React.FC<{
 
   const visibleTags: ChipItem[] = useMemo(() => {
     const trimmedQuery = query.trim();
+    if (pausesOnly) {
+      const pauses = TAG_REGISTRY.filter((tag) => tag.category === "pauses");
+      const found = trimmedQuery
+        ? searchTags(trimmedQuery, uiLang).filter(
+            (tag) => tag.category === "pauses",
+          )
+        : pauses;
+      return found.map((tag) => toChipItem(tag, uiLang, tagLang));
+    }
     if (trimmedQuery) {
       return searchTags(trimmedQuery, uiLang).map((tag) =>
         toChipItem(tag, uiLang, tagLang),
@@ -360,7 +375,7 @@ export const TagPalette: React.FC<{
     return TAG_REGISTRY.filter((tag) => tag.category === activeTab).map((tag) =>
       toChipItem(tag, uiLang, tagLang),
     );
-  }, [query, uiLang, tagLang, activeTab, favorites, recent]);
+  }, [query, uiLang, tagLang, activeTab, favorites, recent, pausesOnly]);
 
   const emptyMessage = query.trim()
     ? t("tts.tags.emptySearch")
@@ -412,7 +427,7 @@ export const TagPalette: React.FC<{
           </button>
         </div>
 
-        {isOpen && (
+        {isOpen && !pausesOnly && (
           <TabStrip label={t("tts.tags.tabsAriaLabel")}>
             <TabButton
               active={activeTab === "favorites"}
@@ -452,13 +467,16 @@ export const TagPalette: React.FC<{
           <p
             className="px-2 pt-1 text-xs text-text/50"
             data-testid="tag-legend"
+            data-pauses-only={pausesOnly || undefined}
           >
-            {t("tts.tags.legend", {
-              documented: TAG_REGISTRY.filter(
-                (tag) => tagClass(tag) === "documented",
-              ).length,
-              total: TAG_REGISTRY.length,
-            })}
+            {pausesOnly
+              ? t("tts.tags.legendPausesOnly", { engine: engineLabel ?? "" })
+              : t("tts.tags.legend", {
+                  documented: TAG_REGISTRY.filter(
+                    (tag) => tagClass(tag) === "documented",
+                  ).length,
+                  total: TAG_REGISTRY.length,
+                })}
           </p>
           <div className="flex flex-wrap gap-x-1 gap-y-0.5 p-2">
             {visibleTags.length === 0 ? (
@@ -531,31 +549,33 @@ export const TagPalette: React.FC<{
             )}
           </div>
 
-          <div className="flex items-center gap-2 border-t border-mid-gray/10 px-2 pt-1.5 pb-2">
-            <Input
-              type="text"
-              value={customText}
-              onChange={(event) => setCustomText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  insertCustom();
-                }
-              }}
-              placeholder={t("tts.tags.customPlaceholder")}
-              title={t("tts.tags.customHint")}
-              className="min-w-0 flex-1"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={insertCustom}
-              disabled={!customText.trim()}
-            >
-              <Plus width={14} height={14} />
-              {t("tts.tags.customInsert")}
-            </Button>
-          </div>
+          {!pausesOnly && (
+            <div className="flex items-center gap-2 border-t border-mid-gray/10 px-2 pt-1.5 pb-2">
+              <Input
+                type="text"
+                value={customText}
+                onChange={(event) => setCustomText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    insertCustom();
+                  }
+                }}
+                placeholder={t("tts.tags.customPlaceholder")}
+                title={t("tts.tags.customHint")}
+                className="min-w-0 flex-1"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={insertCustom}
+                disabled={!customText.trim()}
+              >
+                <Plus width={14} height={14} />
+                {t("tts.tags.customInsert")}
+              </Button>
+            </div>
+          )}
         </>
       )}
 

@@ -10,6 +10,7 @@ import {
   tagClass,
 } from "@/lib/tags/registry";
 import { tagTextFor, useTagLanguage } from "./tagLanguage";
+import { useEngineCaps } from "../useEngineCaps";
 import type { TagDef } from "@/lib/tags/types";
 import type {
   ChipMatch,
@@ -275,9 +276,12 @@ const TagChipPopover: React.FC<{ match: ChipMatch; api: ChipPopoverApi }> = ({
 export function useTagProvider(): ChipProvider {
   const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
-  const { getSetting } = useSettings();
-  const engine =
-    (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
+  // Was die Engine kann, nicht wie sie heisst: ohne Stil-Tags (Piper, Phonon) lassen
+  // sie jedes Tag ausser den Pausen beim Vorlesen weg.
+  const caps = useEngineCaps();
+  const styleTags = caps.styleTags;
+  const engine = caps.kind;
+  const engineLabel = caps.providerLabel ?? "";
 
   return useMemo<ChipProvider>(
     () => ({
@@ -296,8 +300,15 @@ export function useTagProvider(): ChipProvider {
         void klass;
         return {
           label: def
-            ? engine === "piper" && def.category !== "pauses"
-              ? `${localizedLabel(def, uiLang)} — ${t("tts.tags.piperIgnores", { tag: inner })}`
+            ? !styleTags && def.category !== "pauses"
+              ? `${localizedLabel(def, uiLang)} — ${
+                  engine === "piper"
+                    ? t("tts.tags.piperIgnores", { tag: inner })
+                    : t("tts.tags.engineIgnores", {
+                        tag: inner,
+                        engine: engineLabel,
+                      })
+                }`
               : localizedLabel(def, uiLang)
             : t("tts.tags.freeText", { tag: inner }),
           state: "ok",
@@ -305,6 +316,6 @@ export function useTagProvider(): ChipProvider {
       },
       popover: (m, api) => <TagChipPopover match={m} api={api} />,
     }),
-    [t, uiLang, engine],
+    [t, uiLang, styleTags, engine, engineLabel],
   );
 }

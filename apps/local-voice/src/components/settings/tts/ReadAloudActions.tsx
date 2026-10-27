@@ -69,6 +69,9 @@ export interface ReadAloudActionsProps {
   onTidy: () => void;
   errorCount: number;
   onCheckScript: () => void;
+  /** Warum Auto-Tagging gerade nichts bringt (Engine ohne Stil-Tags, z. B. Phonon);
+   *  der Eintrag ist dann ausgegraut und nennt den Grund. */
+  autoTagBlockedReason?: string;
   /** Props der Auto-Tagging-Leiste ohne Dialogsteuerung — die liegt hier. */
   autoTag: Omit<
     AutoTagBarProps,
@@ -229,8 +232,9 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       icon: Tags,
       iconClassName: autoTagLoading ? "animate-pulse" : undefined,
       onSelect: () => setAutoTagOpen(true),
-      disabled: autoTagLoading || !hasText,
+      disabled: autoTagLoading || !hasText || !!props.autoTagBlockedReason,
       testId: "autotag-open",
+      title: props.autoTagBlockedReason,
     },
   ];
 

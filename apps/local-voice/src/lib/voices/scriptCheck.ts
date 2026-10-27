@@ -53,13 +53,18 @@ export interface ScriptFinding {
   line: number;
 }
 
-export type ScriptEngine = "fish" | "piper";
+/**
+ * Welche Art Stimme liest: Fish (Stil-Tags, aufgenommene Sprecher), Piper (nur
+ * Pausen) oder ein Anbieter ohne Stil-Tags (Phonon u. a.: nur Pausen, Sprecher sind
+ * seine Stimmen). Ein Anbieter MIT Stil-Tags verhält sich wie Fish.
+ */
+export type ScriptEngine = "fish" | "piper" | "provider";
 
 /** Tags, die die Engine wirklich versteht (oder die App selbst umsetzt). */
 export function knownTagsFor(engine: ScriptEngine): TagDef[] {
-  return engine === "piper"
-    ? TAG_REGISTRY.filter((tag) => tag.category === "pauses")
-    : TAG_REGISTRY;
+  return engine === "fish"
+    ? TAG_REGISTRY
+    : TAG_REGISTRY.filter((tag) => tag.category === "pauses");
 }
 
 /**
@@ -133,8 +138,10 @@ export function checkScript(
   // kein Fehler im Skript, also auch kein Befund (sonst schaltete die Wahl
   // einer Piper-Stimme alle Tags auf Rot, 26.09.2026). Freie Beschreibungen
   // ausserhalb der Registry bekommen nur einen Hinweis mit aehnlichen Tags.
-  void engine;
+  // Ein Anbieter ohne Stil-Tags (Phonon) lässt jedes Tag beim Vorlesen weg: Vorschläge
+  // für Fish-Tags wären dort nur Lärm.
   for (const span of scanTagMatches(text)) {
+    if (engine === "provider") break;
     const inner = text.slice(span.start + 1, span.end - 1).trim();
     if (!inner || resolveTag(inner)) continue;
     out.push({

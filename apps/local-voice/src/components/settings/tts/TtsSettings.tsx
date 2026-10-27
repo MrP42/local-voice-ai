@@ -51,7 +51,12 @@ import {
   type ScriptFinding,
 } from "@/lib/voices/scriptCheck";
 import { useTagProvider } from "./tags/tagProvider";
-import { useSpeakerProvider, useSpeakers } from "./speakers";
+import {
+  providerSpeakerRefs,
+  useSpeakerProvider,
+  useSpeakers,
+} from "./speakers";
+import { useEngineCaps } from "./useEngineCaps";
 import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
 import {
   applySwap,
@@ -132,9 +137,16 @@ export const TtsSettings = () => {
     () => [tagProvider, speakerProvider],
     [tagProvider, speakerProvider],
   );
-  /** Bekannte Stimmen fuer die Skript-Pruefung -- dieselbe Liste, gegen die
-   *  auch die Sprecher-Chips abgeglichen werden. */
+  /** Bekannte Sprecher fuer die Skript-Pruefung -- dieselbe Liste, gegen die
+   *  auch die Sprecher-Chips abgeglichen werden: bei Fish die aufgenommenen
+   *  Stimmen, bei einem Anbieter mit Stimmwechsel (Phonon u. a.) seine Stimmen. */
   const speakers = useSpeakers();
+  /** Was die gewaehlte Engine kann (Sprecher im Skript, Stil-Tags): die Seite
+   *  richtet sich nach den Faehigkeiten, nicht nach dem Namen der Engine. */
+  const engineCaps = useEngineCaps();
+  /** Ein Anbieter ohne Stil-Tags (Phonon): nur Pausen anbieten und erklaeren. Fish und
+   *  Piper behalten ihre bisherige Darstellung. */
+  const pausesOnly = engineCaps.kind === "provider" && !engineCaps.styleTags;
   /** Skript-Pruefung: Bestaetigungsdialog vor Vorlesen/Speichern, wenn es
    *  Befunde gibt. Traegt, was nach "Trotzdem" laufen soll. */
   const [checkDialog, setCheckDialog] = useState<"speak" | "save" | null>(null);
@@ -737,15 +749,21 @@ export const TtsSettings = () => {
    */
   const nextExportName = (ext: string) => {
     let voice: string;
-    if (voiceValue === "@default") {
+    if (scriptMode) {
       voice = t("tts.export.scriptStem");
+    } else if (voiceValue.startsWith("provider:")) {
+      // "Phonon · Nele": nur der Name der Stimme gehoert in den Dateinamen.
+      const label =
+        voiceOptions.find((option) => option.value === voiceValue)?.label ?? "";
+      voice = label.split(" · ").slice(1).join(" ") || label;
     } else if (voiceValue.startsWith("piper:")) {
       const piper = piperVoices.find((v) => `piper:${v.id}` === voiceValue);
       // Nur der Name: Sprache und Qualitaet der Auswahl-Beschriftung gehoeren
       // nicht in einen Dateinamen.
       voice = piper ? piperVoiceLabel(piper).split(" · ")[0] : "";
     } else {
-      voice = speakers.find((sp) => sp.id === voiceValue)?.displayName ?? "";
+      voice =
+        fishSpeakers.find((sp) => sp.id === voiceValue)?.displayName ?? "";
     }
     const suffix =
       tab === "translation"
@@ -855,10 +873,12 @@ export const TtsSettings = () => {
   // Baustein, den auch die Wiedergabeleiste der Aufnahmen nutzt.
   const {
     fishReady,
+    speakers: fishSpeakers,
     piperVoices,
     providerEngineId,
     providerLabel,
     voiceValue,
+    scriptMode,
     applyVoiceValue,
     selectedVoiceNotSetUp,
     noVoiceSetUp,
@@ -948,8 +968,7 @@ export const TtsSettings = () => {
   };
   const scriptCheckAuto = getSetting("tts_script_check") ?? true;
   const scriptCheckOn = scriptCheckAuto || manualCheck === spokenText;
-  const scriptEngine =
-    (getSetting("tts_engine") ?? "fish") === "piper" ? "piper" : "fish";
+  const scriptEngine = engineCaps.scriptEngine;
   const debouncedText = useDebouncedValue(spokenText, 120);
   const scriptFindings = useMemo<ScriptFinding[]>(
     () =>
@@ -1142,13 +1161,25 @@ export const TtsSettings = () => {
   const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
   /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
   const openSpeakerSwap = async (source: string = translation ?? "") => {
-    const infos = await commands.ttsListVoiceInfos().catch(() => []);
-    const voices: LangVoice[] = infos.map((info) => ({
-      id: info.id,
-      displayName: info.meta.display_name,
-      color: voiceColor(info.meta.color),
-      language: info.meta.language ?? "",
-    }));
+    let voices: LangVoice[];
+    if (engineCaps.kind === "provider") {
+      // Liest ein Anbieter vor, sind die Sprecher SEINE Stimmen (mit Sprache und
+      // Geschlecht), nicht die aufgenommenen Fish-Stimmen.
+      const listed = await commands.ttsProviderSpeakers().catch(() => null);
+      voices = providerSpeakerRefs(
+        listed?.status === "ok" && Array.isArray(listed.data)
+          ? listed.data
+          : [],
+      ).map((voice) => ({ ...voice, language: voice.language ?? "" }));
+    } else {
+      const infos = await commands.ttsListVoiceInfos().catch(() => []);
+      voices = infos.map((info) => ({
+        id: info.id,
+        displayName: info.meta.display_name,
+        color: voiceColor(info.meta.color),
+        language: info.meta.language ?? "",
+      }));
+    }
     setLangVoices(voices);
     const sources = speakersInText(source, voices);
     if (sources.length === 0) {
@@ -1593,6 +1624,8 @@ export const TtsSettings = () => {
                 <div className="space-y-3 pt-2">
                   <TagPalette
                     uiLang={uiLang}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
                     onInsert={(tagText) =>
                       editorApiRef.current?.insertAtCursor(tagText)
                     }
@@ -1755,7 +1788,7 @@ export const TtsSettings = () => {
                   width={300}
                   content={
                     <div className="text-xs">
-                      {voiceValue === "@default"
+                      {scriptMode
                         ? t("tts.voices.scriptVoicesHint")
                         : t("tts.voices.singleVoiceHint")}
                     </div>
@@ -1875,7 +1908,7 @@ export const TtsSettings = () => {
                       className="sr-only"
                       data-testid="voice-mode-hint"
                     >
-                      {voiceValue === "@default"
+                      {scriptMode
                         ? t("tts.voices.scriptVoicesHint")
                         : t("tts.voices.singleVoiceHint")}
                     </p>
@@ -1906,6 +1939,13 @@ export const TtsSettings = () => {
                 onTidy={() => void tidyText()}
                 errorCount={errorCount}
                 onCheckScript={runScriptCheck}
+                autoTagBlockedReason={
+                  pausesOnly
+                    ? t("tts.autotag.noStyleTags", {
+                        engine: engineCaps.providerLabel ?? "",
+                      })
+                    : undefined
+                }
                 autoTag={{
                   text,
                   suggestions: tagSuggestions,
@@ -1948,23 +1988,35 @@ export const TtsSettings = () => {
                 </summary>
                 <div className="mt-1 space-y-1 ps-4">
                   <p>{t("tts.dialogHint")}</p>
-                  <p>{t("tts.writingRules.tagsIntro")}</p>
+                  {pausesOnly ? (
+                    <p>
+                      {t("tts.writingRules.pausesOnly", {
+                        engine: engineCaps.providerLabel ?? "",
+                      })}
+                    </p>
+                  ) : (
+                    <p>{t("tts.writingRules.tagsIntro")}</p>
+                  )}
                   <ul className="list-disc space-y-0.5 ps-4">
-                    <li>
-                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                        {t("tts.writingRules.example1")}
-                      </code>
-                    </li>
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example1")}
+                        </code>
+                      </li>
+                    )}
                     <li>
                       <code className="rounded bg-logo-primary/15 px-1 text-text/70">
                         {t("tts.writingRules.example2")}
                       </code>
                     </li>
-                    <li>
-                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                        {t("tts.writingRules.example3")}
-                      </code>
-                    </li>
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example3")}
+                        </code>
+                      </li>
+                    )}
                   </ul>
                 </div>
               </details>
