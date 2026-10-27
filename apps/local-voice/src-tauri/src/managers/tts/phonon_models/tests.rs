@@ -1412,6 +1412,22 @@ fn meldungen_zu_fehlerstatus_und_vollem_datentraeger() {
 }
 
 #[test]
+fn signierte_adressen_stehen_in_keiner_meldung() {
+    let entry = tiny_entry("phonon-test", &[]);
+    let err = anyhow!(
+        "error decoding response body for url (https://cas-bridge.example/x?X-Amz-Signature=geheim123&y=2) und http://a.b/c?d=e Ende"
+    );
+    let msg = describe_error(&entry, &err);
+    assert!(
+        !msg.contains("geheim123") && !msg.contains("cas-bridge") && !msg.contains("http"),
+        "{msg}"
+    );
+    assert!(msg.contains("<Adresse>") && msg.contains("Ende"), "{msg}");
+    assert_eq!(scrub_urls("kein Link hier"), "kein Link hier");
+    assert_eq!(scrub_urls("https://x.y"), "<Adresse>");
+}
+
+#[test]
 fn eine_kennung_laesst_sich_nur_einmal_belegen() {
     let flags = Mutex::new(HashMap::new());
     let first = try_claim(&flags, "phonon-40m-de").expect("frei");

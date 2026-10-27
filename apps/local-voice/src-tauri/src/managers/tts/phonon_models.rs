@@ -494,7 +494,33 @@ fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
     if let Some(io) = err.downcast_ref::<std::io::Error>() {
         return io_message(&entry.name, io);
     }
-    format!("Download von {} fehlgeschlagen: {err}", entry.name)
+    format!(
+        "Download von {} fehlgeschlagen: {}",
+        entry.name,
+        scrub_urls(&err.to_string())
+    )
+}
+
+/// Ersetzt Webadressen im Text: eine signierte CDN-Adresse waere selbst ein Zugang auf Zeit und
+/// gehoert in keine Meldung (Fehler der Netzbibliothek nennen sie gern).
+fn scrub_urls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = ["https://", "http://"]
+        .iter()
+        .filter_map(|prefix| rest.find(prefix))
+        .min()
+    {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ')' | '"' | '\'' | '>'))
+            .unwrap_or(tail.len());
+        out.push_str("<Adresse>");
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn io_message(what: &str, e: &std::io::Error) -> String {
