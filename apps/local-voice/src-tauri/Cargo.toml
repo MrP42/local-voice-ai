@@ -296,3 +296,13 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "unwind"
+
+# Lokale Abnahme-Installer: wie release, aber ohne volle LTO und mit parallelem,
+# inkrementellem Codegen. Nur geaenderte Crates werden neu uebersetzt; echte
+# Releases bauen weiter mit [profile.release].
+# Aufruf: scripts/build-abnahme.sh (bzw. `npx tauri build -b nsis -- --profile abnahme`).
+[profile.abnahme]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
