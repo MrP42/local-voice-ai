@@ -986,7 +986,7 @@ test("Vorlesen-Seite: tts_engine = provider:phonon zeigt benannten Eintrag statt
   await expect(select).not.toContainText("Skript mit Sprechern");
   const hint = page.getByTestId("voice-provider-hint");
   await expect(hint).toContainText(
-    "Anbieter: Phonon (ptts) (Einstellungen → Sprachausgabe-Anbieter)",
+    "Anbieter: Phonon (Einstellungen → Sprachausgabe-Anbieter)",
   );
   // Kein Fish-"nicht eingerichtet"-Hinweis.
   await expect(page.getByTestId("voice-setup-hint")).toHaveCount(0);
@@ -1446,17 +1446,17 @@ test("Vorlesen-Dropdown: Phonon-Stimmen einzeln, nur die sichtbaren; Wahl setzt 
   await select.getByRole("combobox").click();
   const option = (name: RegExp) => page.getByRole("option", { name });
   // Sichtbar: die Standardstimme und die ausgewählte Stimme, mit Anbieter und Geschlecht.
-  await expect(option(/Phonon \(ptts\): Nele · weiblich/)).toBeVisible();
+  await expect(option(/Phonon · Nele/)).toBeVisible();
   await expect(
-    option(/Phonon \(ptts\): Standardstimme des Modells/),
+    option(/Phonon · Standardstimme des Modells/),
   ).toBeVisible();
   // Nicht gewählt: fehlen.
-  await expect(option(/Phonon \(ptts\): Anna/)).toHaveCount(0);
-  await expect(option(/Phonon \(ptts\): Ben/)).toHaveCount(0);
+  await expect(option(/Phonon · Anna/)).toHaveCount(0);
+  await expect(option(/Phonon · Ben/)).toHaveCount(0);
   // Fish bleibt, wie es war.
   await expect(option(/Skript mit Sprechern/)).toBeVisible();
 
-  await option(/Phonon \(ptts\): Nele/).click();
+  await option(/Phonon · Nele/).click();
   await expect
     .poll(async () => (await calls(page, "tts_provider_select")).length)
     .toBe(1);
@@ -1465,7 +1465,7 @@ test("Vorlesen-Dropdown: Phonon-Stimmen einzeln, nur die sichtbaren; Wahl setzt 
     voice: "nele",
   });
   // Die Auswahl zeigt die gewählte Stimme statt eines Sammel-Eintrags.
-  await expect(select).toContainText("Phonon (ptts): Nele · weiblich");
+  await expect(select).toContainText("Phonon · Nele");
 });
 
 test("Vorlesen-Dropdown: ohne gespeicherte Auswahl stehen alle Stimmen da", async ({
@@ -1480,7 +1480,7 @@ test("Vorlesen-Dropdown: ohne gespeicherte Auswahl stehen alle Stimmen da", asyn
   for (const name of ["Anna", "Nele", "Ben"])
     await expect(
       page.getByRole("option", {
-        name: new RegExp(`Phonon \\(ptts\\): ${name}`),
+        name: new RegExp(`Phonon · ${name}`),
       }),
     ).toBeVisible();
 });
@@ -1500,13 +1500,13 @@ test("Vorlesen-Dropdown: die gewählte Stimme bleibt sichtbar, auch wenn die Aus
     },
   });
   const select = await gotoReadAloud(page);
-  await expect(select).toContainText("Phonon (ptts): Nele · weiblich");
+  await expect(select).toContainText("Phonon · Nele");
   await select.getByRole("combobox").click();
   await expect(
-    page.getByRole("option", { name: /Phonon \(ptts\): Anna/ }),
+    page.getByRole("option", { name: /Phonon · Anna/ }),
   ).toBeVisible();
   await expect(
-    page.getByRole("option", { name: /Phonon \(ptts\): Ben/ }),
+    page.getByRole("option", { name: /Phonon · Ben/ }),
   ).toHaveCount(0);
 });
 

@@ -20,6 +20,7 @@ import {
   discardSavedReading,
   getReadAloudSession,
   getSavedReading,
+  markVoiceHandover,
   pauseReading,
   resumeReading,
   resumeSavedReading,
@@ -73,7 +74,7 @@ const Controls: React.FC<{
   );
 
   const live = view === "live" ? session : null;
-  const playing = !!live && live.runs > 0 && !live.paused;
+  const playing = !!live && !live.paused && (live.runs > 0 || live.handover);
   // Zaehler: der Satz, der zu hoeren ist -- oder der, mit dem es weitergeht.
   const total = live ? (live.progress?.total ?? 0) : (savedEntry?.total ?? 0);
   const index = live
@@ -211,7 +212,10 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
               <Check width={14} height={14} aria-hidden="true" />
             ) : undefined,
           // Ein Wechsel gilt sofort -- eine laufende Wiedergabe stellt am aktuellen Satz um.
-          onSelect: () => applyVoiceValue(option.value),
+          onSelect: () => {
+            markVoiceHandover();
+            applyVoiceValue(option.value);
+          },
         },
   );
 

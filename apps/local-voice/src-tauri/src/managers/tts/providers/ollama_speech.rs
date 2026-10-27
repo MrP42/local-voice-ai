@@ -674,7 +674,7 @@ impl OllamaSpeechProvider {
             return self.fail(
                 self.platform_reason(),
                 "Zum Ausprobieren probe_speech aktivieren (lädt das Sprachmodell in Ollama); \
-                 sonst Phonon (ptts) oder einen OpenAI-kompatiblen Sprachserver nutzen.",
+                 sonst Phonon oder einen OpenAI-kompatiblen Sprachserver nutzen.",
                 Some(raw_version),
             );
         }
