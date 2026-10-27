@@ -729,8 +729,8 @@ pub fn change_tts_seed_setting(app: AppHandle, value: i64) -> Result<(), String>
     settings::write_settings(&app, settings);
     // Der Seed IST die Standardstimme: ein anderer Seed ist eine andere
     // Person. Er muss deshalb genauso sofort wirken wie ein Stimmwechsel —
-    // eine laufende Wiedergabe stellt am aktuellen Satz um, und die neue
-    // Referenz wird beim ersten Satz einmalig erzeugt.
+    // eine laufende Wiedergabe liest ab dem naechsten Satz mit der neuen
+    // Stimme, und die neue Referenz wird dabei einmalig erzeugt.
     apply_voice_change(&app);
     Ok(())
 }
