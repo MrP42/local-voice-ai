@@ -208,6 +208,17 @@ impl TtsModelManager {
         })
     }
 
+    /// `<app_data>/tts/phonon` (Programm, Modelle, eigene Stimmen von Phonon).
+    pub(crate) fn phonon_dirs(&self) -> &PhononDirs {
+        &self.phonon_dirs
+    }
+
+    /// Die Sperre fuer `voices/SOURCE.json`: auch die Verwaltung eigener Stimmen
+    /// (`phonon_voices`) schreibt nur unter ihr, damit sich beide nicht gegenseitig ueberschreiben.
+    pub(crate) fn phonon_voices_lock(&self) -> &Mutex<()> {
+        &self.phonon_voices_lock
+    }
+
     fn is_downloading(&self, id: &str) -> bool {
         self.cancel_flags.lock().unwrap().contains_key(id)
     }

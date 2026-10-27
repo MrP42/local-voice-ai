@@ -393,6 +393,16 @@ pub(crate) fn installed_paths(app_data: &Path) -> InstalledPaths {
     }
 }
 
+/// Kennung und Ordner aller vollstaendig ueber die Modellseite installierten Katalog-Modelle
+/// (Katalogreihenfolge). Dorthin kopiert `phonon_voices` die eigenen Stimmen.
+pub(crate) fn installed_model_dirs(dirs: &PhononDirs) -> Vec<(String, PathBuf)> {
+    model_entries()
+        .into_iter()
+        .filter(|entry| model_complete(dirs, entry))
+        .map(|entry| (entry.id.clone(), dirs.model_dir(&entry.id)))
+        .collect()
+}
+
 /// Lizenz eines ueber die Modellseite installierten Katalog-Modells (aus dem Katalog, mit Quelle und
 /// Pruefdatum). `None` fuer alles andere: `hf://`-Verweise, fremde Ordner und Ordner ohne passende
 /// Marke (ein Ordner gleichen Namens mit fremden Gewichten bekommt so keine Lizenz zugesprochen).

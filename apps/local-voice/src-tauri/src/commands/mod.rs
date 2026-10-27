@@ -34,6 +34,7 @@ pub mod provenance; // A1
 pub mod transcription;
 pub mod tts;
 pub mod tts_providers;
+pub mod phonon_voices;
 pub mod youtube; // A2
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};

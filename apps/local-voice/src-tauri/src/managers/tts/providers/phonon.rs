@@ -85,6 +85,7 @@ use super::contract::{
     SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, UseSubject, VoiceDescriptor,
 };
 use crate::managers::tts::phonon_models;
+use crate::managers::tts::phonon_voices;
 use crate::process_guard::{self, ProcessGuard};
 
 pub const PHONON_ID: &str = "phonon";
@@ -334,6 +335,8 @@ struct VoiceInfo {
     gender: Option<String>,
     age: Option<String>,
     description: Option<String>,
+    /// Herkunft einer EIGENEN Stimme (`import`, `gradium-clone`); fehlt bei mitgelieferten.
+    origin: Option<String>,
 }
 
 /// Der Inhalt von `<Modellordner>/voices/SOURCE.json`: woher die Stimmen stammen,
@@ -434,6 +437,7 @@ fn read_voice_source(model_dir: &Path) -> Option<VoiceSource> {
                     gender: text(e, "gender").map(|g| g.to_ascii_lowercase()),
                     age: text(e, "age"),
                     description: text(e, "description"),
+                    origin: text(e, "origin"),
                 })
                 .collect()
         })
@@ -915,6 +919,34 @@ impl PhononProvider {
         };
         self.check_model()?;
         Ok(exe)
+    }
+
+    /// Groesse und Aenderungszeit der Stimmdatei `<Modellordner>/voices/<stimme>.safetensors`
+    /// (nur fuer einen lokalen Modellordner und einen schlichten Dateinamen).
+    fn voice_file_stamp(&self, voice: &str) -> Option<String> {
+        let plain = !voice.is_empty()
+            && !voice.starts_with('.')
+            && !voice.contains(['/', '\\', ':'])
+            && voice != "default";
+        if !plain {
+            return None;
+        }
+        let ModelSpec::Local(dir) = parse_model(&self.cfg.model).ok()? else {
+            return None;
+        };
+        let meta = std::fs::metadata(
+            Path::new(dir)
+                .join("voices")
+                .join(format!("{voice}.safetensors")),
+        )
+        .ok()?;
+        let secs = meta
+            .modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Some(format!("{:x}{:x}", meta.len(), secs))
     }
 
     /// Darf `ptts` diese Stimme OHNE Netzfreigabe laden? `None` = ja; sonst der
@@ -1439,7 +1471,14 @@ impl TtsProvider for PhononProvider {
                     if let Some(info) = source.as_ref().and_then(|s| s.find(&n)) {
                         voice.label = voice_label(info, &n);
                         voice.gender = info.gender.clone();
-                        voice.license = license.clone();
+                        // Eigene Stimmen (Import, Klon) haben eigene Rechte: die Lizenz des
+                        // Modells gilt nicht fuer sie.
+                        voice.license = match info.origin.as_deref() {
+                            Some(o) if phonon_voices::origin_is_own(o) => {
+                                Some(phonon_voices::own_voice_license(o))
+                            }
+                            _ => license.clone(),
+                        };
                     }
                     voices.push(voice);
                 }
@@ -1525,7 +1564,17 @@ impl TtsProvider for PhononProvider {
             .filter(|v| !v.is_empty())
             .or_else(|| self.cfg.configured_voice())
             .unwrap_or("default");
-        format!("{PHONON_ID}:{base}~{:08x}:{voice}", hash & 0xffff_ffff)
+        // Wird eine Stimmdatei ersetzt (eigene Stimme neu erstellt), muss schon zwischengespeichertes
+        // Vorlesen mit der alten Stimme ungueltig werden: Groesse und Aenderungszeit der Datei
+        // gehoeren in den Tag.
+        let stamp = self
+            .voice_file_stamp(voice)
+            .map(|s| format!("~{s}"))
+            .unwrap_or_default();
+        format!(
+            "{PHONON_ID}:{base}~{:08x}:{voice}{stamp}",
+            hash & 0xffff_ffff
+        )
     }
 
     /// Modell dieser Instanz; `ptts` ist ein lokales Programm (keine Adresse).
@@ -2995,6 +3044,79 @@ mod tests {
         // Die Standardstimme trägt keine Angaben aus der Datei.
         assert!(by_id("default").license.is_none());
         assert!(fake.calls().is_empty(), "offline: kein Prozess");
+    }
+
+    /// Eigene Stimmen (Import, Klon) tragen ihre eigene, unverifizierte Lizenz; die Lizenz der
+    /// mitgelieferten Stimmen in derselben Datei gilt nicht fuer sie.
+    #[tokio::test]
+    async fn eigene_stimmen_tragen_eigene_unbekannte_lizenz_nicht_die_des_modells() {
+        let model = model_dir(&["Nele", "Eigene-Stimme"]);
+        std::fs::write(
+            model.path().join("voices").join("SOURCE.json"),
+            r#"{"source": "hf://gradium/phonon-voices@0ee17205", "license": "apache-2.0", "voices": [
+ {"filename": "voices/AAAA.safetensors", "name": "Nele", "voice_id": "AAAA", "language": "de",
+  "locale": "de-de", "gender": "female", "age": "Adult", "description": "Rounded."},
+ {"filename": "voices/Eigene-Stimme.safetensors", "name": "Eigene Stimme", "voice_id": "vox_1",
+  "language": "de", "locale": "", "gender": null, "age": null,
+  "description": "Eigene Stimme (mit Gradium erstellt)", "origin": "gradium-clone",
+  "license": "eigene/unbekannt", "verified": false}]}"#,
+        )
+        .unwrap();
+        let fake = fake_ptts(FakeOpts::default());
+        let v = provider(&fake, &model).list_voices(None).await.unwrap();
+        let own = v.iter().find(|x| x.id == "Eigene-Stimme").unwrap();
+        assert_eq!(
+            own.label,
+            "Eigene Stimme – Eigene Stimme (mit Gradium erstellt)"
+        );
+        let lic = own.license.as_ref().expect("eigene Lizenz");
+        assert_eq!(lic.weights, "eigene/unbekannt");
+        assert!(lic.non_commercial && !lic.verified && lic.verified_on.is_none());
+        assert!(lic.note.contains("Gradium"), "{}", lic.note);
+        // Die mitgelieferte Stimme behaelt die Lizenz der Datei.
+        let nele = v.iter().find(|x| x.id == "Nele").unwrap();
+        assert_eq!(nele.license.as_ref().unwrap().weights, "apache-2.0");
+    }
+
+    /// Wird eine Stimmdatei ersetzt, aendert sich der Cache-Tag; sonst kaeme schon
+    /// zwischengespeichertes Vorlesen mit der alten Stimme zurueck.
+    #[test]
+    fn der_cache_tag_folgt_der_stimmdatei_im_modellordner() {
+        let model = model_dir(&["Anna"]);
+        let p = PhononProvider::new(PhononConfig {
+            model: model.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        });
+        let file = model.path().join("voices").join("Anna.safetensors");
+        let first = p.cache_tag(Some("Anna"));
+        assert_eq!(
+            first,
+            p.cache_tag(Some("Anna")),
+            "stabil, solange die Datei gleich bleibt"
+        );
+
+        // Andere Groesse.
+        std::fs::write(&file, b"viel laenger als vorher").unwrap();
+        let second = p.cache_tag(Some("Anna"));
+        assert_ne!(first, second);
+
+        // Gleiche Groesse, andere Aenderungszeit.
+        let f = std::fs::OpenOptions::new().write(true).open(&file).unwrap();
+        f.set_modified(std::time::SystemTime::now() + Duration::from_secs(120))
+            .unwrap();
+        drop(f);
+        assert_ne!(second, p.cache_tag(Some("Anna")));
+
+        // Standardstimme, Pfade und unbekannte Stimmen: kein Stempel, kein Zugriff ausserhalb.
+        for voice in [
+            Some("default"),
+            Some("../Anna"),
+            Some("Gibt-es-nicht"),
+            None,
+        ] {
+            let tag = p.cache_tag(voice);
+            assert!(tag.matches('~').count() == 1, "{tag}");
+        }
     }
 
     #[tokio::test]

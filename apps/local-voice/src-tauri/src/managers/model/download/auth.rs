@@ -49,6 +49,22 @@ impl Secret {
         value.set_sensitive(true);
         Some(value)
     }
+
+    /// Der Wert als Inhalt eines eigenen Kopfes (z. B. `x-api-key` bei Gradium), als sensibel
+    /// markiert: reqwest und `Debug` zeigen ihn nie. Der Aufrufer entscheidet ueber den Ursprung
+    /// (`Origin::of`), an den der Kopf gehen darf.
+    pub(crate) fn header_value(&self) -> Option<HeaderValue> {
+        let mut value = HeaderValue::from_str(&self.0).ok()?;
+        value.set_sensitive(true);
+        Some(value)
+    }
+
+    /// `text` ohne den geheimen Wert (jedes Vorkommen wird zu `***`): fuer Fremdtext aus
+    /// Antworten, der in eine Meldung soll. Ein Server, der den Schluessel zurueckschickt,
+    /// bringt ihn so nie in eine Fehlermeldung.
+    pub(crate) fn scrub(&self, text: &str) -> String {
+        text.replace(&self.0, "***")
+    }
 }
 
 impl fmt::Debug for Secret {
@@ -74,6 +90,16 @@ impl Origin {
         }
     }
 
+    /// Die API von Gradium (`https://api.gradium.ai`, Port 443): der einzige Ort, an den der
+    /// Gradium-Schluessel geht.
+    pub(crate) fn gradium() -> Self {
+        Self {
+            https: true,
+            host: "api.gradium.ai".to_string(),
+            port: 443,
+        }
+    }
+
     /// Nur fuer Tests (Fake-Server auf Loopback).
     #[cfg(test)]
     pub(crate) fn plain_http(host: &str, port: u16) -> Self {
@@ -84,7 +110,7 @@ impl Origin {
         }
     }
 
-    fn of(url: &Url) -> Option<Self> {
+    pub(crate) fn of(url: &Url) -> Option<Self> {
         let https = match url.scheme() {
             "https" => true,
             "http" => false,
