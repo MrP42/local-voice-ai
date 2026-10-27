@@ -4,8 +4,9 @@ Stand 26.10.2026 · Goal `tts-provider` (Paket D1). Meldungen und Verhalten stam
 `apps/local-voice/src-tauri/src/managers/tts/providers/` (**P/**) und `managers/tts/availability.rs`; Quellen und
 Abrufdaten zu den Anbietern: [provider-research.md](provider-research.md). Zahlen ohne Fundstelle sind als „laut Auftrag“
 gekennzeichnet. Einbindung in Einstellungen, UI, CLI und Agentenbrücke: [adapter-contract.md](adapter-contract.md), §11, und
-[cli-and-automation.md](cli-and-automation.md). **Die App lädt nie selbst Programme oder Modelle für
-die Experimental-Anbieter** (phonon.rs:679-694, ollama_speech.rs:505-510).
+[cli-and-automation.md](cli-and-automation.md). **Die App lädt nie von selbst Programme oder Modelle für
+die Experimental-Anbieter** (phonon.rs, ollama_speech.rs:505-510). Phonon lässt sich auf ausdrücklichen Klick über die
+Modellseite installieren (Abschnitt 3); die Adapter selbst laden nichts nach.
 
 ## 1. Fish Speech (`fish`, unterstützt)
 
@@ -26,6 +27,44 @@ die Experimental-Anbieter** (phonon.rs:679-694, ollama_speech.rs:505-510).
 * Stimmenlizenz je Stimme, siehe [licenses.md](licenses.md).
 
 ## 3. Phonon (`phonon`, experimentell, opt-in)
+
+**Installation über die Modellseite (empfohlen)**: Modelle > Vorlesen > „Phonon (experimentell)“ (Code:
+`managers/tts/phonon_models.rs`, Katalog `catalog.json`). Wie bei Piper mit Größe, Lizenz, „Nur nicht-kommerziell“,
+Fortschritt, Abbruch und Löschen:
+
+| Eintrag | Inhalt | Größe | Lizenz |
+|---|---|---|---|
+| Phonon-Programm (`phonon-runtime`) | `ptts` 0.4.2 für die eigene Plattform (Windows x64, macOS Intel/Apple Silicon, Linux x64/ARM64); entpackt werden nur das Programm und `LICENSE-MIT`, `LICENSE-APACHE`, `README.md` | Windows 7 766 316 Byte, SHA-256 `699f3452…8b8a07` | MIT OR Apache-2.0 |
+| `phonon-40m-de` (Deutsch, q8) | sieben Dateien, Commit `79cfc7b4`; **gesperrt** | 75 158 617 Byte | CC BY-NC 4.0, nur nicht-kommerziell |
+| `phonon-31m-en` (Englisch, q8) | sieben Dateien, Commit `92741c5b`; öffentlich | 65 116 929 Byte | Apache-2.0 |
+| 13 deutsche Stimmen (`phonon-voice-de-<name>`) | je eine `.safetensors` aus `gradium/phonon-voices` (Commit `0ee17205`), je 256 136 Byte | 3,3 MB gesamt | Apache-2.0 |
+
+* **Ablage**: `<Datenordner>/tts/phonon/<plattform>/ptts(.exe)`, `…/models/<id>/` (die sieben Dateien plus Marke
+  `.lva-install.json`), `…/models/<modell>/voices/<Name>.safetensors` mit `voices/SOURCE.json`
+  (`{"source", "license", "voices": [Zeilen aus voices.jsonl]}`). Ohne die Marke gilt ein Ordner nicht als über die
+  Modellseite installiert.
+* **Prüfung**: Größe und SHA-256 je Datei (Dateien ohne LFS, bei denen die Hugging-Face-API kein SHA-256 nennt:
+  Git-Blob-Kennung). Jede Datei kommt als `.partial` (fortsetzbar), ein Modell entsteht erst in `<id>.installing/` und
+  wird nach der Prüfung aller Dateien als Ganzes eingesetzt; Abbruch und Fehler lassen eine vorhandene Installation
+  unberührt. Eine Stimme braucht das installierte Modell, ein Modell das Programm (die Oberfläche bietet es an).
+* **Gesperrtes Modell (40m-de)**: Bedingungen auf `huggingface.co/gradium/phonon-40m-de` annehmen und anmelden
+  (`hf auth login`) oder `HF_TOKEN` setzen. Die App liest das Token aus `HF_TOKEN`, sonst aus `$HF_HOME/token`,
+  `$XDG_CACHE_HOME/huggingface/token` bzw. `~/.cache/huggingface/token`. Es geht **nur an `https://huggingface.co`**;
+  Weiterleitungen (Hugging Face leitet große Dateien auf ein CDN um) folgt der Downloader selbst und nimmt das Token nie
+  zu einem anderen Host mit. Es steht in keiner Meldung und keinem Log. Fehlt es oder lehnt der Server mit 401/403 ab,
+  nennt die Meldung den Weg: „Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login)“.
+  Öffentliche Quellen bekommen nie ein Token.
+* **Automatische Pfade**: Ist Phonon so installiert und sind `exe_path`/`model` in den Einstellungen leer, nimmt der
+  Adapter die installierten Pfade (Modell: das deutsche, sonst das englische). Vorrang: Argument > Umgebung >
+  Einstellungen > **installiert** > Vorgabe; `ConfigSource::Installed` meldet die Herkunft. Die Lizenz-Zustimmung hängt
+  weiter am Fingerabdruck (Modell): wer vorher ein `hf://`-Modell bestätigt hatte, bestätigt das installierte Modell neu.
+  Die Lizenz installierter Katalog-Modelle kommt aus dem Katalog (verifiziert, Quelle und Datum 27.10.2026), aber nur für
+  Ordner mit passender Marke; andere Ordner bleiben „unbekannt“ und vorsorglich nichtkommerziell.
+* Ist nichts installiert, nennt die Gesundheit „Phonon ist nicht installiert“ und als Hinweis die Modellseite.
+* Die deutschen Stimmen sind laut Karte für die Modellgrößen 31m, 40m, 56m und 98m gedacht; mit dem englischen Modell
+  geprüft (anderes Audio als die Standardstimme).
+
+**Von Hand (Alternative)**: die folgenden Angaben gelten für ein selbst geladenes Programm und Modell.
 
 **Programm**: das offizielle CLI `ptts` aus `github.com/gradium-ai/xn-ptts/releases` (Version 0.4.2 vom 25.10.2026;
 Windows-Archiv `ptts-0.4.2-x86_64-pc-windows-msvc.zip`, 7 766 316 Byte (GitHub-API, Release v0.4.2, abgerufen 26.10.2026), mit `SHA256SUMS` (SHA-256 `699f3452…8b8a07`, lokal nachgerechnet); Prüfsumme vor dem Entpacken
@@ -90,7 +129,11 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
 
 | Symptom (Meldung bzw. Grund) | Ursache | Abhilfe |
 |---|---|---|
-| „ptts wurde nicht gefunden: …“ (phonon.rs:687) | `exe_path` falsch, Datei fehlt | CLI herunterladen, Pfad eintragen |
+| „Phonon ist nicht installiert: …“ (phonon.rs, `validate`) | `exe_path` leer und nichts über die Modellseite installiert | Modelle > Vorlesen > Phonon: Programm und Modell installieren |
+| „… ist gesperrt … Bedingungen auf huggingface.co/… annehmen und anmelden (hf auth login)“ (phonon_models.rs) | Modellseite: kein Token gefunden oder HTTP 401/403 | Bedingungen annehmen, `hf auth login` oder `HF_TOKEN` setzen, erneut installieren |
+| „Das Archiv enthält einen unzulässigen Pfad“ / „… Verknüpfung statt einer Datei“ (phonon_models.rs) | Programm-Archiv mit `..`, absolutem Pfad oder Symlink (kommt trotz SHA-256 nur bei geänderter Quelle vor) | nichts wird installiert; Quelle prüfen, Meldung melden |
+| „… ist beschädigt (Prüfsumme weicht ab)“ / „file is corrupt“ | Datei stimmt nicht mit Katalog überein | die Datei wurde gelöscht; erneut installieren |
+| „ptts wurde nicht gefunden: …“ (phonon.rs:687) | `exe_path` falsch, Datei fehlt | Programm auf der Modellseite installieren oder Pfad eintragen |
 | „`ptts --version` antwortet nicht innerhalb von 5 s“ (phonon.rs:1090) | falsche Datei oder CPU ohne x86-64-v3 | Datei und CPU prüfen |
 | ptts-Versionsabfrage scheitert (phonon.rs:1104) | Datei beschädigt | neu laden, `SHA256SUMS` prüfen |
 | „Modellordner fehlt“ / „fehlt config.json“ (phonon.rs:705-713) | lokaler Ordner unvollständig | vollständigen Checkpoint laden |

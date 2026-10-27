@@ -17,7 +17,7 @@ App wie bisher. Freigaben setzt nur der Nutzer in der Oberfläche, nie Kommandoz
 |---|---|---|---|---|
 | `fish` | supported | Hülle um den lokalen Fish-Speech-Server | Sentence | nein |
 | `piper` | supported | Hülle um den vorhandenen Piper-Prozess | Sentence | nein |
-| `phonon` | experimental | `ptts`-Programm je Satz, offline | Sentence | Opt-in; 40m-Modelle zusätzlich Lizenz |
+| `phonon` | experimental | `ptts`-Programm je Satz, offline; Installation über die Modellseite | Sentence | Opt-in; 40m-Modelle zusätzlich Lizenz |
 | `openai-speech` | experimental | Server mit `POST /audio/speech`, nur Loopback ohne Fernzugriff | Chunk | Opt-in und Lizenz (nie verifiziert) |
 | `ollama-speech` | experimental | Ollama `/v1/audio/speech`, Versions- und Plattformprüfung | Chunk | Opt-in und Lizenz (CC BY-NC) |
 | `mock` | benchmark-only | Testanbieter (nie registriert) | Chunk | n. a. |
@@ -41,4 +41,5 @@ Stufen: `contract.rs:24`; Streaming-Werte laut adapter-contract.md §4. Lizenzen
 ## Schnellstart
 
 * In der App: Einstellungen > Ausgabe > „Sprachausgabe-Anbieter“: aktivieren, Lizenz bestätigen, Stimme wählen, Probestimme.
+* Phonon: Modelle > Vorlesen > „Phonon (experimentell)“: Programm, Modell und Stimmen installieren (Details: [installation-troubleshooting.md](installation-troubleshooting.md), Abschnitt 3).
 * Per Kommandozeile: `local-voice-ai.exe --tts-providers` zeigt Zustand und Sperrgrund; Exit 3 heißt „in der App freigeben“.
