@@ -117,7 +117,7 @@
     "allow_remote": false,
     "blocked": {
       "kind": "license_blocked",
-      "message": "Phonon (ptts) ist nicht freigeschaltet (Opt-in fehlt). In den Einstellungen unter Sprachausgabe-Anbieter einschalten.",
+      "message": "Phonon ist nicht freigeschaltet (Opt-in fehlt). In den Einstellungen unter Sprachausgabe-Anbieter einschalten.",
       "retryable": false
     },
     "descriptor": {
@@ -146,7 +146,7 @@
         "style_tags": false
       },
       "id": "phonon",
-      "label": "Phonon (ptts)",
+      "label": "Phonon",
       "license": {
         "code": "MIT OR Apache-2.0",
         "non_commercial": true,

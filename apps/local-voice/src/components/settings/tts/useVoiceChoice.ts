@@ -248,20 +248,15 @@ export function useVoiceChoice(phase: string) {
     [t, uiLang],
   );
 
-  /* Beschriftung einer Anbieter-Stimme: "Anbieter: Name · weiblich"; alphabetisch. */
+  /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch. */
   const providerVoiceItems: SelectOption[] = sortVoicesByLabel(
     providerVoices.map((option) => {
       const name = shortVoiceName(option.voice.label);
-      const gender = option.voice.gender
-        ? t(`tts.providers.voices.gender.${option.voice.gender}`, {
-            defaultValue: option.voice.gender,
-          })
-        : null;
       return {
         value: providerVoiceValue(option.provider_id, option.voice.id),
         label: t("tts.providers.dropdown.voice", {
           provider: option.provider_label,
-          name: [name, gender].filter(Boolean).join(" \u00b7 "),
+          name,
         }),
       };
     }),

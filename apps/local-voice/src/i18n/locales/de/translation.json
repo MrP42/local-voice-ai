@@ -211,7 +211,7 @@
       },
       "dropdown": {
         "entry": "Anbieter: {{name}}",
-        "voice": "{{provider}}: {{name}}",
+        "voice": "{{provider}} · {{name}}",
         "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
         "open": "Anbieter-Einstellungen öffnen"
       }

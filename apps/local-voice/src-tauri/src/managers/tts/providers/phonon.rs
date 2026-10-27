@@ -1304,7 +1304,7 @@ impl TtsProvider for PhononProvider {
         };
         ProviderDescriptor {
             id: PHONON_ID.to_string(),
-            label: "Phonon (ptts)".to_string(),
+            label: "Phonon".to_string(),
             tier: ProviderTier::Experimental,
             opt_in: true,
             caps: ProviderCaps {

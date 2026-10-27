@@ -706,6 +706,84 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     expect((await calls(page, "tts_speak_text")).length).toBe(1);
   });
 
+  test("Stimmwechsel beim Vorlesen: Pause-Symbol bleibt, bis das Backend wirklich aufhoert", async ({
+    page,
+  }) => {
+    // Patrick 27.10.2026: nach einem Stimmwechsel zeigte der Knopf "Weiter", obwohl die
+    // neue Stimme las -- tts_voice_changed startet im Backend neu, der erste Aufruf kehrt
+    // dabei zurueck.
+    await page.addInitScript(() => {
+      (window as any).__voices = ["anna"];
+    });
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    const toggle = page.getByTestId("minutes-readaloud-bar-toggle");
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    await page.evaluate(() =>
+      (window as any).__emit("tts-state-changed", {
+        phase: "speaking",
+        owns_server: false,
+        message: null,
+        server_up: true,
+      }),
+    );
+    await page.getByTestId("minutes-readaloud-bar-voice-menu").click();
+    await page.getByRole("menuitem", { name: "anna", exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page, "tts_voice_changed")).length)
+      .toBe(1);
+    // Der erste Aufruf kehrt zurueck (Neustart im Backend), mitten im Text.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: 2, total: 6 });
+      w.__speakEnd();
+    });
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    // Pause bleibt auch ueber einen kurzen Phasenwechsel zwischen altem und neuem Lauf.
+    await page.evaluate(() => {
+      const w = window as any;
+      const status = { owns_server: false, message: null, server_up: true };
+      w.__emit("tts-state-changed", { ...status, phase: "ready" });
+      w.__emit("tts-state-changed", { ...status, phase: "speaking" });
+    });
+    await page.waitForTimeout(800);
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    // Das Backend liest bis zum Ende: die Leiste verschwindet.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: 6, total: 6 });
+      w.__emit("tts-state-changed", {
+        phase: "ready",
+        owns_server: false,
+        message: null,
+        server_up: true,
+      });
+    });
+    await expect(page.getByTestId("minutes-readaloud-bar")).toHaveCount(0);
+  });
+
+  test("Stimmwechsel, dann Pause: Weiter erscheint sofort", async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__voices = ["anna"];
+    });
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await page.getByTestId("minutes-readaloud-bar-voice-menu").click();
+    await page.getByRole("menuitem", { name: "anna", exact: true }).click();
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: 2, total: 6 });
+      w.__speakEnd();
+    });
+    const toggle = page.getByTestId("minutes-readaloud-bar-toggle");
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-label", "Weiter");
+    expect((await calls(page, "tts_cancel")).length).toBeGreaterThan(0);
+  });
+
   test("schmales Fenster: die Zeile bricht sauber um, nichts wird abgeschnitten", async ({
     page,
   }) => {
