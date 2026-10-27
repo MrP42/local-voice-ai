@@ -37,6 +37,7 @@ use specta::Type;
 use tauri::{AppHandle, Manager};
 
 use crate::managers::tts::engine;
+use crate::managers::tts::providers::contract::ProviderTier;
 use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::providers::policy::{self, LicenseAck, UseSubject};
 use crate::managers::tts::providers::{
@@ -77,6 +78,9 @@ pub struct TtsProviderEntry {
     pub selected: bool,
     /// Gewählte Stimme (leer = Vorgabe des Anbieters).
     pub voice: Option<String>,
+    /// Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
+    /// [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
+    pub visible_voices: Vec<String>,
 }
 
 fn manager(app: &AppHandle) -> Arc<TtsManager> {
@@ -104,6 +108,12 @@ pub fn build_entries(
             TtsProviderEntry {
                 selected: snapshot.selected == descriptor.id,
                 voice: snapshot.voice_of(&descriptor.id),
+                visible_voices: snapshot
+                    .settings
+                    .visible_voices
+                    .get(&descriptor.id)
+                    .cloned()
+                    .unwrap_or_default(),
                 enabled: state.enabled,
                 license_needs_ack: state.license_needs_ack,
                 license_acked: state.license_acked,
@@ -184,6 +194,99 @@ pub fn set_allow_remote_in(
     known(registry, id)?;
     providers.set_remote_allowed(id, allow);
     Ok(())
+}
+
+/// Obergrenze für die Zahl der gemerkten Stimmen je Anbieter (ein Katalog hat Dutzende, nie Tausende).
+const MAX_VISIBLE_VOICES: usize = 1000;
+
+/// Welche Stimmen eines Anbieters im Vorlesen-Dropdown stehen (rein, testbar). Die Kennungen werden
+/// bereinigt (getrimmt, ohne Leere, Steuerzeichen und Doppelte); eine leere Liste löscht die Auswahl
+/// (= alle sichtbar). Ändert keine Freigabe und braucht keinen Neuaufbau der Anbieter.
+pub fn set_visible_voices_in(
+    providers: &mut TtsProvidersSettings,
+    registry: &ProviderRegistry,
+    id: &str,
+    voices: Vec<String>,
+) -> Result<(), TtsError> {
+    known(registry, id)?;
+    let mut clean: Vec<String> = Vec::new();
+    for voice in voices {
+        let voice = voice.trim();
+        if voice.is_empty() || voice.len() > 256 || voice.chars().any(char::is_control) {
+            continue;
+        }
+        if !clean.iter().any(|v| v == voice) {
+            clean.push(voice.to_string());
+        }
+        if clean.len() >= MAX_VISIBLE_VOICES {
+            break;
+        }
+    }
+    if clean.is_empty() {
+        providers.visible_voices.remove(id);
+    } else {
+        providers.visible_voices.insert(id.to_string(), clean);
+    }
+    Ok(())
+}
+
+/// Eine Stimme eines Anbieters für das Vorlesen-Dropdown.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct ProviderVoiceOption {
+    pub provider_id: String,
+    pub provider_label: String,
+    pub voice: VoiceDescriptor,
+}
+
+/// Bietet der Anbieter Stimmen im Dropdown an? Fish und Piper haben ihre eigenen Einträge dort;
+/// Mock und gesperrte Stufen gehören nie in die Auswahl.
+pub fn offers_dropdown_voices(desc: &ProviderDescriptor) -> bool {
+    !matches!(desc.id.as_str(), policy::FISH_ID | policy::PIPER_ID)
+        && matches!(
+            desc.tier,
+            ProviderTier::Supported | ProviderTier::Experimental
+        )
+}
+
+/// Die Stimmen für das Vorlesen-Dropdown: je freigegebenem Anbieter (`offers` und Guardrails, gesperrte
+/// Anbieter fehlen) seine Stimmenliste, gefiltert nach den gewählten (`visible_voice`: Standardstimme
+/// und gerade gewählte Stimme bleiben immer). Ein Anbieter, dessen Liste scheitert oder zu lange
+/// braucht, fehlt einfach — das Dropdown darf nie am Anbieter hängen.
+pub async fn voice_options(
+    snapshot: &ProviderSnapshot,
+    offers: impl Fn(&ProviderDescriptor) -> bool,
+) -> Vec<ProviderVoiceOption> {
+    let jobs = snapshot.registry.list().into_iter().filter_map(|provider| {
+        let desc = provider.descriptor();
+        if !offers(&desc) || snapshot.checked(&desc.id).is_err() {
+            return None;
+        }
+        let visible = snapshot.settings.visible_voices.get(&desc.id).cloned();
+        let selected = snapshot
+            .voice_of(&desc.id)
+            .or_else(|| snapshot.settings.voices.get(&desc.id).cloned());
+        Some(async move {
+            let listed = tokio::time::timeout(VOICES_LIMIT, provider.list_voices(None)).await;
+            let voices = match listed {
+                Ok(Ok(voices)) => voices,
+                _ => Vec::new(),
+            };
+            voices
+                .into_iter()
+                .filter(|v| policy::visible_voice(visible.as_ref(), selected.as_deref(), &v.id))
+                .map(|voice| ProviderVoiceOption {
+                    provider_id: desc.id.clone(),
+                    provider_label: desc.label.clone(),
+                    voice,
+                })
+                .collect::<Vec<_>>()
+        })
+    });
+    futures_util::future::join_all(jobs)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Anbieter und Stimme wählen: prüft die Guardrails und setzt `tts_engine`
@@ -407,6 +510,35 @@ pub fn tts_provider_set_allow_remote(
     mutate_settings(&app, |s| {
         set_allow_remote_in(&mut s.tts_providers, &registry, &id, allow)
     })
+}
+
+/// Welche Stimmen eines Anbieters im Vorlesen-Dropdown stehen. Leere Liste: alle. „Keine“ ist
+/// `["default"]` (die Standardstimme steht immer da). Ändert weder Freigaben noch die laufende
+/// Wiedergabe, darum ohne Neuaufbau der Anbieter (anders als [`mutate_settings`]).
+#[tauri::command]
+#[specta::specta]
+pub fn tts_provider_set_visible_voices(
+    app: AppHandle,
+    id: String,
+    voices: Vec<String>,
+) -> Result<(), TtsError> {
+    let registry = manager(&app).provider_snapshot().registry;
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut current = settings::get_settings(&app);
+    set_visible_voices_in(&mut current.tts_providers, &registry, &id, voices)?;
+    settings::write_settings(&app, current);
+    Ok(())
+}
+
+/// Die Stimmen der freigegebenen Anbieter für das Vorlesen-Dropdown (nur die gewählten, siehe
+/// [`voice_options`]). Anbieter ohne Freigabe, mit Sperre oder ohne Antwort fehlen.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_provider_voice_options(
+    app: AppHandle,
+) -> Result<Vec<ProviderVoiceOption>, TtsError> {
+    let snapshot = manager(&app).provider_snapshot();
+    Ok(voice_options(&snapshot, offers_dropdown_voices).await)
 }
 
 /// Anbieter (und Stimme) fürs Vorlesen wählen. Prüft die Guardrails: ein
@@ -942,6 +1074,158 @@ mod tests {
         );
         assert!(e.blocked.is_none(), "{:?}", e.blocked);
         assert!(snap.checked("ollama-speech").is_ok());
+    }
+
+    // ---- Sichtbare Stimmen im Vorlesen-Dropdown ---------------------------------------
+
+    fn voice_ids(options: &[ProviderVoiceOption]) -> Vec<&str> {
+        options.iter().map(|o| o.voice.id.as_str()).collect()
+    }
+
+    /// Momentaufnahme mit einem freigegebenen Mock-Anbieter (zwei Stimmen: mock-de, mock-en).
+    fn mock_snapshot(mutate: impl FnOnce(&mut TtsProvidersSettings)) -> ProviderSnapshot {
+        let mut s = TtsProvidersSettings::default();
+        s.set_enabled("mock", true);
+        mutate(&mut s);
+        let snap = snapshot(s, "fish");
+        snap.registry
+            .register(Arc::new(MockProvider::new()))
+            .unwrap();
+        snap
+    }
+
+    #[test]
+    fn sichtbare_stimmen_werden_bereinigt_gespeichert_und_leer_loescht_die_auswahl() {
+        let snap = snapshot(TtsProvidersSettings::default(), "fish");
+        let mut s = TtsProvidersSettings::default();
+        s.set_enabled("phonon", true);
+        s.record_ack("phonon", "fp", "t");
+        s.allow_remote = vec!["phonon".into()];
+        let freigaben = (
+            s.enabled.clone(),
+            s.license_acks.clone(),
+            s.allow_remote.clone(),
+        );
+
+        set_visible_voices_in(
+            &mut s,
+            &snap.registry,
+            "phonon",
+            vec![
+                " Nele ".into(),
+                "Nele".into(),
+                "".into(),
+                "  ".into(),
+                "Anton".into(),
+                "bö\u{7}se".into(),
+                "x".repeat(300),
+            ],
+        )
+        .unwrap();
+        assert_eq!(s.visible_voices["phonon"], ["Nele", "Anton"]);
+        assert_eq!(
+            (
+                s.enabled.clone(),
+                s.license_acks.clone(),
+                s.allow_remote.clone()
+            ),
+            freigaben,
+            "Freigaben bleiben unberuehrt"
+        );
+
+        set_visible_voices_in(&mut s, &snap.registry, "phonon", Vec::new()).unwrap();
+        assert!(!s.visible_voices.contains_key("phonon"), "leer = alle");
+
+        let e = set_visible_voices_in(&mut s, &snap.registry, "gibt-es-nicht", vec!["a".into()])
+            .unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::BadRequest);
+        assert!(s.visible_voices.is_empty());
+    }
+
+    #[test]
+    fn die_liste_nennt_die_sichtbaren_stimmen_je_anbieter() {
+        let mut p = TtsProvidersSettings::default();
+        p.visible_voices
+            .insert("phonon".into(), vec!["Nele".into()]);
+        let snap = snapshot(p, "fish");
+        let entries = build_entries(&snap, healthy(&snap));
+        let by_id = |id: &str| entries.iter().find(|e| e.descriptor.id == id).unwrap();
+        assert_eq!(by_id("phonon").visible_voices, ["Nele"]);
+        assert!(by_id("piper").visible_voices.is_empty(), "leer = alle");
+    }
+
+    #[tokio::test]
+    async fn das_dropdown_zeigt_nur_die_gewaehlten_stimmen_eines_freigegebenen_anbieters() {
+        let all = |_: &ProviderDescriptor| true;
+        // Ohne Auswahl: alle Stimmen.
+        let snap = mock_snapshot(|_| {});
+        let options = voice_options(&snap, all).await;
+        assert_eq!(voice_ids(&options), ["mock-de", "mock-en"]);
+        assert!(options.iter().all(|o| o.provider_id == "mock"));
+        assert!(options.iter().all(|o| o.provider_label == "Mock (Test)"));
+
+        // Mit Auswahl: nur diese.
+        let snap = mock_snapshot(|s| {
+            s.visible_voices
+                .insert("mock".into(), vec!["mock-en".into()]);
+        });
+        assert_eq!(voice_ids(&voice_options(&snap, all).await), ["mock-en"]);
+
+        // „Keine“ (nur die Standardstimme): keine benannte Stimme ausser der gewaehlten.
+        let snap = mock_snapshot(|s| {
+            s.visible_voices
+                .insert("mock".into(), vec![policy::DEFAULT_VOICE_ID.into()]);
+        });
+        assert!(voice_options(&snap, all).await.is_empty());
+
+        // Die gerade gewaehlte Stimme bleibt sichtbar, auch wenn sie abgewaehlt ist.
+        let snap = mock_snapshot(|s| {
+            s.visible_voices
+                .insert("mock".into(), vec!["mock-en".into()]);
+            s.voices.insert("mock".into(), "mock-de".into());
+        });
+        assert_eq!(
+            voice_ids(&voice_options(&snap, all).await),
+            ["mock-de", "mock-en"]
+        );
+    }
+
+    #[tokio::test]
+    async fn das_dropdown_fragt_nur_freigegebene_anbieter_und_nie_fish_piper_oder_mock() {
+        let all = |_: &ProviderDescriptor| true;
+        // Ohne Opt-in gesperrt: keine Stimmen, kein Aufruf.
+        let snap = snapshot(TtsProvidersSettings::default(), "fish");
+        snap.registry
+            .register(Arc::new(MockProvider::new()))
+            .unwrap();
+        assert!(voice_options(&snap, all).await.is_empty());
+
+        // Freigegeben, aber mit den echten Regeln: Mock (nur fuer Tests) und die eingebauten fehlen.
+        let snap = mock_snapshot(|_| {});
+        assert!(voice_options(&snap, offers_dropdown_voices)
+            .await
+            .is_empty());
+        let by_id = |id: &str| {
+            snap.registry
+                .descriptors()
+                .into_iter()
+                .find(|d| d.id == id)
+                .unwrap()
+        };
+        assert!(!offers_dropdown_voices(&by_id("fish")));
+        assert!(!offers_dropdown_voices(&by_id("piper")));
+        assert!(offers_dropdown_voices(&by_id("phonon")));
+
+        // Nicht erreichbarer Anbieter: fehlt einfach, kein Fehler.
+        let mut s = TtsProvidersSettings::default();
+        s.set_enabled("kaputt", true);
+        let snap = snapshot(s, "fish");
+        snap.registry
+            .register(Arc::new(
+                MockProvider::new().with_id("kaputt").unavailable("aus"),
+            ))
+            .unwrap();
+        assert!(voice_options(&snap, all).await.is_empty());
     }
 
     #[test]

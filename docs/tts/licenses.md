@@ -45,7 +45,7 @@ SHA-256 bzw. Git-Blob-Kennung und Commit je Datei im Katalog; Quellen am 27.10.2
 | `phonon-runtime-<plattform>` (ptts 0.4.2, fünf Plattformen) | MIT OR Apache-2.0 | nein | öffentlich | GitHub-Release `gradium-ai/xn-ptts` v0.4.2, `SHA256SUMS` und Release-API abgeglichen; Lizenzdateien liegen im Programmordner |
 | `phonon-40m-de` | CC BY-NC 4.0 | **ja** | gesperrt (Bedingungen + Token) | `hf://gradium/phonon-40m-de@79cfc7b47fcfc0b666657b981eb366415023a862` |
 | `phonon-31m-en` | Apache-2.0 | nein | öffentlich | `hf://gradium/phonon-31m-en@92741c5b07d085ff840e26fea8ce43110b87852f` |
-| 13 deutsche Stimmen | Apache-2.0 | nein | öffentlich | `hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7` |
+| 13 deutsche und 37 englische Stimmen (kommen mit ihrem Modell) | Apache-2.0 | nein | öffentlich, nie mit Token | `hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7` |
 
 Ein so installiertes Modell kennt seine Lizenz aus dem Katalog: `verified = true` mit dem Prüfdatum des Katalogs
 (27.10.2026) und der Karte als Quelle, aber nur, wenn der Ordner unter `…/tts/phonon/models/<id>` liegt und die Marke

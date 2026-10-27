@@ -22,6 +22,7 @@ import {
   buildConfig,
   fieldOfMessage,
   isSelectableTier,
+  offersDropdownVoices,
   parseConfig,
   pickKind,
   previewIsActive,
@@ -32,6 +33,7 @@ import {
   type PickKind,
 } from "./providerModel";
 import type { PreviewState } from "./useProviderPreview";
+import { VisibleVoices } from "./VisibleVoices";
 
 interface Props {
   entry: TtsProviderEntry;
@@ -685,6 +687,9 @@ const VoiceSection: React.FC<{
               </span>
             )}
           </div>
+          {/* Welche Stimmen im Vorlesen-Dropdown stehen: fuer jeden Anbieter,
+              der dort Stimmen anbietet (nicht nur einen bestimmten). */}
+          {offersDropdownVoices(entry) && <VisibleVoices entry={entry} />}
         </div>
       )}
       {error && (

@@ -152,8 +152,11 @@ pub struct PhononVoiceMeta {
     pub voice_id: String,
     pub language: String,
     pub locale: String,
-    pub gender: String,
-    pub age: String,
+    /// Fehlt bei den Figurenstimmen (`locale: "characters"`): dort steht `null`.
+    #[serde(default)]
+    pub gender: Option<String>,
+    #[serde(default)]
+    pub age: Option<String>,
     pub description: String,
 }
 
@@ -868,22 +871,58 @@ mod tests {
         assert_eq!(en.files.len(), 7);
     }
 
+    /// Lokaler Dateiname einer Stimme: der Name, Leerzeichen als `-`.
+    fn voice_stem(name: &str) -> String {
+        name.replace(' ', "-")
+    }
+
     #[test]
-    fn phonon_stimmen_sind_die_13_deutschen_und_gehoeren_zum_deutschen_modell() {
+    fn phonon_stimmen_gehoeren_zum_modell_ihrer_sprache() {
         let voices = tts_entries(Purpose::PhononVoice);
-        assert_eq!(voices.len(), 13, "13 deutsche Stimmen");
         let models = tts_entries(Purpose::PhononModel);
+        let de: Vec<_> = voices
+            .iter()
+            .filter(|v| v.parent.as_deref() == Some("phonon-40m-de"))
+            .collect();
+        let en: Vec<_> = voices
+            .iter()
+            .filter(|v| v.parent.as_deref() == Some("phonon-31m-en"))
+            .collect();
+        assert_eq!(de.len(), 13, "13 deutsche Stimmen");
+        assert_eq!(
+            en.len(),
+            37,
+            "37 englische Stimmen (25 Sprecher, 12 Figuren)"
+        );
+        assert_eq!(
+            de.len() + en.len(),
+            voices.len(),
+            "jede Stimme hat ein Modell"
+        );
         for v in &voices {
             let meta = v
                 .voice
                 .as_ref()
                 .unwrap_or_else(|| panic!("{}: voice fehlt", v.id));
-            assert_eq!(meta.language, "de", "{}", v.id);
-            assert_eq!(v.parent.as_deref(), Some("phonon-40m-de"), "{}", v.id);
-            assert!(models.iter().any(|m| Some(&m.id) == v.parent.as_ref()));
+            let parent = v.parent.as_deref().unwrap();
+            let model = models
+                .iter()
+                .find(|m| m.id == parent)
+                .unwrap_or_else(|| panic!("{}: Modell {parent} fehlt", v.id));
+            // Die Stimme spricht die Sprache ihres Modells.
+            assert_eq!(
+                &[meta.language.clone()][..],
+                &model.languages[..],
+                "{}",
+                v.id
+            );
+            assert_eq!(v.languages, model.languages, "{}", v.id);
             // Lokaler Name ist der Stimmenname; die Quelle liegt unter voice_id.
             assert_eq!(v.files.len(), 1);
-            assert_eq!(v.files[0].filename, format!("{}.safetensors", meta.name));
+            assert_eq!(
+                v.files[0].filename,
+                format!("{}.safetensors", voice_stem(&meta.name))
+            );
             assert_eq!(
                 meta.filename,
                 format!("voices/{}.safetensors", meta.voice_id)
@@ -905,19 +944,46 @@ mod tests {
             assert_eq!(v.license.as_deref(), Some("Apache-2.0"));
             assert!(!v.license_non_commercial);
             assert!(
-                meta.name
+                voice_stem(&meta.name)
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
                 "Name taugt als Dateiname: {}",
                 meta.name
             );
         }
-        let names: BTreeSet<&str> = voices
+        // Eindeutig je Modell (Dateiname, Kennung, SHA).
+        for group in [&de, &en] {
+            let stems: BTreeSet<String> = group
+                .iter()
+                .filter_map(|v| v.voice.as_ref().map(|m| voice_stem(&m.name).to_lowercase()))
+                .collect();
+            assert_eq!(stems.len(), group.len(), "Dateinamen eindeutig");
+            let shas: BTreeSet<&str> = group
+                .iter()
+                .filter_map(|v| v.files[0].sha256.as_deref())
+                .collect();
+            assert_eq!(shas.len(), group.len(), "jede Stimme ist eine eigene Datei");
+        }
+        let names: BTreeSet<&str> = de
             .iter()
             .filter_map(|v| v.voice.as_ref().map(|m| m.name.as_str()))
             .collect();
-        assert_eq!(names.len(), 13, "Namen eindeutig");
         assert!(names.contains("Nele") && names.contains("Anton"));
+        // Figurenstimmen tragen weder Geschlecht noch Alter; die Sprecher beides.
+        let characters = en
+            .iter()
+            .filter(|v| v.voice.as_ref().is_some_and(|m| m.locale == "characters"))
+            .count();
+        assert_eq!(characters, 12);
+        assert!(en
+            .iter()
+            .filter(|v| v.voice.as_ref().is_some_and(|m| m.locale != "characters"))
+            .all(|v| v
+                .voice
+                .as_ref()
+                .is_some_and(|m| m.gender.is_some() && m.age.is_some())));
+        assert!(en.iter().any(|v| v.name == "Captain Silas Blackwater"
+            && v.files[0].filename == "Captain-Silas-Blackwater.safetensors"));
     }
 
     #[test]

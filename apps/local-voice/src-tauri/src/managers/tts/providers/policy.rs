@@ -98,6 +98,24 @@ pub struct TtsProvidersSettings {
     pub allow_remote: Vec<String>,
     /// Letzte Stimmenauswahl je Anbieter-Kennung (`tts_provider_select`).
     pub voices: BTreeMap<String, String>,
+    /// Welche Stimmen eines Anbieters im Vorlesen-Dropdown stehen (nur
+    /// `tts_provider_set_visible_voices`). Kein Eintrag oder eine leere Liste: alle sichtbar.
+    /// Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
+    /// Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
+    pub visible_voices: BTreeMap<String, Vec<String>>,
+}
+
+/// Kennung der Standardstimme eines Anbieters (immer sichtbar, nie abwählbar).
+pub const DEFAULT_VOICE_ID: &str = "default";
+
+/// Steht die Stimme `voice` im Vorlesen-Dropdown? `visible`: die gespeicherte Liste des Anbieters
+/// (`None`/leer = alle), `selected`: die gerade gewählte Stimme des Anbieters (bleibt sichtbar).
+pub fn visible_voice(visible: Option<&Vec<String>>, selected: Option<&str>, voice: &str) -> bool {
+    voice == DEFAULT_VOICE_ID
+        || selected == Some(voice)
+        || visible.map_or(true, |list| {
+            list.is_empty() || list.iter().any(|v| v == voice)
+        })
 }
 
 impl TtsProvidersSettings {
@@ -796,6 +814,24 @@ pub fn apply_config_json(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sichtbar_ist_die_standardstimme_die_gewaehlte_und_die_gespeicherten() {
+        let list = vec!["Nele".to_string(), "Anton".to_string()];
+        // Keine Auswahl (fehlend oder leer): alle.
+        assert!(visible_voice(None, None, "Mats"));
+        assert!(visible_voice(Some(&Vec::new()), None, "Mats"));
+        // Mit Auswahl: nur diese, dazu die Standardstimme und die gewaehlte.
+        assert!(visible_voice(Some(&list), None, "Nele"));
+        assert!(!visible_voice(Some(&list), None, "Mats"));
+        assert!(visible_voice(Some(&list), None, DEFAULT_VOICE_ID));
+        assert!(visible_voice(Some(&list), Some("Mats"), "Mats"));
+        assert!(!visible_voice(Some(&list), Some("Mats"), "Jule"));
+        // „Keine“: nur die Standardstimme (und die gewaehlte).
+        let none = vec![DEFAULT_VOICE_ID.to_string()];
+        assert!(!visible_voice(Some(&none), None, "Nele"));
+        assert!(visible_voice(Some(&none), Some("Nele"), "Nele"));
+    }
+
     use super::*;
     use crate::managers::tts::providers::builtin::{FishProvider, PiperProvider};
     use crate::managers::tts::providers::contract::TtsProvider;

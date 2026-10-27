@@ -274,3 +274,87 @@ export const LANG_ALL = "@all";
 export function previewIsActive(phase: string | undefined): boolean {
   return phase === "starting" || phase === "started" || phase === "first_audio";
 }
+
+// ---------------------------------------------------------------------------
+// Sichtbare Stimmen im Vorlesen-Dropdown (Spiegel von `policy::visible_voice`
+// und `commands::tts_providers::voice_options` im Backend)
+// ---------------------------------------------------------------------------
+
+/** Kennung der Standardstimme eines Anbieters: immer im Dropdown, nie abwaehlbar. */
+export const PROVIDER_DEFAULT_VOICE = "default";
+
+/** Eingebaute Engines haben ihre eigenen Eintraege im Dropdown. */
+const BUILTIN_PROVIDERS: ReadonlySet<string> = new Set(["fish", "piper"]);
+
+/**
+ * Bietet der Anbieter einzelne Stimmen im Vorlesen-Dropdown an (und damit eine
+ * Auswahl "im Vorlesen anzeigen")? Alle freischaltbaren Anbieter ausser den
+ * eingebauten; Mock und gesperrte Stufen nie. Gleiche Regel wie im Backend.
+ */
+export function offersDropdownVoices(entry: TtsProviderEntry): boolean {
+  return !BUILTIN_PROVIDERS.has(entry.descriptor.id) && isSelectableTier(entry);
+}
+
+/**
+ * Steht die Stimme im Dropdown? `visible`: die gespeicherte Liste des Anbieters
+ * (leer = alle), `selected`: die gerade gewaehlte Vorlese-Stimme des Anbieters.
+ */
+export function isVoiceShown(
+  visible: readonly string[],
+  selected: string | null,
+  id: string,
+): boolean {
+  return (
+    id === PROVIDER_DEFAULT_VOICE ||
+    id === selected ||
+    visible.length === 0 ||
+    visible.includes(id)
+  );
+}
+
+/**
+ * Die neue gespeicherte Liste nach einem Haken: Sind danach alle Stimmen
+ * sichtbar, wird nichts gespeichert (leer = alle, auch fuer spaeter
+ * hinzukommende Stimmen); ist keine benannte Stimme mehr sichtbar, steht nur
+ * die Standardstimme in der Liste ("keine").
+ */
+export function toggleVisibleVoice(
+  visible: readonly string[],
+  allIds: readonly string[],
+  id: string,
+  shown: boolean,
+): string[] {
+  const current = new Set(visible.length === 0 ? allIds : visible);
+  if (shown) current.add(id);
+  else current.delete(id);
+  const named = allIds.filter((v) => current.has(v));
+  if (named.length === allIds.length) return [];
+  return named.length === 0 ? [PROVIDER_DEFAULT_VOICE] : named;
+}
+
+/** Wert des Vorlesen-Dropdowns fuer eine Stimme eines Anbieters: `provider:<id>:<stimme>`. */
+export function providerVoiceValue(providerId: string, voice: string): string {
+  return `provider:${providerId}:${voice}`;
+}
+
+/**
+ * Zerlegt `provider:<id>:<stimme>` (Stimme darf `:` enthalten); `provider:<id>`
+ * ohne Stimme ergibt die Standardstimme. Alles andere: `null`.
+ */
+export function parseProviderVoiceValue(
+  value: string,
+): { providerId: string; voice: string } | null {
+  if (!value.startsWith("provider:")) return null;
+  const rest = value.slice("provider:".length);
+  const cut = rest.indexOf(":");
+  const providerId = cut < 0 ? rest : rest.slice(0, cut);
+  if (!providerId) return null;
+  const voice = cut < 0 ? "" : rest.slice(cut + 1);
+  return { providerId, voice: voice || PROVIDER_DEFAULT_VOICE };
+}
+
+/** Name vor der Kurzbeschreibung: "Nele – Rounded, open tone…" -> "Nele". */
+export function shortVoiceName(label: string): string {
+  const name = label.split(" – ")[0].trim();
+  return name || label;
+}

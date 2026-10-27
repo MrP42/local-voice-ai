@@ -150,6 +150,16 @@
         "blocked": "Voices can only be listed after the provider is approved.",
         "use": "Use as reading voice",
         "usedNow": "This provider now reads aloud.",
+        "visible": {
+          "title": "Show in Read aloud",
+          "hint": "Which voices appear in the voice dropdown of the Read aloud page and in the playback bar of the recordings. The provider default and the currently chosen voice always stay visible.",
+          "all": "All",
+          "none": "None",
+          "count": "{{shown}} of {{total}} shown",
+          "current": "chosen",
+          "empty": "No voices to choose from.",
+          "toggle": "Show {{name}} in Read aloud"
+        },
         "license": "Voice: license {{license}}",
         "gender": {
           "female": "female",
@@ -201,6 +211,7 @@
       },
       "dropdown": {
         "entry": "Provider: {{name}}",
+        "voice": "{{provider}}: {{name}}",
         "hint": "Provider: {{name}} (Settings → Speech providers)",
         "open": "Open provider settings"
       }
@@ -1262,7 +1273,7 @@
       },
       "phonon": {
         "title": "Phonon (experimental)",
-        "description": "Phonon is a text-to-speech engine by Gradium that runs locally on the CPU. Install the program, the models and the voices here. Phonon is only used after you have enabled it under Settings > Output.",
+        "description": "Phonon is a text-to-speech engine by Gradium that runs locally on the CPU. Install the program and the models here; the voices of a language come with its model. Phonon is only used after you have enabled it under Settings > Output.",
         "gated": {
           "chip": "Login required",
           "title": "Gated model: accept the terms and log in to Hugging Face",
@@ -1273,6 +1284,14 @@
           "installModel": "Install model"
         },
         "source": "Source: {{source}}",
+        "voices": {
+          "included_one": "{{count}} voice included",
+          "included_other": "{{count}} voices included",
+          "missingChip": "Voices missing ({{present}} of {{total}})",
+          "reload": "Download voices",
+          "detailNew": "The model comes with {{total}} voices. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon.",
+          "detail": "The model comes with {{total}} voices, {{present}} of them installed. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon."
+        },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Several files: the size and SHA-256 of each file are in the app catalog and checked on download.",
         "nonCommercial": {

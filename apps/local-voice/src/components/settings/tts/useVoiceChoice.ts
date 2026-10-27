@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
+import { toast } from "sonner";
+import { commands, type ProviderVoiceOption } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { sortVoicesByLabel } from "@/lib/voices/sortVoices";
@@ -8,6 +9,14 @@ import { openSettingsTab } from "@/lib/openSettingsTab";
 import type { SelectOption } from "../../ui/Select";
 import { useSpeakers } from "./speakers";
 import { useProviderLabel } from "./providers/useProviderLabel";
+import {
+  PROVIDER_DEFAULT_VOICE,
+  asTtsError,
+  parseProviderVoiceValue,
+  providerVoiceValue,
+  shortVoiceName,
+} from "./providers/providerModel";
+import { PROVIDER_VOICES_CHANGED } from "./providers/VisibleVoices";
 
 /** Eintrag der Stimmenauswahl, der keine Stimme ist, sondern ein Sprung zur Verwaltung. */
 export const VOICE_MANAGE = "@manage";
@@ -17,19 +26,32 @@ export const VOICE_MANAGE = "@manage";
  *
  * Eine Quelle fuer die Vorlesen-Seite (`TtsSettings`) und die Wiedergabeleiste in den
  * Aufnahmen: dieselben Eintraege, dieselben Werte (`@default`, Fish-Stimmen-Kennung,
- * `piper:<id>`, `provider:<id>`), und ein Wechsel wirkt ueberall gleich -- erst alle
+ * `piper:<id>`, `provider:<id>:<stimme>`), und ein Wechsel wirkt ueberall gleich -- erst alle
  * Einstellungen schreiben, dann dem Backend Bescheid geben (`tts_voice_changed`), damit
  * ein laufendes Vorlesen ab dem aktuellen Satz die neue Stimme nimmt.
+ *
+ * Anbieter (Phonon u. a.) stehen mit ihren Stimmen in der Liste, aber nur mit den
+ * *sichtbaren*: welche das sind, stellt man unter Einstellungen > Ausgabe >
+ * Sprachausgabe-Anbieter ein (`tts_provider_voice_options` liefert nur diese; die
+ * gerade gewaehlte Stimme bleibt immer dabei). Die Wahl setzt Engine und Stimme
+ * wie `tts_provider_select`.
  *
  * `phase`: Phase des Sprachservers (Fish); ein laufender oder startender Server gilt
  * immer als eingerichtet.
  */
 export function useVoiceChoice(phase: string) {
   const { t, i18n } = useTranslation();
-  const { getSetting, updateSetting } = useSettings();
+  const { getSetting, updateSetting, refreshSettings } = useSettings();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
   const speakers = useSpeakers();
   const [voices, setVoices] = useState<string[]>([]);
+  /* Anbieter-Wahl, die gerade unterwegs ist: die Reiter-Logik der Vorlesen-Seite ruft
+     `applyVoiceValue` mit demselben Wert noch einmal, bevor die Einstellungen neu geladen
+     sind -- ein zweiter `tts_provider_select` waere nur ein zweiter Stimmwechsel. */
+  const pendingProviderValue = useRef<string | null>(null);
+  const [providerVoices, setProviderVoices] = useState<ProviderVoiceOption[]>(
+    [],
+  );
 
   // Stimmenliste fuer das Dropdown. Die Verwaltung meldet Aenderungen ueber ein
   // Fensterereignis, damit beide nie auseinanderlaufen.
@@ -70,7 +92,12 @@ export function useVoiceChoice(phase: string) {
   const piperVoices = useMemo(
     () =>
       ttsDownloads
-        .filter((entry) => entry.kind === "voice" && entry.is_downloaded)
+        .filter(
+          (entry) =>
+            entry.kind === "voice" &&
+            entry.is_downloaded &&
+            entry.engine !== "phonon",
+        )
         .map((entry) => ({
           id: entry.id,
           name: entry.name,
@@ -91,8 +118,44 @@ export function useVoiceChoice(phase: string) {
     ? ttsEngineSetting.slice("provider:".length)
     : null;
   const providerLabel = useProviderLabel(providerEngineId);
+  /* Die gemerkte Stimme des liest-vor-Anbieters (`tts_providers.voices`); leer = Vorgabe. */
+  const providerVoice = providerEngineId
+    ? (getSetting("tts_providers")?.voices?.[providerEngineId] ??
+      PROVIDER_DEFAULT_VOICE)
+    : null;
+
+  /* Stimmen der freigegebenen Anbieter, nur die sichtbaren. Neu laden, wenn sich die
+     Verwaltung (Modelle, Auswahl "im Vorlesen anzeigen") oder die Wahl aendert. */
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      void commands
+        .ttsProviderVoiceOptions()
+        .then((r) => {
+          if (cancelled) return;
+          setProviderVoices(
+            r.status === "ok" && Array.isArray(r.data) ? r.data : [],
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setProviderVoices([]);
+        });
+    };
+    load();
+    window.addEventListener("lv-voices-changed", load);
+    window.addEventListener(PROVIDER_VOICES_CHANGED, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("lv-voices-changed", load);
+      window.removeEventListener(PROVIDER_VOICES_CHANGED, load);
+    };
+  }, [providerEngineId, providerVoice]);
+
   const voiceValue = providerEngineId
-    ? `provider:${providerEngineId}`
+    ? providerVoiceValue(
+        providerEngineId,
+        providerVoice ?? PROVIDER_DEFAULT_VOICE,
+      )
     : ttsEngineSetting === "piper"
       ? `piper:${getSetting("tts_piper_voice") ?? ""}`
       : (getSetting("tts_voice") ?? "@default");
@@ -104,6 +167,23 @@ export function useVoiceChoice(phase: string) {
       // Erst alle Einstellungen schreiben, dann dem Backend Bescheid geben: ein
       // laufendes Vorlesen soll die neue Stimme ab dem aktuellen Satz nehmen.
       void (async () => {
+        const picked = parseProviderVoiceValue(value);
+        if (picked) {
+          if (pendingProviderValue.current === value) return;
+          pendingProviderValue.current = value;
+          // Anbieter und Stimme wie `tts_provider_select` (prueft Freigaben, setzt Engine und
+          // Stimme, stoesst den Stimmwechsel an). Ein Fehler (z. B. gesperrt) wird gezeigt.
+          const result = await commands
+            .ttsProviderSelect(
+              picked.providerId,
+              picked.voice === PROVIDER_DEFAULT_VOICE ? null : picked.voice,
+            )
+            .catch((e) => ({ status: "error" as const, error: asTtsError(e) }));
+          if (result.status === "error") toast.error(result.error.message);
+          await refreshSettings();
+          pendingProviderValue.current = null;
+          return;
+        }
         if (value.startsWith("piper:")) {
           await updateSetting("tts_piper_voice", value.slice(6));
           await updateSetting("tts_engine", "piper");
@@ -116,7 +196,7 @@ export function useVoiceChoice(phase: string) {
         await commands.ttsVoiceChanged().catch(() => undefined);
       })();
     },
-    [getSetting, updateSetting],
+    [getSetting, updateSetting, refreshSettings],
   );
 
   /* Ist die gerade gewaehlte Stimme nicht eingerichtet? Dann sagt ein Hinweis
@@ -166,6 +246,26 @@ export function useVoiceChoice(phase: string) {
       return [base, language, quality].filter(Boolean).join(" · ");
     },
     [t, uiLang],
+  );
+
+  /* Beschriftung einer Anbieter-Stimme: "Anbieter: Name · weiblich"; alphabetisch. */
+  const providerVoiceItems: SelectOption[] = sortVoicesByLabel(
+    providerVoices.map((option) => {
+      const name = shortVoiceName(option.voice.label);
+      const gender = option.voice.gender
+        ? t(`tts.providers.voices.gender.${option.voice.gender}`, {
+            defaultValue: option.voice.gender,
+          })
+        : null;
+      return {
+        value: providerVoiceValue(option.provider_id, option.voice.id),
+        label: t("tts.providers.dropdown.voice", {
+          provider: option.provider_label,
+          name: [name, gender].filter(Boolean).join(" \u00b7 "),
+        }),
+      };
+    }),
+    (o) => o.label,
   );
 
   /** Die Eintraege des Stimmen-Dropdowns, in der Reihenfolge der Vorlesen-Seite. */
@@ -226,9 +326,12 @@ export function useVoiceChoice(phase: string) {
           },
         ]
       : []),
-    // Ein Anbieter liest vor: benannter Eintrag, nicht waehlbar (die Wahl steht
-    // in den Anbieter-Einstellungen).
-    ...(providerEngineId
+    // Stimmen der freigegebenen Anbieter (nur die sichtbaren): "Phonon: Nele · weiblich".
+    ...providerVoiceItems,
+    // Ein Anbieter liest vor, seine Stimme steht aber nicht in der Liste (noch nicht geladen,
+    // nicht mehr sichtbar-gemacht oder nicht mehr freigegeben): benannter Eintrag, nicht waehlbar.
+    ...(providerEngineId &&
+    !providerVoiceItems.some((o) => o.value === voiceValue)
       ? [
           {
             value: voiceValue,

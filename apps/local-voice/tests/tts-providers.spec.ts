@@ -24,6 +24,10 @@ type Over = {
   remote?: boolean;
   fingerprint?: string;
   health?: Record<string, unknown>;
+  /** Gewaehlte Vorlese-Stimme des Anbieters. */
+  voice?: string | null;
+  /** Stimmen im Vorlesen-Dropdown (leer = alle). */
+  visible_voices?: string[];
 };
 type Cfg = { engine: string; over?: Record<string, Over> };
 type Arg = { cfg: Cfg; real: unknown[] };
@@ -62,6 +66,7 @@ async function setup(page: Page, cfg: Cfg) {
       const o = cfg.over?.[e.descriptor.id] ?? {};
       const { health: healthOver, ...state } = o;
       Object.assign(e, state);
+      e.visible_voices = e.visible_voices ?? [];
       if (healthOver) Object.assign(e.health, healthOver);
       e.selected =
         cfg.engine === e.descriptor.id ||
@@ -158,7 +163,12 @@ async function setup(page: Page, cfg: Cfg) {
       tts_engine: cfg.engine,
       tts_piper_voice: null,
       tts_fish_dir: "C:\\AI\\fish-speech",
+      tts_providers: { voices: {} as Record<string, string> },
     };
+    entries.forEach((e: any) => {
+      if (e.voice)
+        (settings.tts_providers as any).voices[e.descriptor.id] = e.voice;
+    });
     Object.assign(window, {
       __TAURI_OS_PLUGIN_INTERNALS__: {
         platform: "windows",
@@ -266,6 +276,8 @@ async function setup(page: Page, cfg: Cfg) {
                 },
               },
             ];
+            // Fuer Bilder: mehr Stimmen (`__voicesExtra`).
+            all.push(...((w.__voicesExtra as typeof all | undefined) ?? []));
             const lang = args?.language as string | null;
             return copy(lang ? all.filter((v) => v.language === lang) : all);
           }
@@ -349,11 +361,59 @@ async function setup(page: Page, cfg: Cfg) {
             entries.forEach((x: any) => (x.selected = false));
             e.selected = true;
             e.voice = (args?.voice as string | null) ?? null;
+            const stored = (settings.tts_providers as any).voices;
+            if (e.voice) stored[e.descriptor.id] = e.voice;
+            else delete stored[e.descriptor.id];
             settings.tts_engine =
               e.descriptor.id === "fish" || e.descriptor.id === "piper"
                 ? e.descriptor.id
                 : `provider:${e.descriptor.id}`;
             return null;
+          }
+          if (cmd === "tts_provider_set_visible_voices") {
+            const e = find(args?.id);
+            e.visible_voices = [...((args?.voices as string[]) ?? [])];
+            return null;
+          }
+          if (cmd === "tts_provider_voice_options") {
+            // Wie das Backend: freigegebene Anbieter ausser Fish/Piper, nur die gewaehlten Stimmen.
+            const out: unknown[] = [];
+            for (const e of entries as any[]) {
+              const tier = e.descriptor.tier;
+              if (["fish", "piper"].includes(e.descriptor.id)) continue;
+              if (tier !== "supported" && tier !== "experimental") continue;
+              if (e.blocked) continue;
+              const listed = (await (
+                (w.__TAURI_INTERNALS__ as any).invoke as any
+              )("tts_provider_voices", {
+                id: e.descriptor.id,
+                language: null,
+              })) as any[];
+              const voices = [
+                {
+                  id: "default",
+                  label: "Standardstimme des Modells",
+                  language: "de",
+                  gender: null,
+                  license: null,
+                },
+                ...listed,
+              ];
+              for (const v of voices) {
+                const shown =
+                  v.id === "default" ||
+                  v.id === e.voice ||
+                  e.visible_voices.length === 0 ||
+                  e.visible_voices.includes(v.id);
+                if (shown)
+                  out.push({
+                    provider_id: e.descriptor.id,
+                    provider_label: e.descriptor.label,
+                    voice: v,
+                  });
+              }
+            }
+            return copy(out);
           }
           if (cmd === "tts_provider_preview") {
             if (w.__previewReject) throw w.__previewReject;
@@ -1246,6 +1306,278 @@ test("Phonon-Stimmen: Geschlecht in der Auswahl, Lizenz der Stimme mit Quelle", 
   await expect(voices).toContainText("Stimme: Lizenz apache-2.0");
   await expect(voices).not.toContainText("nichtkommerziell");
   await expect(voices.getByTestId("tts-provider-license-source")).toBeVisible();
+});
+
+// ---- Sichtbare Stimmen im Vorlesen-Dropdown (27.10.2026) --------------------------------
+
+const phononVisible = (page: Page) =>
+  page.getByTestId("tts-provider-visible-phonon");
+
+test("Phonon-Maske: Liste aller Stimmen mit Haken, Alle/Keine, gewählte Stimme bleibt gesetzt", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "fish",
+    over: { phonon: { enabled: true, license_acked: true } },
+  });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const list = page.getByTestId("tts-provider-visible-list-phonon");
+  await expect(list).toBeVisible();
+
+  // Alle benannten Stimmen (die Standardstimme steht nicht in der Liste), alle angehakt.
+  await expect(list.locator("[data-voice-id]")).toHaveCount(3);
+  await expect(list.locator('[data-voice-id="default"]')).toHaveCount(0);
+  const nele = list.locator('[data-voice-id="nele"]');
+  await expect(nele).toContainText("Nele");
+  await expect(nele).toContainText("weiblich");
+  await expect(nele).toContainText("Rounded, open tone");
+  await expect(list.locator('[data-voice-id="ben"]')).toContainText("männlich");
+  for (const id of ["anna", "nele", "ben"])
+    await expect(
+      page.getByTestId(`tts-provider-visible-check-${id}`),
+    ).toBeChecked();
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("3 von 3 sichtbar");
+
+  // Eine Stimme abwählen: die Auswahl der übrigen wird gespeichert.
+  await page
+    .getByTestId("tts-provider-visible-check-ben")
+
+    .uncheck();
+  await expect
+    .poll(
+      async () => (await calls(page, "tts_provider_set_visible_voices")).length,
+    )
+    .toBe(1);
+  expect((await calls(page, "tts_provider_set_visible_voices"))[0][1]).toEqual({
+    id: "phonon",
+    voices: ["anna", "nele"],
+  });
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("2 von 3 sichtbar");
+
+  // Wieder anhaken: alle sichtbar heißt leere Liste (auch für spätere Stimmen).
+  await page
+    .getByTestId("tts-provider-visible-check-ben")
+
+    .check();
+  await expect
+    .poll(
+      async () => (await calls(page, "tts_provider_set_visible_voices")).length,
+    )
+    .toBe(2);
+  expect((await calls(page, "tts_provider_set_visible_voices"))[1][1]).toEqual({
+    id: "phonon",
+    voices: [],
+  });
+
+  // Keine: nur die Standardstimme in der Liste; Alle: leer.
+  await page.getByTestId("tts-provider-visible-none-phonon").click();
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("0 von 3 sichtbar");
+  for (const id of ["anna", "nele", "ben"])
+    await expect(
+      page.getByTestId(`tts-provider-visible-check-${id}`),
+    ).not.toBeChecked();
+  expect((await calls(page, "tts_provider_set_visible_voices"))[2][1]).toEqual({
+    id: "phonon",
+    voices: ["default"],
+  });
+  await page.getByTestId("tts-provider-visible-all-phonon").click();
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("3 von 3 sichtbar");
+
+  // Die gewählte Vorlese-Stimme lässt sich nicht abwählen und bleibt bei "Keine" sichtbar.
+  const voices = page.getByTestId("tts-provider-voices-phonon");
+  await voices.getByLabel("Stimme", { exact: true }).click();
+  await page.getByRole("option", { name: /Nele/ }).click();
+  await page.getByTestId("tts-provider-use-phonon").click();
+  await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
+  await expect(
+    phononVisible(page).getByText("gewählt", { exact: true }),
+  ).toBeVisible();
+  const neleBox = page.getByTestId("tts-provider-visible-check-nele");
+  await expect(neleBox).toBeDisabled();
+  await page.getByTestId("tts-provider-visible-none-phonon").click();
+  await expect(neleBox).toBeChecked();
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("1 von 3 sichtbar");
+});
+
+test("Phonon-Maske: gesperrter Anbieter zeigt keine Auswahl; Fish und Piper haben keine", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await expect(page.getByTestId("tts-provider-visible-phonon")).toHaveCount(0);
+  await page.getByTestId("tts-provider-toggle-piper").click();
+  await expect(page.getByTestId("tts-provider-voices-piper")).toBeVisible();
+  await expect(page.getByTestId("tts-provider-visible-piper")).toHaveCount(0);
+});
+
+const gotoReadAloud = async (page: Page) => {
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  const select = page.getByTestId("voice-select");
+  await expect(select).toBeVisible();
+  return select;
+};
+
+test("Vorlesen-Dropdown: Phonon-Stimmen einzeln, nur die sichtbaren; Wahl setzt Anbieter und Stimme", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "fish",
+    over: {
+      phonon: { enabled: true, license_acked: true, visible_voices: ["nele"] },
+    },
+  });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  const option = (name: RegExp) => page.getByRole("option", { name });
+  // Sichtbar: die Standardstimme und die ausgewählte Stimme, mit Anbieter und Geschlecht.
+  await expect(option(/Phonon \(ptts\): Nele · weiblich/)).toBeVisible();
+  await expect(
+    option(/Phonon \(ptts\): Standardstimme des Modells/),
+  ).toBeVisible();
+  // Nicht gewählt: fehlen.
+  await expect(option(/Phonon \(ptts\): Anna/)).toHaveCount(0);
+  await expect(option(/Phonon \(ptts\): Ben/)).toHaveCount(0);
+  // Fish bleibt, wie es war.
+  await expect(option(/Skript mit Sprechern/)).toBeVisible();
+
+  await option(/Phonon \(ptts\): Nele/).click();
+  await expect
+    .poll(async () => (await calls(page, "tts_provider_select")).length)
+    .toBe(1);
+  expect((await calls(page, "tts_provider_select"))[0][1]).toEqual({
+    id: "phonon",
+    voice: "nele",
+  });
+  // Die Auswahl zeigt die gewählte Stimme statt eines Sammel-Eintrags.
+  await expect(select).toContainText("Phonon (ptts): Nele · weiblich");
+});
+
+test("Vorlesen-Dropdown: ohne gespeicherte Auswahl stehen alle Stimmen da", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "fish",
+    over: { phonon: { enabled: true, license_acked: true } },
+  });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  for (const name of ["Anna", "Nele", "Ben"])
+    await expect(
+      page.getByRole("option", {
+        name: new RegExp(`Phonon \\(ptts\\): ${name}`),
+      }),
+    ).toBeVisible();
+});
+
+test("Vorlesen-Dropdown: die gewählte Stimme bleibt sichtbar, auch wenn die Auswahl sie nicht nennt", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    over: {
+      phonon: {
+        enabled: true,
+        license_acked: true,
+        voice: "nele",
+        visible_voices: ["anna"],
+      },
+    },
+  });
+  const select = await gotoReadAloud(page);
+  await expect(select).toContainText("Phonon (ptts): Nele · weiblich");
+  await select.getByRole("combobox").click();
+  await expect(
+    page.getByRole("option", { name: /Phonon \(ptts\): Anna/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: /Phonon \(ptts\): Ben/ }),
+  ).toHaveCount(0);
+});
+
+test("Vorlesen-Dropdown: ohne Freigabe stehen keine Anbieter-Stimmen da", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  await expect(
+    page.getByRole("option", { name: /Skript mit Sprechern/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("option", { name: /Phonon/ })).toHaveCount(0);
+});
+
+test("Bild der Sichtbarkeitsliste (nur mit SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur mit SCREENS_DIR");
+  await setup(page, {
+    engine: "provider:phonon",
+    over: {
+      phonon: {
+        enabled: true,
+        license_acked: true,
+        voice: "nele",
+        visible_voices: ["anna", "nele", "jette", "mats", "leon"],
+      },
+    },
+  });
+  await page.addInitScript(() => {
+    const w = window as unknown as { __voicesExtra: unknown[] };
+    const row = (
+      id: string,
+      label: string,
+      gender: string,
+      language = "de",
+    ) => ({
+      id,
+      label,
+      language,
+      gender,
+      license: null,
+    });
+    w.__voicesExtra = [
+      row("jette", "Jette – Warm, clear voice with a friendly tone", "female"),
+      row("annika", "Annika – Bright and lively, quick delivery", "female"),
+      row("mats", "Mats – Calm, grounded and unhurried", "male"),
+      row("leon", "Leon – Young, energetic and open", "male"),
+      row("svea", "Svea – Soft, thoughtful and intimate", "female"),
+      row(
+        "Captain-Silas-Blackwater",
+        "Captain Silas Blackwater – An old British pirate captain, deep and gravelly",
+        null as unknown as string,
+        "en",
+      ),
+    ];
+  });
+  await page.setViewportSize({ width: 1100, height: 1900 });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const voices = page.getByTestId("tts-provider-voices-phonon");
+  await expect(
+    page.getByTestId("tts-provider-visible-list-phonon"),
+  ).toBeVisible();
+  await expect(
+    page.getByTestId("tts-provider-visible-count-phonon"),
+  ).toHaveText("5 von 9 sichtbar");
+  await voices.screenshot({
+    path: `${dir}/phonon-sichtbare-stimmen.png`,
+    animations: "disabled",
+  });
 });
 
 test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {

@@ -80,6 +80,14 @@ pub struct TtsDownloadInfo {
     pub sha256: Option<String>,
     /// Herkunfts- und Lizenzhinweis aus dem Katalog.
     pub license_note: Option<String>,
+    /// Phonon-Modell: so viele Stimmen werden mit dem Modell geliefert (Piper und Programm: 0).
+    /// Ihre Groesse steckt schon in `size_bytes`.
+    #[serde(default)]
+    pub bundled_voices: u32,
+    /// Davon sind vollstaendig installiert. Weniger als `bundled_voices` bei installiertem Modell:
+    /// „Stimmen fehlen“, die Oberflaeche bietet „Stimmen nachladen“ an.
+    #[serde(default)]
+    pub bundled_voices_present: u32,
 }
 
 /// `<piper_dir>/<platform>` — where a platform's Piper binary and its
@@ -270,6 +278,8 @@ impl TtsModelManager {
                     source: None,
                     sha256: None,
                     license_note: entry.license_note,
+                    bundled_voices: 0,
+                    bundled_voices_present: 0,
                 });
             }
         }
@@ -294,6 +304,8 @@ impl TtsModelManager {
                 source: None,
                 sha256: None,
                 license_note: entry.license_note,
+                bundled_voices: 0,
+                bundled_voices_present: 0,
                 id: entry.id,
                 kind: TtsDownloadKind::Voice,
                 name: entry.name,

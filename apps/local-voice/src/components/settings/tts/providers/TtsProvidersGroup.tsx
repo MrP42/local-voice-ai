@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Checkbox } from "@fluentui/react-components";
 import { commands, type TtsProviderEntry } from "@/bindings";
+import { useSettings } from "../../../../hooks/useSettings";
 import { SettingsGroup } from "../../../ui/SettingsGroup";
 import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
@@ -29,6 +30,7 @@ export const TtsProvidersGroup: React.FC = () => {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState>(null);
   const preview = useProviderPreview();
+  const { refreshSettings } = useSettings();
 
   const reload = useCallback(async (): Promise<TtsProviderEntry[] | null> => {
     setChecking(true);
@@ -188,7 +190,11 @@ export const TtsProvidersGroup: React.FC = () => {
               preview={preview.state}
               onPreview={(text, voice) => void preview.start(id, text, voice)}
               onCancelPreview={() => void preview.cancel()}
-              onChanged={() => void reload()}
+              onChanged={() => {
+                void reload();
+                // Eine neue Vorlese-Stimme steht auch im Dropdown der Vorlesen-Seite.
+                void refreshSettings();
+              }}
             />
           </ProviderRow>
         );

@@ -348,12 +348,15 @@ struct VoiceSource {
 }
 
 impl VoiceSource {
-    /// Die Angaben zur Stimmendatei `stem` (Name, Kennung oder Dateiname).
+    /// Die Angaben zur Stimmendatei `stem` (Name, Kennung oder Dateiname). Ein Name mit Leerzeichen
+    /// („Captain Silas Blackwater“) liegt als `Captain-Silas-Blackwater.safetensors` auf der Platte.
     fn find(&self, stem: &str) -> Option<&VoiceInfo> {
         self.voices.iter().find(|v| {
-            [&v.name, &v.voice_id, &v.file_stem]
-                .iter()
-                .any(|k| !k.is_empty() && k.eq_ignore_ascii_case(stem))
+            [&v.name, &v.voice_id, &v.file_stem].iter().any(|k| {
+                !k.is_empty()
+                    && (k.eq_ignore_ascii_case(stem)
+                        || k.replace(' ', "-").eq_ignore_ascii_case(stem))
+            })
         })
     }
 
@@ -2902,6 +2905,39 @@ mod tests {
    "gender": "female"}
  ]
 }"#;
+
+    /// Figurenstimmen des englischen Katalogs: Name mit Leerzeichen, Datei mit `-`, ohne Geschlecht.
+    #[tokio::test]
+    async fn figurenstimmen_mit_leerzeichen_im_namen_finden_ihre_angaben() {
+        let model = model_dir(&["Captain-Silas-Blackwater", "Everly"]);
+        std::fs::write(
+            model.path().join("voices").join("SOURCE.json"),
+            r#"{"source": "hf://gradium/phonon-voices@0ee17205", "license": "apache-2.0", "voices": [
+ {"filename": "voices/xPDpsV3F592srkjA.safetensors", "name": "Captain Silas Blackwater",
+  "voice_id": "xPDpsV3F592srkjA", "language": "en", "locale": "characters", "gender": null, "age": null,
+  "description": "An old British pirate captain from the West Country, around sixty."},
+ {"filename": "voices/vjFyp2BcCyTlUmYb.safetensors", "name": "Everly", "voice_id": "vjFyp2BcCyTlUmYb",
+  "language": "en", "locale": "en-us", "gender": "female", "age": "Middle-age", "description": "Rounded."}]}"#,
+        )
+        .unwrap();
+        let fake = fake_ptts(FakeOpts::default());
+        let v = provider(&fake, &model).list_voices(None).await.unwrap();
+        let captain = v
+            .iter()
+            .find(|x| x.id == "Captain-Silas-Blackwater")
+            .unwrap();
+        assert!(
+            captain
+                .label
+                .starts_with("Captain Silas Blackwater – An old British pirate"),
+            "{}",
+            captain.label
+        );
+        assert_eq!(captain.gender, None, "null im Katalog: kein Geschlecht");
+        assert!(captain.license.is_some());
+        let everly = v.iter().find(|x| x.id == "Everly").unwrap();
+        assert_eq!(everly.gender.as_deref(), Some("female"));
+    }
 
     #[tokio::test]
     async fn stimmen_werden_mit_source_json_angereichert() {

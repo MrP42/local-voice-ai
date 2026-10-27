@@ -3124,6 +3124,31 @@ mod tests {
         assert_eq!(back.tts_providers, s.tts_providers);
     }
 
+    /// `tts_providers.visible_voices` (27.10.2026): alte Dateien haben das Feld nicht (dann sind alle
+    /// Stimmen sichtbar), neue behalten es beim Schreiben und Lesen.
+    #[test]
+    fn sichtbare_stimmen_fehlen_in_alten_dateien_und_ueberleben_das_speichern() {
+        let old: AppSettings = serde_json::from_value(serde_json::json!({
+            "tts_providers": { "enabled": ["phonon"], "voices": { "phonon": "Nele" } }
+        }))
+        .unwrap();
+        assert!(old.tts_providers.visible_voices.is_empty(), "alle sichtbar");
+        assert_eq!(old.tts_providers.voices["phonon"], "Nele");
+        assert_eq!(get_default_settings().tts_providers.visible_voices.len(), 0);
+
+        let new: AppSettings = serde_json::from_value(serde_json::json!({
+            "tts_providers": { "visible_voices": { "phonon": ["Nele", "Anton"] } }
+        }))
+        .unwrap();
+        assert_eq!(
+            new.tts_providers.visible_voices["phonon"],
+            ["Nele", "Anton"]
+        );
+        let back: AppSettings =
+            serde_json::from_value(serde_json::to_value(&new).unwrap()).unwrap();
+        assert_eq!(back.tts_providers, new.tts_providers);
+    }
+
     /// Ein kaputtes Feld (falscher Typ) darf nicht die ganzen Einstellungen
     /// kosten: `salvage_settings` verwirft nur dieses Feld, der Rest bleibt.
     #[test]

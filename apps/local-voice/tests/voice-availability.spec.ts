@@ -426,6 +426,8 @@ const phononRuntime = (over: Record<string, unknown> = {}) => ({
   source: "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
   sha256: "699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07",
   license_note: "Programm ptts unter MIT OR Apache-2.0.",
+  bundled_voices: 0,
+  bundled_voices_present: 0,
   ...over,
 });
 const phononDe = (over: Record<string, unknown> = {}) =>
@@ -434,8 +436,11 @@ const phononDe = (over: Record<string, unknown> = {}) =>
     kind: "model",
     name: "Phonon 40m (German, q8)",
     language: "de",
-    size_mb: 71,
-    size_bytes: 75_158_617,
+    size_mb: 74,
+    // Modell plus 13 Stimmen: so gross ist die ganze Installation.
+    size_bytes: 75_158_617 + 13 * 256_136,
+    bundled_voices: 13,
+    bundled_voices_present: 0,
     license: "CC-BY-NC-4.0",
     license_url: "https://huggingface.co/gradium/phonon-40m-de",
     license_non_commercial: true,
@@ -451,7 +456,9 @@ const phononEn = (over: Record<string, unknown> = {}) =>
     id: "phonon-31m-en",
     name: "Phonon 31m (English, q8)",
     language: "en",
-    size_bytes: 65_000_000,
+    size_bytes: 65_116_929 + 37 * 256_136,
+    bundled_voices: 37,
+    bundled_voices_present: 0,
     license: "Apache-2.0",
     license_url: "https://huggingface.co/gradium/phonon-31m-en",
     license_non_commercial: false,
@@ -459,23 +466,6 @@ const phononEn = (over: Record<string, unknown> = {}) =>
     source: "hf://gradium/phonon-31m-en@92741c5b07d085ff840e26fea8ce43110b87852f",
     ...over,
   });
-const phononNele = (over: Record<string, unknown> = {}) =>
-  phononRuntime({
-    id: "phonon-voice-de-nele",
-    kind: "voice",
-    name: "Nele",
-    description: "Female, Middle-age. Rounded, open tone.",
-    language: "de",
-    size_mb: 0,
-    size_bytes: 256_136,
-    license: "Apache-2.0",
-    license_url: "https://huggingface.co/gradium/phonon-voices",
-    requires: "phonon-40m-de",
-    source: "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
-    sha256: "5d5ad59fdd4642cd162f082873b27f658705a5d8598957d6274b30bf4bd4dc0b",
-    ...over,
-  });
-
 /** Nach `setup`: Dialog-Antwort "ja" und Ereignisse der Oberflaeche ausloesen (`__emit`). */
 async function withEvents(page: Page) {
   await page.addInitScript(() => {
@@ -520,8 +510,8 @@ const phononSetup = async (page: Page, downloads: unknown[]) => {
   await withEvents(page);
 };
 
-test("models: Phonon program, models and voices are offered with size, license, access hint and an install path", async ({ page }) => {
-  await phononSetup(page, [piperRow(), voiceRow(), phononRuntime(), phononDe(), phononEn(), phononNele()]);
+test("models: Phonon program and models are offered with size incl. voices, license, access hint and an install path", async ({ page }) => {
+  await phononSetup(page, [piperRow(), voiceRow(), phononRuntime(), phononDe(), phononEn()]);
   await openModelsArea(page, "Vorlesen");
   // Die Piper-Zeilen bleiben, wo sie waren; Phonon hat seinen eigenen Block.
   await expect(page.locator('[data-models-section="voices"] [data-tts-download="de_DE-thorsten-medium"]')).toHaveCount(1);
@@ -534,11 +524,17 @@ test("models: Phonon program, models and voices are offered with size, license, 
   await expect(runtime).toContainText(/7[.,]4 MB/);
   const de = page.locator('[data-tts-download="phonon-40m-de"]');
   await expect(de).toContainText("Phonon 40m (Deutsch)");
+  // Die Größe ist die ganze Installation (Modell + 13 Stimmen), die Stimmen sind keine eigenen Zeilen.
+  await expect(de).toContainText(/74[.,]9 MB/);
+  await expect(de.getByTestId("phonon-voices-count-phonon-40m-de")).toHaveText("13 Stimmen enthalten");
+  await expect(page.locator('[data-models-section="phonon"] [data-tts-download]')).toHaveCount(3);
+  await expect(page.locator('[data-tts-download^="phonon-voice"]')).toHaveCount(0);
   await expect(de.getByText("Anmeldung nötig")).toBeVisible();
   await expect(de.getByText("Nur nicht-kommerziell").first()).toBeVisible();
   const en = page.locator('[data-tts-download="phonon-31m-en"]');
   await expect(en.getByText("Anmeldung nötig")).toHaveCount(0);
   await expect(en.getByText("Nur nicht-kommerziell")).toHaveCount(0);
+  await expect(en.getByTestId("phonon-voices-count-phonon-31m-en")).toHaveText("37 Stimmen enthalten");
 
   // Details: Lizenz, Zugangshinweis, Quelle und Pruefsumme.
   await openRow(de);
@@ -549,57 +545,95 @@ test("models: Phonon program, models and voices are offered with size, license, 
   await expect(de.getByText("Lizenz: CC-BY-NC-4.0")).toBeVisible();
   await expect(de.getByTestId("phonon-source")).toContainText("hf://gradium/phonon-40m-de@79cfc7b4");
   await expect(de).toContainText("Mehrere Dateien");
+  await expect(de.getByTestId("phonon-voices-detail-phonon-40m-de")).toContainText(
+    "Zum Modell gehören 13 Stimmen. Sie werden mit dem Modell geladen",
+  );
   await openRow(runtime);
   await expect(runtime.getByTestId("phonon-sha256")).toContainText(
     "699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07",
   );
   await expect(runtime.getByTestId("phonon-gated-note")).toHaveCount(0);
 
-  // Eine Stimme ohne Modell bietet zuerst das Modell an, nicht den Download der Stimme.
-  const nele = page.locator('[data-tts-download="phonon-voice-de-nele"]');
-  await expect(nele.getByRole("button", { name: "Herunterladen" })).toHaveCount(0);
-  await expect(nele).toContainText("250 KB");
+  // Das Modell braucht das Programm: der Weg dahin fuehrt zuerst zum Programm, nie zur Stimme.
   await expect(runtime.getByRole("button", { name: "Herunterladen" })).toBeVisible();
-  await nele.getByRole("button", { name: "Modell installieren" }).click();
-  // Das Modell wiederum braucht das Programm: der Weg dahin fuehrt zuerst zum Programm.
   await en.getByRole("button", { name: "Programm installieren" }).click();
   // Laeuft das Programm schon, bietet die abhaengige Zeile es nicht noch einmal an.
   await expect(en.getByRole("button", { name: /installieren|Herunterladen/ })).toHaveCount(0);
   const calls = await callsOf(page);
   const downloads = calls.filter(([cmd]) => cmd === "tts_download_model").map(([, args]) => args?.id);
-  expect(downloads).toEqual(["phonon-40m-de", "phonon-runtime"]);
+  expect(downloads).toEqual(["phonon-runtime"]);
 });
 
 test("models: installed Phonon parts sit under Installed and are deleted after a confirmation", async ({ page }) => {
   await phononSetup(page, [
     piperRow(),
     phononRuntime({ is_downloaded: true, is_usable: true }),
-    phononEn({ is_downloaded: true, is_usable: true }),
-    phononNele({ is_downloaded: true, is_usable: true, requires: "phonon-31m-en" }),
+    phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 37 }),
     phononDe(),
   ]);
   await openModelsArea(page, "Vorlesen");
   const installed = page.locator('[data-model-section="phonon-installed"]');
-  await expect(installed.locator("[data-model-row]")).toHaveCount(3);
+  await expect(installed.locator("[data-model-row]")).toHaveCount(2);
+  // Alle Stimmen da: weder Warnung noch Nachladen.
+  await expect(installed.getByText(/Stimmen fehlen/)).toHaveCount(0);
+  await expect(installed.getByRole("button", { name: "Stimmen nachladen" })).toHaveCount(0);
   await expect(installed.getByText("Programm fehlt")).toHaveCount(0);
   await openGroup(page, "phonon-available");
   await expect(page.locator('[data-model-section="phonon-available"]').getByText("Phonon 40m (Deutsch)")).toBeVisible();
 
-  const nele = installed.locator('[data-tts-download="phonon-voice-de-nele"]');
-  await nele.getByTestId("row-menu").click();
+  // Das Modell loeschen nimmt seine Stimmen mit: ein Aufruf, die Rueckfrage nennt es.
+  const en = installed.locator('[data-tts-download="phonon-31m-en"]');
+  await en.getByTestId("row-menu").click();
   await page.getByTestId("row-delete").click();
   await expect
     .poll(async () => (await callsOf(page)).filter(([cmd]) => cmd === "tts_delete_model").map(([, a]) => a?.id))
-    .toEqual(["phonon-voice-de-nele"]);
+    .toEqual(["phonon-31m-en"]);
   const asked = await page.evaluate(() => (window as unknown as { __asked: unknown[] }).__asked);
   expect(asked.length).toBe(1);
+  expect(JSON.stringify(asked[0])).toContain("Stimmen gelöscht");
+});
+
+test("models: an installed Phonon model without its voices says so and reloads only the voices", async ({ page }) => {
+  await phononSetup(page, [
+    piperRow(),
+    phononRuntime({ is_downloaded: true, is_usable: true }),
+    // Stand von 0.21.20: Modell da, Stimmen fehlen (3 von 37 einzeln geladen).
+    phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 3 }),
+    phononDe({ is_downloaded: true, is_usable: true, bundled_voices_present: 0 }),
+  ]);
+  await openModelsArea(page, "Vorlesen");
+  const installed = page.locator('[data-model-section="phonon-installed"]');
+  const en = installed.locator('[data-tts-download="phonon-31m-en"]');
+  await expect(en.getByText("Stimmen fehlen (3 von 37)")).toBeVisible();
+  // Nicht das ganze Modell neu: ein eigener Knopf, und kein "Herunterladen".
+  await expect(en.getByRole("button", { name: "Herunterladen" })).toHaveCount(0);
+  await en.getByRole("button", { name: "Stimmen nachladen" }).click();
+  await installed
+    .locator('[data-tts-download="phonon-40m-de"]')
+    .getByRole("button", { name: "Stimmen nachladen" })
+    .click();
+  const calls = await callsOf(page);
+  const downloads = calls.filter(([cmd]) => cmd === "tts_download_model").map(([, args]) => args?.id);
+  expect(downloads).toEqual(["phonon-31m-en", "phonon-40m-de"]);
+
+  // Waehrend es laeuft: Fortschritt in derselben Zeile, kein zweiter Knopf.
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit("model-download-progress", {
+      model_id: "phonon-31m-en",
+      downloaded: 40,
+      total: 100,
+      percentage: 40,
+    }),
+  );
+  await expect(en.locator("[data-row-progress]")).toContainText(/40\s?%/);
+  await expect(en.getByRole("button", { name: "Stimmen nachladen" })).toHaveCount(0);
 });
 
 test("models: an installed Phonon model without its program is marked, with a way to install the program", async ({ page }) => {
   await phononSetup(page, [
     piperRow(),
     phononRuntime(),
-    phononEn({ is_downloaded: true, is_usable: false }),
+    phononEn({ is_downloaded: true, is_usable: false, bundled_voices_present: 37 }),
   ]);
   await openModelsArea(page, "Vorlesen");
   const en = page.locator('[data-model-section="phonon-installed"] [data-tts-download="phonon-31m-en"]');
@@ -653,14 +687,14 @@ test("Bild der Modellseite mit Phonon (nur mit SCREENS_DIR)", async ({ page }) =
     piperRow(),
     voiceRow(),
     phononRuntime({ is_downloaded: true, is_usable: true }),
-    phononEn({ is_downloaded: true, is_usable: true }),
-    phononNele({ is_downloaded: true, is_usable: true, requires: "phonon-31m-en" }),
+    // Englisch: Stand von 0.21.20, 3 von 37 Stimmen einzeln geladen -> "Stimmen nachladen".
+    phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 3 }),
     phononDe(),
-    phononNele({ id: "phonon-voice-de-anton", name: "Anton", description: "Male, Adult. A vibrant, engaging German adult voice.", sha256: "b".repeat(64) }),
   ]);
   await openModelsArea(page, "Vorlesen");
   await openGroup(page, "phonon-available");
   await openRow(page.locator('[data-tts-download="phonon-40m-de"]'));
   await expect(page.getByTestId("phonon-gated-note")).toBeVisible();
+  await openRow(page.locator('[data-tts-download="phonon-31m-en"]'));
   await page.screenshot({ path: `${dir}/phonon-modellseite.png`, fullPage: true });
 });
