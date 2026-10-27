@@ -16,6 +16,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
+mod auth;
+pub(crate) use auth::{DownloadAuth, HttpStatusError, Origin, Secret};
+
 /// Bound on connection setup for direct HTTP downloads (mirror + URL models).
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -202,6 +205,35 @@ impl ModelManager {
         cancel_token: &CancellationToken,
         emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
     ) -> Result<HttpDownloadOutcome> {
+        Self::download_http_resumable_authed(
+            model_id,
+            url,
+            partial_path,
+            expected_size,
+            expected_sha256,
+            cancel_token,
+            emit,
+            None,
+        )
+        .await
+    }
+
+    /// [`Self::download_http_resumable_with_events`], optional mit Zugang (Token) fuer gated
+    /// Quellen. `auth: None` verhaelt sich exakt wie zuvor (reqwest folgt Weiterleitungen
+    /// selbst). Mit `Some` folgt der Downloader Weiterleitungen SELBST und sendet das Token nur
+    /// an den freigegebenen Ursprung, nie an das CDN, auf das Hugging Face weiterleitet
+    /// (Regeln und Tests: `auth.rs`). Ein Fehlerstatus kommt als [`HttpStatusError`] zurueck.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn download_http_resumable_authed(
+        model_id: &str,
+        url: &str,
+        partial_path: &Path,
+        expected_size: Option<u64>,
+        expected_sha256: Option<&str>,
+        cancel_token: &CancellationToken,
+        emit: &(dyn Fn(HttpDownloadEvent<'_>) + Send + Sync),
+        auth: Option<&DownloadAuth>,
+    ) -> Result<HttpDownloadOutcome> {
         let mut resume_from = partial_path.metadata().map(|m| m.len()).unwrap_or(0);
 
         if let Some(expected) = expected_size {
@@ -230,13 +262,26 @@ impl ModelManager {
 
         let client = reqwest::Client::builder()
             .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .redirect(if auth.is_some() {
+                reqwest::redirect::Policy::none()
+            } else {
+                reqwest::redirect::Policy::default()
+            })
             .build()?;
-        let mut request = client.get(url);
-        if resume_from > 0 {
-            request = request.header("Range", format!("bytes={}-", resume_from));
-        }
+        let send = async {
+            match auth {
+                Some(auth) => auth::send_following(&client, url, resume_from, auth).await,
+                None => {
+                    let mut request = client.get(url);
+                    if resume_from > 0 {
+                        request = request.header("Range", format!("bytes={}-", resume_from));
+                    }
+                    Ok(request.send().await?)
+                }
+            }
+        };
         let response = tokio::select! {
-            r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, request.send()) => r
+            r = tokio::time::timeout(DOWNLOAD_STALL_TIMEOUT, send) => r
                 .map_err(|_| anyhow::anyhow!(
                     "no response within {}s from {}",
                     DOWNLOAD_STALL_TIMEOUT.as_secs(), url
@@ -268,10 +313,7 @@ impl ModelManager {
             resume_from = 0;
         }
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "server returned HTTP {}",
-                response.status()
-            ));
+            return Err(anyhow::Error::new(HttpStatusError(response.status())));
         }
         // On a 206, trust but verify the offset: a reply starting anywhere but
         // exactly our partial's end would silently corrupt the file on append.

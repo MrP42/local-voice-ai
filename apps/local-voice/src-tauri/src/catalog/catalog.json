@@ -5870,6 +5870,710 @@
           "url": "https://huggingface.co/handy-computer/diar_streaming_sortformer_4spk-v2.1-gguf/resolve/ae4afbb5c3d33b71cf2dbf600022b655ee706dd0/diar_streaming_sortformer_4spk-v2.1-Q8_0.gguf"
         }
       ]
+    },
+    {
+      "id": "phonon-runtime-windows-x64",
+      "name": "Phonon program ptts (Windows x64)",
+      "description": "Phonon text-to-speech command line program ptts 0.4.2 for Windows x64, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",
+      "purpose": "phonon-runtime",
+      "license": "MIT OR Apache-2.0",
+      "license_url": "https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT",
+      "license_note": "Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.",
+      "revision": "v0.4.2",
+      "license_verified_on": "2026-10-27",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "files": [
+        {
+          "filename": "ptts-0.4.2-x86_64-pc-windows-msvc.zip",
+          "quant": "archive",
+          "size_bytes": 7766316,
+          "sha256": "699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-x86_64-pc-windows-msvc.zip"
+        }
+      ]
+    },
+    {
+      "id": "phonon-runtime-macos-aarch64",
+      "name": "Phonon program ptts (macOS Apple Silicon)",
+      "description": "Phonon text-to-speech command line program ptts 0.4.2 for macOS Apple Silicon, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",
+      "purpose": "phonon-runtime",
+      "license": "MIT OR Apache-2.0",
+      "license_url": "https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT",
+      "license_note": "Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.",
+      "revision": "v0.4.2",
+      "license_verified_on": "2026-10-27",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "files": [
+        {
+          "filename": "ptts-0.4.2-aarch64-apple-darwin.tar.gz",
+          "quant": "archive",
+          "size_bytes": 8449606,
+          "sha256": "e606d3c8558ac0f3251275664492bc3330dd3fcab341329ab73a6151e0e4e613",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-aarch64-apple-darwin.tar.gz"
+        }
+      ]
+    },
+    {
+      "id": "phonon-runtime-macos-x64",
+      "name": "Phonon program ptts (macOS Intel)",
+      "description": "Phonon text-to-speech command line program ptts 0.4.2 for macOS Intel, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",
+      "purpose": "phonon-runtime",
+      "license": "MIT OR Apache-2.0",
+      "license_url": "https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT",
+      "license_note": "Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.",
+      "revision": "v0.4.2",
+      "license_verified_on": "2026-10-27",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "files": [
+        {
+          "filename": "ptts-0.4.2-x86_64-apple-darwin.tar.gz",
+          "quant": "archive",
+          "size_bytes": 8727971,
+          "sha256": "b710c437665bbcf188b407675f87d492625b7b631bdc877de28975db1af5ac03",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-x86_64-apple-darwin.tar.gz"
+        }
+      ]
+    },
+    {
+      "id": "phonon-runtime-linux-x64",
+      "name": "Phonon program ptts (Linux x64)",
+      "description": "Phonon text-to-speech command line program ptts 0.4.2 for Linux x64, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",
+      "purpose": "phonon-runtime",
+      "license": "MIT OR Apache-2.0",
+      "license_url": "https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT",
+      "license_note": "Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.",
+      "revision": "v0.4.2",
+      "license_verified_on": "2026-10-27",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "files": [
+        {
+          "filename": "ptts-0.4.2-x86_64-unknown-linux-gnu.tar.gz",
+          "quant": "archive",
+          "size_bytes": 9330755,
+          "sha256": "41ac3d986e633a8130c1870a31853043448aa4245c9f41b585edb07bfdc529ad",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-x86_64-unknown-linux-gnu.tar.gz"
+        }
+      ]
+    },
+    {
+      "id": "phonon-runtime-linux-aarch64",
+      "name": "Phonon program ptts (Linux ARM64)",
+      "description": "Phonon text-to-speech command line program ptts 0.4.2 for Linux ARM64, from the official gradium-ai/xn-ptts GitHub release v0.4.2.",
+      "purpose": "phonon-runtime",
+      "license": "MIT OR Apache-2.0",
+      "license_url": "https://github.com/gradium-ai/xn-ptts/blob/v0.4.2/LICENSE-MIT",
+      "license_note": "Programm ptts unter MIT OR Apache-2.0 (README und Archivdateien LICENSE-MIT, LICENSE-APACHE; beide liegen nach der Installation im Programmordner). Wird auf Wunsch von GitHub geladen und nicht mit dem Installer ausgeliefert. Die Gewichte der Modelle haben eigene Lizenzen.",
+      "revision": "v0.4.2",
+      "license_verified_on": "2026-10-27",
+      "source": "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+      "files": [
+        {
+          "filename": "ptts-0.4.2-aarch64-unknown-linux-gnu.tar.gz",
+          "quant": "archive",
+          "size_bytes": 9004574,
+          "sha256": "47e8a9247ceb26c199d38909111ff2c8684e190650e5200368c66a840eca0a96",
+          "url": "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-aarch64-unknown-linux-gnu.tar.gz"
+        }
+      ]
+    },
+    {
+      "id": "phonon-40m-de",
+      "name": "Phonon 40m (German, q8)",
+      "description": "German text-to-speech model Phonon 40m, 8-bit quantised (runs on the CPU), from gradium/phonon-40m-de. Gated: the terms must be accepted on huggingface.co and a Hugging Face token is needed for the download.",
+      "purpose": "phonon-model",
+      "languages": [
+        "de"
+      ],
+      "license": "CC-BY-NC-4.0",
+      "license_url": "https://huggingface.co/gradium/phonon-40m-de",
+      "license_note": "Gewichte CC BY-NC 4.0: nur nicht-kommerziell nutzbar (Hugging-Face-Karte, Abruf 27.10.2026). Gated (auto): Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login) oder HF_TOKEN setzen. Das Programm ptts steht unter MIT OR Apache-2.0.",
+      "license_verified_on": "2026-10-27",
+      "non_commercial": true,
+      "gated": true,
+      "revision": "79cfc7b47fcfc0b666657b981eb366415023a862",
+      "source": "hf://gradium/phonon-40m-de@79cfc7b47fcfc0b666657b981eb366415023a862",
+      "file_git_blobs": {
+        "config.json": "1a2d919878f37c9bc0578ef19f9d19c29762cb24",
+        "tokenizer.json": "72c0dcacaa598164a35a3d5b9918865342dbb955",
+        "tokenizer_config.json": "89101f16a3ea9bdd36dea4460b0e5fcf394d7cd8",
+        "generation_config.json": "4626eedd4e8a443ed054f1aa2767c401e840f73c"
+      },
+      "files": [
+        {
+          "filename": "config.json",
+          "quant": "support",
+          "size_bytes": 4634,
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/config.json"
+        },
+        {
+          "filename": "tokenizer.json",
+          "quant": "support",
+          "size_bytes": 278111,
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/tokenizer.json"
+        },
+        {
+          "filename": "tokenizer.model",
+          "quant": "support",
+          "size_bytes": 65373,
+          "sha256": "74c3f0cf322619861ca9a89ddd48c7c282bcfea6e9fe9423a9f0f84d0f3a332b",
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/tokenizer.model"
+        },
+        {
+          "filename": "tokenizer_config.json",
+          "quant": "support",
+          "size_bytes": 575,
+          "sha256": "17d12cf8dee2891506648bb1d5657e26fb165263686d0e2ef311513488d6446f",
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/tokenizer_config.json"
+        },
+        {
+          "filename": "model.q8.gguf",
+          "quant": "model",
+          "size_bytes": 74553568,
+          "sha256": "f8680286808bccc1a158a4ba5a2a143b17542f84023f4b7ef9f26bd0e1d08cb4",
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/model.q8.gguf"
+        },
+        {
+          "filename": "default-voice.safetensors",
+          "quant": "support",
+          "size_bytes": 256136,
+          "sha256": "b645c79148a02f6cd2ef7a6b3658373166e19a9a1c49fb81408be5d79667e6cb",
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/default-voice.safetensors"
+        },
+        {
+          "filename": "generation_config.json",
+          "quant": "support",
+          "size_bytes": 220,
+          "sha256": "ffb086e8f531b10a43bfd17a56069f90b649171a55aae98b5e9a28c8411cffc0",
+          "url": "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/generation_config.json"
+        }
+      ]
+    },
+    {
+      "id": "phonon-31m-en",
+      "name": "Phonon 31m (English, q8)",
+      "description": "English text-to-speech model Phonon 31m, 8-bit quantised (runs on the CPU), from gradium/phonon-31m-en. Public, no login needed.",
+      "purpose": "phonon-model",
+      "languages": [
+        "en"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-31m-en",
+      "license_note": "Gewichte Apache-2.0 (Hugging-Face-Karte, Abruf 27.10.2026), öffentlich, kein Zugang nötig. Das Programm ptts steht unter MIT OR Apache-2.0.",
+      "license_verified_on": "2026-10-27",
+      "revision": "92741c5b07d085ff840e26fea8ce43110b87852f",
+      "source": "hf://gradium/phonon-31m-en@92741c5b07d085ff840e26fea8ce43110b87852f",
+      "file_git_blobs": {
+        "config.json": "11cfeb2513febe31358a8ff942093e0b2c28710a",
+        "tokenizer.json": "70d39980cb2154bd364dbed8424b1343923a03e2",
+        "tokenizer_config.json": "89101f16a3ea9bdd36dea4460b0e5fcf394d7cd8",
+        "generation_config.json": "4626eedd4e8a443ed054f1aa2767c401e840f73c"
+      },
+      "files": [
+        {
+          "filename": "config.json",
+          "quant": "support",
+          "size_bytes": 4634,
+          "sha256": "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/config.json"
+        },
+        {
+          "filename": "tokenizer.json",
+          "quant": "support",
+          "size_bytes": 277967,
+          "sha256": "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/tokenizer.json"
+        },
+        {
+          "filename": "tokenizer.model",
+          "quant": "support",
+          "size_bytes": 65045,
+          "sha256": "82e4572006d64d483317074c22c368e87779640b6f3a9dcd07b7caae32b030ce",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/tokenizer.model"
+        },
+        {
+          "filename": "tokenizer_config.json",
+          "quant": "support",
+          "size_bytes": 575,
+          "sha256": "17d12cf8dee2891506648bb1d5657e26fb165263686d0e2ef311513488d6446f",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/tokenizer_config.json"
+        },
+        {
+          "filename": "model.q8.gguf",
+          "quant": "model",
+          "size_bytes": 64512352,
+          "sha256": "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/model.q8.gguf"
+        },
+        {
+          "filename": "default-voice.safetensors",
+          "quant": "support",
+          "size_bytes": 256136,
+          "sha256": "dc537478eaadc1a5257fcda2e3501ab81e14c111a5d95a5838f350db2afd0f1a",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/default-voice.safetensors"
+        },
+        {
+          "filename": "generation_config.json",
+          "quant": "support",
+          "size_bytes": 220,
+          "sha256": "ffb086e8f531b10a43bfd17a56069f90b649171a55aae98b5e9a28c8411cffc0",
+          "url": "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/generation_config.json"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-nele",
+      "name": "Nele",
+      "description": "Female, Middle-age. Rounded, open tone with gentle lift at the ends of phrases and an easy, flowing rhythm.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/2A2fFf8SkDEJ8nzx.safetensors",
+        "name": "Nele",
+        "voice_id": "2A2fFf8SkDEJ8nzx",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Middle-age",
+        "description": "Rounded, open tone with gentle lift at the ends of phrases and an easy, flowing rhythm."
+      },
+      "files": [
+        {
+          "filename": "Nele.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "5d5ad59fdd4642cd162f082873b27f658705a5d8598957d6274b30bf4bd4dc0b",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/2A2fFf8SkDEJ8nzx.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-jette",
+      "name": "Jette",
+      "description": "Female, Young. An upbeat young German voice with a light girlish tone and warm bounce, a chipper assistant who keeps things moving with a smile.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/4Mn9VfG2wsLLEzi5.safetensors",
+        "name": "Jette",
+        "voice_id": "4Mn9VfG2wsLLEzi5",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Young",
+        "description": "An upbeat young German voice with a light girlish tone and warm bounce, a chipper assistant who keeps things moving with a smile."
+      },
+      "files": [
+        {
+          "filename": "Jette.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "720e656aa74cd81729593e0672a6213f5f9e5480bead08321e2a6a327eb8e453",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/4Mn9VfG2wsLLEzi5.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-annika",
+      "name": "Annika",
+      "description": "Female, Adult. A sparky, attentive German adult voice that gets to the point with a smile. Ideal for fast, efficient customer support and helpful voice assistants.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/p6Uutkyi3j2iNAUu.safetensors",
+        "name": "Annika",
+        "voice_id": "p6Uutkyi3j2iNAUu",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Adult",
+        "description": "A sparky, attentive German adult voice that gets to the point with a smile. Ideal for fast, efficient customer support and helpful voice assistants."
+      },
+      "files": [
+        {
+          "filename": "Annika.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "0a4ec738c4222645f175dca1015686b0a628f100650a5e0ab26e88d0a9b60fd4",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/p6Uutkyi3j2iNAUu.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-jule",
+      "name": "Jule",
+      "description": "Female, Young Adult. Open and cheerful, sitting high and close over music, with an airy lift that softens where the copy turns personal.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/MxhgvuHuUER7qjmL.safetensors",
+        "name": "Jule",
+        "voice_id": "MxhgvuHuUER7qjmL",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Young Adult",
+        "description": "Open and cheerful, sitting high and close over music, with an airy lift that softens where the copy turns personal."
+      },
+      "files": [
+        {
+          "filename": "Jule.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "05160ccf33ce0e22da9a2eb601e992bc9fc34e2591e22d3af4f07a07f3731cb7",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/MxhgvuHuUER7qjmL.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-lotta",
+      "name": "Lotta",
+      "description": "Female, Young Adult. High forward energy with a close, present tone and crisp consonant attack that cuts through a music bed, plus real lift on the punchline.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/MOrDPn052KUlnKXk.safetensors",
+        "name": "Lotta",
+        "voice_id": "MOrDPn052KUlnKXk",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Young Adult",
+        "description": "High forward energy with a close, present tone and crisp consonant attack that cuts through a music bed, plus real lift on the punchline."
+      },
+      "files": [
+        {
+          "filename": "Lotta.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "a0f55b29cf02a7bab15a9f8ff961f632e7f7a393b2c69a0ce2c4026e7a9c1742",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/MOrDPn052KUlnKXk.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-josefine",
+      "name": "Josefine",
+      "description": "Female, Middle-age. Rounded and even in tone, sincere at the phrase ends, with consonants that hold up over a handset.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/yadpmqsHVrYC0NJp.safetensors",
+        "name": "Josefine",
+        "voice_id": "yadpmqsHVrYC0NJp",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Middle-age",
+        "description": "Rounded and even in tone, sincere at the phrase ends, with consonants that hold up over a handset."
+      },
+      "files": [
+        {
+          "filename": "Josefine.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "f0c5e9b03ec651da1b8ae2d76f23b46381c9943e1e7c7ad434f66a6bb1a16d44",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/yadpmqsHVrYC0NJp.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-anton",
+      "name": "Anton",
+      "description": "Male, Adult. A vibrant, engaging German adult voice that makes every explanation feel personal. Built for product guides and walk-through assistants.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/3ZKKapPOvuWFcw9f.safetensors",
+        "name": "Anton",
+        "voice_id": "3ZKKapPOvuWFcw9f",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Adult",
+        "description": "A vibrant, engaging German adult voice that makes every explanation feel personal. Built for product guides and walk-through assistants."
+      },
+      "files": [
+        {
+          "filename": "Anton.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "b645c79148a02f6cd2ef7a6b3658373166e19a9a1c49fb81408be5d79667e6cb",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/3ZKKapPOvuWFcw9f.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-mirko",
+      "name": "Mirko",
+      "description": "Male, Young Adult. Punchy and close-miked in feel, with hard edges on the consonants and a decisive drop on the final line.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/Xn9xDzqSSr4xGTNg.safetensors",
+        "name": "Mirko",
+        "voice_id": "Xn9xDzqSSr4xGTNg",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Young Adult",
+        "description": "Punchy and close-miked in feel, with hard edges on the consonants and a decisive drop on the final line."
+      },
+      "files": [
+        {
+          "filename": "Mirko.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "275c9024bf16518fab2c477d4acdc76cad6f2c322ce083ab56238c3856012f57",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/Xn9xDzqSSr4xGTNg.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-mats",
+      "name": "Mats",
+      "description": "Male, Adult. A sparky, attentive German adult voice that gets to the point with a smile. Ideal for fast, efficient customer support and helpful voice assistants.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/Kf5m22mROozoMWj3.safetensors",
+        "name": "Mats",
+        "voice_id": "Kf5m22mROozoMWj3",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Adult",
+        "description": "A sparky, attentive German adult voice that gets to the point with a smile. Ideal for fast, efficient customer support and helpful voice assistants."
+      },
+      "files": [
+        {
+          "filename": "Mats.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "1cd9e5471568fe905906742568b5d3d2e89cdac1fa8b8272780d984d7d54ec9a",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/Kf5m22mROozoMWj3.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-henrik",
+      "name": "Henrik",
+      "description": "Male, Adult. An easy-going, friendly German adult voice that puts callers instantly at ease. Great for onboarding assistants and warm concierge interactions.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/yyS1KYWs6mXoEw7D.safetensors",
+        "name": "Henrik",
+        "voice_id": "yyS1KYWs6mXoEw7D",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Adult",
+        "description": "An easy-going, friendly German adult voice that puts callers instantly at ease. Great for onboarding assistants and warm concierge interactions."
+      },
+      "files": [
+        {
+          "filename": "Henrik.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "4a1bea252ee32f44dff1852894a521bb5de0b58a3ba5f18011c84aab0ad45916",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/yyS1KYWs6mXoEw7D.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-leon",
+      "name": "Leon",
+      "description": "Male, Adult. A bright, welcoming German adult voice with the warmth of a great receptionist. Perfect for greeting customers and friendly front-line support.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/20zdyYrQPzKlCwkk.safetensors",
+        "name": "Leon",
+        "voice_id": "20zdyYrQPzKlCwkk",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Adult",
+        "description": "A bright, welcoming German adult voice with the warmth of a great receptionist. Perfect for greeting customers and friendly front-line support."
+      },
+      "files": [
+        {
+          "filename": "Leon.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "28af62a4ed8af73b560dd5f78f48045969a74306f2d85aedcb4c820025f74870",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/20zdyYrQPzKlCwkk.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-mika",
+      "name": "Mika",
+      "description": "Male, Young Adult. Punchy and to the point, with a firm, resonant core, clean word endings and real snap between loud and quiet.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/R3uU1GTAZJotUhUs.safetensors",
+        "name": "Mika",
+        "voice_id": "R3uU1GTAZJotUhUs",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "male",
+        "age": "Young Adult",
+        "description": "Punchy and to the point, with a firm, resonant core, clean word endings and real snap between loud and quiet."
+      },
+      "files": [
+        {
+          "filename": "Mika.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "36840305b88f217cc20e153276eaaf74718e5e2b50ac05f0dd6c4606b0d576a2",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/R3uU1GTAZJotUhUs.safetensors"
+        }
+      ]
+    },
+    {
+      "id": "phonon-voice-de-svea",
+      "name": "Svea",
+      "description": "Female, Young Adult. Sparky and to the point, with clean consonant edges, brisk rhythm and a decisive drop on the final line.",
+      "purpose": "phonon-voice",
+      "languages": [
+        "de"
+      ],
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/gradium/phonon-voices",
+      "license_note": "Stimmen-Einbettung aus gradium/phonon-voices (Apache-2.0, Hugging-Face-Karte, Abruf 27.10.2026). Die Karte führt Hörproben für die Modellgrößen 31m, 40m, 56m und 98m.",
+      "license_verified_on": "2026-10-27",
+      "revision": "0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+      "parent": "phonon-40m-de",
+      "voice": {
+        "filename": "voices/Adoh4wA9tp5QXJi9.safetensors",
+        "name": "Svea",
+        "voice_id": "Adoh4wA9tp5QXJi9",
+        "language": "de",
+        "locale": "de-de",
+        "gender": "female",
+        "age": "Young Adult",
+        "description": "Sparky and to the point, with clean consonant edges, brisk rhythm and a decisive drop on the final line."
+      },
+      "files": [
+        {
+          "filename": "Svea.safetensors",
+          "quant": "voice",
+          "size_bytes": 256136,
+          "sha256": "0179a71e0aa1e89320ed35da4c6dea30384f98d24ee931517916742ccf7e6002",
+          "url": "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/Adoh4wA9tp5QXJi9.safetensors"
+        }
+      ]
     }
   ]
 }

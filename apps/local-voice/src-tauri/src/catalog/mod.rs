@@ -13,10 +13,10 @@
 //! `GgufHeaderProber` is the same shape with `None` where a header omits a key,
 //! which is why the two are interchangeable (the catalog is a baked probe).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use once_cell::sync::Lazy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::managers::model::{
     default_quant_file, EngineType, ModelDescriptor, ModelSource, QuantFile,
@@ -59,6 +59,13 @@ pub enum Purpose {
     /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
     /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
     Diarization,
+    /// Phonon: das Programm `ptts` je Plattform (Release-Archiv von GitHub),
+    /// `managers::tts::phonon_models`. Getrennt von `TtsRuntime` (Piper).
+    PhononRuntime,
+    /// Phonon: ein Modellordner (mehrere Dateien eines Hugging-Face-Commits).
+    PhononModel,
+    /// Phonon: eine Stimmen-Einbettung (`.safetensors`), gehoert zu einem Modell (`parent`).
+    PhononVoice,
 }
 
 /// One model as written in `catalog.json`. Only the fields the descriptor needs
@@ -116,6 +123,38 @@ struct CatalogModel {
     /// Download an (Issue #29).
     #[serde(default)]
     unsupported_reason: Option<String>,
+    /// Phonon: Zugang nur nach angenommenen Bedingungen und mit Hugging-Face-Token.
+    #[serde(default)]
+    gated: bool,
+    /// Phonon: Datum, an dem Lizenz und Zugang an der Quelle geprueft wurden (`JJJJ-MM-TT`).
+    #[serde(default)]
+    license_verified_on: Option<String>,
+    /// Phonon: Herkunft in lesbarer Form (`hf://OWNER/REPO@COMMIT` bzw. Release-Seite).
+    #[serde(default)]
+    source: Option<String>,
+    /// Phonon-Stimme: Kennung des Modells, in dessen Ordner die Datei kommt.
+    #[serde(default)]
+    parent: Option<String>,
+    /// Phonon-Stimme: die Zeile aus `voices.jsonl` der Quelle, unveraendert.
+    #[serde(default)]
+    voice: Option<PhononVoiceMeta>,
+    /// Phonon: Git-Blob-Kennung (SHA-1 ueber `blob <len>\0<inhalt>`, `blobId` der HF-API) der
+    /// Dateien OHNE LFS, fuer die die API kein SHA-256 liefert. Dateiname -> Kennung.
+    #[serde(default)]
+    file_git_blobs: BTreeMap<String, String>,
+}
+
+/// Eine Zeile aus `voices.jsonl` von `gradium/phonon-voices` (Felder und Reihenfolge wie dort).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhononVoiceMeta {
+    pub filename: String,
+    pub name: String,
+    pub voice_id: String,
+    pub language: String,
+    pub locale: String,
+    pub gender: String,
+    pub age: String,
+    pub description: String,
 }
 
 /// Nicht-kommerzielle Lizenz? Ausdruecklich markiert oder `-NC-` im Namen
@@ -236,6 +275,19 @@ pub struct TtsCatalogEntry {
     pub license_non_commercial: bool,
     /// Siehe `CatalogModel::unsupported_reason`.
     pub unsupported_reason: Option<String>,
+    /// Herkunfts-/Mischlizenzhinweis (`license_note`).
+    pub license_note: Option<String>,
+    /// Sprachen des Eintrags (Phonon-Modelle und -Stimmen).
+    pub languages: Vec<String>,
+    /// Commit (Hugging Face) bzw. Release-Tag, auf den sich Groessen und Pruefsummen beziehen.
+    pub revision: Option<String>,
+    /// Siehe `CatalogModel::gated`, `license_verified_on`, `source`, `parent`, `voice`, `file_git_blobs`.
+    pub gated: bool,
+    pub license_verified_on: Option<String>,
+    pub source: Option<String>,
+    pub parent: Option<String>,
+    pub voice: Option<PhononVoiceMeta>,
+    pub file_git_blobs: BTreeMap<String, String>,
 }
 
 /// All bundled catalog entries of the given TTS `purpose`, in catalog order.
@@ -257,6 +309,15 @@ pub fn tts_entries(purpose: Purpose) -> Vec<TtsCatalogEntry> {
                 m.non_commercial,
             ),
             unsupported_reason: m.unsupported_reason.clone(),
+            license_note: m.license_note.clone(),
+            languages: m.languages.clone(),
+            revision: m.revision.clone(),
+            gated: m.gated,
+            license_verified_on: m.license_verified_on.clone(),
+            source: m.source.clone(),
+            parent: m.parent.clone(),
+            voice: m.voice.clone(),
+            file_git_blobs: m.file_git_blobs.clone(),
             files: m
                 .files
                 .iter()
@@ -588,6 +649,9 @@ mod tests {
             Purpose::LlmEmbedding,
             Purpose::LlmProjector,
             Purpose::Diarization,
+            Purpose::PhononRuntime,
+            Purpose::PhononModel,
+            Purpose::PhononVoice,
         ] {
             for e in tts_entries(purpose) {
                 assert!(
@@ -651,6 +715,180 @@ mod tests {
             let l = e.license.unwrap_or_default();
             assert!(l.contains("GPL-3.0-or-later"), "{}: {l}", e.id);
         }
+    }
+
+    // ── Phonon (Modellseite): Programm, Modelle, Stimmen ─────────────────
+
+    fn is_hex(s: &str, len: usize) -> bool {
+        s.len() == len && s.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    /// Jede Phonon-Datei ist verifizierbar: Groesse, https-Adresse und entweder SHA-256
+    /// (LFS-Dateien, Archive) oder die Git-Blob-Kennung (Dateien ohne LFS, bei denen die
+    /// HF-API kein SHA-256 liefert).
+    #[test]
+    fn jede_phonon_datei_hat_groesse_adresse_und_pruefsumme() {
+        for purpose in [
+            Purpose::PhononRuntime,
+            Purpose::PhononModel,
+            Purpose::PhononVoice,
+        ] {
+            let entries = tts_entries(purpose);
+            assert!(!entries.is_empty(), "{purpose:?}: keine Eintraege");
+            for e in &entries {
+                assert!(!e.files.is_empty(), "{}: keine Datei", e.id);
+                for f in &e.files {
+                    assert!(f.size_bytes > 0, "{}: {} ohne Groesse", e.id, f.filename);
+                    assert!(f.url.starts_with("https://"), "{}: {}", e.id, f.url);
+                    let sha_ok = f.sha256.as_deref().is_some_and(|s| is_hex(s, 64));
+                    let blob_ok = e
+                        .file_git_blobs
+                        .get(&f.filename)
+                        .is_some_and(|s| is_hex(s, 40));
+                    assert!(sha_ok || blob_ok, "{}: {} ohne Pruefsumme", e.id, f.filename);
+                }
+                assert!(e.license.as_deref().is_some_and(|l| !l.is_empty()), "{}", e.id);
+                assert!(e.license_url.is_some(), "{}: Lizenz-Link fehlt", e.id);
+                assert!(e.license_note.is_some(), "{}: Lizenzhinweis fehlt", e.id);
+                assert!(e.license_verified_on.is_some(), "{}: Pruefdatum fehlt", e.id);
+                assert!(e.source.is_some(), "{}: Quelle fehlt", e.id);
+            }
+        }
+    }
+
+    #[test]
+    fn phonon_programm_windows_hat_die_belegten_werte() {
+        let rt = tts_entries(Purpose::PhononRuntime);
+        let win = rt
+            .iter()
+            .find(|e| e.id == "phonon-runtime-windows-x64")
+            .expect("Windows-Eintrag");
+        let f = &win.files[0];
+        assert_eq!(f.filename, "ptts-0.4.2-x86_64-pc-windows-msvc.zip");
+        assert_eq!(f.size_bytes, 7_766_316);
+        assert_eq!(
+            f.sha256.as_deref(),
+            Some("699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07")
+        );
+        assert_eq!(
+            f.url,
+            "https://github.com/gradium-ai/xn-ptts/releases/download/v0.4.2/ptts-0.4.2-x86_64-pc-windows-msvc.zip"
+        );
+        assert_eq!(win.license.as_deref(), Some("MIT OR Apache-2.0"));
+        assert!(!win.license_non_commercial);
+        // Alle fuenf Plattformen der Release.
+        let mut ids: Vec<&str> = rt.iter().map(|e| e.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(
+            ids,
+            [
+                "phonon-runtime-linux-aarch64",
+                "phonon-runtime-linux-x64",
+                "phonon-runtime-macos-aarch64",
+                "phonon-runtime-macos-x64",
+                "phonon-runtime-windows-x64"
+            ]
+        );
+    }
+
+    #[test]
+    fn phonon_modelle_tragen_commit_lizenz_und_zugang() {
+        let models = tts_entries(Purpose::PhononModel);
+        let de = models.iter().find(|e| e.id == "phonon-40m-de").expect("40m-de");
+        assert_eq!(
+            de.revision.as_deref(),
+            Some("79cfc7b47fcfc0b666657b981eb366415023a862")
+        );
+        assert_eq!(de.license.as_deref(), Some("CC-BY-NC-4.0"));
+        assert!(de.license_non_commercial, "40m-de ist nicht-kommerziell");
+        assert!(de.gated, "40m-de ist gated");
+        assert_eq!(de.languages, ["de"]);
+        let names: Vec<&str> = de.files.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "config.json",
+                "tokenizer.json",
+                "tokenizer.model",
+                "tokenizer_config.json",
+                "model.q8.gguf",
+                "default-voice.safetensors",
+                "generation_config.json"
+            ]
+        );
+        let q8 = de.files.iter().find(|f| f.filename == "model.q8.gguf").unwrap();
+        assert_eq!(q8.size_bytes, 74_553_568);
+        assert_eq!(
+            q8.sha256.as_deref(),
+            Some("f8680286808bccc1a158a4ba5a2a143b17542f84023f4b7ef9f26bd0e1d08cb4")
+        );
+        for f in &de.files {
+            assert!(
+                f.url.starts_with(
+                    "https://huggingface.co/gradium/phonon-40m-de/resolve/79cfc7b47fcfc0b666657b981eb366415023a862/"
+                ),
+                "{}",
+                f.url
+            );
+        }
+
+        let en = models.iter().find(|e| e.id == "phonon-31m-en").expect("31m-en");
+        assert_eq!(
+            en.revision.as_deref(),
+            Some("92741c5b07d085ff840e26fea8ce43110b87852f")
+        );
+        assert_eq!(en.license.as_deref(), Some("Apache-2.0"));
+        assert!(!en.license_non_commercial && !en.gated);
+        assert_eq!(en.languages, ["en"]);
+        assert_eq!(en.files.len(), 7);
+    }
+
+    #[test]
+    fn phonon_stimmen_sind_die_13_deutschen_und_gehoeren_zum_deutschen_modell() {
+        let voices = tts_entries(Purpose::PhononVoice);
+        assert_eq!(voices.len(), 13, "13 deutsche Stimmen");
+        let models = tts_entries(Purpose::PhononModel);
+        for v in &voices {
+            let meta = v.voice.as_ref().unwrap_or_else(|| panic!("{}: voice fehlt", v.id));
+            assert_eq!(meta.language, "de", "{}", v.id);
+            assert_eq!(v.parent.as_deref(), Some("phonon-40m-de"), "{}", v.id);
+            assert!(models.iter().any(|m| Some(&m.id) == v.parent.as_ref()));
+            // Lokaler Name ist der Stimmenname; die Quelle liegt unter voice_id.
+            assert_eq!(v.files.len(), 1);
+            assert_eq!(v.files[0].filename, format!("{}.safetensors", meta.name));
+            assert_eq!(meta.filename, format!("voices/{}.safetensors", meta.voice_id));
+            assert!(v.files[0].url.ends_with(&meta.filename), "{}", v.files[0].url);
+            assert!(
+                v.files[0].url.contains("gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/"),
+                "{}",
+                v.files[0].url
+            );
+            assert_eq!(v.files[0].size_bytes, 256_136);
+            assert!(v.files[0].sha256.as_deref().is_some_and(|s| is_hex(s, 64)));
+            assert_eq!(v.license.as_deref(), Some("Apache-2.0"));
+            assert!(!v.license_non_commercial);
+            assert!(
+                meta.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "Name taugt als Dateiname: {}",
+                meta.name
+            );
+        }
+        let names: BTreeSet<&str> = voices
+            .iter()
+            .filter_map(|v| v.voice.as_ref().map(|m| m.name.as_str()))
+            .collect();
+        assert_eq!(names.len(), 13, "Namen eindeutig");
+        assert!(names.contains("Nele") && names.contains("Anton"));
+    }
+
+    #[test]
+    fn phonon_eintraege_bleiben_aus_asr_und_piper_listen() {
+        assert_eq!(CATALOG.len(), 68);
+        assert!(CATALOG.iter().all(|d| !d.id.contains("phonon")));
+        assert_eq!(tts_entries(Purpose::TtsVoice).len(), 10);
+        assert!(tts_entries(Purpose::TtsRuntime)
+            .iter()
+            .all(|e| !e.id.contains("phonon")));
     }
 
     #[test]
