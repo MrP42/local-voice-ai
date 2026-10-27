@@ -16,11 +16,11 @@ import { commands } from "@/bindings";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { IconAction } from "../../ui/IconAction";
 import { VOICE_MANAGE, useVoiceChoice } from "../tts/useVoiceChoice";
+import { counterWidthCh, shownSentenceNumber } from "../tts/sentenceCounter";
 import {
   discardSavedReading,
   getReadAloudSession,
   getSavedReading,
-  markVoiceHandover,
   pauseReading,
   resumeReading,
   resumeSavedReading,
@@ -74,14 +74,14 @@ const Controls: React.FC<{
   );
 
   const live = view === "live" ? session : null;
-  const playing = !!live && !live.paused && (live.runs > 0 || live.handover);
+  const playing = !!live && !live.paused && live.runs > 0;
   // Zaehler: der Satz, der zu hoeren ist -- oder der, mit dem es weitergeht.
   const total = live ? (live.progress?.total ?? 0) : (savedEntry?.total ?? 0);
   const index = live
     ? (live.sentence?.index ??
       (live.progress && total > 0 ? live.progress.position : null))
     : (savedEntry?.position ?? null);
-  const shown = index !== null && total > 0 ? Math.min(index + 1, total) : null;
+  const shown = shownSentenceNumber(index, total);
   const resumePosition = (savedEntry?.position ?? 0) + 1;
 
   return (
@@ -153,8 +153,18 @@ const Controls: React.FC<{
         }
       />
       {shown !== null && (
+        // Feste Breite (tabular-nums + Mindestbreite nach der Stellenzahl der Gesamtzahl):
+        // die Schaltflaeche daneben springt nicht, wenn aus "9/12" "10/12" wird.
         <span
-          className="px-1.5 text-xs tabular-nums text-text/70"
+          className="inline-block px-1.5 text-end text-xs tabular-nums text-text/70"
+          style={{
+            minWidth: `calc(${counterWidthCh(total, (position, count) =>
+              t("meetings.readAloud.bar.positionShort", {
+                position,
+                total: count,
+              }),
+            )}ch + 0.75rem)`,
+          }}
           title={live?.sentence?.text}
           data-testid={`${testId}-bar-position`}
         >
@@ -211,11 +221,9 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
             option.value === voiceValue ? (
               <Check width={14} height={14} aria-hidden="true" />
             ) : undefined,
-          // Ein Wechsel gilt sofort -- eine laufende Wiedergabe stellt am aktuellen Satz um.
-          onSelect: () => {
-            markVoiceHandover();
-            applyVoiceValue(option.value);
-          },
+          // Ein Wechsel gilt sofort: der laufende Satz wird zu Ende gelesen, ab dem naechsten
+          // liest die neue Stimme -- dieselbe Wiedergabe, kein Neustart, keine Pause.
+          onSelect: () => applyVoiceValue(option.value),
         },
   );
 

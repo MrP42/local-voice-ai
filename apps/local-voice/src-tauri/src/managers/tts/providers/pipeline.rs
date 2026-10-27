@@ -388,6 +388,43 @@ mod tests {
         }
     }
 
+    /// Anbieter mit Latenz, der von JEDEM Auftrag Text und Stimme festhält -- beim
+    /// BEGINN, auch wenn der Auftrag danach fallengelassen wird.
+    struct VoiceLog {
+        inner: MockProvider,
+        calls: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl TtsProvider for VoiceLog {
+        fn descriptor(&self) -> ProviderDescriptor {
+            self.inner.descriptor()
+        }
+        fn health_check(&self) -> BoxFuture<'_, ProviderHealth> {
+            self.inner.health_check()
+        }
+        fn list_voices<'a>(
+            &'a self,
+            l: Option<&'a str>,
+        ) -> BoxFuture<'a, Result<Vec<VoiceDescriptor>, TtsError>> {
+            self.inner.list_voices(l)
+        }
+        fn synthesize<'a>(
+            &'a self,
+            t: &'a str,
+            o: &'a SynthesisOptions,
+            c: &'a CancelToken,
+        ) -> BoxFuture<'a, Result<AudioClip, TtsError>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((t.to_string(), o.voice.clone()));
+            self.inner.synthesize(t, o, c)
+        }
+        fn cache_tag(&self, v: Option<&str>) -> String {
+            self.inner.cache_tag(v)
+        }
+    }
+
     // ---- Engine-Wahl --------------------------------------------------------------
 
     #[test]
@@ -538,6 +575,86 @@ mod tests {
         assert_eq!(opts.format, AudioEncoding::Wav);
         assert_eq!(opts.language, "de");
         assert_eq!(core.engine_cache_tag(Some("fish-referenz")), "rec:mock-de");
+    }
+
+    /// Stimmwechsel mitten im Vorlesen mit einem Anbieter (etwa Phonon): die
+    /// Berechnung mit der alten Anbieter-Stimme wird fallengelassen (der
+    /// Subprozess-Adapter stirbt mit seinem Future), die neue beginnt sofort, und
+    /// der Cache haelt beide Stimmen auseinander -- der Tag des Anbieters traegt
+    /// die Stimme.
+    #[tokio::test]
+    async fn ein_wechsel_der_anbieter_stimme_mitten_in_der_berechnung_gilt_sofort() {
+        let log = Arc::new(VoiceLog {
+            inner: MockProvider::new()
+                .with_id("zzz")
+                .latency(Duration::from_millis(400)),
+            calls: Mutex::new(Vec::new()),
+        });
+        let reg = registry_with(log.clone());
+        let approvals = live_with(&["zzz"]);
+        let engine = |voice: &str| {
+            ProviderEngine::new(
+                reg.clone(),
+                "zzz",
+                Some(voice.to_string()),
+                approvals.clone(),
+            )
+        };
+        let core = Arc::new(core_with(engine("anna")));
+
+        let run = {
+            let core = Arc::clone(&core);
+            tokio::spawn(async move { core.speak_core(TEXT).await })
+        };
+        // Der erste Satz wird mit "anna" berechnet ...
+        for _ in 0..400 {
+            if !log.calls.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(log.calls.lock().unwrap().len(), 1);
+        // ... und mittendrin wechselt die Stimme.
+        core.set_provider_engine(engine("ben"));
+        core.mark_voice_changed();
+        let played = tokio::time::timeout(Duration::from_secs(10), run)
+            .await
+            .expect("die Sitzung endet nicht")
+            .unwrap()
+            .unwrap();
+        assert!(played > 2 * 1024, "beide Saetze wurden gespielt: {played}");
+
+        let voices: Vec<Option<String>> = log
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, voice)| voice.clone())
+            .collect();
+        assert_eq!(
+            voices,
+            vec![
+                Some("anna".to_string()),
+                Some("ben".to_string()),
+                Some("ben".to_string())
+            ],
+            "die fallengelassene Berechnung mit anna, dann beide Saetze mit ben"
+        );
+
+        // Cache je Stimme: nur ben ist fertig, anna wurde nie fertig.
+        let first = "Der erste Satz ist lang genug.";
+        assert!(core.has_cached_for(first, None), "ben liegt im Cache");
+        let ben_tag = core.engine_cache_tag(None);
+        core.set_provider_engine(engine("anna"));
+        assert!(
+            !core.has_cached_for(first, None),
+            "anna wurde fallengelassen, ihr Eintrag existiert nicht"
+        );
+        assert_ne!(
+            core.engine_cache_tag(None),
+            ben_tag,
+            "der Tag traegt die Anbieter-Stimme"
+        );
     }
 
     #[tokio::test]

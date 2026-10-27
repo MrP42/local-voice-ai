@@ -1,14 +1,16 @@
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import i18n from "@/i18n";
-import { commands, type TtsPhase, type TtsStatus } from "@/bindings";
+import { commands } from "@/bindings";
+import { sentenceAfterProgress } from "../tts/sentenceCounter";
 
 /**
  * Die Vorlese-Sitzung der Aufnahmen.
  *
  * Keine eigene Sprachausgabe: dieselbe Sitzung des Backends wie auf der Vorlesen-Seite
  * (`tts_speak_text` legt sie an, `tts_speak_resume`, `tts_speak_seek`, `tts_cancel`,
- * `tts_voice_changed` und `tts_speak_to_file` bedienen sie). Sie ist EINE fuer die ganze
+ * `tts_voice_changed` und `tts_speak_to_file` bedienen sie; ein Stimmwechsel laeuft in
+ * derselben Wiedergabe weiter, ohne dass ein Aufruf zurueckkehrt). Sie ist EINE fuer die ganze
  * App; wer sie gestartet hat, steht in `key`. Hier steht nur, was die Oberflaeche dazu
  * wissen muss: ob gerade gespielt wird, wo der Satzzaehler steht, ob pausiert ist.
  */
@@ -23,12 +25,6 @@ export interface ReadAloudSession {
   runs: number;
   /** Pause angefordert (sofort sichtbar, auch bevor der Aufruf zurueckkehrt). */
   paused: boolean;
-  /**
-   * Stimmwechsel waehrend der Wiedergabe: das Backend (`tts_voice_changed`) liest im
-   * Hintergrund mit der neuen Stimme weiter, der urspruengliche Aufruf ist schon zurueck.
-   * Solange das Backend dann in der Phase `speaking` ist, gilt die Sitzung als laufend.
-   */
-  handover: boolean;
   /** Saetze, die vollstaendig gesprochen sind, und die Gesamtzahl. */
   progress: { position: number; total: number } | null;
   /** Der Satz, der gerade zu hoeren ist (nullbasiert) und sein Text. */
@@ -111,41 +107,25 @@ const settle = (token: number) => {
   const progress = session.progress;
   const interrupted =
     session.paused || (progress !== null && progress.position < progress.total);
-  if (interrupted) patchSession(token, { runs: 0, handover: false });
+  if (interrupted) patchSession(token, { runs: 0 });
   else setSession(null);
 };
-
-/** Letzte Phase des Backends; der Stimmwechsel-Lauf endet, wenn sie `speaking` verlaesst. */
-let lastPhase: TtsPhase | null = null;
-/**
- * Zwischen altem und neuem Lauf meldet das Backend kurz eine andere Phase; erst wenn sie
- * so lange anhaelt, gilt der Stimmwechsel-Lauf als beendet.
- */
-const HANDOVER_GRACE_MS = 600;
 
 let listening = false;
 /** Fortschritt, Satz und Export kommen als Ereignisse; einmal anmelden, dauerhaft. */
 const ensureListeners = () => {
   if (listening) return;
   listening = true;
-  void listen<TtsStatus>("tts-state-changed", (e) => {
-    lastPhase = e.payload.phase;
-    const current = session;
-    if (!current?.handover || current.runs > 0) return;
-    if (lastPhase === "speaking" || lastPhase === "starting") return;
-    const token = current.token;
-    window.setTimeout(() => {
-      if (lastPhase === "speaking" || lastPhase === "starting") return;
-      if (session?.token === token && session.handover && session.runs === 0) {
-        settle(token);
-      }
-    }, HANDOVER_GRACE_MS);
-  });
   void listen<{ position: number; total: number }>(
     "tts-speak-progress",
     (e) => {
       if (session) {
-        session = { ...session, progress: e.payload };
+        session = {
+          ...session,
+          progress: e.payload,
+          // Nach einem Sprung oder einem fertigen Satz gilt der alte Satz nicht mehr.
+          sentence: sentenceAfterProgress(session.sentence, e.payload.position),
+        };
         notify();
       }
     },
@@ -201,7 +181,7 @@ type CommandResult = { status: "ok" } | { status: "error"; error: string };
  */
 const run = async (token: number, command: () => Promise<CommandResult>) => {
   if (session?.token !== token) return;
-  patchSession(token, { runs: session.runs + 1, paused: false, handover: false });
+  patchSession(token, { runs: session.runs + 1, paused: false });
   let failure: string | null = null;
   try {
     const result = await command();
@@ -221,21 +201,7 @@ const run = async (token: number, command: () => Promise<CommandResult>) => {
     patchSession(token, { runs });
     return;
   }
-  // Stimmwechsel: das Backend liest weiter; das Ende meldet dann `tts-state-changed`.
-  if (session.handover && !session.paused) {
-    patchSession(token, { runs: 0 });
-    return;
-  }
   settle(token);
-};
-
-/**
- * Vor einem Stimmwechsel aufrufen: laeuft gerade eine Wiedergabe, liest das Backend nach
- * dem Wechsel im Hintergrund weiter -- die Leiste soll dabei "Pause" zeigen, nicht "Weiter".
- */
-export const markVoiceHandover = () => {
-  if (!session || session.paused || session.runs === 0) return;
-  patchSession(session.token, { handover: true });
 };
 
 /**
@@ -259,7 +225,6 @@ export const startReading = (
     text,
     runs: 0,
     paused: false,
-    handover: false,
     progress: from ? { position, total: from.total } : null,
     sentence: null,
   });
@@ -286,7 +251,7 @@ export const discardSavedReading = (key: string) => forget(key);
 /** Pause: anhalten, Position behalten -- Weiter setzt genau dort fort. */
 export const pauseReading = () => {
   if (!session) return;
-  patchSession(session.token, { paused: true, handover: false });
+  patchSession(session.token, { paused: true });
   void commands.ttsCancel();
 };
 
@@ -316,7 +281,7 @@ export const stopReading = () => {
  */
 export const suspendReadingIfOwner = (key: string) => {
   if (session?.key !== key || session.paused) return;
-  patchSession(session.token, { paused: true, handover: false });
+  patchSession(session.token, { paused: true });
   void commands.ttsCancel();
 };
 

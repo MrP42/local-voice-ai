@@ -5,6 +5,7 @@
 //! einen Mock-Server getestet; `TtsManager` ergänzt AppHandle-Belange:
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
+pub mod abbreviations;
 pub mod availability;
 pub mod builder;
 pub mod compile_cache;
@@ -130,6 +131,22 @@ pub struct TtsCore {
     /// ihn vor jedem Auftrag neu — ein geaenderter Regler wirkt damit ab dem
     /// naechsten Vorlesen, und im laufenden Auftrag liest niemand die Platte.
     voice_sounds: Mutex<std::collections::HashMap<String, registry::VoiceSound>>,
+    /// Stimm-Epoche: waechst bei jedem Wechsel von Stimme oder Engine
+    /// ([`Self::mark_voice_changed`]). Die Satz-Pipeline haengt ihre laufende
+    /// Berechnung des Folgesatzes daran (`watch` weckt sie sofort): so beginnt die
+    /// Neuberechnung mit der neuen Stimme, waehrend der aktuelle Satz noch spielt,
+    /// ohne dass die Sitzung neu gestartet oder pausiert wird.
+    voice_epoch: tokio::sync::watch::Sender<u64>,
+    /// Sperre fuer die Dauer eines Stimmwechsels (Einstellungen uebernehmen, neue
+    /// Engine bereitmachen, Epoche erhoehen). Wer SYNTHETISIERT, laeuft an ihr
+    /// vorbei ([`Self::pass_voice_switch`]) und sieht damit nie einen halb
+    /// uebernommenen Stand -- etwa die neue Engine, deren Server noch nicht steht.
+    voice_switch: tokio::sync::Mutex<()>,
+    /// Ist im Stimmenfeld eine FESTE Stimme gewaehlt (`tts_voice` gesetzt)? Dann liest
+    /// sie alles, auch Saetze mit Sprecher aus dem Skript. Eigenes Flag, weil
+    /// `voice` die Seed-Referenz der Standardstimme tragen kann (siehe
+    /// `bind_seed_voice`) und daher nichts ueber die Wahl des Nutzers sagt.
+    fixed_voice: AtomicBool,
     on_phase_change: Mutex<Option<Box<dyn Fn(TtsStatus) + Send + Sync>>>,
 }
 
@@ -265,6 +282,25 @@ impl WavCache {
     }
 }
 
+/// Womit ein Satz synthetisiert wird, ausser dem Text: alles, was in den
+/// Cache-Schluessel eingeht. Zwei gleiche Werte bedeuten dasselbe Audio; die
+/// Satz-Pipeline vergleicht damit, ob ein vorab berechneter Satz nach einem
+/// Stimmwechsel noch zur aktuellen Stimme gehoert.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SynthIdentity {
+    engine_tag: String,
+    seed: i64,
+    voice: Option<String>,
+}
+
+/// Wartet, bis das Abbruch-Flag gesetzt ist (Abfrage alle 25 ms, wie bei den
+/// Anbietern -- ein Abbruch wirkt damit auch mitten in einer Berechnung).
+async fn wait_cancelled(flag: &AtomicBool) {
+    while !flag.load(Ordering::Acquire) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 impl TtsCore {
     fn new(player: Arc<dyn Player>) -> Self {
         Self {
@@ -291,6 +327,9 @@ impl TtsCore {
             enhance: Mutex::new(None),
             voice_gains: Mutex::new(std::collections::HashMap::new()),
             voice_sounds: Mutex::new(std::collections::HashMap::new()),
+            voice_epoch: tokio::sync::watch::Sender::new(0),
+            voice_switch: tokio::sync::Mutex::new(()),
+            fixed_voice: AtomicBool::new(false),
             on_phase_change: Mutex::new(None),
         }
     }
@@ -319,8 +358,12 @@ impl TtsCore {
     /// Schluessel.
     pub fn has_cached_for(&self, text: &str, voice: Option<&str>) -> bool {
         let seed = *self.seed.lock().unwrap();
-        let engine_tag = self.engine_cache_tag(voice);
-        let key = WavCache::key(&engine_tag, text, seed, voice);
+        let engine = self.engine_snapshot();
+        // Derselbe Text wie in `fetch_wav_cancellable`, sonst bildeten beide
+        // verschiedene Schluessel (Tags, ausgeschriebene Abkuerzungen).
+        let text = Self::spoken_text(&engine, text);
+        let engine_tag = engine.cache_tag(voice);
+        let key = WavCache::key(&engine_tag, &text, seed, voice);
         if self.wav_cache.lock().unwrap().get(key).is_some() {
             return true;
         }
@@ -385,6 +428,26 @@ impl TtsCore {
     /// Konsistenter Schnappschuss der aktiven Engine — siehe [`EngineImpl`].
     fn engine_snapshot(&self) -> EngineImpl {
         self.engine.lock().unwrap().clone()
+    }
+
+    /// Der Text, den die Engine bekommt UND aus dem der Cache-Schluessel entsteht.
+    /// Nur fuer die Synthese: Anzeige, Satzgrenzen und Satzzaehlung bleiben beim
+    /// Originaltext.
+    ///
+    /// * Engines ohne Stil-Tags (Piper): `[…]`-Tags raus.
+    /// * Deutscher Text: gaengige Abkuerzungen ausgeschrieben (siehe
+    ///   [`abbreviations`]). Das gilt fuer ALLE Engines -- Fish und Piper buchstabieren
+    ///   „ca." ebenso wie Phonon es mit einer Pause liest. Stil-Tags und
+    ///   Sprechermarker bleiben dabei unberuehrt.
+    fn spoken_text(engine: &EngineImpl, text: &str) -> String {
+        let tagless;
+        let text = if engine.caps().style_tags {
+            text
+        } else {
+            tagless = protocol::strip_tag_spans(text);
+            tagless.as_str()
+        };
+        abbreviations::expand_if_german(text)
     }
 
     /// Dispatch-Punkt der Synthese: ein Cache-Miss in [`Self::fetch_wav`]
@@ -573,13 +636,9 @@ impl TtsCore {
         }
         *self.last_used.lock().unwrap() = Instant::now();
 
-        let port = *self.port.lock().unwrap();
-        let seed = *self.seed.lock().unwrap();
         self.set_phase(TtsPhase::Speaking, None);
         let result = self
             .fetch_and_play_pipelined(
-                port,
-                seed,
                 &sentences,
                 start_index,
                 my_cancel.clone(),
@@ -629,6 +688,12 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
+        // Laeuft gerade ein Stimmwechsel, erst danach Stimme und Engine lesen:
+        // sonst entstuende ein Satz mit der neuen Engine, die noch nicht bereit
+        // ist, oder mit einer halb uebernommenen Stimme.
+        if !self.pass_voice_switch(cancel).await {
+            return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+        }
         let voice = match voice {
             Some(explicit) => Some(explicit.to_string()),
             None => self.voice.lock().unwrap().clone(),
@@ -644,15 +709,15 @@ impl TtsCore {
         if let EngineImpl::Provider(p) = &engine {
             p.guard().map_err(String::from)?;
         }
-        // Ohne Stil-Tags (Piper) fliegen die `[…]`-Tags raus, BEVOR der
-        // Cache-Schluessel entsteht — sonst laese die Engine „calm" vor.
-        let stripped;
-        let text = if engine.caps().style_tags {
-            text
-        } else {
-            stripped = protocol::strip_tag_spans(text);
-            stripped.as_str()
-        };
+        // Der gesprochene Text, BEVOR der Cache-Schluessel entsteht: ohne Stil-Tags
+        // (Piper) fliegen die `[…]`-Tags raus — sonst laese die Engine „calm" vor —,
+        // und in deutschem Text sind Abkuerzungen ausgeschrieben („ca." -> „circa").
+        // Der Schluessel haengt am AUSGESCHRIEBENEN Text: das Audio haengt an ihm,
+        // und schon berechnete Saetze mit „ca." (samt Sprechpause) duerfen den
+        // neuen, pausenlosen nicht ueberdecken. Texte ohne Abkuerzung behalten
+        // ihren bisherigen Schluessel.
+        let text = Self::spoken_text(&engine, text);
+        let text = text.as_str();
         // Unveränderter Satz + gleiche Stimme/Seed/Engine → aus dem Cache,
         // ohne Server. Der Cache-Lookup bleibt VOR der Engine: was schon
         // synthetisiert ist, braucht keine Engine — egal welche.
@@ -778,16 +843,179 @@ impl TtsCore {
             .unwrap_or(1.0)
     }
 
+    /// Stimm-Epoche erhoehen: Stimme oder Engine haben gewechselt (die Einstellungen
+    /// sind schon uebernommen). Die laufende Satz-Pipeline wird geweckt und
+    /// berechnet bereits vorab synthetisierte Folgesaetze der alten Stimme mit der
+    /// neuen neu -- der Satz, der gerade spielt, wird zu Ende gespielt.
+    pub(crate) fn mark_voice_changed(&self) {
+        self.voice_epoch.send_modify(|epoch| *epoch += 1);
+    }
+
+    /// Aktuelle Stimm-Epoche (siehe [`Self::mark_voice_changed`]).
+    pub(crate) fn voice_epoch(&self) -> u64 {
+        *self.voice_epoch.borrow()
+    }
+
+    /// Den Stimmwechsel gegen alle sperren, die gerade synthetisieren wollen:
+    /// solange der Rueckgabewert lebt, warten [`Self::fetch_wav_cancellable`]-Aufrufe.
+    /// Der Wechsel nimmt sie fuer die ganze Uebernahme (Einstellungen lesen, Engine
+    /// bereitmachen, [`Self::mark_voice_changed`]).
+    pub(crate) async fn lock_voice_switch(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.voice_switch.lock().await
+    }
+
+    /// An einem laufenden Stimmwechsel vorbeikommen: im Normalfall ohne Warten
+    /// und ohne `await`, sonst bis er fertig ist. `false`: waehrenddessen
+    /// abgebrochen (Stopp, Pause, neuer Auftrag) -- niemand wartet hier ueber den
+    /// Abbruch hinaus.
+    async fn pass_voice_switch(&self, cancel: Option<&Arc<AtomicBool>>) -> bool {
+        if self.voice_switch.try_lock().is_ok() {
+            return true;
+        }
+        match cancel {
+            None => {
+                drop(self.voice_switch.lock().await);
+                true
+            }
+            Some(flag) => {
+                tokio::select! {
+                    biased;
+                    guard = self.voice_switch.lock() => {
+                        drop(guard);
+                        true
+                    }
+                    _ = wait_cancelled(flag) => false,
+                }
+            }
+        }
+    }
+
+    /// Die Stimme, mit der ein Satz mit dem Sprecher `speaker` JETZT gelesen
+    /// wird. Eine Engine ohne Stimmwechsel oder eine feste Stimme im Stimmenfeld
+    /// liest alles in der eingestellten Stimme (`None`); sonst gilt der Sprecher
+    /// des Skripts. Wird je Satz neu entschieden, damit ein Wechsel mitten im
+    /// Vorlesen auch die Saetze erfasst, die noch kommen.
+    fn utterance_voice(&self, speaker: Option<&String>) -> Option<String> {
+        let fixed = self.fixed_voice.load(Ordering::Acquire);
+        if speaker_markers_apply(self.engine_caps().voice_switching, fixed) {
+            speaker.cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Womit ein Satz mit der Stimme `voice` JETZT synthetisiert wuerde: alles, was
+    /// ausser dem Text in den Cache-Schluessel eingeht (Engine-Tag, Seed, aufgeloeste
+    /// Stimme). Zwei gleiche Werte heissen: dasselbe Audio.
+    fn synth_identity(&self, voice: Option<&str>) -> SynthIdentity {
+        let voice = match voice {
+            Some(explicit) => Some(explicit.to_string()),
+            None => self.voice.lock().unwrap().clone(),
+        };
+        SynthIdentity {
+            engine_tag: self.engine_cache_tag(voice.as_deref()),
+            seed: *self.seed.lock().unwrap(),
+            voice,
+        }
+    }
+
+    /// Gehoert Audio, das mit `identity` berechnet wurde, noch zur aktuellen
+    /// Stimme? Zwei Wechsel hintereinander mit demselben Ergebnis (der
+    /// Einstellungsbefehl und `tts_voice_changed`) werfen damit nichts weg.
+    fn voice_unchanged(&self, identity: &SynthIdentity, speaker: Option<&String>) -> bool {
+        let voice = self.utterance_voice(speaker);
+        self.synth_identity(voice.as_deref()) == *identity
+    }
+
+    /// Alle Stuecke eines Satzes synthetisieren und fuer die Wiedergabe
+    /// aufbereiten: (Bytes, Pegelfaktor) je Stueck, Pausen als Stille dazwischen.
+    /// Port und Seed werden je Stueck frisch gelesen -- ein neuer Seed gilt damit
+    /// schon fuer den naechsten Satz.
+    async fn prepare_sentence(
+        &self,
+        parts: &[protocol::SpeechPart],
+        voice: Option<&str>,
+        cancelled: &Arc<AtomicBool>,
+    ) -> Result<Vec<(Vec<u8>, f32)>, String> {
+        let mut blobs: Vec<(Vec<u8>, f32)> = Vec::new();
+        let mut pending_silence_ms = 0u32;
+        let mut last_rate: Option<u32> = None;
+        for part in parts {
+            match part {
+                protocol::SpeechPart::Silence(ms) => pending_silence_ms += ms,
+                protocol::SpeechPart::Speak(text) => {
+                    let port = *self.port.lock().unwrap();
+                    let seed = *self.seed.lock().unwrap();
+                    // Der naechste Satz wird geholt, WAEHREND der vorige noch
+                    // spielt (siehe `previous_playback` in der Pipeline) —
+                    // deshalb faellt ein Stimmwechsel nicht als Pause auf,
+                    // solange der Server die Referenz im Speicher haelt
+                    // (`use_memory_cache`).
+                    let bytes = self
+                        .fetch_wav_cancellable(port, seed, text, voice, Some(cancelled))
+                        .await?;
+                    let rate = wav_sample_rate(&bytes).unwrap_or(44_100);
+                    last_rate = Some(rate);
+                    // Eine Pause VOR dem ersten gesprochenen Stueck wartet, bis
+                    // die Abtastrate des Nachbarstuecks bekannt ist.
+                    if pending_silence_ms > 0 {
+                        blobs.push((silence_wav(pending_silence_ms, rate), 1.0));
+                        pending_silence_ms = 0;
+                    }
+                    // Aufbereitung vor der Wiedergabe: Raender entschaerfen
+                    // (immer) und Klangbearbeitung (wenn eingeschaltet). Sie
+                    // laeuft, waehrend der vorige Satz noch spielt, faellt also
+                    // nicht als Wartezeit auf.
+                    let strength = *self.enhance.lock().unwrap();
+                    let bytes = prepare_sentence_audio(bytes, strength);
+                    // Stimmen gleich laut: der Pegelausgleich dieses Satzes steht
+                    // fest, der Nutzerregler skaliert ihn live.
+                    let gain = self.playback_gain(voice, &bytes);
+                    // Dauerhaftes Tempo dieser Stimme. NACH der Pegelmessung,
+                    // damit die Lautheit bei der echten Abtastrate gemessen wird.
+                    let bytes = scale_wav_rate(bytes, self.voice_speed(voice));
+                    blobs.push((bytes, gain));
+                }
+            }
+        }
+        // Pause am Satzende: Rate des letzten Stuecks, sonst die uebliche.
+        if pending_silence_ms > 0 {
+            blobs.push((
+                silence_wav(pending_silence_ms, last_rate.unwrap_or(44_100)),
+                1.0,
+            ));
+        }
+        Ok(blobs)
+    }
+
     /// Satz-Pipeline: Satz N wird abgespielt, während Satz N+1 bereits beim
     /// Server liegt. Die gefühlte Latenz ist damit die Synthese des ersten
     /// Satzes; bei RTF < 1 (compile) bleibt die Wiedergabe lückenlos.
     /// `on_played` feuert nach jedem vollständig abgespielten Satz mit dessen
     /// absolutem Index — bei Abbruch mitten im Satz feuert es NICHT (der Satz
     /// wird beim Fortsetzen erneut gehört, wie bei einem Hörbuch üblich).
+    ///
+    /// ## Stimmwechsel mitten im Vorlesen
+    ///
+    /// Die Stimme wird je Satz entschieden, nicht je Lauf. Ein Wechsel
+    /// ([`Self::mark_voice_changed`]) startet KEINE neue Sitzung: der Satz, der
+    /// spielt, läuft zu Ende, und ab dem nächsten liest die neue Stimme. Dafür
+    /// hält die Pipeline zu jedem vorab berechneten Satz fest, womit er berechnet
+    /// wurde ([`SynthIdentity`]), und prüft das
+    ///
+    /// * wenn die Epoche sich ändert, während der Folgesatz noch berechnet wird
+    ///   (die Berechnung wird fallengelassen und mit der neuen Stimme neu
+    ///   gestartet, sofort);
+    /// * wenn die Epoche sich ändert, während der fertige Folgesatz auf das Ende
+    ///   des laufenden wartet (er wird verworfen und neu berechnet, der laufende
+    ///   Satz spielt derweil weiter);
+    /// * unmittelbar vor dem Abspielen noch einmal, auch ohne Benachrichtigung.
+    ///
+    /// Es liegt nie mehr als ein Satz voraus; verworfenes Audio belegt keinen
+    /// Speicher über den Satz hinaus. Der Player selbst (der Audio-Thread) wird
+    /// nicht angefasst.
     async fn fetch_and_play_pipelined(
         &self,
-        port: u16,
-        seed: i64,
         sentences: &[Utterance],
         start_index: usize,
         cancelled: Arc<AtomicBool>,
@@ -805,6 +1033,7 @@ impl TtsCore {
         )> = None;
         let mut total_bytes = 0usize;
         let mut failure: Option<String> = None;
+        let mut epoch = self.voice_epoch.subscribe();
 
         let notify = |idx: usize, was_cancelled: bool| {
             if was_cancelled {
@@ -820,7 +1049,9 @@ impl TtsCore {
             }
         };
 
-        for (offset, (sentence, voice)) in sentences.iter().enumerate().skip(start_index) {
+        'sentences: for (offset, (sentence, speaker)) in
+            sentences.iter().enumerate().skip(start_index)
+        {
             if cancelled.load(Ordering::Acquire) {
                 break;
             }
@@ -833,78 +1064,95 @@ impl TtsCore {
             // Server nie zu sehen bekommt, kann er auch nicht vorlesen.
             // Stille erzeugen wir selbst — verlaesslich, in jeder Sprache.
             let parts = protocol::split_pauses(&prepared.text);
-            // Abspielstuecke dieses Satzes: (Bytes, Pegelfaktor).
-            let mut blobs: Vec<(Vec<u8>, f32)> = Vec::new();
-            let mut pending_silence_ms = 0u32;
-            let mut last_rate: Option<u32> = None;
-            for part in &parts {
-                match part {
-                    protocol::SpeechPart::Silence(ms) => pending_silence_ms += ms,
-                    protocol::SpeechPart::Speak(text) => {
-                        // Der naechste Satz wird geholt, WAEHREND der vorige
-                        // noch spielt (siehe `previous_playback` unten) —
-                        // deshalb faellt ein Stimmwechsel nicht als Pause auf,
-                        // solange der Server die Referenz im Speicher haelt
-                        // (`use_memory_cache`).
-                        match self
-                            .fetch_wav_cancellable(
-                                port,
-                                seed,
-                                text,
-                                voice.as_deref(),
-                                Some(&cancelled),
-                            )
-                            .await
-                        {
-                            Ok(bytes) => {
-                                let rate = wav_sample_rate(&bytes).unwrap_or(44_100);
-                                last_rate = Some(rate);
-                                // Eine Pause VOR dem ersten gesprochenen
-                                // Stueck wartet, bis die Abtastrate des
-                                // Nachbarstuecks bekannt ist.
-                                if pending_silence_ms > 0 {
-                                    blobs.push((silence_wav(pending_silence_ms, rate), 1.0));
-                                    pending_silence_ms = 0;
+
+            // Abspielstuecke dieses Satzes: (Bytes, Pegelfaktor). Jede Runde
+            // rechnet den Satz mit der Stimme, die JETZT gilt; ein Wechsel
+            // schickt uns zurueck an den Anfang der Runde.
+            let blobs = 'ready: loop {
+                // ZUERST als gesehen markieren, DANN die Stimme lesen: ein Wechsel
+                // dazwischen weckt uns (harmlos, wenn er schon in `identity` steckt),
+                // statt unbemerkt zu bleiben.
+                epoch.borrow_and_update();
+                let voice = self.utterance_voice(speaker.as_ref());
+                let identity = self.synth_identity(voice.as_deref());
+
+                // 1. Satz berechnen, solange er noch zur Stimme passt.
+                let computed = {
+                    let work = self.prepare_sentence(&parts, voice.as_deref(), &cancelled);
+                    tokio::pin!(work);
+                    loop {
+                        tokio::select! {
+                            biased;
+                            result = &mut work => break result,
+                            _ = epoch.changed() => {
+                                if self.voice_unchanged(&identity, speaker.as_ref()) {
+                                    continue;
                                 }
-                                // Aufbereitung vor der Wiedergabe: Raender
-                                // entschaerfen (immer) und Klangbearbeitung
-                                // (wenn eingeschaltet). Sie laeuft, waehrend
-                                // der vorige Satz noch spielt, faellt also
-                                // nicht als Wartezeit auf.
-                                let strength = *self.enhance.lock().unwrap();
-                                let bytes = prepare_sentence_audio(bytes, strength);
-                                // Stimmen gleich laut: der Pegelausgleich
-                                // dieses Satzes steht fest, der Nutzerregler
-                                // skaliert ihn live.
-                                let gain = self.playback_gain(voice.as_deref(), &bytes);
-                                // Dauerhaftes Tempo dieser Stimme. NACH der
-                                // Pegelmessung, damit die Lautheit bei der
-                                // echten Abtastrate gemessen wird.
-                                let bytes =
-                                    scale_wav_rate(bytes, self.voice_speed(voice.as_deref()));
-                                blobs.push((bytes, gain));
+                                // Neue Stimme: die Berechnung faellt weg, die neue
+                                // beginnt sofort.
+                                continue 'ready;
                             }
-                            // Ein Abbruch mitten in der Synthese (Anbieter) ist
-                            // kein Fehler des Vorlesens.
-                            Err(_) if cancelled.load(Ordering::Acquire) => break,
-                            Err(e) => {
-                                failure = Some(e);
-                                break;
+                            _ = wait_cancelled(&cancelled) => {
+                                break Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
                             }
                         }
                     }
+                };
+                let blobs = match computed {
+                    Ok(blobs) => blobs,
+                    // Ein Abbruch mitten in der Synthese (Anbieter) ist kein
+                    // Fehler des Vorlesens.
+                    Err(_) if cancelled.load(Ordering::Acquire) => break 'sentences,
+                    Err(e) => {
+                        failure = Some(e);
+                        break 'sentences;
+                    }
+                };
+
+                // 2. Auf den vorigen Satz warten. Wechselt die Stimme in dieser
+                // Zeit, ist der fertige Satz veraltet: er wird verworfen und mit
+                // der neuen Stimme neu berechnet, waehrend der vorige weiterspielt.
+                if let Some((done_idx, mut handle)) = previous_playback.take() {
+                    let joined = loop {
+                        tokio::select! {
+                            biased;
+                            result = &mut handle => break Some(result),
+                            _ = epoch.changed() => {
+                                if self.voice_unchanged(&identity, speaker.as_ref()) {
+                                    continue;
+                                }
+                                break None;
+                            }
+                        }
+                    };
+                    match joined {
+                        None => {
+                            previous_playback = Some((done_idx, handle));
+                            continue 'ready;
+                        }
+                        Some(Ok(Ok(()))) => {
+                            notify_opt(done_idx, cancelled.load(Ordering::Acquire));
+                        }
+                        Some(Ok(Err(e))) => {
+                            failure = Some(e);
+                            break 'sentences;
+                        }
+                        Some(Err(e)) => {
+                            failure = Some(e.to_string());
+                            break 'sentences;
+                        }
+                    }
                 }
-            }
-            if failure.is_some() {
-                break;
-            }
-            // Pause am Satzende: Rate des letzten Stuecks, sonst die uebliche.
-            if pending_silence_ms > 0 {
-                blobs.push((
-                    silence_wav(pending_silence_ms, last_rate.unwrap_or(44_100)),
-                    1.0,
-                ));
-            }
+
+                // 3. Unmittelbar vor dem Abspielen: gehoert das Audio noch zur
+                // aktuellen Stimme? (Faengt auch einen Wechsel ab, dessen
+                // Benachrichtigung gerade erst eintrifft.)
+                if !self.voice_unchanged(&identity, speaker.as_ref()) {
+                    continue 'ready;
+                }
+                break blobs;
+            };
+
             if blobs.is_empty() {
                 notify(offset, cancelled.load(Ordering::Acquire));
                 continue;
@@ -1705,6 +1953,9 @@ impl TtsManager {
         self.core.controls.set_speed(settings.tts_speed);
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
+        self.core
+            .fixed_voice
+            .store(settings.tts_voice.is_some(), Ordering::Release);
         *self.core.voice.lock().unwrap() = settings.tts_voice;
         // Dauerhafte Klangregler der Stimmen einmal je Auftrag von der Platte
         // holen — nicht je Satz. Stimmen ohne `sound` stehen gar nicht erst
@@ -1969,31 +2220,46 @@ impl TtsManager {
             .collect()
     }
 
-    /// Die gewaehlte Stimme oder Engine hat sich geaendert: Einstellungen sofort
-    /// in den Kern uebernehmen. Laeuft gerade ein Vorlesen, geht es mit dem
-    /// Satz weiter, der gerade zu hoeren ist -- in der neuen Stimme (die schon
-    /// erzeugten Saetze der alten waeren sonst noch zu hoeren). Bei Pause oder
-    /// Stopp genuegt die Uebernahme; Fortsetzen liest ohnehin neu ein.
+    /// Die gewaehlte Stimme oder Engine hat sich geaendert (die Einstellungen sind
+    /// schon geschrieben): sofort gelten lassen, auch mitten im Vorlesen -- ohne die
+    /// Wiedergabe zu stoeren. Der Satz, der gerade zu hoeren ist, wird zu Ende
+    /// gespielt, und ab dem naechsten liest die neue Stimme; schon berechnete
+    /// Folgesaetze der alten Stimme werden verworfen und neu berechnet, sofort und
+    /// waehrend der aktuelle Satz noch spielt (siehe `TtsCore::fetch_and_play_pipelined`).
+    /// Es startet KEINE neue Sitzung: kein Pausieren, kein Zurueckspringen, und der
+    /// ursprüngliche Sprechbefehl der Oberflaeche laeuft einfach weiter.
+    ///
+    /// Die Uebernahme laeuft im Hintergrund und kehrt sofort zurueck: eine Engine,
+    /// die erst bereit gemacht werden muss (Fish-Server starten), kann Minuten dauern.
     pub async fn voice_changed(self: &Arc<Self>) {
-        self.refresh_from_settings();
-        if self.core.phase() != TtsPhase::Speaking {
-            return;
-        }
-        let (sentences, position) = {
-            let guard = self.speak_session.lock().unwrap();
-            match guard.as_ref() {
-                Some(session) if session.position < session.sentences.len() => {
-                    (session.sentences.clone(), session.position)
-                }
-                _ => return,
-            }
-        };
         let manager = Arc::clone(self);
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = manager.run_speak_session(sentences, position).await {
-                log::warn!("Stimmenwechsel beim Vorlesen: {e}");
+        tauri::async_runtime::spawn(async move { manager.switch_voice().await });
+    }
+
+    /// Die Uebernahme eines Stimm- oder Engine-Wechsels, unter der Wechsel-Sperre:
+    /// wer synthetisieren will, wartet, bis sie durch ist, und sieht nie einen halb
+    /// uebernommenen Stand.
+    ///
+    /// * Einstellungen in den Kern spiegeln.
+    /// * Laeuft gerade ein Vorlesen (Phase `Speaking`): die neue Engine bereitmachen
+    ///   und die Seed-Referenz der Standardstimme binden, BEVOR der naechste Satz mit
+    ///   ihr berechnet wird. Bei Pause, Stopp und waehrend des Serverstarts
+    ///   (`Starting`) wird nichts gestartet -- ein Stimmwechsel darf keinen
+    ///   17-GB-Server anwerfen; die startende bzw. fortsetzende Sitzung liest die
+    ///   neue Stimme selbst ein (`run_speak_session` merkt die neue Epoche).
+    /// * Epoche erhoehen: die laufende Pipeline stellt um.
+    async fn switch_voice(self: &Arc<Self>) {
+        let _switch = self.core.lock_voice_switch().await;
+        self.refresh_from_settings();
+        if self.core.phase() == TtsPhase::Speaking {
+            // Scheitert das, meldet der naechste Satz den Grund der Engine selbst
+            // (Fehlerphase und Meldung wie bei jedem anderen Syntheseausfall).
+            if let Err(e) = self.ensure_engine_ready().await {
+                log::warn!("Stimmwechsel beim Vorlesen: Engine nicht bereit: {e}");
             }
-        });
+            self.bind_seed_voice().await;
+        }
+        self.core.mark_voice_changed();
     }
 
     /// Pausiertes Freitext-Vorlesen ab dem letzten vollständig gehörten Satz
@@ -2043,37 +2309,52 @@ impl TtsManager {
         start: usize,
     ) -> Result<usize, String> {
         use tauri::Emitter;
-        self.refresh_from_settings();
+        // Der Zaehler steht SOFORT: noch vor dem (womoeglich minutenlangen)
+        // Serverstart und vor der ersten Synthese. `position` = vollstaendig
+        // gesprochene Saetze, hier also die Startposition; die Oberflaeche zeigt
+        // daraus "n/m" mit dem Satz, der als naechster zu hoeren ist.
+        let _ = self.app.emit(
+            "tts-speak-progress",
+            speak_progress_payload(start.min(sentences.len()), sentences.len()),
+        );
         // Das Vorlesen gewinnt: eine laufende Probestimme eines Anbieters
         // verstummt, statt sich mit ihm zu überlagern.
         self.provider_preview.cancel_active();
-        // Auch eine schon berechnete Sitzung (Fortsetzen nach Pause, Wechsel
-        // der Stimme mitten im Text) liest mit der JETZT gewaehlten Stimme:
-        // gilt keine Sprecherzuordnung, tragen die Saetze keine eigene Stimme.
-        let single = self.core.voice.lock().unwrap().is_some();
-        let sentences = without_speakers_unless_switching(
-            sentences,
-            self.core.engine_caps().voice_switching,
-            single,
-        );
-        let texts: Vec<String> = sentences[start.min(sentences.len())..]
-            .iter()
-            .map(|(text, _)| text.clone())
-            .collect();
-        self.ensure_server_for(&texts).await?;
-        // Standardstimme an ihre Referenz binden, damit sie ueber Saetze
-        // hinweg dieselbe bleibt (siehe ensure_seed_reference).
-        self.bind_seed_voice().await;
-        let total = sentences.len() as u32;
+        // Engine bereitmachen. Dauert das (Serverstart: bis zu Minuten) und
+        // wechselt die Stimme in dieser Zeit, gilt die neue -- also noch einmal
+        // einlesen und bereitmachen, bis die Epoche stillsteht. Auch eine schon
+        // berechnete Sitzung (Fortsetzen nach Pause) liest mit der JETZT gewaehlten
+        // Stimme: gilt keine Sprecherzuordnung, tragen die Saetze keine eigene Stimme.
+        let sentences = loop {
+            let epoch = self.core.voice_epoch();
+            self.refresh_from_settings();
+            let single = self.core.fixed_voice.load(Ordering::Acquire);
+            let current = without_speakers_unless_switching(
+                sentences.clone(),
+                self.core.engine_caps().voice_switching,
+                single,
+            );
+            let texts: Vec<String> = current[start.min(current.len())..]
+                .iter()
+                .map(|(text, _)| text.clone())
+                .collect();
+            self.ensure_server_for(&texts).await?;
+            // Standardstimme an ihre Referenz binden, damit sie ueber Saetze
+            // hinweg dieselbe bleibt (siehe ensure_seed_reference).
+            self.bind_seed_voice().await;
+            if self.core.voice_epoch() == epoch {
+                break current;
+            }
+        };
+        let total = sentences.len();
         let cb_manager = Arc::clone(self);
         let on_played: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(move |idx| {
             if let Some(session) = cb_manager.speak_session.lock().unwrap().as_mut() {
                 session.position = idx + 1;
             }
-            let _ = cb_manager.app.emit(
-                "tts-speak-progress",
-                serde_json::json!({ "position": idx as u32 + 1, "total": total }),
-            );
+            let _ = cb_manager
+                .app
+                .emit("tts-speak-progress", speak_progress_payload(idx + 1, total));
         });
         // Live-Anzeige des Satzes, der gerade zu hören ist.
         let now_manager = Arc::clone(self);
@@ -2819,8 +3100,9 @@ impl TtsManager {
         let voice = self.core.voice.lock().unwrap().clone();
         let format = self.core.export_format.lock().unwrap().clone();
         let url = format!("{}/v1/tts", protocol::base_url(port));
-        let body =
-            protocol::tts_request_body_in_format(&prepared.text, seed, voice.as_deref(), &format);
+        // Derselbe gesprochene Text wie beim Vorlesen (Abkuerzungen ausgeschrieben).
+        let spoken = TtsCore::spoken_text(&EngineImpl::Fish, &prepared.text);
+        let body = protocol::tts_request_body_in_format(&spoken, seed, voice.as_deref(), &format);
         let resp = self
             .core
             .http
@@ -3491,7 +3773,6 @@ impl TtsManager {
     /// ein Sprung um 15 Sekunden gaebe es hier gar nicht. Der Satz ist die
     /// Einheit, in der man sich in vorgelesenem Text bewegt.
     pub async fn speak_seek(self: &Arc<Self>, delta: i32) -> Result<usize, String> {
-        use tauri::Emitter;
         let (sentences, target) = {
             let mut guard = self.speak_session.lock().unwrap();
             let session = guard.as_mut().ok_or("nichts zum Springen")?;
@@ -3500,15 +3781,12 @@ impl TtsManager {
             session.position = next as usize;
             (session.sentences.clone(), next as usize)
         };
-        // Die neue Position melden. Ohne das erfuhr die Oberfläche vom Sprung
-        // nichts: ihr "Fortsetzen möglich" hängt am Fortschritt, und der kam
-        // bisher nur, wenn ein Satz VOLLSTÄNDIG gespielt wurde. Wer sprang und
-        // dann pausierte, bekam beim nächsten Druck auf Play einen Neustart
-        // von vorn statt der Fortsetzung an der Sprungmarke.
-        let _ = self.app.emit(
-            "tts-speak-progress",
-            serde_json::json!({ "position": target as u32, "total": sentences.len() as u32 }),
-        );
+        // Die neue Position meldet `run_speak_session` gleich zu Beginn (jeder Lauf
+        // tut das). Ohne diese Meldung erfuhr die Oberfläche vom Sprung nichts:
+        // ihr "Fortsetzen möglich" hängt am Fortschritt, und der kam sonst nur,
+        // wenn ein Satz VOLLSTÄNDIG gespielt wurde. Wer sprang und dann pausierte,
+        // bekam beim nächsten Druck auf Play einen Neustart von vorn statt der
+        // Fortsetzung an der Sprungmarke.
         self.run_speak_session(sentences, target).await
     }
 
@@ -3520,38 +3798,18 @@ impl TtsManager {
         &self.core.controls
     }
 
-    /// Die aktive Stimme hat sich geändert — sofort übernehmen.
-    ///
-    /// Während des Vorlesens genügt es NICHT, die Einstellung zu spiegeln: die
-    /// Satz-Pipeline holt den nächsten Satz bereits, während der aktuelle noch
-    /// spielt, ein Wechsel wäre also erst zwei Sätze später zu hören. Läuft
-    /// gerade eine Wiedergabe, beginnt sie deshalb beim aktuellen Satz neu —
-    /// der wird in der neuen Stimme wiederholt, und ab da gilt sie.
+    /// Die aktive Stimme (oder der Seed, der die Standardstimme IST) hat sich
+    /// geändert — sofort übernehmen, auch mitten im Vorlesen. Gleicher Weg wie
+    /// [`Self::voice_changed`]: der laufende Satz wird zu Ende gespielt, ab dem
+    /// nächsten liest die neue Stimme, ohne Neustart der Sitzung. (Früher begann die
+    /// Wiedergabe beim aktuellen Satz von vorn; das war ein hörbarer Sprung.)
     ///
     /// Sätze mit ausdrücklicher Stimme (Dialogzeilen wie `olga:`) bleiben
-    /// unberührt: dort hat der Text die Stimme bestimmt, nicht die Einstellung.
+    /// unberührt, solange im Stimmenfeld keine feste Stimme gewählt ist: dort hat
+    /// der Text die Stimme bestimmt, nicht die Einstellung.
     pub fn apply_voice_change(self: &Arc<Self>) {
-        self.refresh_from_settings();
-        if self.core.phase() != TtsPhase::Speaking {
-            return;
-        }
-        let Some((sentences, position)) = ({
-            let guard = self.speak_session.lock().unwrap();
-            guard
-                .as_ref()
-                .map(|session| (session.sentences.clone(), session.position))
-        }) else {
-            return;
-        };
-        if position >= sentences.len() {
-            return;
-        }
         let manager = Arc::clone(self);
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = manager.run_speak_session(sentences, position).await {
-                log::warn!("voice change restart failed: {e}");
-            }
-        });
+        tauri::async_runtime::spawn(async move { manager.switch_voice().await });
     }
 
     /// Laufenden Datei-Export abbrechen.
@@ -4513,6 +4771,13 @@ impl TtsManager {
 /// Ausgabe ist seit Jahrzehnten stabil, und der Alternativweg (IP Helper API)
 /// waere fuer eine einzige Abfrage viel unsafe-Code.
 /// PID des Prozesses, der auf `port` lauscht.
+/// Nutzlast von `tts-speak-progress`: `position` = vollständig gesprochene Sätze
+/// (bei einem Start also die Startposition), `total` = Zahl aller Sätze der
+/// Sitzung.
+fn speak_progress_payload(position: usize, total: usize) -> serde_json::Value {
+    serde_json::json!({ "position": position as u32, "total": total as u32 })
+}
+
 /// Ob die Sprechermarker im Skript die Stimme schalten: nur mit einer
 /// Engine, die Stimmen wechseln kann, UND bei "Skript mit Sprechern"
 /// (keine feste Stimme gewaehlt). Sonst liest die gewaehlte Stimme alles.
@@ -5139,8 +5404,49 @@ mod tests {
     /// Zweite Engine im Kleinen: liefert fertige WAV-Blobs ohne jeden
     /// Server und zählt ihre Aufrufe — die Trait-Implementierung, mit der
     /// die Naht bewiesen wird.
+    ///
+    /// Für die Pipeline-Tests schreibt sie außerdem mit, WAS sie wann berechnet
+    /// (`started`/`finished`), kann je Auftrag auf ein Permit warten (`gate`) und
+    /// legt Engine, Stimme und Text als Beschriftung ins WAV, damit ein Player
+    /// erkennt, was er spielt. Standard: wie Piper (ohne Stil-Tags, ohne Stimmwechsel).
     pub(super) struct MockEngine {
         pub(super) calls: AtomicUsize,
+        /// Vorsatz des Cache-Tags: unterscheidet zwei Engines mit derselben Stimme.
+        pub(super) tag: &'static str,
+        pub(super) voice_switching: AtomicBool,
+        pub(super) style_tags: AtomicBool,
+        /// Beginn jedes Syntheseauftrags (Text, Stimme), in der Reihenfolge des Beginns.
+        pub(super) started: Mutex<Vec<(String, Option<String>)>>,
+        /// Ende jedes Auftrags — nicht, wenn er vorher fallengelassen wurde.
+        pub(super) finished: Mutex<Vec<(String, Option<String>)>>,
+        /// Gesetzt: jeder Auftrag wartet auf ein Permit, bis der Test es gibt.
+        pub(super) gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
+    }
+
+    impl MockEngine {
+        pub(super) fn new() -> Self {
+            Self::tagged("mock")
+        }
+
+        pub(super) fn tagged(tag: &'static str) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                tag,
+                voice_switching: AtomicBool::new(false),
+                style_tags: AtomicBool::new(false),
+                started: Mutex::new(Vec::new()),
+                finished: Mutex::new(Vec::new()),
+                gate: Mutex::new(None),
+            }
+        }
+
+        pub(super) fn started(&self) -> Vec<(String, Option<String>)> {
+            self.started.lock().unwrap().clone()
+        }
+
+        pub(super) fn finished(&self) -> Vec<(String, Option<String>)> {
+            self.finished.lock().unwrap().clone()
+        }
     }
 
     impl engine::TtsEngine for MockEngine {
@@ -5150,9 +5456,9 @@ mod tests {
 
         fn caps(&self) -> EngineCaps {
             EngineCaps {
-                style_tags: false,
+                style_tags: self.style_tags.load(Ordering::SeqCst),
                 cloning: false,
-                voice_switching: false,
+                voice_switching: self.voice_switching.load(Ordering::SeqCst),
                 streaming: false,
                 needs_gpu: false,
                 export_formats: &["wav"],
@@ -5160,17 +5466,27 @@ mod tests {
         }
 
         fn cache_tag(&self, voice: Option<&str>) -> String {
-            format!("mock/{}", voice.unwrap_or("standard"))
+            format!("{}/{}", self.tag, voice.unwrap_or("standard"))
         }
 
         async fn ensure_ready(&self) -> Result<(), String> {
             Ok(())
         }
 
-        async fn synthesize(&self, _req: engine::SynthesisRequest<'_>) -> Result<Vec<u8>, String> {
+        async fn synthesize(&self, req: engine::SynthesisRequest<'_>) -> Result<Vec<u8>, String> {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            let job = (req.text.to_string(), req.voice.map(str::to_string));
+            self.started.lock().unwrap().push(job.clone());
+            let gate = self.gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                gate.acquire().await.map_err(|e| e.to_string())?.forget();
+            }
+            self.finished.lock().unwrap().push(job);
+            // Beschriftung "<engine>|<stimme>|<text>" hinter dem RIFF-Kennwort.
+            let label = format!("{}|{}|{}", self.tag, req.voice.unwrap_or("-"), req.text);
             let mut wav = b"RIFF".to_vec();
-            wav.extend_from_slice(&[0u8; 4096]);
+            wav.extend_from_slice(label.as_bytes());
+            wav.resize(4100, 0);
             Ok(wav)
         }
     }
@@ -5181,9 +5497,7 @@ mod tests {
     async fn eine_mock_engine_traegt_die_synthese_ohne_jeden_server() {
         // Port 1: kein Server. Was hier spielt, kam durch die Engine-Naht.
         let core = TtsCore::for_test(1);
-        let mock = Arc::new(MockEngine {
-            calls: AtomicUsize::new(0),
-        });
+        let mock = Arc::new(MockEngine::new());
         *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&mock));
 
         let played = core
@@ -5201,9 +5515,7 @@ mod tests {
     #[tokio::test]
     async fn der_cache_trennt_die_engines_ueber_den_tag() {
         let core = TtsCore::for_test(1);
-        let mock = Arc::new(MockEngine {
-            calls: AtomicUsize::new(0),
-        });
+        let mock = Arc::new(MockEngine::new());
         *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&mock));
         let text = "Dieser Satz wird nur ein einziges Mal synthetisiert.";
 
@@ -5444,5 +5756,631 @@ mod tests {
         sound_for(&core, "pyrion", 1.0, -6.0);
         let mit = core.playback_gain(Some("pyrion"), &wav);
         assert!((mit / ohne - 0.501).abs() < 0.01, "{mit} vs {ohne}");
+    }
+
+    // ------------------------------------------------------------------
+    // Stimmwechsel mitten im Vorlesen: nahtlos, ohne neue Sitzung
+    // ------------------------------------------------------------------
+
+    /// Spielt nichts, sondern merkt sich, WAS (Beschriftung aus dem Mock-WAV) in
+    /// welcher Reihenfolge gespielt wird, und wartet -- wenn gesperrt -- je Satz
+    /// auf eine Freigabe: so bestimmt der Test, wann ein Satz "zu Ende
+    /// gespielt" ist. Ein gesetztes Abbruch-Flag beendet das Warten sofort,
+    /// wie beim echten Player.
+    struct ScriptedPlayer {
+        gated: AtomicBool,
+        permits: std::sync::Mutex<usize>,
+        wake: std::sync::Condvar,
+        started: std::sync::Mutex<Vec<String>>,
+        returned: std::sync::Mutex<Vec<(String, bool)>>,
+    }
+
+    impl ScriptedPlayer {
+        fn new() -> Self {
+            Self {
+                gated: AtomicBool::new(false),
+                permits: std::sync::Mutex::new(0),
+                wake: std::sync::Condvar::new(),
+                started: std::sync::Mutex::new(Vec::new()),
+                returned: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        /// Ab jetzt wartet jeder Satz auf `release`.
+        fn gate_playback(&self) {
+            self.gated.store(true, Ordering::SeqCst);
+        }
+
+        fn release(&self, n: usize) {
+            *self.permits.lock().unwrap() += n;
+            self.wake.notify_all();
+        }
+
+        /// Beschriftungen der Saetze, die zu spielen begonnen haben.
+        fn started(&self) -> Vec<String> {
+            self.started.lock().unwrap().clone()
+        }
+
+        /// (Beschriftung, Abbruch-Flag beim Ende) der Saetze, die zurueckgekehrt sind.
+        fn returned(&self) -> Vec<(String, bool)> {
+            self.returned.lock().unwrap().clone()
+        }
+    }
+
+    impl Player for ScriptedPlayer {
+        fn play(
+            &self,
+            wav: Vec<u8>,
+            _device: Option<String>,
+            _gain: f32,
+            _controls: Arc<PlaybackControls>,
+            cancelled: Arc<AtomicBool>,
+        ) -> Result<(), String> {
+            let body = &wav[4..];
+            let end = body.iter().position(|b| *b == 0).unwrap_or(body.len());
+            let label = String::from_utf8_lossy(&body[..end]).to_string();
+            self.started.lock().unwrap().push(label.clone());
+            if self.gated.load(Ordering::SeqCst) {
+                let mut permits = self.permits.lock().unwrap();
+                loop {
+                    if *permits > 0 {
+                        *permits -= 1;
+                        break;
+                    }
+                    if cancelled.load(Ordering::Acquire) {
+                        break;
+                    }
+                    permits = self
+                        .wake
+                        .wait_timeout(permits, Duration::from_millis(5))
+                        .unwrap()
+                        .0;
+                }
+            }
+            self.returned
+                .lock()
+                .unwrap()
+                .push((label, cancelled.load(Ordering::Acquire)));
+            Ok(())
+        }
+    }
+
+    /// Kern mit Mock-Engine und mitschreibendem Player; `voice` ist die
+    /// eingestellte Stimme.
+    struct Stage {
+        core: Arc<TtsCore>,
+        engine: Arc<MockEngine>,
+        player: Arc<ScriptedPlayer>,
+    }
+
+    fn stage(voice: &str) -> Stage {
+        let player = Arc::new(ScriptedPlayer::new());
+        let core = Arc::new(TtsCore::new(player.clone()));
+        let engine = Arc::new(MockEngine::new());
+        *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&engine));
+        *core.voice.lock().unwrap() = Some(voice.to_string());
+        Stage {
+            core,
+            engine,
+            player,
+        }
+    }
+
+    impl Stage {
+        /// Die Sitzung in einem eigenen Task starten (wie `run_speak_session`).
+        fn run(&self, sentences: &[&str]) -> tokio::task::JoinHandle<Result<usize, String>> {
+            let core = Arc::clone(&self.core);
+            let list = single_voice(sentences.iter().map(|s| s.to_string()).collect());
+            tokio::spawn(async move { core.speak_sentence_run(list, 0, None, None).await })
+        }
+
+        /// Was der Stimmwechsel des Managers tut, ohne App: Einstellung
+        /// uebernehmen, dann die Epoche erhoehen.
+        fn switch_voice(&self, voice: &str) {
+            *self.core.voice.lock().unwrap() = Some(voice.to_string());
+            self.core.mark_voice_changed();
+        }
+    }
+
+    const SAETZE: [&str; 3] = ["Satz eins.", "Satz zwei.", "Satz drei."];
+
+    fn job(text: &str, voice: &str) -> (String, Option<String>) {
+        (text.to_string(), Some(voice.to_string()))
+    }
+
+    fn spielt(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    async fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
+        for _ in 0..600 {
+            if ready() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        panic!("Zeitüberschreitung beim Warten auf: {what}");
+    }
+
+    /// Das Ende der Sitzung abwarten -- höchstens 5 s, sonst hängt etwas.
+    async fn finish(run: tokio::task::JoinHandle<Result<usize, String>>) -> Result<usize, String> {
+        tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("die Sitzung endet nicht")
+            .expect("der Sitzungs-Task ist abgestürzt")
+    }
+
+    /// FEHLERFALL "Wechsel mitten in der Berechnung des Folgesatzes": Satz 1
+    /// spielt, Satz 2 wird gerade mit der alten Stimme berechnet. Der Wechsel
+    /// verwirft diese Berechnung und beginnt SOFORT mit der neuen -- während Satz 1
+    /// noch spielt (er wird nicht angetastet), ohne zweite Sitzung.
+    #[tokio::test]
+    async fn wechsel_mitten_in_der_berechnung_des_folgesatzes_stellt_sofort_um() {
+        let stage = stage("A");
+        // Nur der erste Satz darf fertig werden; der zweite haengt in der Synthese.
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+        let generation = stage.core.generation.load(Ordering::SeqCst);
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 (A) beginnt", || stage.engine.started().len() == 2).await;
+        stage.switch_voice("B");
+        // Sofort -- der Player ist noch nicht freigegeben, Satz 1 spielt noch.
+        wait_until("Satz 2 (B) beginnt", || stage.engine.started().len() == 3).await;
+        assert_eq!(stage.player.started(), spielt(&["mock|A|Satz eins."]));
+        assert!(
+            stage.player.returned().is_empty(),
+            "der laufende Satz darf nicht angetastet werden"
+        );
+
+        gate.add_permits(10);
+        stage.player.release(10);
+        finish(run).await.unwrap();
+
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ]),
+            "ab dem naechsten Satz liest die neue Stimme, ein alter Satz kommt nicht mehr"
+        );
+        assert!(
+            stage
+                .player
+                .returned()
+                .iter()
+                .all(|(_, cancelled)| !cancelled),
+            "nichts wurde abgebrochen"
+        );
+        assert!(
+            !stage.engine.finished().contains(&job("Satz zwei.", "A")),
+            "die verworfene Berechnung wurde nie fertig"
+        );
+        assert_eq!(
+            stage.core.generation.load(Ordering::SeqCst),
+            generation + 1,
+            "es gab genau EINE Sitzung -- kein Neustart"
+        );
+    }
+
+    /// FEHLERFALL "Wechsel kurz vor Ende des Satzes": der Folgesatz ist mit der
+    /// alten Stimme schon FERTIG und wartet auf das Ende des laufenden. Er wird
+    /// verworfen und neu berechnet, waehrend der laufende noch spielt.
+    #[tokio::test]
+    async fn wechsel_kurz_vor_dem_ende_verwirft_den_fertigen_folgesatz() {
+        let stage = stage("A");
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 (A) ist fertig", || {
+            stage.engine.finished().len() == 2
+        })
+        .await;
+        stage.switch_voice("B");
+        wait_until("Satz 2 (B) beginnt", || stage.engine.started().len() == 3).await;
+        assert_eq!(
+            stage.player.started(),
+            spielt(&["mock|A|Satz eins."]),
+            "Satz 1 spielt noch, die Neuberechnung lief schon"
+        );
+
+        stage.player.release(10);
+        finish(run).await.unwrap();
+
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
+        // Cache-Schluessel je Stimme: das fertige Audio der alten Stimme bleibt unter
+        // ihr liegen (Zurueckwechseln kostet nichts), das der neuen unter ihr.
+        assert!(stage.core.has_cached_for("Satz zwei.", Some("A")));
+        assert!(stage.core.has_cached_for("Satz zwei.", Some("B")));
+        assert!(stage.core.has_cached_for("Satz drei.", Some("B")));
+        assert!(!stage.core.has_cached_for("Satz drei.", Some("A")));
+    }
+
+    /// Sicherheitsnetz: selbst wenn die Benachrichtigung nie ankommt, prueft die
+    /// Pipeline UNMITTELBAR vor dem Abspielen, ob das Audio noch zur aktuellen
+    /// Stimme gehoert. Hier wird die Stimme ohne `mark_voice_changed` umgestellt.
+    #[tokio::test]
+    async fn ein_wechsel_ohne_benachrichtigung_wird_vor_dem_abspielen_bemerkt() {
+        let stage = stage("A");
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 (A) ist fertig", || {
+            stage.engine.finished().len() == 2
+        })
+        .await;
+        *stage.core.voice.lock().unwrap() = Some("B".to_string());
+        stage.player.release(10);
+        finish(run).await.unwrap();
+
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ]),
+            "Satz 2 der alten Stimme durfte nicht mehr gespielt werden"
+        );
+        assert_eq!(
+            stage.engine.started(),
+            vec![
+                job("Satz eins.", "A"),
+                job("Satz zwei.", "A"),
+                job("Satz zwei.", "B"),
+                job("Satz drei.", "B"),
+            ]
+        );
+    }
+
+    /// FEHLERFALL "Wechsel direkt nach dem Start" (Phase Starting, noch vor dem
+    /// ersten gesprochenen Satz): die Berechnung des ersten Satzes haengt, die
+    /// Stimme wechselt -- gehoert wird nur die neue.
+    #[tokio::test]
+    async fn wechsel_vor_dem_ersten_satz_spielt_nur_die_neue_stimme() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 (A) beginnt", || stage.engine.started().len() == 1).await;
+        stage.switch_voice("B");
+        wait_until("Satz 1 (B) beginnt", || stage.engine.started().len() == 2).await;
+        assert!(
+            stage.player.started().is_empty(),
+            "noch ist nichts zu hoeren"
+        );
+
+        gate.add_permits(10);
+        finish(run).await.unwrap();
+
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|B|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
+        assert!(
+            stage
+                .engine
+                .finished()
+                .iter()
+                .all(|(_, voice)| voice.as_deref() == Some("B")),
+            "keine Berechnung der alten Stimme wurde fertig"
+        );
+    }
+
+    /// Einstellungsbefehl UND `tts_voice_changed` melden denselben Wechsel zweimal.
+    /// Die schon laufende Berechnung mit der neuen Stimme darf davon nicht
+    /// verworfen werden -- sonst begaenne die Wartezeit von vorn.
+    #[tokio::test]
+    async fn zwei_meldungen_desselben_wechsels_rechnen_nicht_doppelt() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 (A) beginnt", || stage.engine.started().len() == 2).await;
+        stage.switch_voice("B");
+        wait_until("Satz 2 (B) beginnt", || stage.engine.started().len() == 3).await;
+        stage.core.mark_voice_changed();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            stage.engine.started().len(),
+            3,
+            "dieselbe Stimme ein zweites Mal gemeldet: keine neue Berechnung"
+        );
+
+        gate.add_permits(10);
+        stage.player.release(10);
+        finish(run).await.unwrap();
+
+        let second_b = stage
+            .engine
+            .started()
+            .iter()
+            .filter(|started| **started == job("Satz zwei.", "B"))
+            .count();
+        assert_eq!(second_b, 1);
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
+    }
+
+    /// FEHLERFALL "Abbruch waehrend ein Wechsel laeuft": solange die Sperre des
+    /// Wechsels gehalten wird (z. B. waehrend ein Server startet), wartet die
+    /// Synthese -- aber Stopp und Pause wirken trotzdem sofort.
+    #[tokio::test]
+    async fn ein_abbruch_an_der_wechsel_sperre_haelt_niemanden_auf() {
+        let stage = stage("A");
+        let switch = stage.core.lock_voice_switch().await;
+
+        let run = stage.run(&SAETZE);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(
+            stage.engine.calls.load(Ordering::SeqCst),
+            0,
+            "waehrend des Wechsels wird nichts synthetisiert"
+        );
+        assert!(stage.player.started().is_empty());
+
+        stage.core.cancel_core();
+        let result = finish(run).await;
+        assert!(result.is_ok(), "ein Abbruch ist kein Fehler: {result:?}");
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 0);
+        assert!(stage.player.started().is_empty());
+        assert_eq!(stage.core.phase(), TtsPhase::Ready);
+        drop(switch);
+    }
+
+    /// Dauert der Wechsel nur kurz, geht es danach genau da weiter, wo es stand --
+    /// mit der Stimme, die jetzt gilt.
+    #[tokio::test]
+    async fn die_synthese_wartet_den_wechsel_ab_und_liest_dann_weiter() {
+        let stage = stage("A");
+        let switch = stage.core.lock_voice_switch().await;
+        let run = stage.run(&SAETZE);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 0);
+        *stage.core.voice.lock().unwrap() = Some("B".to_string());
+        stage.core.mark_voice_changed();
+        drop(switch);
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|B|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
+    }
+
+    /// FEHLERFALL "Abbruch waehrend der Neuberechnung": Stopp nach einem Wechsel
+    /// beendet den laufenden Satz und die Sitzung sofort; nichts Neues beginnt.
+    #[tokio::test]
+    async fn ein_abbruch_waehrend_der_neuberechnung_beendet_alles_sofort() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 (A) beginnt", || stage.engine.started().len() == 2).await;
+        stage.switch_voice("B");
+        wait_until("Satz 2 (B) beginnt", || stage.engine.started().len() == 3).await;
+
+        stage.core.cancel_core();
+        let result = finish(run).await;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(stage.player.started(), spielt(&["mock|A|Satz eins."]));
+        assert_eq!(
+            stage.player.returned(),
+            vec![("mock|A|Satz eins.".to_string(), true)],
+            "der laufende Satz wurde abgebrochen"
+        );
+    }
+
+    /// Eine ANDERE Engine mit derselben Stimme (etwa von Piper zu einem Anbieter)
+    /// ist ebenfalls ein Wechsel: der Cache-Tag unterscheidet sie.
+    #[tokio::test]
+    async fn ein_engine_wechsel_mit_gleicher_stimme_zaehlt_als_wechsel() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+        let other = Arc::new(MockEngine::tagged("alt"));
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 beginnt", || stage.engine.started().len() == 2).await;
+        *stage.core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&other));
+        stage.core.mark_voice_changed();
+        wait_until("die neue Engine uebernimmt Satz 2", || {
+            other.started().len() == 1
+        })
+        .await;
+
+        gate.add_permits(10);
+        stage.player.release(10);
+        finish(run).await.unwrap();
+
+        assert_eq!(
+            stage.player.started(),
+            spielt(&["mock|A|Satz eins.", "alt|A|Satz zwei.", "alt|A|Satz drei."])
+        );
+        assert_eq!(
+            other.started(),
+            vec![job("Satz zwei.", "A"), job("Satz drei.", "A")]
+        );
+        assert_ne!(
+            stage.engine.cache_tag(Some("A")),
+            other.cache_tag(Some("A")),
+            "ohne verschiedene Tags saehe der Cache beide Engines als eine"
+        );
+    }
+
+    /// Sprecher aus dem Skript gelten nur mit einer Engine, die Stimmen wechseln
+    /// kann, UND ohne feste Stimme im Stimmenfeld -- und das wird je Satz
+    /// entschieden, nicht nur beim Start.
+    #[tokio::test]
+    async fn sprecher_im_skript_gelten_nur_ohne_feste_stimme() {
+        let stage = stage("fest");
+        stage.engine.voice_switching.store(true, Ordering::SeqCst);
+        let dialog = || {
+            vec![
+                ("Satz eins.".to_string(), Some("anna".to_string())),
+                ("Satz zwei.".to_string(), Some("ben".to_string())),
+                ("Satz drei.".to_string(), None),
+            ]
+        };
+
+        // "Skript mit Sprechern": die Sprecher gelten, "None" nimmt die eingestellte.
+        stage.core.fixed_voice.store(false, Ordering::SeqCst);
+        stage
+            .core
+            .speak_sentence_run(dialog(), 0, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            stage.engine.started(),
+            vec![
+                job("Satz eins.", "anna"),
+                job("Satz zwei.", "ben"),
+                job("Satz drei.", "fest"),
+            ]
+        );
+
+        // Feste Stimme gewaehlt: sie liest alles.
+        stage.core.fixed_voice.store(true, Ordering::SeqCst);
+        let again: Vec<Utterance> = vec![
+            ("Satz vier.".to_string(), Some("anna".to_string())),
+            ("Satz fuenf.".to_string(), Some("ben".to_string())),
+        ];
+        stage
+            .core
+            .speak_sentence_run(again, 0, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            stage.engine.started()[3..],
+            [job("Satz vier.", "fest"), job("Satz fuenf.", "fest")]
+        );
+
+        // Eine Engine ohne Stimmwechsel liest in jedem Fall mit der einen Stimme.
+        stage.engine.voice_switching.store(false, Ordering::SeqCst);
+        stage.core.fixed_voice.store(false, Ordering::SeqCst);
+        assert_eq!(stage.core.utterance_voice(Some(&"anna".to_string())), None);
+        stage.engine.voice_switching.store(true, Ordering::SeqCst);
+        assert_eq!(
+            stage.core.utterance_voice(Some(&"anna".to_string())),
+            Some("anna".to_string())
+        );
+        assert_eq!(stage.core.utterance_voice(None), None);
+    }
+
+    /// Der Zaehler: die Meldung zu Beginn eines Laufs hat dieselbe Form wie die
+    /// nach einem gesprochenen Satz.
+    #[test]
+    fn die_fortschrittsmeldung_traegt_position_und_gesamtzahl() {
+        assert_eq!(
+            speak_progress_payload(0, 6),
+            serde_json::json!({ "position": 0, "total": 6 })
+        );
+        assert_eq!(
+            speak_progress_payload(3, 12),
+            serde_json::json!({ "position": 3, "total": 12 })
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Abkuerzungen: zentral vor der Synthese, Cache-Schluessel am gesprochenen Text
+    // ------------------------------------------------------------------
+
+    /// Der gesprochene Text -- nicht der angezeigte -- geht an die Engine und in
+    /// den Cache-Schluessel. Beide Schreibweisen treffen DENSELBEN Eintrag.
+    #[tokio::test]
+    async fn abkuerzungen_werden_vor_synthese_und_cache_schluessel_ausgeschrieben() {
+        let stage = stage("A");
+        let shown = "Das kostet ca. 20 Euro, d. h. nicht viel.";
+        let spoken = "Das kostet circa 20 Euro, das heißt nicht viel.";
+
+        stage.core.fetch_wav(1, 42, shown, None).await.unwrap();
+        assert_eq!(stage.engine.started(), vec![job(spoken, "A")]);
+        assert!(stage.core.has_cached_for(shown, Some("A")));
+        assert!(stage.core.has_cached_for(spoken, Some("A")));
+
+        // Zweiter Abruf: aus dem Cache, keine zweite Synthese.
+        stage.core.fetch_wav(1, 42, shown, None).await.unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Texte ohne Abkuerzung behalten ihren Schluessel und ihren Wortlaut.
+    #[tokio::test]
+    async fn texte_ohne_abkuerzung_bleiben_unveraendert() {
+        let stage = stage("A");
+        let text = "Hallo Welt, das ist ein ganz gewöhnlicher Satz.";
+        stage.core.fetch_wav(1, 42, text, None).await.unwrap();
+        assert_eq!(stage.engine.started(), vec![job(text, "A")]);
+        let key = WavCache::key("mock/A", text, 42, Some("A"));
+        assert!(stage.core.wav_cache.lock().unwrap().get(key).is_some());
+    }
+
+    /// Nur deutscher Text: im englischen hiesse "Dr." "Doctor", nicht "Doktor".
+    #[tokio::test]
+    async fn englischer_text_wird_nicht_ausgeschrieben() {
+        let stage = stage("A");
+        let text = "Dr. Smith said that the report is due, and it was a quiet evening.";
+        stage.core.fetch_wav(1, 42, text, None).await.unwrap();
+        assert_eq!(stage.engine.started(), vec![job(text, "A")]);
+    }
+
+    /// Stil-Tags bleiben bei Engines, die sie verstehen (Fish), unberuehrt; bei
+    /// Engines ohne Stil-Tags (Piper) fliegen sie raus -- ausgeschrieben wird in
+    /// beiden Faellen.
+    #[tokio::test]
+    async fn tags_bleiben_je_nach_engine_und_die_abkuerzung_wird_trotzdem_ausgeschrieben() {
+        let text = "[laughing] Das ist ca. 5 Euro, und das ist nicht gut.";
+
+        let fish_like = stage("A");
+        fish_like.engine.style_tags.store(true, Ordering::SeqCst);
+        fish_like.core.fetch_wav(1, 42, text, None).await.unwrap();
+        assert_eq!(
+            fish_like.engine.started(),
+            vec![job(
+                "[laughing] Das ist circa 5 Euro, und das ist nicht gut.",
+                "A"
+            )]
+        );
+
+        let piper_like = stage("A");
+        piper_like.core.fetch_wav(1, 42, text, None).await.unwrap();
+        assert_eq!(
+            piper_like.engine.started(),
+            vec![job("Das ist circa 5 Euro, und das ist nicht gut.", "A")]
+        );
     }
 }

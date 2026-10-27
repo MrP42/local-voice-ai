@@ -561,6 +561,14 @@ const ABBREVIATIONS: &[&str] = &[
     "zb", "dh", "ua", "uä", "od", "jew",
 ];
 
+/// Ist `word` (ohne Punkt, beliebige Schreibweise) eine bekannte Abkuerzung, nach
+/// deren Punkt kein Satz endet? Dieselbe Liste wie die Satztrennung, damit die
+/// Synthese-Aufbereitung (`abbreviations`) nichts anderes fuer eine Abkuerzung
+/// haelt als der Satzschnitt.
+pub fn is_known_abbreviation(word: &str) -> bool {
+    ABBREVIATIONS.contains(&word.to_lowercase().as_str())
+}
+
 const MONTHS: &[&str] = &[
     "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september",
     "oktober", "november", "dezember", "jan", "feb", "mär", "apr", "jun", "jul", "aug", "sep",
