@@ -287,7 +287,7 @@ pub fn validate_voice_bytes(bytes: &[u8]) -> Result<(), VoiceError> {
     let mut first = [0u8; 8];
     first.copy_from_slice(&bytes[..8]);
     let header_len = u64::from_le_bytes(first);
-    if header_len < 2 || header_len > MAX_HEADER_BYTES || 8 + header_len > len {
+    if !(2..=MAX_HEADER_BYTES).contains(&header_len) || 8 + header_len > len {
         return bad("Das ist keine safetensors-Datei (Kopf unlesbar).");
     }
     let header = &bytes[8..8 + header_len as usize];
@@ -755,7 +755,7 @@ impl VoiceStore<'_> {
                 source_note: text("source_note"),
             });
         }
-        voices.sort_by(|a, b| a.id.to_lowercase().cmp(&b.id.to_lowercase()));
+        voices.sort_by_key(|a| a.id.to_lowercase());
         let idx = Index { version: 1, voices };
         self.write_index(&idx)?;
         Ok(idx)
@@ -832,7 +832,7 @@ impl VoiceStore<'_> {
         match self.read_index() {
             Ok(idx) => {
                 let mut out: Vec<OwnVoice> = idx.voices.iter().map(|r| self.view(r)).collect();
-                out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                out.sort_by_key(|a| a.name.to_lowercase());
                 out
             }
             Err(e) => {

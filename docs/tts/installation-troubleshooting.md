@@ -1,6 +1,6 @@
 # TTS-Anbieter: Installation und Fehlersuche
 
-Stand 26.10.2026 · Goal `tts-provider` (Paket D1). Meldungen und Verhalten stammen aus dem Code unter
+Stand 27.10.2026 (Abschnitt „Eigene Stimmen“ ergänzt) · Goal `tts-provider` (Paket D1). Meldungen und Verhalten stammen aus dem Code unter
 `apps/local-voice/src-tauri/src/managers/tts/providers/` (**P/**) und `managers/tts/availability.rs`; Quellen und
 Abrufdaten zu den Anbietern: [provider-research.md](provider-research.md). Zahlen ohne Fundstelle sind als „laut Auftrag“
 gekennzeichnet. Einbindung in Einstellungen, UI, CLI und Agentenbrücke: [adapter-contract.md](adapter-contract.md), §11, und
@@ -94,6 +94,66 @@ Modells ist Modell plus Stimmen, „Löschen“ entfernt beides. Die Modellzeile
   entfernt (nie vorgelesen), die Palette zeigt nur Pausen. Dasselbe gilt für jeden Anbieter mit Stimmenliste und Stimmwechsel
   (`caps.voice_switching`), z. B. einen OpenAI-kompatiblen Server mit `/audio/voices`.
 
+### Eigene Stimmen (importieren, mit Gradium erstellen)
+
+Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon > „Eigene Stimmen“ (Code: `managers/tts/phonon_voices.rs`,
+`phonon_clip.rs`, `phonon_clone.rs`, `gradium.rs`; Befehle in `commands/phonon_voices.rs`). Eigene Stimmen liegen danach
+lokal im Phonon-Modell und werden **ohne Netz** benutzt; nur „Stimme erstellen“ geht ins Netz, und nur auf Klick.
+
+* **Warum nicht lokal klonen**: die veröffentlichten Phonon-Modelle haben keinen Sprecher-Encoder. Eine Stimme ist eine
+  fertige `.safetensors`-Datei (Tensor `speaker_wavs`, F32 [1, 512, 125], 256 136 Byte); eine neue erzeugt nur der Dienst
+  von Gradium. Den Weg beschreibt `scripts/clone-voice.py` in `github.com/gradium-ai/xn-ptts`; die App baut ihn in Rust
+  nach (ohne Python).
+* **Importieren** („Eigene Stimme importieren …“): `.safetensors` wählen, Namen vergeben. Geprüft wird nur der Aufbau (Kopf
+  lesbar, jeder Tensor mit gültigen Offsets und passender Größe, Daten lückenlos und ohne Anhang, `speaker_wavs` in der Form
+  [1, 512, T], Größe 16 KiB bis 4 MiB); die Datei wird nie ausgeführt und nicht ganz gelesen, wenn sie schon zu groß ist.
+* **Ablage**: erst im eigenen Speicher `<Datenordner>/tts/phonon/eigene-stimmen/` (`<Name>.safetensors`, `stimmen.json`),
+  von dort als Kopie nach `…/models/<modell>/voices/<Name>.safetensors` **jedes** installierten Phonon-Modells, mit einer Zeile in
+  `voices/SOURCE.json`: `origin` (`import` oder `gradium-clone`), `license: "eigene/unbekannt"`, `verified: false`, bei
+  erstellten Stimmen `voice_id` (Gradium), `language`, `consent_at` (Zeitpunkt der bestätigten Einwilligung) und `source_note`
+  (Audiodatei, Mikrofonaufnahme oder „Fish-Stimme: <Kennung>“; nie ein Pfad). Der eigene Speicher ist die Quelle der
+  Wahrheit: „Modell löschen“ auf der Modellseite entfernt den ganzen Modellordner samt `voices/`, **nicht** den eigenen
+  Speicher. Beim nächsten Öffnen der Liste „Eigene Stimmen“ (oder beim Import) gleicht die App ab und kopiert fehlende
+  Dateien und Zeilen in jedes installierte Modell; Zeilen, deren Zusatzfelder die Modellseite beim Umschreiben von
+  `SOURCE.json` verliert, werden wiederhergestellt. Eine fremde Datei gleichen Namens im Modell wird nie überschrieben
+  (nur im Protokoll vermerkt). Ohne installiertes Modell bleibt die Stimme im eigenen Speicher und steht bereit, sobald ein
+  Modell installiert ist. Von Hand eingetragene Modellordner (`model` in den Einstellungen) bekommen keine Kopie: dort die
+  Datei selbst nach `voices/` legen.
+* **Name**: frei (Buchstaben, Ziffern, Leerzeichen, `- _ . ' ( )`, höchstens 40 Zeichen); der Dateiname ist daraus gefaltet
+  (`Müller Größe` → `Mueller-Groesse.safetensors`) und zugleich die Stimmenkennung im Adapter. Pfadzeichen, Steuerzeichen,
+  Windows-Gerätenamen (`CON`, `NUL`, …) und `default` sind abgelehnt. Ein vorhandener eigener Name wird nur nach Rückfrage
+  ersetzt; Namen **mitgelieferter** Stimmen sind tabu (auch mit Zustimmung). Höchstens 200 eigene Stimmen.
+* **Entfernen**: „Entfernen“ löscht Datei und Zeile in jedem Modell und im eigenen Speicher; mitgelieferte Stimmen lassen
+  sich hier nie entfernen. Eine bei Gradium gespeicherte Kopie bleibt in Ihrem Gradium-Konto und ist dort zu löschen.
+* **Erstellen über Gradium** („Stimme erstellen …“): Quelle ist eine Audiodatei (wav, mp3, m4a, aac, flac, ogg, opus, wma; mp3
+  und Co. brauchen ffmpeg, WAV nicht), eine Mikrofonaufnahme oder die Referenzaufnahme einer vorhandenen Fish-Stimme (Liste
+  „Fish-Stimmen nach Phonon übernehmen“). Dazu Startsekunde (ab dort werden etwa zehn Sekunden genutzt), Sprache (`en`, `fr`,
+  `de`, `es`, `pt`) und Name. Ablauf wie `clone-voice.py`: `POST https://api.gradium.ai/api/voices/` (multipart `name`,
+  `language`, `start_s`, `audio_file`; Kopf `x-api-key`) → `uid`; `GET …/voices/embeddings/<uid>/default` bis `found` (bis zu
+  60 Mal im Abstand von 2 s, je Anfrage 60 s Frist) → `GET …/blob?as_safetensors=1` → die Stimmdatei, die geprüft und wie
+  beim Import abgelegt wird. Fehlerbilder und Meldungen: Abschnitt 6.
+  * **Was den Rechner verlässt**: genau das ausgeschnittene Stück (≈ 10 s, Mono-WAV mit der Abtastrate der Quelle, die
+    Startsekunde ist danach 0), der Name der Stimme und die Sprache — nicht die ganze Datei, nicht ihr Name, nicht ihr Pfad.
+    Gradium legt die Stimme in Ihrem Konto ab; die App kann sie dort nicht löschen.
+  * **Hinweis und Einwilligung (Pflicht)**: der Dialog zeigt immer „Die Aufnahme (ca. 10 s) wird an Gradium (api.gradium.ai)
+    gesendet und dort in Ihrem Konto gespeichert.“ und verlangt das Häkchen „Die sprechende Person hat eingewilligt.“ — je
+    Stimme neu (jede neue Quelle, jede andere Fish-Stimme, jede neue Aufnahme setzt es zurück). Ohne Häkchen ist der Knopf
+    gesperrt, und das Backend lehnt den Befehl ohne `consent` ab, **bevor** es den Schlüssel liest, eine Datei öffnet oder
+    eine Verbindung aufbaut. Nichts geht beim Start, in einer Gesundheitsprüfung oder von allein ins Netz.
+  * **API-Schlüssel** („Gradium-Zugang“): ein Konto bei Gradium und ein Schlüssel sind nötig. Er wird mit DPAPI verschlüsselt
+    im Geheimnisspeicher abgelegt (`<Datenordner>/secrets/int-tts-gradium-apikey.bin`), **nie** in `settings_store.json`; die
+    Oberfläche bekommt ihn nie zurück, nur „gespeichert / nicht gespeichert“. Beim Speichern geht nichts ins Netz. Er geht nur
+    an den Ursprung `https://api.gradium.ai`: Weiterleitungen folgt die App selbst, ein anderer Host bekommt den Schlüssel nie,
+    ein `POST` wird nie weitergeleitet. Er steht in keiner Meldung, keinem Log und keinem `Debug` (Fremdtext aus Antworten wird
+    um ihn bereinigt). Ohne DPAPI (nicht Windows) wird er nicht gespeichert; es gibt keinen Klartext-Ersatz.
+  * **Nur über die Oberfläche**: `phonon_voice_clone` und die Schlüsselbefehle sind weder in der CLI noch in der Agentenbrücke
+    noch im MCP-Server erreichbar (ein Test prüft die Verwendungsstellen). Ein Agent kann also nicht für den Nutzer einwilligen.
+  * **Ein Auftrag zugleich**; „Abbrechen“ beendet laufende Anfragen binnen etwa 50 ms, es wird nichts gespeichert. Hat Gradium
+    die Stimme schon angelegt, bleibt sie in Ihrem Konto (Meldung nennt die Kennung); die App hat noch keinen Weg, eine
+    vorhandene Kennung nachträglich zu laden.
+  * Mikrofon: dieselbe Aufnahmefunktion wie die Fish-Referenzaufnahme (`AudioRecordingManager`, VAD aus), höchstens 30 s, mindestens 3 s;
+    Stille und zu kurze Stücke scheitern vor dem Senden.
+
 **Von Hand (Alternative)**: die folgenden Angaben gelten für ein selbst geladenes Programm und Modell.
 
 **Programm**: das offizielle CLI `ptts` aus `github.com/gradium-ai/xn-ptts/releases` (Version 0.4.2 vom 25.10.2026;
@@ -184,6 +244,20 @@ Windows 10 oder neuer, CPU mit x86-64-v3 (provider-research.md, A).
 | `PrivacyBlocked`: „liegt nicht auf diesem Rechner“ (openai_speech.rs:213) | Host nicht Loopback | `allow_remote` nur bewusst setzen: Text verlässt das Gerät |
 | `BadRequest` HTTP 400/404/422 | Format, Modell oder Stimme dem Server unbekannt | Stimme/Modell prüfen; Auszug ≤ 300 Zeichen in der Meldung |
 | HTTP 429/5xx (`Backend`, wiederholbar) | Server überlastet | die Registry wiederholt bis 2 Versuche, nur vor dem ersten Chunk |
+| „Gradium lehnt den API-Schlüssel ab (HTTP 401)“ (gradium.rs) | Schlüssel fehlt, falsch oder widerrufen | unter „Gradium-Zugang“ prüfen oder neu eintragen |
+| „Gradium hat die Aufnahme abgelehnt (HTTP 4xx): …“ (gradium.rs) | Gradium nimmt das Audio nicht an (zu kurz, zu leise, falsche Sprache) | klare Aufnahme einer Person ohne Musik, Hinweis des Servers lesen |
+| „Gradium: Kontingent erschöpft oder zu viele Anfragen (HTTP 402/429)“ (gradium.rs) | Konto bei Gradium | später erneut oder Konto prüfen |
+| „Der Gradium-Server meldet einen Fehler (HTTP 5xx)“ (gradium.rs) | Störung bei Gradium | später erneut |
+| „Gradium hat nicht innerhalb von … s geantwortet“ / „api.gradium.ai ist nicht erreichbar“ (gradium.rs) | Netz, Proxy, Firewall, Gradium | Verbindung prüfen; lokal wurde nichts verändert |
+| „Die Stimme „…“ ist bei Gradium nach … s noch nicht fertig“ (gradium.rs) | Gradium rechnet noch (mehr als 60 Abfragen) | die Stimme liegt in Ihrem Gradium-Konto; später neu erstellen |
+| „Gradium hat keine gültige Phonon-Stimmdatei geliefert“ (phonon_clone.rs) | Antwort entspricht nicht dem erwarteten Format | wird nicht gespeichert; Kennung der Stimme im Gradium-Konto in der Meldung |
+| „Ohne die Einwilligung der sprechenden Person wird nichts gesendet“ (phonon_clone.rs) | Häkchen fehlt | Häkchen setzen, wenn die Person eingewilligt hat |
+| „Es läuft schon eine Stimmenerstellung“ (phonon_clone.rs) | zweiter Auftrag gleichzeitig | warten oder abbrechen |
+| „Es ist noch kein Gradium-API-Schlüssel eingetragen“ (phonon_clone.rs) | kein Schlüssel gespeichert | unter „Gradium-Zugang“ eintragen |
+| „Für diese Audiodatei wird ffmpeg gebraucht“ (phonon_clone.rs) | mp3/m4a/flac … ohne ffmpeg | `winget install ffmpeg` oder die Datei als WAV wählen |
+| „Im gewählten Ausschnitt ist keine Sprache zu hören“ / „Ab der Startsekunde bleiben nur … s“ (phonon_clip.rs) | Stille, zu leise oder zu kurz | Startsekunde ändern oder neu aufnehmen |
+| „Das ist keine safetensors-Datei …“ / „Der Tensor „speaker_wavs“ fehlt …“ (phonon_voices.rs) | Import einer Datei, die keine Phonon-Stimme ist | eine Stimmdatei von Gradium (`phonon-voices`) wählen |
+| „Der Name „…“ gehört zu einer mitgelieferten Stimme des Modells“ (phonon_voices.rs) | Name wie eine Modellstimme | anderen Namen wählen |
 | „Fish Speech ist nicht eingerichtet (… fehlt: …)“ (availability.rs:165) | Python, `api_server.py` oder `checkpoints` fehlen | Fish einrichten oder Piper wählen |
 | „Zeitüberschreitung: keine Antwort nach … ms“ (registry.rs:202) | Health-Prüfung hängt | Anbieter prüfen/neu starten |
 | „Ungültige Anbieterkennung“ (registry.rs:241-247) | Kennung nicht `[a-z0-9][a-z0-9_-]*` | Kennung ändern |

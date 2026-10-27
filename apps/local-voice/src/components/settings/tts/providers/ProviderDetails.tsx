@@ -33,6 +33,7 @@ import {
   type PickKind,
 } from "./providerModel";
 import type { PreviewState } from "./useProviderPreview";
+import { PhononOwnVoices } from "./PhononOwnVoices";
 import { VisibleVoices } from "./VisibleVoices";
 
 interface Props {
@@ -86,6 +87,8 @@ export const ProviderDetails: React.FC<Props> = ({
         onVoice={setVoice}
         onChanged={onChanged}
       />
+      {/* Eigene Stimmen importieren/erstellen: nur bei Phonon (lokale Stimmdateien). */}
+      {id === "phonon" && <PhononOwnVoices />}
       <PreviewSection
         entry={entry}
         preview={preview}

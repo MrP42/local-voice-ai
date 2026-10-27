@@ -728,6 +728,25 @@ fn nebenlaeufige_zugriffe_auf_den_platz_ergeben_genau_einen_besitzer() {
     assert_eq!(winners.load(Ordering::SeqCst), 1);
 }
 
+/// Der Abbruch erreicht auch das Dekodieren (ffmpeg): ein schon gesetzter Abbruch startet gar keinen
+/// Prozess und meldet `cancelled`, nicht „nicht dekodierbar“.
+#[test]
+fn der_abbruch_erreicht_auch_das_dekodieren() {
+    let fx = Fx::new();
+    let junk = fx.tmp.path().join("hoerbuch.mp3");
+    std::fs::write(&junk, b"kein echtes mp3").unwrap();
+    let env = fx.env(gradium::Config::production());
+    let source = CloneSource::File {
+        path: junk.to_string_lossy().to_string(),
+    };
+    let cancelled = AtomicBool::new(true);
+    let err = resolve_clip(&env, &source, 0.0, &cancelled).unwrap_err();
+    assert_eq!(err.kind, PhononVoiceErrorKind::Cancelled);
+    // Ohne Abbruch ist es eine unbrauchbare Quelle (mit oder ohne ffmpeg).
+    let err = resolve_clip(&env, &source, 0.0, &AtomicBool::new(false)).unwrap_err();
+    assert_eq!(err.kind, PhononVoiceErrorKind::BadSource);
+}
+
 // ---- Fehlerabbildung ------------------------------------------------------------------------------------------------------------
 
 #[test]

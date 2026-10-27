@@ -346,6 +346,7 @@ fn resolve_clip(
     env: &CloneEnv<'_>,
     source: &CloneSource,
     start_s: f32,
+    cancel: &AtomicBool,
 ) -> Result<Clip, PhononVoiceError> {
     match source {
         CloneSource::File { path } => {
@@ -371,8 +372,15 @@ fn resolve_clip(
             }
             // WAV geht direkt durch; alles andere dekodiert ffmpeg in eine Temp-Datei, die beim
             // Verlassen (auch im Fehlerfall) gelöscht wird.
-            let (wav, _tmp) = crate::media::ensure_wav(p, DECODE_RATE)
-                .map_err(|e| bad_source(decode_message(&e)))?;
+            // Der Abbruch des Nutzers erreicht auch ffmpeg (`DECODE_CANCELLED`).
+            let (wav, _tmp) = crate::media::ensure_wav_cancellable(p, DECODE_RATE, cancel)
+                .map_err(|e| {
+                    if e == crate::media::DECODE_CANCELLED {
+                        PhononVoiceError::new(PhononVoiceErrorKind::Cancelled, "Abgebrochen.")
+                    } else {
+                        bad_source(decode_message(&e))
+                    }
+                })?;
             Ok(phonon_clip::clip_from_wav_file(&wav, start_s)?)
         }
         CloneSource::Fish { voice_id } => {
@@ -442,7 +450,8 @@ pub async fn create_voice(
         )
     })?;
     // 4. Das 10-Sekunden-Stück (blockierend).
-    let clip = tokio::task::block_in_place(|| resolve_clip(env, &req.source, req.start_s))?;
+    let clip =
+        tokio::task::block_in_place(|| resolve_clip(env, &req.source, req.start_s, &job.cancel))?;
     // 5. Schlüssel.
     let key = (env.key)()
         .map_err(|e| PhononVoiceError::new(K::KeyStore, e))?
