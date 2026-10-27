@@ -2670,6 +2670,23 @@
       "stop": "Vorlesen beenden",
       "stopHint": "Hält die Wiedergabe an",
       "empty": "Es gibt keinen Text zum Vorlesen.",
+      "save": "Audio speichern",
+      "saveHint": "Schreibt den Text mit der gewählten Stimme in eine Audiodatei (Format wie unter Einstellungen > Ausgabe > Vorlesen)",
+      "saveCancel": "Speichern abbrechen",
+      "saveCancelProgress": "Speichern abbrechen ({{position}} von {{total}} Sätzen)",
+      "saveCancelHint": "Bricht das Erzeugen der Audiodatei ab",
+      "saveError": "Audio speichern fehlgeschlagen: {{error}}",
+      "fileFallback": "Aufnahme",
+      "bar": {
+        "label": "Wiedergabe",
+        "position": "Satz {{position}} von {{total}}",
+        "previousHint": "Springt zum vorherigen Satz und liest von dort weiter",
+        "nextHint": "Springt zum nächsten Satz und liest von dort weiter",
+        "pauseHint": "Hält an der aktuellen Stelle an",
+        "resume": "Weiter",
+        "resumeHint": "Liest ab dem zuletzt gehörten Satz weiter",
+        "stopHint": "Beendet das Vorlesen und blendet die Leiste aus"
+      },
       "error": "Vorlesen fehlgeschlagen: {{error}}",
       "truncated": "Nur die ersten {{limit}} von {{total}} Zeichen werden vorgelesen. Die Grenze steht unter Einstellungen > Ausgabe > Vorlesen."
     },

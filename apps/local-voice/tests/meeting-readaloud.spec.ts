@@ -226,26 +226,35 @@ test.beforeEach(async ({ page }) => {
             case "meeting_templates_list":
               return w.__templates;
             case "plugin:dialog|save":
-              return null;
+              return w.__saveTarget ?? null;
             case "tts_speak_text":
+            case "tts_speak_resume":
+            case "tts_speak_seek": {
               w.__speaking = true;
-              // Der Befehl kehrt erst nach der Wiedergabe zurueck.
+              // Der Befehl kehrt erst nach der Wiedergabe zurueck. Ein neuer Lauf
+              // (Weiter, Satzsprung) loest den laufenden ab, wie im Backend.
+              const previous = w.__speakEnd;
               await new Promise<void>((resolve) => {
                 w.__speakEnd = resolve;
+                previous?.();
               });
               w.__speaking = false;
               if (w.__speakError) throw w.__speakError;
               return null;
+            }
             case "tts_cancel":
               w.__speakEnd?.();
               return null;
+            case "tts_speak_to_file":
+              return args.outPath;
+            case "tts_list_voices":
+              return w.__voices ?? [];
             case "tts_server_status":
               return { phase: "stopped", message: null };
             case "get_custom_sounds":
               return { start: false, stop: false };
             case "pages_list":
             case "page_files":
-            case "tts_list_voices":
             case "tts_list_voice_infos":
             case "llm_ps":
             case "tts_reading_list":
@@ -388,6 +397,219 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await expect(page.getByTestId("minutes-readaloud")).toHaveCount(0);
   });
 
+  test("Wiedergabeleiste: Pause/Weiter, Satzsprung, Stopp, Satzanzeige", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    const bar = page.getByTestId("minutes-readaloud-bar");
+    // Ohne Vorlesen keine Leiste.
+    await expect(bar).toHaveCount(0);
+
+    await page.getByTestId("minutes-readaloud").click();
+    await expect(bar).toBeVisible();
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-current-sentence", {
+        context: "speak",
+        index: 1,
+        text: "Beschlüsse.",
+      });
+      w.__emit("tts-speak-progress", { position: 1, total: 6 });
+    });
+    await expect(page.getByTestId("minutes-readaloud-bar-position")).toHaveText(
+      "Satz 2 von 6",
+    );
+    await expect(page.getByTestId("minutes-readaloud-bar-sentence")).toHaveText(
+      "Beschlüsse.",
+    );
+
+    // Pause: dasselbe Anhalten wie auf der Vorlesen-Seite; die Leiste bleibt, Weiter erscheint.
+    const toggle = page.getByTestId("minutes-readaloud-bar-toggle");
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    await toggle.click();
+    await expect
+      .poll(async () => (await calls(page, "tts_cancel")).length)
+      .toBe(1);
+    await expect(toggle).toHaveAttribute("aria-label", "Weiter");
+    await expect(bar).toBeVisible();
+    // Kein Fehler-Toast nach eigener Pause.
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+
+    // Weiter: setzt die Sitzung fort (kein neuer Start mit demselben Text).
+    await toggle.click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_resume")).length)
+      .toBe(1);
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+    expect((await calls(page, "tts_speak_text")).length).toBe(1);
+
+    // Satzsprung vor und zurueck: der Befehl der Vorlesen-Seite mit +1 / -1.
+    await page.getByTestId("minutes-readaloud-bar-next").click();
+    await page.getByTestId("minutes-readaloud-bar-prev").click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_seek")).length)
+      .toBe(2);
+    expect(
+      (await calls(page, "tts_speak_seek")).map((c) => c.args.delta),
+    ).toEqual([1, -1]);
+    await expect(toggle).toHaveAttribute("aria-label", "Pause");
+
+    // Stopp: Leiste weg, Knopf zurueck auf Vorlesen.
+    await page.getByTestId("minutes-readaloud-bar-stop").click();
+    await expect(bar).toHaveCount(0);
+    await expect(page.getByTestId("minutes-readaloud")).toHaveAttribute(
+      "aria-label",
+      "Vorlesen",
+    );
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  });
+
+  test("Wiedergabeleiste: Ende der Sitzung blendet sie aus; angehalten von aussen bleibt Weiter", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    const bar = page.getByTestId("minutes-readaloud-bar");
+    await page.getByTestId("minutes-readaloud").click();
+    await expect(bar).toBeVisible();
+    // Von aussen angehalten (Vorlesen-Seite): nicht am Ende, also Weiter moeglich.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: 2, total: 6 });
+      w.__speakEnd();
+    });
+    await expect(
+      page.getByTestId("minutes-readaloud-bar-toggle"),
+    ).toHaveAttribute("aria-label", "Weiter");
+    // Weiter, dann bis zum letzten Satz gelesen: die Leiste verschwindet.
+    await page.getByTestId("minutes-readaloud-bar-toggle").click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_resume")).length)
+      .toBe(1);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: 6, total: 6 });
+      w.__speakEnd();
+    });
+    await expect(bar).toHaveCount(0);
+  });
+
+  test("Wiedergabeleiste: Stimme wechseln wirkt live (Einstellung schreiben, dann tts_voice_changed)", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as any).__voices = ["anna"];
+    });
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    const voice = page.getByTestId("minutes-readaloud-bar-voice");
+    await expect(voice).toBeVisible();
+    await voice.getByRole("combobox").click();
+    await page.getByRole("option", { name: "anna", exact: true }).click();
+    await expect
+      .poll(async () => (await calls(page, "tts_voice_changed")).length)
+      .toBe(1);
+    const all = await page.evaluate(() =>
+      ((window as any).__calls as Call[]).map((c) => c.cmd),
+    );
+    // Erst die Einstellung, dann das Backend: sonst hoert man die alte Stimme weiter.
+    expect(all.indexOf("change_tts_voice_setting")).toBeGreaterThan(-1);
+    expect(all.indexOf("change_tts_voice_setting")).toBeLessThan(
+      all.indexOf("tts_voice_changed"),
+    );
+    expect((await calls(page, "change_tts_voice_setting"))[0].args).toEqual({
+      value: "anna",
+    });
+    // Die laufende Sitzung wurde dabei nicht neu gestartet.
+    expect((await calls(page, "tts_speak_text")).length).toBe(1);
+  });
+
+  test("Audio speichern: Dateidialog mit Aufnahmetitel, tts_speak_to_file, Fortschritt, Abbrechen", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as any).__saveTarget = "C:\\Audio\\protokoll.wav";
+    });
+    await withMinutes(page);
+    await openMinutes(page);
+    const save = page.getByTestId("minutes-readaloud-save");
+    await expect(save).toHaveAttribute("aria-label", "Audio speichern");
+    await save.click();
+
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_to_file")).length)
+      .toBe(1);
+    // Dasselbe Format wie auf der Vorlesen-Seite: WAV vorgeschlagen, Titel + Zeitstempel.
+    const dialog = (await calls(page, "plugin:dialog|save"))[0].args as any;
+    expect(dialog.options.defaultPath).toMatch(
+      /^Kundentermin-Meyer_\d{4}-\d{2}-\d{2}_\d{4}\.wav$/,
+    );
+    expect(dialog.options.filters[0].extensions).toEqual(["wav"]);
+    expect((await calls(page, "tts_speak_to_file"))[0].args).toEqual({
+      text: SPOKEN,
+      outPath: "C:\\Audio\\protokoll.wav",
+    });
+    // Lesen ist dafuer nicht noetig: keine Wiedergabe gestartet.
+    expect((await calls(page, "tts_speak_text")).length).toBe(0);
+
+    // Fortschritt im Knopf, Klick bricht ab.
+    await page.evaluate(() =>
+      (window as any).__emit("tts-export-progress", {
+        position: 2,
+        total: 6,
+        cancelled: false,
+      }),
+    );
+    await expect(save).toHaveAttribute(
+      "aria-label",
+      "Speichern abbrechen (2 von 6 Sätzen)",
+    );
+    await save.click();
+    await expect
+      .poll(async () => (await calls(page, "tts_export_cancel")).length)
+      .toBe(1);
+    await page.evaluate(() =>
+      (window as any).__emit("tts-export-progress", {
+        position: 2,
+        total: 6,
+        cancelled: true,
+      }),
+    );
+    await expect(save).toHaveAttribute("aria-label", "Audio speichern");
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+
+    // Zweiter Lauf bis zum Ende: Meldung mit dem Pfad.
+    await save.click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_to_file")).length)
+      .toBe(2);
+    await page.evaluate(() =>
+      (window as any).__emit("tts-export-progress", {
+        position: 6,
+        total: 6,
+        cancelled: false,
+      }),
+    );
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "C:\\Audio\\protokoll.wav",
+    );
+    await expect(save).toHaveAttribute("aria-label", "Audio speichern");
+  });
+
+  test("Audio speichern: ohne Auswahl im Dialog passiert nichts", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud-save").click();
+    await expect
+      .poll(async () => (await calls(page, "plugin:dialog|save")).length)
+      .toBe(1);
+    expect((await calls(page, "tts_speak_to_file")).length).toBe(0);
+  });
+
   test("Screenshot: Detailansicht mit Vorlesen-Knopf", async ({ page }) => {
     const dir = process.env.SCREENS_DIR;
     test.skip(!dir, "SCREENS_DIR nicht gesetzt");
@@ -401,6 +623,21 @@ test.describe("Vorlesen in den Aufnahmen", () => {
       "Vorlesen beenden",
     );
     await page.screenshot({ path: `${dir}/aufnahmen-vorlesen-laeuft.png` });
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__emit("tts-current-sentence", {
+        context: "speak",
+        index: 2,
+        text: "Angebot bis Freitag senden.",
+      });
+      w.__emit("tts-speak-progress", { position: 2, total: 6 });
+    });
+    await expect(page.getByTestId("minutes-readaloud-bar")).toBeVisible();
+    await page.screenshot({ path: `${dir}/aufnahmen-wiedergabeleiste.png` });
+    await page.getByTestId("minutes-readaloud-bar-toggle").click();
+    await page.screenshot({
+      path: `${dir}/aufnahmen-wiedergabeleiste-pause.png`,
+    });
   });
 });
 
