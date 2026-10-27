@@ -216,10 +216,13 @@ pub fn select_in_with_env(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<(), TtsError> {
     let desc = snapshot.descriptor(id)?;
-    let subject = policy::resolve_provider_configs(
+    // Mit demselben Stand "installiert" wie die Momentaufnahme: sonst stuende hier ein anderes
+    // Modell als in der Instanz, und die Lizenz-Zustimmung (Fingerabdruck) passte nie.
+    let subject = policy::resolve_provider_configs_with(
         &settings.tts_providers,
         env,
         &policy::ProviderOverrides::default(),
+        snapshot.resolved.installed(),
     )
     .subject(id);
     policy::check_use(&desc, &subject, &settings.tts_providers)?;
@@ -831,6 +834,57 @@ mod tests {
         current.tts_providers = p;
         select_in_with_env(&mut current, &snap, "phonon", None, &|_| None).unwrap();
         assert_eq!(current.tts_engine, "provider:phonon");
+    }
+
+    /// Stufe "installiert": das Modell der Instanz kommt aus der Installation der Modellseite. Die
+    /// Wahl muss denselben Stand sehen, sonst passte der Fingerabdruck der Zustimmung nie.
+    #[test]
+    fn select_loest_mit_demselben_stand_installiert_auf_wie_die_momentaufnahme() {
+        let installed = policy::InstalledPaths {
+            phonon: policy::InstalledPhonon {
+                exe_path: Some("C:/app/tts/phonon/windows-x64/ptts.exe".into()),
+                model: Some("C:/app/tts/phonon/models/phonon-test".into()),
+            },
+        };
+        let mut p = TtsProvidersSettings::default();
+        p.set_enabled("phonon", true);
+        let resolved = policy::resolve_provider_configs_with(
+            &p,
+            &|_| None,
+            &policy::ProviderOverrides::default(),
+            &installed,
+        );
+        assert_eq!(
+            resolved.subject("phonon").model,
+            "C:/app/tts/phonon/models/phonon-test"
+        );
+        let registry = build_registry(&resolved, &paths(), None).unwrap();
+        let snap = ProviderSnapshot {
+            settings: Arc::new(p.clone()),
+            resolved: Arc::new(resolved),
+            registry: Arc::new(registry),
+            selected: "fish".to_string(),
+            fish_voice: None,
+            piper_voice: None,
+        };
+        let desc = snap.descriptor("phonon").unwrap();
+        p.record_ack(
+            "phonon",
+            &license_fingerprint(&desc, &snap.resolved.subject("phonon")),
+            "t",
+        );
+
+        let mut current = crate::settings::get_default_settings();
+        current.tts_providers = p;
+        select_in_with_env(&mut current, &snap, "phonon", None, &|_| None).unwrap();
+        assert_eq!(current.tts_engine, "provider:phonon");
+
+        // Wechselt der Nutzer auf ein eigenes Modell, gilt die Zustimmung zum installierten nicht mehr.
+        let mut other = crate::settings::get_default_settings();
+        other.tts_providers = current.tts_providers.clone();
+        other.tts_providers.phonon.model = "C:/eigenes/modell".into();
+        let e = select_in_with_env(&mut other, &snap, "phonon", None, &|_| None).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::LicenseBlocked, "{e:?}");
     }
 
     /// Befund 7: die inneren Fristen der Anbieter liegen unter den äußeren

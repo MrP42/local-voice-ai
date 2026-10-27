@@ -41,7 +41,18 @@ fn ids_und_dateinamen_im_katalog_sind_sichere_pfadbausteine() {
             assert!(ensure_safe_entry(&e).is_ok(), "{}", e.id);
         }
     }
-    for bad in ["", ".", "..", "../x", "a/b", "a\\b", ".versteckt", "a:b", "ä", "x y"] {
+    for bad in [
+        "",
+        ".",
+        "..",
+        "../x",
+        "a/b",
+        "a\\b",
+        ".versteckt",
+        "a:b",
+        "ä",
+        "x y",
+    ] {
         assert!(!is_safe_component(bad), "{bad:?}");
     }
 }
@@ -49,7 +60,10 @@ fn ids_und_dateinamen_im_katalog_sind_sichere_pfadbausteine() {
 #[test]
 fn die_pfade_liegen_unter_tts_phonon() {
     let dirs = PhononDirs::new(Path::new("/data"));
-    assert_eq!(dirs.runtime_dir("windows-x64"), Path::new("/data/tts/phonon/windows-x64"));
+    assert_eq!(
+        dirs.runtime_dir("windows-x64"),
+        Path::new("/data/tts/phonon/windows-x64")
+    );
     assert_eq!(
         dirs.model_dir("phonon-40m-de"),
         Path::new("/data/tts/phonon/models/phonon-40m-de")
@@ -73,7 +87,13 @@ fn nur_phonon_kennungen_gehoeren_zu_phonon() {
     assert!(is_phonon_id("phonon-40m-de"));
     assert!(is_phonon_id("phonon-31m-en"));
     assert!(is_phonon_id("phonon-voice-de-nele"));
-    for other in ["piper-runtime", "de_DE-thorsten-high", "", "../phonon-40m-de", "phonon-40m-de/../x"] {
+    for other in [
+        "piper-runtime",
+        "de_DE-thorsten-high",
+        "",
+        "../phonon-40m-de",
+        "phonon-40m-de/../x",
+    ] {
         assert!(!is_phonon_id(other), "{other:?}");
     }
 }
@@ -87,10 +107,15 @@ fn die_liste_nennt_programm_modelle_und_13_stimmen_und_nichts_ist_installiert() 
     let rows = build_downloads(&dirs, Some("windows-x64"), |_| false);
     assert_eq!(rows.len(), 1 + 2 + 13);
     assert!(rows.iter().all(|r| r.engine == "phonon"));
-    assert!(rows.iter().all(|r| !r.is_downloaded && !r.is_usable && !r.is_downloading));
+    assert!(rows
+        .iter()
+        .all(|r| !r.is_downloaded && !r.is_usable && !r.is_downloading));
 
     let rt = &rows[0];
-    assert_eq!((rt.id.as_str(), rt.kind), (RUNTIME_ID, TtsDownloadKind::Runtime));
+    assert_eq!(
+        (rt.id.as_str(), rt.kind),
+        (RUNTIME_ID, TtsDownloadKind::Runtime)
+    );
     assert_eq!(rt.size_bytes, 7_766_316);
     assert_eq!(
         rt.sha256.as_deref(),
@@ -106,12 +131,22 @@ fn die_liste_nennt_programm_modelle_und_13_stimmen_und_nichts_ist_installiert() 
     assert_eq!(de.license.as_deref(), Some("CC-BY-NC-4.0"));
     assert_eq!(de.language.as_deref(), Some("de"));
     assert_eq!(de.requires.as_deref(), Some(RUNTIME_ID));
-    assert!(de.sha256.is_none(), "mehrere Dateien: kein gemeinsamer SHA-256");
-    assert!(de.source.as_deref().unwrap().starts_with("hf://gradium/phonon-40m-de@79cfc7b4"));
+    assert!(
+        de.sha256.is_none(),
+        "mehrere Dateien: kein gemeinsamer SHA-256"
+    );
+    assert!(de
+        .source
+        .as_deref()
+        .unwrap()
+        .starts_with("hf://gradium/phonon-40m-de@79cfc7b4"));
     let en = rows.iter().find(|r| r.id == "phonon-31m-en").unwrap();
     assert!(!en.gated && !en.license_non_commercial);
 
-    let nele = rows.iter().find(|r| r.id == "phonon-voice-de-nele").unwrap();
+    let nele = rows
+        .iter()
+        .find(|r| r.id == "phonon-voice-de-nele")
+        .unwrap();
     assert_eq!(nele.kind, TtsDownloadKind::Voice);
     assert_eq!(nele.name, "Nele");
     assert_eq!(nele.requires.as_deref(), Some("phonon-40m-de"));
@@ -217,13 +252,19 @@ fn programm_und_modell_der_liste_folgen_dem_zustand_auf_der_platte() {
     assert!(rows[0].is_downloaded && rows[0].is_usable);
 
     // Eine Stimme ohne Modell: da, aber nicht nutzbar.
-    let nele = voice_entries().into_iter().find(|e| e.id == "phonon-voice-de-nele").unwrap();
+    let nele = voice_entries()
+        .into_iter()
+        .find(|e| e.id == "phonon-voice-de-nele")
+        .unwrap();
     let vfile = voice_file(&dirs, &nele).unwrap();
     fs::create_dir_all(vfile.parent().unwrap()).unwrap();
     fs::File::create(&vfile).unwrap().set_len(256_136).unwrap();
     let rows = build_downloads(&dirs, Some(platform), |_| false);
     let row = rows.iter().find(|r| r.id == nele.id).unwrap();
-    assert!(row.is_downloaded && !row.is_usable, "ohne Modell nicht nutzbar");
+    assert!(
+        row.is_downloaded && !row.is_usable,
+        "ohne Modell nicht nutzbar"
+    );
 }
 
 // ---- Aufloesung "installiert" --------------------------------------------------------------------
@@ -249,7 +290,11 @@ fn installierte_pfade_nennen_programm_und_das_deutsche_modell_zuerst() {
     };
     let tmp = TempDir::new().unwrap();
     let dirs = PhononDirs::new(tmp.path());
-    assert_eq!(installed_paths(tmp.path()), InstalledPaths::default(), "nichts installiert");
+    assert_eq!(
+        installed_paths(tmp.path()),
+        InstalledPaths::default(),
+        "nichts installiert"
+    );
 
     // Programm.
     let rt = runtime_entry(platform).unwrap();
@@ -266,15 +311,30 @@ fn installierte_pfade_nennen_programm_und_das_deutsche_modell_zuerst() {
     // Nur das englische Modell: das ist die zweite Wahl.
     make_model(&dirs, "phonon-31m-en");
     let p = installed_paths(tmp.path());
-    assert!(p.phonon.model.as_deref().unwrap().ends_with("phonon-31m-en"));
+    assert!(p
+        .phonon
+        .model
+        .as_deref()
+        .unwrap()
+        .ends_with("phonon-31m-en"));
     // Mit dem deutschen: das deutsche zuerst.
     make_model(&dirs, "phonon-40m-de");
     let p = installed_paths(tmp.path());
-    assert!(p.phonon.model.as_deref().unwrap().ends_with("phonon-40m-de"));
+    assert!(p
+        .phonon
+        .model
+        .as_deref()
+        .unwrap()
+        .ends_with("phonon-40m-de"));
     // Ein unvollstaendiges deutsches Modell zaehlt nicht.
     fs::remove_file(dirs.model_dir("phonon-40m-de").join("config.json")).unwrap();
     let p = installed_paths(tmp.path());
-    assert!(p.phonon.model.as_deref().unwrap().ends_with("phonon-31m-en"));
+    assert!(p
+        .phonon
+        .model
+        .as_deref()
+        .unwrap()
+        .ends_with("phonon-31m-en"));
 }
 
 #[test]
@@ -287,7 +347,10 @@ fn die_lizenz_installierter_katalogmodelle_kommt_aus_dem_katalog() {
     let de = installed_model_license(&dirs.model_dir("phonon-40m-de").to_string_lossy()).unwrap();
     assert!(de.verified && de.non_commercial);
     assert_eq!(de.verified_on.as_deref(), Some("2026-10-27"));
-    assert_eq!(de.source_url, "https://huggingface.co/gradium/phonon-40m-de");
+    assert_eq!(
+        de.source_url,
+        "https://huggingface.co/gradium/phonon-40m-de"
+    );
     assert!(de.weights.contains("CC-BY-NC-4.0"));
     assert!(de.note.contains("79cfc7b4") && de.note.contains("Modellseite"));
     assert_eq!(de.code, "MIT OR Apache-2.0");
@@ -325,7 +388,10 @@ fn fremde_ordner_und_verweise_bekommen_keine_katalog_lizenz() {
 // ---- Token ---------------------------------------------------------------------------------------------
 
 fn env_map(pairs: &[(&str, String)]) -> impl Fn(&str) -> Option<String> {
-    let map: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    let map: HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
     move |k| map.get(k).cloned()
 }
 
@@ -360,24 +426,39 @@ fn das_token_kommt_aus_hf_token_dann_aus_der_datei() {
     fs::create_dir_all(xdg.join("huggingface")).unwrap();
     fs::write(xdg.join("huggingface").join("token"), "\n\nhf_xdg\n").unwrap();
     let env = env_map(&[("XDG_CACHE_HOME", xdg.to_string_lossy().into_owned())]);
-    assert_eq!(expose(hf_token(&env)).as_deref(), Some("hf_xdg"), "fuehrende Leerzeilen sind egal");
+    assert_eq!(
+        expose(hf_token(&env)).as_deref(),
+        Some("hf_xdg"),
+        "fuehrende Leerzeilen sind egal"
+    );
 
     let cache = tmp.path().join(".cache").join("huggingface");
     fs::create_dir_all(&cache).unwrap();
     fs::write(cache.join("token"), "hf_standardort").unwrap();
     for key in ["HOME", "USERPROFILE"] {
         let env = env_map(&[(key, home.clone())]);
-        assert_eq!(expose(hf_token(&env)).as_deref(), Some("hf_standardort"), "{key}");
+        assert_eq!(
+            expose(hf_token(&env)).as_deref(),
+            Some("hf_standardort"),
+            "{key}"
+        );
     }
 
     // Nichts da, leer, unbrauchbar: kein Token.
     assert!(hf_token(&env_map(&[])).is_none());
     let empty = TempDir::new().unwrap();
-    assert!(hf_token(&env_map(&[("HOME", empty.path().to_string_lossy().into_owned())])).is_none());
+    assert!(hf_token(&env_map(&[(
+        "HOME",
+        empty.path().to_string_lossy().into_owned()
+    )]))
+    .is_none());
     fs::write(cache.join("token"), "zwei woerter hier").unwrap();
     assert!(hf_token(&env_map(&[("HOME", home.clone())])).is_none());
     fs::write(cache.join("token"), [0xff, 0xfe, 0x00]).unwrap();
-    assert!(hf_token(&env_map(&[("HOME", home)])).is_none(), "kein UTF-8");
+    assert!(
+        hf_token(&env_map(&[("HOME", home)])).is_none(),
+        "kein UTF-8"
+    );
 }
 
 // ---- SHA-1 / Git-Blob -------------------------------------------------------------------------------------
@@ -395,7 +476,10 @@ fn sha1_und_git_blob_entsprechen_den_bekannten_werten() {
         sha(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
         "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
     );
-    assert_eq!(sha(&[b'a'; 200]), "e61cfffe0d9195a525fc6cf06ca2d77119c24a40");
+    assert_eq!(
+        sha(&[b'a'; 200]),
+        "e61cfffe0d9195a525fc6cf06ca2d77119c24a40"
+    );
     // In Stuecken gefuettert (ueber die Blockgrenze) gleich wie am Stueck.
     let mut chunked = Sha1::new();
     for part in [&[b'a'; 7][..], &[b'a'; 60], &[b'a'; 64], &[b'a'; 69]] {
@@ -407,7 +491,10 @@ fn sha1_und_git_blob_entsprechen_den_bekannten_werten() {
     let tmp = TempDir::new().unwrap();
     let p = tmp.path().join("hello.txt");
     fs::write(&p, b"hello\n").unwrap();
-    assert_eq!(git_blob_sha1(&p).unwrap(), "ce013625030ba8dba906f756967f9e9ca394464a");
+    assert_eq!(
+        git_blob_sha1(&p).unwrap(),
+        "ce013625030ba8dba906f756967f9e9ca394464a"
+    );
     assert!(verify_git_blob(&p, "ce013625030ba8dba906f756967f9e9ca394464a", "hello.txt").is_ok());
     assert!(p.exists());
     let err = verify_git_blob(&p, &"0".repeat(40), "hello.txt").unwrap_err();
@@ -495,7 +582,13 @@ fn zip_wird_entpackt_nur_die_noetigen_dateien_kommen_mit() {
     names.sort();
     assert_eq!(
         names,
-        [".lva-install.json", "LICENSE-APACHE", "LICENSE-MIT", "README.md", "ptts.exe"],
+        [
+            ".lva-install.json",
+            "LICENSE-APACHE",
+            "LICENSE-MIT",
+            "README.md",
+            "ptts.exe"
+        ],
         "genau die benannten Dateien plus die Marke"
     );
     assert!(marker_matches(&dest, &entry));
@@ -517,15 +610,34 @@ fn zip_mit_unzulaessigem_pfad_wird_abgelehnt_ohne_etwas_auszuserhalb_zu_schreibe
         let sandbox = tmp.path().join("sandbox");
         fs::create_dir_all(&sandbox).unwrap();
         let archive = sandbox.join("a.download");
-        fs::write(&archive, zip_bytes(&[("ptts.exe", b"EXE"), (bad, b"boese")])).unwrap();
+        fs::write(
+            &archive,
+            zip_bytes(&[("ptts.exe", b"EXE"), (bad, b"boese")]),
+        )
+        .unwrap();
         let dest = sandbox.join("windows-x64");
 
-        let err = extract_ptts_archive(&archive, &dest, true, "windows-x64", &runtime_fixture_entry())
-            .unwrap_err();
-        assert!(err.to_string().contains("unzulässigen Pfad"), "{bad}: {err}");
+        let err = extract_ptts_archive(
+            &archive,
+            &dest,
+            true,
+            "windows-x64",
+            &runtime_fixture_entry(),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("unzulässigen Pfad"),
+            "{bad}: {err}"
+        );
         assert!(!dest.exists(), "{bad}: nichts wird eingesetzt");
-        assert!(!sandbox.join("windows-x64.extracting").exists(), "{bad}: aufgeraeumt");
-        assert!(!tmp.path().join("evil.txt").exists(), "{bad}: nichts ausserhalb");
+        assert!(
+            !sandbox.join("windows-x64.extracting").exists(),
+            "{bad}: aufgeraeumt"
+        );
+        assert!(
+            !tmp.path().join("evil.txt").exists(),
+            "{bad}: nichts ausserhalb"
+        );
         assert!(!sandbox.join("evil.txt").exists());
     }
 }
@@ -555,7 +667,10 @@ fn tar_gz_wird_entpackt_und_verknuepfungen_oder_pfade_nach_aussen_werden_abgeleh
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(dest.join("ptts")).unwrap().permissions().mode();
+        let mode = fs::metadata(dest.join("ptts"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o111, 0o111, "ausfuehrbar");
     }
 
@@ -564,8 +679,14 @@ fn tar_gz_wird_entpackt_und_verknuepfungen_oder_pfade_nach_aussen_werden_abgeleh
     fs::create_dir_all(&sandbox).unwrap();
     let link = sandbox.join("l.download");
     fs::write(&link, tar_gz_bytes(&[("top/ptts", b"", Symlink)])).unwrap();
-    let err = extract_ptts_archive(&link, &sandbox.join("linux-x64"), false, "linux-x64", &entry)
-        .unwrap_err();
+    let err = extract_ptts_archive(
+        &link,
+        &sandbox.join("linux-x64"),
+        false,
+        "linux-x64",
+        &entry,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("Verknüpfung"), "{err}");
     assert!(!sandbox.join("linux-x64").exists());
 
@@ -573,11 +694,20 @@ fn tar_gz_wird_entpackt_und_verknuepfungen_oder_pfade_nach_aussen_werden_abgeleh
     let evil = sandbox.join("e.download");
     fs::write(
         &evil,
-        tar_gz_bytes(&[("top/ptts", b"BIN", Regular), ("../evil.txt", b"x", Regular)]),
+        tar_gz_bytes(&[
+            ("top/ptts", b"BIN", Regular),
+            ("../evil.txt", b"x", Regular),
+        ]),
     )
     .unwrap();
-    let err = extract_ptts_archive(&evil, &sandbox.join("linux-x64"), false, "linux-x64", &entry)
-        .unwrap_err();
+    let err = extract_ptts_archive(
+        &evil,
+        &sandbox.join("linux-x64"),
+        false,
+        "linux-x64",
+        &entry,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("unzulässigen Pfad"), "{err}");
     assert!(!tmp.path().join("evil.txt").exists() && !sandbox.join("evil.txt").exists());
     assert!(!sandbox.join("linux-x64").exists());
@@ -592,8 +722,14 @@ fn ein_archiv_mit_doppeltem_programm_wird_abgelehnt() {
         zip_bytes(&[("a/ptts.exe", b"1"), ("b/ptts.exe", b"2")]),
     )
     .unwrap();
-    let err = extract_ptts_archive(&archive, &tmp.path().join("w"), true, "windows-x64", &runtime_fixture_entry())
-        .unwrap_err();
+    let err = extract_ptts_archive(
+        &archive,
+        &tmp.path().join("w"),
+        true,
+        "windows-x64",
+        &runtime_fixture_entry(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("doppelt"), "{err}");
 }
 
@@ -602,9 +738,19 @@ fn eine_zu_grosse_datei_im_archiv_wird_abgelehnt() {
     let tmp = TempDir::new().unwrap();
     let archive = tmp.path().join("g.download");
     let big = vec![b'x'; (MAX_SMALL_BYTES + 1) as usize];
-    fs::write(&archive, zip_bytes(&[("ptts.exe", b"EXE"), ("README.md", &big)])).unwrap();
-    let err = extract_ptts_archive(&archive, &tmp.path().join("w"), true, "windows-x64", &runtime_fixture_entry())
-        .unwrap_err();
+    fs::write(
+        &archive,
+        zip_bytes(&[("ptts.exe", b"EXE"), ("README.md", &big)]),
+    )
+    .unwrap();
+    let err = extract_ptts_archive(
+        &archive,
+        &tmp.path().join("w"),
+        true,
+        "windows-x64",
+        &runtime_fixture_entry(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("unplausibel groß"), "{err}");
     assert!(!tmp.path().join("w").exists());
 }
@@ -619,8 +765,14 @@ fn unvollstaendiges_archiv_laesst_die_vorhandene_installation_unberuehrt() {
     let archive = tmp.path().join("u.download");
     fs::write(&archive, zip_bytes(&[("top/README.md", b"nur readme")])).unwrap();
 
-    let err = extract_ptts_archive(&archive, &dest, true, "windows-x64", &runtime_fixture_entry())
-        .unwrap_err();
+    let err = extract_ptts_archive(
+        &archive,
+        &dest,
+        true,
+        "windows-x64",
+        &runtime_fixture_entry(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("ptts.exe nicht"), "{err}");
     assert_eq!(fs::read(dest.join("ptts.exe")).unwrap(), b"alt");
     assert!(!tmp.path().join("windows-x64.extracting").exists());
@@ -628,7 +780,14 @@ fn unvollstaendiges_archiv_laesst_die_vorhandene_installation_unberuehrt() {
 
     // Ein defektes Archiv ebenso.
     fs::write(&archive, b"kein zip").unwrap();
-    assert!(extract_ptts_archive(&archive, &dest, true, "windows-x64", &runtime_fixture_entry()).is_err());
+    assert!(extract_ptts_archive(
+        &archive,
+        &dest,
+        true,
+        "windows-x64",
+        &runtime_fixture_entry()
+    )
+    .is_err());
     assert_eq!(fs::read(dest.join("ptts.exe")).unwrap(), b"alt");
 }
 
@@ -725,7 +884,9 @@ async fn fake_host(routes: Vec<(&str, Reply)>) -> FakeHost {
                 let header = |name: &str| {
                     text.lines().find_map(|l| {
                         let (k, v) = l.split_once(':')?;
-                        k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+                        k.trim()
+                            .eq_ignore_ascii_case(name)
+                            .then(|| v.trim().to_string())
                     })
                 };
                 let (auth, range) = (header("authorization"), header("range"));
@@ -874,7 +1035,13 @@ fn routes_for(bodies: &[(&'static str, Vec<u8>)]) -> Vec<(String, Reply)> {
 
 async fn host_for(bodies: &[(&'static str, Vec<u8>)]) -> FakeHost {
     let routes = routes_for(bodies);
-    fake_host(routes.iter().map(|(p, r)| (p.as_str(), r.clone())).collect()).await
+    fake_host(
+        routes
+            .iter()
+            .map(|(p, r)| (p.as_str(), r.clone()))
+            .collect(),
+    )
+    .await
 }
 
 // ---- Installieren: Modell ---------------------------------------------------------------------------------------------
@@ -895,15 +1062,28 @@ async fn ein_oeffentliches_modell_wird_geladen_geprueft_und_atomar_eingesetzt() 
     }
     assert!(model_complete(&h.dirs, &entry));
     assert!(marker_matches(&dir, &entry));
-    assert!(!h.dirs.staging_dir("phonon-test").exists(), "Zwischenordner ist weg");
-    assert!(host.hits().iter().all(|x| x.auth.is_none()), "oeffentlich: nie ein Token");
+    assert!(
+        !h.dirs.staging_dir("phonon-test").exists(),
+        "Zwischenordner ist weg"
+    );
+    assert!(
+        host.hits().iter().all(|x| x.auth.is_none()),
+        "oeffentlich: nie ein Token"
+    );
     // Ein Fortschritt ueber alle Dateien: nie rueckwaerts, am Ende voll, Summe = alle Dateien.
     let total: u64 = bodies.iter().map(|(_, b)| b.len() as u64).sum();
     let progress = h.progress.lock().unwrap().clone();
     assert!(progress.iter().all(|(_, t)| *t == total), "{progress:?}");
-    assert!(progress.windows(2).all(|w| w[0].0 <= w[1].0), "{progress:?}");
+    assert!(
+        progress.windows(2).all(|w| w[0].0 <= w[1].0),
+        "{progress:?}"
+    );
     assert_eq!(progress.last().copied(), Some((total, total)));
-    assert_eq!(h.verified.load(Ordering::SeqCst), 3, "jede der drei Dateien wird geprueft");
+    assert_eq!(
+        h.verified.load(Ordering::SeqCst),
+        3,
+        "jede der drei Dateien wird geprueft"
+    );
 }
 
 #[tokio::test]
@@ -918,13 +1098,19 @@ async fn ein_gesperrtes_modell_sendet_das_token_nur_an_den_freigegebenen_ursprun
     let hits = host.hits();
     assert_eq!(hits.len(), 3);
     for hit in &hits {
-        assert_eq!(hit.auth.as_deref(), Some(format!("Bearer {TOKEN}").as_str()), "{hit:?}");
+        assert_eq!(
+            hit.auth.as_deref(),
+            Some(format!("Bearer {TOKEN}").as_str()),
+            "{hit:?}"
+        );
     }
     assert!(model_complete(&h.dirs, &entry));
 
     // Passt der freigegebene Ursprung nicht auf den Host (hier: huggingface.co), geht nichts hinaus.
     let h2 = Harness::new(Some(TOKEN), None);
-    install_model(&h2.env(Origin::huggingface()), &entry).await.unwrap();
+    install_model(&h2.env(Origin::huggingface()), &entry)
+        .await
+        .unwrap();
     let hits = host.hits();
     assert_eq!(hits.len(), 6);
     assert!(
@@ -941,15 +1127,31 @@ async fn bei_einer_weiterleitung_zum_cdn_bekommt_das_cdn_kein_token() {
     // Der Ursprung leitet jede Datei auf das CDN um.
     let redirects: Vec<(String, Reply)> = bodies
         .iter()
-        .map(|(n, _)| (format!("/files/{n}"), Reply::Redirect(format!("{}/files/{n}", cdn.base))))
+        .map(|(n, _)| {
+            (
+                format!("/files/{n}"),
+                Reply::Redirect(format!("{}/files/{n}", cdn.base)),
+            )
+        })
         .collect();
-    let origin = fake_host(redirects.iter().map(|(p, r)| (p.as_str(), r.clone())).collect()).await;
+    let origin = fake_host(
+        redirects
+            .iter()
+            .map(|(p, r)| (p.as_str(), r.clone()))
+            .collect(),
+    )
+    .await;
     let (entry, _) = model_on(&origin, true);
     let h = Harness::new(Some(TOKEN), None);
 
-    install_model(&h.env(origin.origin()), &entry).await.unwrap();
+    install_model(&h.env(origin.origin()), &entry)
+        .await
+        .unwrap();
 
-    assert!(origin.hits().iter().all(|x| x.auth.is_some()), "der Ursprung bekommt es");
+    assert!(
+        origin.hits().iter().all(|x| x.auth.is_some()),
+        "der Ursprung bekommt es"
+    );
     assert_eq!(cdn.hits().len(), 3);
     assert!(
         cdn.hits().iter().all(|x| x.auth.is_none()),
@@ -966,7 +1168,9 @@ async fn ein_gesperrtes_modell_ohne_token_nennt_den_weg_und_laedt_nichts() {
     let (mut entry, _) = model_on(&host, true);
     entry.name = "Phonon 40m (German, q8)".into();
 
-    let err = install_model(&h.env(host.origin()), &entry).await.unwrap_err();
+    let err = install_model(&h.env(host.origin()), &entry)
+        .await
+        .unwrap_err();
 
     assert!(
         err.contains("Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login)"),
@@ -975,7 +1179,10 @@ async fn ein_gesperrtes_modell_ohne_token_nennt_den_weg_und_laedt_nichts() {
     assert!(err.contains("HF_TOKEN"));
     assert!(host.hits().is_empty(), "kein einziger Aufruf");
     assert!(!h.dirs.model_dir("phonon-test").exists());
-    assert!(!h.dirs.staging_dir("phonon-test").exists(), "nicht einmal ein Zwischenordner");
+    assert!(
+        !h.dirs.staging_dir("phonon-test").exists(),
+        "nicht einmal ein Zwischenordner"
+    );
 }
 
 #[tokio::test]
@@ -990,7 +1197,9 @@ async fn http_401_und_403_ergeben_den_hinweis_und_nennen_das_token_nie() {
         let (entry, _) = model_on(&host, true);
         let h = Harness::new(Some(TOKEN), None);
 
-        let err = install_model(&h.env(host.origin()), &entry).await.unwrap_err();
+        let err = install_model(&h.env(host.origin()), &entry)
+            .await
+            .unwrap_err();
 
         assert!(
             err.contains("Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login)"),
@@ -999,14 +1208,25 @@ async fn http_401_und_403_ergeben_den_hinweis_und_nennen_das_token_nie() {
         assert!(!err.contains(TOKEN), "{status}: Token im Fehlertext: {err}");
         assert!(!err.to_lowercase().contains("bearer"), "{err}");
         assert!(!model_complete(&h.dirs, &entry));
-        assert!(!h.dirs.model_dir("phonon-test").exists(), "kein halbes Modell am Zielort");
-        assert!(host.hits().iter().all(|x| x.auth.is_some()), "angefragt wurde mit Token");
+        assert!(
+            !h.dirs.model_dir("phonon-test").exists(),
+            "kein halbes Modell am Zielort"
+        );
+        assert!(
+            host.hits().iter().all(|x| x.auth.is_some()),
+            "angefragt wurde mit Token"
+        );
 
         // Ein oeffentliches Modell mit 403 bekommt keinen Anmelde-Hinweis, und es geht nie ein Token hin.
         let (public, _) = model_on(&host, false);
         let h = Harness::new(Some(TOKEN), None);
-        let err = install_model(&h.env(host.origin()), &public).await.unwrap_err();
-        assert!(err.contains("verweigert") && !err.contains("Bedingungen"), "{err}");
+        let err = install_model(&h.env(host.origin()), &public)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("verweigert") && !err.contains("Bedingungen"),
+            "{err}"
+        );
         assert!(host.hits().last().unwrap().auth.is_none());
     }
 }
@@ -1021,13 +1241,21 @@ async fn eine_abweichende_sha256_installiert_nichts_und_loescht_die_datei() {
     let (entry, _) = model_on(&host, false);
     let h = Harness::new(None, None);
 
-    let err = install_model(&h.env(host.origin()), &entry).await.unwrap_err();
+    let err = install_model(&h.env(host.origin()), &entry)
+        .await
+        .unwrap_err();
 
-    assert!(err.contains("corrupt") || err.contains("beschädigt"), "{err}");
+    assert!(
+        err.contains("corrupt") || err.contains("beschädigt"),
+        "{err}"
+    );
     assert!(!model_complete(&h.dirs, &entry));
     assert!(!h.dirs.model_dir("phonon-test").exists());
     let staging = h.dirs.staging_dir("phonon-test");
-    assert!(!staging.join("model.q8.gguf").exists(), "die beschaedigte Datei ist weg");
+    assert!(
+        !staging.join("model.q8.gguf").exists(),
+        "die beschaedigte Datei ist weg"
+    );
     assert!(!staging.join("model.q8.gguf.partial").exists());
     assert!(!staging.join(MARKER_FILE).exists(), "keine Marke");
 }
@@ -1041,11 +1269,20 @@ async fn eine_abweichende_git_blob_kennung_installiert_nichts() {
     let (entry, _) = model_on(&host, false);
     let h = Harness::new(None, None);
 
-    let err = install_model(&h.env(host.origin()), &entry).await.unwrap_err();
+    let err = install_model(&h.env(host.origin()), &entry)
+        .await
+        .unwrap_err();
 
-    assert!(err.contains("beschädigt") && err.contains("tokenizer.json"), "{err}");
+    assert!(
+        err.contains("beschädigt") && err.contains("tokenizer.json"),
+        "{err}"
+    );
     assert!(!model_complete(&h.dirs, &entry));
-    assert!(!h.dirs.staging_dir("phonon-test").join("tokenizer.json").exists());
+    assert!(!h
+        .dirs
+        .staging_dir("phonon-test")
+        .join("tokenizer.json")
+        .exists());
 }
 
 #[tokio::test]
@@ -1058,10 +1295,16 @@ async fn abbruch_haelt_an_und_die_wiederaufnahme_laedt_fertige_dateien_nicht_neu
     let h = Harness::new(None, Some(1));
     let out = install_model(&h.env(host.origin()), &entry).await.unwrap();
     assert_eq!(out, Outcome::Cancelled);
-    assert!(!h.dirs.model_dir("phonon-test").exists(), "kein halbes Modell am Zielort");
+    assert!(
+        !h.dirs.model_dir("phonon-test").exists(),
+        "kein halbes Modell am Zielort"
+    );
     assert!(!model_complete(&h.dirs, &entry));
     let staging = h.dirs.staging_dir("phonon-test");
-    assert!(staging.join("config.json").is_file(), "die fertige Datei bleibt");
+    assert!(
+        staging.join("config.json").is_file(),
+        "die fertige Datei bleibt"
+    );
     assert!(!staging.join(MARKER_FILE).exists());
 
     // Neuer Versuch im selben Ordner: nur der Rest wird geladen.
@@ -1116,8 +1359,15 @@ async fn eine_installation_ueber_einen_vorhandenen_ordner_behaelt_die_stimmen() 
 
     install_model(&h.env(host.origin()), &entry).await.unwrap();
 
-    assert_eq!(fs::read(dir.join("voices").join("Nele.safetensors")).unwrap(), b"stimme");
-    assert_eq!(fs::read(dir.join("config.json")).unwrap(), b"{\"a\":1}", "alte Datei ersetzt");
+    assert_eq!(
+        fs::read(dir.join("voices").join("Nele.safetensors")).unwrap(),
+        b"stimme"
+    );
+    assert_eq!(
+        fs::read(dir.join("config.json")).unwrap(),
+        b"{\"a\":1}",
+        "alte Datei ersetzt"
+    );
     assert!(model_complete(&h.dirs, &entry));
     assert!(!h.dirs.staging_dir("phonon-test").exists());
 }
@@ -1132,9 +1382,14 @@ async fn ein_nicht_beschreibbares_ziel_ist_eine_meldung_und_nichts_gilt_als_inst
     fs::create_dir_all(h.dirs.root()).unwrap();
     fs::write(h.dirs.models_dir(), b"ich bin kein ordner").unwrap();
 
-    let err = install_model(&h.env(host.origin()), &entry).await.unwrap_err();
+    let err = install_model(&h.env(host.origin()), &entry)
+        .await
+        .unwrap_err();
 
-    assert!(err.contains("Phonon Test") && err.contains("schreiben"), "{err}");
+    assert!(
+        err.contains("Phonon Test") && err.contains("schreiben"),
+        "{err}"
+    );
     assert!(!model_complete(&h.dirs, &entry));
     assert!(host.hits().is_empty(), "ohne Ziel wird nichts geladen");
 }
@@ -1143,7 +1398,9 @@ async fn ein_nicht_beschreibbares_ziel_ist_eine_meldung_und_nichts_gilt_als_inst
 fn meldungen_zu_fehlerstatus_und_vollem_datentraeger() {
     let entry = tiny_entry("phonon-test", &[]);
     let status = |code: u16| {
-        anyhow::Error::new(HttpStatusError(reqwest::StatusCode::from_u16(code).unwrap()))
+        anyhow::Error::new(HttpStatusError(
+            reqwest::StatusCode::from_u16(code).unwrap(),
+        ))
     };
     assert!(describe_error(&entry, &status(404)).contains("nicht gefunden"));
     assert!(describe_error(&entry, &status(500)).contains("HTTP 500"));
@@ -1158,13 +1415,22 @@ fn meldungen_zu_fehlerstatus_und_vollem_datentraeger() {
 fn eine_kennung_laesst_sich_nur_einmal_belegen() {
     let flags = Mutex::new(HashMap::new());
     let first = try_claim(&flags, "phonon-40m-de").expect("frei");
-    assert!(try_claim(&flags, "phonon-40m-de").is_none(), "zweiter Start wird abgewiesen");
-    assert!(try_claim(&flags, "phonon-31m-en").is_some(), "andere Kennung ist frei");
+    assert!(
+        try_claim(&flags, "phonon-40m-de").is_none(),
+        "zweiter Start wird abgewiesen"
+    );
+    assert!(
+        try_claim(&flags, "phonon-31m-en").is_some(),
+        "andere Kennung ist frei"
+    );
     // Der Abbruch der ersten wirkt auf ihr Token.
     flags.lock().unwrap().get("phonon-40m-de").unwrap().cancel();
     assert!(first.is_cancelled());
     flags.lock().unwrap().remove("phonon-40m-de");
-    assert!(try_claim(&flags, "phonon-40m-de").is_some(), "nach dem Freigeben wieder frei");
+    assert!(
+        try_claim(&flags, "phonon-40m-de").is_some(),
+        "nach dem Freigeben wieder frei"
+    );
 }
 
 // ---- Installieren: Programm ---------------------------------------------------------------------------------------------
@@ -1194,9 +1460,15 @@ async fn das_programm_wird_geladen_geprueft_entpackt_und_das_archiv_entfernt() {
     let dest = h.dirs.runtime_dir("windows-x64");
     assert_eq!(fs::read(dest.join("ptts.exe")).unwrap(), b"EXE");
     assert!(runtime_installed(&h.dirs, "windows-x64", &entry));
-    assert!(!h.dirs.root().join("windows-x64.download").exists(), "Archiv entfernt");
+    assert!(
+        !h.dirs.root().join("windows-x64.download").exists(),
+        "Archiv entfernt"
+    );
     assert!(host.hits().iter().all(|x| x.auth.is_none()));
-    assert_eq!(h.progress.lock().unwrap().last().copied(), Some((zip.len() as u64, zip.len() as u64)));
+    assert_eq!(
+        h.progress.lock().unwrap().last().copied(),
+        Some((zip.len() as u64, zip.len() as u64))
+    );
     // Noch einmal: nichts wird geladen.
     install_runtime_entry(&h.env(host.origin()), "windows-x64", &entry)
         .await
@@ -1221,7 +1493,10 @@ async fn ein_falsches_programm_archiv_wird_nicht_installiert() {
         .await
         .unwrap_err();
 
-    assert!(err.contains("corrupt") || err.contains("beschädigt"), "{err}");
+    assert!(
+        err.contains("corrupt") || err.contains("beschädigt"),
+        "{err}"
+    );
     assert!(!h.dirs.runtime_dir("windows-x64").exists());
     assert!(!h.dirs.root().join("windows-x64.download").exists());
 }
@@ -1266,7 +1541,9 @@ async fn eine_stimme_braucht_das_installierte_modell() {
     let (parent, _) = parent_fixture();
     let voice = voice_fixture(&host, "Nele", b"voice-bytes");
 
-    let err = install_voice(&h.env(host.origin()), &voice, &parent).await.unwrap_err();
+    let err = install_voice(&h.env(host.origin()), &voice, &parent)
+        .await
+        .unwrap_err();
 
     assert!(err.contains("Zuerst das Modell installieren"), "{err}");
     assert!(host.hits().is_empty());
@@ -1286,11 +1563,16 @@ async fn stimmen_werden_geladen_und_in_source_json_eingetragen() {
     let anton = voice_fixture(&host, "Anton", b"anton-bytes!");
 
     assert_eq!(
-        install_voice(&h.env(host.origin()), &nele, &parent).await.unwrap(),
+        install_voice(&h.env(host.origin()), &nele, &parent)
+            .await
+            .unwrap(),
         Outcome::Installed
     );
     let voices = h.dirs.voices_dir("phonon-test");
-    assert_eq!(fs::read(voices.join("Nele.safetensors")).unwrap(), b"nele-bytes");
+    assert_eq!(
+        fs::read(voices.join("Nele.safetensors")).unwrap(),
+        b"nele-bytes"
+    );
     let doc: serde_json::Value =
         serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
     assert_eq!(
@@ -1304,7 +1586,9 @@ async fn stimmen_werden_geladen_und_in_source_json_eingetragen() {
     assert_eq!(doc["voices"][0]["filename"], "voices/IDNele.safetensors");
     assert_eq!(doc["voices"][0]["gender"], "female");
 
-    install_voice(&h.env(host.origin()), &anton, &parent).await.unwrap();
+    install_voice(&h.env(host.origin()), &anton, &parent)
+        .await
+        .unwrap();
     let doc: serde_json::Value =
         serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
     let names: Vec<&str> = doc["voices"]
@@ -1317,7 +1601,9 @@ async fn stimmen_werden_geladen_und_in_source_json_eingetragen() {
 
     // Noch einmal dieselbe Stimme: kein neuer Download, keine doppelte Zeile.
     let before = host.hits().len();
-    install_voice(&h.env(host.origin()), &nele, &parent).await.unwrap();
+    install_voice(&h.env(host.origin()), &nele, &parent)
+        .await
+        .unwrap();
     assert_eq!(host.hits().len(), before);
     let doc: serde_json::Value =
         serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
@@ -1326,13 +1612,19 @@ async fn stimmen_werden_geladen_und_in_source_json_eingetragen() {
 
 #[tokio::test]
 async fn eine_beschaedigte_stimme_wird_nicht_eingetragen() {
-    let host = fake_host(vec![("/voices/Nele", Reply::Body(b"falsche-bytes".to_vec()))]).await;
+    let host = fake_host(vec![(
+        "/voices/Nele",
+        Reply::Body(b"falsche-bytes".to_vec()),
+    )])
+    .await;
     let h = Harness::new(None, None);
     let (parent, files) = parent_fixture();
     write_model_files(&h.dirs.model_dir("phonon-test"), &parent, &files);
     let nele = voice_fixture(&host, "Nele", b"nele-bytes!!"); // andere Pruefsumme/Groesse
 
-    assert!(install_voice(&h.env(host.origin()), &nele, &parent).await.is_err());
+    assert!(install_voice(&h.env(host.origin()), &nele, &parent)
+        .await
+        .is_err());
     let voices = h.dirs.voices_dir("phonon-test");
     assert!(!voices.join("Nele.safetensors").exists());
     assert!(!voices.join("SOURCE.json").exists());
@@ -1347,7 +1639,10 @@ fn stimmen_entfernen_nimmt_datei_und_zeile_mit_und_raeumt_den_leeren_ordner_auf(
     let lock = Mutex::new(());
     let all = voice_entries();
     let nele = all.iter().find(|e| e.id == "phonon-voice-de-nele").unwrap();
-    let anton = all.iter().find(|e| e.id == "phonon-voice-de-anton").unwrap();
+    let anton = all
+        .iter()
+        .find(|e| e.id == "phonon-voice-de-anton")
+        .unwrap();
     for v in [nele, anton] {
         let path = voice_file(&dirs, v).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1359,8 +1654,14 @@ fn stimmen_entfernen_nimmt_datei_und_zeile_mit_und_raeumt_den_leeren_ordner_auf(
     let doc: serde_json::Value =
         serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
     assert_eq!(doc["license"], "apache-2.0");
-    assert!(doc["source"].as_str().unwrap().starts_with("hf://gradium/phonon-voices@0ee17205"));
-    assert_eq!(doc["voices"][0], serde_json::to_value(nele.voice.as_ref().unwrap()).unwrap());
+    assert!(doc["source"]
+        .as_str()
+        .unwrap()
+        .starts_with("hf://gradium/phonon-voices@0ee17205"));
+    assert_eq!(
+        doc["voices"][0],
+        serde_json::to_value(nele.voice.as_ref().unwrap()).unwrap()
+    );
 
     delete(&dirs, Some("windows-x64"), &lock, "phonon-voice-de-nele").unwrap();
     assert!(!voices.join("Nele.safetensors").exists());
@@ -1371,7 +1672,10 @@ fn stimmen_entfernen_nimmt_datei_und_zeile_mit_und_raeumt_den_leeren_ordner_auf(
     assert_eq!(doc["voices"][0]["name"], "Anton");
 
     delete(&dirs, Some("windows-x64"), &lock, "phonon-voice-de-anton").unwrap();
-    assert!(!voices.exists(), "ohne Stimmen: weder SOURCE.json noch leerer Ordner");
+    assert!(
+        !voices.exists(),
+        "ohne Stimmen: weder SOURCE.json noch leerer Ordner"
+    );
     // Noch einmal: nicht installiert.
     assert!(delete(&dirs, Some("windows-x64"), &lock, "phonon-voice-de-anton").is_err());
 }
@@ -1388,7 +1692,10 @@ fn modell_und_programm_entfernen_und_unbekanntes_ablehnen() {
     fs::create_dir_all(dirs.staging_dir("phonon-31m-en")).unwrap();
     delete(&dirs, None, &lock, "phonon-31m-en").unwrap();
     assert!(!model.exists() && !dirs.staging_dir("phonon-31m-en").exists());
-    assert!(delete(&dirs, None, &lock, "phonon-31m-en").is_err(), "nicht mehr da");
+    assert!(
+        delete(&dirs, None, &lock, "phonon-31m-en").is_err(),
+        "nicht mehr da"
+    );
 
     // Programm.
     let rt = dirs.runtime_dir("windows-x64");
@@ -1402,8 +1709,17 @@ fn modell_und_programm_entfernen_und_unbekanntes_ablehnen() {
     // Nichts ausserhalb des Katalogs: kein Pfadbaustein vom Aufrufer.
     let precious = tmp.path().join("wichtig");
     fs::create_dir_all(&precious).unwrap();
-    for bad in ["../../wichtig", "..", "", "wichtig", "phonon-40m-de/../../wichtig"] {
-        assert!(delete(&dirs, Some("windows-x64"), &lock, bad).is_err(), "{bad:?}");
+    for bad in [
+        "../../wichtig",
+        "..",
+        "",
+        "wichtig",
+        "phonon-40m-de/../../wichtig",
+    ] {
+        assert!(
+            delete(&dirs, Some("windows-x64"), &lock, bad).is_err(),
+            "{bad:?}"
+        );
     }
     assert!(precious.exists());
 }
@@ -1417,4 +1733,176 @@ async fn unbekannte_kennungen_werden_nicht_installiert() {
         assert!(err.contains("Unbekannter"), "{bad:?}: {err}");
     }
     assert!(host.hits().is_empty());
+}
+
+// ---- Echte Downloads (nur von Hand) ------------------------------------------------------------------
+//
+// `cargo test --lib -- --ignored echt_` laedt die OEFFENTLICHEN Dateien von GitHub und Hugging Face
+// (ptts-Archiv, englisches Modell, eine Stimme) in einen Temp-Ordner (TEMP=D:/lv-build/tmp), nie in
+// echte App-Daten, und nie die gesperrten Modelle. Es geht kein Token hinaus.
+
+fn real_env<'a>(
+    h: &'a Harness,
+    token: &'a (dyn Fn() -> Option<Secret> + Send + Sync),
+) -> InstallEnv<'a> {
+    InstallEnv {
+        dirs: &h.dirs,
+        platform: current_platform(),
+        cancel: &h.cancel,
+        emit: &*h.emit,
+        event_id: "phonon-real",
+        token,
+        auth_origin: Origin::huggingface(),
+        voices_lock: &h.lock,
+    }
+}
+
+/// Programm und englisches Modell wirklich laden, einrichten und mit dem Adapter sprechen lassen.
+#[tokio::test]
+#[ignore = "echter Download (ptts-Archiv von GitHub, Modell und Stimme von Hugging Face), nur von Hand"]
+async fn echt_programm_modell_und_stimme_installieren_und_sprechen() {
+    use crate::managers::tts::providers::contract::{
+        CancelToken, ProviderHealth, SynthesisOptions, TtsProvider,
+    };
+    use crate::managers::tts::providers::phonon::{PhononConfig, PhononProvider};
+
+    let Some(platform) = current_platform() else {
+        return;
+    };
+    let h = Harness::new(None, None);
+    let no_token = || -> Option<Secret> { None };
+    let env = real_env(&h, &no_token);
+
+    // 1. Programm.
+    assert_eq!(install(&env, RUNTIME_ID).await.unwrap(), Outcome::Installed);
+    let exe = h.dirs.runtime_dir(platform).join(exe_name(platform));
+    assert!(exe.is_file(), "{}", exe.display());
+    assert!(h.dirs.runtime_dir(platform).join("LICENSE-MIT").is_file());
+    eprintln!(
+        "ptts: {} ({} Byte)",
+        exe.display(),
+        fs::metadata(&exe).unwrap().len()
+    );
+
+    // 2. Oeffentliches Modell (sieben Dateien, SHA-256 bzw. Git-Blob je Datei geprueft).
+    assert_eq!(
+        install(&env, "phonon-31m-en").await.unwrap(),
+        Outcome::Installed
+    );
+    let model = h.dirs.model_dir("phonon-31m-en");
+    assert!(model_complete(
+        &h.dirs,
+        &model_entry("phonon-31m-en").unwrap()
+    ));
+    let progress = h.progress.lock().unwrap().clone();
+    eprintln!(
+        "Fortschrittsmeldungen: {}, zuletzt {:?}",
+        progress.len(),
+        progress.last()
+    );
+
+    // 3. Eine Stimme in den Ordner des englischen Modells (der Katalogeintrag gehoert zum deutschen:
+    // hier mit dem englischen als Ziel, damit nichts Gesperrtes noetig ist).
+    let mut nele = voice_entries()
+        .into_iter()
+        .find(|e| e.id == "phonon-voice-de-nele")
+        .unwrap();
+    nele.parent = Some("phonon-31m-en".to_string());
+    let parent = model_entry("phonon-31m-en").unwrap();
+    assert_eq!(
+        install_voice(&env, &nele, &parent).await.unwrap(),
+        Outcome::Installed
+    );
+    let voices = h.dirs.voices_dir("phonon-31m-en");
+    assert_eq!(
+        fs::metadata(voices.join("Nele.safetensors")).unwrap().len(),
+        256_136
+    );
+    let doc: serde_json::Value =
+        serde_json::from_slice(&fs::read(voices.join("SOURCE.json")).unwrap()).unwrap();
+    assert_eq!(doc["voices"][0]["name"], "Nele");
+    eprintln!("SOURCE.json: {doc}");
+
+    // 4. Der Adapter spricht mit dem Installierten (ProcessGuard, RAM-Start-Gate wie im Betrieb).
+    let paths = installed_paths(h._tmp.path());
+    assert_eq!(
+        paths.phonon.exe_path.as_deref(),
+        Some(exe.to_string_lossy().as_ref())
+    );
+    assert!(paths
+        .phonon
+        .model
+        .as_deref()
+        .unwrap()
+        .ends_with("phonon-31m-en"));
+    let provider = PhononProvider::new(PhononConfig {
+        exe_path: paths.phonon.exe_path.clone().unwrap(),
+        model: paths.phonon.model.clone().unwrap(),
+        lang: "en".into(),
+        quant: Some("q8".into()),
+        ..PhononConfig::default()
+    });
+    let lic = provider.descriptor().license;
+    assert!(lic.verified && !lic.non_commercial, "{lic:?}");
+    let health: ProviderHealth = provider.health_check().await;
+    assert!(health.available, "{health:?}");
+    eprintln!("Version laut ptts: {:?}", health.version);
+    let mut clips = Vec::new();
+    for voice in [None, Some("Nele".to_string())] {
+        let opts = SynthesisOptions {
+            language: "en".into(),
+            voice: voice.clone(),
+            timeout: std::time::Duration::from_secs(120),
+            ..Default::default()
+        };
+        let clip = provider
+            .synthesize(
+                "Hello from the Local Voice test.",
+                &opts,
+                &CancelToken::detached(),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{voice:?}: {e:?}"));
+        assert!(clip.duration_ms > 500, "{voice:?}: {} ms", clip.duration_ms);
+        eprintln!("Stimme {voice:?}: {} ms Audio", clip.duration_ms);
+        clips.push(clip.data);
+    }
+    // Die installierte Stimme wirkt wirklich: anderes Audio als die Standardstimme.
+    assert_ne!(
+        clips[0], clips[1],
+        "die Stimme Nele aus voices/ wurde nicht verwendet"
+    );
+}
+
+/// Der Weg mit eigener Weiterleitungsfolge (wie fuer gesperrte Modelle) gegen den echten Hugging-Face-
+/// Server: ein oeffentliches LFS-Objekt wird ueber Weiterleitung auf das CDN geladen. Das Token ist
+/// hier an einen anderen Ursprung gebunden, geht also nirgends hin; geprueft wird das Folgen.
+#[tokio::test]
+#[ignore = "echter Download einer oeffentlichen Datei von Hugging Face, nur von Hand"]
+async fn echt_weiterleitung_zum_cdn_wird_gefolgt_ohne_token() {
+    let nele = voice_entries()
+        .into_iter()
+        .find(|e| e.id == "phonon-voice-de-nele")
+        .unwrap();
+    let file = &nele.files[0];
+    let tmp = TempDir::new().unwrap();
+    let partial = tmp.path().join("Nele.safetensors.partial");
+    let other_origin = DownloadAuth::new(
+        Secret::new("hf_kein_echtes_token_wird_nie_gesendet").unwrap(),
+        Origin::plain_http("127.0.0.1", 9),
+    );
+    let out = ModelManager::download_http_resumable_authed(
+        "phonon-real",
+        &file.url,
+        &partial,
+        Some(file.size_bytes),
+        file.sha256.as_deref(),
+        &CancellationToken::new(),
+        &|_| {},
+        Some(&other_origin),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(out, HttpDownloadOutcome::Completed));
+    assert_eq!(fs::metadata(&partial).unwrap().len(), 256_136);
 }

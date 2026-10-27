@@ -11,6 +11,7 @@ import { Button } from "../../ui/Button";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { ModelRow, RowChip, type RowProgress } from "./ModelRow";
 import { ModelSection } from "./ModelSection";
+import { PhononModels, isPhononRow } from "./PhononModels";
 
 /**
  * Vorlesestimmen (Piper): installierte Stimmen als Zeilen, ladbare zugeklappt.
@@ -20,7 +21,7 @@ import { ModelSection } from "./ModelSection";
 export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
   const { t } = useTranslation();
   const {
-    downloads,
+    downloads: allDownloads,
     downloadingIds,
     verifyingIds,
     downloadProgress,
@@ -28,6 +29,9 @@ export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
     cancelDownload,
     deleteModel,
   } = useTtsModelStore();
+
+  // Phonon-Zeilen hat `PhononModels`; hier stehen nur die Piper-Zeilen.
+  const downloads = allDownloads.filter((d) => !isPhononRow(d));
 
   const nameOf = (info: TtsDownloadInfo) =>
     t(
@@ -242,6 +246,7 @@ export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
           {available.map(row)}
         </ModelSection>
       )}
+      <PhononModels query={query} />
     </div>
   );
 };

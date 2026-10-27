@@ -701,9 +701,15 @@ async fn das_token_geht_nicht_an_einen_anderen_ursprung() {
         };
         assert!(!auth.applies_to(&reqwest::Url::parse(&base).unwrap()));
         let _ = fs::remove_file(&partial);
-        run_authed(&format!("{base}/file"), &partial, Some(1), None, Some(&auth))
-            .await
-            .unwrap();
+        run_authed(
+            &format!("{base}/file"),
+            &partial,
+            Some(1),
+            None,
+            Some(&auth),
+        )
+        .await
+        .unwrap();
         let heads = server.await.unwrap();
         assert!(!heads[0].contains("authorization"), "{}", heads[0]);
         assert!(!has_token(&heads[0]));
@@ -747,7 +753,10 @@ async fn eine_weiterleitung_zu_einem_anderen_host_nimmt_das_token_nicht_mit() {
     assert_eq!(fs::read(&partial).unwrap(), body);
     let origin_heads = origin_server.await.unwrap();
     let cdn_heads = cdn_server.await.unwrap();
-    assert!(has_token(&origin_heads[0]), "der Ursprung bekommt das Token");
+    assert!(
+        has_token(&origin_heads[0]),
+        "der Ursprung bekommt das Token"
+    );
     assert!(
         !cdn_heads[0].contains("authorization") && !has_token(&cdn_heads[0]),
         "das CDN darf das Token nie sehen: {}",
@@ -769,7 +778,10 @@ async fn beim_fortsetzen_bleibt_der_range_kopf_ueber_die_weiterleitung_erhalten(
     .await;
     let (origin, origin_server) = serve_script(vec![http_response(
         "307 Temporary Redirect",
-        &[format!("Location: {cdn}/f"), "Content-Length: 0".to_string()],
+        &[
+            format!("Location: {cdn}/f"),
+            "Content-Length: 0".to_string(),
+        ],
         b"",
     )])
     .await;
@@ -879,15 +891,24 @@ async fn http_401_und_403_sind_typisierte_fehler_und_nennen_das_token_nie() {
         let dir = TempDir::new().unwrap();
         let partial = dir.path().join("m.partial");
         let auth = auth_for_port(port_of(&base));
-        let err = run_authed(&format!("{base}/file"), &partial, Some(1), None, Some(&auth))
-            .await
-            .unwrap_err();
+        let err = run_authed(
+            &format!("{base}/file"),
+            &partial,
+            Some(1),
+            None,
+            Some(&auth),
+        )
+        .await
+        .unwrap_err();
         let typed = err
             .downcast_ref::<HttpStatusError>()
             .expect("typisierter Statusfehler");
         assert_eq!(typed.0.as_u16(), status);
         // Wortlaut unveraendert (andere Aufrufer und Tests kennen ihn).
-        assert!(err.to_string().starts_with("server returned HTTP "), "{err}");
+        assert!(
+            err.to_string().starts_with("server returned HTTP "),
+            "{err}"
+        );
         for text in [err.to_string(), format!("{err:?}"), format!("{err:#}")] {
             assert!(!text.contains(TOKEN), "Token im Fehlertext: {text}");
         }
@@ -928,15 +949,26 @@ fn ein_ungueltiges_token_wird_abgelehnt() {
 fn die_freigabe_gilt_nur_fuer_https_huggingface_co() {
     let auth = DownloadAuth::huggingface(Secret::new(TOKEN).unwrap());
     let ok = |u: &str| auth.applies_to(&reqwest::Url::parse(u).unwrap());
-    assert!(ok("https://huggingface.co/gradium/phonon-40m-de/resolve/abc/config.json"));
-    assert!(ok("https://HuggingFace.co/x"), "Gross-/Kleinschreibung des Hosts");
+    assert!(ok(
+        "https://huggingface.co/gradium/phonon-40m-de/resolve/abc/config.json"
+    ));
+    assert!(
+        ok("https://HuggingFace.co/x"),
+        "Gross-/Kleinschreibung des Hosts"
+    );
     assert!(!ok("http://huggingface.co/x"), "nie ueber http");
-    assert!(!ok("https://cdn-lfs.huggingface.co/x"), "Unterdomain ist ein anderer Host");
+    assert!(
+        !ok("https://cdn-lfs.huggingface.co/x"),
+        "Unterdomain ist ein anderer Host"
+    );
     assert!(!ok("https://cas-bridge.xethub.hf.co/x"));
     assert!(!ok("https://huggingface.co.evil.example/x"));
     assert!(!ok("https://evil.example/huggingface.co"));
     assert!(!ok("https://huggingface.co:8443/x"));
-    assert!(!ok("https://huggingface.co@evil.example/x"), "Host ist evil.example");
+    assert!(
+        !ok("https://huggingface.co@evil.example/x"),
+        "Host ist evil.example"
+    );
 }
 
 #[test]

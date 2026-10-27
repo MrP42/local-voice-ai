@@ -747,12 +747,25 @@ mod tests {
                         .file_git_blobs
                         .get(&f.filename)
                         .is_some_and(|s| is_hex(s, 40));
-                    assert!(sha_ok || blob_ok, "{}: {} ohne Pruefsumme", e.id, f.filename);
+                    assert!(
+                        sha_ok || blob_ok,
+                        "{}: {} ohne Pruefsumme",
+                        e.id,
+                        f.filename
+                    );
                 }
-                assert!(e.license.as_deref().is_some_and(|l| !l.is_empty()), "{}", e.id);
+                assert!(
+                    e.license.as_deref().is_some_and(|l| !l.is_empty()),
+                    "{}",
+                    e.id
+                );
                 assert!(e.license_url.is_some(), "{}: Lizenz-Link fehlt", e.id);
                 assert!(e.license_note.is_some(), "{}: Lizenzhinweis fehlt", e.id);
-                assert!(e.license_verified_on.is_some(), "{}: Pruefdatum fehlt", e.id);
+                assert!(
+                    e.license_verified_on.is_some(),
+                    "{}: Pruefdatum fehlt",
+                    e.id
+                );
                 assert!(e.source.is_some(), "{}: Quelle fehlt", e.id);
             }
         }
@@ -796,7 +809,10 @@ mod tests {
     #[test]
     fn phonon_modelle_tragen_commit_lizenz_und_zugang() {
         let models = tts_entries(Purpose::PhononModel);
-        let de = models.iter().find(|e| e.id == "phonon-40m-de").expect("40m-de");
+        let de = models
+            .iter()
+            .find(|e| e.id == "phonon-40m-de")
+            .expect("40m-de");
         assert_eq!(
             de.revision.as_deref(),
             Some("79cfc7b47fcfc0b666657b981eb366415023a862")
@@ -818,7 +834,11 @@ mod tests {
                 "generation_config.json"
             ]
         );
-        let q8 = de.files.iter().find(|f| f.filename == "model.q8.gguf").unwrap();
+        let q8 = de
+            .files
+            .iter()
+            .find(|f| f.filename == "model.q8.gguf")
+            .unwrap();
         assert_eq!(q8.size_bytes, 74_553_568);
         assert_eq!(
             q8.sha256.as_deref(),
@@ -834,7 +854,10 @@ mod tests {
             );
         }
 
-        let en = models.iter().find(|e| e.id == "phonon-31m-en").expect("31m-en");
+        let en = models
+            .iter()
+            .find(|e| e.id == "phonon-31m-en")
+            .expect("31m-en");
         assert_eq!(
             en.revision.as_deref(),
             Some("92741c5b07d085ff840e26fea8ce43110b87852f")
@@ -851,17 +874,29 @@ mod tests {
         assert_eq!(voices.len(), 13, "13 deutsche Stimmen");
         let models = tts_entries(Purpose::PhononModel);
         for v in &voices {
-            let meta = v.voice.as_ref().unwrap_or_else(|| panic!("{}: voice fehlt", v.id));
+            let meta = v
+                .voice
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: voice fehlt", v.id));
             assert_eq!(meta.language, "de", "{}", v.id);
             assert_eq!(v.parent.as_deref(), Some("phonon-40m-de"), "{}", v.id);
             assert!(models.iter().any(|m| Some(&m.id) == v.parent.as_ref()));
             // Lokaler Name ist der Stimmenname; die Quelle liegt unter voice_id.
             assert_eq!(v.files.len(), 1);
             assert_eq!(v.files[0].filename, format!("{}.safetensors", meta.name));
-            assert_eq!(meta.filename, format!("voices/{}.safetensors", meta.voice_id));
-            assert!(v.files[0].url.ends_with(&meta.filename), "{}", v.files[0].url);
+            assert_eq!(
+                meta.filename,
+                format!("voices/{}.safetensors", meta.voice_id)
+            );
             assert!(
-                v.files[0].url.contains("gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/"),
+                v.files[0].url.ends_with(&meta.filename),
+                "{}",
+                v.files[0].url
+            );
+            assert!(
+                v.files[0].url.contains(
+                    "gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/"
+                ),
                 "{}",
                 v.files[0].url
             );
@@ -870,7 +905,9 @@ mod tests {
             assert_eq!(v.license.as_deref(), Some("Apache-2.0"));
             assert!(!v.license_non_commercial);
             assert!(
-                meta.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                meta.name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
                 "Name taugt als Dateiname: {}",
                 meta.name
             );

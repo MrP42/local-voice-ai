@@ -142,7 +142,10 @@ fn ensure_safe_entry(entry: &TtsCatalogEntry) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err(format!("Katalogeintrag {} hat einen unzulässigen Namen.", entry.id))
+        Err(format!(
+            "Katalogeintrag {} hat einen unzulässigen Namen.",
+            entry.id
+        ))
     }
 }
 
@@ -182,7 +185,7 @@ struct Marker {
     installed_at_unix: u64,
 }
 
-fn write_marker(dir: &Path, entry: &TtsCatalogEntry) -> Result<()> {
+pub(crate) fn write_marker(dir: &Path, entry: &TtsCatalogEntry) -> Result<()> {
     let marker = Marker {
         catalog_id: entry.id.clone(),
         revision: entry.revision.clone(),
@@ -304,7 +307,12 @@ pub(crate) fn build_downloads(
         if complete {
             ready_models.push(entry.id.clone());
         }
-        let mut info = base_info(&entry, &entry.id, TtsDownloadKind::Model, runtime_id.clone());
+        let mut info = base_info(
+            &entry,
+            &entry.id,
+            TtsDownloadKind::Model,
+            runtime_id.clone(),
+        );
         info.is_downloaded = complete;
         info.is_usable = complete && runtime_ready;
         info.is_downloading = is_downloading(&entry.id);
@@ -405,7 +413,11 @@ pub(crate) fn hf_token(env: &dyn Fn(&str) -> Option<String>) -> Option<Secret> {
     if let Some(token) = env("HF_TOKEN").as_deref().and_then(Secret::new) {
         return Some(token);
     }
-    let non_empty = |k: &str| env(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let non_empty = |k: &str| {
+        env(k)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
     let path = if let Some(home) = non_empty("HF_HOME") {
         PathBuf::from(home).join("token")
     } else if let Some(cache) = non_empty("XDG_CACHE_HOME") {
@@ -488,7 +500,9 @@ fn describe_error(entry: &TtsCatalogEntry, err: &anyhow::Error) -> String {
 fn io_message(what: &str, e: &std::io::Error) -> String {
     // 112 = ERROR_DISK_FULL (Windows), 28 = ENOSPC (Unix).
     if matches!(e.raw_os_error(), Some(112) | Some(28)) {
-        format!("Für {what} ist nicht genug Speicherplatz frei. Platz schaffen und erneut versuchen.")
+        format!(
+            "Für {what} ist nicht genug Speicherplatz frei. Platz schaffen und erneut versuchen."
+        )
     } else {
         format!("{what} lässt sich nicht schreiben: {e}")
     }
@@ -619,7 +633,9 @@ fn verify_git_blob(path: &Path, expected: &str, name: &str) -> Result<(), String
         Ok(actual) if actual.eq_ignore_ascii_case(expected) => Ok(()),
         Ok(_) => {
             let _ = fs::remove_file(path);
-            Err(format!("Die Datei {name} ist beschädigt (Prüfsumme weicht ab). Bitte erneut versuchen."))
+            Err(format!(
+                "Die Datei {name} ist beschädigt (Prüfsumme weicht ab). Bitte erneut versuchen."
+            ))
         }
         Err(e) => {
             let _ = fs::remove_file(path);
@@ -678,12 +694,18 @@ fn extract_zip(archive: &Path, out_dir: &Path, exe: &str) -> Result<()> {
             continue;
         }
         if entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000) {
-            return Err(anyhow!("Das Archiv enthält eine Verknüpfung statt einer Datei."));
+            return Err(anyhow!(
+                "Das Archiv enthält eine Verknüpfung statt einer Datei."
+            ));
         }
         if seen.contains(&name) {
             return Err(anyhow!("Das Archiv enthält {name} doppelt."));
         }
-        let limit = if name == exe { MAX_EXE_BYTES } else { MAX_SMALL_BYTES };
+        let limit = if name == exe {
+            MAX_EXE_BYTES
+        } else {
+            MAX_SMALL_BYTES
+        };
         let mut out = fs::File::create(out_dir.join(&name))?;
         copy_limited(&mut entry, &mut out, limit)?;
         seen.push(name);
@@ -708,12 +730,18 @@ fn extract_tar_gz(archive: &Path, out_dir: &Path, exe: &str) -> Result<()> {
             continue;
         }
         if !kind.is_file() {
-            return Err(anyhow!("Das Archiv enthält eine Verknüpfung statt einer Datei."));
+            return Err(anyhow!(
+                "Das Archiv enthält eine Verknüpfung statt einer Datei."
+            ));
         }
         if seen.contains(&name) {
             return Err(anyhow!("Das Archiv enthält {name} doppelt."));
         }
-        let limit = if name == exe { MAX_EXE_BYTES } else { MAX_SMALL_BYTES };
+        let limit = if name == exe {
+            MAX_EXE_BYTES
+        } else {
+            MAX_SMALL_BYTES
+        };
         let mut out = fs::File::create(out_dir.join(&name))?;
         copy_limited(&mut entry, &mut out, limit)?;
         seen.push(name);
@@ -775,7 +803,10 @@ pub(crate) fn extract_ptts_archive(
             extract_tar_gz(archive, &temp, exe)?;
         }
         let exe_path = temp.join(exe);
-        if !fs::metadata(&exe_path).map(|m| m.len() > 0).unwrap_or(false) {
+        if !fs::metadata(&exe_path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+        {
             return Err(anyhow!("Das Archiv enthält {exe} nicht."));
         }
         #[cfg(unix)]
@@ -826,7 +857,11 @@ fn add_voice_row(voices_dir: &Path, entry: &TtsCatalogEntry) -> Result<()> {
         voices: Vec::new(),
     });
     doc.source = entry.source.clone().unwrap_or_default();
-    doc.license = entry.license.clone().unwrap_or_default().to_ascii_lowercase();
+    doc.license = entry
+        .license
+        .clone()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     doc.voices.retain(|v| v.name != meta.name);
     doc.voices.push(meta);
     write_voice_source(voices_dir, &doc)
@@ -906,7 +941,9 @@ fn aggregated<'a>(
             };
             (env.emit)(HttpDownloadEvent::Progress(&progress));
         }
-        HttpDownloadEvent::VerificationStarted => (env.emit)(HttpDownloadEvent::VerificationStarted),
+        HttpDownloadEvent::VerificationStarted => {
+            (env.emit)(HttpDownloadEvent::VerificationStarted)
+        }
         HttpDownloadEvent::VerificationCompleted => {
             (env.emit)(HttpDownloadEvent::VerificationCompleted)
         }
@@ -1050,7 +1087,8 @@ pub(crate) async fn install_model(
         done.fetch_add(file.size_bytes, Ordering::Relaxed);
     }
     write_marker(&staging, entry).map_err(|e| format!("{}: {e}", entry.name))?;
-    commit_model(env.dirs, entry).map_err(|e| format!("{} lässt sich nicht einsetzen: {e}", entry.name))?;
+    commit_model(env.dirs, entry)
+        .map_err(|e| format!("{} lässt sich nicht einsetzen: {e}", entry.name))?;
     Ok(Outcome::Installed)
 }
 
@@ -1091,7 +1129,8 @@ pub(crate) async fn install_voice(
         .files
         .first()
         .ok_or_else(|| format!("{}: Katalogeintrag ohne Datei", entry.id))?;
-    let dest = voice_file(env.dirs, entry).ok_or_else(|| format!("{}: kein Modell angegeben", entry.id))?;
+    let dest = voice_file(env.dirs, entry)
+        .ok_or_else(|| format!("{}: kein Modell angegeben", entry.id))?;
     let voices_dir = env.dirs.voices_dir(&parent.id);
     fs::create_dir_all(&voices_dir).map_err(|e| io_message(&entry.name, &e))?;
     let outcome = fetch_file(env, entry, file, &dest, 0, file.size_bytes, None).await?;
@@ -1135,13 +1174,15 @@ pub(crate) fn delete(
     id: &str,
 ) -> Result<(), String> {
     if id == RUNTIME_ID {
-        let platform = platform.ok_or_else(|| "Für dieses System gibt es kein Phonon-Programm.".to_string())?;
+        let platform = platform
+            .ok_or_else(|| "Für dieses System gibt es kein Phonon-Programm.".to_string())?;
         let dir = dirs.runtime_dir(platform);
         // Auch ein liegengebliebener Ordner (unterbrochene Einrichtung) darf weg.
         if !dir.is_dir() {
             return Err("Das Phonon-Programm ist nicht installiert.".to_string());
         }
-        fs::remove_dir_all(&dir).map_err(|e| format!("Das Programm lässt sich nicht löschen: {e}"))?;
+        fs::remove_dir_all(&dir)
+            .map_err(|e| format!("Das Programm lässt sich nicht löschen: {e}"))?;
         return Ok(());
     }
     if let Some(entry) = model_entry(id) {
@@ -1160,7 +1201,8 @@ pub(crate) fn delete(
     }
     if let Some(entry) = voice_entries().into_iter().find(|e| e.id == id) {
         ensure_safe_entry(&entry)?;
-        let path = voice_file(dirs, &entry).ok_or_else(|| format!("{id}: kein Modell angegeben"))?;
+        let path =
+            voice_file(dirs, &entry).ok_or_else(|| format!("{id}: kein Modell angegeben"))?;
         if !path.is_file() {
             return Err(format!("Die Stimme {} ist nicht installiert.", entry.name));
         }

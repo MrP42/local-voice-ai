@@ -25,13 +25,15 @@ use super::builtin::SynthFn;
 use super::contract::TtsProvider;
 use super::contract::{AudioClip, CancelToken, ProviderDescriptor, SynthesisOptions, TtsError};
 use super::policy::{
-    check_use, process_env, resolve_provider_configs, use_state, LiveApprovals, ProviderOverrides,
-    ResolvedConfigs, TtsProvidersSettings, UseState, UseSubject, FISH_ID, PIPER_ID,
+    check_use, process_env, resolve_provider_configs_with, use_state, LiveApprovals,
+    ProviderOverrides, ResolvedConfigs, TtsProvidersSettings, UseState, UseSubject, FISH_ID,
+    PIPER_ID,
 };
 use super::preview::{PreviewRequest, PreviewService, TtsProviderPreview};
 use super::registry::ProviderRegistry;
 use super::setup::ProviderPaths;
 use crate::managers::tts::engine::{self, TtsEngineKind};
+use crate::managers::tts::phonon_models;
 use crate::managers::tts::state::TtsPhase;
 use crate::managers::tts::{TtsCore, TtsManager};
 
@@ -276,17 +278,26 @@ impl TtsManager {
         piper_voice: Option<&str>,
         piper_auto_language: bool,
     ) -> Arc<ResolvedConfigs> {
-        let resolved = Arc::new(resolve_provider_configs(
-            providers,
-            &process_env,
-            &ProviderOverrides::default(),
-        ));
         let paths = ProviderPaths {
             fish_dir: PathBuf::from(fish_dir),
             app_data: self.data_base_dir(),
             piper_voice: piper_voice.map(String::from),
             piper_auto_language,
         };
+        // Stufe "installiert": was die Modellseite eingerichtet hat, gilt, solange nichts
+        // eingetragen ist. Nur Dateisystem (ein paar `is_file`), billig bei jedem Abgleich;
+        // ein neu installiertes Modell baut den Anbieter beim naechsten Abgleich neu.
+        let installed = paths
+            .app_data
+            .as_deref()
+            .map(phonon_models::installed_paths)
+            .unwrap_or_default();
+        let resolved = Arc::new(resolve_provider_configs_with(
+            providers,
+            &process_env,
+            &ProviderOverrides::default(),
+            &installed,
+        ));
         self.provider_host.sync(&resolved, &paths);
         resolved
     }

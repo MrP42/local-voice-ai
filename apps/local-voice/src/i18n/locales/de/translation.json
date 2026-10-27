@@ -1219,6 +1219,46 @@
         "balanced": "Ausgewogen (~480 ms)",
         "accurate": "Genau (~1 s)"
       },
+      "phonon": {
+        "title": "Phonon (experimentell)",
+        "description": "Phonon ist eine lokal laufende Sprachausgabe auf der CPU (Gradium). Hier installierst du das Programm, die Modelle und die Stimmen. Benutzt wird Phonon erst, nachdem du es unter Einstellungen > Ausgabe freigegeben hast.",
+        "gated": {
+          "chip": "Anmeldung nötig",
+          "title": "Gesperrtes Modell: Bedingungen annehmen und bei Hugging Face anmelden",
+          "hint": "Gesperrtes Modell: Bedingungen auf huggingface.co/{{repo}} annehmen und anmelden (hf auth login). Das Token liest die App aus HF_TOKEN oder aus ~/.cache/huggingface/token; es geht nur an huggingface.co."
+        },
+        "actions": {
+          "installRuntime": "Programm installieren",
+          "installModel": "Modell installieren"
+        },
+        "source": "Quelle: {{source}}",
+        "sha256": "SHA-256: {{sha}}",
+        "sha256Files": "Mehrere Dateien: Größe und SHA-256 je Datei stehen im Katalog der App und werden beim Laden geprüft.",
+        "nonCommercial": {
+          "runtime": "Dieses Programm darf nur nicht-kommerziell genutzt werden ({{license}}).",
+          "model": "Dieses Modell darf nur nicht-kommerziell genutzt werden ({{license}}). Für Arbeit, Kunden oder Firmenzwecke nicht einsetzen.",
+          "voice": "Diese Stimme darf nur nicht-kommerziell genutzt werden ({{license}})."
+        },
+        "deleteConfirm": {
+          "runtime": "{{name}} löschen? Das Programm muss zum Vorlesen mit Phonon erneut installiert werden.",
+          "model": "{{name}} löschen? Dabei werden auch die dafür installierten Stimmen gelöscht.",
+          "voice": "{{name}} löschen? Du musst die Stimme erneut herunterladen, um sie wieder zu nutzen."
+        },
+        "items": {
+          "phonon-runtime": {
+            "name": "Phonon-Programm (ptts)",
+            "description": "Das Kommandozeilenprogramm ptts von Gradium (Version 0.4.2, MIT OR Apache-2.0). Es erzeugt die Sprache auf der CPU, ohne Internet."
+          },
+          "phonon-40m-de": {
+            "name": "Phonon 40m (Deutsch)",
+            "description": "Deutsches Sprachmodell, 8-Bit-Fassung (q8), läuft auf der CPU. Nur nicht-kommerziell nutzbar (CC BY-NC 4.0); der Download braucht ein Hugging-Face-Konto und angenommene Bedingungen."
+          },
+          "phonon-31m-en": {
+            "name": "Phonon 31m (Englisch)",
+            "description": "Englisches Sprachmodell, 8-Bit-Fassung (q8), läuft auf der CPU. Apache-2.0, öffentlich, kein Konto nötig."
+          }
+        }
+      },
       "ttsVoices": {
         "title": "Vorlesestimmen",
         "description": "Piper-Stimmen sind eine schnelle, offline laufende Sprachausgabe auf der CPU — keine GPU nötig. Lade herunter, was du zum Vorlesen nutzen möchtest.",

@@ -1260,6 +1260,46 @@
         "balanced": "Balanced (~480 ms)",
         "accurate": "Accurate (~1 s)"
       },
+      "phonon": {
+        "title": "Phonon (experimental)",
+        "description": "Phonon is a text-to-speech engine by Gradium that runs locally on the CPU. Install the program, the models and the voices here. Phonon is only used after you have enabled it under Settings > Output.",
+        "gated": {
+          "chip": "Login required",
+          "title": "Gated model: accept the terms and log in to Hugging Face",
+          "hint": "Gated model: accept the terms on huggingface.co/{{repo}} and log in (hf auth login). The app reads the token from HF_TOKEN or ~/.cache/huggingface/token; it is only sent to huggingface.co."
+        },
+        "actions": {
+          "installRuntime": "Install program",
+          "installModel": "Install model"
+        },
+        "source": "Source: {{source}}",
+        "sha256": "SHA-256: {{sha}}",
+        "sha256Files": "Several files: the size and SHA-256 of each file are in the app catalog and checked on download.",
+        "nonCommercial": {
+          "runtime": "This program may only be used non-commercially ({{license}}).",
+          "model": "This model may only be used non-commercially ({{license}}). Do not use it for work, clients or company purposes.",
+          "voice": "This voice may only be used non-commercially ({{license}})."
+        },
+        "deleteConfirm": {
+          "runtime": "Delete {{name}}? The program has to be installed again to read aloud with Phonon.",
+          "model": "Delete {{name}}? The voices installed for it are deleted too.",
+          "voice": "Delete {{name}}? You will have to download the voice again to use it."
+        },
+        "items": {
+          "phonon-runtime": {
+            "name": "Phonon program (ptts)",
+            "description": "The ptts command line program by Gradium (version 0.4.2, MIT OR Apache-2.0). It generates speech on the CPU, offline."
+          },
+          "phonon-40m-de": {
+            "name": "Phonon 40m (German)",
+            "description": "German speech model, 8-bit version (q8), runs on the CPU. Non-commercial use only (CC BY-NC 4.0); the download needs a Hugging Face account and accepted terms."
+          },
+          "phonon-31m-en": {
+            "name": "Phonon 31m (English)",
+            "description": "English speech model, 8-bit version (q8), runs on the CPU. Apache-2.0, public, no account needed."
+          }
+        }
+      },
       "ttsVoices": {
         "title": "Reading Voices",
         "description": "Piper voices are a fast, offline text-to-speech option that runs on the CPU — no GPU required. Download the ones you want to use for reading aloud.",

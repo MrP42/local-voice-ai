@@ -46,6 +46,7 @@ use tauri::{AppHandle, Manager};
 use crate::cli::CliArgs;
 use crate::commands::tts_providers::{build_entries, TtsProviderEntry};
 use crate::managers::tts::engine::{self, TtsEngineKind};
+use crate::managers::tts::phonon_models;
 use crate::managers::tts::piper;
 use crate::managers::tts::providers::bench::{
     self, BenchBackend, BenchError, BenchOptions, ColdReset, Outcome,
@@ -57,8 +58,8 @@ use crate::managers::tts::providers::contract::{
 use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::providers::phonon::PHONON_ID;
 use crate::managers::tts::providers::policy::{
-    self, ConfigSlot, LiveApprovals, ProviderOverride, ProviderOverrides, ResolvedConfigs,
-    TtsProvidersSettings, FISH_ID, PIPER_ID,
+    self, ConfigSlot, InstalledPaths, LiveApprovals, ProviderOverride, ProviderOverrides,
+    ResolvedConfigs, TtsProvidersSettings, FISH_ID, PIPER_ID,
 };
 use crate::managers::tts::providers::registry::ProviderRegistry;
 use crate::managers::tts::providers::setup::{sync_registry_gated, ProviderPaths};
@@ -266,6 +267,14 @@ fn selected_provider(tts_engine: &str) -> String {
     }
 }
 
+/// Was die Modellseite installiert hat (Stufe "installiert"); ohne Datenordner nichts.
+fn installed_for(cs: &CliSettings) -> InstalledPaths {
+    cs.app_data
+        .as_deref()
+        .map(phonon_models::installed_paths)
+        .unwrap_or_default()
+}
+
 fn paths_for(cs: &CliSettings, piper_voice: Option<String>, auto_language: bool) -> ProviderPaths {
     ProviderPaths {
         fish_dir: PathBuf::from(&cs.fish_dir),
@@ -300,10 +309,11 @@ pub fn plan(
     for_bench: bool,
 ) -> Result<Plan, CliError> {
     let overrides = overrides_for(&cs.providers, args)?;
-    let resolved = Arc::new(policy::resolve_provider_configs(
+    let resolved = Arc::new(policy::resolve_provider_configs_with(
         &cs.providers,
         env,
         &overrides,
+        &installed_for(cs),
     ));
     let id = args.provider.clone();
     let voice = match id.as_str() {
@@ -417,10 +427,11 @@ pub fn listing_snapshot(
     cs: &CliSettings,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<ProviderSnapshot, TtsError> {
-    let resolved = Arc::new(policy::resolve_provider_configs(
+    let resolved = Arc::new(policy::resolve_provider_configs_with(
         &cs.providers,
         env,
         &ProviderOverrides::default(),
+        &installed_for(cs),
     ));
     let paths = paths_for(cs, cs.piper_voice.clone(), cs.piper_auto_language);
     let registry = Arc::new(bench::bench_registry());
@@ -1158,6 +1169,58 @@ mod tests {
         // Einstellungen allein
         let p = plan(&s, &no_env, &args("phonon"), true).unwrap();
         assert_eq!(p.resolved.phonon.exe_path, "C:/einstellungen/ptts.exe");
+    }
+
+    #[test]
+    fn die_cli_nimmt_das_installierte_phonon_wenn_nichts_eingetragen_ist() {
+        let Some(platform) = phonon_models::current_platform() else {
+            return;
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dirs = phonon_models::PhononDirs::new(tmp.path());
+        // Programm der Modellseite: Datei plus Marke.
+        let rt_dir = dirs.runtime_dir(platform);
+        std::fs::create_dir_all(&rt_dir).unwrap();
+        std::fs::write(rt_dir.join(phonon_models::exe_name(platform)), b"exe").unwrap();
+        let entry = crate::catalog::tts_entries(crate::catalog::Purpose::PhononRuntime)
+            .into_iter()
+            .find(|e| e.id == format!("phonon-runtime-{platform}"))
+            .unwrap();
+        phonon_models::write_marker(&rt_dir, &entry).unwrap();
+
+        let mut s = cs();
+        s.app_data = Some(tmp.path().to_path_buf());
+        let p = plan(&s, &no_env, &args("phonon"), true).unwrap();
+        assert!(
+            p.resolved
+                .phonon
+                .exe_path
+                .ends_with(phonon_models::exe_name(platform)),
+            "{}",
+            p.resolved.phonon.exe_path
+        );
+        assert_eq!(
+            p.resolved.source("phonon", "exe_path"),
+            policy::ConfigSource::Installed
+        );
+        // Ein Modell ist nicht installiert: das bleibt leer.
+        assert_eq!(
+            p.resolved.source("phonon", "model"),
+            policy::ConfigSource::Default
+        );
+        // Eintrag in den Einstellungen schlaegt die Installation.
+        s.providers.phonon.exe_path = "C:/einstellungen/ptts.exe".to_string();
+        let p = plan(&s, &no_env, &args("phonon"), true).unwrap();
+        assert_eq!(p.resolved.phonon.exe_path, "C:/einstellungen/ptts.exe");
+        assert_eq!(
+            p.resolved.source("phonon", "exe_path"),
+            policy::ConfigSource::Settings
+        );
+        // Ohne Datenordner (nichts zu finden) bleibt alles wie zuvor.
+        s.app_data = None;
+        s.providers.phonon.exe_path = String::new();
+        let p = plan(&s, &no_env, &args("phonon"), true).unwrap();
+        assert_eq!(p.resolved.phonon.exe_path, "");
     }
 
     #[test]

@@ -384,7 +384,9 @@ pub fn resolve_provider_configs_with(
         phonon.exe_path = l.apply("exe_path", Some(exe), exe_base).unwrap_or_default();
         let (model, model_base) =
             with_installed(&phonon.model, &d.model, installed.phonon.model.as_deref());
-        phonon.model = l.apply("model", Some(model), model_base).unwrap_or_default();
+        phonon.model = l
+            .apply("model", Some(model), model_base)
+            .unwrap_or_default();
         let (voice, base) = stored_voice(settings, PHONON_ID, phonon.voice.as_deref());
         phonon.voice = l.apply("voice", voice, base);
         // base_url gibt es bei phonon nicht.
