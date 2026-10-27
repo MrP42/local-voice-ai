@@ -38,6 +38,12 @@ impl Secret {
         ok.then(|| Self(t.to_string()))
     }
 
+    /// Nur fuer Tests: der Wert (Produktionscode hat keinen Zugriff darauf ausser dem Kopf).
+    #[cfg(test)]
+    pub(crate) fn expose_for_test(&self) -> &str {
+        &self.0
+    }
+
     fn bearer(&self) -> Option<HeaderValue> {
         let mut value = HeaderValue::from_str(&format!("Bearer {}", self.0)).ok()?;
         value.set_sensitive(true);

@@ -11,6 +11,8 @@
 //! `Override` (Argument; die CLI aus P3b füllt [`ProviderOverrides`])
 //! `>` Umgebungsvariable `LVA_TTS_<ANBIETER>_<FELD>`
 //! `>` Einstellungen (`tts_providers`)
+//! `>` „installiert“ (was die Modellseite eingerichtet hat, [`InstalledPaths`]; nur
+//!   `exe_path` und `model` von Phonon, nur wenn die Einstellung leer ist)
 //! `>` Vorgabe des Adapters (`Default` der Konfiguration; wer nichts
 //! gespeichert hat, bekommt sie über `#[serde(default)]`).
 //!
@@ -148,6 +150,8 @@ fn set_membership(list: &mut Vec<String>, id: &str, on: bool) {
 pub enum ConfigSource {
     /// Vorgabe des Adapters (nichts gespeichert).
     Default,
+    /// Über die Modellseite installiert; nichts eingetragen (Anzeige: „Installiert“).
+    Installed,
     Settings,
     Env,
     Override,
@@ -183,6 +187,21 @@ pub struct ProviderOverrides {
     pub ollama_speech: ProviderOverride,
 }
 
+/// Pfade der Teile von Phonon, die die Modellseite installiert hat (leer = nichts oder
+/// unvollständig). Rein: der Aufrufer ermittelt sie am Dateisystem
+/// (`managers::tts::phonon_models::installed_paths`) und reicht sie herein.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledPhonon {
+    pub exe_path: Option<String>,
+    pub model: Option<String>,
+}
+
+/// Was die Modellseite installiert hat, für die Auflösungsstufe „installiert“.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledPaths {
+    pub phonon: InstalledPhonon,
+}
+
 /// Name der Umgebungsvariablen für `<slot_id>` und `<field>`:
 /// `env_var_name("openai-speech", "base_url") == "LVA_TTS_OPENAI_SPEECH_BASE_URL"`.
 pub fn env_var_name(slot_id: &str, field: &str) -> String {
@@ -206,9 +225,16 @@ pub struct ResolvedConfigs {
     pub openai_speech: OpenAiSpeechConfig,
     pub ollama_speech: OllamaSpeechConfig,
     sources: BTreeMap<(String, String), ConfigSource>,
+    /// Der Stand „installiert“, mit dem aufgelöst wurde (wer neu auflöst, nimmt denselben).
+    installed: InstalledPaths,
 }
 
 impl ResolvedConfigs {
+    /// Die Installation, die in diese Auflösung eingegangen ist.
+    pub fn installed(&self) -> &InstalledPaths {
+        &self.installed
+    }
+
     /// Herkunft eines Feldes (`slot_id` = Kennung des Anbieters, bei
     /// openai-speech immer `"openai-speech"`, auch wenn die Konfiguration
     /// eine andere Kennung trägt). Unbekannte Felder: `Default`.
@@ -305,13 +331,38 @@ fn base_source(differs_from_default: bool) -> ConfigSource {
     }
 }
 
+/// Einstellung vor „installiert“ vor Vorgabe, für ein Feld, das leer bleiben darf. Leer (nach
+/// `trim`) oder gleich der Vorgabe zählt als nicht eingetragen.
+fn with_installed(current: &str, default: &str, installed: Option<&str>) -> (String, ConfigSource) {
+    if current.trim().is_empty() || current == default {
+        if let Some(path) = clean(installed) {
+            return (path, ConfigSource::Installed);
+        }
+        return (current.to_string(), ConfigSource::Default);
+    }
+    (current.to_string(), ConfigSource::Settings)
+}
+
 /// Löst die Konfigurationen aller Anbieter auf — rein und deterministisch
 /// (Vorrang siehe Moduldoku). `env` liefert Umgebungsvariablen (Produktion:
-/// [`process_env`]).
+/// [`process_env`]). Ohne die Stufe „installiert“ (siehe
+/// [`resolve_provider_configs_with`]).
 pub fn resolve_provider_configs(
     settings: &TtsProvidersSettings,
     env: &dyn Fn(&str) -> Option<String>,
     overrides: &ProviderOverrides,
+) -> ResolvedConfigs {
+    resolve_provider_configs_with(settings, env, overrides, &InstalledPaths::default())
+}
+
+/// Wie [`resolve_provider_configs`], mit der Stufe „installiert“ zwischen Einstellungen und
+/// Vorgabe: ist `exe_path` oder `model` von Phonon leer und hat die Modellseite etwas
+/// installiert, gilt der installierte Pfad (`source()` meldet [`ConfigSource::Installed`]).
+pub fn resolve_provider_configs_with(
+    settings: &TtsProvidersSettings,
+    env: &dyn Fn(&str) -> Option<String>,
+    overrides: &ProviderOverrides,
+    installed: &InstalledPaths,
 ) -> ResolvedConfigs {
     let mut sources = BTreeMap::new();
 
@@ -325,20 +376,15 @@ pub fn resolve_provider_configs(
             ov: &overrides.phonon,
             sources: &mut sources,
         };
-        phonon.exe_path = l
-            .apply(
-                "exe_path",
-                Some(phonon.exe_path.clone()),
-                base_source(phonon.exe_path != d.exe_path),
-            )
-            .unwrap_or_default();
-        phonon.model = l
-            .apply(
-                "model",
-                Some(phonon.model.clone()),
-                base_source(phonon.model != d.model),
-            )
-            .unwrap_or_default();
+        let (exe, exe_base) = with_installed(
+            &phonon.exe_path,
+            &d.exe_path,
+            installed.phonon.exe_path.as_deref(),
+        );
+        phonon.exe_path = l.apply("exe_path", Some(exe), exe_base).unwrap_or_default();
+        let (model, model_base) =
+            with_installed(&phonon.model, &d.model, installed.phonon.model.as_deref());
+        phonon.model = l.apply("model", Some(model), model_base).unwrap_or_default();
         let (voice, base) = stored_voice(settings, PHONON_ID, phonon.voice.as_deref());
         phonon.voice = l.apply("voice", voice, base);
         // base_url gibt es bei phonon nicht.
@@ -425,6 +471,7 @@ pub fn resolve_provider_configs(
         openai_speech: openai,
         ollama_speech: ollama,
         sources,
+        installed: installed.clone(),
     }
 }
 
@@ -897,6 +944,125 @@ mod tests {
             r.source("openai-speech", "base_url"),
             ConfigSource::Settings
         );
+    }
+
+    fn installiert() -> InstalledPaths {
+        InstalledPaths {
+            phonon: InstalledPhonon {
+                exe_path: Some("D:/app/tts/phonon/windows-x64/ptts.exe".into()),
+                model: Some("D:/app/tts/phonon/models/phonon-40m-de".into()),
+            },
+        }
+    }
+
+    #[test]
+    fn installiert_schlaegt_die_vorgabe_und_meldet_die_quelle() {
+        let r = resolve_provider_configs_with(
+            &TtsProvidersSettings::default(),
+            &no_env,
+            &ProviderOverrides::default(),
+            &installiert(),
+        );
+        assert_eq!(r.phonon.exe_path, "D:/app/tts/phonon/windows-x64/ptts.exe");
+        assert_eq!(r.phonon.model, "D:/app/tts/phonon/models/phonon-40m-de");
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Installed);
+        assert_eq!(r.source("phonon", "model"), ConfigSource::Installed);
+        // Der Gegenstand der Guardrails (Fingerabdruck) ist das installierte Modell.
+        assert_eq!(
+            r.subject("phonon").model,
+            "D:/app/tts/phonon/models/phonon-40m-de"
+        );
+        assert_eq!(r.installed(), &installiert());
+        assert!(ConfigSource::Default < ConfigSource::Installed);
+        assert!(ConfigSource::Installed < ConfigSource::Settings);
+    }
+
+    #[test]
+    fn einstellungen_schlagen_installiert_feld_fuer_feld() {
+        let mut s = TtsProvidersSettings::default();
+        s.phonon.model = "C:/eigene/modelle/phonon".into();
+        let r = resolve_provider_configs_with(
+            &s,
+            &no_env,
+            &ProviderOverrides::default(),
+            &installiert(),
+        );
+        assert_eq!(r.phonon.model, "C:/eigene/modelle/phonon");
+        assert_eq!(r.source("phonon", "model"), ConfigSource::Settings);
+        assert_eq!(r.phonon.exe_path, "D:/app/tts/phonon/windows-x64/ptts.exe");
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Installed);
+    }
+
+    #[test]
+    fn umgebung_und_argument_schlagen_installiert() {
+        let env = env_of(&[("LVA_TTS_PHONON_MODEL", "aus-der-umgebung")]);
+        let ov = ProviderOverrides {
+            phonon: ProviderOverride {
+                exe_path: Some("C:/arg/ptts.exe".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let r = resolve_provider_configs_with(
+            &TtsProvidersSettings::default(),
+            &env,
+            &ov,
+            &installiert(),
+        );
+        assert_eq!(r.phonon.model, "aus-der-umgebung");
+        assert_eq!(r.source("phonon", "model"), ConfigSource::Env);
+        assert_eq!(r.phonon.exe_path, "C:/arg/ptts.exe");
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Override);
+    }
+
+    #[test]
+    fn eine_leere_einstellung_zaehlt_als_nicht_eingetragen() {
+        let mut s = TtsProvidersSettings::default();
+        s.phonon.exe_path = "   ".into();
+        let r = resolve_provider_configs_with(
+            &s,
+            &no_env,
+            &ProviderOverrides::default(),
+            &installiert(),
+        );
+        assert_eq!(r.phonon.exe_path, "D:/app/tts/phonon/windows-x64/ptts.exe");
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Installed);
+    }
+
+    #[test]
+    fn ohne_installation_und_bei_teilinstallation_bleibt_der_rest_vorgabe() {
+        let r = resolve_provider_configs_with(
+            &TtsProvidersSettings::default(),
+            &no_env,
+            &ProviderOverrides::default(),
+            &InstalledPaths::default(),
+        );
+        assert_eq!(r.phonon, PhononConfig::default());
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Default);
+
+        // Nur das Programm installiert: das Modell bleibt leer (Hinweis „Modell installieren“).
+        let only_exe = InstalledPaths {
+            phonon: InstalledPhonon {
+                exe_path: Some("D:/x/ptts.exe".into()),
+                model: None,
+            },
+        };
+        let r = resolve_provider_configs_with(
+            &TtsProvidersSettings::default(),
+            &no_env,
+            &ProviderOverrides::default(),
+            &only_exe,
+        );
+        assert_eq!(r.source("phonon", "exe_path"), ConfigSource::Installed);
+        assert_eq!(r.source("phonon", "model"), ConfigSource::Default);
+        assert_eq!(r.phonon.model, "");
+        // Die alte Funktion ist unverändert: ohne Stufe „installiert“.
+        let plain = resolve_provider_configs(
+            &TtsProvidersSettings::default(),
+            &no_env,
+            &ProviderOverrides::default(),
+        );
+        assert_eq!(plain.installed(), &InstalledPaths::default());
     }
 
     #[test]

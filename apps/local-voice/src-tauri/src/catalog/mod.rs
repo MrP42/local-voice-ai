@@ -255,6 +255,7 @@ pub static CATALOG: Lazy<Vec<ModelDescriptor>> = Lazy::new(|| {
 /// Hugging-Face-hosted Piper voices live at repo paths that differ from the
 /// flat local filename we want, so there is no single reconstruction rule.
 /// A file without a `url` is dropped rather than guessed at.
+#[derive(Debug, Clone)]
 pub struct TtsCatalogFile {
     pub filename: String,
     pub url: String,
@@ -264,6 +265,7 @@ pub struct TtsCatalogFile {
 
 /// One `tts-runtime`/`tts-voice` catalog entry, read directly by
 /// `managers::tts::models` (bypassing [`ModelDescriptor`] entirely).
+#[derive(Debug, Clone)]
 pub struct TtsCatalogEntry {
     pub id: String,
     pub name: String,
