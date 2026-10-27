@@ -1,6 +1,6 @@
 # TTS-Anbieter: Lizenzen
 
-Stand 26.10.2026 · Goal `tts-provider` (Paket D1). Quellen: [provider-research.md](provider-research.md) (alle Quellen am
+Stand 27.10.2026 (Abschnitt „Eigene und geklonte Stimmen“ ergänzt) · Goal `tts-provider` (Paket D1). Quellen: [provider-research.md](provider-research.md) (alle Quellen am
 26.10.2026 abgerufen), Lizenzfelder im Code (`LicenseInfo`, `providers/contract.rs:118`), Katalog
 `apps/local-voice/src-tauri/src/catalog/catalog.json`. Dies ist eine technische Zusammenstellung, **keine Rechtsberatung**.
 
@@ -22,6 +22,7 @@ Prüfdatum (`source_url`, `verified_on`); sonst `false` mit `note`, was noch zu 
 | `phonon` / phonon-31m-en | MIT OR Apache-2.0 (README, 26.10.2026) | Apache-2.0 (README-Tabelle, HF-Karte, 26.10.2026) | nein | ja, `https://huggingface.co/gradium/phonon-31m-en`, 2026-10-26 (phonon.rs:643-657) | ja nach Quellenlage (nur Englisch); Auslieferung der Gewichte nicht geprüft |
 | `phonon` / phonon-40m-de, -multilingual | MIT OR Apache-2.0 | CC BY-NC 4.0, gated (HF-Karte, 26.10.2026) | **ja** | ja, `https://huggingface.co/gradium/phonon-40m-de`, 2026-10-26 (phonon.rs:658-673) | **nein** (nichtkommerziell) |
 | `phonon` / anderes Modell | MIT OR Apache-2.0 | unbekannt | vorsorglich ja | nein (phonon.rs:618-641) | nein |
+| `phonon` / eigene Stimmen (Import, mit Gradium erstellt) | wie das Modell | „eigene/unbekannt“ je Stimme (`origin`, `license`, `verified: false` in `voices/SOURCE.json`; `phonon_voices::own_voice_license`) | vorsorglich ja | nie (Rechte und Einwilligung beim Nutzer) | nein, ohne eigene Prüfung |
 | `ollama-speech` / `phonon:40m-de`, `phonon:de`, `phonon:multilingual` | MIT OR Apache-2.0 (Phonon-Code) | CC BY-NC 4.0 (Ollama-Bibliothek, 26.10.2026) | **ja** | ja, `https://ollama.com/library/phonon`, 2026-10-26 (ollama_speech.rs:216-234) | **nein** |
 | `ollama-speech` / anderes Modell (auch `phonon` ohne Tag) | wie oben | nicht gegengeprüft (Gradium-31M: Apache-2.0) | vorsorglich ja | nein (ollama_speech.rs:236-250) | nein |
 | `openai-speech` | je Server | je Server und Modell | laut Nutzerangabe | **nie** (Nutzerangabe, openai_speech.rs:1042) | nur nach eigener Prüfung |
@@ -32,8 +33,10 @@ Prüfdatum (`source_url`, `verified_on`); sonst `false` mit `note`, was noch zu 
 
 Hinweise: Der Piper-Programmcode läuft als **separater Prozess**; ob das die GPL-Pflichten für die App berührt, ist laut
 Recherche und Deskriptor-Note juristisch offen (builtin.rs:320-332, provider-research.md, Offene Punkte).
-Phonon-Stimmen haben eigene Lizenzen laut `docs/cli.md` (phonon.rs:626-630); die App führt dafür kein Feld je Stimme für
-Phonon (`VoiceDescriptor.license` ist optional, contract.rs:206).
+Phonon-Stimmen haben eigene Lizenzen laut `docs/cli.md` (phonon.rs:626-630). Die mitgelieferten Stimmen tragen die Lizenz
+aus dem Kopf von `voices/SOURCE.json`; **eigene** Stimmen (Import, mit Gradium erstellt) tragen eine eigene Angabe je
+Zeile (`VoiceDescriptor.license`, contract.rs:206): „eigene/unbekannt“, nie verifiziert, vorsorglich nichtkommerziell.
+Siehe Abschnitt „Eigene und geklonte Stimmen“.
 
 ### Katalogeinträge für die Modellseite (Stand 27.10.2026)
 
@@ -84,6 +87,33 @@ ihr SHA-256 ohne Zugang nicht ermitteln ließ.
 * **Kokoro-Stimmen** deutsch: nicht verifiziert (Recherche C).
 * **Windows-Lauf** von Ollama/ptts-server betrifft die Funktion, nicht die Lizenz; siehe
   [installation-troubleshooting.md](installation-troubleshooting.md).
+
+## 2a. Eigene und geklonte Stimmen
+
+Seit 27.10.2026 lassen sich in Phonon eigene Stimmen importieren und mit Gradium aus einer Aufnahme erstellen
+([installation-troubleshooting.md](installation-troubleshooting.md), Abschnitt „Eigene Stimmen“). Rechtlich ist das **Ihre**
+Sache, nicht die der App:
+
+* **Rechte und Einwilligung liegen beim Nutzer.** Eine Stimme ist ein personenbezogenes Merkmal. Wer die Stimme einer
+  anderen Person importiert oder klont, braucht deren Einwilligung (und, je nach Verwendung, weitere Rechte). Die App
+  verlangt vor dem Senden zwar das Häkchen „Die sprechende Person hat eingewilligt“ und hält den Zeitpunkt in `consent_at`
+  fest, **prüft aber nichts**: das Häkchen ist eine Bestätigung des Nutzers, kein Nachweis.
+* **Lizenz „eigene/unbekannt“.** Die App führt jede eigene Stimme mit `license: "eigene/unbekannt"`, `verified: false` und —
+  wie jede ungeprüft eingebrachte Stimme — vorsorglich als nichtkommerziell (`non_commercial`). Das ist eine Anzeige, keine
+  Freigabe: sie gilt unabhängig von der Lizenz des Modells (die Apache-2.0-Angabe der mitgelieferten Stimmen gilt nicht für
+  sie). Importierte Stimmdateien anderer (z. B. aus `gradium/phonon-voices`) tragen deren Lizenz nicht mit; wer sie weitergibt
+  oder gewerblich nutzt, prüft die Lizenz der Quelle selbst.
+* **Gradium-Bedingungen selbst prüfen.** „Stimme erstellen“ nutzt den Dienst von Gradium (api.gradium.ai) mit Ihrem Konto und
+  Schlüssel. Es gelten dessen Nutzungs- und Datenschutzbedingungen, Kosten und Kontingente; die Aufnahme (≈ 10 s) wird dort
+  verarbeitet und die Stimme in Ihrem Konto gespeichert. Ob Gradium die Stimme für eigene Zwecke nutzt, wie lange sie
+  gespeichert bleibt und ob eine gewerbliche Nutzung der erstellten Stimme erlaubt ist, steht in diesen Bedingungen und wurde
+  **nicht** geprüft (kein Konto, kein Aufruf bei der Entwicklung). Die Phonon-Gewichte selbst: Abschnitt 1.
+* **Fish-Stimmen.** Die Referenzaufnahme einer Fish-Stimme verlässt den Rechner nur auf ausdrücklichen Klick je Stimme und mit
+  deren eigener Einwilligung. Für die Fish-Gewichte gilt weiter die Fish Audio Research License (Abschnitt 2); die Phonon-Stimme
+  daraus ist eine eigene Stimme im obigen Sinn.
+* **Datenschutz im Betrieb.** Der API-Schlüssel liegt DPAPI-verschlüsselt im Geheimnisspeicher und geht nur an
+  `https://api.gradium.ai`. Mehr als das ausgeschnittene Stück, der Name der Stimme und die Sprache geht nicht hinaus (kein
+  Dateiname, kein Pfad). Die Aufrufe sind nur über die Oberfläche möglich; Agenten und CLI können sie nicht auslösen.
 
 ## 3. Durchsetzung in der App
 

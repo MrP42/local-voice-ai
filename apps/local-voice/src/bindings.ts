@@ -5610,6 +5610,118 @@ async ttsProviderCancel(requestId: string) : Promise<Result<boolean, TtsError>> 
 }
 },
 /**
+ * Eigene Stimmen anzeigen. Gleicht vorher den eigenen Speicher mit den installierten Modellen ab
+ * (fehlende Dateien und Zeilen werden ergänzt, z. B. nach einem neu installierten Modell).
+ */
+async phononOwnVoicesList() : Promise<Result<OwnVoicesOverview, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_own_voices_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine fertige Stimmdatei (`.safetensors`) importieren: prüfen, kopieren, eintragen. Kein
+ * Netzzugriff.
+ */
+async phononOwnVoiceImport(path: string, name: string, overwrite: boolean) : Promise<Result<OwnVoice, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_own_voice_import", { path, name, overwrite }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine eigene Stimme entfernen (nur eigene; mitgelieferte Stimmen nie).
+ */
+async phononOwnVoiceRemove(id: string) : Promise<Result<null, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_own_voice_remove", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine Stimme über Gradium erstellen. **Netzzugriff** (nur dieser Befehl): sendet ein Stück von
+ * etwa zehn Sekunden Sprache an api.gradium.ai. Ohne `consent` geschieht nichts.
+ */
+async phononVoiceClone(request: CloneRequest) : Promise<Result<OwnVoice, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_voice_clone", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die laufende Erstellung abbrechen (Anfragen enden binnen etwa 50 ms; nichts wird gespeichert).
+ */
+async phononVoiceCloneCancel() : Promise<void> {
+    await TAURI_INVOKE("phonon_voice_clone_cancel");
+},
+/**
+ * Ist ein Gradium-Schlüssel gespeichert (nie der Schlüssel selbst)?
+ */
+async phononGradiumKeyStatus() : Promise<Result<KeyStatus, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_gradium_key_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schlüssel eintragen oder ändern: verschlüsselt im Geheimnisspeicher, nie in den Einstellungen.
+ * Kein Netzzugriff (der Schlüssel wird nicht „zur Probe“ gesendet).
+ */
+async phononGradiumKeySet(key: string) : Promise<Result<KeyStatus, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_gradium_key_set", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async phononGradiumKeyDelete() : Promise<Result<KeyStatus, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_gradium_key_delete") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aufnahme für „Stimme erstellen“ starten (mit dem Mikrofon der App; VAD aus).
+ */
+async phononVoiceRecordStart() : Promise<Result<null, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_voice_record_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Aufnahme beenden und für die Erstellung bereithalten.
+ */
+async phononVoiceRecordStop() : Promise<Result<RecordedInfo, PhononVoiceError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("phonon_voice_record_stop") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eine laufende oder wartende Aufnahme verwerfen (Dialog geschlossen).
+ */
+async phononVoiceRecordDiscard() : Promise<void> {
+    await TAURI_INVOKE("phonon_voice_record_discard");
+},
+/**
  * Stub implementation for non-macOS platforms
  * Always returns false since laptop detection is macOS-specific
  */
@@ -7036,6 +7148,18 @@ export type JobRunState = "running" |
 "stopping"
 export type KeyboardImplementation = "tauri" | "handy_keys"
 /**
+ * Zustand des Schlüssels für die Oberfläche; nie der Schlüssel selbst.
+ */
+export type KeyStatus = { 
+/**
+ * Dieses System kann Geheimnisse verschlüsselt ablegen (Windows/DPAPI).
+ */
+supported: boolean; present: boolean; 
+/**
+ * Ein Schlüssel liegt vor, ist aber nicht lesbar (anderes Konto, beschädigt).
+ */
+problem: string | null }
+/**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
  */
@@ -7205,6 +7329,31 @@ export type ExternalSource =
  * Der Modellspeicher von Ollama (`manifests/` + `blobs/`).
  */
 "ollama"
+export type CloneRequest = { source: CloneSource; 
+/**
+ * Anzeigename der neuen Stimme.
+ */
+name: string; 
+/**
+ * Sprache der Aufnahme: `en`, `fr`, `de`, `es`, `pt`.
+ */
+language: string; 
+/**
+ * Sekunde, ab der die Sprache beginnt (aus Datei oder Fish-Referenz; bei Mikrofon 0).
+ */
+start_s: number; 
+/**
+ * Die sprechende Person hat eingewilligt (Häkchen). Ohne `true` geschieht nichts.
+ */
+consent: boolean; 
+/**
+ * Eine vorhandene eigene Stimme dieses Namens ersetzen.
+ */
+overwrite: boolean }
+/**
+ * Woher die Stimme kommt.
+ */
+export type CloneSource = { kind: "file"; path: string } | { kind: "fish"; voice_id: string } | { kind: "recording" }
 /**
  * Kann der `llama-server` der App die Datei laden?
  */
@@ -7829,6 +7978,66 @@ export type OverlayPosition = "top" | "bottom"
  */
 export type OverlayStyle = "none" | "minimal" | "live"
 /**
+ * Eine eigene Stimme für die Oberfläche.
+ */
+export type OwnVoice = { 
+/**
+ * Dateiname ohne Endung: die Stimmenkennung im Adapter.
+ */
+id: string; 
+/**
+ * Anzeigename, wie eingegeben.
+ */
+name: string; 
+/**
+ * `import` oder `gradium-clone`.
+ */
+origin: string; 
+/**
+ * Kennung bei Gradium (leer beim Import).
+ */
+voice_id: string; 
+/**
+ * Sprache der Aufnahme (`de`, `en`, …); leer beim Import.
+ */
+language: string; created_at: string; 
+/**
+ * Zeitpunkt der bestätigten Einwilligung (Gradium-Klon).
+ */
+consent_at: string | null; 
+/**
+ * Woraus die Stimme entstand (z. B. „Fish-Stimme: erzaehler“).
+ */
+source_note: string | null; 
+/**
+ * Immer „eigene/unbekannt“: Rechte und Einwilligung liegen beim Nutzer.
+ */
+license: string; 
+/**
+ * Immer `false`: die App prüft keine Lizenz eigener Stimmen.
+ */
+verified: boolean; 
+/**
+ * Kennungen der Modelle, in denen die Datei liegt.
+ */
+in_models: string[] }
+/**
+ * Eigene Stimmen und das, was die Oberfläche zum Anzeigen braucht.
+ */
+export type OwnVoicesOverview = { voices: OwnVoice[]; 
+/**
+ * Kennungen der installierten Phonon-Modelle (dorthin wird kopiert).
+ */
+models: string[]; 
+/**
+ * Sprachen, die Gradium beim Erstellen annimmt.
+ */
+languages: string[]; 
+/**
+ * Es läuft gerade eine Erstellung.
+ */
+busy: boolean }
+/**
  * Vorschau vor Export und Import — dieselbe Form für beide Richtungen.
  */
 export type PackagePreview = { title: string; files: string[]; voices: PackageVoice[]; rights_confirmed: boolean }
@@ -7935,6 +8144,12 @@ hf_home: string | null;
  * Downloads vom Hugging Face erlauben (Standard: nein).
  */
 allow_network: boolean }
+/**
+ * Fehler der Stimmenverwaltung für die Oberfläche: `kind` steuert die Anzeige, `message` ist
+ * deutsch, ohne Schlüssel und ohne Adresse.
+ */
+export type PhononVoiceError = { kind: PhononVoiceErrorKind; message: string }
+export type PhononVoiceErrorKind = "consent_required" | "no_key" | "key_store" | "busy" | "invalid_name" | "invalid_language" | "exists" | "taken_by_model" | "invalid_file" | "bad_source" | "not_own" | "too_many" | "io" | "unauthorized" | "quota_or_rate" | "bad_audio" | "server" | "timeout" | "network" | "bad_response" | "cancelled"
 /**
  * Wohin der Export kam (Pfad relativ zum Ordner).
  */
@@ -8234,6 +8449,7 @@ export type RecipeVar = {
  */
 name: string; label: string; kind: RecipeVarKind; required?: boolean; default?: string | null }
 export type RecipeVarKind = "text" | "person" | "folder" | "date_from" | "date_to" | "meeting"
+export type RecordedInfo = { seconds: number }
 /**
  * Laufende Aufnahme und ihre Audioposition (Mikrofon-Zeitachse, ms).
  */

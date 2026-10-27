@@ -2449,6 +2449,18 @@ pub fn run(cli_args: CliArgs) {
             commands::tts_providers::tts_provider_select,
             commands::tts_providers::tts_provider_preview,
             commands::tts_providers::tts_provider_cancel,
+            // Eigene Phonon-Stimmen (nur Oberflaeche; siehe commands/phonon_voices.rs)
+            commands::phonon_voices::phonon_own_voices_list,
+            commands::phonon_voices::phonon_own_voice_import,
+            commands::phonon_voices::phonon_own_voice_remove,
+            commands::phonon_voices::phonon_voice_clone,
+            commands::phonon_voices::phonon_voice_clone_cancel,
+            commands::phonon_voices::phonon_gradium_key_status,
+            commands::phonon_voices::phonon_gradium_key_set,
+            commands::phonon_voices::phonon_gradium_key_delete,
+            commands::phonon_voices::phonon_voice_record_start,
+            commands::phonon_voices::phonon_voice_record_stop,
+            commands::phonon_voices::phonon_voice_record_discard,
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
