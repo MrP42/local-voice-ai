@@ -17,6 +17,7 @@ Einstieg: [README.md](README.md).
 | `630c3793` | Anbieter in der App: Einstellungen mit Vorrang, Lizenz-/Privacy-Sperren, Engine-Variante `provider:<id>`, Tauri-Befehle mit Stream-Probestimme (P3a) |
 | `2b527389` | UI: Gruppe „Sprachausgabe-Anbieter“ im Reiter Ausgabe (fähigkeitsgesteuert, Freigabe-Ablauf, Probestimme mit Abbruch) (P4) |
 | `1ad486f5` | CLI (`--tts-providers`, `--tts-voices`, `--tts-provider`, `--tts-bench`) und Agentenbrücken-Werkzeuge (P3b) |
+| (Zweig `feat/phonon-mehrere-sprecher`) | mehrere Sprecher über Anbieter (27.10.2026): `ProviderCaps::voice_switching`, `providers/speakers.rs`, Stimme je Satz an `SynthesisOptions::voice` mit Cache je Stimme, Befehl `tts_provider_speakers`, Oberfläche fähigkeitsgesteuert (Sprecher einfügen/prüfen/tauschen, nur Pausen bei Anbietern ohne Stil-Tags) |
 | (ungesichert) | diese Doku-Runde (D2): Abschnitt 11 des Vertrags, `cli-and-automation.md`, `README.md`, dieses Protokoll, Verweise in beiden READMEs |
 
 ## Dateigruppen
