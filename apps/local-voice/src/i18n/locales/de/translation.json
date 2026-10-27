@@ -2748,7 +2748,13 @@
         "pauseHint": "Hält an der aktuellen Stelle an",
         "resume": "Weiter",
         "resumeHint": "Liest ab dem zuletzt gehörten Satz weiter",
-        "stopHint": "Beendet das Vorlesen und blendet die Leiste aus"
+        "stopHint": "Beendet das Vorlesen und blendet die Steuerung aus",
+        "positionShort": "{{position}}/{{total}}",
+        "savedResume": "Ab Satz {{position}} fortsetzen",
+        "savedResumeHint": "Liest diesen Text ab dem zuletzt gehörten Satz neu vor – die Wiedergabe wurde durch eine andere ersetzt",
+        "savedStopHint": "Verwirft die gemerkte Stelle und blendet die Steuerung aus",
+        "voiceMenu": "Stimme wählen",
+        "voiceMenuHint": "Aktuell: {{name}}. Wechselt die Stimme; eine laufende Wiedergabe nimmt sie ab dem aktuellen Satz"
       },
       "error": "Vorlesen fehlgeschlagen: {{error}}",
       "truncated": "Nur die ersten {{limit}} von {{total}} Zeichen werden vorgelesen. Die Grenze steht unter Einstellungen > Ausgabe > Vorlesen."
