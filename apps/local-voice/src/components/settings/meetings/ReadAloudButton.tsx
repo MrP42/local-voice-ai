@@ -2,7 +2,7 @@ import React, { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { FileAudio, Square, Volume2, X } from "lucide-react";
+import { FileAudio, Volume2, X } from "lucide-react";
 import { toast } from "sonner";
 import { markdownToSpeech } from "@/lib/speechText";
 import { exportFileName } from "@/lib/utils/exportName";
@@ -14,10 +14,14 @@ import {
   getReadAloudSession,
   startExport,
   startReading,
-  stopReading,
-  stopReadingIfOwner,
   subscribeReadAloud,
+  suspendReadingIfOwner,
 } from "./readAloudSession";
+import {
+  ReadAloudControls,
+  ReadAloudVoice,
+  useReadAloudView,
+} from "./ReadAloudBar";
 
 interface ReadAloudButtonProps {
   /** Wer vorliest, z. B. `minutes:<Besprechung>:<Dokument>`; je Inhalt verschieden. */
@@ -37,8 +41,11 @@ interface ReadAloudButtonProps {
  * "Vorlesen" und "Audio speichern" für erzeugte Inhalte der Aufnahmen (Protokoll,
  * Dokumente, KI-Notizen, Projektprotokoll). Keine eigene Sprachausgabe: dieselben Befehle
  * wie auf der Vorlesen-Seite (`tts_speak_text`, `tts_speak_to_file`), mit der dort
- * gewählten Stimme. Solange vorgelesen wird, steht der Knopf auf "Beenden" und
- * `ReadAloudBar` zeigt Pause/Weiter, Satzsprung und Stimmenwahl.
+ * gewählten Stimme. Ein Klick auf "Vorlesen" ersetzt den Knopf IN DERSELBEN Zeile durch
+ * die Steuerung (`ReadAloudControls`: Satz zurück, Pause/Weiter, Satz vor, Stopp, Zähler,
+ * Stimme); sie bleibt, solange eine Sitzung besteht -- auch pausiert, auch nach einem
+ * Wechsel der Aufnahme oder des Reiters (der pausiert nur). Erst Stopp oder das Ende
+ * blendet sie aus. "Audio speichern" steht immer dahinter.
  */
 export const ReadAloudButton: React.FC<ReadAloudButtonProps> = ({
   speakKey,
@@ -54,11 +61,14 @@ export const ReadAloudButton: React.FC<ReadAloudButtonProps> = ({
     subscribeReadAloud,
     getReadAloudExport,
   );
+  const view = useReadAloudView(speakKey);
   const speaking = session?.key === speakKey;
   const saving = exporting?.key === speakKey ? exporting : null;
 
-  // Ohne den Reiter (Wechsel von Protokoll zu Transkript, andere Aufnahme) verstummt die Stimme.
-  useEffect(() => () => stopReadingIfOwner(speakKey), [speakKey]);
+  // Ohne den Reiter (Wechsel von Protokoll zu Transkript, andere Aufnahme) verstummt die
+  // Stimme: sie PAUSIERT, die Sitzung bleibt -- zurück am selben Inhalt geht es mit Weiter
+  // an derselben Stelle weiter.
+  useEffect(() => () => suspendReadingIfOwner(speakKey), [speakKey]);
 
   // Eine Kürzung an der Zeichengrenze muss man hören UND wissen.
   useEffect(() => {
@@ -78,10 +88,6 @@ export const ReadAloudButton: React.FC<ReadAloudButtonProps> = ({
   };
 
   const onClick = async () => {
-    if (speaking) {
-      stopReading();
-      return;
-    }
     const text = await spokenText();
     if (text) startReading(speakKey, text);
   };
@@ -112,24 +118,19 @@ export const ReadAloudButton: React.FC<ReadAloudButtonProps> = ({
 
   return (
     <>
-      <IconAction
-        size="sm"
-        icon={speaking ? Square : Volume2}
-        label={
-          speaking
-            ? t("meetings.readAloud.stop")
-            : t("meetings.readAloud.speak")
-        }
-        description={
-          speaking
-            ? t("meetings.readAloud.stopHint")
-            : t("meetings.readAloud.speakHint")
-        }
-        testId={testId}
-        disabled={disabled && !speaking}
-        aria-pressed={speaking}
-        onClick={() => void onClick()}
-      />
+      {view ? (
+        <ReadAloudControls speakKey={speakKey} testId={testId} />
+      ) : (
+        <IconAction
+          size="sm"
+          icon={Volume2}
+          label={t("meetings.readAloud.speak")}
+          description={t("meetings.readAloud.speakHint")}
+          testId={testId}
+          disabled={disabled}
+          onClick={() => void onClick()}
+        />
+      )}
       <IconAction
         size="sm"
         icon={saving ? X : FileAudio}
@@ -153,6 +154,8 @@ export const ReadAloudButton: React.FC<ReadAloudButtonProps> = ({
         aria-busy={saving !== null}
         onClick={() => void onSave()}
       />
+      {/* Die Stimme steht zuletzt und nimmt den Rest der Zeile. */}
+      <ReadAloudVoice speakKey={speakKey} testId={testId} />
     </>
   );
 };

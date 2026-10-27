@@ -4736,6 +4736,20 @@ async ttsSpeakTextFrom(text: string, charOffset: number, onlyOne: boolean) : Pro
 }
 },
 /**
+ * Den ganzen Text vorlesen, beginnend beim Satz `sentence_index` (nullbasiert).
+ * Legt wie `tts_speak_text` eine Pause/Weiter-faehige Sitzung an; die Aufnahmen
+ * setzen damit "ab Satz n fortsetzen" um, wenn eine andere Wiedergabe die
+ * globale Sitzung ersetzt hat.
+ */
+async ttsSpeakTextAt(text: string, sentenceIndex: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speak_text_at", { text, sentenceIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Geaenderte Saetze vorab erzeugen (Cache fuellen), ohne Wiedergabe.
  * Kehrt sofort zurueck; Fortschritt kommt ueber `tts-prewarm-progress`.
  */

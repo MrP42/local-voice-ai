@@ -29,6 +29,20 @@ export interface ReadAloudSession {
   sentence: { index: number; text: string } | null;
 }
 
+/**
+ * Die gemerkte Stelle einer Wiedergabe, die nicht mehr die globale Sitzung ist (eine
+ * andere Wiedergabe hat sie ersetzt): je Knopf-Schluessel (Aufnahme + Dokument) der Text
+ * und der Satz, ab dem "Weiter" neu ansetzt. Lebt, solange die App laeuft.
+ */
+export interface SavedReading {
+  key: string;
+  text: string;
+  /** Nullbasierter Satz, mit dem die Wiedergabe fortgesetzt wird (= schon gehoerte Saetze). */
+  position: number;
+  /** Anzahl der Saetze, 0 = unbekannt. */
+  total: number;
+}
+
 export interface ReadAloudExport {
   key: string;
   position: number;
@@ -39,6 +53,7 @@ export interface ReadAloudExport {
 }
 
 let session: ReadAloudSession | null = null;
+const saved = new Map<string, SavedReading>();
 let exporting: ReadAloudExport | null = null;
 let tokenCounter = 0;
 const subscribers = new Set<() => void>();
@@ -52,6 +67,23 @@ export const subscribeReadAloud = (fn: () => void) => {
 };
 export const getReadAloudSession = () => session;
 export const getReadAloudExport = () => exporting;
+/** Die gemerkte Stelle fuer `key`; dasselbe Objekt, solange sie sich nicht aendert. */
+export const getSavedReading = (key: string) => saved.get(key) ?? null;
+
+const forget = (key: string) => {
+  if (saved.delete(key)) notify();
+};
+/**
+ * Die Stelle einer Sitzung merken, die gleich ersetzt wird. Zu Ende gelesen oder
+ * noch kein Satz gehoert: nichts fortzusetzen.
+ */
+const remember = (old: ReadAloudSession) => {
+  const total = old.progress?.total ?? 0;
+  const position = old.progress?.position ?? 0;
+  // Zu Ende gelesen oder noch nichts gehoert: nichts fortzusetzen, ein Neustart genuegt.
+  if (position <= 0 || (total > 0 && position >= total)) return;
+  saved.set(old.key, { key: old.key, text: old.text, position, total });
+};
 
 const setSession = (next: ReadAloudSession | null) => {
   session = next;
@@ -159,21 +191,49 @@ const run = async (token: number, command: () => Promise<CommandResult>) => {
   else setSession(null);
 };
 
-/** Text vorlesen; eine Sitzung eines anderen Knopfes wird dabei ersetzt. */
-export const startReading = (key: string, text: string) => {
+/**
+ * Text vorlesen. Eine Sitzung eines anderen Knopfes wird dabei ersetzt, ihre Stelle bleibt
+ * gemerkt (`getSavedReading`). `from`: nicht von vorn, sondern ab diesem Satz (gemerkte
+ * Stelle fortsetzen; `total` = Satzzahl der gemerkten Stelle, damit der Zaehler gleich stimmt).
+ */
+export const startReading = (
+  key: string,
+  text: string,
+  from?: { position: number; total: number },
+) => {
   ensureListeners();
+  if (session && session.key !== key) remember(session);
+  saved.delete(key);
   const token = ++tokenCounter;
+  const position = from?.position ?? 0;
   setSession({
     key,
     token,
     text,
     runs: 0,
     paused: false,
-    progress: null,
+    progress: from ? { position, total: from.total } : null,
     sentence: null,
   });
-  void run(token, () => commands.ttsSpeakText(text));
+  void run(token, () =>
+    position > 0
+      ? commands.ttsSpeakTextAt(text, position)
+      : commands.ttsSpeakText(text),
+  );
 };
+
+/** Eine gemerkte Stelle ab ihrem Satz neu starten. */
+export const resumeSavedReading = (key: string) => {
+  const entry = saved.get(key);
+  if (!entry) return;
+  startReading(key, entry.text, {
+    position: entry.position,
+    total: entry.total,
+  });
+};
+
+/** Die gemerkte Stelle verwerfen (Stopp an einer Leiste ohne laufende Sitzung). */
+export const discardSavedReading = (key: string) => forget(key);
 
 /** Pause: anhalten, Position behalten -- Weiter setzt genau dort fort. */
 export const pauseReading = () => {
@@ -193,16 +253,23 @@ export const seekReading = (delta: number) => {
   void run(session.token, () => commands.ttsSpeakSeek(delta));
 };
 
-/** Beenden: anhalten und die Sitzung dieses Knopfes verwerfen. */
+/** Beenden: anhalten und die Sitzung samt gemerkter Stelle verwerfen. */
 export const stopReading = () => {
   if (!session) return;
+  saved.delete(session.key);
   setSession(null);
   void commands.ttsCancel();
 };
 
-/** Wiedergabe beenden, wenn der Knopf `key` sie gestartet hat (Reiter-/Aufnahmewechsel). */
-export const stopReadingIfOwner = (key: string) => {
-  if (session?.key === key) stopReading();
+/**
+ * Wechsel der Aufnahme oder des Reiters: die Wiedergabe des Knopfes `key` PAUSIEREN statt
+ * verwerfen. Es laeuft kein Ton weiter; kommt man zurueck, ist die Sitzung noch da und
+ * "Weiter" setzt am selben Satz fort.
+ */
+export const suspendReadingIfOwner = (key: string) => {
+  if (session?.key !== key || session.paused) return;
+  patchSession(session.token, { paused: true });
+  void commands.ttsCancel();
 };
 
 /**

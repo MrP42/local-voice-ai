@@ -2361,6 +2361,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_server_start,
             commands::tts::tts_server_stop,
             commands::tts::tts_speak_text_from,
+            commands::tts::tts_speak_text_at,
             commands::tts::tts_prewarm,
             commands::tts::tts_prewarm_cancel,
             commands::tts::tts_server_status,

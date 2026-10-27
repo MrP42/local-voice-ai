@@ -16,6 +16,23 @@ pub async fn tts_speak_text(app: AppHandle, text: String) -> Result<(), String> 
     tts.speak_text(&text).await.map(|_| ())
 }
 
+/// Den ganzen Text vorlesen, beginnend beim Satz `sentence_index` (nullbasiert).
+/// Legt wie `tts_speak_text` eine Pause/Weiter-faehige Sitzung an; die Aufnahmen
+/// setzen damit "ab Satz n fortsetzen" um, wenn eine andere Wiedergabe die
+/// globale Sitzung ersetzt hat.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_speak_text_at(
+    app: AppHandle,
+    text: String,
+    sentence_index: u32,
+) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tts.speak_text_at(&text, sentence_index as usize)
+        .await
+        .map(|_| ())
+}
+
 /// Ab einem Satz vorlesen (`only_one`: nur diesen). `char_offset` ist der
 /// UTF-16-freie Zeichen-Offset im Text -- das Frontend rechnet ihn um.
 #[tauri::command]

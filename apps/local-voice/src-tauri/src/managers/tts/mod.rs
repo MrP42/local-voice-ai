@@ -1779,6 +1779,19 @@ impl TtsManager {
     /// Freitext sprechen: legt eine Pause/Weiter-fähige Session an und meldet
     /// den Satzfortschritt als `tts-speak-progress`-Event.
     pub async fn speak_text(self: &Arc<Self>, raw: &str) -> Result<usize, String> {
+        self.speak_text_at(raw, 0).await
+    }
+
+    /// Wie [`Self::speak_text`], beginnt aber beim Satz `sentence_index`
+    /// (nullbasiert; hinter dem Ende: der letzte Satz). Die Session umfasst
+    /// trotzdem den ganzen Text, damit Pause/Weiter und Satzsprung davor und
+    /// danach funktionieren -- die Grundlage fuer "ab Satz n fortsetzen" in
+    /// den Aufnahmen, wenn die globale Sitzung inzwischen ersetzt wurde.
+    pub async fn speak_text_at(
+        self: &Arc<Self>,
+        raw: &str,
+        sentence_index: usize,
+    ) -> Result<usize, String> {
         use tauri::Emitter;
         let max_chars = *self.core.max_chars.lock().unwrap();
         let prepared =
@@ -1796,11 +1809,12 @@ impl TtsManager {
             );
         }
         let sentences = self.utterances(&prepared.text);
+        let start = clamp_start_sentence(sentence_index, sentences.len());
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: sentences.clone(),
-            position: 0,
+            position: start,
         });
-        self.run_speak_session(sentences, 0).await
+        self.run_speak_session(sentences, start).await
     }
 
     /// Ab einem Satz vorlesen -- oder nur diesen einen. `char_offset` ist
@@ -4506,6 +4520,12 @@ fn speaker_markers_apply(voice_switching: bool, single_voice: bool) -> bool {
     voice_switching && !single_voice
 }
 
+/// Startsatz einer Wiedergabe, die mitten im Text beginnt: nie hinter dem
+/// letzten Satz (sonst spraeche sie nichts), bei leerem Text 0.
+fn clamp_start_sentence(requested: usize, sentence_count: usize) -> usize {
+    requested.min(sentence_count.saturating_sub(1))
+}
+
 /// Saetze ohne eigene Stimme, wenn keine Sprecherzuordnung gilt (Engine ohne
 /// Stimmwechsel oder eine feste Stimme gewaehlt): dann liest die eine
 /// gewaehlte Stimme alles -- auch einen schon berechneten Text, dessen Saetze
@@ -4614,6 +4634,19 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Ab Satz n fortsetzen" (Aufnahmen: Wiedergabe nach Seitenwechsel neu
+    /// aufnehmen): ein gemerkter Satz hinter dem Textende darf nie ins Leere
+    /// laufen -- er landet auf dem letzten Satz, ein leerer Text auf 0.
+    #[test]
+    fn der_startsatz_bleibt_im_text() {
+        assert_eq!(clamp_start_sentence(0, 5), 0);
+        assert_eq!(clamp_start_sentence(3, 5), 3);
+        assert_eq!(clamp_start_sentence(4, 5), 4);
+        assert_eq!(clamp_start_sentence(5, 5), 4);
+        assert_eq!(clamp_start_sentence(99, 5), 4);
+        assert_eq!(clamp_start_sentence(7, 0), 0);
+    }
 
     #[test]
     fn eine_gewaehlte_stimme_liest_alles_das_skript_nur_ohne_wahl() {

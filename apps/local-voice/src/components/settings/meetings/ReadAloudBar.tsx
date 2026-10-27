@@ -1,67 +1,32 @@
-import React, { useEffect, useId, useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
+import {
+  AudioLines,
+  Check,
+  ChevronDown,
+  Pause,
+  Play,
+  Settings,
+  SkipBack,
+  SkipForward,
+  Square,
+} from "lucide-react";
 import { commands } from "@/bindings";
-import { Glyph } from "../../ui/AudioPlayer";
-import { Select } from "../../ui/Select";
-import { TooltipTrigger } from "../../ui/TooltipTrigger";
+import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import { IconAction } from "../../ui/IconAction";
 import { VOICE_MANAGE, useVoiceChoice } from "../tts/useVoiceChoice";
 import {
+  discardSavedReading,
   getReadAloudSession,
+  getSavedReading,
   pauseReading,
   resumeReading,
+  resumeSavedReading,
   seekReading,
   stopReading,
   subscribeReadAloud,
 } from "./readAloudSession";
-
-interface TransportProps {
-  glyph: "prev" | "next" | "play" | "pause" | "stop";
-  label: string;
-  description: string;
-  testId: string;
-  primary?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}
-
-/** Ein Schalter der Transportzeile: runder Glyph-Knopf der Mediabar, Name im Tooltip. */
-const Transport: React.FC<TransportProps> = ({
-  glyph,
-  label,
-  description,
-  testId,
-  primary,
-  disabled,
-  onClick,
-}) => {
-  const tipId = `${useId()}-tip`;
-  return (
-    <TooltipTrigger
-      tooltipId={tipId}
-      content={
-        <>
-          <div className="text-sm font-semibold">
-            <strong>{label}</strong>
-          </div>
-          <div className="text-xs text-text/70">{description}</div>
-        </>
-      }
-    >
-      <button
-        type="button"
-        className={`mbtn mbtn--sm${primary ? " mbtn--primary" : ""}`}
-        aria-label={label}
-        aria-describedby={tipId}
-        data-testid={testId}
-        disabled={disabled}
-        onClick={onClick}
-      >
-        <Glyph name={glyph} />
-      </button>
-    </TooltipTrigger>
-  );
-};
 
 /** Phase des Sprachservers (Fish) -- die Stimmenliste braucht sie fuer "eingerichtet". */
 const useServerPhase = () => {
@@ -82,9 +47,141 @@ const useServerPhase = () => {
   return phase;
 };
 
-const Bar: React.FC<{ testId: string }> = ({ testId }) => {
+/**
+ * Was die Steuerung fuer `speakKey` zeigt: `live` = die globale Sitzung gehoert diesem
+ * Inhalt (laeuft oder pausiert), `saved` = eine andere Wiedergabe hat die Sitzung
+ * ersetzt, die Stelle ist aber gemerkt (Fortsetzen ab Satz n), sonst nichts.
+ */
+export const useReadAloudView = (speakKey: string): "live" | "saved" | null => {
+  const session = useSyncExternalStore(subscribeReadAloud, getReadAloudSession);
+  const savedEntry = useSyncExternalStore(subscribeReadAloud, () =>
+    getSavedReading(speakKey),
+  );
+  if (session?.key === speakKey) return "live";
+  return savedEntry ? "saved" : null;
+};
+
+const Controls: React.FC<{
+  speakKey: string;
+  testId: string;
+  view: "live" | "saved";
+}> = ({ speakKey, testId, view }) => {
   const { t } = useTranslation();
   const session = useSyncExternalStore(subscribeReadAloud, getReadAloudSession);
+  const savedEntry = useSyncExternalStore(subscribeReadAloud, () =>
+    getSavedReading(speakKey),
+  );
+
+  const live = view === "live" ? session : null;
+  const playing = !!live && live.runs > 0 && !live.paused;
+  // Zaehler: der Satz, der zu hoeren ist -- oder der, mit dem es weitergeht.
+  const total = live ? (live.progress?.total ?? 0) : (savedEntry?.total ?? 0);
+  const index = live
+    ? (live.sentence?.index ??
+      (live.progress && total > 0 ? live.progress.position : null))
+    : (savedEntry?.position ?? null);
+  const shown = index !== null && total > 0 ? Math.min(index + 1, total) : null;
+  const resumePosition = (savedEntry?.position ?? 0) + 1;
+
+  return (
+    <div
+      role="group"
+      aria-label={t("meetings.readAloud.bar.label")}
+      data-testid={`${testId}-bar`}
+      data-view={view}
+      className="inline-flex items-center gap-0.5 rounded-lg border border-mid-gray/20 bg-mid-gray/5 p-0.5"
+    >
+      <IconAction
+        size="sm"
+        ghost
+        icon={SkipBack}
+        label={t("tts.previousSentence")}
+        description={t("meetings.readAloud.bar.previousHint")}
+        testId={`${testId}-bar-prev`}
+        disabled={view === "saved"}
+        onClick={() => seekReading(-1)}
+      />
+      {view === "live" ? (
+        <IconAction
+          size="sm"
+          icon={playing ? Pause : Play}
+          label={playing ? t("tts.pause") : t("meetings.readAloud.bar.resume")}
+          description={
+            playing
+              ? t("meetings.readAloud.bar.pauseHint")
+              : t("meetings.readAloud.bar.resumeHint")
+          }
+          testId={`${testId}-bar-toggle`}
+          onClick={() => (playing ? pauseReading() : resumeReading())}
+        />
+      ) : (
+        <IconAction
+          size="sm"
+          icon={Play}
+          label={t("meetings.readAloud.bar.savedResume", {
+            position: resumePosition,
+          })}
+          description={t("meetings.readAloud.bar.savedResumeHint")}
+          testId={`${testId}-bar-toggle`}
+          onClick={() => resumeSavedReading(speakKey)}
+        />
+      )}
+      <IconAction
+        size="sm"
+        ghost
+        icon={SkipForward}
+        label={t("tts.nextSentence")}
+        description={t("meetings.readAloud.bar.nextHint")}
+        testId={`${testId}-bar-next`}
+        disabled={view === "saved"}
+        onClick={() => seekReading(1)}
+      />
+      <IconAction
+        size="sm"
+        ghost
+        icon={Square}
+        label={t("tts.stop")}
+        description={
+          view === "live"
+            ? t("meetings.readAloud.bar.stopHint")
+            : t("meetings.readAloud.bar.savedStopHint")
+        }
+        testId={`${testId}-bar-stop`}
+        onClick={() =>
+          view === "live" ? stopReading() : discardSavedReading(speakKey)
+        }
+      />
+      {shown !== null && (
+        <span
+          className="px-1.5 text-xs tabular-nums text-text/70"
+          title={live?.sentence?.text}
+          data-testid={`${testId}-bar-position`}
+        >
+          <span aria-hidden="true">
+            {t("meetings.readAloud.bar.positionShort", {
+              position: shown,
+              total,
+            })}
+          </span>
+          <span className="sr-only">
+            {t("meetings.readAloud.bar.position", { position: shown, total })}
+          </span>
+        </span>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Die Stimmenwahl der Steuerung, dezent: nur ein Pfeil-Knopf mit Menue, daneben klein der
+ * Name der gewaehlten Stimme bzw. des Anbieters. Sie steht als LETZTES der Zeile und waechst
+ * auf den Rest der Zeile (`flex-1`, Basis = der Knopf): der Name erscheint nur, wenn dort
+ * Platz fuer ihn bleibt (Containerabfrage auf die Gruppe selbst, deren Breite von der Zeile
+ * kommt, nicht vom Inhalt); sonst steht er im Tooltip des Knopfes. So bricht die Zeile nie
+ * um, nur weil ein Name lang ist.
+ */
+const Voice: React.FC<{ testId: string }> = ({ testId }) => {
+  const { t } = useTranslation();
   const phase = useServerPhase();
   const {
     options,
@@ -94,120 +191,92 @@ const Bar: React.FC<{ testId: string }> = ({ testId }) => {
     selectedVoiceNotSetUp,
   } = useVoiceChoice(phase);
 
-  if (!session) return null;
-  const playing = session.runs > 0 && !session.paused;
-  const total = session.progress?.total ?? 0;
-  const index = session.sentence?.index ?? null;
-  const position =
-    index !== null && total > 0
-      ? t("meetings.readAloud.bar.position", {
-          position: Math.min(index + 1, total),
-          total,
-        })
-      : null;
+  const voiceLabel = options.find((o) => o.value === voiceValue)?.label ?? "";
+  const items: ActionMenuItem[] = options.map((option) =>
+    option.value === VOICE_MANAGE
+      ? {
+          id: option.value,
+          label: option.label,
+          icon: Settings,
+          testId: `${testId}-bar-voice-manage`,
+          onSelect: openVoiceManagement,
+        }
+      : {
+          id: option.value,
+          label: option.label,
+          icon: AudioLines,
+          disabled: option.isDisabled,
+          trailing:
+            option.value === voiceValue ? (
+              <Check width={14} height={14} aria-hidden="true" />
+            ) : undefined,
+          // Ein Wechsel gilt sofort -- eine laufende Wiedergabe stellt am aktuellen Satz um.
+          onSelect: () => applyVoiceValue(option.value),
+        },
+  );
 
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-mid-gray/30 px-2 py-1"
-      data-testid={testId}
-      role="group"
-      aria-label={t("meetings.readAloud.bar.label")}
+      className="@container flex min-w-[28px] flex-[1_1_28px] items-center gap-1"
+      data-testid={`${testId}-bar-voice`}
     >
-      <div className="mediabar mediabar--start" style={{ gap: "0.25rem" }}>
-        <Transport
-          glyph="prev"
-          label={t("tts.previousSentence")}
-          description={t("meetings.readAloud.bar.previousHint")}
-          testId={`${testId}-prev`}
-          onClick={() => seekReading(-1)}
-        />
-        <Transport
-          glyph={playing ? "pause" : "play"}
-          label={playing ? t("tts.pause") : t("meetings.readAloud.bar.resume")}
-          description={
-            playing
-              ? t("meetings.readAloud.bar.pauseHint")
-              : t("meetings.readAloud.bar.resumeHint")
-          }
-          testId={`${testId}-toggle`}
-          primary
-          onClick={() => (playing ? pauseReading() : resumeReading())}
-        />
-        <Transport
-          glyph="next"
-          label={t("tts.nextSentence")}
-          description={t("meetings.readAloud.bar.nextHint")}
-          testId={`${testId}-next`}
-          onClick={() => seekReading(1)}
-        />
-        <Transport
-          glyph="stop"
-          label={t("tts.stop")}
-          description={t("meetings.readAloud.bar.stopHint")}
-          testId={`${testId}-stop`}
-          onClick={stopReading}
-        />
-        {position && (
-          <span
-            className="ms-2 text-xs tabular-nums text-text/70"
-            data-testid={`${testId}-position`}
-          >
-            {position}
-          </span>
+      <ActionMenu
+        trigger={{
+          icon: ChevronDown,
+          label: t("meetings.readAloud.bar.voiceMenu"),
+          description: t("meetings.readAloud.bar.voiceMenuHint", {
+            name: voiceLabel || "\u2013",
+          }),
+          testId: `${testId}-bar-voice-menu`,
+          size: "sm",
+        }}
+        items={items}
+        menuLabel={t("tts.voices.title")}
+        widthClass="w-72"
+      />
+      <span
+        className={`hidden min-w-0 flex-1 truncate text-xs @[5.5rem]:block ${
+          selectedVoiceNotSetUp
+            ? "text-amber-700 dark:text-amber-400"
+            : "text-text/60"
+        }`}
+        title={
+          selectedVoiceNotSetUp ? t("tts.voices.notSetUpHint") : voiceLabel
+        }
+        data-testid={`${testId}-bar-voice-name`}
+        data-not-set-up={selectedVoiceNotSetUp ? "true" : undefined}
+      >
+        {voiceLabel}
+        {selectedVoiceNotSetUp && (
+          <span className="sr-only">{t("tts.voices.notSetUpHint")}</span>
         )}
-      </div>
-      <div className="w-56 max-w-full" data-testid={`${testId}-voice`}>
-        {/* Dieselbe Auswahl wie auf der Vorlesen-Seite: gleiche Eintraege, gleiche Werte,
-            ein Wechsel gilt sofort -- eine laufende Wiedergabe stellt am aktuellen Satz um. */}
-        <Select
-          menuPortal
-          value={voiceValue}
-          options={options}
-          ariaLabel={t("tts.voices.title")}
-          isClearable={false}
-          onChange={(value) => {
-            if (!value) return;
-            if (value === VOICE_MANAGE) {
-              openVoiceManagement();
-              return;
-            }
-            applyVoiceValue(value);
-          }}
-        />
-      </div>
-      {selectedVoiceNotSetUp && (
-        <span
-          role="status"
-          className="text-xs text-amber-700 dark:text-amber-400"
-          data-testid={`${testId}-voice-hint`}
-        >
-          {t("tts.voices.notSetUpHint")}
-        </span>
-      )}
-      {session.sentence && (
-        <p
-          className="w-full min-w-0 truncate text-xs text-text/60"
-          title={session.sentence.text}
-          data-testid={`${testId}-sentence`}
-        >
-          {session.sentence.text}
-        </p>
-      )}
+      </span>
     </div>
   );
 };
 
 /**
- * Wiedergabeleiste der Aufnahmen: erscheint, solange der Knopf `speakKey` vorliest (oder
- * pausiert hat). Dieselben Bausteine wie die Vorlesen-Seite -- Mediabar-Glyphen,
- * Satzsprung, Pause/Weiter und die Stimmenauswahl (`useVoiceChoice`); keine eigene
- * Sprachausgabe.
+ * Wiedergabe-Steuerung der Aufnahmen, gedacht als Teil der Werkzeugzeile (gleiche Zeile
+ * wie Neu erzeugen/Kopieren/Herunterladen, kein eigener Streifen darunter): Satz zurueck,
+ * Pause/Weiter, Satz vor, Stopp, Zaehler. Dieselben Bausteine wie die Vorlesen-Seite --
+ * Satzsprung, Pause/Weiter; keine eigene Sprachausgabe. Erscheint, solange fuer `speakKey`
+ * eine Sitzung besteht (auch pausiert) oder eine Stelle gemerkt ist (`useReadAloudView`).
  */
-export const ReadAloudBar: React.FC<{ speakKey: string; testId: string }> = ({
-  speakKey,
-  testId,
-}) => {
-  const session = useSyncExternalStore(subscribeReadAloud, getReadAloudSession);
-  if (session?.key !== speakKey) return null;
-  return <Bar testId={testId} />;
+export const ReadAloudControls: React.FC<{
+  speakKey: string;
+  testId: string;
+}> = ({ speakKey, testId }) => {
+  const view = useReadAloudView(speakKey);
+  if (!view) return null;
+  return <Controls speakKey={speakKey} testId={testId} view={view} />;
+};
+
+/** Die Stimmenwahl dazu (`useVoiceChoice`); gehoert ans Ende der Zeile, hinter "Audio speichern". */
+export const ReadAloudVoice: React.FC<{
+  speakKey: string;
+  testId: string;
+}> = ({ speakKey, testId }) => {
+  const view = useReadAloudView(speakKey);
+  if (!view) return null;
+  return <Voice testId={testId} />;
 };

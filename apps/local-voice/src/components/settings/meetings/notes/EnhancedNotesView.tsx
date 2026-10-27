@@ -51,7 +51,6 @@ import { Dropdown } from "../../../ui/Dropdown";
 import { IconAction } from "../../../ui/IconAction";
 import { InstructionBar } from "./InstructionBar";
 import { ReadAloudButton } from "../ReadAloudButton";
-import { ReadAloudBar } from "../ReadAloudBar";
 import { SourceChips } from "./SourceChips";
 import { TaskChecklist } from "./TaskChecklist";
 
@@ -781,13 +780,6 @@ export const EnhancedNotesView: React.FC<EnhancedNotesViewProps> = ({
           </div>
         )}
       </div>
-
-      {selected && (
-        <ReadAloudBar
-          speakKey={`enhanced:${meeting.id}:${selected.id}`}
-          testId="enhanced-readaloud-bar"
-        />
-      )}
 
       {basis && selected && (
         <p className="text-xs text-text/70" data-testid="enhanced-basis">

@@ -24,7 +24,6 @@ import { IconAction } from "../../../ui/IconAction";
 import { MarkdownContent } from "../../../whats-new/MarkdownContent";
 import { JobPanel } from "../JobProgress";
 import { ReadAloudButton } from "../ReadAloudButton";
-import { ReadAloudBar } from "../ReadAloudBar";
 
 /** Was die Arbeitsflaeche zeigt: ein gespeichertes Dokument oder den laufenden Lauf. */
 export type OpenProjectMinutes =
@@ -169,7 +168,7 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
       <div className="flex flex-wrap items-center gap-2">
         <FileText width={18} height={18} aria-hidden="true" />
         <h2
-          className="min-w-0 flex-1 text-base font-semibold"
+          className="min-w-[10rem] flex-1 text-base font-semibold"
           data-testid="pm-title"
         >
           {doc.title}
@@ -177,7 +176,7 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
         <div
           role="toolbar"
           aria-label={t("meetings.projectMinutes.view.toolbar")}
-          className="flex items-center gap-2"
+          className="flex min-w-0 max-w-full flex-wrap items-center gap-2"
           data-testid="pm-toolbar"
         >
           <IconAction
@@ -232,11 +231,6 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
         <span>·</span>
         <span data-testid="pm-template">{meta.template_title}</span>
       </p>
-
-      <ReadAloudBar
-        speakKey={`project-minutes:${doc.id}`}
-        testId="pm-readaloud-bar"
-      />
 
       {error && <Alert variant="error">{error}</Alert>}
       {saved && (

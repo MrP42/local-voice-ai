@@ -525,6 +525,50 @@ test("Export wie beim Protokoll (Dialog, Word/Text/Markdown) und Loeschen mit Ru
   expect(await calls(page, "project_minutes_delete")).toHaveLength(1);
 });
 
+test("Vorlesen: die Steuerung steht in der Werkzeugzeile des Ergebnisses und bricht im schmalen Fenster um", async ({
+  page,
+}) => {
+  await setup(page);
+  await finishWithDoc(page);
+  // Die Wiedergabe haengt (wie die echte), bis sie beendet wird.
+  await page.evaluate(() => {
+    const internals = (window as any).__TAURI_INTERNALS__;
+    const original = internals.invoke;
+    internals.invoke = (cmd: string, args: unknown) =>
+      cmd === "tts_speak_text" ? new Promise(() => {}) : original(cmd, args);
+  });
+  await page.getByTestId("pm-readaloud").click();
+  const bar = page.getByTestId("pm-readaloud-bar");
+  await expect(bar).toBeVisible();
+  await expect(
+    page.getByTestId("pm-toolbar").getByTestId("pm-readaloud-bar"),
+  ).toBeVisible();
+  for (const width of [480, 1100]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect
+      .poll(() =>
+        page.getByTestId("pm-toolbar").evaluate((el) => el.clientWidth),
+      )
+      .toBeGreaterThan(100);
+    const fits = await page.evaluate(() => {
+      const toolbar = document.querySelector(
+        '[data-testid="pm-toolbar"]',
+      ) as HTMLElement;
+      const limit = toolbar.getBoundingClientRect().right + 1;
+      return {
+        page: document.scrollingElement!.scrollWidth <= innerWidth,
+        inside: Array.from(toolbar.querySelectorAll("button")).every(
+          (el) => el.getBoundingClientRect().right <= limit,
+        ),
+      };
+    });
+    expect(fits, `Breite ${width}`).toEqual({ page: true, inside: true });
+  }
+  await page.getByTestId("pm-readaloud-bar-stop").click();
+  await expect(bar).toHaveCount(0);
+  await expect(page.getByTestId("pm-readaloud")).toBeVisible();
+});
+
 // ---------------------------------------------------------------------------
 // Quellen
 // ---------------------------------------------------------------------------

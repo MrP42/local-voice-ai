@@ -25,7 +25,6 @@ import {
 } from "../../whats-new/MarkdownContent";
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
-import { ReadAloudBar } from "./ReadAloudBar";
 import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
@@ -383,11 +382,6 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           </span>
         )}
       </div>
-
-      <ReadAloudBar
-        speakKey={`minutes:${meetingId}:${docKey ?? "minutes"}`}
-        testId="minutes-readaloud-bar"
-      />
 
       {error && <Alert variant="error">{error}</Alert>}
 
