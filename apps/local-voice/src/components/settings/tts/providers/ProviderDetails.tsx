@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   commands,
+  type ModelFolderInfo,
   type TtsError,
   type TtsProviderEntry,
   type VoiceDescriptor,
@@ -11,17 +13,23 @@ import { Input } from "../../../ui/Input";
 import { Select } from "../../../ui/Select";
 import { Textarea } from "../../../ui/Textarea";
 import { Switch } from "@fluentui/react-components";
+import { SourceLink } from "./ProviderRow";
 import {
   ConfigInputError,
   LANG_ALL,
   VOICE_DEFAULT,
   asTtsError,
   buildConfig,
+  fieldOfMessage,
   isSelectableTier,
   parseConfig,
+  pickKind,
   previewIsActive,
+  requiredFields,
+  sameValues,
   type FieldValue,
   type ParsedConfig,
+  type PickKind,
 } from "./providerModel";
 import type { PreviewState } from "./useProviderPreview";
 
@@ -104,9 +112,17 @@ const ConfigSection: React.FC<{
     | { kind: "ready"; parsed: ParsedConfig }
   >({ kind: "loading" });
   const [values, setValues] = useState<Record<string, FieldValue>>({});
+  /** Der zuletzt gespeicherte (bzw. geladene) Stand: nur er gilt. */
+  const [baseline, setBaseline] = useState<Record<string, FieldValue>>({});
+  /** Fehler je Feld, direkt am Feld. */
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** Was im Modellordner an Gewichten liegt (nur lokale Programme). */
+  const [modelInfo, setModelInfo] = useState<ModelFolderInfo | null>(null);
+  /** `q8` wurde beim Auswaehlen des Ordners vorgeschlagen und eingetragen. */
+  const [quantAuto, setQuantAuto] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,6 +136,7 @@ const ConfigSection: React.FC<{
         try {
           const parsed = parseConfig(result.data);
           setValues(parsed.values);
+          setBaseline(parsed.values);
           setState({ kind: "ready", parsed });
         } catch (e) {
           setState({
@@ -139,41 +156,128 @@ const ConfigSection: React.FC<{
     };
   }, [id, errorText]);
 
+  const fields = state.kind === "ready" ? state.parsed.fields : [];
+  const dirty = state.kind === "ready" && !sameValues(values, baseline);
+  const modelValue = String(values.model ?? "");
+  const hasQuant = fields.some((f) => f.key === "quant");
+  const hasModelFolder = pickKind("model", fields) === "folder";
+
+  // Modellordner ansehen (nur Dateisystem): daraus folgt der Vorschlag fuer q8.
+  useEffect(() => {
+    if (!hasModelFolder || !hasQuant || modelValue.trim() === "") {
+      setModelInfo(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void commands
+        .ttsProviderInspectModelFolder(modelValue)
+        .then((info) => !cancelled && setModelInfo(info))
+        .catch(() => !cancelled && setModelInfo(null));
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [hasModelFolder, hasQuant, modelValue]);
+
+  const setField = (key: string, v: FieldValue) => {
+    setSaved(false);
+    setSaveError(null);
+    setFieldErrors((cur) => {
+      if (!(key in cur)) return cur;
+      const next = { ...cur };
+      delete next[key];
+      return next;
+    });
+    if (key === "quant") setQuantAuto(false);
+    setValues((cur) => ({ ...cur, [key]: v }));
+  };
+
+  const labelOf = (key: string) =>
+    t(`tts.providers.fields.${key}`, { defaultValue: key });
+
+  /** "Durchsuchen ...": Datei fuer das Programm, Ordner fuer Modell und Cache. */
+  const browse = async (key: string, kind: PickKind) => {
+    const current = String(values[key] ?? "").trim();
+    const picked = await open({
+      directory: kind === "folder",
+      multiple: false,
+      title: t("tts.providers.config.browseTitle", { field: labelOf(key) }),
+      defaultPath:
+        current !== "" && !current.startsWith("hf://") ? current : undefined,
+    });
+    if (typeof picked !== "string") return;
+    setField(key, picked);
+    if (key !== "model" || !hasQuant) return;
+    // Liegt im Ordner ein q8-Modell und ist noch nichts gewaehlt: q8 vorbelegen.
+    const info = await commands
+      .ttsProviderInspectModelFolder(picked)
+      .catch(() => null);
+    if (!info) return;
+    setModelInfo(info);
+    if (info.is_dir && info.has_q8 && String(values.quant ?? "") === "") {
+      setValues((cur) => ({ ...cur, quant: "q8" }));
+      setQuantAuto(true);
+    }
+  };
+
   const save = async () => {
     if (state.kind !== "ready") return;
     setSaveError(null);
     setSaved(false);
-    let json: string;
+    const keys = state.parsed.fields.map((f) => f.key);
+    // Pflichtfelder zuerst: alle fehlenden auf einmal am Feld melden.
+    const errors: Record<string, string> = {};
+    for (const key of requiredFields(state.parsed.fields)) {
+      if (String(values[key] ?? "").trim() === "") {
+        errors[key] = t("tts.providers.config.required", {
+          field: labelOf(key),
+        });
+      }
+    }
+    let json = "";
     try {
       json = buildConfig(state.parsed, values);
     } catch (e) {
       if (e instanceof ConfigInputError) {
-        setSaveError(
-          t(`tts.providers.config.${e.message}`, {
-            field: t(`tts.providers.fields.${e.key}`, { defaultValue: e.key }),
-          }),
-        );
-        return;
+        errors[e.key] = t(`tts.providers.config.${e.message}`, {
+          field: labelOf(e.key),
+        });
+      } else {
+        throw e;
       }
-      throw e;
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      return;
     }
     setSaving(true);
     try {
       const result = await commands.ttsProviderSetConfig(id, json);
       if (result.status === "ok") {
+        setFieldErrors({});
+        setBaseline(values);
         setSaved(true);
         onChanged();
       } else {
-        setSaveError(errorText(result.error));
+        const message = errorText(result.error);
+        const key = fieldOfMessage(result.error.message, keys);
+        if (key) setFieldErrors({ [key]: message });
+        else setSaveError(message);
       }
     } catch (e) {
-      setSaveError(errorText(asTtsError(e)));
+      const error = asTtsError(e);
+      const key = fieldOfMessage(error.message, keys);
+      if (key) setFieldErrors({ [key]: errorText(error) });
+      else setSaveError(errorText(error));
     } finally {
       setSaving(false);
     }
   };
 
   if (state.kind === "loading") return null;
+  const hasFieldErrors = Object.keys(fieldErrors).length > 0;
   return (
     <section
       aria-label={t("tts.providers.config.title")}
@@ -194,18 +298,16 @@ const ConfigSection: React.FC<{
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             {state.parsed.fields.map((field) => {
-              const label = t(`tts.providers.fields.${field.key}`, {
-                defaultValue: field.key,
-              });
+              const label = labelOf(field.key);
               const hint = t(`tts.providers.fieldHints.${field.key}`, {
                 defaultValue: "",
               });
               const inputId = `tts-provider-${id}-${field.key}`;
+              const errorId = `${inputId}-error`;
               const value = values[field.key];
-              const set = (v: FieldValue) => {
-                setSaved(false);
-                setValues((cur) => ({ ...cur, [field.key]: v }));
-              };
+              const error = fieldErrors[field.key];
+              const pick = pickKind(field.key, state.parsed.fields);
+              const quant = field.key === "quant" ? String(value ?? "") : null;
               return (
                 <div key={field.key} className="min-w-0 space-y-1">
                   {field.kind === "bool" ? (
@@ -213,7 +315,7 @@ const ConfigSection: React.FC<{
                       checked={value === true}
                       label={label}
                       data-testid={inputId}
-                      onChange={(_e, data) => set(data.checked)}
+                      onChange={(_e, data) => setField(field.key, data.checked)}
                     />
                   ) : (
                     <>
@@ -236,26 +338,78 @@ const ConfigSection: React.FC<{
                           isClearable={false}
                           ariaLabel={label}
                           onChange={(v) =>
-                            set(v === "@none" || v === null ? "" : v)
+                            setField(
+                              field.key,
+                              v === "@none" || v === null ? "" : v,
+                            )
                           }
                         />
                       ) : (
-                        <Input
-                          id={inputId}
-                          data-testid={inputId}
-                          type={field.kind === "number" ? "number" : "text"}
-                          value={String(value ?? "")}
-                          onChange={(e) => set(e.target.value)}
-                          className="w-full"
-                        />
+                        <div className="flex items-start gap-2">
+                          <Input
+                            id={inputId}
+                            data-testid={inputId}
+                            type={field.kind === "number" ? "number" : "text"}
+                            value={String(value ?? "")}
+                            onChange={(e) =>
+                              setField(field.key, e.target.value)
+                            }
+                            aria-invalid={error ? true : undefined}
+                            aria-describedby={error ? errorId : undefined}
+                            className="w-full min-w-0 flex-1"
+                          />
+                          {pick && (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="md"
+                              data-testid={`${inputId}-browse`}
+                              aria-label={t(
+                                "tts.providers.config.browseLabel",
+                                { field: label },
+                              )}
+                              onClick={() => void browse(field.key, pick)}
+                            >
+                              {t("tts.providers.config.browse")}
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </>
                   )}
+                  {error && (
+                    <p
+                      id={errorId}
+                      role="alert"
+                      className="text-xs text-red-500"
+                      data-testid={`tts-provider-field-error-${id}-${field.key}`}
+                    >
+                      {error}
+                    </p>
+                  )}
                   {hint && <p className="text-xs text-text/60">{hint}</p>}
+                  {quant !== null && modelInfo?.is_dir && (
+                    <QuantNote
+                      id={id}
+                      info={modelInfo}
+                      quant={quant}
+                      auto={quantAuto}
+                      onUseQ8={() => setField("quant", "q8")}
+                    />
+                  )}
                 </div>
               );
             })}
           </div>
+          {hasFieldErrors && (
+            <p
+              role="alert"
+              className="text-xs text-red-500"
+              data-testid={`tts-provider-config-notsaved-${id}`}
+            >
+              {t("tts.providers.config.notSaved")}
+            </p>
+          )}
           {saveError && (
             <p
               role="alert"
@@ -265,10 +419,10 @@ const ConfigSection: React.FC<{
               {saveError}
             </p>
           )}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
-              variant="secondary"
+              variant={dirty ? "primary" : "secondary"}
               size="sm"
               disabled={saving}
               data-testid={`tts-provider-config-save-${id}`}
@@ -276,7 +430,16 @@ const ConfigSection: React.FC<{
             >
               {t("tts.providers.config.save")}
             </Button>
-            {saved && (
+            {dirty && !saving && (
+              <span
+                role="status"
+                className="text-xs text-amber-700 dark:text-amber-400"
+                data-testid={`tts-provider-config-dirty-${id}`}
+              >
+                {t("tts.providers.config.dirty")}
+              </span>
+            )}
+            {saved && !dirty && (
               <span role="status" className="text-xs text-text/70">
                 {t("tts.providers.config.saved")}
               </span>
@@ -285,6 +448,54 @@ const ConfigSection: React.FC<{
         </div>
       )}
     </section>
+  );
+};
+
+/** Hinweis unter "Quantisierung": was der gewaehlte Modellordner an Gewichten hat. */
+const QuantNote: React.FC<{
+  id: string;
+  info: ModelFolderInfo;
+  quant: string;
+  auto: boolean;
+  onUseQ8: () => void;
+}> = ({ id, info, quant, auto, onUseQ8 }) => {
+  const { t } = useTranslation();
+  const q8 = quant.trim().toLowerCase() === "q8";
+  let text: string | null = null;
+  let warn = false;
+  if (!q8 && info.has_q8) {
+    text = info.has_f32
+      ? t("tts.providers.config.quantSuggest")
+      : t("tts.providers.config.quantNeeded");
+    warn = !info.has_f32;
+  } else if (q8 && !info.has_q8) {
+    text = t("tts.providers.config.quantMissing");
+    warn = true;
+  } else if (q8 && auto) {
+    text = t("tts.providers.config.quantAuto");
+  }
+  if (!text) return null;
+  return (
+    <div
+      role="status"
+      data-testid={`tts-provider-quant-note-${id}`}
+      className={`flex flex-wrap items-center gap-2 text-xs ${
+        warn ? "text-amber-700 dark:text-amber-400" : "text-text/70"
+      }`}
+    >
+      <span>{text}</span>
+      {!q8 && info.has_q8 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid={`tts-provider-quant-use-${id}`}
+          onClick={onUseQ8}
+        >
+          {t("tts.providers.config.quantUse")}
+        </Button>
+      )}
+    </div>
   );
 };
 
@@ -352,7 +563,17 @@ const VoiceSection: React.FC<{
       { value: VOICE_DEFAULT, label: t("tts.providers.voices.default") },
       ...(voices ?? []).map((v) => ({
         value: v.id,
-        label: `${v.label} · ${languageName(v.language)}`,
+        label: [
+          v.label,
+          v.gender
+            ? t(`tts.providers.voices.gender.${v.gender}`, {
+                defaultValue: v.gender,
+              })
+            : null,
+          languageName(v.language),
+        ]
+          .filter(Boolean)
+          .join(" · "),
       })),
     ];
     if (voice !== VOICE_DEFAULT && !list.some((o) => o.value === voice))
@@ -443,7 +664,8 @@ const VoiceSection: React.FC<{
                 license: chosen.license.weights || chosen.license.code,
               })}
               {chosen.license.non_commercial &&
-                ` · ${t("tts.providers.license.nonCommercial")}`}
+                ` · ${t("tts.providers.license.nonCommercial")}`}{" "}
+              <SourceLink license={chosen.license} />
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">

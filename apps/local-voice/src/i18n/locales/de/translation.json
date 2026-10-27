@@ -38,6 +38,14 @@
       "no": "nein",
       "languageAny": "sprachunabhängig",
       "selected": "Liest vor",
+      "savedState": "Gespeicherter Stand:",
+      "savedStateFix": "Die Felder unter „Einstellungen“ ausfüllen und „Speichern“ wählen; erst danach gilt die Änderung.",
+      "savedStateOpen": "Einstellungen öffnen",
+      "selectedNotReady": {
+        "title": "Liest derzeit nicht.",
+        "blocked": "Dieser Anbieter ist als Vorlese-Stimme gewählt, aber gesperrt (siehe oben). Das Vorlesen fällt nicht auf Fish oder Piper zurück, sondern bricht mit der Fehlermeldung des Anbieters ab. Die Sperre aufheben oder unter „Stimme“ einen anderen Anbieter wählen.",
+        "unavailable": "Dieser Anbieter ist als Vorlese-Stimme gewählt, aber nicht bereit (siehe oben). Das Vorlesen fällt nicht auf Fish oder Piper zurück, sondern bricht mit dieser Fehlermeldung ab. Die Ursache beheben oder einen anderen Anbieter wählen."
+      },
       "enable": "Aktivieren",
       "tier": {
         "supported": "Unterstützt",
@@ -98,6 +106,17 @@
         "loadError": "Die Einstellungen konnten nicht geladen werden: {{message}}",
         "save": "Speichern",
         "saved": "Gespeichert.",
+        "browse": "Durchsuchen …",
+        "browseLabel": "{{field}}: Durchsuchen",
+        "browseTitle": "{{field}} wählen",
+        "required": "„{{field}}“ ist ein Pflichtfeld.",
+        "notSaved": "Nicht gespeichert: Bitte die markierten Felder korrigieren. Bis dahin gilt weiter der gespeicherte Stand.",
+        "dirty": "Ungespeicherte Änderungen – sie gelten erst nach „Speichern“.",
+        "quantSuggest": "Im Modellordner liegt model.q8.gguf.",
+        "quantNeeded": "Im Modellordner liegt nur model.q8.gguf: ohne q8 findet das Programm keine Gewichte.",
+        "quantUse": "q8 verwenden",
+        "quantMissing": "Im Modellordner fehlt model.q8.gguf.",
+        "quantAuto": "q8 eingetragen, weil im Modellordner model.q8.gguf liegt.",
         "choiceNone": "keine Angabe",
         "number_required": "„{{field}}“ braucht eine Zahl.",
         "number_invalid": "„{{field}}“ ist keine gültige Zahl."
@@ -131,7 +150,11 @@
         "blocked": "Die Stimmen sind erst nach der Freigabe abrufbar.",
         "use": "Als Vorlese-Stimme verwenden",
         "usedNow": "Dieser Anbieter liest jetzt vor.",
-        "license": "Stimme: Lizenz {{license}}"
+        "license": "Stimme: Lizenz {{license}}",
+        "gender": {
+          "female": "weiblich",
+          "male": "männlich"
+        }
       },
       "preview": {
         "title": "Probestimme",

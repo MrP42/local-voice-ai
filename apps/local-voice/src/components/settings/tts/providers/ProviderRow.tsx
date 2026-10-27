@@ -87,6 +87,15 @@ export const ProviderRow: React.FC<Props> = ({
   const { caps, license } = descriptor;
   const id = descriptor.id;
   const step = nextApprovalStep(entry);
+  // Nennt die Meldung ein Feld der Einstellungen ("exe_path fehlt: ..."), steht die
+  // Abhilfe in den Feldern des Anbieters: Hinweis darauf statt nur der Meldung.
+  const reasonToken = /^([a-z][a-z0-9_]*)(?=[\s:'"]|$)/.exec(
+    (health.reason ?? "").trim(),
+  )?.[1];
+  const configField =
+    reasonToken && i18n.exists(`tts.providers.fields.${reasonToken}`)
+      ? reasonToken
+      : null;
 
   const languageName = (code: string) => {
     if (code === "und") return t("tts.providers.languageAny");
@@ -190,14 +199,53 @@ export const ProviderRow: React.FC<Props> = ({
       </div>
 
       {!health.available && (health.reason || health.hint) && (
-        <p
-          className="mt-1 text-xs text-text/80"
+        <div
+          className="mt-1 space-y-1 text-xs text-text/80"
           data-testid={`tts-provider-reason-${id}`}
         >
-          {health.reason}
-          {health.reason && health.hint ? " " : ""}
-          {health.hint && <span className="text-text/60">{health.hint}</span>}
-        </p>
+          {/* Die Anzeige beschreibt den GESPEICHERTEN Stand, nicht das, was gerade
+              in den Feldern steht: ohne "Speichern" gilt keine Eingabe. */}
+          <p>
+            <span className="font-medium">{t("tts.providers.savedState")}</span>{" "}
+            {health.reason}
+            {health.reason && health.hint ? " " : ""}
+            {health.hint && <span className="text-text/60">{health.hint}</span>}
+          </p>
+          {configField && (
+            <p
+              className="flex flex-wrap items-center gap-x-2"
+              data-testid={`tts-provider-reason-fix-${id}`}
+            >
+              <span>{t("tts.providers.savedStateFix")}</span>
+              {!expanded && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid={`tts-provider-reason-open-${id}`}
+                  onClick={onToggleExpanded}
+                >
+                  {t("tts.providers.savedStateOpen")}
+                </Button>
+              )}
+            </p>
+          )}
+        </div>
+      )}
+      {entry.selected && (!health.available || entry.blocked !== null) && (
+        <div
+          role="status"
+          className="mt-2 rounded bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300"
+          data-testid={`tts-provider-selected-warning-${id}`}
+          data-reason={entry.blocked !== null ? "blocked" : "unavailable"}
+        >
+          <span className="font-medium">
+            {t("tts.providers.selectedNotReady.title")}
+          </span>{" "}
+          {entry.blocked !== null
+            ? t("tts.providers.selectedNotReady.blocked")
+            : t("tts.providers.selectedNotReady.unavailable")}
+        </div>
       )}
       {health.available && health.hint && (
         <p className="mt-1 text-xs text-text/60">{health.hint}</p>

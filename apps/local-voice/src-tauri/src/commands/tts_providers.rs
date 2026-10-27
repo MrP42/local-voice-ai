@@ -344,6 +344,17 @@ pub fn tts_provider_set_config(app: AppHandle, id: String, json: String) -> Resu
     })
 }
 
+/// Einen Modellordner ansehen: liegen f32- und/oder q8-Gewichte vor? Die
+/// Einstellungsmaske schlägt damit `q8` vor, wenn nur `model.q8.gguf` da ist (der
+/// f32-Lauf scheitert dort am Fehlen der Gewichte). Nur Dateisystem, kein Prozess.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_provider_inspect_model_folder(
+    path: String,
+) -> crate::managers::tts::providers::phonon::ModelFolderInfo {
+    crate::managers::tts::providers::phonon::inspect_model_folder(&path)
+}
+
 /// Opt-in eines Anbieters setzen oder zurücknehmen. NUR OBERFLÄCHE (siehe Moduldoku).
 #[tauri::command]
 #[specta::specta]

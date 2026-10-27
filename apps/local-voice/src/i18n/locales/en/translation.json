@@ -38,6 +38,14 @@
       "no": "no",
       "languageAny": "language independent",
       "selected": "Reading aloud",
+      "savedState": "Saved state:",
+      "savedStateFix": "Fill in the fields under “Settings” and choose “Save”; a change only applies after that.",
+      "savedStateOpen": "Open settings",
+      "selectedNotReady": {
+        "title": "Not reading aloud at the moment.",
+        "blocked": "This provider is selected as the reading voice but blocked (see above). Reading does not fall back to Fish or Piper; it stops with the provider's error message. Lift the block or pick another provider under “Voice”.",
+        "unavailable": "This provider is selected as the reading voice but not ready (see above). Reading does not fall back to Fish or Piper; it stops with this error message. Fix the cause or pick another provider."
+      },
       "enable": "Enable",
       "tier": {
         "supported": "Supported",
@@ -98,6 +106,17 @@
         "loadError": "The settings could not be loaded: {{message}}",
         "save": "Save",
         "saved": "Saved.",
+        "browse": "Browse …",
+        "browseLabel": "{{field}}: Browse",
+        "browseTitle": "Choose {{field}}",
+        "required": "“{{field}}” is required.",
+        "notSaved": "Not saved: please correct the marked fields. Until then the saved state still applies.",
+        "dirty": "Unsaved changes – they only apply after “Save”.",
+        "quantSuggest": "The model folder contains model.q8.gguf.",
+        "quantNeeded": "The model folder contains only model.q8.gguf: without q8 the program finds no weights.",
+        "quantUse": "Use q8",
+        "quantMissing": "The model folder has no model.q8.gguf.",
+        "quantAuto": "q8 entered because the model folder contains model.q8.gguf.",
         "choiceNone": "not set",
         "number_required": "“{{field}}” needs a number.",
         "number_invalid": "“{{field}}” is not a valid number."
@@ -131,7 +150,11 @@
         "blocked": "Voices can only be listed after the provider is approved.",
         "use": "Use as reading voice",
         "usedNow": "This provider now reads aloud.",
-        "license": "Voice: license {{license}}"
+        "license": "Voice: license {{license}}",
+        "gender": {
+          "female": "female",
+          "male": "male"
+        }
       },
       "preview": {
         "title": "Voice preview",
