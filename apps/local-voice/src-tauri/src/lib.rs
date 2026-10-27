@@ -2437,6 +2437,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts_providers::tts_provider_health,
             commands::tts_providers::tts_provider_voices,
             commands::tts_providers::tts_provider_get_config,
+            commands::tts_providers::tts_provider_inspect_model_folder,
             commands::tts_providers::tts_provider_set_config,
             commands::tts_providers::tts_provider_set_enabled,
             commands::tts_providers::tts_provider_acknowledge_license,

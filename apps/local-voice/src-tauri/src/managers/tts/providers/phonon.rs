@@ -314,6 +314,188 @@ fn check_voice(v: &str) -> Result<(), TtsError> {
     Ok(())
 }
 
+// ---- Stimmenkatalog des Modellordners (voices/SOURCE.json) -------------------
+
+/// Obergrenze für `voices/SOURCE.json` (ein Dutzend Stimmen sind wenige KiB).
+const SOURCE_JSON_MAX_BYTES: u64 = 512 * 1024;
+/// Länge der Kurzbeschreibung in der Stimmenbeschriftung.
+const VOICE_BLURB_CHARS: usize = 48;
+
+/// Angaben zu EINER Stimme aus `voices/SOURCE.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct VoiceInfo {
+    name: String,
+    voice_id: String,
+    /// Dateiname ohne Endung (`voices/<voice_id>.safetensors` → `<voice_id>`).
+    file_stem: String,
+    gender: Option<String>,
+    age: Option<String>,
+    description: Option<String>,
+}
+
+/// Der Inhalt von `<Modellordner>/voices/SOURCE.json`: woher die Stimmen stammen,
+/// unter welcher Lizenz, und was man über sie weiß. Die Datei legt der Nutzer mit
+/// den Stimmen ab (z. B. aus `hf://gradium/phonon-voices`); sie ist NICHT von der
+/// App geprüft und deshalb nie als „verifiziert“ gemeldet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct VoiceSource {
+    license: Option<String>,
+    source: Option<String>,
+    voices: Vec<VoiceInfo>,
+}
+
+impl VoiceSource {
+    /// Die Angaben zur Stimmendatei `stem` (Name, Kennung oder Dateiname).
+    fn find(&self, stem: &str) -> Option<&VoiceInfo> {
+        self.voices.iter().find(|v| {
+            [&v.name, &v.voice_id, &v.file_stem]
+                .iter()
+                .any(|k| !k.is_empty() && k.eq_ignore_ascii_case(stem))
+        })
+    }
+
+    /// Lizenz der Stimmen: das Feld `license`, Quelle aus `source`.
+    fn license_info(&self) -> Option<LicenseInfo> {
+        let license = self.license.as_deref()?.trim();
+        if license.is_empty() {
+            return None;
+        }
+        let low = license.to_ascii_lowercase();
+        // Nur bekannte freizügige Lizenzen gelten als kommerziell nutzbar; alles
+        // andere (auch „…-nc…“ und Unbekanntes) vorsorglich als nichtkommerziell.
+        let permissive = matches!(
+            low.as_str(),
+            "apache-2.0" | "mit" | "cc-by-4.0" | "cc0-1.0" | "bsd-3-clause" | "bsd-2-clause"
+        );
+        let source_url = self
+            .source
+            .as_deref()
+            .and_then(|s| s.trim().strip_prefix("hf://"))
+            .map(|rest| rest.split('@').next().unwrap_or(rest))
+            .filter(|repo| !repo.is_empty())
+            .map(|repo| format!("https://huggingface.co/{repo}"))
+            .unwrap_or_default();
+        Some(LicenseInfo {
+            code: license.to_string(),
+            weights: license.to_string(),
+            non_commercial: !permissive,
+            verified: false,
+            source_url,
+            verified_on: None,
+            note: format!(
+                "Angabe aus voices/SOURCE.json des Modellordners{}; von der App nicht geprüft.",
+                self.source
+                    .as_deref()
+                    .map(|s| format!(" (Quelle {})", s.trim()))
+                    .unwrap_or_default()
+            ),
+        })
+    }
+}
+
+/// `<Modellordner>/voices/SOURCE.json` tolerant lesen. Fehlt die Datei, ist sie zu
+/// groß oder kein JSON, gibt es keine Anreicherung — die Stimmenliste bleibt die
+/// schlichte Dateiliste.
+fn read_voice_source(model_dir: &Path) -> Option<VoiceSource> {
+    let path = model_dir.join("voices").join("SOURCE.json");
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() > SOURCE_JSON_MAX_BYTES {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    let text = |v: &serde_json::Value, key: &str| {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+    };
+    let voices = value
+        .get("voices")
+        .and_then(|v| v.as_array())
+        .map(|list| {
+            list.iter()
+                .map(|e| VoiceInfo {
+                    name: text(e, "name").unwrap_or_default(),
+                    voice_id: text(e, "voice_id").unwrap_or_default(),
+                    file_stem: text(e, "filename")
+                        .and_then(|f| {
+                            Path::new(&f)
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .map(String::from)
+                        })
+                        .unwrap_or_default(),
+                    gender: text(e, "gender").map(|g| g.to_ascii_lowercase()),
+                    age: text(e, "age"),
+                    description: text(e, "description"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(VoiceSource {
+        license: text(&value, "license"),
+        source: text(&value, "source"),
+        voices,
+    })
+}
+
+/// Kurzfassung eines Beschreibungstextes: höchstens `max` Zeichen, an einer
+/// Wortgrenze, mit „…“ wenn gekürzt.
+fn short_blurb(text: &str, max: usize) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= max {
+        return text.trim_end_matches('.').to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    let cut = match cut.rfind(' ') {
+        Some(i) if i > max / 2 => cut[..i].to_string(),
+        _ => cut,
+    };
+    format!("{}…", cut.trim_end_matches([' ', ',', ';', ':', '.', '-']))
+}
+
+/// Beschriftung einer Stimme aus ihren Angaben: `Name – Kurzbeschreibung`
+/// (ohne Beschreibung der Alterseindruck, sonst nur der Name).
+fn voice_label(info: &VoiceInfo, fallback: &str) -> String {
+    let name = if info.name.is_empty() {
+        fallback
+    } else {
+        info.name.as_str()
+    };
+    match (&info.description, &info.age) {
+        (Some(d), _) => format!("{name} – {}", short_blurb(d, VOICE_BLURB_CHARS)),
+        (None, Some(a)) => format!("{name} – {a}"),
+        (None, None) => name.to_string(),
+    }
+}
+
+/// Was ein Modellordner an Gewichten enthält (nur Dateisystem, kein Prozess).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ModelFolderInfo {
+    /// Der Pfad ist ein vorhandener Ordner.
+    pub is_dir: bool,
+    /// `model.safetensors` (f32-Gewichte) liegt vor.
+    pub has_f32: bool,
+    /// `model.q8.gguf` (8-Bit-Gewichte) liegt vor.
+    pub has_q8: bool,
+}
+
+/// Modellordner ansehen, damit die Oberfläche `q8` vorschlagen kann: liegt dort nur
+/// `model.q8.gguf`, scheitert der f32-Lauf (Vorgabe) am Fehlen der Gewichte.
+pub fn inspect_model_folder(path: &str) -> ModelFolderInfo {
+    let path = path.trim();
+    let dir = Path::new(path);
+    let is_dir = !path.is_empty()
+        && !path.starts_with("hf://")
+        && !path.chars().any(char::is_control)
+        && dir.is_dir();
+    ModelFolderInfo {
+        is_dir,
+        has_f32: is_dir && dir.join("model.safetensors").is_file(),
+        has_q8: is_dir && dir.join("model.q8.gguf").is_file(),
+    }
+}
+
 // ---- Programm und Modell finden ---------------------------------------------
 
 /// `exe` als Datei auflösen: Pfad (mit Trenner) direkt, sonst im `PATH`.
@@ -1212,6 +1394,10 @@ impl TtsProvider for PhononProvider {
             }
             // Offline nur, was im Modellordner liegt.
             if let Ok(ModelSpec::Local(dir)) = parse_model(&self.cfg.model) {
+                // Mit `voices/SOURCE.json` tragen die Stimmen Geschlecht, Kurzbeschreibung
+                // und Lizenz; ohne sie bleibt es bei den Dateinamen.
+                let source = read_voice_source(Path::new(dir));
+                let license = source.as_ref().and_then(VoiceSource::license_info);
                 let mut names: Vec<String> = std::fs::read_dir(Path::new(dir).join("voices"))
                     .into_iter()
                     .flatten()
@@ -1225,7 +1411,13 @@ impl TtsProvider for PhononProvider {
                     .collect();
                 names.sort();
                 for n in names {
-                    voices.push(make(&n, &n));
+                    let mut voice = make(&n, &n);
+                    if let Some(info) = source.as_ref().and_then(|s| s.find(&n)) {
+                        voice.label = voice_label(info, &n);
+                        voice.gender = info.gender.clone();
+                        voice.license = license.clone();
+                    }
+                    voices.push(voice);
                 }
             }
             // Den Hugging-Face-Katalog nur mit Netzfreigabe.
@@ -2591,6 +2783,154 @@ mod tests {
         assert!(de.iter().all(|v| v.language == "de"));
         assert!(!de.iter().any(|v| v.id == "Ben"));
         assert!(fake.calls().iter().any(|c| c.has("--list-voices")));
+    }
+
+    /// `voices/SOURCE.json` wie bei Patrick (Auszug): Dateinamen nach dem Namen der
+    /// Stimme, `voice_id` und `filename` aus dem Hugging-Face-Katalog.
+    const SOURCE_JSON: &str = r#"{
+ "source": "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+ "license": "apache-2.0",
+ "voices": [
+  {"filename": "voices/2A2fFf8SkDEJ8nzx.safetensors", "name": "Nele", "voice_id": "2A2fFf8SkDEJ8nzx",
+   "language": "de", "gender": "female", "age": "Middle-age",
+   "description": "Rounded, open tone with gentle lift at the ends of phrases and an easy, flowing rhythm."},
+  {"filename": "voices/AAAA.safetensors", "name": "Anton", "voice_id": "AAAA",
+   "language": "de", "gender": "Male", "age": "Adult", "description": "Calm."},
+  {"filename": "voices/xyz789.safetensors", "name": "Zoe", "voice_id": "xyz789",
+   "gender": "female"}
+ ]
+}"#;
+
+    #[tokio::test]
+    async fn stimmen_werden_mit_source_json_angereichert() {
+        let model = model_dir(&["Nele", "Anton", "xyz789", "Ohne"]);
+        std::fs::write(model.path().join("voices").join("SOURCE.json"), SOURCE_JSON).unwrap();
+        let fake = fake_ptts(FakeOpts::default());
+        let p = provider(&fake, &model);
+        let v = p.list_voices(None).await.unwrap();
+        let by_id = |id: &str| {
+            v.iter()
+                .find(|x| x.id == id)
+                .unwrap_or_else(|| panic!("{id}"))
+        };
+
+        // Die Kennung bleibt der Dateiname; Beschriftung, Geschlecht und Lizenz kommen aus der Datei.
+        let nele = by_id("Nele");
+        assert_eq!(nele.gender.as_deref(), Some("female"));
+        assert_eq!(
+            nele.label,
+            "Nele – Rounded, open tone with gentle lift at the ends…"
+        );
+        let lic = nele.license.as_ref().expect("Lizenz der Stimmen");
+        assert_eq!(lic.weights, "apache-2.0");
+        assert!(!lic.non_commercial);
+        assert!(
+            !lic.verified,
+            "die Datei ist vom Nutzer, nicht von der App geprüft"
+        );
+        assert_eq!(
+            lic.source_url,
+            "https://huggingface.co/gradium/phonon-voices"
+        );
+        assert!(lic.note.contains("hf://gradium/phonon-voices"));
+
+        // Geschlecht klein geschrieben; kurze Beschreibung bleibt ganz, ohne Schlusspunkt.
+        let anton = by_id("Anton");
+        assert_eq!(anton.gender.as_deref(), Some("male"));
+        assert_eq!(anton.label, "Anton – Calm");
+        // Zuordnung auch über die Kennung (Dateiname = voice_id), Name als Beschriftung.
+        let zoe = by_id("xyz789");
+        assert_eq!(zoe.label, "Zoe");
+        assert_eq!(zoe.gender.as_deref(), Some("female"));
+        // Ohne Eintrag: schlicht wie bisher.
+        let ohne = by_id("Ohne");
+        assert_eq!(
+            (
+                ohne.label.as_str(),
+                ohne.gender.clone(),
+                ohne.license.clone()
+            ),
+            ("Ohne", None, None)
+        );
+        // Die Standardstimme trägt keine Angaben aus der Datei.
+        assert!(by_id("default").license.is_none());
+        assert!(fake.calls().is_empty(), "offline: kein Prozess");
+    }
+
+    #[tokio::test]
+    async fn defekte_oder_zu_grosse_source_json_laesst_die_dateiliste_unberuehrt() {
+        let fake = fake_ptts(FakeOpts::default());
+        for bad in [
+            "kein json".to_string(),
+            "[1,2,3]".to_string(),
+            format!(
+                "{{\"voices\": [], \"pad\": \"{}\"}}",
+                "x".repeat(600 * 1024)
+            ),
+        ] {
+            let model = model_dir(&["Nele"]);
+            std::fs::write(model.path().join("voices").join("SOURCE.json"), bad).unwrap();
+            let v = provider(&fake, &model).list_voices(None).await.unwrap();
+            let nele = v.iter().find(|x| x.id == "Nele").unwrap();
+            assert_eq!(nele.label, "Nele");
+            assert!(nele.gender.is_none() && nele.license.is_none());
+        }
+        // Lizenz unbekannt/nicht freizügig: vorsorglich nichtkommerziell.
+        let model = model_dir(&["Nele"]);
+        std::fs::write(
+            model.path().join("voices").join("SOURCE.json"),
+            r#"{"license": "cc-by-nc-4.0", "voices": [{"name": "Nele"}]}"#,
+        )
+        .unwrap();
+        let v = provider(&fake, &model).list_voices(None).await.unwrap();
+        let lic = v
+            .iter()
+            .find(|x| x.id == "Nele")
+            .unwrap()
+            .license
+            .clone()
+            .unwrap();
+        assert!(lic.non_commercial);
+        assert_eq!(lic.source_url, "");
+    }
+
+    #[test]
+    fn modellordner_zeigt_welche_gewichte_vorliegen() {
+        // f32 (Fixture von model_dir), kein q8.
+        let f32_only = model_dir(&[]);
+        let info = inspect_model_folder(&f32_only.path().display().to_string());
+        assert_eq!(
+            info,
+            ModelFolderInfo {
+                is_dir: true,
+                has_f32: true,
+                has_q8: false
+            }
+        );
+        // Nur q8 — wie der Modellordner phonon-40m-de bei Patrick.
+        let q8_only = TempDir::new().unwrap();
+        std::fs::write(q8_only.path().join("model.q8.gguf"), b"x").unwrap();
+        let info = inspect_model_folder(&q8_only.path().display().to_string());
+        assert_eq!(
+            info,
+            ModelFolderInfo {
+                is_dir: true,
+                has_f32: false,
+                has_q8: true
+            }
+        );
+        // Kein Ordner, hf://-Verweis, leer: keine Gewichte, kein Fehler.
+        for none in ["", "   ", "hf://gradium/phonon-40m-de", "Z:/gibt/es/nicht"] {
+            assert_eq!(
+                inspect_model_folder(none),
+                ModelFolderInfo {
+                    is_dir: false,
+                    has_f32: false,
+                    has_q8: false
+                },
+                "{none:?}"
+            );
+        }
     }
 
     #[tokio::test]

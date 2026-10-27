@@ -24,6 +24,7 @@ import { IconAction } from "../../../ui/IconAction";
 import { MarkdownContent } from "../../../whats-new/MarkdownContent";
 import { JobPanel } from "../JobProgress";
 import { ReadAloudButton } from "../ReadAloudButton";
+import { ReadAloudBar } from "../ReadAloudBar";
 
 /** Was die Arbeitsflaeche zeigt: ein gespeichertes Dokument oder den laufenden Lauf. */
 export type OpenProjectMinutes =
@@ -203,6 +204,7 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
             speakKey={`project-minutes:${doc.id}`}
             getMarkdown={() => doc.body}
             testId="pm-readaloud"
+            fileStem={doc.title}
           />
           <IconAction
             size="sm"
@@ -230,6 +232,11 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
         <span>·</span>
         <span data-testid="pm-template">{meta.template_title}</span>
       </p>
+
+      <ReadAloudBar
+        speakKey={`project-minutes:${doc.id}`}
+        testId="pm-readaloud-bar"
+      />
 
       {error && <Alert variant="error">{error}</Alert>}
       {saved && (

@@ -38,6 +38,14 @@
       "no": "no",
       "languageAny": "language independent",
       "selected": "Reading aloud",
+      "savedState": "Saved state:",
+      "savedStateFix": "Fill in the fields under “Settings” and choose “Save”; a change only applies after that.",
+      "savedStateOpen": "Open settings",
+      "selectedNotReady": {
+        "title": "Not reading aloud at the moment.",
+        "blocked": "This provider is selected as the reading voice but blocked (see above). Reading does not fall back to Fish or Piper; it stops with the provider's error message. Lift the block or pick another provider under “Voice”.",
+        "unavailable": "This provider is selected as the reading voice but not ready (see above). Reading does not fall back to Fish or Piper; it stops with this error message. Fix the cause or pick another provider."
+      },
       "enable": "Enable",
       "tier": {
         "supported": "Supported",
@@ -98,6 +106,17 @@
         "loadError": "The settings could not be loaded: {{message}}",
         "save": "Save",
         "saved": "Saved.",
+        "browse": "Browse …",
+        "browseLabel": "{{field}}: Browse",
+        "browseTitle": "Choose {{field}}",
+        "required": "“{{field}}” is required.",
+        "notSaved": "Not saved: please correct the marked fields. Until then the saved state still applies.",
+        "dirty": "Unsaved changes – they only apply after “Save”.",
+        "quantSuggest": "The model folder contains model.q8.gguf.",
+        "quantNeeded": "The model folder contains only model.q8.gguf: without q8 the program finds no weights.",
+        "quantUse": "Use q8",
+        "quantMissing": "The model folder has no model.q8.gguf.",
+        "quantAuto": "q8 entered because the model folder contains model.q8.gguf.",
         "choiceNone": "not set",
         "number_required": "“{{field}}” needs a number.",
         "number_invalid": "“{{field}}” is not a valid number."
@@ -131,7 +150,11 @@
         "blocked": "Voices can only be listed after the provider is approved.",
         "use": "Use as reading voice",
         "usedNow": "This provider now reads aloud.",
-        "license": "Voice: license {{license}}"
+        "license": "Voice: license {{license}}",
+        "gender": {
+          "female": "female",
+          "male": "male"
+        }
       },
       "preview": {
         "title": "Voice preview",
@@ -2670,6 +2693,23 @@
       "stop": "Stop reading",
       "stopHint": "Stops the playback",
       "empty": "There is no text to read aloud.",
+      "save": "Save audio",
+      "saveHint": "Writes the text to an audio file in the selected voice (format as under Settings > Output > Read aloud)",
+      "saveCancel": "Cancel saving",
+      "saveCancelProgress": "Cancel saving ({{position}} of {{total}} sentences)",
+      "saveCancelHint": "Cancels creating the audio file",
+      "saveError": "Saving audio failed: {{error}}",
+      "fileFallback": "Recording",
+      "bar": {
+        "label": "Playback",
+        "position": "Sentence {{position}} of {{total}}",
+        "previousHint": "Jumps to the previous sentence and keeps reading from there",
+        "nextHint": "Jumps to the next sentence and keeps reading from there",
+        "pauseHint": "Stops at the current position",
+        "resume": "Resume",
+        "resumeHint": "Continues from the last sentence heard",
+        "stopHint": "Ends reading aloud and hides the bar"
+      },
       "error": "Read aloud failed: {{error}}",
       "truncated": "Only the first {{limit}} of {{total}} characters are read aloud. The limit is under Settings > Output > Read aloud."
     },

@@ -181,6 +181,63 @@ export function buildConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Eingabehilfen der Einstellungsmaske
+// ---------------------------------------------------------------------------
+
+/** Welche Art Auswahl ein Feld anbietet ("Durchsuchen ..."). */
+export type PickKind = "file" | "folder";
+
+/**
+ * Felder eines lokalen Programms (Konfiguration mit `exe_path`) bekommen
+ * "Durchsuchen ...": die Programmdatei per Dateiwahl, Modell und Hugging-Face-
+ * Ordner per Ordnerwahl. Bei Anbietern ohne `exe_path` (z. B. `model` = Name
+ * eines Modells auf einem Server) gibt es keinen Knopf -- dort waere ein Ordner
+ * falsch.
+ */
+export function pickKind(
+  key: string,
+  fields: readonly ConfigField[],
+): PickKind | null {
+  if (!fields.some((f) => f.key === "exe_path")) return null;
+  if (key === "exe_path") return "file";
+  if (key === "model" || key === "hf_home") return "folder";
+  return null;
+}
+
+/** Pflichtfelder eines lokalen Programms: ohne sie kann nichts starten. */
+export function requiredFields(fields: readonly ConfigField[]): string[] {
+  if (!fields.some((f) => f.key === "exe_path")) return [];
+  return ["exe_path", "model"].filter((key) =>
+    fields.some((f) => f.key === key),
+  );
+}
+
+/**
+ * Zu welchem Feld gehoert eine Meldung des Backends? Die Pruefmeldungen nennen
+ * das Feld zuerst ("exe_path fehlt: ...", "model 'x' ...", "voice: ...").
+ * `null`: keine Feldmeldung (allgemeiner Fehler).
+ */
+export function fieldOfMessage(
+  message: string,
+  keys: readonly string[],
+): string | null {
+  const first = /^([a-z][a-z0-9_]*)(?=[\s:'"]|$)/.exec(message.trim())?.[1];
+  return first && keys.includes(first) ? first : null;
+}
+
+/** Stimmen die Eingaben mit dem gespeicherten Stand ueberein? */
+export function sameValues(
+  a: Record<string, FieldValue>,
+  b: Record<string, FieldValue>,
+): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (String(a[key] ?? "") !== String(b[key] ?? "")) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Fehler
 // ---------------------------------------------------------------------------
 

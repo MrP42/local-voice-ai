@@ -5455,6 +5455,14 @@ async ttsProviderGetConfig(id: string) : Promise<Result<string, TtsError>> {
 }
 },
 /**
+ * Einen Modellordner ansehen: liegen f32- und/oder q8-Gewichte vor? Die
+ * Einstellungsmaske schlägt damit `q8` vor, wenn nur `model.q8.gguf` da ist (der
+ * f32-Lauf scheitert dort am Fehlen der Gewichte). Nur Dateisystem, kein Prozess.
+ */
+async ttsProviderInspectModelFolder(path: string) : Promise<ModelFolderInfo> {
+    return await TAURI_INVOKE("tts_provider_inspect_model_folder", { path });
+},
+/**
  * Konfiguration eines Anbieters speichern. Der Adapter prüft vorher
  * (`validate()`: Pfade, Adresse, Bereiche); ein Fehler kommt als
  * `invalid_config` mit lesbarem Grund zurück und ändert nichts. Die Schalter
@@ -7588,6 +7596,22 @@ cancelling: boolean;
  * Beginn des Laufs (Sekunden seit der Epoche); fuer die Laufzeitanzeige.
  */
 started_at: number | null }
+/**
+ * Was ein Modellordner an Gewichten enthält (nur Dateisystem, kein Prozess).
+ */
+export type ModelFolderInfo = {
+/**
+ * Der Pfad ist ein vorhandener Ordner.
+ */
+is_dir: boolean;
+/**
+ * `model.safetensors` (f32-Gewichte) liegt vor.
+ */
+has_f32: boolean;
+/**
+ * `model.q8.gguf` (8-Bit-Gewichte) liegt vor.
+ */
+has_q8: boolean }
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean; 
 /**
  * Whether the streaming look-ahead (`att_context_right`) can be chosen for

@@ -120,6 +120,11 @@ async function setup(page: Page, cfg: Cfg) {
         license: null,
       },
     };
+    w.__configs = configs;
+    // Dateiwahl: die naechste Antwort steht in `__picks` (null = abgebrochen).
+    w.__picks = [] as unknown[];
+    // Was im Modellordner liegt (Pfad -> Antwort); sonst: f32 vorhanden.
+    w.__modelInfo = {} as Record<string, unknown>;
     const err = (kind: string, message: string) => ({
       kind,
       retryable: false,
@@ -230,6 +235,22 @@ async function setup(page: Page, cfg: Cfg) {
                 license: null,
               },
               {
+                id: "nele",
+                label:
+                  "Nele – Rounded, open tone with gentle lift at the ends…",
+                language: "de",
+                gender: "female",
+                license: {
+                  code: "apache-2.0",
+                  weights: "apache-2.0",
+                  non_commercial: false,
+                  verified: false,
+                  source_url: "https://huggingface.co/gradium/phonon-voices",
+                  verified_on: null,
+                  note: "",
+                },
+              },
+              {
                 id: "ben",
                 label: "Ben",
                 language: "en",
@@ -257,8 +278,36 @@ async function setup(page: Page, cfg: Cfg) {
               );
             return JSON.stringify(c);
           }
+          if (cmd === "plugin:dialog|open") {
+            const picks = w.__picks as unknown[];
+            return picks.length > 0 ? picks.shift() : null;
+          }
+          if (cmd === "tts_provider_inspect_model_folder") {
+            const known = (w.__modelInfo as Record<string, unknown>)[
+              String(args?.path)
+            ];
+            return known ?? { is_dir: true, has_f32: true, has_q8: false };
+          }
           if (cmd === "tts_provider_set_config") {
             const parsed = JSON.parse(String(args?.json));
+            // Wie PhononConfig::validate: erstes Problem, Feld zuerst genannt.
+            if (String(args?.id) === "phonon") {
+              if (String(parsed.exe_path ?? "").trim() === "")
+                throw err(
+                  "invalid_config",
+                  "exe_path fehlt: Pfad zur ptts-Programmdatei eintragen",
+                );
+              if (String(parsed.model ?? "").trim() === "")
+                throw err(
+                  "invalid_config",
+                  "model fehlt: lokalen Modellordner oder hf://OWNER/MODEL@COMMIT angeben",
+                );
+              if (parsed.threads !== null && parsed.threads > 256)
+                throw err(
+                  "invalid_config",
+                  `threads ${parsed.threads} liegt nicht in 1 bis 256`,
+                );
+            }
             if (String(parsed.base_url ?? "").startsWith("ftp:"))
               throw err(
                 "invalid_config",
@@ -952,6 +1001,303 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   await expect(page.getByTestId("tts-provider-license-dialog")).toBeVisible();
   await page.getByRole("dialog").screenshot({
     path: `${dir}/tts-anbieter-lizenzdialog.png`,
+    animations: "disabled",
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phonon-Einstellungsmaske (Durchsuchen, Feldfehler, q8, Stand, Warnhinweis)
+// ---------------------------------------------------------------------------
+
+// addInitScript laeuft in der Reihenfolge der Anmeldung: nach `setup` anmelden.
+const phonon = (page: Page, suffix: string) =>
+  page.getByTestId(`tts-provider-phonon-${suffix}`);
+
+test("Phonon: Durchsuchen wählt Programmdatei (Datei) und Modell (Ordner), q8 wird vorbelegt, Speichern gilt erst danach", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __configs: Record<string, any>;
+      __picks: unknown[];
+      __modelInfo: Record<string, unknown>;
+    };
+    Object.assign(w.__configs.phonon, {
+      exe_path: "",
+      model: "",
+      quant: null,
+    });
+    w.__picks.push(
+      "D:\\phonon\\bin\\ptts.exe",
+      "D:\\phonon\\models\\phonon-40m-de",
+    );
+    w.__modelInfo["D:\\phonon\\models\\phonon-40m-de"] = {
+      is_dir: true,
+      has_f32: false,
+      has_q8: true,
+    };
+  });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const cfg = page.getByTestId("tts-provider-config-phonon");
+  await expect(phonon(page, "exe_path")).toHaveValue("");
+  // Noch nichts geaendert: kein Hinweis auf ungespeicherte Aenderungen.
+  await expect(
+    page.getByTestId("tts-provider-config-dirty-phonon"),
+  ).toHaveCount(0);
+
+  // Programmdatei: Dateiwahl.
+  await phonon(page, "exe_path-browse").click();
+  await expect(phonon(page, "exe_path")).toHaveValue(
+    "D:\\phonon\\bin\\ptts.exe",
+  );
+  // Modell: Ordnerwahl.
+  await phonon(page, "model-browse").click();
+  await expect(phonon(page, "model")).toHaveValue(
+    "D:\\phonon\\models\\phonon-40m-de",
+  );
+  const dialogs = (await calls(page, "plugin:dialog|open")).map(
+    ([, a]) => (a as { options: { directory: boolean } }).options.directory,
+  );
+  expect(dialogs).toEqual([false, true]);
+
+  // Im Ordner liegt nur model.q8.gguf: q8 ist vorbelegt und erklaert.
+  await expect(
+    cfg.getByRole("combobox", { name: "Quantisierung" }),
+  ).toBeVisible();
+  await expect(cfg).toContainText("q8 eingetragen");
+  await expect(
+    page.getByTestId("tts-provider-config-dirty-phonon"),
+  ).toContainText("Ungespeicherte Änderungen");
+  // Bis hierher wurde nichts gespeichert.
+  expect(await calls(page, "tts_provider_set_config")).toHaveLength(0);
+
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  await expect(cfg).toContainText("Gespeichert.");
+  await expect(
+    page.getByTestId("tts-provider-config-dirty-phonon"),
+  ).toHaveCount(0);
+  const saves = await calls(page, "tts_provider_set_config");
+  expect(saves).toHaveLength(1);
+  const sent = JSON.parse((saves[0][1] as { json: string }).json);
+  expect(sent).toMatchObject({
+    exe_path: "D:\\phonon\\bin\\ptts.exe",
+    model: "D:\\phonon\\models\\phonon-40m-de",
+    quant: "q8",
+  });
+
+  // Abbrechen im Dialog aendert nichts.
+  await phonon(page, "model-browse").click();
+  await expect(phonon(page, "model")).toHaveValue(
+    "D:\\phonon\\models\\phonon-40m-de",
+  );
+});
+
+test("Phonon: q8-Hinweis bei getipptem Modellordner (nur q8 vorhanden) mit Knopf", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __configs: Record<string, any>;
+      __modelInfo: Record<string, unknown>;
+    };
+    Object.assign(w.__configs.phonon, {
+      exe_path: "ptts",
+      model: "D:\\nur-q8",
+      quant: null,
+    });
+    w.__modelInfo["D:\\nur-q8"] = {
+      is_dir: true,
+      has_f32: false,
+      has_q8: true,
+    };
+  });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const note = page.getByTestId("tts-provider-quant-note-phonon");
+  await expect(note).toContainText("nur model.q8.gguf");
+  await page.getByTestId("tts-provider-quant-use-phonon").click();
+  await expect(note).toHaveCount(0);
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  const saves = await calls(page, "tts_provider_set_config");
+  expect(JSON.parse((saves[0][1] as { json: string }).json).quant).toBe("q8");
+});
+
+test("Phonon: Fehler stehen am Feld, nichts wird gespeichert, die Anzeige oben erklärt den gespeicherten Stand", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await page.addInitScript(() => {
+    const w = window as unknown as { __configs: Record<string, any> };
+    Object.assign(w.__configs.phonon, { exe_path: "", model: "" });
+  });
+  await openGroup(page);
+
+  // Oben: der GESPEICHERTE Stand, mit Verweis auf die Felder.
+  const reason = page.getByTestId("tts-provider-reason-phonon");
+  await expect(reason).toContainText("Gespeicherter Stand:");
+  await expect(reason).toContainText("exe_path fehlt");
+  await expect(
+    page.getByTestId("tts-provider-reason-fix-phonon"),
+  ).toContainText("erst danach gilt die Änderung");
+  // Der Verweis oeffnet die Felder.
+  await page.getByTestId("tts-provider-reason-open-phonon").click();
+  await expect(page.getByTestId("tts-provider-config-phonon")).toBeVisible();
+  await expect(page.getByTestId("tts-provider-reason-open-phonon")).toHaveCount(
+    0,
+  );
+
+  // Nur die Programmdatei eingetragen, Modell leer: beide Pflichtfelder pruefen,
+  // der Fehler steht am Modell, nichts wird gespeichert.
+  await phonon(page, "exe_path").fill("C:\\ptts\\ptts.exe");
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  const modelError = page.getByTestId("tts-provider-field-error-phonon-model");
+  await expect(modelError).toContainText("Pflichtfeld");
+  await expect(
+    page.getByTestId("tts-provider-field-error-phonon-exe_path"),
+  ).toHaveCount(0);
+  await expect(
+    page.getByTestId("tts-provider-config-notsaved-phonon"),
+  ).toContainText("Nicht gespeichert");
+  await expect(phonon(page, "model")).toHaveAttribute("aria-invalid", "true");
+  expect(await calls(page, "tts_provider_set_config")).toHaveLength(0);
+
+  // Beide leer: beide Felder melden sich auf einmal.
+  await phonon(page, "exe_path").fill("");
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  await expect(
+    page.getByTestId("tts-provider-field-error-phonon-exe_path"),
+  ).toContainText("Pflichtfeld");
+  await expect(modelError).toContainText("Pflichtfeld");
+
+  // Tippen raeumt den Fehler dieses Feldes weg.
+  await phonon(page, "model").fill("D:\\modell");
+  await expect(modelError).toHaveCount(0);
+
+  // Fehlermeldung des Backends wird dem Feld zugeordnet (erstes Wort = Feld).
+  await phonon(page, "exe_path").fill("ptts");
+  await phonon(page, "threads").fill("999");
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  await expect(
+    page.getByTestId("tts-provider-field-error-phonon-threads"),
+  ).toContainText("threads 999 liegt nicht in 1 bis 256");
+  await expect(
+    page.getByTestId("tts-provider-config-error-phonon"),
+  ).toHaveCount(0);
+  expect(await calls(page, "tts_provider_set_config")).toHaveLength(1);
+  await expect(
+    page.getByTestId("tts-provider-config-dirty-phonon"),
+  ).toBeVisible();
+});
+
+test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf Fish oder Piper", async ({
+  page,
+}) => {
+  // Phonon gewaehlt, aber nicht bereit (echte Daten: exe_path fehlt) und gesperrt.
+  await setup(page, { engine: "provider:phonon" });
+  await openGroup(page);
+  const warn = page.getByTestId("tts-provider-selected-warning-phonon");
+  await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
+  await expect(warn).toContainText("Liest derzeit nicht");
+  await expect(warn).toContainText("nicht auf Fish oder Piper zurück");
+  await expect(warn).toHaveAttribute("data-reason", "blocked");
+
+  // Freigegeben, aber nicht bereit: anderer Grund, derselbe Hinweis auf den Fehler.
+  await page.getByTestId("tts-provider-enable-phonon").click();
+  await page.getByTestId("tts-provider-license-checkbox").check();
+  await page.getByTestId("tts-provider-license-confirm").click();
+  await expect(page.getByTestId("tts-provider-license-dialog")).toHaveCount(0);
+  await expect(warn).toHaveAttribute("data-reason", "unavailable");
+  await expect(warn).toContainText("bricht mit dieser Fehlermeldung ab");
+
+  // Bereit: kein Warnhinweis.
+  await page.evaluate(() => {
+    const e = (
+      window as unknown as {
+        __entries: {
+          descriptor: { id: string };
+          health: Record<string, unknown>;
+        }[];
+      }
+    ).__entries.find((x) => x.descriptor.id === "phonon")!;
+    e.health = { ...e.health, available: true, reason: null, hint: null };
+  });
+  await page.getByTestId("tts-providers-recheck-all").click();
+  await expect(warn).toHaveCount(0);
+});
+
+test("Phonon-Stimmen: Geschlecht in der Auswahl, Lizenz der Stimme mit Quelle", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "fish",
+    over: { phonon: { enabled: true, license_acked: true } },
+  });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const voices = page.getByTestId("tts-provider-voices-phonon");
+  await voices.getByLabel("Stimme", { exact: true }).click();
+  await expect(
+    page.getByRole("option", { name: /Nele – Rounded.*weiblich · Deutsch/ }),
+  ).toBeVisible();
+  await page.getByRole("option", { name: /Nele/ }).click();
+  await expect(voices).toContainText("Stimme: Lizenz apache-2.0");
+  await expect(voices).not.toContainText("nichtkommerziell");
+  await expect(voices.getByTestId("tts-provider-license-source")).toBeVisible();
+});
+
+test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur mit SCREENS_DIR");
+  await setup(page, {
+    engine: "provider:phonon",
+    over: { phonon: { enabled: true, license_acked: true } },
+  });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __configs: Record<string, any>;
+      __picks: unknown[];
+      __modelInfo: Record<string, unknown>;
+    };
+    Object.assign(w.__configs.phonon, { exe_path: "", model: "", quant: null });
+    w.__picks.push(
+      "D:\\lv-build\\phonon\\bin\\ptts.exe",
+      "D:\\lv-build\\phonon\\models\\phonon-40m-de",
+    );
+    w.__modelInfo["D:\\lv-build\\phonon\\models\\phonon-40m-de"] = {
+      is_dir: true,
+      has_f32: false,
+      has_q8: true,
+    };
+  });
+  await page.setViewportSize({ width: 1100, height: 2300 });
+  await openGroup(page);
+  const row = page.getByTestId("tts-provider-phonon");
+  // 1) Gespeicherter Stand unvollstaendig, gewaehlt, nicht bereit.
+  await row.screenshot({
+    path: `${dir}/phonon-maske-1-stand.png`,
+    animations: "disabled",
+  });
+  // 2) Aufgeklappt, Pflichtfelder leer gespeichert: Fehler am Feld.
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await page.getByTestId("tts-provider-config-save-phonon").click();
+  await expect(
+    page.getByTestId("tts-provider-field-error-phonon-model"),
+  ).toBeVisible();
+  await row.screenshot({
+    path: `${dir}/phonon-maske-2-fehler.png`,
+    animations: "disabled",
+  });
+  // 3) Durchsuchen: Programm und Modell, q8 vorbelegt, ungespeichert.
+  await phonon(page, "exe_path-browse").click();
+  await phonon(page, "model-browse").click();
+  await expect(
+    page.getByTestId("tts-provider-config-dirty-phonon"),
+  ).toBeVisible();
+  await row.screenshot({
+    path: `${dir}/phonon-maske-3-durchsuchen.png`,
     animations: "disabled",
   });
 });
