@@ -15,6 +15,7 @@ pub mod engine;
 pub mod enhance;
 pub mod loudness;
 pub mod models;
+pub mod phonon_models;
 pub mod piper;
 pub mod lang;
 pub mod player;

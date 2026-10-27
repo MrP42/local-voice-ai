@@ -577,3 +577,429 @@ async fn http_cancel_during_stalled_body_keeps_partial() {
         "bytes received before the cancel must be kept for resume"
     );
 }
+
+// ── Zugang (Token) fuer gated Downloads ───────────────────────────────────
+//
+// Das Token darf nur an EINEN Ursprung gehen und bei Weiterleitungen nie
+// mitgenommen werden (Hugging Face leitet auf ein CDN eines anderen Hosts um).
+// Fake-Server auf Loopback: der "Ursprung" ist dort 127.0.0.1 samt Port, ein
+// anderer Port ist also ein anderer Ursprung.
+
+use super::auth::{DownloadAuth, HttpStatusError, Origin, Secret};
+
+const TOKEN: &str = "hf_GeheimesTestToken_0123456789abcdef";
+
+fn auth_for_port(port: u16) -> DownloadAuth {
+    DownloadAuth::new(
+        Secret::new(TOKEN).unwrap(),
+        Origin::plain_http("127.0.0.1", port),
+    )
+}
+
+fn port_of(url: &str) -> u16 {
+    url.split("127.0.0.1:")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|p| p.parse().ok())
+        .expect("Port in der Adresse")
+}
+
+/// Mehrere Verbindungen nacheinander bedienen (eine Antwort je Verbindung).
+/// Liefert die Adresse (`http://127.0.0.1:PORT`) und die mitgeschriebenen Anfragekoepfe.
+async fn serve_script(responses: Vec<Vec<u8>>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let handle = tokio::spawn(async move {
+        let mut heads = Vec::new();
+        for response in responses {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            heads.push(read_request_head(&mut sock).await.to_lowercase());
+            let _ = sock.write_all(&response).await;
+            let _ = sock.shutdown().await;
+        }
+        heads
+    });
+    (base, handle)
+}
+
+async fn run_authed(
+    url: &str,
+    partial: &Path,
+    expected_size: Option<u64>,
+    expected_sha256: Option<&str>,
+    auth: Option<&DownloadAuth>,
+) -> Result<HttpDownloadOutcome> {
+    ModelManager::download_http_resumable_authed(
+        "test/model",
+        url,
+        partial,
+        expected_size,
+        expected_sha256,
+        &CancellationToken::new(),
+        &|_| {},
+        auth,
+    )
+    .await
+}
+
+fn has_token(head: &str) -> bool {
+    head.contains(&TOKEN.to_lowercase())
+}
+
+#[tokio::test]
+async fn das_token_geht_an_den_freigegebenen_ursprung() {
+    let body = b"gesperrte Gewichte";
+    let (base, server) = serve_script(vec![http_response(
+        "200 OK",
+        &[format!("Content-Length: {}", body.len())],
+        body,
+    )])
+    .await;
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    let auth = auth_for_port(port_of(&base));
+
+    let out = run_authed(
+        &format!("{base}/file"),
+        &partial,
+        Some(body.len() as u64),
+        Some(&sha_hex(body)),
+        Some(&auth),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(out, HttpDownloadOutcome::Completed));
+    assert_eq!(fs::read(&partial).unwrap(), body);
+    let heads = server.await.unwrap();
+    assert!(
+        heads[0].contains("authorization: bearer "),
+        "Bearer-Kopf fehlt: {}",
+        heads[0]
+    );
+    assert!(has_token(&heads[0]));
+}
+
+#[tokio::test]
+async fn das_token_geht_nicht_an_einen_anderen_ursprung() {
+    let body = b"x";
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    // Einmal ist ein ANDERER Port desselben Hosts freigegeben, einmal die echte
+    // Freigabe (https://huggingface.co): beide passen nicht auf den Fake-Server.
+    for real_origin in [false, true] {
+        let (base, server) = serve_script(vec![http_response(
+            "200 OK",
+            &["Content-Length: 1".to_string()],
+            body,
+        )])
+        .await;
+        let auth = if real_origin {
+            DownloadAuth::huggingface(Secret::new(TOKEN).unwrap())
+        } else {
+            auth_for_port(port_of(&base).wrapping_add(1))
+        };
+        assert!(!auth.applies_to(&reqwest::Url::parse(&base).unwrap()));
+        let _ = fs::remove_file(&partial);
+        run_authed(
+            &format!("{base}/file"),
+            &partial,
+            Some(1),
+            None,
+            Some(&auth),
+        )
+        .await
+        .unwrap();
+        let heads = server.await.unwrap();
+        assert!(!heads[0].contains("authorization"), "{}", heads[0]);
+        assert!(!has_token(&heads[0]));
+    }
+}
+
+#[tokio::test]
+async fn eine_weiterleitung_zu_einem_anderen_host_nimmt_das_token_nicht_mit() {
+    // Das "CDN": anderer Port = anderer Ursprung.
+    let body = b"Gewichte vom CDN";
+    let (cdn, cdn_server) = serve_script(vec![http_response(
+        "200 OK",
+        &[format!("Content-Length: {}", body.len())],
+        body,
+    )])
+    .await;
+    let (origin, origin_server) = serve_script(vec![http_response(
+        "302 Found",
+        &[
+            format!("Location: {cdn}/signed/file?sig=abc"),
+            "Content-Length: 0".to_string(),
+        ],
+        b"",
+    )])
+    .await;
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    let auth = auth_for_port(port_of(&origin));
+
+    let out = run_authed(
+        &format!("{origin}/resolve/file"),
+        &partial,
+        Some(body.len() as u64),
+        Some(&sha_hex(body)),
+        Some(&auth),
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(out, HttpDownloadOutcome::Completed));
+    assert_eq!(fs::read(&partial).unwrap(), body);
+    let origin_heads = origin_server.await.unwrap();
+    let cdn_heads = cdn_server.await.unwrap();
+    assert!(
+        has_token(&origin_heads[0]),
+        "der Ursprung bekommt das Token"
+    );
+    assert!(
+        !cdn_heads[0].contains("authorization") && !has_token(&cdn_heads[0]),
+        "das CDN darf das Token nie sehen: {}",
+        cdn_heads[0]
+    );
+}
+
+#[tokio::test]
+async fn beim_fortsetzen_bleibt_der_range_kopf_ueber_die_weiterleitung_erhalten() {
+    let full = b"helloworld";
+    let (cdn, cdn_server) = serve_script(vec![http_response(
+        "206 Partial Content",
+        &[
+            "Content-Range: bytes 5-9/10".to_string(),
+            "Content-Length: 5".to_string(),
+        ],
+        &full[5..],
+    )])
+    .await;
+    let (origin, origin_server) = serve_script(vec![http_response(
+        "307 Temporary Redirect",
+        &[
+            format!("Location: {cdn}/f"),
+            "Content-Length: 0".to_string(),
+        ],
+        b"",
+    )])
+    .await;
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    fs::write(&partial, &full[..5]).unwrap();
+    let auth = auth_for_port(port_of(&origin));
+
+    run_authed(
+        &format!("{origin}/f"),
+        &partial,
+        Some(10),
+        Some(&sha_hex(full)),
+        Some(&auth),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fs::read(&partial).unwrap(), full);
+    assert!(origin_server.await.unwrap()[0].contains("range: bytes=5-"));
+    let cdn_head = &cdn_server.await.unwrap()[0];
+    assert!(cdn_head.contains("range: bytes=5-"), "{cdn_head}");
+    assert!(!has_token(cdn_head));
+}
+
+#[tokio::test]
+async fn eine_weiterleitung_auf_denselben_ursprung_behaelt_das_token() {
+    let body = b"ok";
+    // Zwei Antworten desselben Servers: erst 302 auf einen anderen Pfad, dann die Datei.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let location = format!("{base}/api/resolve-cache/file");
+    let server = tokio::spawn(async move {
+        let mut heads = Vec::new();
+        for response in [
+            http_response(
+                "302 Found",
+                &[format!("Location: {location}"), "Content-Length: 0".into()],
+                b"",
+            ),
+            http_response("200 OK", &["Content-Length: 2".into()], b"ok"),
+        ] {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            heads.push(read_request_head(&mut sock).await.to_lowercase());
+            let _ = sock.write_all(&response).await;
+            let _ = sock.shutdown().await;
+        }
+        heads
+    });
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    let auth = auth_for_port(port_of(&base));
+
+    run_authed(
+        &format!("{base}/resolve/file"),
+        &partial,
+        Some(2),
+        Some(&sha_hex(body)),
+        Some(&auth),
+    )
+    .await
+    .unwrap();
+
+    let heads = server.await.unwrap();
+    assert!(has_token(&heads[0]) && has_token(&heads[1]), "{heads:?}");
+}
+
+#[tokio::test]
+async fn endlose_weiterleitungen_brechen_ab() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let location = format!("{base}/again");
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            let _ = read_request_head(&mut sock).await;
+            let r = http_response(
+                "302 Found",
+                &[format!("Location: {location}"), "Content-Length: 0".into()],
+                b"",
+            );
+            let _ = sock.write_all(&r).await;
+            let _ = sock.shutdown().await;
+        }
+    });
+    let dir = TempDir::new().unwrap();
+    let partial = dir.path().join("m.partial");
+    let auth = auth_for_port(port_of(&base));
+    let err = run_authed(&format!("{base}/x"), &partial, Some(1), None, Some(&auth))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("too many redirects"), "{err}");
+    assert!(!err.to_string().contains(TOKEN));
+}
+
+#[tokio::test]
+async fn http_401_und_403_sind_typisierte_fehler_und_nennen_das_token_nie() {
+    for status in [401u16, 403] {
+        let (base, server) = serve_script(vec![http_response(
+            &format!("{status} Forbidden"),
+            &["Content-Length: 0".to_string()],
+            b"",
+        )])
+        .await;
+        let dir = TempDir::new().unwrap();
+        let partial = dir.path().join("m.partial");
+        let auth = auth_for_port(port_of(&base));
+        let err = run_authed(
+            &format!("{base}/file"),
+            &partial,
+            Some(1),
+            None,
+            Some(&auth),
+        )
+        .await
+        .unwrap_err();
+        let typed = err
+            .downcast_ref::<HttpStatusError>()
+            .expect("typisierter Statusfehler");
+        assert_eq!(typed.0.as_u16(), status);
+        // Wortlaut unveraendert (andere Aufrufer und Tests kennen ihn).
+        assert!(
+            err.to_string().starts_with("server returned HTTP "),
+            "{err}"
+        );
+        for text in [err.to_string(), format!("{err:?}"), format!("{err:#}")] {
+            assert!(!text.contains(TOKEN), "Token im Fehlertext: {text}");
+        }
+        let heads = server.await.unwrap();
+        assert!(has_token(&heads[0]));
+        assert!(!partial.exists() || fs::metadata(&partial).unwrap().len() == 0);
+    }
+}
+
+#[test]
+fn secret_und_zugang_zeigen_den_wert_in_keiner_ausgabe() {
+    let auth = DownloadAuth::huggingface(Secret::new(TOKEN).unwrap());
+    for text in [format!("{auth:?}"), format!("{auth:#?}")] {
+        assert!(!text.contains(TOKEN), "{text}");
+        assert!(!text.contains("GeheimesTest"), "{text}");
+    }
+    assert!(format!("{:?}", Secret::new(TOKEN).unwrap()).contains("***"));
+}
+
+#[test]
+fn ein_ungueltiges_token_wird_abgelehnt() {
+    assert!(Secret::new("").is_none());
+    assert!(Secret::new("   \r\n").is_none());
+    assert!(Secret::new("hf_abc def").is_none(), "Leerzeichen im Token");
+    assert!(
+        Secret::new("hf_abc\r\nX-Evil: 1").is_none(),
+        "Zeilenumbruch im Token"
+    );
+    assert!(Secret::new("hf_\u{fc}nicode").is_none());
+    assert!(Secret::new(&"a".repeat(513)).is_none());
+    assert!(
+        Secret::new("  hf_gueltig_123\n").is_some(),
+        "Umgebung darf Rand-Leerraum haben"
+    );
+}
+
+#[test]
+fn die_freigabe_gilt_nur_fuer_https_huggingface_co() {
+    let auth = DownloadAuth::huggingface(Secret::new(TOKEN).unwrap());
+    let ok = |u: &str| auth.applies_to(&reqwest::Url::parse(u).unwrap());
+    assert!(ok(
+        "https://huggingface.co/gradium/phonon-40m-de/resolve/abc/config.json"
+    ));
+    assert!(
+        ok("https://HuggingFace.co/x"),
+        "Gross-/Kleinschreibung des Hosts"
+    );
+    assert!(!ok("http://huggingface.co/x"), "nie ueber http");
+    assert!(
+        !ok("https://cdn-lfs.huggingface.co/x"),
+        "Unterdomain ist ein anderer Host"
+    );
+    assert!(!ok("https://cas-bridge.xethub.hf.co/x"));
+    assert!(!ok("https://huggingface.co.evil.example/x"));
+    assert!(!ok("https://evil.example/huggingface.co"));
+    assert!(!ok("https://huggingface.co:8443/x"));
+    assert!(
+        !ok("https://huggingface.co@evil.example/x"),
+        "Host ist evil.example"
+    );
+}
+
+#[test]
+fn weiterleitungsziele_werden_geprueft() {
+    use super::auth::redirect_target;
+    let from = reqwest::Url::parse("https://huggingface.co/a/b").unwrap();
+    assert_eq!(
+        redirect_target(&from, "/api/resolve-cache/x?y=1")
+            .unwrap()
+            .as_str(),
+        "https://huggingface.co/api/resolve-cache/x?y=1"
+    );
+    assert_eq!(
+        redirect_target(&from, "https://cas-bridge.xethub.hf.co/file?sig=1")
+            .unwrap()
+            .host_str(),
+        Some("cas-bridge.xethub.hf.co")
+    );
+    assert!(
+        redirect_target(&from, "http://example.org/x").is_err(),
+        "kein Rueckschritt auf http"
+    );
+    assert!(redirect_target(&from, "file:///C:/Windows/win.ini").is_err());
+    assert!(redirect_target(&from, "ftp://example.org/x").is_err());
+    assert!(
+        redirect_target(&from, "https://user:pw@example.org/x").is_err(),
+        "keine Zugangsdaten in der Adresse"
+    );
+    let plain = reqwest::Url::parse("http://127.0.0.1:1/a").unwrap();
+    assert!(
+        redirect_target(&plain, "http://127.0.0.1:2/b").is_ok(),
+        "http bleibt http"
+    );
+}

@@ -84,6 +84,7 @@ use super::contract::{
     ProviderCaps, ProviderDescriptor, ProviderHealth, ProviderTier, StreamingMode,
     SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, UseSubject, VoiceDescriptor,
 };
+use crate::managers::tts::phonon_models;
 use crate::process_guard::{self, ProcessGuard};
 
 pub const PHONON_ID: &str = "phonon";
@@ -186,7 +187,8 @@ fn parse_model(model: &str) -> Result<ModelSpec<'_>, TtsError> {
     let m = model.trim();
     if m.is_empty() {
         return Err(invalid(
-            "model fehlt: lokalen Modellordner oder hf://OWNER/MODEL@COMMIT angeben",
+            "model fehlt: auf der Modellseite (Vorlesen) ein Phonon-Modell installieren, einen \
+             lokalen Modellordner oder hf://OWNER/MODEL@COMMIT angeben",
         ));
     }
     if m.chars().any(char::is_control) {
@@ -238,7 +240,8 @@ impl PhononConfig {
         let exe = self.exe_path.trim();
         if exe.is_empty() {
             return Err(invalid(
-                "exe_path fehlt: Pfad zur ptts-Programmdatei eintragen",
+                "Phonon ist nicht installiert: auf der Modellseite (Vorlesen) das Phonon-Programm \
+                 installieren oder in exe_path den Pfad zur ptts-Programmdatei eintragen",
             ));
         }
         if exe.chars().any(char::is_control) {
@@ -811,6 +814,11 @@ impl PhononProvider {
     /// ausdrücklich recherchierten Gradium-Repos (`hf://gradium/phonon-…`);
     /// alles andere gilt vorsorglich als nichtkommerziell und ungeprüft.
     fn license(&self) -> LicenseInfo {
+        // Ein ueber die Modellseite installiertes Katalog-Modell kennt seine Lizenz aus dem
+        // Katalog (Quelle und Pruefdatum dort); fremde Ordner gleichen Namens nicht (Marke).
+        if let Some(info) = phonon_models::installed_model_license(&self.cfg.model) {
+            return info;
+        }
         let code = "MIT OR Apache-2.0".to_string();
         let unknown = |model: &str| {
             LicenseInfo {
@@ -880,16 +888,26 @@ impl PhononProvider {
     /// einen Prozess zu starten.
     fn check_ready(&self) -> Result<PathBuf, Problem> {
         self.cfg.validate().map_err(|error| Problem {
+            hint: Some(
+                if self.cfg.exe_path.trim().is_empty() || self.cfg.model.trim().is_empty() {
+                    "Auf der Modellseite (Vorlesen) das Phonon-Programm und ein Phonon-Modell \
+                     installieren; exe_path und model bleiben dann leer und werden automatisch \
+                     gefunden."
+                } else {
+                    "Phonon-Einstellungen prüfen (exe_path, model, lang)."
+                }
+                .to_string(),
+            ),
             error,
-            hint: Some("Phonon-Einstellungen prüfen (exe_path, model, lang).".to_string()),
         })?;
         let exe_text = self.cfg.exe_path.trim();
         let Some(exe) = resolve_exe(exe_text) else {
             return Err(unavailable(
                 format!("ptts wurde nicht gefunden: {exe_text}"),
-                "Das offizielle ptts-CLI (v0.4.x) von github.com/gradium-ai/xn-ptts/releases \
-                 herunterladen und den Pfad zur Programmdatei eintragen. Die App lädt keine \
-                 Programme selbst.",
+                "Auf der Modellseite (Vorlesen) das Phonon-Programm installieren. Alternativ das \
+                 offizielle ptts-CLI (v0.4.x) von github.com/gradium-ai/xn-ptts/releases \
+                 herunterladen und den Pfad zur Programmdatei eintragen. Ohne ausdrücklichen \
+                 Klick lädt die App nichts.",
             ));
         };
         self.check_model()?;
@@ -946,7 +964,8 @@ impl PhononProvider {
                 if !dir.is_dir() {
                     return Err(unavailable(
                         format!("Modellordner fehlt: {}", dir.display()),
-                        "Den Modellordner (z. B. von huggingface.co/gradium) herunterladen und den \
+                        "Auf der Modellseite (Vorlesen) ein Modell installieren, oder den \
+                         Modellordner (z. B. von huggingface.co/gradium) herunterladen und den \
                          Pfad eintragen, oder ein hf://-Modell mit allow_network laden.",
                     ));
                 }
@@ -1601,6 +1620,7 @@ mod tests {
         assert_eq!(h.device, Some(Device::Cpu));
         assert!(h.reason.as_deref().unwrap().contains("nicht gefunden"));
         assert!(h.hint.as_deref().unwrap().contains("xn-ptts"));
+        assert!(h.hint.as_deref().unwrap().contains("Modellseite"));
         contract_suite(Arc::new(p), ContractExpect::unavailable()).await;
     }
 
@@ -1629,6 +1649,88 @@ mod tests {
         })
         .descriptor();
         assert_eq!(multi.caps.languages.len(), 5);
+    }
+
+    #[test]
+    fn ein_installiertes_katalogmodell_kennt_seine_lizenz_aus_dem_katalog() {
+        use crate::catalog::{self, Purpose};
+        let lic = |base: &Path, id: &str, marker: bool| -> LicenseInfo {
+            let dir = base.join("tts").join("phonon").join("models").join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            if marker {
+                let entry = catalog::tts_entries(Purpose::PhononModel)
+                    .into_iter()
+                    .find(|e| e.id == id)
+                    .unwrap();
+                phonon_models::write_marker(&dir, &entry).unwrap();
+            }
+            PhononProvider::new(PhononConfig {
+                model: dir.display().to_string(),
+                ..Default::default()
+            })
+            .descriptor()
+            .license
+        };
+        let tmp = TempDir::new().unwrap();
+        let de = lic(tmp.path(), "phonon-40m-de", true);
+        assert!(de.verified && de.non_commercial);
+        assert_eq!(de.verified_on.as_deref(), Some("2026-10-27"));
+        assert!(de.source_url.contains("gradium/phonon-40m-de"));
+        assert!(de.weights.contains("CC-BY-NC-4.0"));
+        assert_eq!(de.code, "MIT OR Apache-2.0");
+        let en = lic(tmp.path(), "phonon-31m-en", true);
+        assert!(en.verified && !en.non_commercial);
+        assert!(en.weights.contains("Apache-2.0"));
+
+        // Derselbe Ordnername ohne Marke (von Hand abgelegte Gewichte): ungeprueft, vorsorglich nichtkommerziell.
+        let other = TempDir::new().unwrap();
+        let unmarked = lic(other.path(), "phonon-31m-en", false);
+        assert!(
+            !unmarked.verified && unmarked.non_commercial,
+            "{unmarked:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ist_phonon_nicht_installiert_nennt_der_hinweis_die_modellseite() {
+        // Nichts eingetragen und nichts installiert: der Grund sagt es, der Hinweis nennt den Weg.
+        let p = PhononProvider::new(PhononConfig::default()).with_ram_gate(|_| Ok(64 * 1024));
+        let h = p.health_check().await;
+        assert!(!h.available);
+        let reason = h.reason.unwrap();
+        assert!(
+            reason.contains("nicht installiert") && reason.contains("Modellseite"),
+            "{reason}"
+        );
+        assert!(!reason.contains("exe_path fehlt"), "{reason}");
+        assert!(h.hint.unwrap().contains("Modellseite"));
+
+        // Programm da, kein Modell eingetragen: dasselbe fuer das Modell.
+        let fake = fake_ptts(FakeOpts::default());
+        let p = PhononProvider::new(PhononConfig {
+            exe_path: fake.exe.display().to_string(),
+            ..PhononConfig::default()
+        })
+        .with_ram_gate(|_| Ok(64 * 1024));
+        let h = p.health_check().await;
+        let reason = h.reason.unwrap();
+        assert!(
+            reason.contains("model fehlt") && reason.contains("Modellseite"),
+            "{reason}"
+        );
+
+        // Eingetragenes Programm fehlt: der Hinweis nennt die Modellseite und weiter den Release.
+        let model = model_dir(&[]);
+        let p = PhononProvider::new(PhononConfig {
+            exe_path: "Z:/gibt/es/nicht/ptts.exe".to_string(),
+            model: model.path().display().to_string(),
+            ..PhononConfig::default()
+        });
+        let hint = p.health_check().await.hint.unwrap();
+        assert!(
+            hint.contains("Modellseite") && hint.contains("xn-ptts"),
+            "{hint}"
+        );
     }
 
     #[test]

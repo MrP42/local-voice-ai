@@ -12,8 +12,9 @@
 //! - Laufzeit: `<app_data>/tts/piper/<plattform>/` (aus dem Release-Archiv entpackt)
 //! - Stimmen: `<app_data>/tts/piper/voices/<voice_id>.onnx` (+ `.onnx.json`)
 
+use super::phonon_models::{self, InstallEnv, Outcome, PhononDirs};
 use crate::catalog::{self, Purpose};
-use crate::managers::model::download::{HttpDownloadEvent, HttpDownloadOutcome};
+use crate::managers::model::download::{HttpDownloadEvent, HttpDownloadOutcome, Origin};
 use crate::managers::model::ModelManager;
 use anyhow::Result;
 use hf_hub::api::tokio::CancellationToken;
@@ -36,6 +37,8 @@ pub const RUNTIME_ID: &str = "piper-runtime";
 pub enum TtsDownloadKind {
     Runtime,
     Voice,
+    /// Phonon: ein Modellordner (mehrere Dateien).
+    Model,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -62,6 +65,21 @@ pub struct TtsDownloadInfo {
     pub license_url: Option<String>,
     /// Nur nicht-kommerziell nutzbar: die Oberflaeche warnt deutlich.
     pub license_non_commercial: bool,
+    /// Zu welcher Engine die Zeile gehoert: `"piper"` oder `"phonon"`.
+    pub engine: String,
+    /// Genaue Groesse in Bytes (`size_mb` rundet ab; Stimmen sind kleiner als 1 MB).
+    pub size_bytes: u64,
+    /// Phonon: gesperrtes Modell, der Download braucht angenommene Bedingungen und ein
+    /// Hugging-Face-Token.
+    pub gated: bool,
+    /// Kennung der Zeile, die zuerst installiert sein muss (Stimme -> Modell -> Programm).
+    pub requires: Option<String>,
+    /// Herkunft in lesbarer Form (z. B. `hf://gradium/phonon-40m-de@79cfc7b4...`).
+    pub source: Option<String>,
+    /// SHA-256 der Datei, wenn der Eintrag aus genau einer besteht (sonst steht er je Datei im Katalog).
+    pub sha256: Option<String>,
+    /// Herkunfts- und Lizenzhinweis aus dem Katalog.
+    pub license_note: Option<String>,
 }
 
 /// `<piper_dir>/<platform>` — where a platform's Piper binary and its
@@ -151,6 +169,10 @@ pub struct TtsModelManager {
     /// One cancellation token per in-flight download, keyed by the
     /// frontend-facing id ([`RUNTIME_ID`] or a voice id).
     cancel_flags: Mutex<HashMap<String, CancellationToken>>,
+    /// `<app_data>/tts/phonon` (Programm, Modelle, Stimmen von Phonon).
+    phonon_dirs: PhononDirs,
+    /// Serialisiert Aenderungen an `voices/SOURCE.json`.
+    phonon_voices_lock: Mutex<()>,
 }
 
 impl TtsModelManager {
@@ -173,6 +195,8 @@ impl TtsModelManager {
             app_handle: app_handle.clone(),
             piper_dir: base.join("tts").join("piper"),
             cancel_flags: Mutex::new(HashMap::new()),
+            phonon_dirs: PhononDirs::new(&base),
+            phonon_voices_lock: Mutex::new(()),
         })
     }
 
@@ -196,7 +220,13 @@ impl TtsModelManager {
     /// Runtime entry + voices, in that order (the runtime is the "program"
     /// row and belongs at the top — see the task brief).
     pub fn list_downloads(&self) -> Vec<TtsDownloadInfo> {
-        Self::build_downloads(&self.piper_dir, |id| self.is_downloading(id))
+        let mut out = Self::build_downloads(&self.piper_dir, |id| self.is_downloading(id));
+        out.extend(phonon_models::build_downloads(
+            &self.phonon_dirs,
+            phonon_models::current_platform(),
+            |id| self.is_downloading(id),
+        ));
+        out
     }
 
     /// Pure core of [`Self::list_downloads`] — everything except the live
@@ -233,6 +263,13 @@ impl TtsModelManager {
                     license: entry.license,
                     license_url: entry.license_url,
                     license_non_commercial: entry.license_non_commercial,
+                    engine: "piper".to_string(),
+                    size_bytes,
+                    gated: false,
+                    requires: None,
+                    source: None,
+                    sha256: None,
+                    license_note: entry.license_note,
                 });
             }
         }
@@ -250,6 +287,13 @@ impl TtsModelManager {
                 license: entry.license,
                 license_url: entry.license_url,
                 license_non_commercial: entry.license_non_commercial,
+                engine: "piper".to_string(),
+                size_bytes,
+                gated: false,
+                requires: None,
+                source: None,
+                sha256: None,
+                license_note: entry.license_note,
                 id: entry.id,
                 kind: TtsDownloadKind::Voice,
                 name: entry.name,
@@ -302,8 +346,51 @@ impl TtsModelManager {
     pub async fn download(&self, id: &str) -> Result<(), String> {
         if id == RUNTIME_ID {
             self.download_runtime().await
+        } else if phonon_models::is_phonon_id(id) {
+            self.download_phonon(id).await
         } else {
             self.download_voice(id).await
+        }
+    }
+
+    /// Phonon: Programm, Modell oder Stimme. Dieselben Ereignisse wie beim Piper-Weg; ein zweiter
+    /// Start derselben Kennung wird abgewiesen, statt parallel zu laufen.
+    async fn download_phonon(&self, id: &str) -> Result<(), String> {
+        let Some(cancel_token) = phonon_models::try_claim(&self.cancel_flags, id) else {
+            return Err("Dieser Download läuft bereits.".to_string());
+        };
+        let emit = |event: HttpDownloadEvent<'_>| {
+            let _ = match event {
+                HttpDownloadEvent::Progress(progress) => {
+                    self.app_handle.emit("model-download-progress", progress)
+                }
+                HttpDownloadEvent::VerificationStarted => {
+                    self.app_handle.emit("model-verification-started", id)
+                }
+                HttpDownloadEvent::VerificationCompleted => {
+                    self.app_handle.emit("model-verification-completed", id)
+                }
+            };
+        };
+        let token = || phonon_models::hf_token(&phonon_models::process_env);
+        let env = InstallEnv {
+            dirs: &self.phonon_dirs,
+            platform: phonon_models::current_platform(),
+            cancel: &cancel_token,
+            emit: &emit,
+            event_id: id,
+            token: &token,
+            auth_origin: Origin::huggingface(),
+            voices_lock: &self.phonon_voices_lock,
+        };
+        let outcome = phonon_models::install(&env, id).await;
+        self.release(id);
+        match outcome? {
+            Outcome::Cancelled => Ok(()),
+            Outcome::Installed => {
+                let _ = self.app_handle.emit("model-download-complete", id);
+                Ok(())
+            }
         }
     }
 
@@ -459,6 +546,19 @@ impl TtsModelManager {
     }
 
     pub fn delete(&self, id: &str) -> Result<(), String> {
+        if phonon_models::is_phonon_id(id) {
+            if self.is_downloading(id) {
+                return Err("Der Download läuft noch; zuerst abbrechen.".to_string());
+            }
+            phonon_models::delete(
+                &self.phonon_dirs,
+                phonon_models::current_platform(),
+                &self.phonon_voices_lock,
+                id,
+            )?;
+            let _ = self.app_handle.emit("model-deleted", id);
+            return Ok(());
+        }
         if id == RUNTIME_ID {
             let platform = current_platform()
                 .ok_or_else(|| "No Piper runtime for this platform".to_string())?;

@@ -402,3 +402,265 @@ test("help shows the Fish sections once Fish is set up", async ({ page }) => {
   await expect(help).toContainText("Zwei Engines");
   await expect(help).not.toContainText("Sprachausgabe einrichten");
 });
+
+// ── Phonon auf der Modellseite: Programm, Modelle und Stimmen wie bei Piper ──────────────────
+
+const phononRuntime = (over: Record<string, unknown> = {}) => ({
+  id: "phonon-runtime",
+  kind: "runtime",
+  name: "Phonon program ptts (Windows x64)",
+  description: "ptts",
+  language: null,
+  size_mb: 7,
+  size_bytes: 7_766_316,
+  is_downloaded: false,
+  is_downloading: false,
+  is_usable: false,
+  unsupported_reason: null,
+  license: "MIT OR Apache-2.0",
+  license_url: "https://example.org/mit",
+  license_non_commercial: false,
+  engine: "phonon",
+  gated: false,
+  requires: null,
+  source: "https://github.com/gradium-ai/xn-ptts/releases/tag/v0.4.2",
+  sha256: "699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07",
+  license_note: "Programm ptts unter MIT OR Apache-2.0.",
+  ...over,
+});
+const phononDe = (over: Record<string, unknown> = {}) =>
+  phononRuntime({
+    id: "phonon-40m-de",
+    kind: "model",
+    name: "Phonon 40m (German, q8)",
+    language: "de",
+    size_mb: 71,
+    size_bytes: 75_158_617,
+    license: "CC-BY-NC-4.0",
+    license_url: "https://huggingface.co/gradium/phonon-40m-de",
+    license_non_commercial: true,
+    gated: true,
+    requires: "phonon-runtime",
+    source: "hf://gradium/phonon-40m-de@79cfc7b47fcfc0b666657b981eb366415023a862",
+    sha256: null,
+    license_note: "Gewichte CC BY-NC 4.0.",
+    ...over,
+  });
+const phononEn = (over: Record<string, unknown> = {}) =>
+  phononDe({
+    id: "phonon-31m-en",
+    name: "Phonon 31m (English, q8)",
+    language: "en",
+    size_bytes: 65_000_000,
+    license: "Apache-2.0",
+    license_url: "https://huggingface.co/gradium/phonon-31m-en",
+    license_non_commercial: false,
+    gated: false,
+    source: "hf://gradium/phonon-31m-en@92741c5b07d085ff840e26fea8ce43110b87852f",
+    ...over,
+  });
+const phononNele = (over: Record<string, unknown> = {}) =>
+  phononRuntime({
+    id: "phonon-voice-de-nele",
+    kind: "voice",
+    name: "Nele",
+    description: "Female, Middle-age. Rounded, open tone.",
+    language: "de",
+    size_mb: 0,
+    size_bytes: 256_136,
+    license: "Apache-2.0",
+    license_url: "https://huggingface.co/gradium/phonon-voices",
+    requires: "phonon-40m-de",
+    source: "hf://gradium/phonon-voices@0ee17205f254b5abc43b266c8a0f215565c352f7",
+    sha256: "5d5ad59fdd4642cd162f082873b27f658705a5d8598957d6274b30bf4bd4dc0b",
+    ...over,
+  });
+
+/** Nach `setup`: Dialog-Antwort "ja" und Ereignisse der Oberflaeche ausloesen (`__emit`). */
+async function withEvents(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const internals = w.__TAURI_INTERNALS__;
+    const fns: Record<number, (e: unknown) => void> = {};
+    const listeners: Record<string, number[]> = {};
+    const transform = internals.transformCallback;
+    internals.transformCallback = (fn: (e: unknown) => void) => {
+      const id = transform(fn);
+      fns[id] = fn;
+      return id;
+    };
+    const invoke = internals.invoke;
+    internals.invoke = async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "plugin:dialog|ask") {
+        (w.__asked ??= []).push(args);
+        return true;
+      }
+      if (cmd === "plugin:event|listen") {
+        (listeners[args?.event as string] ??= []).push(args?.handler as number);
+      }
+      return invoke(cmd, args);
+    };
+    w.__emit = (event: string, payload: unknown) => {
+      for (const id of listeners[event] ?? []) fns[id]?.({ event, id, payload });
+    };
+  });
+}
+
+const callsOf = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls);
+
+const phononSetup = async (page: Page, downloads: unknown[]) => {
+  await setup(page, {
+    engine: "piper",
+    piperVoice: null,
+    downloads,
+    runtime: runtimeState(true, false),
+    models: [],
+  });
+  await withEvents(page);
+};
+
+test("models: Phonon program, models and voices are offered with size, license, access hint and an install path", async ({ page }) => {
+  await phononSetup(page, [piperRow(), voiceRow(), phononRuntime(), phononDe(), phononEn(), phononNele()]);
+  await openModelsArea(page, "Vorlesen");
+  // Die Piper-Zeilen bleiben, wo sie waren; Phonon hat seinen eigenen Block.
+  await expect(page.locator('[data-models-section="voices"] [data-tts-download="de_DE-thorsten-medium"]')).toHaveCount(1);
+  await expect(page.locator('[data-models-section="phonon"]').getByText("Phonon (experimentell)")).toBeVisible();
+  await expect(page.locator('[data-models-section="phonon"] [data-tts-download="de_DE-thorsten-medium"]')).toHaveCount(0);
+  await openGroup(page, "phonon-available");
+
+  const runtime = page.locator('[data-models-section="phonon"] [data-tts-download="phonon-runtime"]');
+  await expect(runtime).toContainText("Phonon-Programm (ptts)");
+  await expect(runtime).toContainText(/7[.,]4 MB/);
+  const de = page.locator('[data-tts-download="phonon-40m-de"]');
+  await expect(de).toContainText("Phonon 40m (Deutsch)");
+  await expect(de.getByText("Anmeldung nötig")).toBeVisible();
+  await expect(de.getByText("Nur nicht-kommerziell").first()).toBeVisible();
+  const en = page.locator('[data-tts-download="phonon-31m-en"]');
+  await expect(en.getByText("Anmeldung nötig")).toHaveCount(0);
+  await expect(en.getByText("Nur nicht-kommerziell")).toHaveCount(0);
+
+  // Details: Lizenz, Zugangshinweis, Quelle und Pruefsumme.
+  await openRow(de);
+  await expect(de.getByTestId("phonon-gated-note")).toContainText(
+    "Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login)",
+  );
+  await expect(de.getByTestId("tts-nc-note")).toContainText("CC-BY-NC-4.0");
+  await expect(de.getByText("Lizenz: CC-BY-NC-4.0")).toBeVisible();
+  await expect(de.getByTestId("phonon-source")).toContainText("hf://gradium/phonon-40m-de@79cfc7b4");
+  await expect(de).toContainText("Mehrere Dateien");
+  await openRow(runtime);
+  await expect(runtime.getByTestId("phonon-sha256")).toContainText(
+    "699f34526e66523a2f59c76fcf820f28fb11c581ea135cfb1e918c8d786b8a07",
+  );
+  await expect(runtime.getByTestId("phonon-gated-note")).toHaveCount(0);
+
+  // Eine Stimme ohne Modell bietet zuerst das Modell an, nicht den Download der Stimme.
+  const nele = page.locator('[data-tts-download="phonon-voice-de-nele"]');
+  await expect(nele.getByRole("button", { name: "Herunterladen" })).toHaveCount(0);
+  await expect(nele).toContainText("250 KB");
+  await expect(runtime.getByRole("button", { name: "Herunterladen" })).toBeVisible();
+  await nele.getByRole("button", { name: "Modell installieren" }).click();
+  // Das Modell wiederum braucht das Programm: der Weg dahin fuehrt zuerst zum Programm.
+  await en.getByRole("button", { name: "Programm installieren" }).click();
+  // Laeuft das Programm schon, bietet die abhaengige Zeile es nicht noch einmal an.
+  await expect(en.getByRole("button", { name: /installieren|Herunterladen/ })).toHaveCount(0);
+  const calls = await callsOf(page);
+  const downloads = calls.filter(([cmd]) => cmd === "tts_download_model").map(([, args]) => args?.id);
+  expect(downloads).toEqual(["phonon-40m-de", "phonon-runtime"]);
+});
+
+test("models: installed Phonon parts sit under Installed and are deleted after a confirmation", async ({ page }) => {
+  await phononSetup(page, [
+    piperRow(),
+    phononRuntime({ is_downloaded: true, is_usable: true }),
+    phononEn({ is_downloaded: true, is_usable: true }),
+    phononNele({ is_downloaded: true, is_usable: true, requires: "phonon-31m-en" }),
+    phononDe(),
+  ]);
+  await openModelsArea(page, "Vorlesen");
+  const installed = page.locator('[data-model-section="phonon-installed"]');
+  await expect(installed.locator("[data-model-row]")).toHaveCount(3);
+  await expect(installed.getByText("Programm fehlt")).toHaveCount(0);
+  await openGroup(page, "phonon-available");
+  await expect(page.locator('[data-model-section="phonon-available"]').getByText("Phonon 40m (Deutsch)")).toBeVisible();
+
+  const nele = installed.locator('[data-tts-download="phonon-voice-de-nele"]');
+  await nele.getByTestId("row-menu").click();
+  await page.getByTestId("row-delete").click();
+  await expect
+    .poll(async () => (await callsOf(page)).filter(([cmd]) => cmd === "tts_delete_model").map(([, a]) => a?.id))
+    .toEqual(["phonon-voice-de-nele"]);
+  const asked = await page.evaluate(() => (window as unknown as { __asked: unknown[] }).__asked);
+  expect(asked.length).toBe(1);
+});
+
+test("models: an installed Phonon model without its program is marked, with a way to install the program", async ({ page }) => {
+  await phononSetup(page, [
+    piperRow(),
+    phononRuntime(),
+    phononEn({ is_downloaded: true, is_usable: false }),
+  ]);
+  await openModelsArea(page, "Vorlesen");
+  const en = page.locator('[data-model-section="phonon-installed"] [data-tts-download="phonon-31m-en"]');
+  await expect(en.getByText("Programm fehlt – nicht nutzbar")).toBeVisible();
+  await en.getByRole("button", { name: "Programm installieren" }).click();
+  const calls = await callsOf(page);
+  expect(calls.some(([cmd, a]) => cmd === "tts_download_model" && a?.id === "phonon-runtime")).toBe(true);
+});
+
+test("models: Phonon shows progress, can be cancelled and reports a refused access with the way forward", async ({ page }) => {
+  await phononSetup(page, [
+    piperRow(),
+    phononRuntime({ is_downloaded: true, is_usable: true }),
+    phononEn(),
+    phononDe(),
+  ]);
+  await openModelsArea(page, "Vorlesen");
+  await openGroup(page, "phonon-available");
+  await page.locator('[data-tts-download="phonon-31m-en"]').getByRole("button", { name: "Herunterladen" }).click();
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit("model-download-progress", {
+      model_id: "phonon-31m-en",
+      downloaded: 30,
+      total: 100,
+      percentage: 30,
+    }),
+  );
+  // Die laufende Zeile steht unter "Installiert", mit Fortschritt und Abbrechen.
+  const row = page.locator('[data-model-section="phonon-installed"] [data-tts-download="phonon-31m-en"]');
+  await expect(row.locator("[data-row-progress]")).toContainText(/30\s?%/);
+  await row.getByRole("button", { name: "Abbrechen" }).click();
+  const calls = await callsOf(page);
+  expect(calls.some(([cmd, a]) => cmd === "tts_cancel_download" && a?.id === "phonon-31m-en")).toBe(true);
+
+  // Verweigerter Zugang: der Hinweis des Backends erscheint als Meldung.
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit("model-download-failed", {
+      model_id: "phonon-40m-de",
+      error:
+        "Phonon 40m ist gesperrt: der Server verweigert den Zugriff. Bedingungen auf huggingface.co/gradium/phonon-40m-de annehmen und anmelden (hf auth login).",
+    }),
+  );
+  await expect(page.locator("[data-sonner-toast]").first()).toContainText("annehmen und anmelden (hf auth login)");
+});
+
+test("Bild der Modellseite mit Phonon (nur mit SCREENS_DIR)", async ({ page }) => {
+  const dir = process.env.SCREENS_DIR;
+  test.skip(!dir, "nur mit SCREENS_DIR");
+  await page.setViewportSize({ width: 1180, height: 1500 });
+  await phononSetup(page, [
+    piperRow(),
+    voiceRow(),
+    phononRuntime({ is_downloaded: true, is_usable: true }),
+    phononEn({ is_downloaded: true, is_usable: true }),
+    phononNele({ is_downloaded: true, is_usable: true, requires: "phonon-31m-en" }),
+    phononDe(),
+    phononNele({ id: "phonon-voice-de-anton", name: "Anton", description: "Male, Adult. A vibrant, engaging German adult voice.", sha256: "b".repeat(64) }),
+  ]);
+  await openModelsArea(page, "Vorlesen");
+  await openGroup(page, "phonon-available");
+  await openRow(page.locator('[data-tts-download="phonon-40m-de"]'));
+  await expect(page.getByTestId("phonon-gated-note")).toBeVisible();
+  await page.screenshot({ path: `${dir}/phonon-modellseite.png`, fullPage: true });
+});

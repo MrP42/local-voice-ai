@@ -8705,8 +8705,37 @@ license: string | null; license_url: string | null;
 /**
  * Nur nicht-kommerziell nutzbar: die Oberflaeche warnt deutlich.
  */
-license_non_commercial: boolean }
-export type TtsDownloadKind = "runtime" | "voice"
+license_non_commercial: boolean;
+/**
+ * Zu welcher Engine die Zeile gehoert: `"piper"` oder `"phonon"`.
+ */
+engine: string;
+/**
+ * Genaue Groesse in Bytes (`size_mb` rundet ab; Stimmen sind kleiner als 1 MB).
+ */
+size_bytes: number;
+/**
+ * Phonon: gesperrtes Modell, der Download braucht angenommene Bedingungen und ein
+ * Hugging-Face-Token.
+ */
+gated: boolean;
+/**
+ * Kennung der Zeile, die zuerst installiert sein muss (Stimme -> Modell -> Programm).
+ */
+requires: string | null;
+/**
+ * Herkunft in lesbarer Form (z. B. `hf://gradium/phonon-40m-de@79cfc7b4...`).
+ */
+source: string | null;
+/**
+ * SHA-256 der Datei, wenn der Eintrag aus genau einer besteht (sonst steht er je Datei im Katalog).
+ */
+sha256: string | null;
+/**
+ * Herkunfts- und Lizenzhinweis aus dem Katalog.
+ */
+license_note: string | null }
+export type TtsDownloadKind = "runtime" | "voice" | "model"
 /**
  * Fehler eines Anbieters. `retryable`: ein erneuter Versuch kann gelingen
  * (Netzwerkaussetzer, 5xx). Abbruch, Fristablauf, Konfigurations-, Lizenz-
