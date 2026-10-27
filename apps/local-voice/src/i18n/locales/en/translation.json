@@ -2773,7 +2773,7 @@
         "savedResumeHint": "Reads this text again from the last sentence heard – another playback has replaced it",
         "savedStopHint": "Discards the remembered position and hides the controls",
         "voiceMenu": "Choose voice",
-        "voiceMenuHint": "Current: {{name}}. Changes the voice; a running playback uses it from the current sentence"
+        "voiceMenuHint": "Current: {{name}}. Changes the voice; a running playback uses it from the next sentence"
       },
       "error": "Read aloud failed: {{error}}",
       "truncated": "Only the first {{limit}} of {{total}} characters are read aloud. The limit is under Settings > Output > Read aloud."

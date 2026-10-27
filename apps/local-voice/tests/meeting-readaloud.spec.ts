@@ -706,12 +706,12 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     expect((await calls(page, "tts_speak_text")).length).toBe(1);
   });
 
-  test("Stimmwechsel beim Vorlesen: Pause-Symbol bleibt, bis das Backend wirklich aufhoert", async ({
+  test("Stimmwechsel beim Vorlesen: dieselbe Wiedergabe läuft weiter, Pause bleibt, kein Neustart", async ({
     page,
   }) => {
-    // Patrick 27.10.2026: nach einem Stimmwechsel zeigte der Knopf "Weiter", obwohl die
-    // neue Stimme las -- tts_voice_changed startet im Backend neu, der erste Aufruf kehrt
-    // dabei zurueck.
+    // Patrick 27.10.2026: der Stimmwechsel startet im Backend KEINE neue Sitzung mehr -- der
+    // laufende Satz wird zu Ende gelesen, ab dem naechsten liest die neue Stimme, und der
+    // urspruengliche Sprechbefehl laeuft einfach weiter (er kehrt nicht zurueck).
     await page.addInitScript(() => {
       (window as any).__voices = ["anna"];
     });
@@ -733,14 +733,12 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await expect
       .poll(async () => (await calls(page, "tts_voice_changed")).length)
       .toBe(1);
-    // Der erste Aufruf kehrt zurueck (Neustart im Backend), mitten im Text.
-    await page.evaluate(() => {
-      const w = window as any;
-      w.__emit("tts-speak-progress", { position: 2, total: 6 });
-      w.__speakEnd();
-    });
+    // Das Backend liest weiter, mitten im Text; der Befehl ist nicht zurueckgekehrt.
+    await page.evaluate(() =>
+      (window as any).__emit("tts-speak-progress", { position: 2, total: 6 }),
+    );
     await expect(toggle).toHaveAttribute("aria-label", "Pause");
-    // Pause bleibt auch ueber einen kurzen Phasenwechsel zwischen altem und neuem Lauf.
+    // Auch ein kurzer Phasenwechsel (z. B. Serverpruefung) aendert nichts daran.
     await page.evaluate(() => {
       const w = window as any;
       const status = { owns_server: false, message: null, server_up: true };
@@ -749,16 +747,14 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     });
     await page.waitForTimeout(800);
     await expect(toggle).toHaveAttribute("aria-label", "Pause");
-    // Das Backend liest bis zum Ende: die Leiste verschwindet.
+    // Keine zweite Sitzung, kein Fortsetzen: nur der eine Start.
+    expect((await calls(page, "tts_speak_text")).length).toBe(1);
+    expect((await calls(page, "tts_speak_resume")).length).toBe(0);
+    // Das Backend liest bis zum Ende: der Befehl kehrt zurueck, die Leiste verschwindet.
     await page.evaluate(() => {
       const w = window as any;
       w.__emit("tts-speak-progress", { position: 6, total: 6 });
-      w.__emit("tts-state-changed", {
-        phase: "ready",
-        owns_server: false,
-        message: null,
-        server_up: true,
-      });
+      w.__speakEnd();
     });
     await expect(page.getByTestId("minutes-readaloud-bar")).toHaveCount(0);
   });
@@ -772,16 +768,86 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await page.getByTestId("minutes-readaloud").click();
     await page.getByTestId("minutes-readaloud-bar-voice-menu").click();
     await page.getByRole("menuitem", { name: "anna", exact: true }).click();
-    await page.evaluate(() => {
-      const w = window as any;
-      w.__emit("tts-speak-progress", { position: 2, total: 6 });
-      w.__speakEnd();
-    });
+    await page.evaluate(() =>
+      (window as any).__emit("tts-speak-progress", { position: 2, total: 6 }),
+    );
     const toggle = page.getByTestId("minutes-readaloud-bar-toggle");
     await expect(toggle).toHaveAttribute("aria-label", "Pause");
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-label", "Weiter");
     expect((await calls(page, "tts_cancel")).length).toBeGreaterThan(0);
+  });
+
+  test("Satzzähler: steht sofort beim Start, folgt Sprung und Satzwechsel, die Breite bleibt gleich", async ({
+    page,
+  }) => {
+    // Patrick 27.10.2026: "1/m" soll beim Klick auf Vorlesen sofort stehen, nicht erst ab Satz 2,
+    // und die Schaltflaeche daneben darf nicht springen. Das Backend meldet zu Beginn jedes Laufs
+    // (Start, Weiter, Satzsprung) die Startposition.
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    const position = page.getByTestId("minutes-readaloud-bar-position");
+    // Noch keine Meldung: die Gesamtzahl ist unbekannt, also kein Zaehler.
+    await expect(position).toHaveCount(0);
+    const emit = (name: string, payload: unknown) =>
+      page.evaluate(([n, p]) => (window as any).__emit(n, p), [
+        name,
+        payload,
+      ] as const);
+
+    // Beginn des Laufs: Startposition 0 von 12 -- der Zaehler steht sofort auf 1/12.
+    await emit("tts-speak-progress", { position: 0, total: 12 });
+    await expect(position).toContainText("1/12");
+    const widths: number[] = [];
+    const measure = async () =>
+      widths.push((await position.boundingBox())!.width);
+    await measure();
+
+    // Der erste Satz beginnt zu spielen: weiter 1/12.
+    await emit("tts-current-sentence", {
+      context: "speak",
+      index: 0,
+      text: "Erster Satz.",
+    });
+    await expect(position).toContainText("1/12");
+    await expect(position).toHaveAttribute("title", "Erster Satz.");
+
+    // Satz 1 ist durch: sofort 2/12, auch bevor der naechste Satz meldet; der alte Satz
+    // steht nicht mehr im Tooltip.
+    await emit("tts-speak-progress", { position: 1, total: 12 });
+    await expect(position).toContainText("2/12");
+    await expect(position).not.toHaveAttribute("title", "Erster Satz.");
+    await measure();
+    await emit("tts-current-sentence", {
+      context: "speak",
+      index: 1,
+      text: "Zweiter Satz.",
+    });
+    await expect(position).toContainText("2/12");
+
+    // Satzsprung vorwaerts: das Backend meldet die neue Startposition.
+    await emit("tts-speak-progress", { position: 8, total: 12 });
+    await expect(position).toContainText("9/12");
+    await measure();
+    // Weiter ueber die Stellenzahl hinaus: 10/12, 12/12.
+    await emit("tts-speak-progress", { position: 9, total: 12 });
+    await expect(position).toContainText("10/12");
+    await measure();
+    await emit("tts-speak-progress", { position: 11, total: 12 });
+    await expect(position).toContainText("12/12");
+    await measure();
+    // Satzsprung zurueck.
+    await emit("tts-speak-progress", { position: 2, total: 12 });
+    await expect(position).toContainText("3/12");
+    await measure();
+
+    // Feste Breite: kein Pixel Unterschied zwischen "1/12" und "12/12".
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(0.5);
+    // Tabellarische Ziffern.
+    expect(
+      await position.evaluate((el) => getComputedStyle(el).fontVariantNumeric),
+    ).toContain("tabular-nums");
   });
 
   test("schmales Fenster: die Zeile bricht sauber um, nichts wird abgeschnitten", async ({

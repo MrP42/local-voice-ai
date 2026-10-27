@@ -28,7 +28,8 @@ export const VOICE_MANAGE = "@manage";
  * Aufnahmen: dieselben Eintraege, dieselben Werte (`@default`, Fish-Stimmen-Kennung,
  * `piper:<id>`, `provider:<id>:<stimme>`), und ein Wechsel wirkt ueberall gleich -- erst alle
  * Einstellungen schreiben, dann dem Backend Bescheid geben (`tts_voice_changed`), damit
- * ein laufendes Vorlesen ab dem aktuellen Satz die neue Stimme nimmt.
+ * ein laufendes Vorlesen ab dem naechsten Satz die neue Stimme nimmt (der laufende Satz
+ * wird zu Ende gelesen; keine neue Sitzung, kein Pausieren).
  *
  * Anbieter (Phonon u. a.) stehen mit ihren Stimmen in der Liste, aber nur mit den
  * *sichtbaren*: welche das sind, stellt man unter Einstellungen > Ausgabe >
@@ -165,7 +166,7 @@ export function useVoiceChoice(phase: string) {
   const applyVoiceValue = useCallback(
     (value: string) => {
       // Erst alle Einstellungen schreiben, dann dem Backend Bescheid geben: ein
-      // laufendes Vorlesen soll die neue Stimme ab dem aktuellen Satz nehmen.
+      // laufendes Vorlesen soll die neue Stimme ab dem naechsten Satz nehmen.
       void (async () => {
         const picked = parseProviderVoiceValue(value);
         if (picked) {

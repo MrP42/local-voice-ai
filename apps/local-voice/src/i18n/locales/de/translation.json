@@ -2773,7 +2773,7 @@
         "savedResumeHint": "Liest diesen Text ab dem zuletzt gehörten Satz neu vor – die Wiedergabe wurde durch eine andere ersetzt",
         "savedStopHint": "Verwirft die gemerkte Stelle und blendet die Steuerung aus",
         "voiceMenu": "Stimme wählen",
-        "voiceMenuHint": "Aktuell: {{name}}. Wechselt die Stimme; eine laufende Wiedergabe nimmt sie ab dem aktuellen Satz"
+        "voiceMenuHint": "Aktuell: {{name}}. Wechselt die Stimme; eine laufende Wiedergabe liest ab dem nächsten Satz mit ihr"
       },
       "error": "Vorlesen fehlgeschlagen: {{error}}",
       "truncated": "Nur die ersten {{limit}} von {{total}} Zeichen werden vorgelesen. Die Grenze steht unter Einstellungen > Ausgabe > Vorlesen."

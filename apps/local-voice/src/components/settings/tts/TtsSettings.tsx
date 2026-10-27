@@ -74,6 +74,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import { HelpCircle } from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
+import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
@@ -284,6 +285,8 @@ export const TtsSettings = () => {
     total: number;
   } | null>(null);
   const [currentSentence, setCurrentSentence] = useState<string | null>(null);
+  /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
+  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [exportProgress, setExportProgress] = useState<{
     position: number;
@@ -373,14 +376,28 @@ export const TtsSettings = () => {
     );
     const unProgress = listen<{ position: number; total: number }>(
       "tts-speak-progress",
-      (e) => setSpeakProgress(e.payload),
-    );
-    const unSentence = listen<{ context: string; text: string }>(
-      "tts-current-sentence",
       (e) => {
-        if (e.payload.context === "speak") setCurrentSentence(e.payload.text);
+        setSpeakProgress(e.payload);
+        // Nach einem Sprung oder einem fertigen Satz gilt der alte Satz nicht mehr.
+        setCurrentIndex((index) =>
+          index === null
+            ? null
+            : (sentenceAfterProgress({ index }, e.payload.position)?.index ??
+              null),
+        );
       },
     );
+    const unSentence = listen<{
+      context: string;
+      index?: number;
+      text: string;
+    }>("tts-current-sentence", (e) => {
+      if (e.payload.context !== "speak") return;
+      setCurrentSentence(e.payload.text);
+      setCurrentIndex(
+        typeof e.payload.index === "number" ? e.payload.index : null,
+      );
+    });
     // Eine Kuerzung darf nicht stumm bleiben: sonst hoert das Vorlesen
     // mitten im Text auf, ohne dass irgendwo steht, warum.
     const unTruncated = listen<{ limit: number; total: number }>(
@@ -614,6 +631,7 @@ export const TtsSettings = () => {
   const speakFrom = async (charOffset: number, onlyOne: boolean) => {
     setLastError(null);
     setSpeakProgress(null);
+    setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
     // Die Engine kennt nur die englische Tag-Form; der Offset wandert mit.
@@ -666,6 +684,7 @@ export const TtsSettings = () => {
   const speakNow = async () => {
     setLastError(null);
     setSpeakProgress(null);
+    setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
     const result = await commands.ttsSpeakText(canonicalizeTags(spokenText));
@@ -696,6 +715,7 @@ export const TtsSettings = () => {
   const stopSpeaking = () => {
     void commands.ttsCancel();
     setSpeakProgress(null);
+    setCurrentIndex(null);
   };
 
   const resumeSpeaking = async () => {
@@ -809,10 +829,27 @@ export const TtsSettings = () => {
     void commands.ttsSpeakSeek(delta);
   };
 
+  // Waehrend des Serverstarts gibt es nichts fortzusetzen: der Lauf haengt noch im Start,
+  // auch wenn sein Zaehler (`tts-speak-progress` zu Beginn) schon steht.
   const canResume =
     !speaking &&
+    !starting &&
     speakProgress !== null &&
     speakProgress.position < speakProgress.total;
+  // Zaehler "Satz n/m": der Satz, der zu hoeren ist (1-basiert) -- steht ab dem Start, nicht erst
+  // nach dem ersten fertigen Satz.
+  const sentenceCounter =
+    speakProgress !== null
+      ? (() => {
+          const shown = shownSentenceNumber(
+            currentIndex ?? speakProgress.position,
+            speakProgress.total,
+          );
+          return shown === null
+            ? null
+            : { position: shown, total: speakProgress.total };
+        })()
+      : null;
 
   // Stimmenliste, Piper-Stimmen, Fish-Zustand und Stimmenwechsel kommen aus dem
   // Baustein, den auch die Wiedergabeleiste der Aufnahmen nutzt.
@@ -1863,7 +1900,7 @@ export const TtsSettings = () => {
                 prewarm={prewarm}
                 onPrewarm={() => void startPrewarm()}
                 onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
-                speakProgress={speakProgress}
+                sentenceCounter={sentenceCounter}
                 onOpenWorkshop={() => setWorkshopOpen(true)}
                 tidying={tidying}
                 onTidy={() => void tidyText()}

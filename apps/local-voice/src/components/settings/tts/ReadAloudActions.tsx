@@ -26,6 +26,7 @@ import { Glyph } from "../../ui/AudioPlayer";
 import { Select } from "../../ui/Select";
 import { TTS_TARGET_LANGS } from "../../../lib/constants/languages";
 import { AutoTagBar, type AutoTagBarProps } from "./tags/AutoTagBar";
+import { counterWidthCh } from "./sentenceCounter";
 
 export type TtsTab = "original" | "translation" | "summary";
 
@@ -60,7 +61,8 @@ export interface ReadAloudActionsProps {
   onPrewarm: () => void;
   onCancelPrewarm: () => void;
 
-  speakProgress: Progress | null;
+  /** Zaehler "Satz n/m": `position` = der Satz, der zu hoeren ist (1-basiert). */
+  sentenceCounter: Progress | null;
 
   onOpenWorkshop: () => void;
   tidying: boolean;
@@ -147,7 +149,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     exportProgress,
     exportEta,
     prewarm,
-    speakProgress,
+    sentenceCounter,
     tidying,
     errorCount,
   } = props;
@@ -557,11 +559,23 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           onCancel={props.onCancelPrewarm}
         />
       )}
-      {speakProgress && (
-        <span className="text-xs text-text/60">
+      {sentenceCounter && (
+        // Feste Breite (tabular-nums + Mindestbreite nach der Stellenzahl der Gesamtzahl):
+        // die Zeile springt nicht, wenn aus "Satz 9/12" "Satz 10/12" wird.
+        <span
+          className="inline-block text-xs tabular-nums text-text/60"
+          style={{
+            minWidth: `${counterWidthCh(
+              sentenceCounter.total,
+              (position, total) =>
+                t("tts.sentenceProgress", { position, total }),
+            )}ch`,
+          }}
+          data-testid="tts-sentence-counter"
+        >
           {t("tts.sentenceProgress", {
-            position: speakProgress.position,
-            total: speakProgress.total,
+            position: sentenceCounter.position,
+            total: sentenceCounter.total,
           })}
         </span>
       )}
