@@ -537,6 +537,9 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         if !next_is_boundary {
             continue;
         }
+        if c == '.' && !period_ends_sentence(&chars, pos) {
+            continue;
+        }
         let chunk = text[start..next_byte_idx].trim();
         if visible_char_count(chunk) >= MIN_CHUNK_CHARS {
             sentences.push(chunk.to_string());
@@ -548,6 +551,61 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         sentences.push(tail.to_string());
     }
     sentences
+}
+
+/// Abkürzungen, nach deren Punkt kein Satz endet (klein geschrieben, ohne Punkt).
+const ABBREVIATIONS: &[&str] = &[
+    "ca", "bzw", "usw", "etc", "ggf", "inkl", "exkl", "evtl", "vgl", "bspw", "zzgl", "abzgl",
+    "dr", "prof", "nr", "abs", "art", "ziff", "kap", "bd", "hr", "fr", "str", "tel", "mio",
+    "mrd", "jh", "st", "max", "min", "mind", "sog", "geb", "gem", "lt", "allg", "insb",
+    "zb", "dh", "ua", "uä", "od", "jew",
+];
+
+const MONTHS: &[&str] = &[
+    "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september",
+    "oktober", "november", "dezember", "jan", "feb", "mär", "apr", "jun", "jul", "aug", "sep",
+    "sept", "okt", "nov", "dez",
+];
+
+/// Endet bei `chars[pos] == '.'` wirklich ein Satz? Nein nach bekannten
+/// Abkürzungen („ca.", „Dr."), nach Einzelbuchstaben (Initialen, „z. B."),
+/// vor einem Kleinbuchstaben oder einer Ziffer (so beginnt kein deutscher
+/// Satz) und bei Ordnungszahlen vor einem Monat („am 24. Dezember").
+fn period_ends_sentence(chars: &[(usize, char)], pos: usize) -> bool {
+    let word: String = chars[..pos]
+        .iter()
+        .rev()
+        .map(|(_, c)| *c)
+        .take_while(|c| c.is_alphanumeric())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let next_word: String = chars[pos + 1..]
+        .iter()
+        .map(|(_, c)| *c)
+        .skip_while(|c| c.is_whitespace())
+        .take_while(|c| c.is_alphanumeric())
+        .collect();
+    let lower = word.to_lowercase();
+    if word.chars().count() == 1 && word.chars().all(char::is_alphabetic) {
+        return false;
+    }
+    if ABBREVIATIONS.contains(&lower.as_str()) {
+        return false;
+    }
+    if let Some(first) = next_word.chars().next() {
+        if first.is_lowercase() || first.is_ascii_digit() {
+            return false;
+        }
+    }
+    if !word.is_empty()
+        && word.chars().all(|c| c.is_ascii_digit())
+        && MONTHS.contains(&next_word.to_lowercase().as_str())
+    {
+        return false;
+    }
+    true
 }
 
 /// Lage jedes Satzes im Rohtext als Zeichen-Offsets (Anfang, Ende).
@@ -806,6 +864,36 @@ mod tests {
         let parts = split_sentences(text);
         assert_eq!(parts.len(), 2, "war: {parts:?}");
         assert!(parts[0].contains("z. B."));
+    }
+
+    #[test]
+    fn abbreviations_mid_sentence_do_not_cut() {
+        // Patrick 27.10.2026: Phonon pausierte nach „ca." — die Satztrennung
+        // schnitt dort, sobald das Stueck davor schon 15 Zeichen hatte.
+        for text in [
+            "Die Kosten betragen ca. 500 Euro pro Jahr.",
+            "Wir treffen uns am 24. Dezember in Berlin.",
+            "Das gilt bzw. galt schon immer für alle Beteiligten.",
+            "Bitte wenden Sie sich an Dr. Müller in der Verwaltung.",
+            "Den Antrag hat Herr A. Schmidt gestern gestellt.",
+            "Wir brauchen Stifte, Papier usw. für den Workshop morgen.",
+            "Das ist laut Abs. 3 der Vereinbarung so festgelegt.",
+            "Der Beitrag steht in der Ausgabe Nr. 12 auf Seite fünf.",
+        ] {
+            assert_eq!(split_sentences(text), vec![text.to_string()], "geschnitten: {text}");
+        }
+    }
+
+    #[test]
+    fn real_boundaries_after_numbers_and_abbreviation_free_words_still_cut() {
+        assert_eq!(
+            split_sentences("Das kostet genau 500 Euro. Danach gehen wir essen."),
+            vec!["Das kostet genau 500 Euro.", "Danach gehen wir essen."]
+        );
+        assert_eq!(
+            split_sentences("Wir sind im Jahr 2026. Das Projekt läuft weiter."),
+            vec!["Wir sind im Jahr 2026.", "Das Projekt läuft weiter."]
+        );
     }
 
     #[test]
