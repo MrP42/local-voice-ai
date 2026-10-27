@@ -152,7 +152,7 @@
         "usedNow": "This provider now reads aloud.",
         "visible": {
           "title": "Show in Read aloud",
-          "hint": "Which voices appear in the voice dropdown of the Read aloud page and in the playback bar of the recordings. The provider default and the currently chosen voice always stay visible.",
+          "hint": "Which voices appear in the voice dropdown of the Read aloud page and in the playback bar of the recordings. If the provider switches voices per sentence, they are also the speakers in the script (<Name>). The provider default and the currently chosen voice always stay visible.",
           "all": "All",
           "none": "None",
           "count": "{{shown}} of {{total}} shown",
@@ -212,6 +212,7 @@
       "dropdown": {
         "entry": "Provider: {{name}}",
         "voice": "{{provider}} · {{name}}",
+        "script": "{{provider}} · Script with speakers",
         "hint": "Provider: {{name}} (Settings → Speech providers)",
         "open": "Open provider settings"
       }
@@ -585,7 +586,9 @@
       "all": "All",
       "legend": "Fish Audio S2 understands any description in square brackets. {{documented}} of the {{total}} tags appear as examples in the official docs; your own descriptions like [whispering and tired] work as well.",
       "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works.",
-      "piperIgnores": "“{{tag}}” — Piper does not support tags and leaves it out (only pauses work)."
+      "piperIgnores": "“{{tag}}” — Piper does not support tags and leaves it out (only pauses work).",
+      "engineIgnores": "“{{tag}}” — {{engine}} does not support style tags and leaves it out (only pauses work).",
+      "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work."
     },
     "speakers": {
       "menuInsert": "Insert speaker",
@@ -738,6 +741,7 @@
     },
     "autotag": {
       "button": "Auto-Tagging",
+      "noStyleTags": "{{engine}} does not support style tags - auto-tagging would not help here.",
       "providerDefault": "Default AI",
       "providerClaude": "Claude Haiku",
       "counter": "{{count}} suggestions",
@@ -797,6 +801,7 @@
     "writingRules": {
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
+      "pausesOnly": "{{engine}} does not support emotion tags. Only pauses go in square brackets, exactly where they should be heard:",
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",
       "example3": "[laughing] You can't be serious!"

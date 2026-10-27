@@ -8,6 +8,7 @@ import {
   type LangVoice,
 } from "@/lib/voices/speakerSwap";
 import type { SpeakerRef } from "@/lib/voices/speakerMarkers";
+import { useGenderLabel } from "./speakerProvider";
 
 interface Props {
   open: boolean;
@@ -51,8 +52,12 @@ export const SpeakerSwapDialog: React.FC<Props> = ({
     return { fits, rest };
   }, [voices, targetCode]);
 
+  // Name, bei Anbieter-Stimmen auch weiblich/maennlich, dazu die Sprache.
+  const genderLabel = useGenderLabel();
   const label = (v: LangVoice) =>
-    v.language ? `${v.displayName} · ${v.language}` : v.displayName;
+    [v.displayName, genderLabel(v.gender), v.language]
+      .filter(Boolean)
+      .join(" · ");
 
   return (
     <Dialog

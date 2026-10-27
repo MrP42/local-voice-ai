@@ -132,6 +132,7 @@ impl TtsProvider for FishProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: engine::FISH_CAPS.style_tags,
+                voice_switching: engine::FISH_CAPS.voice_switching,
             },
             license: LicenseInfo {
                 code: "Fish Audio Research License (installierte Fassung, Stand 07.03.2026)"
@@ -324,6 +325,7 @@ impl TtsProvider for PiperProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: piper::PIPER_CAPS.style_tags,
+                voice_switching: piper::PIPER_CAPS.voice_switching,
             },
             license: LicenseInfo {
                 code: "GPL-3.0".to_string(),

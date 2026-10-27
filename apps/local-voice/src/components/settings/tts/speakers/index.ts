@@ -1,1 +1,7 @@
-export { useSpeakerProvider, useSpeakers } from "./speakerProvider";
+export {
+  providerSpeakerRefs,
+  useFishSpeakers,
+  useGenderLabel,
+  useSpeakerProvider,
+  useSpeakers,
+} from "./speakerProvider";

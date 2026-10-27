@@ -5555,6 +5555,22 @@ async ttsProviderVoiceOptions() : Promise<Result<ProviderVoiceOption[], TtsError
 }
 },
 /**
+ * Die Sprecher des Anbieters, der gerade vorliest: seine sichtbaren Stimmen mit
+ * Name im Marker (`<Nele>`), Geschlecht und Sprache — GENAU die Liste, nach der die
+ * Pipeline Marker im Text schaltet, damit der Editor nie mehr einfärbt als später
+ * gesprochen wird. Leer bei Fish und Piper (deren Sprecher sind die aufgenommenen
+ * Stimmen, `tts_list_voice_infos`), bei einem Anbieter ohne Stimmwechsel, einem
+ * gesperrten oder nicht antwortenden Anbieter.
+ */
+async ttsProviderSpeakers() : Promise<Result<ProviderSpeaker[], TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_speakers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Anbieter (und Stimme) fürs Vorlesen wählen. Prüft die Guardrails: ein
  * gesperrter Anbieter lässt sich nicht wählen (`license_blocked`/
  * `privacy_blocked`). Wirkt auch mitten im Vorlesen (wie ein Stimmwechsel).
@@ -8071,7 +8087,14 @@ formats: AudioEncoding[]; sample_rates: number[]; cloning: boolean; devices: Dev
 /**
  * Plattformkennungen wie im Katalog (`windows-x64`, `macos-aarch64`, …).
  */
-platforms: string[]; style_tags: boolean }
+platforms: string[]; style_tags: boolean; 
+/**
+ * Spricht der Anbieter je Auftrag eine andere Stimme (`SynthesisOptions::voice`) und
+ * liefert er dafür eine Stimmenliste (`list_voices`)? Dann gelten Sprechermarker im
+ * Skript (`<Name>`): die Satz-Pipeline wählt je Satz die Stimme seines Sprechers.
+ * Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
+ */
+voice_switching: boolean }
 /**
  * Statische Beschreibung eines Anbieters.
  */
@@ -8093,6 +8116,30 @@ export type ProviderHealth = { available: boolean; reason: string | null; hint: 
  * Dauer der Prüfung in Millisekunden (die Registry setzt den gemessenen Wert).
  */
 checked_ms: number }
+/**
+ * Ein Sprecher eines Anbieters, so wie ihn die Oberfläche braucht.
+ */
+export type ProviderSpeaker = { 
+/**
+ * Kennung der Stimme beim Anbieter (`SynthesisOptions::voice`).
+ */
+id: string; 
+/**
+ * Name im Marker (`<Name>`) und in der Anzeige.
+ */
+name: string; 
+/**
+ * Weitere Schreibweisen, die denselben Sprecher treffen (die ganze Beschriftung).
+ */
+aliases: string[]; 
+/**
+ * `female`/`male`/… wie vom Anbieter gemeldet (`None` = unbekannt).
+ */
+gender: string | null; 
+/**
+ * Sprachkürzel der Stimme (`und` = beliebig).
+ */
+language: string }
 /**
  * Wie verbindlich ein Anbieter angeboten wird.
  */
@@ -8116,7 +8163,13 @@ export type ProviderTier =
 /**
  * Eine Stimme eines Anbieters für das Vorlesen-Dropdown.
  */
-export type ProviderVoiceOption = { provider_id: string; provider_label: string; voice: VoiceDescriptor }
+export type ProviderVoiceOption = { provider_id: string; provider_label: string; 
+/**
+ * Der Anbieter wechselt die Stimme je Satz (`ProviderCaps::voice_switching`): seine
+ * Standardstimme im Dropdown heißt dann "Skript mit Sprechern", seine Stimmen sind die
+ * Sprecher im Text.
+ */
+voice_switching: boolean; voice: VoiceDescriptor }
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).

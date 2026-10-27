@@ -28,7 +28,7 @@ IPC-Typen tragen serde + `specta::Type`, Felder und Enum-Werte `snake_case` (con
 | `AudioChunk` | :96 | `request_id`, `seq: u32`, `format`, `data: Vec<u8>`, `is_last`, `elapsed_ms: u64` |
 | `AudioClip` | :108 | `format`, `data` (immer vollständiges WAV), `duration_ms` |
 | `LicenseInfo` | :118 | `code`, `weights`, `non_commercial`, `verified`, `source_url`, `verified_on: Option<String>`, `note` |
-| `ProviderCaps` | :133 | `languages`, `streaming`, `formats`, `sample_rates`, `cloning`, `devices`, `platforms`, `style_tags` |
+| `ProviderCaps` | :133 | `languages`, `streaming`, `formats`, `sample_rates`, `cloning`, `devices`, `platforms`, `style_tags`, `voice_switching` (spricht je Auftrag eine andere Stimme per `opts.voice` und liefert dafür `list_voices`; Fish, Phonon, `openai-speech`, Ollama: ja, Piper: nein) |
 | `ProviderDescriptor` | :149 | `id` (`[a-z0-9][a-z0-9_-]*`), `label`, `tier`, `opt_in`, `caps`, `license` |
 | `ProviderHealth` | :163 | `available`, `reason`, `hint`, `device`, `version`, `checked_ms` |
 | `VoiceDescriptor` | :199 | `id`, `label`, `language` (`und` = beliebig), `gender`, `license` (nur bei Abweichung) |
@@ -279,8 +279,39 @@ Die Wahl steht im bestehenden Feld `tts_engine` als `provider:<id>` (`PROVIDER_P
 eingebauten Engines und laufen über deren unveränderte Pfade; ältere App-Fassungen kennen den Wert nicht und fallen auf
 Fish zurück (P/pipeline.rs:1-30). Im Kern ist es die Variante `EngineImpl::Provider(ProviderEngine)`
 (A/managers/tts/mod.rs:156): Satz-Pipeline, Satz-Cache, Abbruch über den Generationszähler und Player bleiben unverändert;
-`synthesize` bricht auch mitten im Satz ab. Ein Anbieter spricht in **einer** gewählten Stimme (kein Sprecherwechsel per
-Marker, P/pipeline.rs:68-70).
+`synthesize` bricht auch mitten im Satz ab. Ein Anbieter mit `voice_switching` spricht je Satz in der Stimme seines
+Sprechers (Marker `<Name>`, siehe „Sprecher im Skript“ unten); ohne die Fähigkeit liest er alles in der einen gewählten
+Stimme.
+
+### Sprecher im Skript (mehrere Stimmen eines Anbieters)
+
+Hat ein Anbieter `caps.voice_switching` (Phonon, `openai-speech`, Ollama), gelten im Vorlesetext dieselben Marker wie bei Fish
+(`<Name>`, `<Name:Stil>`, Zeilenform `Name:`) — ohne Sonderfall je Anbieter (kein `if phonon`), allein über die Fähigkeit.
+
+* **Bekannte Sprecher** sind die SICHTBAREN Stimmen des aktiven Anbieters (`list_voices`, gefiltert wie das Vorlesen-Dropdown:
+  `tts_providers.visible_voices`, die gewählte Stimme bleibt) ohne die Standardstimme `default`. Der Name im Marker ist der Teil
+  der Beschriftung vor „ – “ (`Nele – Rounded, open tone` → `<Nele>`); zusätzlich treffen Kennung und ganze Beschriftung.
+  Abgleich wie bei Fish (klein, Umlaute ausgeschrieben); gleiche Namen werden mit `Name (Kennung)` unterschieden
+  (`providers/speakers.rs`, rein und dort getestet). Die Liste kommt über `TtsManager::ensure_provider_roster` (60 s gehalten,
+  bei Änderung von Konfiguration, Auswahl oder gewählter Stimme sofort verworfen; scheitert das Lesen, bleibt die letzte Liste
+  und der nächste Versuch kommt nach 10 s, der Auftrag wartet nie länger als die Frist des Anbieters, 8 s).
+* **„Skript mit Sprechern“** ist wie bei Fish die Standardstimme ohne gewählte Stimme (im Dropdown „Phonon · Skript mit
+  Sprechern“): Marker schalten, Text ohne Marker und unbekannte Marker lesen die Standardstimme des Anbieters (bzw. die in der
+  Konfiguration eingetragene). Eine **benannte Stimme** gewählt (`tts_providers.voices[<id>]`) liest dagegen alles; die Marker
+  werden dann gestrichen (wie bei Fish mit gewählter Stimme und bei Piper). Das Flag dazu setzt `refresh_from_settings` je Engine
+  (`fixed_voice`: bei Fish `tts_voice`, beim Anbieter dessen gewählte Stimme — eine alte Fish-Stimme in `tts_voice` zählt dort nicht).
+* **Je Satz**: `utterance_voice` wählt die Stimme wie bei Fish (Epoche, Verwerfen eines vorab berechneten Satzes nach Wechsel, nahtlos
+  wie in PR #103); `ProviderEngine::synthesize_voiced` reicht sie als `SynthesisOptions::voice` an den Anbieter, `cache_tag_for(voice)`
+  trägt sie in den Cache-Tag (`phonon:<modell>~<hash>:<stimme>`): zwei Sprecher teilen sich nie einen Eintrag.
+* **Schlüssel statt Kennung**: der Parser reicht `provider:<anbieter>:<stimme>` weiter (`speakers::speaker_key`). Ein Anbieter nimmt nur
+  Schlüssel SEINER Kennung an, Fish und Piper nie einen Anbieter-Schlüssel: wer mitten im Vorlesen die Engine wechselt, schickt keine
+  fremde Kennung an einen Server; der Satz liest dann in der eigenen Stimme (`TtsCore::translate_voice`).
+* **Stil-Tags `[…]`** setzt ein Anbieter ohne `style_tags` (Phonon) nicht um: `TtsCore::spoken_text` entfernt sie VOR der Synthese und
+  vor dem Cache-Schlüssel (Pausen erzeugt die App selbst), sie werden also nie vorgelesen. Die Oberfläche bietet ihm deshalb nur
+  Pausen an (Palette), blendet das Auto-Tagging aus und zeigt bei Tags „Phonon setzt keine Stil-Tags um“.
+* **Oberfläche**: `useSpeakers()` (Editor-Chips, „Sprecher einfügen“ mit Name und weiblich/männlich, Skript-Prüfung, Sprecher tauschen)
+  liefert bei Fish die aufgenommenen Stimmen, bei einem Anbieter mit `voice_switching` die Antwort von `tts_provider_speakers`; die Seite
+  richtet sich über `useEngineCaps()` nach den Fähigkeiten, nicht nach dem Namen der Engine.
 
 ### Tauri-Befehle (A/commands/tts_providers.rs, registriert A/lib.rs:2436-2446)
 
@@ -294,6 +325,7 @@ Marker, P/pipeline.rs:68-70).
 | `tts_provider_set_enabled` | :305 | Opt-in setzen/zurücknehmen, **nur Oberfläche** |
 | `tts_provider_acknowledge_license` | :318 | Lizenz zum aktuellen Fingerabdruck bestätigen, **nur Oberfläche** |
 | `tts_provider_set_allow_remote` | :342 | Fernzugriff erlauben/zurücknehmen, **nur Oberfläche** |
+| `tts_provider_speakers` | commands/tts_providers.rs | die Sprecher des vorlesenden Anbieters (Name im Marker, Geschlecht, Sprache): genau die Liste, nach der die Pipeline Marker schaltet; leer bei Fish, Piper und Anbietern ohne `voice_switching` |
 | `tts_provider_select` | :358 | Anbieter und Stimme fürs Vorlesen wählen (prüft `check_use`, wirkt auch mitten im Vorlesen) |
 | `tts_provider_preview` | :388 | Probestimme starten, liefert `request_id`; läuft das Vorlesen, `bad_request` |
 | `tts_provider_cancel` | :400 | Probestimme abbrechen (Synthese und Wiedergabe) |

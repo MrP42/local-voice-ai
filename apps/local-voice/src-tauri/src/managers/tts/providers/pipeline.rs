@@ -38,6 +38,16 @@
 //! `kill_on_drop`) — der Abbruch wirkt also auch MITTEN im Satz, anders als
 //! bei Fish (HTTP-Anfrage läuft zu Ende) und Piper.
 //!
+//! ## Stimmen
+//!
+//! Die Engine trägt EINE Stimme (die gewählte bzw. die der Konfiguration). Hat der
+//! Anbieter [`ProviderCaps::voice_switching`](super::contract::ProviderCaps) —
+//! Phonon, generischer Sprachserver, Ollama —, kann ein Satz zusätzlich eine
+//! eigene Stimme mitbringen (Sprecher aus dem Skript, `<Nele>`): `synthesize_voiced`
+//! und `cache_tag_for` nehmen sie statt der eigenen, `SynthesisOptions::voice` und
+//! der Cache-Tag tragen sie. Welche Stimme ein Satz bekommt, entscheidet der Kern je
+//! Satz (`TtsCore::utterance_voice`); die Namen liefert [`super::speakers`].
+//!
 //! Kein `settings::get_settings(&AppHandle)` hier.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -46,7 +56,7 @@ use std::time::Duration;
 
 use super::contract::{
     guarded, AudioEncoding, CancelToken, ProviderDescriptor, StreamingMode, SynthesisOptions,
-    TtsError, TtsProvider,
+    TtsError, TtsProvider, VoiceDescriptor,
 };
 use super::policy::{check_use, LiveApprovals, UseSubject};
 use super::registry::{with_retry, DeliveryTracker, ProviderRegistry, RetryPolicy};
@@ -57,6 +67,9 @@ use crate::managers::tts::lang::detect_language;
 pub const SENTENCE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Frist der Bereitschaftsprüfung vor einem Auftrag.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(8);
+/// Frist der Stimmenliste für die Sprecher. Unter den 10 s der Befehle der Oberfläche
+/// (`VOICES_LIMIT`), damit eine Teilliste noch ankommt.
+pub const VOICES_TIMEOUT: Duration = Duration::from_secs(8);
 /// Wie oft das Abbruch-Flag während der Synthese angesehen wird.
 const CANCEL_POLL: Duration = Duration::from_millis(25);
 /// Wie oft während eines laufenden Satzes geprüft wird, ob die Nutzung inzwischen
@@ -76,8 +89,11 @@ pub fn next_request_id(prefix: &str) -> String {
 
 /// Fähigkeiten eines Anbieters als Engine-Fähigkeiten.
 ///
-/// * `voice_switching`: nie — Sprechermarker im Skript beziehen sich auf
-///   Fish-Referenzstimmen; ein Anbieter spricht in EINER gewählten Stimme.
+/// * `voice_switching`: die Angabe des Anbieters
+///   ([`ProviderCaps::voice_switching`](super::contract::ProviderCaps)): wer je
+///   Auftrag eine andere Stimme sprechen kann, bekommt Sprechermarker im Skript
+///   (`<Nele>`), die Satz für Satz die Stimme wählen. Die Namen sind die Stimmen
+///   seiner Liste, nicht Fish-Referenzstimmen ([`super::speakers`]).
 /// * `needs_gpu`: nie — die App kennt die Grafikkartennutzung eines fremden
 ///   Anbieters nicht, und das Flag steuert, ob die Fußleiste „Server läuft“
 ///   zeigt und ob Übersetzung die GPU meiden muss (nur bei Fish zutreffend).
@@ -87,7 +103,7 @@ pub fn engine_caps(desc: &ProviderDescriptor) -> EngineCaps {
     EngineCaps {
         style_tags: desc.caps.style_tags,
         cloning: desc.caps.cloning,
-        voice_switching: false,
+        voice_switching: desc.caps.voice_switching,
         streaming: desc.caps.streaming == StreamingMode::Chunk,
         needs_gpu: false,
         export_formats: &["wav"],
@@ -103,6 +119,11 @@ const UNKNOWN_CAPS: EngineCaps = EngineCaps {
     needs_gpu: false,
     export_formats: &["wav"],
 };
+
+/// Eine ausdrücklich genannte Stimme: getrimmt, leer zählt als keine.
+fn clean_voice(voice: Option<&str>) -> Option<&str> {
+    voice.map(str::trim).filter(|v| !v.is_empty())
+}
 
 async fn wait_flag(flag: &AtomicBool) {
     while !flag.load(Ordering::Acquire) {
@@ -169,6 +190,11 @@ impl ProviderEngine {
         &self.id
     }
 
+    /// Die eigene (gewählte bzw. konfigurierte) Stimme dieser Engine.
+    pub fn voice(&self) -> Option<&str> {
+        self.voice.as_deref()
+    }
+
     pub fn caps(&self) -> EngineCaps {
         self.descriptor
             .as_ref()
@@ -179,8 +205,16 @@ impl ProviderEngine {
     /// Anteil am Cache-Schlüssel: der des Anbieters (`"<id>:<modell>:<stimme>"`).
     /// Die Fish-Referenzstimme, die der Kern mitreicht, zählt hier nicht.
     pub fn cache_tag(&self) -> String {
+        self.cache_tag_for(None)
+    }
+
+    /// Wie [`Self::cache_tag`] für einen Satz mit eigener Stimme `voice` (Sprecher aus
+    /// dem Skript): sie ersetzt die der Engine, so teilen sich zwei Stimmen nie einen
+    /// Cache-Eintrag.
+    pub fn cache_tag_for(&self, voice: Option<&str>) -> String {
+        let voice = clean_voice(voice).or(self.voice.as_deref());
         match &self.provider {
-            Some(p) => p.cache_tag(self.voice.as_deref()),
+            Some(p) => p.cache_tag(voice),
             None => format!("provider:{}:unbekannt", self.id),
         }
     }
@@ -234,11 +268,38 @@ impl ProviderEngine {
         })
     }
 
-    /// Einen Satz synthetisieren; Rückgabe sind WAV-Bytes. `cancel` ist das
-    /// Abbruch-Flag des laufenden Auftrags (siehe Moduldoku).
+    /// Die Stimmenliste des Anbieters (Grundlage der Sprecher, siehe
+    /// [`super::speakers`]), mit Frist [`VOICES_TIMEOUT`]. Gilt als Nutzung: ein
+    /// gesperrter Anbieter antwortet mit dem Sperrgrund, ohne dass er gerufen wird.
+    pub async fn list_voices(&self) -> Result<Vec<VoiceDescriptor>, TtsError> {
+        self.guard()?;
+        let provider = self.provider.clone().ok_or_else(|| self.unknown())?;
+        match tokio::time::timeout(VOICES_TIMEOUT, provider.list_voices(None)).await {
+            Ok(result) => result,
+            Err(_) => Err(TtsError::timeout(format!(
+                "Die Stimmenliste kam nicht innerhalb von {} s",
+                VOICES_TIMEOUT.as_secs()
+            ))),
+        }
+    }
+
+    /// Einen Satz in der Stimme der Engine synthetisieren; Rückgabe sind WAV-Bytes.
+    /// `cancel` ist das Abbruch-Flag des laufenden Auftrags (siehe Moduldoku).
     pub async fn synthesize(
         &self,
         text: &str,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
+        self.synthesize_voiced(text, None, cancel).await
+    }
+
+    /// Wie [`Self::synthesize`], aber mit einer eigenen Stimme für diesen Satz
+    /// (`voice`, Sprecher aus dem Skript); `None` = die Stimme der Engine. Die
+    /// Stimme geht unverändert als `SynthesisOptions::voice` an den Anbieter.
+    pub async fn synthesize_voiced(
+        &self,
+        text: &str,
+        voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
         self.guard().map_err(|e| e.message)?;
@@ -249,7 +310,9 @@ impl ProviderEngine {
         let token = CancelToken::new(next_request_id("read"));
         let opts = SynthesisOptions {
             language: detect_language(text).unwrap_or("de").to_string(),
-            voice: self.voice.clone(),
+            voice: clean_voice(voice)
+                .map(String::from)
+                .or_else(|| self.voice.clone()),
             format: AudioEncoding::Wav,
             // Tempo regelt die Wiedergabe (siehe `SynthesisRequest::speed`).
             speed: None,
@@ -309,8 +372,9 @@ mod tests {
     };
     use crate::managers::tts::providers::mock::{MockFailure, MockProvider};
     use crate::managers::tts::providers::policy::{license_fingerprint, TtsProvidersSettings};
+    use crate::managers::tts::providers::speakers;
     use crate::managers::tts::state::TtsPhase;
-    use crate::managers::tts::{EngineImpl, TtsCore};
+    use crate::managers::tts::{split_utterances, EngineImpl, TtsCore};
     use futures_util::future::BoxFuture;
     use std::sync::Mutex;
     use std::time::Instant;
@@ -495,8 +559,13 @@ mod tests {
         d.caps.style_tags = true;
         let c = engine_caps(&d);
         assert!(c.streaming && c.cloning && c.style_tags);
-        assert!(!c.voice_switching && !c.needs_gpu);
+        assert!(!c.needs_gpu);
         assert_eq!(c.export_formats, &["wav"]);
+        // Den Stimmwechsel meldet der Anbieter selbst (der Mock hat zwei Stimmen) ...
+        assert!(c.voice_switching);
+        // ... ohne die Angabe gibt es keine Sprecher im Skript.
+        d.caps.voice_switching = false;
+        assert!(!engine_caps(&d).voice_switching);
         let single = MockProvider::new().descriptor();
         assert!(
             !engine_caps(&single).streaming,
@@ -574,7 +643,9 @@ mod tests {
         assert_eq!(opts.voice.as_deref(), Some("mock-de"));
         assert_eq!(opts.format, AudioEncoding::Wav);
         assert_eq!(opts.language, "de");
-        assert_eq!(core.engine_cache_tag(Some("fish-referenz")), "rec:mock-de");
+        // Auch der Schluessel des Caches kennt die Fish-Stimme nicht.
+        assert_eq!(core.synth_identity(None).voice, None);
+        assert_eq!(core.synth_identity(None).engine_tag, "rec:mock-de");
     }
 
     /// Stimmwechsel mitten im Vorlesen mit einem Anbieter (etwa Phonon): die
@@ -654,6 +725,338 @@ mod tests {
             core.engine_cache_tag(None),
             ben_tag,
             "der Tag traegt die Anbieter-Stimme"
+        );
+    }
+
+    // ---- Mehrere Sprecher: je Satz die Stimme des Sprechers -----------------------------
+
+    fn voice(id: &str, label: &str) -> VoiceDescriptor {
+        VoiceDescriptor {
+            id: id.to_string(),
+            label: label.to_string(),
+            language: "de".to_string(),
+            gender: None,
+            license: None,
+        }
+    }
+
+    /// Die Sprecher einer Stimmenliste wie die von Phonon: Standardstimme, Nele, Anton.
+    fn nele_und_anton() -> Vec<crate::managers::tts::protocol::KnownSpeaker> {
+        let voices = [
+            voice("default", "Standardstimme des Modells"),
+            voice("nele-id", "Nele – hell"),
+            voice("anton-id", "Anton – tief"),
+        ];
+        speakers::build_roster(&voices, None, None)
+            .iter()
+            .map(|s| s.known("zzz"))
+            .collect()
+    }
+
+    fn voice_log() -> Arc<VoiceLog> {
+        Arc::new(VoiceLog {
+            inner: MockProvider::new().with_id("zzz"),
+            calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn calls_of(log: &VoiceLog) -> Vec<(String, Option<String>)> {
+        log.calls.lock().unwrap().clone()
+    }
+
+    const SKRIPT: &str = "<Nele> Der erste Satz ist lang genug. \
+        <Anton> Der zweite Satz ist auch lang genug. \
+        <Bob> Der dritte Satz ist ebenfalls lang genug.";
+
+    /// Der Kern des Pakets: jeder Abschnitt geht mit der Stimme SEINES Sprechers an den
+    /// Anbieter (`SynthesisOptions::voice`); ein unbekannter Marker wird gestrichen und
+    /// liest in der eingestellten Stimme; kein Marker erreicht je den Anbieter als Text.
+    #[tokio::test]
+    async fn jeder_satz_geht_mit_der_stimme_seines_sprechers_an_den_anbieter() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let core = core_with(engine_for(&reg, "zzz", settings_with(&["zzz"])));
+        assert!(core.engine_caps().voice_switching);
+
+        let utterances = split_utterances(SKRIPT, &nele_und_anton(), true);
+        assert_eq!(utterances.len(), 3, "{utterances:?}");
+        core.speak_sentence_run(utterances, 0, None, None)
+            .await
+            .unwrap();
+
+        let calls = calls_of(&log);
+        assert_eq!(
+            calls.iter().map(|(_, v)| v.as_deref()).collect::<Vec<_>>(),
+            [Some("nele-id"), Some("anton-id"), None],
+            "{calls:?}"
+        );
+        assert!(
+            calls.iter().all(|(text, _)| !text.contains('<')),
+            "kein Marker wird vorgelesen: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn der_cache_haelt_die_stimmen_auseinander_und_trifft_beim_zweiten_lauf() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let core = core_with(engine_for(&reg, "zzz", settings_with(&["zzz"])));
+        let satz = "Derselbe Satz klingt je Sprecher anders.";
+        let nele = speakers::speaker_key("zzz", "nele-id");
+        let anton = speakers::speaker_key("zzz", "anton-id");
+        let run = || {
+            vec![
+                (satz.to_string(), Some(nele.clone())),
+                (satz.to_string(), Some(anton.clone())),
+            ]
+        };
+        core.speak_sentence_run(run(), 0, None, None).await.unwrap();
+        assert_eq!(calls_of(&log).len(), 2, "zwei Stimmen, zwei Berechnungen");
+
+        assert!(core.has_cached_for(satz, Some(&nele)));
+        assert!(core.has_cached_for(satz, Some(&anton)));
+        assert!(
+            !core.has_cached_for(satz, None),
+            "die eigene Stimme des Anbieters ist eine dritte"
+        );
+        assert_ne!(
+            core.engine_cache_tag(Some("nele-id")),
+            core.engine_cache_tag(Some("anton-id")),
+            "der Tag traegt die Stimme des Sprechers"
+        );
+
+        core.speak_sentence_run(run(), 0, None, None).await.unwrap();
+        assert_eq!(
+            calls_of(&log).len(),
+            2,
+            "der zweite Lauf kommt aus dem Cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn text_ohne_marker_und_unbekannte_marker_lesen_in_der_eingestellten_stimme() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let engine =
+            ProviderEngine::new(reg, "zzz", Some("mock-de".to_string()), live_with(&["zzz"]));
+        let core = core_with(engine);
+        let text = "Der erste Satz ohne Marker ist lang genug. \
+                    <Nele> Der zweite Satz gehoert Nele und ist lang. \
+                    <Bob> Der dritte Satz gehoert niemandem und ist lang.";
+        let utterances = split_utterances(text, &nele_und_anton(), true);
+        core.speak_sentence_run(utterances, 0, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            calls_of(&log)
+                .iter()
+                .map(|(_, v)| v.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("mock-de"), Some("nele-id"), Some("mock-de")]
+        );
+    }
+
+    /// Stil-Tags `[…]` setzt ein Anbieter ohne `style_tags` (Phonon) nicht um und
+    /// würde sie wörtlich vorlesen: sie erreichen ihn nie. Pausen erzeugt die App selbst
+    /// (Stille), der Satz geht in Teilen an den Anbieter; der Stil hinter dem Sprecher
+    /// (`<Anton:leise>`) wird vom Parser entfernt.
+    #[tokio::test]
+    async fn stil_tags_erreichen_einen_anbieter_ohne_stil_tags_nicht() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let core = core_with(engine_for(&reg, "zzz", settings_with(&["zzz"])));
+        assert!(!core.engine_caps().style_tags);
+        let text = "<Anton:leise> Das ist [laughing] ein Satz mit [whisper] Tags. [short pause] Und danach geht es weiter.";
+        let utterances = split_utterances(text, &nele_und_anton(), true);
+        core.speak_sentence_run(utterances, 0, None, None)
+            .await
+            .unwrap();
+        let calls = calls_of(&log);
+        assert!(!calls.is_empty());
+        for (spoken, voice) in &calls {
+            assert!(
+                !spoken.contains('[') && !spoken.contains(']') && !spoken.contains('<'),
+                "dem Anbieter darf kein Tag und kein Marker erreichen: {spoken:?}"
+            );
+            assert_eq!(voice.as_deref(), Some("anton-id"));
+        }
+        assert!(
+            calls.iter().any(|(t, _)| t.contains("Das ist")),
+            "der Text selbst bleibt: {calls:?}"
+        );
+    }
+
+    /// Eine gewaehlte feste Stimme liest alles; die Sprecher im Skript gelten dann nur
+    /// bei "Skript mit Sprechern" (wie bei Fish).
+    #[tokio::test]
+    async fn eine_feste_stimme_liest_alles_und_uebergeht_die_sprecher() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let engine =
+            ProviderEngine::new(reg, "zzz", Some("mock-de".to_string()), live_with(&["zzz"]));
+        let core = core_with(engine);
+        core.fixed_voice
+            .store(true, std::sync::atomic::Ordering::Release);
+        // Der Text wird ohne Marker zerlegt (wie `utterances` bei fester Stimme) ...
+        let plain = split_utterances(SKRIPT, &nele_und_anton(), false);
+        assert!(plain
+            .iter()
+            .all(|(text, voice)| voice.is_none() && !text.contains('<')));
+        // ... und selbst ein Satz, der noch einen Sprecher traegt (Sitzung von vorher),
+        // liest in der festen Stimme.
+        let with_speakers = split_utterances(SKRIPT, &nele_und_anton(), true);
+        core.speak_sentence_run(with_speakers, 0, None, None)
+            .await
+            .unwrap();
+        assert!(
+            calls_of(&log)
+                .iter()
+                .all(|(_, v)| v.as_deref() == Some("mock-de")),
+            "{:?}",
+            calls_of(&log)
+        );
+    }
+
+    /// Anbieter ohne Stimmwechsel: Sprecher gelten nicht, alles liest die eine Stimme.
+    struct Flat(Arc<VoiceLog>);
+
+    impl TtsProvider for Flat {
+        fn descriptor(&self) -> ProviderDescriptor {
+            let mut d = self.0.descriptor();
+            d.caps.voice_switching = false;
+            d
+        }
+        fn health_check(&self) -> BoxFuture<'_, ProviderHealth> {
+            self.0.health_check()
+        }
+        fn list_voices<'a>(
+            &'a self,
+            l: Option<&'a str>,
+        ) -> BoxFuture<'a, Result<Vec<VoiceDescriptor>, TtsError>> {
+            self.0.list_voices(l)
+        }
+        fn synthesize<'a>(
+            &'a self,
+            t: &'a str,
+            o: &'a SynthesisOptions,
+            c: &'a CancelToken,
+        ) -> BoxFuture<'a, Result<AudioClip, TtsError>> {
+            self.0.synthesize(t, o, c)
+        }
+        fn cache_tag(&self, v: Option<&str>) -> String {
+            self.0.cache_tag(v)
+        }
+    }
+
+    #[tokio::test]
+    async fn ein_anbieter_ohne_stimmwechsel_liest_alles_in_seiner_stimme() {
+        let log = voice_log();
+        let reg = registry_with(Arc::new(Flat(log.clone())));
+        let engine =
+            ProviderEngine::new(reg, "zzz", Some("mock-de".to_string()), live_with(&["zzz"]));
+        let core = core_with(engine);
+        assert!(!core.engine_caps().voice_switching);
+        let utterances = split_utterances(SKRIPT, &nele_und_anton(), true);
+        core.speak_sentence_run(utterances, 0, None, None)
+            .await
+            .unwrap();
+        assert!(calls_of(&log)
+            .iter()
+            .all(|(_, v)| v.as_deref() == Some("mock-de")));
+    }
+
+    /// Die Stimme eines Satzes ist an seine Welt gebunden: ein Schluessel eines anderen
+    /// Anbieters oder eine Fish-Kennung erreicht den Anbieter nicht (der Satz liest in
+    /// der eigenen Stimme), und Fish bekommt nie einen Anbieter-Schluessel.
+    #[tokio::test]
+    async fn fremde_stimmen_erreichen_weder_den_anbieter_noch_fish() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let core = core_with(engine_for(&reg, "zzz", settings_with(&["zzz"])));
+        let sentences = vec![
+            (
+                "Ein Satz mit der Fish-Stimme aus einer alten Sitzung.".to_string(),
+                Some("erzaehlerin".to_string()),
+            ),
+            (
+                "Ein Satz mit der Stimme eines anderen Anbieters.".to_string(),
+                Some(speakers::speaker_key("andere", "nele-id")),
+            ),
+            (
+                "Ein Satz mit der Stimme dieses Anbieters selbst.".to_string(),
+                Some(speakers::speaker_key("zzz", "nele-id")),
+            ),
+        ];
+        core.speak_sentence_run(sentences, 0, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            calls_of(&log)
+                .iter()
+                .map(|(_, v)| v.as_deref())
+                .collect::<Vec<_>>(),
+            [None, None, Some("nele-id")]
+        );
+
+        let own = speakers::speaker_key("zzz", "nele-id");
+        let fish = EngineImpl::Fish;
+        assert_eq!(TtsCore::translate_voice(&fish, Some(&own)), None);
+        assert_eq!(
+            TtsCore::translate_voice(&fish, Some("erzaehlerin")).as_deref(),
+            Some("erzaehlerin"),
+            "Fish behaelt seine Kennungen unveraendert"
+        );
+        // Die gewaehlte Fish-Stimme (`tts_voice`) bleibt fuer Fish der Rueckfall ...
+        *core.voice.lock().unwrap() = Some("fish-referenz".to_string());
+        assert_eq!(
+            core.effective_voice(&fish, None).as_deref(),
+            Some("fish-referenz")
+        );
+        // ... fuer einen Anbieter aber nie.
+        let provider = EngineImpl::Provider(engine_for(&reg, "zzz", settings_with(&["zzz"])));
+        assert_eq!(core.effective_voice(&provider, None), None);
+        assert_eq!(
+            core.effective_voice(&provider, Some(&own)).as_deref(),
+            Some("nele-id")
+        );
+    }
+
+    /// Ein Wechsel von "Skript mit Sprechern" zu einer festen Stimme (oder zurueck)
+    /// mitten im Vorlesen gilt fuer den Folgesatz: die Berechnung mit der alten Stimme
+    /// wird verworfen (die Identitaet des Satzes aendert sich).
+    #[tokio::test]
+    async fn der_wechsel_zur_festen_stimme_aendert_die_identitaet_des_satzes() {
+        let log = voice_log();
+        let reg = registry_with(log.clone());
+        let engine =
+            ProviderEngine::new(reg, "zzz", Some("mock-de".to_string()), live_with(&["zzz"]));
+        let core = core_with(engine);
+        let nele = speakers::speaker_key("zzz", "nele-id");
+        let speaker = Some(nele.clone());
+        let before = core.synth_identity(core.utterance_voice(speaker.as_ref()).as_deref());
+        assert_eq!(before.voice.as_deref(), Some("nele-id"));
+        assert!(core.voice_unchanged(&before, speaker.as_ref()));
+
+        core.fixed_voice
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(
+            !core.voice_unchanged(&before, speaker.as_ref()),
+            "feste Stimme: der Satz muss mit \"mock-de\" neu berechnet werden"
+        );
+        let after = core.synth_identity(core.utterance_voice(speaker.as_ref()).as_deref());
+        assert_eq!(
+            after.voice, None,
+            "die eigene Stimme steckt im Tag des Anbieters"
+        );
+        assert!(
+            before.engine_tag.ends_with("nele-id"),
+            "{}",
+            before.engine_tag
+        );
+        assert!(
+            after.engine_tag.ends_with("mock-de"),
+            "{}",
+            after.engine_tag
         );
     }
 

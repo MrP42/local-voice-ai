@@ -152,7 +152,7 @@
         "usedNow": "Dieser Anbieter liest jetzt vor.",
         "visible": {
           "title": "Im Vorlesen anzeigen",
-          "hint": "Welche Stimmen im Dropdown der Vorlesen-Seite und in der Wiedergabeleiste der Aufnahmen stehen. Die Vorgabe des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar.",
+          "hint": "Welche Stimmen im Dropdown der Vorlesen-Seite und in der Wiedergabeleiste der Aufnahmen stehen. Wechselt der Anbieter die Stimme je Satz, sind es auch die Sprecher im Skript (<Name>). Die Vorgabe des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar.",
           "all": "Alle",
           "none": "Keine",
           "count": "{{shown}} von {{total}} sichtbar",
@@ -212,6 +212,7 @@
       "dropdown": {
         "entry": "Anbieter: {{name}}",
         "voice": "{{provider}} · {{name}}",
+        "script": "{{provider}} · Skript mit Sprechern",
         "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
         "open": "Anbieter-Einstellungen öffnen"
       }
@@ -585,7 +586,9 @@
       "all": "Alle",
       "legend": "Fish Audio S2 versteht jede Beschreibung in eckigen Klammern. {{documented}} der {{total}} Tags stehen als Beispiel in der offiziellen Doku; eigene Beschreibungen wie [flüsternd und müde] funktionieren ebenfalls.",
       "extended": "{{tag}} — erweitertes Tag, nicht in der offiziellen Fish-Audio-Liste; wirkt meist.",
-      "piperIgnores": "„{{tag}}“ — Piper setzt keine Tags um und lässt es weg (nur Pausen wirken)."
+      "piperIgnores": "„{{tag}}“ — Piper setzt keine Tags um und lässt es weg (nur Pausen wirken).",
+      "engineIgnores": "„{{tag}}“ — {{engine}} setzt keine Stil-Tags um und lässt es weg (nur Pausen wirken).",
+      "legendPausesOnly": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen – die erzeugt die App selbst, sie wirken immer."
     },
     "speakers": {
       "menuInsert": "Sprecher einfügen",
@@ -738,6 +741,7 @@
     },
     "autotag": {
       "button": "Auto-Tagging",
+      "noStyleTags": "{{engine}} setzt keine Stil-Tags um – Auto-Tagging bringt hier nichts.",
       "providerDefault": "Standard-KI",
       "providerClaude": "Claude Haiku",
       "counter": "{{count}} Vorschläge",
@@ -797,6 +801,7 @@
     "writingRules": {
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
+      "pausesOnly": "{{engine}} setzt keine Emotions-Tags um. Nur Pausen stehen in eckigen Klammern, genau dort, wo sie zu hören sein sollen:",
       "example1": "[whisper] Komm näher …",
       "example2": "Er öffnete die Tür. [short pause] Nichts.",
       "example3": "[laughing] Das darf doch nicht wahr sein!"

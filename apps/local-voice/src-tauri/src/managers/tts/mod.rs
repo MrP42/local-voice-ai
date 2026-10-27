@@ -202,8 +202,11 @@ impl EngineImpl {
         match self {
             Self::Fish => engine::fish_cache_tag(voice),
             Self::Piper(p) => p.cache_tag(voice),
-            // Der Tag kommt vom Anbieter; die Fish-Referenzstimme zählt nicht.
-            Self::Provider(p) => p.cache_tag(),
+            // Der Tag kommt vom Anbieter. `voice` ist die Stimme des Sprechers (bereits
+            // in die Kennung des Anbieters übersetzt, siehe `TtsCore::translate_voice`);
+            // ohne sie gilt die eigene Stimme des Anbieters. Die Fish-Referenzstimme
+            // zählt nie.
+            Self::Provider(p) => p.cache_tag_for(voice),
             #[cfg(test)]
             Self::Mock(mock) => mock.cache_tag(voice),
         }
@@ -345,7 +348,8 @@ impl TtsCore {
     /// Ist dieser Satz (mit aktueller Stimme/Seed/Engine) bereits
     /// synthetisiert — im RAM oder auf Platte?
     pub fn has_cached(&self, text: &str) -> bool {
-        let voice = self.voice.lock().unwrap().clone();
+        let engine = self.engine_snapshot();
+        let voice = self.effective_voice(&engine, None);
         self.has_cached_for(text, voice.as_deref())
     }
 
@@ -359,6 +363,10 @@ impl TtsCore {
     pub fn has_cached_for(&self, text: &str, voice: Option<&str>) -> bool {
         let seed = *self.seed.lock().unwrap();
         let engine = self.engine_snapshot();
+        // Dieselbe Stimme wie in `fetch_wav_cancellable` (ein Sprecher eines anderen
+        // Anbieters bzw. der Fish-Welt zaehlt dort nicht).
+        let voice = Self::translate_voice(&engine, voice);
+        let voice = voice.as_deref();
         // Derselbe Text wie in `fetch_wav_cancellable`, sonst bildeten beide
         // verschiedene Schluessel (Tags, ausgeschriebene Abkuerzungen).
         let text = Self::spoken_text(&engine, text);
@@ -420,7 +428,9 @@ impl TtsCore {
         *self.engine.lock().unwrap() = EngineImpl::Provider(engine);
     }
 
-    /// Cache-Tag der aktiven Engine (siehe [`WavCache::key`]).
+    /// Cache-Tag der aktiven Engine (siehe [`WavCache::key`]). Die Pipeline selbst
+    /// rechnet ueber einen Schnappschuss (`synth_identity`, `fetch_wav_cancellable`).
+    #[cfg(test)]
     fn engine_cache_tag(&self, voice: Option<&str>) -> String {
         self.engine.lock().unwrap().cache_tag(voice)
     }
@@ -428,6 +438,40 @@ impl TtsCore {
     /// Konsistenter Schnappschuss der aktiven Engine — siehe [`EngineImpl`].
     fn engine_snapshot(&self) -> EngineImpl {
         self.engine.lock().unwrap().clone()
+    }
+
+    /// Die ausdruecklich genannte Stimme eines Satzes (Sprecher aus dem Skript) in
+    /// der Sprache der Engine. Sprecher eines Registry-Anbieters tragen einen
+    /// Schluessel `provider:<anbieter>:<stimme>` (siehe `providers::speakers`):
+    ///
+    /// * der Anbieter bekommt nur die Stimme aus SEINEM Schluessel -- ein Schluessel
+    ///   eines anderen Anbieters (oder eine Fish-Kennung) zaehlt nicht, der Satz liest
+    ///   dann in der eigenen Stimme des Anbieters;
+    /// * Fish, Piper und alle anderen bekommen nie einen Anbieter-Schluessel als
+    ///   Stimme: wer mitten im Vorlesen von Phonon auf Fish wechselt, schickt keine
+    ///   fremde Kennung an den Server.
+    ///
+    /// Alles andere bleibt unveraendert.
+    fn translate_voice(engine: &EngineImpl, explicit: Option<&str>) -> Option<String> {
+        let explicit = explicit?;
+        match engine {
+            EngineImpl::Provider(p) => {
+                providers::speakers::voice_of_key(p.id(), explicit).map(String::from)
+            }
+            _ if providers::speakers::is_provider_key(explicit) => None,
+            _ => Some(explicit.to_string()),
+        }
+    }
+
+    /// Die Stimme, mit der ein Satz JETZT gerechnet wird: die genannte
+    /// ([`Self::translate_voice`]), sonst die eingestellte Fish-Stimme. Ein
+    /// Registry-Anbieter kennt die Fish-Stimme nicht (sie kann von frueher in
+    /// `tts_voice` stehen): ohne genannte Stimme spricht er in seiner eigenen.
+    fn effective_voice(&self, engine: &EngineImpl, explicit: Option<&str>) -> Option<String> {
+        Self::translate_voice(engine, explicit).or_else(|| match engine {
+            EngineImpl::Provider(_) => None,
+            _ => self.voice.lock().unwrap().clone(),
+        })
     }
 
     /// Der Text, den die Engine bekommt UND aus dem der Cache-Schluessel entsteht.
@@ -476,7 +520,7 @@ impl TtsCore {
             EngineImpl::Fish => self.fish_synthesize(port, req).await,
             EngineImpl::Piper(p) => p.synthesize(req).await,
             // Ein Anbieter hört auf das Abbruch-Flag auch mitten im Satz.
-            EngineImpl::Provider(p) => p.synthesize(text, cancel).await,
+            EngineImpl::Provider(p) => p.synthesize_voiced(text, voice, cancel).await,
             #[cfg(test)]
             EngineImpl::Mock(mock) => mock.synthesize(req).await,
         }
@@ -694,15 +738,12 @@ impl TtsCore {
         if !self.pass_voice_switch(cancel).await {
             return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
         }
-        let voice = match voice {
-            Some(explicit) => Some(explicit.to_string()),
-            None => self.voice.lock().unwrap().clone(),
-        };
         // EIN Engine-Schnappschuss je Aufruf: Cache-Tag und Synthese dieses
         // Satzes stammen garantiert aus derselben Engine — ein
         // Settings-Wechsel währenddessen kann keine Bytes mehr unter
         // fremdem Tag ablegen (TOCTOU-Befund aus dem A3/E1-Review).
         let engine = self.engine_snapshot();
+        let voice = self.effective_voice(&engine, voice);
         // Guardrails eines Registry-Anbieters VOR dem Cache: auch schon
         // synthetisiertes Audio eines inzwischen gesperrten Anbieters wird
         // nicht mehr ausgeliefert (Lizenz-Opt-in, Zustimmung, Fernzugriff).
@@ -823,10 +864,8 @@ impl TtsCore {
     /// ergeben wie ihr expliziter Name — sonst bekaeme dieselbe Stimme zwei
     /// Eintraege.
     fn voice_key(&self, voice: Option<&str>) -> String {
-        match voice {
-            Some(explicit) => explicit.to_string(),
-            None => self.voice.lock().unwrap().clone().unwrap_or_default(),
-        }
+        let engine = self.engine_snapshot();
+        self.effective_voice(&engine, voice).unwrap_or_default()
     }
 
     /// Dauerhafter Tempofaktor dieser Stimme (1,0 = unveraendert). Er tritt
@@ -908,12 +947,10 @@ impl TtsCore {
     /// ausser dem Text in den Cache-Schluessel eingeht (Engine-Tag, Seed, aufgeloeste
     /// Stimme). Zwei gleiche Werte heissen: dasselbe Audio.
     fn synth_identity(&self, voice: Option<&str>) -> SynthIdentity {
-        let voice = match voice {
-            Some(explicit) => Some(explicit.to_string()),
-            None => self.voice.lock().unwrap().clone(),
-        };
+        let engine = self.engine_snapshot();
+        let voice = self.effective_voice(&engine, voice);
         SynthIdentity {
-            engine_tag: self.engine_cache_tag(voice.as_deref()),
+            engine_tag: engine.cache_tag(voice.as_deref()),
             seed: *self.seed.lock().unwrap(),
             voice,
         }
@@ -1270,6 +1307,10 @@ pub struct TtsManager {
     provider_host: providers::setup::ProviderHost,
     /// Probestimme der Anbieter (streamt; siehe `providers::preview`).
     provider_preview: providers::preview::PreviewService,
+    /// Die Sprecher des aktiven Anbieters, zuletzt gelesen. Das Zerlegen des Textes
+    /// (`utterances`) ist synchron, die Stimmenliste des Anbieters nicht: sie wird
+    /// vorher (`ensure_provider_roster`) gelesen und hier gehalten.
+    provider_roster: Mutex<Option<providers::speakers::RosterCache>>,
 }
 
 struct SpeakSession {
@@ -1849,6 +1890,7 @@ impl TtsManager {
                 prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 provider_host,
                 provider_preview,
+                provider_roster: Mutex::new(None),
             }
         });
         manager.refresh_from_settings();
@@ -1953,9 +1995,11 @@ impl TtsManager {
         self.core.controls.set_speed(settings.tts_speed);
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
-        self.core
-            .fixed_voice
-            .store(settings.tts_voice.is_some(), Ordering::Release);
+        // Ob eine FESTE Stimme gewaehlt ist, haengt an der Engine: bei Fish das
+        // Stimmenfeld (`tts_voice`), bei einem Anbieter dessen gewaehlte Stimme
+        // (`tts_providers.voices`) -- eine alte Fish-Stimme in `tts_voice` sagt dort
+        // nichts. Gesetzt wird das Flag unten, wenn die Engine feststeht.
+        let fish_voice_chosen = settings.tts_voice.is_some();
         *self.core.voice.lock().unwrap() = settings.tts_voice;
         // Dauerhafte Klangregler der Stimmen einmal je Auftrag von der Platte
         // holen — nicht je Satz. Stimmen ohne `sound` stehen gar nicht erst
@@ -1996,8 +2040,14 @@ impl TtsManager {
             settings.tts_piper_voice.as_deref(),
             settings.tts_piper_auto_language,
         );
-        match engine::provider_id_from_setting(&settings.tts_engine) {
-            Some(id) if kind == TtsEngineKind::Provider => {
+        let provider_pick = engine::provider_id_from_setting(&settings.tts_engine)
+            .filter(|_| kind == TtsEngineKind::Provider);
+        let voice_chosen = match &provider_pick {
+            Some(id) => providers::speakers::voice_is_chosen(settings.tts_providers.voices.get(id)),
+            None => fish_voice_chosen,
+        };
+        match provider_pick {
+            Some(id) => {
                 self.core
                     .set_provider_engine(providers::pipeline::ProviderEngine::new(
                         self.provider_host.registry().clone(),
@@ -2006,8 +2056,9 @@ impl TtsManager {
                         self.provider_host.approvals().clone(),
                     ));
             }
-            _ => self.core.set_engine(kind, piper_engine),
+            None => self.core.set_engine(kind, piper_engine),
         }
+        self.core.fixed_voice.store(voice_chosen, Ordering::Release);
         // Beim Umschalten die gemessenen Faktoren verwerfen: sonst hinge der
         // Pegel an einer Messung aus der Zeit vor dem Umschalten.
         let previous = self
@@ -2059,7 +2110,7 @@ impl TtsManager {
                 serde_json::json!({ "limit": max_chars, "total": total }),
             );
         }
-        let sentences = self.utterances(&prepared.text);
+        let sentences = self.utterances(&prepared.text).await;
         let start = clamp_start_sentence(sentence_index, sentences.len());
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: sentences.clone(),
@@ -2085,7 +2136,7 @@ impl TtsManager {
         let leading = raw.len() - raw.trim_start().len();
         let leading_chars = raw[..leading].chars().count();
         let offset = char_offset.saturating_sub(leading_chars);
-        let sentences = self.utterances(&prepared.text);
+        let sentences = self.utterances(&prepared.text).await;
         if sentences.is_empty() {
             return Err("empty text".to_string());
         }
@@ -2112,7 +2163,7 @@ impl TtsManager {
     pub async fn prewarm(self: &Arc<Self>, raw: &str) -> Result<u32, String> {
         use tauri::Emitter;
         let max_chars = *self.core.max_chars.lock().unwrap();
-        let utterances = self.utterances(raw.trim());
+        let utterances = self.utterances(raw.trim()).await;
         // Nur die Stuecke, die wirklich fehlen.
         let mut jobs: Vec<(String, Option<String>)> = Vec::new();
         for (sentence, voice) in &utterances {
@@ -2185,39 +2236,33 @@ impl TtsManager {
     ///
     /// Der Stil aus `<Name:Stil>` wird geparst (und damit aus dem gesprochenen
     /// Text entfernt), aber noch nicht aufgeloest — das ist Paket S5.
-    fn utterances(&self, text: &str) -> Vec<Utterance> {
+    ///
+    /// Die Sprecher sind die der AKTIVEN Engine: bei Fish die aufgenommenen Stimmen,
+    /// bei einem Anbieter mit Stimmwechsel (Phonon u. a.) die sichtbaren Stimmen seiner
+    /// Liste (`active_speakers`). Deshalb ist die Funktion async: die Liste des
+    /// Anbieters wird vorher gelesen (`ensure_provider_roster`, gehalten und nur selten
+    /// neu geholt).
+    async fn utterances(&self, text: &str) -> Vec<Utterance> {
         // Engine und gewaehlte Stimme zuerst aus den Einstellungen lesen: sonst
         // entscheidet der Stand des LETZTEN Auftrags, ob Sprechermarken gelten --
         // wer gerade von "Skript mit Sprechern" auf eine Piper-Stimme gewechselt
         // hat, bekam beim ersten Vorlesen noch die Sprecher der Fish-Stimmen.
         self.refresh_from_settings();
+        self.ensure_provider_roster().await;
         // Eine Engine ohne Stimmwechsel (Piper) darf keinen Marker sprechen,
         // auch keinen unbekannten: alle `<…>`-Kandidaten fallen weg, der
         // Text laeuft in der einen eingestellten Stimme.
         //
-        // Dasselbe, wenn im Stimmen-Dropdown eine BESTIMMTE Stimme gewaehlt
-        // ist (tts_voice gesetzt): dann liest diese Stimme alles, die
-        // Sprecher im Skript gelten nur bei "Skript mit Sprechern"
-        // (tts_voice = None). Vorher schalteten die Marker trotzdem um, und
-        // ein fertig erzeugtes Hoerspiel liess sich nicht mehr in einer
-        // anderen Stimme hoeren (26.09.2026).
-        let single_voice = self.core.voice.lock().unwrap().is_some();
-        let stripped;
-        let text = if speaker_markers_apply(self.core.engine_caps().voice_switching, single_voice) {
-            text
-        } else {
-            stripped = protocol::strip_speaker_markers(text);
-            stripped.as_str()
-        };
-        let speakers = self.known_speakers();
-        protocol::split_speaker_segments(text, &speakers)
-            .into_iter()
-            .flat_map(|segment| {
-                protocol::split_sentences(&segment.text)
-                    .into_iter()
-                    .map(move |sentence| (sentence, segment.voice.clone()))
-            })
-            .collect()
+        // Dasselbe, wenn eine BESTIMMTE Stimme gewaehlt ist (Fish: `tts_voice`
+        // gesetzt, Anbieter: dessen Stimme gewaehlt): dann liest diese Stimme
+        // alles, die Sprecher im Skript gelten nur bei "Skript mit Sprechern".
+        // Vorher schalteten die Marker trotzdem um, und ein fertig erzeugtes
+        // Hoerspiel liess sich nicht mehr in einer anderen Stimme hoeren
+        // (26.09.2026).
+        let single_voice = self.core.fixed_voice.load(Ordering::Acquire);
+        let markers_apply =
+            speaker_markers_apply(self.core.engine_caps().voice_switching, single_voice);
+        split_utterances(text, &self.active_speakers(), markers_apply)
     }
 
     /// Die gewaehlte Stimme oder Engine hat sich geaendert (die Einstellungen sind
@@ -3553,7 +3598,7 @@ impl TtsManager {
         // Die Grenze gilt weiterhin je SATZ (siehe unten): ein einzelner
         // Satz, der laenger als das Limit ist, waere fuer den Server ein
         // Problem, nicht fuer uns.
-        let utterances = self.utterances(raw.trim());
+        let utterances = self.utterances(raw.trim()).await;
         if utterances.is_empty() {
             return Err("empty text".to_string());
         }
@@ -3698,7 +3743,12 @@ impl TtsManager {
                 }
                 last_spec = Some(spec);
             }
-            marks.push((sentence.clone(), voice.clone(), segment_start, written));
+            marks.push((
+                sentence.clone(),
+                self.note_voice(voice.as_deref()),
+                segment_start,
+                written,
+            ));
             self.emit_export_progress(index as u32 + 1, total, false);
         }
         // Pause am Textende: mit der `spec` des letzten Teilstuecks.
@@ -3730,7 +3780,12 @@ impl TtsManager {
             std::path::Path::new(out_path),
             &notes::AudioNote {
                 text: raw.trim().to_string(),
-                voice: self.core.voice.lock().unwrap().clone(),
+                // Die Stimme dieser Engine: bei einem Anbieter seine eigene, nicht eine
+                // alte Fish-Stimme aus `tts_voice`.
+                voice: match self.core.engine_snapshot() {
+                    EngineImpl::Provider(p) => p.voice().map(String::from),
+                    _ => self.core.voice.lock().unwrap().clone(),
+                },
                 seed,
                 created_ms: notes::now_ms(),
                 // Ohne Abtastrate gibt es keine Zeitmarken — dann bleibt die
@@ -4320,6 +4375,117 @@ impl TtsManager {
 
     // ---- Sprecher-Registry (Paket B-S1) ------------------------------------
 
+    /// Die Sprecher der AKTIVEN Engine fuer den Parser: bei einem Anbieter mit
+    /// Stimmwechsel die zuletzt gelesene Liste seiner Stimmen
+    /// (`ensure_provider_roster`), bei einem Anbieter ohne Stimmwechsel keine, sonst
+    /// (Fish, Piper) die aufgenommenen Stimmen der Registry ([`Self::known_speakers`]).
+    fn active_speakers(&self) -> Vec<protocol::KnownSpeaker> {
+        match self.core.engine_snapshot() {
+            EngineImpl::Provider(p) => {
+                if !p.caps().voice_switching {
+                    return Vec::new();
+                }
+                match self.provider_roster.lock().unwrap().as_ref() {
+                    Some(cache) if cache.provider_id == p.id() => cache
+                        .speakers
+                        .iter()
+                        .map(|speaker| speaker.known(p.id()))
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            }
+            _ => self.known_speakers(),
+        }
+    }
+
+    /// Wie eine Stimme in der Herkunftsnotiz einer Aufnahme steht: Fish-Kennungen
+    /// unveraendert, ein Sprecher eines Anbieters mit seinem Namen (der Schluessel
+    /// `provider:<anbieter>:<stimme>` sagt dem Leser nichts).
+    fn note_voice(&self, voice: Option<&str>) -> Option<String> {
+        let voice = voice?;
+        if !providers::speakers::is_provider_key(voice) {
+            return Some(voice.to_string());
+        }
+        let held = self.provider_roster.lock().unwrap();
+        let name = held.as_ref().and_then(|cache| {
+            providers::speakers::name_of_key(&cache.provider_id, &cache.speakers, voice)
+        });
+        Some(name.map_or_else(|| voice.to_string(), String::from))
+    }
+
+    /// Die Sprecher des aktiven Anbieters lesen, falls er Stimmen wechseln kann und
+    /// die gehaltene Liste fehlt oder veraltet ist (Konfiguration geaendert, nach
+    /// [`ROSTER_TTL`]). Ein Anbieter, der nicht antwortet, haelt den Auftrag nicht
+    /// auf: nach der Frist des Anbieters bleibt die letzte bekannte Liste (oder keine)
+    /// und der naechste Versuch kommt erst nach [`ROSTER_RETRY`].
+    ///
+    /// Sichtbar sind dieselben Stimmen wie im Vorlesen-Dropdown (Auswahl "im Vorlesen
+    /// anzeigen", die gewaehlte Stimme bleibt). Gibt die Liste zurueck, die der Parser
+    /// jetzt benutzt (leer fuer Fish, Piper und Anbieter ohne Stimmwechsel).
+    pub(crate) async fn ensure_provider_roster(&self) -> Vec<providers::speakers::ProviderSpeaker> {
+        let EngineImpl::Provider(p) = self.core.engine_snapshot() else {
+            return Vec::new();
+        };
+        if !p.caps().voice_switching {
+            return Vec::new();
+        }
+        let config_key = p.cache_tag_for(None);
+        {
+            let held = self.provider_roster.lock().unwrap();
+            if let Some(cache) = held.as_ref() {
+                if cache.is_fresh(p.id(), &config_key, Instant::now()) {
+                    return cache.speakers.clone();
+                }
+            }
+        }
+        let visible = crate::settings::get_settings(&self.app)
+            .tts_providers
+            .visible_voices
+            .get(p.id())
+            .cloned();
+        let read = match p.list_voices().await {
+            Ok(voices) => Some(providers::speakers::build_roster(
+                &voices,
+                visible.as_ref(),
+                p.voice(),
+            )),
+            Err(error) => {
+                log::info!(
+                    "Stimmenliste von '{}' nicht gelesen ({:?}): {}",
+                    p.id(),
+                    error.kind,
+                    error.message
+                );
+                None
+            }
+        };
+        let mut held = self.provider_roster.lock().unwrap();
+        let next = providers::speakers::RosterCache::after_read(
+            held.as_ref(),
+            p.id(),
+            &config_key,
+            read,
+            Instant::now(),
+        );
+        let speakers = next.speakers.clone();
+        *held = Some(next);
+        speakers
+    }
+
+    /// Die Sprecher des aktiven Anbieters fuer die Oberflaeche (Befehl
+    /// `tts_provider_speakers`): genau die Liste, die auch der Parser benutzt. Leer
+    /// bei Fish, Piper und Anbietern ohne Stimmwechsel.
+    pub(crate) async fn provider_speakers(&self) -> Vec<providers::speakers::ProviderSpeaker> {
+        self.refresh_from_settings();
+        self.ensure_provider_roster().await
+    }
+
+    /// Die gehaltene Liste verwerfen: Auswahl "im Vorlesen anzeigen", gewaehlte
+    /// Stimme oder Konfiguration eines Anbieters haben sich geaendert.
+    pub(crate) fn invalidate_provider_roster(&self) {
+        *self.provider_roster.lock().unwrap() = None;
+    }
+
     /// Alle bekannten Sprecher fuer den Sprecher-Parser
     /// (`protocol::split_speaker_segments`): id und Anzeigename als Namen,
     /// gegen die ein `<Name>`/`Name:`-Marker im Vorlesetext abgeglichen wird.
@@ -4783,6 +4949,33 @@ fn speak_progress_payload(position: usize, total: usize) -> serde_json::Value {
 /// (keine feste Stimme gewaehlt). Sonst liest die gewaehlte Stimme alles.
 fn speaker_markers_apply(voice_switching: bool, single_voice: bool) -> bool {
     voice_switching && !single_voice
+}
+
+/// Den Vorlesetext in Saetze samt Stimme zerlegen (rein): je Sprecherabschnitt
+/// getrennt, damit ein Satz nie zwei Sprecher enthaelt. `markers_apply` (siehe
+/// [`speaker_markers_apply`]): ohne es fallen alle `<…>`-Kandidaten weg, und der Text
+/// laeuft in der einen eingestellten Stimme. Ein Marker ohne passenden Sprecher wird
+/// gestrichen und schaltet auf die eingestellte Stimme (`None`) zurueck.
+fn split_utterances(
+    text: &str,
+    speakers: &[protocol::KnownSpeaker],
+    markers_apply: bool,
+) -> Vec<Utterance> {
+    let stripped;
+    let text = if markers_apply {
+        text
+    } else {
+        stripped = protocol::strip_speaker_markers(text);
+        stripped.as_str()
+    };
+    protocol::split_speaker_segments(text, speakers)
+        .into_iter()
+        .flat_map(|segment| {
+            protocol::split_sentences(&segment.text)
+                .into_iter()
+                .map(move |sentence| (sentence, segment.voice.clone()))
+        })
+        .collect()
 }
 
 /// Startsatz einer Wiedergabe, die mitten im Text beginnt: nie hinter dem

@@ -26,6 +26,13 @@ export interface SpeakerRef {
   displayName: string;
   /** CSS-Farbe (bereits aus dem Palette-Key aufgelöst). */
   color: string;
+  /** Weitere Schreibweisen, die denselben Sprecher treffen (Anbieter-Stimmen:
+   *  die ganze Beschriftung). Dieselbe Regel wie im Backend (`ProviderSpeaker`). */
+  aliases?: string[];
+  /** `female`/`male`/… (nur Anbieter-Stimmen; Fish kennt es nicht). */
+  gender?: string | null;
+  /** Sprachkürzel der Stimme (`de`, `en-US`, `und`); leer/fehlend = unbekannt. */
+  language?: string;
 }
 
 export interface MarkerCandidate {
@@ -102,7 +109,8 @@ export function resolveSpeaker(
   return speakers.find(
     (s) =>
       foldSpeakerName(s.id) === needle ||
-      foldSpeakerName(s.displayName) === needle,
+      foldSpeakerName(s.displayName) === needle ||
+      (s.aliases ?? []).some((alias) => foldSpeakerName(alias) === needle),
   );
 }
 

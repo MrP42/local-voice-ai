@@ -84,6 +84,15 @@ Modells ist Modell plus Stimmen, „Löschen“ entfernt beides. Die Modellzeile
   Die Standardstimme des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar (der Haken der gewählten Stimme
   ist gesetzt und gesperrt). Das gilt für jeden Anbieter mit Stimmenliste außer Fish und Piper, die ihre eigenen Einträge
   im Dropdown haben; Anbieter ohne Freigabe oder mit Sperre erscheinen dort nicht.
+* **Mehrere Sprecher beim Vorlesen** (wie bei Fish): Im Vorlesen-Dropdown steht „Phonon · Skript mit Sprechern“; dort lesen die
+  Marker im Text `<Nele>`, `<Anton>` … die Zeilen des jeweiligen Sprechers, Text ohne Marker liest die Standardstimme des Modells.
+  Sprecher sind die sichtbaren Stimmen aus „Im Vorlesen anzeigen“ (Name = Teil vor „ – “; Rechtsklick im Text > „Sprecher
+  einfügen“ zeigt sie mit weiblich/männlich, die Skript-Prüfung kennt sie, „Sprecher tauschen“ bietet sie an). Ein unbekannter
+  Marker (`<Bob>`) wird nie vorgelesen, sondern gestrichen und liest die Standardstimme. Wählt man im Dropdown eine einzelne Stimme
+  („Phonon · Nele“), liest sie den ganzen Text und die Marker werden übergangen. Jede Stimme wird für sich zwischengespeichert,
+  ein Wechsel mitten im Vorlesen gilt ab dem nächsten Satz. Stil-Tags `[…]` setzt Phonon nicht um: sie werden vor der Synthese
+  entfernt (nie vorgelesen), die Palette zeigt nur Pausen. Dasselbe gilt für jeden Anbieter mit Stimmenliste und Stimmwechsel
+  (`caps.voice_switching`), z. B. einen OpenAI-kompatiblen Server mit `/audio/voices`.
 
 **Von Hand (Alternative)**: die folgenden Angaben gelten für ein selbst geladenes Programm und Modell.
 

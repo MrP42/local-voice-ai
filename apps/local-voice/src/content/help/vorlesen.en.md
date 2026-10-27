@@ -31,6 +31,7 @@ Each page is a worksheet with its own text and folder. The list shows the start 
 ## Voices
 
 - Select in the bar above the player. Piper voices show language and quality there, for example "Thorsten · German · HQ · Piper". Each tab remembers its voice.
+- **Providers such as Phonon** (Settings → Output → Speech providers) read with several speakers as long as the voice menu shows "Phonon · Script with speakers": `<Nele>` and `<Anton>` in the text switch between the provider's voices (right-click → "Insert speaker"). Text without a speaker is read in the default voice. A single voice ("Phonon · Nele") reads the whole text instead. These providers do not support emotion tags, only pauses.
 <!--if:fish-->
 - Listen, clone, import and delete: **Settings → Output**, or via "Manage voices …" at the end of the voice list.
 <!--/if:fish-->

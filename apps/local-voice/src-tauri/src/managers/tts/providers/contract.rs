@@ -154,6 +154,12 @@ pub struct ProviderCaps {
     /// Plattformkennungen wie im Katalog (`windows-x64`, `macos-aarch64`, …).
     pub platforms: Vec<String>,
     pub style_tags: bool,
+    /// Spricht der Anbieter je Auftrag eine andere Stimme (`SynthesisOptions::voice`) und
+    /// liefert er dafür eine Stimmenliste (`list_voices`)? Dann gelten Sprechermarker im
+    /// Skript (`<Name>`): die Satz-Pipeline wählt je Satz die Stimme seines Sprechers.
+    /// Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
+    #[serde(default)]
+    pub voice_switching: bool,
 }
 
 /// Statische Beschreibung eines Anbieters.
