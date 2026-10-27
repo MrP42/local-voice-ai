@@ -260,6 +260,8 @@ impl TtsProvider for MockProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: false,
+                // Zwei Stimmen (`list_voices`), `cache_tag` trägt die Stimme.
+                voice_switching: true,
             },
             license: LicenseInfo {
                 code: "MIT".to_string(),

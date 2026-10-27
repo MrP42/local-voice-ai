@@ -1327,6 +1327,8 @@ impl TtsProvider for PhononProvider {
                 .map(String::from)
                 .to_vec(),
                 style_tags: false,
+                // `--voice` je Aufruf; die Liste ist der Ordner `voices/` des Modells.
+                voice_switching: true,
             },
             license: self.license(),
         }

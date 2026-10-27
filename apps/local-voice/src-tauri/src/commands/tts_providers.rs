@@ -41,8 +41,8 @@ use crate::managers::tts::providers::contract::ProviderTier;
 use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::providers::policy::{self, LicenseAck, UseSubject};
 use crate::managers::tts::providers::{
-    ProviderDescriptor, ProviderHealth, ProviderRegistry, TtsError, TtsProvidersSettings,
-    VoiceDescriptor,
+    ProviderDescriptor, ProviderHealth, ProviderRegistry, ProviderSpeaker, TtsError,
+    TtsProvidersSettings, VoiceDescriptor,
 };
 use crate::managers::tts::TtsManager;
 use crate::settings::{self, AppSettings};
@@ -235,6 +235,10 @@ pub fn set_visible_voices_in(
 pub struct ProviderVoiceOption {
     pub provider_id: String,
     pub provider_label: String,
+    /// Der Anbieter wechselt die Stimme je Satz (`ProviderCaps::voice_switching`): seine
+    /// Standardstimme im Dropdown heißt dann "Skript mit Sprechern", seine Stimmen sind die
+    /// Sprecher im Text.
+    pub voice_switching: bool,
     pub voice: VoiceDescriptor,
 }
 
@@ -277,6 +281,7 @@ pub async fn voice_options(
                 .map(|voice| ProviderVoiceOption {
                     provider_id: desc.id.clone(),
                     provider_label: desc.label.clone(),
+                    voice_switching: desc.caps.voice_switching,
                     voice,
                 })
                 .collect::<Vec<_>>()
@@ -527,7 +532,22 @@ pub fn tts_provider_set_visible_voices(
     let mut current = settings::get_settings(&app);
     set_visible_voices_in(&mut current.tts_providers, &registry, &id, voices)?;
     settings::write_settings(&app, current);
+    // Die Sprecher im Skript sind die sichtbaren Stimmen: Marker und Editor sollen
+    // die neue Auswahl sofort kennen, nicht erst nach Ablauf der gehaltenen Liste.
+    manager(&app).invalidate_provider_roster();
     Ok(())
+}
+
+/// Die Sprecher des Anbieters, der gerade vorliest: seine sichtbaren Stimmen mit
+/// Name im Marker (`<Nele>`), Geschlecht und Sprache — GENAU die Liste, nach der die
+/// Pipeline Marker im Text schaltet, damit der Editor nie mehr einfärbt als später
+/// gesprochen wird. Leer bei Fish und Piper (deren Sprecher sind die aufgenommenen
+/// Stimmen, `tts_list_voice_infos`), bei einem Anbieter ohne Stimmwechsel, einem
+/// gesperrten oder nicht antwortenden Anbieter.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_provider_speakers(app: AppHandle) -> Result<Vec<ProviderSpeaker>, TtsError> {
+    Ok(manager(&app).provider_speakers().await)
 }
 
 /// Die Stimmen der freigegebenen Anbieter für das Vorlesen-Dropdown (nur die gewählten, siehe

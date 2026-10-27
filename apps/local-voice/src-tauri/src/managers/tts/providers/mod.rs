@@ -35,6 +35,10 @@
 //! * [`setup`] — baut die Registry aus den aufgelösten Konfigurationen
 //!   (alle fünf Anbieter immer registriert) und hält sie aktuell
 //!   ([`ProviderHost`]). Paket P3a.
+//! * [`speakers`] — die Sprecher eines Anbieters mit Stimmwechsel (`voice_switching`):
+//!   aus seiner Stimmenliste die Namen für Marker `<Name>` im Vorlesetext, die
+//!   gehaltene Liste ([`speakers::RosterCache`]) und der Schlüssel, der die
+//!   Stimme eines Satzes an ihre Welt bindet. Rein. Paket "mehrere Sprecher".
 //! * [`pipeline`] — [`ProviderEngine`]: ein Registry-Anbieter als Engine der
 //!   Vorlese-Pipeline (`tts_engine = "provider:<id>"`, Variante
 //!   `EngineImpl::Provider`). Paket P3a.
@@ -121,6 +125,7 @@ pub mod policy;
 pub mod preview;
 pub mod registry;
 pub mod setup;
+pub mod speakers;
 pub mod wav;
 
 #[cfg(test)]
@@ -152,3 +157,4 @@ pub use registry::{
     stream_with_retry, with_retry, DeliveryTracker, ProviderRegistry, RequestGuard, RetryPolicy,
 };
 pub use setup::{build_registry, sync_registry, sync_registry_gated, ProviderHost, ProviderPaths};
+pub use speakers::ProviderSpeaker;

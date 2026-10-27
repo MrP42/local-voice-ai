@@ -210,6 +210,9 @@ impl TtsManager {
     /// (`ProviderEngine::guard`) — hier kommt nur der Neuaufbau der Engine dazu,
     /// damit auch Modell und Adresse der neuen Konfiguration gelten.
     pub(crate) fn providers_changed(&self) {
+        // Die Sprecher des Anbieters (Stimmenliste, Auswahl, gewaehlte Stimme) koennen
+        // sich mit geaendert haben: beim naechsten Zerlegen des Textes neu lesen.
+        self.invalidate_provider_roster();
         self.refresh_from_settings();
         if self.provider_preview.enforce() {
             log::info!("Probestimme beendet: der Anbieter ist nicht mehr freigegeben");
