@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
+  Replace,
   Trash2,
   UserCog,
   Users,
@@ -338,8 +339,7 @@ const SpeakerChipPopover: React.FC<{
   );
 };
 
-const MENU_ROW =
-  "flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none";
+const MENU_ROW = "lv-menu-item";
 
 /**
  * Abschnitt „Sprecher ändern" im Kontextmenü: steht der Rechtsklick auf einem
@@ -363,6 +363,7 @@ const SpeakerChangeSection: React.FC<{
   const current = resolveSpeaker(marker.name, speakers);
   const count = markersNamed(text, marker.name).length;
   const choices = filtered.filter((s) => s.id !== current?.id);
+  const replaceEverywhere = api.replaceEverywhere;
 
   const applyHere = (speaker: SpeakerRef) =>
     api.replaceRange?.(
@@ -397,6 +398,20 @@ const SpeakerChangeSection: React.FC<{
           <ChevronRight width={15} height={15} aria-hidden="true" />
         )}
       </button>
+      {replaceEverywhere && (
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="menu-speaker-replace-everywhere"
+          onClick={() => replaceEverywhere(marker.name)}
+          className="lv-menu-item"
+        >
+          <Replace width={15} height={15} aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            {t("tts.replaceSpeaker.menu", { name: marker.name })}
+          </span>
+        </button>
+      )}
       {open && picked && (
         <div
           className="border-t border-mid-gray/15 px-2 py-1"
@@ -473,7 +488,7 @@ const SpeakerMenuSection: React.FC<{
         role="menuitem"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none"
+        className="lv-menu-item"
       >
         <Users width={15} height={15} aria-hidden="true" />
         <span className="flex-1">{t("tts.speakers.menuInsert")}</span>

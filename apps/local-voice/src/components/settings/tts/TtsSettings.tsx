@@ -58,6 +58,8 @@ import {
 } from "./speakers";
 import { useEngineCaps } from "./useEngineCaps";
 import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
+import { ReplaceSpeakerDialog } from "./speakers/ReplaceSpeakerDialog";
+import { useContextMenu } from "../../ui/ContextMenu";
 import {
   applySwap,
   speakersInText,
@@ -77,7 +79,7 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, Replace, Settings } from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
@@ -257,6 +259,11 @@ export const TtsSettings = () => {
   // 28.10.2026). Werte wie im Dropdown: "@default", "<fish-id>", "piper:<id>",
   // "provider:<id>:<stimme>". Fehlt ein Eintrag, bleibt die aktuelle Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
+  /** "Sprecher auf allen Seiten ersetzen": offen, mit optionaler Vorbelegung. */
+  const [replaceSpeaker, setReplaceSpeaker] = useState<{
+    from?: string;
+  } | null>(null);
+  const voiceMenu = useContextMenu(t("tts.voices.title"));
   const [translation, setTranslation] = useState<string | null>(null);
   /** Sprachen, in die diese Seite uebersetzt ist (Reiter ueber dem Feld). */
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
@@ -909,8 +916,14 @@ export const TtsSettings = () => {
     const wanted =
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
-    if (!wanted || wanted === voiceValue) return;
+    if (!wanted) return;
     const marker = `${activePage ?? ""}|${voiceKey}|${wanted}`;
+    // Schon aktiv (z. B. gerade im Dropdown gewaehlt): als erledigt merken, damit
+    // ein spaeteres Zurueckschalten auf diese Wahl nicht an einer alten Marke haengt.
+    if (wanted === voiceValue) {
+      appliedFor.current = marker;
+      return;
+    }
     if (appliedFor.current === marker) return;
     appliedFor.current = marker;
     pendingApply.current = {
@@ -1504,6 +1517,7 @@ export const TtsSettings = () => {
           onToggle={() => setPagesCollapsed(pagesCollapsed === "1" ? "0" : "1")}
           onSelect={setActivePage}
           onChanged={() => void reloadPages()}
+          onReplaceSpeaker={() => setReplaceSpeaker({})}
           width={ws.pages.width}
         />
         {pagesCollapsed !== "1" && (
@@ -1627,6 +1641,9 @@ export const TtsSettings = () => {
                     onSpeakFrom={(offset, onlyOne) =>
                       void speakFrom(offset, onlyOne)
                     }
+                    onReplaceSpeakerEverywhere={(name) =>
+                      setReplaceSpeaker({ from: name })
+                    }
                   />
                 ) : tab === "translation" ? (
                   <TtsChipEditor
@@ -1643,6 +1660,9 @@ export const TtsSettings = () => {
                     onSpeakFrom={(offset, onlyOne) =>
                       void speakFrom(offset, onlyOne)
                     }
+                    onReplaceSpeakerEverywhere={(name) =>
+                      setReplaceSpeaker({ from: name })
+                    }
                   />
                 ) : (
                   <TtsChipEditor
@@ -1657,6 +1677,9 @@ export const TtsSettings = () => {
                     onRedo={history.redo}
                     onSpeakFrom={(offset, onlyOne) =>
                       void speakFrom(offset, onlyOne)
+                    }
+                    onReplaceSpeakerEverywhere={(name) =>
+                      setReplaceSpeaker({ from: name })
                     }
                   />
                 )}
@@ -1846,6 +1869,35 @@ export const TtsSettings = () => {
                     aria-label={t("tts.voices.title")}
                     aria-describedby="voice-mode-hint"
                     data-testid="voice-select"
+                    onContextMenu={(event) =>
+                      voiceMenu.open(event, [
+                        {
+                          id: "replace",
+                          label: t("tts.replaceSpeaker.voiceMenu"),
+                          icon: Replace,
+                          testId: "voice-menu-replace",
+                          disabled: speakers.length < 2,
+                          onSelect: () => setReplaceSpeaker({}),
+                        },
+                        {
+                          id: "manage",
+                          label: t("tts.voices.manage"),
+                          icon: Settings,
+                          testId: "voice-menu-manage",
+                          onSelect: () => {
+                            window.localStorage.setItem(
+                              "lva.ui.settings.tab",
+                              "output",
+                            );
+                            window.dispatchEvent(
+                              new CustomEvent("lv-navigate", {
+                                detail: { section: "settings" },
+                              }),
+                            );
+                          },
+                        },
+                      ])
+                    }
                   >
                     {/* Kennwert statt leerem Text fuer die Standardstimme:
                       "" gilt der Select-Komponente als "nichts gewaehlt" und
@@ -2182,6 +2234,25 @@ export const TtsSettings = () => {
             </p>
           </Dialog>
 
+          <ReplaceSpeakerDialog
+            open={replaceSpeaker !== null}
+            onOpenChange={(isOpen) => {
+              if (!isOpen) setReplaceSpeaker(null);
+            }}
+            speakers={speakers}
+            providerId={providerEngineId}
+            pages={pages}
+            activePageId={activePage}
+            active={{ text, summary, voices: tabVoices }}
+            onApplyActive={(next) => {
+              setText(next.text);
+              setSummary(next.summary);
+              setTabVoices(next.voices);
+            }}
+            onSaved={() => void reloadPages()}
+            initialFrom={replaceSpeaker?.from}
+          />
+          {voiceMenu.menu}
           <SpeakerSwapDialog
             open={swapOpen}
             onOpenChange={setSwapOpen}

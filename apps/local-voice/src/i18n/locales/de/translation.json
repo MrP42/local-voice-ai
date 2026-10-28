@@ -322,6 +322,22 @@
       "cancel": "Abbrechen",
       "cancelled": "Abgebrochen."
     },
+    "replaceSpeaker": {
+      "title": "Sprecher auf allen Seiten ersetzen",
+      "description": "Ersetzt die Marker <Name> in Text und Zusammenfassung jeder Seite sowie die dort gemerkte Stimme. Der Stil jeder Stelle bleibt. Übersetzungen entstehen aus dem Original neu.",
+      "from": "Ersetze",
+      "to": "durch",
+      "pick": "Wähle zwei verschiedene Sprecher.",
+      "none": "Diese Stimme kommt auf keiner Seite vor.",
+      "preview": "{{markers}} Marker und gemerkte Stimmen auf {{pages}} Seite(n) werden geändert.",
+      "done": "Fertig: {{markers}} Marker auf {{pages}} Seite(n) ersetzt.",
+      "doneFailed": "Fertig, aber {{failed}} Seite(n) ließen sich nicht speichern. Ersetzt: {{markers}} Marker auf {{pages}} Seite(n).",
+      "apply": "Auf allen Seiten ersetzen",
+      "cancel": "Abbrechen",
+      "close": "Schließen",
+      "menu": "„{{name}}“ auf allen Seiten ersetzen …",
+      "voiceMenu": "Sprecher auf allen Seiten ersetzen …"
+    },
     "speakerSwap": {
       "open": "Sprecher tauschen …",
       "hint": "Die Sprecher der Übersetzung gegen Stimmen der Zielsprache tauschen",

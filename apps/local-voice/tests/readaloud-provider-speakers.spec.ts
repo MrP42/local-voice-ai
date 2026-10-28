@@ -18,6 +18,8 @@ type Cfg = {
   switching?: boolean;
   /** Zwei Seiten; die zweite hat (alt) eine eigene Stimme gespeichert. */
   twoPages?: boolean;
+  /** Seite 2 enthält einen Sprecher-Marker (<Nele>). */
+  markers?: boolean;
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -210,7 +212,7 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "page_state_load")
             return args?.id === "p2"
               ? JSON.stringify({
-                  text: "Zweite Seite.",
+                  text: cfg.markers ? "<Nele> Zweite Seite." : "Zweite Seite.",
                   tab: "original",
                   voices: { original: "provider:phonon:anton-id" },
                 })
@@ -698,4 +700,54 @@ test("Die Stimme gehört zur Seite: ein Seitenwechsel holt die Stimme der neuen 
   await expect(editorOf(page)).toHaveValue("Zweite Seite.");
   await expect(select).toContainText("Phonon · Anton");
   await expect.poll(async () => (await selects()).length).toBe(2);
+});
+
+test("Rechtsklick auf eine Seite öffnet ein Fluent-Menü statt des Browsermenüs", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", twoPages: true });
+  await gotoReadAloud(page);
+  await page
+    .getByText("Hörbuch", { exact: true })
+    .click({ button: "right", position: { x: 4, y: 4 } });
+  const menu = page.getByRole("menu", { name: "Seiten" });
+  await expect(menu).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Umbenennen" }),
+  ).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /löschen/i })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+});
+
+test("Sprecher auf allen Seiten ersetzen: Vorschau zählt, Anwenden schreibt Seiten und offenen Text", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    twoPages: true,
+    markers: true,
+  });
+  const select = await gotoReadAloud(page);
+  await editorOf(page).fill("<Nele> Eins.\n<Anton> Zwei.");
+  await select.click({ button: "right" });
+  await page.getByTestId("voice-menu-replace").click();
+  const from = page.getByTestId("replace-speaker-from");
+  const to = page.getByTestId("replace-speaker-to");
+  await from.selectOption({ label: "Nele" });
+  await to.selectOption({ label: "Anton" });
+  await expect(page.getByTestId("replace-speaker-preview")).toContainText(
+    "2 Marker",
+  );
+  await page.getByTestId("replace-speaker-apply").click();
+  await expect(page.getByTestId("replace-speaker-preview")).toContainText(
+    "Fertig",
+  );
+  await page.getByRole("button", { name: "Schließen" }).first().click();
+  await expect(editorOf(page)).toHaveValue("<Anton> Eins.\n<Anton> Zwei.");
+  const saves = await calls(page, "page_state_save");
+  const other = saves.find((c) => c[1]?.id === "p2");
+  expect(JSON.parse(String(other?.[1]?.state)).text).toBe(
+    "<Anton> Zweite Seite.",
+  );
 });

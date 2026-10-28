@@ -56,7 +56,7 @@ const MenuRow: React.FC<{
     role="menuitem"
     disabled={disabled}
     onClick={onClick}
-    className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:bg-mid-gray/15 focus-visible:text-text disabled:cursor-default disabled:text-text/30 disabled:hover:bg-transparent"
+    className="lv-menu-item"
   >
     <Icon width={15} height={15} aria-hidden="true" />
     {label}
@@ -74,7 +74,7 @@ const TagRow: React.FC<{
     role="menuitem"
     onClick={() => onPick(tag)}
     title={uiLang === "de" ? tag.description?.de : tag.description?.en}
-    className="flex min-h-[44px] w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 text-start text-sm text-text/80 hover:bg-logo-primary/10 hover:text-text focus-visible:outline-none focus-visible:bg-logo-primary/10 focus-visible:text-text"
+    className="lv-menu-item justify-between"
   >
     <span className="truncate">{localizedLabel(tag, uiLang)}</span>
     <span className="shrink-0 text-xs text-text/45">
@@ -256,7 +256,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
             ? { left: pos.left, top: pos.top }
             : { left: -9999, top: 0, visibility: "hidden" }
         }
-        className="fixed z-50 w-72 rounded-lg border border-mid-gray/40 bg-background py-1 shadow-lg"
+        className="lv-menu-surface fixed z-50 w-72 p-1"
       >
         <MenuRow
           icon={Scissors}
@@ -281,7 +281,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
           role="menuitem"
           aria-expanded={subOpen}
           onClick={() => setSubOpen((open) => !open)}
-          className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:bg-mid-gray/15 focus-visible:text-text"
+          className="lv-menu-item"
         >
           <Tag width={15} height={15} aria-hidden="true" />
           <span className="flex-1">{t("tts.editor.menuInsertTag")}</span>
