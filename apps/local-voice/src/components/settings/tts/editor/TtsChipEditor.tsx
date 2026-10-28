@@ -73,6 +73,9 @@ export interface ChipMenuApi {
    *  den ganzen Text in EINEM Schritt ersetzen. Beide schließen das Menü. */
   replaceRange?(start: number, end: number, insert: string): void;
   replaceText?(next: string): void;
+  /** Optionale Erweiterung: den Sprecher mit diesem Namen auf ALLEN Seiten
+   *  ersetzen (oeffnet den Dialog der Seite). Schliesst das Menue. */
+  replaceEverywhere?(name: string): void;
 }
 
 export interface ChipProvider {
@@ -154,6 +157,8 @@ interface TtsChipEditorProps {
   /** Vorlesen ab der Rechtsklick-Stelle (bzw. nur diesen Satz). Der Offset
    *  ist ein Zeichen-Offset (Codepoints), wie ihn das Backend erwartet. */
   onSpeakFrom?: (charOffset: number, onlyOne: boolean) => void;
+  /** Sprecher `<Name>` auf allen Seiten ersetzen (Rechtsklick auf den Marker). */
+  onReplaceSpeakerEverywhere?: (name: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +376,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   onUndo,
   onRedo,
   onSpeakFrom,
+  onReplaceSpeakerEverywhere,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -1086,6 +1092,12 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
       valueRef.current = next;
       onChangeRef.current(next);
     },
+    replaceEverywhere: onReplaceSpeakerEverywhere
+      ? (name) => {
+          closeMenu();
+          onReplaceSpeakerEverywhere(name);
+        }
+      : undefined,
   };
 
   // ---- Ueberall ersetzen (Kontextmenue) ----------------------------------
@@ -1376,7 +1388,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
                       setMenu(null);
                       onSpeakFrom(chars, onlyOne);
                     }}
-                    className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none"
+                    className="lv-menu-item"
                   >
                     {onlyOne ? (
                       <PlayCircle width={15} height={15} aria-hidden="true" />
@@ -1403,7 +1415,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
                   role="menuitem"
                   onClick={openReplaceAll}
                   data-testid="menu-replace-all"
-                  className="flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none"
+                  className="lv-menu-item"
                 >
                   <Replace width={15} height={15} aria-hidden="true" />
                   <span className="min-w-0 truncate">

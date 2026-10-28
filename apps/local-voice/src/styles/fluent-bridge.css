@@ -463,3 +463,43 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     width: 100%;
   }
 }
+
+/* Rechtsklick-Menues des Editors im Fluent-Stil (wie Fluent `Menu`): gleiche
+   Flaeche, Zeilenhoehe und Hover-Farben; auf Touch-Geraeten 44px. */
+.lv-menu-surface {
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorTransparentStroke);
+  border-radius: var(--borderRadiusMedium);
+  box-shadow: var(--shadow16);
+  color: var(--colorNeutralForeground1);
+}
+.lv-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: var(--borderRadiusMedium);
+  background: transparent;
+  color: var(--colorNeutralForeground1);
+  font-size: var(--fontSizeBase300);
+  text-align: start;
+  cursor: pointer;
+}
+.lv-menu-item:hover,
+.lv-menu-item:focus-visible {
+  background: var(--colorNeutralBackground1Hover);
+  outline: none;
+}
+.lv-menu-item:disabled {
+  color: var(--colorNeutralForegroundDisabled);
+  cursor: default;
+  background: transparent;
+}
+@media (pointer: coarse) {
+  .lv-menu-item {
+    min-height: 44px;
+  }
+}

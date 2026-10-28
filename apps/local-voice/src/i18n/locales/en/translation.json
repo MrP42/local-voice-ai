@@ -322,6 +322,21 @@
       "cancel": "Cancel",
       "cancelled": "Cancelled."
     },
+    "replaceSpeaker": {
+      "title": "Replace speaker on all pages",
+      "description": "Replaces the <Name> markers in the text and summary of every page, and the voice remembered there. Each marker keeps its style. Translations are rebuilt from the original.",
+      "from": "Replace",
+      "to": "with",
+      "pick": "Pick two different speakers.",
+      "none": "This voice does not occur on any page.",
+      "preview": "{{markers}} markers and remembered voices on {{pages}} page(s) will change.",
+      "done": "Done: {{markers}} markers replaced on {{pages}} page(s).",
+      "apply": "Replace on all pages",
+      "cancel": "Cancel",
+      "close": "Close",
+      "menu": "Replace “{{name}}” on all pages …",
+      "voiceMenu": "Replace speaker on all pages …"
+    },
     "speakerSwap": {
       "open": "Swap speakers …",
       "hint": "Replace the translation's speakers with voices of the target language",

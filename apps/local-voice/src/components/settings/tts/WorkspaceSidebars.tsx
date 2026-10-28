@@ -13,6 +13,7 @@ import { Button } from "../../ui/Button";
 import { IconButton } from "../../ui/IconButton";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
+import { useContextMenu } from "../../ui/ContextMenu";
 import { TabList } from "../../ui/TabList";
 import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
@@ -32,6 +33,7 @@ import {
   PackagePlus,
   Pencil,
   Plus,
+  Replace,
   RefreshCw,
   Rows2,
   Square,
@@ -88,15 +90,27 @@ export const PagesSidebar: React.FC<{
   onToggle: () => void;
   onSelect: (id: string) => void;
   onChanged: () => void;
+  /** Eintrag "Sprecher auf allen Seiten ersetzen" im Rechtsklick-Menue. */
+  onReplaceSpeaker?: () => void;
   /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
   width?: number;
-}> = ({ pages, activeId, collapsed, onToggle, onSelect, onChanged, width }) => {
+}> = ({
+  pages,
+  activeId,
+  collapsed,
+  onToggle,
+  onSelect,
+  onChanged,
+  onReplaceSpeaker,
+  width,
+}) => {
   const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<PageInfo | null>(null);
   const [exportTarget, setExportTarget] = useState<PageInfo | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const rowMenu = useContextMenu(t("tts.pages.title"));
 
   const create = async () => {
     const result = await commands.pagesCreate("");
@@ -193,6 +207,61 @@ export const PagesSidebar: React.FC<{
             setEditingId(page.id);
             setEditTitle(page.title);
           }}
+          onContextMenu={(event) =>
+            rowMenu.open(event, [
+              {
+                id: "rename",
+                label: t("tts.pages.rename"),
+                icon: Pencil,
+                testId: "page-menu-rename",
+                onSelect: () => {
+                  setEditingId(page.id);
+                  setEditTitle(page.title);
+                },
+              },
+              {
+                id: "up",
+                label: t("tts.pages.moveUp"),
+                icon: ChevronUp,
+                disabled: index === 0,
+                onSelect: () => void move(page.id, -1),
+              },
+              {
+                id: "down",
+                label: t("tts.pages.moveDown"),
+                icon: ChevronDown,
+                disabled: index === pages.length - 1,
+                onSelect: () => void move(page.id, 1),
+              },
+              {
+                id: "export",
+                label: t("tts.pages.package.exportTitle"),
+                icon: PackagePlus,
+                onSelect: () => setExportTarget(page),
+              },
+              ...(onReplaceSpeaker
+                ? [
+                    {
+                      id: "replace",
+                      label: t("tts.replaceSpeaker.voiceMenu"),
+                      icon: Replace,
+                      testId: "page-menu-replace-speaker",
+                      separatorBefore: true,
+                      onSelect: onReplaceSpeaker,
+                    },
+                  ]
+                : []),
+              {
+                id: "delete",
+                label: t("tts.pages.delete"),
+                icon: Trash2,
+                danger: true,
+                separatorBefore: true,
+                testId: "page-menu-delete",
+                onSelect: () => setDeleteTarget(page),
+              },
+            ])
+          }
         >
           {editingId === page.id ? (
             <Input
@@ -298,6 +367,7 @@ export const PagesSidebar: React.FC<{
         </div>
       ))}
 
+      {rowMenu.menu}
       <PageExportDialog
         page={exportTarget}
         onClose={() => setExportTarget(null)}

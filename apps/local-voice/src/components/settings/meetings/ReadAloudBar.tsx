@@ -15,6 +15,7 @@ import {
 import { commands } from "@/bindings";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { IconAction } from "../../ui/IconAction";
+import { useContextMenu } from "../../ui/ContextMenu";
 import { VOICE_MANAGE, useVoiceChoice } from "../tts/useVoiceChoice";
 import { SamplePlayButton } from "../tts/providers/SamplePlayButton";
 import { VoiceTryButton } from "../tts/providers/VoiceTryButton";
@@ -206,6 +207,7 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
     tryOf,
   } = useVoiceChoice(phase);
 
+  const contextMenu = useContextMenu(t("tts.voices.title"));
   const voiceLabel = options.find((o) => o.value === voiceValue)?.label ?? "";
   const items: ActionMenuItem[] = options.map((option) =>
     option.value === VOICE_MANAGE
@@ -262,7 +264,19 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
     <div
       className="@container flex min-w-[28px] flex-[1_1_28px] items-center gap-1"
       data-testid={`${testId}-bar-voice`}
+      onContextMenu={(event) =>
+        contextMenu.open(event, [
+          {
+            id: "manage",
+            label: t("tts.voices.manage"),
+            icon: Settings,
+            testId: `${testId}-bar-voice-context-manage`,
+            onSelect: openVoiceManagement,
+          },
+        ])
+      }
     >
+      {contextMenu.menu}
       <ActionMenu
         trigger={{
           icon: ChevronDown,
