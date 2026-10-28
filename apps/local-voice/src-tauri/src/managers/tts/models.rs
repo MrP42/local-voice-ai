@@ -412,6 +412,10 @@ impl TtsModelManager {
             Outcome::Cancelled => Ok(()),
             Outcome::Installed => {
                 let _ = self.app_handle.emit("model-download-complete", id);
+                crate::managers::tts::providers::samples::refresh_in_background(
+                    &self.app_handle,
+                    "phonon",
+                );
                 Ok(())
             }
         }

@@ -79,6 +79,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import { HelpCircle } from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
+import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 
@@ -884,6 +885,7 @@ export const TtsSettings = () => {
     noVoiceSetUp,
     piperVoiceLabel,
     options: voiceOptions,
+    sampleOf,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
@@ -1812,6 +1814,26 @@ export const TtsSettings = () => {
                       menuPortal
                       value={voiceValue}
                       options={voiceOptions}
+                      formatOptionLabel={(option, context) => {
+                        const sample =
+                          context === "menu"
+                            ? sampleOf(option.value)
+                            : undefined;
+                        if (!sample) return option.label;
+                        return (
+                          <span className="flex items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate">
+                              {option.label}
+                            </span>
+                            <SamplePlayButton
+                              inline
+                              path={sample.path}
+                              name={sample.name}
+                              testId={`voice-sample-${option.value}`}
+                            />
+                          </span>
+                        );
+                      }}
                       onChange={(value) => {
                         if (!value) return;
                         if (value === "@manage") {

@@ -150,6 +150,11 @@
         "blocked": "Voices can only be listed after the provider is approved.",
         "use": "Use as reading voice",
         "usedNow": "This provider now reads aloud.",
+        "sample": {
+          "play": "Listen: {{name}}",
+          "stop": "Stop sample: {{name}}",
+          "pending": "Creating a sample of {{name}} …"
+        },
         "visible": {
           "title": "Show in Read aloud",
           "hint": "Which voices appear in the voice dropdown of the Read aloud page and in the playback bar of the recordings. If the provider switches voices per sentence, they are also the speakers in the script (<Name>). The provider default and the currently chosen voice always stay visible.",

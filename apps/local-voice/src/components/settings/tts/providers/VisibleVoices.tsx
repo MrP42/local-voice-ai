@@ -13,6 +13,8 @@ import {
   isVoiceShown,
   toggleVisibleVoice,
 } from "./providerModel";
+import { SamplePlayButton } from "./SamplePlayButton";
+import { useVoiceSamples } from "./useVoiceSamples";
 
 /** Fensterereignis: die Auswahl "im Vorlesen anzeigen" hat sich geaendert (Dropdowns laden neu). */
 export const PROVIDER_VOICES_CHANGED = "lv-provider-voices-changed";
@@ -33,6 +35,7 @@ export const VisibleVoices: React.FC<{ entry: TtsProviderEntry }> = ({
   const [voices, setVoices] = useState<VoiceDescriptor[] | null>(null);
   const [visible, setVisible] = useState<string[]>(entry.visible_voices ?? []);
   const [error, setError] = useState<string | null>(null);
+  const samples = useVoiceSamples(id);
   const visibleKey = (entry.visible_voices ?? []).join("\u0000");
 
   // Der Stand des Backends gilt, sobald die Liste neu geladen wurde.
@@ -203,6 +206,13 @@ export const VisibleVoices: React.FC<{ entry: TtsProviderEntry }> = ({
                   <p className="text-xs text-text/70">{rest.join(" – ")}</p>
                 )}
               </div>
+              {voice.id in samples && (
+                <SamplePlayButton
+                  path={samples[voice.id]}
+                  name={name.trim() || voice.id}
+                  testId={`tts-provider-sample-${voice.id}`}
+                />
+              )}
             </li>
           );
         })}

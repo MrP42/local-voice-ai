@@ -34,6 +34,12 @@ type BaseProps = {
   /** Zugänglicher Name des Eingabefelds (die sichtbare Beschriftung steht
    *  meist daneben, ohne mit dem Feld verbunden zu sein). */
   ariaLabel?: string;
+  /** Eigene Darstellung eines Eintrags (`menu`: in der offenen Liste,
+   *  `value`: im geschlossenen Feld). Standard: nur die Beschriftung. */
+  formatOptionLabel?: (
+    option: SelectOption,
+    context: "menu" | "value",
+  ) => React.ReactNode;
 };
 
 type CreatableProps = {
@@ -143,6 +149,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     className = "",
     menuPortal = false,
     ariaLabel,
+    formatOptionLabel,
     isCreatable,
     formatCreateLabel,
     onCreateOption,
@@ -175,6 +182,14 @@ export const Select: React.FC<SelectProps> = React.memo(
       onBlur,
       isClearable,
       styles: selectStyles,
+      ...(formatOptionLabel
+        ? {
+            formatOptionLabel: (
+              option: SelectOption,
+              meta: { context: "menu" | "value" },
+            ) => formatOptionLabel(option, meta.context),
+          }
+        : {}),
       // Portal + fixed: die Liste richtet sich am Fenster aus und flippt bei
       // Platzmangel; Scrollen der Seite soll sie nicht verschieben.
       ...(menuPortal && typeof document !== "undefined"

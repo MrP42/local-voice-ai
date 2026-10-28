@@ -17,6 +17,7 @@ import {
   shortVoiceName,
 } from "./providers/providerModel";
 import { PROVIDER_VOICES_CHANGED } from "./providers/VisibleVoices";
+import { useVoiceSamplesOf } from "./providers/useVoiceSamples";
 
 /** Eintrag der Stimmenauswahl, der keine Stimme ist, sondern ein Sprung zur Verwaltung. */
 export const VOICE_MANAGE = "@manage";
@@ -372,6 +373,27 @@ export function useVoiceChoice(phase: string) {
     { value: VOICE_MANAGE, label: t("tts.voices.manage") },
   ];
 
+  /* Hoerproben der Anbieter-Stimmen (nur Anbieter mit Vorratsproben liefern welche). */
+  const sampleProviders = useMemo(
+    () => [...new Set(providerVoices.map((o) => o.provider_id))].sort(),
+    [providerVoices],
+  );
+  const samples = useVoiceSamplesOf(sampleProviders);
+  /** Hoerprobe zu einem Eintrag des Dropdowns: `undefined` = keine vorgesehen,
+      `path: null` = sie entsteht noch. */
+  const sampleOf = useCallback(
+    (value: string): { path: string | null; name: string } | undefined => {
+      const picked = parseProviderVoiceValue(value);
+      if (!picked) return undefined;
+      const voices = samples[picked.providerId];
+      if (!voices || !(picked.voice in voices)) return undefined;
+      // Der Name, wie er im Dropdown steht (auch "Skript mit Sprechern").
+      const item = providerVoiceItems.find((o) => o.value === value);
+      return { path: voices[picked.voice], name: item?.label ?? picked.voice };
+    },
+    [samples, providerVoiceItems],
+  );
+
   /** Sprung zur Stimmenverwaltung (Eintrag `VOICE_MANAGE`). */
   const openVoiceManagement = useCallback(() => {
     openSettingsTab("output");
@@ -391,6 +413,7 @@ export function useVoiceChoice(phase: string) {
     noVoiceSetUp,
     piperVoiceLabel,
     options,
+    sampleOf,
     openVoiceManagement,
   };
 }

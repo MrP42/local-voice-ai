@@ -124,6 +124,7 @@ pub mod pipeline;
 pub mod policy;
 pub mod preview;
 pub mod registry;
+pub mod samples;
 pub mod setup;
 pub mod speakers;
 pub mod wav;

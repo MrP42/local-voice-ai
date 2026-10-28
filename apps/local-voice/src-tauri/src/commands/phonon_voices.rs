@@ -34,6 +34,7 @@ use crate::managers::tts::phonon_clone::{
 };
 use crate::managers::tts::phonon_models;
 use crate::managers::tts::phonon_voices::{ModelTarget, OwnVoice, VoiceStore};
+use crate::managers::tts::providers::samples;
 use crate::managers::tts::TtsManager;
 
 /// Bindung der Mikrofonaufnahme im `AudioRecordingManager`.
@@ -151,13 +152,16 @@ pub async fn phonon_own_voice_import(
     name: String,
     overwrite: bool,
 ) -> Result<OwnVoice, PhononVoiceError> {
-    blocking(move || {
+    let handle = app.clone();
+    let voice = blocking(move || {
         let ctx = Ctx::new(&app);
         Ok(ctx
             .store()
             .import_file(std::path::Path::new(&path), &name, overwrite)?)
     })
-    .await
+    .await?;
+    samples::refresh_in_background(&handle, "phonon");
+    Ok(voice)
 }
 
 /// Eine eigene Stimme entfernen (nur eigene; mitgelieferte Stimmen nie).
@@ -200,10 +204,12 @@ pub async fn phonon_voice_clone(
         recording: &PENDING_RECORDING,
     };
     let emitter = app.clone();
-    phonon_clone::create_voice(&env, &CLONE_JOB, request, &move |phase: Phase| {
+    let voice = phonon_clone::create_voice(&env, &CLONE_JOB, request, &move |phase: Phase| {
         let _ = emitter.emit(PHASE_EVENT, phase);
     })
-    .await
+    .await?;
+    samples::refresh_in_background(&app, "phonon");
+    Ok(voice)
 }
 
 /// Die laufende Erstellung abbrechen (Anfragen enden binnen etwa 50 ms; nichts wird gespeichert).
