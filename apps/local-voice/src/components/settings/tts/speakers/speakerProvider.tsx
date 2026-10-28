@@ -6,12 +6,22 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Trash2, Users } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+  UserCog,
+  Users,
+} from "lucide-react";
 import { commands, type ProviderSpeaker } from "@/bindings";
 import { Input } from "@/components/ui/Input";
 import { useSettings } from "@/hooks/useSettings";
 import { VOICE_PALETTE, voiceColor } from "@/lib/voices/palette";
 import {
+  markerAt,
+  markersNamed,
+  renameSpeakerMarkers,
+  resolveSpeaker,
   scanSpeakerMarkers,
   speakerMarkerText,
   type SpeakerRef,
@@ -328,6 +338,125 @@ const SpeakerChipPopover: React.FC<{
   );
 };
 
+const MENU_ROW =
+  "flex min-h-[44px] w-full cursor-pointer items-center gap-2 px-3 text-start text-sm text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:bg-mid-gray/15 focus-visible:text-text focus-visible:outline-none";
+
+/**
+ * Abschnitt „Sprecher ändern" im Kontextmenü: steht der Rechtsklick auf einem
+ * Marker `<Name>` (bekannt oder nicht), lässt er sich auf einen anderen
+ * Sprecher umhängen -- nur an dieser Stelle oder an allen Stellen mit diesem
+ * Namen. Der Stil jeder Stelle bleibt.
+ */
+const SpeakerChangeSection: React.FC<{
+  api: ChipMenuApi;
+  speakers: SpeakerRef[];
+}> = ({ api, speakers }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<SpeakerRef | null>(null);
+  const { query, setQuery, filtered, showSearch } = useSpeakerSearch(speakers);
+  const text = api.text ?? "";
+  const marker =
+    api.caret === undefined ? undefined : markerAt(text, api.caret);
+  if (!marker || !api.replaceRange || !api.replaceText || speakers.length === 0)
+    return null;
+  const current = resolveSpeaker(marker.name, speakers);
+  const count = markersNamed(text, marker.name).length;
+  const choices = filtered.filter((s) => s.id !== current?.id);
+
+  const applyHere = (speaker: SpeakerRef) =>
+    api.replaceRange?.(
+      marker.start,
+      marker.end,
+      speakerMarkerText(speaker, marker.style),
+    );
+  const applyAll = (speaker: SpeakerRef) =>
+    api.replaceText?.(renameSpeakerMarkers(text, marker.name, speaker));
+
+  return (
+    <>
+      <div className="my-1 border-t border-mid-gray/15" aria-hidden="true" />
+      <button
+        type="button"
+        role="menuitem"
+        aria-expanded={open}
+        data-testid="menu-speaker-change"
+        onClick={() => {
+          setOpen((v) => !v);
+          setPicked(null);
+        }}
+        className={MENU_ROW}
+      >
+        <UserCog width={15} height={15} aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">
+          {t("tts.speakers.menuChange", { name: marker.name })}
+        </span>
+        {open ? (
+          <ChevronDown width={15} height={15} aria-hidden="true" />
+        ) : (
+          <ChevronRight width={15} height={15} aria-hidden="true" />
+        )}
+      </button>
+      {open && picked && (
+        <div
+          className="border-t border-mid-gray/15 px-2 py-1"
+          data-testid="menu-speaker-change-scope"
+        >
+          <p className="px-2 pb-1 pt-2 text-xs text-text/60">
+            {t("tts.speakers.changeTo", {
+              from: marker.name,
+              to: picked.displayName,
+            })}
+          </p>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="menu-speaker-change-here"
+            onClick={() => applyHere(picked)}
+            className={MENU_ROW}
+          >
+            {t("tts.speakers.changeHere")}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="menu-speaker-change-all"
+            onClick={() => applyAll(picked)}
+            className={MENU_ROW}
+          >
+            {t("tts.speakers.changeAll", { count, name: marker.name })}
+          </button>
+        </div>
+      )}
+      {open && !picked && (
+        <div className="border-t border-mid-gray/15 px-2 py-1">
+          {showSearch && (
+            <div className="px-1 pb-1">
+              <SpeakerSearchField value={query} onChange={setQuery} />
+            </div>
+          )}
+          {choices.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-text/50">
+              {t("tts.speakers.emptySearch")}
+            </p>
+          ) : (
+            <div className="max-h-64 overflow-y-auto">
+              {choices.map((speaker) => (
+                <SpeakerRow
+                  key={speaker.id}
+                  speaker={speaker}
+                  // Kommt der Name nur einmal vor, gibt es nichts zu fragen.
+                  onPick={(s) => (count > 1 ? setPicked(s) : applyHere(s))}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
+
 /** Abschnitt „Sprecher einfügen" im Kontextmenü des Editors. */
 const SpeakerMenuSection: React.FC<{
   api: ChipMenuApi;
@@ -439,7 +568,10 @@ export function useSpeakerProvider(): ChipProvider {
         <SpeakerChipPopover match={m} api={api} speakers={speakers} />
       ),
       menuSection: (api) => (
-        <SpeakerMenuSection api={api} speakers={speakers} />
+        <>
+          <SpeakerChangeSection api={api} speakers={speakers} />
+          <SpeakerMenuSection api={api} speakers={speakers} />
+        </>
       ),
     }),
     [scan, speakers, t],

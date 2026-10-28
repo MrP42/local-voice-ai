@@ -686,6 +686,10 @@
       "legendPausesOnly": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen – die erzeugt die App selbst, sie wirken immer."
     },
     "speakers": {
+      "menuChange": "Sprecher „{{name}}“ ändern",
+      "changeTo": "„{{from}}“ → {{to}}",
+      "changeHere": "Nur diese Stelle",
+      "changeAll": "Alle {{count}} Stellen „{{name}}“",
       "menuInsert": "Sprecher einfügen",
       "searchPlaceholder": "Stimmen durchsuchen…",
       "emptySearch": "Keine Stimmen gefunden.",

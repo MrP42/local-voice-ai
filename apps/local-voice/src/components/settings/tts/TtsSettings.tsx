@@ -124,6 +124,21 @@ const TRANSFORM_CANCELLED = "transform_cancelled";
 const translationHistoryKey = (page: string | null | undefined, lang: string) =>
   `${page ?? "-"}:translation:${lang}`;
 
+/** Gemerkte Stimme je Reiter (seitenuebergreifend, siehe `tabVoices`). */
+const TAB_VOICES_KEY = "lva.ui.tts.tabVoices";
+const readTabVoices = (): Record<string, string> => {
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(TAB_VOICES_KEY) ?? "{}",
+    );
+    return value && typeof value === "object"
+      ? (value as Record<string, string>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
@@ -250,11 +265,20 @@ export const TtsSettings = () => {
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
-  // Stimme je Reiter, gespeichert mit der Seite (state.json): das Original
-  // liest Thorsten, die Uebersetzung Lessac -- ohne dass man beim Umschalten
-  // jedes Mal neu waehlt. Werte wie im Dropdown: "@default", "<fish-id>",
-  // "piper:<id>". Fehlt ein Eintrag, bleibt die zuletzt gewaehlte Stimme.
-  const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
+  // Stimme je Reiter, seitenuebergreifend gemerkt: das Original liest
+  // Thorsten, die Uebersetzung Lessac -- ohne dass man beim Umschalten jedes
+  // Mal neu waehlt. Werte wie im Dropdown: "@default", "<fish-id>",
+  // "piper:<id>", "provider:<id>:<stimme>". Nicht mehr je Seite: wer die Seite
+  // wechselt, behaelt seine Stimme (Patrick 28.10.2026).
+  const [tabVoices, setTabVoices] =
+    useState<Record<string, string>>(readTabVoices);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TAB_VOICES_KEY, JSON.stringify(tabVoices));
+    } catch {
+      // Ohne Speicher gilt die Wahl nur bis zum Neustart.
+    }
+  }, [tabVoices]);
   const [translation, setTranslation] = useState<string | null>(null);
   /** Sprachen, in die diese Seite uebersetzt ist (Reiter ueber dem Feld). */
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
@@ -509,11 +533,6 @@ export const TtsSettings = () => {
           setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
-          setTabVoices(
-            state.voices && typeof state.voices === "object"
-              ? state.voices
-              : {},
-          );
           setTab(
             state.tab === "translation" || state.tab === "summary"
               ? state.tab
@@ -536,7 +555,6 @@ export const TtsSettings = () => {
         setText(legacy("tts.text"));
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
-        setTabVoices({});
         setTranslatedLangs([]);
         setTab("original");
       }
@@ -568,7 +586,6 @@ export const TtsSettings = () => {
             summary,
             sourceUrl,
             tab,
-            voices: tabVoices,
             translatedLangs,
             autoTag: autoTagOptions ?? undefined,
           }),
@@ -588,7 +605,6 @@ export const TtsSettings = () => {
     summary,
     sourceUrl,
     tab,
-    tabVoices,
     translatedLangs,
     autoTagOptions,
   ]);
@@ -891,8 +907,15 @@ export const TtsSettings = () => {
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
   // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
   const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
-  // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv.
+  // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv. Beim
+  // Oeffnen der Seite und beim Seitenwechsel (gleicher Reiter) bleibt die
+  // gerade gewaehlte Stimme -- auch eine, die in der Wiedergabeleiste oder in
+  // den Einstellungen gewaehlt wurde.
+  const lastVoiceKey = useRef<string | null>(null);
   useEffect(() => {
+    const previous = lastVoiceKey.current;
+    lastVoiceKey.current = voiceKey;
+    if (previous === null || previous === voiceKey) return;
     const wanted =
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
@@ -900,6 +923,18 @@ export const TtsSettings = () => {
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
   }, [tab, voiceKey, tabVoices, applyVoiceValue]);
+  // Jede Wahl (Dropdown, Wiedergabeleiste, Reiterwechsel) gilt fuer den
+  // aktuellen Reiter: so kommt man beim Zurueckschalten zu ihr zurueck.
+  useEffect(() => {
+    if (!voiceValue || voiceValue === "@manage") return;
+    setTabVoices((current) =>
+      current[voiceKey] === voiceValue
+        ? current
+        : { ...current, [voiceKey]: voiceValue },
+    );
+    // voiceKey absichtlich nicht: beim Reiterwechsel ist voiceValue noch die
+    // Stimme des alten Reiters.
+  }, [voiceValue]);
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen

@@ -686,6 +686,10 @@
       "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work."
     },
     "speakers": {
+      "menuChange": "Change speaker “{{name}}”",
+      "changeTo": "“{{from}}” → {{to}}",
+      "changeHere": "Only this occurrence",
+      "changeAll": "All {{count}} occurrences of “{{name}}”",
       "menuInsert": "Insert speaker",
       "searchPlaceholder": "Search voices…",
       "emptySearch": "No voices match your search.",
