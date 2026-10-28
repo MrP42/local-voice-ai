@@ -896,23 +896,50 @@ export const TtsSettings = () => {
   const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
   // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
   // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
+  // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
+  // (Einstellungen neu geladen) wiederholt eine fehlgeschlagene Wahl nicht.
+  const appliedFor = useRef<string | null>(null);
+  /** Die ausstehende Wahl dieses Effekts: wem sie gehoert, wenn `voiceValue` sie meldet. */
+  const pendingApply = useRef<{
+    value: string;
+    page: string | null;
+    key: string;
+  } | null>(null);
   useEffect(() => {
     const wanted =
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
-    if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
+    if (!wanted || wanted === voiceValue) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}`;
+    if (appliedFor.current === marker) return;
+    appliedFor.current = marker;
+    pendingApply.current = {
+      value: wanted,
+      page: activePage ?? null,
+      key: voiceKey,
+    };
+    applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, voiceKey, tabVoices, applyVoiceValue]);
+  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage]);
   // Jede Wahl (Dropdown, Wiedergabeleiste, Einstellungen) gilt fuer die
   // aktuelle Seite und den aktuellen Reiter: so kommt man beim Zurueckschalten
-  // zu ihr zurueck.
+  // zu ihr zurueck. Meldet `voiceValue` die Wahl des Effekts oben (sie kommt
+  // erst nach dem Neuladen der Einstellungen), gehoert sie dem Reiter, fuer den
+  // sie angewendet wurde -- nicht dem, der inzwischen offen ist.
   useEffect(() => {
     if (!voiceValue || voiceValue === "@manage") return;
+    const pending = pendingApply.current;
+    let target = voiceKey;
+    if (pending && pending.value === voiceValue) {
+      pendingApply.current = null;
+      if (pending.page !== (activePage ?? null)) return;
+      target = pending.key;
+    }
     setTabVoices((current) =>
-      current[voiceKey] === voiceValue
+      current[target] === voiceValue
         ? current
-        : { ...current, [voiceKey]: voiceValue },
+        : { ...current, [target]: voiceValue },
     );
     // voiceKey absichtlich nicht: beim Reiterwechsel ist voiceValue noch die
     // Stimme des alten Reiters.

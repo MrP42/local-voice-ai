@@ -1,7 +1,11 @@
 import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { commands, events } from "@/bindings";
-import { stopSample, toggleSample } from "@/lib/voices/samplePlayer";
+import {
+  onSampleStart,
+  stopSample,
+  toggleSample,
+} from "@/lib/voices/samplePlayer";
 import { asTtsError } from "./providerModel";
 
 /**
@@ -17,6 +21,10 @@ export type VoiceTryTarget =
 type TryState = { key: string; requestId: string | null } | null;
 
 let state: TryState = null;
+/** Zaehler der Laeufe: jede asynchrone Fortsetzung prueft, ob ihr Lauf noch der aktuelle ist. */
+let seq = 0;
+/** Endereignisse, die vor der Antwort des Starts eintrafen (request_id -> Fehlertext/null). */
+const finished = new Map<string, string | null>();
 const listeners = new Set<() => void>();
 const set = (next: TryState) => {
   state = next;
@@ -39,6 +47,7 @@ export const tryKey = (target: VoiceTryTarget): string =>
     : `${target.providerId}:${target.voice ?? ""}`;
 
 const cancelRunning = () => {
+  seq += 1;
   const requestId = state?.requestId;
   if (requestId) void commands.ttsProviderCancel(requestId).catch(() => null);
   set(null);
@@ -48,18 +57,25 @@ let wired = false;
 const wire = () => {
   if (wired) return;
   wired = true;
+  onSampleStart(() => {
+    if (state) cancelRunning();
+  });
   void events.ttsProviderPreview.listen(({ payload }) => {
-    if (!state || state.requestId !== payload.request_id) return;
     if (
-      payload.phase === "done" ||
-      payload.phase === "cancelled" ||
-      payload.phase === "error"
+      payload.phase !== "done" &&
+      payload.phase !== "cancelled" &&
+      payload.phase !== "error"
     ) {
-      if (payload.phase === "error" && payload.message) {
-        toast.error(payload.message);
-      }
-      set(null);
+      return;
     }
+    const failure = payload.phase === "error" ? (payload.message ?? "") : null;
+    if (state?.requestId === payload.request_id) {
+      if (failure) toast.error(failure);
+      set(null);
+      return;
+    }
+    // Der Start ist noch nicht beantwortet: fuer die Antwort merken.
+    finished.set(payload.request_id, failure);
   });
 };
 
@@ -71,6 +87,7 @@ export async function toggleTry(target: VoiceTryTarget, text: string) {
   stopSample();
   if (wasRunning) return;
   wire();
+  const mine = seq;
   set({ key, requestId: null });
   try {
     if (target.kind === "fish") {
@@ -82,7 +99,7 @@ export async function toggleTry(target: VoiceTryTarget, text: string) {
           if (result.status === "error") throw new Error(result.error);
           return result.data;
         })());
-      if (state?.key !== key) return;
+      if (mine !== seq) return;
       set(null);
       toggleSample(sample.wav_path);
       return;
@@ -93,13 +110,21 @@ export async function toggleTry(target: VoiceTryTarget, text: string) {
       target.voice,
     );
     if (result.status === "error") throw asTtsError(result.error);
-    if (state?.key !== key) {
-      void commands.ttsProviderCancel(result.data).catch(() => null);
+    const requestId = result.data;
+    if (mine !== seq) {
+      void commands.ttsProviderCancel(requestId).catch(() => null);
       return;
     }
-    set({ key, requestId: result.data });
+    if (finished.has(requestId)) {
+      const failure = finished.get(requestId);
+      finished.clear();
+      if (failure) toast.error(failure);
+      set(null);
+      return;
+    }
+    set({ key, requestId });
   } catch (error) {
-    if (state?.key === key) set(null);
+    if (mine === seq) set(null);
     toast.error(
       error instanceof Error ? error.message : asTtsError(error).message,
     );

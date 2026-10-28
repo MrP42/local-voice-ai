@@ -11,6 +11,12 @@ const listeners = new Set<() => void>();
 
 const notify = () => listeners.forEach((l) => l());
 
+/** Wird vor jeder neuen Hoerprobe gerufen (z. B. um eine laufende Probestimme zu beenden). */
+const startHooks = new Set<() => void>();
+export const onSampleStart = (hook: () => void) => {
+  startHooks.add(hook);
+};
+
 export const stopSample = () => {
   if (!current) return;
   current.audio.pause();
@@ -25,6 +31,7 @@ export const toggleSample = (path: string) => {
     return;
   }
   stopSample();
+  startHooks.forEach((h) => h());
   const audio = new Audio(convertFileSrc(path, "asset"));
   const entry = { path, audio };
   current = entry;
