@@ -233,6 +233,15 @@ async function setup(page: Page, cfg: Cfg) {
             };
             return copy(e.health);
           }
+          // Hoerproben: Anna und Nele fertig, Ben entsteht noch.
+          if (cmd === "tts_provider_voice_samples")
+            return args?.id === "phonon"
+              ? [
+                  { voice_id: "anna", wav_path: "C:/proben/anna.wav" },
+                  { voice_id: "nele", wav_path: "C:/proben/nele.wav" },
+                  { voice_id: "ben", wav_path: null },
+                ]
+              : [];
           if (cmd === "tts_provider_voices") {
             const e = find(args?.id);
             if (e.blocked) throw e.blocked;
@@ -1632,4 +1641,47 @@ test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
     path: `${dir}/phonon-maske-3-durchsuchen.png`,
     animations: "disabled",
   });
+});
+
+test("Phonon-Maske: Reinhoeren spielt die fertige Hoerprobe, eine entstehende ist gesperrt", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __played: string[] };
+    w.__played = [];
+    HTMLMediaElement.prototype.play = function () {
+      w.__played.push(this.getAttribute("src") ?? this.src);
+      return Promise.resolve();
+    };
+  });
+  await setup(page, {
+    engine: "fish",
+    over: { phonon: { enabled: true, license_acked: true } },
+  });
+  await openGroup(page);
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  const nele = page.getByTestId("tts-provider-sample-nele");
+  await expect(nele).toBeVisible();
+  await expect(nele).toHaveAttribute("aria-label", "Reinhören: Nele");
+  await nele.click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __played: string[] }).__played),
+    )
+    .toEqual(["C:/proben/nele.wav"]);
+  // Waehrend sie laeuft, stoppt derselbe Knopf.
+  await expect(nele).toHaveAttribute("aria-label", "Hörprobe stoppen: Nele");
+  // Ben: die Probe entsteht noch -- Kreisel, gesperrt; fertig meldet sie das Ereignis.
+  const ben = page.getByTestId("tts-provider-sample-ben");
+  await expect(ben).toBeDisabled();
+  await page.evaluate(() =>
+    (window as unknown as { __emit: (n: string, p: unknown) => void }).__emit(
+      "tts-provider-voice-sample",
+      { provider_id: "phonon", voice_id: "ben", wav_path: "C:/proben/ben.wav" },
+    ),
+  );
+  await expect(ben).toBeEnabled();
+  await page
+    .getByTestId("tts-provider-visible-list-phonon")
+    .screenshot({ path: "test-results/phonon-hoerproben-einstellungen.png" });
 });

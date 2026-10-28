@@ -2437,6 +2437,7 @@ pub fn run(cli_args: CliArgs) {
             commands::tts_providers::tts_providers_list,
             commands::tts_providers::tts_provider_health,
             commands::tts_providers::tts_provider_voices,
+            commands::tts_providers::tts_provider_voice_samples,
             commands::tts_providers::tts_provider_get_config,
             commands::tts_providers::tts_provider_inspect_model_folder,
             commands::tts_providers::tts_provider_set_config,
@@ -2492,6 +2493,7 @@ pub fn run(cli_args: CliArgs) {
             managers::transcription::StreamTextEvent,
             // Goal tts-provider, P3a: Verlauf der Probestimme
             managers::tts::providers::preview::TtsProviderPreview,
+            managers::tts::providers::samples::TtsProviderVoiceSample,
             managers::transcription::StreamPhaseEvent,
         ]);
 

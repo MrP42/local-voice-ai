@@ -5456,6 +5456,18 @@ async ttsProviderVoices(id: string, language: string | null) : Promise<Result<Vo
 }
 },
 /**
+ * Hörproben der Stimmen eines Anbieters (nur lokale, z. B. Phonon; sonst leer). Fehlende
+ * entstehen im Hintergrund und melden sich mit `tts-provider-voice-sample`.
+ */
+async ttsProviderVoiceSamples(id: string) : Promise<Result<ProviderVoiceSample[], TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_voice_samples", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gespeicherte Konfiguration eines Anbieters als JSON-Text (Felder wie in
  * `PhononConfig`/`OpenAiSpeechConfig`/`OllamaSpeechConfig`). Fish, Piper:
  * `bad_request` (keine Konfiguration).
@@ -5756,7 +5768,8 @@ projectMinutesEvent: ProjectMinutesEvent,
 speakersChanged: SpeakersChanged,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
-ttsProviderPreview: TtsProviderPreview
+ttsProviderPreview: TtsProviderPreview,
+ttsProviderVoiceSample: TtsProviderVoiceSample
 }>({
 briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
@@ -5775,7 +5788,8 @@ projectMinutesEvent: "project-minutes-event",
 speakersChanged: "speakers-changed",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
-ttsProviderPreview: "tts-provider-preview"
+ttsProviderPreview: "tts-provider-preview",
+ttsProviderVoiceSample: "tts-provider-voice-sample"
 })
 
 /** user-defined constants **/
@@ -8378,6 +8392,10 @@ export type ProviderTier =
 /**
  * Eine Stimme eines Anbieters für das Vorlesen-Dropdown.
  */
+/**
+ * Hörprobe einer Stimme; `wav_path` fehlt, solange sie noch entsteht.
+ */
+export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
 export type ProviderVoiceOption = { provider_id: string; provider_label: string; 
 /**
  * Der Anbieter wechselt die Stimme je Satz (`ProviderCaps::voice_switching`): seine
@@ -9120,6 +9138,10 @@ visible_voices: string[] }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
+/**
+ * Ereignis `tts-provider-voice-sample`: eine Probe ist fertig.
+ */
+export type TtsProviderVoiceSample = { provider_id: string; voice_id: string; wav_path: string }
 export type TtsProviderPreview = { request_id: string; phase: PreviewPhase; 
 /**
  * Nur bei `first_audio`: Millisekunden vom Start bis zum ersten Teil.

@@ -41,7 +41,7 @@ use crate::managers::tts::providers::contract::ProviderTier;
 use crate::managers::tts::providers::host::ProviderSnapshot;
 use crate::managers::tts::providers::policy::{self, LicenseAck, UseSubject};
 use crate::managers::tts::providers::{
-    ProviderDescriptor, ProviderHealth, ProviderRegistry, ProviderSpeaker, TtsError,
+    samples, ProviderDescriptor, ProviderHealth, ProviderRegistry, ProviderSpeaker, TtsError,
     TtsProvidersSettings, VoiceDescriptor,
 };
 use crate::managers::tts::TtsManager;
@@ -429,6 +429,17 @@ pub async fn tts_provider_voices(
             VOICES_LIMIT.as_secs()
         ))),
     }
+}
+
+/// Hörproben der Stimmen eines Anbieters (nur lokale, z. B. Phonon; sonst leer). Fehlende
+/// entstehen im Hintergrund und melden sich mit `tts-provider-voice-sample`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_provider_voice_samples(
+    app: AppHandle,
+    id: String,
+) -> Result<Vec<samples::ProviderVoiceSample>, TtsError> {
+    samples::samples_for(&app, &id).await
 }
 
 /// Gespeicherte Konfiguration eines Anbieters als JSON-Text (Felder wie in

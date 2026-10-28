@@ -174,6 +174,13 @@ async function setup(page: Page, cfg: Cfg) {
               entry("phonon", "Phonon", caps(false, switching)),
             ];
           if (cmd === "tts_provider_voice_options") return options;
+          // Hoerproben: Standardstimme und Nele fertig, Anton entsteht noch.
+          if (cmd === "tts_provider_voice_samples")
+            return [
+              { voice_id: "default", wav_path: "C:/proben/default.wav" },
+              { voice_id: "nele-id", wav_path: "C:/proben/nele.wav" },
+              { voice_id: "anton-id", wav_path: null },
+            ];
           if (cmd === "tts_provider_speakers")
             return cfg.engine === "provider:phonon" ? speakers : [];
           // Wie `select_in`: Engine und Stimme werden gespeichert.
@@ -486,4 +493,42 @@ test("Bild: Vorlesen mit Phonon-Sprechern (nur mit SCREENS_DIR)", async ({
     .evaluate((el) => (el as HTMLButtonElement).click());
   await expect(page.getByRole("menuitem", { name: /Nele/ })).toBeVisible();
   await page.screenshot({ path: `${dir}/phonon-sprecher-menue.png` });
+});
+
+test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu waehlen", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __played: string[] };
+    w.__played = [];
+    HTMLMediaElement.prototype.play = function () {
+      w.__played.push(this.getAttribute("src") ?? this.src);
+      return Promise.resolve();
+    };
+  });
+  await setup(page, { engine: "provider:phonon" });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  const nele = page.getByTestId("voice-sample-provider:phonon:nele-id");
+  await expect(nele).toBeVisible();
+  await expect(
+    page.getByTestId("voice-sample-provider:phonon:anton-id"),
+  ).toHaveAttribute("aria-disabled", "true");
+  await page.screenshot({
+    path: "test-results/phonon-hoerproben-dropdown.png",
+  });
+  await nele.click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __played: string[] }).__played,
+      ),
+    )
+    .toEqual(["C:/proben/nele.wav"]);
+  // Die Liste bleibt offen, und gewaehlt wurde nichts.
+  await expect(
+    page.getByRole("option", { name: /Phonon · Anton/ }),
+  ).toBeVisible();
+  expect(await calls(page, "tts_provider_select")).toHaveLength(0);
+  await expect(select).toContainText("Phonon · Skript mit Sprechern");
 });

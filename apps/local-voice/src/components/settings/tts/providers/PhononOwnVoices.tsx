@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/Input";
 import { PhononCloneDialog } from "./PhononCloneDialog";
 import { PhononImportDialog } from "./PhononImportDialog";
 import { asPhononError, isCloned, modelLabel } from "./phononVoicesModel";
+import { SamplePlayButton } from "./SamplePlayButton";
+import { useVoiceSamples } from "./useVoiceSamples";
 
 /** Die Stimmenlisten (Vorlesen-Dropdown, Auswahl „im Vorlesen anzeigen“) laden neu. */
 const announceVoicesChanged = () =>
@@ -28,6 +30,7 @@ const announceVoicesChanged = () =>
  */
 export const PhononOwnVoices: React.FC = () => {
   const { t } = useTranslation();
+  const samples = useVoiceSamples("phonon");
   const [overview, setOverview] = useState<OwnVoicesOverview | null>(null);
   const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
   const [fish, setFish] = useState<VoiceInfo[]>([]);
@@ -160,6 +163,13 @@ export const PhononOwnVoices: React.FC = () => {
                   <p className="text-xs text-text/70">{voice.source_note}</p>
                 )}
               </div>
+              {voice.id in samples && (
+                <SamplePlayButton
+                  path={samples[voice.id]}
+                  name={voice.name}
+                  testId={`phonon-own-sample-${voice.id}`}
+                />
+              )}
               <Button
                 type="button"
                 variant="danger-ghost"

@@ -150,6 +150,11 @@
         "blocked": "Die Stimmen sind erst nach der Freigabe abrufbar.",
         "use": "Als Vorlese-Stimme verwenden",
         "usedNow": "Dieser Anbieter liest jetzt vor.",
+        "sample": {
+          "play": "Reinhören: {{name}}",
+          "stop": "Hörprobe stoppen: {{name}}",
+          "pending": "Hörprobe von {{name}} wird erstellt …"
+        },
         "visible": {
           "title": "Im Vorlesen anzeigen",
           "hint": "Welche Stimmen im Dropdown der Vorlesen-Seite und in der Wiedergabeleiste der Aufnahmen stehen. Wechselt der Anbieter die Stimme je Satz, sind es auch die Sprecher im Skript (<Name>). Die Vorgabe des Anbieters und die gerade gewählte Stimme bleiben immer sichtbar.",
