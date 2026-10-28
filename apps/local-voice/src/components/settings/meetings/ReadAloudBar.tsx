@@ -17,6 +17,7 @@ import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { IconAction } from "../../ui/IconAction";
 import { VOICE_MANAGE, useVoiceChoice } from "../tts/useVoiceChoice";
 import { SamplePlayButton } from "../tts/providers/SamplePlayButton";
+import { VoiceTryButton } from "../tts/providers/VoiceTryButton";
 import { counterWidthCh, shownSentenceNumber } from "../tts/sentenceCounter";
 import {
   discardSavedReading,
@@ -202,6 +203,7 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
     openVoiceManagement,
     selectedVoiceNotSetUp,
     sampleOf,
+    tryOf,
   } = useVoiceChoice(phase);
 
   const voiceLabel = options.find((o) => o.value === voiceValue)?.label ?? "";
@@ -225,16 +227,27 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
               option.value === voiceValue ? (
                 <Check width={14} height={14} aria-hidden="true" />
               ) : undefined;
-            if (!sample) return check;
+            const target = sample ? undefined : tryOf(option.value);
+            if (!sample && !target) return check;
             // Reinhoeren waehlt die Stimme nicht: der Knopf spielt nur die Hoerprobe.
             return (
               <span className="flex items-center gap-1">
-                <SamplePlayButton
-                  inline
-                  path={sample.path}
-                  name={sample.name}
-                  testId={`${testId}-bar-voice-sample-${option.value}`}
-                />
+                {sample ? (
+                  <SamplePlayButton
+                    inline
+                    path={sample.path}
+                    name={sample.name}
+                    testId={`${testId}-bar-voice-sample-${option.value}`}
+                  />
+                ) : (
+                  target && (
+                    <VoiceTryButton
+                      target={target}
+                      name={option.label}
+                      testId={`${testId}-bar-voice-sample-${option.value}`}
+                    />
+                  )
+                )}
                 <span className="inline-flex w-[14px]">{check}</span>
               </span>
             );

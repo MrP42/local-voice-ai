@@ -80,6 +80,7 @@ import { Glyph } from "../../ui/AudioPlayer";
 import { HelpCircle } from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
+import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import { openSettingsTab } from "@/lib/openSettingsTab";
 
@@ -123,21 +124,6 @@ const TRANSFORM_CANCELLED = "transform_cancelled";
  *  haben jeweils ihre eigenen Schritte). */
 const translationHistoryKey = (page: string | null | undefined, lang: string) =>
   `${page ?? "-"}:translation:${lang}`;
-
-/** Gemerkte Stimme je Reiter (seitenuebergreifend, siehe `tabVoices`). */
-const TAB_VOICES_KEY = "lva.ui.tts.tabVoices";
-const readTabVoices = (): Record<string, string> => {
-  try {
-    const value: unknown = JSON.parse(
-      window.localStorage.getItem(TAB_VOICES_KEY) ?? "{}",
-    );
-    return value && typeof value === "object"
-      ? (value as Record<string, string>)
-      : {};
-  } catch {
-    return {};
-  }
-};
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -265,20 +251,12 @@ export const TtsSettings = () => {
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
-  // Stimme je Reiter, seitenuebergreifend gemerkt: das Original liest
-  // Thorsten, die Uebersetzung Lessac -- ohne dass man beim Umschalten jedes
-  // Mal neu waehlt. Werte wie im Dropdown: "@default", "<fish-id>",
-  // "piper:<id>", "provider:<id>:<stimme>". Nicht mehr je Seite: wer die Seite
-  // wechselt, behaelt seine Stimme (Patrick 28.10.2026).
-  const [tabVoices, setTabVoices] =
-    useState<Record<string, string>>(readTabVoices);
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(TAB_VOICES_KEY, JSON.stringify(tabVoices));
-    } catch {
-      // Ohne Speicher gilt die Wahl nur bis zum Neustart.
-    }
-  }, [tabVoices]);
+  // Stimme je Seite UND Reiter, gespeichert mit der Seite (state.json): das
+  // Original liest Thorsten, die Uebersetzung Lessac -- und jede Seite behaelt
+  // ihre eigene Wahl. Wer die Seite wechselt, bekommt deren Stimme (Patrick
+  // 28.10.2026). Werte wie im Dropdown: "@default", "<fish-id>", "piper:<id>",
+  // "provider:<id>:<stimme>". Fehlt ein Eintrag, bleibt die aktuelle Stimme.
+  const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
   const [translation, setTranslation] = useState<string | null>(null);
   /** Sprachen, in die diese Seite uebersetzt ist (Reiter ueber dem Feld). */
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
@@ -533,6 +511,11 @@ export const TtsSettings = () => {
           setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
+          setTabVoices(
+            state.voices && typeof state.voices === "object"
+              ? state.voices
+              : {},
+          );
           setTab(
             state.tab === "translation" || state.tab === "summary"
               ? state.tab
@@ -555,6 +538,7 @@ export const TtsSettings = () => {
         setText(legacy("tts.text"));
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
+        setTabVoices({});
         setTranslatedLangs([]);
         setTab("original");
       }
@@ -586,6 +570,7 @@ export const TtsSettings = () => {
             summary,
             sourceUrl,
             tab,
+            voices: tabVoices,
             translatedLangs,
             autoTag: autoTagOptions ?? undefined,
           }),
@@ -605,6 +590,7 @@ export const TtsSettings = () => {
     summary,
     sourceUrl,
     tab,
+    tabVoices,
     translatedLangs,
     autoTagOptions,
   ]);
@@ -902,35 +888,58 @@ export const TtsSettings = () => {
     piperVoiceLabel,
     options: voiceOptions,
     sampleOf,
+    tryOf,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
   // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
   const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
-  // Reiterwechsel: die fuer diesen Reiter gemerkte Stimme wird aktiv. Beim
-  // Oeffnen der Seite und beim Seitenwechsel (gleicher Reiter) bleibt die
-  // gerade gewaehlte Stimme -- auch eine, die in der Wiedergabeleiste oder in
-  // den Einstellungen gewaehlt wurde.
-  const lastVoiceKey = useRef<string | null>(null);
+  // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
+  // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
+  // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
+  // (Einstellungen neu geladen) wiederholt eine fehlgeschlagene Wahl nicht.
+  const appliedFor = useRef<string | null>(null);
+  /** Die ausstehende Wahl dieses Effekts: wem sie gehoert, wenn `voiceValue` sie meldet. */
+  const pendingApply = useRef<{
+    value: string;
+    page: string | null;
+    key: string;
+  } | null>(null);
   useEffect(() => {
-    const previous = lastVoiceKey.current;
-    lastVoiceKey.current = voiceKey;
-    if (previous === null || previous === voiceKey) return;
     const wanted =
       tabVoices[voiceKey] ??
       (tab === "translation" ? tabVoices.translation : undefined);
-    if (wanted && wanted !== voiceValue) applyVoiceValue(wanted);
+    if (!wanted || wanted === voiceValue) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${wanted}`;
+    if (appliedFor.current === marker) return;
+    appliedFor.current = marker;
+    pendingApply.current = {
+      value: wanted,
+      page: activePage ?? null,
+      key: voiceKey,
+    };
+    applyVoiceValue(wanted);
     // voiceValue absichtlich nicht in den Abhaengigkeiten: der Effekt soll
     // beim Umschalten greifen, nicht bei jeder Einstellungsaenderung.
-  }, [tab, voiceKey, tabVoices, applyVoiceValue]);
-  // Jede Wahl (Dropdown, Wiedergabeleiste, Reiterwechsel) gilt fuer den
-  // aktuellen Reiter: so kommt man beim Zurueckschalten zu ihr zurueck.
+  }, [tab, voiceKey, tabVoices, applyVoiceValue, activePage]);
+  // Jede Wahl (Dropdown, Wiedergabeleiste, Einstellungen) gilt fuer die
+  // aktuelle Seite und den aktuellen Reiter: so kommt man beim Zurueckschalten
+  // zu ihr zurueck. Meldet `voiceValue` die Wahl des Effekts oben (sie kommt
+  // erst nach dem Neuladen der Einstellungen), gehoert sie dem Reiter, fuer den
+  // sie angewendet wurde -- nicht dem, der inzwischen offen ist.
   useEffect(() => {
     if (!voiceValue || voiceValue === "@manage") return;
+    const pending = pendingApply.current;
+    let target = voiceKey;
+    if (pending && pending.value === voiceValue) {
+      pendingApply.current = null;
+      if (pending.page !== (activePage ?? null)) return;
+      target = pending.key;
+    }
     setTabVoices((current) =>
-      current[voiceKey] === voiceValue
+      current[target] === voiceValue
         ? current
-        : { ...current, [voiceKey]: voiceValue },
+        : { ...current, [target]: voiceValue },
     );
     // voiceKey absichtlich nicht: beim Reiterwechsel ist voiceValue noch die
     // Stimme des alten Reiters.
@@ -1854,18 +1863,32 @@ export const TtsSettings = () => {
                           context === "menu"
                             ? sampleOf(option.value)
                             : undefined;
-                        if (!sample) return option.label;
+                        const target =
+                          context === "menu" && !sample
+                            ? tryOf(option.value)
+                            : undefined;
+                        if (!sample && !target) return option.label;
                         return (
                           <span className="flex items-center gap-2">
                             <span className="min-w-0 flex-1 truncate">
                               {option.label}
                             </span>
-                            <SamplePlayButton
-                              inline
-                              path={sample.path}
-                              name={sample.name}
-                              testId={`voice-sample-${option.value}`}
-                            />
+                            {sample ? (
+                              <SamplePlayButton
+                                inline
+                                path={sample.path}
+                                name={sample.name}
+                                testId={`voice-sample-${option.value}`}
+                              />
+                            ) : (
+                              target && (
+                                <VoiceTryButton
+                                  target={target}
+                                  name={option.label}
+                                  testId={`voice-sample-${option.value}`}
+                                />
+                              )
+                            )}
                           </span>
                         );
                       }}

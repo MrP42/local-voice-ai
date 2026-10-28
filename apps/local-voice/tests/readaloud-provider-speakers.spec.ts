@@ -183,6 +183,12 @@ async function setup(page: Page, cfg: Cfg) {
               { voice_id: "nele-id", wav_path: "C:/proben/nele.wav" },
               { voice_id: "anton-id", wav_path: null },
             ];
+          if (cmd === "tts_voice_demo_cached") return null;
+          if (cmd === "tts_voice_demo")
+            return {
+              wav_path: `C:/proben/${String(args?.voiceId)}-demo.wav`,
+              transcript: "Probe",
+            };
           if (cmd === "tts_provider_speakers")
             return cfg.engine === "provider:phonon" ? speakers : [];
           // Wie `select_in`: Engine und Stimme werden gespeichert.
@@ -549,6 +555,31 @@ test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu wa
   await expect(select).toContainText("Phonon · Skript mit Sprechern");
 });
 
+test("Reinhören gibt es auch für Stimmen ohne Vorratsprobe (Fish)", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __played: string[] };
+    w.__played = [];
+    HTMLMediaElement.prototype.play = function () {
+      w.__played.push(this.getAttribute("src") ?? this.src);
+      return Promise.resolve();
+    };
+  });
+  await setup(page, { engine: "provider:phonon" });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  await page.getByTestId("voice-sample-leo").click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __played: string[] }).__played,
+      ),
+    )
+    .toEqual(["C:/proben/leo-demo.wav"]);
+  expect(await calls(page, "tts_provider_select")).toHaveLength(0);
+});
+
 /** Caret in den Text setzen und das Kontextmenü dort öffnen. */
 async function contextMenuAt(page: Page, caret: number) {
   const editor = editorOf(page);
@@ -649,7 +680,7 @@ test("Kontextmenü: unbekannter Sprecher lässt sich umhängen, außerhalb eines
   );
 });
 
-test("Stimmenwahl bleibt beim Seitenwechsel und beim Verlassen der Vorlesen-Seite", async ({
+test("Die Stimme gehört zur Seite: ein Seitenwechsel holt die Stimme der neuen Seite", async ({
   page,
 }) => {
   await setup(page, { engine: "provider:phonon", twoPages: true });
@@ -660,24 +691,11 @@ test("Stimmenwahl bleibt beim Seitenwechsel und beim Verlassen der Vorlesen-Seit
   const selects = () => calls(page, "tts_provider_select");
   await expect.poll(async () => (await selects()).length).toBe(1);
 
-  // Seite 2 hat (aus alter Zeit) Anton gespeichert: die Wahl bleibt trotzdem Nele.
+  // Seite 2 hat Anton gespeichert: mit der Seite wechselt die Stimme.
   await page
     .getByText("Hörbuch", { exact: true })
     .click({ position: { x: 4, y: 4 } });
   await expect(editorOf(page)).toHaveValue("Zweite Seite.");
-  await page.waitForTimeout(300);
-  expect(await selects()).toHaveLength(1);
-  await expect(select).toContainText("Phonon · Nele");
-
-  // Andere Ansicht und zurück: weiterhin Nele.
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Aufnahmen", exact: true })
-    .click();
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Vorlesen", exact: true })
-    .click();
-  await expect(page.getByTestId("voice-select")).toContainText("Phonon · Nele");
-  expect(await selects()).toHaveLength(1);
+  await expect(select).toContainText("Phonon · Anton");
+  await expect.poll(async () => (await selects()).length).toBe(2);
 });
