@@ -804,3 +804,26 @@ test.describe("Navigation eingeklappt", () => {
     });
   }
 });
+
+test("Navigation: Symbole bleiben beim Ein- und Ausklappen an derselben Stelle", async ({
+  page,
+}) => {
+  await setup(page, "light");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const positions = () =>
+    page
+      .locator(".workspace-nav__item svg")
+      .evaluateAll((svgs) =>
+        svgs.map((svg) => {
+          const r = svg.getBoundingClientRect();
+          return [Math.round(r.x), Math.round(r.y)];
+        }),
+      );
+  const expanded = await positions();
+  await page.getByRole("button", { name: "Menü einklappen" }).click();
+  await expect(
+    page.locator('.workspace-nav[data-collapsed="true"]'),
+  ).toBeVisible();
+  expect(await positions()).toEqual(expanded);
+});

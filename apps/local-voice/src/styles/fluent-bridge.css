@@ -320,6 +320,10 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 .workspace-nav__item.workspace-nav__item {
   gap: 10px;
   background-color: transparent;
+  /* Symbol-Position gleich bei ein- und ausgeklappter Leiste: (48px Knopf
+     - 20px Symbol) / 2 Abstand links, in beiden Zustaenden. */
+  padding-inline: 14px;
+  justify-content: flex-start;
 }
 .workspace-nav__item.workspace-nav__item:hover {
   background-color: var(--colorNeutralBackground3Hover);
@@ -346,7 +350,6 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   margin-block: auto;
 }
 .workspace-nav[data-collapsed="true"] .workspace-nav__item {
-  justify-content: center;
   gap: 0;
 }
 .workspace-nav[data-collapsed="true"] .workspace-nav__label {
