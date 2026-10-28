@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { commands, type PageInfo } from "@/bindings";
@@ -23,6 +23,8 @@ interface Props {
   /** Der offene Stand der aktiven Seite (noch nicht unbedingt gespeichert). */
   active: SpeakerFields;
   onApplyActive: (next: SpeakerFields) => void;
+  /** Nach dem Speichern anderer Seiten (Seitenliste neu laden). */
+  onSaved?: () => void;
   /** Vorbelegung "Ersetze": ein Marker-Name oder eine Sprecher-id. */
   initialFrom?: string;
 }
@@ -51,6 +53,7 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   activePageId,
   active,
   onApplyActive,
+  onSaved,
   initialFrom,
 }) => {
   const { t } = useTranslation();
@@ -58,28 +61,51 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   const [toId, setToId] = useState("");
   const [others, setOthers] = useState<Loaded[]>([]);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ markers: number; pages: number } | null>(
-    null,
-  );
+  const [loaded, setLoaded] = useState(false);
+  const [done, setDone] = useState<{
+    markers: number;
+    pages: number;
+    failed: number;
+  } | null>(null);
+  const speakersRef = useRef(speakers);
+  speakersRef.current = speakers;
 
-  useEffect(() => {
-    if (!open) return;
-    setDone(null);
-    const needle = initialFrom ? foldSpeakerName(initialFrom) : "";
+  const defaults = (list: SpeakerRef[], from?: string) => {
+    const needle = from ? foldSpeakerName(from) : "";
     const match =
-      speakers.find(
+      list.find(
         (s) =>
           foldSpeakerName(s.id) === needle ||
           foldSpeakerName(s.displayName) === needle ||
           (s.aliases ?? []).some((a) => foldSpeakerName(a) === needle),
-      ) ?? speakers[0];
+      ) ?? list[0];
     setFromId(match?.id ?? "");
-    setToId(speakers.find((s) => s.id !== match?.id)?.id ?? "");
-  }, [open, initialFrom, speakers]);
+    setToId(list.find((s) => s.id !== match?.id)?.id ?? "");
+  };
+  // Beim Oeffnen vorbelegen -- nicht bei jeder neuen Sprecherliste (Stimmen-
+  // ereignisse), das wuerde die Wahl und das "Fertig" zuruecksetzen.
+  useEffect(() => {
+    if (!open) return;
+    setDone(null);
+    defaults(speakersRef.current, initialFrom);
+  }, [open, initialFrom]);
+  // Verschwindet eine gewaehlte Stimme aus der Liste (oder kommt sie erst jetzt),
+  // neu vorbelegen.
+  useEffect(() => {
+    if (!open) return;
+    if (
+      !speakers.some((s) => s.id === fromId) ||
+      !speakers.some((s) => s.id === toId)
+    ) {
+      defaults(speakers, initialFrom);
+    }
+  }, [speakers]);
 
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    setOthers([]);
+    setLoaded(false);
     void Promise.all(
       pages
         .filter((p) => p.id !== activePageId)
@@ -91,7 +117,9 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           return parsed ? { id: p.id, ...parsed } : null;
         }),
     ).then((loaded) => {
-      if (alive) setOthers(loaded.filter((l): l is Loaded => l !== null));
+      if (!alive) return;
+      setOthers(loaded.filter((l): l is Loaded => l !== null));
+      setLoaded(true);
     });
     return () => {
       alive = false;
@@ -124,22 +152,70 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   }, [from, to, speakers, providerId, active, others]);
 
   const apply = async () => {
-    if (!plan) return;
+    if (!from || !to || from.id === to.id) return;
     setBusy(true);
-    for (const o of plan.otherResults) {
-      const next = {
-        ...o.state,
-        text: o.result.fields.text,
-        summary: o.result.fields.summary,
-        voices: o.result.fields.voices,
-      };
-      await commands.pageStateSave(o.id, JSON.stringify(next));
+    const fromValue = valueOf(providerId, from);
+    const toValue = valueOf(providerId, to);
+    let markers = 0;
+    let pagesChanged = 0;
+    let failed = 0;
+    try {
+      // Jede Seite direkt vor dem Schreiben frisch laden: der Stand der Vorschau
+      // kann inzwischen veraltet sein (Autosave, Sync).
+      for (const page of pages.filter((p) => p.id !== activePageId)) {
+        const result = await commands.pageStateLoad(page.id).catch(() => null);
+        const parsed = fieldsOfState(
+          result && result.status === "ok" ? result.data : null,
+        );
+        if (!parsed) continue;
+        const r = replaceSpeakerInFields(
+          parsed.fields,
+          from,
+          to,
+          speakers,
+          fromValue,
+          toValue,
+        );
+        if (r.markers + r.voices === 0) continue;
+        const saved = await commands
+          .pageStateSave(
+            page.id,
+            JSON.stringify({
+              ...parsed.state,
+              text: r.fields.text,
+              summary: r.fields.summary,
+              voices: r.fields.voices,
+            }),
+          )
+          .catch(() => null);
+        if (saved && saved.status === "ok") {
+          markers += r.markers;
+          pagesChanged += 1;
+        } else {
+          failed += 1;
+        }
+      }
+      const current = replaceSpeakerInFields(
+        active,
+        from,
+        to,
+        speakers,
+        fromValue,
+        toValue,
+      );
+      if (current.markers + current.voices > 0) {
+        onApplyActive(current.fields);
+        markers += current.markers;
+        pagesChanged += 1;
+      }
+      if (pagesChanged > 0) {
+        void commands.syncTouch();
+        onSaved?.();
+      }
+    } finally {
+      setBusy(false);
     }
-    if (plan.activeResult.markers + plan.activeResult.voices > 0) {
-      onApplyActive(plan.activeResult.fields);
-    }
-    setBusy(false);
-    setDone({ markers: plan.markers, pages: plan.pages });
+    setDone({ markers, pages: pagesChanged, failed });
   };
 
   const options = speakers.map((s) => (
@@ -166,7 +242,9 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           {!done && (
             <Button
               onClick={() => void apply()}
-              disabled={busy || !plan || plan.markers + plan.pages === 0}
+              disabled={
+                busy || !loaded || !plan || plan.markers + plan.pages === 0
+              }
               data-testid="replace-speaker-apply"
             >
               {t("tts.replaceSpeaker.apply")}
@@ -204,7 +282,9 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           data-testid="replace-speaker-preview"
         >
           {done
-            ? t("tts.replaceSpeaker.done", done)
+            ? done.failed > 0
+              ? t("tts.replaceSpeaker.doneFailed", done)
+              : t("tts.replaceSpeaker.done", done)
             : plan
               ? plan.markers + plan.pages === 0
                 ? t("tts.replaceSpeaker.none")

@@ -41,6 +41,13 @@ export function useContextMenu(menuLabel: string) {
 
   const open = useCallback(
     (event: React.MouseEvent, items: ContextMenuItem[]) => {
+      // Eingabefelder behalten ihr eigenes Menue (Kopieren/Einfuegen).
+      if (
+        event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable]")
+      ) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       let { clientX: x, clientY: y } = event;

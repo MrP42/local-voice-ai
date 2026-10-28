@@ -331,6 +331,7 @@
       "none": "This voice does not occur on any page.",
       "preview": "{{markers}} markers and remembered voices on {{pages}} page(s) will change.",
       "done": "Done: {{markers}} markers replaced on {{pages}} page(s).",
+      "doneFailed": "Done, but {{failed}} page(s) could not be saved. Replaced: {{markers}} markers on {{pages}} page(s).",
       "apply": "Replace on all pages",
       "cancel": "Cancel",
       "close": "Close",

@@ -2249,6 +2249,7 @@ export const TtsSettings = () => {
               setSummary(next.summary);
               setTabVoices(next.voices);
             }}
+            onSaved={() => void reloadPages()}
             initialFrom={replaceSpeaker?.from}
           />
           {voiceMenu.menu}

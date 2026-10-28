@@ -261,54 +261,56 @@ const Voice: React.FC<{ testId: string }> = ({ testId }) => {
   );
 
   return (
-    <div
-      className="@container flex min-w-[28px] flex-[1_1_28px] items-center gap-1"
-      data-testid={`${testId}-bar-voice`}
-      onContextMenu={(event) =>
-        contextMenu.open(event, [
-          {
-            id: "manage",
-            label: t("tts.voices.manage"),
-            icon: Settings,
-            testId: `${testId}-bar-voice-context-manage`,
-            onSelect: openVoiceManagement,
-          },
-        ])
-      }
-    >
-      {contextMenu.menu}
-      <ActionMenu
-        trigger={{
-          icon: ChevronDown,
-          label: t("meetings.readAloud.bar.voiceMenu"),
-          description: t("meetings.readAloud.bar.voiceMenuHint", {
-            name: voiceLabel || "\u2013",
-          }),
-          testId: `${testId}-bar-voice-menu`,
-          size: "sm",
-        }}
-        items={items}
-        menuLabel={t("tts.voices.title")}
-        widthClass="w-72"
-      />
-      <span
-        className={`hidden min-w-0 flex-1 truncate text-xs @[5.5rem]:block ${
-          selectedVoiceNotSetUp
-            ? "text-amber-700 dark:text-amber-400"
-            : "text-text/60"
-        }`}
-        title={
-          selectedVoiceNotSetUp ? t("tts.voices.notSetUpHint") : voiceLabel
+    <>
+      <div
+        className="@container flex min-w-[28px] flex-[1_1_28px] items-center gap-1"
+        data-testid={`${testId}-bar-voice`}
+        onContextMenu={(event) =>
+          contextMenu.open(event, [
+            {
+              id: "manage",
+              label: t("tts.voices.manage"),
+              icon: Settings,
+              testId: `${testId}-bar-voice-context-manage`,
+              onSelect: openVoiceManagement,
+            },
+          ])
         }
-        data-testid={`${testId}-bar-voice-name`}
-        data-not-set-up={selectedVoiceNotSetUp ? "true" : undefined}
       >
-        {voiceLabel}
-        {selectedVoiceNotSetUp && (
-          <span className="sr-only">{t("tts.voices.notSetUpHint")}</span>
-        )}
-      </span>
-    </div>
+        <ActionMenu
+          trigger={{
+            icon: ChevronDown,
+            label: t("meetings.readAloud.bar.voiceMenu"),
+            description: t("meetings.readAloud.bar.voiceMenuHint", {
+              name: voiceLabel || "\u2013",
+            }),
+            testId: `${testId}-bar-voice-menu`,
+            size: "sm",
+          }}
+          items={items}
+          menuLabel={t("tts.voices.title")}
+          widthClass="w-72"
+        />
+        <span
+          className={`hidden min-w-0 flex-1 truncate text-xs @[5.5rem]:block ${
+            selectedVoiceNotSetUp
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-text/60"
+          }`}
+          title={
+            selectedVoiceNotSetUp ? t("tts.voices.notSetUpHint") : voiceLabel
+          }
+          data-testid={`${testId}-bar-voice-name`}
+          data-not-set-up={selectedVoiceNotSetUp ? "true" : undefined}
+        >
+          {voiceLabel}
+          {selectedVoiceNotSetUp && (
+            <span className="sr-only">{t("tts.voices.notSetUpHint")}</span>
+          )}
+        </span>
+      </div>
+      {contextMenu.menu}
+    </>
   );
 };
 
