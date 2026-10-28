@@ -18,6 +18,7 @@ import {
 } from "./providers/providerModel";
 import { PROVIDER_VOICES_CHANGED } from "./providers/VisibleVoices";
 import { useVoiceSamplesOf } from "./providers/useVoiceSamples";
+import type { VoiceTryTarget } from "./providers/voiceTry";
 
 /** Eintrag der Stimmenauswahl, der keine Stimme ist, sondern ein Sprung zur Verwaltung. */
 export const VOICE_MANAGE = "@manage";
@@ -394,6 +395,37 @@ export function useVoiceChoice(phase: string) {
     [samples, providerVoiceItems],
   );
 
+  /** Reinhoeren fuer Eintraege ohne fertige Hoerprobe (Fish-, Piper-, Cloud-Stimmen):
+      der Probesatz entsteht beim Klick. `undefined` = keine Probe moeglich
+      (Skript mit Sprechern, Verwaltung, nicht eingerichtete Stimmen). */
+  const tryOf = useCallback(
+    (value: string): VoiceTryTarget | undefined => {
+      if (value === "@default" || value === VOICE_MANAGE) return undefined;
+      const option = options.find((o) => o.value === value);
+      if (!option || option.isDisabled) return undefined;
+      if (value.startsWith("piper:")) {
+        return {
+          kind: "provider",
+          providerId: "piper",
+          voice: value.slice("piper:".length),
+        };
+      }
+      const picked = parseProviderVoiceValue(value);
+      if (picked) {
+        if (picked.voice === PROVIDER_DEFAULT_VOICE) return undefined;
+        return {
+          kind: "provider",
+          providerId: picked.providerId,
+          voice: picked.voice,
+        };
+      }
+      return voices.includes(value)
+        ? { kind: "fish", voiceId: value }
+        : undefined;
+    },
+    [options, voices],
+  );
+
   /** Sprung zur Stimmenverwaltung (Eintrag `VOICE_MANAGE`). */
   const openVoiceManagement = useCallback(() => {
     openSettingsTab("output");
@@ -414,6 +446,7 @@ export function useVoiceChoice(phase: string) {
     piperVoiceLabel,
     options,
     sampleOf,
+    tryOf,
     openVoiceManagement,
   };
 }
