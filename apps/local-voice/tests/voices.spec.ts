@@ -504,7 +504,7 @@ test("a downloaded Piper voice can be picked right in the read-aloud voice list"
     .toBe("de_DE-thorsten-medium");
 });
 
-test("each tab remembers its own voice with the page", async ({ page }) => {
+test("each tab remembers its own voice across pages", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   // Uebersetzung bekommt die Piper-Stimme ...
@@ -521,7 +521,7 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
   // ... das Original bleibt bei der Standardstimme: Umschalten schaltet die Engine zurueck.
   await page.getByRole("tab", { name: "Original", exact: true }).click();
   await page.getByTestId("voice-select").click();
-  await page.getByText("Skript mit Sprechern").click();
+  await page.getByRole("option", { name: "Skript mit Sprechern" }).click();
   await expect
     .poll(() =>
       page.evaluate(
@@ -537,14 +537,12 @@ test("each tab remembers its own voice with the page", async ({ page }) => {
       ),
     )
     .toBe("piper");
-  // Und die Zuordnung steht im Seitenstand.
+  // Die Zuordnung gilt seitenuebergreifend (nicht mehr im Seitenstand).
   await expect
     .poll(() =>
-      page.evaluate(
-        () => (window as unknown as { savedPageState?: string }).savedPageState,
-      ),
+      page.evaluate(() => window.localStorage.getItem("lva.ui.tts.tabVoices")),
     )
-    .toContain('"translation":"piper:de_DE-thorsten-medium"');
+    .toContain('"translation:English":"piper:de_DE-thorsten-medium"');
 });
 
 test("the voice list links to voice management under settings", async ({

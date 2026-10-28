@@ -65,6 +65,14 @@ export interface ChipMenuApi {
    *  Caret ein) — mit nativem Undo-Schritt. Schließt das Menü. */
   insertAtSelection(text: string): void;
   close(): void;
+  /** Optionale Erweiterung (Sprecher ändern): Text und Caret zum Zeitpunkt
+   *  des Rechtsklicks. */
+  text?: string;
+  caret?: number;
+  /** Optionale Erweiterung: Bereich ersetzen (nativer Undo-Schritt), bzw.
+   *  den ganzen Text in EINEM Schritt ersetzen. Beide schließen das Menü. */
+  replaceRange?(start: number, end: number, insert: string): void;
+  replaceText?(next: string): void;
 }
 
 export interface ChipProvider {
@@ -1067,6 +1075,17 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   const menuApi: ChipMenuApi = {
     insertAtSelection: menuInsertTag,
     close: closeMenu,
+    text: valueRef.current,
+    caret: menu?.selStart,
+    replaceRange: (start, end, insert) => {
+      closeMenu();
+      replaceRange(start, end, insert);
+    },
+    replaceText: (next) => {
+      closeMenu();
+      valueRef.current = next;
+      onChangeRef.current(next);
+    },
   };
 
   // ---- Ueberall ersetzen (Kontextmenue) ----------------------------------

@@ -199,3 +199,41 @@ export const speakerMarkerText = (
   style?: string,
 ): string =>
   style ? `<${speaker.displayName}:${style}>` : `<${speaker.displayName}>`;
+
+/** Der `<…>`-Marker, in dem (oder direkt an dem) der Caret steht. Auch
+ *  unbekannte Namen (`<Erzähler>` ohne Stimme): genau die will man oft
+ *  umhängen. */
+export function markerAt(
+  text: string,
+  caret: number,
+): MarkerCandidate | undefined {
+  return scanMarkerCandidates(text).find(
+    (candidate) => candidate.start <= caret && caret <= candidate.end,
+  );
+}
+
+/** Alle `<…>`-Marker mit demselben Namen (umlaut- und
+ *  gross-/kleinschreibungstolerant, wie das Backend schaltet). */
+export function markersNamed(text: string, name: string): MarkerCandidate[] {
+  const needle = foldSpeakerName(name);
+  return scanMarkerCandidates(text).filter(
+    (candidate) => foldSpeakerName(candidate.name) === needle,
+  );
+}
+
+/** Jeden `<…>`-Marker mit diesem Namen auf einen anderen Sprecher umhängen;
+ *  der Stil jeder Stelle (`<Anna:fluesternd>`) bleibt. */
+export function renameSpeakerMarkers(
+  text: string,
+  name: string,
+  speaker: SpeakerRef,
+): string {
+  let out = text;
+  for (const candidate of markersNamed(text, name).reverse()) {
+    out =
+      out.slice(0, candidate.start) +
+      speakerMarkerText(speaker, candidate.style) +
+      out.slice(candidate.end);
+  }
+  return out;
+}

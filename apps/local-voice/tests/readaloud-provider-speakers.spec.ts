@@ -16,6 +16,8 @@ type Cfg = {
   chosen?: string | null;
   /** Der Anbieter wechselt die Stimme je Satz (Vorgabe: ja). */
   switching?: boolean;
+  /** Zwei Seiten; die zweite hat (alt) eine eigene Stimme gespeichert. */
+  twoPages?: boolean;
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -192,7 +194,21 @@ async function setup(page: Page, cfg: Cfg) {
             else delete voices[String(args?.id)];
             return null;
           }
-          if (cmd === "pages_list") return [{ id: "p1", title: "Podcast" }];
+          if (cmd === "pages_list")
+            return cfg.twoPages
+              ? [
+                  { id: "p1", title: "Podcast" },
+                  { id: "p2", title: "Hörbuch" },
+                ]
+              : [{ id: "p1", title: "Podcast" }];
+          if (cmd === "page_state_load")
+            return args?.id === "p2"
+              ? JSON.stringify({
+                  text: "Zweite Seite.",
+                  tab: "original",
+                  voices: { original: "provider:phonon:anton-id" },
+                })
+              : null;
           if (cmd === "page_dir") return "C:\\projects\\p1";
           if (cmd === "tts_translate")
             return "<Nele> Good day.\n<Anton> Hello everyone.";
@@ -531,4 +547,137 @@ test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu wa
   ).toBeVisible();
   expect(await calls(page, "tts_provider_select")).toHaveLength(0);
   await expect(select).toContainText("Phonon · Skript mit Sprechern");
+});
+
+/** Caret in den Text setzen und das Kontextmenü dort öffnen. */
+async function contextMenuAt(page: Page, caret: number) {
+  const editor = editorOf(page);
+  await editor.evaluate((el, at) => {
+    const ta = el as HTMLTextAreaElement;
+    ta.focus();
+    ta.setSelectionRange(at, at);
+    // Echtes Mausereignis mit Koordinaten (wie ein Rechtsklick): sonst steht
+    // das Menü ohne Position unsichtbar am Rand.
+    ta.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 520,
+        clientY: 180,
+      }),
+    );
+  }, caret);
+}
+
+/** Einen Menüeintrag per JS klicken (das Menü schließt bei Scroll). */
+const clickIn = (page: Page, testId: string) =>
+  page.getByTestId(testId).evaluate((el) => (el as HTMLButtonElement).click());
+
+const pickSpeaker = (page: Page, name: RegExp) =>
+  page
+    .getByRole("menu")
+    .getByRole("menuitem", { name })
+    .evaluate((el) => (el as HTMLButtonElement).click());
+
+const SCRIPT = [
+  "<Erzählerin> Hallo.",
+  "<Leo> Hi.",
+  "<Erzählerin:leise> Tschüss.",
+].join("\n");
+
+test("Kontextmenü: Sprecher ändern an allen Stellen mit demselben Namen (Stil bleibt)", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await gotoReadAloud(page);
+  await editorOf(page).fill(SCRIPT);
+  await contextMenuAt(page, 3);
+  await clickIn(page, "menu-speaker-change");
+  // Der aktuelle Sprecher steht nicht zur Wahl.
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: /Leo/ })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: /^Erzählerin/ })).toHaveCount(
+    0,
+  );
+  await pickSpeaker(page, /Leo/);
+  await expect(page.getByTestId("menu-speaker-change-all")).toContainText(
+    "Alle 2 Stellen „Erzählerin“",
+  );
+  await page.screenshot({ path: "test-results/sprecher-aendern-menue.png" });
+  await clickIn(page, "menu-speaker-change-all");
+  await expect(editorOf(page)).toHaveValue(
+    ["<Leo> Hallo.", "<Leo> Hi.", "<Leo:leise> Tschüss."].join("\n"),
+  );
+});
+
+test("Kontextmenü: Sprecher ändern nur an dieser Stelle, auch bei einem gültigen Namen", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await gotoReadAloud(page);
+  await editorOf(page).fill(SCRIPT);
+  // Caret in der dritten Zeile, im Marker <Erzählerin:leise>.
+  await contextMenuAt(page, SCRIPT.lastIndexOf("<Erz") + 2);
+  await clickIn(page, "menu-speaker-change");
+  await pickSpeaker(page, /Leo/);
+  await clickIn(page, "menu-speaker-change-here");
+  await expect(editorOf(page)).toHaveValue(
+    ["<Erzählerin> Hallo.", "<Leo> Hi.", "<Leo:leise> Tschüss."].join("\n"),
+  );
+});
+
+test("Kontextmenü: unbekannter Sprecher lässt sich umhängen, außerhalb eines Markers fehlt der Eintrag", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await gotoReadAloud(page);
+  await editorOf(page).fill(
+    ["<Erzähler> Eins.", "<Erzähler> Zwei."].join("\n"),
+  );
+  await contextMenuAt(page, 14);
+  await expect(page.getByTestId("menu-speaker-change")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await contextMenuAt(page, 2);
+  await expect(page.getByTestId("menu-speaker-change")).toContainText(
+    "Sprecher „Erzähler“ ändern",
+  );
+  await clickIn(page, "menu-speaker-change");
+  await pickSpeaker(page, /Erzählerin/);
+  await clickIn(page, "menu-speaker-change-all");
+  await expect(editorOf(page)).toHaveValue(
+    ["<Erzählerin> Eins.", "<Erzählerin> Zwei."].join("\n"),
+  );
+});
+
+test("Stimmenwahl bleibt beim Seitenwechsel und beim Verlassen der Vorlesen-Seite", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", twoPages: true });
+  const select = await gotoReadAloud(page);
+  await select.getByRole("combobox").click();
+  await page.getByRole("option", { name: /Phonon · Nele/ }).click();
+  await expect(select).toContainText("Phonon · Nele");
+  const selects = () => calls(page, "tts_provider_select");
+  await expect.poll(async () => (await selects()).length).toBe(1);
+
+  // Seite 2 hat (aus alter Zeit) Anton gespeichert: die Wahl bleibt trotzdem Nele.
+  await page
+    .getByText("Hörbuch", { exact: true })
+    .click({ position: { x: 4, y: 4 } });
+  await expect(editorOf(page)).toHaveValue("Zweite Seite.");
+  await page.waitForTimeout(300);
+  expect(await selects()).toHaveLength(1);
+  await expect(select).toContainText("Phonon · Nele");
+
+  // Andere Ansicht und zurück: weiterhin Nele.
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Aufnahmen", exact: true })
+    .click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("voice-select")).toContainText("Phonon · Nele");
+  expect(await selects()).toHaveLength(1);
 });
