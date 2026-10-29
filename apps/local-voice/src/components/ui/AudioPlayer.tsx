@@ -140,7 +140,7 @@ interface AudioPlayerProps {
    *  darunter über die volle Breite (statt alles in einer Zeile). */
   compact?: boolean;
   /** Eine Zeile: Beschriftung, Play, Zeitstrahl, Zeit, Tempo (Bedienfeld der
-   *  Aufnahmen; Springen per Zeitstrahl, ohne ±10 s, Stopp und Lautstärke). */
+   *  Aufnahmen; Springen per Zeitstrahl und ±10/30 s, Stopp und Lautstärke). */
   dense?: boolean;
   /** Beschriftung vor dem Player (nur mit `dense`), z. B. „Ich“. */
   label?: string;
@@ -314,21 +314,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       window.removeEventListener("resize", close);
       window.removeEventListener("scroll", close, true);
     };
-  }, [isRateMenuOpen]);
-
-  useEffect(() => {
-    if (!isRateMenuOpen) return;
-
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        rateMenuRef.current &&
-        !rateMenuRef.current.contains(event.target as Node)
-      ) {
-        setIsRateMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isRateMenuOpen]);
 
   useEffect(() => {

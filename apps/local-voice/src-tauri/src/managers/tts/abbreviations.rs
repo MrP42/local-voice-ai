@@ -209,7 +209,8 @@ pub fn expand_if_german(text: &str) -> String {
 
 /// Abkuerzungen ausschreiben (Sprache wird vorausgesetzt, siehe
 /// [`expand_if_german`]). Tags `[…]` und Sprechermarker `<…>` bleiben
-/// unberuehrt; ohne Punkt im Text kommt der Text unveraendert zurueck.
+/// unberuehrt. Vorher laufen Datum und Lexikon (`pronunciation`); ohne diese und ohne
+/// Punkt kommt der Text unveraendert zurueck.
 pub fn expand_for_synthesis(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 16);
     let mut last = 0usize;
