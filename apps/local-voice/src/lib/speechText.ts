@@ -35,6 +35,20 @@ const stripInline = (line: string): string =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
+/**
+ * Kopfangaben "Vorlage: ..." und "Grundlage: ..." (Protokollkopf, KI-Notizen) sind
+ * Metadaten der Erzeugung, kein Inhalt: sie werden nicht vorgelesen. Die Angaben stehen
+ * mit " · " getrennt in einer Zeile ("Grundlage: Original · Protokoll auf Deutsch"):
+ * ab der ersten solchen Angabe entfällt der Rest der Zeile.
+ */
+const META_FIELD = /^(Vorlage|Grundlage)\s*:/i;
+
+const dropMetaFields = (text: string): string => {
+  const parts = text.split(" · ");
+  const first = parts.findIndex((part) => META_FIELD.test(part.trim()));
+  return first < 0 ? text : parts.slice(0, first).join(" · ");
+};
+
 const isTableSeparator = (line: string): boolean =>
   /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
 
@@ -72,12 +86,12 @@ export function markdownToSpeech(markdown: string): string {
     }
     const item = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.*)$/.exec(raw);
     if (item) {
-      const text = endSentence(stripInline(item[1]));
+      const text = endSentence(dropMetaFields(stripInline(item[1])));
       if (text) out.push(text);
       continue;
     }
     const quote = /^\s*>+\s?(.*)$/.exec(raw);
-    const text = stripInline(quote ? quote[1] : raw);
+    const text = dropMetaFields(stripInline(quote ? quote[1] : raw));
     // Leerzeile = Absatz; mehrere hintereinander zählen einmal.
     if (!text) {
       if (out.length > 0 && out[out.length - 1] !== "") out.push("");

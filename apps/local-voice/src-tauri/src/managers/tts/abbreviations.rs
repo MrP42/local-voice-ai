@@ -209,11 +209,9 @@ pub fn expand_if_german(text: &str) -> String {
 
 /// Abkuerzungen ausschreiben (Sprache wird vorausgesetzt, siehe
 /// [`expand_if_german`]). Tags `[…]` und Sprechermarker `<…>` bleiben
-/// unberuehrt; ohne Punkt im Text kommt der Text unveraendert zurueck.
+/// unberuehrt. Vorher laufen Datum und Lexikon (`pronunciation`); ohne diese und ohne
+/// Punkt kommt der Text unveraendert zurueck.
 pub fn expand_for_synthesis(text: &str) -> String {
-    if !text.contains('.') {
-        return text.to_string();
-    }
     let mut out = String::with_capacity(text.len() + 16);
     let mut last = 0usize;
     for span in protected_spans(text) {
@@ -251,6 +249,8 @@ fn protected_spans(text: &str) -> Vec<std::ops::Range<usize>> {
 
 /// Ein Stueck ohne Tags: erst die Tabelle, dann die allgemeine Punktregel.
 fn expand_segment(segment: &str) -> String {
+    let segment = super::pronunciation::apply(segment);
+    let segment = segment.as_str();
     if !segment.contains('.') {
         return segment.to_string();
     }

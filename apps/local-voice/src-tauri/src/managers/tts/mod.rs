@@ -6,6 +6,7 @@
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
 pub mod abbreviations;
+pub mod pronunciation;
 pub mod availability;
 pub mod builder;
 pub mod compile_cache;

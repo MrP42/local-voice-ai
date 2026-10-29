@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 /**
  * Transport glyphs, straight from the design system
  * (references/components.md → Media-Controls). Filled shapes are the stated
@@ -87,8 +88,9 @@ export const Glyph: React.FC<{
   </svg>
 );
 
-/** How far the skip buttons jump. */
-const SKIP_SECONDS = 15;
+/** How far the skip buttons jump (seconds): short and long, back and forward. */
+const SKIP_BACK_SECONDS = [30, 10] as const;
+const SKIP_FORWARD_SECONDS = [10, 30] as const;
 
 /** Selectable playback speeds; 1 is the default. */
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2] as const;
@@ -97,6 +99,9 @@ const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 let lastPlaybackRate = 1;
 /** Same for volume — set it once, every player in the session follows. */
 let lastVolume = 1;
+
+/** Rough height of the full speed list; decides above or below the button. */
+const RATE_MENU_HEIGHT = 190;
 
 const formatRate = (rate: number): string => `${rate}×`;
 
@@ -135,7 +140,7 @@ interface AudioPlayerProps {
    *  darunter über die volle Breite (statt alles in einer Zeile). */
   compact?: boolean;
   /** Eine Zeile: Beschriftung, Play, Zeitstrahl, Zeit, Tempo (Bedienfeld der
-   *  Aufnahmen; Springen per Zeitstrahl, ohne ±10 s, Stopp und Lautstärke). */
+   *  Aufnahmen; Springen per Zeitstrahl und ±10/30 s, Stopp und Lautstärke). */
   dense?: boolean;
   /** Beschriftung vor dem Player (nur mit `dense`), z. B. „Ich“. */
   label?: string;
@@ -201,6 +206,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [playbackRate, setPlaybackRate] = useState(lastPlaybackRate);
   const [isRateMenuOpen, setIsRateMenuOpen] = useState(false);
   const rateMenuRef = useRef<HTMLDivElement>(null);
+  const rateListRef = useRef<HTMLDivElement>(null);
+  const [rateMenuStyle, setRateMenuStyle] =
+    useState<React.CSSProperties | null>(null);
   const [volume, setVolume] = useState(lastVolume);
   const [isVolumeOpen, setIsVolumeOpen] = useState(false);
   const volumeRef = useRef<HTMLDivElement>(null);
@@ -281,20 +289,31 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     if (audioRef.current) audioRef.current.volume = volume;
   }, [volume, loadedSrc]);
 
-  // Close the speed menu when clicking outside of it
+  // Close the speed menu when clicking outside of it. The list is portalled to
+  // the body (an overflow container around the player would clip it), so a
+  // click inside either the button wrapper or the list counts as inside.
   useEffect(() => {
     if (!isRateMenuOpen) return;
 
     const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node;
       if (
-        rateMenuRef.current &&
-        !rateMenuRef.current.contains(event.target as Node)
+        rateMenuRef.current?.contains(target) ||
+        rateListRef.current?.contains(target)
       ) {
-        setIsRateMenuOpen(false);
+        return;
       }
+      setIsRateMenuOpen(false);
     };
+    const close = () => setIsRateMenuOpen(false);
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
   }, [isRateMenuOpen]);
 
   useEffect(() => {
@@ -544,6 +563,29 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     setVolume(value);
   };
 
+  /** Open above the button when there is room, else below; never taller than the space. */
+  const toggleRateMenu = () => {
+    if (isRateMenuOpen) {
+      setIsRateMenuOpen(false);
+      return;
+    }
+    const rect = rateMenuRef.current?.getBoundingClientRect();
+    if (rect) {
+      const margin = 8;
+      const above = rect.top - margin;
+      const below = window.innerHeight - rect.bottom - margin;
+      const openAbove = above >= RATE_MENU_HEIGHT || above > below;
+      setRateMenuStyle({
+        right: Math.max(margin, window.innerWidth - rect.right),
+        maxHeight: Math.max(96, openAbove ? above : below),
+        ...(openAbove
+          ? { bottom: window.innerHeight - rect.top + 4 }
+          : { top: rect.bottom + 4 }),
+      });
+    }
+    setIsRateMenuOpen(true);
+  };
+
   const handleSelectRate = (rate: number) => {
     lastPlaybackRate = rate;
     setPlaybackRate(rate);
@@ -575,7 +617,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     <div className="relative" ref={rateMenuRef}>
       <button
         type="button"
-        onClick={() => setIsRateMenuOpen((open) => !open)}
+        onClick={toggleRateMenu}
         className={`px-1.5 py-0.5 text-xs font-semibold tabular-nums rounded-md border transition-colors cursor-pointer ${
           playbackRate === 1
             ? "border-mid-gray/80 bg-mid-gray/10 text-text/70 hover:border-logo-primary hover:bg-logo-primary/10"
@@ -588,30 +630,49 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         {formatRate(playbackRate)}
       </button>
 
-      {isRateMenuOpen && (
-        <div
-          role="listbox"
-          className="absolute right-0 bottom-full z-50 mb-1 rounded-md border border-mid-gray/80 bg-background shadow-lg py-1"
-        >
-          {PLAYBACK_RATES.map((rate) => (
-            <button
-              key={rate}
-              type="button"
-              role="option"
-              aria-selected={rate === playbackRate}
-              onClick={() => handleSelectRate(rate)}
-              className={`block w-full px-3 py-1 text-xs text-start tabular-nums whitespace-nowrap transition-colors cursor-pointer hover:bg-logo-primary/10 ${
-                rate === playbackRate
-                  ? "text-logo-primary font-semibold"
-                  : "text-text"
-              }`}
-            >
-              {formatRate(rate)}
-            </button>
-          ))}
-        </div>
-      )}
+      {isRateMenuOpen &&
+        rateMenuStyle &&
+        createPortal(
+          <div
+            ref={rateListRef}
+            role="listbox"
+            style={rateMenuStyle}
+            className="fixed z-[100] overflow-y-auto rounded-md border border-mid-gray/80 bg-background shadow-lg py-1"
+          >
+            {PLAYBACK_RATES.map((rate) => (
+              <button
+                key={rate}
+                type="button"
+                role="option"
+                aria-selected={rate === playbackRate}
+                onClick={() => handleSelectRate(rate)}
+                className={`block w-full px-3 py-1 text-xs text-start tabular-nums whitespace-nowrap transition-colors cursor-pointer hover:bg-logo-primary/10 ${
+                  rate === playbackRate
+                    ? "text-logo-primary font-semibold"
+                    : "text-text"
+                }`}
+              >
+                {formatRate(rate)}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
+  );
+
+  const skipChip = (seconds: number, direction: -1 | 1) => (
+    <button
+      key={`${direction}${seconds}`}
+      type="button"
+      onClick={() => skip(direction * seconds)}
+      className="shrink-0 px-1 py-0.5 text-xs font-semibold tabular-nums rounded-md border border-mid-gray/80 bg-mid-gray/10 text-text/70 transition-colors cursor-pointer hover:border-logo-primary hover:bg-logo-primary/10"
+      aria-label={`${seconds} Sekunden ${direction < 0 ? "zurück" : "vor"}`}
+      title={`${seconds} s ${direction < 0 ? "zurück" : "vor"}`}
+    >
+      {direction < 0 ? "−" : "+"}
+      {seconds}
+    </button>
   );
 
   const slider = (
@@ -636,7 +697,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   if (dense) {
     return (
-      <div className={`flex items-center gap-2 ${className}`} data-player-dense>
+      <div
+        className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${className}`}
+        data-player-dense
+      >
         <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
         {label && (
           <span className="w-16 shrink-0 truncate text-xs text-text/60">
@@ -652,11 +716,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         >
           <Glyph name={isPlaying ? "pause" : "play"} />
         </button>
-        {slider}
+        {SKIP_BACK_SECONDS.map((n) => skipChip(n, -1))}
+        {SKIP_FORWARD_SECONDS.map((n) => skipChip(n, 1))}
         <span className="shrink-0 text-xs text-text/60 tabular-nums">
           {formatTime(currentTime)}/{formatTime(duration)}
         </span>
         {rateMenu}
+        <div className="order-last flex basis-full items-center">{slider}</div>
       </div>
     );
   }
@@ -672,14 +738,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       {/* Transport per design system: round glyph buttons, exactly one
           primary (play/pause) per player, never text inside the button. */}
       <div className="mediabar mediabar--start">
-        <button
-          type="button"
-          className="mbtn mbtn--sm"
-          onClick={() => skip(-SKIP_SECONDS)}
-          aria-label={`${SKIP_SECONDS} Sekunden zurück`}
-        >
-          <Glyph name="back" />
-        </button>
+        {SKIP_BACK_SECONDS.map((n) => skipChip(n, -1))}
         <button
           type="button"
           className="mbtn mbtn--primary"
@@ -689,14 +748,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         >
           <Glyph name={isPlaying ? "pause" : "play"} />
         </button>
-        <button
-          type="button"
-          className="mbtn mbtn--sm"
-          onClick={() => skip(SKIP_SECONDS)}
-          aria-label={`${SKIP_SECONDS} Sekunden vor`}
-        >
-          <Glyph name="back" mirrored />
-        </button>
+        {SKIP_FORWARD_SECONDS.map((n) => skipChip(n, 1))}
         <button
           type="button"
           className="mbtn mbtn--sm"
@@ -772,46 +824,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         )}
       </div>
 
-      <div className="relative" ref={rateMenuRef}>
-        <button
-          type="button"
-          onClick={() => setIsRateMenuOpen((open) => !open)}
-          className={`px-1.5 py-0.5 text-xs font-semibold tabular-nums rounded-md border transition-colors cursor-pointer ${
-            playbackRate === 1
-              ? "border-mid-gray/80 bg-mid-gray/10 text-text/70 hover:border-logo-primary hover:bg-logo-primary/10"
-              : "border-logo-primary bg-logo-primary/10 text-text"
-          }`}
-          aria-label="Playback speed"
-          aria-haspopup="listbox"
-          aria-expanded={isRateMenuOpen}
-        >
-          {formatRate(playbackRate)}
-        </button>
-
-        {isRateMenuOpen && (
-          <div
-            role="listbox"
-            className="absolute right-0 bottom-full z-50 mb-1 rounded-md border border-mid-gray/80 bg-background shadow-lg py-1"
-          >
-            {PLAYBACK_RATES.map((rate) => (
-              <button
-                key={rate}
-                type="button"
-                role="option"
-                aria-selected={rate === playbackRate}
-                onClick={() => handleSelectRate(rate)}
-                className={`block w-full px-3 py-1 text-xs text-start tabular-nums whitespace-nowrap transition-colors cursor-pointer hover:bg-logo-primary/10 ${
-                  rate === playbackRate
-                    ? "text-logo-primary font-semibold"
-                    : "text-text"
-                }`}
-              >
-                {formatRate(rate)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+      {rateMenu}
     </div>
   );
 };

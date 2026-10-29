@@ -236,7 +236,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
-      HTMLElement | undefined;
+      | HTMLElement
+      | undefined;
     preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
       el.replaceWith(
         document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
@@ -315,7 +316,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="flex flex-wrap items-center gap-2"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
       >
         {toolbarLead}
         <IconAction
