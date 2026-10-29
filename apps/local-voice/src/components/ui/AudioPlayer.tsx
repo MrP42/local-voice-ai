@@ -88,9 +88,33 @@ export const Glyph: React.FC<{
   </svg>
 );
 
-/** How far the skip buttons jump (seconds): short and long, back and forward. */
-const SKIP_BACK_SECONDS = [30, 10] as const;
-const SKIP_FORWARD_SECONDS = [10, 30] as const;
+/** Circular skip arrow with the number of seconds inside (back, or mirrored: forward). */
+const SkipGlyph: React.FC<{ seconds: number; forward?: boolean }> = ({
+  seconds,
+  forward = false,
+}) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    {forward ? (
+      <g transform="translate(24,0) scale(-1,1)">{GLYPHS.back}</g>
+    ) : (
+      GLYPHS.back
+    )}
+    <text
+      x="12"
+      y="15.6"
+      textAnchor="middle"
+      fontSize="8.4"
+      fontWeight="700"
+      fontFamily="inherit"
+    >
+      {seconds}
+    </text>
+  </svg>
+);
+
+/** How far the skip buttons jump (seconds), as on streaming players: a short step back, a long one forward. */
+const SKIP_BACK_SECONDS = 10;
+const SKIP_FORWARD_SECONDS = 30;
 
 /** Selectable playback speeds; 1 is the default. */
 const PLAYBACK_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2] as const;
@@ -661,17 +685,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     </div>
   );
 
-  const skipChip = (seconds: number, direction: -1 | 1) => (
+  const skipButton = (seconds: number, forward: boolean) => (
     <button
-      key={`${direction}${seconds}`}
       type="button"
-      onClick={() => skip(direction * seconds)}
-      className="shrink-0 px-1 py-0.5 text-xs font-semibold tabular-nums rounded-md border border-mid-gray/80 bg-mid-gray/10 text-text/70 transition-colors cursor-pointer hover:border-logo-primary hover:bg-logo-primary/10"
-      aria-label={`${seconds} Sekunden ${direction < 0 ? "zurück" : "vor"}`}
-      title={`${seconds} s ${direction < 0 ? "zurück" : "vor"}`}
+      className="mbtn mbtn--sm"
+      onClick={() => skip(forward ? seconds : -seconds)}
+      aria-label={`${seconds} Sekunden ${forward ? "vor" : "zurück"}`}
+      title={`${seconds} s ${forward ? "vor" : "zurück"}`}
     >
-      {direction < 0 ? "−" : "+"}
-      {seconds}
+      <SkipGlyph seconds={seconds} forward={forward} />
     </button>
   );
 
@@ -707,6 +729,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             {label}
           </span>
         )}
+        {skipButton(SKIP_BACK_SECONDS, false)}
         <button
           type="button"
           className="mbtn mbtn--sm mbtn--primary shrink-0"
@@ -716,8 +739,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         >
           <Glyph name={isPlaying ? "pause" : "play"} />
         </button>
-        {SKIP_BACK_SECONDS.map((n) => skipChip(n, -1))}
-        {SKIP_FORWARD_SECONDS.map((n) => skipChip(n, 1))}
+        {skipButton(SKIP_FORWARD_SECONDS, true)}
         <span className="shrink-0 text-xs text-text/60 tabular-nums">
           {formatTime(currentTime)}/{formatTime(duration)}
         </span>
@@ -738,7 +760,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       {/* Transport per design system: round glyph buttons, exactly one
           primary (play/pause) per player, never text inside the button. */}
       <div className="mediabar mediabar--start">
-        {SKIP_BACK_SECONDS.map((n) => skipChip(n, -1))}
+        {skipButton(SKIP_BACK_SECONDS, false)}
         <button
           type="button"
           className="mbtn mbtn--primary"
@@ -748,7 +770,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         >
           <Glyph name={isPlaying ? "pause" : "play"} />
         </button>
-        {SKIP_FORWARD_SECONDS.map((n) => skipChip(n, 1))}
+        {skipButton(SKIP_FORWARD_SECONDS, true)}
         <button
           type="button"
           className="mbtn mbtn--sm"
