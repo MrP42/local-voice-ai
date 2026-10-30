@@ -10,20 +10,20 @@ test("ohne Variablen keine Aenderung", () => {
 });
 
 test("Basis und Kanal ergeben den Endpunkt", () => {
-  const c = buildConfig({ LVA_UPDATE_BASE: "https://u.example/wai/", LVA_UPDATE_CHANNEL: "beta" }, ID);
-  assert.deepEqual(c.plugins.updater.endpoints, [`https://u.example/wai/${ID}/beta/latest.json`]);
+  const c = buildConfig({ LVA_UPDATE_BASE: "https://u.example/wai/", LVA_UPDATE_CHANNEL: "nacht" }, ID);
+  assert.deepEqual(c.plugins.updater.endpoints, [`https://u.example/wai/${ID}/nacht/latest.json`]);
   assert.equal(c.plugins.updater.pubkey, undefined);
 });
 
-test("Standardkanal ist stabil, Schluessel optional", () => {
+test("Standardkanal ist stable, Schluessel optional", () => {
   const c = buildConfig({ LVA_UPDATE_BASE: "https://u.example", LVA_UPDATE_PUBKEY: " KEY " }, ID);
-  assert.ok(c.plugins.updater.endpoints[0].endsWith("/stabil/latest.json"));
+  assert.ok(c.plugins.updater.endpoints[0].endsWith("/stable/latest.json"));
   assert.equal(c.plugins.updater.pubkey, "KEY");
 });
 
-test("leerer Kanal heisst stabil", () => {
+test("leerer Kanal heisst stable", () => {
   const c = buildConfig({ LVA_UPDATE_BASE: "https://u.example", LVA_UPDATE_CHANNEL: " " }, ID);
-  assert.ok(c.plugins.updater.endpoints[0].endsWith("/stabil/latest.json"));
+  assert.ok(c.plugins.updater.endpoints[0].endsWith("/stable/latest.json"));
 });
 
 test("unsichere oder falsche Angaben werden abgewiesen", () => {
