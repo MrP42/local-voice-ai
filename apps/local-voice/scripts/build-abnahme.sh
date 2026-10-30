@@ -36,8 +36,7 @@ fi
 conf_args=()
 update_conf=$(node scripts/update-config.mjs)
 if [ "$update_conf" != "{}" ]; then
-  update_conf_file="$CARGO_TARGET_DIR/update.conf.json"
-  mkdir -p "$CARGO_TARGET_DIR"
+  update_conf_file=$(mktemp)
   printf '%s\n' "$update_conf" > "$update_conf_file"
   conf_args=(--config "$update_conf_file")
   echo "Update-Quelle aus Umgebung: $update_conf_file"

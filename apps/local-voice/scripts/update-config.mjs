@@ -10,7 +10,7 @@
 // Ergebnis: JSON fuer `tauri build --config <Datei>`; der Endpunkt lautet
 // <Basis>/<identifier>/<kanal>/latest.json (statische Datei im Format des Tauri-Updaters).
 // Aufruf: node scripts/update-config.mjs > update.conf.json   (leer = {} = keine Aenderung)
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -18,7 +18,7 @@ const KANAELE = new Set(["stabil", "beta"]);
 
 export function buildConfig(env, identifier) {
   const base = (env.LVA_UPDATE_BASE ?? "").trim().replace(/\/+$/, "");
-  const kanal = (env.LVA_UPDATE_CHANNEL ?? "stabil").trim();
+  const kanal = (env.LVA_UPDATE_CHANNEL ?? "").trim() || "stabil";
   const pubkey = (env.LVA_UPDATE_PUBKEY ?? "").trim();
   if (!base && !pubkey) return {};
   if (!KANAELE.has(kanal)) throw new Error(`LVA_UPDATE_CHANNEL: stabil oder beta, nicht "${kanal}"`);
@@ -31,6 +31,7 @@ export function buildConfig(env, identifier) {
       throw new Error("LVA_UPDATE_BASE ist keine gueltige URL");
     }
     if (url.protocol !== "https:") throw new Error("LVA_UPDATE_BASE muss HTTPS sein");
+    if (url.search || url.hash) throw new Error("LVA_UPDATE_BASE darf keine Query und kein Fragment enthalten");
     if (url.username || url.password) throw new Error("LVA_UPDATE_BASE darf keine Zugangsdaten enthalten");
     updater.endpoints = [`${base}/${identifier}/${kanal}/latest.json`];
   }
@@ -38,7 +39,7 @@ export function buildConfig(env, identifier) {
   return { plugins: { updater } };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const dir = dirname(fileURLToPath(import.meta.url));
   const conf = JSON.parse(readFileSync(join(dir, "..", "src-tauri", "tauri.conf.json"), "utf8"));
   process.stdout.write(JSON.stringify(buildConfig(process.env, conf.identifier), null, 2) + "\n");

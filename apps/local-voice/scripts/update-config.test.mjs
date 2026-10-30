@@ -21,9 +21,15 @@ test("Standardkanal ist stabil, Schluessel optional", () => {
   assert.equal(c.plugins.updater.pubkey, "KEY");
 });
 
+test("leerer Kanal heisst stabil", () => {
+  const c = buildConfig({ LVA_UPDATE_BASE: "https://u.example", LVA_UPDATE_CHANNEL: " " }, ID);
+  assert.ok(c.plugins.updater.endpoints[0].endsWith("/stabil/latest.json"));
+});
+
 test("unsichere oder falsche Angaben werden abgewiesen", () => {
   assert.throws(() => buildConfig({ LVA_UPDATE_BASE: "http://u.example" }, ID), /HTTPS/);
   assert.throws(() => buildConfig({ LVA_UPDATE_BASE: "https://a:b@u.example" }, ID), /Zugangsdaten/);
+  assert.throws(() => buildConfig({ LVA_UPDATE_BASE: "https://u.example/x?a=1" }, ID), /Query/);
   assert.throws(() => buildConfig({ LVA_UPDATE_BASE: "kaputt" }, ID), /URL/);
   assert.throws(() => buildConfig({ LVA_UPDATE_BASE: "https://u.example", LVA_UPDATE_CHANNEL: "nightly" }, ID), /Kanal|CHANNEL/);
 });
