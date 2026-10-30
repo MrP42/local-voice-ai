@@ -42,6 +42,7 @@ mod tray;
 mod tray_i18n;
 mod tts_cli; // P3b (Goal tts-provider)
 mod utils;
+mod voice_call; // Sprachgespräch mit der KI
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -2210,6 +2211,11 @@ pub fn run(cli_args: CliArgs) {
             commands::meeting_search::meeting_embedding_model_download,
             commands::meeting_search::change_meeting_semantic_search_setting,
             // M4-P4c: Chat-Motor
+            voice_call::voice_call_start,
+            voice_call::voice_call_transcribe,
+            voice_call::voice_call_chat,
+            voice_call::voice_call_cancel,
+            voice_call::voice_call_synthesize,
             commands::meeting_chat::meeting_chat_ask,
             commands::meeting_chat::meeting_chat_cancel,
             commands::meeting_chat::meeting_chat_threads,

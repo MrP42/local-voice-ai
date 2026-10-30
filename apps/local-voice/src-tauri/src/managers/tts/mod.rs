@@ -3174,6 +3174,30 @@ impl TtsManager {
         Ok(audio.len())
     }
 
+    /// Ein Stück Text mit der eingestellten Engine und Stimme zu WAV im
+    /// Speicher (Sprachgespräch): derselbe Weg wie das Vorlesen — Satz-Cache,
+    /// Abkürzungen, Anbieter-Guardrails —, nur ohne Wiedergabe und ohne Datei.
+    pub async fn synthesize_wav(
+        &self,
+        text: &str,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
+        self.refresh_from_settings();
+        self.ensure_engine_ready().await?;
+        let prepared = {
+            let max_chars = *self.core.max_chars.lock().unwrap();
+            protocol::prepare_text(text, max_chars).ok_or_else(|| "empty text".to_string())?
+        };
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let wav = self
+            .core
+            .fetch_wav_cancellable(port, seed, &prepared.text, None, cancel)
+            .await?;
+        *self.core.last_used.lock().unwrap() = Instant::now();
+        Ok(wav)
+    }
+
     /// Der Piper-Zweig des Datei-Exports: ein Lauf durch die Engine-Naht
     /// (samt Satz-Cache), das Ergebnis als WAV auf die Platte. Andere
     /// Formate encodiert der Fish-Server; Piper kann nur WAV

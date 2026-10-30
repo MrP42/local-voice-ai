@@ -19,6 +19,7 @@
     "debug": "Debug",
     "about": "About",
     "dictationTest": "Dictation test",
+    "voiceCall": "Voice conversation",
     "tts": "Read Aloud",
     "meetings": "Meetings",
     "settings": "Settings",
@@ -5878,6 +5879,36 @@
     "designs": {
       "fluent": "Default: Fluent 2 with neutral gray and blue, matching the system interface.",
       "wai": "Wolff Applied AI: navy in light mode, signal yellow in dark mode."
+    }
+  },
+  "voiceCall": {
+    "title": "Voice conversation",
+    "description": "Talk to the AI like on the phone: it listens while you speak, answers right away and you can interrupt it.",
+    "begin": "Start conversation",
+    "end": "End conversation",
+    "hint": "Start the conversation and just talk. A headset gives the cleanest result.",
+    "speakNow": "Go ahead, I'm listening.",
+    "transcript": "Conversation",
+    "model": "Model: {{model}}",
+    "local": "local",
+    "latency": "Time to first sound: {{ms}} ms (median {{median}} ms)",
+    "latencyDetail": "Speech recognition {{stt}} ms · first sentence {{llm}} ms · voice {{tts}} ms",
+    "state": {
+      "idle": "Not connected",
+      "starting": "Warming up models…",
+      "listening": "Listening",
+      "hearing": "Hearing you",
+      "thinking": "Thinking",
+      "speaking": "Speaking"
+    },
+    "settings": {
+      "title": "Conversation settings",
+      "prompt": "Instruction for the AI",
+      "endMs": "Pause until I'm done: {{ms}} ms",
+      "earlyMs": "Start preparing the answer after: {{ms}} ms",
+      "bargeIn": "Let me interrupt the AI",
+      "reset": "Reset",
+      "note": "The model comes from Models (active model, local or API), the voice from Read Aloud (default: Anton)."
     }
   }
 }
