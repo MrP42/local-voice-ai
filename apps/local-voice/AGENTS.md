@@ -130,8 +130,8 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 `apps/apple/scripts/validate_local.sh`.
 
 **Beta channel / self-hosted update source (wai-sdk ADR-0020).** By default the app updates
-from the GitHub releases above. For a self-hosted server with a `beta` channel, set
-`LVA_UPDATE_BASE` (HTTPS), `LVA_UPDATE_CHANNEL` (`stabil`|`beta`) and optionally
+from the GitHub releases above. For a self-hosted server with a `nacht` channel, set
+`LVA_UPDATE_BASE` (HTTPS), `LVA_UPDATE_CHANNEL` (`stable`|`nacht`) and optionally
 `LVA_UPDATE_PUBKEY` before building; `scripts/update-config.mjs` turns them into a
 `--config` override (`<base>/de.wolffappliedai.localvoiceai/<channel>/latest.json`), and
 `scripts/build-abnahme.sh` applies it. The release workflow is unchanged. The channel is

@@ -1,10 +1,10 @@
 // Update-Quelle der App zur Bauzeit festlegen (wai-sdk ADR-0020, Beta-Kanal).
 //
 // Ohne Umgebungsvariablen bleibt alles beim Alten: tauri.conf.json zeigt auf die GitHub-Releases
-// (Kanal "stabil"). Fuer einen selbst betriebenen Update-Server (z. B. Beta-Kanal):
+// (Kanal "stable"). Fuer einen selbst betriebenen Update-Server (z. B. Beta-Kanal):
 //
 //   LVA_UPDATE_BASE=https://updates.example.org/wai    Basis-URL (HTTPS, ohne Schlusszeichen)
-//   LVA_UPDATE_CHANNEL=beta                            stabil (Standard) oder beta
+//   LVA_UPDATE_CHANNEL=nacht                           stable (Standard) oder nacht
 //   LVA_UPDATE_PUBKEY=<Inhalt der .pub-Datei>          optional, sonst der Schluessel aus tauri.conf.json
 //
 // Ergebnis: JSON fuer `tauri build --config <Datei>`; der Endpunkt lautet
@@ -14,14 +14,14 @@ import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
-const KANAELE = new Set(["stabil", "beta"]);
+const KANAELE = new Set(["stable", "nacht"]);
 
 export function buildConfig(env, identifier) {
   const base = (env.LVA_UPDATE_BASE ?? "").trim().replace(/\/+$/, "");
-  const kanal = (env.LVA_UPDATE_CHANNEL ?? "").trim() || "stabil";
+  const kanal = (env.LVA_UPDATE_CHANNEL ?? "").trim() || "stable";
   const pubkey = (env.LVA_UPDATE_PUBKEY ?? "").trim();
   if (!base && !pubkey) return {};
-  if (!KANAELE.has(kanal)) throw new Error(`LVA_UPDATE_CHANNEL: stabil oder beta, nicht "${kanal}"`);
+  if (!KANAELE.has(kanal)) throw new Error(`LVA_UPDATE_CHANNEL: stable oder nacht, nicht "${kanal}"`);
   const updater = {};
   if (base) {
     let url;
