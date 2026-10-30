@@ -32,10 +32,10 @@ fi
 # Die Signatur des Update-Artefakts scheitert lokal immer (kein privater Schluessel);
 # der Installer ist dann trotzdem fertig. Deshalb zaehlt hier nur, ob er existiert.
 # Optional: Update-Quelle fuer den Beta-Kanal (LVA_UPDATE_BASE/_CHANNEL/_PUBKEY, siehe
-# scripts/update-config.mjs). Ohne Variablen bleibt die GitHub-Quelle aus tauri.conf.json.
+# scripts/update-config-cli.mjs). Ohne Variablen bleibt die GitHub-Quelle aus tauri.conf.json.
 conf_args=()
-update_conf=$(node scripts/update-config.mjs)
-if [ "$update_conf" != "{}" ]; then
+update_conf=$(node scripts/update-config-cli.mjs)
+if [ -n "$update_conf" ] && [ "$update_conf" != "{}" ]; then
   update_conf_file=$(mktemp)
   printf '%s\n' "$update_conf" > "$update_conf_file"
   conf_args=(--config "$update_conf_file")
