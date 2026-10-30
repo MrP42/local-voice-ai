@@ -64,6 +64,12 @@ if [ ! -f "$setup" ]; then
   echo "FEHLER: Installer fehlt: $setup" >&2
   exit 1
 fi
+# Ein schluckender `|| true` darf keinen alten Installer als neu ausgeben: er muss nach dem Bau-Start entstanden sein.
+setup_mtime=$(stat -c %Y "$setup")
+if [ "$setup_mtime" -lt "$build_start" ]; then
+  echo "FEHLER: Installer ist aelter als dieser Lauf (Bau fehlgeschlagen, alter Stand): $setup" >&2
+  exit 1
+fi
 
 mkdir -p "$update_dir"
 cp "$setup" "$update_dir/"
