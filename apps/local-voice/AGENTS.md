@@ -129,6 +129,15 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 (iOS/watchOS) validation formerly in `apple.yml` is
 `apps/apple/scripts/validate_local.sh`.
 
+**Beta channel / self-hosted update source (wai-sdk ADR-0020).** By default the app updates
+from the GitHub releases above. For a self-hosted server with a `beta` channel, set
+`LVA_UPDATE_BASE` (HTTPS), `LVA_UPDATE_CHANNEL` (`stabil`|`beta`) and optionally
+`LVA_UPDATE_PUBKEY` before building; `scripts/update-config.mjs` turns them into a
+`--config` override (`<base>/de.wolffappliedai.localvoiceai/<channel>/latest.json`), and
+`scripts/build-abnahme.sh` applies it. The release workflow is unchanged. The channel is
+fixed per build; switching at runtime and a UI-only hot update need Rust/TypeScript changes
+in the app that are not part of this step (the wai-sdk host has them).
+
 Requirements for the update path to work at all: the repository (or at least
 its releases) must be **public** — the updater fetches
 `releases/latest/download/latest.json` unauthenticated — and the release must
