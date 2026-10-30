@@ -42,9 +42,25 @@ if [ -n "$update_conf" ] && [ "$update_conf" != "{}" ]; then
   echo "Update-Quelle aus Umgebung: $update_conf_file"
 fi
 
-npx tauri build -b nsis "${conf_args[@]}" -- --profile abnahme || true
-
 setup="$CARGO_TARGET_DIR/abnahme/bundle/nsis/Local Voice AI_${version}_x64-setup.exe"
+# Ein Installer aus einem frueheren Lauf darf einen gescheiterten Build nicht verdecken.
+rm -f "$setup"
+
+build_log=$(mktemp)
+set +e
+npx tauri build -b nsis "${conf_args[@]}" -- --profile abnahme 2>&1 | tee "$build_log"
+build_rc=${PIPESTATUS[0]}
+set -e
+if [ "$build_rc" -ne 0 ]; then
+  # Nur der fehlende Signaturschluessel ist erwartbar; jeder andere Fehler bricht ab.
+  if ! grep -qiE 'TAURI_SIGNING_PRIVATE_KEY|failed to sign|signature' "$build_log"; then
+    echo "FEHLER: tauri build scheiterte (Exit $build_rc), kein Signaturproblem" >&2
+    exit "$build_rc"
+  fi
+  echo "Hinweis: Signatur fehlgeschlagen (erwartet ohne privaten Schluessel), Installer wird geprueft."
+fi
+rm -f "$build_log"
+
 if [ ! -f "$setup" ]; then
   echo "FEHLER: Installer fehlt: $setup" >&2
   exit 1
