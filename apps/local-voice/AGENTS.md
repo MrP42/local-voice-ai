@@ -132,7 +132,7 @@ merges the `darwin-*` entries into the release's `latest.json`. The Apple
 **Beta channel / self-hosted update source (wai-sdk ADR-0020).** By default the app updates
 from the GitHub releases above. For a self-hosted server with a `nacht` channel, set
 `LVA_UPDATE_BASE` (HTTPS), `LVA_UPDATE_CHANNEL` (`stable`|`nacht`) and optionally
-`LVA_UPDATE_PUBKEY` before building; `scripts/update-config.mjs` turns them into a
+`LVA_UPDATE_PUBKEY` before building; `scripts/update-config-cli.mjs` (library: `update-config.mjs`) turns them into a
 `--config` override (`<base>/de.wolffappliedai.localvoiceai/<channel>/latest.json`), and
 `scripts/build-abnahme.sh` applies it. The release workflow is unchanged. The channel is
 fixed per build; switching at runtime and a UI-only hot update need Rust/TypeScript changes

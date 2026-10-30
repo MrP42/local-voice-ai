@@ -9,11 +9,7 @@
 //
 // Ergebnis: JSON fuer `tauri build --config <Datei>`; der Endpunkt lautet
 // <Basis>/<identifier>/<kanal>/latest.json (statische Datei im Format des Tauri-Updaters).
-// Aufruf: node scripts/update-config.mjs > update.conf.json   (leer = {} = keine Aenderung)
-import { readFileSync, realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
+// Aufruf: node scripts/update-config-cli.mjs > update.conf.json   (leer = {} = keine Aenderung)
 const KANAELE = new Set(["stable", "nacht"]);
 
 export function buildConfig(env, identifier) {
@@ -37,10 +33,4 @@ export function buildConfig(env, identifier) {
   }
   if (pubkey) updater.pubkey = pubkey;
   return { plugins: { updater } };
-}
-
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
-  const dir = dirname(fileURLToPath(import.meta.url));
-  const conf = JSON.parse(readFileSync(join(dir, "..", "src-tauri", "tauri.conf.json"), "utf8"));
-  process.stdout.write(JSON.stringify(buildConfig(process.env, conf.identifier), null, 2) + "\n");
 }
