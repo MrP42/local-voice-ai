@@ -78,6 +78,8 @@ interface Turn {
   audible: boolean;
   /** Antwort ist vollständig erzeugt (das Sprechen kann noch laufen). */
   done: boolean;
+  /** Verlauf wurde schon um diesen Schritt ergänzt. */
+  historyPushed: boolean;
   userText: string;
   spoken: string[];
   lastSpeechWall: number;
@@ -104,6 +106,7 @@ export class VoiceCallEngine {
   private unlisten: UnlistenFn | null = null;
   private taker: TurnTaker;
   private state: CallState = "idle";
+  private stopped = false;
 
   private frames: Float32Array[] = [];
   private firstFrame = 0;
@@ -136,11 +139,14 @@ export class VoiceCallEngine {
   }
 
   async start(): Promise<CallReady> {
+    this.stopped = false;
     this.setState("starting");
     try {
       const ready = await invoke<CallReady>("voice_call_start");
+      if (this.stopped) throw new Error("abgebrochen");
       this.ctx = new AudioContext({ latencyHint: "interactive" });
       await this.ctx.resume();
+      if (this.stopped) throw new Error("abgebrochen");
       this.player = new SpeechPlayer(this.ctx);
       this.player.onIdle = () => {
         if (this.turn?.audible && this.turn.done) this.finishTurn();
@@ -155,9 +161,14 @@ export class VoiceCallEngine {
         h?.(e.payload.kind, e.payload.index ?? 0, e.payload.text ?? "");
       });
       this.history = [];
-      this.capture = await startCapture(this.ctx, {
+      const capture = await startCapture(this.ctx, {
         onFrame: (f) => this.onFrame(f),
       });
+      if (this.stopped) {
+        capture.stop();
+        throw new Error("abgebrochen");
+      }
+      this.capture = capture;
       this.setState("listening");
       return ready;
     } catch (e) {
@@ -167,6 +178,7 @@ export class VoiceCallEngine {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.cancelTurn(true);
     this.capture?.stop();
     this.capture = null;
@@ -190,7 +202,10 @@ export class VoiceCallEngine {
     this.frameIndex++;
     this.wallOffset = performance.now() - this.frameIndex * 20;
     // Puffer begrenzen, ohne laufende Äußerung anzutasten.
-    const keepFrom = this.utt?.startFrame ?? this.frameIndex - 100;
+    const keepFrom = Math.min(
+      this.utt?.startFrame ?? this.frameIndex - 100,
+      this.turn?.startFrame ?? Infinity,
+    );
     while (
       this.firstFrame < keepFrom - PREROLL_FRAMES &&
       this.frames.length > 0
@@ -258,7 +273,9 @@ export class VoiceCallEngine {
     const utt = this.utt;
     if (!utt) return;
     // Husten oder Nachhall, während die KI spricht: kein Unterbrechen, kein Turn.
-    if (utt.aiWasSpeaking && !utt.barged) return;
+    const aiStillSpeaking =
+      (this.player?.active ?? false) || !!this.turn?.audible;
+    if (utt.aiWasSpeaking && !utt.barged && aiStillSpeaking) return;
     if (speechMs < this.cfg.turn.minUtteranceMs) return;
     const endFrame = Math.min(
       this.frameIndex,
@@ -283,7 +300,7 @@ export class VoiceCallEngine {
     const turn = this.turn;
     this.utt = null;
     if (!turn) {
-      if (this.state === "hearing") this.setState("listening");
+      this.setState(this.player?.active ? "speaking" : "listening");
       return;
     }
     turn.committed = true;
@@ -309,6 +326,7 @@ export class VoiceCallEngine {
       committedP,
       audible: false,
       done: false,
+      historyPushed: false,
       userText: "",
       spoken: [],
       lastSpeechWall,
@@ -345,16 +363,25 @@ export class VoiceCallEngine {
       let chain: Promise<void> = Promise.resolve();
       let assistantText = "";
 
+      let finishStream!: () => void;
+      const streamEnded = new Promise<void>((r) => (finishStream = r));
       this.sentenceHandlers.set(turn.id, (kind, _index, piece) => {
+        if (kind === "done" || kind === "failed") finishStream();
         if (kind !== "sentence" || dead()) return;
         if (!firstSentenceAt) firstSentenceAt = performance.now();
         assistantText += (assistantText ? " " : "") + piece;
         this.cb.onAssistant(assistantText, false, false);
         chain = chain.then(async () => {
           if (dead()) return;
-          const wav = await invoke<string>("voice_call_synthesize", {
-            text: piece,
-          });
+          let wav: string;
+          try {
+            wav = await invoke<string>("voice_call_synthesize", {
+              text: piece,
+            });
+          } catch (e) {
+            if (!dead()) this.cb.onError(String(e));
+            return;
+          }
           if (dead()) return;
           if (!firstAudioAt) firstAudioAt = performance.now();
           await turn.committedP;
@@ -381,6 +408,11 @@ export class VoiceCallEngine {
         requestId: turn.id,
         messages,
       });
+      // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
+      await Promise.race([
+        streamEnded,
+        new Promise<void>((r) => setTimeout(r, 3000)),
+      ]);
       await chain;
       this.sentenceHandlers.delete(turn.id);
       if (dead()) return;
@@ -391,6 +423,7 @@ export class VoiceCallEngine {
       }
       this.history.push({ role: "user", content: text });
       this.history.push({ role: "assistant", content: assistantText });
+      turn.historyPushed = true;
       this.cb.onAssistant(assistantText, true, false);
       // Ende der Wiedergabe meldet player.onIdle -> finishTurn.
       if (!this.player?.active) this.finishTurn();
@@ -427,6 +460,7 @@ export class VoiceCallEngine {
     turn.commit();
     if (interrupted && turn.spoken.length > 0) {
       // Nur das tatsächlich Gesprochene gehört in den Verlauf.
+      if (turn.historyPushed) this.history.splice(-2, 2);
       const said = turn.spoken.join(" ");
       this.history.push({ role: "user", content: turn.userText });
       this.history.push({ role: "assistant", content: `${said} …` });

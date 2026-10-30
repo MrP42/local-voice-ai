@@ -69,6 +69,9 @@ export async function startCapture(
   );
   try {
     await ctx.audioWorklet.addModule(url);
+  } catch (e) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw e;
   } finally {
     URL.revokeObjectURL(url);
   }

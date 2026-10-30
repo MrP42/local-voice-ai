@@ -90,7 +90,19 @@ export const VoiceCallPage: React.FC = () => {
           if (el) el.style.transform = `scaleX(${Math.min(1, level * 8)})`;
         },
         onUser: (text) =>
-          setLines((l) => [...l, { id: lineId.current++, role: "user", text }]),
+          setLines((l) => {
+            // Verworfene spekulative Vorarbeit (Weitersprechen) ersetzen.
+            const kept = [...l];
+            while (
+              kept.length &&
+              kept[kept.length - 1].role === "assistant" &&
+              !kept[kept.length - 1].final
+            )
+              kept.pop();
+            if (kept.length && kept[kept.length - 1].role === "user")
+              kept.pop();
+            return [...kept, { id: lineId.current++, role: "user", text }];
+          }),
         onAssistant: (text, final, interrupted) =>
           setLines((l) => {
             const last = l[l.length - 1];

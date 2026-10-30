@@ -43,6 +43,8 @@ use sentences::SentenceSplitter;
 pub const EVENT: &str = "voice-call";
 
 static CANCELS: Lazy<Mutex<HashMap<String, Arc<Notify>>>> = Lazy::new(Default::default);
+/// Abbrüche, die vor dem Start ihrer Anfrage eintrafen (IPC-Reihenfolge ist nicht garantiert).
+static EARLY_CANCELS: Lazy<Mutex<std::collections::HashSet<String>>> = Lazy::new(Default::default);
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct VoiceCallReady {
@@ -159,6 +161,13 @@ pub async fn voice_call_chat(
         .map(|m| StreamMessage::new(&m.role, m.content))
         .collect();
 
+    if EARLY_CANCELS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&request_id)
+    {
+        return Ok(String::new());
+    }
     let cancel = Arc::new(Notify::new());
     CANCELS
         .lock()
@@ -239,16 +248,24 @@ pub async fn voice_call_chat(
 #[tauri::command]
 #[specta::specta]
 pub fn voice_call_cancel(request_id: String) -> bool {
-    match CANCELS
+    let registered = CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&request_id)
-    {
+        .cloned();
+    match registered {
         Some(n) => {
             n.notify_one();
             true
         }
-        None => false,
+        None => {
+            let mut early = EARLY_CANCELS.lock().unwrap_or_else(|e| e.into_inner());
+            // Begrenzen: ein Abbruch ohne Anfrage darf nicht ewig liegen bleiben.
+            if early.len() < 64 {
+                early.insert(request_id);
+            }
+            false
+        }
     }
 }
 
