@@ -10,7 +10,17 @@ import {
   Button as FluentButton,
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
-import { Cog, History, Cpu, Plug, Users, Volume2, House, X } from "lucide-react";
+import {
+  Cog,
+  History,
+  Cpu,
+  Phone,
+  Plug,
+  Users,
+  Volume2,
+  House,
+  X,
+} from "lucide-react";
 import {
   AppSettings,
   HistorySettings,
@@ -20,6 +30,7 @@ import {
 } from "./settings";
 import { APP_NAME } from "./shell/frame";
 import { IntegrationsPage } from "./integrations/IntegrationsPage";
+import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -52,6 +63,11 @@ export const SECTIONS_CONFIG = {
     labelKey: "workspace.recordings",
     icon: Users,
     component: MeetingsSettings,
+  },
+  voice: {
+    labelKey: "sidebar.voiceCall",
+    icon: Phone,
+    component: VoiceCallPage,
   },
   models: {
     labelKey: "sidebar.models",
@@ -91,7 +107,7 @@ interface SidebarProps {
   onDrawerOpenChange: (open: boolean) => void;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts"] as const;
+const PRIMARY = ["home", "history", "meetings", "tts", "voice"] as const;
 // Fußeinträge vor „Einstellungen“ (Leitlinie §3: Einstellungen unten zuletzt).
 const UTILITIES = ["models", "integrations"] as const;
 

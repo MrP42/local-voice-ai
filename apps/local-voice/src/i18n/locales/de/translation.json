@@ -19,6 +19,7 @@
     "debug": "Debug",
     "about": "Info",
     "dictationTest": "Diktattest",
+    "voiceCall": "Sprachgespräch",
     "tts": "Vorlesen",
     "meetings": "Besprechungen",
     "settings": "Einstellungen",
@@ -5878,6 +5879,36 @@
     "designs": {
       "fluent": "Standard: Fluent 2 mit neutralem Grau und Blau, passend zur Systemoberfläche.",
       "wai": "Wolff Applied AI: Navy im hellen, Signalgelb im dunklen Modus."
+    }
+  },
+  "voiceCall": {
+    "title": "Sprachgespräch",
+    "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, während Sie sprechen, antwortet sofort und lässt sich unterbrechen.",
+    "begin": "Gespräch beginnen",
+    "end": "Gespräch beenden",
+    "hint": "Gespräch beginnen und einfach sprechen. Mit Headset wird das Ergebnis am saubersten.",
+    "speakNow": "Bitte, ich höre zu.",
+    "transcript": "Gespräch",
+    "model": "Modell: {{model}}",
+    "local": "lokal",
+    "latency": "Zeit bis zum ersten Ton: {{ms}} ms (Median {{median}} ms)",
+    "latencyDetail": "Spracherkennung {{stt}} ms · erster Satz {{llm}} ms · Stimme {{tts}} ms",
+    "state": {
+      "idle": "Nicht verbunden",
+      "starting": "Modelle werden vorgewärmt …",
+      "listening": "Hört zu",
+      "hearing": "Hört Sie",
+      "thinking": "Denkt nach",
+      "speaking": "Spricht"
+    },
+    "settings": {
+      "title": "Gesprächseinstellungen",
+      "prompt": "Anweisung an die KI",
+      "endMs": "Pause bis zum Satzende: {{ms}} ms",
+      "earlyMs": "Antwort vorbereiten nach: {{ms}} ms",
+      "bargeIn": "Unterbrechen der KI erlauben",
+      "reset": "Zurücksetzen",
+      "note": "Das Modell kommt aus „Modelle“ (aktives Modell, lokal oder API), die Stimme aus „Vorlesen“ (Standard: Anton)."
     }
   }
 }
