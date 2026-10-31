@@ -48,7 +48,11 @@ export const readFirstRunDictationModel = async (): Promise<string | null> => {
     });
     const value = parseFirstRunIni(text);
     return value === undefined ? DEFAULT_DICTATION_MODEL : value;
-  } catch {
-    return DEFAULT_DICTATION_MODEL;
+  } catch (e) {
+    // Nur „Datei fehlt“ heißt Vorgabe; eine unlesbare Datei darf ein „aus“ nicht überstimmen.
+    return isNotFound(e) ? DEFAULT_DICTATION_MODEL : null;
   }
 };
+
+const isNotFound = (e: unknown) =>
+  /os error 2\b|not found|no such file|cannot find/i.test(String(e));

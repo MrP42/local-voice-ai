@@ -59,8 +59,12 @@ const setupDictation = async (): Promise<boolean> => {
   if (!useModelStore.getState().models.length) {
     await useModelStore.getState().loadModels();
   }
-  const model = useModelStore.getState().models.find((m) => m.id === id);
+  const models = useModelStore.getState().models;
+  const model = models.find((m) => m.id === id);
   if (!model) return false;
+  // Liegt schon ein anderes Diktatmodell vor (z. B. Einstellungen nicht lesbar, Onboarding
+  // abgebrochen), nichts erzwingen: der Nutzer wählt selbst.
+  if (models.some((m) => m.is_downloaded && m.id !== id)) return false;
 
   useIntroTourStore.getState().setPendingModel(id);
   if (!model.is_downloaded) download(id);
