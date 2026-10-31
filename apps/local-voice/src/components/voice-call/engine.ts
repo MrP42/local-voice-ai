@@ -166,6 +166,14 @@ export class VoiceCallEngine {
     this.history = [];
   }
 
+  /** Gespeichertes Gespräch öffnen: die KI kennt ab jetzt genau diesen Verlauf. */
+  setHistory(
+    messages: { role: "user" | "assistant"; content: string }[],
+  ): void {
+    this.resetHistory();
+    this.history = messages.slice(-MAX_HISTORY);
+  }
+
   /**
    * Laufende Text-Anfrage abbrechen. `keepPartial`: das bisher Gestreamte
    * bleibt als unterbrochene Antwort stehen (Stopp-Knopf), sonst wird es verworfen.

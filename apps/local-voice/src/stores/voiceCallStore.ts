@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_CALL_CONFIG,
   DEFAULT_SYSTEM_PROMPT,
@@ -11,6 +12,21 @@ import {
 } from "@/components/voice-call/engine";
 import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
+import {
+  LOCAL_USER_ID,
+  MAX_ENTRY_CHARS,
+  VOICEBOT_ID,
+  deriveTitle,
+  mergeUsage,
+  usageFromExt,
+  usageToExt,
+  type ConversationDetail,
+  type ConversationRecord,
+  type ConversationSummary,
+  type HistoryAttachment,
+  type NewEntry,
+  type StoredEntry,
+} from "@/stores/voiceHistory";
 
 /** Schlüssel der gespeicherten Gesprächseinstellungen (unverändert seit Stufe 0). */
 export const VOICE_CALL_CONFIG_KEY = "voice-call.config";
@@ -27,6 +43,12 @@ export interface VoiceLine {
   at: number;
   /** Zeit bis zum ersten Ton (ms), nur bei gesprochenen Antworten. */
   latencyMs?: number;
+  /** Gesprochen (Anruf) oder getippt; so steht es im gespeicherten Beitrag. */
+  mode?: "typed" | "spoken";
+  /** Schon im Verlauf gespeichert (oder zum Speichern eingereiht). */
+  persisted?: boolean;
+  /** Dateien, die der Nutzer mitgeschickt hat (nur Name, Typ, Größe; kein Inhalt). */
+  attachments?: HistoryAttachment[];
 }
 
 /** Verbrauch des Gesprächs seit „Neues Gespräch“. */
@@ -52,6 +74,81 @@ const EMPTY_USAGE: CallUsage = {
   providerId: null,
   local: false,
 };
+
+/** Mikrofon offen (Anruf läuft oder startet gerade)? */
+const callRunning = (state: CallState): boolean => state !== "idle";
+
+/** Verbrauch einer weiteren Antwort zum Gesprächsverbrauch addieren. */
+function addUsage(usage: CallUsage, u: CallUsageEvent): CallUsage {
+  const ids =
+    u.usage_event_ids ?? (u.usage_event_id != null ? [u.usage_event_id] : []);
+  const subscription = SUBSCRIPTION_PROVIDERS.has(u.provider_id ?? "");
+  const local = !subscription && u.local === true;
+  const api = !subscription && !local;
+  return {
+    promptTokens: usage.promptTokens + (u.prompt_tokens ?? 0),
+    completionTokens: usage.completionTokens + (u.completion_tokens ?? 0),
+    usageEventIds: [...usage.usageEventIds, ...ids],
+    billableEventIds: api
+      ? [...usage.billableEventIds, ...ids]
+      : usage.billableEventIds,
+    calls: {
+      subscription: usage.calls.subscription + (subscription ? 1 : 0),
+      local: usage.calls.local + (local ? 1 : 0),
+      api: usage.calls.api + (api ? 1 : 0),
+    },
+    providerId: u.provider_id ?? usage.providerId,
+    local: u.local ?? usage.local,
+  };
+}
+
+/** Gesprächsverbrauch aus den gespeicherten Antworten (Infozeile beim Öffnen). */
+export function usageFromEntries(entries: StoredEntry[]): CallUsage {
+  return entries.reduce((usage, e) => {
+    const u = e.role === "assistant" ? usageFromExt(e.ext) : null;
+    return u ? addUsage(usage, u) : usage;
+  }, EMPTY_USAGE);
+}
+
+function lineFromEntry(e: StoredEntry, id: number): VoiceLine {
+  return {
+    id,
+    role: e.role === "user" ? "user" : "assistant",
+    text: e.text,
+    final: true,
+    interrupted: e.status === "interrupted",
+    at: Date.parse(e.created_at) || Date.now(),
+    mode: e.mode === "spoken" ? "spoken" : "typed",
+    persisted: true,
+  };
+}
+
+function entryFromLine(
+  line: VoiceLine,
+  usage: CallUsageEvent | null,
+  model: string | null,
+): NewEntry | null {
+  const text = line.text.slice(0, MAX_ENTRY_CHARS);
+  if (!text.trim()) return null;
+  const base: NewEntry = {
+    role: line.role,
+    mode: line.mode ?? "typed",
+    text,
+    status: line.interrupted ? "interrupted" : "complete",
+    created_at: new Date(line.at).toISOString(),
+    author_id: line.role === "user" ? LOCAL_USER_ID : VOICEBOT_ID,
+  };
+  if (line.role === "user")
+    return line.attachments?.length
+      ? { ...base, attachments: line.attachments }
+      : base;
+  return {
+    ...base,
+    triggered_by: LOCAL_USER_ID,
+    ...(model ? { model: model.slice(0, 256) } : {}),
+    ...(usage ? { ext: usageToExt(usage) } : {}),
+  };
+}
 
 export function loadCallConfig(): CallConfig {
   try {
@@ -90,6 +187,15 @@ interface VoiceCallStore {
   textBusy: boolean;
   settingsOpen: boolean;
   settingsTab: VoiceSettingsTab;
+  /** Gespeichertes Gespräch, das gerade offen ist; `null` bis zum ersten Beitrag. */
+  conversationId: string | null;
+  conversations: ConversationSummary[];
+  /** Archivierte Gespräche in der Liste zeigen. */
+  showArchived: boolean;
+  /** Ein anderes Gespräch wird gerade geladen: Eingabe gesperrt. */
+  switching: boolean;
+  /** Letzter Fehler beim Speichern im Verlauf (getrennt von Gesprächsfehlern). */
+  saveError: string | null;
 
   setActive: (active: boolean) => void;
   setConfig: (update: (c: CallConfig) => CallConfig) => void;
@@ -101,8 +207,21 @@ interface VoiceCallStore {
   startCall: () => Promise<void>;
   stopCall: () => Promise<void>;
   /** `display`: was im Verlauf steht, wenn es vom gesendeten Text abweicht (Anhänge). */
-  sendText: (text: string, display?: string) => Promise<void>;
-  newConversation: () => void;
+  sendText: (
+    text: string,
+    display?: string,
+    attachments?: HistoryAttachment[],
+  ) => Promise<void>;
+  /** Leeres Gespräch; gespeichert wird erst beim ersten Beitrag. */
+  newConversation: () => Promise<void>;
+  loadConversations: () => Promise<void>;
+  /** Gespeichertes Gespräch öffnen (beendet einen laufenden Anruf). */
+  openConversation: (id: string) => Promise<void>;
+  rename: (id: string, title: string) => Promise<void>;
+  remove: (id: string) => Promise<void>;
+  togglePin: (id: string) => Promise<void>;
+  archive: (id: string, archived?: boolean) => Promise<void>;
+  setShowArchived: (show: boolean) => Promise<void>;
   /** Laufende Text-Antwort abbrechen (Stopp-Knopf). */
   stopText: () => void;
   /** Seite verlassen: Anruf beenden, Verlauf bleibt. */
@@ -123,6 +242,37 @@ let lineId = 0;
 let textRun = 0;
 /** Zählt Besuche der Seite: ein spätes `leave()` (StrictMode, schneller Rückweg) darf einen neuen Besuch nicht abmelden. */
 let visit = 0;
+/**
+ * Ziel der Beiträge: das Gespräch, dem neue Zeilen gehören. Eingereihte Speicher-
+ * aufträge halten ihr Ziel fest, damit ein Wechsel sie nicht ins falsche Gespräch
+ * schreibt; `id` bleibt `null`, bis der erste Beitrag das Gespräch anlegt.
+ */
+interface Target {
+  id: string | null;
+  /** Das Gespräch trägt schon einen Titel aus der ersten Nutzernachricht (oder einen eigenen). */
+  titled: boolean;
+}
+/** Titel, mit dem der Kern leere Gespräche anlegt. */
+const DEFAULT_TITLE = "Neues Gespräch";
+let target: Target = { id: null, titled: false };
+/** Speicheraufträge laufen nacheinander: Reihenfolge und „erst anlegen, dann anhängen“. */
+let persistChain: Promise<void> = Promise.resolve();
+/** Verbrauch der laufenden Antwort, bis ihr Beitrag gespeichert wird. */
+let pendingUsage: CallUsageEvent | null = null;
+/** Die nächste Nutzerzeile ist getippt (sonst gesprochen). */
+let typedNext = false;
+/** Dateien der nächsten Nutzerzeile (wie `typedNext`). */
+let attachmentsNext: HistoryAttachment[] | undefined;
+/** Kennung des gespeicherten Beitrags je Zeile, für spätere Änderungen (Unterbrechen). */
+const entryIds = new Map<number, string>();
+/** Zählt Wechsel des Gesprächs: ein spätes Laden eines alten Wechsels wird verworfen. */
+let openRun = 0;
+/** Zählt Listenabfragen: nur die jüngste Antwort darf die Liste setzen. */
+let listRun = 0;
+/** Zeilen, deren Speichern gerade läuft (kein zweites Einreihen). */
+const inflight = new Set<number>();
+/** Verbrauch je Zeile, damit ein erneuter Versuch ihn nicht verliert. */
+const lineUsage = new Map<number, CallUsageEvent | null>();
 
 export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const getEngine = (): VoiceCallEngine => {
@@ -132,7 +282,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         onState: (state) => set({ state }),
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
         onLevel: (level) => levelListeners.forEach((fn) => fn(level)),
-        onUser: (text) =>
+        onUser: (text) => {
+          const mode = typedNext ? "typed" : "spoken";
+          const attachments = attachmentsNext;
+          typedNext = false;
+          attachmentsNext = undefined;
           set((s) => {
             // Verworfene spekulative Vorarbeit (Weitersprechen) ersetzen.
             const kept = [...s.lines];
@@ -147,11 +301,37 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return {
               lines: [
                 ...kept,
-                { id: lineId++, role: "user", text, at: Date.now() },
+                {
+                  id: lineId++,
+                  role: "user",
+                  text,
+                  at: Date.now(),
+                  mode,
+                  attachments,
+                },
               ],
             };
-          }),
-        onAssistant: (text, final, interrupted) =>
+          });
+        },
+        onAssistant: (text, final, interrupted) => {
+          const last = get().lines[get().lines.length - 1];
+          if (
+            final &&
+            interrupted &&
+            last?.role === "assistant" &&
+            last.final &&
+            !last.interrupted
+          ) {
+            // Schon vollständig angezeigt und gespeichert, dann beim Sprechen
+            // unterbrochen: dieselbe Sprechblase, derselbe Beitrag.
+            set((s) => ({
+              lines: s.lines.map((l) =>
+                l.id === last.id ? { ...l, text, interrupted: true } : l,
+              ),
+            }));
+            enqueueUpdate(last.id, text);
+            return;
+          }
           set((s) => {
             const l = s.lines;
             const last = l[l.length - 1];
@@ -173,10 +353,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   final,
                   interrupted,
                   at: Date.now(),
+                  mode: callRunning(s.state) ? "spoken" : "typed",
                 },
               ],
             };
-          }),
+          });
+          if (final) flushLines();
+        },
         onMetrics: (m) =>
           set((s) => {
             const lines = [...s.lines];
@@ -189,41 +372,155 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
         onError: (error) => set({ error }),
-        onUsage: (u: CallUsageEvent) =>
-          set((s) => {
-            const ids =
-              u.usage_event_ids ??
-              (u.usage_event_id != null ? [u.usage_event_id] : []);
-            const subscription = SUBSCRIPTION_PROVIDERS.has(
-              u.provider_id ?? "",
-            );
-            const local = !subscription && u.local === true;
-            const api = !subscription && !local;
-            return {
-              usage: {
-                promptTokens: s.usage.promptTokens + (u.prompt_tokens ?? 0),
-                completionTokens:
-                  s.usage.completionTokens + (u.completion_tokens ?? 0),
-                usageEventIds: [...s.usage.usageEventIds, ...ids],
-                billableEventIds: api
-                  ? [...s.usage.billableEventIds, ...ids]
-                  : s.usage.billableEventIds,
-                calls: {
-                  subscription:
-                    s.usage.calls.subscription + (subscription ? 1 : 0),
-                  local: s.usage.calls.local + (local ? 1 : 0),
-                  api: s.usage.calls.api + (api ? 1 : 0),
-                },
-                providerId: u.provider_id ?? s.usage.providerId,
-                local: u.local ?? s.usage.local,
-              },
-            };
-          }),
+        onUsage: (u: CallUsageEvent) => {
+          pendingUsage = mergeUsage(pendingUsage, u);
+          set((s) => ({ usage: addUsage(s.usage, u) }));
+        },
       },
       get().config,
     );
     engine.setMuted(get().muted);
+    if (import.meta.env.DEV)
+      (window as unknown as { __voiceCallEngine?: unknown }).__voiceCallEngine =
+        engine;
     return engine;
+  };
+
+  const loadConversations = async (): Promise<void> => {
+    const run = ++listRun;
+    try {
+      const list = await invoke<ConversationSummary[]>("conversations_list", {
+        includeArchived: get().showArchived,
+      });
+      if (run !== listRun) return;
+      set({ conversations: Array.isArray(list) ? list : [] });
+    } catch {
+      /* ohne Liste bleibt die alte stehen; das Gespräch selbst läuft weiter */
+    }
+  };
+
+  /** Reiht das Anhängen eines Beitrags ein; legt das Gespräch beim ersten an. */
+  const enqueueUpdate = (lineKey: number, text: string): void => {
+    persistChain = persistChain.then(async () => {
+      const id = entryIds.get(lineKey);
+      // Ohne Kennung ist die Zeile noch nicht gespeichert: der nächste Versuch
+      // nimmt ihren geänderten Text ohnehin mit.
+      if (!id || !text.trim()) return;
+      try {
+        await invoke("conversation_update_entry", {
+          id,
+          text: text.slice(0, MAX_ENTRY_CHARS),
+          status: "interrupted",
+        });
+        await loadConversations();
+      } catch (e) {
+        set({ saveError: String(e) });
+      }
+    });
+  };
+
+  /**
+   * Reiht das Anhängen eines Beitrags ein; legt das Gespräch beim ersten an.
+   * Als gespeichert gilt die Zeile erst nach Erfolg; bei einem Fehler bleibt sie
+   * offen und der nächste Flush versucht es erneut.
+   */
+  const enqueueAppend = (entry: NewEntry, lineKey: number): void => {
+    const t = target;
+    inflight.add(lineKey);
+    persistChain = persistChain.then(async () => {
+      try {
+        if (!t.id) {
+          const title = entry.role === "user" ? deriveTitle(entry.text) : null;
+          const created = await invoke<ConversationRecord>(
+            "conversation_create",
+            { title },
+          );
+          t.id = created.id;
+          t.titled = title !== null;
+          if (target === t) set({ conversationId: created.id });
+        }
+        const stored = await invoke<{ id?: string } | null>(
+          "conversation_append_entry",
+          { conversationId: t.id, entry },
+        );
+        if (stored?.id) entryIds.set(lineKey, stored.id);
+        set((s) => ({
+          saveError: null,
+          lines: s.lines.map((l) =>
+            l.id === lineKey ? { ...l, persisted: true } : l,
+          ),
+        }));
+        if (!t.titled && entry.role === "user") {
+          const title = deriveTitle(entry.text);
+          if (title) {
+            await invoke("conversation_update", { id: t.id, title });
+            t.titled = true;
+          }
+        }
+        await loadConversations();
+      } catch (e) {
+        set({ saveError: String(e) });
+      } finally {
+        inflight.delete(lineKey);
+      }
+    });
+  };
+
+  /**
+   * Alle fertigen Zeilen, die noch nicht gespeichert sind, in Reihenfolge
+   * einreihen. Nutzerzeilen ohne Antwort gelten an den Grenzen (Anruf Ende,
+   * Wechsel, Seite verlassen) als fertig; `all` nimmt sie mit.
+   */
+  const flushLines = (all = false): void => {
+    const pending = get().lines.filter(
+      (l) => !l.persisted && !inflight.has(l.id),
+    );
+    const lastFinal = Math.max(
+      -1,
+      ...pending.filter((l) => l.final).map((l) => l.id),
+    );
+    const due = pending.filter(
+      (l) => l.final || (l.role === "user" && (all || l.id < lastFinal)),
+    );
+    if (due.length === 0) return;
+    const model = get().ready?.llm ?? null;
+    for (const line of due) {
+      if (line.role === "assistant" && !lineUsage.has(line.id)) {
+        lineUsage.set(line.id, pendingUsage);
+        pendingUsage = null;
+      }
+      const usage = lineUsage.get(line.id) ?? null;
+      const entry = entryFromLine(line, usage, model);
+      if (entry) enqueueAppend(entry, line.id);
+    }
+  };
+
+  /** Läuft ein Anruf, dann beenden (Wechsel des Gesprächs). */
+  const endCall = async (): Promise<void> => {
+    if (get().state !== "idle") await engine?.stop();
+  };
+
+  /** Zustand für ein anderes (oder leeres) Gespräch zurücksetzen. */
+  const switchTo = (
+    next: Target,
+    id: string | null,
+    lines: VoiceLine[],
+    usage: CallUsage,
+  ): void => {
+    textRun++;
+    pendingUsage = null;
+    typedNext = false;
+    attachmentsNext = undefined;
+    target = next;
+    set({
+      conversationId: id,
+      textBusy: false,
+      lines,
+      metrics: [],
+      usage,
+      error: null,
+      ready: get().state === "idle" ? null : get().ready,
+    });
   };
 
   return {
@@ -239,6 +536,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     textBusy: false,
     settingsOpen: false,
     settingsTab: "talk",
+    conversationId: null,
+    conversations: [],
+    showArchived: false,
+    switching: false,
+    saveError: null,
 
     setActive: (active) => {
       if (active) visit++;
@@ -264,7 +566,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     setSettingsTab: (settingsTab) => set({ settingsTab }),
 
     startCall: async () => {
-      if (get().state !== "idle") return;
+      if (get().state !== "idle" || get().switching) return;
       set({ error: null });
       try {
         set({ ready: await getEngine().start() });
@@ -275,15 +577,23 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     stopCall: async () => {
       await engine?.stop();
+      flushLines(true);
     },
 
-    sendText: async (text, display) => {
+    sendText: async (text, display, attachments) => {
       const clean = text.trim();
-      if (!clean) return;
+      if (!clean || get().switching) return;
       const e = getEngine();
       set({ error: null });
+      typedNext = true;
+      attachmentsNext = attachments?.length ? attachments : undefined;
       if (e.inCall) {
-        await e.sendText(clean, display);
+        try {
+          await e.sendText(clean, display);
+        } finally {
+          typedNext = false;
+          attachmentsNext = undefined;
+        }
         return;
       }
       const run = ++textRun;
@@ -291,6 +601,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       try {
         await e.sendText(clean, display);
       } finally {
+        typedNext = false;
+        attachmentsNext = undefined;
         // Eine abgebrochene, ältere Anfrage darf die neue nicht „fertig“ melden.
         if (run === textRun) set({ textBusy: false });
       }
@@ -302,22 +614,104 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       set({ textBusy: false });
     },
 
-    newConversation: () => {
+    newConversation: async () => {
+      openRun++;
+      set({ switching: false });
+      await endCall();
+      flushLines(true);
       engine?.resetHistory();
-      textRun++;
-      set({
-        textBusy: false,
-        lines: [],
-        metrics: [],
-        usage: EMPTY_USAGE,
-        error: null,
-        ready: get().state === "idle" ? null : get().ready,
-      });
+      switchTo({ id: null, titled: false }, null, [], EMPTY_USAGE);
+    },
+
+    loadConversations,
+
+    openConversation: async (id) => {
+      if (id === get().conversationId || get().switching) return;
+      const run = ++openRun;
+      set({ switching: true });
+      await endCall();
+      flushLines(true);
+      await persistChain;
+      try {
+        const detail = await invoke<ConversationDetail>("conversation_get", {
+          id,
+        });
+        if (run !== openRun) return;
+        const lines = detail.entries
+          .filter(
+            (e) => (e.role === "user" || e.role === "assistant") && e.text,
+          )
+          .map((e) => lineFromEntry(e, lineId++));
+        getEngine().setHistory(
+          lines.map((l) => ({ role: l.role, content: l.text })),
+        );
+        switchTo(
+          { id, titled: detail.conversation.title !== DEFAULT_TITLE },
+          id,
+          lines,
+          usageFromEntries(detail.entries),
+        );
+      } catch (e) {
+        if (run === openRun) set({ error: String(e) });
+        void loadConversations();
+      } finally {
+        if (run === openRun) set({ switching: false });
+      }
+    },
+
+    rename: async (id, title) => {
+      try {
+        await invoke("conversation_update", { id, title });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+      await loadConversations();
+    },
+
+    remove: async (id) => {
+      if (id === target.id) await get().newConversation();
+      await persistChain;
+      try {
+        await invoke("conversation_delete", { id });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+      await loadConversations();
+    },
+
+    togglePin: async (id) => {
+      const current = get().conversations.find((c) => c.id === id);
+      try {
+        await invoke("conversation_update", {
+          id,
+          pinned: !(current?.pinned ?? false),
+        });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+      await loadConversations();
+    },
+
+    archive: async (id, archived = true) => {
+      if (archived && id === target.id) await get().newConversation();
+      await persistChain;
+      try {
+        await invoke("conversation_update", { id, archived });
+      } catch (e) {
+        set({ error: String(e) });
+      }
+      await loadConversations();
+    },
+
+    setShowArchived: async (showArchived) => {
+      set({ showArchived });
+      await loadConversations();
     },
 
     leave: async () => {
       const left = visit;
       await engine?.stop();
+      flushLines(true);
       if (visit !== left) return;
       await engine?.dispose();
       if (visit !== left) return;

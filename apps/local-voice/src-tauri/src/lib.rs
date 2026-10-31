@@ -14,6 +14,7 @@ mod commands;
 mod sync;
 #[cfg(windows)]
 mod context_menu;
+mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod helpers;
 mod input;
 mod local_update;
@@ -320,6 +321,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
     app_handle.manage(usage_ledger);
+    // U3: Gesprächsverlauf. Ein Speicher, der nicht aufgeht, nimmt die App nicht
+    // mit: die Befehle melden dann „nicht verfügbar“.
+    match conversations::store::ConversationStore::new(app_handle) {
+        Ok(store) => {
+            app_handle.manage(Arc::new(store));
+        }
+        Err(e) => log::error!("Failed to initialize conversations store: {e}"),
+    }
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
     // Geraete-Sync: Status-Objekt fuer die Oberflaeche; die Schleife startet
@@ -2216,6 +2225,13 @@ pub fn run(cli_args: CliArgs) {
             voice_call::voice_call_chat,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
+            conversations::conversations_list,
+            conversations::conversation_get,
+            conversations::conversation_create,
+            conversations::conversation_update,
+            conversations::conversation_delete,
+            conversations::conversation_append_entry,
+            conversations::conversation_update_entry,
             commands::meeting_chat::meeting_chat_ask,
             commands::meeting_chat::meeting_chat_cancel,
             commands::meeting_chat::meeting_chat_threads,
