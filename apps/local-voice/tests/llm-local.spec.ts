@@ -261,7 +261,8 @@ test("an app copy with a checked twin is marked and can be deleted after asking"
 
 test("search finds models in folded groups", async ({ page }) => {
   await openModels(page);
-  await page.getByPlaceholder(/suchen/i).fill("gpt-oss");
+  // Eindeutig das Suchfeld der Modellseite, nicht die Titelleisten-Suche.
+  await page.getByPlaceholder(/^Modelle nach Namen suchen/).fill("gpt-oss");
   await expect(card(page, "ext-bbbbbbbbbbbb")).toBeVisible();
   await expect(card(page, "llm-qwen3-4b-q4")).toHaveCount(0);
 });

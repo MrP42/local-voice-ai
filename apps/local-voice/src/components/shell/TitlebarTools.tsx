@@ -97,6 +97,8 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
     ? sections.filter((s) => s.label.toLowerCase().includes(needle))
     : [];
 
+  const listOpen = searchOpen && !!needle;
+
   const go = (id: SidebarSection) => {
     onNavigate(id);
     setQuery("");
@@ -118,8 +120,9 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
           input={{
             role: "combobox",
             "aria-autocomplete": "list",
-            "aria-expanded": searchOpen && !!needle,
-            "aria-controls": "lv-search-list",
+            "aria-expanded": listOpen,
+            // Nur auf die Liste verweisen, solange sie im DOM steht.
+            "aria-controls": listOpen ? "lv-search-list" : undefined,
             "aria-activedescendant":
               searchOpen && results[active]
                 ? `lv-search-opt-${results[active].id}`
@@ -158,7 +161,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
           }}
           data-titlebar-search
         />
-        {searchOpen && needle && (
+        {listOpen && (
           <ul
             id="lv-search-list"
             className="lv-search__list"

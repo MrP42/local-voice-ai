@@ -316,7 +316,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
       >
         {toolbarLead}
         <IconAction
