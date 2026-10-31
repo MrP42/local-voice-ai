@@ -6248,7 +6248,7 @@
     "end": {
       "eyebrow": "Done",
       "title": "Let's go",
-      "body": "You can restart the introduction any time from the home page and at the bottom of every help panel (question mark top right).",
+      "body": "You can restart the introduction any time from the help menu (question mark top right) and on the home page.",
       "stillLoading": "The dictation model is still downloading. Once it's done you can dictate – the status bar shows the progress."
     }
   }
