@@ -309,7 +309,7 @@
         "entry": "Anbieter: {{name}}",
         "voice": "{{provider}} · {{name}}",
         "script": "{{provider}} · Skript mit Sprechern",
-        "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
+        "hint": "Anbieter: {{name}} (Modelle › Vorlesen › Anbieter)",
         "open": "Anbieter-Einstellungen öffnen"
       }
     },
@@ -1369,8 +1369,8 @@
           "included_other": "{{count}} Stimmen enthalten",
           "missingChip": "Stimmen fehlen ({{present}} von {{total}})",
           "reload": "Stimmen nachladen",
-          "detailNew": "Zum Modell gehören {{total}} Stimmen. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein.",
-          "detail": "Zum Modell gehören {{total}} Stimmen, {{present}} davon sind installiert. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein."
+          "detailNew": "Zum Modell gehören {{total}} Stimmen. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Modelle > Vorlesen > Anbieter > Phonon ein.",
+          "detail": "Zum Modell gehören {{total}} Stimmen, {{present}} davon sind installiert. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Modelle > Vorlesen > Anbieter > Phonon ein."
         },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Mehrere Dateien: Größe und SHA-256 je Datei stehen im Katalog der App und werden beim Laden geprüft.",
@@ -1396,6 +1396,97 @@
           "phonon-31m-en": {
             "name": "Phonon 31m (Englisch)",
             "description": "Englisches Sprachmodell, 8-Bit-Fassung (q8), läuft auf der CPU. Apache-2.0, öffentlich, kein Konto nötig."
+          }
+        }
+      },
+      "voiceManager": {
+        "view": {
+          "label": "Ansicht",
+          "voices": "Stimmen",
+          "providers": "Anbieter"
+        },
+        "reading": "Liest vor",
+        "readingScope": "Gilt für Vorlesen, Aufnahmen und Skripte",
+        "scriptDescription": "Die Marker im Skript wechseln die Stimme; Text ohne Marker liest die Standardstimme.",
+        "multilingual": "mehrsprachig",
+        "loading": "Stimmen werden geladen …",
+        "count": "{{shown}} von {{total}} Stimmen",
+        "empty": "Es sind noch keine Stimmen eingerichtet. Unter „Anbieter“ lassen sich Anbieter aktivieren und einrichten; Piper-Stimmen stehen dort zum Laden bereit.",
+        "noMatch": "Keine Stimme passt zu den gewählten Filtern.",
+        "noVoicesFrom": "Noch keine Stimmen von: {{names}}. Sie erscheinen, sobald der Anbieter bereit ist.",
+        "generalHint": "Lautstärke, Klang verbessern, Exportformat, Zeichenlimit, Auto-Tags und Fish-Ordner stehen unter Einstellungen › Ausgabe › Vorlesen.",
+        "openOutput": "Einstellungen öffnen",
+        "providersMoved": "Die Anbieter (Aktivieren, Lizenz, Fernzugriff, Einstellungen, Stimmen, Probestimme) stehen jetzt unter Modelle › Vorlesen in der Ansicht „Anbieter“.",
+        "openProviders": "Anbieter öffnen",
+        "filter": {
+          "title": "Filter",
+          "button": "Filter",
+          "buttonCount": "Filter ({{count}})",
+          "reset": "Zurücksetzen",
+          "status": "Status",
+          "onlyInstalled": "Nur installierte",
+          "language": "Sprache",
+          "device": "Gerät",
+          "provider": "Anbieter",
+          "license": "Lizenz"
+        },
+        "device": {
+          "cpu": "CPU",
+          "gpu": "GPU",
+          "server": "Server"
+        },
+        "license": {
+          "free": "Lizenz geprüft",
+          "nonCommercial": "nichtkommerziell",
+          "unverified": "Lizenz ungeprüft"
+        },
+        "sort": {
+          "label": "Sortieren",
+          "recommended": "Empfohlen",
+          "name": "Name",
+          "language": "Sprache",
+          "provider": "Anbieter"
+        },
+        "layout": {
+          "label": "Darstellung",
+          "cards": "Karten",
+          "list": "Liste"
+        },
+        "voice": {
+          "selected": "Liest vor",
+          "use": "Verwenden",
+          "useNamed": "{{name}} zum Vorlesen verwenden",
+          "load": "Laden · {{size}}",
+          "loadNamed": "{{name}} laden ({{size}})",
+          "setUp": "Anbieter einrichten",
+          "notLoaded": "nicht geladen",
+          "providerNotReady": "Anbieter nicht bereit",
+          "hidden": "im Vorlesen ausgeblendet",
+          "assessment": "Einschätzung",
+          "quality": "Qualität",
+          "effort": "Rechenaufwand",
+          "notMeasured": "nicht gemessen",
+          "openProvider": "Anbieter öffnen: {{name}}",
+          "sampleAfterLoad": "Hörprobe erst nach dem Laden",
+          "sampleAfterSetup": "Hörprobe erst, wenn der Anbieter bereit ist",
+          "noSample": "Keine Hörprobe verfügbar"
+        },
+        "providers": {
+          "title": "Anbieter und Dienste",
+          "details": "Details",
+          "openNamed": "Details und Einstellungen: {{name}}",
+          "recheckNamed": "{{name}} erneut prüfen",
+          "voiceCount_one": "{{count}} Stimme",
+          "voiceCount_other": "{{count}} Stimmen",
+          "sheetHint": "Zustand, Freigaben, Einstellungen, Stimmen und Probestimme dieses Anbieters.",
+          "downloads": "Downloads",
+          "moreSettings": "App-weite Einstellungen zum Vorlesen (Lautstärke, Export, Fish-Ordner …) stehen unter Einstellungen › Ausgabe.",
+          "status": {
+            "ready": "Bereit",
+            "notReady": "Nicht bereit",
+            "blocked": "Gesperrt",
+            "notEnabled": "Nicht aktiviert",
+            "unavailable": "Nicht verfügbar"
           }
         }
       },

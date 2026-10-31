@@ -9,6 +9,11 @@ import {
 } from "./voiceTry";
 import { DEFAULT_PREVIEW_KEY } from "./providerModel";
 
+const MEDIA_STYLE = {
+  "--_mb-size": "44px",
+  "--_mb-ico": "1.1rem",
+} as React.CSSProperties;
+
 /**
  * Reinhoeren in eine Stimme ohne fertige Hoerprobe: erzeugt beim Klick einen
  * kurzen Probesatz und spielt ihn (Kreisel, bis das Audio kommt). Zweiter Klick
@@ -18,7 +23,9 @@ export const VoiceTryButton: React.FC<{
   target: VoiceTryTarget;
   name: string;
   testId?: string;
-}> = ({ target, name, testId }) => {
+  /** Runder Wiedergabeknopf der Stimmenverwaltung (44 px, `.mbtn`). */
+  media?: boolean;
+}> = ({ target, name, testId, media = false }) => {
   const { t } = useTranslation();
   const trying = useTryingKey() === tryKey(target);
   const label = trying
@@ -31,13 +38,25 @@ export const VoiceTryButton: React.FC<{
   return (
     <span
       role="button"
-      tabIndex={-1}
+      tabIndex={media ? 0 : -1}
       aria-label={label}
       title={label}
       data-testid={testId}
-      className={`inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded hover:bg-mid-gray/20 hover:text-text ${
-        trying ? "text-logo-primary" : "text-text/60"
-      }`}
+      style={media ? MEDIA_STYLE : undefined}
+      className={
+        media
+          ? "mbtn mbtn--primary"
+          : `inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded hover:bg-mid-gray/20 hover:text-text ${
+              trying ? "text-logo-primary" : "text-text/60"
+            }`
+      }
+      onKeyDown={(e) => {
+        // Als eigener Knopf der Verwaltung erreichbar mit Tab, Enter und Leertaste.
+        if (media && (e.key === "Enter" || e.key === " ")) {
+          stop(e);
+          void toggleTry(target, t(DEFAULT_PREVIEW_KEY));
+        }
+      }}
       onMouseDown={stop}
       onPointerDown={stop}
       onClick={(e) => {
@@ -46,9 +65,17 @@ export const VoiceTryButton: React.FC<{
       }}
     >
       {trying ? (
-        <Square width={14} height={14} aria-hidden="true" />
+        <Square
+          width={media ? undefined : 14}
+          height={media ? undefined : 14}
+          aria-hidden="true"
+        />
       ) : (
-        <Play width={14} height={14} aria-hidden="true" />
+        <Play
+          width={media ? undefined : 14}
+          height={media ? undefined : 14}
+          aria-hidden="true"
+        />
       )}
     </span>
   );

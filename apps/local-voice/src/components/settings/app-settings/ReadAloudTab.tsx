@@ -11,7 +11,8 @@ import { Input } from "../../ui/Input";
 import { ShortcutInput } from "../ShortcutInput";
 import { VoiceLibrary } from "../tts/voices/VoiceLibrary";
 import { DEFAULT_TAG_PROVIDER_UI_VALUE } from "../tts/tags/AutoTagBar";
-import { TtsProvidersGroup } from "../tts/providers/TtsProvidersGroup";
+import { Button } from "../../ui/Button";
+import { openVoiceManager } from "../models/voices";
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -406,9 +407,29 @@ export const ReadAloudTab = () => {
         </SettingContainer>
       </SettingsGroup>
       {/* Weitere Sprachausgaben (Phonon, OpenAI-kompatible Server, Ollama):
-        ein Anbieter-Vertrag, Opt-in je Anbieter. Gehoert zum Vorlesen, daher
-        hier -- kein eigener Reiter, kein eigener Menuepunkt. */}
-      <TtsProvidersGroup />
+        ein Anbieter-Vertrag, Opt-in je Anbieter. Verwaltet werden sie unter
+        Modelle > Vorlesen (Ansicht "Anbieter", Seitenblatt je Anbieter);
+        hier bleibt nur der Weg dorthin. */}
+      <SettingsGroup
+        title={t("tts.providers.title")}
+        description={t("tts.providers.description")}
+        anchor="tts-providers"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-text/80">
+            {t("settings.models.voiceManager.providersMoved")}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="tts-providers-open-models"
+            onClick={() => openVoiceManager("providers")}
+          >
+            {t("settings.models.voiceManager.openProviders")}
+          </Button>
+        </div>
+      </SettingsGroup>
       {/* Stimmen anhoeren, aufnehmen, klonen, importieren, loeschen: eine
         Einstellung des Vorlesens, deshalb hier -- nicht auf der Modelle-Seite
         (Entscheidung Patrick 14.09.). Die Vorlesen-Seite verweist ueber den

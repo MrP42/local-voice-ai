@@ -867,3 +867,10 @@ body.lv-resizing * {
     transition: none;
   }
 }
+
+/* Stimmenverwaltung (Modelle > Vorlesen): Touch-Ziele der Sortierauswahl >= 44 px. */
+@media (max-width: 767px) {
+  .voice-sort .app-select__control {
+    min-height: 44px;
+  }
+}
