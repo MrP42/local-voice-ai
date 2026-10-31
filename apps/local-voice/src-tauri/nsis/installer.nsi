@@ -440,6 +440,67 @@ Function PageLeaveReinstall
   reinst_done:
 FunctionEnd
 
+; --- DIKTATMODELL --- Erststart-Auswahl des Diktatmodells (nur Neuinstallation)
+; Schreibt $INSTDIR\erststart.ini, Abschnitt [diktat], Schlüssel modell.
+; Die App liest die Datei beim ersten Start; fehlt sie, gilt „an“.
+!define DIKTAT_MODELL_ID "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf"
+Var DiktatCheckbox
+Var DiktatWahl
+Var DiktatSchreiben
+Page custom PageDiktat PageLeaveDiktat
+
+Function PageDiktat
+  StrCpy $DiktatSchreiben 0
+  ; Passiv, still, Update und portabel: Seite nicht zeigen, nichts schreiben
+  ${If} $PassiveMode = 1
+  ${OrIf} ${Silent}
+  ${OrIf} $UpdateMode = 1
+  ${OrIf} $PortableMode = 1
+    Abort
+  ${EndIf}
+  ; Nur Neuinstallation: vorhandene Installation oder Datei -> überspringen
+  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} $R0 != ""
+    Abort
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\erststart.ini"
+    Abort
+  ${EndIf}
+
+  !insertmacro MUI_HEADER_TEXT "Diktat" "Wählen Sie, ob das Diktieren direkt nach der Installation bereitsteht."
+
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+
+  ${NSD_CreateCheckbox} 0 0 100% 14u "Diktatmodell Nemotron 3.5 beim ersten Start einrichten (empfohlen, ca. 750 MB)"
+  Pop $DiktatCheckbox
+
+  ${NSD_CreateLabel} 12u 18u -12u 36u "Das Modell wird beim ersten Start der App geladen. Danach können Sie sofort diktieren. Ohne Haken wählen Sie das Modell später unter Einstellungen › Modelle."
+  Pop $0
+
+  ${If} $DiktatWahl == "0"
+    ${NSD_Uncheck} $DiktatCheckbox
+  ${Else}
+    ${NSD_Check} $DiktatCheckbox
+  ${EndIf}
+
+  StrCpy $DiktatSchreiben 1
+  nsDialogs::Show
+FunctionEnd
+
+Function PageLeaveDiktat
+  ${NSD_GetState} $DiktatCheckbox $0
+  ${If} $0 = ${BST_CHECKED}
+    StrCpy $DiktatWahl 1
+  ${Else}
+    StrCpy $DiktatWahl 0
+  ${EndIf}
+FunctionEnd
+; --- END DIKTATMODELL ---
+
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
@@ -832,6 +893,16 @@ Section Install
     ${EndIf}
   ${EndIf} ; --- END PORTABLE MODE guard ---
 
+  ; --- DIKTATMODELL --- Auswahl nur bei gezeigter Seite (Neuinstallation) schreiben
+  ${If} $DiktatSchreiben = 1
+  ${AndIfNot} ${FileExists} "$INSTDIR\erststart.ini"
+    ${If} $DiktatWahl == "0"
+      WriteINIStr "$INSTDIR\erststart.ini" "diktat" "modell" "aus"
+    ${Else}
+      WriteINIStr "$INSTDIR\erststart.ini" "diktat" "modell" "${DIKTAT_MODELL_ID}"
+    ${EndIf}
+  ${EndIf}
+
   !ifmacrodef NSIS_HOOK_POSTINSTALL
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
@@ -912,6 +983,11 @@ Section Uninstall
     ${EndIf}
   {{/each}}
 
+
+  ; --- DIKTATMODELL --- Erststart-Datei nur bei echter Deinstallation entfernen
+  ${If} $UpdateMode <> 1
+    Delete "$INSTDIR\erststart.ini"
+  ${EndIf}
 
   ; Delete uninstaller
   Delete "$INSTDIR\uninstall.exe"
