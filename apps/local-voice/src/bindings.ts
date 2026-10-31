@@ -6858,6 +6858,10 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  */
 "workflow.run" | 
 /**
+ * Besprechungen auflisten, durchsuchen und Transkript lesen (Sprachgespraech Stufe 2).
+ */
+"meeting.read" |
+/**
  * In einen Kanal posten (Slack, Teams, Discord).
  */
 "chat.post" | 

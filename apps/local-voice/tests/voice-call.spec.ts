@@ -10,12 +10,25 @@ type Call = { cmd: string; args: Record<string, any> };
 
 const SHOTS = "/mnt/project-files/sprachgespraech/umsetzung";
 
-async function install(page: Page, theme: "light" | "dark" = "light") {
+/** Ergänzungen der Attrappe: Einstellungen, gespeicherte Gesprächskonfiguration, Werkzeuge. */
+type Extra = {
+  settings?: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  tools?: Record<string, unknown>[];
+};
+
+async function install(
+  page: Page,
+  theme: "light" | "dark" = "light",
+  extra: Extra = {},
+) {
   page.on("pageerror", (error) => {
     throw error;
   });
+  await page.addInitScript((e: Extra) => ((window as any).__extra = e), extra);
   await page.addInitScript((themeName: string) => {
     const w = window as any;
+    const extra: Extra = w.__extra ?? {};
     const callbacks = new Map<number, (e: unknown) => void>();
     const listeners: Record<string, number[]> = {};
     const handlerOf = new Map<number, { event: string; handler: number }>();
@@ -58,7 +71,11 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
       llm_active_model_id: "cli:sonnet",
       push_to_talk: true,
     };
+    Object.assign(settings, extra.settings ?? {});
     w.__settings = settings;
+    w.__tools = extra.tools ?? [];
+    w.__tool = null;
+    w.__turnReplies = [] as string[];
     // Gespraechsverlauf (U3): Attrappe der Befehle `conversation*`, im Speicher.
     const convs: Record<string, any>[] = [];
     const entries: Record<string, Record<string, any>[]> = {};
@@ -134,6 +151,34 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
               });
+            case "voice_tools_list":
+              return w.__tools;
+            case "voice_tool_call":
+              return new Promise((resolve, reject) => {
+                w.__tool = { args, resolve, reject };
+              });
+            case "voice_call_turn": {
+              // Orchestrator (Stufe 2): Antwort aus der Warteschlange `__turnReplies`.
+              const text = (w.__turnReplies as string[]).shift() ?? "";
+              w.__emit("voice-call", {
+                kind: "delta",
+                request_id: args.requestId,
+                text,
+              });
+              w.__emit("voice-call", {
+                kind: "usage",
+                request_id: args.requestId,
+                usage: {
+                  prompt_tokens: 100,
+                  completion_tokens: 10,
+                  usage_event_ids: [],
+                  usage_event_id: null,
+                  provider_id: "claude_cli",
+                  local: false,
+                },
+              });
+              return text;
+            }
             case "conversations_list":
               return convs
                 .filter((c) => args.includeArchived || !c.archived)
@@ -247,6 +292,8 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
       },
     });
     localStorage.setItem("lva.ui.settings.tab", "dictation");
+    if (extra.config)
+      localStorage.setItem("voice-call.config", JSON.stringify(extra.config));
   }, theme);
 }
 
@@ -844,6 +891,255 @@ test.describe("Sprachgespraech", () => {
   });
 });
 
+// Stufe 2: Orchestrator (Denker und lesende LVA-Werkzeuge). Der Sprecher ist hier ein lokales
+// Modell; die Antworten kommen aus `__turnReplies`, Werkzeugaufrufe laufen über `__tool`.
+const LOCAL_SPEAKER = {
+  llm_connections: [
+    {
+      id: "loc",
+      kind: "local",
+      label: "Lokal",
+      base_url: "http://127.0.0.1:0/v1",
+      enabled: true,
+    },
+    {
+      id: "cli",
+      kind: "claude_cli",
+      label: "Claude (Abo)",
+      base_url: "",
+      enabled: true,
+    },
+  ],
+  llm_models: [
+    {
+      id: "loc:gemma",
+      connection_id: "loc",
+      remote_id: "gemma",
+      label: "Gemma lokal",
+      enabled: true,
+      tags: [],
+    },
+    {
+      id: "cli:sonnet",
+      connection_id: "cli",
+      remote_id: "sonnet",
+      label: "Claude Sonnet",
+      enabled: true,
+      tags: [],
+    },
+  ],
+  llm_active_model_id: "loc:gemma",
+};
+
+const MEETINGS_TOOL = {
+  name: "meetings_list",
+  title: "Besprechungen auflisten",
+  description: "Listet fertige Besprechungen.",
+  parameters_json: JSON.stringify({
+    type: "object",
+    properties: { limit: { type: "integer", minimum: 1, maximum: 50 } },
+    additionalProperties: false,
+  }),
+  capability: "meeting.read",
+};
+
+const orchestration = (patch: Record<string, unknown>) => ({
+  orchestration: {
+    denkerModelId: "",
+    souveraenitaet: "nur_lokal",
+    useTools: true,
+    ...patch,
+  },
+});
+
+const replies = (page: Page, list: string[]) =>
+  page.evaluate((l) => ((window as any).__turnReplies = [...l]), list);
+
+const send = async (page: Page, text: string) => {
+  await message(page).fill(text);
+  await message(page).press("Enter");
+};
+
+test.describe("Sprachgespraech Orchestrator", () => {
+  test("Werkzeugaufruf erscheint als Statuszeile, danach kommt die Antwort", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      config: orchestration({}),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    await replies(page, [
+      "\u27e6werkzeug meetings_list {}\u27e7",
+      "Gestern gab es zwei Besprechungen.",
+    ]);
+    await send(page, "Welche Besprechungen hatte ich gestern?");
+
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__tool !== null))
+      .toBe(true);
+    const status = page.getByTestId("call-status");
+    await expect(status).toHaveAttribute("aria-live", "polite");
+    await expect(status).toHaveText("Schaue in Besprechungen nach …");
+
+    await page.evaluate(() =>
+      (window as any).__tool.resolve(
+        JSON.stringify({ meetings: [{ title: "Wochenplanung" }] }),
+      ),
+    );
+    await expect(
+      page.getByRole("log").getByText("Gestern gab es zwei Besprechungen."),
+    ).toBeVisible();
+    await expect(status).toHaveText("");
+
+    const tool = await calls(page, "voice_tool_call");
+    expect(tool).toHaveLength(1);
+    expect(tool[0].args.name).toBe("meetings_list");
+    expect(tool[0].args.args).toBe("{}");
+    const turns = await calls(page, "voice_call_turn");
+    expect(turns).toHaveLength(2);
+    expect(turns.every((c) => c.args.modelId === null)).toBe(true);
+    expect(JSON.stringify(turns[1].args.messages)).toContain(
+      "Daten aus Werkzeug meetings_list",
+    );
+    expect(await calls(page, "voice_call_chat")).toHaveLength(0);
+    // Beide Durchgänge laufen in die Infozeile ein.
+    await expect(page.getByText("220 Token")).toBeVisible();
+  });
+
+  test("Denker-Übergabe: zweites Modell antwortet, beide Verbräuche zählen", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      config: orchestration({
+        denkerModelId: "cli:sonnet",
+        souveraenitaet: "frei",
+        useTools: false,
+      }),
+    });
+    await openPage(page);
+    await replies(page, [
+      '\u27e6werkzeug denker_fragen {"frage":"Was ist ein Qubit?"}\u27e7',
+      "Ein Qubit ist die Recheneinheit eines Quantencomputers.",
+    ]);
+    await send(page, "Was ist ein Qubit?");
+    await expect(
+      page
+        .getByRole("log")
+        .getByText("Ein Qubit ist die Recheneinheit eines Quantencomputers."),
+    ).toBeVisible();
+    const turns = await calls(page, "voice_call_turn");
+    expect(turns.map((c) => c.args.modelId)).toEqual([null, "cli:sonnet"]);
+    expect(await calls(page, "voice_call_chat")).toHaveLength(0);
+    expect(await calls(page, "voice_tools_list")).toHaveLength(0);
+    await expect(page.getByText("220 Token")).toBeVisible();
+  });
+
+  test("„nur lokal“ sperrt einen Cloud-Denker und sagt es", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      config: orchestration({
+        denkerModelId: "cli:sonnet",
+        souveraenitaet: "nur_lokal",
+      }),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    await replies(page, ["Das weiß ich auch so."]);
+    await send(page, "Wie spät ist es ungefähr?");
+    await expect(
+      page.getByRole("log").getByText("Das weiß ich auch so."),
+    ).toBeVisible();
+    await expect(page.getByTestId("call-status")).toHaveText(
+      "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt.",
+    );
+    const turns = await calls(page, "voice_call_turn");
+    expect(turns).toHaveLength(1);
+    expect(turns[0].args.modelId).toBeNull();
+    // Der Denker wird dem Sprecher nicht einmal angeboten.
+    expect(JSON.stringify(turns[0].args.messages)).not.toContain(
+      "denker_fragen",
+    );
+
+    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    const panel = page.getByRole("complementary", {
+      name: "Gesprächseinstellungen",
+    });
+    await panel.getByRole("tab", { name: "Modelle" }).click();
+    await expect(
+      panel.getByText(
+        "Bei „nur lokal“ wird dieses Cloud-Modell nicht genutzt.",
+      ),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("radio", { name: "Nur lokal" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  test("Cloud-Sprecher bei „nur lokal“: alter Weg, keine Werkzeugdaten, Hinweis", async ({
+    page,
+  }) => {
+    await install(page, "light", { tools: [MEETINGS_TOOL] });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    expect(await calls(page, "voice_call_turn")).toHaveLength(0);
+    expect(await calls(page, "voice_tool_call")).toHaveLength(0);
+    await expect(page.getByTestId("call-status")).toContainText(
+      "Das Antwortmodell ist bei dieser Souveränität nicht zulässig",
+    );
+  });
+
+  test("Ohne Denker und ohne Werkzeuge bleibt der alte Weg", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: LOCAL_SPEAKER,
+      config: orchestration({ useTools: false }),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    expect(await calls(page, "voice_call_chat")).toHaveLength(1);
+    expect(await calls(page, "voice_call_turn")).toHaveLength(0);
+    expect(await calls(page, "voice_tools_list")).toHaveLength(0);
+    await expect(page.getByTestId("call-status")).toHaveText("");
+  });
+
+  test("Einstellungen: Vorgaben und Speichern der Orchestrator-Wahl", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    const panel = page.getByRole("complementary", {
+      name: "Gesprächseinstellungen",
+    });
+    await panel.getByRole("tab", { name: "Modelle" }).click();
+    for (const level of ["Nur lokal", "EU", "Frei"])
+      await expect(panel.getByRole("radio", { name: level })).toBeVisible();
+    await expect(
+      panel.getByRole("radio", { name: "Nur lokal" }),
+    ).toHaveAttribute("aria-checked", "true");
+    const tools = panel.getByRole("switch", { name: "LVA-Werkzeuge nutzen" });
+    await expect(tools).toBeChecked();
+    await expect(panel.getByText("Aus", { exact: true })).toBeVisible();
+    await panel.getByRole("radio", { name: "EU" }).click();
+    await tools.click();
+    const saved = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("voice-call.config") ?? "{}"),
+    );
+    expect(saved.orchestration).toEqual({
+      denkerModelId: "",
+      souveraenitaet: "eu",
+      useTools: false,
+    });
+  });
+});
+
 test.describe("Screenshots @screenshots", () => {
   const conversation = async (page: Page) => {
     await openPage(page);
@@ -931,5 +1227,50 @@ test.describe("Screenshots @screenshots", () => {
       await moreHistory(page, true);
       await snap("verlauf-390");
     });
+  });
+
+  test("Stufe 2: Einstellungen Modelle und Werkzeug-Statuszeile", async ({
+    browser,
+  }) => {
+    const dir = "/mnt/project-files/sprachgespraech/stufe2/";
+    mkdirSync(dir, { recursive: true });
+    for (const [name, size] of [
+      ["1440", { width: 1440, height: 900 }],
+      ["390", { width: 390, height: 844 }],
+    ] as const) {
+      const ctx = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, "light", {
+        settings: LOCAL_SPEAKER,
+        config: orchestration({ denkerModelId: "cli:sonnet" }),
+        tools: [MEETINGS_TOOL],
+      });
+      await openPage(page);
+      if (name === "1440") {
+        await replies(page, [
+          "\u27e6werkzeug meetings_list {}\u27e7",
+          "Heute gab es zwei Besprechungen.",
+        ]);
+        await send(page, "Welche Besprechungen hatte ich heute?");
+        await expect(page.getByTestId("call-status")).toHaveText(
+          "Schaue in Besprechungen nach …",
+        );
+        await page.screenshot({ path: `${dir}werkzeug-statuszeile-1440.png` });
+      }
+      await page
+        .getByRole("button", { name: "Gesprächseinstellungen" })
+        .click();
+      await page
+        .getByRole("complementary", { name: "Gesprächseinstellungen" })
+        .getByRole("tab", { name: "Modelle" })
+        .click();
+      await page.screenshot({
+        path: `${dir}einstellungen-modelle-${name}.png`,
+      });
+      await ctx.close();
+    }
   });
 });

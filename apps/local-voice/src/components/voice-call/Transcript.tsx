@@ -9,13 +9,17 @@ export const Transcript: React.FC<{
   lines: VoiceLine[];
   active: boolean;
   onSuggest: (text: string) => void;
-}> = ({ lines, active, onSuggest }) => {
+  /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
+  toolStatus?: string | null;
+  /** Hinweis des Orchestrators (Code). */
+  notice?: string | null;
+}> = ({ lines, active, onSuggest, toolStatus = null, notice = null }) => {
   const { t, i18n } = useTranslation();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [lines]);
+  }, [lines, toolStatus]);
 
   if (lines.length === 0) {
     return (
@@ -103,6 +107,20 @@ export const Transcript: React.FC<{
             </div>
           );
         })}
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="call-status"
+          className="self-start text-xs text-text/60 italic min-h-[1em]"
+        >
+          {toolStatus
+            ? t([`voiceCall.tool.${toolStatus}`, "voiceCall.tool.generic"], {
+                name: toolStatus,
+              })
+            : notice
+              ? t(`voiceCall.notice.${notice}`)
+              : null}
+        </div>
         <div ref={endRef} />
       </div>
     </div>

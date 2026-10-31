@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Switch } from "@fluentui/react-components";
 import { X } from "lucide-react";
@@ -14,6 +14,18 @@ import { VOICE_MANAGE, useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
 import { TEMPO_PRESETS, TEMPOS, tempoOf } from "./tempo";
 import { useActiveLlm, useSttModelName } from "./useVoiceInfo";
+import {
+  SOUVERAENITAET_STUFEN,
+  blockedBy,
+  describeModels,
+  type ModelDescription,
+} from "./orchestration";
+import { useSettings } from "@/hooks/useSettings";
+import { useComplianceStore } from "@/stores/complianceStore";
+import type { LlmConnection, LlmModelConfig } from "@/bindings";
+
+/** Auswahlwert für „kein Denker“ (die Auswahl kennt keinen leeren Wert). */
+const DENKER_OFF = "off";
 
 const TAB_IDS: VoiceSettingsTab[] = ["talk", "voice", "recognition", "models"];
 
@@ -107,6 +119,26 @@ export const VoicePicker: React.FC<{ className?: string }> = ({
   );
 };
 
+/** Die freigegebenen Modelle mit Herkunft (lokal/EU/andere), für die Wahl des Denkers. */
+function useVoiceModels(): ModelDescription[] {
+  const { getSetting } = useSettings();
+  const byModel = useComplianceStore((s) => s.byModel);
+  const refresh = useComplianceStore((s) => s.refresh);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
+  const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
+  return useMemo(
+    () =>
+      describeModels(
+        { llm_connections: connections, llm_models: models },
+        byModel,
+      ),
+    [connections, models, byModel],
+  );
+}
+
 export const SettingsPanel: React.FC = () => {
   const { t } = useTranslation();
   const config = useVoiceCallStore((s) => s.config);
@@ -118,6 +150,15 @@ export const SettingsPanel: React.FC = () => {
   const llm = useActiveLlm();
   const stt = useSttModelName();
   const ready = useVoiceCallStore((s) => s.ready);
+  const models = useVoiceModels();
+  const orch = config.orchestration;
+  const setOrch = (patch: Partial<typeof orch>) =>
+    setConfig((c) => ({
+      ...c,
+      orchestration: { ...c.orchestration, ...patch },
+    }));
+  const denker = models.find((m) => m.id === orch.denkerModelId);
+  const denkerBlocked = !!denker && blockedBy(denker, orch.souveraenitaet);
   const setTurn = (patch: Partial<typeof config.turn>) =>
     setConfig((c) => ({ ...c, turn: { ...c.turn, ...patch } }));
 
@@ -255,9 +296,71 @@ export const SettingsPanel: React.FC = () => {
             >
               <div className="text-sm">{ready?.llm || llm.label || "–"}</div>
             </Field>
-            <Note title={t("voiceCall.settings.orchestratorTitle")}>
-              {t("voiceCall.settings.orchestratorSoon")}
-            </Note>
+            <Field
+              label={t("voiceCall.settings.denker")}
+              hint={
+                denkerBlocked
+                  ? t("voiceCall.settings.denkerBlocked")
+                  : t("voiceCall.settings.denkerHint")
+              }
+            >
+              <Select
+                value={orch.denkerModelId || DENKER_OFF}
+                options={[
+                  {
+                    value: DENKER_OFF,
+                    label: t("voiceCall.settings.denkerOff"),
+                  },
+                  ...models.map((m) => ({ value: m.id, label: m.label })),
+                ]}
+                isClearable={false}
+                menuPortal
+                ariaLabel={t("voiceCall.settings.denker")}
+                onChange={(value) =>
+                  setOrch({
+                    denkerModelId: !value || value === DENKER_OFF ? "" : value,
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label={t("voiceCall.settings.sovereignty")}
+              hint={t(
+                `voiceCall.settings.sovereigntyHint.${orch.souveraenitaet}`,
+              )}
+            >
+              <div
+                role="radiogroup"
+                aria-label={t("voiceCall.settings.sovereignty")}
+                className="flex flex-wrap gap-1.5"
+              >
+                {SOUVERAENITAET_STUFEN.map((k) => (
+                  <Button
+                    key={k}
+                    size="sm"
+                    variant={
+                      orch.souveraenitaet === k ? "primary" : "secondary"
+                    }
+                    role="radio"
+                    aria-checked={orch.souveraenitaet === k}
+                    type="button"
+                    onClick={() => setOrch({ souveraenitaet: k })}
+                  >
+                    {t(`voiceCall.settings.sovereigntyLevels.${k}`)}
+                  </Button>
+                ))}
+              </div>
+            </Field>
+            <Field
+              label={t("voiceCall.settings.tools")}
+              hint={t("voiceCall.settings.toolsHint")}
+            >
+              <Switch
+                checked={orch.useTools}
+                onChange={(_e, d) => setOrch({ useTools: d.checked })}
+                aria-label={t("voiceCall.settings.tools")}
+              />
+            </Field>
           </>
         )}
       </div>

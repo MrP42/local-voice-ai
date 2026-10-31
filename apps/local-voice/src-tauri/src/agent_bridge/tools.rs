@@ -14,6 +14,7 @@
 //! | `tts_providers_list` / `tts_provider_capabilities` / `tts_provider_voices` / `tts_provider_health` | Anbieter, Fähigkeiten, Stimmen, Gesundheit der Sprachausgabe (Recht `tts.read`) | nur lesend; ein gesperrter Anbieter nennt den Sperrgrund, Stimmen nur bei erlaubtem Anbieter |
 //! | `tts_provider_select` | wählt Anbieter und Stimme fürs Vorlesen (Recht `tts.render`) | nur wenn die Guardrails des Anbieters es erlauben; setzt NIE Opt-in, Lizenz-Zustimmung oder Fernzugriff |
 //! | `tts_benchmark_results` | Zusammenfassungen und `results.json` der Benchmarks (Recht `tts.read`) | nur die zwei Ergebnisordner, Kennung ohne Pfadanteile, höchstens 512 KiB |
+//! | `meetings_list` / `meetings_search` / `meeting_transcript` | Besprechungen auflisten, durchsuchen, Transkript lesen (Recht `meeting.read`) | nur lesend; gleiche Logik und Grenzen wie der lokale MCP-Server; Transkript nur mit dessen Freigabe |
 //! | `start_recording` | Aufnahme | NUR nach der Zustimmung des Nutzers in der App (`ctx.approved`) |
 //! | `stop_recording` | beendet die laufende Aufnahme | |
 //!
@@ -34,6 +35,7 @@
 //! Weg des Recorders (`start_into`, Arbeitsthread, nie im Audio-Callback).
 
 pub mod app_host;
+pub mod meetings; // Sprachgespraech Stufe 2
 pub mod paths;
 pub mod sandbox;
 pub mod tts_providers; // P3b
@@ -117,6 +119,11 @@ pub trait Host: Send + Sync {
     /// (headless Sandbox). Die Werkzeuge melden das als Klartext.
     fn tts_providers(&self) -> Option<Arc<dyn tts_providers::TtsProviderAccess>> {
         None
+    }
+    /// Hat der Nutzer das Transkript freigegeben (Einstellung des lokalen MCP-Servers)? Ohne
+    /// Antwort gilt „nein“: die Lesewerkzeuge zeigen dann keinen Transkriptinhalt (fail closed).
+    fn transcript_shared(&self) -> bool {
+        false
     }
 }
 
@@ -403,6 +410,7 @@ pub fn all_specs() -> Vec<ToolSpec> {
     .into_iter()
     .chain(tts_providers::specs())
     .chain(workflows::specs())
+    .chain(meetings::specs())
     .collect()
 }
 
@@ -663,6 +671,9 @@ impl ToolHandler for AppTools {
             "list_workflows" => self.list_workflows(a),
             "run_workflow" => self.run_workflow(ctx, a),
             "get_run" => self.get_run(a),
+            "meetings_list" => self.meetings_list(a),
+            "meetings_search" => self.meetings_search(a),
+            "meeting_transcript" => self.meeting_transcript(a),
             other => Err(format!("Das Werkzeug „{other}“ gibt es nicht.")),
         }
     }

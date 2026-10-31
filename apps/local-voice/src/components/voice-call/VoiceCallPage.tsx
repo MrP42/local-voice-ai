@@ -86,6 +86,8 @@ export const VoiceCallPage: React.FC = () => {
   const switching = useVoiceCallStore((s) => s.switching);
   const muted = useVoiceCallStore((s) => s.muted);
   const textBusy = useVoiceCallStore((s) => s.textBusy);
+  const toolStatus = useVoiceCallStore((s) => s.toolStatus);
+  const notice = useVoiceCallStore((s) => s.notice);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
   const conversations = useVoiceCallStore((s) => s.conversations);
   const conversationId = useVoiceCallStore((s) => s.conversationId);
@@ -456,6 +458,8 @@ export const VoiceCallPage: React.FC = () => {
             lines={lines}
             active={inCall}
             onSuggest={(text) => send(text, [])}
+            toolStatus={toolStatus}
+            notice={notice}
           />
           <Composer
             value={draft}

@@ -11,6 +11,8 @@
 //! * `voice_call_transcribe`: ein Stück Sprache (16 kHz, mono, PCM16) erkennen.
 //! * `voice_call_chat`: Antwort des aktiven Sprachmodells als Strom, schon
 //!   beim Eintreffen in sprechbare Häppchen zerlegt (`sentences`).
+//! * `turn::voice_call_turn`: ein Durchgang eines Modells als roher Textstrom für den
+//!   Orchestrator (Stufe 2), wahlweise mit einem zweiten Modell (Denker).
 //! * `voice_call_synthesize`: ein Häppchen mit der eingestellten Stimme
 //!   (Standard: Anton) zu WAV.
 //!
@@ -19,6 +21,7 @@
 //! Texte und Audio stehen nie im Log.
 
 pub mod sentences;
+pub mod turn;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
