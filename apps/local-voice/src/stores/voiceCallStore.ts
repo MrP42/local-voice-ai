@@ -68,6 +68,8 @@ export interface CallUsage {
   calls: { subscription: number; local: number; api: number };
   providerId: string | null;
   local: boolean;
+  /** Mindestens ein Aufruf lief nicht lokal (Cloud oder Abo): „lokal“ zeigt die Infozeile dann nicht. */
+  anyCloud: boolean;
 }
 
 const EMPTY_USAGE: CallUsage = {
@@ -78,6 +80,7 @@ const EMPTY_USAGE: CallUsage = {
   calls: { subscription: 0, local: 0, api: 0 },
   providerId: null,
   local: false,
+  anyCloud: false,
 };
 
 /** Mikrofon offen (Anruf läuft oder startet gerade)? */
@@ -104,6 +107,7 @@ function addUsage(usage: CallUsage, u: CallUsageEvent): CallUsage {
     },
     providerId: u.provider_id ?? usage.providerId,
     local: u.local ?? usage.local,
+    anyCloud: usage.anyCloud || u.local !== true,
   };
 }
 
@@ -589,11 +593,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       engine?.updateConfig(config);
       set({ config });
     },
-    resetConfig: () =>
-      get().setConfig((c) => ({
-        ...DEFAULT_CALL_CONFIG,
-        orchestration: c.orchestration,
-      })),
+    resetConfig: () => get().setConfig(() => DEFAULT_CALL_CONFIG),
 
     setMuted: (muted) => {
       engine?.setMuted(muted);

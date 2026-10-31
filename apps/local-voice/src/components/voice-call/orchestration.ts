@@ -104,8 +104,10 @@ export interface OrchestrationDeps {
 }
 
 export interface Prepared {
-  /** `null`: nichts zu orchestrieren, der alte Weg gilt. */
+  /** `null`: nichts zu orchestrieren, der alte Weg gilt (außer bei `blocked`). */
   side: ChatSide | null;
+  /** Der Sprecher ist bei der Souveränität gesperrt: es gibt kein Gespräch mit diesem Modell. */
+  blocked: boolean;
 }
 
 /** Ländercodes der EU (ISO 3166-1 alpha-2): dort sitzende Anbieter gelten als „EU“. */
@@ -210,6 +212,13 @@ const ANNOUNCE: Record<string, string> = {
 
 /** Wie lange nach dem Rückgabewert noch auf den Verbrauch gewartet wird (ms). */
 const USAGE_WAIT_MS = 1500;
+/** Wächter: ein Modell-Durchgang darf höchstens so lange laufen (ms), ein Werkzeug so lange. */
+export const TURN_TIMEOUT_MS = 20_000;
+export const TOOL_TIMEOUT_MS = 10_000;
+/** Gesprochen, wenn der Wächter anschlägt. */
+export const TURN_TIMEOUT_TEXT = "Das Modell antwortet gerade nicht.";
+export const TOOL_TIMEOUT_TEXT =
+  "Das Werkzeug hat nicht rechtzeitig geantwortet.";
 
 function wireMessages(
   messages: ModelMessage[],
@@ -223,12 +232,14 @@ function wireMessages(
 let turnCounter = 0;
 
 /**
- * Ein Modell als `VoiceModel`: jeder Durchgang ist ein `voice_call_turn` mit eigener
- * Kennung (so bricht der Abbruch genau ihn ab). `modelId` leer = aktives Sprachmodell.
+ * Ein Modell als `VoiceModel`: jeder Durchgang ist ein `voice_call_turn` mit eigener Kennung
+ * (so bricht der Abbruch genau ihn ab) und ausdrücklicher Modellkennung samt Souveränitätsstufe
+ * (Rust lehnt ein unzulässiges Modell selbst ab). Ein Wächter bricht einen hängenden Durchgang
+ * nach `TURN_TIMEOUT_MS` ab; die Meldung wird gesprochen.
  */
 function makeModel(
   info: ModelDescription,
-  modelId: string,
+  stufe: Souveraenitaet,
   deps: OrchestrationDeps,
 ): VoiceModel {
   return {
@@ -251,22 +262,33 @@ function makeModel(
         void invoke("voice_call_cancel", { requestId: turnId }).catch(
           () => undefined,
         );
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        cancel();
+      }, TURN_TIMEOUT_MS);
       if (req.signal.aborted) cancel();
       req.signal.addEventListener("abort", cancel, { once: true });
       try {
         const text = await invoke<string>("voice_call_turn", {
           requestId: turnId,
           messages: wireMessages(req.messages),
-          modelId: modelId || null,
+          modelId: info.id,
+          stufe,
         });
-        if (!req.signal.aborted)
-          await Promise.race([
-            usageP,
-            new Promise<void>((r) => setTimeout(r, USAGE_WAIT_MS)),
-          ]);
+        // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
+        await Promise.race([
+          usageP,
+          new Promise<void>((r) => setTimeout(r, USAGE_WAIT_MS)),
+        ]);
+        if (timedOut && !req.signal.aborted) {
+          req.onText(TURN_TIMEOUT_TEXT);
+          return { text: TURN_TIMEOUT_TEXT, toolCalls: [] };
+        }
         onText = () => undefined;
         return { text, toolCalls: [] };
       } finally {
+        clearTimeout(timer);
         req.signal.removeEventListener("abort", cancel);
         off();
       }
@@ -310,19 +332,21 @@ export function toolsFrom(infos: VoiceToolInfo[]): VoiceTool[] {
   return accepted;
 }
 
-async function listTools(): Promise<VoiceToolInfo[]> {
+async function listTools(): Promise<VoiceTool[]> {
   try {
     const list = await invoke<VoiceToolInfo[] | null>("voice_tools_list");
-    return Array.isArray(list) ? list : [];
+    return toolsFrom(Array.isArray(list) ? list : []);
   } catch {
     return [];
   }
 }
 
-async function loadModels(): Promise<{
+interface LoadedModels {
   active: ModelDescription | null;
   all: ModelDescription[];
-}> {
+}
+
+async function loadModels(): Promise<LoadedModels> {
   const [settings, compliance] = await Promise.all([
     commands.getAppSettings().catch(() => null),
     commands.complianceAssessModels().catch(() => null),
@@ -333,67 +357,136 @@ async function loadModels(): Promise<{
   return { active: all.find((m) => m.id === activeId) ?? null, all };
 }
 
+/** Fehlertext eines Werkzeugs für das Modell: kurz, ohne Steuerzeichen. */
+function errorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return raw.replace(/[\u0000-\u001f]/g, " ").slice(0, 500);
+}
+
+/**
+ * Ruft ein Werkzeug der Brücke. Ein Fehler oder Zeitablauf kommt als Text-Ergebnis zurück
+ * (das Modell spricht ihn aus), nie als Ausnahme.
+ */
 async function runTool(
   tool: VoiceTool,
   args: Record<string, unknown>,
 ): Promise<VoiceToolResult> {
-  const text = await invoke<string>("voice_tool_call", {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<VoiceToolResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ text: TOOL_TIMEOUT_TEXT, bereich: tool.bereich }),
+      TOOL_TIMEOUT_MS,
+    );
+  });
+  const call = invoke<string>("voice_tool_call", {
     name: tool.name,
     args: JSON.stringify(args),
-  });
-  return { text, bereich: tool.bereich };
+  }).then(
+    (text): VoiceToolResult => ({ text, bereich: tool.bereich }),
+    (e: unknown): VoiceToolResult => ({
+      text: errorText(e),
+      bereich: tool.bereich,
+    }),
+  );
+  try {
+    return await Promise.race([call, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Baut den Orchestrator für einen Gesprächsschritt, oder `side: null`, wenn nichts zu
- * orchestrieren ist (kein Denker, keine Werkzeuge) oder der Sprecher bei der gewählten
- * Souveränität nicht zulässig ist (dann gilt der alte Weg ohne Werkzeuge und Denker, damit
- * Werkzeugdaten nie zu einem gesperrten Cloud-Modell gehen).
+ * Der Orchestrator eines Gesprächs (eine je Engine). Hält Werkzeugliste, Modelle und den
+ * gebauten Orchestrator zwischen den Schritten (je Gespräch statt je Satz); `invalidate`
+ * verwirft alles (Einstellungen oder Gespräch gewechselt), `dispose` bricht Laufendes ab.
  */
-export async function prepareOrchestration(
-  cfg: OrchestrationConfig & { systemPrompt: string },
-  deps: OrchestrationDeps,
-): Promise<Prepared> {
-  const wantsDenker = cfg.denkerModelId !== "";
-  const offered = cfg.useTools ? toolsFrom(await listTools()) : [];
-  if (offered.length === 0 && !wantsDenker) return { side: null };
+export class OrchestrationSession {
+  private tools: VoiceTool[] | null = null;
+  private models: LoadedModels | null = null;
+  private side: ChatSide | null = null;
+  private sideKey = "";
 
-  const { active, all } = await loadModels();
-  if (!active || blockedBy(active, cfg.souveraenitaet)) {
-    deps.onStatus({ kind: "notice", code: "speaker_blocked" });
-    return { side: null };
-  }
-  const denkerInfo = wantsDenker
-    ? all.find((m) => m.id === cfg.denkerModelId)
-    : undefined;
-  if (denkerInfo && blockedBy(denkerInfo, cfg.souveraenitaet)) {
-    deps.onStatus({ kind: "notice", code: "denker_blocked" });
-  }
-  const denker =
-    denkerInfo && !blockedBy(denkerInfo, cfg.souveraenitaet)
-      ? makeModel(denkerInfo, denkerInfo.id, deps)
-      : undefined;
-  if (offered.length === 0 && !denker) return { side: null };
+  constructor(private readonly deps: OrchestrationDeps) {}
 
-  const names = new Set(offered.map((t) => t.name));
-  const side = createOrchestrator({
-    sprecher: makeModel(active, "", deps),
-    denker,
-    tools: offered,
-    bereich: SESSION_BEREICH,
-    souveraenitaet: cfg.souveraenitaet,
-    systemPrompt: cfg.systemPrompt,
-    authorize: async (tool, _args, bereich) =>
-      bereich === SESSION_BEREICH &&
-      tool.bereich === bereich &&
-      names.has(tool.name) &&
-      !blockedBy(active, cfg.souveraenitaet),
-    run: async (tool, args) => {
-      deps.onStatus({ kind: "tool", tool: tool.name });
-      return runTool(tool, args);
-    },
-  });
-  return { side };
+  /** Orchestrator beenden, Zwischenspeicher behalten (Stopp). */
+  dispose(): void {
+    this.side?.dispose?.();
+    this.side = null;
+    this.sideKey = "";
+  }
+
+  /** Alles verwerfen: nächster Schritt liest Einstellungen, Modelle und Werkzeuge neu. */
+  invalidate(): void {
+    this.dispose();
+    this.tools = null;
+    this.models = null;
+  }
+
+  /**
+   * Bereitet den nächsten Schritt vor. Die Prüfung des Sprechers gilt immer, auch ohne Denker und
+   * Werkzeuge: ist er bei der Souveränität gesperrt, gibt es kein Gespräch mit ihm (`blocked`).
+   */
+  async prepare(
+    cfg: OrchestrationConfig & { systemPrompt: string },
+  ): Promise<Prepared> {
+    const deps = this.deps;
+    this.models ??= await loadModels();
+    const { active, all } = this.models;
+    if (!active) return { side: null, blocked: false };
+    if (blockedBy(active, cfg.souveraenitaet)) {
+      deps.onStatus({ kind: "notice", code: "speaker_blocked" });
+      return { side: null, blocked: true };
+    }
+    if (cfg.useTools) this.tools ??= await listTools();
+    const offered = cfg.useTools ? (this.tools ?? []) : [];
+    const denkerInfo =
+      cfg.denkerModelId !== ""
+        ? all.find((m) => m.id === cfg.denkerModelId)
+        : undefined;
+    if (denkerInfo && blockedBy(denkerInfo, cfg.souveraenitaet)) {
+      deps.onStatus({ kind: "notice", code: "denker_blocked" });
+    }
+    const denker =
+      denkerInfo && !blockedBy(denkerInfo, cfg.souveraenitaet)
+        ? denkerInfo
+        : undefined;
+    if (offered.length === 0 && !denker) return { side: null, blocked: false };
+
+    const key = JSON.stringify([
+      cfg,
+      active.id,
+      denker?.id ?? null,
+      offered.map((t) => t.name),
+    ]);
+    if (this.side && key === this.sideKey)
+      return { side: this.side, blocked: false };
+    this.dispose();
+    const names = new Set(offered.map((t) => t.name));
+    const stufe = cfg.souveraenitaet;
+    this.side = createOrchestrator({
+      sprecher: makeModel(active, stufe, deps),
+      denker: denker ? makeModel(denker, stufe, deps) : undefined,
+      tools: offered,
+      bereich: SESSION_BEREICH,
+      souveraenitaet: stufe,
+      systemPrompt: cfg.systemPrompt,
+      authorize: async (tool, _args, bereich) =>
+        bereich === SESSION_BEREICH &&
+        tool.bereich === bereich &&
+        names.has(tool.name) &&
+        !blockedBy(active, stufe),
+      run: async (tool, args, signal) => {
+        if (!signal?.aborted) deps.onStatus({ kind: "tool", tool: tool.name });
+        try {
+          return await runTool(tool, args);
+        } finally {
+          deps.onStatus(null);
+        }
+      },
+    });
+    this.sideKey = key;
+    return { side: this.side, blocked: false };
+  }
 }
 
 export type { ChatMessage };

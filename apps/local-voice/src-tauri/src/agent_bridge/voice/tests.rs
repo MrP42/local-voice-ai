@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::agent_bridge::catalog::{ToolHandler, ToolSpec};
+use crate::managers::integrations::approvals;
 use crate::managers::integrations::audit::{self, AuditFilter};
 use crate::managers::integrations::model::{Capability, IntegrationPatch};
 use crate::managers::integrations::test_support::Fx;
@@ -67,6 +68,7 @@ struct Rig {
     fx: Fx,
     fake: Arc<Fake>,
     registry: ToolRegistry,
+    opts: VoiceOptions,
 }
 
 fn rig_with(reply: Value) -> Rig {
@@ -77,6 +79,7 @@ fn rig_with(reply: Value) -> Rig {
         fx: Fx::new(),
         fake,
         registry,
+        opts: VoiceOptions { transcripts: true },
     }
 }
 
@@ -87,7 +90,7 @@ fn rig() -> Rig {
 impl Rig {
     fn list(&self) -> Vec<String> {
         let conn = self.fx.conn();
-        list(&conn, &self.registry, NOW)
+        list(&conn, &self.registry, self.opts, NOW)
             .unwrap()
             .into_iter()
             .map(|t| t.name)
@@ -96,7 +99,7 @@ impl Rig {
 
     fn call(&self, name: &str, args: &str) -> Result<String, String> {
         let conn = self.fx.conn();
-        call(&conn, &self.registry, name, args, NOW)
+        call(&conn, &self.registry, self.opts, name, args, NOW)
     }
 
     fn integration_id(&self) -> String {
@@ -185,10 +188,13 @@ fn a_catalog_tool_without_a_handler_is_unavailable() {
     registry.register(fake).unwrap();
     let fx = Fx::new();
     let conn = fx.conn();
-    assert!(call(&conn, &registry, "tts_providers_list", "{}", NOW)
-        .unwrap_err()
-        .contains("nicht verfügbar"));
-    assert_eq!(list(&conn, &registry, NOW).unwrap().len(), 1);
+    let opts = VoiceOptions { transcripts: true };
+    assert!(
+        call(&conn, &registry, opts, "tts_providers_list", "{}", NOW)
+            .unwrap_err()
+            .contains("nicht verfügbar")
+    );
+    assert_eq!(list(&conn, &registry, opts, NOW).unwrap().len(), 1);
 }
 
 #[test]
@@ -218,25 +224,64 @@ fn the_list_follows_the_rights() {
 }
 
 #[test]
-fn a_right_of_off_blocks_the_call_and_is_audited() {
+fn a_right_of_off_blocks_before_the_gate() {
     let r = rig();
     r.set_right(Capability::MeetingRead, GrantMode::Off);
     let err = r.call("meetings_list", "{}").unwrap_err();
-    assert!(err.contains("aus"), "{err}");
+    assert!(err.contains("ausgeschaltet"), "{err}");
     assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0);
-    assert!(r
-        .audit()
-        .iter()
-        .any(|a| a.outcome == "denied" && a.caller == "agent_local"));
+    assert!(
+        r.audit()
+            .iter()
+            .all(|a| a.target.as_deref() != Some("meetings_list · voice_orchestrator")),
+        "abgelehnt vor dem Tor: kein Tor-Eintrag"
+    );
 }
 
 #[test]
-fn a_right_of_ask_runs_nothing() {
+fn a_right_of_ask_runs_nothing_and_opens_no_approval() {
     let r = rig();
     r.set_right(Capability::MeetingRead, GrantMode::Ask);
     let err = r.call("meetings_list", "{}").unwrap_err();
     assert!(err.contains("Freigabe"), "{err}");
     assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0);
+    assert!(approvals::list_pending(&r.fx.conn(), NOW)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn the_transcript_needs_the_voice_release_in_list_and_call() {
+    for (transcripts, listed) in [(false, false), (true, true)] {
+        let mut r = rig();
+        r.opts = VoiceOptions { transcripts };
+        assert_eq!(
+            r.list().iter().any(|n| n == "meeting_transcript"),
+            listed,
+            "Liste bei {transcripts}"
+        );
+        // Die anderen lesenden Werkzeuge bleiben in jedem Fall.
+        assert!(r.list().iter().any(|n| n == "meetings_list"));
+        let result = r.call("meeting_transcript", r#"{"meeting_id":"x"}"#);
+        assert_eq!(result.is_ok(), listed, "Aufruf bei {transcripts}");
+        if !listed {
+            assert!(result.unwrap_err().contains("Transkripte"));
+            assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0);
+        }
+    }
+}
+
+#[test]
+fn the_rate_limit_allows_eight_calls_a_minute() {
+    let mut l = RateLimiter::default();
+    for i in 0..RateLimiter::MAX_CALLS {
+        assert!(l.allow(NOW + i as i64), "Aufruf {i}");
+    }
+    assert!(!l.allow(NOW + 1_000), "der neunte in derselben Minute");
+    assert!(!l.allow(NOW + 59_000));
+    assert!(l.allow(NOW + 60_000), "nach einer Minute wieder frei");
+    // Eine rueckwaerts springende Uhr sperrt nicht dauerhaft.
+    assert!(l.allow(NOW - 10_000_000));
 }
 
 #[test]
@@ -258,20 +303,19 @@ fn arguments_must_be_a_small_object() {
 }
 
 #[test]
-fn long_results_are_cut_at_a_character_boundary() {
-    assert_eq!(clamp_result("kurz".to_string(), 10), "kurz");
-    assert_eq!(clamp_result("ääää".to_string(), 4), "ääää");
-    let cut = clamp_result("äöüß!".to_string(), 4);
-    assert!(cut.starts_with("äöüß"), "{cut}");
-    assert!(cut.ends_with("[gekürzt]"), "{cut}");
+fn long_results_are_refused_not_cut() {
+    assert_eq!(clamp_result("kurz".to_string(), 10).unwrap(), "kurz");
+    assert_eq!(clamp_result("ääää".to_string(), 4).unwrap(), "ääää");
+    let err = clamp_result("äöüß!".to_string(), 4).unwrap_err();
+    assert!(err.contains("kleinere Seite"), "{err}");
     let r = rig_with(json!({"text": "ü".repeat(MAX_RESULT_CHARS * 2)}));
-    let out = r.call("meetings_list", "{}").unwrap();
-    assert!(
-        out.chars().count() <= MAX_RESULT_CHARS + 20,
-        "{}",
-        out.len()
-    );
-    assert!(out.ends_with("[gekürzt]"));
+    let err = r.call("meetings_list", "{}").unwrap_err();
+    assert!(err.contains("zu lang"), "{err}");
+    assert!(!err.contains("üüüü"), "keine Teilausgabe");
+    // Knapp darunter geht durch, unverkürzt.
+    let fits = "ü".repeat(MAX_RESULT_CHARS - 20);
+    let r = rig_with(json!({ "text": fits }));
+    assert!(r.call("meetings_list", "{}").unwrap().contains(&fits));
 }
 
 #[test]
@@ -314,7 +358,8 @@ fn a_failing_handler_is_an_error_and_audited() {
     registry.register(Arc::new(Failing)).unwrap();
     let fx = Fx::new();
     let conn = fx.conn();
-    let err = call(&conn, &registry, "meetings_list", "{}", NOW).unwrap_err();
+    let opts = VoiceOptions { transcripts: true };
+    let err = call(&conn, &registry, opts, "meetings_list", "{}", NOW).unwrap_err();
     assert!(err.contains("gesperrt"));
     let rows = audit::list(&conn, &AuditFilter::default(), 10).unwrap();
     assert!(rows.iter().any(|a| a.outcome == "error"));

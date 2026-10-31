@@ -14,9 +14,10 @@ use crate::managers::meetings::store::{MeetingStore, StoredSegment, TranscriptDe
 use crate::managers::workflows::recording::RecordingControl;
 use crate::managers::youtube::source::AddOptions;
 
-/// Ein Host, der nur die Freigabe des Transkripts kennt.
+/// Ein Host, der nur die Freigaben des Transkripts kennt: fuer externe Agenten und fuers Sprachgespraech.
 struct MeetHost {
     transcript: bool,
+    voice_transcript: bool,
 }
 
 impl Host for MeetHost {
@@ -47,6 +48,10 @@ impl Host for MeetHost {
     fn transcript_shared(&self) -> bool {
         self.transcript
     }
+
+    fn voice_transcript_shared(&self) -> bool {
+        self.voice_transcript
+    }
 }
 
 fn segment(index: u32, start_ms: u64, text: &str) -> StoredSegment {
@@ -68,30 +73,51 @@ struct Rig {
 }
 
 fn rig(transcript: bool) -> Rig {
+    rig_with(transcript, false, 2)
+}
+
+/// `lines` Zeilen Transkript zu je rund 100 Zeichen (mehr als 40 000 Zeichen ab 400).
+fn rig_with(transcript: bool, voice_transcript: bool, lines: u32) -> Rig {
     let (dir, store) = tmp_store();
     let meeting = ready_meeting(&store, "Jour fixe Vertrieb", 1_790_000_000).id;
     store
         .append_delta(
             &meeting,
             &TranscriptDelta {
-                new_segments: vec![
-                    segment(0, 0, "Wir starten mit dem Quartalsbericht."),
-                    segment(1, 5_000, "Der Umsatz liegt bei einer Million."),
-                ],
+                new_segments: if lines <= 2 {
+                    vec![
+                        segment(0, 0, "Wir starten mit dem Quartalsbericht."),
+                        segment(1, 5_000, "Der Umsatz liegt bei einer Million."),
+                    ]
+                } else {
+                    (0..lines)
+                        .map(|i| {
+                            let text =
+                                format!("Satz {i:04} über Umsatz und Planung. {}", "x".repeat(60));
+                            segment(i, u64::from(i) * 5_000, &text)
+                        })
+                        .collect()
+                },
             },
         )
         .unwrap();
     let store: Arc<MeetingStore> = Arc::new(store);
     Rig {
         _dir: dir,
-        tools: AppTools::new(store, Arc::new(MeetHost { transcript })),
+        tools: AppTools::new(
+            store,
+            Arc::new(MeetHost {
+                transcript,
+                voice_transcript,
+            }),
+        ),
         meeting,
     }
 }
 
-fn ctx() -> CallContext {
+fn ctx_of(client_id: &str) -> CallContext {
     CallContext {
-        client_id: "C1".to_string(),
+        client_id: client_id.to_string(),
         client_label: "Sprachgespraech".to_string(),
         approved: false,
         now_ms: NOW,
@@ -99,8 +125,14 @@ fn ctx() -> CallContext {
 }
 
 impl Rig {
+    /// Ein externer Agent ueber die Bruecke.
     fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
-        self.tools.call(&ctx(), tool, &args)
+        self.tools.call(&ctx_of("C1"), tool, &args)
+    }
+
+    /// Das Sprachgespraech (Zugang `voice_orchestrator`).
+    fn call_voice(&self, tool: &str, args: Value) -> Result<Value, String> {
+        self.tools.call(&ctx_of(CALLER_TAG), tool, &args)
     }
 }
 
@@ -202,4 +234,81 @@ fn the_transcript_needs_the_users_release() {
         r.call("meetings_list", json!({})).unwrap()["returned"],
         json!(1)
     );
+}
+
+#[test]
+fn bridge_and_voice_releases_are_independent() {
+    // (Freigabe der Bruecke, Freigabe des Sprachgespraechs)
+    for (external, voice) in [(false, false), (true, false), (false, true), (true, true)] {
+        let r = rig_with(external, voice, 2);
+        let args = json!({"meeting_id": r.meeting});
+        assert_eq!(
+            r.call("meeting_transcript", args.clone()).is_ok(),
+            external,
+            "extern bei ({external}, {voice})"
+        );
+        assert_eq!(
+            r.call_voice("meeting_transcript", args).is_ok(),
+            voice,
+            "Sprachgespräch bei ({external}, {voice})"
+        );
+        // Ohne die Freigabe liefert auch die Suche des Sprachgespraechs nichts aus dem Transkript.
+        if !voice {
+            let found = r
+                .call_voice("meetings_search", json!({"query": "Quartalsbericht"}))
+                .unwrap();
+            assert_eq!(found["returned"], json!(0), "{found}");
+        }
+        // Die Liste ist immer lesbar.
+        assert_eq!(
+            r.call_voice("meetings_list", json!({})).unwrap()["returned"],
+            json!(1)
+        );
+    }
+}
+
+#[test]
+fn the_voice_reads_a_long_transcript_in_small_complete_pages() {
+    let r = rig_with(true, true, 450);
+    let id = json!({"meeting_id": r.meeting});
+    // Extern: eine grosse Seite (bis 40 000 Zeichen).
+    let big = r.call("meeting_transcript", id.clone()).unwrap();
+    assert!(big["total_chars"].as_u64().unwrap() > 40_000, "{big}");
+    assert!(big["text"].as_str().unwrap().chars().count() > 30_000);
+    // Sprachgespraech: Seiten bis 4000 Zeichen; die Seiten ergeben zusammen genau das Transkript.
+    let mut cursor = 0u64;
+    let mut collected = 0usize;
+    let mut pages = 0;
+    loop {
+        let page = r
+            .call_voice(
+                "meeting_transcript",
+                json!({"meeting_id": r.meeting, "cursor": cursor}),
+            )
+            .unwrap();
+        let text = page["text"].as_str().unwrap();
+        assert!(text.chars().count() <= crate::agent_bridge::voice::VOICE_PAGE_CHARS);
+        assert!(
+            page.to_string().chars().count() < crate::agent_bridge::voice::MAX_RESULT_CHARS,
+            "eine Seite samt JSON passt in die Antwortgrenze"
+        );
+        assert_eq!(page["cursor"], json!(cursor));
+        collected += text.chars().count();
+        pages += 1;
+        match page["next_cursor"].as_u64() {
+            Some(next) => {
+                assert_eq!(
+                    next as usize, collected,
+                    "next_cursor zeigt hinter die Seite"
+                );
+                cursor = next;
+            }
+            None => {
+                assert_eq!(collected as u64, page["total_chars"].as_u64().unwrap());
+                break;
+            }
+        }
+        assert!(pages < 100, "kein Fortschritt");
+    }
+    assert!(pages >= 10, "{pages} Seiten");
 }

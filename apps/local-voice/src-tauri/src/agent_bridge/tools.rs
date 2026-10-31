@@ -125,6 +125,11 @@ pub trait Host: Send + Sync {
     fn transcript_shared(&self) -> bool {
         false
     }
+    /// Hat der Nutzer das Transkript fuer das Sprachgespraech freigegeben („Transkripte im
+    /// Sprachgespraech lesen“, getrennt von `transcript_shared`)? Ohne Antwort „nein“.
+    fn voice_transcript_shared(&self) -> bool {
+        false
+    }
 }
 
 /// Die Handler. Haelt den Store (Besprechungen, Ordner, Provenienz) und den `Host`.
@@ -671,9 +676,9 @@ impl ToolHandler for AppTools {
             "list_workflows" => self.list_workflows(a),
             "run_workflow" => self.run_workflow(ctx, a),
             "get_run" => self.get_run(a),
-            "meetings_list" => self.meetings_list(a),
-            "meetings_search" => self.meetings_search(a),
-            "meeting_transcript" => self.meeting_transcript(a),
+            "meetings_list" => self.meetings_list(ctx, a),
+            "meetings_search" => self.meetings_search(ctx, a),
+            "meeting_transcript" => self.meeting_transcript(ctx, a),
             other => Err(format!("Das Werkzeug „{other}“ gibt es nicht.")),
         }
     }

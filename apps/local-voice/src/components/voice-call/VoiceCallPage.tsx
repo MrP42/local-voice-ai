@@ -460,6 +460,7 @@ export const VoiceCallPage: React.FC = () => {
             onSuggest={(text) => send(text, [])}
             toolStatus={toolStatus}
             notice={notice}
+            onOpenSettings={() => store.getState().openSettings("models")}
           />
           <Composer
             value={draft}

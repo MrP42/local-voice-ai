@@ -5905,8 +5905,9 @@
       "meeting_transcript": "Lese im Transkript nach …"
     },
     "notice": {
-      "speaker_blocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig: Denker und Werkzeuge sind aus, die Antwort kommt direkt vom Modell.",
-      "denker_blocked": "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt."
+      "speaker_blocked": "Mit diesem Antwortmodell ist bei der gewählten Souveränität kein Gespräch möglich: Es würde Daten an einen Cloud-Dienst senden. Ändere das Modell oder die Souveränität.",
+      "denker_blocked": "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt.",
+      "openSettings": "Einstellungen öffnen"
     },
     "title": "Sprachgespräch",
     "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
@@ -6065,6 +6066,9 @@
         "eu": "EU",
         "frei": "Frei"
       },
+      "transcripts": "Transkripte im Sprachgespräch lesen",
+      "transcriptsHint": "Standardmäßig aus. Ist es an, darf die KI Transkripte von Besprechungen lesen und in ihnen suchen. Der Inhalt geht dann an das Antwortmodell, bei „nur lokal“ also nur an ein lokales.",
+      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
       "tools": "LVA-Werkzeuge nutzen",
       "toolsHint": "Nur lesend: Besprechungen auflisten, durchsuchen und Transkripte lesen. Die KI ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
     }

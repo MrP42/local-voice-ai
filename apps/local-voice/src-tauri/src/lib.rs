@@ -2301,6 +2301,7 @@ pub fn run(cli_args: CliArgs) {
             commands::agent_bridge::agent_bridge_status,
             // Sprachgespraech Stufe 2: lesende Werkzeuge fuer den Orchestrator
             commands::voice_tools::voice_tools_list,
+            commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::voice_tool_call,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,

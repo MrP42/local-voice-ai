@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Switch } from "@fluentui/react-components";
+import { Radio, RadioGroup, Switch, useId } from "@fluentui/react-components";
 import { X } from "lucide-react";
 import {
   useVoiceCallStore,
@@ -32,12 +32,18 @@ const TAB_IDS: VoiceSettingsTab[] = ["talk", "voice", "recognition", "models"];
 const Field: React.FC<{
   label: string;
   hint?: string;
+  /** Kennung für den Hinweis (damit ein Feld ihn mit `aria-describedby` binden kann). */
+  hintId?: string;
   children: React.ReactNode;
-}> = ({ label, hint, children }) => (
+}> = ({ label, hint, hintId, children }) => (
   <div className="flex flex-col gap-1">
     <span className="text-[13px] font-semibold">{label}</span>
     {children}
-    {hint && <span className="text-xs text-text/60">{hint}</span>}
+    {hint && (
+      <span id={hintId} className="text-xs text-text/60">
+        {hint}
+      </span>
+    )}
   </div>
 );
 
@@ -151,6 +157,13 @@ export const SettingsPanel: React.FC = () => {
   const stt = useSttModelName();
   const ready = useVoiceCallStore((s) => s.ready);
   const models = useVoiceModels();
+  const { getSetting, updateSetting } = useSettings();
+  const readTranscripts = getSetting("voice_call_read_transcripts") ?? false;
+  const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const speaker = models.find((m) => m.id === activeId);
+  const speakerBlocked =
+    !!speaker && blockedBy(speaker, config.orchestration.souveraenitaet);
+  const denkerHintId = useId("denker-hint");
   const orch = config.orchestration;
   const setOrch = (patch: Partial<typeof orch>) =>
     setConfig((c) => ({
@@ -296,8 +309,17 @@ export const SettingsPanel: React.FC = () => {
             >
               <div className="text-sm">{ready?.llm || llm.label || "–"}</div>
             </Field>
+            {speakerBlocked && (
+              <div
+                role="alert"
+                className="rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
+              >
+                {t("voiceCall.settings.speakerBlocked")}
+              </div>
+            )}
             <Field
               label={t("voiceCall.settings.denker")}
+              hintId={denkerHintId}
               hint={
                 denkerBlocked
                   ? t("voiceCall.settings.denkerBlocked")
@@ -316,6 +338,7 @@ export const SettingsPanel: React.FC = () => {
                 isClearable={false}
                 menuPortal
                 ariaLabel={t("voiceCall.settings.denker")}
+                ariaDescribedBy={denkerHintId}
                 onChange={(value) =>
                   setOrch({
                     denkerModelId: !value || value === DENKER_OFF ? "" : value,
@@ -329,27 +352,23 @@ export const SettingsPanel: React.FC = () => {
                 `voiceCall.settings.sovereigntyHint.${orch.souveraenitaet}`,
               )}
             >
-              <div
-                role="radiogroup"
+              <RadioGroup
+                layout="horizontal"
                 aria-label={t("voiceCall.settings.sovereignty")}
-                className="flex flex-wrap gap-1.5"
+                value={orch.souveraenitaet}
+                onChange={(_e, d) => {
+                  const next = SOUVERAENITAET_STUFEN.find((k) => k === d.value);
+                  if (next) setOrch({ souveraenitaet: next });
+                }}
               >
                 {SOUVERAENITAET_STUFEN.map((k) => (
-                  <Button
+                  <Radio
                     key={k}
-                    size="sm"
-                    variant={
-                      orch.souveraenitaet === k ? "primary" : "secondary"
-                    }
-                    role="radio"
-                    aria-checked={orch.souveraenitaet === k}
-                    type="button"
-                    onClick={() => setOrch({ souveraenitaet: k })}
-                  >
-                    {t(`voiceCall.settings.sovereigntyLevels.${k}`)}
-                  </Button>
+                    value={k}
+                    label={t(`voiceCall.settings.sovereigntyLevels.${k}`)}
+                  />
                 ))}
-              </div>
+              </RadioGroup>
             </Field>
             <Field
               label={t("voiceCall.settings.tools")}
@@ -359,6 +378,19 @@ export const SettingsPanel: React.FC = () => {
                 checked={orch.useTools}
                 onChange={(_e, d) => setOrch({ useTools: d.checked })}
                 aria-label={t("voiceCall.settings.tools")}
+              />
+            </Field>
+            <Field
+              label={t("voiceCall.settings.transcripts")}
+              hint={t("voiceCall.settings.transcriptsHint")}
+            >
+              <Switch
+                checked={readTranscripts}
+                disabled={!orch.useTools}
+                onChange={(_e, d) =>
+                  void updateSetting("voice_call_read_transcripts", d.checked)
+                }
+                aria-label={t("voiceCall.settings.transcripts")}
               />
             </Field>
           </>

@@ -23,9 +23,20 @@
 //! - Die Liste enthaelt nur Werkzeuge, deren wirksames Recht fuer `AgentLocal` „erlaubt“ ist. Ein
 //!   Recht „fragen“ oder „aus“ (Integration abgeschaltet, Fähigkeit nicht eingeschaltet, Richtung)
 //!   nimmt das Werkzeug aus der Liste. Im Gespraech laesst sich nicht zurueckfragen.
-//! - Der Aufruf prueft das Recht erneut (Tor). Kommt dabei doch „fragen“, legt das Tor eine Freigabe an,
-//!   der Aufruf scheitert mit Klartext: ausgefuehrt wird nichts.
-//! - Die Antwort ist auf [`MAX_RESULT_CHARS`] Zeichen gekuerzt.
+//! - Der Aufruf prueft das Recht VOR dem Tor (`explain`): nur bei „erlaubt“ geht er ins Tor, sonst
+//!   wird sofort abgelehnt, ohne eine Freigabe anzulegen und ohne etwas auszufuehren.
+//! - Antworten werden nie still gekuerzt: ist eine Antwort laenger als [`MAX_RESULT_CHARS`], kommt eine
+//!   Meldung („kleinere Seite oder engere Suche“). Transkriptseiten sind fuer die Stimme auf
+//!   [`VOICE_PAGE_CHARS`] Zeichen begrenzt, damit `next_cursor` stimmt.
+//! - Hoechstens [`RateLimiter::MAX_CALLS`] Aufrufe je Minute (Schutz vor einer Schleife des Modells).
+//!
+//! # Transkripte
+//! Das Transkript liefert fuer das Sprachgespraech NUR die eigene Einstellung „Transkripte im
+//! Sprachgespraech lesen“ (`voice_call_read_transcripts`, Standard aus, ADR-0021). `meeting_transcript`
+//! fehlt ohne sie in der Liste und wird abgelehnt; die Suche zeigt keine Treffer aus dem Transkript.
+//! Fuer externe Agenten ueber die Bruecke gilt davon getrennt `meeting_mcp_enabled &&
+//! meeting_mcp_include_transcript`; `meeting.read` steht ihnen nur mit erteiltem Recht offen
+//! (Vorgabe: „aus“).
 //!
 //! # Fehlerfaelle und ihre Absicherung (Tests in `voice/tests.rs`)
 //!
@@ -60,8 +71,46 @@ use crate::managers::integrations::store;
 pub const CALLER_TAG: &str = "voice_orchestrator";
 /// Name des Zugangs im `CallContext` (nur Anzeige; es gibt keinen echten Zugang).
 const CALLER_LABEL: &str = "Sprachgespräch";
-/// Laengste Antwort an das Sprachmodell (Zeichen).
-pub const MAX_RESULT_CHARS: usize = 6_000;
+/// Laengste Antwort an das Sprachmodell (Zeichen). Der Orchestrator kuerzt selbst bei 8000: darunter bleiben.
+pub const MAX_RESULT_CHARS: usize = 8_000;
+/// Zeichen je Transkriptseite fuer die Stimme (eine Seite samt JSON bleibt unter [`MAX_RESULT_CHARS`]).
+pub const VOICE_PAGE_CHARS: usize = 4_000;
+/// Werkzeuge, die den Inhalt von Transkripten lesen (brauchen die Freigabe im Sprachgespraech).
+const NEEDS_TRANSCRIPT: [&str; 1] = ["meeting_transcript"];
+
+/// Einstellungen des Nutzers, die die Liste und den Aufruf beeinflussen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VoiceOptions {
+    /// „Transkripte im Sprachgespraech lesen“ (Standard aus).
+    pub transcripts: bool,
+}
+
+/// Begrenzt die Aufrufe je Minute (gleitendes Fenster); rein, mit uebergebener Uhr.
+#[derive(Debug, Default)]
+pub struct RateLimiter {
+    calls: std::collections::VecDeque<i64>,
+}
+
+impl RateLimiter {
+    pub const MAX_CALLS: usize = 8;
+    const WINDOW_MS: i64 = 60_000;
+
+    /// Zaehlt einen Aufruf; `false`, wenn die Grenze der letzten Minute erreicht ist.
+    pub fn allow(&mut self, now_ms: i64) -> bool {
+        while self
+            .calls
+            .front()
+            .is_some_and(|t| now_ms - *t >= Self::WINDOW_MS || *t > now_ms)
+        {
+            self.calls.pop_front();
+        }
+        if self.calls.len() >= Self::MAX_CALLS {
+            return false;
+        }
+        self.calls.push_back(now_ms);
+        true
+    }
+}
 /// Groesste Argumentzeichenkette (Bytes).
 pub const MAX_ARGS_BYTES: usize = 16 * 1024;
 
@@ -115,6 +164,7 @@ fn shown(name: &str) -> String {
 pub fn list(
     conn: &Connection,
     registry: &ToolRegistry,
+    opts: VoiceOptions,
     now_ms: i64,
 ) -> Result<Vec<VoiceToolInfo>, String> {
     let integration =
@@ -125,7 +175,7 @@ pub fn list(
         let (Some(entry), Some(spec)) = (catalog::find(&name), registry.spec(&name)) else {
             continue;
         };
-        if !is_read_only(entry) {
+        if !is_read_only(entry) || (!opts.transcripts && NEEDS_TRANSCRIPT.contains(&entry.name)) {
             continue;
         }
         let (mode, _) = explain(
@@ -162,23 +212,28 @@ fn parse_args(raw: &str) -> Result<Value, String> {
     Bridge::normalize_args(&value).map_err(|e| e.message)
 }
 
-/// Kuerzt auf `max` Zeichen an einer Zeichengrenze und markiert die Kuerzung.
-pub fn clamp_result(text: String, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        None => text,
-        Some((end, _)) => format!("{} … [gekürzt]", &text[..end]),
+/// Laesst eine Antwort bis `max` Zeichen durch; eine laengere wird NIE still gekuerzt (das Modell
+/// wuerde auf abgeschnittenen Daten antworten), sondern durch eine Meldung ersetzt.
+pub fn clamp_result(text: String, max: usize) -> Result<String, String> {
+    if text.chars().nth(max).is_none() {
+        return Ok(text);
     }
+    Err("Die Antwort ist zu lang für das Gespräch. Bitte eine kleinere Seite oder eine engere Suche wählen (weniger Treffer, kürzerer Zeitraum).".to_string())
 }
 
 /// Fuehrt ein lesendes Werkzeug durch das Tor aus; die Antwort ist der JSON-Text des Ergebnisses.
 pub fn call(
     conn: &Connection,
     registry: &ToolRegistry,
+    opts: VoiceOptions,
     name: &str,
     args_json: &str,
     now_ms: i64,
 ) -> Result<String, String> {
     let entry = read_only_entry(name)?;
+    if !opts.transcripts && NEEDS_TRANSCRIPT.contains(&entry.name) {
+        return Err("Transkripte darf die Sprach-KI nur lesen, wenn „Transkripte im Sprachgespräch lesen“ eingeschaltet ist.".to_string());
+    }
     let args = parse_args(args_json)?;
     let handler = registry.handler(entry.name).ok_or_else(|| {
         format!(
@@ -188,6 +243,23 @@ pub fn call(
     })?;
     let integration =
         clients::ensure_agent_integration(conn, now_ms).map_err(|e| store_error(&e))?;
+    let grants = store::grants_for(conn, &integration.id).map_err(|e| store_error(&e))?;
+    let (mode, _) = explain(
+        &integration,
+        entry.capability,
+        Caller::AgentLocal,
+        &grants,
+        None,
+    );
+    match mode {
+        GrantMode::Allow => {}
+        GrantMode::Ask => {
+            return Err("Dieses Werkzeug braucht eine Freigabe in der App (Integrationen). Im Sprachgespräch ist keine Rückfrage möglich, es wurde nichts ausgeführt.".to_string())
+        }
+        GrantMode::Off => {
+            return Err("Dieses Werkzeug ist für das Sprachgespräch ausgeschaltet (Integrationen). Es wurde nichts ausgeführt.".to_string())
+        }
+    }
     let target = format!("{} · {CALLER_TAG}", entry.name);
     let request = Request {
         caller: Caller::AgentLocal,
@@ -208,7 +280,7 @@ pub fn call(
     })
     .map_err(|e| store_error(&e))?;
     match outcome {
-        GateOutcome::Done(value) => Ok(clamp_result(value.to_string(), MAX_RESULT_CHARS)),
+        GateOutcome::Done(value) => clamp_result(value.to_string(), MAX_RESULT_CHARS),
         GateOutcome::Failed(message) => Err(message),
         GateOutcome::Denied { reason, .. } => Err(reason),
         GateOutcome::Pending { .. } => Err(

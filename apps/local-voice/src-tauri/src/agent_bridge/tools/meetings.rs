@@ -32,7 +32,8 @@ use std::time::Duration;
 use serde_json::{json, Map, Value};
 
 use super::{spec, string_prop, AppTools, Args};
-use crate::agent_bridge::catalog::ToolSpec;
+use crate::agent_bridge::catalog::{CallContext, ToolSpec};
+use crate::agent_bridge::voice::{CALLER_TAG, VOICE_PAGE_CHARS};
 use crate::mcp::tools::{self as mcp_tools, Backend};
 
 /// Wartezeit auf eine gesperrte Datenbank (wie der lokale MCP-Server; die Stimme wartet nicht 30 s).
@@ -136,11 +137,28 @@ fn forward_integer(
 
 impl AppTools {
     /// Liest ueber die Logik des lokalen MCP-Servers; ein Fehlertext wird zum Werkzeugfehler.
-    fn read_meetings(&self, mcp_tool: &str, args: Map<String, Value>) -> Result<Value, String> {
+    fn read_meetings(
+        &self,
+        ctx: &CallContext,
+        mcp_tool: &str,
+        args: Map<String, Value>,
+    ) -> Result<Value, String> {
+        // Das Sprachgespraech (Zugang `voice_orchestrator`) hat eine eigene Freigabe und kleinere
+        // Seiten; externe Agenten folgen den Einstellungen des MCP-Servers.
+        let voice = ctx.client_id == CALLER_TAG;
         let backend = Backend {
             db_path: self.store.db_path(),
             busy_timeout: READ_BUSY_TIMEOUT,
-            include_transcript: self.host.transcript_shared(),
+            include_transcript: if voice {
+                self.host.voice_transcript_shared()
+            } else {
+                self.host.transcript_shared()
+            },
+            transcript_page_chars: if voice {
+                VOICE_PAGE_CHARS
+            } else {
+                mcp_tools::TRANSCRIPT_PAGE_CHARS
+            },
         };
         let outcome = mcp_tools::call(mcp_tool, &Value::Object(args), &backend);
         if outcome.is_error {
@@ -150,16 +168,16 @@ impl AppTools {
             .map_err(|_| "Die Antwort der Besprechungsdatenbank war nicht lesbar.".to_string())
     }
 
-    pub(super) fn meetings_list(&self, mut a: Args) -> Result<Value, String> {
+    pub(super) fn meetings_list(&self, ctx: &CallContext, mut a: Args) -> Result<Value, String> {
         let mut forwarded = Map::new();
         forward_text(&mut a, &mut forwarded, "from", MAX_DATE_CHARS)?;
         forward_text(&mut a, &mut forwarded, "to", MAX_DATE_CHARS)?;
         forward_integer(&mut a, &mut forwarded, "limit", 1, LIST_LIMIT_MAX)?;
         a.done()?;
-        self.read_meetings("list_meetings", forwarded)
+        self.read_meetings(ctx, "list_meetings", forwarded)
     }
 
-    pub(super) fn meetings_search(&self, mut a: Args) -> Result<Value, String> {
+    pub(super) fn meetings_search(&self, ctx: &CallContext, mut a: Args) -> Result<Value, String> {
         let mut forwarded = Map::new();
         let query = a.required("query", MAX_QUERY_CHARS, false)?;
         forwarded.insert("query".to_string(), Value::String(query));
@@ -167,10 +185,14 @@ impl AppTools {
         forward_text(&mut a, &mut forwarded, "to", MAX_DATE_CHARS)?;
         forward_integer(&mut a, &mut forwarded, "limit", 1, SEARCH_LIMIT_MAX)?;
         a.done()?;
-        self.read_meetings("search_meetings", forwarded)
+        self.read_meetings(ctx, "search_meetings", forwarded)
     }
 
-    pub(super) fn meeting_transcript(&self, mut a: Args) -> Result<Value, String> {
+    pub(super) fn meeting_transcript(
+        &self,
+        ctx: &CallContext,
+        mut a: Args,
+    ) -> Result<Value, String> {
         let id = a
             .id("meeting_id")?
             .ok_or_else(|| "„meeting_id“ fehlt.".to_string())?;
@@ -178,7 +200,7 @@ impl AppTools {
         forwarded.insert("id".to_string(), Value::String(id));
         forward_integer(&mut a, &mut forwarded, "cursor", 0, MAX_CURSOR)?;
         a.done()?;
-        self.read_meetings("get_transcript", forwarded)
+        self.read_meetings(ctx, "get_transcript", forwarded)
     }
 }
 

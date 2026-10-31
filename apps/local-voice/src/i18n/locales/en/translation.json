@@ -5905,8 +5905,9 @@
       "meeting_transcript": "Reading the transcript …"
     },
     "notice": {
-      "speaker_blocked": "The answer model is not allowed at this sovereignty level: thinker and tools are off, the model answers directly.",
-      "denker_blocked": "The thinker model is not allowed at this sovereignty level and is not used."
+      "speaker_blocked": "No conversation is possible with this answer model at the chosen sovereignty level: it would send data to a cloud service. Change the model or the sovereignty level.",
+      "denker_blocked": "The thinker model is not allowed at this sovereignty level and is not used.",
+      "openSettings": "Open settings"
     },
     "title": "Voice conversation",
     "description": "Talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
@@ -6065,6 +6066,9 @@
         "eu": "EU",
         "frei": "Open"
       },
+      "transcripts": "Read transcripts in voice chat",
+      "transcriptsHint": "Off by default. When on, the AI may read and search meeting transcripts. The content then goes to the answer model, with \"local only\" that means a local one only.",
+      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
       "tools": "Use LVA tools",
       "toolsHint": "Read-only: list and search meetings and read transcripts. The AI changes nothing, every call is in the integrations log."
     }
