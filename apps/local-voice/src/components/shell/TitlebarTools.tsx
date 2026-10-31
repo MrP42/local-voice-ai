@@ -20,6 +20,7 @@ import {
 } from "@fluentui/react-components";
 import { Bell, HelpCircle, Settings, User } from "lucide-react";
 import { Dialog } from "../ui/Dialog";
+import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { useSettings } from "../../hooks/useSettings";
 import { togglePageHelp, useHasPageHelp } from "../help/pageHelp";
 import { SECTIONS_CONFIG, type SidebarSection } from "../Sidebar";
@@ -308,7 +309,12 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
             <React.Fragment key={b.id}>
               <dt>{b.name}</dt>
               <dd>
-                <kbd>{b.current_binding}</kbd>
+                <kbd>
+                  {formatKeyCombination(
+                    b.current_binding,
+                    IS_MAC ? "macos" : "windows",
+                  )}
+                </kbd>
               </dd>
             </React.Fragment>
           ))}

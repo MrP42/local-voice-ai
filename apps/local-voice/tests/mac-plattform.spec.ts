@@ -19,6 +19,10 @@ const openOutput = async (page: Page, os: "macos" | "windows") => {
       version: "1",
       eol: osType === "windows" ? "\r\n" : "\n",
     };
+    // Die Titelleiste erkennt den Mac an navigator.platform.
+    Object.defineProperty(navigator, "platform", {
+      get: () => (osType === "macos" ? "MacIntel" : "Win32"),
+    });
   }, os);
   // Das Vorlese-Kuerzel wie in den echten Standardeinstellungen.
   await page.addInitScript(() => {
@@ -59,4 +63,29 @@ test("Windows: Kuerzel mit Namen, Explorer-Kontextmenue sichtbar", async ({
     page.getByText("Ctrl + Alt + Space", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Explorer-Kontextmenü")).toBeVisible();
+});
+
+const openShortcutDialog = async (page: Page) => {
+  await page.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Tastenkürzel" }).click();
+  return page.getByRole("dialog", { name: "Tastenkürzel" });
+};
+
+test("macOS: der Kuerzel-Dialog der Titelleiste zeigt Mac-Symbole", async ({
+  page,
+}) => {
+  await openOutput(page, "macos");
+  const dialog = await openShortcutDialog(page);
+  await expect(dialog.getByText("⌃ ⌥ Space", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("ctrl+alt+space")).toHaveCount(0);
+});
+
+test("Windows: der Kuerzel-Dialog der Titelleiste zeigt Namen", async ({
+  page,
+}) => {
+  await openOutput(page, "windows");
+  const dialog = await openShortcutDialog(page);
+  await expect(
+    dialog.getByText("Ctrl + Alt + Space", { exact: true }),
+  ).toBeVisible();
 });
