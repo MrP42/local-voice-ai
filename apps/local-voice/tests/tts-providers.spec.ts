@@ -1697,6 +1697,17 @@ test("Phonon-Maske: Reinhoeren spielt die fertige Hoerprobe, eine entstehende is
       w.__played.push(this.getAttribute("src") ?? this.src);
       return Promise.resolve();
     };
+    // Die Probe "laeuft", bis der Test sie stoppt: ohne preload=none laedt
+    // Chromium die Attrappen-Adresse sofort, scheitert und feuert "error" --
+    // der Spieler beendet die Probe dann, bevor die Pruefung greift (Mac:
+    // 2 von 3 Laeufen rot). Mit preload=none wird nichts geladen.
+    const NativeAudio = window.Audio;
+    window.Audio = function (src?: string) {
+      const audio = new NativeAudio();
+      audio.preload = "none";
+      if (src !== undefined) audio.src = src;
+      return audio;
+    } as unknown as typeof Audio;
   });
   await setup(page, {
     engine: "fish",

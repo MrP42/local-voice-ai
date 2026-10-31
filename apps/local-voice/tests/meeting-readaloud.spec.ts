@@ -687,7 +687,7 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     expect((await voice.boundingBox())!.width).toBeLessThan(220);
 
     await menuButton.click();
-    await page.getByRole("menuitem", { name: "anna", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^anna\b/ }).click();
     await expect
       .poll(async () => (await calls(page, "tts_voice_changed")).length)
       .toBe(1);
@@ -729,7 +729,7 @@ test.describe("Vorlesen in den Aufnahmen", () => {
       }),
     );
     await page.getByTestId("minutes-readaloud-bar-voice-menu").click();
-    await page.getByRole("menuitem", { name: "anna", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^anna\b/ }).click();
     await expect
       .poll(async () => (await calls(page, "tts_voice_changed")).length)
       .toBe(1);
@@ -767,7 +767,7 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await openMinutes(page);
     await page.getByTestId("minutes-readaloud").click();
     await page.getByTestId("minutes-readaloud-bar-voice-menu").click();
-    await page.getByRole("menuitem", { name: "anna", exact: true }).click();
+    await page.getByRole("menuitem", { name: /^anna\b/ }).click();
     await page.evaluate(() =>
       (window as any).__emit("tts-speak-progress", { position: 2, total: 6 }),
     );

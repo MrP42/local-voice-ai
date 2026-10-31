@@ -20,6 +20,7 @@ import {
 } from "@fluentui/react-components";
 import { Bell, HelpCircle, Settings, User } from "lucide-react";
 import { Dialog } from "../ui/Dialog";
+import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { useSettings } from "../../hooks/useSettings";
 import { togglePageHelp, useHasPageHelp } from "../help/pageHelp";
 import { useIntroTourStore } from "@/stores/introTourStore";
@@ -99,6 +100,8 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
     ? sections.filter((s) => s.label.toLowerCase().includes(needle))
     : [];
 
+  const listOpen = searchOpen && !!needle;
+
   const go = (id: SidebarSection) => {
     onNavigate(id);
     setQuery("");
@@ -120,8 +123,9 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
           input={{
             role: "combobox",
             "aria-autocomplete": "list",
-            "aria-expanded": searchOpen && !!needle,
-            "aria-controls": "lv-search-list",
+            "aria-expanded": listOpen,
+            // Nur auf die Liste verweisen, solange sie im DOM steht.
+            "aria-controls": listOpen ? "lv-search-list" : undefined,
             "aria-activedescendant":
               searchOpen && results[active]
                 ? `lv-search-opt-${results[active].id}`
@@ -160,7 +164,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
           }}
           data-titlebar-search
         />
-        {searchOpen && needle && (
+        {listOpen && (
           <ul
             id="lv-search-list"
             className="lv-search__list"
@@ -310,7 +314,12 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
             <React.Fragment key={b.id}>
               <dt>{b.name}</dt>
               <dd>
-                <kbd>{b.current_binding}</kbd>
+                <kbd>
+                  {formatKeyCombination(
+                    b.current_binding,
+                    IS_MAC ? "macos" : "windows",
+                  )}
+                </kbd>
               </dd>
             </React.Fragment>
           ))}

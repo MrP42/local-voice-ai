@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useOsType } from "@/hooks/useOsType";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -29,6 +30,9 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
  */
 export const ReadAloudTab = () => {
   const { t } = useTranslation();
+  // Ohne Tauri ("unknown") gilt der Windows-Pfad.
+  const osType = useOsType();
+  const isWindows = osType === "windows" || osType === "unknown";
   const { getSetting, updateSetting, isUpdating } = useSettings();
   // Fish Speech ist optional (Issue #29): nur wenn es auf diesem System
   // eingerichtet ist, erscheinen seine Detail-Einstellungen. Unbekannt
@@ -376,14 +380,17 @@ export const ReadAloudTab = () => {
             />
           </>
         )}
-        <ToggleSwitch
-          checked={getSetting("tts_context_menu") ?? false}
-          onChange={(checked) => updateSetting("tts_context_menu", checked)}
-          isUpdating={isUpdating("tts_context_menu")}
-          label={t("tts.settings.contextMenu")}
-          description={t("tts.settings.contextMenuDescription")}
-          grouped={true}
-        />
+        {/* Das Explorer-Kontextmenue gibt es nur unter Windows (Registry). */}
+        {isWindows && (
+          <ToggleSwitch
+            checked={getSetting("tts_context_menu") ?? false}
+            onChange={(checked) => updateSetting("tts_context_menu", checked)}
+            isUpdating={isUpdating("tts_context_menu")}
+            label={t("tts.settings.contextMenu")}
+            description={t("tts.settings.contextMenuDescription")}
+            grouped={true}
+          />
+        )}
         <SettingContainer
           title={t("tts.settings.maxChars")}
           description={t("tts.settings.maxCharsDescription")}

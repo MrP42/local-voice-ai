@@ -8,7 +8,9 @@ import { mkdirSync } from "node:fs";
 
 type Call = { cmd: string; args: Record<string, any> };
 
-const SHOTS = "/mnt/project-files/sprachgespraech/umsetzung";
+// Abnahmebilder nur auf Wunsch (wie die anderen Bildstrecken): ein fester
+// Ablagepfad brach den Lauf auf Mac und Windows ab.
+const SHOTS = process.env.SCREENS_DIR ?? "";
 
 async function install(page: Page, theme: "light" | "dark" = "light") {
   page.on("pageerror", (error) => {
@@ -858,6 +860,7 @@ test.describe("Screenshots @screenshots", () => {
   test("hell und dunkel, Menues, Einstellungen, schmal", async ({
     browser,
   }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
     mkdirSync(SHOTS, { recursive: true });
     const shoot = async (
       theme: "light" | "dark",
