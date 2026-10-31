@@ -77,7 +77,12 @@ export const useFirstRunModelSelection = () => {
   const done = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!pendingModelId || !ready || done.current === pendingModelId) return;
+    if (!pendingModelId) {
+      // Nach Fehler oder Abschluss darf „Wiederholen“ erneut auswählen.
+      done.current = null;
+      return;
+    }
+    if (!ready || done.current === pendingModelId) return;
     done.current = pendingModelId;
     const { setPendingModel, setFailedModel } = useIntroTourStore.getState();
     // Hat der Nutzer inzwischen selbst ein Modell gewählt, bleibt es dabei.

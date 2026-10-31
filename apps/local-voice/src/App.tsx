@@ -87,7 +87,15 @@ function App() {
   // Download gescheitert und Tour geschlossen, oder „Modell selbst wählen“:
   // zurück zur Modellauswahl, solange die Ersteinrichtung offen ist.
   useEffect(() => {
-    if ((!firstRunFailed && !pickerRequested) || isReturningUser) return;
+    if (!firstRunFailed && !pickerRequested) return;
+    if (isReturningUser) {
+      // Kein Erststart mehr: alten Fehler nicht in spätere Touren tragen.
+      useIntroTourStore.setState({
+        failedModelId: null,
+        pickerRequested: false,
+      });
+      return;
+    }
     useIntroTourStore.setState({
       open: false,
       failedModelId: null,

@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -13,6 +14,7 @@ import { useIntroTourStore } from "@/stores/introTourStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyCombination } from "@/lib/utils/keyboard";
+import { commands } from "@/bindings";
 import { retryFirstRunDownload } from "./firstRunSetup";
 import "./introTour.css";
 
@@ -53,10 +55,13 @@ const localizeKeys = (combo: string, language: string) =>
 
 /** Systemeinstellung „Bewegung reduzieren“, auch wenn sie sich ändert. */
 const useReducedMotion = () => {
-  const query =
-    typeof window !== "undefined" && window.matchMedia
-      ? window.matchMedia("(prefers-reduced-motion: reduce)")
-      : null;
+  const query = useMemo(
+    () =>
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null,
+    [],
+  );
   const [reduced, setReduced] = useState(!!query?.matches);
   useEffect(() => {
     if (!query) return;
@@ -180,9 +185,11 @@ export const IntroTour: React.FC = () => {
   const pendingModelId = useIntroTourStore((s) => s.pendingModelId);
   const failedModelId = useIntroTourStore((s) => s.failedModelId);
   const download = useDownloadState(pendingModelId);
-  const hasModel = useModelStore((s) => !!s.currentModel);
+  const currentModel = useModelStore((s) => s.currentModel);
   const { getSetting } = useSettings();
-  const binding = getSetting("bindings")?.transcribe?.current_binding ?? "";
+  const bindings = getSetting("bindings");
+  const binding = bindings?.transcribe?.current_binding ?? "";
+  const cancelBinding = bindings?.cancel?.current_binding ?? "escape";
   const pushToTalk = getSetting("push_to_talk") ?? true;
   const reduced = useReducedMotion();
   const [index, setIndex] = useState(0);
@@ -196,11 +203,17 @@ export const IntroTour: React.FC = () => {
     ? localizeKeys(formatKeyCombination(binding, "unknown"), i18n.language)
     : "";
   const keys = shortcut ? shortcut.split(" + ") : [];
+  const cancelKey = localizeKeys(
+    formatKeyCombination(cancelBinding, "unknown"),
+    i18n.language,
+  );
 
   // Download beim ersten Start: Die Tour beginnt erst, wenn das Modell da ist.
-  const loading = !!pendingModelId && !download.ready;
+  // Bereit heißt: geladen UND als Diktatmodell ausgewählt.
+  const selected = !!pendingModelId && currentModel === pendingModelId;
+  const loading = !!pendingModelId && !selected;
   const failed = !!failedModelId;
-  const dictationReady = !loading && !failed && (hasModel || download.ready);
+  const dictationReady = !loading && !failed && !!currentModel;
 
   const step = TOUR_STEPS[index];
   const target = step.kind === "spot" ? findTarget(step.target) : null;
@@ -217,7 +230,7 @@ export const IntroTour: React.FC = () => {
 
   const finish = useCallback(() => {
     // Fertig eingerichtet: spätere Touren zeigen keinen Fortschritt mehr.
-    if (download.ready) useIntroTourStore.getState().setPendingModel(null);
+    if (selected) useIntroTourStore.getState().setPendingModel(null);
     close();
     const back = restoreFocus.current;
     window.requestAnimationFrame(() => {
@@ -227,7 +240,7 @@ export const IntroTour: React.FC = () => {
           : focusFallback();
       target?.focus?.();
     });
-  }, [close, download.ready]);
+  }, [close, selected]);
 
   const next = useCallback(() => {
     if (!canAdvance) return;
@@ -292,15 +305,23 @@ export const IntroTour: React.FC = () => {
   }, [open, canAdvance, dictationReady, failed, focusStep]);
 
   // Rest der App für Hilfsmittel und Tastatur stilllegen (echtes Modal).
+  // Ausnahme: die Fensterknöpfe der Titelleiste (schließen, minimieren).
   useEffect(() => {
     if (!open) return;
     const tour = document.querySelector<HTMLElement>(".lv-tour");
-    const siblings = Array.from(tour?.parentElement?.children ?? []).filter(
-      (el): el is HTMLElement =>
-        el instanceof HTMLElement && el !== tour && !el.inert,
-    );
-    siblings.forEach((el) => (el.inert = true));
-    return () => siblings.forEach((el) => (el.inert = false));
+    const muted: HTMLElement[] = [];
+    const mute = (el: Element) => {
+      if (!(el instanceof HTMLElement) || el === tour || el.inert) return;
+      if (el.querySelector(".lv-window-controls")) {
+        Array.from(el.children).forEach(mute);
+        return;
+      }
+      if (el.classList.contains("lv-window-controls")) return;
+      el.inert = true;
+      muted.push(el);
+    };
+    Array.from(tour?.parentElement?.children ?? []).forEach(mute);
+    return () => muted.forEach((el) => (el.inert = false));
   }, [open]);
 
   // Tastatur: Esc beendet die Tour (nicht im Übungsfeld, dort bricht Esc das
@@ -317,41 +338,49 @@ export const IntroTour: React.FC = () => {
         origin === document.documentElement;
       const onBox = !!box && origin === box;
       const inBox = !!box && !!origin && box.contains(origin);
-      if (!onBody && !inBox) return;
-      const inField = !!(origin as HTMLElement | null)?.closest?.("textarea");
-      if (e.key === "Escape" && !inField) {
+      // Tab immer in der Tour halten: Fluents Tabster schiebt den Fokus beim
+      // Drücken von Umschalt teils auf eigene Hilfselemente außerhalb.
+      if (e.key === "Tab" && box) {
+        const items = Array.from(
+          box.querySelectorAll<HTMLElement>(
+            "button:not([disabled]), textarea:not([disabled])",
+          ),
+        );
         e.preventDefault();
-        finish();
+        e.stopPropagation();
+        if (!items.length) {
+          box.focus();
+          return;
+        }
+        const active = document.activeElement as HTMLElement | null;
+        const at = active ? items.indexOf(active) : -1;
+        const nextIndex =
+          at < 0
+            ? e.shiftKey
+              ? items.length - 1
+              : 0
+            : (at + (e.shiftKey ? -1 : 1) + items.length) % items.length;
+        items[nextIndex].focus();
+        return;
+      }
+      if (!onBody && !inBox) return;
+      if (e.key === "Escape") {
+        // Während einer Aufnahme bricht Esc zuerst die Aufnahme ab (globales
+        // Kürzel im Backend); erst außerhalb einer Aufnahme schließt Esc die
+        // Tour.
+        e.preventDefault();
+        void commands
+          .isRecording()
+          .catch(() => false)
+          .then((recording) => {
+            if (!recording) finish();
+          });
       } else if (e.key === "ArrowRight" && (onBody || onBox)) {
         e.preventDefault();
         next();
       } else if (e.key === "ArrowLeft" && (onBody || onBox)) {
         e.preventDefault();
         back();
-      } else if (e.key === "Tab" && box) {
-        const items = Array.from(
-          box.querySelectorAll<HTMLElement>(
-            "button:not([disabled]), textarea:not([disabled])",
-          ),
-        );
-        if (!items.length) {
-          e.preventDefault();
-          box.focus();
-          return;
-        }
-        const first = items[0];
-        const lastItem = items[items.length - 1];
-        const active = document.activeElement;
-        if (!active || active === document.body || active === box) {
-          e.preventDefault();
-          (e.shiftKey ? lastItem : first).focus();
-        } else if (e.shiftKey && active === first) {
-          e.preventDefault();
-          lastItem.focus();
-        } else if (!e.shiftKey && active === lastItem) {
-          e.preventDefault();
-          first.focus();
-        }
       }
     };
     document.addEventListener("keydown", onKeyDown, true);
@@ -360,7 +389,7 @@ export const IntroTour: React.FC = () => {
 
   if (!open) return null;
 
-  const modelName = download.name ?? "Nemotron 3.5";
+  const modelName = download.name ?? t("introTour.download.fallbackName");
   const downloadBlock =
     pendingModelId || failed ? (
       <div
@@ -423,7 +452,7 @@ export const IntroTour: React.FC = () => {
   // progressbar und wird nicht bei jedem Prozent angesagt).
   const announcement = failed
     ? t("introTour.download.failedShort")
-    : pendingModelId && download.ready
+    : selected
       ? t("introTour.download.ready", { model: modelName })
       : "";
 
@@ -432,7 +461,11 @@ export const IntroTour: React.FC = () => {
       case "welcome":
         return (
           <>
-            <p>{t("introTour.welcome.body")}</p>
+            <p>
+              {dictationReady
+                ? t("introTour.welcome.bodyReady")
+                : t("introTour.welcome.body")}
+            </p>
             {downloadBlock}
             {loading && (
               <p className="lv-tour__note">{t("introTour.welcome.note")}</p>
@@ -455,7 +488,9 @@ export const IntroTour: React.FC = () => {
                   : t("introTour.dictate.threeToggle", { shortcut })}
               </li>
             </ol>
-            <p className="lv-tour__note">{t("introTour.dictate.note")}</p>
+            <p className="lv-tour__note">
+              {t("introTour.dictate.note", { cancel: cancelKey })}
+            </p>
           </>
         );
       case "try": {
@@ -481,7 +516,7 @@ export const IntroTour: React.FC = () => {
             />
             <p id={hintId} className="lv-tour__note">
               {dictationReady
-                ? t("introTour.try.ready")
+                ? t("introTour.try.ready", { cancel: cancelKey })
                 : t("introTour.try.locked")}
             </p>
           </>

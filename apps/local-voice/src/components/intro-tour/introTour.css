@@ -180,7 +180,7 @@ ol.lv-tour__list {
 .lv-tour__bar i {
   display: block;
   height: 100%;
-  background: var(--colorBrandBackground, #0f6cbd);
+  background: var(--colorBrandForeground1, #0f6cbd);
   transition: width 0.4s;
 }
 
@@ -190,7 +190,8 @@ ol.lv-tour__list {
   font: inherit;
   padding: 8px 10px;
   border-radius: 4px;
-  border: 1px solid var(--colorNeutralStroke1, #d1d1d1);
+  /* Barrierefreier Rahmen (≥ 3:1), wie Fluents Eingabefelder. */
+  border: 1px solid var(--colorNeutralStrokeAccessible, #616161);
   background: var(--colorNeutralBackground1, #fff);
   color: inherit;
 }
@@ -205,6 +206,12 @@ ol.lv-tour__list {
 .lv-tour__try:focus-visible {
   outline: 2px solid var(--colorBrandStroke1, #0f6cbd);
   outline-offset: 1px;
+}
+
+/* Hauptknopf: Rand in Vordergrund-Markenfarbe, damit die Fläche auch im
+   dunklen Schema ≥ 3:1 vom Dialog absetzt. */
+.lv-tour [data-tour-primary]:not(:disabled):not(:focus-visible) {
+  box-shadow: 0 0 0 1px var(--colorBrandForeground1, #0f6cbd);
 }
 
 .lv-tour__nav {
@@ -236,7 +243,8 @@ ol.lv-tour__list {
 
 .lv-tour__dots i[data-on] {
   width: 18px;
-  background: var(--colorBrandBackground, #0f6cbd);
+  /* Vordergrund-Markenfarbe: ≥ 3:1 auf hellem und dunklem Dialog. */
+  background: var(--colorBrandForeground1, #0f6cbd);
 }
 
 .lv-tour__icon {
@@ -272,6 +280,12 @@ ol.lv-tour__list {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
+}
+
+/* Fensterknöpfe bleiben während der Tour bedienbar. */
+body:has(.lv-tour) .lv-window-controls {
+  position: relative;
+  z-index: 1001;
 }
 
 /* Nur für Screenreader sichtbar */
@@ -416,6 +430,15 @@ ol.lv-tour__list {
   .lv-tour__dialog {
     grid-template-columns: 1fr;
   }
+  /* Gleiche Reihenfolge wie am Desktop, alle Knöpfe in einer Zeile. */
+  .lv-tour__nav {
+    justify-content: stretch;
+  }
+  .lv-tour__nav > button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 8px;
+  }
   .lv-tour__art {
     min-height: 160px;
   }
@@ -427,6 +450,16 @@ ol.lv-tour__list {
 .lv-tour[data-reduced] *::after {
   animation: none !important;
   transition: none !important;
+}
+
+/* Sehr wenig Höhe (hoher Zoom): Grafik ist Schmuck, Text hat Vorrang. */
+@media (max-height: 420px) {
+  .lv-tour__art {
+    display: none;
+  }
+  .lv-tour__dialog {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-height: 520px) {

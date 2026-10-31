@@ -6192,25 +6192,27 @@
       "ready": "{{model}} ist bereit – du kannst sofort diktieren.",
       "failed": "Das Diktatmodell konnte nicht geladen werden. Wähle ein Modell, um loszulegen – oder versuche es erneut.",
       "selected": "Diktatmodell eingerichtet – du kannst jetzt diktieren.",
+      "fallbackName": "das Diktatmodell",
       "failedShort": "Das Diktatmodell konnte nicht geladen werden. Prüfe die Internetverbindung und versuche es erneut.",
-      "retry": "Wiederholen",
-      "choose": "Modell selbst wählen"
+      "retry": "Download wiederholen",
+      "choose": "Anderes Modell auswählen"
     },
     "welcome": {
       "eyebrow": "Willkommen",
       "title": "Schön, dass du da bist",
       "body": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. Sobald das Diktatmodell bereit ist, zeigen wir dir in sechs kurzen Schritten, wo du was findest.",
-      "note": "Der Download läuft im Hintergrund weiter, auch wenn du die Tour überspringst."
+      "note": "Der Download läuft im Hintergrund weiter, auch wenn du die Tour überspringst.",
+      "bodyReady": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. In sechs kurzen Schritten zeigen wir dir, wo du was findest."
     },
     "dictate": {
       "eyebrow": "Diktieren",
       "title": "In Textfelder diktieren",
-      "one": "In ein Textfeld klicken – zum Beispiel in Word, Outlook oder im Browser. Das Diktat funktioniert überall, wo du auch tippen könntest.",
+      "one": "In ein Textfeld klicken – zum Beispiel in Word, Outlook oder im Browser. In manchen Feldern, etwa Passwortfeldern oder Programmen mit Administratorrechten, kann das Einfügen nicht funktionieren.",
       "twoHold": "{{shortcut}} gedrückt halten und sprechen.",
       "twoToggle": "{{shortcut}} drücken und sprechen.",
       "threeHold": "Loslassen – der Text wird eingefügt.",
       "threeToggle": "{{shortcut}} erneut drücken – der Text wird eingefügt.",
-      "note": "Während einer Aufnahme bricht Esc das Diktat ab, ohne Text einzufügen. Kürzel und Modus (halten oder umschalten) änderst du unter Einstellungen › Diktat.",
+      "note": "Während einer Aufnahme bricht {{cancel}} das Diktat ab, ohne Text einzufügen. Ohne laufende Aufnahme schließt {{cancel}} diese Einführung. Kürzel und Modus (halten oder umschalten) änderst du unter Einstellungen › Diktat.",
       "sample": "Sehr geehrte Frau Berger, vielen Dank für Ihre Nachricht."
     },
     "try": {
@@ -6220,7 +6222,7 @@
       "placeholder": "Hier erscheint dein Text …",
       "bodyHold": "Klick ins Übungsfeld, halte {{shortcut}} gedrückt und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Beim Loslassen erscheint der Text.",
       "bodyToggle": "Klick ins Übungsfeld, drück {{shortcut}} und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Drück {{shortcut}} erneut, dann erscheint der Text.",
-      "ready": "Esc im Übungsfeld bricht nur die Aufnahme ab. Die Tour verlässt du mit „Weiter“ oder „Überspringen“.",
+      "ready": "Während einer Aufnahme bricht {{cancel}} nur die Aufnahme ab. Ohne laufende Aufnahme schließt {{cancel}} die Einführung.",
       "locked": "Das Übungsfeld wird freigegeben, sobald das Diktatmodell bereit ist."
     },
     "tools": {
