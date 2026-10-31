@@ -117,17 +117,19 @@ export const PhononSetup: React.FC<{
     (!licenseNeeded || licenseOk) &&
     accessReady;
 
-  // Liegt beim Öffnen schon ein Zugang vor, einmal still prüfen, ob er für das Modell wirkt.
-  const autoChecked = useRef(false);
+  // Liegt ein Zugang vor, still prüfen, ob er für das (erste) gesperrte Modell wirkt –
+  // je Modell einmal, auch wenn die Downloads oder die Auswahl erst später kommen.
+  const gatedId = gated[0]?.id ?? null;
+  const autoCheckedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (autoChecked.current || access === null) return;
-    autoChecked.current = true;
-    if (!access.present || gated.length === 0) return;
+    if (!access?.present || gatedId === null || check !== null) return;
+    if (autoCheckedFor.current === gatedId) return;
+    autoCheckedFor.current = gatedId;
     void commands
-      .ttsHfAccessVerify(gated[0].id)
+      .ttsHfAccessVerify(gatedId)
       .then(setCheck)
       .catch(() => setCheck("unreachable"));
-  }, [access, gated]);
+  }, [access, gatedId, check]);
 
   const toggle = (id: string, on: boolean) => {
     const next = new Set(choice);
@@ -145,6 +147,8 @@ export const PhononSetup: React.FC<{
         setAccessError(result.error);
         return;
       }
+      // Die Prüfung folgt hier direkt; die stille Prüfung darf nicht zusätzlich laufen.
+      autoCheckedFor.current = gatedId;
       setAccess(result.data);
       const verdict = gated[0]
         ? await commands.ttsHfAccessVerify(gated[0].id)
@@ -174,7 +178,10 @@ export const PhononSetup: React.FC<{
   };
 
   const run = async () => {
+    if (running) return;
     const todo = steps(plan, choice);
+    // Sofort sperren: ein Doppelklick darf keinen zweiten Lauf starten.
+    setPhase({ kind: "running", current: null });
     try {
       if (entry.descriptor.opt_in && !entry.enabled) {
         const en = await commands.ttsProviderSetEnabled(
@@ -212,10 +219,11 @@ export const PhononSetup: React.FC<{
         !fresh.license_acked &&
         licenseOk
       ) {
-        await commands.ttsProviderAcknowledgeLicense(
+        const ack = await commands.ttsProviderAcknowledgeLicense(
           fresh.descriptor.id,
           fresh.fingerprint,
         );
+        if (ack.status === "error") throw new Error(ack.error.message);
       }
       await providers.recheck(entry.descriptor.id);
       providers.changed();
@@ -487,14 +495,23 @@ export const PhononSetup: React.FC<{
             <p className="text-xs text-green-700 dark:text-green-400">
               {"✓ "}
               {t("tts.providers.setup.access.granted")}{" "}
-              <button
-                type="button"
-                className="min-h-6 underline"
-                data-testid="phonon-setup-access-remove"
-                onClick={() => void removeAccess()}
-              >
-                {t("tts.providers.setup.access.remove")}
-              </button>
+              {access?.source === "app" ? (
+                <button
+                  type="button"
+                  className="min-h-6 underline"
+                  data-testid="phonon-setup-access-remove"
+                  onClick={() => void removeAccess()}
+                >
+                  {t("tts.providers.setup.access.remove")}
+                </button>
+              ) : (
+                <span
+                  className="text-text/60"
+                  data-testid="phonon-setup-access-system"
+                >
+                  {t("tts.providers.setup.access.systemOwned")}
+                </span>
+              )}
             </p>
           ) : (
             <>
@@ -538,7 +555,7 @@ export const PhononSetup: React.FC<{
                 >
                   {t("tts.providers.setup.access.paste")}
                 </Button>
-                {access?.present && check !== null && (
+                {access?.present && (
                   <Button
                     type="button"
                     variant="ghost"
@@ -580,6 +597,8 @@ export const PhononSetup: React.FC<{
             size="md"
             className="min-h-[44px] md:min-h-8"
             disabled={!canStart}
+            // Kein Überblenden aus dem Sperrzustand: jeder Zwischenframe hätte < 4,5:1.
+            style={{ transition: "none" }}
             data-testid="phonon-setup-start"
             onClick={() => void run()}
           >

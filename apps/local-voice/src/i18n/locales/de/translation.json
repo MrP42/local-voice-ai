@@ -59,6 +59,7 @@
           "recheck": "Erneut prüfen",
           "granted": "Freigabe geprüft: Hugging Face liefert das Modell aus.",
           "remove": "Zugang entfernen",
+          "systemOwned": "Dieser Zugang stammt aus der Hugging-Face-Anmeldung des Systems (hf auth) und wird dort entfernt.",
           "denied": "Hugging Face verweigert das Modell: Bedingungen noch nicht angenommen oder Zugang ungültig.",
           "unreachable": "Hugging Face ist gerade nicht erreichbar. Später erneut prüfen.",
           "missing": "Noch kein Zugang übernommen."
@@ -154,6 +155,7 @@
         "legacy": "Aus einer früheren Einrichtung sind eigene Angaben hinterlegt ({{fields}}). Sie haben Vorrang vor der App-Installation und bleiben, bis Sie umstellen.",
         "legacyUse": "Auf App-Installation umstellen",
         "legacyConfirm": "Eigene Angaben entfernen und die von der App eingerichtete Installation verwenden?",
+        "legacyConfirmEmpty": "Die App hat das Programm noch nicht eingerichtet. Nach dem Entfernen liest der Anbieter erst wieder vor, wenn oben „Einrichten“ gelaufen ist. Trotzdem entfernen?",
         "legacyYes": "Ja, umstellen",
         "title": "Einstellungen",
         "none": "Dieser Anbieter hat hier keine eigenen Einstellungen.",

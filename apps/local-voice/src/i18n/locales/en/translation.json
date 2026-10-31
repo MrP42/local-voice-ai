@@ -59,6 +59,7 @@
           "recheck": "Check again",
           "granted": "Approval verified: Hugging Face serves the model.",
           "remove": "Remove access",
+          "systemOwned": "This access comes from the system Hugging Face login (hf auth); remove it there.",
           "denied": "Hugging Face refuses the model: terms not accepted yet or access invalid.",
           "unreachable": "Hugging Face is not reachable right now. Check again later.",
           "missing": "No access taken over yet."
@@ -154,6 +155,7 @@
         "legacy": "Custom values from an earlier setup are stored ({{fields}}). They take precedence over the app installation and stay until you switch.",
         "legacyUse": "Switch to app installation",
         "legacyConfirm": "Remove the custom values and use the installation set up by the app?",
+        "legacyConfirmEmpty": "The app has not set up the program yet. After removing, the provider only works again once “Set up” above has run. Remove anyway?",
         "legacyYes": "Yes, switch",
         "title": "Settings",
         "none": "This provider has no settings of its own here.",

@@ -726,7 +726,7 @@ pub async fn tts_hf_access_from_clipboard(
         .map(|now| zeroize::Zeroizing::new(now).trim() == token.as_str())
         .unwrap_or(false);
     if still_ours {
-        let _ = app.clipboard().write_text(String::new());
+        let _ = app.clipboard().clear();
     }
     Ok(saved)
 }

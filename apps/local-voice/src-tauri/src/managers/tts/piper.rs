@@ -198,6 +198,9 @@ pub fn run_piper_blocking(
         .map_err(|e| format!("Piper: keine Temp-Datei: {e}"))?
         .into_temp_path();
 
+    // Nie eine Platzhalter-/kaputte .exe starten (Windows zeigte sonst einen modalen Dialog).
+    crate::process_guard::check_launchable(&paths.binary)
+        .map_err(|e| format!("{ERR_BINARY_MISSING} ({e})"))?;
     let mut cmd = std::process::Command::new(&paths.binary);
     cmd.args(piper_args(paths, &out, speed))
         .stdin(std::process::Stdio::piped())

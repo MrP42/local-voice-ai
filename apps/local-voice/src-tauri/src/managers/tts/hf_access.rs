@@ -4,9 +4,10 @@
 //!
 //! ## Reihenfolge beim Lesen
 //!
-//! 1. `HF_TOKEN` bzw. die Token-Datei von Hugging Face ([`phonon_models::hf_token`]) – wer schon
+//! 1. Der in der App abgelegte Zugang (Windows: Tresor/DPAPI) – ihn hat der Nutzer ausdrücklich
+//!    übernommen; ein veraltetes `HF_TOKEN` darf ihn nicht verdecken.
+//! 2. `HF_TOKEN` bzw. die Token-Datei von Hugging Face ([`phonon_models::hf_token`]) – wer schon
 //!    `hf auth login` benutzt, muss nichts tun.
-//! 2. Der in der App abgelegte Zugang (Windows: Tresor/DPAPI).
 //!
 //! ## Ablage
 //!
@@ -88,18 +89,29 @@ fn hf_token_file(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".cache").join("huggingface").join("token"))
 }
 
-/// Zugang für den Download: erst System (`HF_TOKEN`/Token-Datei), dann Tresor der App.
-pub fn load(secrets_dir: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) -> Option<Secret> {
-    if let Some(t) = phonon_models::hf_token(env) {
-        return Some(t);
-    }
-    let dir = secrets_dir?;
-    let bytes = secret::get_ref_in(dir, &token_ref()).ok()??;
-    let text = String::from_utf8(bytes.to_vec()).ok()?;
+/// Zugang für den Download: erst der Tresor der App, dann System (`HF_TOKEN`/Token-Datei).
+pub(crate) fn load(
+    secrets_dir: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Option<Secret> {
+    vault_token(secrets_dir).or_else(|| phonon_models::hf_token(env))
+}
+
+fn vault_token(secrets_dir: Option<&Path>) -> Option<Secret> {
+    let bytes = secret::get_ref_in(secrets_dir?, &token_ref()).ok()??;
+    let text = std::str::from_utf8(&bytes[..]).ok()?;
     Secret::new(text.trim())
 }
 
 pub fn status(secrets_dir: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) -> HfAccessStatus {
+    let vault = secrets_dir.map(|dir| secret::status_ref_in(dir, &token_ref()));
+    if matches!(vault, Some(SecretStatus::Present)) {
+        return HfAccessStatus {
+            present: true,
+            source: Some(HfAccessSource::App),
+            problem: None,
+        };
+    }
     if phonon_models::hf_token(env).is_some() {
         return HfAccessStatus {
             present: true,
@@ -107,28 +119,12 @@ pub fn status(secrets_dir: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) 
             problem: None,
         };
     }
-    let Some(dir) = secrets_dir else {
-        return HfAccessStatus {
-            present: false,
-            source: None,
-            problem: None,
-        };
-    };
-    match secret::status_ref_in(dir, &token_ref()) {
-        SecretStatus::Present => HfAccessStatus {
-            present: true,
-            source: Some(HfAccessSource::App),
-            problem: None,
-        },
-        SecretStatus::Missing => HfAccessStatus {
-            present: false,
-            source: None,
-            problem: None,
-        },
-        SecretStatus::Broken(why) => HfAccessStatus {
-            present: false,
-            source: None,
-            problem: Some(why),
+    HfAccessStatus {
+        present: false,
+        source: None,
+        problem: match vault {
+            Some(SecretStatus::Broken(why)) => Some(why),
+            _ => None,
         },
     }
 }
@@ -178,7 +174,7 @@ pub enum HfAccessCheck {
 }
 
 /// Erste Datei eines gesperrten Modells im Katalog, nur wenn sie auf `https://huggingface.co` liegt.
-pub fn probe_url(model_id: &str) -> Option<reqwest::Url> {
+pub(crate) fn probe_url(model_id: &str) -> Option<reqwest::Url> {
     let entry = catalog::tts_entries(Purpose::PhononModel)
         .into_iter()
         .find(|e| e.id == model_id && e.gated)?;
@@ -187,10 +183,11 @@ pub fn probe_url(model_id: &str) -> Option<reqwest::Url> {
 }
 
 /// Ordnet die Antwort von Hugging Face ein (ohne Weiterleitungen zu folgen: 2xx/3xx = freigegeben).
+/// 404 heißt bei öffentlichen, gesperrten Modellen „Adresse stimmt nicht“, nicht „abgelehnt“.
 pub fn classify(status: reqwest::StatusCode) -> HfAccessCheck {
     if status.is_success() || status.is_redirection() {
         HfAccessCheck::Granted
-    } else if matches!(status.as_u16(), 401 | 403 | 404) {
+    } else if matches!(status.as_u16(), 401 | 403) {
         HfAccessCheck::Denied
     } else {
         HfAccessCheck::Unreachable
@@ -199,7 +196,7 @@ pub fn classify(status: reqwest::StatusCode) -> HfAccessCheck {
 
 /// Prüft mit einer HEAD-Anfrage an die erste Datei des Modells, ob der Zugang wirkt. Das Token geht
 /// nur an `https://huggingface.co`; Weiterleitungen (CDN) werden nicht verfolgt.
-pub async fn verify(token: Option<Secret>, model_id: &str) -> HfAccessCheck {
+pub(crate) async fn verify(token: Option<Secret>, model_id: &str) -> HfAccessCheck {
     let Some(token) = token else {
         return HfAccessCheck::Missing;
     };
@@ -244,9 +241,17 @@ fn write_token_file(path: &Path, token: &str) -> Result<(), String> {
     let mut f = opts
         .open(path)
         .map_err(|_| "Die Token-Datei von Hugging Face lässt sich nicht schreiben.".to_string())?;
-    f.write_all(token.as_bytes())
+    let written = f
+        .write_all(token.as_bytes())
         .and_then(|_| f.write_all(b"\n"))
-        .map_err(|_| "Die Token-Datei von Hugging Face lässt sich nicht schreiben.".to_string())
+        .and_then(|_| f.sync_all());
+    if written.is_err() {
+        // Keine halbe Datei zurücklassen: sie würde jede spätere Ablage blockieren.
+        drop(f);
+        let _ = std::fs::remove_file(path);
+        return Err("Die Token-Datei von Hugging Face lässt sich nicht schreiben.".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -287,12 +292,25 @@ mod tests {
     }
 
     #[test]
-    fn ein_systemzugang_hat_vorrang() {
+    fn ein_systemzugang_wirkt_ohne_eigenen() {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_of(&[("HF_TOKEN", GOOD.to_string())]);
         let s = status(Some(tmp.path()), &env);
         assert_eq!(s.source, Some(HfAccessSource::System));
         assert!(load(Some(tmp.path()), &env).is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn der_eigene_zugang_hat_vorrang_vor_hf_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = env_of(&[("HF_TOKEN", "hf_veraltetveraltetveraltet".to_string())]);
+        save(tmp.path(), GOOD, false, &env).unwrap();
+        assert_eq!(status(Some(tmp.path()), &env).source, Some(HfAccessSource::App));
+        assert_eq!(
+            load(Some(tmp.path()), &env).and_then(|s| s.bearer()),
+            Secret::new(GOOD).and_then(|s| s.bearer())
+        );
     }
 
     #[cfg(unix)]
@@ -349,6 +367,7 @@ mod tests {
         assert_eq!(classify(S::FOUND), HfAccessCheck::Granted);
         assert_eq!(classify(S::UNAUTHORIZED), HfAccessCheck::Denied);
         assert_eq!(classify(S::FORBIDDEN), HfAccessCheck::Denied);
+        assert_eq!(classify(S::NOT_FOUND), HfAccessCheck::Unreachable);
         assert_eq!(classify(S::BAD_GATEWAY), HfAccessCheck::Unreachable);
     }
 

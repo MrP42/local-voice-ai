@@ -20,6 +20,11 @@ import type { TtsProvidersState } from "../../tts/providers/useTtsProviders";
 import { ProviderErrors } from "./ProviderErrors";
 import { PhononModels } from "../PhononModels";
 import { PhononSetup } from "../../tts/providers/setup/PhononSetup";
+import {
+  anyInstalled,
+  buildPlan,
+} from "../../tts/providers/setup/phononSetupModel";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { VoicesSection } from "../VoicesSection";
 
 /**
@@ -45,6 +50,15 @@ export const ProviderSheet: React.FC<{
     setExpanded(true);
   }, [providerId]);
 
+  // Vor der ersten Einrichtung schaltet „Einrichten“ frei und bestätigt die Lizenz; danach (z. B.
+  // neue Lizenzfassung) gilt wieder der normale Sperr-Hinweis mit Lizenzdialog.
+  const setupOwnsApproval = useTtsModelStore((s) => {
+    const plan = buildPlan(s.downloads);
+    return (
+      (plan.runtime !== null || plan.languages.length > 0) &&
+      !anyInstalled(plan)
+    );
+  });
   const open = providerId !== null && entry !== null;
   const id = providerId ?? "";
   const { cancel: cancelPreview } = preview;
@@ -114,7 +128,7 @@ export const ProviderSheet: React.FC<{
                 <ProviderRow
                   entry={entry}
                   compact
-                  approvalBySetup={id === "phonon"}
+                  approvalBySetup={id === "phonon" && setupOwnsApproval}
                   expanded={expanded}
                   busy={providers.busy === id}
                   onToggleExpanded={() => setExpanded((v) => !v)}

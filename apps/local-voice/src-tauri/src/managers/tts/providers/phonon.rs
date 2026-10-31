@@ -1112,6 +1112,8 @@ impl PhononProvider {
         };
         let (stdout_file, stderr_file) = (create(&stdout_path)?, create(&stderr_path)?);
 
+        // Nie eine Platzhalter-/kaputte .exe starten (Windows zeigte sonst einen modalen Dialog).
+        process_guard::check_launchable(exe).map_err(TtsError::unavailable)?;
         let mut cmd = std::process::Command::new(exe);
         cmd.args(make_args(&out))
             .stdin(Stdio::null())

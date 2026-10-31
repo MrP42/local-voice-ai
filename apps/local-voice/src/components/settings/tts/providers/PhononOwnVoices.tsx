@@ -16,6 +16,7 @@ import { PhononImportDialog } from "./PhononImportDialog";
 import { asPhononError, isCloned, modelLabel } from "./phononVoicesModel";
 import { SamplePlayButton } from "./SamplePlayButton";
 import { useVoiceSamples } from "./useVoiceSamples";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
 
 /** Die Stimmenlisten (Vorlesen-Dropdown, Auswahl „im Vorlesen anzeigen“) laden neu. */
 const announceVoicesChanged = () =>
@@ -51,9 +52,19 @@ export const PhononOwnVoices: React.FC = () => {
     setFish(Array.isArray(fishVoices) ? fishVoices : []);
   }, []);
 
+  // Neu laden, sobald sich die installierten Phonon-Modelle ändern (z. B. nach „Einrichten“),
+  // damit Status, Stimmen und Aktionen nie einen veralteten Stand zeigen.
+  const installedKey = useTtsModelStore((s) =>
+    s.downloads
+      .filter(
+        (d) => d.engine === "phonon" && d.kind === "model" && d.is_downloaded,
+      )
+      .map((d) => d.id)
+      .join(","),
+  );
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, installedKey]);
 
   const changed = useCallback(
     (message: string | null) => {

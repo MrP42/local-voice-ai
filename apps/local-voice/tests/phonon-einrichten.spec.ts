@@ -73,6 +73,8 @@ const DOWNLOADS = [
 interface Opts {
   os?: "windows" | "macos";
   access?: boolean;
+  /** Herkunft eines vorhandenen Zugangs (Standard: in der App abgelegt). */
+  accessSource?: "app" | "system";
   verify?: "granted" | "denied" | "unreachable";
   /** Downloads bleiben hängen (Fortschritt/Abbrechen prüfen). */
   hang?: boolean;
@@ -206,7 +208,7 @@ async function setup(page: Page, opts: Opts = {}) {
             if (cmd === "tts_hf_access_status")
               return {
                 present: access,
-                source: access ? "app" : null,
+                source: access ? (opts.accessSource ?? "app") : null,
                 problem: null,
               };
             if (cmd === "tts_hf_access_from_clipboard") {
@@ -240,7 +242,22 @@ async function setup(page: Page, opts: Opts = {}) {
                 problem: null,
               };
             if (cmd === "phonon_own_voices_list")
-              return { voices: [], models: [] };
+              return {
+                voices: [],
+                // Wie das Backend: genau die installierten Phonon-Modelle.
+                models: downloads
+                  .filter(
+                    (d: {
+                      kind: string;
+                      engine: string;
+                      is_downloaded: boolean;
+                    }) =>
+                      d.engine === "phonon" &&
+                      d.kind === "model" &&
+                      d.is_downloaded,
+                  )
+                  .map((d: { id: string }) => d.id),
+              };
             if (
               cmd.includes("history") ||
               cmd.includes("models") ||
@@ -278,6 +295,23 @@ const calls = (page: Page) =>
   );
 const named = async (page: Page, cmd: string) =>
   (await calls(page)).filter(([c]) => c === cmd);
+
+/** WCAG-Kontrast zwischen Text- und Hintergrundfarbe eines Elements (sofort, ohne Warten). */
+async function contrastOf(loc: import("@playwright/test").Locator) {
+  return loc.evaluate((el) => {
+    const c = getComputedStyle(el);
+    const lum = (rgb: string) => {
+      const [r, g, b] = (rgb.match(/[\d.]+/g) ?? []).slice(0, 3).map((v) => {
+        const x = Number(v) / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const a = lum(c.color);
+    const b = lum(c.backgroundColor);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  });
+}
 
 async function openSetup(page: Page) {
   await page.goto("/");
@@ -328,6 +362,8 @@ test("Windows: ein Klick lädt Programm, Deutsch und Englisch mit allen Stimmen,
 
   await expect(start).toBeEnabled();
   await expect(start).toContainText(/Einrichten \(1\d\d MB\)/);
+  // Primärknopf: Weiß auf Markenfarbe mindestens 4,5:1, ohne Überblendung aus dem Sperrzustand.
+  expect(await contrastOf(start)).toBeGreaterThanOrEqual(4.5);
   await start.click();
   await expect(page.getByTestId("phonon-setup-status")).toContainText(
     "50 Stimmen",
@@ -466,6 +502,9 @@ test("Bilder für die Abnahme (nur mit SCREENS_DIR)", async ({ page }) => {
     await page.getByTestId("phonon-setup-license").check();
     await page.getByTestId("phonon-setup-access-paste").click();
     await expect(page.getByTestId("phonon-setup-start")).toBeEnabled();
+    expect(
+      await contrastOf(page.getByTestId("phonon-setup-start")),
+    ).toBeGreaterThanOrEqual(4.5);
     await page.screenshot({ path: `${dir}/03-freigabe-geprueft-${hell}.png` });
   }
 });
@@ -553,4 +592,95 @@ test("Bild: schmal 390 px ohne waagerechte Scrollleiste (nur mit SCREENS_DIR)", 
     () => document.documentElement.scrollWidth > window.innerWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("Tastatur und Screenreader: Sprachen per Leertaste, Labels, Status als Live-Region, Escape gibt den Fokus zurück", async ({
+  page,
+}) => {
+  await setup(page, { access: true });
+  await openSetup(page);
+  const en = page.getByTestId("phonon-setup-choose-phonon-31m-en");
+  // Echte Checkbox mit zugeordnetem Label (for/id): per Name erreichbar.
+  await expect(
+    page.getByRole("checkbox", { name: /Englisch · Phonon 31m/ }),
+  ).toBeVisible();
+  await en.focus();
+  await page.keyboard.press("Space");
+  await expect(en).not.toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(en).toBeChecked();
+  const license = page.getByTestId("phonon-setup-license");
+  await license.focus();
+  await page.keyboard.press("Space");
+  await expect(license).toBeChecked();
+  await expect(page.getByTestId("phonon-setup-status")).toHaveAttribute(
+    "aria-live",
+    "polite",
+  );
+  // Vorhandener Zugang wird ohne Klick einmal geprüft.
+  await expect(page.getByTestId("phonon-setup-access")).toHaveAttribute(
+    "data-check",
+    "granted",
+  );
+  const start = page.getByTestId("phonon-setup-start");
+  await start.focus();
+  await expect(start).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("phonon-setup")).toHaveCount(0);
+  await expect(page.getByTestId("tts-provider-setup-phonon")).toBeFocused();
+});
+
+test("Doppelklick auf Einrichten startet genau einen Lauf", async ({
+  page,
+}) => {
+  await setup(page, { access: true });
+  await openSetup(page);
+  await page.getByTestId("phonon-setup-license").check();
+  await expect(page.getByTestId("phonon-setup-access")).toHaveAttribute(
+    "data-check",
+    "granted",
+  );
+  await page.getByTestId("phonon-setup-start").dblclick();
+  await expect(page.getByTestId("phonon-setup-status")).toContainText(
+    "50 Stimmen",
+  );
+  const ids = (await named(page, "tts_download_model")).map(([, a]) => a.id);
+  expect(ids).toEqual(["phonon-runtime", "phonon-40m-de", "phonon-31m-en"]);
+});
+
+test("Zugang aus dem System (hf auth): kein „Zugang entfernen“, stattdessen Hinweis", async ({
+  page,
+}) => {
+  await setup(page, { access: true, accessSource: "system" });
+  await openSetup(page);
+  await expect(page.getByTestId("phonon-setup-access")).toHaveAttribute(
+    "data-check",
+    "granted",
+  );
+  await expect(page.getByTestId("phonon-setup-access-remove")).toHaveCount(0);
+  await expect(page.getByTestId("phonon-setup-access-system")).toContainText(
+    "hf auth",
+  );
+});
+
+test("Eingerichtet: Status, eigene Stimmen und Aktionen zeigen denselben Stand", async ({
+  page,
+}) => {
+  await setup(page, { installed: true });
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Modelle", exact: true })
+    .click();
+  await page.getByTestId("tts-provider-open-phonon").click();
+  await expect(page.getByTestId("phonon-setup")).toHaveAttribute(
+    "data-complete",
+    "true",
+  );
+  await page.getByTestId("phonon-own-voices-toggle").click();
+  const own = page.getByTestId("phonon-own-voices");
+  await expect(own).not.toContainText("kein Phonon-Modell installiert");
+  await expect(
+    own.getByRole("button", { name: /Stimmdatei importieren/ }),
+  ).toBeEnabled();
 });

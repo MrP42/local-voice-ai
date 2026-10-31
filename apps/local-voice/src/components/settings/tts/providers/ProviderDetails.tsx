@@ -37,6 +37,7 @@ import {
 import type { PreviewState } from "./useProviderPreview";
 import { PhononOwnVoices } from "./PhononOwnVoices";
 import { VisibleVoices } from "./VisibleVoices";
+import { useTtsModelStore } from "@/stores/ttsModelStore";
 
 interface Props {
   entry: TtsProviderEntry;
@@ -542,6 +543,12 @@ const LegacyPathsNote: React.FC<{
 }> = ({ id, keys, label, onReset }) => {
   const { t } = useTranslation();
   const [confirm, setConfirm] = useState(false);
+  // Ohne App-Installation liefe der Anbieter nach dem Umstellen nicht mehr: dann deutlich warnen.
+  const appInstalled = useTtsModelStore((s) =>
+    s.downloads.some(
+      (d) => d.engine === id && d.kind === "runtime" && d.is_downloaded,
+    ),
+  );
   return (
     <div
       role="note"
@@ -555,7 +562,11 @@ const LegacyPathsNote: React.FC<{
       </p>
       {confirm ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span>{t("tts.providers.config.legacyConfirm")}</span>
+          <span data-testid={`tts-provider-legacy-confirm-${id}`}>
+            {appInstalled
+              ? t("tts.providers.config.legacyConfirm")
+              : t("tts.providers.config.legacyConfirmEmpty")}
+          </span>
           <Button
             type="button"
             variant="secondary"
