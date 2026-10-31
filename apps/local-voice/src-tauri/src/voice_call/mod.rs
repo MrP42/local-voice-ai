@@ -36,7 +36,7 @@ use tokio::sync::Notify;
 use crate::llm_client::{self, StreamMessage};
 use crate::managers::transcription::TranscriptionManager;
 use crate::managers::tts::TtsManager;
-use crate::managers::usage::Purpose;
+use crate::managers::usage::{self, CapturedCall, Purpose};
 use sentences::SentenceSplitter;
 
 /// Name des Ereignisses, über das Antwortstücke zum Frontend laufen.
@@ -76,6 +76,21 @@ fn pcm16_b64_to_f32(b64: &str) -> Result<Vec<f32>, String> {
         .chunks_exact(2)
         .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
         .collect())
+}
+
+/// Verbrauch der erfassten Modellaufrufe für das `done`-Ereignis: Summe der
+/// Token, die Ereignisnummern des Ledgers als Liste (`usage_event_ids`; die
+/// erste zusätzlich als `usage_event_id`), Anbieter und ob er lokal läuft.
+fn usage_payload(calls: &[CapturedCall]) -> serde_json::Value {
+    let ids: Vec<i64> = calls.iter().filter_map(|c| c.usage_event_id).collect();
+    serde_json::json!({
+        "prompt_tokens": calls.iter().map(|c| c.prompt_tokens).sum::<u64>(),
+        "completion_tokens": calls.iter().map(|c| c.completion_tokens).sum::<u64>(),
+        "usage_event_id": ids.first(),
+        "usage_event_ids": ids,
+        "provider_id": calls.last().map(|c| c.provider_id.clone()),
+        "local": calls.last().map(|c| c.local).unwrap_or(false),
+    })
 }
 
 /// Wärmt STT, TTS und LLM vor und meldet, was das Gespräch verlangsamen würde.
@@ -203,18 +218,25 @@ pub async fn voice_call_chat(
         }
     };
 
-    let call = llm_client::send_chat_completion_stream(
-        Purpose::Chat,
-        &provider,
-        api_key,
-        &model,
-        messages,
-        &on_delta,
-    );
-    let result = tokio::select! {
-        r = call => Some(r),
-        _ = cancel.notified() => None,
-    };
+    // Erfassungsbereich: der Aufruf bucht seinen Verbrauch, und das Gespräch
+    // zeigt Token und Kosten. Gelesen wird innerhalb des Bereichs, auch nach
+    // dem Abbruch (dann ist nur der Verbrauch bis dahin gebucht, falls überhaupt).
+    let (result, captured) = usage::with_capture(async {
+        let call = llm_client::send_chat_completion_stream(
+            Purpose::Chat,
+            &provider,
+            api_key,
+            &model,
+            messages,
+            &on_delta,
+        );
+        let result = tokio::select! {
+            r = call => Some(r),
+            _ = cancel.notified() => None,
+        };
+        (result, usage::captured_calls().0)
+    })
+    .await;
     CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -230,7 +252,11 @@ pub async fn voice_call_chat(
             }
             let _ = app.emit(
                 EVENT,
-                serde_json::json!({"kind": "done", "request_id": request_id}),
+                serde_json::json!({
+                    "kind": "done",
+                    "request_id": request_id,
+                    "usage": usage_payload(&captured),
+                }),
             );
             Ok(full)
         }
@@ -291,6 +317,29 @@ mod tests {
             .collect();
         let v = pcm16_b64_to_f32(&B64.encode(bytes)).unwrap();
         assert_eq!(v, vec![0.0, 0.5, -1.0]);
+    }
+
+    #[test]
+    fn usage_payload_sums_calls() {
+        let call = |p, c, id| CapturedCall {
+            purpose: "chat".into(),
+            provider_id: "openai".into(),
+            local: false,
+            connection_label: String::new(),
+            model_id: "m".into(),
+            model_label: "m".into(),
+            prompt_tokens: p,
+            completion_tokens: c,
+            duration_ms: 1,
+            ok: true,
+            usage_event_id: id,
+        };
+        let v = usage_payload(&[call(10, 2, Some(7)), call(5, 1, None)]);
+        assert_eq!(v["prompt_tokens"], 15);
+        assert_eq!(v["completion_tokens"], 3);
+        assert_eq!(v["usage_event_ids"], serde_json::json!([7]));
+        assert_eq!(v["provider_id"], "openai");
+        assert_eq!(usage_payload(&[])["prompt_tokens"], 0);
     }
 
     #[test]

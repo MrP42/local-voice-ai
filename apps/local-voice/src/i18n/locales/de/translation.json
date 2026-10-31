@@ -5883,32 +5883,116 @@
   },
   "voiceCall": {
     "title": "Sprachgespräch",
-    "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, während Sie sprechen, antwortet sofort und lässt sich unterbrechen.",
+    "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
     "begin": "Gespräch beginnen",
     "end": "Gespräch beenden",
-    "hint": "Gespräch beginnen und einfach sprechen. Mit Headset wird das Ergebnis am saubersten.",
+    "newConversation": "Neues Gespräch",
     "speakNow": "Bitte, ich höre zu.",
     "transcript": "Gespräch",
-    "model": "Modell: {{model}}",
     "local": "lokal",
-    "latency": "Zeit bis zum ersten Ton: {{ms}} ms (Median {{median}} ms)",
+    "seconds": "{{value}} s",
+    "aiAvatar": "KI",
     "latencyDetail": "Spracherkennung {{stt}} ms · erster Satz {{llm}} ms · Stimme {{tts}} ms",
+    "firstSound": "⏱ {{last}} (Ø {{median}})",
+    "tokens": "◇ {{count}} Token",
     "state": {
-      "idle": "Nicht verbunden",
+      "idle": "Bereit",
       "starting": "Modelle werden vorgewärmt …",
       "listening": "Hört zu",
       "hearing": "Hört Sie",
       "thinking": "Denkt nach",
       "speaking": "Spricht"
     },
+    "cost": {
+      "subscription": "Abo · keine API-Kosten",
+      "local": "lokal · kostenlos",
+      "unknown": "Kosten nicht erfasst",
+      "subscriptionDetail": "0,00 $ (über Abo abgerechnet)",
+      "localDetail": "keine (lokales Modell)",
+      "unknownDetail": "nicht erfasst (kein Preis hinterlegt)",
+      "none": "noch keine"
+    },
+    "info": {
+      "open": "Informationen zum Sprachgespräch",
+      "title": "Sprachgespräch",
+      "tipInterrupt": "Unterbrechen: einfach weitersprechen, die KI verstummt.",
+      "tipHeadset": "Ein Headset liefert die sauberste Erkennung; Lautsprecher gehen dank Echo-Unterdrückung auch.",
+      "tipText": "Du kannst auch schreiben und Dateien anhängen, mit und ohne laufendes Gespräch.",
+      "tipMute": "Stumm schaltet das Mikrofon, ohne das Gespräch zu beenden.",
+      "usageTable": "Verbrauch dieses Gesprächs",
+      "tokens": "Token Eingabe / Ausgabe",
+      "tokensHint": "Eingabe {{input}} · Ausgabe {{output}}",
+      "cost": "Kosten",
+      "latency": "Erster Ton, letzte Antwort",
+      "recognitionVoice": "Spracherkennung · Stimme",
+      "model": "Antwortmodell"
+    },
+    "empty": {
+      "title": "Worüber möchtest du sprechen?",
+      "hint": "Gespräch beginnen und einfach lossprechen. Du kannst jederzeit unterbrechen oder schreiben."
+    },
+    "suggestions": {
+      "s1": "Was steht in meinen letzten Protokollen?",
+      "s2": "Fasse das gestrige Meeting zusammen",
+      "s3": "Lies mir den Entwurf vor",
+      "s4": "Diktat starten"
+    },
+    "composer": {
+      "message": "Nachricht",
+      "placeholder": "Nachricht schreiben, Datei anhängen oder einfach sprechen …",
+      "add": "Hinzufügen",
+      "mute": "Mikrofon stummschalten",
+      "send": "Nachricht senden",
+      "removeAttachment": "Anhang „{{name}}“ entfernen",
+      "attachFiles": "Dateien anhängen …",
+      "fromCorporate": "Aus Corporate LLM",
+      "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
+      "documents": "Dokumente",
+      "truncated": "gekürzt",
+      "attached": "Anhang: {{names}}"
+    },
+    "tempo": {
+      "patient": "Geduldig",
+      "balanced": "Ausgewogen",
+      "fast": "Zügig",
+      "custom": "Eigene"
+    },
+    "footer": {
+      "label": "Gespräch",
+      "title": "Gespräch: Mikrofon, Stimme und Sprachfluss",
+      "microphone": "Mikrofon",
+      "output": "Ausgabe",
+      "flow": "Sprachfluss",
+      "bargeIn": "Unterbrechen erlauben",
+      "allSettings": "Alle Gesprächseinstellungen …"
+    },
     "settings": {
       "title": "Gesprächseinstellungen",
+      "close": "Einstellungen schließen",
+      "tabs": {
+        "talk": "Gespräch",
+        "voice": "Stimme",
+        "recognition": "Erkennung",
+        "models": "Modelle"
+      },
       "prompt": "Anweisung an die KI",
+      "tempo": "Antworttempo",
+      "tempoHint": "Pause bis Satzende {{end}} ms, Antwort vorbereiten nach {{early}} ms.",
+      "fine": "Feineinstellung",
       "endMs": "Pause bis zum Satzende: {{ms}} ms",
       "earlyMs": "Antwort vorbereiten nach: {{ms}} ms",
       "bargeIn": "Unterbrechen der KI erlauben",
       "reset": "Zurücksetzen",
-      "note": "Das Modell kommt aus „Modelle“ (aktives Modell, lokal oder API), die Stimme aus „Vorlesen“ (Standard: Anton)."
+      "voice": "Stimme",
+      "voiceHint": "Dieselbe Auswahl wie unter „Vorlesen“; sie gilt auch dort.",
+      "note": "Das Modell kommt aus „Modelle“ (aktives Modell, lokal oder API), die Stimme aus „Vorlesen“ (Standard: Anton).",
+      "recognitionModel": "Spracherkennungsmodell",
+      "autoTitle": "Automatische Optimierung",
+      "autoSoon": "Kommt mit Stufe 3: Die Erkennung stellt sich selbst ein, auch über eine kurze Einrichtung durch Vorlesen eines Textes.",
+      "answerModel": "Antwortmodell",
+      "answerModelHint": "Das aktive Sprachmodell aus der Fußleiste.",
+      "orchestratorTitle": "Schnelle Sprechschicht und Werkzeuge",
+      "orchestratorSoon": "Kommt mit Stufe 2: ein Sprachmodell als Orchestrator, das weitere Modelle und Werkzeuge nutzt."
     }
   }
 }
