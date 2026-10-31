@@ -120,7 +120,7 @@ test("home exposes working destinations and remembers navigation", async ({
   await expect(
     page.getByRole("heading", { name: "Was möchtest du tun?" }),
   ).toBeVisible();
-  await expect(page.getByText("Ctrl+Space", { exact: true })).toBeVisible();
+  await expect(page.getByText("⌃ Space", { exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
   await expect(

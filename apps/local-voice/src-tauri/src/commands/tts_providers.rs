@@ -593,6 +593,13 @@ pub(crate) async fn select_provider(
     id: &str,
     voice: Option<String>,
 ) -> Result<(), TtsError> {
+    // Fish dort, wo es nie laufen kann (z. B. Mac mit Intel): ablehnen statt
+    // scheinbar annehmen -- das Laden der Einstellungen machte sonst still Piper daraus.
+    if id == policy::FISH_ID {
+        if let Some(why) = crate::settings::tts_engine_unsupported_here(id) {
+            return Err(TtsError::bad_request(why));
+        }
+    }
     let tts = manager(app);
     let snapshot = tts.provider_snapshot();
     mutate_settings(app, |s| select_in(s, &snapshot, id, voice))?;
@@ -912,7 +919,7 @@ mod tests {
             ),
             before
         );
-        assert_eq!(s.tts_engine, "fish", "der Standard bleibt");
+        assert_eq!(s.tts_engine, before.0, "der Standard bleibt");
     }
 
     /// Beschreibung: ein Anbieter mit Opt-in, Lizenz-Zustimmung und aktuellem Modell.

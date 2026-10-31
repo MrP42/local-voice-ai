@@ -196,10 +196,44 @@ const formatKeyPart = (part: string): string => {
  */
 export const formatKeyCombination = (
   combination: string,
-  _osType: OSType,
+  osType: OSType,
 ): string => {
   if (!combination) return "";
+  if (osType === "macos") {
+    return combination.split("+").map(formatMacKeyPart).join(" ");
+  }
   return combination.split("+").map(formatKeyPart).join(" + ");
+};
+
+/** macOS-Symbole der Sondertasten, wie sie Mac-Menues zeigen. */
+const MAC_MODIFIER_SYMBOLS: Record<string, string> = {
+  ctrl: "⌃",
+  control: "⌃",
+  alt: "⌥",
+  option: "⌥",
+  shift: "⇧",
+  command: "⌘",
+  cmd: "⌘",
+  meta: "⌘",
+  super: "⌘",
+};
+
+/**
+ * Ein Tastenteil fuer macOS: Sondertasten als Symbol („⌃ ⌥ Space“ statt
+ * „Ctrl + Alt + Space“), Seitenangabe bleibt als Wort davor.
+ */
+const formatMacKeyPart = (part: string): string => {
+  const trimmed = part.trim().toLowerCase();
+  if (!trimmed) return "";
+  const side = trimmed.endsWith("_left")
+    ? "Left "
+    : trimmed.endsWith("_right")
+      ? "Right "
+      : "";
+  const name = side ? trimmed.replace(/_(left|right)$/, "") : trimmed;
+  const symbol = MAC_MODIFIER_SYMBOLS[name];
+  if (symbol) return `${side}${symbol}`;
+  return formatKeyPart(part);
 };
 
 /**

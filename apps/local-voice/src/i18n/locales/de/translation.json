@@ -6244,5 +6244,76 @@
       "orchestratorTitle": "Schnelle Sprechschicht und Werkzeuge",
       "orchestratorSoon": "Kommt mit Stufe 2: ein Sprachmodell als Orchestrator, das weitere Modelle und Werkzeuge nutzt."
     }
+  },
+  "introTour": {
+    "stepOf": "{{step}}/{{total}}",
+    "start": "Tour starten",
+    "next": "Weiter",
+    "back": "Zurück",
+    "skip": "Überspringen",
+    "finish": "Loslegen",
+    "restart": "Einführung erneut starten",
+    "restartShort": "Einführung ansehen",
+    "download": {
+      "label": "Download des Diktatmodells",
+      "loading": "Diktatmodell {{model}} wird eingerichtet … {{percent}} %",
+      "ready": "{{model}} ist bereit – du kannst sofort diktieren.",
+      "failed": "Das Diktatmodell konnte nicht geladen werden. Wähle ein Modell, um loszulegen – oder versuche es erneut.",
+      "selected": "Diktatmodell eingerichtet – du kannst jetzt diktieren.",
+      "fallbackName": "das Diktatmodell",
+      "failedShort": "Das Diktatmodell konnte nicht geladen werden. Prüfe die Internetverbindung und versuche es erneut.",
+      "retry": "Download wiederholen",
+      "choose": "Anderes Modell auswählen"
+    },
+    "welcome": {
+      "eyebrow": "Willkommen",
+      "title": "Schön, dass du da bist",
+      "body": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. Sobald das Diktatmodell bereit ist, zeigen wir dir in sechs kurzen Schritten, wo du was findest.",
+      "note": "Der Download läuft im Hintergrund weiter, auch wenn du die Tour überspringst.",
+      "bodyReady": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. In sechs kurzen Schritten zeigen wir dir, wo du was findest."
+    },
+    "dictate": {
+      "eyebrow": "Diktieren",
+      "title": "In Textfelder diktieren",
+      "one": "In ein Textfeld klicken – zum Beispiel in Word, Outlook oder im Browser. In manchen Feldern, etwa Passwortfeldern oder Programmen mit Administratorrechten, kann das Einfügen nicht funktionieren.",
+      "twoHold": "{{shortcut}} gedrückt halten und sprechen.",
+      "twoToggle": "{{shortcut}} drücken und sprechen.",
+      "threeHold": "Loslassen – der Text wird eingefügt.",
+      "threeToggle": "{{shortcut}} erneut drücken – der Text wird eingefügt.",
+      "note": "Während einer Aufnahme bricht {{cancel}} das Diktat ab, ohne Text einzufügen. Ohne laufende Aufnahme schließt {{cancel}} diese Einführung. Kürzel und Modus (halten oder umschalten) änderst du unter Einstellungen › Diktat.",
+      "sample": "Sehr geehrte Frau Berger, vielen Dank für Ihre Nachricht."
+    },
+    "try": {
+      "eyebrow": "Ausprobieren",
+      "title": "Probier es gleich aus",
+      "field": "Übungsfeld zum Diktieren",
+      "placeholder": "Hier erscheint dein Text …",
+      "bodyHold": "Klick ins Übungsfeld, halte {{shortcut}} gedrückt und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Beim Loslassen erscheint der Text.",
+      "bodyToggle": "Klick ins Übungsfeld, drück {{shortcut}} und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Drück {{shortcut}} erneut, dann erscheint der Text.",
+      "ready": "Während einer Aufnahme bricht {{cancel}} nur die Aufnahme ab. Ohne laufende Aufnahme schließt {{cancel}} die Einführung.",
+      "locked": "Das Übungsfeld wird freigegeben, sobald das Diktatmodell bereit ist."
+    },
+    "tools": {
+      "eyebrow": "Werkzeuge",
+      "title": "Modelle, Integrationen, Einstellungen",
+      "models": "Modelle: weitere Sprach- und Stimmmodelle laden.",
+      "integrations": "Integrationen: Verbindungen zu anderen Apps.",
+      "settings": "Einstellungen: Kürzel, Mikrofon, Sprache, Aussehen.",
+      "statusbar": "Unten in der Statusleiste siehst du jederzeit Modell und Mikrofon."
+    },
+    "end": {
+      "eyebrow": "Fertig",
+      "title": "Los geht’s",
+      "body": "Die Einführung findest du jederzeit wieder im Hilfe-Menü (Fragezeichen oben rechts) und auf der Startseite.",
+      "stillLoading": "Das Diktatmodell lädt noch. Sobald es fertig ist, kannst du diktieren – die Statusleiste zeigt den Stand."
+    },
+    "pages": {
+      "eyebrow": "Seiten",
+      "title": "Alles auf einen Blick",
+      "history": "Verlauf: jedes Diktat wiederfinden, kopieren, anhören oder neu transkribieren.",
+      "meetings": "Aufnahmen: Besprechungen live mitschreiben oder Audio- und Videodateien importieren.",
+      "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
+      "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
+    }
   }
 }
