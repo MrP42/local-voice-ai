@@ -2368,8 +2368,8 @@
   },
   "meetings": {
     "presenter": {
-      "button": "Send to WAI Presenter",
-      "title": "Send to WAI Presenter",
+      "button": "Send to Presenter",
+      "title": "Send to Presenter",
       "description": "Puts a package with the transcript and the chosen documents into the exchange folder. An older package of this meeting is replaced.",
       "target": "Exchange folder",
       "documents": "Documents",
@@ -4211,7 +4211,63 @@
     "gpu": "GPU {{used}} / {{total}} GB",
     "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
+    "labelRam": "RAM",
+    "labelGpu": "GPU",
+    "open": "Show and manage memory",
+    "ramTitle": "Memory (RAM)",
+    "gpuTitle": "Graphics memory",
+    "legendApp": "Local Voice AI",
+    "legendOther": "Other",
+    "legendFree": "Free",
+    "system": "System",
+    "systemValue": "{{used}} of {{total}} GB ({{percent}} %)",
+    "gpuValue": "{{used}} of {{total}} GB ({{percent}} %)",
+    "gpuSharedNote": "shared with system memory",
+    "gpuBudget": "{{name}} · driver budget",
+    "release": "Free memory",
+    "releaseHint": "Unloads models that are not working right now.",
+    "releasing": "Freeing …",
+    "released": "{{mb}} MB freed",
+    "releasedNothing": "Nothing to unload",
+    "releaseFailed": "Memory could not be freed",
+    "guardTitle": "Memory protection",
+    "guardSwitch": "Turn on memory protection",
+    "guardLimit": "Limit for total memory use",
+    "guardExplain": "The app will not load a model that would exceed the limit, and unloads unused ones first.",
+    "guardOffWarning": "Without memory protection, large models can fill up memory. The PC may then stutter, freeze or close programs.",
     "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”. App = Local Voice AI incl. model servers and web view."
+  },
+  "roles": {
+    "stt": {
+      "role": "Speech recognition",
+      "purpose": "Turns speech into text"
+    },
+    "llm": {
+      "role": "AI model",
+      "purpose": "Summarises, refines text and answers questions"
+    }
+  },
+  "titlebar": {
+    "searchPlaceholder": "Search ({{key}})",
+    "searchKey": "Ctrl+K",
+    "search": "Search",
+    "searchResults": "Results in the app",
+    "searchNone": "No results",
+    "notifications": "Notifications",
+    "noNotifications": "No notifications",
+    "help": "Help",
+    "helpPage": "Help for this page",
+    "shortcuts": "Keyboard shortcuts",
+    "shortcutsTitle": "Keyboard shortcuts",
+    "shortcutSearch": "Open search",
+    "about": "About Local Voice AI",
+    "aboutName": "WAI Local Voice AI",
+    "aboutSuite": "Part of the WAI Suite · Wolff Applied AI",
+    "aboutVersion": "Version {{version}}",
+    "settings": "Open settings",
+    "profile": "Profile",
+    "localProfile": "Local profile",
+    "close": "Close"
   },
   "help": {
     "title": "Help",
@@ -5256,7 +5312,7 @@
       "agent_local": "Local agent"
     },
     "kinds": {
-      "presenter": "WAI Presenter",
+      "presenter": "Presenter",
       "youtube": "YouTube",
       "ics": "Calendar (ICS)",
       "graph": "Microsoft 365 calendar",
@@ -5264,7 +5320,7 @@
       "smtp": "Mailbox (SMTP)",
       "folder": "Folder",
       "obsidian": "Obsidian vault",
-      "wissen": "WAI knowledge base",
+      "wissen": "Knowledge base",
       "agent": "Agent access",
       "webhook": "Webhook (n8n)",
       "service": "Service"
@@ -5279,8 +5335,8 @@
       "auto": "automatic",
       "items": {
         "presenter": {
-          "name": "WAI Presenter",
-          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by WAI Presenter. You choose the folder.",
+          "name": "Presenter",
+          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by Presenter. You choose the folder.",
           "action": "Choose exchange folder"
         },
         "calendar_ics": {
@@ -5324,7 +5380,7 @@
           "action": "Connect vault"
         },
         "wissen": {
-          "name": "WAI knowledge base",
+          "name": "Knowledge base",
           "description": "Search the knowledge base (MCP endpoint with an access key).",
           "action": "Connect knowledge base"
         },
@@ -5703,10 +5759,10 @@
     },
     "target": {
       "presenter": {
-        "title": "Set up WAI Presenter",
-        "titleEdit": "WAI Presenter settings",
+        "title": "Set up Presenter",
+        "titleEdit": "Presenter settings",
         "path": "Exchange folder",
-        "pathPlaceholder": "e.g. D:\\Exchange\\WAI Presenter",
+        "pathPlaceholder": "e.g. D:\\Exchange\\Presenter",
         "privacy": "Packages contain transcripts and documents (confidential). Choose a folder only you use; a shared OneDrive folder only deliberately.",
         "catalog": "Write the meeting catalog (title, date, duration, existing documents only)"
       },

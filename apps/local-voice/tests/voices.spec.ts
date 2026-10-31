@@ -292,8 +292,6 @@ test("a generated recording can be played from the file list", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const audioRow = page
     .locator("div", { hasText: /^Der-Sturm_2026-09-08_1405\.wav/ })
@@ -317,8 +315,6 @@ test("a recording carries its origin and hands the text back to the editor", asy
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();
@@ -343,8 +339,6 @@ test("the spoken line is highlighted while the recording plays", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();

@@ -21,6 +21,7 @@ mod local_update;
 mod llm_client;
 mod managers;
 mod media;
+mod memory_guard;
 pub mod mcp; // M6-P6e
 mod meeting_prompt; // M5-P5b
 mod overlay;
@@ -1941,6 +1942,9 @@ pub fn run(cli_args: CliArgs) {
             commands::compliance::compliance_set_profile,
             commands::compliance::compliance_set_training_opt_out,
             commands::llm::system_memory,
+            memory_guard::release_memory,
+            memory_guard::change_memory_guard_enabled_setting,
+            memory_guard::change_memory_guard_percent_setting,
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,

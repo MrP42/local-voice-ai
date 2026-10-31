@@ -9,6 +9,8 @@ import {
   type LocalLlmStatus,
 } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
+import { Sparkle } from "lucide-react";
+import { RoleTip } from "./RoleTip";
 import { ModelBadges, reasonsText } from "../compliance/ModelBadges";
 import { modelLabel } from "@/lib/modelNames";
 import { openSettingsTab } from "@/lib/openSettingsTab";
@@ -405,56 +407,75 @@ export const LlmSelector: React.FC = () => {
     spendTitle ??
     undefined;
 
+  const trigger = (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setOpen(false);
+        setContextAt({ x: event.clientX, y: event.clientY });
+      }}
+      className="lv-status-btn"
+      title={title}
+      aria-label={t("llmSelector.title")}
+      aria-expanded={open}
+      data-llm-selector
+    >
+      <span className="relative inline-flex">
+        <Sparkle size={14} aria-hidden="true" />
+        <div
+          className={`absolute -bottom-px -end-px w-1.5 h-1.5 rounded-full ring-1 ring-background ${light()}`}
+        />
+      </span>
+      <span className="lv-status-label max-w-56 truncate">{label()}</span>
+      {spend && spend.month.cost > 0 && (
+        <span
+          className="lv-status-label text-xs tabular-nums text-text/60"
+          data-llm-spend
+        >
+          {usd(spend.month.cost)}
+        </span>
+      )}
+      {active && <ModelBadges assessment={byModel[active.model.id]} />}
+      {budgetWarning && (
+        <span
+          className={`text-xs tabular-nums ${budgetExceeded ? "text-red-400" : "text-yellow-500"}`}
+          data-llm-budget
+        >
+          {Math.round(budgetRatio! * 100)}%
+        </span>
+      )}
+      <svg
+        className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M19 9l-7 7-7-7"
+        />
+      </svg>
+    </button>
+  );
+
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setOpen(false);
-          setContextAt({ x: event.clientX, y: event.clientY });
-        }}
-        className="flex items-center gap-2 hover:text-text/80 transition-colors"
-        title={title ?? t("llmSelector.title")}
-        aria-label={t("llmSelector.title")}
-        aria-expanded={open}
-        data-llm-selector
-      >
-        <div className={`w-2 h-2 rounded-full ${light()}`} />
-        <span className="lv-status-label max-w-56 truncate">{label()}</span>
-        {spend && spend.month.cost > 0 && (
-          <span
-            className="lv-status-label text-xs tabular-nums text-text/60"
-            data-llm-spend
-          >
-            {usd(spend.month.cost)}
-          </span>
-        )}
-        {active && <ModelBadges assessment={byModel[active.model.id]} />}
-        {budgetWarning && (
-          <span
-            className={`text-xs tabular-nums ${budgetExceeded ? "text-red-400" : "text-yellow-500"}`}
-            data-llm-budget
-          >
-            {Math.round(budgetRatio! * 100)}%
-          </span>
-        )}
-        <svg
-          className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
+      {title ? (
+        trigger
+      ) : (
+        <RoleTip
+          role={t("roles.llm.role")}
+          name={label()}
+          purpose={t("roles.llm.purpose")}
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
-      </button>
+          {trigger}
+        </RoleTip>
+      )}
       {contextAt && (
         <div
           className="fixed z-50 min-w-48 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1"

@@ -1,4 +1,7 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
+import { PersonWavesIcon } from "../icons/PersonWavesIcon";
+import { RoleTip } from "../footer/RoleTip";
 
 type ModelStatus =
   | "ready"
@@ -48,28 +51,46 @@ const ModelStatusButton: React.FC<ModelStatusButtonProps> = ({
     }
   };
 
+  const { t } = useTranslation();
+  // Rollensymbol „Person mit Schallwellen“; der Statuspunkt sitzt als kleine
+  // Marke an seiner Ecke (grün = bereit, gelb = lädt, rot = Fehler).
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2 hover:text-text/80 transition-colors ${className}`}
-      title={`Model status: ${displayText}`}
+    <RoleTip
+      role={t("roles.stt.role")}
+      name={displayText}
+      purpose={t("roles.stt.purpose")}
     >
-      <div className={`w-2 h-2 rounded-full ${getStatusColor(status)}`} />
-      <span className="lv-status-label max-w-28 truncate">{displayText}</span>
-      <svg
-        className={`w-3 h-3 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`${t("roles.stt.role")}: ${displayText}`}
+        aria-expanded={isDropdownOpen}
+        data-model-status={status}
+        className={`lv-status-btn ${className}`}
       >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M19 9l-7 7-7-7"
-        />
-      </svg>
-    </button>
+        <span className="relative inline-flex">
+          <PersonWavesIcon size={14} />
+          <span
+            className={`absolute -bottom-px -end-px w-1.5 h-1.5 rounded-full ring-1 ring-background ${getStatusColor(status)}`}
+          />
+        </span>
+        <span className="lv-status-label max-w-28 truncate">{displayText}</span>
+        <svg
+          className={`w-3 h-3 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 9l-7 7-7-7"
+          />
+        </svg>
+      </button>
+    </RoleTip>
   );
 };
 

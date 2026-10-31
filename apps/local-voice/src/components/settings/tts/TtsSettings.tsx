@@ -22,8 +22,7 @@ import { ShortcutInput } from "../ShortcutInput";
 import {
   FilesSidebar,
   PagesSidebar,
-  isRightTab,
-  type RightTab,
+  TtsHelpDock,
 } from "./WorkspaceSidebars";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { useWorkspaceLayout } from "./useWorkspaceLayout";
@@ -73,6 +72,7 @@ import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
 import { usePersistentState } from "../../../hooks/usePersistentState";
+import { registerPageHelp } from "../../help/pageHelp";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
@@ -210,10 +210,18 @@ export const TtsSettings = () => {
   // Leiste, kein Fenster — sie soll neben dem Text stehen, nicht davor.
   // Erster Start: Hilfe, damit niemand die Leiste fuer eine leere
   // Dateiliste haelt. Ein gespeicherter Reiter hat immer Vorrang.
-  const [rightTab, setRightTab] = usePersistentState<RightTab>(
-    "tts.rightTab",
-    "help",
-    isRightTab,
+  const [helpOpenValue, setHelpOpenValue] = usePersistentState<string>(
+    "tts.helpOpen",
+    "0",
+  );
+  const helpOpen = helpOpenValue === "1";
+  // Das Hilfe-Menü der Titelleiste schaltet dieselbe Hilfe.
+  useEffect(
+    () =>
+      registerPageHelp(() =>
+        setHelpOpenValue(helpOpenValue === "1" ? "0" : "1"),
+      ),
+    [helpOpenValue, setHelpOpenValue],
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
   // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
@@ -1494,8 +1502,7 @@ export const TtsSettings = () => {
           <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
           <IconButton
             onClick={() => {
-              setRightTab("help");
-              setFilesCollapsed("0");
+              setHelpOpenValue(helpOpen ? "0" : "1");
             }}
             label={t("help.open")}
             icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
@@ -2170,15 +2177,13 @@ export const TtsSettings = () => {
                 onChange={ws.right.set}
               />
             )}
+            {helpOpen && <TtsHelpDock onClose={() => setHelpOpenValue("0")} />}
             <FilesSidebar
               pageId={activePage}
               collapsed={filesCollapsed === "1"}
               onToggle={() =>
                 setFilesCollapsed(filesCollapsed === "1" ? "0" : "1")
               }
-              tab={rightTab}
-              onTabChange={setRightTab}
-              helpSection="vorlesen"
               width={ws.right.width}
               stacked={ws.stacked}
               onLayoutToggle={ws.toggleLayout}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Mic } from "lucide-react";
+import { Tooltip as FluentTooltip } from "@fluentui/react-components";
 import { useSettings } from "../../hooks/useSettings";
 import { MicLevelMeter } from "../settings/MicLevelMeter";
 
@@ -57,22 +58,32 @@ export const MicSelector: React.FC = () => {
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-        aria-expanded={open}
-        title={t("micSelector.title", { device: label })}
-        className="flex items-center gap-2 hover:text-text/80 transition-colors cursor-pointer"
+      {/* Nur Symbol und Pfeil; der Gerätename steht im Tooltip und im Namen
+          des Knopfes. */}
+      <FluentTooltip
+        relationship="description"
+        withArrow
+        positioning="above-end"
+        content={t("micSelector.title", { device: label })}
       >
-        <Mic className="w-3 h-3 shrink-0" />
-        <span className="lv-status-label max-w-28 truncate">{label}</span>
-        <ChevronDown
-          className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
+        <button
+          type="button"
+          onClick={() => setOpen((wasOpen) => !wasOpen)}
+          aria-expanded={open}
+          aria-label={t("micSelector.title", { device: label })}
+          className="lv-status-btn"
+          data-mic-selector
+        >
+          <Mic className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <ChevronDown
+            aria-hidden="true"
+            className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      </FluentTooltip>
 
       {open && (
-        <div className="absolute bottom-full mb-2 start-0 w-72 bg-background border border-mid-gray/40 rounded-lg shadow-lg z-50 overflow-hidden">
+        <div className="absolute bottom-full mb-2 end-0 w-72 bg-background border border-mid-gray/40 rounded-lg shadow-lg z-50 overflow-hidden">
           <div className="px-3 pt-3 pb-2 border-b border-mid-gray/20">
             <p className="text-xs font-medium text-text/50 mb-2">
               {t("micSelector.level")}

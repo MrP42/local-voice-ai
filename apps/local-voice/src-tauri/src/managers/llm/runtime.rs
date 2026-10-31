@@ -146,6 +146,11 @@ pub struct LlmRuntimeManager {
 }
 
 impl LlmRuntimeManager {
+    /// Fuer den Speicherschutz: Einstellungen und Zustand der App.
+    pub fn app_handle(&self) -> &AppHandle {
+        &self.app_handle
+    }
+
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
         let base = crate::portable::data_dir()
             .cloned()

@@ -153,6 +153,12 @@ async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, Strin
     } else {
         None
     };
+    // Speicherschutz: nur vor einem echten Start (ein laufender Server hat
+    // oben schon geantwortet). Die Dateigroesse ist die Mindestschaetzung.
+    let size_mb = std::fs::metadata(&model_path)
+        .map(|m| m.len() / (1024 * 1024))
+        .unwrap_or(0);
+    crate::memory_guard::check_before_load(runtime.app_handle(), size_mb, model_id).await?;
     let (_, backend, binary) = runtime.resolve_runtime().await?;
     let gpu_layers = if backend == "cpu" { 0 } else { 99 };
     let context_tokens = plan_context(&model_path, &backend).await;
