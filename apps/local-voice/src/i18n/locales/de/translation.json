@@ -5057,7 +5057,7 @@
       },
       "pairing": {
         "title": "Diese App koppeln?",
-        "body": "<name>{{name}}</name> möchte den Sprachdienst nutzen. Zeigt die App denselben Code? Koppeln nur, wenn er genau übereinstimmt. Bestätigen Sie auch in der App.",
+        "body": "<name>{{name}}</name> möchte den Sprachdienst nutzen. Zeigt die App denselben Code? Koppeln nur, wenn er genau übereinstimmt. Bestätige es auch in der App.",
         "client": "Kennung:",
         "warnings": {
           "duplicateName": "Eine App mit diesem Namen ist schon gekoppelt oder wartet. Prüfe, dass es keine Nachahmung ist.",
