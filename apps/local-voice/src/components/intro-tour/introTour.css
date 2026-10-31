@@ -17,7 +17,9 @@
   position: absolute;
   border-radius: 6px;
   box-shadow: 0 0 0 9999px var(--colorBackgroundOverlay, rgba(0, 0, 0, 0.4));
-  outline: 2px solid var(--colorBrandStroke1, #0f6cbd);
+  /* Neutraler Rahmen: ≥ 3:1 gegen die hervorgehobene Fläche UND gegen die
+     abgedunkelte App (Markenblau erreicht auf dem Grau nur 1,75:1). */
+  outline: 2px solid var(--colorNeutralForeground1, #242424);
   outline-offset: 2px;
   pointer-events: none;
   transition:

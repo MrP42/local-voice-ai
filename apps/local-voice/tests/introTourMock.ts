@@ -11,6 +11,12 @@ export interface TourMockOptions {
   downloadFails?: number;
   theme?: "light" | "dark";
   pushToTalk?: boolean;
+  /** Wie oft set_active_model scheitert, bevor es gelingt. */
+  selectFails?: number;
+  /** set_active_model wartet auf window.__releaseSelect(). */
+  holdSelect?: boolean;
+  /** Desktop-App (window.isTauri): Fensterknöpfe werden gezeigt. */
+  desktop?: boolean;
 }
 
 export const setup = async (page: Page, opts: TourMockOptions = {}) => {
@@ -25,11 +31,15 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
       downloadFails,
       theme,
       pushToTalk,
+      selectFails,
+      holdSelect,
+      desktop,
     }) => {
       const callbacks = new Map<number, (e: unknown) => void>();
       const listeners = new Map<string, number[]>();
       let callback = 0;
       let failures = downloadFails;
+      let selectFailures = selectFails;
       const calls: { cmd: string; args: unknown }[] = [];
       const model = {
         id: nemotron,
@@ -92,6 +102,7 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
           callbacks.get(id)?.({ event, id, payload }),
         );
       Object.assign(window, {
+        ...(desktop ? { isTauri: true } : {}),
         __recording: false,
         __calls: calls,
         __emit: emit,
@@ -145,7 +156,17 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
               }
               return null;
             }
-            if (cmd === "set_active_model") return null;
+            if (cmd === "set_active_model") {
+              if (selectFailures > 0) {
+                selectFailures--;
+                throw "Modell konnte nicht geladen werden";
+              }
+              if (holdSelect)
+                await new Promise((resolve) =>
+                  Object.assign(window, { __releaseSelect: resolve }),
+                );
+              return null;
+            }
             if (cmd === "is_recording")
               return (window as unknown as { __recording: boolean })
                 .__recording;
@@ -175,6 +196,9 @@ export const setup = async (page: Page, opts: TourMockOptions = {}) => {
       downloadFails: opts.downloadFails ?? 0,
       theme: opts.theme ?? "light",
       pushToTalk: opts.pushToTalk ?? true,
+      selectFails: opts.selectFails ?? 0,
+      holdSelect: opts.holdSelect ?? false,
+      desktop: opts.desktop ?? false,
     },
   );
 };
