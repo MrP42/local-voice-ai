@@ -7645,7 +7645,7 @@ suggestion: ModelSuggestion | null }
 /**
  * Ein Briefkopf.
  */
-export type Letterhead = { schema: string; id: string; name: string; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+export type Letterhead = { schema: string; id: string; name: string; builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
