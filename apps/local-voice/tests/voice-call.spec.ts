@@ -69,6 +69,8 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
       return c;
     };
     w.__convs = convs;
+    w.__failAppend = false;
+    w.__stored = () => Object.values(entries).flat().length;
     w.__calls = [];
     w.__chat = null;
     w.__listening = (event: string) => (listeners[event] ?? []).length;
@@ -186,6 +188,7 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
               return null;
             }
             case "conversation_append_entry": {
+              if (w.__failAppend) throw "Datenbank gesperrt.";
               const c = find(args.conversationId);
               const stored = {
                 ...args.entry,
@@ -615,6 +618,83 @@ test.describe("Sprachgespraech", () => {
       size_bytes: 2048,
     });
     expect(JSON.stringify(user)).not.toContain("Inhalt der Datei");
+  });
+
+  test("Fehlgeschlagenes Speichern wird gemeldet und beim nächsten Beitrag nachgeholt", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await page.evaluate(() => ((window as any).__failAppend = true));
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Speichern im Verlauf" }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__stored())).toBe(0);
+    await page.evaluate(() => ((window as any).__failAppend = false));
+    await exchange(page, "Noch eine Frage", "Noch eine Antwort.");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__stored()))
+      .toBe(4);
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Speichern im Verlauf" }),
+    ).toHaveCount(0);
+    const detail = await page.evaluate(async () => {
+      const w = window as any;
+      const id = w.__convs[0].id;
+      return (
+        await w.__TAURI_INTERNALS__.invoke("conversation_get", { id })
+      ).entries.map((e: any) => e.text);
+    });
+    expect(detail).toEqual([
+      "Hallo KI",
+      "Hallo zurück.",
+      "Noch eine Frage",
+      "Noch eine Antwort.",
+    ]);
+  });
+
+  test("Archivieren des offenen Gesprächs beginnt ein neues", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Archivieren" }).click();
+    await expect(emptyTitle(page)).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
+  });
+
+  test("Fokus kehrt nach Menüaktion und Escape in der Löschfrage zur Zeile zurück", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await expect(
+      page.getByRole("button", { name: "Optionen für „Hallo KI“" }),
+    ).toHaveAttribute("aria-controls", /.+/);
+    await page.getByRole("menuitem", { name: "Anheften" }).click();
+    await expect(historyItem(page, "Hallo KI")).toBeFocused();
+
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    // Deaktivierte Einträge bleiben mit den Pfeiltasten erreichbar.
+    await page.keyboard.press("End");
+    await expect(
+      page.getByRole("menuitem", { name: /In Corporate LLM öffnen/ }),
+    ).toBeFocused();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    const confirm = page.getByRole("group", {
+      name: "„Hallo KI“ endgültig löschen?",
+    });
+    await expect(confirm).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(confirm).toHaveCount(0);
+    await expect(historyItem(page, "Hallo KI")).toBeFocused();
+    expect(await calls(page, "conversation_delete")).toHaveLength(0);
   });
 
   test("Gespräch umbenennen", async ({ page }) => {

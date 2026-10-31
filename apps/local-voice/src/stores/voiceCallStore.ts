@@ -192,6 +192,10 @@ interface VoiceCallStore {
   conversations: ConversationSummary[];
   /** Archivierte Gespräche in der Liste zeigen. */
   showArchived: boolean;
+  /** Ein anderes Gespräch wird gerade geladen: Eingabe gesperrt. */
+  switching: boolean;
+  /** Letzter Fehler beim Speichern im Verlauf (getrennt von Gesprächsfehlern). */
+  saveError: string | null;
 
   setActive: (active: boolean) => void;
   setConfig: (update: (c: CallConfig) => CallConfig) => void;
@@ -245,8 +249,12 @@ let visit = 0;
  */
 interface Target {
   id: string | null;
+  /** Das Gespräch trägt schon einen Titel aus der ersten Nutzernachricht (oder einen eigenen). */
+  titled: boolean;
 }
-let target: Target = { id: null };
+/** Titel, mit dem der Kern leere Gespräche anlegt. */
+const DEFAULT_TITLE = "Neues Gespräch";
+let target: Target = { id: null, titled: false };
 /** Speicheraufträge laufen nacheinander: Reihenfolge und „erst anlegen, dann anhängen“. */
 let persistChain: Promise<void> = Promise.resolve();
 /** Verbrauch der laufenden Antwort, bis ihr Beitrag gespeichert wird. */
@@ -259,6 +267,12 @@ let attachmentsNext: HistoryAttachment[] | undefined;
 const entryIds = new Map<number, string>();
 /** Zählt Wechsel des Gesprächs: ein spätes Laden eines alten Wechsels wird verworfen. */
 let openRun = 0;
+/** Zählt Listenabfragen: nur die jüngste Antwort darf die Liste setzen. */
+let listRun = 0;
+/** Zeilen, deren Speichern gerade läuft (kein zweites Einreihen). */
+const inflight = new Set<number>();
+/** Verbrauch je Zeile, damit ein erneuter Versuch ihn nicht verliert. */
+const lineUsage = new Map<number, CallUsageEvent | null>();
 
 export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const getEngine = (): VoiceCallEngine => {
@@ -373,10 +387,12 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   };
 
   const loadConversations = async (): Promise<void> => {
+    const run = ++listRun;
     try {
       const list = await invoke<ConversationSummary[]>("conversations_list", {
         includeArchived: get().showArchived,
       });
+      if (run !== listRun) return;
       set({ conversations: Array.isArray(list) ? list : [] });
     } catch {
       /* ohne Liste bleibt die alte stehen; das Gespräch selbst läuft weiter */
@@ -387,6 +403,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const enqueueUpdate = (lineKey: number, text: string): void => {
     persistChain = persistChain.then(async () => {
       const id = entryIds.get(lineKey);
+      // Ohne Kennung ist die Zeile noch nicht gespeichert: der nächste Versuch
+      // nimmt ihren geänderten Text ohnehin mit.
       if (!id || !text.trim()) return;
       try {
         await invoke("conversation_update_entry", {
@@ -396,21 +414,29 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         });
         await loadConversations();
       } catch (e) {
-        set({ error: String(e) });
+        set({ saveError: String(e) });
       }
     });
   };
 
+  /**
+   * Reiht das Anhängen eines Beitrags ein; legt das Gespräch beim ersten an.
+   * Als gespeichert gilt die Zeile erst nach Erfolg; bei einem Fehler bleibt sie
+   * offen und der nächste Flush versucht es erneut.
+   */
   const enqueueAppend = (entry: NewEntry, lineKey: number): void => {
     const t = target;
+    inflight.add(lineKey);
     persistChain = persistChain.then(async () => {
       try {
         if (!t.id) {
+          const title = entry.role === "user" ? deriveTitle(entry.text) : null;
           const created = await invoke<ConversationRecord>(
             "conversation_create",
-            { title: entry.role === "user" ? deriveTitle(entry.text) : null },
+            { title },
           );
           t.id = created.id;
+          t.titled = title !== null;
           if (target === t) set({ conversationId: created.id });
         }
         const stored = await invoke<{ id?: string } | null>(
@@ -418,9 +444,24 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           { conversationId: t.id, entry },
         );
         if (stored?.id) entryIds.set(lineKey, stored.id);
+        set((s) => ({
+          saveError: null,
+          lines: s.lines.map((l) =>
+            l.id === lineKey ? { ...l, persisted: true } : l,
+          ),
+        }));
+        if (!t.titled && entry.role === "user") {
+          const title = deriveTitle(entry.text);
+          if (title) {
+            await invoke("conversation_update", { id: t.id, title });
+            t.titled = true;
+          }
+        }
         await loadConversations();
       } catch (e) {
-        set({ error: String(e) });
+        set({ saveError: String(e) });
+      } finally {
+        inflight.delete(lineKey);
       }
     });
   };
@@ -431,7 +472,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
    * Wechsel, Seite verlassen) als fertig; `all` nimmt sie mit.
    */
   const flushLines = (all = false): void => {
-    const pending = get().lines.filter((l) => !l.persisted);
+    const pending = get().lines.filter(
+      (l) => !l.persisted && !inflight.has(l.id),
+    );
     const lastFinal = Math.max(
       -1,
       ...pending.filter((l) => l.final).map((l) => l.id),
@@ -440,16 +483,13 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       (l) => l.final || (l.role === "user" && (all || l.id < lastFinal)),
     );
     if (due.length === 0) return;
-    const ids = new Set(due.map((l) => l.id));
-    set((s) => ({
-      lines: s.lines.map((l) =>
-        ids.has(l.id) ? { ...l, persisted: true } : l,
-      ),
-    }));
     const model = get().ready?.llm ?? null;
     for (const line of due) {
-      const usage = line.role === "assistant" ? pendingUsage : null;
-      if (line.role === "assistant") pendingUsage = null;
+      if (line.role === "assistant" && !lineUsage.has(line.id)) {
+        lineUsage.set(line.id, pendingUsage);
+        pendingUsage = null;
+      }
+      const usage = lineUsage.get(line.id) ?? null;
       const entry = entryFromLine(line, usage, model);
       if (entry) enqueueAppend(entry, line.id);
     }
@@ -499,6 +539,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     conversationId: null,
     conversations: [],
     showArchived: false,
+    switching: false,
+    saveError: null,
 
     setActive: (active) => {
       if (active) visit++;
@@ -524,7 +566,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     setSettingsTab: (settingsTab) => set({ settingsTab }),
 
     startCall: async () => {
-      if (get().state !== "idle") return;
+      if (get().state !== "idle" || get().switching) return;
       set({ error: null });
       try {
         set({ ready: await getEngine().start() });
@@ -540,7 +582,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     sendText: async (text, display, attachments) => {
       const clean = text.trim();
-      if (!clean) return;
+      if (!clean || get().switching) return;
       const e = getEngine();
       set({ error: null });
       typedNext = true;
@@ -574,17 +616,19 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
 
     newConversation: async () => {
       openRun++;
+      set({ switching: false });
       await endCall();
       flushLines(true);
       engine?.resetHistory();
-      switchTo({ id: null }, null, [], EMPTY_USAGE);
+      switchTo({ id: null, titled: false }, null, [], EMPTY_USAGE);
     },
 
     loadConversations,
 
     openConversation: async (id) => {
-      if (id === get().conversationId) return;
+      if (id === get().conversationId || get().switching) return;
       const run = ++openRun;
+      set({ switching: true });
       await endCall();
       flushLines(true);
       await persistChain;
@@ -601,10 +645,17 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         getEngine().setHistory(
           lines.map((l) => ({ role: l.role, content: l.text })),
         );
-        switchTo({ id }, id, lines, usageFromEntries(detail.entries));
+        switchTo(
+          { id, titled: detail.conversation.title !== DEFAULT_TITLE },
+          id,
+          lines,
+          usageFromEntries(detail.entries),
+        );
       } catch (e) {
         if (run === openRun) set({ error: String(e) });
         void loadConversations();
+      } finally {
+        if (run === openRun) set({ switching: false });
       }
     },
 
@@ -618,7 +669,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     },
 
     remove: async (id) => {
-      if (id === get().conversationId) await get().newConversation();
+      if (id === target.id) await get().newConversation();
       await persistChain;
       try {
         await invoke("conversation_delete", { id });
@@ -642,6 +693,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     },
 
     archive: async (id, archived = true) => {
+      if (archived && id === target.id) await get().newConversation();
+      await persistChain;
       try {
         await invoke("conversation_update", { id, archived });
       } catch (e) {

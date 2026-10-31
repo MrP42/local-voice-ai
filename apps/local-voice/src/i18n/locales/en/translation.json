@@ -5914,7 +5914,8 @@
       "confirmYes": "Delete",
       "confirmNo": "Cancel",
       "showArchived": "Show archive",
-      "archivedBadge": "Archived"
+      "archivedBadge": "Archived",
+      "saveFailed": "Saving to history failed; the next message will retry."
     },
     "speakNow": "Go ahead, I'm listening.",
     "transcript": "Conversation",

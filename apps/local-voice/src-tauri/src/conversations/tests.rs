@@ -66,7 +66,7 @@ fn append_and_get_round_trip_in_order() {
     let mut answer = entry("assistant", "Gern.");
     answer.model = Some("Claude Sonnet".to_string());
     answer.triggered_by = Some(OWNER_ID.to_string());
-    answer.ext = Some(Ext {
+    answer.ext = Some(ConversationExt {
         local_voice_ai: Some(VoiceExt {
             prompt_tokens: Some(120),
             completion_tokens: Some(30),
@@ -75,7 +75,7 @@ fn append_and_get_round_trip_in_order() {
             local: Some(false),
         }),
     });
-    answer.attachments = vec![Attachment {
+    answer.attachments = vec![ConversationAttachment {
         id: "att-1".to_string(),
         name: "notiz.txt".to_string(),
         mime: "text/plain".to_string(),
@@ -298,12 +298,12 @@ fn created_at_is_normalised_to_utc_and_orders_entries() {
     let s = store();
     let c = s.create(None).unwrap();
     let mut later = entry("assistant", "spät");
-    later.created_at = Some("2026-10-31T12:00:05+01:00".to_string());
+    later.created_at = Some("2020-10-31T12:00:05+01:00".to_string());
     let mut earlier = entry("user", "früh");
-    earlier.created_at = Some("2026-10-31T11:00:01Z".to_string());
+    earlier.created_at = Some("2020-10-31T11:00:01Z".to_string());
     s.append_entry(&c.id, later).unwrap();
     let stored = s.append_entry(&c.id, earlier).unwrap();
-    assert_eq!(stored.created_at, "2026-10-31T11:00:01.000Z");
+    assert_eq!(stored.created_at, "2020-10-31T11:00:01.000Z");
     let texts: Vec<_> = s
         .get(&c.id)
         .unwrap()
@@ -331,7 +331,7 @@ fn ext_serializes_under_its_own_key_without_usage_in_the_contract_fields() {
     let s = store();
     let c = s.create(None).unwrap();
     let mut answer = entry("assistant", "Hallo");
-    answer.ext = Some(Ext {
+    answer.ext = Some(ConversationExt {
         local_voice_ai: Some(VoiceExt {
             prompt_tokens: Some(1),
             ..VoiceExt::default()
@@ -388,4 +388,54 @@ fn update_entry_rejects_bad_input() {
         .update_entry(&ghost, "y".into(), "complete".into())
         .is_err());
     assert_eq!(s.get(&c.id).unwrap().entries[0].text, "x");
+}
+
+#[test]
+fn limits_for_ext_sources_references_and_future_timestamps() {
+    let s = store();
+    let c = s.create(None).unwrap();
+
+    let mut big_ext = entry("assistant", "x");
+    big_ext.ext = Some(ConversationExt {
+        local_voice_ai: Some(VoiceExt {
+            provider_id: Some("p".repeat(20_000)),
+            ..VoiceExt::default()
+        }),
+    });
+    assert!(s.append_entry(&c.id, big_ext).is_err());
+
+    let mut many = entry("assistant", "x");
+    many.sources = vec!["a".to_string(); 51];
+    assert!(s.append_entry(&c.id, many).is_err());
+    let mut long = entry("assistant", "x");
+    long.sources = vec!["a".repeat(2001)];
+    assert!(s.append_entry(&c.id, long).is_err());
+    let mut ok = entry("assistant", "x");
+    ok.sources = vec!["a".repeat(2000); 50];
+    assert!(s.append_entry(&c.id, ok).is_ok());
+
+    let mut reference = entry("user", "x");
+    reference.attachments = vec![ConversationAttachment {
+        id: "a".to_string(),
+        name: "n.txt".to_string(),
+        mime: "text/plain".to_string(),
+        size_bytes: None,
+        reference: Some("r".repeat(1001)),
+    }];
+    assert!(s.append_entry(&c.id, reference).is_err());
+
+    let mut future = entry("user", "x");
+    future.created_at = Some("2999-01-01T00:00:00Z".to_string());
+    let stored = s.append_entry(&c.id, future).unwrap();
+    assert!(stored.created_at < "2100".to_string());
+    assert!(stored.created_at > "2020".to_string());
+}
+
+#[test]
+fn list_is_limited_to_500_rows() {
+    let s = store();
+    for _ in 0..502 {
+        s.create(None).unwrap();
+    }
+    assert_eq!(s.list(true).unwrap().len(), 500);
 }

@@ -41,7 +41,13 @@ pub const MAX_TITLE_CHARS: usize = 200;
 pub const MAX_TEXT_CHARS: usize = 200_000;
 const MAX_ATTACHMENTS: usize = 50;
 const MAX_VARIANTS: usize = 100;
-const MAX_SOURCES: usize = 500;
+const MAX_SOURCES: usize = 50;
+const MAX_SOURCE_CHARS: usize = 2000;
+const MAX_REFERENCE_CHARS: usize = 1000;
+const MAX_EXT_BYTES: usize = 16 * 1024;
+const MAX_LIST_ROWS: i64 = 500;
+/// So weit darf `created_at` eines Beitrags in der Zukunft liegen (Uhrenabweichung).
+const MAX_FUTURE_MINUTES: i64 = 5;
 const MAX_EXT_ID_CHARS: usize = 128;
 const MAX_MODEL_CHARS: usize = 256;
 const MAX_LAST_TEXT_CHARS: usize = 120;
@@ -102,9 +108,9 @@ static MIGRATIONS: &[M] = &[M::up(
 // Vertragstypen
 // ---------------------------------------------------------------------------
 
-/// Bereich der Unterhaltung (Vertrag `Scope`).
+/// Bereich der Unterhaltung (Vertrag `ConversationScope`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-pub struct Scope {
+pub struct ConversationScope {
     pub data_class: String,
     pub special_category: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,9 +121,9 @@ pub struct Scope {
     pub sovereignty: Option<String>,
 }
 
-/// Teilnehmer (Vertrag `Participant`).
+/// Teilnehmer (Vertrag `ConversationParticipant`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-pub struct Participant {
+pub struct ConversationParticipant {
     pub id: String,
     /// `person`, `ai`, `agent` oder `voicebot`.
     pub kind: String,
@@ -161,9 +167,9 @@ pub struct VoiceExt {
     pub local: Option<bool>,
 }
 
-/// Erweiterung je Herkunft (Vertrag `Ext`): diese App schreibt nur ihren Schlüssel.
+/// Erweiterung je Herkunft (Vertrag `ConversationExt`): diese App schreibt nur ihren Schlüssel.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
-pub struct Ext {
+pub struct ConversationExt {
     #[serde(
         rename = "local-voice-ai",
         default,
@@ -172,9 +178,9 @@ pub struct Ext {
     pub local_voice_ai: Option<VoiceExt>,
 }
 
-/// Anhang eines Beitrags (Vertrag `Attachment`).
+/// Anhang eines Beitrags (Vertrag `ConversationAttachment`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
-pub struct Attachment {
+pub struct ConversationAttachment {
     pub id: String,
     pub name: String,
     pub mime: String,
@@ -211,13 +217,13 @@ pub struct Conversation {
     pub created_at: String,
     pub updated_at: String,
     pub kind: String,
-    pub scope: Scope,
-    pub participants: Vec<Participant>,
+    pub scope: ConversationScope,
+    pub participants: Vec<ConversationParticipant>,
     pub context: Vec<ContextSource>,
     pub pinned: bool,
     pub archived: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ext: Option<Ext>,
+    pub ext: Option<ConversationExt>,
 }
 
 /// Beitrag (Vertrag `ConversationEntry`).
@@ -243,7 +249,7 @@ pub struct ConversationEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<Attachment>,
+    pub attachments: Vec<ConversationAttachment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<EntryVariant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,7 +261,7 @@ pub struct ConversationEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ext: Option<Ext>,
+    pub ext: Option<ConversationExt>,
 }
 
 /// Was die Oberfläche beim Anhängen mitbringt. Kennung, Zeit, Trace und
@@ -277,7 +283,7 @@ pub struct NewEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<Attachment>,
+    pub attachments: Vec<ConversationAttachment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<EntryVariant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -289,7 +295,7 @@ pub struct NewEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ext: Option<Ext>,
+    pub ext: Option<ConversationExt>,
 }
 
 /// Zeile der Verlaufsliste.
@@ -325,6 +331,16 @@ fn normalize_ts(value: &str) -> Result<String> {
     let parsed =
         DateTime::parse_from_rfc3339(value).map_err(|_| anyhow!("Ungültiger Zeitstempel."))?;
     Ok(parsed.with_timezone(&Utc).format(TS_FORMAT).to_string())
+}
+
+/// Wie `normalize_ts`, aber nicht weiter als `MAX_FUTURE_MINUTES` in der Zukunft:
+/// ein falsch gehender Browser-Takt würde sonst die Reihenfolge der Beiträge zerlegen.
+fn capped_ts(value: &str) -> Result<String> {
+    let parsed = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| anyhow!("Ungültiger Zeitstempel."))?
+        .with_timezone(&Utc);
+    let limit = Utc::now() + chrono::Duration::minutes(MAX_FUTURE_MINUTES);
+    Ok(parsed.min(limit).format(TS_FORMAT).to_string())
 }
 
 /// 32 Hexzeichen, wie das W3C-Trace-Context verlangt.
@@ -429,7 +445,24 @@ fn validate_entry(entry: &NewEntry) -> Result<()> {
     {
         bail!("Zu viele Anhänge, Fassungen oder Quellen.");
     }
+    if entry
+        .sources
+        .iter()
+        .any(|s| s.chars().count() > MAX_SOURCE_CHARS)
+    {
+        bail!("Eine Quellenangabe ist zu lang.");
+    }
+    if let Some(ext) = &entry.ext {
+        if to_json(ext)?.len() > MAX_EXT_BYTES {
+            bail!("Die Zusatzdaten sind zu groß.");
+        }
+    }
     for a in &entry.attachments {
+        if let Some(r) = &a.reference {
+            if r.chars().count() > MAX_REFERENCE_CHARS {
+                bail!("Ungültiger Anhang.");
+            }
+        }
         check_ext_id(&a.id)?;
         let name_len = a.name.chars().count();
         if name_len == 0 || name_len > 255 || a.mime.is_empty() || a.mime.chars().count() > 127 {
@@ -651,9 +684,10 @@ impl ConversationStore {
                       ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
              FROM conversations c
              WHERE (?1 = 1 OR c.archived = 0)
-             ORDER BY c.pinned DESC, c.updated_at DESC, c.rowid DESC",
+             ORDER BY c.pinned DESC, c.updated_at DESC, c.rowid DESC
+             LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![include_archived as i64], |r| {
+        let rows = stmt.query_map(params![include_archived as i64, MAX_LIST_ROWS], |r| {
             Ok(ConversationSummary {
                 id: r.get(0)?,
                 title: r.get(1)?,
@@ -706,7 +740,7 @@ impl ConversationStore {
             created_at: now.clone(),
             updated_at: now.clone(),
             kind: KIND_VOICE.to_string(),
-            scope: Scope {
+            scope: ConversationScope {
                 data_class: DEFAULT_DATA_CLASS.to_string(),
                 special_category: false,
                 project_id: None,
@@ -714,7 +748,7 @@ impl ConversationStore {
                 sovereignty: None,
             },
             participants: vec![
-                Participant {
+                ConversationParticipant {
                     id: OWNER_ID.to_string(),
                     kind: "person".to_string(),
                     role: "owner".to_string(),
@@ -723,7 +757,7 @@ impl ConversationStore {
                     agent_version: None,
                     visible_from_entry_id: None,
                 },
-                Participant {
+                ConversationParticipant {
                     id: VOICEBOT_ID.to_string(),
                     kind: "voicebot".to_string(),
                     role: "member".to_string(),
@@ -810,7 +844,7 @@ impl ConversationStore {
         validate_entry(&entry)?;
         let now = now_ts();
         let created_at = match &entry.created_at {
-            Some(t) => normalize_ts(t)?,
+            Some(t) => capped_ts(t)?,
             None => now.clone(),
         };
         let stored = ConversationEntry {

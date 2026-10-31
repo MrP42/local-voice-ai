@@ -176,6 +176,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtons = useRef(new Map<string, HTMLButtonElement>());
+  const rowButtons = useRef(new Map<string, HTMLButtonElement>());
+  const pendingFocus = useRef<string | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
   const renameDone = useRef(true);
   const baseId = useId();
   const current = now ?? Date.now();
@@ -201,6 +204,34 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     setMenu(null);
     if (restoreFocus && id) menuButtons.current.get(id)?.focus();
   };
+
+  /**
+   * Fokus zurück auf den Zeilenknopf, sobald er (neu) im DOM steht. Ein Eintrag,
+   * der nach dem Anheften in eine andere Gruppe wandert, wird neu eingehängt und
+   * verliert den Fokus erneut: darum bleibt der Wunsch bestehen, bis der Nutzer
+   * selbst etwas tut oder kurze Zeit vergangen ist.
+   */
+  const focusRow = (id: string) => {
+    pendingFocus.current = id;
+    setFocusTick((t) => t + 1);
+    const clear = () => {
+      if (pendingFocus.current === id) pendingFocus.current = null;
+      document.removeEventListener("mousedown", clear, true);
+      document.removeEventListener("keydown", clear, true);
+      window.clearTimeout(timer);
+    };
+    const timer = window.setTimeout(clear, 1500);
+    document.addEventListener("mousedown", clear, true);
+    document.addEventListener("keydown", clear, true);
+  };
+
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (!id || renamingId || confirmId || menu) return;
+    const button = rowButtons.current.get(id);
+    if (!button || document.activeElement === button) return;
+    button.focus();
+  }, [items, focusTick, renamingId, confirmId, menu]);
 
   useEffect(() => {
     if (!menu) return;
@@ -258,7 +289,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     }
     const buttons = Array.from(
       menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        "button:not([aria-disabled='true'])",
+        "button[role='menuitem']",
       ) ?? [],
     );
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -285,12 +316,13 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     setRenamingId(null);
     const title = draft.trim();
     if (commit && title && title !== item.title) onRename(item.id, title);
-    menuButtons.current.get(item.id)?.focus();
+    focusRow(item.id);
   };
 
-  const menuAction = (action: () => void) => {
+  const menuAction = (id: string, action: () => void) => {
     setMenu(null);
     action();
+    focusRow(id);
   };
 
   const rowButton =
@@ -359,6 +391,13 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                         key={item.id}
                         role="group"
                         aria-label={labels.confirmDelete(item.title)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Escape") return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setConfirmId(null);
+                          focusRow(item.id);
+                        }}
                         className="rounded-md border border-red-500/40 bg-red-500/5 p-2 text-sm"
                       >
                         <p className="m-0 mb-2 text-text">
@@ -378,7 +417,10 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           <button
                             type="button"
                             autoFocus
-                            onClick={() => setConfirmId(null)}
+                            onClick={() => {
+                              setConfirmId(null);
+                              focusRow(item.id);
+                            }}
                             className="min-h-11 md:min-h-8 px-3 rounded-md border border-mid-gray/30 text-text cursor-pointer hover:bg-mid-gray/10"
                           >
                             {labels.confirmNo}
@@ -416,6 +458,10 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                       ) : (
                         <button
                           type="button"
+                          ref={(el) => {
+                            if (el) rowButtons.current.set(item.id, el);
+                            else rowButtons.current.delete(item.id);
+                          }}
                           aria-current={active ? "true" : undefined}
                           onClick={() => onSelect(item.id)}
                           className={`${rowButton} flex-1 min-w-0 flex items-center gap-2 ps-2 pe-1 text-sm text-text`}
@@ -451,6 +497,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           }}
                           aria-haspopup="menu"
                           aria-expanded={menu?.id === item.id}
+                          aria-controls={
+                            menu?.id === item.id ? `${baseId}-menu` : undefined
+                          }
                           aria-label={labels.menu(item.title)}
                           title={labels.menu(item.title)}
                           onClick={(e) => openMenu(item.id, e.currentTarget)}
@@ -487,6 +536,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       {menu && menuItem && (
         <div
           ref={menuRef}
+          id={`${baseId}-menu`}
           role="menu"
           aria-label={labels.menu(menuItem.title)}
           onKeyDown={onMenuKey}
@@ -509,7 +559,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               }
               label={menuItem.pinned ? labels.unpin : labels.pin}
               onSelect={() =>
-                menuAction(() => onPin(menuItem.id, !menuItem.pinned))
+                menuAction(menuItem.id, () =>
+                  onPin(menuItem.id, !menuItem.pinned),
+                )
               }
             />
             <MenuButton
@@ -522,7 +574,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               }
               label={menuItem.archived ? labels.unarchive : labels.archive}
               onSelect={() =>
-                menuAction(() => onArchive(menuItem.id, !menuItem.archived))
+                menuAction(menuItem.id, () =>
+                  onArchive(menuItem.id, !menuItem.archived),
+                )
               }
             />
             <MenuButton
@@ -530,7 +584,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
               label={labels.delete}
               danger
               onSelect={() =>
-                menuAction(() => {
+                menuAction(menuItem.id, () => {
                   setConfirmId(menuItem.id);
                 })
               }

@@ -5914,7 +5914,8 @@
       "confirmYes": "Löschen",
       "confirmNo": "Abbrechen",
       "showArchived": "Archiv anzeigen",
-      "archivedBadge": "Archiviert"
+      "archivedBadge": "Archiviert",
+      "saveFailed": "Speichern im Verlauf fehlgeschlagen, der nächste Beitrag versucht es erneut."
     },
     "speakNow": "Bitte, ich höre zu.",
     "transcript": "Gespräch",

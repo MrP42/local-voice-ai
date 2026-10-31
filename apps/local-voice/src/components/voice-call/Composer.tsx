@@ -60,6 +60,8 @@ export interface ComposerProps {
   sending?: boolean;
   /** Gesetzt: während `sending` ersetzt ein Stopp-Knopf den Senden-Knopf. */
   onStop?: () => void;
+  /** Eingabe gesperrt (ein anderes Gespräch wird gerade geladen). */
+  disabled?: boolean;
 }
 
 export const Composer: React.FC<ComposerProps> = ({
@@ -75,13 +77,16 @@ export const Composer: React.FC<ComposerProps> = ({
   onToggleMute,
   sending = false,
   onStop,
+  disabled = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const menuId = useId();
   const canSend =
-    (value.trim().length > 0 || attachments.length > 0) && !sending;
+    (value.trim().length > 0 || attachments.length > 0) &&
+    !sending &&
+    !disabled;
 
   useLayoutEffect(() => {
     const el = areaRef.current;
@@ -139,6 +144,7 @@ export const Composer: React.FC<ComposerProps> = ({
         <textarea
           ref={areaRef}
           rows={1}
+          disabled={disabled}
           value={value}
           aria-label={labels.message}
           placeholder={labels.placeholder}

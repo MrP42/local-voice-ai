@@ -82,6 +82,8 @@ export const VoiceCallPage: React.FC = () => {
   const lines = useVoiceCallStore((s) => s.lines);
   const ready = useVoiceCallStore((s) => s.ready);
   const error = useVoiceCallStore((s) => s.error);
+  const saveError = useVoiceCallStore((s) => s.saveError);
+  const switching = useVoiceCallStore((s) => s.switching);
   const muted = useVoiceCallStore((s) => s.muted);
   const textBusy = useVoiceCallStore((s) => s.textBusy);
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
@@ -309,6 +311,14 @@ export const VoiceCallPage: React.FC = () => {
     ...warnings.map((w) => ({ kind: "warn" as const, text: w })),
     ...(attachError ? [{ kind: "error" as const, text: attachError }] : []),
     ...(error ? [{ kind: "error" as const, text: error }] : []),
+    ...(saveError
+      ? [
+          {
+            kind: "error" as const,
+            text: `${t("voiceCall.history.saveFailed")} ${saveError}`,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -459,6 +469,7 @@ export const VoiceCallPage: React.FC = () => {
             muted={muted}
             onToggleMute={() => store.getState().setMuted(!muted)}
             sending={textBusy}
+            disabled={switching}
             onStop={() => store.getState().stopText()}
             labels={{
               message: t("voiceCall.composer.message"),
