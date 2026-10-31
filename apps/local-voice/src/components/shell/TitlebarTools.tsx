@@ -31,7 +31,9 @@ interface TitlebarToolsProps {
 }
 
 const ICON = 18;
-const SEARCH_KEY = "Strg+K";
+const IS_MAC =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad/.test(navigator.platform);
 
 /**
  * Werkzeuge rechts in der Titelleiste, vor den Fensterknöpfen: Suche
@@ -52,13 +54,16 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [version, setVersion] = useState("");
   const hasPageHelp = useHasPageHelp();
+  const blurTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(blurTimer.current), []);
+  const searchKey = IS_MAC ? "⌘K" : t("titlebar.searchKey");
   const { settings } = useSettings();
 
   // Strg+K (macOS: Cmd+K) springt ins Suchfeld, von überall in der App.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (
-        (event.ctrlKey || event.metaKey) &&
+        (IS_MAC ? event.metaKey : event.ctrlKey) &&
         !event.altKey &&
         event.key.toLowerCase() === "k"
       ) {
@@ -104,12 +109,22 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
   );
 
   return (
-    <div className="lv-titlebar__tools" role="toolbar" aria-label={APP_NAME}>
+    <div className="lv-titlebar__tools" role="group" aria-label={APP_NAME}>
       <div className="lv-search">
         <SearchBox
           ref={inputRef}
           size="medium"
-          placeholder={t("titlebar.searchPlaceholder")}
+          placeholder={t("titlebar.searchPlaceholder", { key: searchKey })}
+          input={{
+            role: "combobox",
+            "aria-autocomplete": "list",
+            "aria-expanded": searchOpen && !!needle,
+            "aria-controls": "lv-search-list",
+            "aria-activedescendant":
+              searchOpen && results[active]
+                ? `lv-search-opt-${results[active].id}`
+                : undefined,
+          }}
           aria-label={t("titlebar.search")}
           value={query}
           onChange={(_e, data) => {
@@ -118,7 +133,13 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
             setActive(0);
           }}
           onFocus={() => setSearchOpen(true)}
-          onBlur={() => window.setTimeout(() => setSearchOpen(false), 120)}
+          onBlur={() => {
+            window.clearTimeout(blurTimer.current);
+            blurTimer.current = window.setTimeout(
+              () => setSearchOpen(false),
+              120,
+            );
+          }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               setQuery("");
@@ -139,6 +160,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
         />
         {searchOpen && needle && (
           <ul
+            id="lv-search-list"
             className="lv-search__list"
             role="listbox"
             aria-label={t("titlebar.searchResults")}
@@ -149,6 +171,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
             {results.map(({ id, label, Icon }, i) => (
               <li
                 key={id}
+                id={`lv-search-opt-${id}`}
                 role="option"
                 aria-selected={i === active}
                 className="lv-search__item"
@@ -288,7 +311,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
           ))}
           <dt>{t("titlebar.shortcutSearch")}</dt>
           <dd>
-            <kbd>{SEARCH_KEY}</kbd>
+            <kbd>{searchKey}</kbd>
           </dd>
         </dl>
       </Dialog>

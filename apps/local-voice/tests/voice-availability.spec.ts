@@ -381,7 +381,7 @@ test("help hides Fish content when Fish is not set up and shows it when it is", 
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: /Hilfe/ }).first().click();
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Sprachausgabe einrichten");
   await expect(help).not.toContainText("Zwei Engines");
@@ -397,7 +397,7 @@ test("help shows the Fish sections once Fish is set up", async ({ page }) => {
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: /Hilfe/ }).first().click();
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Zwei Engines");
   await expect(help).not.toContainText("Sprachausgabe einrichten");

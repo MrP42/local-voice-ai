@@ -708,24 +708,17 @@ impl TranscriptionManager {
 
         let model_path = self.model_manager.get_model_path(model_id)?;
 
-        // Drop the current engine BEFORE building the new one so transcribe-cpp
-        // frees the previous native context first — avoids holding two models at
-        // once (peak memory on large GGUFs). Clear the id too: if the new load
-        // fails, status should read "no loaded model", not the dropped engine.
-        {
-            let mut engine = self.lock_engine();
-            *engine = None;
-        }
-        {
-            let mut current_model = self.current_model_id.lock().unwrap();
-            *current_model = None;
-        }
-
-        // Speicherschutz: nach dem Entladen des alten Modells messen, damit es
-        // sich nicht selbst mitzaehlt.
+        // Speicherschutz: VOR dem Verwerfen des alten Modells pruefen (dessen
+        // Groesse zaehlt als frei); bei Verweigerung bleibt es geladen.
+        let credit_mb = self
+            .get_current_model()
+            .and_then(|id| self.model_manager.get_model_info(&id))
+            .map(|m| m.size_mb)
+            .unwrap_or(0);
         if let Err(message) = crate::memory_guard::check_before_load_blocking(
             &self.app_handle,
             model_info.size_mb,
+            credit_mb,
             &model_info.name,
         ) {
             let _ = self.app_handle.emit(
@@ -738,6 +731,19 @@ impl TranscriptionManager {
                 },
             );
             return Err(anyhow::anyhow!(message));
+        }
+
+        // Drop the current engine BEFORE building the new one so transcribe-cpp
+        // frees the previous native context first — avoids holding two models at
+        // once (peak memory on large GGUFs). Clear the id too: if the new load
+        // fails, status should read "no loaded model", not the dropped engine.
+        {
+            let mut engine = self.lock_engine();
+            *engine = None;
+        }
+        {
+            let mut current_model = self.current_model_id.lock().unwrap();
+            *current_model = None;
         }
 
         // Create appropriate engine based on model type

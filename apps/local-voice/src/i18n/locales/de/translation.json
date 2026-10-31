@@ -4129,7 +4129,7 @@
     "system": "System",
     "systemValue": "{{used}} von {{total}} GB ({{percent}} %)",
     "gpuValue": "{{used}} von {{total}} GB ({{percent}} %)",
-    "gpuShared": "gemeinsam mit dem Arbeitsspeicher",
+    "gpuSharedNote": "gemeinsam mit dem Arbeitsspeicher",
     "gpuBudget": "{{name}} · Treiberbudget",
     "release": "Speicher freigeben",
     "releaseHint": "Entlädt Modelle, die gerade nicht arbeiten.",
@@ -4138,6 +4138,7 @@
     "releasedNothing": "Nichts zu entladen",
     "releaseFailed": "Speicher konnte nicht freigegeben werden",
     "guardTitle": "Speicherschutz",
+    "guardSwitch": "Speicherschutz einschalten",
     "guardLimit": "Grenze für den gesamten Arbeitsspeicher",
     "guardExplain": "Die App lädt kein Modell, das die Grenze überschreiten würde, und entlädt vorher ungenutzte.",
     "guardOffWarning": "Ohne Speicherschutz können große Modelle den Arbeitsspeicher füllen. Der PC kann dann stocken, einfrieren oder Programme beenden.",
@@ -4154,7 +4155,8 @@
     }
   },
   "titlebar": {
-    "searchPlaceholder": "Suchen (Strg+K)",
+    "searchPlaceholder": "Suchen ({{key}})",
+    "searchKey": "Strg+K",
     "search": "Suchen",
     "searchResults": "Treffer in der App",
     "searchNone": "Keine Treffer",

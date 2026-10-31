@@ -265,25 +265,6 @@ pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
     true
 }
 
-/// Speicherschutz, blockierende Variante (Ladepfad des Diktatmodells, laeuft
-/// auf einem eigenen Thread): beendet den Chat-Server, wenn er seit `min_idle`
-/// keine Anfrage hatte. Ohne `/slots`-Abfrage -- darum nur mit Mindestzeit.
-pub fn stop_local_idle_blocking(min_idle: std::time::Duration) -> bool {
-    let Some(server) = SERVER.get() else { return false };
-    if !server.has_process() {
-        return false;
-    }
-    let idle = std::time::Duration::from_millis(
-        now_ms().saturating_sub(LOCAL_LAST_USE_MS.load(Ordering::Acquire)),
-    );
-    if idle < min_idle {
-        return false;
-    }
-    log::info!("Speicherschutz: Chat-Server ({} s ohne Anfrage) wird beendet", idle.as_secs());
-    server.stop();
-    true
-}
-
 /// Rechnet der Chat-Server gerade (`/slots`)? Unklar zaehlt als "nein".
 async fn server_busy(server: &LocalLlmServer) -> bool {
     let Some(port) = server.status().port else {

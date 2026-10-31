@@ -207,3 +207,31 @@ for (const theme of ["dark", "light"] as const) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+// Seitenhilfe: auf allen Seiten dieselbe volle Spalte ganz rechts im Dock;
+// bei Vorlesen bleibt die Dateiliste, wo sie ist.
+for (const theme of ["light", "dark"] as const) {
+  test(`Seitenhilfe dockt rechts an (${theme})`, async ({ page }) => {
+    await setup(page, theme);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+    for (const [label, id] of [["Einstellungen", "einstellungen"], ["Vorlesen", "vorlesen"], ["Aufnahmen", "aufnahmen"]] as const) {
+      await nav.getByRole("button", { name: label, exact: true }).click();
+      await expect(page.locator("#page-title")).toHaveText(label);
+      const dock = page.locator(".lv-helpdock");
+      if (id === "vorlesen") await page.evaluate(() => localStorage.removeItem("lva.ui.tts.helpOpen"));
+      await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).first().click();
+      const panel = dock.locator(".lv-helpdock__panel");
+      await expect(panel).toBeVisible();
+      const box = (await panel.boundingBox())!;
+      expect(box.x + box.width).toBeGreaterThan(1440 - 2);
+      // Die Hilfe sitzt nicht in der zentrierten Spalte
+      await expect(page.locator("#workspace-content .lv-helpdock__panel")).toHaveCount(0);
+      if (id === "vorlesen") await expect(page.getByTestId("tts-files")).toBeVisible();
+      await page.screenshot({ path: `${SHOTS}/hilfe-${id}-${theme}.png`, animations: "disabled" });
+      await page.getByRole("button", { name: "Hilfe schließen" }).click();
+      await expect(panel).toHaveCount(0);
+    }
+  });
+}

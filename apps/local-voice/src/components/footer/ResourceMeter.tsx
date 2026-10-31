@@ -121,12 +121,18 @@ export const ResourceMeter: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
+    let running = false;
     const tick = async () => {
+      // Versteckte Fenster nicht messen; ein langsamer Tick blockiert den nächsten.
+      if (document.hidden || running) return;
+      running = true;
       try {
         const result = await commands.systemMemory();
         if (!cancelled && result.status === "ok") setMemory(result.data);
       } catch {
         // Ohne Backend (Browser-Test) bleibt die Anzeige leer.
+      } finally {
+        running = false;
       }
     };
     void tick();
@@ -328,7 +334,7 @@ export const ResourceMeter: React.FC = () => {
               <div className="lv-mem__row">
                 <span>
                   {gpu.shared
-                    ? `${gpu.name} · ${t("resourceMeter.gpuShared")}`
+                    ? `${gpu.name} · ${t("resourceMeter.gpuSharedNote")}`
                     : t("resourceMeter.gpuBudget", { name: gpu.name })}
                 </span>
                 <span>
@@ -344,7 +350,9 @@ export const ResourceMeter: React.FC = () => {
 
           <hr className="lv-mem__sep" />
           <div className="lv-mem__row" style={{ alignItems: "center" }}>
-            <span>{releaseNote ?? t("resourceMeter.releaseHint")}</span>
+            <span aria-live="polite">
+              {releaseNote ?? t("resourceMeter.releaseHint")}
+            </span>
             <FluentButton
               size="small"
               onClick={() => void release()}
@@ -368,7 +376,7 @@ export const ResourceMeter: React.FC = () => {
               onChange={(_e, data) =>
                 void updateSetting("memory_guard_enabled", data.checked)
               }
-              aria-label={t("resourceMeter.guardTitle")}
+              aria-label={t("resourceMeter.guardSwitch")}
               data-memory-guard-switch
             />
           </div>
@@ -376,7 +384,7 @@ export const ResourceMeter: React.FC = () => {
             <>
               <div className="lv-mem__row">
                 <span id="lv-guard-limit">{t("resourceMeter.guardLimit")}</span>
-                <strong>{sliderValue} %</strong>
+                <strong>{sliderValue} %</strong>
               </div>
               <FluentSlider
                 min={GUARD_MIN}

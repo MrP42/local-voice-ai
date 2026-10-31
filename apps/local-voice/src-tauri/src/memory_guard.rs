@@ -48,39 +48,41 @@ fn refusal(what: &str, used_mb: u64, need_mb: u64, total_mb: u64, percent: u8) -
     )
 }
 
-/// Stoppt, was nur Speicher belegt und gerade nichts tut. Blockierend, ohne
-/// den Chat-Server auf `/slots` zu pruefen (dafuer Mindestzeit ohne Anfrage).
-/// `except_transcription`: das Diktatmodell bleibt, wenn es selbst gerade lädt.
-fn release_blocking(app: &AppHandle, except_transcription: bool) {
-    crate::managers::llm::stop_local_idle_blocking(BLOCKING_MIN_IDLE);
+/// Gibt im blockierenden Pfad nur frei, was einen Zaehler fuer laufende
+/// Anfragen hat (Embedding-Server). Der Chat-Server hat keinen: ihn ohne
+/// `/slots`-Pruefung zu beenden koennte eine laufende Anfrage abbrechen, darum
+/// bleibt er hier unberuehrt (der async-Pfad prueft `/slots`).
+fn release_blocking() {
     crate::managers::llm::stop_embedding_if_idle(BLOCKING_MIN_IDLE);
-    if !except_transcription {
-        if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
-            tm.unload_if_idle(Duration::ZERO);
-        }
-    }
 }
 
-/// Prueft vor dem Laden des Diktatmodells (eigener Thread, blockierend).
-/// `Ok`, wenn der Schutz aus ist, nichts messbar ist oder es nach dem
-/// Entladen ungenutzter Modelle passt.
-pub fn check_before_load_blocking(app: &AppHandle, need_mb: u64, what: &str) -> Result<(), String> {
+/// Prueft vor dem Laden des Diktatmodells (blockierend, nie auf einem
+/// Tokio-Worker). `credit_mb`: Groesse des Modells, das beim Wechsel ohnehin
+/// entladen wird; es zaehlt nicht als belegt. `Ok`, wenn der Schutz aus ist,
+/// nichts messbar ist oder es nach dem Entladen ungenutzter Modelle passt.
+pub fn check_before_load_blocking(
+    app: &AppHandle,
+    need_mb: u64,
+    credit_mb: u64,
+    what: &str,
+) -> Result<(), String> {
     let settings = get_settings(app);
     if !settings.memory_guard_enabled {
         return Ok(());
     }
     let percent = clamp_percent(settings.memory_guard_percent);
     let mem = system_memory();
-    if !exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
+    let used = |m: &crate::managers::llm::SystemMemory| m.ram_used_mb.saturating_sub(credit_mb);
+    if !exceeds_limit(used(&mem), need_mb, mem.ram_total_mb, percent) {
         return Ok(());
     }
-    release_blocking(app, true);
+    release_blocking();
     std::thread::sleep(Duration::from_millis(400));
     let mem = system_memory();
-    if exceeds_limit(mem.ram_used_mb, need_mb, mem.ram_total_mb, percent) {
+    if exceeds_limit(used(&mem), need_mb, mem.ram_total_mb, percent) {
         return Err(refusal(
             what,
-            mem.ram_used_mb,
+            used(&mem),
             need_mb,
             mem.ram_total_mb,
             percent,

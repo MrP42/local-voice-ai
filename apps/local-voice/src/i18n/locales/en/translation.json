@@ -4129,7 +4129,7 @@
     "system": "System",
     "systemValue": "{{used}} of {{total}} GB ({{percent}} %)",
     "gpuValue": "{{used}} of {{total}} GB ({{percent}} %)",
-    "gpuShared": "shared with system memory",
+    "gpuSharedNote": "shared with system memory",
     "gpuBudget": "{{name}} · driver budget",
     "release": "Free memory",
     "releaseHint": "Unloads models that are not working right now.",
@@ -4138,6 +4138,7 @@
     "releasedNothing": "Nothing to unload",
     "releaseFailed": "Memory could not be freed",
     "guardTitle": "Memory protection",
+    "guardSwitch": "Turn on memory protection",
     "guardLimit": "Limit for total memory use",
     "guardExplain": "The app will not load a model that would exceed the limit, and unloads unused ones first.",
     "guardOffWarning": "Without memory protection, large models can fill up memory. The PC may then stutter, freeze or close programs.",
@@ -4154,7 +4155,8 @@
     }
   },
   "titlebar": {
-    "searchPlaceholder": "Search (Ctrl+K)",
+    "searchPlaceholder": "Search ({{key}})",
+    "searchKey": "Ctrl+K",
     "search": "Search",
     "searchResults": "Results in the app",
     "searchNone": "No results",

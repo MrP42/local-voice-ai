@@ -269,7 +269,9 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   await expect(page.getByTestId("help-panel")).toContainText(
     "Sprecher und Betonung im Text",
   );
-  await page.getByRole("tab", { name: "Dateien" }).click();
+  // Die Hilfe dockt am Fensterrand an; die Dateiliste bleibt, wo sie ist.
+  await expect(page.getByTestId("tts-files")).toBeVisible();
+  await page.getByRole("button", { name: "Hilfe schließen" }).click();
   await expect(page.getByTestId("help-panel")).toHaveCount(0);
   const editor = page.locator(".tts-workspace > .min-w-0");
   expect((await editor.boundingBox())!.width).toBeGreaterThan(600);
