@@ -447,7 +447,8 @@ FunctionEnd
 Var DiktatCheckbox
 Var DiktatWahl
 Var DiktatSchreiben
-Page custom PageDiktat PageLeaveDiktat
+; Die Seite selbst steht nach Verzeichnis- und Startmenü-Seite (siehe unten), damit
+; $INSTDIR feststeht, wenn auf eine vorhandene erststart.ini geprüft wird.
 
 Function PageDiktat
   StrCpy $DiktatSchreiben 0
@@ -475,10 +476,10 @@ Function PageDiktat
     Abort
   ${EndIf}
 
-  ${NSD_CreateCheckbox} 0 0 100% 14u "Diktatmodell Nemotron 3.5 beim ersten Start einrichten (empfohlen, ca. 750 MB)"
+  ${NSD_CreateCheckbox} 0 0 100% 24u "Diktatmodell Nemotron 3.5 beim ersten Start einrichten (empfohlen, ca. 750 MB)"
   Pop $DiktatCheckbox
 
-  ${NSD_CreateLabel} 12u 18u -12u 36u "Das Modell wird beim ersten Start der App geladen. Danach können Sie sofort diktieren. Ohne Haken wählen Sie das Modell später unter Einstellungen › Modelle."
+  ${NSD_CreateLabel} 12u 28u -12u 36u "Das Modell wird beim ersten Start der App geladen. Danach können Sie sofort diktieren. Ohne Haken wählen Sie das Modell später unter Einstellungen › Modelle."
   Pop $0
 
   ${If} $DiktatWahl == "0"
@@ -515,6 +516,9 @@ Var AppStartMenuFolder
   !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
 !endif
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
+
+; 6b. Diktatmodell (nur Neuinstallation), nach der Verzeichniswahl
+Page custom PageDiktat PageLeaveDiktat
 
 ; 7. Installation page
 !insertmacro MUI_PAGE_INSTFILES
