@@ -9,12 +9,15 @@ import {
 } from "@fluentui/react-components";
 import { ExternalLink, X } from "lucide-react";
 import { openSettingsTab } from "@/lib/openSettingsTab";
+import { onSampleStart, stopSample } from "@/lib/voices/samplePlayer";
 import { Button } from "../../../ui/Button";
 import { DialogPortalContext } from "../../../ui/Dialog";
 import { ProviderDetails } from "../../tts/providers/ProviderDetails";
 import { ProviderRow } from "../../tts/providers/ProviderRow";
+import { onTryStart, stopTry } from "../../tts/providers/voiceTry";
 import { useProviderPreview } from "../../tts/providers/useProviderPreview";
 import type { TtsProvidersState } from "../../tts/providers/useTtsProviders";
+import { ProviderErrors } from "./ProviderErrors";
 import { PhononModels } from "../PhononModels";
 import { VoicesSection } from "../VoicesSection";
 
@@ -43,6 +46,22 @@ export const ProviderSheet: React.FC<{
 
   const open = providerId !== null && entry !== null;
   const id = providerId ?? "";
+  const { cancel: cancelPreview } = preview;
+
+  // Seitenblatt zu: eine laufende Anbieter-Probestimme nicht weiterspielen lassen.
+  useEffect(() => {
+    if (!open) void cancelPreview();
+  }, [open, cancelPreview]);
+
+  // Eine Probe zur Zeit: startet eine Karten-Hoerprobe, endet die Anbieter-Probestimme.
+  useEffect(() => {
+    const offSample = onSampleStart(() => void cancelPreview());
+    const offTry = onTryStart(() => void cancelPreview());
+    return () => {
+      offSample();
+      offTry();
+    };
+  }, [cancelPreview]);
 
   return (
     <OverlayDrawer
@@ -83,6 +102,10 @@ export const ProviderSheet: React.FC<{
               <p className="text-xs text-text/60">
                 {t("settings.models.voiceManager.providers.sheetHint")}
               </p>
+              <ProviderErrors
+                providers={providers}
+                testIdPrefix="voice-provider-sheet"
+              />
               <div className="rounded-lg border border-mid-gray/20">
                 <ProviderRow
                   entry={entry}
@@ -97,10 +120,12 @@ export const ProviderSheet: React.FC<{
                   <ProviderDetails
                     entry={entry}
                     preview={preview.state}
-                    onPreview={(text, voice) =>
-                      void preview.start(id, text, voice)
-                    }
-                    onCancelPreview={() => void preview.cancel()}
+                    onPreview={(text, voice) => {
+                      stopTry();
+                      stopSample();
+                      void preview.start(id, text, voice);
+                    }}
+                    onCancelPreview={() => void cancelPreview()}
                     onChanged={providers.changed}
                   />
                 </ProviderRow>

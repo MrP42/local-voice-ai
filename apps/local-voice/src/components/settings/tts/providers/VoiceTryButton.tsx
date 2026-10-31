@@ -35,48 +35,57 @@ export const VoiceTryButton: React.FC<{
     e.stopPropagation();
     e.preventDefault();
   };
+  const icon = trying ? (
+    <Square
+      width={media ? undefined : 14}
+      height={media ? undefined : 14}
+      aria-hidden="true"
+    />
+  ) : (
+    <Play
+      width={media ? undefined : 14}
+      height={media ? undefined : 14}
+      aria-hidden="true"
+    />
+  );
+  const run = (e: React.SyntheticEvent) => {
+    stop(e);
+    void toggleTry(target, t(DEFAULT_PREVIEW_KEY));
+  };
+  if (media) {
+    // Eigener Knopf der Verwaltung: echtes <button> (Tab, Enter, Leertaste gratis).
+    return (
+      <button
+        type="button"
+        aria-label={label}
+        title={label}
+        data-testid={testId}
+        style={MEDIA_STYLE}
+        className="mbtn mbtn--primary"
+        onMouseDown={stop}
+        onPointerDown={stop}
+        onClick={run}
+      >
+        {icon}
+      </button>
+    );
+  }
+  // Inline in einer Zeile, die selbst ein Knopf ist: kein verschachteltes <button>.
   return (
     <span
       role="button"
-      tabIndex={media ? 0 : -1}
+      tabIndex={-1}
       aria-label={label}
       title={label}
       data-testid={testId}
-      style={media ? MEDIA_STYLE : undefined}
-      className={
-        media
-          ? "mbtn mbtn--primary"
-          : `inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded hover:bg-mid-gray/20 hover:text-text ${
-              trying ? "text-logo-primary" : "text-text/60"
-            }`
-      }
-      onKeyDown={(e) => {
-        // Als eigener Knopf der Verwaltung erreichbar mit Tab, Enter und Leertaste.
-        if (media && (e.key === "Enter" || e.key === " ")) {
-          stop(e);
-          void toggleTry(target, t(DEFAULT_PREVIEW_KEY));
-        }
-      }}
+      className={`inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded hover:bg-mid-gray/20 hover:text-text ${
+        trying ? "text-logo-primary" : "text-text/60"
+      }`}
       onMouseDown={stop}
       onPointerDown={stop}
-      onClick={(e) => {
-        stop(e);
-        void toggleTry(target, t(DEFAULT_PREVIEW_KEY));
-      }}
+      onClick={run}
     >
-      {trying ? (
-        <Square
-          width={media ? undefined : 14}
-          height={media ? undefined : 14}
-          aria-hidden="true"
-        />
-      ) : (
-        <Play
-          width={media ? undefined : 14}
-          height={media ? undefined : 14}
-          aria-hidden="true"
-        />
-      )}
+      {icon}
     </span>
   );
 };

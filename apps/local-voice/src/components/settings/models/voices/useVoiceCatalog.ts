@@ -8,6 +8,7 @@ import {
 } from "@/bindings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { useVoiceChoice } from "../../tts/useVoiceChoice";
+import { PROVIDER_VOICES_CHANGED } from "../../tts/providers/VisibleVoices";
 import { useVoiceSamplesOf } from "../../tts/providers/useVoiceSamples";
 import {
   PROVIDER_DEFAULT_VOICE,
@@ -31,7 +32,11 @@ import {
  * Alles aus vorhandenen Befehlen und Speichern -- die Auswahl geht ueber
  * dieselbe Stimmenwahl wie die Vorlesen-Seite (`useVoiceChoice`).
  */
-export function useVoiceCatalog(entries: TtsProviderEntry[] | null) {
+export function useVoiceCatalog(
+  entries: TtsProviderEntry[] | null,
+  /** Die Anbieterliste ist nicht ladbar: nicht endlos "laedt" melden. */
+  failed = false,
+) {
   const { t } = useTranslation();
   const choice = useVoiceChoice("");
   const downloads = useTtsModelStore((s) => s.downloads);
@@ -51,7 +56,10 @@ export function useVoiceCatalog(entries: TtsProviderEntry[] | null) {
     () =>
       (entries ?? [])
         .filter(offersDropdownVoices)
-        .map((e) => `${e.descriptor.id}:${e.blocked === null}:${e.enabled}`)
+        .map(
+          (e) =>
+            `${e.descriptor.id}:${e.blocked === null}:${e.enabled}:${e.health.available}`,
+        )
         .join(","),
     [entries],
   );
@@ -89,9 +97,11 @@ export function useVoiceCatalog(entries: TtsProviderEntry[] | null) {
     void load();
     const again = () => void load();
     window.addEventListener("lv-voices-changed", again);
+    window.addEventListener(PROVIDER_VOICES_CHANGED, again);
     return () => {
       cancelled = true;
       window.removeEventListener("lv-voices-changed", again);
+      window.removeEventListener(PROVIDER_VOICES_CHANGED, again);
     };
     // providerIds fasst die relevanten Teile von `entries` zusammen.
   }, [providerIds, entries === null]);
@@ -308,7 +318,7 @@ export function useVoiceCatalog(entries: TtsProviderEntry[] | null) {
 
   return {
     items,
-    loading,
+    loading: loading && !failed,
     providersWithoutVoices,
     runtimeId,
     select,

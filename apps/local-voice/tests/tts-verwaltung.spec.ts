@@ -542,6 +542,36 @@ test("Einstellungen › Ausgabe verweist auf die Anbieter unter Modelle", async 
   await expect(page.getByTestId("voice-providers-view")).toBeVisible();
 });
 
+test("Seitenblatt: Escape gibt den Fokus an den Öffner zurück; Umschalter ist ein Tab-Umschalter; Downloads-Knopf", async ({
+  page,
+}) => {
+  await setup(page);
+  await openManager(page);
+  const tabs = page.getByRole("tablist");
+  await expect(tabs.getByRole("tab", { name: /Stimmen/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByTestId("voice-view-providers").click();
+  await expect(page.locator("#voice-view-panel")).toHaveAttribute(
+    "aria-labelledby",
+    "voice-view-tab-providers",
+  );
+  const opener = page.getByTestId("tts-provider-downloads-piper");
+  await expect(opener).toBeVisible();
+  await expect(page.getByTestId("tts-provider-downloads-phonon")).toBeVisible();
+  await opener.focus();
+  await opener.click();
+  await expect(page.getByTestId("voice-provider-sheet")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("voice-provider-sheet")).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+    )
+    .toBe("tts-provider-downloads-piper");
+});
+
 test("Schmal (390 px): keine waagerechte Rollleiste, Bedienziele mindestens 44 px, Filter hinter Knopf", async ({
   page,
 }) => {

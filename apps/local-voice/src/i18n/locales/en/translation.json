@@ -1520,6 +1520,8 @@
           "voiceCount_one": "{{count}} voice",
           "voiceCount_other": "{{count}} voices",
           "sheetHint": "State, approvals, settings, voices and sample voice of this provider.",
+          "retry": "Try again",
+          "manageDownloads": "Manage downloads",
           "downloads": "Downloads",
           "moreSettings": "App-wide read-aloud settings (volume, export, Fish folder …) are under Settings › Output.",
           "status": {

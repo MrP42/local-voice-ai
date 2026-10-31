@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { RefreshCw, Settings2 } from "lucide-react";
+import { Download, RefreshCw, Settings2 } from "lucide-react";
 import { Switch } from "@fluentui/react-components";
 import type { TtsProviderEntry } from "@/bindings";
 import { Button } from "../../../ui/Button";
@@ -104,6 +104,19 @@ const ProviderCard: React.FC<{
           <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
           {t("settings.models.voiceManager.providers.details")}
         </Button>
+        {(id === "piper" || id === "phonon") && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="min-h-[44px] md:min-h-8"
+            data-testid={`tts-provider-downloads-${id}`}
+            onClick={() => onOpen(id)}
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            {t("settings.models.voiceManager.providers.manageDownloads")}
+          </Button>
+        )}
         {hasEnableSwitch(entry) && (
           <Switch
             checked={entry.enabled}
@@ -142,7 +155,7 @@ export const ProviderCards: React.FC<{
   onOpen: (id: string) => void;
 }> = ({ providers, voiceCounts, query, onOpen }) => {
   const { t } = useTranslation();
-  const { entries, checking, loadError, actionError } = providers;
+  const { entries, checking, loadError } = providers;
   const q = query.trim().toLowerCase();
   const shown = (entries ?? []).filter(
     (e) =>
@@ -191,24 +204,6 @@ export const ProviderCards: React.FC<{
           </Button>
         </div>
       </div>
-      {loadError && (
-        <p
-          role="alert"
-          className="text-xs text-red-500"
-          data-testid="tts-providers-load-error"
-        >
-          {t("tts.providers.loadError", { message: loadError })}
-        </p>
-      )}
-      {actionError && (
-        <p
-          role="alert"
-          className="text-xs text-red-500"
-          data-testid="tts-providers-action-error"
-        >
-          {actionError}
-        </p>
-      )}
       {entries === null && !loadError && (
         <p role="status" className="text-sm text-text/60">
           {t("tts.providers.checking")}

@@ -1479,6 +1479,8 @@
           "voiceCount_one": "{{count}} Stimme",
           "voiceCount_other": "{{count}} Stimmen",
           "sheetHint": "Zustand, Freigaben, Einstellungen, Stimmen und Probestimme dieses Anbieters.",
+          "retry": "Erneut versuchen",
+          "manageDownloads": "Downloads verwalten",
           "downloads": "Downloads",
           "moreSettings": "App-weite Einstellungen zum Vorlesen (Lautstärke, Export, Fish-Ordner …) stehen unter Einstellungen › Ausgabe.",
           "status": {

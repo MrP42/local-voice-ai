@@ -13,8 +13,9 @@ const notify = () => listeners.forEach((l) => l());
 
 /** Wird vor jeder neuen Hoerprobe gerufen (z. B. um eine laufende Probestimme zu beenden). */
 const startHooks = new Set<() => void>();
-export const onSampleStart = (hook: () => void) => {
+export const onSampleStart = (hook: () => void): (() => void) => {
   startHooks.add(hook);
+  return () => startHooks.delete(hook);
 };
 
 export const stopSample = () => {
