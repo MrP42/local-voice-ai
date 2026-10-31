@@ -28,6 +28,7 @@ import { Menu } from "lucide-react";
 import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
+import { TitlebarTools } from "./components/shell/TitlebarTools";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
@@ -466,6 +467,10 @@ function App() {
           <span className="lv-titlebar__fallback">
             {t(SECTIONS_CONFIG[currentSection].labelKey)}
           </span>
+          <TitlebarTools
+            currentSection={currentSection}
+            onNavigate={setCurrentSection}
+          />
           <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
@@ -519,7 +524,7 @@ function App() {
             </main>
           </div>
         </div>
-        {/* Statusleiste (Leitlinie §2): Modell, Mikrofon, Sprachmodell, Version */}
+        {/* Statusleiste (Leitlinie §2, 24 px): Modelle links; Mikrofon, Speicher, Version rechts */}
         <footer className="lv-statusbar">
           <Footer />
         </footer>

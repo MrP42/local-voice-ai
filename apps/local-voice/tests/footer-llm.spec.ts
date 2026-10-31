@@ -119,10 +119,11 @@ test("memory is shown as measured: RAM and the dedicated GPU, not the iGPU", asy
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   const meter = page.locator("[data-resource-meter]");
-  await expect(meter).toContainText("RAM 12,3 / 64,0 GB");
+  // Seit dem Suite-Rahmen zwei Saeulen; die Zahlen stehen im Namen des Knopfes.
+  await expect(meter).toHaveAttribute("aria-label", /RAM 12,3 \/ 64,0 GB/);
   // Die dedizierte Karte zaehlt, nicht die iGPU mit "gemeinsamem" Speicher.
-  await expect(meter).toContainText("GPU 4,1 / 22,6 GB");
-  await expect(meter).not.toContainText("gemeinsam");
+  await expect(meter).toHaveAttribute("aria-label", /GPU 4,1 \/ 22,6 GB/);
+  await expect(meter).not.toHaveAttribute("aria-label", /gemeinsam/);
 });
 
 const GPUS = [
@@ -139,10 +140,11 @@ test("the footer adds the app's own share of RAM and GPU memory", async ({ page 
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   const meter = page.locator("[data-resource-meter]");
-  await expect(meter).toContainText("RAM 31,6 / 64,0 GB (App 4,2)");
-  await expect(meter).toContainText("GPU 0,9 / 22,6 GB (App 0,8)");
+  await expect(meter).toHaveAttribute("aria-label", /RAM 31,6 \/ 64,0 GB \(App 4,2\)/);
+  await expect(meter).toHaveAttribute("aria-label", /GPU 0,9 \/ 22,6 GB \(App 0,8\)/);
   // Der Tooltip erklaert, was "App" umfasst.
-  await expect(meter).toHaveAttribute("title", /App = Local Voice AI inkl\. Modell-Server/);
+  await meter.hover();
+  await expect(page.getByRole("tooltip")).toContainText(/App = Local Voice AI inkl\. Modell-Server/);
 });
 
 test("without a measurable app VRAM only the app RAM is added, never an invented zero", async ({ page }) => {
@@ -154,9 +156,9 @@ test("without a measurable app VRAM only the app RAM is added, never an invented
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   const meter = page.locator("[data-resource-meter]");
-  await expect(meter).toContainText("RAM 31,6 / 64,0 GB (App 4,2)");
-  await expect(meter).toContainText("GPU 0,9 / 22,6 GB");
-  await expect(meter).not.toContainText("GPU 0,9 / 22,6 GB (App");
+  await expect(meter).toHaveAttribute("aria-label", /RAM 31,6 \/ 64,0 GB \(App 4,2\)/);
+  await expect(meter).toHaveAttribute("aria-label", /GPU 0,9 \/ 22,6 GB/);
+  await expect(meter).not.toHaveAttribute("aria-label", /GPU 0,9 \/ 22,6 GB \(App/);
 });
 
 test("the Fish server sits in the footer left of the shield and asks before starting", async ({ page }) => {

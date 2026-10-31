@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePageHeaderSlot } from "../shell/PageHeaderSlot";
 import { useTranslation } from "react-i18next";
 import { HelpCircle, X } from "lucide-react";
 import { HelpPanel } from "../help/HelpPanel";
+import { registerPageHelp } from "../help/pageHelp";
 import { IconButton } from "./IconButton";
 import {
   ToggleButton,
@@ -46,6 +47,12 @@ export const PageShell: React.FC<PageShellProps> = ({
   const { t } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   const slot = usePageHeaderSlot();
+  // Das Hilfe-Menü der Titelleiste schaltet die Seitenhilfe über diese Anmeldung.
+  useEffect(
+    () =>
+      help ? registerPageHelp(() => setHelpOpen((open) => !open)) : undefined,
+    [help],
+  );
   const head = (
     <header className="page-shell__head flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">

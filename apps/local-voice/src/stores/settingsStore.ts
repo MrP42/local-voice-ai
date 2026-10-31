@@ -185,6 +185,10 @@ const settingUpdaters: {
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
+  memory_guard_enabled: (value) =>
+    commands.changeMemoryGuardEnabledSetting(value as boolean),
+  memory_guard_percent: (value) =>
+    commands.changeMemoryGuardPercentSetting(value as number),
   paste_delay_ms: (value) =>
     commands.changePasteDelayMsSetting(value as number),
   paste_delay_after_ms: (value) =>

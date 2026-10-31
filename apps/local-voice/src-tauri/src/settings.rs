@@ -549,6 +549,13 @@ pub struct AppSettings {
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
     pub word_correction_threshold: f64,
+    /// Speicherschutz: kein Modell laden, das die RAM-Grenze ueberschreiten
+    /// wuerde (siehe `memory_guard`).
+    #[serde(default = "default_memory_guard_enabled")]
+    pub memory_guard_enabled: bool,
+    /// Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
+    #[serde(default = "default_memory_guard_percent")]
+    pub memory_guard_percent: u8,
     #[serde(default = "default_history_limit")]
     pub history_limit: usize,
     #[serde(default = "default_recording_retention_period")]
@@ -1286,6 +1293,14 @@ fn default_word_correction_threshold() -> f64 {
     0.18
 }
 
+fn default_memory_guard_enabled() -> bool {
+    true
+}
+
+fn default_memory_guard_percent() -> u8 {
+    90
+}
+
 fn default_paste_delay_ms() -> u64 {
     60
 }
@@ -1709,6 +1724,8 @@ pub fn get_default_settings() -> AppSettings {
         custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
+        memory_guard_enabled: default_memory_guard_enabled(),
+        memory_guard_percent: default_memory_guard_percent(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),

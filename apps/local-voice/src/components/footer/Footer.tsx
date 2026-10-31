@@ -27,24 +27,28 @@ const Footer: React.FC = () => {
   }, []);
 
   return (
-    <div className="workspace-status w-full border-t border-mid-gray/20 py-2">
-      <div className="flex flex-wrap justify-between items-center gap-2 text-xs px-3 text-text/70">
-        {/* Model and microphone side by side: together they answer "will a
-            dictation work right now?" without leaving the page. */}
-        <div className="flex flex-wrap items-center gap-3 min-w-0">
+    <div className="workspace-status w-full">
+      <div className="flex justify-between items-center gap-2 px-2 text-text/70">
+        {/* Links: die zwei Modelle mit Rollensymbol. Sie beantworten, ob
+            Diktat und Zusammenfassung gerade funktionieren. */}
+        <div className="flex items-center gap-1 min-w-0">
           <ModelSelector />
-          <MicSelector />
-          {/* Das Sprachmodell gehoert in dieselbe Reihe: es beantwortet, ob
-              Zusammenfassung und Nachbearbeitung gerade funktionieren. */}
           <LlmSelector />
-          <ResourceMeter />
         </div>
 
-        {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
-        <div className="flex items-center gap-2">
-          {/* Fish-Speech-Server (Vorlesen): links neben dem Schild. */}
+        {/* Rechts: Mikrofon, Anrufmenü, Fish-Server, Schild, Speicher,
+            Trenner, Version. */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          <MicSelector />
+          {/* Platzhalter: <CallMenu /> (src/components/footer/CallMenu.tsx)
+              kommt mit Branch claude/project-thread-4aeogv und gehört hier
+              direkt hinter das Mikrofon. */}
+          {/* Fish-Speech-Server (Vorlesen). */}
           <FishServerButton />
+          {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
           <ComplianceShield />
+          <ResourceMeter />
+          <span className="lv-status-sep" aria-hidden="true" />
           {/* Version: ein Klick sucht nach Updates; ein gefundenes meldet
               sich beim Start als Fenster mit den Release-Notes. */}
           <UpdateChecker version={version} />

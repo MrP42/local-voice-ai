@@ -153,6 +153,12 @@ async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, Strin
     } else {
         None
     };
+    // Speicherschutz: nur vor einem echten Start (ein laufender Server hat
+    // oben schon geantwortet). Die Dateigroesse ist die Mindestschaetzung.
+    let size_mb = std::fs::metadata(&model_path)
+        .map(|m| m.len() / (1024 * 1024))
+        .unwrap_or(0);
+    crate::memory_guard::check_before_load(runtime.app_handle(), size_mb, model_id).await?;
     let (_, backend, binary) = runtime.resolve_runtime().await?;
     let gpu_layers = if backend == "cpu" { 0 } else { 99 };
     let context_tokens = plan_context(&model_path, &backend).await;
@@ -256,6 +262,25 @@ pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
     );
     let server = server.clone();
     let _ = tokio::task::spawn_blocking(move || server.stop()).await;
+    true
+}
+
+/// Speicherschutz, blockierende Variante (Ladepfad des Diktatmodells, laeuft
+/// auf einem eigenen Thread): beendet den Chat-Server, wenn er seit `min_idle`
+/// keine Anfrage hatte. Ohne `/slots`-Abfrage -- darum nur mit Mindestzeit.
+pub fn stop_local_idle_blocking(min_idle: std::time::Duration) -> bool {
+    let Some(server) = SERVER.get() else { return false };
+    if !server.has_process() {
+        return false;
+    }
+    let idle = std::time::Duration::from_millis(
+        now_ms().saturating_sub(LOCAL_LAST_USE_MS.load(Ordering::Acquire)),
+    );
+    if idle < min_idle {
+        return false;
+    }
+    log::info!("Speicherschutz: Chat-Server ({} s ohne Anfrage) wird beendet", idle.as_secs());
+    server.stop();
     true
 }
 
