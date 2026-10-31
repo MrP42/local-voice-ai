@@ -3,6 +3,8 @@ import { getVersion } from "@tauri-apps/api/app";
 
 import ModelSelector from "../model-selector";
 import { MicSelector } from "./MicSelector";
+import { CallMenu } from "./CallMenu";
+import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
@@ -11,6 +13,7 @@ import { FishServerButton } from "./FishServerButton";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
+  const callActive = useVoiceCallStore((s) => s.active);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -34,6 +37,7 @@ const Footer: React.FC = () => {
         <div className="flex flex-wrap items-center gap-3 min-w-0">
           <ModelSelector />
           <MicSelector />
+          {callActive && <CallMenu />}
           {/* Das Sprachmodell gehoert in dieselbe Reihe: es beantwortet, ob
               Zusammenfassung und Nachbearbeitung gerade funktionieren. */}
           <LlmSelector />

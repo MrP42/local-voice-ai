@@ -481,7 +481,7 @@ function App() {
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
             <main
               id="workspace-content"
-              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" ? "workspace-main--fill" : ""} ${currentSection === "meetings" ? "workspace-main--fixed" : ""}`}
+              className={`flex-1 workspace-main ${currentSection === "tts" || currentSection === "meetings" || currentSection === "voice" ? "workspace-main--fill" : ""} ${currentSection === "meetings" || currentSection === "voice" ? "workspace-main--fixed" : ""}`}
               aria-label={t(SECTIONS_CONFIG[currentSection].labelKey)}
             >
               {/* Fluid: the content uses whatever width the window offers, up
@@ -490,11 +490,13 @@ function App() {
                   the column itself). */}
               <div
                 className={`flex flex-col w-full mx-auto p-3 sm:p-4 gap-4 min-w-0 ${
-                  currentSection === "tts" || currentSection === "meetings"
+                  currentSection === "tts" ||
+                  currentSection === "meetings" ||
+                  currentSection === "voice"
                     ? "workspace-content--fill"
                     : ""
                 } ${
-                  currentSection === "meetings"
+                  currentSection === "meetings" || currentSection === "voice"
                     ? "workspace-content--fixed"
                     : ""
                 } ${
@@ -504,7 +506,10 @@ function App() {
                   // Besprechungen sind ebenfalls eine Arbeitsflaeche (Liste,
                   // Transkript, Protokoll) und nutzen die volle Breite. Alle
                   // anderen Bereiche behalten die lesefreundliche Obergrenze.
-                  currentSection === "tts" || currentSection === "meetings"
+                  // Sprachgespräch: Verlauf zentriert, Einstellungen als Spalte rechts.
+                  currentSection === "tts" ||
+                  currentSection === "meetings" ||
+                  currentSection === "voice"
                     ? ""
                     : "max-w-5xl"
                 }`}

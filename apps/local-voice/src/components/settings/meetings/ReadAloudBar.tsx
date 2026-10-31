@@ -33,7 +33,7 @@ import {
 } from "./readAloudSession";
 
 /** Phase des Sprachservers (Fish) -- die Stimmenliste braucht sie fuer "eingerichtet". */
-const useServerPhase = () => {
+export const useServerPhase = () => {
   const [phase, setPhase] = useState("stopped");
   useEffect(() => {
     let alive = true;
