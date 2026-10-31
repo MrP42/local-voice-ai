@@ -156,9 +156,11 @@ test("Titelleiste: ohne WAI, Suche mit Strg+K, Glocke, Hilfe, Einstellungen, Pro
   await expect(bar.locator(".lv-titlebar__name")).toHaveText("Local Voice AI");
   expect(await bar.innerText()).not.toMatch(/WAI/);
 
-  // Strg+K fokussiert die Suche; Treffer navigiert
-  const search = bar.getByPlaceholder("Suchen (Strg+K)");
-  await page.keyboard.press("Control+k");
+  // Strg+K (macOS: ⌘K) fokussiert die Suche; Treffer navigiert. Die App
+  // entscheidet nach navigator.platform, der Test folgt derselben Quelle.
+  const isMac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
+  const search = bar.getByPlaceholder(isMac ? "Suchen (⌘K)" : "Suchen (Strg+K)");
+  await page.keyboard.press(isMac ? "Meta+k" : "Control+k");
   await expect(search).toBeFocused();
   await search.fill("vorl");
   await expect(page.getByRole("option", { name: "Vorlesen" })).toBeVisible();

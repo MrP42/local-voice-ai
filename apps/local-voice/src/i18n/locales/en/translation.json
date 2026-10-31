@@ -5048,6 +5048,13 @@
     }
   },
   "integrations": {
+    "secretStore": {
+      "unavailable": {
+        "macos": "Not available on macOS yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
+        "linux": "Not available on Linux yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
+        "short": "Not available on this system yet (no secure credential storage)."
+      }
+    },
     "m365": {
       "dialog": {
         "title": "Set up a Microsoft 365 account",
