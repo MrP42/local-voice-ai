@@ -10,7 +10,16 @@ import { useModelStore } from "@/stores/modelStore";
  * zurück, wenn die Auswahl beim Nutzer bleibt (Installer-Haken aus oder
  * Modell unbekannt) — dann folgt die bisherige Modellauswahl.
  */
-export const startFirstRunDictation = async (): Promise<boolean> => {
+let running: Promise<boolean> | null = null;
+
+/** Einmal je App-Start, auch wenn der Abschluss der Berechtigungen doppelt meldet. */
+export const startFirstRunDictation = (): Promise<boolean> =>
+  (running ??= setupDictation().finally(() => {
+    running = null;
+  }));
+
+const setupDictation = async (): Promise<boolean> => {
+  if (useIntroTourStore.getState().pendingModelId) return true;
   const id = await readFirstRunDictationModel();
   if (!id) return false;
   if (!useModelStore.getState().models.length) {
@@ -28,7 +37,8 @@ export const startFirstRunDictation = async (): Promise<boolean> => {
       .then((ok) => {
         if (ok) return;
         setPendingModel(null);
-        // Die Ursache meldet der Modell-Store; hier nur der Weg weiter.
+        // Die Ursache meldet der Modell-Store; die App zeigt die Auswahl.
+        useIntroTourStore.getState().setSetupFailed(true);
         toast.info(i18n.t("introTour.download.failed"));
       });
   }
@@ -51,19 +61,30 @@ export const useFirstRunModelSelection = () => {
       !(pendingModelId in s.extractingModels)
     );
   });
+  const currentModel = useModelStore((s) => s.currentModel);
   const selectModel = useModelStore((s) => s.selectModel);
   const done = useRef<string | null>(null);
 
   useEffect(() => {
     if (!pendingModelId || !ready || done.current === pendingModelId) return;
     done.current = pendingModelId;
+    const { setPendingModel, setSetupFailed, open } =
+      useIntroTourStore.getState();
+    // Hat der Nutzer inzwischen selbst ein Modell gewählt, bleibt es dabei.
+    if (currentModel && currentModel !== pendingModelId) {
+      setPendingModel(null);
+      return;
+    }
     void selectModel(pendingModelId).then((ok) => {
       if (ok) {
         toast.success(i18n.t("introTour.download.selected"));
+        // Läuft die Tour noch, zeigt sie „bereit“ und räumt beim Schließen auf.
+        if (!open) setPendingModel(null);
       } else {
-        done.current = null;
+        setPendingModel(null);
+        setSetupFailed(true);
         toast.error(i18n.t("onboarding.errors.selectModel"));
       }
     });
-  }, [pendingModelId, ready, selectModel]);
+  }, [pendingModelId, ready, currentModel, selectModel]);
 };

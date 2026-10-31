@@ -73,8 +73,18 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
-  const startIntroTour = useIntroTourStore((state) => state.start);
+  const firstRunStarted = useRef(false);
+  const startIntroTour = useIntroTourStore((state) => state.startFirstTime);
+  const firstRunFailed = useIntroTourStore((state) => state.setupFailed);
   useFirstRunModelSelection();
+  // Automatischer Download gescheitert (z. B. offline): zurück zur
+  // Modellauswahl, solange die Ersteinrichtung nicht abgeschlossen ist.
+  useEffect(() => {
+    if (!firstRunFailed || isReturningUser) return;
+    useIntroTourStore.getState().setSetupFailed(false);
+    useIntroTourStore.setState({ open: false });
+    setOnboardingStep("model");
+  }, [firstRunFailed, isReturningUser]);
   // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
   // (bleibt über Neustarts), schmal als Overlay-Drawer.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
@@ -383,6 +393,9 @@ function App() {
     // Erstinstallation: Diktatmodell (Vorgabe Nemotron 3.5) sofort laden und
     // ohne Auswahlbildschirm in die App, die Einführungstour zeigt den
     // Fortschritt. Hat der Installer das abgewählt, kommt die Modellauswahl.
+    // Der Berechtigungsschritt kann zweimal melden: nur einmal einrichten.
+    if (firstRunStarted.current) return;
+    firstRunStarted.current = true;
     let automatic = false;
     try {
       automatic = await startFirstRunDictation();

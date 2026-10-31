@@ -7,13 +7,17 @@ const NEMOTRON = "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf";
 
 const setup = async (
   page: Page,
-  opts: { erststart?: string; onboardingCompleted?: boolean } = {},
+  opts: {
+    erststart?: string;
+    onboardingCompleted?: boolean;
+    downloadFails?: boolean;
+  } = {},
 ) => {
   page.on("pageerror", (error) => {
     throw error;
   });
   await page.addInitScript(
-    ({ erststart, onboardingCompleted, nemotron }) => {
+    ({ erststart, onboardingCompleted, nemotron, downloadFails }) => {
       const callbacks = new Map<number, (e: unknown) => void>();
       const listeners = new Map<string, number[]>();
       let callback = 0;
@@ -112,7 +116,10 @@ const setup = async (
             if (cmd === "get_available_models") return [model];
             if (cmd === "get_current_model" || cmd === "get_selected_model")
               return "";
-            if (cmd === "download_model") return null;
+            if (cmd === "download_model") {
+              if (downloadFails) throw "offline";
+              return null;
+            }
             if (cmd === "set_active_model") return null;
             if (cmd.includes("permission")) return true;
             if (cmd === "meetings_is_recording") return false;
@@ -137,6 +144,7 @@ const setup = async (
       erststart: opts.erststart,
       onboardingCompleted: opts.onboardingCompleted ?? false,
       nemotron: NEMOTRON,
+      downloadFails: opts.downloadFails ?? false,
     },
   );
 };
@@ -196,7 +204,7 @@ test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", asy
 
   // Pfeiltaste: Übungsfeld, dann Spotlight auf „Verlauf“.
   await page.keyboard.press("ArrowRight");
-  await expect(tour.getByRole("textbox", { name: /Übungsfeld/ })).toBeVisible();
+  await expect(tour.getByRole("textbox", { name: /Übungsfeld/ })).toBeFocused();
   await tour.getByRole("button", { name: "Weiter" }).click();
   await expect(tour).toHaveAttribute("data-mode", "spot");
   await expect(
@@ -250,4 +258,16 @@ test("Bestehende Installation startet ohne Tour", async ({ page }) => {
     page.getByRole("heading", { name: "Was möchtest du tun?" }),
   ).toBeVisible();
   await expect(page.getByTestId("intro-tour")).toHaveCount(0);
+});
+
+test("Gescheiterter Download führt zur Modellauswahl", async ({ page }) => {
+  await setup(page, { downloadFails: true });
+  await page.goto("/");
+  await expect(
+    page.getByText("Das Diktatmodell konnte nicht geladen werden", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(page.getByTestId("intro-tour")).toHaveCount(0);
+  await expect(page.getByText("Nemotron 3.5 ASR Streaming")).toBeVisible();
 });

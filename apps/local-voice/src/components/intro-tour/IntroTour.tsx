@@ -195,9 +195,11 @@ export const IntroTour: React.FC = () => {
   }, [open]);
 
   const finish = useCallback(() => {
+    // Fertig eingerichtet: spätere Touren zeigen keinen Fortschritt mehr.
+    if (download.ready) useIntroTourStore.getState().setPendingModel(null);
     close();
     restoreFocus.current?.focus?.();
-  }, [close]);
+  }, [close, download.ready]);
 
   const next = useCallback(
     () => (last ? finish() : setIndex((i) => i + 1)),
@@ -211,22 +213,46 @@ export const IntroTour: React.FC = () => {
       setRect(null);
       return;
     }
+    target.scrollIntoView?.({ block: "nearest" });
     const update = () => setRect(target.getBoundingClientRect());
     update();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    observer?.observe(target);
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
   }, [open, target]);
 
   // Fokus in den Schritt: Hauptknopf, damit Enter weiterführt.
   useEffect(() => {
     if (!open) return;
     const id = window.requestAnimationFrame(() => {
-      boxRef.current
-        ?.querySelector<HTMLElement>("[data-tour-primary]")
-        ?.focus({ preventScroll: true });
+      // Übungsschritt: Fokus ins Feld, damit ein sofortiges Diktat dort landet.
+      const box = boxRef.current;
+      const field = box?.querySelector<HTMLElement>("textarea");
+      (field ?? box?.querySelector<HTMLElement>("[data-tour-primary]"))?.focus({
+        preventScroll: true,
+      });
     });
     return () => window.cancelAnimationFrame(id);
   }, [open, index]);
+
+  // Rest der App für Hilfsmittel stilllegen, solange die Tour offen ist.
+  useEffect(() => {
+    if (!open) return;
+    const tour = document.querySelector<HTMLElement>(".lv-tour");
+    const siblings = Array.from(tour?.parentElement?.children ?? []).filter(
+      (el): el is HTMLElement =>
+        el instanceof HTMLElement && el !== tour && !el.inert,
+    );
+    siblings.forEach((el) => (el.inert = true));
+    return () => siblings.forEach((el) => (el.inert = false));
+  }, [open]);
 
   // Tastatur am Dokument: Beim Schrittwechsel ist der Fokus kurz außerhalb
   // der Tour, schnelle Tastendrücke gingen sonst verloren.
@@ -234,6 +260,15 @@ export const IntroTour: React.FC = () => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const box = boxRef.current;
+      // Nur Tasten aus der Tour oder ohne Fokus (Schrittwechsel); andere
+      // Dialoge (z. B. Neuigkeiten) behalten ihre Tastatur.
+      const origin = e.target as Node | null;
+      const fromTour =
+        !origin ||
+        origin === document.body ||
+        origin === document.documentElement ||
+        !!box?.contains(origin);
+      if (!fromTour) return;
       // Im Übungsfeld gehören Esc (Diktat abbrechen) und Pfeile dem Text.
       const inField = !!(e.target as HTMLElement | null)?.closest?.("textarea");
       if (e.key === "Escape" && !inField) {
@@ -255,7 +290,7 @@ export const IntroTour: React.FC = () => {
         const first = items[0];
         const lastItem = items[items.length - 1];
         const active = document.activeElement;
-        if (!active || !box.contains(active)) {
+        if (!active || active === document.body) {
           e.preventDefault();
           (e.shiftKey ? lastItem : first).focus();
         } else if (e.shiftKey && active === first) {

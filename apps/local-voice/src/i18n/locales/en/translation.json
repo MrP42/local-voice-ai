@@ -6134,7 +6134,7 @@
       "label": "Dictation model download",
       "loading": "Setting up dictation model {{model}} … {{percent}} %",
       "ready": "{{model}} is ready – you can dictate right away.",
-      "failed": "The dictation model could not be downloaded. Retry or pick another one under “Models”.",
+      "failed": "The dictation model could not be downloaded. Pick a model to get started – or try again.",
       "selected": "Dictation model set up – you can dictate now."
     },
     "welcome": {

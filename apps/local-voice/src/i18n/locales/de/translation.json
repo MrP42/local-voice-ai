@@ -6134,7 +6134,7 @@
       "label": "Download des Diktatmodells",
       "loading": "Diktatmodell {{model}} wird eingerichtet … {{percent}} %",
       "ready": "{{model}} ist bereit – du kannst sofort diktieren.",
-      "failed": "Das Diktatmodell konnte nicht geladen werden. Unter „Modelle“ kannst du es erneut laden oder ein anderes wählen.",
+      "failed": "Das Diktatmodell konnte nicht geladen werden. Wähle ein Modell, um loszulegen – oder versuche es erneut.",
       "selected": "Diktatmodell eingerichtet – du kannst jetzt diktieren."
     },
     "welcome": {
