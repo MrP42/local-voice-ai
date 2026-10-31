@@ -5,7 +5,7 @@
 #
 # Aufruf aus apps/local-voice:   bash scripts/build-abnahme.sh
 # Umgebung (optional):
-#   CARGO_TARGET_DIR   gemeinsamer Build-Ordner (Vorgabe D:/lv-build/target-dokumente)
+#   CARGO_TARGET_DIR   gemeinsamer Build-Ordner (Vorgabe D:/b: kurzer Pfad, dort liegt der LTO-freie Stand)
 #   CARGO_BUILD_JOBS   parallele Compiler-Jobs (Vorgabe 2, Systemschutz)
 #   LVA_UPDATE_DIR     Zielordner fuer den Installer
 #                      (Vorgabe ~/local-voice-project/apps/local-voice/src-tauri/target/release/bundle/nsis)
@@ -15,13 +15,19 @@
 # fuer die Abhaengigkeiten (Vorgabe D:/lv-build/sccache, falls `sccache` vorhanden), NSIS mit zlib statt LZMA.
 # Das Skript legt die Update-Notizen (`.notes.md`) selbst an: Commit-Betreffe seit dem letzten Tag app-v*.
 #
+# Messung 30.10.2026 (lto = false, TRANSCRIBE_DIR): Wiederholbau 90 s; der erste Lauf je Target ca. 22 min.
 # Messung 27.10.2026 (i9-13900K, 2 Jobs): Wiederholbau nach Code-Aenderung
 # 5 min 14 s statt 14-16 min mit dem Release-Profil (volle LTO, 1 Codegen-Einheit).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-D:/lv-build/target-dokumente}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-D:/b}"
+# Vorgebaute Whisper-Bibliothek: der cmake-Neubau von transcribe-cpp-sys scheitert unter cargo auf diesem PC (MSB1009).
+# Erzeugen: cmake wie im Build-Script von transcribe-cpp-sys mit -DTRANSCRIBE_INSTALL=ON, Release, Install nach diesem Ordner.
+if [ -z "${TRANSCRIBE_DIR:-}" ] && [ -f "D:/lv-build/transcribe-prebuilt/lib/transcribe-link.json" ]; then
+  export TRANSCRIBE_DIR="D:/lv-build/transcribe-prebuilt"
+fi
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 if command -v sccache >/dev/null 2>&1 && [ -z "${RUSTC_WRAPPER:-}" ]; then
   export SCCACHE_DIR="${SCCACHE_DIR:-D:/lv-build/sccache}"
