@@ -5949,7 +5949,10 @@
       "corporateHint": "Corporate LLM verbinden – Skills, Plugins und Konnektoren kommen von dort",
       "documents": "Dokumente",
       "truncated": "gekürzt",
-      "attached": "Anhang: {{names}}"
+      "attached": "[Anhang: {{names}}]",
+      "tooLarge": "Datei ist größer als 20 MB und wird nicht gelesen.",
+      "totalLimit": "Die Anhänge sind zusammen zu lang (höchstens 40 000 Zeichen).",
+      "stop": "Antwort stoppen"
     },
     "tempo": {
       "patient": "Geduldig",

@@ -291,6 +291,59 @@ test.describe("Sprachgespraech", () => {
     ).toHaveAttribute("aria-disabled", "true");
   });
 
+  test("Neues Gespräch während laufender Antwort verwirft die späte Antwort", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await message(page).fill("Erzähl etwas");
+    await message(page).press("Enter");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__chat !== null))
+      .toBe(true);
+    const requestId = await page.evaluate(
+      () => (window as any).__chat.args.requestId as string,
+    );
+    await expect(
+      page.getByRole("button", { name: "Antwort stoppen" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Neues Gespräch" }).click();
+    await expect
+      .poll(async () => (await calls(page, "voice_call_cancel")).length)
+      .toBe(1);
+    expect((await calls(page, "voice_call_cancel"))[0].args.requestId).toBe(
+      requestId,
+    );
+    // Die Antwort trifft trotzdem noch ein: sie darf nichts mehr schreiben.
+    await page.evaluate(
+      ([id]) => {
+        const w = window as any;
+        w.__emit("voice-call", {
+          kind: "sentence",
+          request_id: id,
+          index: 0,
+          text: "Späte Antwort.",
+        });
+        w.__emit("voice-call", {
+          kind: "done",
+          request_id: id,
+          usage: {
+            prompt_tokens: 50,
+            completion_tokens: 5,
+            provider_id: "claude_cli",
+            local: false,
+          },
+        });
+        w.__chat.resolve("Späte Antwort.");
+      },
+      [requestId] as const,
+    );
+    await expect(
+      page.getByRole("heading", { name: "Worüber möchtest du sprechen?" }),
+    ).toBeVisible();
+    await expect(page.getByText("Späte Antwort.")).toHaveCount(0);
+    await expect(page.getByText("55 Token")).toHaveCount(0);
+  });
+
   test("Einstellungs-Panel hat vier Reiter", async ({ page }) => {
     await openPage(page);
     await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();

@@ -9,6 +9,7 @@ import {
   type CallUsageEvent,
   type TurnMetrics,
 } from "@/components/voice-call/engine";
+import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
 
 /** Schlüssel der gespeicherten Gesprächseinstellungen (unverändert seit Stufe 0). */
@@ -32,7 +33,12 @@ export interface VoiceLine {
 export interface CallUsage {
   promptTokens: number;
   completionTokens: number;
+  /** Alle Ledger-Ereignisse des Gesprächs. */
   usageEventIds: number[];
+  /** Nur die Ereignisse von API-Aufrufen (Abo und lokal kosten nichts extra). */
+  billableEventIds: number[];
+  /** Anzahl Antworten je Abrechnungsart. */
+  calls: { subscription: number; local: number; api: number };
   providerId: string | null;
   local: boolean;
 }
@@ -41,6 +47,8 @@ const EMPTY_USAGE: CallUsage = {
   promptTokens: 0,
   completionTokens: 0,
   usageEventIds: [],
+  billableEventIds: [],
+  calls: { subscription: 0, local: 0, api: 0 },
   providerId: null,
   local: false,
 };
@@ -95,6 +103,8 @@ interface VoiceCallStore {
   /** `display`: was im Verlauf steht, wenn es vom gesendeten Text abweicht (Anhänge). */
   sendText: (text: string, display?: string) => Promise<void>;
   newConversation: () => void;
+  /** Laufende Text-Antwort abbrechen (Stopp-Knopf). */
+  stopText: () => void;
   /** Seite verlassen: Anruf beenden, Verlauf bleibt. */
   leave: () => Promise<void>;
 }
@@ -109,6 +119,8 @@ export function subscribeCallLevel(fn: (level: number) => void): () => void {
 
 let engine: VoiceCallEngine | null = null;
 let lineId = 0;
+/** Zählt Text-Anfragen, damit nur die jüngste `textBusy` zurücksetzt. */
+let textRun = 0;
 /** Zählt Besuche der Seite: ein spätes `leave()` (StrictMode, schneller Rückweg) darf einen neuen Besuch nicht abmelden. */
 let visit = 0;
 
@@ -178,20 +190,35 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           }),
         onError: (error) => set({ error }),
         onUsage: (u: CallUsageEvent) =>
-          set((s) => ({
-            usage: {
-              promptTokens: s.usage.promptTokens + (u.prompt_tokens ?? 0),
-              completionTokens:
-                s.usage.completionTokens + (u.completion_tokens ?? 0),
-              usageEventIds: [
-                ...s.usage.usageEventIds,
-                ...(u.usage_event_ids ??
-                  (u.usage_event_id != null ? [u.usage_event_id] : [])),
-              ],
-              providerId: u.provider_id ?? s.usage.providerId,
-              local: u.local ?? s.usage.local,
-            },
-          })),
+          set((s) => {
+            const ids =
+              u.usage_event_ids ??
+              (u.usage_event_id != null ? [u.usage_event_id] : []);
+            const subscription = SUBSCRIPTION_PROVIDERS.has(
+              u.provider_id ?? "",
+            );
+            const local = !subscription && u.local === true;
+            const api = !subscription && !local;
+            return {
+              usage: {
+                promptTokens: s.usage.promptTokens + (u.prompt_tokens ?? 0),
+                completionTokens:
+                  s.usage.completionTokens + (u.completion_tokens ?? 0),
+                usageEventIds: [...s.usage.usageEventIds, ...ids],
+                billableEventIds: api
+                  ? [...s.usage.billableEventIds, ...ids]
+                  : s.usage.billableEventIds,
+                calls: {
+                  subscription:
+                    s.usage.calls.subscription + (subscription ? 1 : 0),
+                  local: s.usage.calls.local + (local ? 1 : 0),
+                  api: s.usage.calls.api + (api ? 1 : 0),
+                },
+                providerId: u.provider_id ?? s.usage.providerId,
+                local: u.local ?? s.usage.local,
+              },
+            };
+          }),
       },
       get().config,
     );
@@ -259,17 +286,27 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         await e.sendText(clean, display);
         return;
       }
+      const run = ++textRun;
       set({ textBusy: true });
       try {
         await e.sendText(clean, display);
       } finally {
-        set({ textBusy: false });
+        // Eine abgebrochene, ältere Anfrage darf die neue nicht „fertig“ melden.
+        if (run === textRun) set({ textBusy: false });
       }
+    },
+
+    stopText: () => {
+      engine?.cancelText(true);
+      textRun++;
+      set({ textBusy: false });
     },
 
     newConversation: () => {
       engine?.resetHistory();
+      textRun++;
       set({
+        textBusy: false,
         lines: [],
         metrics: [],
         usage: EMPTY_USAGE,
@@ -282,7 +319,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       const left = visit;
       await engine?.stop();
       if (visit !== left) return;
-      engine?.dispose();
+      await engine?.dispose();
+      if (visit !== left) return;
       set({ active: false, settingsOpen: false });
     },
   };

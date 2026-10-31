@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, Phone, Settings } from "lucide-react";
 import { useSettings } from "../../hooks/useSettings";
@@ -55,6 +55,13 @@ export const CallMenu: React.FC = () => {
   const [section, setSection] = useState<"voice" | "tempo" | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
+  /** Schließen; der Fokus kehrt zum Auslöser zurück (Tastatur). */
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
 
   const mic =
     getSetting("selected_microphone") === "default"
@@ -72,7 +79,10 @@ export const CallMenu: React.FC = () => {
         setOpen(false);
     };
     const onEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", onClickOutside);
     document.addEventListener("keydown", onEscape);
@@ -83,6 +93,10 @@ export const CallMenu: React.FC = () => {
   }, [open, refreshAudioDevices]);
 
   const onMenuKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Tab") {
+      close();
+      return;
+    }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
     const items = Array.from(
       menuRef.current?.querySelectorAll<HTMLElement>(
@@ -110,9 +124,11 @@ export const CallMenu: React.FC = () => {
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
         aria-haspopup="menu"
         title={t("voiceCall.footer.title")}
         className="flex items-center gap-2 rounded px-1 bg-logo-primary/15 text-logo-primary font-semibold hover:opacity-90 transition-colors cursor-pointer"
@@ -128,6 +144,7 @@ export const CallMenu: React.FC = () => {
       {open && (
         <div
           ref={menuRef}
+          id={menuId}
           role="menu"
           aria-label={t("voiceCall.footer.label")}
           onKeyDown={onMenuKey}
@@ -197,7 +214,7 @@ export const CallMenu: React.FC = () => {
                     disabled={o.isDisabled}
                     onClick={() => {
                       if (o.value === VOICE_MANAGE) {
-                        setOpen(false);
+                        close();
                         openVoiceManagement();
                       } else applyVoiceValue(o.value);
                     }}
@@ -282,7 +299,7 @@ export const CallMenu: React.FC = () => {
             role="menuitem"
             className={ITEM}
             onClick={() => {
-              setOpen(false);
+              close();
               openSettings();
             }}
           >

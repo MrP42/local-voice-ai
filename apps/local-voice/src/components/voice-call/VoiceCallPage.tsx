@@ -1,6 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
+import { stat } from "@tauri-apps/plugin-fs";
 import {
   AlertCircle,
   AlertTriangle,
@@ -27,6 +34,10 @@ import { Transcript } from "./Transcript";
 
 /** Mehr Text als das gehört nicht in eine Nachricht an die KI. */
 const MAX_FILE_CHARS = 20_000;
+/** … und alle Anhänge einer Nachricht zusammen. */
+const MAX_TOTAL_CHARS = 40_000;
+/** Größere Dateien werden gar nicht erst gelesen. */
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 interface Attachment extends ComposerAttachment {
   text: string;
@@ -45,6 +56,7 @@ export const VoiceCallPage: React.FC = () => {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const attachId = useRef(0);
 
   useEffect(() => {
     store.getState().setActive(true);
@@ -84,32 +96,54 @@ export const VoiceCallPage: React.FC = () => {
 
   const attachFile = useCallback(async () => {
     setAttachError(null);
-    const picked = await open({
-      multiple: false,
-      filters: [
-        {
-          name: t("voiceCall.composer.documents"),
-          extensions: ["txt", "md", "pdf", "docx"],
-        },
-      ],
-    });
-    if (typeof picked !== "string") return;
-    const result = await commands.ttsExtractDocument(picked);
-    if (result.status === "error") {
-      setAttachError(result.error);
-      return;
+    try {
+      const picked = await open({
+        multiple: false,
+        filters: [
+          {
+            name: t("voiceCall.composer.documents"),
+            extensions: ["txt", "md", "pdf", "docx"],
+          },
+        ],
+      });
+      if (typeof picked !== "string") return;
+      try {
+        const info = await stat(picked);
+        if (info.size > MAX_FILE_BYTES) {
+          setAttachError(t("voiceCall.composer.tooLarge"));
+          return;
+        }
+      } catch {
+        /* ohne Größe (keine Berechtigung) geht es weiter; die Textgrenze greift trotzdem */
+      }
+      const result = await commands.ttsExtractDocument(picked);
+      if (result.status === "error") {
+        setAttachError(result.error);
+        return;
+      }
+      const name = picked.split(/[\\/]/).pop() ?? picked;
+      const id = `att-${attachId.current++}`;
+      setAttachments((all) => {
+        const used = all.reduce((n, a) => n + a.text.length, 0);
+        const room = Math.min(MAX_FILE_CHARS, MAX_TOTAL_CHARS - used);
+        if (room <= 0) {
+          setAttachError(t("voiceCall.composer.totalLimit"));
+          return all;
+        }
+        const cut = result.data.length > room;
+        return [
+          ...all,
+          {
+            id,
+            label: name,
+            detail: cut ? t("voiceCall.composer.truncated") : undefined,
+            text: cut ? result.data.slice(0, room) : result.data,
+          },
+        ];
+      });
+    } catch (e) {
+      setAttachError(String(e));
     }
-    const name = picked.split(/[\\/]/).pop() ?? picked;
-    const cut = result.data.length > MAX_FILE_CHARS;
-    setAttachments((all) => [
-      ...all,
-      {
-        id: `${Date.now()}-${name}`,
-        label: name,
-        detail: cut ? t("voiceCall.composer.truncated") : undefined,
-        text: cut ? result.data.slice(0, MAX_FILE_CHARS) : result.data,
-      },
-    ]);
   }, [t]);
 
   const menuItems: ComposerMenuItem[] = useMemo(
@@ -244,12 +278,14 @@ export const VoiceCallPage: React.FC = () => {
             muted={muted}
             onToggleMute={() => store.getState().setMuted(!muted)}
             sending={textBusy}
+            onStop={() => store.getState().stopText()}
             labels={{
               message: t("voiceCall.composer.message"),
               placeholder: t("voiceCall.composer.placeholder"),
               add: t("voiceCall.composer.add"),
               mute: t("voiceCall.composer.mute"),
               send: t("voiceCall.composer.send"),
+              stop: t("voiceCall.composer.stop"),
               removeAttachment: (label) =>
                 t("voiceCall.composer.removeAttachment", { name: label }),
             }}

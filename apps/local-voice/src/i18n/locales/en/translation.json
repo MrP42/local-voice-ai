@@ -5949,7 +5949,10 @@
       "corporateHint": "Connect Corporate LLM – skills, plugins and connectors come from there",
       "documents": "Documents",
       "truncated": "truncated",
-      "attached": "Attachment: {{names}}"
+      "attached": "[Attachment: {{names}}]",
+      "tooLarge": "The file is larger than 20 MB and will not be read.",
+      "totalLimit": "The attachments are too long together (40,000 characters at most).",
+      "stop": "Stop answer"
     },
     "tempo": {
       "patient": "Patient",

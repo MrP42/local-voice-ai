@@ -5,7 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Mic, MicOff, Plus, SendHorizontal, X } from "lucide-react";
+import { Mic, MicOff, Plus, SendHorizontal, Square, X } from "lucide-react";
 
 /**
  * Eingabezeile eines Gesprächs: Anhang-Chips, Textfeld, darunter ＋-Menü,
@@ -40,6 +40,7 @@ export interface ComposerLabels {
   add: string;
   mute: string;
   send: string;
+  stop: string;
   removeAttachment: (label: string) => string;
 }
 
@@ -57,6 +58,8 @@ export interface ComposerProps {
   onToggleMute?: () => void;
   /** Senden läuft: Senden-Knopf gesperrt. */
   sending?: boolean;
+  /** Gesetzt: während `sending` ersetzt ein Stopp-Knopf den Senden-Knopf. */
+  onStop?: () => void;
 }
 
 export const Composer: React.FC<ComposerProps> = ({
@@ -71,6 +74,7 @@ export const Composer: React.FC<ComposerProps> = ({
   muted = false,
   onToggleMute,
   sending = false,
+  onStop,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -228,6 +232,21 @@ export const Composer: React.FC<ComposerProps> = ({
               ) : (
                 <Mic className="w-[18px] h-[18px]" aria-hidden="true" />
               )}
+            </button>
+          )}
+          {sending && onStop && (
+            <button
+              type="button"
+              className="grid place-items-center w-10 h-10 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
+              aria-label={labels.stop}
+              title={labels.stop}
+              onClick={onStop}
+            >
+              <Square
+                className="w-4 h-4"
+                fill="currentColor"
+                aria-hidden="true"
+              />
             </button>
           )}
           {canSend && (

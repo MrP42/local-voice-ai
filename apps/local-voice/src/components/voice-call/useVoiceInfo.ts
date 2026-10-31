@@ -45,18 +45,19 @@ export type CallCost =
   | { kind: "unknown" }
   | { kind: "none" };
 
-/** Kosten des Gesprächs: Abo und lokal kosten nichts, sonst fragt das Ledger. */
+/**
+ * Kosten des Gesprächs. Abo und lokal kosten nichts; nur API-Aufrufe werden
+ * über das Ledger abgefragt. Ein API-Aufruf ohne Preis (Kosten 0 bei Token > 0)
+ * gilt als „nicht erfasst“, nicht als kostenlos.
+ */
 export function useCallCost(usage: CallUsage, llm: ActiveLlm): CallCost {
-  const provider = usage.providerId ?? llm.kind;
-  const subscription =
-    provider !== null && SUBSCRIPTION_PROVIDERS.has(provider);
-  const local = usage.providerId ? usage.local : llm.local;
-  const key = usage.usageEventIds.join(",");
+  const { subscription, local, api } = usage.calls;
+  const key = usage.billableEventIds.join(",");
   const [micro, setMicro] = useState<number | null>(null);
 
   useEffect(() => {
     setMicro(null);
-    if (subscription || local || !key) return;
+    if (api === 0 || !key) return;
     let cancelled = false;
     const ids = key.split(",").map(Number);
     void commands
@@ -68,13 +69,24 @@ export function useCallCost(usage: CallUsage, llm: ActiveLlm): CallCost {
     return () => {
       cancelled = true;
     };
-  }, [key, subscription, local]);
+  }, [key, api]);
 
-  if (subscription) return { kind: "subscription" };
-  if (local) return { kind: "local" };
-  if (usage.promptTokens + usage.completionTokens === 0)
-    return { kind: "none" };
-  if (micro === null) return { kind: "unknown" };
+  if (subscription + local + api === 0) {
+    // Noch keine Antwort: das aktive Modell sagt, was zu erwarten ist.
+    if (llm.kind !== null && SUBSCRIPTION_PROVIDERS.has(llm.kind))
+      return { kind: "subscription" };
+    return llm.local ? { kind: "local" } : { kind: "none" };
+  }
+  if (api === 0) {
+    if (local === 0) return { kind: "subscription" };
+    if (subscription === 0) return { kind: "local" };
+    return { kind: "usd", usd: 0 };
+  }
+  if (
+    micro === null ||
+    (micro === 0 && usage.promptTokens + usage.completionTokens > 0)
+  )
+    return { kind: "unknown" };
   return { kind: "usd", usd: micro / 1_000_000 };
 }
 
