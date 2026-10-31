@@ -7,12 +7,17 @@
 //! Pipe vorbelegt hat; ein mitgeschnittener Beweis gilt nur für diesen Zufallswert.
 //! Grenze: Wer die Fingerabdruck-Ablage des Dienstes liest, kann sich anmelden; die Ablage ist
 //! deshalb wie ein Geheimnis zu schützen (nur Benutzer, Tresor).
+//!
+//! Umgekehrt beweist der Dienst in `willkommen` mit [`dienst_erzeugen`], dass er den Fingerabdruck
+//! kennt (eigener Kontext). Die App sendet weder Audio noch Text, bevor sie diesen Gegenbeweis
+//! geprüft hat; ein Prozess, der die Pipe vorbelegt, kennt den Fingerabdruck nicht.
 
 use sha2::{Digest, Sha256};
 
 use crate::PROTOKOLL;
 
 const KONTEXT: &[u8] = b"wai-sprache/1";
+const KONTEXT_DIENST: &[u8] = b"wai-sprache/1/dienst";
 const BLOCK: usize = 64;
 
 /// Fingerabdruck eines Zugangsschlüssels (das, was der Dienst speichert).
@@ -33,7 +38,11 @@ fn hmac(key: &[u8; 32], nachricht: &[u8]) -> [u8; 32] {
 }
 
 fn nachricht(zufall_hex: &str, client: &str) -> Vec<u8> {
-    let mut n = KONTEXT.to_vec();
+    nachricht_mit(KONTEXT, zufall_hex, client)
+}
+
+fn nachricht_mit(kontext: &[u8], zufall_hex: &str, client: &str) -> Vec<u8> {
+    let mut n = kontext.to_vec();
     n.extend_from_slice(zufall_hex.as_bytes());
     n.push(0);
     n.extend_from_slice(client.as_bytes());
@@ -53,7 +62,33 @@ pub fn erzeugen(fingerabdruck: &[u8; 32], zufall_hex: &str, client: &str) -> Str
 
 /// Prüft den Beweis in konstanter Zeit.
 pub fn pruefen(fingerabdruck: &[u8; 32], zufall_hex: &str, client: &str, beweis_hex: &str) -> bool {
-    let soll = erzeugen(fingerabdruck, zufall_hex, client);
+    gleich(&erzeugen(fingerabdruck, zufall_hex, client), beweis_hex)
+}
+
+/// Gegenbeweis des Dienstes in `willkommen`: zeigt der App, dass der Dienst den Fingerabdruck ihres
+/// Zugangs kennt, also kein fremder Prozess die Pipe vorbelegt hat. Eigener Kontext, damit ein
+/// App-Beweis nie als Dienstbeweis zurückgespielt werden kann.
+pub fn dienst_erzeugen(fingerabdruck: &[u8; 32], zufall_hex: &str, client: &str) -> String {
+    hex(&hmac(
+        fingerabdruck,
+        &nachricht_mit(KONTEXT_DIENST, zufall_hex, client),
+    ))
+}
+
+/// Prüft den Gegenbeweis des Dienstes in konstanter Zeit (App-Seite).
+pub fn dienst_pruefen(
+    fingerabdruck: &[u8; 32],
+    zufall_hex: &str,
+    client: &str,
+    beweis_hex: &str,
+) -> bool {
+    gleich(
+        &dienst_erzeugen(fingerabdruck, zufall_hex, client),
+        beweis_hex,
+    )
+}
+
+fn gleich(soll: &str, beweis_hex: &str) -> bool {
     soll.len() == beweis_hex.len()
         && soll
             .bytes()
@@ -93,5 +128,16 @@ mod tests {
             !pruefen(&fingerabdruck("lvat_anders"), &z, "corporate-llm", &b),
             "anderer Schlüssel"
         );
+    }
+
+    #[test]
+    fn gegenbeweis_ist_nicht_der_app_beweis() {
+        let fp = fingerabdruck("k");
+        let z = "ab".repeat(32);
+        let app = erzeugen(&fp, &z, "corporate-llm");
+        let dienst = dienst_erzeugen(&fp, &z, "corporate-llm");
+        assert_ne!(app, dienst);
+        assert!(dienst_pruefen(&fp, &z, "corporate-llm", &dienst));
+        assert!(!dienst_pruefen(&fp, &z, "corporate-llm", &app));
     }
 }

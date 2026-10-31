@@ -211,13 +211,19 @@ impl<S: Read + Write> Verbindung<S> {
                 version,
                 rechte,
                 engines,
+                beweis: gegen,
                 ..
-            } => Ok(Angemeldet {
-                dienst,
-                version,
-                rechte,
-                engines,
-            }),
+            } => {
+                if !beweis::dienst_pruefen(&fp, &zufall, client, &gegen) {
+                    return Err(ClientFehler::Vertrag("dienst_beweis".into()));
+                }
+                Ok(Angemeldet {
+                    dienst,
+                    version,
+                    rechte,
+                    engines,
+                })
+            }
             _ => Err(ClientFehler::Vertrag("willkommen".into())),
         }
     }
@@ -449,6 +455,7 @@ mod tests {
                                     stimme: "s".into(),
                                     lokal: true,
                                 },
+                                beweis: beweis::dienst_erzeugen(&fp, &zufall(), &client),
                             },
                         );
                     } else {
@@ -648,6 +655,11 @@ mod tests {
                     stimme: "s".into(),
                     lokal: true,
                 },
+                beweis: beweis::dienst_erzeugen(
+                    &beweis::fingerabdruck("k"),
+                    &zufall(),
+                    "corporate-llm",
+                ),
             },
         );
         let mut v = Verbindung::neu(a);
@@ -744,6 +756,37 @@ mod tests {
             .erkennen(2, "allgemein", Souveraenitaet::NurLokal, &[0; 4], |_| {})
             .unwrap_err();
         assert_eq!(e.code(), code::SCHLUESSEL_WIDERRUFEN);
+    }
+
+    #[test]
+    fn dienst_ohne_gegenbeweis_wird_abgewiesen() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        sende(
+            &mut b,
+            &AnApp::Gruss {
+                protokoll: crate::PROTOKOLL,
+                zufall: zufall(),
+            },
+        );
+        // Ein fremder Prozess kennt den Fingerabdruck nicht und rät den Gegenbeweis.
+        sende(
+            &mut b,
+            &AnApp::Willkommen {
+                protokoll: crate::PROTOKOLL,
+                dienst: "falsch".into(),
+                version: "0".into(),
+                rechte: vec![Recht::Hoeren],
+                engines: Engines {
+                    erkennung: "e".into(),
+                    stimme: "s".into(),
+                    lokal: true,
+                },
+                beweis: "0".repeat(64),
+            },
+        );
+        let mut v = Verbindung::neu(a);
+        let e = v.anmelden("corporate-llm", "z-1", "k").unwrap_err();
+        assert_eq!(e.to_string(), "Vertrag verletzt: dienst_beweis");
     }
 
     #[test]

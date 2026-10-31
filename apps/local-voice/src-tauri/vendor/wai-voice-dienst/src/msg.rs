@@ -151,12 +151,14 @@ pub enum AnApp {
         protokoll: u16,
         zufall: String,
     },
+    /// `beweis`: Gegenbeweis des Dienstes ([`crate::beweis::dienst_erzeugen`]), Hex.
     Willkommen {
         protokoll: u16,
         dienst: String,
         version: String,
         rechte: Vec<Recht>,
         engines: Engines,
+        beweis: String,
     },
     /// Guthaben für `AudioHinein` (Rückstau des Dienstes).
     Guthaben {
@@ -317,11 +319,13 @@ pub fn pruefen_an_app(m: &AnApp) -> Result<(), String> {
             }
             hex(zufall, 64, "zufall")
         }
-        AnApp::Willkommen { protokoll, .. } => {
+        AnApp::Willkommen {
+            protokoll, beweis, ..
+        } => {
             if *protokoll != PROTOKOLL {
                 return Err("protokoll".into());
             }
-            Ok(())
+            hex(beweis, 64, "beweis")
         }
         AnApp::Guthaben { strom, rahmen } => {
             strom_nr(*strom)?;

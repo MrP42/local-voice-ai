@@ -459,6 +459,9 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             version: self.ctx.konfig.version.clone(),
             rechte: z.rechte.clone(),
             engines: self.ctx.engine.engines(),
+            // Gegenbeweis erst nach erfolgreich geprüftem `hallo`: wer den Fingerabdruck nicht
+            // kennt (ein Prozess, der den Endpunkt vorbelegt hat), kann ihn nicht erzeugen.
+            beweis: beweis::dienst_erzeugen(&fp, &self.zufall, client),
         };
         self.senden(0, &willkommen)
     }
