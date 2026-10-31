@@ -16,6 +16,10 @@ fn main() {
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+        // Test-Binaries (Unit- und Integrationstests) tragen sonst kein Common-Controls-v6-Manifest: tauri-plugin-dialog/rfd
+        // importieren TaskDialogIndirect, und der Lader bricht mit STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) samt Fehlerfenster ab.
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
     }
 
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
