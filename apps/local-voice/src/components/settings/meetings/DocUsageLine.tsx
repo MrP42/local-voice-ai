@@ -4,7 +4,7 @@ import { commands, type ProvenanceEntry } from "@/bindings";
 import { displayModelName, splitModel } from "@/lib/modelNames";
 
 /** Abo ueber die CLI: keine API-Kosten (abgerechnet im Abo). */
-const SUBSCRIPTION_PROVIDERS = new Set(["claude_cli", "codex_cli"]);
+export const SUBSCRIPTION_PROVIDERS = new Set(["claude_cli", "codex_cli"]);
 
 const num = (n: number) => n.toLocaleString("de-DE");
 
