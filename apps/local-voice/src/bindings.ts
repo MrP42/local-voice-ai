@@ -7506,6 +7506,7 @@ export type GrantMode = "off" | "ask" | "allow"
  * `Recovered` nimmt die Bedingung des Kanals zurueck; `VadUnavailable` und
  * `LoopbackDied` sind einmalige Meldungen des Recorders und bleiben stehen.
  */
+export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
 /**
  * Ergebnis der Zugangsprüfung.
  */
@@ -7546,7 +7547,6 @@ export type HfAccessStatus = { present: boolean; source: HfAccessSource | null;
  * Ein abgelegter Zugang ist nicht lesbar (anderes Konto, beschädigt).
  */
 problem: string | null }
-export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }
