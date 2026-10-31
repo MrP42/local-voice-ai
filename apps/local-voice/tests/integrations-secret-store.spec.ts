@@ -85,3 +85,14 @@ test("Windows: kein Hinweis, alles einrichtbar", async ({ page }) => {
   }
   await expect(page.getByTestId("catalog-setup-service-slack")).toBeEnabled();
 });
+
+test("macOS: Kalender verbinden in den Verbindungen ebenfalls gesperrt", async ({
+  page,
+}) => {
+  await setup(page, "macos");
+  await page.getByTestId("integrations-back").click();
+  const connect = page.getByTestId("calendar-connect");
+  await connect.scrollIntoViewIfNeeded();
+  await expect(connect).toBeDisabled();
+  await expect(connect).toHaveAttribute("title", /noch nicht verfügbar/);
+});
