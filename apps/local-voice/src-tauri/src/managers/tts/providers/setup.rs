@@ -19,6 +19,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use super::audio8::{Audio8Config, Audio8Provider};
 use super::builtin::{FishProvider, PiperProvider, SynthFn};
 use super::contract::{TtsError, TtsProvider};
 use super::ollama_speech::OllamaSpeechProvider;
@@ -65,6 +66,10 @@ fn build_providers(
         Arc::new(PhononProvider::new(resolved.phonon.clone())),
         Arc::new(OpenAiSpeechProvider::new(resolved.openai_speech.clone())),
         Arc::new(ollama),
+        Arc::new(Audio8Provider::new(
+            paths.app_data.clone(),
+            Audio8Config::default(),
+        )),
     ]
 }
 
@@ -230,12 +235,12 @@ mod tests {
     }
 
     #[test]
-    fn alle_fuenf_anbieter_sind_immer_registriert_auch_unkonfiguriert() {
+    fn alle_sechs_anbieter_sind_immer_registriert_auch_unkonfiguriert() {
         let reg =
             build_registry(&resolved(&TtsProvidersSettings::default()), &paths(), None).unwrap();
         assert_eq!(
             ids(&reg),
-            ["fish", "piper", "phonon", "openai-speech", "ollama-speech"]
+            ["fish", "piper", "phonon", "openai-speech", "ollama-speech", "audio8"]
         );
     }
 
@@ -424,7 +429,7 @@ mod tests {
         host.sync(&resolved(&s), &paths());
         assert!(host.registry().get("openai-speech").is_some());
         assert!(host.registry().get("kokoro").is_none(), "kein Rest");
-        assert_eq!(host.registry().list().len(), 5);
+        assert_eq!(host.registry().list().len(), 6);
     }
 
     /// Nebenläufigkeit: der Neuaufbau während eines laufenden Auftrags lässt

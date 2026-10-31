@@ -112,6 +112,7 @@
 //! P2/P3 — der Vertrag ist trotzdem vollständig und getestet.
 #![allow(dead_code, unused_imports)]
 
+pub mod audio8;
 pub mod bench;
 pub mod builtin;
 pub mod contract;
@@ -136,6 +137,7 @@ pub(crate) mod phonon_fake;
 #[cfg(test)]
 pub(crate) mod test_http;
 
+pub use audio8::{Audio8Config, Audio8Provider};
 pub use builtin::{FishProvider, PiperProvider, SynthFn};
 pub use contract::{
     guarded, send_chunk, sink_stall_count, AudioChunk, AudioClip, AudioEncoding, AudioFormat,
