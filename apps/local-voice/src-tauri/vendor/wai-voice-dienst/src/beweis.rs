@@ -9,7 +9,9 @@
 //! deshalb wie ein Geheimnis zu schützen (nur Benutzer, Tresor).
 //!
 //! Umgekehrt beweist der Dienst in `willkommen` mit [`dienst_erzeugen`], dass er den Fingerabdruck
-//! kennt (eigener Kontext). Die App sendet weder Audio noch Text, bevor sie diesen Gegenbeweis
+//! kennt (eigener Kontext). Der Gegenbeweis bindet zusätzlich den Zufall der App aus `hallo`;
+//! sonst könnte ein Prozess, der Pipe oder Socket belegt, ein mitgeschnittenes
+//! `gruss`/`willkommen`-Paar später wieder abspielen. Die App sendet weder Audio noch Text, bevor sie diesen Gegenbeweis
 //! geprüft hat; ein Prozess, der die Pipe vorbelegt, kennt den Fingerabdruck nicht.
 
 use sha2::{Digest, Sha256};
@@ -68,22 +70,28 @@ pub fn pruefen(fingerabdruck: &[u8; 32], zufall_hex: &str, client: &str, beweis_
 /// Gegenbeweis des Dienstes in `willkommen`: zeigt der App, dass der Dienst den Fingerabdruck ihres
 /// Zugangs kennt, also kein fremder Prozess die Pipe vorbelegt hat. Eigener Kontext, damit ein
 /// App-Beweis nie als Dienstbeweis zurückgespielt werden kann.
-pub fn dienst_erzeugen(fingerabdruck: &[u8; 32], zufall_hex: &str, client: &str) -> String {
-    hex(&hmac(
-        fingerabdruck,
-        &nachricht_mit(KONTEXT_DIENST, zufall_hex, client),
-    ))
+pub fn dienst_erzeugen(
+    fingerabdruck: &[u8; 32],
+    zufall_hex: &str,
+    app_zufall_hex: &str,
+    client: &str,
+) -> String {
+    let mut n = nachricht_mit(KONTEXT_DIENST, zufall_hex, client);
+    n.push(0);
+    n.extend_from_slice(app_zufall_hex.as_bytes());
+    hex(&hmac(fingerabdruck, &n))
 }
 
 /// Prüft den Gegenbeweis des Dienstes in konstanter Zeit (App-Seite).
 pub fn dienst_pruefen(
     fingerabdruck: &[u8; 32],
     zufall_hex: &str,
+    app_zufall_hex: &str,
     client: &str,
     beweis_hex: &str,
 ) -> bool {
     gleich(
-        &dienst_erzeugen(fingerabdruck, zufall_hex, client),
+        &dienst_erzeugen(fingerabdruck, zufall_hex, app_zufall_hex, client),
         beweis_hex,
     )
 }
@@ -135,9 +143,14 @@ mod tests {
         let fp = fingerabdruck("k");
         let z = "ab".repeat(32);
         let app = erzeugen(&fp, &z, "corporate-llm");
-        let dienst = dienst_erzeugen(&fp, &z, "corporate-llm");
+        let a = "cd".repeat(32);
+        let dienst = dienst_erzeugen(&fp, &z, &a, "corporate-llm");
         assert_ne!(app, dienst);
-        assert!(dienst_pruefen(&fp, &z, "corporate-llm", &dienst));
-        assert!(!dienst_pruefen(&fp, &z, "corporate-llm", &app));
+        assert!(dienst_pruefen(&fp, &z, &a, "corporate-llm", &dienst));
+        assert!(!dienst_pruefen(&fp, &z, &a, "corporate-llm", &app));
+        assert!(
+            !dienst_pruefen(&fp, &z, &"ef".repeat(32), "corporate-llm", &dienst),
+            "anderer App-Zufall: alter Gegenbeweis gilt nicht"
+        );
     }
 }

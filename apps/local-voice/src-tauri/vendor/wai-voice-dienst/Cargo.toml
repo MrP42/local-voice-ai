@@ -1,4 +1,4 @@
-# Erzeugt von scripts/vendor-wai-voice-dienst.py aus https://github.com/MrP42/wai-sdk (crates/wai-voice-dienst, Commit a624d6900928). Nicht von Hand ändern.
+# Erzeugt von scripts/vendor-wai-voice-dienst.py aus https://github.com/MrP42/wai-sdk (crates/wai-voice-dienst, Commit ee5eee00aa3e). Nicht von Hand ändern.
 [package]
 name = "wai-voice-dienst"
 version = "0.1.0"

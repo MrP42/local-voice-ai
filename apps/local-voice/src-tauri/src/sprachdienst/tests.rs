@@ -220,7 +220,7 @@ struct Kunde {
     dec: Decoder,
     rest: Vec<u8>,
     /// Fingerabdruck, Zufall und Client des letzten `hallo` (für den Gegenbeweis).
-    angemeldet: Option<([u8; 32], String, String)>,
+    angemeldet: Option<([u8; 32], String, String, String)>,
     /// Alles, was über die Leitung ging (beide Richtungen), für die Prüfung auf Inhalte.
     mitschnitt: Vec<u8>,
 }
@@ -330,20 +330,22 @@ impl Kunde {
     async fn hallo(&mut self, zugang: &str, client: &str, schluessel: &str) {
         let zufall = self.gruss().await;
         let fp = beweis::fingerabdruck(schluessel);
-        self.angemeldet = Some((fp, zufall.clone(), client.to_string()));
+        let app_zufall = "ab".repeat(32);
+        self.angemeldet = Some((fp, zufall.clone(), app_zufall.clone(), client.to_string()));
         self.senden(&AnDienst::Hallo {
             protokoll: PROTOKOLL,
             client: client.into(),
             zugang: zugang.into(),
             beweis: beweis::erzeugen(&fp, &zufall, client),
+            zufall: app_zufall,
         })
         .await;
     }
 
     /// Stimmt der Gegenbeweis des Dienstes in `willkommen` (so wie ihn die App prüft)?
     fn gegenbeweis_gueltig(&self, beweis_hex: &str) -> bool {
-        let (fp, zufall, client) = self.angemeldet.as_ref().expect("hallo gesendet");
-        beweis::dienst_pruefen(fp, zufall, client, beweis_hex)
+        let (fp, zufall, app_zufall, client) = self.angemeldet.as_ref().expect("hallo gesendet");
+        beweis::dienst_pruefen(fp, zufall, app_zufall, client, beweis_hex)
     }
 
     /// Handschlag mit dem richtigen Schlüssel; erwartet `willkommen` mit gültigem Gegenbeweis.
@@ -461,19 +463,30 @@ async fn handschlag_mit_hmac_beweis_meldet_rechte_und_engines() {
         } => {
             assert!(k.gegenbeweis_gueltig(&gegenbeweis));
             assert_eq!(gegenbeweis.len(), 64);
-            let (_, zufall, _) = k.angemeldet.clone().unwrap();
+            let (_, zufall, app_zufall, _) = k.angemeldet.clone().unwrap();
             assert!(
-                !beweis::dienst_pruefen(&beweis::fingerabdruck("anderer"), &zufall, CLIENT, &gegenbeweis),
+                !beweis::dienst_pruefen(&beweis::fingerabdruck("anderer"), &zufall, &app_zufall, CLIENT, &gegenbeweis),
                 "wer den Schlüssel nicht kennt, prüft den Gegenbeweis nicht erfolgreich (App weist ab)"
             );
             assert!(
                 !beweis::dienst_pruefen(
                     &beweis::fingerabdruck(SCHLUESSEL),
                     &zufall,
+                    &app_zufall,
                     "anderer-client",
                     &gegenbeweis
                 ),
                 "der Gegenbeweis gilt nur für diesen Client"
+            );
+            assert!(
+                !beweis::dienst_pruefen(
+                    &beweis::fingerabdruck(SCHLUESSEL),
+                    &zufall,
+                    &"cd".repeat(32),
+                    CLIENT,
+                    &gegenbeweis
+                ),
+                "der Gegenbeweis gilt nur für den App-Zufall dieser Verbindung (kein Replay)"
             );
             assert_ne!(
                 gegenbeweis,
@@ -539,6 +552,7 @@ async fn mitgeschnittener_beweis_gilt_nur_fuer_seine_verbindung() {
         client: CLIENT.into(),
         zugang: z.zugang.clone(),
         beweis: beweis_a,
+        zufall: "ab".repeat(32),
     })
     .await;
     assert_eq!(b.fehler().await, (0, code::SCHLUESSEL_UNGUELTIG.into()));
@@ -554,13 +568,29 @@ async fn falsche_protokollversion_und_vertragsbrueche_beenden_die_verbindung() {
     k.json(
         0,
         &format!(
-            r#"{{"t":"hallo","protokoll":99,"client":"{CLIENT}","zugang":"{}","beweis":"{}"}}"#,
+            r#"{{"t":"hallo","protokoll":99,"client":"{CLIENT}","zugang":"{}","beweis":"{}","zufall":"{}"}}"#,
+            z.zugang,
+            "a".repeat(64),
+            "b".repeat(64)
+        ),
+    )
+    .await;
+    assert_eq!(k.fehler().await, (0, code::VERSION_INKOMPATIBEL.into()));
+    k.leitung_zu().await;
+
+    // `hallo` ohne `zufall` der App ist ungueltig.
+    let mut k = st.verbinden();
+    k.gruss().await;
+    k.json(
+        0,
+        &format!(
+            r#"{{"t":"hallo","protokoll":1,"client":"{CLIENT}","zugang":"{}","beweis":"{}"}}"#,
             z.zugang,
             "a".repeat(64)
         ),
     )
     .await;
-    assert_eq!(k.fehler().await, (0, code::VERSION_INKOMPATIBEL.into()));
+    assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()));
     k.leitung_zu().await;
 
     // Start vor dem Handschlag.
@@ -1747,6 +1777,7 @@ async fn ein_unlesbarer_fingerabdruck_ist_ein_ungueltiger_zugang() {
         client: CLIENT.into(),
         zugang: "z-kaputt00000".into(),
         beweis: beweis::erzeugen(&nullschluessel, &zufall, CLIENT),
+        zufall: "ab".repeat(32),
     })
     .await;
     assert_eq!(k.fehler().await, (0, code::SCHLUESSEL_UNGUELTIG.into()));

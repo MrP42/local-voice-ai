@@ -72,11 +72,13 @@ pub struct Wortpaar {
 #[serde(tag = "t", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnDienst {
     /// `zugang`: öffentliche Kennung des Zugangs; `beweis`: Hex-HMAC aus [`crate::beweis`].
+    /// `zufall`: 32 Bytes der App als Hex, je Verbindung neu; geht in den Gegenbeweis ein.
     Hallo {
         protokoll: u16,
         client: String,
         zugang: String,
         beweis: String,
+        zufall: String,
     },
     Start {
         strom: u32,
@@ -258,12 +260,14 @@ pub fn pruefen(m: &AnDienst) -> Result<(), String> {
             client,
             zugang,
             beweis,
+            zufall,
         } => {
             if *protokoll != PROTOKOLL {
                 return Err("protokoll".into());
             }
             kennung(client, "client")?;
             kennung(zugang, "zugang")?;
+            hex(zufall, 64, "zufall")?;
             hex(beweis, 64, "beweis")
         }
         AnDienst::Start {
@@ -534,6 +538,7 @@ mod tests {
             client: "corporate-llm".into(),
             zugang: "z1".into(),
             beweis: "a".repeat(64),
+            zufall: "b".repeat(64),
         }
     }
 

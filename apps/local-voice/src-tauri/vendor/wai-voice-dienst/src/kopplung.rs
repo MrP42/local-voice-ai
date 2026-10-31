@@ -31,13 +31,23 @@ use crate::PROTOKOLL;
 const KONTEXT: &[u8] = b"wai-sprache/1/kopplung";
 
 /// Ergebnis einer Kopplung auf beiden Seiten.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Ergebnis {
     /// Zugangsschlüssel als Hex (64 Zeichen); die App legt ihn im Tresor ab, der Dienst speichert
     /// nur [`crate::beweis::fingerabdruck`] davon.
     pub schluessel: String,
     /// Sechsstelliger Vergleichscode, den beide Seiten anzeigen.
     pub vergleich: String,
+}
+
+/// Ohne Schlüssel, damit er nie über `{:?}` in Logs oder Panikmeldungen landet.
+impl std::fmt::Debug for Ergebnis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ergebnis")
+            .field("schluessel", &"…")
+            .field("vergleich", &self.vergleich)
+            .finish()
+    }
 }
 
 /// Fehlgeschlagener Austausch (Zufall nicht verfügbar, Schlüssel ungültig, Zusage passt nicht).

@@ -443,8 +443,9 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                 client,
                 zugang,
                 beweis,
+                zufall,
                 ..
-            } => self.hallo(&client, &zugang, &beweis),
+            } => self.hallo(&client, &zugang, &beweis, &zufall),
             AnDienst::Koppeln {
                 client,
                 anzeige,
@@ -478,7 +479,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
 
     // --- Handschlag und Kopplung ------------------------------------------------------------------
 
-    fn hallo(&mut self, client: &str, zugang: &str, beweis_hex: &str) -> Res {
+    fn hallo(&mut self, client: &str, zugang: &str, beweis_hex: &str, app_zufall: &str) -> Res {
         let z = self.ctx.zugaenge.get(zugang);
         // Auch für einen unbekannten Zugang wird gerechnet: gleiche Zeit, gleiche Antwort.
         // Ein unlesbarer Fingerabdruck macht den Zugang ungültig; gerechnet wird trotzdem, mit
@@ -521,7 +522,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             engines: self.ctx.engine.engines(),
             // Gegenbeweis erst nach erfolgreich geprüftem `hallo`: wer den Fingerabdruck nicht
             // kennt (ein Prozess, der den Endpunkt vorbelegt hat), kann ihn nicht erzeugen.
-            beweis: beweis::dienst_erzeugen(&fp, &self.zufall, client),
+            beweis: beweis::dienst_erzeugen(&fp, &self.zufall, app_zufall, client),
         };
         self.senden(0, &willkommen)
     }

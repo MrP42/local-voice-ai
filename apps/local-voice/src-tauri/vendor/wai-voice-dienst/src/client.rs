@@ -52,13 +52,33 @@ pub struct Angemeldet {
     pub engines: Engines,
 }
 
+/// 32 Zufallsbytes als Hex (Zufall der App in `hallo`).
+fn zufall_hex() -> Result<String, ClientFehler> {
+    use ring::rand::SecureRandom;
+    let mut b = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut b)
+        .map_err(|_| ClientFehler::Vertrag("zufall".into()))?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
 /// Ergebnis einer Kopplung.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Gekoppelt {
     /// Öffentliche Kennung für künftige `hallo`.
     pub zugang: String,
     /// Zugangsschlüssel (Hex); gehört in den Tresor, nie in Dateien oder Logs.
     pub schluessel: String,
+}
+
+/// Ohne Schlüssel, damit er nie über `{:?}` in Logs oder Panikmeldungen landet.
+impl std::fmt::Debug for Gekoppelt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Gekoppelt")
+            .field("zugang", &self.zugang)
+            .field("schluessel", &"…")
+            .finish()
+    }
 }
 
 /// Ein empfangenes Ereignis.
@@ -208,12 +228,14 @@ impl<S: Read + Write> Verbindung<S> {
         schluessel: &str,
     ) -> Result<Angemeldet, ClientFehler> {
         let zufall = self.gruss()?;
+        let app_zufall = zufall_hex()?;
         let fp = beweis::fingerabdruck(schluessel);
         self.senden(&AnDienst::Hallo {
             protokoll: crate::PROTOKOLL,
             client: client.into(),
             zugang: zugang.into(),
             beweis: beweis::erzeugen(&fp, &zufall, client),
+            zufall: app_zufall.clone(),
         })?;
         match self.steuer()? {
             AnApp::Willkommen {
@@ -224,7 +246,7 @@ impl<S: Read + Write> Verbindung<S> {
                 beweis: gegen,
                 ..
             } => {
-                if !beweis::dienst_pruefen(&fp, &zufall, client, &gegen) {
+                if !beweis::dienst_pruefen(&fp, &zufall, &app_zufall, client, &gegen) {
                     return Err(ClientFehler::Vertrag("dienst_beweis".into()));
                 }
                 Ok(Angemeldet {
@@ -465,7 +487,10 @@ mod tests {
             log.push(format!("{:?}", std::mem::discriminant(&m)));
             match m {
                 AnDienst::Hallo {
-                    client, beweis: b, ..
+                    client,
+                    beweis: b,
+                    zufall: app_zufall,
+                    ..
                 } => {
                     if beweis::pruefen(&fp, &zufall(), &client, &b) {
                         sitzung.anmelden();
@@ -481,7 +506,12 @@ mod tests {
                                     stimme: "s".into(),
                                     lokal: true,
                                 },
-                                beweis: beweis::dienst_erzeugen(&fp, &zufall(), &client),
+                                beweis: beweis::dienst_erzeugen(
+                                    &fp,
+                                    &zufall(),
+                                    &app_zufall,
+                                    &client,
+                                ),
                             },
                         );
                     } else {
@@ -684,6 +714,46 @@ mod tests {
         s.write_all(&r.kodieren().unwrap()).unwrap();
     }
 
+    /// Liest das `hallo` der App (Dienstseite) und liefert ihren Zufall.
+    fn lies_hallo(b: &mut UnixStream) -> String {
+        let mut d = Decoder::new(Rolle::Dienst);
+        let mut buf = [0u8; 1024];
+        loop {
+            if let Some(r) = d.naechster().unwrap() {
+                let m: AnDienst = serde_json::from_slice(&r.nutzlast).unwrap();
+                let AnDienst::Hallo { zufall, .. } = m else {
+                    panic!("hallo erwartet");
+                };
+                return zufall;
+            }
+            let n = b.read(&mut buf).unwrap();
+            assert!(n > 0);
+            let mut rest = &buf[..n];
+            while !rest.is_empty() {
+                let k = d.einspeisen(rest).unwrap();
+                rest = &rest[k..];
+                if k == 0 {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn willkommen(beweis: String) -> AnApp {
+        AnApp::Willkommen {
+            protokoll: crate::PROTOKOLL,
+            dienst: "t".into(),
+            version: "0".into(),
+            rechte: vec![Recht::Hoeren],
+            engines: Engines {
+                erkennung: "e".into(),
+                stimme: "s".into(),
+                lokal: true,
+            },
+            beweis,
+        }
+    }
+
     fn angemeldet() -> (Verbindung<UnixStream>, UnixStream) {
         let (a, mut b) = UnixStream::pair().unwrap();
         sende(
@@ -693,28 +763,22 @@ mod tests {
                 zufall: zufall(),
             },
         );
+        let h = thread::spawn(move || {
+            let mut v = Verbindung::neu(a);
+            v.anmelden("corporate-llm", "z-1", "k").unwrap();
+            v
+        });
+        let app_zufall = lies_hallo(&mut b);
         sende(
             &mut b,
-            &AnApp::Willkommen {
-                protokoll: crate::PROTOKOLL,
-                dienst: "t".into(),
-                version: "0".into(),
-                rechte: vec![Recht::Hoeren],
-                engines: Engines {
-                    erkennung: "e".into(),
-                    stimme: "s".into(),
-                    lokal: true,
-                },
-                beweis: beweis::dienst_erzeugen(
-                    &beweis::fingerabdruck("k"),
-                    &zufall(),
-                    "corporate-llm",
-                ),
-            },
+            &willkommen(beweis::dienst_erzeugen(
+                &beweis::fingerabdruck("k"),
+                &zufall(),
+                &app_zufall,
+                "corporate-llm",
+            )),
         );
-        let mut v = Verbindung::neu(a);
-        v.anmelden("corporate-llm", "z-1", "k").unwrap();
-        (v, b)
+        (h.join().unwrap(), b)
     }
 
     #[test]
@@ -834,6 +898,25 @@ mod tests {
                 beweis: "0".repeat(64),
             },
         );
+        let mut v = Verbindung::neu(a);
+        let e = v.anmelden("corporate-llm", "z-1", "k").unwrap_err();
+        assert_eq!(e.to_string(), "Vertrag verletzt: dienst_beweis");
+        // Wiedergabe: ein Gegenbeweis zu einem fremden App-Zufall gilt nicht.
+        let (a, mut b) = UnixStream::pair().unwrap();
+        sende(
+            &mut b,
+            &AnApp::Gruss {
+                protokoll: crate::PROTOKOLL,
+                zufall: zufall(),
+            },
+        );
+        let alt = beweis::dienst_erzeugen(
+            &beweis::fingerabdruck("k"),
+            &zufall(),
+            &"ee".repeat(32),
+            "corporate-llm",
+        );
+        sende(&mut b, &willkommen(alt));
         let mut v = Verbindung::neu(a);
         let e = v.anmelden("corporate-llm", "z-1", "k").unwrap_err();
         assert_eq!(e.to_string(), "Vertrag verletzt: dienst_beweis");

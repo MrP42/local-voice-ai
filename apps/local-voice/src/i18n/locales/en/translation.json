@@ -5057,7 +5057,7 @@
       },
       "pairing": {
         "title": "Pair this app?",
-        "body": "<name>{{name}}</name> wants to use the speech service. Does the app show the same code? Pair only if it matches exactly.",
+        "body": "<name>{{name}}</name> wants to use the speech service. Does the app show the same code? Pair only if it matches exactly. Please also confirm in the app.",
         "client": "Identifier:",
         "warnings": {
           "duplicateName": "An app with this name is already paired or waiting. Make sure it is not an imitation.",
