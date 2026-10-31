@@ -8,9 +8,23 @@ import {
   Settings,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { type } from "@tauri-apps/plugin-os";
 import { useSettings } from "@/hooks/useSettings";
+import { formatKeyCombination, type OSType } from "@/lib/utils/keyboard";
 import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
+
+/** Betriebssystem fuer die Tastenanzeige (Mac: Symbole); ohne Tauri „unknown“. */
+const currentOs = (): OSType => {
+  try {
+    const os = type();
+    return os === "macos" || os === "windows" || os === "linux"
+      ? os
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
+};
 
 export function WorkspaceHome({
   onNavigate,
@@ -54,7 +68,11 @@ export function WorkspaceHome({
             {t("workspace.dictateHint")}
           </p>
           {shortcut ? (
-            <kbd className="workspace-shortcut">{shortcut}</kbd>
+            <kbd className="workspace-shortcut">
+              {currentOs() === "macos"
+                ? formatKeyCombination(shortcut, "macos")
+                : shortcut}
+            </kbd>
           ) : (
             <p className="text-sm mt-2">{t("workspace.shortcutMissing")}</p>
           )}

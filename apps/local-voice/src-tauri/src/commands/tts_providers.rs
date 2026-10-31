@@ -912,7 +912,7 @@ mod tests {
             ),
             before
         );
-        assert_eq!(s.tts_engine, "fish", "der Standard bleibt");
+        assert_eq!(s.tts_engine, before.0, "der Standard bleibt");
     }
 
     /// Beschreibung: ein Anbieter mit Opt-in, Lizenz-Zustimmung und aktuellem Modell.
