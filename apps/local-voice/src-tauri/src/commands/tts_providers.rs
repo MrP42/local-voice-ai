@@ -671,7 +671,7 @@ mod tests {
         let ids: Vec<&str> = entries.iter().map(|e| e.descriptor.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["fish", "piper", "phonon", "openai-speech", "ollama-speech"]
+            ["fish", "piper", "phonon", "openai-speech", "ollama-speech", "audio8"]
         );
         let fish = &entries[0];
         assert!(fish.selected && fish.enabled && fish.blocked.is_none());
