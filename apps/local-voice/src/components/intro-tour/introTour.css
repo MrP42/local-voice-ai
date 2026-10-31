@@ -46,6 +46,7 @@
   width: min(720px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   overflow: auto;
+  scroll-padding-block: 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   background: var(--colorNeutralBackground1, #fff);
@@ -84,6 +85,8 @@
   max-height: calc(100vh - 32px);
   overflow: auto;
   overscroll-behavior: contain;
+  /* Fokussierte Elemente samt Fokusring ganz in den Ausschnitt holen. */
+  scroll-padding-block: 8px;
   animation: lv-tour-fade 0.2s ease-out;
 }
 
@@ -196,6 +199,12 @@ ol.lv-tour__list {
   border: 1px solid var(--colorNeutralStrokeAccessible, #616161);
   background: var(--colorNeutralBackground1, #fff);
   color: inherit;
+}
+
+/* Browser-Standard ist halbtransparente Schriftfarbe (hell nur ~3:1). */
+.lv-tour__try::placeholder {
+  color: var(--colorNeutralForeground3, #616161);
+  opacity: 1;
 }
 
 .lv-tour__try:disabled {

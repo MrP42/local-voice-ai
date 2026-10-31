@@ -36,7 +36,8 @@ const STEPS = [
 ];
 
 /** Farbrechnung im Browser (per `new Function` geladen): Alpha wird über
-    alle Ebenen von der Wurzel abwärts verrechnet. */
+    die Hintergründe der DOM-Vorfahren von der Wurzel abwärts verrechnet
+    (keine fremden, überlagernden Ebenen). */
 const COLOR_LIB = String.raw`
 const parse = (c) => {
   const m = c && c.match(/rgba?\(([^)]+)\)/);
@@ -82,7 +83,7 @@ type Measure = {
 
 /** Kontrastpunkte des aktuellen Schritts; erwartete, aber fehlende
     Messpunkte werden gemeldet (kein stilles Überspringen). */
-const measureContrast = (page: Page, expected: string[]) =>
+const measureContrast = (page: Page, expected: Record<string, number>) =>
   page.evaluate(
     ({ lib, expected }) => {
       const L = new Function(lib)();
@@ -183,6 +184,21 @@ const measureContrast = (page: Page, expected: string[]) =>
           getComputedStyle(field).borderTopColor,
           field.parentElement!,
         );
+      if (field) {
+        push(
+          "Platzhalter / Übungsfeld",
+          "text",
+          getComputedStyle(field, "::placeholder").color,
+          field,
+        );
+        if ((field as HTMLTextAreaElement).value)
+          push(
+            "Übungstext / Übungsfeld",
+            "text",
+            getComputedStyle(field).color,
+            field,
+          );
+      }
       const spot = document.querySelector<HTMLElement>(".lv-tour__spot");
       if (spot) {
         const outline = getComputedStyle(spot).outlineColor;
@@ -224,40 +240,107 @@ const measureContrast = (page: Page, expected: string[]) =>
             L.over(shade, below),
           );
       }
-      const names = out.map((m) => m.name);
-      const missing = expected.filter(
-        (e) => !names.some((n) => n.startsWith(e)),
-      );
-      return { out, missing };
+      // Anzahl je Art: Name bis „#“ bzw. „ /“.
+      const counts: Record<string, number> = {};
+      for (const m of out) {
+        const k = m.name.split(/#| \//)[0];
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+      const keys = new Set([...Object.keys(counts), ...Object.keys(expected)]);
+      const mismatch = [...keys]
+        .filter((k) => (counts[k] ?? 0) !== (expected[k] ?? 0))
+        .map(
+          (k) =>
+            `${k}: erwartet ${expected[k] ?? 0}, gemessen ${counts[k] ?? 0}`,
+        );
+      return { out, counts, mismatch };
     },
     { lib: COLOR_LIB, expected },
   );
 
-const BASE = [
-  "Schrittlabel",
-  "Titel",
-  "Text",
-  "Knopf",
-  "aktiver Schrittpunkt",
-  "Hauptknopf-Rand",
-];
-const SPOT = [
-  "Spotlight-Rahmen / hervorgehobene",
-  "Spotlight-Rahmen / abgedunkelte",
-];
-const EXPECTED: Record<string, string[]> = {
-  Willkommen: [...BASE, "Fortschritt"],
-  Diktieren: [...BASE, "Hinweis"],
-  Üben: [...BASE, "Hinweis", "Feldbeschriftung", "Übungsfeld-Rahmen"],
-  Seiten: [...BASE, ...SPOT],
-  Werkzeuge: [...BASE, ...SPOT],
-  Fertig: BASE,
+/** Erwartete Messpunkte je Zustand, mit Anzahl (nicht nur Arten). */
+const EXPECTED: Record<string, Record<string, number>> = {
+  Laden: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 1,
+    Hinweis: 1,
+    Fortschritt: 1,
+    Knopf: 1,
+    "aktiver Schrittpunkt": 1,
+    Balken: 1,
+  },
+  Willkommen: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 1,
+    Fortschritt: 1,
+    Knopf: 2,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+  },
+  Diktieren: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 3,
+    Hinweis: 1,
+    Knopf: 3,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+  },
+  Üben: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 1,
+    Hinweis: 1,
+    Feldbeschriftung: 1,
+    Knopf: 3,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+    "Übungsfeld-Rahmen": 1,
+    Platzhalter: 1,
+    Übungstext: 1,
+  },
+  Seiten: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 4,
+    Knopf: 3,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+    "Spotlight-Rahmen": 2,
+  },
+  Werkzeuge: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 4,
+    Knopf: 3,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+    "Spotlight-Rahmen": 2,
+  },
+  Fertig: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 1,
+    Knopf: 2,
+    "aktiver Schrittpunkt": 1,
+    "Hauptknopf-Rand": 1,
+  },
+  Fehler: {
+    Schrittlabel: 1,
+    Titel: 1,
+    Text: 1,
+    Fehler: 1,
+    Knopf: 3,
+    "aktiver Schrittpunkt": 1,
+  },
 };
 
 const checkContrast = async (
   page: Page,
   label: string,
-  expected: string[],
+  state: string,
   all: unknown[],
 ) => {
   await expect(tour(page).getByRole("dialog")).toBeVisible();
@@ -269,11 +352,14 @@ const checkContrast = async (
     (document.activeElement as HTMLElement | null)?.blur(),
   );
   await page.waitForTimeout(400); // Übergänge abwarten
-  const { out, missing } = await measureContrast(page, expected);
+  const expected = EXPECTED[state] ?? {};
+  const { out, counts, mismatch } = await measureContrast(page, expected);
+  COUNTS[state] = counts;
+  const total = Object.values(expected).reduce((a, b) => a + b, 0);
   log(
-    `${label}: alle ${expected.length} erwarteten Messpunktarten vorhanden`,
-    missing.length === 0,
-    { missing, messpunkte: out.length },
+    `${label}: genau die erwarteten ${total} Messpunkte (Anzahl je Art)`,
+    mismatch.length === 0,
+    { mismatch, counts },
   );
   for (const m of out as Measure[]) {
     const min = m.kind === "text" ? 4.5 : 3;
@@ -281,6 +367,7 @@ const checkContrast = async (
     log(`${label} ${m.name} ≥ ${min}:1`, m.ratio >= min, m);
   }
 };
+const COUNTS: Record<string, Record<string, number>> = {};
 
 /** Fokus-relevante Eigenschaften des Elements (auch ::after). */
 const FOCUS_STYLE = `(el) => {
@@ -319,12 +406,29 @@ const focusDelta = (page: Page, rest: Record<string, string>) =>
       const now: Record<string, string> = style(el);
       const outside = L.surface(el.parentElement);
       const inside = L.surface(el);
-      const changed = Object.keys(now).filter((k) => now[k] !== rest[k]);
-      const parts = changed.flatMap((k) => {
+      // Schatten je Komponente vergleichen: nur neue/geänderte Komponenten
+      // zählen zum Fokus-Indikator, unveränderte (z. B. Hauptknopf-Rand)
+      // nicht.
+      const split = (v: string) =>
+        v === "none" ? [] : v.split(/,(?![^(]*\))/).map((x) => x.trim());
+      const restShadow = new Set(split(rest.boxShadow));
+      const newShadow = split(now.boxShadow).filter((c) => !restShadow.has(c));
+      const changed = Object.keys(now).filter((k) =>
+        k === "boxShadow" ? newShadow.length > 0 : now[k] !== rest[k],
+      );
+      const colorsOf = (k: string): string[] => {
+        if (k === "boxShadow")
+          return newShadow
+            .filter((c) => !/\b0px 0px 0px 0px\b/.test(c))
+            .map((c) => c.match(/rgba?\([^)]+\)/)?.[0] ?? "")
+            .filter(Boolean);
         const v = now[k];
-        if (/^none\b/.test(v) || /\b0px\b(?! )/.test(v.split(" ")[1] ?? ""))
-          return [];
-        return (v.match(/rgba?\([^)]+\)/g) ?? []).map((c) => {
+        const [style, width] = v.split(" ");
+        if (style === "none" || parseFloat(width) === 0) return [];
+        return v.match(/rgba?\([^)]+\)/g) ?? [];
+      };
+      const parts = changed.flatMap((k) =>
+        colorsOf(k).map((c) => {
           const col = L.parse(c);
           const o = L.over(col, outside);
           const i = L.over(col, inside);
@@ -335,14 +439,15 @@ const focusDelta = (page: Page, rest: Record<string, string>) =>
             gegenAussen: L.ratio(o, outside),
             gegenInnen: L.ratio(i, inside),
           };
-        });
-      });
+        }),
+      );
       const bester = parts
         .filter((p) => p.alpha >= 0.9)
         .reduce((m, p) => Math.max(m, p.gegenAussen, p.gegenInnen), 0);
       return {
         element: el.tagName === "TEXTAREA" ? "Übungsfeld" : el.innerText.trim(),
         geaendert: changed,
+        neueSchatten: newShadow,
         teile: parts,
         bester,
       };
@@ -373,6 +478,11 @@ const tabCycle = async (page: Page) => {
         );
         const el = document.activeElement as HTMLElement;
         const r = el.getBoundingClientRect();
+        // Sichtbar = im Fenster UND im sichtbaren Bereich des scrollenden
+        // Dialogs (clientTop/clientHeight ohne Rahmen und Scrollleiste).
+        const b = (box as HTMLElement).getBoundingClientRect();
+        const top = b.top + (box as HTMLElement).clientTop;
+        const bottom = top + (box as HTMLElement).clientHeight;
         return {
           index: items.indexOf(el),
           name: el.tagName === "TEXTAREA" ? "Übungsfeld" : el.innerText.trim(),
@@ -380,7 +490,9 @@ const tabCycle = async (page: Page) => {
             r.top >= 0 &&
             r.left >= 0 &&
             r.bottom <= window.innerHeight + 0.5 &&
-            r.right <= window.innerWidth + 0.5,
+            r.right <= window.innerWidth + 0.5 &&
+            r.top >= top - 0.5 &&
+            r.bottom <= bottom + 0.5,
         };
       }),
     );
@@ -425,25 +537,14 @@ for (const theme of ["light", "dark"] as const) {
     await progress(page, 40);
     const all: unknown[] = [];
     const focus: unknown[] = [];
-    await checkContrast(
-      page,
-      `${theme} Willkommen (lädt)`,
-      [
-        "Schrittlabel",
-        "Titel",
-        "Text",
-        "Fortschritt",
-        "Balken / Schiene",
-        "Knopf",
-        "aktiver Schrittpunkt",
-      ],
-      all,
-    );
+    await checkContrast(page, `${theme} Willkommen (lädt)`, "Laden", all);
     await checkFocus(page, `${theme} Willkommen (lädt)`, focus);
     await ready(page);
     for (let s = 0; s < STEPS.length; s++) {
       const label = `${theme} ${STEPS[s]}`;
-      await checkContrast(page, label, EXPECTED[STEPS[s]], all);
+      if (STEPS[s] === "Üben")
+        await tour(page).getByRole("textbox").fill("Heute ist ein guter Tag.");
+      await checkContrast(page, label, STEPS[s], all);
       await checkFocus(page, label, focus);
       if (s < STEPS.length - 1) await next(page, s);
     }
@@ -452,6 +553,10 @@ for (const theme of ["light", "dark"] as const) {
       JSON.stringify(all, null, 2),
     );
     writeFileSync(`${OUT}/fokus-${theme}.json`, JSON.stringify(focus, null, 2));
+    writeFileSync(
+      `${OUT}/anzahl-${theme}.json`,
+      JSON.stringify(COUNTS, null, 2),
+    );
   });
 
   test(`Fehlerzustand: Kontrast, Fokus, Knopftexte (${theme})`, async ({
@@ -470,19 +575,7 @@ for (const theme of ["light", "dark"] as const) {
         .getByRole("button", { name: "Download wiederholen" })
         .evaluate((el) => el === document.activeElement),
     );
-    await checkContrast(
-      page,
-      `${theme} Fehler`,
-      [
-        "Schrittlabel",
-        "Titel",
-        "Text",
-        "Fehler",
-        "Knopf",
-        "aktiver Schrittpunkt",
-      ],
-      all,
-    );
+    await checkContrast(page, `${theme} Fehler`, "Fehler", all);
     const buttons = await tour(page).getByRole("button").allInnerTexts();
     log(
       "Fehlerknöpfe: „Download wiederholen“ und „Anderes Modell auswählen“",
@@ -517,52 +610,110 @@ for (const z of [
 ]) {
   test.describe(z.name, () => {
     test.use({ viewport: { width: z.w, height: z.h }, deviceScaleFactor: 2 });
-    test("alle Schritte: kein waagerechtes Scrollen, Tab-Folge erreicht alles sichtbar", async ({
-      page,
-    }) => {
+
+    /** Layout, Tab-Folge und Erreichbarkeit aller Inhalte im aktuellen Zustand. */
+    const checkZoom = async (page: Page, label: string) => {
+      await page.waitForTimeout(300);
+      const m = await page.evaluate(() => {
+        const box = document.querySelector<HTMLElement>("[role=dialog]")!;
+        const r = box.getBoundingClientRect();
+        return {
+          seiteWaagerecht:
+            document.documentElement.scrollWidth > window.innerWidth,
+          dialogWaagerecht: box.scrollWidth > box.clientWidth + 1,
+          imFenster:
+            r.left >= 0 &&
+            r.top >= 0 &&
+            r.right <= window.innerWidth + 0.5 &&
+            r.bottom <= window.innerHeight + 0.5,
+          innenScroll: box.scrollHeight > box.clientHeight,
+          overflowY: getComputedStyle(box).overflowY,
+        };
+      });
+      log(
+        `${z.name} ${label}: kein waagerechtes Scrollen`,
+        !m.seiteWaagerecht && !m.dialogWaagerecht,
+        m,
+      );
+      log(`${z.name} ${label}: Dialog im Fenster`, m.imFenster, m);
+      if (m.innenScroll)
+        log(
+          `${z.name} ${label}: inneres Scrollen aktiv`,
+          m.overflowY === "auto",
+          m,
+        );
+      // Abgeschnittene Inhalte: jeder Textblock lässt sich per innerem
+      // Scrollen vollständig in den sichtbaren Dialogbereich holen.
+      const reach = await page.evaluate(() => {
+        const box = document.querySelector<HTMLElement>("[role=dialog]")!;
+        const blocks = Array.from(
+          box.querySelectorAll<HTMLElement>(
+            ".lv-tour__eyebrow, .lv-tour__title, .lv-tour__body > *, .lv-tour__body li, .lv-tour__nav",
+          ),
+        ).filter((el) => el.offsetParent);
+        const res = blocks.map((el) => {
+          el.scrollIntoView({ block: "nearest" });
+          const b = box.getBoundingClientRect();
+          const top = b.top + box.clientTop;
+          const bottom = top + box.clientHeight;
+          const r = el.getBoundingClientRect();
+          const fits = r.height <= box.clientHeight;
+          return {
+            block: (el.className || el.tagName).toString().slice(0, 24),
+            ok: fits
+              ? r.top >= top - 0.5 && r.bottom <= bottom + 0.5
+              : r.top >= top - 0.5,
+          };
+        });
+        box.scrollTop = 0;
+        return {
+          anzahl: res.length,
+          nichtErreichbar: res.filter((x) => !x.ok),
+        };
+      });
+      log(
+        `${z.name} ${label}: alle ${reach.anzahl} Textblöcke per innerem Scrollen erreichbar`,
+        reach.anzahl > 0 && reach.nichtErreichbar.length === 0,
+        reach,
+      );
+      const { count, seen } = await tabCycle(page);
+      log(
+        `${z.name} ${label}: Tab-Folge erreicht jedes der ${count} Elemente genau einmal`,
+        count > 0 &&
+          seen.every((x) => x.index >= 0) &&
+          new Set(seen.map((x) => x.index)).size === count,
+        seen,
+      );
+      log(
+        `${z.name} ${label}: jedes per Tab fokussierte Element im Fenster und im Dialogausschnitt sichtbar`,
+        seen.every((x) => x.visible),
+        seen,
+      );
+    };
+
+    test("Ladezustand", async ({ page }) => {
+      await setup(page);
+      await page.goto("/");
+      await expect(tour(page).getByRole("dialog")).toBeVisible();
+      await progress(page, 40);
+      await checkZoom(page, "Willkommen (lädt)");
+    });
+
+    test("Fehlerzustand", async ({ page }) => {
+      await setup(page, { downloadFails: 9 });
+      await page.goto("/");
+      await expect(tour(page).getByRole("alert")).toContainText(
+        "konnte nicht geladen werden",
+      );
+      await checkZoom(page, "Fehler");
+    });
+
+    test("alle sechs Schritte im Zustand „bereit“", async ({ page }) => {
       await setup(page);
       await page.goto("/");
       await ready(page);
       for (let s = 0; s < STEPS.length; s++) {
-        const m = await page.evaluate(() => {
-          const box = document.querySelector<HTMLElement>("[role=dialog]")!;
-          const r = box.getBoundingClientRect();
-          return {
-            seiteWaagerecht:
-              document.documentElement.scrollWidth > window.innerWidth,
-            dialogWaagerecht: box.scrollWidth > box.clientWidth + 1,
-            imFenster:
-              r.left >= 0 &&
-              r.top >= 0 &&
-              r.right <= window.innerWidth + 0.5 &&
-              r.bottom <= window.innerHeight + 0.5,
-            innenScroll: box.scrollHeight > box.clientHeight,
-            overflowY: getComputedStyle(box).overflowY,
-          };
-        });
-        log(
-          `${z.name} ${STEPS[s]}: kein waagerechtes Scrollen`,
-          !m.seiteWaagerecht && !m.dialogWaagerecht,
-          m,
-        );
-        log(`${z.name} ${STEPS[s]}: Dialog im Fenster`, m.imFenster, m);
-        if (m.innenScroll)
-          log(
-            `${z.name} ${STEPS[s]}: inneres Scrollen aktiv`,
-            m.overflowY === "auto",
-            m,
-          );
-        const { count, seen } = await tabCycle(page);
-        log(
-          `${z.name} ${STEPS[s]}: Tab-Folge erreicht alle ${count} Elemente`,
-          new Set(seen.map((x) => x.index)).size === count,
-          seen,
-        );
-        log(
-          `${z.name} ${STEPS[s]}: jedes per Tab fokussierte Element sichtbar`,
-          seen.every((x) => x.visible),
-          seen,
-        );
+        await checkZoom(page, STEPS[s]);
         if (s < STEPS.length - 1) await next(page, s);
       }
     });
@@ -727,7 +878,7 @@ test("Modal: Accessibility-Baum, Tab-Reihenfolge, Pfeile, Ansagen, Fokusrückgab
   log("Überspringen: Fokus zurück an den Auslöser", true);
 });
 
-test("Fensterknöpfe bleiben während der Tour bedienbar (Desktop)", async ({
+test("Fensterknopf „Minimieren“ bleibt während der Tour bedienbar (Desktop, Attrappe)", async ({
   page,
 }) => {
   await setup(page, { desktop: true });
@@ -917,13 +1068,26 @@ test("Modellwahl scheitert, Wiederholen wählt erneut", async ({ page }) => {
   const selectsBefore = (await commands(page)).filter(
     (c) => c.cmd === "set_active_model",
   ).length;
+  const downloadsBefore = (await commands(page)).filter(
+    (c) => c.cmd === "download_model",
+  ).length;
   await tour(page)
     .getByRole("button", { name: "Download wiederholen" })
     .click();
   await expect(tour(page).getByRole("alert")).toContainText("ist bereit");
-  const selects = (await commands(page)).filter(
-    (c) => c.cmd === "set_active_model",
+  // Die Ansage kann vor dem Eintreffen des Befehls in der Attrappe kommen.
+  const countSelects = async () =>
+    (await commands(page)).filter((c) => c.cmd === "set_active_model").length;
+  await expect.poll(countSelects).toBeGreaterThan(selectsBefore);
+  const selects = await countSelects();
+  const downloads = (await commands(page)).filter(
+    (c) => c.cmd === "download_model",
   ).length;
+  log(
+    "Wiederholen nach gescheiterter Modellwahl lädt nicht erneut herunter",
+    downloads === downloadsBefore,
+    { downloadsBefore, downloads },
+  );
   log(
     "Wiederholen löst eine neue Modellwahl aus (die Fußleiste wählt beim Download-Ende zusätzlich selbst)",
     selects > selectsBefore,

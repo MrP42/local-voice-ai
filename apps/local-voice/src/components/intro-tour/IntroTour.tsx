@@ -361,6 +361,8 @@ export const IntroTour: React.FC = () => {
               : 0
             : (at + (e.shiftKey ? -1 : 1) + items.length) % items.length;
         items[nextIndex].focus();
+        // Samt Fokusring ganz in den Ausschnitt holen (scroll-padding).
+        items[nextIndex].scrollIntoView?.({ block: "nearest" });
         return;
       }
       if (!onBody && !inBox) return;

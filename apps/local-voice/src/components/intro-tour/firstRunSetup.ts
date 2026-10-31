@@ -35,10 +35,21 @@ const download = (id: string) => {
     });
 };
 
-/** „Wiederholen“ nach gescheitertem Download (nur aus der Tour). */
+/**
+ * „Wiederholen“ (nur aus der Tour): nach gescheitertem Download erneut laden,
+ * nach gescheiterter Modellwahl nur erneut auswählen (kein zweiter Download).
+ */
 export const retryFirstRunDownload = () => {
-  const id = useIntroTourStore.getState().failedModelId;
-  if (id) download(id);
+  const tour = useIntroTourStore.getState();
+  const id = tour.failedModelId;
+  if (!id) return;
+  const model = useModelStore.getState().models.find((m) => m.id === id);
+  if (!model?.is_downloaded) {
+    download(id);
+    return;
+  }
+  tour.setFailedModel(null);
+  tour.setPendingModel(id);
 };
 
 const setupDictation = async (): Promise<boolean> => {
