@@ -4,6 +4,7 @@ import { CalendarDays } from "lucide-react";
 import { commands, events, type CalendarSource } from "@/bindings";
 import { Button } from "../ui/Button";
 import { secretStoreState } from "@/lib/platform/secretStore";
+import { SecretStoreNotice } from "./SecretStoreNotice";
 
 /** Uhrzeit des letzten erfolgreichen Abrufs, in der Sprache der Oberflaeche. */
 const timeOf = (ms: number, language: string): string =>
@@ -258,6 +259,7 @@ export const CalendarSourceCards: React.FC<CalendarSourceCardsProps> = ({
           ))}
         </ul>
       )}
+      {!store.available && <SecretStoreNotice state={store} />}
       <div className="flex flex-wrap gap-2">
         <Button
           onClick={onConnect}
