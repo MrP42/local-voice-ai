@@ -95,8 +95,12 @@ test("macOS: Kalender verbinden in den Verbindungen ebenfalls gesperrt", async (
   await connect.scrollIntoViewIfNeeded();
   await expect(connect).toBeDisabled();
   await expect(connect).toHaveAttribute("title", /noch nicht verfügbar/);
-  // Derselbe Hinweis wie im Katalog steht auch hier, nicht nur im Tooltip.
-  await expect(page.getByTestId("secret-store-notice")).toContainText(
-    "Auf macOS derzeit nicht verfügbar",
-  );
+  // Derselbe Hinweis wie im Katalog steht auch hier, genau einmal und vor dem Knopf.
+  const notice = page.getByTestId("secret-store-notice");
+  await expect(notice).toHaveCount(1);
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("Auf macOS derzeit nicht verfügbar");
+  const noticeBox = (await notice.boundingBox())!;
+  const connectBox = (await connect.boundingBox())!;
+  expect(noticeBox.y).toBeLessThan(connectBox.y);
 });
