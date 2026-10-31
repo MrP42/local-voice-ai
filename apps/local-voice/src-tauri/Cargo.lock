@@ -8402,6 +8402,7 @@ dependencies = [
 name = "wai-voice-dienst"
 version = "0.1.0"
 dependencies = [
+ "ring",
  "serde",
  "serde_json",
  "sha2",

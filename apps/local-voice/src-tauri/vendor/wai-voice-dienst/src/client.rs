@@ -13,6 +13,7 @@ use crate::beweis;
 use crate::fluss::Guthaben;
 use crate::frame::{Art, Decoder, Rahmen, RahmenFehler, Rolle};
 use crate::grenzen;
+use crate::kopplung::AppSeite;
 use crate::msg::{
     AnApp, AnDienst, Engines, Operation, Recht, Souveraenitaet, Wortpaar, pruefen, pruefen_an_app,
 };
@@ -49,6 +50,15 @@ pub struct Angemeldet {
     pub version: String,
     pub rechte: Vec<Recht>,
     pub engines: Engines,
+}
+
+/// Ergebnis einer Kopplung.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gekoppelt {
+    /// Öffentliche Kennung für künftige `hallo`.
+    pub zugang: String,
+    /// Zugangsschlüssel (Hex); gehört in den Tresor, nie in Dateien oder Logs.
+    pub schluessel: String,
 }
 
 /// Ein empfangenes Ereignis.
@@ -228,25 +238,39 @@ impl<S: Read + Write> Verbindung<S> {
         }
     }
 
-    /// Kopplung anfragen; wartet, bis der Nutzer in Local Voice AI bestätigt. Liefert den Zugang.
+    /// Kopplung mit Schlüsselaustausch ([`crate::kopplung`]). `vergleich` bekommt den Code, den
+    /// die App anzeigen soll, sobald er feststeht; danach wartet die Verbindung, bis der Nutzer in
+    /// Local Voice AI bestätigt. Liefert Zugang und Schlüssel (der Schlüssel gehört in den Tresor).
     pub fn koppeln(
         &mut self,
         client: &str,
         anzeige: &str,
-        schluessel: &str,
-        code: &str,
-    ) -> Result<String, ClientFehler> {
-        self.gruss()?;
-        let fp = beweis::fingerabdruck(schluessel);
+        vergleich: impl FnOnce(&str),
+    ) -> Result<Gekoppelt, ClientFehler> {
+        let zufall = self.gruss()?;
+        let app = AppSeite::neu().map_err(|_| ClientFehler::Vertrag("kopplung".into()))?;
         self.senden(&AnDienst::Koppeln {
             protokoll: crate::PROTOKOLL,
             client: client.into(),
             anzeige: anzeige.into(),
-            fingerabdruck: fp.iter().map(|b| format!("{b:02x}")).collect(),
-            code: code.into(),
+            zusage: app.zusage(),
         })?;
+        let dienst_schluessel = match self.steuer()? {
+            AnApp::KopplungAngebot { dienst_schluessel } => dienst_schluessel,
+            _ => return Err(ClientFehler::Vertrag("kopplung_angebot".into())),
+        };
+        self.senden(&AnDienst::KopplungSchluessel {
+            app_schluessel: app.oeffentlich(),
+        })?;
+        let ergebnis = app
+            .abschliessen(&dienst_schluessel, client, &zufall)
+            .map_err(|_| ClientFehler::Vertrag("kopplung".into()))?;
+        vergleich(&ergebnis.vergleich);
         match self.steuer()? {
-            AnApp::Gekoppelt { zugang } => Ok(zugang),
+            AnApp::Gekoppelt { zugang } => Ok(Gekoppelt {
+                zugang,
+                schluessel: ergebnis.schluessel,
+            }),
             _ => Err(ClientFehler::Vertrag("gekoppelt".into())),
         }
     }
@@ -376,6 +400,7 @@ mod tests {
     use std::thread;
 
     use super::*;
+    use crate::kopplung::DienstSeite;
     use crate::msg::{Sitzung, code};
 
     const ZUFALL: &str = "ab";
@@ -405,6 +430,7 @@ mod tests {
         );
         let mut buf = [0u8; 4096];
         let mut rest = Vec::new();
+        let mut kopplung: Option<(DienstSeite, String, String)> = None;
         loop {
             while !rest.is_empty() {
                 let n = d.einspeisen(&rest).unwrap();
@@ -470,13 +496,25 @@ mod tests {
                         return log;
                     }
                 }
-                AnDienst::Koppeln {
-                    fingerabdruck,
-                    code: c,
-                    ..
-                } => {
-                    let soll: String = fp.iter().map(|b| format!("{b:02x}")).collect();
-                    if fingerabdruck == soll && c == "123456" {
+                AnDienst::Koppeln { client, zusage, .. } => {
+                    let seite = DienstSeite::neu().unwrap();
+                    sende(
+                        &mut s,
+                        AnApp::KopplungAngebot {
+                            dienst_schluessel: seite.oeffentlich(),
+                        },
+                    );
+                    kopplung = Some((seite, zusage, client));
+                }
+                AnDienst::KopplungSchluessel { app_schluessel } => {
+                    let (seite, zusage, client) = kopplung.take().unwrap();
+                    let e = seite
+                        .abschliessen(&app_schluessel, &zusage, &client, &zufall())
+                        .unwrap();
+                    log.push(format!("vergleich:{}", e.vergleich));
+                    log.push(format!("schluessel:{}", e.schluessel));
+                    // Testkonvention: Ein Testdienst mit Schlüssel `ablehnen` lehnt ab.
+                    if schluessel != "ablehnen" {
                         sende(
                             &mut s,
                             AnApp::Gekoppelt {
@@ -582,19 +620,31 @@ mod tests {
     }
 
     #[test]
-    fn koppeln_schickt_nur_den_fingerabdruck() {
-        let (mut v, h) = paar("neu-erzeugt", vec![]);
-        assert_eq!(
-            v.koppeln("corporate-llm", "Corporate LLM", "neu-erzeugt", "123456")
-                .unwrap(),
-            "z-1"
-        );
+    fn koppeln_tauscht_schluessel_und_zeigt_denselben_code() {
+        let (mut v, h) = paar("annehmen", vec![]);
+        let mut gesehen = String::new();
+        let g = v
+            .koppeln("corporate-llm", "Corporate LLM", |c| gesehen = c.to_owned())
+            .unwrap();
+        drop(v);
+        let log = h.join().unwrap();
+        assert_eq!(g.zugang, "z-1");
+        assert_eq!(gesehen.len(), 6);
+        assert!(log.contains(&format!("vergleich:{gesehen}")));
+        assert!(log.contains(&format!("schluessel:{}", g.schluessel)));
+        // Zweite Kopplung: neuer Schlüssel.
+        let (mut v, h) = paar("annehmen", vec![]);
+        let g2 = v.koppeln("corporate-llm", "Corporate LLM", |_| {}).unwrap();
+        drop(v);
         h.join().unwrap();
-        let (mut v, h) = paar("neu-erzeugt", vec![]);
+        assert_ne!(g.schluessel, g2.schluessel);
+
+        let (mut v, h) = paar("ablehnen", vec![]);
         let e = v
-            .koppeln("corporate-llm", "Corporate LLM", "neu-erzeugt", "000000")
+            .koppeln("corporate-llm", "Corporate LLM", |_| {})
             .unwrap_err();
         assert_eq!(e.code(), code::ABGELEHNT);
+        drop(v);
         h.join().unwrap();
     }
 
@@ -797,7 +847,7 @@ mod tests {
             Err(ClientFehler::Vertrag(_))
         ));
         assert!(matches!(
-            v.koppeln("corporate-llm", "X", "k", "123456"),
+            v.koppeln("corporate-llm", "X", |_| {}),
             Err(ClientFehler::Vertrag(_))
         ));
     }

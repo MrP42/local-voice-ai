@@ -22,6 +22,7 @@ pub mod client;
 pub mod endpunkt;
 pub mod fluss;
 pub mod frame;
+pub mod kopplung;
 pub mod msg;
 
 /// Protokollversion; der Handschlag scheitert bei Abweichung (`version_inkompatibel`).
@@ -45,8 +46,13 @@ pub mod grenzen {
     pub const AUDIO_PUFFER_MAX: usize = 256 * 1024;
     /// Höchstdauer eines Diktats bzw. einer Äußerung in Sekunden.
     pub const AEUSSERUNG_MAX_S: u32 = 120;
-    /// Ohne Audio und ohne Steuerrahmen endet ein Strom nach so vielen Sekunden.
+    /// Ohne Audio und ohne Steuerrahmen endet ein offener Strom nach so vielen Sekunden.
     pub const LEERLAUF_S: u32 = 15;
+    /// Bis `hallo` bzw. `koppeln` (und `kopplung_schluessel`) da sind, höchstens so viele Sekunden;
+    /// das Warten auf die Bestätigung durch den Nutzer zählt nicht dazu.
+    pub const HANDSCHLAG_S: u32 = 15;
+    /// Eine angemeldete Verbindung ohne offenen Strom und ohne Rahmen endet nach so vielen Sekunden.
+    pub const VERBINDUNG_LEERLAUF_S: u32 = 300;
     /// Längster Text für `synthetisieren` (Zeichen).
     pub const TEXT_MAX: usize = 2_000;
     /// Wortpaare je Korrektursignal.

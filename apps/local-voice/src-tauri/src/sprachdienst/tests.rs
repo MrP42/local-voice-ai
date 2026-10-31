@@ -12,6 +12,7 @@ use tokio::time::timeout;
 use wai_voice_dienst::beweis;
 use wai_voice_dienst::frame::{Art, Decoder, Rahmen, Rolle};
 use wai_voice_dienst::grenzen;
+use wai_voice_dienst::kopplung::{AppSeite, Ergebnis};
 use wai_voice_dienst::msg::{
     code, AnApp, AnDienst, Engines, Operation, Recht, Souveraenitaet, Wortpaar,
 };
@@ -220,6 +221,8 @@ struct Kunde {
     rest: Vec<u8>,
     /// Fingerabdruck, Zufall und Client des letzten `hallo` (für den Gegenbeweis).
     angemeldet: Option<([u8; 32], String, String)>,
+    /// Alles, was über die Leitung ging (beide Richtungen), für die Prüfung auf Inhalte.
+    mitschnitt: Vec<u8>,
 }
 
 impl Kunde {
@@ -229,10 +232,12 @@ impl Kunde {
             dec: Decoder::new(Rolle::App),
             rest: Vec::new(),
             angemeldet: None,
+            mitschnitt: Vec::new(),
         }
     }
 
     async fn roh(&mut self, bytes: &[u8]) {
+        self.mitschnitt.extend_from_slice(bytes);
         let _ = self.s.write_all(bytes).await;
         let _ = self.s.flush().await;
     }
@@ -288,7 +293,10 @@ impl Kunde {
             let mut buf = [0u8; 8192];
             match self.s.read(&mut buf).await {
                 Ok(0) | Err(_) => return None,
-                Ok(n) => self.rest.extend_from_slice(&buf[..n]),
+                Ok(n) => {
+                    self.mitschnitt.extend_from_slice(&buf[..n]);
+                    self.rest.extend_from_slice(&buf[..n]);
+                }
             }
         }
     }
@@ -340,7 +348,11 @@ impl Kunde {
 
     /// Handschlag mit dem richtigen Schlüssel; erwartet `willkommen` mit gültigem Gegenbeweis.
     async fn anmelden(&mut self, z: &Zugang) -> Vec<Recht> {
-        self.hallo(&z.zugang, CLIENT, SCHLUESSEL).await;
+        self.anmelden_mit(z, SCHLUESSEL).await
+    }
+
+    async fn anmelden_mit(&mut self, z: &Zugang, schluessel: &str) -> Vec<Recht> {
+        self.hallo(&z.zugang, CLIENT, schluessel).await;
         match self.steuer().await {
             AnApp::Willkommen { rechte, beweis, .. } => {
                 assert!(self.gegenbeweis_gueltig(&beweis), "Gegenbeweis ungültig");
@@ -348,6 +360,36 @@ impl Kunde {
             }
             m => panic!("willkommen erwartet, bekam {m:?}"),
         }
+    }
+
+    /// Kopplung, Seite der App: gruss lesen, `koppeln` senden. Die App legt sich mit der Zusage
+    /// fest, bevor sie den Schlüssel des Dienstes kennt.
+    async fn koppeln_anfang(&mut self, client: &str, anzeige: &str) -> (AppSeite, String) {
+        let zufall = self.gruss().await;
+        let app = AppSeite::neu().unwrap();
+        self.senden(&koppeln_nachricht(client, anzeige, &app.zusage()))
+            .await;
+        (app, zufall)
+    }
+
+    /// Weiter nach `koppeln`: Angebot lesen, Schlüssel senden, Ergebnis ableiten.
+    async fn koppeln_weiter(&mut self, app: AppSeite, zufall: &str, client: &str) -> Ergebnis {
+        let dienst_schluessel = match self.steuer().await {
+            AnApp::KopplungAngebot { dienst_schluessel } => dienst_schluessel,
+            m => panic!("kopplung_angebot erwartet, bekam {m:?}"),
+        };
+        self.senden(&AnDienst::KopplungSchluessel {
+            app_schluessel: app.oeffentlich(),
+        })
+        .await;
+        app.abschliessen(&dienst_schluessel, client, zufall)
+            .unwrap()
+    }
+
+    /// Die ganze Kopplung bis zum Vergleichscode (danach wartet der Dienst auf den Nutzer).
+    async fn koppeln(&mut self, client: &str, anzeige: &str) -> Ergebnis {
+        let (app, zufall) = self.koppeln_anfang(client, anzeige).await;
+        self.koppeln_weiter(app, &zufall, client).await
     }
 
     async fn leitung_zu(&mut self) {
@@ -382,14 +424,22 @@ impl Kunde {
     }
 }
 
-fn koppeln_nachricht(client: &str, anzeige: &str, fp: &str, code_text: &str) -> AnDienst {
+fn koppeln_nachricht(client: &str, anzeige: &str, zusage: &str) -> AnDienst {
     AnDienst::Koppeln {
         protokoll: PROTOKOLL,
         client: client.into(),
         anzeige: anzeige.into(),
-        fingerabdruck: fp.into(),
-        code: code_text.into(),
+        zusage: zusage.into(),
     }
+}
+
+/// Kommt `wort` als eigenes Wort vor (nicht mitten in einer Hex- oder Ziffernfolge)?
+fn enthaelt_wort(text: &str, wort: &str) -> bool {
+    text.match_indices(wort).any(|(i, _)| {
+        let davor = text[..i].chars().next_back();
+        let danach = text[i + wort.len()..].chars().next();
+        !davor.is_some_and(char::is_alphanumeric) && !danach.is_some_and(char::is_alphanumeric)
+    })
 }
 
 // --- Handschlag -----------------------------------------------------------------------------------------
@@ -660,27 +710,24 @@ async fn widerruf_wird_bei_jedem_start_geprueft_und_rechte_gelten_live() {
 
 // --- Kopplung ---------------------------------------------------------------------------------------------
 
+fn fp_von(schluessel: &str) -> String {
+    hex(&beweis::fingerabdruck(schluessel))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kopplung_wird_in_der_oberflaeche_bestaetigt() {
     let st = stand();
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    let ergebnis = k.koppeln(CLIENT, "Corporate LLM").await;
 
     let offen = st.kopplung_abwarten().await;
     assert_eq!(
-        (
-            offen.client.as_str(),
-            offen.anzeige.as_str(),
-            offen.code.as_str()
-        ),
-        (CLIENT, "Corporate LLM", "123456")
+        (offen.client.as_str(), offen.anzeige.as_str()),
+        (CLIENT, "Corporate LLM")
+    );
+    assert_eq!(
+        offen.code, ergebnis.vergleich,
+        "beide Seiten haben denselben Vergleichscode"
     );
     assert!(offen.bis_ms > jetzt() + 100_000, "Frist von 120 s");
     assert!(st
@@ -700,13 +747,32 @@ async fn kopplung_wird_in_der_oberflaeche_bestaetigt() {
     };
     k.leitung_zu().await;
     let z = st.ctx.zugaenge.get(&zugang).unwrap();
-    assert_eq!(z.fingerabdruck, fp_hex());
+    assert_eq!(
+        z.fingerabdruck,
+        fp_von(&ergebnis.schluessel),
+        "gespeichert wird der Fingerabdruck des abgeleiteten Schlüssels"
+    );
     assert!(z.rechte.is_empty(), "Rechte vergibt der Nutzer getrennt");
     assert!(st.ctx.kopplungen.offen(jetzt()).is_empty());
 
-    // Mit dem Schlüssel der App geht jetzt der Handschlag; ohne Recht kein Start.
+    // Weder Schlüssel noch Fingerabdruck noch Code sind über die Leitung gegangen.
+    let leitung = String::from_utf8_lossy(&k.mitschnitt).into_owned();
+    assert!(
+        !leitung.contains(&ergebnis.schluessel),
+        "Schlüssel auf der Leitung"
+    );
+    assert!(
+        !leitung.contains(&z.fingerabdruck),
+        "Fingerabdruck auf der Leitung"
+    );
+    assert!(
+        !leitung.contains(&format!("\"{}\"", ergebnis.vergleich)),
+        "Code auf der Leitung"
+    );
+
+    // Mit dem abgeleiteten Schlüssel geht jetzt der Handschlag; ohne Recht kein Start.
     let mut k = st.verbinden();
-    assert!(k.anmelden(&z).await.is_empty());
+    assert!(k.anmelden_mit(&z, &ergebnis.schluessel).await.is_empty());
     k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
         .await;
     assert_eq!(k.fehler().await, (1, code::RECHT_FEHLT.into()));
@@ -716,14 +782,7 @@ async fn kopplung_wird_in_der_oberflaeche_bestaetigt() {
 async fn kopplung_ablehnen() {
     let st = stand();
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln(CLIENT, "Corporate LLM").await;
     let offen = st.kopplung_abwarten().await;
     assert!(st.ctx.kopplungen.entscheiden(&offen.id, false, jetzt()));
     assert_eq!(k.fehler().await, (0, code::ABGELEHNT.into()));
@@ -735,14 +794,7 @@ async fn kopplung_ablehnen() {
 async fn kopplung_laeuft_nach_der_frist_ab() {
     let st = stand_mit(|k| k.bestaetigung = Duration::from_millis(150));
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln(CLIENT, "Corporate LLM").await;
     let offen = st.kopplung_abwarten().await;
     assert_eq!(k.fehler().await, (0, code::ZEIT_UEBERSCHRITTEN.into()));
     k.leitung_zu().await;
@@ -758,9 +810,88 @@ async fn kopplung_laeuft_nach_der_frist_ab() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn die_standardfrist_ist_120_sekunden() {
-    assert_eq!(Konfig::standard("x").bestaetigung, Duration::from_secs(120));
+async fn die_standardgrenzen_folgen_dem_vertrag() {
+    let k = Konfig::standard("x");
+    assert_eq!(k.bestaetigung, Duration::from_secs(120));
     assert_eq!(grenzen::KOPPELN_BESTAETIGUNG_S, 120);
+    assert_eq!(k.anfang, Duration::from_secs(15), "HANDSCHLAG_S");
+    assert_eq!(k.leerlauf_strom, Duration::from_secs(15), "LEERLAUF_S");
+    assert_eq!(k.leerlauf_verbindung, Duration::from_secs(300));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ohne_kopplung_schluessel_nach_der_frist_gibt_es_zeit_ueberschritten_das_warten_auf_den_nutzer_zaehlt_nicht(
+) {
+    let st = stand_mit(|k| k.anfang = Duration::from_millis(150));
+    // Kein Schlüssel der App: Frist.
+    let mut k = st.verbinden();
+    let (_app, _zufall) = k.koppeln_anfang(CLIENT, "Corporate LLM").await;
+    assert!(matches!(k.steuer().await, AnApp::KopplungAngebot { .. }));
+    assert_eq!(k.fehler().await, (0, code::ZEIT_UEBERSCHRITTEN.into()));
+    k.leitung_zu().await;
+    assert!(st.ctx.kopplungen.offen(jetzt()).is_empty());
+
+    // Das Warten auf die Bestätigung dauert länger als die Handschlag-Frist und läuft trotzdem.
+    let mut k = st.verbinden();
+    k.koppeln("poststelle", "Poststelle").await;
+    let offen = st.kopplung_abwarten().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(st.ctx.kopplungen.entscheiden(&offen.id, true, jetzt()));
+    assert!(matches!(k.steuer().await, AnApp::Gekoppelt { .. }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn eine_falsche_zusage_ist_ungueltig() {
+    let st = stand();
+    let mut k = st.verbinden();
+    let zufall = k.gruss().await;
+    // Die App legt sich auf einen Schlüssel fest und schickt dann einen anderen.
+    let zugesagt = AppSeite::neu().unwrap();
+    let anderer = AppSeite::neu().unwrap();
+    k.senden(&koppeln_nachricht(
+        CLIENT,
+        "Corporate LLM",
+        &zugesagt.zusage(),
+    ))
+    .await;
+    assert!(matches!(k.steuer().await, AnApp::KopplungAngebot { .. }));
+    k.senden(&AnDienst::KopplungSchluessel {
+        app_schluessel: anderer.oeffentlich(),
+    })
+    .await;
+    let _ = zufall;
+    assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()));
+    k.leitung_zu().await;
+    assert!(st.ctx.kopplungen.offen(jetzt()).is_empty(), "kein Dialog");
+    assert!(st.ctx.zugaenge.liste().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn kopplung_schluessel_wird_nur_einmal_und_nur_nach_koppeln_angenommen() {
+    let st = stand();
+    // Ohne `koppeln`.
+    let mut k = st.verbinden();
+    k.gruss().await;
+    k.senden(&AnDienst::KopplungSchluessel {
+        app_schluessel: AppSeite::neu().unwrap().oeffentlich(),
+    })
+    .await;
+    assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()));
+    k.leitung_zu().await;
+
+    // Ein zweites `kopplung_schluessel` während des Wartens auf den Nutzer.
+    let mut k = st.verbinden();
+    let (app, zufall) = k.koppeln_anfang(CLIENT, "Corporate LLM").await;
+    k.koppeln_weiter(app, &zufall, CLIENT).await;
+    st.kopplung_abwarten().await;
+    k.senden(&AnDienst::KopplungSchluessel {
+        app_schluessel: AppSeite::neu().unwrap().oeffentlich(),
+    })
+    .await;
+    assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()));
+    k.leitung_zu().await;
+    assert!(st.ctx.kopplungen.offen(jetzt()).is_empty());
+    assert!(st.ctx.zugaenge.liste().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -768,14 +899,7 @@ async fn kopplung_ratenbremse_drei_je_minute_und_eine_offene() {
     let st = stand_mit(|k| k.bestaetigung = Duration::from_millis(30));
     for versuch in 1..=3 {
         let mut k = st.verbinden();
-        k.gruss().await;
-        k.senden(&koppeln_nachricht(
-            CLIENT,
-            "Corporate LLM",
-            &fp_hex(),
-            "123456",
-        ))
-        .await;
+        k.koppeln(CLIENT, "Corporate LLM").await;
         assert_eq!(
             k.fehler().await,
             (0, code::ZEIT_UEBERSCHRITTEN.into()),
@@ -783,14 +907,7 @@ async fn kopplung_ratenbremse_drei_je_minute_und_eine_offene() {
         );
     }
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln_anfang(CLIENT, "Corporate LLM").await;
     assert_eq!(
         k.fehler().await,
         (0, code::BESCHAEFTIGT.into()),
@@ -800,14 +917,7 @@ async fn kopplung_ratenbremse_drei_je_minute_und_eine_offene() {
 
     // Ein anderer Client ist von der Bremse dieses Clients nicht betroffen.
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        "poststelle",
-        "Poststelle",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln("poststelle", "Poststelle").await;
     assert_eq!(k.fehler().await, (0, code::ZEIT_UEBERSCHRITTEN.into()));
 }
 
@@ -815,25 +925,11 @@ async fn kopplung_ratenbremse_drei_je_minute_und_eine_offene() {
 async fn zweite_offene_kopplung_desselben_clients_ist_beschaeftigt() {
     let st = stand();
     let mut a = st.verbinden();
-    a.gruss().await;
-    a.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    a.koppeln(CLIENT, "Corporate LLM").await;
     let offen = st.kopplung_abwarten().await;
 
     let mut b = st.verbinden();
-    b.gruss().await;
-    b.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &"b".repeat(64),
-        "654321",
-    ))
-    .await;
+    b.koppeln_anfang(CLIENT, "Corporate LLM").await;
     assert_eq!(b.fehler().await, (0, code::BESCHAEFTIGT.into()));
     assert_eq!(
         st.ctx.kopplungen.offen(jetzt()).len(),
@@ -846,27 +942,9 @@ async fn zweite_offene_kopplung_desselben_clients_ist_beschaeftigt() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn schon_gekoppelter_fingerabdruck_bekommt_bereits_gekoppelt() {
-    let st = stand();
-    st.gekoppelt(&[]);
-    let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
-    assert_eq!(k.fehler().await, (0, code::BEREITS_GEKOPPELT.into()));
-    k.leitung_zu().await;
-    assert!(st.ctx.kopplungen.offen(jetzt()).is_empty(), "kein Dialog");
-    assert_eq!(st.ctx.zugaenge.liste().len(), 1, "kein zweiter Zugang");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ungueltige_anzeige_wird_abgewiesen_bevor_ein_dialog_entsteht() {
     let st = stand();
+    let zusage = AppSeite::neu().unwrap().zusage();
     for anzeige in [
         "B\u{202E}ose",
         "Null\u{200B}breite",
@@ -875,43 +953,33 @@ async fn ungueltige_anzeige_wird_abgewiesen_bevor_ein_dialog_entsteht() {
         " ",
         "",
         &"x".repeat(65),
+        // Homoglyphen und fremde Schriften: kyrillisches „С“, Arabisch, „é“.
+        "\u{0421}orporate LLM",
+        "\u{0645}\u{0631}\u{062d}\u{0628}\u{0627}",
+        "Caf\u{e9}",
     ] {
         let mut k = st.verbinden();
         k.gruss().await;
         // Roh gesendet, ohne die Prüfung des Clients: der Dienst prüft selbst.
-        let json = serde_json::to_string(&koppeln_nachricht(CLIENT, anzeige, &fp_hex(), "123456"))
-            .unwrap();
+        let json = serde_json::to_string(&koppeln_nachricht(CLIENT, anzeige, &zusage)).unwrap();
         k.json(0, &json).await;
         assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()), "{anzeige:?}");
         k.leitung_zu().await;
         assert!(st.ctx.kopplungen.offen(jetzt()).is_empty(), "{anzeige:?}");
     }
-    // Erlaubt sind Buchstaben, Ziffern, Leerzeichen und -_.()&+/
+    // Erlaubt sind ASCII-Buchstaben, ÄÖÜäöüß, Ziffern, Leerzeichen und -_.()&+/
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Müller & Söhne (Test)-1.0_a+b/c",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln(CLIENT, "Müller & Söhne (Test)-1.0_a+b/c ÄÖÜß")
+        .await;
     let offen = st.kopplung_abwarten().await;
-    assert_eq!(offen.anzeige, "Müller & Söhne (Test)-1.0_a+b/c");
+    assert_eq!(offen.anzeige, "Müller & Söhne (Test)-1.0_a+b/c ÄÖÜß");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn aufgelegte_kopplung_verschwindet_aus_dem_dialog() {
     let st = stand();
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln(CLIENT, "Corporate LLM").await;
     st.kopplung_abwarten().await;
     drop(k);
     for _ in 0..200 {
@@ -927,14 +995,7 @@ async fn aufgelegte_kopplung_verschwindet_aus_dem_dialog() {
 async fn waehrend_der_kopplung_sind_keine_weiteren_nachrichten_erlaubt() {
     let st = stand();
     let mut k = st.verbinden();
-    k.gruss().await;
-    k.senden(&koppeln_nachricht(
-        CLIENT,
-        "Corporate LLM",
-        &fp_hex(),
-        "123456",
-    ))
-    .await;
+    k.koppeln(CLIENT, "Corporate LLM").await;
     st.kopplung_abwarten().await;
     k.senden(&AnDienst::Status {}).await;
     assert_eq!(k.fehler().await, (0, code::UNGUELTIG.into()));
@@ -1343,6 +1404,30 @@ async fn inhalte_stehen_nicht_im_log() {
             .iter()
             .all(|l| !l.contains("GEHEIMER") && !l.contains(SCHLUESSEL) && !l.contains(&fp_hex())),
         "weder Text noch Schlüssel noch Fingerabdruck im Log: {zeilen:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn kopplung_schreibt_weder_code_noch_schluessel_ins_log() {
+    static FANG: Fang = Fang;
+    let _ = log::set_logger(&FANG);
+    log::set_max_level(log::LevelFilter::Trace);
+
+    let st = stand();
+    let mut k = st.verbinden();
+    let ergebnis = k.koppeln(CLIENT, "Corporate LLM").await;
+    let offen = st.kopplung_abwarten().await;
+    assert!(st.ctx.kopplungen.entscheiden(&offen.id, true, jetzt()));
+    assert!(matches!(k.steuer().await, AnApp::Gekoppelt { .. }));
+    k.leitung_zu().await;
+
+    let fp = fp_von(&ergebnis.schluessel);
+    let zeilen = ZEILEN.lock().unwrap().clone();
+    assert!(
+        zeilen.iter().all(|l| !l.contains(&ergebnis.schluessel)
+            && !l.contains(&fp)
+            && !enthaelt_wort(l, &ergebnis.vergleich)),
+        "weder Schlüssel noch Fingerabdruck noch Code im Log: {zeilen:?}"
     );
 }
 
@@ -1878,23 +1963,33 @@ mod sockets {
         d.starten_unix(laufzeit.path()).await.unwrap();
         let pfad = socket_pfad(laufzeit.path());
 
-        // Kopplung: Der Client wartet, der Nutzer bestätigt in der Oberfläche.
+        // Kopplung: Beide Seiten leiten denselben Vergleichscode ab, der Nutzer bestätigt.
         let p = pfad.clone();
+        let (code_tx, code_rx) = std::sync::mpsc::channel::<String>();
         let koppeln = tokio::task::spawn_blocking(move || {
             let mut v = Verbindung::neu(StdStream::connect(p).unwrap());
-            v.koppeln(CLIENT, "Corporate LLM", SCHLUESSEL, "424242")
+            v.koppeln(CLIENT, "Corporate LLM", |c| {
+                code_tx.send(c.to_string()).unwrap();
+            })
         });
         let offen = st.kopplung_abwarten().await;
-        assert_eq!(offen.code, "424242");
+        let client_code = code_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            offen.code, client_code,
+            "derselbe Vergleichscode auf beiden Seiten"
+        );
+        assert_eq!(offen.code.len(), 6);
         assert!(st.ctx.kopplungen.entscheiden(&offen.id, true, jetzt()));
-        let zugang = koppeln.await.unwrap().expect("gekoppelt");
+        let gekoppelt = koppeln.await.unwrap().expect("gekoppelt");
+        let zugang = gekoppelt.zugang.clone();
+        let schluessel = gekoppelt.schluessel.clone();
 
         // Ohne Recht: Start scheitert mit recht_fehlt.
         let p = pfad.clone();
-        let z2 = zugang.clone();
+        let (z2, s2) = (zugang.clone(), schluessel.clone());
         let ohne_recht = tokio::task::spawn_blocking(move || {
             let mut v = Verbindung::neu(StdStream::connect(p).unwrap());
-            let w = v.anmelden(CLIENT, &z2, SCHLUESSEL).unwrap();
+            let w = v.anmelden(CLIENT, &z2, &s2).unwrap();
             assert!(w.rechte.is_empty());
             v.erkennen(1, BEREICH, Souveraenitaet::NurLokal, &[0; 640], |_| {})
         });
@@ -1906,10 +2001,10 @@ mod sockets {
             .zugaenge
             .recht_setzen(&zugang, Recht::Hoeren, true)
             .unwrap();
-        let (p, z3) = (pfad.clone(), zugang.clone());
+        let (p, z3, s3) = (pfad.clone(), zugang.clone(), schluessel.clone());
         let text = tokio::task::spawn_blocking(move || {
             let mut v = Verbindung::neu(StdStream::connect(p).unwrap());
-            v.anmelden(CLIENT, &z3, SCHLUESSEL).unwrap();
+            v.anmelden(CLIENT, &z3, &s3).unwrap();
             v.erkennen(
                 1,
                 BEREICH,
@@ -1926,10 +2021,10 @@ mod sockets {
         // Widerruf: neue Anmeldungen scheitern.
         st.ctx.zugaenge.widerrufen(&zugang, jetzt()).unwrap();
         st.ctx.verbindungen_beenden(&zugang);
-        let (p, z4) = (pfad.clone(), zugang.clone());
+        let (p, z4, s4) = (pfad.clone(), zugang.clone(), schluessel.clone());
         let fehler = tokio::task::spawn_blocking(move || {
             let mut v = Verbindung::neu(StdStream::connect(p).unwrap());
-            v.anmelden(CLIENT, &z4, SCHLUESSEL).unwrap_err()
+            v.anmelden(CLIENT, &z4, &s4).unwrap_err()
         })
         .await
         .unwrap();

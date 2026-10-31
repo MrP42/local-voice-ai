@@ -22,7 +22,8 @@ pub struct Konfig {
     pub version: String,
     /// So lange wartet der Dienst auf die Bestätigung einer Kopplung (`KOPPELN_BESTAETIGUNG_S`).
     pub bestaetigung: Duration,
-    /// Bis zum ersten `hallo`/`koppeln` nach dem `gruss`.
+    /// Bis zum ersten `hallo` bzw. bis `kopplung_schluessel` nach `koppeln` (`HANDSCHLAG_S`); das
+    /// Warten auf die Bestätigung des Nutzers zählt nicht mit.
     pub anfang: Duration,
     /// Ohne Audio und ohne Steuerrahmen endet ein Strom nach dieser Zeit (`LEERLAUF_S`).
     pub leerlauf_strom: Duration,
@@ -54,9 +55,9 @@ impl Konfig {
             dienst: "local-voice-ai".to_string(),
             version: version.to_string(),
             bestaetigung: Duration::from_secs(u64::from(grenzen::KOPPELN_BESTAETIGUNG_S)),
-            anfang: Duration::from_secs(u64::from(grenzen::LEERLAUF_S)),
+            anfang: Duration::from_secs(u64::from(grenzen::HANDSCHLAG_S)),
             leerlauf_strom: Duration::from_secs(u64::from(grenzen::LEERLAUF_S)),
-            leerlauf_verbindung: Duration::from_secs(300),
+            leerlauf_verbindung: Duration::from_secs(u64::from(grenzen::VERBINDUNG_LEERLAUF_S)),
             schreiben: Duration::from_secs(10),
             aeusserung_max_s: grenzen::AEUSSERUNG_MAX_S,
             // 1,5 s PCM16 mono 16 kHz.

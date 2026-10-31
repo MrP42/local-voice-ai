@@ -193,7 +193,7 @@ test("Kopplungsdialog zeigt die Kennung, den Namen in <bdi> und sperrt Koppeln k
   await expect(page.getByTestId("kopplung-confirm")).toBeEnabled();
 });
 
-test("Kopplungsdialog warnt bei fremden Schriften und doppelten Namen oder Kennungen", async ({
+test("Kopplungsdialog warnt bei doppelten Namen oder Kennungen", async ({
   page,
 }) => {
   await setup(page, {
@@ -206,11 +206,10 @@ test("Kopplungsdialog warnt bei fremden Schriften und doppelten Namen oder Kennu
       },
     ],
     kopplungen: [
-      // Das erste „С“ ist kyrillisch.
       {
         id: "K-1",
         client: "corporate-llm",
-        anzeige: "\u0421orporate LLM",
+        anzeige: "Meine Sprach-App",
         code: "123456",
       },
     ],
@@ -219,7 +218,6 @@ test("Kopplungsdialog warnt bei fremden Schriften und doppelten Namen oder Kennu
     (window as any).__emit("sprachdienst-kopplung", null),
   );
   const w = page.getByTestId("kopplung-warnungen");
-  await expect(w.locator('[data-warnung="mixedScripts"]')).toBeVisible();
   await expect(w.locator('[data-warnung="duplicateClient"]')).toBeVisible();
   await expect(w.locator('[data-warnung="duplicateName"]')).toHaveCount(0);
   await page.getByTestId("kopplung-reject").click();
@@ -306,7 +304,7 @@ test("Bild: Kopplungsdialog", async ({ page }) => {
       {
         id: "K-1",
         client: "corporate-llm",
-        anzeige: "\u0421orporate LLM",
+        anzeige: "Corporate LLM",
         code: "482913",
       },
     ],

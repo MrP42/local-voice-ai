@@ -36,6 +36,7 @@ use wai_voice_dienst::beweis;
 use wai_voice_dienst::fluss::{Ausgang, Einreihen, Guthaben};
 use wai_voice_dienst::frame::{Art, Decoder, Rahmen, RahmenFehler, Rolle};
 use wai_voice_dienst::grenzen;
+use wai_voice_dienst::kopplung::DienstSeite;
 use wai_voice_dienst::msg::{
     code, pruefen, AnApp, AnDienst, Operation, Recht, Sitzung, Souveraenitaet, Wortpaar,
 };
@@ -43,6 +44,7 @@ use wai_voice_dienst::PROTOKOLL;
 
 use super::engine::{EngineFehler, Sprache};
 use super::kontext::{Entzug, Kontext, Marke, Meldung};
+use super::kopplung::Warten;
 use super::wav;
 use super::zugang::{fingerabdruck_bytes, Fehler as ZugangFehler, Zugang};
 
@@ -446,12 +448,13 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             AnDienst::Koppeln {
                 client,
                 anzeige,
-                fingerabdruck,
-                code: code_text,
+                zusage,
                 ..
-            } => {
-                self.koppeln(&client, &anzeige, &fingerabdruck, &code_text, leser, stopp)
-                    .await
+            } => self.koppeln(&client, &anzeige, &zusage, leser, stopp).await,
+            // Der Vertragsablauf lässt `kopplung_schluessel` nur im Rahmen von `koppeln` zu; hier
+            // kommt es nur an, wenn `Sitzung` es nicht abgefangen hätte.
+            AnDienst::KopplungSchluessel { .. } => {
+                self.fatal(code::UNGUELTIG, "Unerwarteter Schlüssel.")
             }
             AnDienst::Start {
                 strom,
@@ -523,35 +526,110 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         self.senden(0, &willkommen)
     }
 
+    /// Kopplung mit Schlüsselaustausch (`wai_voice_dienst::kopplung`): `koppeln` → `kopplung_angebot`
+    /// → `kopplung_schluessel` (binnen `HANDSCHLAG_S`) → Vergleichscode im Dialog → `gekoppelt`.
+    /// Weder Schlüssel noch Fingerabdruck noch Code gehen über die Leitung oder ins Log.
     async fn koppeln<R: AsyncRead + Unpin>(
         &mut self,
         client: &str,
         anzeige: &str,
-        fingerabdruck: &str,
-        code_text: &str,
+        zusage: &str,
         leser: &mut Leser<R>,
         stopp: &mut watch::Receiver<bool>,
     ) -> Res {
         let jetzt = (self.ctx.uhr)();
+        let anfang = self.ctx.konfig.anfang;
+        let warten =
+            match self
+                .ctx
+                .kopplungen
+                .anfragen(client, anzeige, jetzt, anfang.as_millis() as i64)
+            {
+                Ok(w) => w,
+                Err(c) => {
+                    log::info!("sprachdienst: Kopplung abgewiesen code={c}");
+                    return self.fatal(c, "Die Kopplung ist gerade nicht möglich.");
+                }
+            };
+        log::info!("sprachdienst: Kopplung angefragt client={client}");
+        let id = warten.id.clone();
+        let r = self
+            .koppeln_ablauf(client, anzeige, zusage, warten, leser, stopp)
+            .await;
+        self.ctx.kopplungen.aufgeben(&id);
+        // Die Liste der offenen Anfragen hat sich geändert (der Dialog darf verschwinden).
+        self.ctx.melden(Meldung::KopplungOffen);
+        r
+    }
+
+    async fn koppeln_ablauf<R: AsyncRead + Unpin>(
+        &mut self,
+        client: &str,
+        anzeige: &str,
+        zusage: &str,
+        mut warten: Warten,
+        leser: &mut Leser<R>,
+        stopp: &mut watch::Receiver<bool>,
+    ) -> Res {
+        let anfang = self.ctx.konfig.anfang;
         let frist = self.ctx.konfig.bestaetigung;
-        let bereits = self.ctx.zugaenge.bereits_gekoppelt(fingerabdruck);
-        let mut warten = match self.ctx.kopplungen.anfragen(
-            client,
-            anzeige,
-            code_text,
-            bereits,
+
+        // 1. Angebot: frischer Schlüssel des Dienstes.
+        let Ok(seite) = DienstSeite::neu() else {
+            return self.fatal(code::FEHLGESCHLAGEN, "Die Kopplung ist nicht möglich.");
+        };
+        self.senden(
+            0,
+            &AnApp::KopplungAngebot {
+                dienst_schluessel: seite.oeffentlich(),
+            },
+        )?;
+        self.fluten().await?;
+
+        // 2. Der Schlüssel der App, binnen der Handschlag-Frist (das Warten auf den Nutzer folgt
+        //    erst danach und zählt nicht mit).
+        let rahmen = tokio::select! {
+            r = timeout(anfang, leser.naechster()) => match r {
+                Err(_) => {
+                    return self.fatal(
+                        code::ZEIT_UEBERSCHRITTEN,
+                        "Kein Schlüssel der App innerhalb der Frist.",
+                    )
+                }
+                Ok(Ok(Some(rahmen))) => rahmen,
+                Ok(Ok(None)) | Ok(Err(LeseFehler::Io)) => return Err(Beendet),
+                Ok(Err(LeseFehler::Rahmen(f))) => {
+                    log::info!("sprachdienst: Rahmenfehler: {f}");
+                    return self.fatal(code::UNGUELTIG, "Der Rahmen verletzt den Vertrag.");
+                }
+            },
+            _ = stopp.changed() => return Err(Beendet),
+        };
+        let app_schluessel = match self.kopplung_schluessel(rahmen) {
+            Ok(k) => k,
+            Err((c, text)) => return self.fatal(c, text),
+        };
+        let ergebnis = match seite.abschliessen(&app_schluessel, zusage, client, &self.zufall) {
+            Ok(e) => e,
+            Err(_) => {
+                return self.fatal(code::UNGUELTIG, "Der Schlüssel passt nicht zur Zusage.");
+            }
+        };
+
+        // 3. Der Nutzer vergleicht den Code in der Oberfläche; ab hier läuft die Frist.
+        let jetzt = (self.ctx.uhr)();
+        if !self.ctx.kopplungen.freigeben(
+            &warten.id,
+            &ergebnis.vergleich,
             jetzt,
             frist.as_millis() as i64,
         ) {
-            Ok(w) => w,
-            Err(c) => {
-                log::info!("sprachdienst: Kopplung abgewiesen code={c}");
-                return self.fatal(c, "Die Kopplung ist gerade nicht möglich.");
-            }
-        };
-        log::info!("sprachdienst: Kopplung angefragt client={client}");
+            return self.fatal(
+                code::ZEIT_UEBERSCHRITTEN,
+                "Die Kopplung wurde nicht rechtzeitig vorbereitet.",
+            );
+        }
         self.ctx.melden(Meldung::KopplungOffen);
-
         let entscheidung = tokio::select! {
             r = &mut warten.antwort => match r {
                 Ok(true) => Entscheidung::Ja,
@@ -564,16 +642,20 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
             },
             _ = stopp.changed() => Entscheidung::Aufgelegt,
         };
-        self.ctx.kopplungen.aufgeben(&warten.id);
-        // Die Liste der offenen Anfragen hat sich geändert (der Dialog darf verschwinden).
-        self.ctx.melden(Meldung::KopplungOffen);
 
         match entscheidung {
             Entscheidung::Ja => {
-                let neu =
-                    self.ctx
-                        .zugaenge
-                        .hinzufuegen(client, anzeige, fingerabdruck, (self.ctx.uhr)());
+                // Gespeichert wird nur der Fingerabdruck des abgeleiteten Zugangsschlüssels.
+                let fingerabdruck = beweis::fingerabdruck(&ergebnis.schluessel)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                let neu = self.ctx.zugaenge.hinzufuegen(
+                    client,
+                    anzeige,
+                    &fingerabdruck,
+                    (self.ctx.uhr)(),
+                );
                 match neu {
                     Ok(z) => {
                         log::info!("sprachdienst: gekoppelt zugang={}", z.zugang);
@@ -605,6 +687,25 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                 "Während der Kopplung sind keine Nachrichten erlaubt.",
             ),
             Entscheidung::Aufgelegt => Err(Beendet),
+        }
+    }
+
+    /// Prüft den Rahmen nach dem Angebot: genau `kopplung_schluessel`, einmal, gültig.
+    fn kopplung_schluessel(&mut self, r: Rahmen) -> Result<String, (&'static str, &'static str)> {
+        const UNGUELTIG: (&str, &str) =
+            (code::UNGUELTIG, "Hier wird der Schlüssel der App erwartet.");
+        if r.art != Art::Steuer {
+            return Err(UNGUELTIG);
+        }
+        let Ok(m) = serde_json::from_slice::<AnDienst>(&r.nutzlast) else {
+            return Err(UNGUELTIG);
+        };
+        if pruefen(&m).is_err() || self.sitzung.annehmen(r.strom, &m).is_err() {
+            return Err(UNGUELTIG);
+        }
+        match m {
+            AnDienst::KopplungSchluessel { app_schluessel } => Ok(app_schluessel),
+            _ => Err(UNGUELTIG),
         }
     }
 

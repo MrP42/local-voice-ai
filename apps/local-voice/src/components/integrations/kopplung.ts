@@ -1,19 +1,15 @@
 import type { SprachKopplung, SprachZugang } from "@/bindings";
 
-export type KopplungWarnung =
-  "nonLatin" | "mixedScripts" | "duplicateName" | "duplicateClient";
-
-const LETTER = /\p{L}/u;
-const LATIN_LETTER = /\p{Script=Latin}/u;
+export type KopplungWarnung = "duplicateName" | "duplicateClient";
 
 const normalisiert = (text: string): string =>
   text.normalize("NFKC").trim().toLocaleLowerCase();
 
 /**
  * Hinweise zu einer Kopplungsanfrage. Der Name ist frei gewählt und kommt von der anfragenden
- * App: Buchstaben fremder Schriften, die lateinischen zum Verwechseln ähneln (kyrillisches „С“
- * statt „C“), oder ein Name, den schon eine gekoppelte App trägt, können eine bekannte App
- * vortäuschen. Die Hinweise sagen es dem Nutzer; entscheiden muss er selbst.
+ * App: Ein Name, den schon eine gekoppelte App trägt, kann eine bekannte App vortäuschen.
+ * (Der Dienst lässt im Namen nur lateinische Buchstaben, Umlaute und ß zu, Mischschrift
+ * ist daher ausgeschlossen.) Die Hinweise sagen es dem Nutzer; entscheiden muss er selbst.
  */
 export const kopplungsWarnungen = (
   anfrage: Pick<SprachKopplung, "id" | "anzeige" | "client">,
@@ -21,15 +17,6 @@ export const kopplungsWarnungen = (
   weitere: readonly SprachKopplung[] = [],
 ): KopplungWarnung[] => {
   const warnungen: KopplungWarnung[] = [];
-  const buchstaben = Array.from(anfrage.anzeige).filter((c) => LETTER.test(c));
-  const fremd = buchstaben.some((c) => !LATIN_LETTER.test(c));
-  if (fremd) {
-    warnungen.push(
-      buchstaben.some((c) => LATIN_LETTER.test(c))
-        ? "mixedScripts"
-        : "nonLatin",
-    );
-  }
   const name = normalisiert(anfrage.anzeige);
   const aktiv = zugaenge.filter((z) => z.widerrufen_ms == null);
   if (

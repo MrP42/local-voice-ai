@@ -2,8 +2,8 @@
 paket = "wai-voice-dienst"
 quelle = "https://github.com/MrP42/wai-sdk"
 pfad = "crates/wai-voice-dienst"
-referenz = "6ecea3ad"
-commit = "6ecea3adebd2637bc4fede64ac3849d1f3f95b65"
+referenz = "a624d690"
+commit = "a624d690092861a5524c84d522b21de15b3c3a65"
 commit_datum = "2026-10-31"
 uebernommen_am = "2026-10-31"
 ausgelassen = ["Tests im SDK-Arbeitsbaum"]

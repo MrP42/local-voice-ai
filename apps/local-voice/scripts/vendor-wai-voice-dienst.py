@@ -2,15 +2,16 @@
 """wai-voice-dienst aus dem WAI-SDK in Local Voice AI übernehmen (Vendoring, ADR-0021 Paket S2).
 
 Quelle:   https://github.com/MrP42/wai-sdk, Pfad crates/wai-voice-dienst
-Commit:   6ecea3ad (Branch claude/project-thread-irqf6e, PR #994, noch nicht gemergt: `willkommen` mit
-          Gegenbeweis `beweis`). Vorher 249a4db3 (origin/main, #985). Nach dem Merge von #994 wird auf
-          main nachgezogen (`--commit origin/main`). Der volle Commit steht in VENDOR.toml.
+Commit:   a624d690 (Branch claude/project-thread-irqf6e, PR #994, noch nicht gemergt: `willkommen` mit
+          Gegenbeweis und Kopplung mit Schluesselaustausch/Vergleichscode). Vorher 6ecea3ad und
+          249a4db3 (origin/main, #985). Nach dem Merge von #994 wird auf main nachgezogen
+          (`--commit origin/main`). Der volle Commit steht in VENDOR.toml.
 Ziel:     apps/local-voice/src-tauri/vendor/wai-voice-dienst/
 
 Muster: wai-digitaler-posteingang/scripts/vendor-wai-rules.py. Kopiert `src/` des festen Commits per
 `git archive` und erzeugt eine eigenständige `Cargo.toml` ohne Workspace-Vererbung. Die workspace-Abhängigkeiten
 werden auf konkrete Versionen aufgelöst, passend zu dem, was Local Voice AI schon im Lock hat (sha2 0.10 statt
-0.11 des SDK-Workspace; thiserror 2, serde 1, serde_json 1). Es kommt KEINE neue externe Abhängigkeit dazu.
+0.11 des SDK-Workspace; thiserror 2, serde 1, serde_json 1). Es kommt KEINE neue externe Abhängigkeit dazu (ring steht schon im Lock).
 Die vendorten Dateien werden nie von Hand geändert; Anpassungen gehören ins SDK.
 
     python3 scripts/vendor-wai-voice-dienst.py [<wai-sdk-pfad>] [--commit <rev>]   übernehmen
@@ -39,13 +40,15 @@ ZIEL = WURZEL / "src-tauri" / "vendor" / "wai-voice-dienst"
 QUELLE = "crates/wai-voice-dienst"
 UEBERNOMMEN = ("src/",)
 VENDOR_DATEI = "VENDOR.toml"
-STANDARD_REV = "6ecea3ad"
+STANDARD_REV = "a624d690"
 REPO = "https://github.com/MrP42/wai-sdk"
 # Versionen, die Local Voice AI schon nutzt (src-tauri/Cargo.toml und Cargo.lock). Sie ersetzen die
 # Workspace-Versionen des SDK, damit im Lock nichts Zweites entsteht.
 LVA_VERSIONEN = {"sha2": "0.10"}
 # Mehr als das darf die Crate nicht brauchen; eine neue Abhängigkeit im SDK soll hier auffallen.
-ERLAUBT = {"serde", "serde_json", "sha2", "thiserror"}
+# ring (0.17, Apache-2.0 AND ISC) steht schon im Cargo.lock von Local Voice AI (rustls); es kommt
+# nichts Neues dazu. Genutzt fuer X25519 und HKDF der Kopplung.
+ERLAUBT = {"serde", "serde_json", "sha2", "thiserror", "ring"}
 
 
 def git(sdk: Path, *argumente: str) -> bytes:

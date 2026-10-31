@@ -1,8 +1,11 @@
 //! Offene Kopplungsanfragen (ADR-0021, Protokoll "Kopplung").
 //!
-//! Eine App schickt `koppeln {client, anzeige, fingerabdruck, code}`. Local Voice AI zeigt Name und
-//! den sechsstelligen Code; der Nutzer bestätigt nur, wenn der Code mit dem in der App
-//! übereinstimmt. Das hier ist der Zustand dazwischen:
+//! Eine App schickt `koppeln {client, anzeige, zusage}`; danach tauschen beide Seiten Schlüssel
+//! aus (`wai_voice_dienst::kopplung`) und leiten denselben sechsstelligen Vergleichscode ab. Local
+//! Voice AI zeigt Name, Kennung und Code; der Nutzer bestätigt nur, wenn die App denselben Code
+//! zeigt. Das hier ist der Zustand dazwischen. Eine Anfrage entsteht mit `koppeln` ([`anfragen`],
+//! zählt für die Ratenbremse und belegt den Platz) und wird für den Nutzer erst sichtbar, wenn der
+//! Code feststeht ([`freigeben`]); die 120 s laufen ab da:
 //!
 //! - **Bestätigung nur in der Oberfläche**: [`Kopplungen::entscheiden`] wird ausschließlich von
 //!   einem Tauri-Kommando gerufen. Über die Leitung gibt es keinen Weg dorthin.
@@ -13,7 +16,7 @@
 //!   Da die Client-Kennung vom Anrufer stammt, gilt zusätzlich eine Grenze über alle Clients
 //!   (höchstens 4 offene Dialoge, 12 Versuche je Minute): ein fremder Prozess desselben Benutzers
 //!   kann den Nutzer nicht mit Dialogen fluten, indem er Kennungen wechselt.
-//! - Ein schon gekoppelter Fingerabdruck bekommt `bereits_gekoppelt` (kein zweiter Zugang).
+//! - `bereits_gekoppelt` kommt nur noch aus dem Zugangsspeicher (die Schlüssel sind je Versuch neu).
 //!
 //! Die Uhr kommt als Parameter (Millisekunden), damit Tests ohne Warten auskommen.
 
@@ -39,6 +42,7 @@ pub struct OffeneKopplung {
     pub id: String,
     pub client: String,
     pub anzeige: String,
+    /// Vergleichscode; leer, solange der Schlüsselaustausch läuft (dann ist die Anfrage unsichtbar).
     pub code: String,
     /// Bis wann bestätigt werden kann (ms, UTC).
     pub bis_ms: i64,
@@ -85,16 +89,14 @@ impl Kopplungen {
 
     /// Nimmt eine Anfrage an oder weist sie mit einem Fehlercode des Vertrags ab.
     ///
-    /// Jeder Versuch zählt für die Ratenbremse, auch ein abgewiesener. `bereits`: Der
-    /// Fingerabdruck gehört schon zu einem Zugang. `bestaetigung_ms`: Frist der Anfrage.
+    /// Jeder Versuch zählt für die Ratenbremse, auch ein abgewiesener. `handschlag_ms`: so lange
+    /// darf der Schlüsselaustausch bis [`Self::freigeben`] dauern (`HANDSCHLAG_S`).
     pub fn anfragen(
         &self,
         client: &str,
         anzeige: &str,
-        code_text: &str,
-        bereits: bool,
         jetzt_ms: i64,
-        bestaetigung_ms: i64,
+        handschlag_ms: i64,
     ) -> Result<Warten, &'static str> {
         let mut i = self.sperre();
         // Abgelaufene Anfragen räumen, damit ein vergessener Dialog den Platz nicht blockiert.
@@ -119,9 +121,6 @@ impl Kopplungen {
         if zu_oft || gesamt_zu_oft {
             return Err(code::BESCHAEFTIGT);
         }
-        if bereits {
-            return Err(code::BEREITS_GEKOPPELT);
-        }
         if i.offen.iter().any(|o| o.ansicht.client == client) || i.offen.len() >= OFFEN_MAX {
             return Err(code::BESCHAEFTIGT);
         }
@@ -134,19 +133,45 @@ impl Kopplungen {
                 id: id.clone(),
                 client: client.to_string(),
                 anzeige: anzeige.to_string(),
-                code: code_text.to_string(),
-                bis_ms: jetzt_ms + bestaetigung_ms,
+                code: String::new(),
+                bis_ms: jetzt_ms + handschlag_ms,
             },
             antwort: Some(tx),
         });
         Ok(Warten { id, antwort: rx })
     }
 
+    /// Der Schlüsselaustausch ist fertig: ab jetzt sieht der Nutzer die Anfrage mit `code_text`, und
+    /// die Frist von `bestaetigung_ms` beginnt. `false`: die Anfrage gibt es nicht mehr.
+    pub fn freigeben(
+        &self,
+        id: &str,
+        code_text: &str,
+        jetzt_ms: i64,
+        bestaetigung_ms: i64,
+    ) -> bool {
+        let mut i = self.sperre();
+        let Some(o) = i
+            .offen
+            .iter_mut()
+            .find(|o| o.ansicht.id == id && o.ansicht.bis_ms > jetzt_ms)
+        else {
+            return false;
+        };
+        o.ansicht.code = code_text.to_string();
+        o.ansicht.bis_ms = jetzt_ms + bestaetigung_ms;
+        true
+    }
+
     /// Entscheidung des Nutzers (nur aus der Oberfläche). `false`: die Anfrage gibt es nicht
     /// (mehr), etwa weil sie abgelaufen ist oder die App aufgelegt hat.
     pub fn entscheiden(&self, id: &str, bestaetigt: bool, jetzt_ms: i64) -> bool {
         let mut i = self.sperre();
-        let Some(pos) = i.offen.iter().position(|o| o.ansicht.id == id) else {
+        let Some(pos) = i
+            .offen
+            .iter()
+            .position(|o| o.ansicht.id == id && !o.ansicht.code.is_empty())
+        else {
             return false;
         };
         let mut o = i.offen.remove(pos);
@@ -167,7 +192,11 @@ impl Kopplungen {
     pub fn offen(&self, jetzt_ms: i64) -> Vec<OffeneKopplung> {
         let mut i = self.sperre();
         i.offen.retain(|o| o.ansicht.bis_ms > jetzt_ms);
-        i.offen.iter().map(|o| o.ansicht.clone()).collect()
+        i.offen
+            .iter()
+            .filter(|o| !o.ansicht.code.is_empty())
+            .map(|o| o.ansicht.clone())
+            .collect()
     }
 }
 
@@ -178,7 +207,9 @@ mod tests {
     const FRIST: i64 = grenzen::KOPPELN_BESTAETIGUNG_S as i64 * 1000;
 
     fn frage(k: &Kopplungen, client: &str, jetzt: i64) -> Result<Warten, &'static str> {
-        k.anfragen(client, "Corporate LLM", "123456", false, jetzt, FRIST)
+        let w = k.anfragen(client, "Corporate LLM", jetzt, 15_000)?;
+        assert!(k.freigeben(&w.id, "123456", jetzt, FRIST));
+        Ok(w)
     }
 
     #[test]
@@ -247,11 +278,30 @@ mod tests {
     }
 
     #[test]
-    fn bereits_gekoppelt_hat_eigenen_code_und_zaehlt_als_versuch() {
+    fn vor_dem_schluesselaustausch_ist_die_anfrage_unsichtbar_und_nicht_bestaetigbar() {
         let k = Kopplungen::new();
-        let r = k.anfragen("a", "A", "123456", true, 0, FRIST);
-        assert_eq!(r.err(), Some(code::BEREITS_GEKOPPELT));
-        assert!(k.offen(1).is_empty(), "kein Dialog");
+        let w = k.anfragen("a", "A", 0, 15_000).unwrap();
+        assert!(k.offen(1).is_empty(), "kein Dialog ohne Code");
+        assert!(
+            !k.entscheiden(&w.id, true, 1),
+            "ohne Code nicht bestätigbar"
+        );
+        // Der Platz ist trotzdem belegt.
+        assert_eq!(
+            k.anfragen("a", "A", 2, 15_000).err(),
+            Some(code::BESCHAEFTIGT)
+        );
+        // Die Frist von 120 s beginnt erst mit der Freigabe.
+        assert!(k.freigeben(&w.id, "654321", 10_000, FRIST));
+        let liste = k.offen(10_001);
+        assert_eq!(
+            (liste[0].code.as_str(), liste[0].bis_ms),
+            ("654321", 10_000 + FRIST)
+        );
+        // Nach der Handschlag-Frist ist eine nicht freigegebene Anfrage weg.
+        let k = Kopplungen::new();
+        let w = k.anfragen("a", "A", 0, 15_000).unwrap();
+        assert!(!k.freigeben(&w.id, "123456", 15_000, FRIST));
     }
 
     #[test]

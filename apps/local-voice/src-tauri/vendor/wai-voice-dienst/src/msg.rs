@@ -100,19 +100,23 @@ pub enum AnDienst {
         paare: Vec<Wortpaar>,
     },
     Status {},
-    /// Kopplung einer App (statt `hallo`, nur einmal je Verbindung): Die App erzeugt ihren
-    /// Schlüssel selbst und schickt nur dessen Fingerabdruck. Local Voice AI zeigt `anzeige` und
-    /// `code`; der Nutzer bestätigt, wenn der Code mit dem in der App übereinstimmt. Antwort
+    /// Kopplung einer App (statt `hallo`, nur einmal je Verbindung), Ablauf in
+    /// [`crate::kopplung`]: `zusage` = Hex von SHA-256 des X25519-Schlüssels der App. Antwort
+    /// `kopplung_angebot`, danach `kopplung_schluessel`. Local Voice AI zeigt `anzeige`, `client`
+    /// und den Vergleichscode; der Nutzer bestätigt, wenn die App denselben Code zeigt. Dann
     /// `gekoppelt` (oder `fehler` `abgelehnt`, `zeit_ueberschritten` nach
-    /// [`grenzen::KOPPELN_BESTAETIGUNG_S`], `beschaeftigt`, `bereits_gekoppelt`), danach endet die
-    /// Verbindung. Rechte vergibt der
-    /// Nutzer getrennt, Standard „aus“.
+    /// [`grenzen::KOPPELN_BESTAETIGUNG_S`], `beschaeftigt`, `bereits_gekoppelt`, `ungueltig` bei
+    /// falscher Zusage), danach endet die Verbindung. Rechte vergibt der Nutzer getrennt, Standard
+    /// „aus“.
     Koppeln {
         protokoll: u16,
         client: String,
         anzeige: String,
-        fingerabdruck: String,
-        code: String,
+        zusage: String,
+    },
+    /// Öffentlicher X25519-Schlüssel der App (Hex), nur direkt nach `kopplung_angebot`.
+    KopplungSchluessel {
+        app_schluessel: String,
     },
 }
 
@@ -127,6 +131,7 @@ impl AnDienst {
             | Self::Guthaben { strom, .. } => *strom,
             Self::Hallo { .. }
             | Self::Koppeln { .. }
+            | Self::KopplungSchluessel { .. }
             | Self::Rueckmeldung { .. }
             | Self::Status {} => 0,
         }
@@ -186,6 +191,10 @@ pub enum AnApp {
         bereit: bool,
         engines: Engines,
     },
+    /// Antwort auf `koppeln`: öffentlicher X25519-Schlüssel des Dienstes (Hex), je Versuch frisch.
+    KopplungAngebot {
+        dienst_schluessel: String,
+    },
     /// Kopplung bestätigt; `zugang` ist die öffentliche Kennung für künftige `hallo`.
     Gekoppelt {
         zugang: String,
@@ -203,6 +212,7 @@ impl AnApp {
             Self::Gruss { .. }
             | Self::Willkommen { .. }
             | Self::Status { .. }
+            | Self::KopplungAngebot { .. }
             | Self::Gekoppelt { .. } => 0,
         }
     }
@@ -293,19 +303,17 @@ pub fn pruefen(m: &AnDienst) -> Result<(), String> {
             protokoll,
             client,
             anzeige,
-            fingerabdruck,
-            code,
+            zusage,
         } => {
             if *protokoll != PROTOKOLL {
                 return Err("protokoll".into());
             }
             kennung(client, "client")?;
             anzeige_ok(anzeige)?;
-            hex(fingerabdruck, 64, "fingerabdruck")?;
-            if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
-                return Err("code".into());
-            }
-            Ok(())
+            hex(zusage, 64, "zusage")
+        }
+        AnDienst::KopplungSchluessel { app_schluessel } => {
+            hex(app_schluessel, 64, "app_schluessel")
         }
     }
 }
@@ -348,18 +356,24 @@ pub fn pruefen_an_app(m: &AnApp) -> Result<(), String> {
             Ok(())
         }
         AnApp::Status { .. } => Ok(()),
+        AnApp::KopplungAngebot { dienst_schluessel } => {
+            hex(dienst_schluessel, 64, "dienst_schluessel")
+        }
         AnApp::Gekoppelt { zugang } => kennung(zugang, "zugang"),
     }
 }
 
-/// Name im Bestätigungsdialog von Local Voice AI: nur Buchstaben, Ziffern, Leerzeichen und
-/// `-_.()&+/`. Keine Steuer-, Format- oder Bidi-Zeichen (U+202E u. ä.), die den Dialog fälschen könnten.
+/// Name im Bestätigungsdialog von Local Voice AI: nur lateinische Grundbuchstaben (ASCII und
+/// `ÄÖÜäöüß`), Ziffern, Leerzeichen und `-_.()&+/`. Keine Steuer-, Format- oder Bidi-Zeichen
+/// (U+202E u. ä.) und keine fremden Schriften, deren Zeichen wie lateinische aussehen (Homoglyphen),
+/// damit der Dialog nicht gefälscht werden kann.
 fn anzeige_ok(a: &str) -> Result<(), String> {
     let n = a.chars().count();
     let ok = !a.trim().is_empty()
         && n <= 64
-        && a.chars()
-            .all(|c| c.is_alphanumeric() || c == ' ' || "-_.()&+/".contains(c));
+        && a.chars().all(|c| {
+            c.is_ascii_alphanumeric() || "ÄÖÜäöüß".contains(c) || c == ' ' || "-_.()&+/".contains(c)
+        });
     if ok { Ok(()) } else { Err("anzeige".into()) }
 }
 
@@ -430,6 +444,8 @@ pub struct Sitzung {
     angemeldet: bool,
     /// `hallo` oder `koppeln` ist eingegangen; ein zweites wird abgewiesen.
     begonnen: bool,
+    /// `koppeln` ist eingegangen, `kopplung_schluessel` steht noch aus.
+    schluessel_erwartet: bool,
     offen: HashSet<u32>,
 }
 
@@ -456,10 +472,20 @@ impl Sitzung {
             AnDienst::Hallo { .. } | AnDienst::Koppeln { .. } if self.begonnen => {
                 Err(code::UNGUELTIG)
             }
-            AnDienst::Hallo { .. } | AnDienst::Koppeln { .. } => {
+            AnDienst::Hallo { .. } => {
                 self.begonnen = true;
                 Ok(())
             }
+            AnDienst::Koppeln { .. } => {
+                self.begonnen = true;
+                self.schluessel_erwartet = true;
+                Ok(())
+            }
+            AnDienst::KopplungSchluessel { .. } if self.schluessel_erwartet => {
+                self.schluessel_erwartet = false;
+                Ok(())
+            }
+            AnDienst::KopplungSchluessel { .. } => Err(code::UNGUELTIG),
             _ if !self.angemeldet => Err(code::NICHT_ANGEMELDET),
             AnDienst::Start { strom, .. } => {
                 if self.offen.contains(strom) {
@@ -658,29 +684,40 @@ mod tests {
         assert!(pruefen_an_app(&AnApp::Fertig { strom: 0 }).is_err());
     }
 
-    fn koppeln(code: &str, anzeige: &str) -> AnDienst {
+    fn koppeln(zusage: &str, anzeige: &str) -> AnDienst {
         AnDienst::Koppeln {
             protokoll: PROTOKOLL,
             client: "corporate-llm".into(),
             anzeige: anzeige.into(),
-            fingerabdruck: "0".repeat(64),
-            code: code.into(),
+            zusage: zusage.into(),
         }
     }
 
     #[test]
     fn koppeln_felder() {
-        assert!(pruefen(&koppeln("123456", "Corporate LLM")).is_ok());
-        assert!(pruefen(&koppeln("12345", "Corporate LLM")).is_err());
-        assert!(pruefen(&koppeln("12345a", "Corporate LLM")).is_err());
-        assert!(pruefen(&koppeln("123456", "Böse\u{202E}gnalL")).is_err());
-        assert!(pruefen(&koppeln("123456", "Null\u{200B}breite")).is_err());
-        assert!(pruefen(&koppeln("123456", &"x".repeat(65))).is_err());
-        let mut gross = koppeln("123456", "A");
-        if let AnDienst::Koppeln { fingerabdruck, .. } = &mut gross {
-            *fingerabdruck = "A".repeat(64);
-        }
-        assert!(pruefen(&gross).is_err());
+        let z = "0".repeat(64);
+        assert!(pruefen(&koppeln(&z, "Corporate LLM")).is_ok());
+        assert!(pruefen(&koppeln(&z, "Bürger-Größe (Test)")).is_ok());
+        assert!(pruefen(&koppeln(&"0".repeat(63), "Corporate LLM")).is_err());
+        assert!(pruefen(&koppeln(&"A".repeat(64), "Corporate LLM")).is_err());
+        assert!(pruefen(&koppeln(&z, "Böse\u{202E}gnalL")).is_err());
+        assert!(pruefen(&koppeln(&z, "Null\u{200B}breite")).is_err());
+        assert!(pruefen(&koppeln(&z, &"x".repeat(65))).is_err());
+        // Kyrillisches „С“ und „о“ sehen lateinisch aus.
+        assert!(pruefen(&koppeln(&z, "\u{0421}\u{043e}rporate LLM")).is_err());
+        assert!(pruefen(&koppeln(&z, "مرحبا")).is_err());
+        assert!(
+            pruefen(&AnDienst::KopplungSchluessel {
+                app_schluessel: "ab".repeat(32)
+            })
+            .is_ok()
+        );
+        assert!(
+            pruefen_an_app(&AnApp::KopplungAngebot {
+                dienst_schluessel: "x".repeat(64)
+            })
+            .is_err()
+        );
         assert!(
             pruefen_an_app(&AnApp::Gekoppelt {
                 zugang: "z-1".into()
@@ -701,6 +738,11 @@ mod tests {
         assert!(s.annehmen(0, &koppeln("123456", "A")).is_ok());
         assert_eq!(s.annehmen(0, &hallo()), Err(code::UNGUELTIG));
         assert_eq!(s.annehmen(0, &koppeln("123456", "A")), Err(code::UNGUELTIG));
+        let ks = AnDienst::KopplungSchluessel {
+            app_schluessel: "ab".repeat(32),
+        };
+        assert!(s.annehmen(0, &ks).is_ok());
+        assert_eq!(s.annehmen(0, &ks), Err(code::UNGUELTIG), "nur einmal");
         let start = AnDienst::Start {
             strom: 1,
             op: Operation::Erkennen,
@@ -711,5 +753,6 @@ mod tests {
         let mut s = Sitzung::new();
         assert!(s.annehmen(0, &hallo()).is_ok());
         assert_eq!(s.annehmen(0, &koppeln("123456", "A")), Err(code::UNGUELTIG));
+        assert_eq!(s.annehmen(0, &ks), Err(code::UNGUELTIG), "ohne koppeln");
     }
 }
