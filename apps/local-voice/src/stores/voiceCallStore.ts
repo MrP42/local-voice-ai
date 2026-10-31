@@ -109,6 +109,8 @@ export function subscribeCallLevel(fn: (level: number) => void): () => void {
 
 let engine: VoiceCallEngine | null = null;
 let lineId = 0;
+/** Zählt Besuche der Seite: ein spätes `leave()` (StrictMode, schneller Rückweg) darf einen neuen Besuch nicht abmelden. */
+let visit = 0;
 
 export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const getEngine = (): VoiceCallEngine => {
@@ -211,7 +213,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     settingsOpen: false,
     settingsTab: "talk",
 
-    setActive: (active) => set({ active }),
+    setActive: (active) => {
+      if (active) visit++;
+      set({ active });
+    },
 
     setConfig: (update) => {
       const config = update(get().config);
@@ -274,7 +279,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     },
 
     leave: async () => {
+      const left = visit;
       await engine?.stop();
+      if (visit !== left) return;
       engine?.dispose();
       set({ active: false, settingsOpen: false });
     },

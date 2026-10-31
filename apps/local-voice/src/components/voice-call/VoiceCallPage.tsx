@@ -151,9 +151,13 @@ export const VoiceCallPage: React.FC = () => {
               size="sm"
               type="button"
               icon={<SquarePen className="w-4 h-4" aria-hidden="true" />}
+              aria-label={t("voiceCall.newConversation")}
+              title={t("voiceCall.newConversation")}
               onClick={() => store.getState().newConversation()}
             >
-              {t("voiceCall.newConversation")}
+              <span className="max-md:hidden">
+                {t("voiceCall.newConversation")}
+              </span>
             </Button>
           )}
           <Button
@@ -177,8 +181,8 @@ export const VoiceCallPage: React.FC = () => {
               type="button"
               onClick={() => void store.getState().stopCall()}
             >
-              <PhoneOff className="w-4 h-4 mr-1" />
-              {t("voiceCall.end")}
+              <PhoneOff className="w-4 h-4 sm:mr-1" aria-hidden="true" />
+              <span className="max-sm:sr-only">{t("voiceCall.end")}</span>
             </Button>
           ) : (
             <Button
@@ -187,14 +191,14 @@ export const VoiceCallPage: React.FC = () => {
               type="button"
               onClick={() => void store.getState().startCall()}
             >
-              <Phone className="w-4 h-4 mr-1" />
-              {t("voiceCall.begin")}
+              <Phone className="w-4 h-4 sm:mr-1" aria-hidden="true" />
+              <span className="max-sm:sr-only">{t("voiceCall.begin")}</span>
             </Button>
           )}
         </>
       }
     >
-      <div className="relative flex h-full min-h-0 border border-mid-gray/20 rounded-lg overflow-hidden">
+      <div className="relative flex h-full min-h-0 overflow-hidden">
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
           <InfoLine />
           {alerts.map((a) => (

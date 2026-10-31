@@ -152,7 +152,7 @@ export const InfoLine: React.FC = () => {
       {model && (
         <>
           <span className="w-px h-3.5 bg-mid-gray/30 shrink-0" />
-          <span className="truncate min-w-0" title={t("voiceCall.info.model")}>
+          <span className="truncate min-w-16" title={t("voiceCall.info.model")}>
             {model}
             {ready?.llm_local ? ` · ${t("voiceCall.local")}` : ""}
           </span>
