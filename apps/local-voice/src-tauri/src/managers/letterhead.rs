@@ -105,8 +105,9 @@ pub struct Letterhead {
     pub schema: String,
     pub id: String,
     pub name: String,
-    /// Mitgeliefert (schreibgeschuetzt). Wird nicht gespeichert, sondern beim Laden gesetzt.
-    #[serde(default, skip_serializing)]
+    /// Mitgeliefert (schreibgeschuetzt). Geht an die Oberflaeche; beim Speichern und
+    /// Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
+    #[serde(default)]
     pub builtin: bool,
     pub firma: Firma,
     #[serde(default)]
@@ -723,6 +724,11 @@ mod tests {
         assert!(!list[3].builtin);
         assert_eq!(s.get("meine-firma").unwrap().name, "Meine Firma");
         assert_eq!(s.save(&builtins()[1]).unwrap_err(), CODE_READ_ONLY);
+        // Die Oberflaeche braucht das Feld (Bindings), mitgelieferte Profile tragen `true`.
+        assert_eq!(
+            serde_json::to_value(&builtins()[1]).unwrap()["builtin"],
+            true
+        );
         assert_eq!(s.delete("wai").unwrap_err(), CODE_READ_ONLY);
         assert_eq!(s.get("fehlt").unwrap_err(), CODE_NOT_FOUND);
         s.delete("meine-firma").unwrap();
