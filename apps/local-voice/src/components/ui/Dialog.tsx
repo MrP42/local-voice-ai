@@ -49,7 +49,7 @@ const maxWidthOf = (className: string): string | undefined => {
 /** Dialogfläche als Ziel für schwebende Listen (react-select `menuPortal`):
  *  Ein modaler Fluent-Dialog blendet alles außerhalb für Hilfstechnik aus
  *  (aria-hidden); eine Liste an `document.body` wäre dann unerreichbar. */
-const DialogPortalContext = createContext<HTMLElement | null>(null);
+export const DialogPortalContext = createContext<HTMLElement | null>(null);
 export const useDialogPortalTarget = () => useContext(DialogPortalContext);
 
 interface DialogProps {

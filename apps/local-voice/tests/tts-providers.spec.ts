@@ -458,6 +458,8 @@ async function setup(page: Page, cfg: Cfg) {
     });
     try {
       localStorage.setItem("lva.ui.settings.tab", "output");
+      localStorage.setItem("lva.ui.models.area", "voices");
+      localStorage.setItem("lva.ui.models.voices.view", "providers");
     } catch {
       /* egal */
     }
@@ -483,12 +485,28 @@ const emit = (page: Page, payload: Record<string, unknown>) =>
     payload,
   );
 
+/** Vorlesen unter Modelle, Ansicht "Anbieter" (die Anbieter stehen seit der Verwaltung dort). */
 const openGroup = async (page: Page) => {
   await page.goto("/");
   await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
+    .getByRole("navigation")
+    .getByRole("button", { name: "Modelle", exact: true })
     .click();
-  await expect(page.getByTestId("tts-provider-fish")).toBeVisible();
+  await expect(page.getByTestId("voice-providers-view")).toBeVisible();
+  await expect(page.getByTestId("tts-provider-open-fish")).toBeVisible();
+};
+
+/** Seitenblatt eines Anbieters (Zeile samt Einstellungen); ein offenes anderes wird geschlossen. */
+const openProvider = async (page: Page, id: string) => {
+  const close = page.getByTestId("voice-provider-sheet-close");
+  if (await close.isVisible()) {
+    await close.click();
+    await expect(page.getByTestId("voice-provider-sheet")).toHaveCount(0);
+  }
+  await page.getByTestId(`tts-provider-open-${id}`).click();
+  await expect(
+    page.getByTestId("voice-provider-sheet").getByTestId(`tts-provider-${id}`),
+  ).toBeVisible();
 };
 
 test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz je Anbieter", async ({
@@ -499,6 +517,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     over: { piper: { health: { version: "2023.11" } } },
   });
   await openGroup(page);
+  await openProvider(page, "fish");
 
   const fish = page.getByTestId("tts-provider-fish");
   await expect(fish).toContainText("Fish Speech");
@@ -520,6 +539,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     "nichtkommerziell",
   );
 
+  await openProvider(page, "piper");
   const piper = page.getByTestId("tts-provider-piper");
   await expect(piper).toContainText("2023.11");
   await expect(piper).toContainText("satzweise");
@@ -534,6 +554,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     "CPU",
   );
 
+  await openProvider(page, "phonon");
   const phonon = page.getByTestId("tts-provider-phonon");
   await expect(page.getByTestId("tts-provider-tier-phonon")).toHaveText(
     "Experimentell",
@@ -547,15 +568,18 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
   await expect(
     page.getByTestId("tts-provider-device-phonon"),
   ).not.toContainText("CUDA");
+  await openProvider(page, "openai-speech");
   // Echtes Streaming (Art "chunk") hat nur der OpenAI-kompatible Sprachserver.
   await expect(page.getByTestId("tts-provider-openai-speech")).toContainText(
     "echtes Streaming",
   );
+  await openProvider(page, "phonon");
   await expect(
     page.getByTestId("tts-provider-noncommercial-phonon"),
   ).toHaveText("nichtkommerziell");
   await expect(page.getByTestId("tts-provider-selected-phonon")).toHaveCount(0);
 
+  await openProvider(page, "ollama-speech");
   // Nicht verfügbar: Grund und Hinweis aus der Gesundheitsprüfung.
   const reason = page.getByTestId("tts-provider-reason-ollama-speech");
   await expect(reason).toContainText("Ollama ist nicht erreichbar");
@@ -564,10 +588,13 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     page.getByTestId("tts-provider-health-ollama-speech"),
   ).toHaveText("Nicht bereit");
 
+  await openProvider(page, "fish");
   // Fish/Piper ohne Opt-in: kein Schalter. Phonon: Schalter.
   await expect(page.getByTestId("tts-provider-enable-fish")).toHaveCount(0);
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-enable-phonon")).toHaveCount(1);
 
+  await openProvider(page, "piper");
   // Erneut prüfen ruft die Gesundheit dieses Anbieters.
   await page.getByTestId("tts-provider-recheck-piper").click();
   await expect
@@ -583,6 +610,7 @@ test("Aktivieren führt über den Lizenzdialog (Fingerabdruck) bis zur Freigabe"
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
 
   // Vor der Freigabe: gesperrt, Grund steht da, Auswahl nicht möglich.
   const blocked = page.getByTestId("tts-provider-blocked-phonon");
@@ -638,6 +666,7 @@ test("Fernzugriff: Aktivieren eines entfernten Anbieters verlangt die Freigabe m
     over: { "openai-speech": { license_acked: true, remote: true } },
   });
   await openGroup(page);
+  await openProvider(page, "openai-speech");
 
   await page.getByTestId("tts-provider-enable-openai-speech").click();
   // Lizenz ist bestätigt: kein Lizenzdialog, aber Fernzugriff.
@@ -673,6 +702,7 @@ test("Veraltete Lizenzbestätigung (bad_request) bleibt im Dialog und lädt die 
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
   await page.getByTestId("tts-provider-enable-phonon").click();
   const dialog = page.getByTestId("tts-provider-license-dialog");
   await expect(dialog).toBeVisible();
@@ -709,6 +739,7 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
 
   // Lizenz fehlt (aktiviert, aber nicht bestätigt): Weg zur Bestätigung.
   await page.evaluate(() => {
@@ -728,7 +759,10 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
       message: "Lizenz nicht bestätigt.",
     };
   });
+  // "Alle erneut prüfen" steht in der Karten-Ansicht, hinter dem Seitenblatt.
+  await page.getByTestId("voice-provider-sheet-close").click();
   await page.getByTestId("tts-providers-recheck-all").click();
+  await openProvider(page, "phonon");
   const blocked = page.getByTestId("tts-provider-blocked-phonon");
   await expect(blocked).toContainText("Lizenz ist noch nicht bestätigt");
   await expect(
@@ -736,12 +770,13 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
   ).toBeVisible();
 
   // Entfernter Anbieter ohne Opt-in: zuerst fehlt die Aktivierung.
+  await openProvider(page, "openai-speech");
   const remote = page.getByTestId("tts-provider-blocked-openai-speech");
   await expect(remote).toHaveAttribute("data-kind", "license_blocked");
   await expect(remote).toContainText("nicht aktiviert");
 
   // Aufgeklappt: Stimmen sind erst nach Freigabe abrufbar, Auswahl und Probe aus.
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const details = page.getByTestId("tts-provider-details-phonon");
   await expect(details).toContainText("erst nach der Freigabe abrufbar");
   await expect(
@@ -755,7 +790,7 @@ test("Einstellungen: Felder aus der Konfiguration, Freigaben nicht als Feld, Val
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-openai-speech").click();
+  await openProvider(page, "openai-speech");
   const cfg = page.getByTestId("tts-provider-config-openai-speech");
   await expect(
     cfg.getByTestId("tts-provider-openai-speech-base_url"),
@@ -792,7 +827,7 @@ test("Einstellungen: Felder aus der Konfiguration, Freigaben nicht als Feld, Val
   expect(sent.languages).toEqual(["und"]);
 
   // Anbieter ohne Konfiguration (Piper): freundlicher Hinweis statt Fehler.
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await expect(page.getByTestId("tts-provider-config-piper")).toContainText(
     "keine eigenen Einstellungen",
   );
@@ -803,13 +838,14 @@ test("Stimme und Sprache wählen, als Vorlese-Stimme verwenden", async ({
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   const voices = page.getByTestId("tts-provider-voices-piper");
   await expect(voices).toBeVisible();
   // (Im Entwicklungsmodus mountet React Effekte doppelt: nach Sprache zählen.)
   const voiceCalls = async (language: string | null) =>
     (await calls(page, "tts_provider_voices")).filter(
-      ([, a]) => a?.language === language,
+      // Die Stimmenliste der Verwaltung fragt auch die anderen Anbieter: nur Piper zaehlt.
+      ([, a]) => a?.id === "piper" && a?.language === language,
     );
   await expect
     .poll(async () => (await voiceCalls(null)).length)
@@ -849,7 +885,7 @@ test("Probestimme: Phase, Zeit bis zum ersten Ton, Abbrechen (started kommt vor 
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   const text = page.getByTestId("tts-provider-preview-text-piper");
   await expect(text).toHaveValue(/Guten Tag\. Dies ist ein kurzer Probesatz/);
   await page.getByTestId("tts-provider-preview-play-piper").click();
@@ -911,7 +947,7 @@ test("Probestimme: Fehler beim Start (bad_request: Vorlesen läuft) und Fehler-E
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await page.evaluate(() => {
     (window as unknown as { __previewReject: unknown }).__previewReject = {
       kind: "bad_request",
@@ -952,7 +988,7 @@ test("Probestimme: started und first_audio vor der Befehlsantwort werden zugeord
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await page.evaluate(() => {
     const w = window as unknown as {
       __emit: (n: string, p: unknown) => void;
@@ -995,12 +1031,14 @@ test("Vorlesen-Seite: tts_engine = provider:phonon zeigt benannten Eintrag statt
   await expect(select).not.toContainText("Skript mit Sprechern");
   const hint = page.getByTestId("voice-provider-hint");
   await expect(hint).toContainText(
-    "Anbieter: Phonon (Einstellungen → Sprachausgabe-Anbieter)",
+    "Anbieter: Phonon (Modelle › Vorlesen › Anbieter)",
   );
   // Kein Fish-"nicht eingerichtet"-Hinweis.
   await expect(page.getByTestId("voice-setup-hint")).toHaveCount(0);
-  // Der Link führt in die Gruppe.
+  // Der Link führt in die Anbieter-Ansicht unter Modelle.
   await page.getByTestId("voice-provider-open").click();
+  await expect(page.getByTestId("voice-providers-view")).toBeVisible();
+  await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("tts-provider-phonon")).toBeVisible();
   await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
 });
@@ -1041,12 +1079,13 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   // Hoch genug, damit die ganze Gruppe ohne Rollen auf ein Bild passt.
   await page.setViewportSize({ width: 1100, height: 2700 });
   await openGroup(page);
+  await openProvider(page, "phonon");
   // Phonon freigeben, aufklappen, Probestimme laufen lassen.
   await page.getByTestId("tts-provider-enable-phonon").click();
   await page.getByTestId("tts-provider-license-checkbox").check();
   await page.getByTestId("tts-provider-license-confirm").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toHaveCount(0);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-voices-phonon")).toBeVisible();
   await page.getByTestId("tts-provider-preview-play-phonon").click();
   await emit(page, {
@@ -1068,7 +1107,7 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   // Lizenzdialog (zweiter Anbieter).
   await page.getByTestId("tts-provider-enable-ollama-speech").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toBeVisible();
-  await page.getByRole("dialog").screenshot({
+  await page.locator(".lv-dialog").screenshot({
     path: `${dir}/tts-anbieter-lizenzdialog.png`,
     animations: "disabled",
   });
@@ -1108,7 +1147,7 @@ test("Phonon: Durchsuchen wählt Programmdatei (Datei) und Modell (Ordner), q8 w
     };
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const cfg = page.getByTestId("tts-provider-config-phonon");
   await expect(phonon(page, "exe_path")).toHaveValue("");
   // Noch nichts geaendert: kein Hinweis auf ungespeicherte Aenderungen.
@@ -1184,7 +1223,7 @@ test("Phonon: q8-Hinweis bei getipptem Modellordner (nur q8 vorhanden) mit Knopf
     };
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const note = page.getByTestId("tts-provider-quant-note-phonon");
   await expect(note).toContainText("nur model.q8.gguf");
   await page.getByTestId("tts-provider-quant-use-phonon").click();
@@ -1203,6 +1242,7 @@ test("Phonon: Fehler stehen am Feld, nichts wird gespeichert, die Anzeige oben e
     Object.assign(w.__configs.phonon, { exe_path: "", model: "" });
   });
   await openGroup(page);
+  await openProvider(page, "phonon");
 
   // Oben: der GESPEICHERTE Stand, mit Verweis auf die Felder.
   const reason = page.getByTestId("tts-provider-reason-phonon");
@@ -1211,7 +1251,9 @@ test("Phonon: Fehler stehen am Feld, nichts wird gespeichert, die Anzeige oben e
   await expect(
     page.getByTestId("tts-provider-reason-fix-phonon"),
   ).toContainText("erst danach gilt die Änderung");
-  // Der Verweis oeffnet die Felder.
+  // Im Seitenblatt ist alles aufgeklappt; zugeklappt oeffnet der Verweis die Felder.
+  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await expect(page.getByTestId("tts-provider-config-phonon")).toHaveCount(0);
   await page.getByTestId("tts-provider-reason-open-phonon").click();
   await expect(page.getByTestId("tts-provider-config-phonon")).toBeVisible();
   await expect(page.getByTestId("tts-provider-reason-open-phonon")).toHaveCount(
@@ -1267,6 +1309,7 @@ test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf 
   // Phonon gewaehlt, aber nicht bereit (echte Daten: exe_path fehlt) und gesperrt.
   await setup(page, { engine: "provider:phonon" });
   await openGroup(page);
+  await openProvider(page, "phonon");
   const warn = page.getByTestId("tts-provider-selected-warning-phonon");
   await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
   await expect(warn).toContainText("Liest derzeit nicht");
@@ -1293,7 +1336,7 @@ test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf 
     ).__entries.find((x) => x.descriptor.id === "phonon")!;
     e.health = { ...e.health, available: true, reason: null, hint: null };
   });
-  await page.getByTestId("tts-providers-recheck-all").click();
+  await page.getByTestId("tts-provider-recheck-phonon").click();
   await expect(warn).toHaveCount(0);
 });
 
@@ -1305,7 +1348,7 @@ test("Phonon-Stimmen: Geschlecht in der Auswahl, Lizenz der Stimme mit Quelle", 
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const voices = page.getByTestId("tts-provider-voices-phonon");
   await voices.getByLabel("Stimme", { exact: true }).click();
   await expect(
@@ -1330,7 +1373,7 @@ test("Phonon-Maske: Liste aller Stimmen mit Haken, Alle/Keine, gewählte Stimme 
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const list = page.getByTestId("tts-provider-visible-list-phonon");
   await expect(list).toBeVisible();
 
@@ -1424,9 +1467,9 @@ test("Phonon-Maske: gesperrter Anbieter zeigt keine Auswahl; Fish und Piper habe
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-visible-phonon")).toHaveCount(0);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await expect(page.getByTestId("tts-provider-voices-piper")).toBeVisible();
   await expect(page.getByTestId("tts-provider-visible-piper")).toHaveCount(0);
 });
@@ -1575,7 +1618,7 @@ test("Bild der Sichtbarkeitsliste (nur mit SCREENS_DIR)", async ({ page }) => {
   });
   await page.setViewportSize({ width: 1100, height: 1900 });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const voices = page.getByTestId("tts-provider-voices-phonon");
   await expect(
     page.getByTestId("tts-provider-visible-list-phonon"),
@@ -1615,6 +1658,7 @@ test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
   });
   await page.setViewportSize({ width: 1100, height: 2300 });
   await openGroup(page);
+  await openProvider(page, "phonon");
   const row = page.getByTestId("tts-provider-phonon");
   // 1) Gespeicherter Stand unvollstaendig, gewaehlt, nicht bereit.
   await row.screenshot({
@@ -1622,7 +1666,7 @@ test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
     animations: "disabled",
   });
   // 2) Aufgeklappt, Pflichtfelder leer gespeichert: Fehler am Feld.
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await page.getByTestId("tts-provider-config-save-phonon").click();
   await expect(
     page.getByTestId("tts-provider-field-error-phonon-model"),
@@ -1659,7 +1703,7 @@ test("Phonon-Maske: Reinhoeren spielt die fertige Hoerprobe, eine entstehende is
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const nele = page.getByTestId("tts-provider-sample-nele");
   await expect(nele).toBeVisible();
   await expect(nele).toHaveAttribute("aria-label", "Reinhören: Nele");

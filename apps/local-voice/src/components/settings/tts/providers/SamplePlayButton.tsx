@@ -3,6 +3,11 @@ import { useTranslation } from "react-i18next";
 import { Loader2, Play, Square } from "lucide-react";
 import { toggleSample, usePlayingSample } from "@/lib/voices/samplePlayer";
 
+const MEDIA_STYLE = {
+  "--_mb-size": "44px",
+  "--_mb-ico": "1.1rem",
+} as React.CSSProperties;
+
 /**
  * Reinhoeren in eine Stimme: spielt ihre fertige Hoerprobe (oder stoppt sie).
  * `path === null`: die Probe entsteht noch im Hintergrund (Kreisel, gesperrt).
@@ -16,7 +21,9 @@ export const SamplePlayButton: React.FC<{
   name: string;
   inline?: boolean;
   testId?: string;
-}> = ({ path, name, inline = false, testId }) => {
+  /** Runder Wiedergabeknopf der Stimmenverwaltung (44 px, `.mbtn`). */
+  media?: boolean;
+}> = ({ path, name, inline = false, testId, media = false }) => {
   const { t } = useTranslation();
   const playing = usePlayingSample();
   const active = path !== null && playing === path;
@@ -29,15 +36,18 @@ export const SamplePlayButton: React.FC<{
   const Icon = path === null ? Loader2 : active ? Square : Play;
   const icon = (
     <Icon
-      width={14}
-      height={14}
+      width={media ? undefined : 14}
+      height={media ? undefined : 14}
       aria-hidden="true"
       className={path === null ? "animate-spin opacity-60" : undefined}
     />
   );
-  const className = `inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
-    active ? "text-logo-primary" : "text-text/60"
-  } ${path === null ? "cursor-default" : "cursor-pointer hover:bg-mid-gray/20 hover:text-text"}`;
+  const className = media
+    ? `mbtn mbtn--primary ${path === null ? "opacity-70" : ""}`
+    : `inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ${
+        active ? "text-logo-primary" : "text-text/60"
+      } ${path === null ? "cursor-default" : "cursor-pointer hover:bg-mid-gray/20 hover:text-text"}`;
+  const style = media ? MEDIA_STYLE : undefined;
   const stop = (e: React.SyntheticEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -57,6 +67,7 @@ export const SamplePlayButton: React.FC<{
         title={label}
         data-testid={testId}
         className={className}
+        style={style}
         // Die Auswahl der Liste reagiert schon auf das Druecken der Maustaste.
         onMouseDown={stop}
         onPointerDown={stop}
@@ -74,6 +85,7 @@ export const SamplePlayButton: React.FC<{
       disabled={path === null}
       data-testid={testId}
       className={className}
+      style={style}
       onClick={onClick}
     >
       {icon}

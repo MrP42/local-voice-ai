@@ -309,7 +309,7 @@
         "entry": "Provider: {{name}}",
         "voice": "{{provider}} · {{name}}",
         "script": "{{provider}} · Script with speakers",
-        "hint": "Provider: {{name}} (Settings → Speech providers)",
+        "hint": "Provider: {{name}} (Models › Read aloud › Providers)",
         "open": "Open provider settings"
       }
     },
@@ -1410,8 +1410,8 @@
           "included_other": "{{count}} voices included",
           "missingChip": "Voices missing ({{present}} of {{total}})",
           "reload": "Download voices",
-          "detailNew": "The model comes with {{total}} voices. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon.",
-          "detail": "The model comes with {{total}} voices, {{present}} of them installed. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon."
+          "detailNew": "The model comes with {{total}} voices. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Models > Read aloud > Providers > Phonon.",
+          "detail": "The model comes with {{total}} voices, {{present}} of them installed. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Models > Read aloud > Providers > Phonon."
         },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Several files: the size and SHA-256 of each file are in the app catalog and checked on download.",
@@ -1437,6 +1437,99 @@
           "phonon-31m-en": {
             "name": "Phonon 31m (English)",
             "description": "English speech model, 8-bit version (q8), runs on the CPU. Apache-2.0, public, no account needed."
+          }
+        }
+      },
+      "voiceManager": {
+        "view": {
+          "label": "View",
+          "voices": "Voices",
+          "providers": "Providers"
+        },
+        "reading": "Reading",
+        "readingScope": "Applies to reading aloud, recordings and scripts",
+        "scriptDescription": "Markers in the script switch the voice; text without markers uses the default voice.",
+        "multilingual": "multilingual",
+        "loading": "Loading voices …",
+        "count": "{{shown}} of {{total}} voices",
+        "empty": "No voices are set up yet. Under “Providers” you can enable and set up providers; Piper voices are ready to download there.",
+        "noMatch": "No voice matches the selected filters.",
+        "noVoicesFrom": "No voices yet from: {{names}}. They appear once the provider is ready.",
+        "generalHint": "Volume, enhance sound, export format, character limit, auto tags and the Fish folder are under Settings › Output › Read aloud.",
+        "openOutput": "Open settings",
+        "providersMoved": "Providers (enable, license, remote access, settings, voices, sample voice) now live under Models › Read aloud in the “Providers” view.",
+        "openProviders": "Open providers",
+        "filter": {
+          "title": "Filter",
+          "button": "Filter",
+          "buttonCount": "Filter ({{count}})",
+          "reset": "Reset",
+          "status": "Status",
+          "onlyInstalled": "Installed only",
+          "language": "Language",
+          "device": "Device",
+          "provider": "Provider",
+          "license": "License"
+        },
+        "device": {
+          "cpu": "CPU",
+          "gpu": "GPU",
+          "server": "Server"
+        },
+        "license": {
+          "free": "License verified",
+          "nonCommercial": "non-commercial",
+          "unverified": "License unverified"
+        },
+        "sort": {
+          "label": "Sort by",
+          "recommended": "Recommended",
+          "name": "Name",
+          "language": "Language",
+          "provider": "Provider"
+        },
+        "layout": {
+          "label": "Layout",
+          "cards": "Cards",
+          "list": "List"
+        },
+        "voice": {
+          "selected": "Reading",
+          "use": "Use",
+          "useNamed": "Use {{name}} for reading aloud",
+          "load": "Download · {{size}}",
+          "loadNamed": "Download {{name}} ({{size}})",
+          "setUp": "Set up provider",
+          "notLoaded": "not downloaded",
+          "providerNotReady": "Provider not ready",
+          "hidden": "hidden in Read aloud",
+          "assessment": "Assessment",
+          "quality": "Quality",
+          "effort": "Compute",
+          "notMeasured": "not measured",
+          "openProvider": "Open provider: {{name}}",
+          "sampleAfterLoad": "Sample available after download",
+          "sampleAfterSetup": "Sample available once the provider is ready",
+          "noSample": "No sample available"
+        },
+        "providers": {
+          "title": "Providers and services",
+          "details": "Details",
+          "openNamed": "Details and settings: {{name}}",
+          "recheckNamed": "Check {{name}} again",
+          "voiceCount_one": "{{count}} voice",
+          "voiceCount_other": "{{count}} voices",
+          "sheetHint": "State, approvals, settings, voices and sample voice of this provider.",
+          "retry": "Try again",
+          "manageDownloads": "Manage downloads",
+          "downloads": "Downloads",
+          "moreSettings": "App-wide read-aloud settings (volume, export, Fish folder …) are under Settings › Output.",
+          "status": {
+            "ready": "Ready",
+            "notReady": "Not ready",
+            "blocked": "Blocked",
+            "notEnabled": "Not enabled",
+            "unavailable": "Not available"
           }
         }
       },

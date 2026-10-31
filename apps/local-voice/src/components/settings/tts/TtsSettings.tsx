@@ -16,6 +16,7 @@ import { useTagLanguage } from "./tags/tagLanguage";
 import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
 import { openModelsArea } from "@/components/settings/models/ModelsSettings";
+import { openVoiceManager } from "@/components/settings/models/voices";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
@@ -84,7 +85,6 @@ import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
-import { openSettingsTab } from "@/lib/openSettingsTab";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -1983,7 +1983,7 @@ export const TtsSettings = () => {
                           size="sm"
                           data-testid="voice-provider-open"
                           onClick={() =>
-                            openSettingsTab("output", "tts-providers")
+                            openVoiceManager("providers")
                           }
                         >
                           {t("tts.providers.dropdown.open")}

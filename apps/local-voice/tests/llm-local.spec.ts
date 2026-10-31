@@ -132,7 +132,7 @@ test("the page is split into three areas and remembers the choice", async ({ pag
   await expect(page.getByRole("tab", { name: "Diktat" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toBeVisible();
   await page.getByRole("tab", { name: "Vorlesen" }).click();
-  await expect(page.locator('[data-models-section="voices"]')).toBeVisible();
+  await expect(page.getByTestId("voice-manager")).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
