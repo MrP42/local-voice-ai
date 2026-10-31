@@ -44,15 +44,23 @@ const LOCKED = [
 ];
 const OPEN = ["folder", "mcp", "obsidian", "presenter"];
 
-test("macOS: Hinweis vorab, Arten mit Geheimnis und Dienste gesperrt", async ({
+test("macOS: Schlüsselbund-Tresor, kein Hinweis, alles einrichtbar (lva#134)", async ({
   page,
 }) => {
   await setup(page, "macos");
+  await expect(page.getByTestId("secret-store-notice")).toHaveCount(0);
+  for (const id of [...LOCKED, ...OPEN]) {
+    await expect(page.getByTestId(`catalog-setup-${id}`), id).toBeEnabled();
+  }
+  await expect(page.getByTestId("catalog-setup-service-slack")).toBeEnabled();
+});
+
+test("Linux: Hinweis vorab, Arten mit Geheimnis und Dienste gesperrt", async ({
+  page,
+}) => {
+  await setup(page, "linux");
   const notice = page.getByTestId("secret-store-notice");
   await expect(notice).toBeVisible();
-  await expect(notice).toContainText(
-    "Auf macOS derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt.",
-  );
   for (const id of LOCKED) {
     await expect(page.getByTestId(`catalog-setup-${id}`), id).toBeDisabled();
   }
@@ -86,10 +94,10 @@ test("Windows: kein Hinweis, alles einrichtbar", async ({ page }) => {
   await expect(page.getByTestId("catalog-setup-service-slack")).toBeEnabled();
 });
 
-test("macOS: Kalender verbinden in den Verbindungen ebenfalls gesperrt", async ({
+test("Linux: Kalender verbinden in den Verbindungen ebenfalls gesperrt", async ({
   page,
 }) => {
-  await setup(page, "macos");
+  await setup(page, "linux");
   await page.getByTestId("integrations-back").click();
   const connect = page.getByTestId("calendar-connect");
   await connect.scrollIntoViewIfNeeded();
@@ -99,7 +107,7 @@ test("macOS: Kalender verbinden in den Verbindungen ebenfalls gesperrt", async (
   const notice = page.getByTestId("secret-store-notice");
   await expect(notice).toHaveCount(1);
   await expect(notice).toBeVisible();
-  await expect(notice).toContainText("Auf macOS derzeit nicht verfügbar");
+  await expect(notice).toContainText("Unter Linux");
   const noticeBox = (await notice.boundingBox())!;
   const connectBox = (await connect.boundingBox())!;
   expect(noticeBox.y).toBeLessThan(connectBox.y);

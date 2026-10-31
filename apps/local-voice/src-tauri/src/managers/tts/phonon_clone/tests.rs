@@ -785,7 +785,7 @@ fn fehler_werden_auf_die_klassen_der_oberflaeche_abgebildet() {
 
 // ---- Schluesselspeicher -------------------------------------------------------------------------------------------------------------
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 #[test]
 fn der_schluessel_liegt_verschluesselt_und_nur_im_geheimnisspeicher() {
     let dir = TempDir::new().unwrap();
@@ -847,9 +847,9 @@ fn ungueltige_schluessel_werden_abgelehnt_ohne_etwas_zu_schreiben() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 #[test]
-fn ohne_dpapi_wird_der_schluessel_nicht_gespeichert() {
+fn ohne_tresor_wird_der_schluessel_nicht_gespeichert() {
     let dir = TempDir::new().unwrap();
     let err = save_key(dir.path(), KEY).unwrap_err();
     assert_eq!(err.kind, PhononVoiceErrorKind::KeyStore);

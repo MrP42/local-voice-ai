@@ -71,7 +71,7 @@ const DOWNLOADS = [
 ];
 
 interface Opts {
-  os?: "windows" | "macos";
+  os?: "windows" | "macos" | "linux";
   access?: boolean;
   /** Herkunft eines vorhandenen Zugangs (Standard: in der App abgelegt). */
   accessSource?: "app" | "system";
@@ -237,7 +237,7 @@ async function setup(page: Page, opts: Opts = {}) {
             }
             if (cmd === "phonon_gradium_key_status")
               return {
-                supported: os === "windows",
+                supported: os !== "linux",
                 present: false,
                 problem: null,
               };
@@ -451,10 +451,28 @@ test("Fortschritt als progressbar, Abbrechen ruft den Abbruch", async ({
   ]);
 });
 
-test("macOS ohne Tresor: nur Englisch vorausgewählt; Deutsch erst nach Zustimmung zur Klartext-Datei; Klonen gesperrt mit Grund", async ({
+test("macOS mit Schlüsselbund-Tresor: wie Windows, Deutsch vorausgewählt, keine Klartext-Datei, Klonen frei (lva#134)", async ({
   page,
 }) => {
   await setup(page, { os: "macos" });
+  await openSetup(page);
+  await expect(
+    page.getByTestId("phonon-setup-choose-phonon-40m-de"),
+  ).toBeChecked();
+  await expect(page.getByTestId("phonon-setup-access-file")).toHaveCount(0);
+  await page.getByTestId("phonon-setup-access-paste").click();
+  expect(await named(page, "tts_hf_access_from_clipboard")).toEqual([
+    ["tts_hf_access_from_clipboard", { allowFile: false }],
+  ]);
+  await page.getByTestId("phonon-own-voices-toggle").click();
+  await expect(page.getByTestId("phonon-create-button")).toBeEnabled();
+  await expect(page.getByTestId("phonon-clone-blocked")).toHaveCount(0);
+});
+
+test("Linux ohne Tresor: nur Englisch vorausgewählt; Deutsch erst nach Zustimmung zur Klartext-Datei; Klonen gesperrt mit Grund", async ({
+  page,
+}) => {
+  await setup(page, { os: "linux" });
   await openSetup(page);
   const de = page.getByTestId("phonon-setup-choose-phonon-40m-de");
   await expect(de).not.toBeChecked();
@@ -476,9 +494,7 @@ test("macOS ohne Tresor: nur Englisch vorausgewählt; Deutsch erst nach Zustimmu
   // Eigene Stimmen: Klonen ist ohne Tresor gesperrt, der Grund steht daneben.
   await page.getByTestId("phonon-own-voices-toggle").click();
   await expect(page.getByTestId("phonon-create-button")).toBeDisabled();
-  await expect(page.getByTestId("phonon-clone-blocked")).toContainText(
-    "Schlüsselbund",
-  );
+  await expect(page.getByTestId("phonon-clone-blocked")).toContainText("Linux");
   await expect(page.getByTestId("phonon-import-button")).toBeEnabled();
 });
 
@@ -573,9 +589,9 @@ test("Bilder: laufend, fertig, macOS, schmal (nur mit SCREENS_DIR)", async ({
     viewport: { width: 1440, height: 1000 },
   });
   const m = await mac.newPage();
-  await setup(m, { os: "macos" });
+  await setup(m, { os: "linux" });
   await openSetup(m);
-  await m.screenshot({ path: `${dir}/07-macos-nur-englisch-hell.png` });
+  await m.screenshot({ path: `${dir}/07-linux-nur-englisch-hell.png` });
   await mac.close();
 });
 
