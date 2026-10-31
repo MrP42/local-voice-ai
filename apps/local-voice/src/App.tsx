@@ -25,7 +25,10 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
-import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
+import {
+  HelpDockSlotContext,
+  PageHeaderSlotContext,
+} from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
 import { TitlebarTools } from "./components/shell/TitlebarTools";
@@ -71,6 +74,7 @@ function App() {
   // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
   // (bleibt über Neustarts), schmal als Overlay-Drawer.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
     "0",
@@ -528,6 +532,9 @@ function App() {
               </div>
             </main>
           </div>
+          {/* Seitenhilfe dockt am rechten Fensterrand an (Suite-Standard),
+              neben der Inhaltsschicht: der Inhalt behält seine Breite. */}
+          <div ref={setHelpDock} className="lv-helpdock" />
         </div>
         {/* Statusleiste (Leitlinie §2, 24 px): Modelle links; Mikrofon, Speicher, Version rechts */}
         <footer className="lv-statusbar">
@@ -539,8 +546,10 @@ function App() {
 
   return (
     <PageHeaderSlotContext.Provider value={headerSlot}>
-      {toaster}
-      {content}
+      <HelpDockSlotContext.Provider value={helpDock}>
+        {toaster}
+        {content}
+      </HelpDockSlotContext.Provider>
     </PageHeaderSlotContext.Provider>
   );
 }
