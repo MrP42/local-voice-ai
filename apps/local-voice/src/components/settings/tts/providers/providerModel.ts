@@ -204,6 +204,37 @@ export function pickKind(
   return null;
 }
 
+/**
+ * Felder, die die App bei einem lokalen Programm (Phonon) selbst verwaltet: Programm, Modell,
+ * Cache, Stimme (Auswahl unter „Stimme“) und Netz. Sie stehen nicht mehr in der Oberfläche;
+ * leer = die von der App eingerichtete Installation. Gespeicherte Altwerte bleiben unverändert.
+ */
+export const MANAGED_FIELDS = [
+  "exe_path",
+  "model",
+  "hf_home",
+  "voice",
+  "allow_network",
+] as const;
+
+export function managedFields(fields: readonly ConfigField[]): Set<string> {
+  if (!fields.some((f) => f.key === "exe_path")) return new Set();
+  return new Set(
+    MANAGED_FIELDS.filter((key) => fields.some((f) => f.key === key)),
+  );
+}
+
+/** Altwerte (eigene Pfade), die Vorrang vor der App-Installation haben. */
+export function legacyPaths(
+  fields: readonly ConfigField[],
+  values: Record<string, FieldValue>,
+): string[] {
+  if (!fields.some((f) => f.key === "exe_path")) return [];
+  return ["exe_path", "model", "hf_home"].filter(
+    (key) => String(values[key] ?? "").trim() !== "",
+  );
+}
+
 /** Pflichtfelder eines lokalen Programms: ohne sie kann nichts starten. */
 export function requiredFields(fields: readonly ConfigField[]): string[] {
   if (!fields.some((f) => f.key === "exe_path")) return [];

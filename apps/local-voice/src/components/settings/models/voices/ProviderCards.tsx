@@ -33,6 +33,24 @@ function missingText(
   return entry.blocked.message;
 }
 
+/** Kurzzeichen des Anbieters (zwei Buchstaben) für die Listenzeile. */
+const initials = (label: string) =>
+  label
+    .replace(/[^\p{L}\p{N} ]/gu, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w, i, all) => (all.length === 1 ? w.slice(0, 2) : w[0]))
+    .join("")
+    .replace(
+      /^(.)(.?)$/,
+      (_m, a: string, b: string) => a.toUpperCase() + b.toLowerCase(),
+    );
+
+/**
+ * Eine Zeile je Anbieter: Kürzel, Name, Zustand, eine Zeile Fakten, höchstens ein Problem –
+ * und genau eine Hauptaktion (Einrichten bzw. Aktivieren) plus „Details“.
+ */
 const ProviderCard: React.FC<{
   entry: TtsProviderEntry;
   voiceCount: number | null;
@@ -45,54 +63,96 @@ const ProviderCard: React.FC<{
   const id = descriptor.id;
   const status = providerStatus(entry);
   const busy = providers.busy === id;
-  const problem =
-    missingText(entry, t) ??
-    (!health.available
-      ? [health.reason, health.hint].filter(Boolean).join(" ")
-      : null);
+  // Phonon richtet sich mit einem Klick selbst ein (Programm, Modelle, Stimmen).
+  const offersSetup = id === "phonon" && status !== "ready";
+  const problem = offersSetup
+    ? null
+    : (missingText(entry, t) ??
+      (!health.available
+        ? [health.reason, health.hint].filter(Boolean).join(" ")
+        : null));
+  const facts = [
+    ...deviceGroups(
+      health.device ? [health.device] : descriptor.caps.devices,
+    ).map((d) => label.device(d)),
+    voiceCount !== null
+      ? t("settings.models.voiceManager.providers.voiceCount", {
+          count: voiceCount,
+        })
+      : null,
+    descriptor.license.code || null,
+  ].filter(Boolean);
   return (
     <li
-      className="flex flex-col gap-2 rounded-lg border border-mid-gray/25 p-3"
+      className={`grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:grid-cols-[2rem_minmax(0,1fr)_auto] ${
+        entry.selected ? "bg-logo-primary/5" : ""
+      }`}
       data-provider-card={id}
       data-status={status}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold text-text">{descriptor.label}</h3>
-        <RowChip tone={STATUS_TONE[status]}>
-          {t(`settings.models.voiceManager.providers.status.${status}`)}
-        </RowChip>
-        <RowChip>{t(`tts.providers.tier.${descriptor.tier}`)}</RowChip>
-        {entry.selected && (
-          <RowChip tone="accent">{t("tts.providers.selected")}</RowChip>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {deviceGroups(
-          health.device ? [health.device] : descriptor.caps.devices,
-        ).map((d) => (
-          <RowChip key={d}>{label.device(d)}</RowChip>
-        ))}
-        {voiceCount !== null && (
-          <RowChip>
-            {t("settings.models.voiceManager.providers.voiceCount", {
-              count: voiceCount,
-            })}
+      <span
+        aria-hidden="true"
+        className="grid h-8 w-8 place-items-center rounded-md bg-logo-primary/10 text-xs font-semibold text-logo-primary"
+      >
+        {initials(descriptor.label)}
+      </span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <h3 className="text-sm font-semibold text-text">
+            {descriptor.label}
+          </h3>
+          <RowChip tone={offersSetup ? "neutral" : STATUS_TONE[status]}>
+            {offersSetup
+              ? t("settings.models.voiceManager.providers.status.notSetUp")
+              : t(`settings.models.voiceManager.providers.status.${status}`)}
           </RowChip>
+          {descriptor.tier !== "supported" && (
+            <RowChip>{t(`tts.providers.tier.${descriptor.tier}`)}</RowChip>
+          )}
+          {entry.selected && (
+            <RowChip tone="accent">{t("tts.providers.selected")}</RowChip>
+          )}
+          {descriptor.license.non_commercial && (
+            <RowChip tone="warning">{label.license("nonCommercial")}</RowChip>
+          )}
+        </div>
+        <p className="truncate text-xs text-text/60" title={facts.join(" · ")}>
+          {facts.join(" · ")}
+        </p>
+        {problem && (
+          <p className="line-clamp-2 text-xs text-amber-700 dark:text-amber-400">
+            {problem}
+          </p>
         )}
-        {descriptor.license.non_commercial && (
-          <RowChip tone="warning">{label.license("nonCommercial")}</RowChip>
-        )}
-        <RowChip tone={descriptor.license.verified ? "success" : "warning"}>
-          {label.license(descriptor.license.verified ? "free" : "unverified")}
-        </RowChip>
       </div>
-      {problem && (
-        <p className="text-xs text-amber-700 dark:text-amber-400">{problem}</p>
-      )}
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+      <div className="col-start-2 flex flex-wrap items-center gap-2 sm:col-start-3">
+        {offersSetup ? (
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="min-h-[44px] md:min-h-8"
+            data-testid={`tts-provider-setup-${id}`}
+            onClick={() => onOpen(id)}
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            {t("settings.models.voiceManager.providers.setUp")}
+          </Button>
+        ) : (
+          hasEnableSwitch(entry) && (
+            <Switch
+              checked={entry.enabled}
+              disabled={busy}
+              label={t("tts.providers.enable")}
+              labelPosition="before"
+              data-testid={`tts-provider-card-enable-${id}`}
+              onChange={(_e, data) => void providers.enable(id, data.checked)}
+            />
+          )
+        )}
         <Button
           type="button"
-          variant="secondary"
+          variant="ghost"
           size="sm"
           className="min-h-[44px] md:min-h-8"
           data-testid={`tts-provider-open-${id}`}
@@ -103,44 +163,6 @@ const ProviderCard: React.FC<{
         >
           <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
           {t("settings.models.voiceManager.providers.details")}
-        </Button>
-        {(id === "piper" || id === "phonon") && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="min-h-[44px] md:min-h-8"
-            data-testid={`tts-provider-downloads-${id}`}
-            onClick={() => onOpen(id)}
-          >
-            <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            {t("settings.models.voiceManager.providers.manageDownloads")}
-          </Button>
-        )}
-        {hasEnableSwitch(entry) && (
-          <Switch
-            checked={entry.enabled}
-            disabled={busy}
-            label={t("tts.providers.enable")}
-            labelPosition="before"
-            data-testid={`tts-provider-card-enable-${id}`}
-            onChange={(_e, data) => void providers.enable(id, data.checked)}
-          />
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="ms-auto min-h-[44px] md:min-h-8"
-          disabled={busy}
-          data-testid={`tts-provider-card-recheck-${id}`}
-          aria-label={t("settings.models.voiceManager.providers.recheckNamed", {
-            name: descriptor.label,
-          })}
-          onClick={() => void providers.recheck(id)}
-        >
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-          {t("tts.providers.recheck")}
         </Button>
       </div>
     </li>
@@ -209,7 +231,7 @@ export const ProviderCards: React.FC<{
           {t("tts.providers.checking")}
         </p>
       )}
-      <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,19rem),1fr))] gap-3">
+      <ul className="divide-y divide-mid-gray/15 overflow-hidden rounded-lg border border-mid-gray/25">
         {shown.map((entry) => (
           <ProviderCard
             key={entry.descriptor.id}

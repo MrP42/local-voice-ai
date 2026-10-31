@@ -778,7 +778,8 @@ pub fn apply_config_json(
     match slot {
         ConfigSlot::Phonon => {
             let cfg: PhononConfig = serde_json::from_str(json).map_err(bad_json)?;
-            cfg.validate()?;
+            // Leere Pfade = die von der App eingerichtete Installation (One-Click-Einrichtung).
+            cfg.validate_stored()?;
             settings.phonon = cfg;
         }
         ConfigSlot::OpenAiSpeech => {
@@ -1611,10 +1612,28 @@ mod tests {
     }
 
     #[test]
+    fn leere_pfade_heissen_app_installation_und_werden_gespeichert() {
+        let mut s = TtsProvidersSettings::default();
+        apply_config_json(
+            &mut s,
+            "phonon",
+            r#"{"exe_path":"","model":"","quant":"q8","lang":"de","threads":4}"#,
+        )
+        .unwrap();
+        assert_eq!(s.phonon.exe_path, "");
+        assert_eq!(s.phonon.model, "");
+        assert_eq!(s.phonon.threads, Some(4));
+        // Gesetzte Werte werden weiter geprüft.
+        let e = apply_config_json(&mut s, "phonon", r#"{"exe_path":"","model":"-x"}"#).unwrap_err();
+        assert_eq!(e.kind, TtsErrorKind::InvalidConfig);
+    }
+
+    #[test]
     fn ungueltige_konfiguration_wird_abgelehnt_und_aendert_nichts() {
         let mut s = TtsProvidersSettings::default();
         let before = s.clone();
-        let e = apply_config_json(&mut s, "phonon", r#"{"exe_path":"","model":""}"#).unwrap_err();
+        let e = apply_config_json(&mut s, "phonon", r#"{"exe_path":"","model":"","threads":999}"#)
+            .unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);
         let e = apply_config_json(&mut s, "phonon", "kein json").unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);

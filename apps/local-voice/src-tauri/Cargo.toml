@@ -184,6 +184,8 @@ windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_Security",
   "Win32_System_Com_StructuredStorage",
+  # Systemdialoge (z. B. „Nicht unterstützte 16 Bit-Anwendung“) vor Kindprozess-Starts abschalten.
+  "Win32_System_Diagnostics_Debug",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
   "Win32_System_Variant",

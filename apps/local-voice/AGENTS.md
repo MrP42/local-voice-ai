@@ -183,7 +183,7 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
   - `shared/`, `ui/`, `icons/`, `footer/` - Shared components
 - `hooks/useSettings.ts` - Settings state management hook
 - `stores/settingsStore.ts` - Zustand store for settings
-- `bindings.ts` - Auto-generated Tauri type bindings (via tauri-specta)
+- `bindings.ts` - Auto-generated Tauri type bindings (via tauri-specta). Headless neu erzeugen: in `src-tauri` `cargo run --example bindings_export -- ../src/bindings.ts` (Debug-Start der App schreibt sie ebenfalls).
 - `overlay/` - Recording overlay window entry point
 - `lib/types.ts` - Shared TypeScript type definitions
 
