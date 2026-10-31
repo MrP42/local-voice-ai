@@ -16,10 +16,12 @@ fn main() {
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         println!("cargo:rustc-link-arg-bins=/STACK:16777216");
-        // Test-Binaries (Unit- und Integrationstests) tragen sonst kein Common-Controls-v6-Manifest: tauri-plugin-dialog/rfd
-        // importieren TaskDialogIndirect, und der Lader bricht mit STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139) samt Fehlerfenster ab.
+        // Das Common-Controls-v6-Manifest kommt für ALLE Ziele aus `windows-app.manifest` (App-Binary UND Test-Binaries). Ohne
+        // Manifest brechen `cargo test`-EXEs mit STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139, TaskDialogIndirect aus tauri-plugin-dialog/rfd)
+        // samt Fehlerfenster ab. tauri-build bettet seines deshalb unten nicht mehr selbst ein (sonst CVT1100: doppelte Ressource).
+        println!("cargo:rerun-if-changed=windows-app.manifest");
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
-        println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("windows-app.manifest").display());
     }
 
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
@@ -52,7 +54,13 @@ fn main() {
     // Must run after transcribe staging because that helper recreates transcribe-libs/.
     stage_vc_runtime_dlls();
 
-    tauri_build::build()
+    let mut attributes = tauri_build::Attributes::new();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        attributes = attributes.windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    tauri_build::try_build(attributes).expect("tauri-build failed")
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.
