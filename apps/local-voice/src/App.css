@@ -545,6 +545,23 @@ html[data-fluent] .lva-logo__accent {
   background: color-mix(in srgb, var(--color-mid-gray) 8%, transparent);
   border-color: color-mix(in srgb, var(--color-text) 35%, transparent);
 }
+/* Einführung erneut starten: als Link im Fließtext bzw. unter der Hilfe */
+.workspace-home__tour,
+.help-panel__tour {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--colorBrandForegroundLink, var(--color-text));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.help-panel__tour {
+  margin-top: 8px;
+  font-size: 12px;
+  align-self: flex-start;
+}
 .workspace-home button:focus-visible,
 [role="tab"]:focus-visible {
   outline: 2px solid var(--color-text);
