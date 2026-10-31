@@ -3,6 +3,8 @@ import { getVersion } from "@tauri-apps/api/app";
 
 import ModelSelector from "../model-selector";
 import { MicSelector } from "./MicSelector";
+import { CallMenu } from "./CallMenu";
+import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
 import UpdateChecker from "../update-checker";
@@ -11,6 +13,7 @@ import { FishServerButton } from "./FishServerButton";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
+  const callActive = useVoiceCallStore((s) => s.active);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -40,9 +43,8 @@ const Footer: React.FC = () => {
             Trenner, Version. */}
         <div className="flex items-center gap-0.5 shrink-0">
           <MicSelector />
-          {/* Platzhalter: <CallMenu /> (src/components/footer/CallMenu.tsx)
-              kommt mit Branch claude/project-thread-4aeogv und gehört hier
-              direkt hinter das Mikrofon. */}
+          {/* Anrufmenü direkt hinter dem Mikrofon, solange ein Anruf läuft. */}
+          {callActive && <CallMenu />}
           {/* Fish-Speech-Server (Vorlesen). */}
           <FishServerButton />
           {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
