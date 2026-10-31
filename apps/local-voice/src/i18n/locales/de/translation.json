@@ -6120,5 +6120,80 @@
       "orchestratorTitle": "Schnelle Sprechschicht und Werkzeuge",
       "orchestratorSoon": "Kommt mit Stufe 2: ein Sprachmodell als Orchestrator, das weitere Modelle und Werkzeuge nutzt."
     }
+  },
+  "introTour": {
+    "stepOf": "{{step}}/{{total}}",
+    "start": "Tour starten",
+    "next": "Weiter",
+    "back": "Zurück",
+    "skip": "Überspringen",
+    "finish": "Loslegen",
+    "restart": "Einführung erneut starten",
+    "restartShort": "Einführung ansehen",
+    "download": {
+      "label": "Download des Diktatmodells",
+      "loading": "Diktatmodell {{model}} wird eingerichtet … {{percent}} %",
+      "ready": "{{model}} ist bereit – du kannst sofort diktieren.",
+      "failed": "Das Diktatmodell konnte nicht geladen werden. Unter „Modelle“ kannst du es erneut laden oder ein anderes wählen.",
+      "selected": "Diktatmodell eingerichtet – du kannst jetzt diktieren."
+    },
+    "welcome": {
+      "eyebrow": "Willkommen",
+      "title": "Schön, dass du da bist",
+      "body": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. In zwei Minuten zeigen wir dir, wo du was findest.",
+      "note": "Der Download läuft im Hintergrund weiter, auch wenn du die Tour überspringst."
+    },
+    "dictate": {
+      "eyebrow": "Diktieren",
+      "title": "In jede App diktieren",
+      "one": "Ins Textfeld der Ziel-App klicken – Word, Outlook, Browser, egal.",
+      "twoHold": "{{shortcut}} gedrückt halten und sprechen.",
+      "twoToggle": "{{shortcut}} drücken und sprechen.",
+      "threeHold": "Loslassen – der Text wird eingefügt.",
+      "threeToggle": "{{shortcut}} erneut drücken – der Text wird eingefügt.",
+      "note": "Abbrechen mit Esc. Kürzel und Modus (halten oder umschalten) änderst du unter Einstellungen › Diktat.",
+      "sample": "Sehr geehrte Frau Berger, vielen Dank für Ihre Nachricht."
+    },
+    "try": {
+      "eyebrow": "Ausprobieren",
+      "title": "Probier es gleich aus",
+      "body": "Klick ins Feld, nutze {{shortcut}} und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“",
+      "field": "Übungsfeld zum Diktieren",
+      "placeholder": "Hier erscheint dein Text …"
+    },
+    "history": {
+      "eyebrow": "Verlauf",
+      "title": "Alles wiederfinden",
+      "body": "Jedes Diktat landet im Verlauf: Text kopieren, Aufnahme anhören, erneut transkribieren oder nachbearbeiten."
+    },
+    "meetings": {
+      "eyebrow": "Aufnahmen",
+      "title": "Besprechungen aufnehmen",
+      "body": "Gespräche live mitschreiben oder Audio- und Videodateien importieren – mit Sprechern, Zeitmarken, Zusammenfassung und Export."
+    },
+    "tts": {
+      "eyebrow": "Vorlesen",
+      "title": "Texte anhören",
+      "body": "Texte und Dokumente vorlesen lassen, Stimme und Sprechstil wählen und als Audiodatei speichern."
+    },
+    "voice": {
+      "eyebrow": "Sprachgespräch",
+      "title": "Mit der KI sprechen",
+      "body": "Wie ein Telefonat: frei sprechen und die Antwort hören. Tippen und Dateien anhängen geht auch."
+    },
+    "tools": {
+      "eyebrow": "Werkzeuge",
+      "title": "Modelle, Integrationen, Einstellungen",
+      "models": "Modelle: weitere Sprach- und Stimmmodelle laden.",
+      "integrations": "Integrationen: Verbindungen zu anderen Apps.",
+      "settings": "Einstellungen: Kürzel, Mikrofon, Sprache, Aussehen.",
+      "statusbar": "Unten in der Statusleiste siehst du jederzeit Modell und Mikrofon."
+    },
+    "end": {
+      "eyebrow": "Fertig",
+      "title": "Los geht’s",
+      "body": "Die Einführung findest du jederzeit wieder auf der Startseite und unten in jeder Hilfe (Fragezeichen oben rechts).",
+      "stillLoading": "Das Diktatmodell lädt noch. Sobald es fertig ist, kannst du diktieren – die Statusleiste zeigt den Stand."
+    }
   }
 }

@@ -6120,5 +6120,80 @@
       "orchestratorTitle": "Fast speech layer and tools",
       "orchestratorSoon": "Coming in stage 2: a language model as orchestrator that uses further models and tools."
     }
+  },
+  "introTour": {
+    "stepOf": "{{step}}/{{total}}",
+    "start": "Start tour",
+    "next": "Next",
+    "back": "Back",
+    "skip": "Skip",
+    "finish": "Get started",
+    "restart": "Restart the introduction",
+    "restartShort": "Take the tour",
+    "download": {
+      "label": "Dictation model download",
+      "loading": "Setting up dictation model {{model}} … {{percent}} %",
+      "ready": "{{model}} is ready – you can dictate right away.",
+      "failed": "The dictation model could not be downloaded. Retry or pick another one under “Models”.",
+      "selected": "Dictation model set up – you can dictate now."
+    },
+    "welcome": {
+      "eyebrow": "Welcome",
+      "title": "Glad you're here",
+      "body": "Local Voice AI turns speech into text – entirely on your device. In two minutes we'll show you where everything is.",
+      "note": "The download keeps running in the background, even if you skip the tour."
+    },
+    "dictate": {
+      "eyebrow": "Dictation",
+      "title": "Dictate into any app",
+      "one": "Click into the text field of the target app – Word, Outlook, browser, anything.",
+      "twoHold": "Hold {{shortcut}} and speak.",
+      "twoToggle": "Press {{shortcut}} and speak.",
+      "threeHold": "Release – the text is inserted.",
+      "threeToggle": "Press {{shortcut}} again – the text is inserted.",
+      "note": "Cancel with Esc. Change the shortcut and mode (hold or toggle) under Settings › Dictation.",
+      "sample": "Dear Ms Berger, thank you for your message."
+    },
+    "try": {
+      "eyebrow": "Try it",
+      "title": "Give it a try",
+      "body": "Click into the field, use {{shortcut}} and say for example: “Today is a good day for dictation.”",
+      "field": "Practice field for dictation",
+      "placeholder": "Your text appears here …"
+    },
+    "history": {
+      "eyebrow": "History",
+      "title": "Find everything again",
+      "body": "Every dictation lands in the history: copy text, play the recording, transcribe again or refine it."
+    },
+    "meetings": {
+      "eyebrow": "Recordings",
+      "title": "Record meetings",
+      "body": "Transcribe conversations live or import audio and video files – with speakers, timestamps, summary and export."
+    },
+    "tts": {
+      "eyebrow": "Read aloud",
+      "title": "Listen to texts",
+      "body": "Have texts and documents read aloud, choose voice and speaking style and save them as audio."
+    },
+    "voice": {
+      "eyebrow": "Voice chat",
+      "title": "Talk to the AI",
+      "body": "Like a phone call: speak freely and hear the answer. Typing and attaching files works too."
+    },
+    "tools": {
+      "eyebrow": "Tools",
+      "title": "Models, integrations, settings",
+      "models": "Models: download more speech and voice models.",
+      "integrations": "Integrations: connections to other apps.",
+      "settings": "Settings: shortcuts, microphone, language, appearance.",
+      "statusbar": "The status bar at the bottom always shows model and microphone."
+    },
+    "end": {
+      "eyebrow": "Done",
+      "title": "Let's go",
+      "body": "You can restart the introduction any time from the home page and at the bottom of every help panel (question mark top right).",
+      "stillLoading": "The dictation model is still downloading. Once it's done you can dictate – the status bar shows the progress."
+    }
   }
 }

@@ -137,6 +137,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         key={id}
         value={id}
         className="workspace-nav__item"
+        data-tour={`nav-${id}`}
         aria-current={activeSection === id ? "page" : undefined}
         // Eingeklappt bleibt nur das Symbol; der Name steht dann im Tooltip
         // (title) und für Screenreader im aria-label.
@@ -168,7 +169,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {PRIMARY.map(item)}
         </div>
         <div className="workspace-nav__secondary">
-          <div id="workspace-more" className="workspace-nav__utilities">
+          <div
+            id="workspace-more"
+            className="workspace-nav__utilities"
+            data-tour="nav-utilities"
+          >
             {UTILITIES.map(item)}
             <NavDivider className="workspace-nav__divider" />
             {item("settings")}
