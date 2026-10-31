@@ -13,6 +13,7 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatKeyCombination } from "@/lib/utils/keyboard";
 import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
+import { useIntroTourStore } from "@/stores/introTourStore";
 
 export function WorkspaceHome({
   onNavigate,
@@ -22,6 +23,7 @@ export function WorkspaceHome({
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const shortcut = getSetting("bindings")?.transcribe?.current_binding;
+  const startTour = useIntroTourStore((state) => state.start);
   const osType = useOsType();
   const openDictationSettings = () => {
     try {
@@ -40,7 +42,17 @@ export function WorkspaceHome({
     <div className="workspace-home">
       <header>
         <h1 className="text-lg font-semibold">{t("workspace.title")}</h1>
-        <p className="text-sm text-text/70 mt-1">{t("workspace.intro")}</p>
+        <p className="text-sm text-text/70 mt-1">
+          {t("workspace.intro")}{" "}
+          <button
+            type="button"
+            className="workspace-home__tour"
+            onClick={startTour}
+            data-testid="workspace-start-tour"
+          >
+            {t("introTour.restartShort")}
+          </button>
+        </p>
       </header>
       <section
         className="workspace-dictation"

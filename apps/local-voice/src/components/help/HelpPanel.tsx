@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownContent } from "../whats-new/MarkdownContent";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
+import { useIntroTourStore } from "@/stores/introTourStore";
 
 /**
  * Hilfe an Ort und Stelle: je Bereich ein Markdown-Text je Sprache unter
@@ -49,6 +50,7 @@ export const HelpPanel: React.FC<{ section: string }> = ({ section }) => {
   const fishReady = useTtsModelStore((state) =>
     state.runtime ? state.runtime.fish.ready : true,
   );
+  const startTour = useIntroTourStore((state) => state.start);
   const raw = findHelp(section, i18n.language ?? "en");
   const markdown = raw === null ? null : filterHelp(raw, fishReady);
   return (
@@ -58,6 +60,14 @@ export const HelpPanel: React.FC<{ section: string }> = ({ section }) => {
       ) : (
         <p className="text-xs text-text/40">{t("help.empty")}</p>
       )}
+      <button
+        type="button"
+        className="help-panel__tour"
+        onClick={startTour}
+        data-testid="help-start-tour"
+      >
+        {t("introTour.restart")}
+      </button>
     </div>
   );
 };

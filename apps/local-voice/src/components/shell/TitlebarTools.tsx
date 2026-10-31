@@ -23,6 +23,7 @@ import { Dialog } from "../ui/Dialog";
 import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { useSettings } from "../../hooks/useSettings";
 import { togglePageHelp, useHasPageHelp } from "../help/pageHelp";
+import { useIntroTourStore } from "@/stores/introTourStore";
 import { SECTIONS_CONFIG, type SidebarSection } from "../Sidebar";
 import { APP_NAME } from "./frame";
 
@@ -55,6 +56,7 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [version, setVersion] = useState("");
   const hasPageHelp = useHasPageHelp();
+  const startTour = useIntroTourStore((state) => state.start);
   const blurTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(blurTimer.current), []);
   const searchKey = IS_MAC ? "⌘K" : t("titlebar.searchKey");
@@ -230,6 +232,9 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
             </MenuItem>
             <MenuItem onClick={() => setShortcutsOpen(true)}>
               {t("titlebar.shortcuts")}
+            </MenuItem>
+            <MenuItem onClick={startTour} data-testid="titlebar-start-tour">
+              {t("introTour.restart")}
             </MenuItem>
             <MenuDivider />
             <MenuItem onClick={() => setAboutOpen(true)}>
