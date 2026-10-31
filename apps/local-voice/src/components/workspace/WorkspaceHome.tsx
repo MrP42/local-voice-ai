@@ -8,23 +8,11 @@ import {
   Settings,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { type } from "@tauri-apps/plugin-os";
 import { useSettings } from "@/hooks/useSettings";
-import { formatKeyCombination, type OSType } from "@/lib/utils/keyboard";
+import { useOsType } from "@/hooks/useOsType";
+import { formatKeyCombination } from "@/lib/utils/keyboard";
 import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
-
-/** Betriebssystem fuer die Tastenanzeige (Mac: Symbole); ohne Tauri „unknown“. */
-const currentOs = (): OSType => {
-  try {
-    const os = type();
-    return os === "macos" || os === "windows" || os === "linux"
-      ? os
-      : "unknown";
-  } catch {
-    return "unknown";
-  }
-};
 
 export function WorkspaceHome({
   onNavigate,
@@ -34,6 +22,7 @@ export function WorkspaceHome({
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const shortcut = getSetting("bindings")?.transcribe?.current_binding;
+  const osType = useOsType();
   const openDictationSettings = () => {
     try {
       localStorage.setItem("lva.ui.settings.tab", "input");
@@ -69,7 +58,7 @@ export function WorkspaceHome({
           </p>
           {shortcut ? (
             <kbd className="workspace-shortcut">
-              {currentOs() === "macos"
+              {osType === "macos"
                 ? formatKeyCombination(shortcut, "macos")
                 : shortcut}
             </kbd>

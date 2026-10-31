@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { type } from "@tauri-apps/plugin-os";
+import { useOsType } from "@/hooks/useOsType";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -28,18 +28,11 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
  * Vorlesen-Seite blieb, ist, was zur Arbeit gehoert — Stimmen, Seed und
  * Stimmwechsler.
  */
-/** Windows? Ohne Tauri (Vorschau, Tests) gilt der Windows-Pfad. */
-const runsOnWindows = (): boolean => {
-  try {
-    return type() === "windows";
-  } catch {
-    return true;
-  }
-};
-
 export const ReadAloudTab = () => {
   const { t } = useTranslation();
-  const isWindows = runsOnWindows();
+  // Ohne Tauri ("unknown") gilt der Windows-Pfad.
+  const osType = useOsType();
+  const isWindows = osType === "windows" || osType === "unknown";
   const { getSetting, updateSetting, isUpdating } = useSettings();
   // Fish Speech ist optional (Issue #29): nur wenn es auf diesem System
   // eingerichtet ist, erscheinen seine Detail-Einstellungen. Unbekannt
