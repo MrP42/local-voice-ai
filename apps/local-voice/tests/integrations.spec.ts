@@ -138,7 +138,7 @@ test.describe("Katalog", () => {
       "Microsoft-365-Kalender",
       "Ordner",
       "Obsidian-Vault",
-      "WAI-Wissensbasis",
+      "Wissensbasis",
       "MCP und Agenten",
       "YouTube",
     ]) {

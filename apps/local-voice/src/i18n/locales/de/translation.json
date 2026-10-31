@@ -2275,8 +2275,8 @@
   },
   "meetings": {
     "presenter": {
-      "button": "An WAI Presenter senden",
-      "title": "An WAI Presenter senden",
+      "button": "An Presenter senden",
+      "title": "An Presenter senden",
       "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
       "target": "Austauschordner",
       "documents": "Dokumente",
@@ -5219,7 +5219,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
-      "presenter": "WAI Presenter",
+      "presenter": "Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -5227,7 +5227,7 @@
       "smtp": "Postfach (SMTP)",
       "folder": "Ordner",
       "obsidian": "Obsidian-Vault",
-      "wissen": "WAI-Wissensbasis",
+      "wissen": "Wissensbasis",
       "agent": "Agentenzugang",
       "webhook": "Webhook (n8n)",
       "service": "Dienst"
@@ -5242,8 +5242,8 @@
       "auto": "automatisch",
       "items": {
         "presenter": {
-          "name": "WAI Presenter",
-          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "name": "Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der Presenter liest. Den Ordner wählst du selbst.",
           "action": "Austauschordner wählen"
         },
         "calendar_ics": {
@@ -5287,7 +5287,7 @@
           "action": "Vault verbinden"
         },
         "wissen": {
-          "name": "WAI-Wissensbasis",
+          "name": "Wissensbasis",
           "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
           "action": "Wissensbasis verbinden"
         },
@@ -5666,10 +5666,10 @@
     },
     "target": {
       "presenter": {
-        "title": "WAI Presenter einrichten",
-        "titleEdit": "WAI-Presenter-Einstellungen",
+        "title": "Presenter einrichten",
+        "titleEdit": "Presenter-Einstellungen",
         "path": "Austauschordner",
-        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "pathPlaceholder": "z. B. D:\\Austausch\\Presenter",
         "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
         "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
       },
