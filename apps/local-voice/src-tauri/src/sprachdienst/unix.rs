@@ -127,6 +127,23 @@ fn einlassen(s: UnixStream, erwartete_uid: u32, ctx: &Arc<Kontext>, stopp: &watc
         log::warn!("sprachdienst: Gegenstelle eines anderen Benutzers abgewiesen");
         return;
     }
+    // Je Gegenstelle (Prozess) höchstens `je_gegenstelle` Verbindungen schon vor dem Handschlag;
+    // ohne lesbare Prozess-ID gibt es keine Zählung, nur die Gesamtgrenze.
+    let pid = s
+        .peer_cred()
+        .ok()
+        .and_then(|c| c.pid())
+        .and_then(|p| u32::try_from(p).ok());
+    let gegenstelle = match pid {
+        Some(pid) => match ctx.gegenstelle(pid) {
+            Some(m) => Some(m),
+            None => {
+                log::warn!("sprachdienst: zu viele Verbindungen einer Gegenstelle abgewiesen");
+                return;
+            }
+        },
+        None => None,
+    };
     let Some(platz) = ctx.platz() else {
         log::warn!("sprachdienst: alle Verbindungsplätze belegt");
         return;
@@ -134,6 +151,7 @@ fn einlassen(s: UnixStream, erwartete_uid: u32, ctx: &Arc<Kontext>, stopp: &watc
     let (ctx, stopp) = (ctx.clone(), stopp.clone());
     tokio::spawn(async move {
         let _platz = platz;
+        let _gegenstelle = gegenstelle;
         verbindung(s, ctx, stopp).await;
     });
 }

@@ -8721,7 +8721,11 @@ export type SpeakersChanged = { meeting_id: string }
 /**
  * Eine Kopplungsanfrage, die auf die Bestaetigung wartet.
  */
-export type SprachKopplung = { id: string; anzeige: string; 
+export type SprachKopplung = { id: string; 
+/**
+ * Kennung der App (`client` im Vertrag), neben dem frei gewaehlten Namen anzuzeigen.
+ */
+client: string; anzeige: string; 
 /**
  * Sechsstelliger Code, den die anfragende App zeigt; nur ein Vergleich fuer den Nutzer.
  */

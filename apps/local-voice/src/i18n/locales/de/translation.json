@@ -5057,7 +5057,14 @@
       },
       "pairing": {
         "title": "Diese App koppeln?",
-        "body": "{{name}} möchte den Sprachdienst nutzen. Bestätige nur, wenn der Code unten in dieser App genauso erscheint.",
+        "body": "<name>{{name}}</name> möchte den Sprachdienst nutzen. Bestätige nur, wenn der Code unten in dieser App genauso erscheint.",
+        "client": "Kennung:",
+        "warnings": {
+          "nonLatin": "Der Name verwendet Buchstaben einer nichtlateinischen Schrift. Prüfe, ob es wirklich die erwartete App ist.",
+          "mixedScripts": "Der Name mischt lateinische Buchstaben mit Buchstaben einer anderen Schrift (zum Verwechseln ähnliche Zeichen). Er könnte eine andere App nachahmen.",
+          "duplicateName": "Eine App mit diesem Namen ist schon gekoppelt oder wartet. Prüfe, dass es keine Nachahmung ist.",
+          "duplicateClient": "Eine App mit dieser Kennung ist schon gekoppelt oder wartet."
+        },
         "codeLabel": "Code",
         "remaining": "Noch {{seconds}} s",
         "afterwards": "Nach dem Koppeln legst du fest, was die App darf (Hören, Sprechen).",

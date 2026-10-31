@@ -167,18 +167,155 @@ test("Kopplungsdialog: Ablehnen koppelt nichts", async ({ page }) => {
   expect(z).toEqual([]);
 });
 
+test("Kopplungsdialog zeigt die Kennung, den Namen in <bdi> und sperrt Koppeln kurz", async ({
+  page,
+}) => {
+  await setup(page, {
+    kopplungen: [
+      {
+        id: "K-1",
+        client: "corporate-llm",
+        anzeige: "Corporate LLM",
+        code: "123456",
+      },
+    ],
+  });
+  await page.evaluate(() =>
+    (window as any).__emit("sprachdienst-kopplung", null),
+  );
+  await expect(page.getByTestId("kopplung-client")).toHaveText("corporate-llm");
+  await expect(page.getByTestId("kopplung-dialog").locator("bdi")).toHaveText(
+    "Corporate LLM",
+  );
+  await expect(page.getByTestId("kopplung-warnungen")).toHaveCount(0);
+  // Erst nach der Sperre lässt sich bestätigen.
+  await expect(page.getByTestId("kopplung-confirm")).toBeDisabled();
+  await expect(page.getByTestId("kopplung-confirm")).toBeEnabled();
+});
+
+test("Kopplungsdialog warnt bei fremden Schriften und doppelten Namen oder Kennungen", async ({
+  page,
+}) => {
+  await setup(page, {
+    zugaenge: [
+      {
+        zugang: "z-1",
+        anzeige: "Corporate LLM",
+        client: "corporate-llm",
+        hoeren: true,
+      },
+    ],
+    kopplungen: [
+      // Das erste „С“ ist kyrillisch.
+      {
+        id: "K-1",
+        client: "corporate-llm",
+        anzeige: "\u0421orporate LLM",
+        code: "123456",
+      },
+    ],
+  });
+  await page.evaluate(() =>
+    (window as any).__emit("sprachdienst-kopplung", null),
+  );
+  const w = page.getByTestId("kopplung-warnungen");
+  await expect(w.locator('[data-warnung="mixedScripts"]')).toBeVisible();
+  await expect(w.locator('[data-warnung="duplicateClient"]')).toBeVisible();
+  await expect(w.locator('[data-warnung="duplicateName"]')).toHaveCount(0);
+  await page.getByTestId("kopplung-reject").click();
+
+  await page.evaluate(() => {
+    const st = (window as any).__sprache;
+    st.kopplungen.push({
+      id: "K-2",
+      client: "andere-app",
+      anzeige: "corporate llm",
+      code: "654321",
+      bis_ms: st.zugaenge[0].erstellt_ms + 200_000_000,
+    });
+    (window as any).__emit("sprachdienst-kopplung", null);
+  });
+  await expect(
+    page
+      .getByTestId("kopplung-warnungen")
+      .locator('[data-warnung="duplicateName"]'),
+  ).toBeVisible();
+});
+
+test("Kopplungsdialog bindet an die gezeigte Anfrage, auch wenn die Liste sich ändert", async ({
+  page,
+}) => {
+  await setup(page, {
+    kopplungen: [{ id: "K-1", anzeige: "Erste App", code: "111111" }],
+  });
+  await page.evaluate(() =>
+    (window as any).__emit("sprachdienst-kopplung", null),
+  );
+  await expect(page.getByTestId("kopplung-dialog")).toHaveAttribute(
+    "data-kopplung-id",
+    "K-1",
+  );
+  await expect(page.getByTestId("kopplung-confirm")).toBeEnabled();
+  // Eine neue Anfrage drängt sich an die Spitze der Liste.
+  await page.evaluate(() => {
+    const st = (window as any).__sprache;
+    st.kopplungen.unshift({
+      id: "K-0",
+      client: "dreist",
+      anzeige: "Dreiste App",
+      code: "000000",
+      bis_ms: st.kopplungen[0].bis_ms,
+    });
+    (window as any).__emit("sprachdienst-kopplung", null);
+  });
+  await expect(page.getByTestId("kopplung-weitere")).toBeVisible();
+  await expect(page.getByTestId("kopplung-dialog")).toHaveAttribute(
+    "data-kopplung-id",
+    "K-1",
+  );
+  await expect(page.getByTestId("kopplung-code")).toHaveText("111 111");
+  await page.getByTestId("kopplung-confirm").click();
+  const entscheidungen = await calls(page, "sprachdienst_kopplung_entscheiden");
+  expect(entscheidungen.map((c) => c.args)).toEqual([
+    { id: "K-1", bestaetigen: true },
+  ]);
+  // Die nächste Anfrage erscheint; Koppeln ist erst nach der Sperre möglich.
+  await expect(page.getByTestId("kopplung-dialog")).toHaveAttribute(
+    "data-kopplung-id",
+    "K-0",
+  );
+  await expect(page.getByTestId("kopplung-confirm")).toBeDisabled();
+  await expect(page.getByTestId("kopplung-confirm")).toBeEnabled();
+});
+
 test("Bild: Kopplungsdialog", async ({ page }) => {
   test.skip(!process.env.LVA_SCREENS, "Bild nur mit LVA_SCREENS=1");
   const out =
     process.env.LVA_SCREENS_DIR ?? "/mnt/project-files/sprachgespraech/s2";
   if (!existsSync(out)) mkdirSync(out, { recursive: true });
   await setup(page, {
-    kopplungen: [{ id: "K-1", anzeige: "Corporate LLM", code: "482913" }],
+    zugaenge: [
+      {
+        zugang: "z-1",
+        anzeige: "Corporate LLM",
+        client: "corporate-llm",
+        hoeren: true,
+      },
+    ],
+    kopplungen: [
+      {
+        id: "K-1",
+        client: "corporate-llm",
+        anzeige: "\u0421orporate LLM",
+        code: "482913",
+      },
+    ],
   });
   await page.evaluate(() =>
     (window as any).__emit("sprachdienst-kopplung", null),
   );
   await expect(page.getByTestId("kopplung-dialog")).toBeVisible();
+  await expect(page.getByTestId("kopplung-confirm")).toBeEnabled();
   await page.addStyleTag({
     content:
       "*,*::before,*::after{transition:none!important;animation:none!important}",

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 use wai_voice_dienst::msg::Recht;
 
 use crate::sprachdienst::app::EREIGNIS_ZUGAENGE;
@@ -43,6 +43,8 @@ pub struct SprachZugang {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SprachKopplung {
     pub id: String,
+    /// Kennung der App (`client` im Vertrag), neben dem frei gewählten Namen anzuzeigen.
+    pub client: String,
     pub anzeige: String,
     /// Sechsstelliger Code, den die anfragende App zeigt; nur ein Vergleich für den Nutzer.
     pub code: String,
@@ -62,6 +64,17 @@ impl From<Zugang> for SprachZugang {
             zuletzt_ms: z.zuletzt_ms,
             widerrufen_ms: z.widerrufen_ms,
         }
+    }
+}
+
+/// Nur das Hauptfenster darf den Sprachdienst steuern. Die Fähigkeiten der Fenster
+/// `recording_overlay` und `meeting_prompt` sind dieselben wie die des Hauptfensters; ohne diese
+/// Prüfung könnte Code in einem davon Apps koppeln oder die Kopplung bestätigen.
+fn nur_hauptfenster(fenster: &WebviewWindow) -> Result<(), String> {
+    if fenster.label() == "main" {
+        Ok(())
+    } else {
+        Err("Der Sprachdienst lässt sich nur im Hauptfenster steuern.".to_string())
     }
 }
 
@@ -94,8 +107,10 @@ fn recht_aus(name: &str) -> Result<Recht, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_status(
+    fenster: WebviewWindow,
     dienst: State<'_, Arc<Sprachdienst>>,
 ) -> Result<SprachdienstStatus, String> {
+    nur_hauptfenster(&fenster)?;
     Ok(status_von(&dienst))
 }
 
@@ -103,10 +118,12 @@ pub async fn sprachdienst_status(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_aktiv_setzen(
+    fenster: WebviewWindow,
     app: AppHandle,
     dienst: State<'_, Arc<Sprachdienst>>,
     aktiv: bool,
 ) -> Result<SprachdienstStatus, String> {
+    nur_hauptfenster(&fenster)?;
     dienst
         .kontext()
         .zugaenge
@@ -116,7 +133,7 @@ pub async fn sprachdienst_aktiv_setzen(
         // Ein Startfehler steht im Status und blockiert die App nicht.
         let _ = dienst.starten().await;
     } else {
-        dienst.stoppen();
+        dienst.stoppen().await;
     }
     geaendert(&app);
     Ok(status_von(&dienst))
@@ -125,8 +142,10 @@ pub async fn sprachdienst_aktiv_setzen(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_zugaenge(
+    fenster: WebviewWindow,
     dienst: State<'_, Arc<Sprachdienst>>,
 ) -> Result<Vec<SprachZugang>, String> {
+    nur_hauptfenster(&fenster)?;
     Ok(dienst
         .kontext()
         .zugaenge
@@ -141,12 +160,14 @@ pub async fn sprachdienst_zugaenge(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_recht_setzen(
+    fenster: WebviewWindow,
     app: AppHandle,
     dienst: State<'_, Arc<Sprachdienst>>,
     zugang: String,
     recht: String,
     an: bool,
 ) -> Result<SprachZugang, String> {
+    nur_hauptfenster(&fenster)?;
     let r = recht_aus(&recht)?;
     let z = dienst
         .kontext()
@@ -154,7 +175,8 @@ pub async fn sprachdienst_recht_setzen(
         .recht_setzen(&zugang, r, an)
         .map_err(|e| e.to_string())?;
     if !an {
-        dienst.kontext().verbindungen_beenden(&zugang);
+        // Nur die Ströme dieses Rechts enden (mit `recht_fehlt`), nicht die Verbindung.
+        dienst.kontext().recht_entzogen(&zugang, r);
     }
     geaendert(&app);
     Ok(z.into())
@@ -164,10 +186,12 @@ pub async fn sprachdienst_recht_setzen(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_widerrufen(
+    fenster: WebviewWindow,
     app: AppHandle,
     dienst: State<'_, Arc<Sprachdienst>>,
     zugang: String,
 ) -> Result<SprachZugang, String> {
+    nur_hauptfenster(&fenster)?;
     let z = dienst
         .kontext()
         .zugaenge
@@ -182,10 +206,12 @@ pub async fn sprachdienst_widerrufen(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_entfernen(
+    fenster: WebviewWindow,
     app: AppHandle,
     dienst: State<'_, Arc<Sprachdienst>>,
     zugang: String,
 ) -> Result<(), String> {
+    nur_hauptfenster(&fenster)?;
     dienst
         .kontext()
         .zugaenge
@@ -200,8 +226,10 @@ pub async fn sprachdienst_entfernen(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_kopplungen(
+    fenster: WebviewWindow,
     dienst: State<'_, Arc<Sprachdienst>>,
 ) -> Result<Vec<SprachKopplung>, String> {
+    nur_hauptfenster(&fenster)?;
     Ok(dienst
         .kontext()
         .kopplungen
@@ -209,6 +237,7 @@ pub async fn sprachdienst_kopplungen(
         .into_iter()
         .map(|k| SprachKopplung {
             id: k.id,
+            client: k.client,
             anzeige: k.anzeige,
             code: k.code,
             bis_ms: k.bis_ms,
@@ -221,10 +250,12 @@ pub async fn sprachdienst_kopplungen(
 #[tauri::command]
 #[specta::specta]
 pub async fn sprachdienst_kopplung_entscheiden(
+    fenster: WebviewWindow,
     dienst: State<'_, Arc<Sprachdienst>>,
     id: String,
     bestaetigen: bool,
 ) -> Result<bool, String> {
+    nur_hauptfenster(&fenster)?;
     Ok(dienst
         .kontext()
         .kopplungen

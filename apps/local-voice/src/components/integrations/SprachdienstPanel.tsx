@@ -187,7 +187,7 @@ export const SprachdienstPanel: React.FC = () => {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="break-words text-sm font-medium">
-                    {z.anzeige}
+                    <bdi>{z.anzeige}</bdi>
                     <span
                       className={`ms-2 rounded-full px-2 py-0.5 text-xs font-normal ${
                         revoked
@@ -200,6 +200,10 @@ export const SprachdienstPanel: React.FC = () => {
                         ? t("integrations.sprachdienst.client.revoked")
                         : t("integrations.sprachdienst.client.active")}
                     </span>
+                  </p>
+                  <p className="break-all text-xs text-text-muted">
+                    {t("integrations.sprachdienst.pairing.client")}{" "}
+                    <code>{z.client}</code>
                   </p>
                   <p className="text-xs text-text-muted">
                     {t("integrations.sprachdienst.client.created", {

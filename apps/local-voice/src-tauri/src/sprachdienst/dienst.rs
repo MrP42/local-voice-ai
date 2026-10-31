@@ -4,8 +4,13 @@
 //! der Nutzer ihn eingeschaltet hat. `starten` und `stoppen` sind idempotent. Fehler beim Start
 //! (kein sicherer Laufzeitordner, Pipe belegt) bleiben für die Oberfläche lesbar und lassen die
 //! App normal weiterlaufen.
+//!
+//! Start und Stopp laufen hintereinander (ein Mutex für beide). Ein Neustart wartet, bis die alte
+//! Annahme-Aufgabe beendet ist und ihren Endpunkt freigegeben hat; sonst könnte der Stopp des
+//! alten Dienstes den frisch gebundenen Socket des neuen entfernen.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -22,9 +27,12 @@ pub struct Status {
     pub fehler: Option<String>,
 }
 
+/// So lange wartet `stoppen` auf das Ende der Annahme-Aufgabe.
+const STOPP_WARTEN: Duration = Duration::from_secs(5);
+
 struct Lauf {
     stopp: watch::Sender<bool>,
-    _task: JoinHandle<()>,
+    task: JoinHandle<()>,
     endpunkt: String,
 }
 
@@ -32,6 +40,8 @@ pub struct Sprachdienst {
     ctx: Arc<Kontext>,
     lauf: Mutex<Option<Lauf>>,
     fehler: Mutex<Option<String>>,
+    /// Serialisiert Start und Stopp.
+    steuerung: tokio::sync::Mutex<()>,
 }
 
 impl Sprachdienst {
@@ -40,6 +50,7 @@ impl Sprachdienst {
             ctx,
             lauf: Mutex::new(None),
             fehler: Mutex::new(None),
+            steuerung: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -81,6 +92,7 @@ impl Sprachdienst {
 
     /// Beginnt zu lauschen, am Ort des Betriebssystems. Rückgabe: Endpunkt.
     pub async fn starten(&self) -> Result<String, String> {
+        let _steuerung = self.steuerung.lock().await;
         if let Some(ep) = self.laeuft() {
             return Ok(ep);
         }
@@ -100,15 +112,25 @@ impl Sprachdienst {
         let laufzeit = wai_voice_dienst::endpunkt::laufzeitordner().ok_or_else(|| {
             "Es gibt keinen sicheren Laufzeitordner für den Benutzer (XDG_RUNTIME_DIR bzw. TMPDIR).".to_string()
         })?;
-        self.starten_unix(&laufzeit)
+        self.binden_unix(&laufzeit)
     }
 
     /// Wie `starten`, mit einem Laufzeitordner (Tests).
     #[cfg(unix)]
-    pub fn starten_unix(&self, laufzeit: &std::path::Path) -> Result<String, String> {
+    pub async fn starten_unix(&self, laufzeit: &std::path::Path) -> Result<String, String> {
+        let _steuerung = self.steuerung.lock().await;
         if let Some(ep) = self.laeuft() {
             return Ok(ep);
         }
+        let r = self.binden_unix(laufzeit);
+        if let Err(e) = &r {
+            self.fehler_merken(Some(e.clone()));
+        }
+        r
+    }
+
+    #[cfg(unix)]
+    fn binden_unix(&self, laufzeit: &std::path::Path) -> Result<String, String> {
         let g = super::unix::binden(laufzeit)
             .map_err(|e| format!("Der Socket ließ sich nicht anlegen: {e}"))?;
         let endpunkt = g.pfad.display().to_string();
@@ -117,7 +139,7 @@ impl Sprachdienst {
         let task = tokio::spawn(super::unix::annehmen(g, uid, self.ctx.clone(), rx));
         Ok(self.eintragen(Lauf {
             stopp: tx,
-            _task: task,
+            task,
             endpunkt,
         }))
     }
@@ -131,7 +153,7 @@ impl Sprachdienst {
         let task = tokio::spawn(super::pipe::annehmen(g, self.ctx.clone(), rx));
         Ok(self.eintragen(Lauf {
             stopp: tx,
-            _task: task,
+            task,
             endpunkt,
         }))
     }
@@ -141,11 +163,16 @@ impl Sprachdienst {
         Err("Der Sprachdienst gibt es auf diesem System nicht.".to_string())
     }
 
-    /// Hört auf zu lauschen und beendet die laufenden Verbindungen.
-    pub fn stoppen(&self) {
+    /// Hört auf zu lauschen, beendet die laufenden Verbindungen und wartet, bis die
+    /// Annahme-Aufgabe ihren Endpunkt freigegeben hat.
+    pub async fn stoppen(&self) {
+        let _steuerung = self.steuerung.lock().await;
         let lauf = self.lauf.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(l) = lauf {
             let _ = l.stopp.send(true);
+            if tokio::time::timeout(STOPP_WARTEN, l.task).await.is_err() {
+                log::warn!("sprachdienst: Annahme endete nicht rechtzeitig");
+            }
         }
         self.fehler_merken(None);
     }

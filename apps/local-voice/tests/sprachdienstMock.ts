@@ -20,6 +20,7 @@ export interface MockSprachZugang {
 
 export interface MockKopplung {
   id: string;
+  client?: string;
   anzeige: string;
   code: string;
   /** Millisekunden bis zum Verfall, vom festgesetzten Zeitpunkt aus. */
@@ -57,6 +58,7 @@ export const installSprachdienstMock = async (
         })),
         kopplungen: (options.kopplungen ?? []).map((k: any) => ({
           id: k.id,
+          client: k.client ?? "corporate-llm",
           anzeige: k.anzeige,
           code: k.code,
           bis_ms: now + (k.rest_ms ?? 100_000),
@@ -125,7 +127,7 @@ export const installSprachdienstMock = async (
             if (args.bestaetigen) {
               state.zugaenge.push({
                 zugang: `z-${k.id}`,
-                client: "corporate-llm",
+                client: k.client,
                 anzeige: k.anzeige,
                 hoeren: false,
                 sprechen: false,

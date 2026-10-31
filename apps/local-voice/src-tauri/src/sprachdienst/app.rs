@@ -3,6 +3,7 @@
 //! Alles, was Tauri braucht, steht hier und in `commands/sprachdienst.rs`; die Bausteine
 //! daneben sind davon unabhängig und einzeln getestet. Keine Inhalte im Log.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -92,7 +93,16 @@ impl Sprache for AppSprache {
             .is_some_and(|t| t.get_current_model().is_some())
     }
 
-    fn erkennen(&self, pcm: &[u8], _bereich: &str) -> Result<String, EngineFehler> {
+    fn erkennen(
+        &self,
+        pcm: &[u8],
+        _bereich: &str,
+        abbruch: &Arc<AtomicBool>,
+    ) -> Result<String, EngineFehler> {
+        let abgebrochen = || abbruch.load(Ordering::Acquire);
+        if abgebrochen() {
+            return Err(EngineFehler::abgebrochen());
+        }
         let tm = self.erkennung()?;
         if tm.get_current_model().is_none() {
             return Err(EngineFehler::fehlt("Es ist kein Erkennungsmodell gewählt."));
@@ -101,6 +111,9 @@ impl Sprache for AppSprache {
             tm.initiate_model_load();
             let bis = Instant::now() + MODELL_WARTEN;
             while !tm.is_model_loaded() {
+                if abgebrochen() {
+                    return Err(EngineFehler::abgebrochen());
+                }
                 if Instant::now() >= bis {
                     return Err(EngineFehler::fehlgeschlagen(
                         "Das Erkennungsmodell wurde nicht rechtzeitig geladen.",
@@ -109,23 +122,41 @@ impl Sprache for AppSprache {
                 std::thread::sleep(Duration::from_millis(100));
             }
         }
-        tm.transcribe(pcm_zu_f32(pcm)).map_err(|e| {
-            log::warn!("sprachdienst: Erkennung fehlgeschlagen: {e}");
+        if abgebrochen() {
+            return Err(EngineFehler::abgebrochen());
+        }
+        // Nur die Art des Fehlers ins Log, nie sein Text: er könnte Inhalte enthalten.
+        tm.transcribe(pcm_zu_f32(pcm)).map_err(|_| {
+            log::warn!("sprachdienst: Erkennung fehlgeschlagen");
             EngineFehler::fehlgeschlagen("Die Erkennung ist fehlgeschlagen.")
         })
     }
 
-    fn sprechen(&self, text: &str, stimme: Option<&str>) -> Result<Vec<Vec<u8>>, EngineFehler> {
+    fn sprechen(
+        &self,
+        text: &str,
+        stimme: Option<&str>,
+        abbruch: &Arc<AtomicBool>,
+    ) -> Result<Vec<Vec<u8>>, EngineFehler> {
+        if abbruch.load(Ordering::Acquire) {
+            return Err(EngineFehler::abgebrochen());
+        }
         let tts = self.stimmen()?;
         // Eine fremde App darf nur Stimmen wählen, die es gibt; sonst gilt die eingestellte.
         let stimme = stimme.filter(|s| tts.list_voice_ids().iter().any(|v| v.as_str() == *s));
         let text = text.to_string();
         let stimme = stimme.map(str::to_string);
+        let abbruch = abbruch.clone();
         tauri::async_runtime::block_on(async move {
-            tts.synthesize_wavs(&text, stimme.as_deref()).await
+            tts.synthesize_wavs(&text, stimme.as_deref(), &abbruch)
+                .await
         })
         .map_err(|e| {
-            log::warn!("sprachdienst: Sprachausgabe fehlgeschlagen: {e}");
+            // Nur die Art des Fehlers ins Log, nie sein Text: er könnte Inhalte enthalten.
+            if e == crate::managers::tts::providers::pipeline::CANCELLED_MESSAGE {
+                return EngineFehler::abgebrochen();
+            }
+            log::warn!("sprachdienst: Sprachausgabe fehlgeschlagen");
             EngineFehler::fehlgeschlagen("Die Sprachausgabe ist fehlgeschlagen.")
         })
     }

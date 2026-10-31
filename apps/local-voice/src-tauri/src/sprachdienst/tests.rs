@@ -2,7 +2,7 @@
 //! auf jedem System; die mit echten Sockets (Rechte, Peer-Prüfung, Interop mit dem Client des SDK)
 //! nur unter Unix. Der Pipe-Teil unter Windows (DACL, Prüfung der Gegenstelle) ist nur dort prüfbar.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -53,6 +53,13 @@ struct Attrappe {
     erkannt: Mutex<Vec<usize>>,
     /// Statt der Byte-Zahl diesen Text liefern (Test des Logs).
     antwort: Mutex<Option<String>>,
+    /// Gleichzeitig laufende Aufträge jetzt und höchstens.
+    parallel: AtomicUsize,
+    parallel_max: AtomicUsize,
+    /// `sprechen` wartet, bis das Abbruch-Flag gesetzt ist (und meldet dann den Abbruch).
+    sprechen_wartet: AtomicBool,
+    /// Ein Auftrag hat das Abbruch-Flag gesetzt gesehen.
+    abbruch_gesehen: AtomicBool,
 }
 
 impl Attrappe {
@@ -64,7 +71,20 @@ impl Attrappe {
             sprech_bytes: 70_000,
             erkannt: Mutex::new(Vec::new()),
             antwort: Mutex::new(None),
+            parallel: AtomicUsize::new(0),
+            parallel_max: AtomicUsize::new(0),
+            sprechen_wartet: AtomicBool::new(false),
+            abbruch_gesehen: AtomicBool::new(false),
         })
+    }
+
+    fn lauf_beginnt(&self) {
+        let n = self.parallel.fetch_add(1, Ordering::SeqCst) + 1;
+        self.parallel_max.fetch_max(n, Ordering::SeqCst);
+    }
+
+    fn lauf_endet(&self) {
+        self.parallel.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -82,17 +102,41 @@ impl Sprache for Attrappe {
     }
 
     /// Der Text ist die Zahl der empfangenen Bytes: Das Audio kam vollständig an.
-    fn erkennen(&self, pcm: &[u8], _bereich: &str) -> Result<String, EngineFehler> {
+    fn erkennen(
+        &self,
+        pcm: &[u8],
+        _bereich: &str,
+        _abbruch: &Arc<AtomicBool>,
+    ) -> Result<String, EngineFehler> {
+        self.lauf_beginnt();
         let v = *self.verzoegerung.lock().unwrap();
         std::thread::sleep(v);
         self.erkannt.lock().unwrap().push(pcm.len());
+        self.lauf_endet();
         if let Some(a) = self.antwort.lock().unwrap().clone() {
             return Ok(a);
         }
         Ok(pcm.len().to_string())
     }
 
-    fn sprechen(&self, _text: &str, _stimme: Option<&str>) -> Result<Vec<Vec<u8>>, EngineFehler> {
+    fn sprechen(
+        &self,
+        _text: &str,
+        _stimme: Option<&str>,
+        abbruch: &Arc<AtomicBool>,
+    ) -> Result<Vec<Vec<u8>>, EngineFehler> {
+        if self.sprechen_wartet.load(Ordering::SeqCst) {
+            self.lauf_beginnt();
+            let bis = std::time::Instant::now() + Duration::from_secs(5);
+            while !abbruch.load(Ordering::Acquire) && std::time::Instant::now() < bis {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            self.lauf_endet();
+            if abbruch.load(Ordering::Acquire) {
+                self.abbruch_gesehen.store(true, Ordering::SeqCst);
+                return Err(EngineFehler::abgebrochen());
+            }
+        }
         Ok(vec![wav::wav_aus_pcm(
             &vec![3u8; self.sprech_bytes],
             1,
@@ -1312,6 +1356,318 @@ async fn verbindungsplaetze_sind_begrenzt() {
     assert!(st.ctx.platz().is_some());
 }
 
+// --- Grenzen, Abbruch, Rechteentzug (Fixrunde nach dem Sicherheitsreview) -----------------------------------
+
+/// Wartet bis zu 3 s, dass `bedingung` wahr wird.
+async fn bis(bedingung: impl Fn() -> bool) -> bool {
+    for _ in 0..300 {
+        if bedingung() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rechteentzug_beendet_nur_die_betroffenen_stroeme_und_setzt_das_abbruch_flag() {
+    let st = stand();
+    st.engine.sprechen_wartet.store(true, Ordering::SeqCst);
+    let z = st.gekoppelt(&[Recht::Hoeren, Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, Operation::Erkennen, Souveraenitaet::NurLokal)
+        .await;
+    k.guthaben_erwarten(1).await;
+    k.start(
+        2,
+        Operation::Sprechen {
+            text: "Hallo".into(),
+            stimme: None,
+        },
+        Souveraenitaet::NurLokal,
+    )
+    .await;
+    assert!(
+        bis(|| st.engine.parallel.load(Ordering::SeqCst) == 1).await,
+        "die Stimme läuft"
+    );
+
+    st.ctx
+        .zugaenge
+        .recht_setzen(&z.zugang, Recht::Sprechen, false)
+        .unwrap();
+    st.ctx.recht_entzogen(&z.zugang, Recht::Sprechen);
+    // Nur Strom 2 endet, mit recht_fehlt; die Verbindung und Strom 1 bleiben.
+    assert_eq!(k.fehler().await, (2, code::RECHT_FEHLT.into()));
+    assert!(
+        bis(|| st.engine.abbruch_gesehen.load(Ordering::SeqCst)).await,
+        "die Engine sieht das Abbruch-Flag"
+    );
+    k.audio(1, vec![0; 3200]).await;
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    loop {
+        match k.steuer().await {
+            AnApp::Guthaben { strom: 1, .. } => continue,
+            AnApp::Ergebnis { strom: 1, text } => {
+                assert_eq!(text, "3200");
+                break;
+            }
+            m => panic!("{m:?}"),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn abbrechen_widerruf_und_verbindungsende_setzen_das_abbruch_flag() {
+    // Abbrechen der App.
+    let st = stand();
+    st.engine.sprechen_wartet.store(true, Ordering::SeqCst);
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    let sprechen = || Operation::Sprechen {
+        text: "Hallo".into(),
+        stimme: None,
+    };
+    k.start(1, sprechen(), Souveraenitaet::NurLokal).await;
+    assert!(bis(|| st.engine.parallel.load(Ordering::SeqCst) == 1).await);
+    k.senden(&AnDienst::Abbrechen { strom: 1 }).await;
+    assert_eq!(k.fehler().await, (1, code::ABGEBROCHEN.into()));
+    assert!(bis(|| st.engine.abbruch_gesehen.load(Ordering::SeqCst)).await);
+
+    // Widerruf.
+    st.engine.abbruch_gesehen.store(false, Ordering::SeqCst);
+    k.start(2, sprechen(), Souveraenitaet::NurLokal).await;
+    assert!(bis(|| st.engine.parallel.load(Ordering::SeqCst) == 1).await);
+    st.ctx.zugaenge.widerrufen(&z.zugang, jetzt()).unwrap();
+    st.ctx.verbindungen_beenden(&z.zugang);
+    assert_eq!(k.fehler().await, (0, code::SCHLUESSEL_WIDERRUFEN.into()));
+    assert!(bis(|| st.engine.abbruch_gesehen.load(Ordering::SeqCst)).await);
+
+    // Ende der Verbindung (die Gegenstelle legt auf).
+    let st = stand();
+    st.engine.sprechen_wartet.store(true, Ordering::SeqCst);
+    let z = st.gekoppelt(&[Recht::Sprechen]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, sprechen(), Souveraenitaet::NurLokal).await;
+    assert!(bis(|| st.engine.parallel.load(Ordering::SeqCst) == 1).await);
+    drop(k);
+    assert!(
+        bis(|| st.engine.abbruch_gesehen.load(Ordering::SeqCst)).await,
+        "Verbindungsende bricht laufende Aufträge ab"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn engine_auftraege_sind_global_begrenzt() {
+    let st = stand_mit(|k| {
+        k.engine_global = 1;
+        k.engine_je_verbindung = 4;
+    });
+    *st.engine.verzoegerung.lock().unwrap() = Duration::from_millis(100);
+    let z = st.gekoppelt(&[Recht::Hoeren]);
+    let mut a = st.verbinden();
+    let mut b = st.verbinden();
+    a.anmelden(&z).await;
+    b.anmelden(&z).await;
+    for k in [&mut a, &mut b] {
+        for strom in 1..=2u32 {
+            k.start(strom, Operation::Erkennen, Souveraenitaet::NurLokal)
+                .await;
+            k.guthaben_erwarten(strom).await;
+            k.audio(strom, vec![0; 640]).await;
+            k.senden(&AnDienst::Ende { strom }).await;
+        }
+    }
+    for k in [&mut a, &mut b] {
+        let mut fertig = 0;
+        while fertig < 2 {
+            match k.steuer().await {
+                AnApp::Guthaben { .. } => {}
+                AnApp::Ergebnis { .. } => fertig += 1,
+                m => panic!("{m:?}"),
+            }
+        }
+    }
+    assert_eq!(st.engine.erkannt.lock().unwrap().len(), 4);
+    assert_eq!(
+        st.engine.parallel_max.load(Ordering::SeqCst),
+        1,
+        "nie zwei Aufträge zugleich"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn engine_auftraege_je_verbindung_sind_begrenzt() {
+    let st = stand_mit(|k| {
+        k.engine_global = 4;
+        k.engine_je_verbindung = 1;
+    });
+    *st.engine.verzoegerung.lock().unwrap() = Duration::from_millis(100);
+    let z = st.gekoppelt(&[Recht::Hoeren]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    for strom in 1..=3u32 {
+        k.start(strom, Operation::Erkennen, Souveraenitaet::NurLokal)
+            .await;
+        k.guthaben_erwarten(strom).await;
+        k.audio(strom, vec![0; 640]).await;
+        k.senden(&AnDienst::Ende { strom }).await;
+    }
+    let mut fertig = 0;
+    while fertig < 3 {
+        match k.steuer().await {
+            AnApp::Guthaben { .. } => {}
+            AnApp::Ergebnis { .. } => fertig += 1,
+            m => panic!("{m:?}"),
+        }
+    }
+    assert_eq!(st.engine.parallel_max.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn teilergebnis_laeufe_sind_global_begrenzt() {
+    // Ohne freien Platz gibt es keine Teilergebnisse; das Endergebnis kommt trotzdem.
+    let st = stand_mit(|k| {
+        k.takt = Duration::from_millis(20);
+        k.teil_abstand = 3200;
+        k.teil_global = 0;
+    });
+    let z = st.gekoppelt(&[Recht::Hoeren]);
+    let mut k = st.verbinden();
+    k.anmelden(&z).await;
+    k.start(1, Operation::ErkennenStrom, Souveraenitaet::NurLokal)
+        .await;
+    k.guthaben_erwarten(1).await;
+    for _ in 0..4 {
+        k.audio(1, vec![0; 3200]).await;
+        tokio::time::sleep(Duration::from_millis(60)).await;
+    }
+    k.senden(&AnDienst::Ende { strom: 1 }).await;
+    loop {
+        match k.steuer().await {
+            AnApp::Guthaben { .. } => {}
+            AnApp::Teil { .. } => panic!("kein Teilergebnis ohne Platz"),
+            AnApp::Ergebnis { strom: 1, text } => {
+                assert_eq!(text, "12800");
+                break;
+            }
+            m => panic!("{m:?}"),
+        }
+    }
+    assert_eq!(
+        *st.engine.erkannt.lock().unwrap(),
+        vec![12800],
+        "nur der Endlauf"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn je_client_kennung_hoechstens_zwei_verbindungen() {
+    let st = stand();
+    let z = st.gekoppelt(&[Recht::Hoeren]);
+    let mut a = st.verbinden();
+    let mut b = st.verbinden();
+    a.anmelden(&z).await;
+    b.anmelden(&z).await;
+    let mut c = st.verbinden();
+    c.hallo(&z.zugang, CLIENT, SCHLUESSEL).await;
+    assert_eq!(c.fehler().await, (0, code::BESCHAEFTIGT.into()));
+    c.leitung_zu().await;
+    // Ein Platz wird frei, sobald eine Verbindung endet.
+    drop(a);
+    let mut d = st.verbinden();
+    let mut ok = false;
+    for _ in 0..100 {
+        d.hallo(&z.zugang, CLIENT, SCHLUESSEL).await;
+        match d.steuer().await {
+            AnApp::Willkommen { .. } => {
+                ok = true;
+                break;
+            }
+            AnApp::Fehler { .. } => {
+                d = st.verbinden();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            m => panic!("{m:?}"),
+        }
+    }
+    assert!(
+        ok,
+        "nach dem Ende einer Verbindung ist wieder ein Platz frei"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn die_zaehlung_je_gegenstelle_gibt_plaetze_frei() {
+    let st = stand();
+    let a = st.ctx.gegenstelle(4711).unwrap();
+    let _b = st.ctx.gegenstelle(4711).unwrap();
+    assert!(
+        st.ctx.gegenstelle(4711).is_none(),
+        "höchstens zwei je Prozess"
+    );
+    assert!(
+        st.ctx.gegenstelle(4712).is_some(),
+        "andere Prozesse zählen für sich"
+    );
+    drop(a);
+    assert!(st.ctx.gegenstelle(4711).is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ein_unlesbarer_fingerabdruck_ist_ein_ungueltiger_zugang() {
+    let dir = tempfile::tempdir().unwrap();
+    let pfad = dir.path().join("sprachdienst.json");
+    let datei = serde_json::json!({
+        "version": 1,
+        "aktiv": true,
+        "zugaenge": [{
+            "zugang": "z-kaputt00000",
+            "client": CLIENT,
+            "anzeige": "Corporate LLM",
+            "fingerabdruck": "kein-hex",
+            "rechte": ["hoeren"],
+            "erstellt_ms": 1,
+            "zuletzt_ms": null,
+            "widerrufen_ms": null
+        }]
+    });
+    std::fs::write(&pfad, serde_json::to_vec(&datei).unwrap()).unwrap();
+    let store = Arc::new(ZugangStore::oeffnen(pfad));
+    assert!(
+        store.get("z-kaputt00000").is_some(),
+        "die Datei wurde gelesen"
+    );
+    let engine = Attrappe::neu();
+    let ctx = Kontext::new(
+        Konfig::standard("0.0.0-test"),
+        store,
+        engine,
+        jetzt,
+        Box::new(|_| {}),
+    );
+    let (stopp, _) = watch::channel(false);
+    let (a, b) = duplex(1 << 20);
+    let (c, s) = (ctx.clone(), stopp.subscribe());
+    tokio::spawn(async move { verbindung(b, c, s).await });
+    let mut k = Kunde::neu(a);
+    // Auch mit dem Beweis, den ein Null-Schlüssel ergäbe, kommt niemand hinein.
+    let zufall = k.gruss().await;
+    let nullschluessel = [0u8; 32];
+    k.senden(&AnDienst::Hallo {
+        protokoll: PROTOKOLL,
+        client: CLIENT.into(),
+        zugang: "z-kaputt00000".into(),
+        beweis: beweis::erzeugen(&nullschluessel, &zufall, CLIENT),
+    })
+    .await;
+    assert_eq!(k.fehler().await, (0, code::SCHLUESSEL_UNGUELTIG.into()));
+    k.leitung_zu().await;
+}
+
 // --- Echte Sockets (Unix) -----------------------------------------------------------------------------------------
 
 #[cfg(unix)]
@@ -1342,7 +1698,7 @@ mod sockets {
         std::fs::set_permissions(laufzeit.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let st = stand();
         let d = dienst(&st);
-        let ep = d.starten_unix(laufzeit.path()).unwrap();
+        let ep = d.starten_unix(laufzeit.path()).await.unwrap();
 
         let soll = socket_pfad(laufzeit.path());
         assert_eq!(Path::new(&ep), soll);
@@ -1355,7 +1711,7 @@ mod sockets {
         );
         assert!(d.status().laeuft && d.status().endpunkt.as_deref() == Some(ep.as_str()));
 
-        d.stoppen();
+        d.stoppen().await;
         for _ in 0..200 {
             if !soll.exists() {
                 break;
@@ -1378,19 +1734,19 @@ mod sockets {
         .unwrap();
         let st = stand();
         let d = dienst(&st);
-        d.starten_unix(laufzeit.path()).unwrap();
+        d.starten_unix(laufzeit.path()).await.unwrap();
         assert_eq!(
             modus(&laufzeit.path().join("wai")),
             0o700,
             "Ordner wird auf 0700 gesetzt"
         );
-        d.stoppen();
+        d.stoppen().await;
 
         // Gemeinsames Verzeichnis wie /tmp: abgelehnt, es entsteht nichts darin.
         let offen = tempfile::tempdir().unwrap();
         std::fs::set_permissions(offen.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
         let d = dienst(&st);
-        let fehler = d.starten_unix(offen.path()).unwrap_err();
+        let fehler = d.starten_unix(offen.path()).await.unwrap_err();
         assert!(fehler.contains("beschreibbar"), "{fehler}");
         assert!(!offen.path().join("wai").exists());
         assert!(!d.status().laeuft);
@@ -1405,16 +1761,16 @@ mod sockets {
         std::fs::write(&pfad, b"wichtig").unwrap();
         let st = stand();
         let d = dienst(&st);
-        assert!(d.starten_unix(laufzeit.path()).is_err());
+        assert!(d.starten_unix(laufzeit.path()).await.is_err());
         assert_eq!(std::fs::read(&pfad).unwrap(), b"wichtig");
         std::fs::remove_file(&pfad).unwrap();
 
         // Ein Socket, auf dem niemand mehr hört (abgestürzter Vorgänger).
         drop(std::os::unix::net::UnixListener::bind(&pfad).unwrap());
         assert!(pfad.exists());
-        d.starten_unix(laufzeit.path()).unwrap();
+        d.starten_unix(laufzeit.path()).await.unwrap();
         assert!(StdStream::connect(&pfad).is_ok());
-        d.stoppen();
+        d.stoppen().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1423,16 +1779,16 @@ mod sockets {
         std::fs::set_permissions(laufzeit.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let st = stand();
         let erster = dienst(&st);
-        erster.starten_unix(laufzeit.path()).unwrap();
+        erster.starten_unix(laufzeit.path()).await.unwrap();
         let zweiter = dienst(&st);
-        let fehler = zweiter.starten_unix(laufzeit.path()).unwrap_err();
+        let fehler = zweiter.starten_unix(laufzeit.path()).await.unwrap_err();
         assert!(fehler.contains("belegt"), "{fehler}");
         assert!(zweiter.status().laeuft == false);
         assert!(
             StdStream::connect(socket_pfad(laufzeit.path())).is_ok(),
             "der erste läuft weiter"
         );
-        erster.stoppen();
+        erster.stoppen().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1456,12 +1812,70 @@ mod sockets {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn je_prozess_hoechstens_zwei_verbindungen_vor_dem_handschlag() {
+        let laufzeit = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(laufzeit.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let st = stand();
+        let d = dienst(&st);
+        d.starten_unix(laufzeit.path()).await.unwrap();
+        let pfad = socket_pfad(laufzeit.path());
+
+        // Zwei Verbindungen bekommen ihren gruss und bleiben offen.
+        let mut offen = Vec::new();
+        for _ in 0..2 {
+            let mut s = UnixStream::connect(&pfad).await.unwrap();
+            let mut buf = [0u8; 16];
+            let n = timeout(Duration::from_secs(5), s.read(&mut buf))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(n > 0, "gruss erwartet");
+            offen.push(s);
+        }
+        // Die dritte aus demselben Prozess wird ohne ein Wort geschlossen.
+        let mut dritte = UnixStream::connect(&pfad).await.unwrap();
+        let mut buf = [0u8; 16];
+        let n = timeout(Duration::from_secs(5), dritte.read(&mut buf))
+            .await
+            .unwrap()
+            .unwrap_or(0);
+        assert_eq!(n, 0, "keine dritte Verbindung je Prozess");
+        drop(offen);
+        d.stoppen().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn start_und_stopp_laufen_hintereinander_und_ein_neustart_wartet_auf_das_ende() {
+        let laufzeit = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(laufzeit.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let st = stand();
+        let d = dienst(&st);
+        // Gleichzeitige Starts: einer bindet, der andere sieht den laufenden Dienst.
+        let (x, y) = tokio::join!(
+            d.starten_unix(laufzeit.path()),
+            d.starten_unix(laufzeit.path())
+        );
+        assert_eq!(x.unwrap(), y.unwrap());
+        // Schneller Wechsel: nach `stoppen` ist der Socket weg, der Neustart gelingt sofort.
+        for _ in 0..5 {
+            d.stoppen().await;
+            assert!(!socket_pfad(laufzeit.path()).exists(), "Socket entfernt");
+            d.starten_unix(laufzeit.path()).await.unwrap();
+            assert!(socket_pfad(laufzeit.path()).exists());
+            assert!(UnixStream::connect(socket_pfad(laufzeit.path()))
+                .await
+                .is_ok());
+        }
+        d.stoppen().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn client_des_sdk_koppelt_meldet_sich_an_erkennt_und_wird_widerrufen() {
         let laufzeit = tempfile::tempdir().unwrap();
         std::fs::set_permissions(laufzeit.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let st = stand();
         let d = dienst(&st);
-        d.starten_unix(laufzeit.path()).unwrap();
+        d.starten_unix(laufzeit.path()).await.unwrap();
         let pfad = socket_pfad(laufzeit.path());
 
         // Kopplung: Der Client wartet, der Nutzer bestätigt in der Oberfläche.
@@ -1523,6 +1937,6 @@ mod sockets {
             matches!(&fehler, ClientFehler::Dienst { code, .. } if code == "schluessel_widerrufen"),
             "{fehler:?}"
         );
-        d.stoppen();
+        d.stoppen().await;
     }
 }

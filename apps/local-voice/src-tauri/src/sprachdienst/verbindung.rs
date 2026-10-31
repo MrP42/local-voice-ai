@@ -23,13 +23,14 @@
 //! Aufgabe und wird nach dem Erkennen verworfen; es wird nirgends gespeichert.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rand::rngs::OsRng;
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{interval, sleep, timeout, MissedTickBehavior};
 use wai_voice_dienst::beweis;
 use wai_voice_dienst::fluss::{Ausgang, Einreihen, Guthaben};
@@ -40,8 +41,8 @@ use wai_voice_dienst::msg::{
 };
 use wai_voice_dienst::PROTOKOLL;
 
-use super::engine::EngineFehler;
-use super::kontext::{Kontext, Meldung};
+use super::engine::{EngineFehler, Sprache};
+use super::kontext::{Entzug, Kontext, Marke, Meldung};
 use super::wav;
 use super::zugang::{fingerabdruck_bytes, Fehler as ZugangFehler, Zugang};
 
@@ -102,8 +103,20 @@ enum Typ {
     Sprechen,
 }
 
+impl Typ {
+    /// Das Recht, das dieser Strom braucht.
+    fn recht(&self) -> Recht {
+        match self {
+            Self::Erkennen { .. } => Recht::Hoeren,
+            Self::Sprechen => Recht::Sprechen,
+        }
+    }
+}
+
 struct Strom {
     gen: u64,
+    /// Gesetzt bei Abbruch, Widerruf, Rechteentzug und Verbindungsende; die Engine prüft es.
+    abbruch: Arc<AtomicBool>,
     typ: Typ,
     bereich: String,
     beginn: Instant,
@@ -155,6 +168,19 @@ struct Verb<W> {
     tx: mpsc::UnboundedSender<Ev>,
     gen: u64,
     beenden: bool,
+    /// Engine-Aufträge dieser Verbindung gleichzeitig (der globale Platz kommt aus dem Kontext).
+    je_verbindung: Arc<Semaphore>,
+    /// Platz in der Zählung je `client`-Kennung (nach dem Handschlag).
+    _client_marke: Option<Marke<String>>,
+}
+
+impl<W> Drop for Verb<W> {
+    /// Mit der Verbindung enden auch die Aufträge der Engines: Ströme noch offen heißt Abbruch.
+    fn drop(&mut self) {
+        for s in self.stroeme.values() {
+            s.abbruch.store(true, Ordering::Release);
+        }
+    }
 }
 
 /// Bedient eine Verbindung bis zum Ende. Gibt den Platz in `Kontext::platz` erst mit dem Ende frei
@@ -165,6 +191,7 @@ where
 {
     let (r, w) = tokio::io::split(strom);
     let (tx, rx) = mpsc::unbounded_channel();
+    let je_verbindung = ctx.konfig.engine_je_verbindung.max(1);
     let mut v = Verb {
         ctx,
         schreib: w,
@@ -179,9 +206,18 @@ where
         tx,
         gen: 0,
         beenden: false,
+        je_verbindung: Arc::new(Semaphore::new(je_verbindung)),
+        _client_marke: None,
     };
     v.lauf(Leser::neu(r), rx, stopp).await;
     let _ = v.schreib.shutdown().await;
+}
+
+/// Ein Schlüssel, der zu keinem Zugang gehört (gleiche Rechenzeit für unbekannte Zugänge).
+fn zufalls_schluessel() -> [u8; 32] {
+    let mut b = [0u8; 32];
+    OsRng.fill_bytes(&mut b);
+    b
 }
 
 fn neuer_zufall() -> String {
@@ -246,10 +282,15 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                 Some(ev) = rx.recv() => self.ereignis(ev),
                 _ = takt.tick() => self.takt(letzte),
                 w = widerruf.recv() => match w {
-                    Ok(id) if self.zugang.as_deref() == Some(id.as_str()) => {
+                    Ok(Entzug::Zugang(id)) if self.zugang.as_deref() == Some(id.as_str()) => {
                         self.fatal(code::SCHLUESSEL_WIDERRUFEN, "Der Zugang wurde widerrufen.")
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => self.zugang_pruefen(),
+                    Ok(Entzug::Recht(id, _)) if self.zugang.as_deref() == Some(id.as_str()) => {
+                        self.rechte_pruefen()
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        self.zugang_pruefen().and_then(|()| self.rechte_pruefen())
+                    }
                     _ => Ok(()),
                 },
                 _ = stopp.changed() => return,
@@ -351,7 +392,9 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
     }
 
     fn strom_schliessen(&mut self, strom: u32) {
-        self.stroeme.remove(&strom);
+        if let Some(s) = self.stroeme.remove(&strom) {
+            s.abbruch.store(true, Ordering::Release);
+        }
         self.sitzung.schliessen(strom);
         self.eingang.schliessen(strom);
         self.heraus.schliessen(strom);
@@ -435,12 +478,19 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
     fn hallo(&mut self, client: &str, zugang: &str, beweis_hex: &str) -> Res {
         let z = self.ctx.zugaenge.get(zugang);
         // Auch für einen unbekannten Zugang wird gerechnet: gleiche Zeit, gleiche Antwort.
+        // Ein unlesbarer Fingerabdruck macht den Zugang ungültig; gerechnet wird trotzdem, mit
+        // einem Zufallsschlüssel, der nie passt (kein fester Schlüssel, der gültig sein könnte).
         let fp = z
             .as_ref()
-            .and_then(|z| fingerabdruck_bytes(&z.fingerabdruck))
-            .unwrap_or([0u8; 32]);
-        let gueltig = beweis::pruefen(&fp, &self.zufall, client, beweis_hex);
-        let Some(z) = z.filter(|z| gueltig && z.client == client) else {
+            .and_then(|z| fingerabdruck_bytes(&z.fingerabdruck));
+        let gueltig = match &fp {
+            Some(fp) => beweis::pruefen(fp, &self.zufall, client, beweis_hex),
+            None => {
+                let _ = beweis::pruefen(&zufalls_schluessel(), &self.zufall, client, beweis_hex);
+                false
+            }
+        };
+        let Some((z, fp)) = z.zip(fp).filter(|(z, _)| gueltig && z.client == client) else {
             return self.fatal(
                 code::SCHLUESSEL_UNGUELTIG,
                 "Zugang oder Schlüssel ungültig.",
@@ -449,6 +499,13 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         if !z.aktiv() {
             return self.fatal(code::SCHLUESSEL_WIDERRUFEN, "Der Zugang wurde widerrufen.");
         }
+        let Some(marke) = self.ctx.client_platz(client) else {
+            return self.fatal(
+                code::BESCHAEFTIGT,
+                "Zu viele gleichzeitige Verbindungen dieser App.",
+            );
+        };
+        self._client_marke = Some(marke);
         self.sitzung.anmelden();
         self.zugang = Some(z.zugang.clone());
         self.ctx.zugaenge.beruehren(&z.zugang, (self.ctx.uhr)());
@@ -557,6 +614,24 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         self.ctx.zugaenge.get(id).filter(Zugang::aktiv)
     }
 
+    /// Nach einem Rechteentzug: nur die Ströme, deren Recht fehlt, enden mit `recht_fehlt`.
+    fn rechte_pruefen(&mut self) -> Res {
+        let Some(z) = self.aktueller_zugang() else {
+            return Ok(());
+        };
+        let entzogen: Vec<u32> = self
+            .stroeme
+            .iter()
+            .filter(|(_, s)| !z.hat_recht(s.typ.recht()))
+            .map(|(n, _)| *n)
+            .collect();
+        for n in entzogen {
+            log::info!("sprachdienst: Recht entzogen strom={n}");
+            self.strom_fehler(n, code::RECHT_FEHLT, "Dieses Recht wurde entzogen.")?;
+        }
+        Ok(())
+    }
+
     fn zugang_pruefen(&mut self) -> Res {
         if self.zugang.is_some() && self.aktueller_zugang().is_none() {
             return self.fatal(code::SCHLUESSEL_WIDERRUFEN, "Der Zugang wurde widerrufen.");
@@ -571,6 +646,7 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         let jetzt = Instant::now();
         Strom {
             gen: self.gen,
+            abbruch: Arc::new(AtomicBool::new(false)),
             typ,
             bereich,
             beginn: jetzt,
@@ -639,12 +715,21 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                 let gen = s.gen;
                 self.stroeme.insert(strom, s);
                 self.heraus.oeffnen(strom, 0);
-                let engine = self.ctx.engine.clone();
-                let tx = self.tx.clone();
-                tokio::task::spawn_blocking(move || {
-                    let haeppchen = engine.sprechen(&text, stimme.as_deref()).and_then(|wavs| {
+                let abbruch = self
+                    .stroeme
+                    .get(&strom)
+                    .map(|s| s.abbruch.clone())
+                    .unwrap_or_default();
+                self.auftrag(
+                    abbruch,
+                    None,
+                    move |engine, abbruch| {
+                        let wavs = engine.sprechen(&text, stimme.as_deref(), &abbruch)?;
                         let mut alle = Vec::new();
                         for w in &wavs {
+                            if abbruch.load(Ordering::Acquire) {
+                                return Err(EngineFehler::abgebrochen());
+                            }
                             let teile = wav::haeppchen(w).map_err(|_| {
                                 EngineFehler::fehlgeschlagen(
                                     "Die Stimme lieferte kein gültiges Audio.",
@@ -653,13 +738,13 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
                             alle.extend(teile);
                         }
                         Ok(alle)
-                    });
-                    let _ = tx.send(Ev::Sprechen {
+                    },
+                    move |haeppchen| Ev::Sprechen {
                         strom,
                         gen,
                         haeppchen,
-                    });
-                });
+                    },
+                );
                 Ok(())
             }
         }
@@ -720,14 +805,17 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         };
         s.ende = true;
         let pcm = std::mem::take(&mut s.pcm);
-        let (gen, bereich) = (s.gen, s.bereich.clone());
-        let engine = self.ctx.engine.clone();
-        let tx = self.tx.clone();
-        tokio::task::spawn_blocking(move || {
-            let text = engine.erkennen(&pcm, &bereich);
-            drop(pcm);
-            let _ = tx.send(Ev::Ergebnis { strom, gen, text });
-        });
+        let (gen, bereich, abbruch) = (s.gen, s.bereich.clone(), s.abbruch.clone());
+        self.auftrag(
+            abbruch,
+            None,
+            move |engine, abbruch| {
+                let text = engine.erkennen(&pcm, &bereich, &abbruch);
+                drop(pcm);
+                text
+            },
+            move |text| Ev::Ergebnis { strom, gen, text },
+        );
         Ok(())
     }
 
@@ -992,20 +1080,68 @@ impl<W: AsyncWrite + Unpin> Verb<W> {
         self.pumpen()
     }
 
-    /// Zwischenergebnis des Diktats: erkennt eine Kopie des bisherigen Audios.
+    /// Zwischenergebnis des Diktats: erkennt eine Kopie des bisherigen Audios. Höchstens
+    /// `teil_global` solche Läufe im ganzen Dienst; ist kein Platz frei, wartet der Strom auf den
+    /// nächsten Takt.
     fn teil_starten(&mut self, strom: u32) {
+        let Ok(marke) = self.ctx.teil_plaetze().try_acquire_owned() else {
+            return;
+        };
         let Some(s) = self.stroeme.get_mut(&strom) else {
             return;
         };
         s.teil_laeuft = true;
         s.teil_bytes = s.pcm.len();
-        let (pcm, gen, bereich) = (s.pcm.clone(), s.gen, s.bereich.clone());
+        let (pcm, gen, bereich, abbruch) =
+            (s.pcm.clone(), s.gen, s.bereich.clone(), s.abbruch.clone());
+        self.auftrag(
+            abbruch,
+            Some(marke),
+            move |engine, abbruch| {
+                let text = engine.erkennen(&pcm, &bereich, &abbruch);
+                drop(pcm);
+                text
+            },
+            move |text| Ev::Teil { strom, gen, text },
+        );
+    }
+
+    /// Ein Engine-Auftrag: wartet auf einen Platz dieser Verbindung und dann auf einen globalen,
+    /// prüft das Abbruch-Flag davor und läuft erst dann auf einem Blockier-Thread. Das Ergebnis
+    /// kommt als Ereignis zurück; ein Strom, der inzwischen weg ist, verwirft es.
+    fn auftrag<T, F, G>(
+        &self,
+        abbruch: Arc<AtomicBool>,
+        halten: Option<OwnedSemaphorePermit>,
+        arbeit: F,
+        fertig: G,
+    ) where
+        T: Send + 'static,
+        F: FnOnce(Arc<dyn Sprache>, Arc<AtomicBool>) -> Result<T, EngineFehler> + Send + 'static,
+        G: FnOnce(Result<T, EngineFehler>) -> Ev + Send + 'static,
+    {
         let engine = self.ctx.engine.clone();
         let tx = self.tx.clone();
-        tokio::task::spawn_blocking(move || {
-            let text = engine.erkennen(&pcm, &bereich);
-            drop(pcm);
-            let _ = tx.send(Ev::Teil { strom, gen, text });
+        let je = self.je_verbindung.clone();
+        let global = self.ctx.engine_plaetze();
+        tokio::spawn(async move {
+            let _halten = halten;
+            let Ok(_je) = je.acquire_owned().await else {
+                return;
+            };
+            let Ok(_global) = global.acquire_owned().await else {
+                return;
+            };
+            let ergebnis = if abbruch.load(Ordering::Acquire) {
+                Err(EngineFehler::abgebrochen())
+            } else {
+                tokio::task::spawn_blocking(move || arbeit(engine, abbruch))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(EngineFehler::fehlgeschlagen("Die Engine ist ausgefallen."))
+                    })
+            };
+            let _ = tx.send(fertig(ergebnis));
         });
     }
 }

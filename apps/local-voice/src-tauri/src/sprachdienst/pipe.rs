@@ -92,8 +92,18 @@ pub async fn annehmen(g: Gebunden, ctx: Arc<Kontext>, mut stopp: watch::Receiver
             Ok(n) => wartend = Some(n),
             Err(e) => log::warn!("sprachdienst: keine neue Pipe-Instanz: {e}"),
         }
-        match client_pid(&aktuell).and_then(|pid| pid_belongs_to(pid, &eigene)) {
+        let pid = client_pid(&aktuell);
+        match pid
+            .as_ref()
+            .map_err(|e| e.to_string())
+            .and_then(|pid| pid_belongs_to(*pid, &eigene).map_err(|e| e.to_string()))
+        {
             Ok(true) => {
+                // Je Gegenstelle (Prozess) höchstens `je_gegenstelle` Verbindungen vor dem Handschlag.
+                let Some(gegenstelle) = pid.ok().and_then(|p| ctx.gegenstelle(p)) else {
+                    log::warn!("sprachdienst: zu viele Verbindungen einer Gegenstelle abgewiesen");
+                    continue;
+                };
                 let Some(platz) = ctx.platz() else {
                     log::warn!("sprachdienst: alle Verbindungsplätze belegt");
                     continue;
@@ -101,6 +111,7 @@ pub async fn annehmen(g: Gebunden, ctx: Arc<Kontext>, mut stopp: watch::Receiver
                 let (ctx, stopp) = (ctx.clone(), stopp.clone());
                 tokio::spawn(async move {
                     let _platz = platz;
+                    let _gegenstelle = gegenstelle;
                     verbindung(aktuell, ctx, stopp).await;
                 });
             }

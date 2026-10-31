@@ -8,6 +8,9 @@
 //! Keine Inhalte im Log: weder Audio noch Text. Fehler tragen feste Meldungen, nie Auszüge
 //! aus dem Gesprochenen.
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use wai_voice_dienst::msg::{code, Engines};
 
 /// Fehler einer Engine: ein stabiler Code des Vertrags und eine feste, inhaltsfreie Meldung.
@@ -23,6 +26,14 @@ impl EngineFehler {
         Self {
             code: code::ENGINE_FEHLT,
             nachricht: nachricht.into(),
+        }
+    }
+
+    /// Der Auftrag wurde abgebrochen (Abbruch der App, Widerruf, Verbindungsende).
+    pub fn abgebrochen() -> Self {
+        Self {
+            code: code::ABGEBROCHEN,
+            nachricht: "Der Auftrag wurde abgebrochen.".to_string(),
         }
     }
 
@@ -46,12 +57,25 @@ pub trait Sprache: Send + Sync + 'static {
         true
     }
 
-    /// Erkennt eine Äußerung: PCM16 LE, 16 kHz, mono. Blockiert.
-    fn erkennen(&self, pcm: &[u8], bereich: &str) -> Result<String, EngineFehler>;
+    /// Erkennt eine Äußerung: PCM16 LE, 16 kHz, mono. Blockiert. `abbruch` setzen Abbruch der App,
+    /// Widerruf und das Ende der Verbindung; die Engine prüft es vor und zwischen ihren
+    /// Teilschritten (ein laufender Erkennungsdurchgang selbst lässt sich nicht unterbrechen).
+    fn erkennen(
+        &self,
+        pcm: &[u8],
+        bereich: &str,
+        abbruch: &Arc<AtomicBool>,
+    ) -> Result<String, EngineFehler>;
 
     /// Spricht `text`; Rückgabe: vollständige WAV-Stücke in Sprechreihenfolge (je Satz eines).
-    /// Blockiert, schreibt keine Datei und spielt nichts ab.
-    fn sprechen(&self, text: &str, stimme: Option<&str>) -> Result<Vec<Vec<u8>>, EngineFehler>;
+    /// Blockiert, schreibt keine Datei, spielt nichts ab und benutzt keinen Cache. `abbruch` wie
+    /// bei `erkennen`.
+    fn sprechen(
+        &self,
+        text: &str,
+        stimme: Option<&str>,
+        abbruch: &Arc<AtomicBool>,
+    ) -> Result<Vec<Vec<u8>>, EngineFehler>;
 
     /// Korrektursignal (Recht `lernen`). Local Voice AI nimmt es in Paket S2 noch nicht an; der
     /// Dienst vergibt das Recht deshalb nicht.

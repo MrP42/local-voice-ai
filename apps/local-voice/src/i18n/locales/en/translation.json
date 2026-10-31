@@ -5057,7 +5057,14 @@
       },
       "pairing": {
         "title": "Pair this app?",
-        "body": "{{name}} wants to use the speech service. Only confirm if the code below appears exactly the same in that app.",
+        "body": "<name>{{name}}</name> wants to use the speech service. Only confirm if the code below appears exactly the same in that app.",
+        "client": "Identifier:",
+        "warnings": {
+          "nonLatin": "The name uses letters from a non-Latin script. Check that it really is the app you expect.",
+          "mixedScripts": "The name mixes Latin letters with letters from another script (look-alike letters). It may imitate another app.",
+          "duplicateName": "An app with this name is already paired or waiting. Make sure it is not an imitation.",
+          "duplicateClient": "An app with this identifier is already paired or waiting."
+        },
         "codeLabel": "Code",
         "remaining": "{{seconds}} s left",
         "afterwards": "After pairing you decide what the app may do (listen, speak).",

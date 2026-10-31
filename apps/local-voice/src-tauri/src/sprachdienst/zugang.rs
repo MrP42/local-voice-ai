@@ -307,6 +307,11 @@ pub fn fingerabdruck_bytes(hex: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+// TODO(L2, Issue "Sprachdienst: Kopplungsdatei unter Windows schuetzen"): Unter Windows erbt die
+// Datei die Rechte des Datenordners (unter Unix gilt 0600). Die Fingerabdruecke sind wie
+// Geheimnisse zu behandeln (wer sie liest, kann sich anmelden): DACL nur fuer den Benutzer
+// setzen und/oder den Inhalt mit DPAPI (CryptProtectData, Benutzerbereich) verschluesseln.
+// Bewusst noch nicht umgesetzt.
 fn speichern(pfad: &Path, daten: &Datei) -> std::io::Result<()> {
     if let Some(ordner) = pfad.parent() {
         std::fs::create_dir_all(ordner)?;
