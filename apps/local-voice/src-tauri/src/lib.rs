@@ -1869,20 +1869,10 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     0
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(cli_args: CliArgs) {
-    // Detect portable mode before anything else
-    portable::init();
 
-    // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
-    // dem ersten Store-Zugriff laufen und ist idempotent.
-    appdata_migration::migrate_legacy_app_data();
-
-    // Parse console logging directives from RUST_LOG, falling back to info-level logging
-    // when the variable is unset
-    let console_filter = build_console_filter();
-
-    let specta_builder = Builder::<tauri::Wry>::new()
+/// Alle Commands und Events für tauri-specta (eine Quelle für App und Bindings-Export).
+fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -2525,7 +2515,34 @@ pub fn run(cli_args: CliArgs) {
             managers::tts::providers::preview::TtsProviderPreview,
             managers::tts::providers::samples::TtsProviderVoiceSample,
             managers::transcription::StreamPhaseEvent,
-        ]);
+        ])
+}
+
+/// Schreibt `bindings.ts` ohne App-Start (headless, z. B. im Windows-Tor):
+/// `cargo run --example bindings_export -- ../src/bindings.ts`.
+pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
+    specta_builder()
+        .export(
+            Typescript::default().bigint(BigIntExportBehavior::Number),
+            path,
+        )
+        .map_err(|e| format!("Bindings-Export nach {} fehlgeschlagen: {e}", path.display()))
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run(cli_args: CliArgs) {
+    // Detect portable mode before anything else
+    portable::init();
+
+    // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
+    // dem ersten Store-Zugriff laufen und ist idempotent.
+    appdata_migration::migrate_legacy_app_data();
+
+    // Parse console logging directives from RUST_LOG, falling back to info-level logging
+    // when the variable is unset
+    let console_filter = build_console_filter();
+
+    let specta_builder = specta_builder();
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder
