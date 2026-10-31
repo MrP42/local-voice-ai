@@ -572,6 +572,33 @@ impl TranscriptionManager {
         })
     }
 
+    /// Speicherschutz / "Speicher freigeben": entlaedt das Modell nur, wenn es
+    /// gerade nichts tut -- keine Aufnahme, kein Strom, kein Laden, nicht an die
+    /// Streaming-Arbeit verliehen -- und seit `min_idle` unbenutzt ist.
+    /// Liefert, ob entladen wurde.
+    pub fn unload_if_idle(&self, min_idle: Duration) -> bool {
+        if !self.is_model_loaded()
+            || self.active_engine_lease.load(Ordering::Acquire) != 0
+            || self.stream_active.load(Ordering::Acquire)
+        {
+            return false;
+        }
+        if self.app_handle
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|a| a.is_recording())
+        {
+            return false;
+        }
+        if self.is_loading.try_lock().map(|g| *g).unwrap_or(true) {
+            return false;
+        }
+        let idle_ms = Self::now_ms().saturating_sub(self.last_activity.load(Ordering::Relaxed));
+        if idle_ms < min_idle.as_millis() as u64 {
+            return false;
+        }
+        self.unload_model().is_ok()
+    }
+
     pub fn unload_model(&self) -> Result<()> {
         let unload_start = std::time::Instant::now();
         debug!("Starting to unload model");
@@ -680,6 +707,31 @@ impl TranscriptionManager {
         }
 
         let model_path = self.model_manager.get_model_path(model_id)?;
+
+        // Speicherschutz: VOR dem Verwerfen des alten Modells pruefen (dessen
+        // Groesse zaehlt als frei); bei Verweigerung bleibt es geladen.
+        let credit_mb = self
+            .get_current_model()
+            .and_then(|id| self.model_manager.get_model_info(&id))
+            .map(|m| m.size_mb)
+            .unwrap_or(0);
+        if let Err(message) = crate::memory_guard::check_before_load_blocking(
+            &self.app_handle,
+            model_info.size_mb,
+            credit_mb,
+            &model_info.name,
+        ) {
+            let _ = self.app_handle.emit(
+                "model-state-changed",
+                ModelStateEvent {
+                    event_type: "loading_failed".to_string(),
+                    model_id: Some(model_id.to_string()),
+                    model_name: Some(model_info.name.clone()),
+                    error: Some(message.clone()),
+                },
+            );
+            return Err(anyhow::anyhow!(message));
+        }
 
         // Drop the current engine BEFORE building the new one so transcribe-cpp
         // frees the previous native context first — avoids holding two models at

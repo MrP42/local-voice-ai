@@ -2368,8 +2368,8 @@
   },
   "meetings": {
     "presenter": {
-      "button": "An WAI Presenter senden",
-      "title": "An WAI Presenter senden",
+      "button": "An Presenter senden",
+      "title": "An Presenter senden",
       "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
       "target": "Austauschordner",
       "documents": "Dokumente",
@@ -4211,7 +4211,63 @@
     "gpu": "GPU {{used}} / {{total}} GB",
     "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
+    "labelRam": "RAM",
+    "labelGpu": "GPU",
+    "open": "Speicher anzeigen und verwalten",
+    "ramTitle": "Arbeitsspeicher",
+    "gpuTitle": "Grafikspeicher",
+    "legendApp": "Local Voice AI",
+    "legendOther": "Andere",
+    "legendFree": "Frei",
+    "system": "System",
+    "systemValue": "{{used}} von {{total}} GB ({{percent}} %)",
+    "gpuValue": "{{used}} von {{total}} GB ({{percent}} %)",
+    "gpuSharedNote": "gemeinsam mit dem Arbeitsspeicher",
+    "gpuBudget": "{{name}} · Treiberbudget",
+    "release": "Speicher freigeben",
+    "releaseHint": "Entlädt Modelle, die gerade nicht arbeiten.",
+    "releasing": "Wird freigegeben …",
+    "released": "{{mb}} MB freigegeben",
+    "releasedNothing": "Nichts zu entladen",
+    "releaseFailed": "Speicher konnte nicht freigegeben werden",
+    "guardTitle": "Speicherschutz",
+    "guardSwitch": "Speicherschutz einschalten",
+    "guardLimit": "Grenze für den gesamten Arbeitsspeicher",
+    "guardExplain": "Die App lädt kein Modell, das die Grenze überschreiten würde, und entlädt vorher ungenutzte.",
+    "guardOffWarning": "Ohne Speicherschutz können große Modelle den Arbeitsspeicher füllen. Der PC kann dann stocken, einfrieren oder Programme beenden.",
     "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“. App = Local Voice AI inkl. Modell-Server und Webansicht."
+  },
+  "roles": {
+    "stt": {
+      "role": "Spracherkennung",
+      "purpose": "Wandelt Gesprochenes in Text um"
+    },
+    "llm": {
+      "role": "KI-Modell",
+      "purpose": "Fasst zusammen, bearbeitet Text nach, beantwortet Fragen"
+    }
+  },
+  "titlebar": {
+    "searchPlaceholder": "Suchen ({{key}})",
+    "searchKey": "Strg+K",
+    "search": "Suchen",
+    "searchResults": "Treffer in der App",
+    "searchNone": "Keine Treffer",
+    "notifications": "Benachrichtigungen",
+    "noNotifications": "Keine Benachrichtigungen",
+    "help": "Hilfe",
+    "helpPage": "Hilfe zu dieser Seite",
+    "shortcuts": "Tastenkürzel",
+    "shortcutsTitle": "Tastenkürzel",
+    "shortcutSearch": "Suche öffnen",
+    "about": "Info über Local Voice AI",
+    "aboutName": "WAI Local Voice AI",
+    "aboutSuite": "Teil der WAI Suite · Wolff Applied AI",
+    "aboutVersion": "Version {{version}}",
+    "settings": "Einstellungen öffnen",
+    "profile": "Profil",
+    "localProfile": "Lokales Profil",
+    "close": "Schließen"
   },
   "help": {
     "title": "Hilfe",
@@ -5256,7 +5312,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
-      "presenter": "WAI Presenter",
+      "presenter": "Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -5264,7 +5320,7 @@
       "smtp": "Postfach (SMTP)",
       "folder": "Ordner",
       "obsidian": "Obsidian-Vault",
-      "wissen": "WAI-Wissensbasis",
+      "wissen": "Wissensbasis",
       "agent": "Agentenzugang",
       "webhook": "Webhook (n8n)",
       "service": "Dienst"
@@ -5279,8 +5335,8 @@
       "auto": "automatisch",
       "items": {
         "presenter": {
-          "name": "WAI Presenter",
-          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "name": "Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der Presenter liest. Den Ordner wählst du selbst.",
           "action": "Austauschordner wählen"
         },
         "calendar_ics": {
@@ -5324,7 +5380,7 @@
           "action": "Vault verbinden"
         },
         "wissen": {
-          "name": "WAI-Wissensbasis",
+          "name": "Wissensbasis",
           "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
           "action": "Wissensbasis verbinden"
         },
@@ -5703,10 +5759,10 @@
     },
     "target": {
       "presenter": {
-        "title": "WAI Presenter einrichten",
-        "titleEdit": "WAI-Presenter-Einstellungen",
+        "title": "Presenter einrichten",
+        "titleEdit": "Presenter-Einstellungen",
         "path": "Austauschordner",
-        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "pathPlaceholder": "z. B. D:\\Austausch\\Presenter",
         "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
         "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
       },
