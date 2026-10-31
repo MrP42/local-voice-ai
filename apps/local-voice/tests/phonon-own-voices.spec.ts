@@ -372,6 +372,8 @@ const openPhonon = async (page: Page) => {
     .click();
   await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("phonon-own-voices")).toBeVisible();
+  // „Eigene Stimmen“ ist im Seitenblatt eingeklappt.
+  await page.getByTestId("phonon-own-voices-toggle").click();
 };
 
 const shot = async (page: Page, name: string) => {
@@ -629,7 +631,7 @@ test("Fish-Stimmen: jede braucht ihre eigene Einwilligung", async ({
   await setup(page);
   await openPhonon(page);
   const fish = page.getByTestId("phonon-fish-voices");
-  await expect(fish).toContainText("Fish-Stimmen nach Phonon übernehmen");
+  await expect(fish).toContainText("Lokale Fish-Speech-Stimmen übernehmen");
   await expect(fish).toContainText(
     "Jede Stimme braucht ihre eigene Einwilligung.",
   );

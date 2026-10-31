@@ -97,230 +97,265 @@ export const PhononOwnVoices: React.FC = () => {
 
   const voices = overview?.voices ?? [];
   const installed = overview?.models ?? [];
+  /** Klonen braucht den Gradium-Schlüssel im Tresor; ohne Tresor (macOS bis lva#134) gesperrt. */
+  const cloneBlocked = keyStatus?.supported === false;
 
   return (
-    <section
-      aria-label={t("tts.providers.phononVoices.title")}
-      className="space-y-3"
+    <details
+      className="group border-t border-mid-gray/20 pt-1"
       data-testid="phonon-own-voices"
     >
-      <div className="space-y-1">
-        <h3 className="text-xs font-medium text-mid-gray">
-          {t("tts.providers.phononVoices.title")}
-        </h3>
-        <p className="text-xs text-text/70">
-          {t("tts.providers.phononVoices.intro")}
-        </p>
-        {overview && installed.length === 0 && (
-          <p
-            className="text-xs text-yellow-500"
-            data-testid="phonon-own-no-model"
-          >
-            {t("tts.providers.phononVoices.noModel")}
-          </p>
-        )}
-      </div>
-
-      {voices.length === 0 ? (
-        <p className="text-xs text-text/70" data-testid="phonon-own-empty">
-          {t("tts.providers.phononVoices.empty")}
-        </p>
-      ) : (
-        <ul
-          className="divide-y divide-mid-gray/15 rounded-md border border-mid-gray/20"
-          data-testid="phonon-own-list"
+      <summary
+        className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 py-2 text-sm font-medium md:min-h-8"
+        data-testid="phonon-own-voices-toggle"
+      >
+        <span
+          aria-hidden="true"
+          className="inline-block w-3 text-mid-gray transition-transform group-open:rotate-90"
         >
-          {voices.map((voice) => (
-            <li
-              key={voice.id}
-              className="flex items-start gap-2 px-3 py-2"
-              data-testid={`phonon-own-voice-${voice.id}`}
-            >
-              <div className="min-w-0 flex-1 text-sm">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-medium text-text">{voice.name}</span>
-                  <span className="text-xs text-text/70">
-                    {isCloned(voice)
-                      ? t("tts.providers.phononVoices.originClone")
-                      : t("tts.providers.phononVoices.originImport")}
-                  </span>
-                  {voice.language && (
-                    <span className="text-xs text-text/70">
-                      {voice.language}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-text/70">
-                  {t("tts.providers.phononVoices.license")}
-                  {" · "}
-                  {voice.in_models.length > 0
-                    ? t("tts.providers.phononVoices.inModels", {
-                        models: voice.in_models.map(modelLabel).join(", "),
-                      })
-                    : t("tts.providers.phononVoices.inNoModel")}
-                </p>
-                {voice.source_note && (
-                  <p className="text-xs text-text/70">{voice.source_note}</p>
-                )}
-              </div>
-              {voice.id in samples && (
-                <SamplePlayButton
-                  path={samples[voice.id]}
-                  name={voice.name}
-                  testId={`phonon-own-sample-${voice.id}`}
-                />
-              )}
-              <Button
-                type="button"
-                variant="danger-ghost"
-                size="sm"
-                data-testid={`phonon-own-remove-${voice.id}`}
-                onClick={() => setRemoving(voice)}
-              >
-                {t("tts.providers.phononVoices.remove")}
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          data-testid="phonon-import-button"
-          onClick={() => void chooseImport()}
-        >
-          {t("tts.providers.phononVoices.importButton")}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          data-testid="phonon-create-button"
-          onClick={() => setClone({ fishId: null })}
-        >
-          {t("tts.providers.phononVoices.createButton")}
-        </Button>
-      </div>
-
-      {notice && (
-        <p
-          role="status"
-          className="text-xs text-text/80"
-          data-testid="phonon-own-notice"
-        >
-          {notice}
-        </p>
-      )}
-      {error && (
-        <p
-          role="alert"
-          className="text-xs text-red-500"
-          data-testid="phonon-own-error"
-        >
-          {error}
-        </p>
-      )}
-
-      <GradiumKey status={keyStatus} onStatus={setKeyStatus} />
-
-      <div className="space-y-1" data-testid="phonon-fish-voices">
-        <h4 className="text-xs font-medium text-text/80">
-          {t("tts.providers.phononVoices.fish.title")}
-        </h4>
-        <p className="text-xs text-text/70">
-          {t("tts.providers.phononVoices.fish.hint")}
-        </p>
-        {fish.length === 0 ? (
+          ›
+        </span>
+        {t("tts.providers.phononVoices.title")}
+        <span className="text-xs font-normal text-text/60">
+          {t("tts.providers.phononVoices.summary", { count: voices.length })}
+        </span>
+      </summary>
+      <section
+        aria-label={t("tts.providers.phononVoices.title")}
+        className="space-y-3 pb-2"
+      >
+        <div className="space-y-1">
           <p className="text-xs text-text/70">
-            {t("tts.providers.phononVoices.fish.empty")}
+            {t("tts.providers.phononVoices.intro")}
+          </p>
+          {overview && installed.length === 0 && (
+            <p
+              className="text-xs text-yellow-500"
+              data-testid="phonon-own-no-model"
+            >
+              {t("tts.providers.phononVoices.noModel")}
+            </p>
+          )}
+        </div>
+
+        {voices.length === 0 ? (
+          <p className="text-xs text-text/70" data-testid="phonon-own-empty">
+            {t("tts.providers.phononVoices.empty")}
           </p>
         ) : (
-          <ul className="max-h-48 divide-y divide-mid-gray/15 overflow-y-auto rounded-md border border-mid-gray/20">
-            {fish.map((v) => (
+          <ul
+            className="divide-y divide-mid-gray/15 rounded-md border border-mid-gray/20"
+            data-testid="phonon-own-list"
+          >
+            {voices.map((voice) => (
               <li
-                key={v.id}
-                className="flex items-center gap-2 px-3 py-1.5"
-                data-testid={`phonon-fish-${v.id}`}
+                key={voice.id}
+                className="flex items-start gap-2 px-3 py-2"
+                data-testid={`phonon-own-voice-${voice.id}`}
               >
-                <span className="min-w-0 flex-1 truncate text-sm">
-                  {v.meta.display_name || v.id}
-                </span>
+                <div className="min-w-0 flex-1 text-sm">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium text-text">{voice.name}</span>
+                    <span className="text-xs text-text/70">
+                      {isCloned(voice)
+                        ? t("tts.providers.phononVoices.originClone")
+                        : t("tts.providers.phononVoices.originImport")}
+                    </span>
+                    {voice.language && (
+                      <span className="text-xs text-text/70">
+                        {voice.language}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-text/70">
+                    {t("tts.providers.phononVoices.license")}
+                    {" · "}
+                    {voice.in_models.length > 0
+                      ? t("tts.providers.phononVoices.inModels", {
+                          models: voice.in_models.map(modelLabel).join(", "),
+                        })
+                      : t("tts.providers.phononVoices.inNoModel")}
+                  </p>
+                  {voice.source_note && (
+                    <p className="text-xs text-text/70">{voice.source_note}</p>
+                  )}
+                </div>
+                {voice.id in samples && (
+                  <SamplePlayButton
+                    path={samples[voice.id]}
+                    name={voice.name}
+                    testId={`phonon-own-sample-${voice.id}`}
+                  />
+                )}
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="danger-ghost"
                   size="sm"
-                  data-testid={`phonon-fish-take-${v.id}`}
-                  onClick={() => setClone({ fishId: v.id })}
+                  data-testid={`phonon-own-remove-${voice.id}`}
+                  onClick={() => setRemoving(voice)}
                 >
-                  {t("tts.providers.phononVoices.fish.take")}
+                  {t("tts.providers.phononVoices.remove")}
                 </Button>
               </li>
             ))}
           </ul>
         )}
-      </div>
 
-      <PhononImportDialog
-        path={importPath}
-        onClose={() => setImportPath(null)}
-        onDone={(voice) => {
-          setImportPath(null);
-          changed(
-            t("tts.providers.phononVoices.imported", { name: voice.name }),
-          );
-        }}
-      />
-      <PhononCloneDialog
-        open={clone !== null}
-        initialFishId={clone?.fishId ?? null}
-        fishVoices={fish}
-        languages={overview?.languages ?? []}
-        keyStatus={keyStatus}
-        onClose={() => setClone(null)}
-        onDone={(voice) =>
-          changed(t("tts.providers.phononVoices.created", { name: voice.name }))
-        }
-      />
-      <Dialog
-        open={removing !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemoving(null);
-        }}
-        title={t("tts.providers.phononVoices.removeTitle", {
-          name: removing?.name ?? "",
-        })}
-        description={t("tts.providers.phononVoices.removeText")}
-        closeLabel={t("common.close")}
-        footer={
-          <>
-            <Button
-              type="button"
-              variant="danger"
-              data-testid="phonon-own-remove-confirm"
-              onClick={() => removing && void remove(removing)}
-            >
-              {t("tts.providers.phononVoices.remove")}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setRemoving(null)}
-            >
-              {t("common.cancel")}
-            </Button>
-          </>
-        }
-      >
-        {removing && isCloned(removing) && (
-          <p className="text-sm">
-            {t("tts.providers.phononVoices.removeCloneNote")}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="phonon-import-button"
+            onClick={() => void chooseImport()}
+          >
+            {t("tts.providers.phononVoices.importButton")}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="phonon-create-button"
+            disabled={cloneBlocked}
+            aria-describedby={cloneBlocked ? "phonon-clone-blocked" : undefined}
+            onClick={() => setClone({ fishId: null })}
+          >
+            {t("tts.providers.phononVoices.createButton")}
+          </Button>
+        </div>
+        {cloneBlocked && (
+          <p
+            id="phonon-clone-blocked"
+            className="text-xs text-amber-800 dark:text-amber-300"
+            data-testid="phonon-clone-blocked"
+          >
+            {t("tts.providers.phononVoices.cloneBlocked")}
           </p>
         )}
-      </Dialog>
-    </section>
+
+        {notice && (
+          <p
+            role="status"
+            className="text-xs text-text/80"
+            data-testid="phonon-own-notice"
+          >
+            {notice}
+          </p>
+        )}
+        {error && (
+          <p
+            role="alert"
+            className="text-xs text-red-500"
+            data-testid="phonon-own-error"
+          >
+            {error}
+          </p>
+        )}
+
+        <GradiumKey status={keyStatus} onStatus={setKeyStatus} />
+
+        <div className="space-y-1" data-testid="phonon-fish-voices">
+          <h4 className="text-xs font-medium text-text/80">
+            {t("tts.providers.phononVoices.fish.title")}
+          </h4>
+          <p className="text-xs text-text/70">
+            {t("tts.providers.phononVoices.fish.hint")}
+          </p>
+          {fish.length === 0 ? (
+            <p className="text-xs text-text/70">
+              {t("tts.providers.phononVoices.fish.empty")}
+            </p>
+          ) : (
+            <ul className="max-h-48 divide-y divide-mid-gray/15 overflow-y-auto rounded-md border border-mid-gray/20">
+              {fish.map((v) => (
+                <li
+                  key={v.id}
+                  className="flex items-center gap-2 px-3 py-1.5"
+                  data-testid={`phonon-fish-${v.id}`}
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {v.meta.display_name || v.id}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`phonon-fish-take-${v.id}`}
+                    disabled={cloneBlocked}
+                    aria-describedby={
+                      cloneBlocked ? "phonon-clone-blocked" : undefined
+                    }
+                    onClick={() => setClone({ fishId: v.id })}
+                  >
+                    {t("tts.providers.phononVoices.fish.take")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <PhononImportDialog
+          path={importPath}
+          onClose={() => setImportPath(null)}
+          onDone={(voice) => {
+            setImportPath(null);
+            changed(
+              t("tts.providers.phononVoices.imported", { name: voice.name }),
+            );
+          }}
+        />
+        <PhononCloneDialog
+          open={clone !== null}
+          initialFishId={clone?.fishId ?? null}
+          fishVoices={fish}
+          languages={overview?.languages ?? []}
+          keyStatus={keyStatus}
+          onClose={() => setClone(null)}
+          onDone={(voice) =>
+            changed(
+              t("tts.providers.phononVoices.created", { name: voice.name }),
+            )
+          }
+        />
+        <Dialog
+          open={removing !== null}
+          onOpenChange={(open) => {
+            if (!open) setRemoving(null);
+          }}
+          title={t("tts.providers.phononVoices.removeTitle", {
+            name: removing?.name ?? "",
+          })}
+          description={t("tts.providers.phononVoices.removeText")}
+          closeLabel={t("common.close")}
+          footer={
+            <>
+              <Button
+                type="button"
+                variant="danger"
+                data-testid="phonon-own-remove-confirm"
+                onClick={() => removing && void remove(removing)}
+              >
+                {t("tts.providers.phononVoices.remove")}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setRemoving(null)}
+              >
+                {t("common.cancel")}
+              </Button>
+            </>
+          }
+        >
+          {removing && isCloned(removing) && (
+            <p className="text-sm">
+              {t("tts.providers.phononVoices.removeCloneNote")}
+            </p>
+          )}
+        </Dialog>
+      </section>
+    </details>
   );
 };
 

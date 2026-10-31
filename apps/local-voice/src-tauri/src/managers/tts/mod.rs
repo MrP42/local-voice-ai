@@ -16,6 +16,7 @@ pub mod encode;
 pub mod engine;
 pub mod enhance;
 pub mod gradium;
+pub mod hf_access;
 pub mod loudness;
 pub mod models;
 pub mod phonon_clip;

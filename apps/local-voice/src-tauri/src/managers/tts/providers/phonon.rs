@@ -236,6 +236,20 @@ fn parse_model(model: &str) -> Result<ModelSpec<'_>, TtsError> {
 }
 
 impl PhononConfig {
+    /// Prüft den GESPEICHERTEN Stand: leeres `exe_path`/`model` ist erlaubt und heißt „die von der
+    /// App eingerichtete Installation“ (wird beim Auflösen aus [`super::policy::InstalledPaths`]
+    /// gefüllt). Gesetzte Werte werden wie bei [`Self::validate`] geprüft.
+    pub fn validate_stored(&self) -> Result<(), TtsError> {
+        let mut probe = self.clone();
+        if probe.exe_path.trim().is_empty() {
+            probe.exe_path = "ptts".into();
+        }
+        if probe.model.trim().is_empty() {
+            probe.model = "hf://app/installiert".into();
+        }
+        probe.validate()
+    }
+
     /// Prüft die Einstellungen; die Meldungen sind für den Nutzer gedacht.
     pub fn validate(&self) -> Result<(), TtsError> {
         let exe = self.exe_path.trim();

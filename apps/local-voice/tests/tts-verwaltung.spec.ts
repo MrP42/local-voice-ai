@@ -499,19 +499,20 @@ test("Anbieter: Karten mit Zustand; Seitenblatt enthält die bisherigen Einstell
   await expect(page.locator("[data-provider-card='fish']")).toContainText(
     "Bereit",
   );
+  // Phonon ist noch nicht eingerichtet: eine Hauptaktion „Einrichten“ statt Schalter.
   await expect(page.locator("[data-provider-card='phonon']")).toContainText(
-    "Nicht aktiviert",
+    "Nicht eingerichtet",
   );
-  // Aktivieren führt über den Lizenzdialog.
-  await page.getByTestId("tts-provider-card-enable-phonon").click();
+  await expect(page.getByTestId("tts-provider-card-enable-phonon")).toHaveCount(0);
+  await page.getByTestId("tts-provider-setup-phonon").click();
+  const sheet = page.getByTestId("voice-provider-sheet");
+  await expect(sheet).toBeVisible();
+  // Aktivieren im Blatt führt weiterhin über den Lizenzdialog.
+  await sheet.getByTestId("tts-provider-enable-phonon").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toBeVisible();
   await page.getByTestId("tts-provider-license-checkbox").check();
   await page.getByTestId("tts-provider-license-confirm").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toHaveCount(0);
-  // Seitenblatt: Anbieterzeile mit Details (Einstellungen, eigene Stimmen).
-  await page.getByTestId("tts-provider-open-phonon").click();
-  const sheet = page.getByTestId("voice-provider-sheet");
-  await expect(sheet).toBeVisible();
   await expect(sheet.getByTestId("tts-provider-phonon")).toBeVisible();
   await expect(sheet.getByTestId("tts-provider-details-phonon")).toBeVisible();
   await page.getByTestId("voice-provider-sheet-close").click();
@@ -557,9 +558,8 @@ test("Seitenblatt: Escape gibt den Fokus an den Öffner zurück; Umschalter ist 
     "aria-labelledby",
     "voice-view-tab-providers",
   );
-  const opener = page.getByTestId("tts-provider-downloads-piper");
+  const opener = page.getByTestId("tts-provider-open-piper");
   await expect(opener).toBeVisible();
-  await expect(page.getByTestId("tts-provider-downloads-phonon")).toBeVisible();
   await opener.focus();
   await opener.click();
   await expect(page.getByTestId("voice-provider-sheet")).toBeVisible();
@@ -569,7 +569,7 @@ test("Seitenblatt: Escape gibt den Fokus an den Öffner zurück; Umschalter ist 
     .poll(() =>
       page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
     )
-    .toBe("tts-provider-downloads-piper");
+    .toBe("tts-provider-open-piper");
 });
 
 test("Schmal (390 px): keine waagerechte Rollleiste, Bedienziele mindestens 44 px, Filter hinter Knopf", async ({

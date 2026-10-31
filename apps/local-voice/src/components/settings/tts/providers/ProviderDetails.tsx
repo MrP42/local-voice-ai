@@ -22,6 +22,8 @@ import {
   buildConfig,
   fieldOfMessage,
   isSelectableTier,
+  legacyPaths,
+  managedFields,
   offersDropdownVoices,
   parseConfig,
   pickKind,
@@ -162,6 +164,10 @@ const ConfigSection: React.FC<{
   }, [id, errorText]);
 
   const fields = state.kind === "ready" ? state.parsed.fields : [];
+  /** Von der App verwaltete Felder (Phonon): nicht sichtbar, Speichern sofort. */
+  const managed = managedFields(fields);
+  const autoSave = managed.size > 0;
+  const legacy = legacyPaths(fields, baseline);
   const dirty = state.kind === "ready" && !sameValues(values, baseline);
   const modelValue = String(values.model ?? "");
   const hasQuant = fields.some((f) => f.key === "quant");
@@ -186,7 +192,7 @@ const ConfigSection: React.FC<{
     };
   }, [hasModelFolder, hasQuant, modelValue]);
 
-  const setField = (key: string, v: FieldValue) => {
+  const setField = (key: string, v: FieldValue, saveNow = false) => {
     setSaved(false);
     setSaveError(null);
     setFieldErrors((cur) => {
@@ -196,7 +202,9 @@ const ConfigSection: React.FC<{
       return next;
     });
     if (key === "quant") setQuantAuto(false);
-    setValues((cur) => ({ ...cur, [key]: v }));
+    const next = { ...values, [key]: v };
+    setValues(next);
+    if (saveNow && autoSave) void save(next);
   };
 
   const labelOf = (key: string) =>
@@ -227,14 +235,17 @@ const ConfigSection: React.FC<{
     }
   };
 
-  const save = async () => {
+  const save = async (current: Record<string, FieldValue> = values) => {
     if (state.kind !== "ready") return;
+    const values = current;
     setSaveError(null);
     setSaved(false);
     const keys = state.parsed.fields.map((f) => f.key);
     // Pflichtfelder zuerst: alle fehlenden auf einmal am Feld melden.
     const errors: Record<string, string> = {};
-    for (const key of requiredFields(state.parsed.fields)) {
+    for (const key of requiredFields(state.parsed.fields).filter(
+      (k) => !managed.has(k),
+    )) {
       if (String(values[key] ?? "").trim() === "") {
         errors[key] = t("tts.providers.config.required", {
           field: labelOf(key),
@@ -283,14 +294,8 @@ const ConfigSection: React.FC<{
 
   if (state.kind === "loading") return null;
   const hasFieldErrors = Object.keys(fieldErrors).length > 0;
-  return (
-    <section
-      aria-label={t("tts.providers.config.title")}
-      data-testid={`tts-provider-config-${id}`}
-    >
-      <h3 className="text-xs font-medium text-mid-gray mb-2">
-        {t("tts.providers.config.title")}
-      </h3>
+  const content = (
+    <>
       {state.kind === "none" && (
         <p className="text-xs text-text/70">{t("tts.providers.config.none")}</p>
       )}
@@ -302,109 +307,120 @@ const ConfigSection: React.FC<{
       {state.kind === "ready" && (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            {state.parsed.fields.map((field) => {
-              const label = labelOf(field.key);
-              const hint = t(`tts.providers.fieldHints.${field.key}`, {
-                defaultValue: "",
-              });
-              const inputId = `tts-provider-${id}-${field.key}`;
-              const errorId = `${inputId}-error`;
-              const value = values[field.key];
-              const error = fieldErrors[field.key];
-              const pick = pickKind(field.key, state.parsed.fields);
-              const quant = field.key === "quant" ? String(value ?? "") : null;
-              return (
-                <div key={field.key} className="min-w-0 space-y-1">
-                  {field.kind === "bool" ? (
-                    <Switch
-                      checked={value === true}
-                      label={label}
-                      data-testid={inputId}
-                      onChange={(_e, data) => setField(field.key, data.checked)}
-                    />
-                  ) : (
-                    <>
-                      <label
-                        htmlFor={inputId}
-                        className="block text-xs text-text/80"
-                      >
-                        {label}
-                      </label>
-                      {field.kind === "choice" ? (
-                        <Select
-                          value={String(value) === "" ? "@none" : String(value)}
-                          options={(field.choices ?? []).map((c) => ({
-                            value: c === "" ? "@none" : c,
-                            label:
-                              c === ""
-                                ? t("tts.providers.config.choiceNone")
-                                : c,
-                          }))}
-                          isClearable={false}
-                          ariaLabel={label}
-                          onChange={(v) =>
-                            setField(
-                              field.key,
-                              v === "@none" || v === null ? "" : v,
-                            )
-                          }
-                        />
-                      ) : (
-                        <div className="flex items-start gap-2">
-                          <Input
-                            id={inputId}
-                            data-testid={inputId}
-                            type={field.kind === "number" ? "number" : "text"}
-                            value={String(value ?? "")}
-                            onChange={(e) =>
-                              setField(field.key, e.target.value)
+            {state.parsed.fields
+              .filter((field) => !managed.has(field.key))
+              .map((field) => {
+                const label = labelOf(field.key);
+                const hint = t(`tts.providers.fieldHints.${field.key}`, {
+                  defaultValue: "",
+                });
+                const inputId = `tts-provider-${id}-${field.key}`;
+                const errorId = `${inputId}-error`;
+                const value = values[field.key];
+                const error = fieldErrors[field.key];
+                const pick = pickKind(field.key, state.parsed.fields);
+                const quant =
+                  field.key === "quant" ? String(value ?? "") : null;
+                return (
+                  <div key={field.key} className="min-w-0 space-y-1">
+                    {field.kind === "bool" ? (
+                      <Switch
+                        checked={value === true}
+                        label={label}
+                        data-testid={inputId}
+                        onChange={(_e, data) =>
+                          setField(field.key, data.checked, true)
+                        }
+                      />
+                    ) : (
+                      <>
+                        <label
+                          htmlFor={inputId}
+                          className="block text-xs text-text/80"
+                        >
+                          {label}
+                        </label>
+                        {field.kind === "choice" ? (
+                          <Select
+                            value={
+                              String(value) === "" ? "@none" : String(value)
                             }
-                            aria-invalid={error ? true : undefined}
-                            aria-describedby={error ? errorId : undefined}
-                            className="w-full min-w-0 flex-1"
+                            options={(field.choices ?? []).map((c) => ({
+                              value: c === "" ? "@none" : c,
+                              label:
+                                c === ""
+                                  ? t("tts.providers.config.choiceNone")
+                                  : c,
+                            }))}
+                            isClearable={false}
+                            ariaLabel={label}
+                            onChange={(v) =>
+                              setField(
+                                field.key,
+                                v === "@none" || v === null ? "" : v,
+                                true,
+                              )
+                            }
                           />
-                          {pick && (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="md"
-                              data-testid={`${inputId}-browse`}
-                              aria-label={t(
-                                "tts.providers.config.browseLabel",
-                                { field: label },
-                              )}
-                              onClick={() => void browse(field.key, pick)}
-                            >
-                              {t("tts.providers.config.browse")}
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-                  {error && (
-                    <p
-                      id={errorId}
-                      role="alert"
-                      className="text-xs text-red-500"
-                      data-testid={`tts-provider-field-error-${id}-${field.key}`}
-                    >
-                      {error}
-                    </p>
-                  )}
-                  {hint && <p className="text-xs text-text/60">{hint}</p>}
-                  {quant !== null && modelInfo?.is_dir && (
-                    <QuantNote
-                      id={id}
-                      info={modelInfo}
-                      quant={quant}
-                      auto={quantAuto}
-                      onUseQ8={() => setField("quant", "q8")}
-                    />
-                  )}
-                </div>
-              );
-            })}
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <Input
+                              id={inputId}
+                              data-testid={inputId}
+                              type={field.kind === "number" ? "number" : "text"}
+                              value={String(value ?? "")}
+                              onChange={(e) =>
+                                setField(field.key, e.target.value)
+                              }
+                              onBlur={() => {
+                                if (autoSave && dirty) void save();
+                              }}
+                              aria-invalid={error ? true : undefined}
+                              aria-describedby={error ? errorId : undefined}
+                              className="w-full min-w-0 flex-1"
+                            />
+                            {pick && (
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="md"
+                                data-testid={`${inputId}-browse`}
+                                aria-label={t(
+                                  "tts.providers.config.browseLabel",
+                                  { field: label },
+                                )}
+                                onClick={() => void browse(field.key, pick)}
+                              >
+                                {t("tts.providers.config.browse")}
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {error && (
+                      <p
+                        id={errorId}
+                        role="alert"
+                        className="text-xs text-red-500"
+                        data-testid={`tts-provider-field-error-${id}-${field.key}`}
+                      >
+                        {error}
+                      </p>
+                    )}
+                    {hint && <p className="text-xs text-text/60">{hint}</p>}
+                    {quant !== null && modelInfo?.is_dir && (
+                      <QuantNote
+                        id={id}
+                        info={modelInfo}
+                        quant={quant}
+                        auto={quantAuto}
+                        onUseQ8={() => setField("quant", "q8", true)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
           </div>
           {hasFieldErrors && (
             <p
@@ -425,17 +441,19 @@ const ConfigSection: React.FC<{
             </p>
           )}
           <div className="flex flex-wrap items-center gap-3">
-            <Button
-              type="button"
-              variant={dirty ? "primary" : "secondary"}
-              size="sm"
-              disabled={saving}
-              data-testid={`tts-provider-config-save-${id}`}
-              onClick={() => void save()}
-            >
-              {t("tts.providers.config.save")}
-            </Button>
-            {dirty && !saving && (
+            {!autoSave && (
+              <Button
+                type="button"
+                variant={dirty ? "primary" : "secondary"}
+                size="sm"
+                disabled={saving}
+                data-testid={`tts-provider-config-save-${id}`}
+                onClick={() => void save()}
+              >
+                {t("tts.providers.config.save")}
+              </Button>
+            )}
+            {dirty && !saving && !autoSave && (
               <span
                 role="status"
                 className="text-xs text-amber-700 dark:text-amber-400"
@@ -452,7 +470,128 @@ const ConfigSection: React.FC<{
           </div>
         </div>
       )}
+    </>
+  );
+  if (autoSave) {
+    return (
+      <details
+        className="group border-t border-mid-gray/20 pt-1"
+        data-testid={`tts-provider-config-${id}`}
+      >
+        <summary
+          className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 py-2 text-sm font-medium md:min-h-8"
+          data-testid={`tts-provider-advanced-${id}`}
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block w-3 text-mid-gray transition-transform group-open:rotate-90"
+          >
+            ›
+          </span>
+          {t("tts.providers.config.advanced")}
+          <span className="text-xs font-normal text-text/60">
+            {t("tts.providers.config.advancedHint")}
+          </span>
+        </summary>
+        <div className="space-y-3 pb-2">
+          {legacy.length > 0 && (
+            <LegacyPathsNote
+              id={id}
+              keys={legacy}
+              label={labelOf}
+              onReset={() => {
+                const next = { ...values };
+                for (const k of legacy) next[k] = "";
+                setValues(next);
+                void save(next);
+              }}
+            />
+          )}
+          {content}
+          {saved && !dirty && (
+            <span role="status" className="sr-only">
+              {t("tts.providers.config.saved")}
+            </span>
+          )}
+        </div>
+      </details>
+    );
+  }
+  return (
+    <section
+      aria-label={t("tts.providers.config.title")}
+      data-testid={`tts-provider-config-${id}`}
+    >
+      <h3 className="text-xs font-medium text-mid-gray mb-2">
+        {t("tts.providers.config.title")}
+      </h3>
+      {content}
     </section>
+  );
+};
+
+/**
+ * Eigene Pfade aus einer früheren Einrichtung: sie haben Vorrang vor der App-Installation und
+ * werden nie still überschrieben. Der Nutzer stellt ausdrücklich um (mit Rückfrage).
+ */
+const LegacyPathsNote: React.FC<{
+  id: string;
+  keys: string[];
+  label: (key: string) => string;
+  onReset: () => void;
+}> = ({ id, keys, label, onReset }) => {
+  const { t } = useTranslation();
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <div
+      role="note"
+      className="space-y-2 rounded bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
+      data-testid={`tts-provider-legacy-${id}`}
+    >
+      <p>
+        {t("tts.providers.config.legacy", {
+          fields: keys.map(label).join(", "),
+        })}
+      </p>
+      {confirm ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{t("tts.providers.config.legacyConfirm")}</span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="min-h-[44px] md:min-h-8"
+            data-testid={`tts-provider-legacy-reset-${id}`}
+            onClick={() => {
+              setConfirm(false);
+              onReset();
+            }}
+          >
+            {t("tts.providers.config.legacyYes")}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="min-h-[44px] md:min-h-8"
+            onClick={() => setConfirm(false)}
+          >
+            {t("common.cancel")}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="min-h-[44px] md:min-h-8"
+          data-testid={`tts-provider-legacy-ask-${id}`}
+          onClick={() => setConfirm(true)}
+        >
+          {t("tts.providers.config.legacyUse")}
+        </Button>
+      )}
+    </div>
   );
 };
 

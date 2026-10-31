@@ -21,6 +21,13 @@ interface Props {
   onRecheck: () => void;
   onApprove: (step: "license" | "remote") => void;
   onRevokeRemote: () => void;
+  /**
+   * Kompakt (Seitenblatt): Fakten, Lizenz und der technische Stand stehen eingeklappt unter
+   * „Über diesen Anbieter“; der Name ist kein Aufklapp-Knopf (das Blatt zeigt immer alles).
+   */
+  compact?: boolean;
+  /** Freischalten und Lizenz übernimmt die Einrichtung darüber (Phonon): kein zweiter Sperr-Hinweis. */
+  approvalBySetup?: boolean;
   children?: React.ReactNode;
 }
 
@@ -80,6 +87,8 @@ export const ProviderRow: React.FC<Props> = ({
   onRecheck,
   onApprove,
   onRevokeRemote,
+  compact = false,
+  approvalBySetup = false,
   children,
 }) => {
   const { t, i18n } = useTranslation();
@@ -120,6 +129,12 @@ export const ProviderRow: React.FC<Props> = ({
   // Was fehlt, damit der Anbieter benutzt werden darf (leer = nichts).
   const missing = (() => {
     if (entry.blocked === null) return null;
+    if (
+      approvalBySetup &&
+      ((descriptor.opt_in && !entry.enabled) ||
+        (entry.license_needs_ack && !entry.license_acked))
+    )
+      return null;
     if (descriptor.opt_in && !entry.enabled)
       return t("tts.providers.blocked.notEnabled");
     if (entry.license_needs_ack && !entry.license_acked)
@@ -128,6 +143,112 @@ export const ProviderRow: React.FC<Props> = ({
       return t("tts.providers.blocked.needsRemote");
     return entry.blocked.message;
   })();
+
+  const reasonBlock = (
+    <>
+      {!health.available && (health.reason || health.hint) && (
+        <div
+          className="mt-1 space-y-1 text-xs text-text/80"
+          data-testid={`tts-provider-reason-${id}`}
+        >
+          {/* Die Anzeige beschreibt den GESPEICHERTEN Stand, nicht das, was gerade
+              in den Feldern steht: ohne "Speichern" gilt keine Eingabe. */}
+          <p>
+            <span className="font-medium">{t("tts.providers.savedState")}</span>{" "}
+            {health.reason}
+            {health.reason && health.hint ? " " : ""}
+            {health.hint && <span className="text-text/60">{health.hint}</span>}
+          </p>
+          {configField && (
+            <p
+              className="flex flex-wrap items-center gap-x-2"
+              data-testid={`tts-provider-reason-fix-${id}`}
+            >
+              <span>{t("tts.providers.savedStateFix")}</span>
+              {!expanded && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid={`tts-provider-reason-open-${id}`}
+                  onClick={onToggleExpanded}
+                >
+                  {t("tts.providers.savedStateOpen")}
+                </Button>
+              )}
+            </p>
+          )}
+        </div>
+      )}
+    </>
+  );
+  const factsBlock = (
+    <>
+      <dl className="mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">{t("tts.providers.facts.device")}</dt>
+          <dd data-testid={`tts-provider-device-${id}`}>
+            {health.device
+              ? deviceName(health.device)
+              : caps.devices.length > 0
+                ? caps.devices.map(deviceName).join(", ")
+                : t("tts.providers.unknown")}
+          </dd>
+        </div>
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">{t("tts.providers.facts.version")}</dt>
+          <dd>{health.version ?? t("tts.providers.unknown")}</dd>
+        </div>
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">
+            {t("tts.providers.facts.streaming")}
+          </dt>
+          <dd>{t(`tts.providers.streaming.${caps.streaming}`)}</dd>
+        </div>
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">
+            {t("tts.providers.facts.languages")}
+          </dt>
+          <dd>
+            {caps.languages.length > 0
+              ? caps.languages.map(languageName).join(", ")
+              : t("tts.providers.unknown")}
+          </dd>
+        </div>
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">{t("tts.providers.facts.cloning")}</dt>
+          <dd data-testid={`tts-provider-cloning-${id}`}>
+            {caps.cloning ? t("tts.providers.yes") : t("tts.providers.no")}
+          </dd>
+        </div>
+        <div className={FACT_ROW}>
+          <dt className="text-mid-gray">{t("tts.providers.facts.license")}</dt>
+          <dd
+            className="space-y-0.5"
+            data-testid={`tts-provider-license-${id}`}
+          >
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span>
+                {t("tts.providers.license.code")}: {license.code || "–"} ·{" "}
+                {t("tts.providers.license.weights")}: {license.weights || "–"}
+              </span>
+              {license.non_commercial && (
+                <span data-testid={`tts-provider-noncommercial-${id}`}>
+                  <Badge variant="warning" className="!px-2 !py-0">
+                    {t("tts.providers.license.nonCommercial")}
+                  </Badge>
+                </span>
+              )}
+            </div>
+            <div data-testid={`tts-provider-verified-${id}`}>
+              <VerifiedLine license={license} />
+            </div>
+            {license.note && <div className="text-text/60">{license.note}</div>}
+          </dd>
+        </div>
+      </dl>
+    </>
+  );
 
   return (
     <div
@@ -198,40 +319,7 @@ export const ProviderRow: React.FC<Props> = ({
         </div>
       </div>
 
-      {!health.available && (health.reason || health.hint) && (
-        <div
-          className="mt-1 space-y-1 text-xs text-text/80"
-          data-testid={`tts-provider-reason-${id}`}
-        >
-          {/* Die Anzeige beschreibt den GESPEICHERTEN Stand, nicht das, was gerade
-              in den Feldern steht: ohne "Speichern" gilt keine Eingabe. */}
-          <p>
-            <span className="font-medium">{t("tts.providers.savedState")}</span>{" "}
-            {health.reason}
-            {health.reason && health.hint ? " " : ""}
-            {health.hint && <span className="text-text/60">{health.hint}</span>}
-          </p>
-          {configField && (
-            <p
-              className="flex flex-wrap items-center gap-x-2"
-              data-testid={`tts-provider-reason-fix-${id}`}
-            >
-              <span>{t("tts.providers.savedStateFix")}</span>
-              {!expanded && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  data-testid={`tts-provider-reason-open-${id}`}
-                  onClick={onToggleExpanded}
-                >
-                  {t("tts.providers.savedStateOpen")}
-                </Button>
-              )}
-            </p>
-          )}
-        </div>
-      )}
+      {!compact && reasonBlock}
       {entry.selected && (!health.available || entry.blocked !== null) && (
         <div
           role="status"
@@ -251,70 +339,29 @@ export const ProviderRow: React.FC<Props> = ({
         <p className="mt-1 text-xs text-text/60">{health.hint}</p>
       )}
 
-      <dl className="mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">{t("tts.providers.facts.device")}</dt>
-          <dd data-testid={`tts-provider-device-${id}`}>
-            {health.device
-              ? deviceName(health.device)
-              : caps.devices.length > 0
-                ? caps.devices.map(deviceName).join(", ")
-                : t("tts.providers.unknown")}
-          </dd>
-        </div>
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">{t("tts.providers.facts.version")}</dt>
-          <dd>{health.version ?? t("tts.providers.unknown")}</dd>
-        </div>
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">
-            {t("tts.providers.facts.streaming")}
-          </dt>
-          <dd>{t(`tts.providers.streaming.${caps.streaming}`)}</dd>
-        </div>
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">
-            {t("tts.providers.facts.languages")}
-          </dt>
-          <dd>
-            {caps.languages.length > 0
-              ? caps.languages.map(languageName).join(", ")
-              : t("tts.providers.unknown")}
-          </dd>
-        </div>
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">{t("tts.providers.facts.cloning")}</dt>
-          <dd data-testid={`tts-provider-cloning-${id}`}>
-            {caps.cloning ? t("tts.providers.yes") : t("tts.providers.no")}
-          </dd>
-        </div>
-        <div className={FACT_ROW}>
-          <dt className="text-mid-gray">{t("tts.providers.facts.license")}</dt>
-          <dd
-            className="space-y-0.5"
-            data-testid={`tts-provider-license-${id}`}
-          >
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span>
-                {t("tts.providers.license.code")}: {license.code || "–"} ·{" "}
-                {t("tts.providers.license.weights")}: {license.weights || "–"}
-              </span>
-              {license.non_commercial && (
-                <span data-testid={`tts-provider-noncommercial-${id}`}>
-                  <Badge variant="warning" className="!px-2 !py-0">
-                    {t("tts.providers.license.nonCommercial")}
-                  </Badge>
-                </span>
-              )}
-            </div>
-            <div data-testid={`tts-provider-verified-${id}`}>
-              <VerifiedLine license={license} />
-            </div>
-            {license.note && <div className="text-text/60">{license.note}</div>}
-          </dd>
-        </div>
-      </dl>
-
+      {compact ? (
+        <details
+          className="group mt-2"
+          data-testid={`tts-provider-about-${id}`}
+        >
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 text-xs font-medium text-text/80 md:min-h-6">
+            <span
+              aria-hidden="true"
+              className="inline-block w-3 text-mid-gray transition-transform group-open:rotate-90"
+            >
+              ›
+            </span>
+            {t("tts.providers.about")}
+            <span className="font-normal text-text/60">
+              {t("tts.providers.aboutHint")}
+            </span>
+          </summary>
+          {reasonBlock}
+          {factsBlock}
+        </details>
+      ) : (
+        factsBlock
+      )}
       {missing && (
         <div
           role="status"

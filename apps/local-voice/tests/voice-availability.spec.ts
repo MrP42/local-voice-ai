@@ -296,6 +296,8 @@ async function openProviderSheet(page: import("@playwright/test").Page, id: stri
   await page.getByTestId("voice-view-providers").click();
   await page.getByTestId(`tts-provider-open-${id}`).click();
   await expect(page.getByTestId("voice-provider-sheet")).toBeVisible();
+  // Phonon: die einzelnen Downloads stehen eingeklappt unter dem „Einrichten“-Bereich.
+  if (id === "phonon") await page.locator('[data-testid="phonon-downloads-details"] > summary').click();
 }
 async function openGroup(page: import("@playwright/test").Page, id: string) {
   const header = page.locator(`[data-model-section="${id}"] > div button[aria-expanded]`).first();

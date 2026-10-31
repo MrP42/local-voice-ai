@@ -395,7 +395,12 @@ impl TtsModelManager {
                 }
             };
         };
-        let token = || phonon_models::hf_token(&phonon_models::process_env);
+        // Zugang fuer gesperrte Modelle: System (HF_TOKEN/Token-Datei), sonst der in der App
+        // abgelegte (`hf_access`).
+        let secrets_dir = crate::managers::calendar::secret::secrets_dir_for(&self.app_handle).ok();
+        let token = || {
+            crate::managers::tts::hf_access::load(secrets_dir.as_deref(), &phonon_models::process_env)
+        };
         let env = InstallEnv {
             dirs: &self.phonon_dirs,
             platform: phonon_models::current_platform(),

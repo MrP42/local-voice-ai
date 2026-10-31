@@ -19,6 +19,7 @@ import { useProviderPreview } from "../../tts/providers/useProviderPreview";
 import type { TtsProvidersState } from "../../tts/providers/useTtsProviders";
 import { ProviderErrors } from "./ProviderErrors";
 import { PhononModels } from "../PhononModels";
+import { PhononSetup } from "../../tts/providers/setup/PhononSetup";
 import { VoicesSection } from "../VoicesSection";
 
 /**
@@ -106,9 +107,14 @@ export const ProviderSheet: React.FC<{
                 providers={providers}
                 testIdPrefix="voice-provider-sheet"
               />
+              {id === "phonon" && (
+                <PhononSetup entry={entry} providers={providers} />
+              )}
               <div className="rounded-lg border border-mid-gray/20">
                 <ProviderRow
                   entry={entry}
+                  compact
+                  approvalBySetup={id === "phonon"}
                   expanded={expanded}
                   busy={providers.busy === id}
                   onToggleExpanded={() => setExpanded((v) => !v)}
@@ -140,13 +146,30 @@ export const ProviderSheet: React.FC<{
                 </section>
               )}
               {id === "phonon" && (
-                <section
-                  aria-label={t(
-                    "settings.models.voiceManager.providers.downloads",
-                  )}
+                <details
+                  className="group rounded-lg border border-mid-gray/20 px-3"
+                  data-testid="phonon-downloads-details"
                 >
-                  <PhononModels query="" />
-                </section>
+                  <summary className="flex min-h-[44px] cursor-pointer list-none items-center gap-2 text-sm font-medium md:min-h-8">
+                    <span
+                      aria-hidden="true"
+                      className="inline-block w-3 text-mid-gray transition-transform group-open:rotate-90"
+                    >
+                      ›
+                    </span>
+                    {t(
+                      "settings.models.voiceManager.providers.downloadsSingle",
+                    )}
+                  </summary>
+                  <section
+                    className="pb-3"
+                    aria-label={t(
+                      "settings.models.voiceManager.providers.downloads",
+                    )}
+                  >
+                    <PhononModels query="" />
+                  </section>
+                </details>
               )}
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed border-mid-gray/30 px-3 py-2 text-xs text-text/60">
                 <span>

@@ -44,7 +44,7 @@ impl Secret {
         &self.0
     }
 
-    fn bearer(&self) -> Option<HeaderValue> {
+    pub(crate) fn bearer(&self) -> Option<HeaderValue> {
         let mut value = HeaderValue::from_str(&format!("Bearer {}", self.0)).ok()?;
         value.set_sensitive(true);
         Some(value)
