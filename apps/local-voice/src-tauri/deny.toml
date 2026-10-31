@@ -14,6 +14,12 @@
 version = 2
 confidence-threshold = 0.9
 
+# wai-voice-dienst (Vertrag des Sprachdienstes, ADR-0021) ist eine eigene, nicht veroeffentlichte
+# Crate des WAI SDK (`publish = false`, LicenseRef-WAI-Proprietary) und liegt als Pfad-Abhaengigkeit
+# unter vendor/. Private Crates werden nicht gegen die Allow-Liste geprueft.
+[licenses.private]
+ignore = true
+
 allow = [
     "MIT",
     "MIT-0",

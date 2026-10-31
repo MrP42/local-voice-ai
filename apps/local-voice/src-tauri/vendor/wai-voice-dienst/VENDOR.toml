@@ -1,0 +1,9 @@
+# Vendorte Kopie von wai-voice-dienst (WAI SDK). Nicht von Hand ändern: scripts/vendor-wai-voice-dienst.py
+paket = "wai-voice-dienst"
+quelle = "https://github.com/MrP42/wai-sdk"
+pfad = "crates/wai-voice-dienst"
+referenz = "249a4db3"
+commit = "249a4db38362dce1c613e96dd7f9ad7270625a46"
+commit_datum = "2026-10-31"
+uebernommen_am = "2026-10-31"
+ausgelassen = ["Tests im SDK-Arbeitsbaum"]

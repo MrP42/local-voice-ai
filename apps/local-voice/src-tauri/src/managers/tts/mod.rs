@@ -3198,6 +3198,46 @@ impl TtsManager {
         Ok(wav)
     }
 
+    /// Einen Text satzweise zu WAV-Stücken im Speicher (Sprachdienst, ADR-0021): dieselbe
+    /// Zerlegung, Aufbereitung und derselbe Engine-Weg wie der Datei-Export, aber ohne Datei
+    /// und ohne Wiedergabe. `voice` überschreibt die Stimme, sonst gilt die eingestellte.
+    pub async fn synthesize_wavs(
+        &self,
+        raw: &str,
+        voice: Option<&str>,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        let utterances = self.utterances(raw.trim()).await;
+        if utterances.is_empty() {
+            return Err("empty text".to_string());
+        }
+        self.refresh_from_settings();
+        self.ensure_engine_ready().await?;
+        self.bind_seed_voice().await;
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let strength = *self.core.enhance.lock().unwrap();
+        let mut out = Vec::new();
+        for (sentence, own_voice) in &utterances {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            for piece in protocol::split_pauses(&part.text) {
+                let protocol::SpeechPart::Speak(text) = piece else {
+                    continue;
+                };
+                let chosen = voice.or(own_voice.as_deref());
+                let bytes = self.core.fetch_wav(port, seed, &text, chosen).await?;
+                out.push(prepare_sentence_audio(bytes, strength));
+            }
+        }
+        *self.core.last_used.lock().unwrap() = Instant::now();
+        if out.is_empty() {
+            return Err("empty text".to_string());
+        }
+        Ok(out)
+    }
+
     /// Der Piper-Zweig des Datei-Exports: ein Lauf durch die Engine-Naht
     /// (samt Satz-Cache), das Ergebnis als WAV auf die Platte. Andere
     /// Formate encodiert der Fish-Server; Piper kann nur WAV

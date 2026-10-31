@@ -29,6 +29,7 @@ import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
+import { KopplungsDialog } from "./components/integrations/KopplungsDialog";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -435,6 +436,7 @@ function App() {
       >
         <WhatsNewGate />
         <ModelUpdateGate />
+        <KopplungsDialog />
         {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
             daneben der Seitentitel mit den Aktionen der Seite (PageShell),
             rechts die Fensterknöpfe. Das Hauptfenster ist rahmenlos, dies ist

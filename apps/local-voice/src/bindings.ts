@@ -3862,6 +3862,96 @@ async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
+ * Sprachdienst (ADR-0021): ist er eingeschaltet, laeuft er, wo lauscht er?
+ */
+async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet den Dienst ein oder aus. Aus: Der Endpunkt verschwindet, laufende Verbindungen enden.
+ */
+async sprachdienstAktivSetzen(aktiv: boolean) : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_aktiv_setzen", { aktiv }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Alle gekoppelten Apps (auch widerrufene).
+ */
+async sprachdienstZugaenge() : Promise<Result<SprachZugang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_zugaenge") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt `hoeren` oder `sprechen` fuer eine gekoppelte App. Ein Entzug wirkt sofort auch in
+ * laufenden Verbindungen.
+ */
+async sprachdienstRechtSetzen(zugang: string, recht: string, an: boolean) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_recht_setzen", { zugang, recht, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft eine App: Rechte weg, laufende Verbindungen enden sofort, die Zeile bleibt als Spur.
+ */
+async sprachdienstWiderrufen(zugang: string) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_widerrufen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine App ganz aus der Liste.
+ */
+async sprachdienstEntfernen(zugang: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_entfernen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Kopplungsanfragen (mit Code), neueste zuletzt.
+ */
+async sprachdienstKopplungen() : Promise<Result<SprachKopplung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestaetigt oder lehnt eine Kopplungsanfrage ab. `false` in der Antwort: die Anfrage gab es
+ * nicht mehr (Frist abgelaufen oder die App hat aufgelegt).
+ */
+async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplung_entscheiden", { id, bestaetigen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
  * eingegeben hat, sonst der Termintitel; Vorlage = die der letzten Besprechung
  * derselben Serie (UID), sonst die Standardvorlage; danach Verknuepfung und
@@ -8628,6 +8718,31 @@ export type SourceRef = { kind: string; ref: string; title: string | null; url: 
  * Ansichten laden Segmente und Sprecher neu.
  */
 export type SpeakersChanged = { meeting_id: string }
+/**
+ * Eine Kopplungsanfrage, die auf die Bestaetigung wartet.
+ */
+export type SprachKopplung = { id: string; anzeige: string; 
+/**
+ * Sechsstelliger Code, den die anfragende App zeigt; nur ein Vergleich fuer den Nutzer.
+ */
+code: string; 
+/**
+ * Ablauf der Frist (ms seit 1970, UTC).
+ */
+bis_ms: number }
+/**
+ * Eine gekoppelte App, ohne Fingerabdruck.
+ */
+export type SprachZugang = { zugang: string; client: string; anzeige: string; hoeren: boolean; sprechen: boolean; erstellt_ms: number; zuletzt_ms: number | null; widerrufen_ms: number | null }
+export type SprachdienstStatus = { 
+/**
+ * Vom Nutzer eingeschaltet (Opt-in, Standard aus).
+ */
+aktiv: boolean; laeuft: boolean; 
+/**
+ * Name der Pipe bzw. Pfad des Sockets.
+ */
+endpunkt: string | null; fehler: string | null }
 /**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
