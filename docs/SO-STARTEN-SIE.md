@@ -120,7 +120,7 @@ Alle vier Funktionen liegen im Hauptfenster unter **„Vorlesen"**:
 
 | Funktion | Bedienung |
 |---|---|
-| **Vorlesen** | Text ins Feld tippen → „Vorlesen"; oder Text kopieren und **Strg+Alt+Leertaste** drücken (zweiter Druck stoppt). Beim ersten Mal startet der Server (~2 Minuten, Status-Anzeige); danach kommt der erste Satz nach rund 2 Sekunden. Nach 15 Minuten Leerlauf stoppt der Server von selbst und gibt den Grafikspeicher frei. |
+| **Vorlesen** | Text ins Feld tippen → „Vorlesen"; oder Text kopieren und **Strg+Alt+Leertaste** drücken (Mac: **⌃⇧Leertaste**; zweiter Druck stoppt). Beim ersten Mal startet der Server (~2 Minuten, Status-Anzeige); danach kommt der erste Satz nach rund 2 Sekunden. Nach 15 Minuten Leerlauf stoppt der Server von selbst und gibt den Grafikspeicher frei. |
 | **Stimmen** | „Neue Stimme aufnehmen" → 10–30 Sekunden natürlich sprechen → Stopp. Das Transkript entsteht automatisch und ist korrigierbar. Name vergeben, speichern — die Stimme ist sofort aktiv. Alternativ eine WAV-Datei importieren (beste Qualität). Aufnahmen bleiben auf diesem Rechner. |
 | **Audio-Übersetzung** | Zielsprache wählen, dann tippen oder „Aufnehmen & übersetzen". Die Übersetzung erscheint als Text und wird in der gewählten Stimme gesprochen. Voraussetzung: ein Nachbearbeitungs-Provider mit Modell (für lokal: Ollama mit einem **kleinen** Modell — ein großes passt nicht neben die Sprachsynthese in den Grafikspeicher). |
 | **Stimmwechsler** | Aufnehmen oder WAV-Datei wählen → der Inhalt wird in der gewählten Stimme nachgesprochen und lässt sich als WAV exportieren. Kein Live-Effekt: erst erkennen, dann synthetisieren (ein 10-Sekunden-Ergebnis dauert etwa 7 Sekunden). |

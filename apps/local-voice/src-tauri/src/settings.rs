@@ -1646,10 +1646,13 @@ pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 const SPEAK_CLIPBOARD_LEGACY: &str = "ctrl+alt+space";
 
 /// Standard fuer „Zwischenablage vorlesen“. Auf dem Mac ist ⌃⌥ die
-/// VoiceOver-Taste (⌃⌥Space = VO-Aktivieren); dort darum ⌘⇧Space, das macOS
-/// selbst nicht belegt (⌘Space Spotlight, ⌃Space Eingabequelle, ⌥⌘Space Finder).
+/// VoiceOver-Taste (⌃⌥Space = VO-Aktivieren); dort darum ⌃⇧Space. macOS
+/// belegt es nicht (⌘Space Spotlight, ⌃Space/⌃⌥Space Eingabequelle, ⌥⌘Space
+/// Finder, ⌃⌘Space Emoji); ⇧⌘Space waere 1Password-Schnellzugriff. Reihenfolge
+/// wie der Tastenrekorder (ctrl, option, shift, command), damit eine neu
+/// aufgenommene gleiche Taste als Standard gilt.
 #[cfg(target_os = "macos")]
-const SPEAK_CLIPBOARD_DEFAULT: &str = "command+shift+space";
+const SPEAK_CLIPBOARD_DEFAULT: &str = "ctrl+shift+space";
 #[cfg(not(target_os = "macos"))]
 const SPEAK_CLIPBOARD_DEFAULT: &str = SPEAK_CLIPBOARD_LEGACY;
 
@@ -2232,9 +2235,17 @@ fn apply_settings_migrations(
     // Mac: Wer „Zwischenablage vorlesen“ noch auf dem alten Standard ⌃⌥Space hat
     // (= VoiceOver-Aktivieren), bekommt den neuen Mac-Standard. Eine eigene
     // Belegung bleibt. Idempotent.
-    if let Some(b) = settings.bindings.get_mut("speak_clipboard") {
-        if migrate_speak_clipboard_binding(b, SPEAK_CLIPBOARD_DEFAULT) {
-            updated = true;
+    // Nicht, wenn eine andere Aktion den neuen Standard schon belegt: zwei
+    // gleiche Kuerzel liessen eines davon beim Registrieren ausfallen.
+    let taken = settings
+        .bindings
+        .values()
+        .any(|b| b.id != "speak_clipboard" && b.current_binding == SPEAK_CLIPBOARD_DEFAULT);
+    if !taken {
+        if let Some(b) = settings.bindings.get_mut("speak_clipboard") {
+            if migrate_speak_clipboard_binding(b, SPEAK_CLIPBOARD_DEFAULT) {
+                updated = true;
+            }
         }
     }
 
@@ -3170,7 +3181,7 @@ mod tests {
         assert_eq!(b.default_binding, SPEAK_CLIPBOARD_DEFAULT);
         assert_eq!(b.current_binding, SPEAK_CLIPBOARD_DEFAULT);
         if cfg!(target_os = "macos") {
-            let mac = "command+shift+space";
+            let mac = "ctrl+shift+space";
             assert_eq!(b.default_binding, mac, "nicht ⌃⌥ (VoiceOver)");
         } else {
             assert_eq!(b.default_binding, "ctrl+alt+space");
@@ -3186,7 +3197,7 @@ mod tests {
             default_binding: "ctrl+alt+space".to_string(),
             current_binding: current.to_string(),
         };
-        let new = "command+shift+space";
+        let new = "ctrl+shift+space";
         // Alter Standard unveraendert: beide auf den neuen Standard.
         let mut b = binding("ctrl+alt+space");
         assert!(migrate_speak_clipboard_binding(&mut b, new));

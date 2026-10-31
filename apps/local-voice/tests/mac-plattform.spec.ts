@@ -24,19 +24,20 @@ const openOutput = async (page: Page, os: "macos" | "windows") => {
       get: () => (osType === "macos" ? "MacIntel" : "Win32"),
     });
   }, os);
-  // Das Vorlese-Kuerzel wie in den echten Standardeinstellungen.
-  await page.addInitScript(() => {
+  // Das Vorlese-Kuerzel wie in den echten Standardeinstellungen je System.
+  await page.addInitScript((osType) => {
+    const binding = osType === "macos" ? "ctrl+shift+space" : "ctrl+alt+space";
     const w = window as unknown as { __settings: Record<string, unknown> };
     w.__settings.bindings = {
       speak_clipboard: {
         id: "speak_clipboard",
         name: "Speak Clipboard",
         description: "Reads the current clipboard text aloud.",
-        default_binding: "ctrl+alt+space",
-        current_binding: "ctrl+alt+space",
+        default_binding: binding,
+        current_binding: binding,
       },
     };
-  });
+  }, os);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
   await page
@@ -50,8 +51,8 @@ test("macOS: Kuerzel als Mac-Symbole, kein Explorer-Kontextmenue", async ({
   page,
 }) => {
   await openOutput(page, "macos");
-  await expect(page.getByText("⌃ ⌥ Space", { exact: true })).toBeVisible();
-  await expect(page.getByText("Ctrl + Alt + Space")).toHaveCount(0);
+  await expect(page.getByText("⌃ ⇧ Space", { exact: true })).toBeVisible();
+  await expect(page.getByText("Ctrl + Shift + Space")).toHaveCount(0);
   await expect(page.getByText("Explorer-Kontextmenü")).toHaveCount(0);
 });
 
@@ -76,8 +77,8 @@ test("macOS: der Kuerzel-Dialog der Titelleiste zeigt Mac-Symbole", async ({
 }) => {
   await openOutput(page, "macos");
   const dialog = await openShortcutDialog(page);
-  await expect(dialog.getByText("⌃ ⌥ Space", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("ctrl+alt+space")).toHaveCount(0);
+  await expect(dialog.getByText("⌃ ⇧ Space", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("ctrl+shift+space")).toHaveCount(0);
 });
 
 test("Windows: der Kuerzel-Dialog der Titelleiste zeigt Namen", async ({
