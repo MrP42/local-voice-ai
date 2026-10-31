@@ -59,6 +59,16 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
       push_to_talk: true,
     };
     w.__settings = settings;
+    // Gespraechsverlauf (U3): Attrappe der Befehle `conversation*`, im Speicher.
+    const convs: Record<string, any>[] = [];
+    const entries: Record<string, Record<string, any>[]> = {};
+    let seq = 0;
+    const find = (id: string) => {
+      const c = convs.find((x) => x.id === id);
+      if (!c) throw "Das Gespräch gibt es nicht (mehr).";
+      return c;
+    };
+    w.__convs = convs;
     w.__calls = [];
     w.__chat = null;
     w.__listening = (event: string) => (listeners[event] ?? []).length;
@@ -122,6 +132,85 @@ async function install(page: Page, theme: "light" | "dark" = "light") {
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
               });
+            case "conversations_list":
+              return convs
+                .filter((c) => args.includeArchived || !c.archived)
+                .sort(
+                  (a, b) =>
+                    Number(b.pinned) - Number(a.pinned) ||
+                    (a.updated_at < b.updated_at ? 1 : -1),
+                )
+                .map((c) => {
+                  const list = entries[c.id] ?? [];
+                  return {
+                    id: c.id,
+                    title: c.title,
+                    updated_at: c.updated_at,
+                    pinned: c.pinned,
+                    archived: c.archived,
+                    entry_count: list.length,
+                    last_text: list.length ? list[list.length - 1].text : "",
+                  };
+                });
+            case "conversation_create": {
+              const now = new Date().toISOString();
+              const c = {
+                id: `conv_${String(++seq).padStart(26, "0")}`,
+                title: args.title || "Neues Gespräch",
+                created_at: now,
+                updated_at: now,
+                kind: "voice",
+                pinned: false,
+                archived: false,
+              };
+              convs.push(c);
+              entries[c.id] = [];
+              return c;
+            }
+            case "conversation_get":
+              return {
+                conversation: find(args.id),
+                entries: entries[args.id] ?? [],
+              };
+            case "conversation_update": {
+              const c = find(args.id);
+              if (args.title != null) c.title = args.title;
+              if (args.pinned != null) c.pinned = args.pinned;
+              if (args.archived != null) c.archived = args.archived;
+              return c;
+            }
+            case "conversation_delete": {
+              const c = find(args.id);
+              convs.splice(convs.indexOf(c), 1);
+              delete entries[c.id];
+              return null;
+            }
+            case "conversation_append_entry": {
+              const c = find(args.conversationId);
+              const stored = {
+                ...args.entry,
+                id: `entry_${String(++seq).padStart(26, "0")}`,
+                conversation_id: c.id,
+              };
+              entries[c.id].push(stored);
+              c.updated_at = new Date().toISOString();
+              return stored;
+            }
+            case "conversation_update_entry": {
+              const found = Object.values(entries)
+                .flat()
+                .find((x) => x.id === args.id);
+              if (!found) throw "Den Beitrag gibt es nicht (mehr).";
+              found.text = args.text;
+              found.status = args.status;
+              return found;
+            }
+            case "plugin:dialog|open":
+              return "C:\\Daten\\Protokoll.pdf";
+            case "plugin:fs|stat":
+              return { size: 2048, isFile: true, isDirectory: false };
+            case "tts_extract_document":
+              return "Inhalt der Datei";
             case "meetings_is_recording":
               return false;
             case "get_selected_model":
@@ -184,6 +273,18 @@ async function openPage(page: Page) {
 
 const message = (page: Page) =>
   page.getByRole("textbox", { name: "Nachricht" });
+
+const history = (page: Page) =>
+  page.getByRole("navigation", { name: "Gesprächsverlauf" });
+const historyItem = (page: Page, title: string) =>
+  history(page).getByRole("button", { name: new RegExp(`^${title}`) });
+// Der Schalter im Seitenkopf (nicht der Menüpunkt „Verlauf“ der Seitenleiste).
+const historyToggle = (page: Page) =>
+  page.locator("button[aria-controls][aria-label='Gesprächsverlauf']");
+const newChat = (page: Page) =>
+  page.getByRole("button", { name: "Neues Gespräch", exact: true });
+const emptyTitle = (page: Page) =>
+  page.getByRole("heading", { name: "Worüber möchtest du sprechen?" });
 
 /** Schickt eine Nachricht und beantwortet sie mit den gegebenen Saetzen. */
 async function exchange(
@@ -344,6 +445,312 @@ test.describe("Sprachgespraech", () => {
     await expect(page.getByText("55 Token")).toHaveCount(0);
   });
 
+  test("Nachricht senden legt das Gespräch an, der Titel erscheint in der Liste", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await expect(history(page)).toBeVisible();
+    expect(await calls(page, "conversation_create")).toHaveLength(0);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+    const created = await calls(page, "conversation_create");
+    expect(created).toHaveLength(1);
+    expect(created[0].args.title).toBe("Hallo KI");
+    await expect
+      .poll(async () => (await calls(page, "conversation_append_entry")).length)
+      .toBe(2);
+    const [user, assistant] = (
+      await calls(page, "conversation_append_entry")
+    ).map((c) => c.args.entry);
+    expect(user).toMatchObject({
+      role: "user",
+      mode: "typed",
+      text: "Hallo KI",
+      status: "complete",
+    });
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      mode: "typed",
+      text: "Hallo zurück.",
+      status: "complete",
+    });
+    // Verbrauch steht nur in ext["local-voice-ai"], nicht in Vertragsfeldern.
+    expect(assistant.ext["local-voice-ai"]).toMatchObject({
+      prompt_tokens: 120,
+      completion_tokens: 30,
+      provider_id: "claude_cli",
+      local: false,
+    });
+    expect(assistant.usage).toBeUndefined();
+    // Eine zweite Nachricht hängt an dasselbe Gespräch an.
+    await exchange(page, "Noch eine Frage", "Noch eine Antwort.");
+    await expect
+      .poll(async () => (await calls(page, "conversation_append_entry")).length)
+      .toBe(4);
+    expect(await calls(page, "conversation_create")).toHaveLength(1);
+  });
+
+  test("Titel wird an der Wortgrenze auf 60 Zeichen gekürzt", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(
+      page,
+      "Fasse bitte das gestrige Meeting über Budget Termine und Risiken kurz zusammen",
+      "Gern.",
+    );
+    const title = (await calls(page, "conversation_create"))[0].args
+      .title as string;
+    expect(title.length).toBeLessThanOrEqual(60);
+    expect(title.endsWith("…")).toBe(true);
+    expect(title).toBe(
+      "Fasse bitte das gestrige Meeting über Budget Termine und…",
+    );
+  });
+
+  test("Neues Gespräch und zurückwechseln zeigt den alten Verlauf", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await expect(page.getByText("150 Token")).toBeVisible();
+    await newChat(page).click();
+    await expect(emptyTitle(page)).toBeVisible();
+    await expect(page.getByText("150 Token")).toHaveCount(0);
+    await exchange(page, "Zweite Frage", "Zweite Antwort.", {
+      prompt_tokens: 40,
+      completion_tokens: 10,
+      usage_event_ids: [],
+      usage_event_id: null,
+      provider_id: "claude_cli",
+      local: false,
+    });
+    await expect(historyItem(page, "Zweite Frage")).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+
+    await historyItem(page, "Hallo KI").click();
+    const log = page.getByRole("log");
+    await expect(log.getByText("Hallo zurück.")).toBeVisible();
+    await expect(log.getByText("Zweite Antwort.")).toHaveCount(0);
+    await expect(page.getByText("150 Token")).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
+
+    // Die KI kennt den geöffneten Verlauf.
+    await exchange(page, "Und weiter?", "Weiter so.");
+    const sent = await calls(page, "voice_call_chat");
+    const last = JSON.stringify(sent[sent.length - 1].args.messages);
+    expect(last).toContain("Hallo KI");
+    expect(last).toContain("Hallo zurück.");
+    expect(last).not.toContain("Zweite Frage");
+    // … und der neue Beitrag landet im geöffneten Gespräch.
+    await expect
+      .poll(async () => (await calls(page, "conversation_append_entry")).length)
+      .toBe(6);
+    const all = await calls(page, "conversation_append_entry");
+    expect(all[4].args.conversationId).toBe(all[0].args.conversationId);
+    expect(all[4].args.conversationId).not.toBe(all[2].args.conversationId);
+  });
+
+  test("Unterbrochene, schon gespeicherte Antwort bleibt eine Sprechblase und ein Beitrag", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(
+      page,
+      "Erzähl mir etwas",
+      "Volle Antwort, die ich gerade sprach.",
+    );
+    await expect
+      .poll(async () => (await calls(page, "conversation_append_entry")).length)
+      .toBe(2);
+    // Der Anruf meldet nach der fertigen Antwort, was tatsächlich gesprochen wurde.
+    await page.evaluate(() => {
+      const engine = (window as any).__voiceCallEngine;
+      engine.cb.onAssistant("Volle Antwort", true, true);
+    });
+    const log = page.getByRole("log");
+    await expect(log.getByText("Volle Antwort")).toBeVisible();
+    await expect(
+      log.getByText("Volle Antwort, die ich gerade sprach."),
+    ).toHaveCount(0);
+    await expect(log.getByText("Volle Antwort")).toHaveCount(1);
+    await expect
+      .poll(async () => (await calls(page, "conversation_update_entry")).length)
+      .toBe(1);
+    const update = (await calls(page, "conversation_update_entry"))[0].args;
+    expect(update).toMatchObject({
+      text: "Volle Antwort",
+      status: "interrupted",
+    });
+    expect(await calls(page, "conversation_append_entry")).toHaveLength(2);
+    // Wieder geöffnet: eine Antwort, als unterbrochen gespeichert.
+    await newChat(page).click();
+    await historyItem(page, "Erzähl mir etwas").click();
+    await expect(log.getByText("Volle Antwort")).toHaveCount(1);
+  });
+
+  test("Anhänge werden als Vertragsfeld gespeichert, ohne Dateiinhalt", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+    await page.getByRole("menuitem", { name: /Dateien anhängen/ }).click();
+    await expect(page.getByText("Protokoll.pdf")).toBeVisible();
+    await exchange(page, "Fasse das zusammen", "Erledigt.");
+    await expect
+      .poll(async () => (await calls(page, "conversation_append_entry")).length)
+      .toBe(2);
+    const user = (await calls(page, "conversation_append_entry"))[0].args.entry;
+    expect(user.attachments).toHaveLength(1);
+    expect(user.attachments[0]).toMatchObject({
+      name: "Protokoll.pdf",
+      mime: "application/pdf",
+      size_bytes: 2048,
+    });
+    expect(JSON.stringify(user)).not.toContain("Inhalt der Datei");
+  });
+
+  test("Gespräch umbenennen", async ({ page }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Umbenennen" }).click();
+    const input = page.getByRole("textbox", { name: "Neuer Titel" });
+    await expect(input).toBeFocused();
+    await input.fill("Mein Plan");
+    await input.press("Enter");
+    await expect(historyItem(page, "Mein Plan")).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
+    const updates = await calls(page, "conversation_update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].args.title).toBe("Mein Plan");
+  });
+
+  test("Umbenennen mit Escape ändert nichts", async ({ page }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Umbenennen" }).click();
+    const input = page.getByRole("textbox", { name: "Neuer Titel" });
+    await input.fill("Verworfen");
+    await input.press("Escape");
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+    expect(await calls(page, "conversation_update")).toHaveLength(0);
+  });
+
+  test("Gespräch löschen fragt nach und leert die Ansicht", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Löschen" }).click();
+    const confirm = page.getByRole("group", {
+      name: "„Hallo KI“ endgültig löschen?",
+    });
+    await expect(confirm).toBeVisible();
+    await confirm.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+    expect(await calls(page, "conversation_delete")).toHaveLength(0);
+
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Löschen" }).click();
+    await confirm.getByRole("button", { name: "Löschen" }).click();
+    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
+    await expect(emptyTitle(page)).toBeVisible();
+    expect(await calls(page, "conversation_delete")).toHaveLength(1);
+  });
+
+  test("Archivieren blendet aus, Archiv anzeigen holt zurück; Suche filtert", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await newChat(page).click();
+    await exchange(page, "Zweite Frage", "Zweite Antwort.");
+    await history(page)
+      .getByRole("searchbox", { name: "Gespräche durchsuchen" })
+      .fill("zweite");
+    await expect(historyItem(page, "Zweite Frage")).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
+    await history(page)
+      .getByRole("searchbox", { name: "Gespräche durchsuchen" })
+      .fill("");
+
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Archivieren" }).click();
+    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
+    await history(page)
+      .getByRole("switch", { name: "Archiv anzeigen" })
+      .check();
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+    await expect(history(page).getByText("Archiviert")).toBeVisible();
+  });
+
+  test("Deaktivierter Eintrag „In Corporate LLM öffnen“ nennt den Grund", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    const item = page.getByRole("menuitem", {
+      name: /In Corporate LLM öffnen/,
+    });
+    await expect(item).toHaveAttribute("aria-disabled", "true");
+    await expect(item).toContainText("Corporate LLM verbinden");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  });
+
+  test("Verlaufsspalte lässt sich einklappen, die Wahl bleibt", async ({
+    page,
+  }) => {
+    await openPage(page);
+    await expect(history(page)).toBeVisible();
+    await historyToggle(page).click();
+    await expect(history(page)).toHaveCount(0);
+    await page.reload();
+    await goTo(page, "Sprachgespräch");
+    await expect(emptyTitle(page)).toBeVisible();
+    await expect(history(page)).toHaveCount(0);
+    await historyToggle(page).click();
+    await expect(history(page)).toBeVisible();
+  });
+
+  test("Schmal liegt der Verlauf als Überlagerung über dem Gespräch", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+    });
+    const page = await ctx.newPage();
+    await install(page);
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await expect(history(page)).toHaveCount(0);
+    await historyToggle(page).click();
+    await expect(history(page)).toBeVisible();
+    const box = await history(page).boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(390 * 0.85 + 1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await newChat(page).click();
+    await expect(history(page)).toHaveCount(0);
+    await expect(emptyTitle(page)).toBeVisible();
+    await ctx.close();
+  });
+
   test("Einstellungs-Panel hat vier Reiter", async ({ page }) => {
     await openPage(page);
     await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
@@ -411,5 +818,38 @@ test.describe("Screenshots @screenshots", () => {
     await shoot("light", { width: 390, height: 844 }, async (_p, snap) =>
       snap("hell-390"),
     );
+
+    // Verlauf (U3): mehrere Gespräche, eines angeheftet.
+    const moreHistory = async (page: Page, narrow = false) => {
+      const newChat = page.getByRole("button", {
+        name: "Neues Gespräch",
+        exact: true,
+      });
+      await newChat.click();
+      await exchange(page, "Rezept für Linsensuppe", "Gern, hier ein Rezept.");
+      await newChat.click();
+      await exchange(
+        page,
+        "Erkläre mir bitte den Unterschied zwischen TCP und UDP ausführlich",
+        "TCP ist verbindungsorientiert, UDP nicht.",
+      );
+      if (narrow) await historyToggle(page).click();
+      await page
+        .getByRole("button", { name: "Optionen für „Rezept für Linsensuppe“" })
+        .click();
+      await page.getByRole("menuitem", { name: "Anheften" }).click();
+    };
+    await shoot("light", big, async (page, snap) => {
+      await moreHistory(page);
+      await snap("verlauf-hell-1440");
+    });
+    await shoot("dark", big, async (page, snap) => {
+      await moreHistory(page);
+      await snap("verlauf-dunkel-1440");
+    });
+    await shoot("light", { width: 390, height: 844 }, async (page, snap) => {
+      await moreHistory(page, true);
+      await snap("verlauf-390");
+    });
   });
 });
