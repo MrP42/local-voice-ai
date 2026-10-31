@@ -3930,6 +3930,17 @@ async changeMeetingMcpIncludeTranscriptSetting(enabled: boolean) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus).
+ */
+async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_mcp_info") };
@@ -6431,6 +6442,10 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * Stufe 2 des Sprachgesprächs: Transkripte lesen (Standard aus).
+ */
+voice_call_read_transcripts?: boolean; 
+/**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
  * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -6857,6 +6872,10 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
  */
 "workflow.run" | 
+/**
+ * Besprechungen auflisten, durchsuchen und Transkript lesen (Sprachgespraech Stufe 2).
+ */
+"meeting.read" |
 /**
  * In einen Kanal posten (Slack, Teams, Discord).
  */

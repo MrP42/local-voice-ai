@@ -82,6 +82,9 @@ pub struct Backend<'a> {
     pub busy_timeout: Duration,
     /// Einstellung `meeting_mcp_include_transcript`.
     pub include_transcript: bool,
+    /// Zeichen je Seite von `get_transcript` (Standard [`TRANSCRIPT_PAGE_CHARS`]; die Sprachbruecke
+    /// nimmt kleinere Seiten, damit eine Seite samt `next_cursor` vollstaendig beim Modell ankommt).
+    pub transcript_page_chars: usize,
 }
 
 fn read_only_annotations() -> Value {
@@ -886,7 +889,7 @@ fn get_transcript(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let meeting = ready_meeting(&store, id)?;
     let text = transcript_text(&store, id)?;
     let (page, next, total) =
-        page_text(&text, cursor, TRANSCRIPT_PAGE_CHARS).map_err(ToolOutcome::error)?;
+        page_text(&text, cursor, backend.transcript_page_chars).map_err(ToolOutcome::error)?;
     let mut out = json!({
         "meeting_id": meeting.id,
         "title": meeting.title,

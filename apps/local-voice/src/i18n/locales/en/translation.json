@@ -5148,6 +5148,18 @@
         "get_run": {
           "title": "Read run log",
           "description": "Reads the log of a run: state, steps, errors (without secrets and trigger data)."
+        },
+        "meetings_list": {
+          "title": "List meetings",
+          "description": "Lists finished meetings with title, date and duration, newest first (read-only)."
+        },
+        "meetings_search": {
+          "title": "Search meetings",
+          "description": "Full-text search over title, notes and transcript of finished meetings (read-only; transcript hits only when released)."
+        },
+        "meeting_transcript": {
+          "title": "Read transcript",
+          "description": "Reads the transcript of a finished meeting page by page (read-only, only when the transcript is released)."
         }
       }
     },
@@ -5484,6 +5496,10 @@
       "workflow_run": {
         "title": "Start a workflow",
         "description": "Start a workflow as a dry run or, if it is armed, for real."
+      },
+      "meeting_read": {
+        "title": "Read meetings",
+        "description": "List and search meetings and read transcripts (changes nothing)."
       },
       "chat_post": {
         "title": "Post to channel",
@@ -5882,6 +5898,17 @@
     }
   },
   "voiceCall": {
+    "tool": {
+      "generic": "Using the tool \"{{name}}\" …",
+      "meetings_list": "Looking through meetings …",
+      "meetings_search": "Searching the meetings …",
+      "meeting_transcript": "Reading the transcript …"
+    },
+    "notice": {
+      "speaker_blocked": "No conversation is possible with this answer model at the chosen sovereignty level: it would send data to a cloud service. Change the model or the sovereignty level.",
+      "denker_blocked": "The thinker model is not allowed at this sovereignty level and is not used.",
+      "openSettings": "Open settings"
+    },
     "title": "Voice conversation",
     "description": "Talk to the AI like on the phone: it listens, answers right away and you can interrupt it.",
     "begin": "Start conversation",
@@ -6024,8 +6051,26 @@
       "autoSoon": "Coming in stage 3: recognition tunes itself, including a short setup by reading a text aloud.",
       "answerModel": "Answer model",
       "answerModelHint": "The active language model from the status bar.",
-      "orchestratorTitle": "Fast speech layer and tools",
-      "orchestratorSoon": "Coming in stage 2: a language model as orchestrator that uses further models and tools."
+      "denker": "Thinker model",
+      "denkerHint": "A second, stronger model for questions that need knowledge or longer thought. The speaker stays fast and asks the thinker only when needed.",
+      "denkerOff": "Off",
+      "denkerBlocked": "With \"local only\" this cloud model is not used. Pick a more open level or a local model.",
+      "sovereignty": "Sovereignty",
+      "sovereigntyHint": {
+        "nur_lokal": "Local models only: cloud models do not take part and receive no tool data.",
+        "eu": "Local models and cloud models that process in the EU.",
+        "frei": "All enabled models, including outside the EU."
+      },
+      "sovereigntyLevels": {
+        "nur_lokal": "Local only",
+        "eu": "EU",
+        "frei": "Open"
+      },
+      "transcripts": "Read transcripts in voice chat",
+      "transcriptsHint": "Off by default. When on, the AI may read and search meeting transcripts. The content then goes to the answer model, with \"local only\" that means a local one only.",
+      "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
+      "tools": "Use LVA tools",
+      "toolsHint": "Read-only: list and search meetings and read transcripts. The AI changes nothing, every call is in the integrations log."
     }
   }
 }

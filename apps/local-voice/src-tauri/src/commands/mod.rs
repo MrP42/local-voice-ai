@@ -9,6 +9,7 @@ pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod llm;
 pub mod usage;
+pub mod voice_tools; // Sprachgespraech Stufe 2
 pub mod workflows; // B7
 pub mod meeting_chat; // M4-P4c
 pub mod meeting_mcp; // M6-P6e

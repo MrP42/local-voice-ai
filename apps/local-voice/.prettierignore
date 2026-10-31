@@ -19,3 +19,6 @@ src-tauri/src/catalog/catalog.json
 # Misc
 .DS_Store
 *.log
+
+# Vendored (scripts/vendor-wai-voice.py), never hand-edited
+src/vendor/

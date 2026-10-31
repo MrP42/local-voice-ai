@@ -82,7 +82,7 @@ impl ToolHandler for TestHandler {
 }
 
 /// Alle Katalogwerkzeuge.
-pub const ALL_TOOLS: [&str; 17] = [
+pub const ALL_TOOLS: [&str; 20] = [
     "add_youtube_source",
     "start_recording",
     "stop_recording",
@@ -100,6 +100,9 @@ pub const ALL_TOOLS: [&str; 17] = [
     "list_workflows",
     "run_workflow",
     "get_run",
+    "meetings_list",
+    "meetings_search",
+    "meeting_transcript",
 ];
 
 pub struct Fixture {
