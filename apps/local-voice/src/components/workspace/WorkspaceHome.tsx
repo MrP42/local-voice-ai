@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
+import { useOsType } from "@/hooks/useOsType";
+import { formatKeyCombination } from "@/lib/utils/keyboard";
 import { Button } from "../ui/Button";
 import type { SidebarSection } from "../Sidebar";
 
@@ -20,6 +22,7 @@ export function WorkspaceHome({
   const { t } = useTranslation();
   const { getSetting } = useSettings();
   const shortcut = getSetting("bindings")?.transcribe?.current_binding;
+  const osType = useOsType();
   const openDictationSettings = () => {
     try {
       localStorage.setItem("lva.ui.settings.tab", "input");
@@ -54,7 +57,11 @@ export function WorkspaceHome({
             {t("workspace.dictateHint")}
           </p>
           {shortcut ? (
-            <kbd className="workspace-shortcut">{shortcut}</kbd>
+            <kbd className="workspace-shortcut">
+              {osType === "macos"
+                ? formatKeyCombination(shortcut, "macos")
+                : shortcut}
+            </kbd>
           ) : (
             <p className="text-sm mt-2">{t("workspace.shortcutMissing")}</p>
           )}

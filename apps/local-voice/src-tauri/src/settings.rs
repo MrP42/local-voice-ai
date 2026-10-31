@@ -1084,8 +1084,15 @@ fn default_tts_compile() -> bool {
     true
 }
 
+/// Fish, wo es laeuft; sonst (z. B. Mac mit Intel) Piper.
 fn default_tts_engine() -> String {
-    "fish".to_string()
+    if crate::managers::tts::availability::fish_supported(
+        crate::managers::tts::availability::current_platform_id(),
+    ) {
+        "fish".to_string()
+    } else {
+        "piper".to_string()
+    }
 }
 
 /// Standardmäßig an: eine deutsche Piper-Stimme liest englischen Text sonst
@@ -2211,7 +2218,38 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // Vorlesen ohne Fish-Unterstuetzung (z. B. Mac mit Intel): eine gespeicherte
+    // Wahl, die auf Fish hinauslaeuft (auch Altwerte wie "system"), wird Piper.
+    // Sonst zeigte die Oberflaeche „Liest vor: Fish Speech – nicht eingerichtet“
+    // fuer eine Engine, die es hier nie geben kann. Idempotent.
+    if let Some(engine) = tts_engine_for_platform(
+        &settings.tts_engine,
+        crate::managers::tts::availability::current_platform_id(),
+    ) {
+        settings.tts_engine = engine;
+        updated = true;
+    }
+
     updated
+}
+
+/// Meldung, wenn der `tts_engine`-Wert `engine` (z. B. "fish", "provider:<id>")
+/// auf diesem System nie laufen kann; die Setter lehnen dann ab, statt dass das
+/// naechste Laden still Piper daraus macht.
+pub(crate) fn tts_engine_unsupported_here(engine: &str) -> Option<String> {
+    tts_engine_for_platform(
+        engine,
+        crate::managers::tts::availability::current_platform_id(),
+    )
+    .map(|_| "Fish Speech wird auf diesem System nicht unterstützt; Piper liest vor.".to_string())
+}
+
+/// Ersatz-Engine, wenn `engine` auf Fish hinauslaeuft, Fish auf `platform`
+/// aber nicht laeuft; `None` = Wahl bleibt.
+fn tts_engine_for_platform(engine: &str, platform: &str) -> Option<String> {
+    use crate::managers::tts::{availability::fish_supported, engine::TtsEngineKind};
+    (TtsEngineKind::from_setting(engine) == TtsEngineKind::Fish && !fish_supported(platform))
+        .then(|| "piper".to_string())
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
@@ -3087,7 +3125,11 @@ mod tests {
         assert_eq!(s.tts_seed, 42);
         assert_eq!(s.tts_idle_minutes, 15);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish");
+        assert_eq!(
+            s.tts_engine,
+            default_tts_engine(),
+            "Fish, wo es laeuft, sonst Piper"
+        );
         assert_eq!(s.tts_preview_engine, "", "Vorschau-Engine ist aus");
         assert_eq!(s.tts_piper_voice, None);
         let b = &s.bindings["speak_clipboard"];
@@ -3096,12 +3138,48 @@ mod tests {
     }
 
     #[test]
+    fn tts_engine_falls_back_to_piper_where_fish_cannot_run() {
+        for v in ["fish", "provider:fish", "system", ""] {
+            assert_eq!(
+                tts_engine_for_platform(v, "macos-x64").as_deref(),
+                Some("piper"),
+                "{v:?}"
+            );
+            assert_eq!(tts_engine_for_platform(v, "windows-x64"), None, "{v:?}");
+            assert_eq!(tts_engine_for_platform(v, "macos-aarch64"), None, "{v:?}");
+        }
+        for v in ["piper", "provider:phonon"] {
+            assert_eq!(tts_engine_for_platform(v, "macos-x64"), None, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn the_migration_applies_the_fish_fallback_once() {
+        let fish_here = crate::managers::tts::availability::fish_supported(
+            crate::managers::tts::availability::current_platform_id(),
+        );
+        let stored = serde_json::json!({ "tts_engine": "system" });
+        let mut s: AppSettings = serde_json::from_value(stored.clone()).unwrap();
+        apply_settings_migrations(&mut s, &stored);
+        let expected = if fish_here { "system" } else { "piper" };
+        assert_eq!(s.tts_engine, expected);
+        // Idempotent: ein zweiter Lauf aendert nichts mehr an der Engine.
+        let again = serde_json::to_value(&s).unwrap();
+        apply_settings_migrations(&mut s, &again);
+        assert_eq!(s.tts_engine, expected);
+    }
+
+    #[test]
     fn tts_fields_survive_a_partial_store() {
         // Bestehende Stores kennen die tts_-Keys nicht; sie müssen mit Defaults laden.
         let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+        assert_eq!(
+            s.tts_engine,
+            default_tts_engine(),
+            "ohne Engine-Key gilt der Plattform-Standard"
+        );
     }
 
     /// P3a: das Feld `tts_providers` ist optional. Eine Datei aus der Zeit
@@ -3122,7 +3200,7 @@ mod tests {
 
         let d = get_default_settings();
         assert_eq!(d.tts_providers, Default::default());
-        assert_eq!(d.tts_engine, "fish", "der Standard bleibt Fish");
+        assert_eq!(d.tts_engine, default_tts_engine(), "der Plattform-Standard");
     }
 
     /// Eine Datei mit einem Teil des Feldes lädt mit Vorgaben für den Rest;

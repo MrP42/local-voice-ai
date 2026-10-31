@@ -788,6 +788,9 @@ pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), St
     if !crate::managers::tts::engine::is_valid_engine_setting(&value) {
         return Err(format!("Unbekannte Vorlese-Engine: {value}"));
     }
+    if let Some(why) = settings::tts_engine_unsupported_here(&value) {
+        return Err(why);
+    }
     let mut settings = settings::get_settings(&app);
     settings.tts_engine = value;
     settings::write_settings(&app, settings);
