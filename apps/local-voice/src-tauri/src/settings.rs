@@ -1642,6 +1642,20 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
+/// Frueherer Standard fuer „Zwischenablage vorlesen“ auf allen Systemen.
+const SPEAK_CLIPBOARD_LEGACY: &str = "ctrl+alt+space";
+
+/// Standard fuer „Zwischenablage vorlesen“. Auf dem Mac ist ⌃⌥ die
+/// VoiceOver-Taste (⌃⌥Space = VO-Aktivieren); dort darum ⌃⇧Space. macOS
+/// belegt es nicht (⌘Space Spotlight, ⌃Space/⌃⌥Space Eingabequelle, ⌥⌘Space
+/// Finder, ⌃⌘Space Emoji); ⇧⌘Space waere 1Password-Schnellzugriff. Reihenfolge
+/// wie der Tastenrekorder (ctrl, option, shift, command), damit eine neu
+/// aufgenommene gleiche Taste als Standard gilt.
+#[cfg(target_os = "macos")]
+const SPEAK_CLIPBOARD_DEFAULT: &str = "ctrl+shift+space";
+#[cfg(not(target_os = "macos"))]
+const SPEAK_CLIPBOARD_DEFAULT: &str = SPEAK_CLIPBOARD_LEGACY;
+
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
@@ -1699,8 +1713,8 @@ pub fn get_default_settings() -> AppSettings {
             id: "speak_clipboard".to_string(),
             name: "Speak Clipboard".to_string(),
             description: "Reads the current clipboard text aloud.".to_string(),
-            default_binding: "ctrl+alt+space".to_string(),
-            current_binding: "ctrl+alt+space".to_string(),
+            default_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
+            current_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
         },
     );
 
@@ -2218,6 +2232,23 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // Mac: Wer „Zwischenablage vorlesen“ noch auf dem alten Standard ⌃⌥Space hat
+    // (= VoiceOver-Aktivieren), bekommt den neuen Mac-Standard. Eine eigene
+    // Belegung bleibt. Idempotent.
+    // Nicht, wenn eine andere Aktion den neuen Standard schon belegt: zwei
+    // gleiche Kuerzel liessen eines davon beim Registrieren ausfallen.
+    let taken = settings
+        .bindings
+        .values()
+        .any(|b| b.id != "speak_clipboard" && b.current_binding == SPEAK_CLIPBOARD_DEFAULT);
+    if !taken {
+        if let Some(b) = settings.bindings.get_mut("speak_clipboard") {
+            if migrate_speak_clipboard_binding(b, SPEAK_CLIPBOARD_DEFAULT) {
+                updated = true;
+            }
+        }
+    }
+
     // Vorlesen ohne Fish-Unterstuetzung (z. B. Mac mit Intel): eine gespeicherte
     // Wahl, die auf Fish hinauslaeuft (auch Altwerte wie "system"), wird Piper.
     // Sonst zeigte die Oberflaeche „Liest vor: Fish Speech – nicht eingerichtet“
@@ -2242,6 +2273,20 @@ pub(crate) fn tts_engine_unsupported_here(engine: &str) -> Option<String> {
         crate::managers::tts::availability::current_platform_id(),
     )
     .map(|_| "Fish Speech wird auf diesem System nicht unterstützt; Piper liest vor.".to_string())
+}
+
+/// Hebt eine Belegung vom alten Standard auf `default` an, solange der Nutzer sie
+/// nicht selbst geaendert hat; `true` = geaendert.
+fn migrate_speak_clipboard_binding(b: &mut ShortcutBinding, default: &str) -> bool {
+    let mut changed = false;
+    if b.default_binding == SPEAK_CLIPBOARD_LEGACY && default != SPEAK_CLIPBOARD_LEGACY {
+        if b.current_binding == SPEAK_CLIPBOARD_LEGACY {
+            b.current_binding = default.to_string();
+        }
+        b.default_binding = default.to_string();
+        changed = true;
+    }
+    changed
 }
 
 /// Ersatz-Engine, wenn `engine` auf Fish hinauslaeuft, Fish auf `platform`
@@ -3133,7 +3178,40 @@ mod tests {
         assert_eq!(s.tts_preview_engine, "", "Vorschau-Engine ist aus");
         assert_eq!(s.tts_piper_voice, None);
         let b = &s.bindings["speak_clipboard"];
-        assert_eq!(b.default_binding, "ctrl+alt+space");
+        assert_eq!(b.default_binding, SPEAK_CLIPBOARD_DEFAULT);
+        assert_eq!(b.current_binding, SPEAK_CLIPBOARD_DEFAULT);
+        if cfg!(target_os = "macos") {
+            let mac = "ctrl+shift+space";
+            assert_eq!(b.default_binding, mac, "nicht ⌃⌥ (VoiceOver)");
+        } else {
+            assert_eq!(b.default_binding, "ctrl+alt+space");
+        }
+    }
+
+    #[test]
+    fn speak_clipboard_moves_off_the_old_default_but_keeps_own_bindings() {
+        let binding = |current: &str| ShortcutBinding {
+            id: "speak_clipboard".to_string(),
+            name: "Speak Clipboard".to_string(),
+            description: String::new(),
+            default_binding: "ctrl+alt+space".to_string(),
+            current_binding: current.to_string(),
+        };
+        let new = "ctrl+shift+space";
+        // Alter Standard unveraendert: beide auf den neuen Standard.
+        let mut b = binding("ctrl+alt+space");
+        assert!(migrate_speak_clipboard_binding(&mut b, new));
+        assert_eq!(b.current_binding, new);
+        assert_eq!(b.default_binding, new);
+        assert!(!migrate_speak_clipboard_binding(&mut b, new));
+        // Eigene Belegung bleibt, nur der Standard wandert.
+        let mut b = binding("ctrl+shift+f9");
+        assert!(migrate_speak_clipboard_binding(&mut b, new));
+        assert_eq!(b.current_binding, "ctrl+shift+f9");
+        assert_eq!(b.default_binding, new);
+        // Wo der Standard gleich bleibt (Windows/Linux), aendert sich nichts.
+        let mut b = binding("ctrl+alt+space");
+        assert!(!migrate_speak_clipboard_binding(&mut b, "ctrl+alt+space"));
         assert_eq!(b.current_binding, "ctrl+alt+space");
     }
 
