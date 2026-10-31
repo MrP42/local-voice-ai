@@ -33,7 +33,7 @@
   inset: -6px;
   border-radius: 9px;
   border: 2px solid var(--colorBrandStroke1, #0f6cbd);
-  animation: lv-tour-pulse 1.6s ease-out infinite;
+  animation: lv-tour-pulse 1.6s ease-out 3;
 }
 
 .lv-tour__dialog {
@@ -79,6 +79,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  overscroll-behavior: contain;
   animation: lv-tour-fade 0.2s ease-out;
 }
 
@@ -192,6 +195,13 @@ ol.lv-tour__list {
   color: inherit;
 }
 
+.lv-tour__try:disabled {
+  cursor: not-allowed;
+  background: var(--colorNeutralBackgroundDisabled, #f0f0f0);
+  color: var(--colorNeutralForegroundDisabled, #6e6e6e);
+  border-style: dashed;
+}
+
 .lv-tour__try:focus-visible {
   outline: 2px solid var(--colorBrandStroke1, #0f6cbd);
   outline-offset: 1px;
@@ -238,13 +248,43 @@ ol.lv-tour__list {
   background: var(--colorNeutralBackground1, #fff);
   color: var(--colorBrandForeground1, #0f6cbd);
   box-shadow: var(--shadow8, 0 2px 8px rgba(0, 0, 0, 0.1));
-  animation: lv-tour-float 3s ease-in-out infinite;
+  animation: lv-tour-float 3s ease-in-out 2;
 }
 
 .lv-tour__icon[data-done] {
   border-radius: 50%;
   color: var(--colorPaletteGreenForeground1, #107c10);
   animation: lv-tour-pop 0.5s ease-out;
+}
+
+.lv-tour__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.lv-tour__error {
+  color: var(--colorPaletteRedForeground1, #b10e1c);
+  font-weight: 600;
+}
+
+.lv-tour__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Nur für Screenreader sichtbar */
+.lv-tour__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Diktier-Animation */
@@ -297,7 +337,7 @@ ol.lv-tour__list {
 }
 
 .lv-tour-anim[data-phase="speak"] .lv-tour-anim__wave i {
-  animation: lv-tour-wave 0.55s ease-in-out infinite alternate;
+  animation: lv-tour-wave 0.55s ease-in-out 4 alternate;
 }
 
 .lv-tour-anim__field {
@@ -317,7 +357,7 @@ ol.lv-tour__list {
   height: 14px;
   vertical-align: middle;
   background: currentColor;
-  animation: lv-tour-blink 1s steps(1) infinite;
+  animation: lv-tour-blink 1s steps(1) 6;
 }
 
 @keyframes lv-tour-fade {
@@ -378,6 +418,25 @@ ol.lv-tour__list {
   }
   .lv-tour__art {
     min-height: 160px;
+  }
+}
+
+/* Bewegung reduzieren: per Systemeinstellung (CSS) und live per JS-Attribut. */
+.lv-tour[data-reduced] *,
+.lv-tour[data-reduced] *::before,
+.lv-tour[data-reduced] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+@media (max-height: 520px) {
+  .lv-tour__art {
+    min-height: 0;
+    padding: 12px;
+  }
+  .lv-tour__icon {
+    width: 56px;
+    height: 56px;
   }
 }
 

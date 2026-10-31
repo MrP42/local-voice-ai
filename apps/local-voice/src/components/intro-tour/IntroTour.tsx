@@ -1,38 +1,22 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Button as FluentButton } from "@fluentui/react-components";
-import {
-  type LucideIcon,
-  Check,
-  Cog,
-  History,
-  Mic,
-  Phone,
-  Users,
-  Volume2,
-} from "lucide-react";
+import { type LucideIcon, Check, Cog, LayoutGrid, Mic } from "lucide-react";
 import { useIntroTourStore } from "@/stores/introTourStore";
 import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyCombination } from "@/lib/utils/keyboard";
+import { retryFirstRunDownload } from "./firstRunSetup";
 import "./introTour.css";
 
-type StepId =
-  | "welcome"
-  | "dictate"
-  | "try"
-  | "history"
-  | "meetings"
-  | "tts"
-  | "voice"
-  | "tools"
-  | "end";
+type StepId = "welcome" | "dictate" | "try" | "pages" | "tools" | "end";
 
 interface Step {
   id: StepId;
@@ -42,14 +26,12 @@ interface Step {
   icon: LucideIcon;
 }
 
+/** Schwerpunkt Diktieren und Üben; der Rest der App in zwei Spotlights. */
 export const TOUR_STEPS: Step[] = [
   { id: "welcome", kind: "dialog", icon: Mic },
   { id: "dictate", kind: "dialog", icon: Mic },
   { id: "try", kind: "dialog", icon: Mic },
-  { id: "history", kind: "spot", target: "nav-history", icon: History },
-  { id: "meetings", kind: "spot", target: "nav-meetings", icon: Users },
-  { id: "tts", kind: "spot", target: "nav-tts", icon: Volume2 },
-  { id: "voice", kind: "spot", target: "nav-voice", icon: Phone },
+  { id: "pages", kind: "spot", target: "nav-primary", icon: LayoutGrid },
   { id: "tools", kind: "spot", target: "nav-utilities", icon: Cog },
   { id: "end", kind: "dialog", icon: Check },
 ];
@@ -69,9 +51,21 @@ const localizeKeys = (combo: string, language: string) =>
         .join(" + ")
     : combo;
 
-const prefersReducedMotion = () =>
-  typeof window !== "undefined" &&
-  !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+/** Systemeinstellung „Bewegung reduzieren“, auch wenn sie sich ändert. */
+const useReducedMotion = () => {
+  const query =
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-reduced-motion: reduce)")
+      : null;
+  const [reduced, setReduced] = useState(!!query?.matches);
+  useEffect(() => {
+    if (!query) return;
+    const onChange = () => setReduced(query.matches);
+    query.addEventListener?.("change", onChange);
+    return () => query.removeEventListener?.("change", onChange);
+  }, [query]);
+  return reduced;
+};
 
 /** Sichtbares Ziel des Spotlights, sonst `null` (dann zeigt der Schritt einen Dialog). */
 const findTarget = (target?: string): HTMLElement | null => {
@@ -96,30 +90,30 @@ const useDownloadState = (modelId: string | null) => {
         modelId in s.extractingModels
       : false,
   );
-  const current = useModelStore((s) => s.currentModel);
   return {
     name: model?.name ?? null,
     ready: !!model?.is_downloaded && !busy,
-    selected: !!modelId && current === modelId,
     percent: Math.max(0, Math.min(100, Math.round(progress ?? 0))),
   };
 };
 
-/** Tasten, Pegel und Tippen in einer Endlosschleife — still bei reduzierter Bewegung. */
-const DictationAnimation: React.FC<{ keys: string[]; sample: string }> = ({
-  keys,
-  sample,
-}) => {
-  const reduced = prefersReducedMotion();
-  const [phase, setPhase] = useState<"idle" | "speak" | "type">(
-    reduced ? "type" : "idle",
-  );
-  const [typed, setTyped] = useState(reduced ? sample : "");
+/** Drei Durchläufe Tasten, Pegel und Tippen, dann Endzustand. */
+const DictationAnimation: React.FC<{
+  keys: string[];
+  sample: string;
+  reduced: boolean;
+}> = ({ keys, sample, reduced }) => {
+  const [phase, setPhase] = useState<"idle" | "speak" | "type">("type");
+  const [typed, setTyped] = useState(sample);
 
   useEffect(() => {
-    if (reduced) return;
+    if (reduced) {
+      setPhase("type");
+      setTyped(sample);
+      return;
+    }
     const timers: number[] = [];
-    const run = () => {
+    const run = (round: number) => {
       setPhase("idle");
       setTyped("");
       timers.push(window.setTimeout(() => setPhase("speak"), 600));
@@ -130,15 +124,18 @@ const DictationAnimation: React.FC<{ keys: string[]; sample: string }> = ({
             timers.push(
               window.setTimeout(() => setTyped(sample.slice(0, i)), i * 28),
             );
+          if (round < 3)
+            timers.push(
+              window.setTimeout(
+                () => run(round + 1),
+                sample.length * 28 + 2400,
+              ),
+            );
         }, 2800),
       );
     };
-    run();
-    const loop = window.setInterval(run, 6800);
-    return () => {
-      window.clearInterval(loop);
-      timers.forEach(window.clearTimeout);
-    };
+    run(1);
+    return () => timers.forEach(window.clearTimeout);
   }, [reduced, sample]);
 
   return (
@@ -157,35 +154,59 @@ const DictationAnimation: React.FC<{ keys: string[]; sample: string }> = ({
       </div>
       <div className="lv-tour-anim__field">
         {typed}
-        <span className="lv-tour-anim__caret" />
+        {phase !== "type" || typed.length < sample.length ? (
+          <span className="lv-tour-anim__caret" />
+        ) : null}
       </div>
     </div>
   );
 };
+
+/** Sinnvolles Ziel nach dem Schließen, wenn der Auslöser nicht mehr da ist. */
+const FOCUS_FALLBACKS = [
+  "[data-testid='workspace-start-tour']",
+  "[data-titlebar-help]",
+  "[data-tour='nav-home']",
+];
+const focusFallback = () =>
+  FOCUS_FALLBACKS.map((q) => document.querySelector<HTMLElement>(q)).find(
+    (el): el is HTMLElement => !!el,
+  ) ?? null;
 
 export const IntroTour: React.FC = () => {
   const { t, i18n } = useTranslation();
   const open = useIntroTourStore((s) => s.open);
   const close = useIntroTourStore((s) => s.close);
   const pendingModelId = useIntroTourStore((s) => s.pendingModelId);
+  const failedModelId = useIntroTourStore((s) => s.failedModelId);
   const download = useDownloadState(pendingModelId);
+  const hasModel = useModelStore((s) => !!s.currentModel);
   const { getSetting } = useSettings();
   const binding = getSetting("bindings")?.transcribe?.current_binding ?? "";
   const pushToTalk = getSetting("push_to_talk") ?? true;
+  const reduced = useReducedMotion();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+  const bodyId = useId();
 
   const shortcut = binding
     ? localizeKeys(formatKeyCombination(binding, "unknown"), i18n.language)
     : "";
   const keys = shortcut ? shortcut.split(" + ") : [];
 
+  // Download beim ersten Start: Die Tour beginnt erst, wenn das Modell da ist.
+  const loading = !!pendingModelId && !download.ready;
+  const failed = !!failedModelId;
+  const dictationReady = !loading && !failed && (hasModel || download.ready);
+
   const step = TOUR_STEPS[index];
   const target = step.kind === "spot" ? findTarget(step.target) : null;
   const mode = target ? "spot" : "dialog";
   const last = index === TOUR_STEPS.length - 1;
+  const canAdvance = index !== 0 || (!loading && !failed);
 
   useEffect(() => {
     if (open) {
@@ -198,16 +219,24 @@ export const IntroTour: React.FC = () => {
     // Fertig eingerichtet: spätere Touren zeigen keinen Fortschritt mehr.
     if (download.ready) useIntroTourStore.getState().setPendingModel(null);
     close();
-    restoreFocus.current?.focus?.();
+    const back = restoreFocus.current;
+    window.requestAnimationFrame(() => {
+      const target =
+        back && back.isConnected && back !== document.body
+          ? back
+          : focusFallback();
+      target?.focus?.();
+    });
   }, [close, download.ready]);
 
-  const next = useCallback(
-    () => (last ? finish() : setIndex((i) => i + 1)),
-    [last, finish],
-  );
+  const next = useCallback(() => {
+    if (!canAdvance) return;
+    if (last) finish();
+    else setIndex((i) => i + 1);
+  }, [canAdvance, last, finish]);
   const back = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
 
-  // Spotlight-Rahmen am Ziel ausrichten, auch bei Größenänderung.
+  // Spotlight-Rahmen am Ziel ausrichten, auch bei Scrollen und Größenänderung.
   useLayoutEffect(() => {
     if (!open || !target) {
       setRect(null);
@@ -228,21 +257,41 @@ export const IntroTour: React.FC = () => {
     };
   }, [open, target]);
 
-  // Fokus in den Schritt: Hauptknopf, damit Enter weiterführt.
+  // Fokus in den Schritt: Übungsfeld, sonst Hauptknopf, sonst „Wiederholen“,
+  // sonst Dialog selbst. Wird ein Knopf erst später bedienbar (Modell bereit,
+  // Download gescheitert), folgt der Fokus nur, wenn er gerade nirgends steht.
+  const focusStep = useCallback((force: boolean) => {
+    const box = boxRef.current;
+    if (!box) return;
+    const active = document.activeElement;
+    const idle =
+      !active ||
+      active === document.body ||
+      active === box ||
+      !box.contains(active);
+    if (!force && !idle) return;
+    const pick = (selector: string) => box.querySelector<HTMLElement>(selector);
+    (
+      pick("textarea:not([disabled])") ??
+      pick("[data-tour-primary]:not([disabled])") ??
+      pick("[data-tour-retry]") ??
+      box
+    ).focus({ preventScroll: true });
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-    const id = window.requestAnimationFrame(() => {
-      // Übungsschritt: Fokus ins Feld, damit ein sofortiges Diktat dort landet.
-      const box = boxRef.current;
-      const field = box?.querySelector<HTMLElement>("textarea");
-      (field ?? box?.querySelector<HTMLElement>("[data-tour-primary]"))?.focus({
-        preventScroll: true,
-      });
-    });
+    const id = window.requestAnimationFrame(() => focusStep(true));
     return () => window.cancelAnimationFrame(id);
-  }, [open, index]);
+  }, [open, index, focusStep]);
 
-  // Rest der App für Hilfsmittel stilllegen, solange die Tour offen ist.
+  useEffect(() => {
+    if (!open) return;
+    const id = window.requestAnimationFrame(() => focusStep(false));
+    return () => window.cancelAnimationFrame(id);
+  }, [open, canAdvance, dictationReady, failed, focusStep]);
+
+  // Rest der App für Hilfsmittel und Tastatur stilllegen (echtes Modal).
   useEffect(() => {
     if (!open) return;
     const tour = document.querySelector<HTMLElement>(".lv-tour");
@@ -254,43 +303,46 @@ export const IntroTour: React.FC = () => {
     return () => siblings.forEach((el) => (el.inert = false));
   }, [open]);
 
-  // Tastatur am Dokument: Beim Schrittwechsel ist der Fokus kurz außerhalb
-  // der Tour, schnelle Tastendrücke gingen sonst verloren.
+  // Tastatur: Esc beendet die Tour (nicht im Übungsfeld, dort bricht Esc das
+  // Diktat ab). Pfeile nur, wenn kein Bedienelement den Fokus hat. Tab bleibt
+  // im Dialog.
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const box = boxRef.current;
-      // Nur Tasten aus der Tour oder ohne Fokus (Schrittwechsel); andere
-      // Dialoge (z. B. Neuigkeiten) behalten ihre Tastatur.
       const origin = e.target as Node | null;
-      const fromTour =
+      const onBody =
         !origin ||
         origin === document.body ||
-        origin === document.documentElement ||
-        !!box?.contains(origin);
-      if (!fromTour) return;
-      // Im Übungsfeld gehören Esc (Diktat abbrechen) und Pfeile dem Text.
-      const inField = !!(e.target as HTMLElement | null)?.closest?.("textarea");
+        origin === document.documentElement;
+      const onBox = !!box && origin === box;
+      const inBox = !!box && !!origin && box.contains(origin);
+      if (!onBody && !inBox) return;
+      const inField = !!(origin as HTMLElement | null)?.closest?.("textarea");
       if (e.key === "Escape" && !inField) {
         e.preventDefault();
         finish();
-      } else if (e.key === "ArrowRight" && !inField) {
+      } else if (e.key === "ArrowRight" && (onBody || onBox)) {
         e.preventDefault();
         next();
-      } else if (e.key === "ArrowLeft" && !inField) {
+      } else if (e.key === "ArrowLeft" && (onBody || onBox)) {
         e.preventDefault();
         back();
       } else if (e.key === "Tab" && box) {
         const items = Array.from(
           box.querySelectorAll<HTMLElement>(
-            "button:not([disabled]), textarea, [tabindex='0']",
+            "button:not([disabled]), textarea:not([disabled])",
           ),
         );
-        if (!items.length) return;
+        if (!items.length) {
+          e.preventDefault();
+          box.focus();
+          return;
+        }
         const first = items[0];
         const lastItem = items[items.length - 1];
         const active = document.activeElement;
-        if (!active || active === document.body) {
+        if (!active || active === document.body || active === box) {
           e.preventDefault();
           (e.shiftKey ? lastItem : first).focus();
         } else if (e.shiftKey && active === first) {
@@ -308,34 +360,72 @@ export const IntroTour: React.FC = () => {
 
   if (!open) return null;
 
-  const progressLine = pendingModelId ? (
-    <div
-      className="lv-tour__progress"
-      data-ready={download.ready || undefined}
-      role="status"
-    >
-      <span>
-        {download.ready
-          ? t("introTour.download.ready", { model: download.name })
-          : t("introTour.download.loading", {
-              model: download.name ?? "Nemotron 3.5",
-              percent: download.percent,
-            })}
-      </span>
-      {!download.ready && (
-        <span
-          className="lv-tour__bar"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={download.percent}
-          aria-label={t("introTour.download.label")}
-        >
-          <i style={{ width: `${download.percent}%` }} />
-        </span>
-      )}
-    </div>
-  ) : null;
+  const modelName = download.name ?? "Nemotron 3.5";
+  const downloadBlock =
+    pendingModelId || failed ? (
+      <div
+        className="lv-tour__progress"
+        data-state={failed ? "failed" : loading ? "loading" : "ready"}
+      >
+        {failed ? (
+          <>
+            <span className="lv-tour__error">
+              {t("introTour.download.failedShort")}
+            </span>
+            <span className="lv-tour__actions">
+              <FluentButton
+                appearance="secondary"
+                size="small"
+                onClick={retryFirstRunDownload}
+                data-tour-retry=""
+              >
+                {t("introTour.download.retry")}
+              </FluentButton>
+              <FluentButton
+                appearance="transparent"
+                size="small"
+                onClick={() => useIntroTourStore.getState().requestPicker(true)}
+              >
+                {t("introTour.download.choose")}
+              </FluentButton>
+            </span>
+          </>
+        ) : loading ? (
+          <>
+            <span aria-hidden="true">
+              {t("introTour.download.loading", {
+                model: modelName,
+                percent: download.percent,
+              })}
+            </span>
+            <span
+              className="lv-tour__bar"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={download.percent}
+              aria-valuetext={t("introTour.download.loading", {
+                model: modelName,
+                percent: download.percent,
+              })}
+              aria-label={t("introTour.download.label")}
+            >
+              <i style={{ width: `${download.percent}%` }} />
+            </span>
+          </>
+        ) : (
+          <span>{t("introTour.download.ready", { model: modelName })}</span>
+        )}
+      </div>
+    ) : null;
+
+  // Gezielte Ansagen: Bereit und Fehler (der Fortschritt selbst ist eine
+  // progressbar und wird nicht bei jedem Prozent angesagt).
+  const announcement = failed
+    ? t("introTour.download.failedShort")
+    : pendingModelId && download.ready
+      ? t("introTour.download.ready", { model: modelName })
+      : "";
 
   const body = (() => {
     switch (step.id) {
@@ -343,8 +433,8 @@ export const IntroTour: React.FC = () => {
         return (
           <>
             <p>{t("introTour.welcome.body")}</p>
-            {progressLine}
-            {pendingModelId && (
+            {downloadBlock}
+            {loading && (
               <p className="lv-tour__note">{t("introTour.welcome.note")}</p>
             )}
           </>
@@ -362,24 +452,49 @@ export const IntroTour: React.FC = () => {
               <li>
                 {pushToTalk
                   ? t("introTour.dictate.threeHold")
-                  : t("introTour.dictate.threeToggle")}
+                  : t("introTour.dictate.threeToggle", { shortcut })}
               </li>
             </ol>
             <p className="lv-tour__note">{t("introTour.dictate.note")}</p>
           </>
         );
-      case "try":
+      case "try": {
+        const fieldId = `${bodyId}-try`;
+        const hintId = `${bodyId}-try-hint`;
         return (
           <>
-            <p>{t("introTour.try.body", { shortcut })}</p>
+            <p>
+              {pushToTalk
+                ? t("introTour.try.bodyHold", { shortcut })
+                : t("introTour.try.bodyToggle", { shortcut })}
+            </p>
+            <label className="lv-tour__label" htmlFor={fieldId}>
+              {t("introTour.try.field")}
+            </label>
             <textarea
+              id={fieldId}
               className="lv-tour__try"
               rows={3}
-              aria-label={t("introTour.try.field")}
+              disabled={!dictationReady}
+              aria-describedby={hintId}
               placeholder={t("introTour.try.placeholder")}
             />
-            {pendingModelId && !download.ready ? progressLine : null}
+            <p id={hintId} className="lv-tour__note">
+              {dictationReady
+                ? t("introTour.try.ready")
+                : t("introTour.try.locked")}
+            </p>
           </>
+        );
+      }
+      case "pages":
+        return (
+          <ul className="lv-tour__list">
+            <li>{t("introTour.pages.history")}</li>
+            <li>{t("introTour.pages.meetings")}</li>
+            <li>{t("introTour.pages.tts")}</li>
+            <li>{t("introTour.pages.voice")}</li>
+          </ul>
         );
       case "tools":
         return (
@@ -394,36 +509,44 @@ export const IntroTour: React.FC = () => {
         return (
           <>
             <p>{t("introTour.end.body")}</p>
-            {pendingModelId && !download.ready ? (
+            {loading ? (
               <p className="lv-tour__note">{t("introTour.end.stillLoading")}</p>
             ) : null}
           </>
         );
-      default:
-        return <p>{t(`introTour.${step.id}.body`)}</p>;
     }
   })();
 
   const Icon = step.icon;
   const art =
     step.id === "dictate" ? (
-      <DictationAnimation keys={keys} sample={t("introTour.dictate.sample")} />
+      <DictationAnimation
+        keys={keys}
+        sample={t("introTour.dictate.sample")}
+        reduced={reduced}
+      />
     ) : (
       <div className="lv-tour__icon" data-done={step.id === "end" || undefined}>
         <Icon size={40} aria-hidden={true} />
       </div>
     );
 
+  const stepLabel = t("introTour.stepOf", {
+    step: index + 1,
+    total: TOUR_STEPS.length,
+  });
+
   const content = (
     <>
-      <div className="lv-tour__eyebrow">
-        {t(`introTour.${step.id}.eyebrow`)} ·{" "}
-        {t("introTour.stepOf", { step: index + 1, total: TOUR_STEPS.length })}
+      <div className="lv-tour__eyebrow" aria-hidden="true">
+        {t(`introTour.${step.id}.eyebrow`)} · {stepLabel}
       </div>
-      <h2 className="lv-tour__title" id="lv-tour-title">
+      <h2 className="lv-tour__title" id={titleId}>
         {t(`introTour.${step.id}.title`)}
       </h2>
-      <div className="lv-tour__body">{body}</div>
+      <div className="lv-tour__body" id={bodyId}>
+        {body}
+      </div>
       <div className="lv-tour__nav">
         <span className="lv-tour__dots" aria-hidden="true">
           {TOUR_STEPS.map((s, i) => (
@@ -440,7 +563,12 @@ export const IntroTour: React.FC = () => {
             {t("introTour.back")}
           </FluentButton>
         )}
-        <FluentButton appearance="primary" onClick={next} data-tour-primary="">
+        <FluentButton
+          appearance="primary"
+          onClick={next}
+          disabled={!canAdvance}
+          data-tour-primary=""
+        >
           {last
             ? t("introTour.finish")
             : index === 0
@@ -452,8 +580,7 @@ export const IntroTour: React.FC = () => {
   );
 
   // Platz für die Sprechblase: rechts vom Ziel, sonst darunter. Ziele in der
-  // unteren Hälfte (Werkzeuge) richten die Blase an ihrer Unterkante aus,
-  // damit sie nicht aus dem Fenster ragt.
+  // unteren Hälfte richten die Blase an ihrer Unterkante aus.
   const popStyle: React.CSSProperties & Record<string, string | number> = {};
   let arrow: "left" | "left-bottom" | "top" = "left";
   if (mode === "spot" && rect) {
@@ -468,25 +595,41 @@ export const IntroTour: React.FC = () => {
         arrow = "left-bottom";
         const bottom = Math.max(16, vh - rect.bottom);
         popStyle.bottom = bottom;
+        popStyle.maxHeight = vh - bottom - 16;
         popStyle["--lv-tour-arrow"] =
           `${Math.max(16, vh - mid - bottom - 6)}px`;
       } else {
-        const top = Math.max(16, mid - 40);
+        const top = Math.max(16, Math.min(mid - 40, rect.top));
         popStyle.top = top;
+        popStyle.maxHeight = vh - top - 16;
         popStyle["--lv-tour-arrow"] = `${Math.max(16, mid - top - 6)}px`;
       }
     } else {
       arrow = "top";
       const left = Math.max(16, Math.min(rect.left, vw - width - 16));
+      const top = Math.min(rect.bottom + 16, vh - 160);
       popStyle.left = left;
-      popStyle.top = rect.bottom + 16;
+      popStyle.top = top;
+      popStyle.maxHeight = vh - top - 16;
       popStyle["--lv-tour-arrow"] =
         `${Math.max(16, rect.left + rect.width / 2 - left - 6)}px`;
     }
   }
 
   return (
-    <div className="lv-tour" data-mode={mode} data-testid="intro-tour">
+    <div
+      className="lv-tour"
+      data-mode={mode}
+      data-reduced={reduced || undefined}
+      data-testid="intro-tour"
+    >
+      {/* Schrittwechsel und Bereitschaft für Screenreader */}
+      <div className="lv-tour__sr" role="status" aria-live="polite">
+        {`${stepLabel}: ${t(`introTour.${step.id}.title`)}`}
+      </div>
+      <div className="lv-tour__sr" role="alert" aria-live="assertive">
+        {announcement}
+      </div>
       {mode === "dialog" ? (
         <div className="lv-tour__shade" />
       ) : rect ? (
@@ -505,7 +648,9 @@ export const IntroTour: React.FC = () => {
         key={step.id}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="lv-tour-title"
+        aria-labelledby={titleId}
+        aria-describedby={bodyId}
+        tabIndex={-1}
         className={mode === "dialog" ? "lv-tour__dialog" : "lv-tour__pop"}
         data-arrow={mode === "spot" ? arrow : undefined}
         style={mode === "spot" ? popStyle : undefined}

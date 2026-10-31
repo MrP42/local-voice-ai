@@ -18,6 +18,29 @@ export const startFirstRunDictation = (): Promise<boolean> =>
     running = null;
   }));
 
+/** Lädt das Diktatmodell; bei Fehler zeigt die Tour „Wiederholen“. */
+const download = (id: string) => {
+  const tour = useIntroTourStore.getState();
+  tour.setFailedModel(null);
+  tour.setPendingModel(id);
+  void useModelStore
+    .getState()
+    .downloadModel(id)
+    .then((ok) => {
+      if (ok) return;
+      // Die Ursache meldet der Modell-Store per Toast.
+      const state = useIntroTourStore.getState();
+      state.setPendingModel(null);
+      state.setFailedModel(id);
+    });
+};
+
+/** „Wiederholen“ nach gescheitertem Download (nur aus der Tour). */
+export const retryFirstRunDownload = () => {
+  const id = useIntroTourStore.getState().failedModelId;
+  if (id) download(id);
+};
+
 const setupDictation = async (): Promise<boolean> => {
   if (useIntroTourStore.getState().pendingModelId) return true;
   const id = await readFirstRunDictationModel();
@@ -28,20 +51,8 @@ const setupDictation = async (): Promise<boolean> => {
   const model = useModelStore.getState().models.find((m) => m.id === id);
   if (!model) return false;
 
-  const { setPendingModel } = useIntroTourStore.getState();
-  setPendingModel(id);
-  if (!model.is_downloaded) {
-    void useModelStore
-      .getState()
-      .downloadModel(id)
-      .then((ok) => {
-        if (ok) return;
-        setPendingModel(null);
-        // Die Ursache meldet der Modell-Store; die App zeigt die Auswahl.
-        useIntroTourStore.getState().setSetupFailed(true);
-        toast.info(i18n.t("introTour.download.failed"));
-      });
-  }
+  useIntroTourStore.getState().setPendingModel(id);
+  if (!model.is_downloaded) download(id);
   return true;
 };
 
@@ -68,8 +79,7 @@ export const useFirstRunModelSelection = () => {
   useEffect(() => {
     if (!pendingModelId || !ready || done.current === pendingModelId) return;
     done.current = pendingModelId;
-    const { setPendingModel, setSetupFailed, open } =
-      useIntroTourStore.getState();
+    const { setPendingModel, setFailedModel } = useIntroTourStore.getState();
     // Hat der Nutzer inzwischen selbst ein Modell gewählt, bleibt es dabei.
     if (currentModel && currentModel !== pendingModelId) {
       setPendingModel(null);
@@ -77,12 +87,14 @@ export const useFirstRunModelSelection = () => {
     }
     void selectModel(pendingModelId).then((ok) => {
       if (ok) {
+        // Läuft die Tour noch, meldet sie „bereit“ selbst (ohne Toast über
+        // ihren Knöpfen) und räumt beim Schließen auf.
+        if (useIntroTourStore.getState().open) return;
         toast.success(i18n.t("introTour.download.selected"));
-        // Läuft die Tour noch, zeigt sie „bereit“ und räumt beim Schließen auf.
-        if (!open) setPendingModel(null);
+        setPendingModel(null);
       } else {
         setPendingModel(null);
-        setSetupFailed(true);
+        setFailedModel(pendingModelId);
         toast.error(i18n.t("onboarding.errors.selectModel"));
       }
     });

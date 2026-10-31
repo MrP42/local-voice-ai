@@ -79,16 +79,22 @@ function App() {
   const hasCompletedPostOnboardingInit = useRef(false);
   const firstRunStarted = useRef(false);
   const startIntroTour = useIntroTourStore((state) => state.startFirstTime);
-  const firstRunFailed = useIntroTourStore((state) => state.setupFailed);
+  const firstRunFailed = useIntroTourStore(
+    (state) => !!state.failedModelId && !state.open,
+  );
+  const pickerRequested = useIntroTourStore((state) => state.pickerRequested);
   useFirstRunModelSelection();
-  // Automatischer Download gescheitert (z. B. offline): zurück zur
-  // Modellauswahl, solange die Ersteinrichtung nicht abgeschlossen ist.
+  // Download gescheitert und Tour geschlossen, oder „Modell selbst wählen“:
+  // zurück zur Modellauswahl, solange die Ersteinrichtung offen ist.
   useEffect(() => {
-    if (!firstRunFailed || isReturningUser) return;
-    useIntroTourStore.getState().setSetupFailed(false);
-    useIntroTourStore.setState({ open: false });
+    if ((!firstRunFailed && !pickerRequested) || isReturningUser) return;
+    useIntroTourStore.setState({
+      open: false,
+      failedModelId: null,
+      pickerRequested: false,
+    });
     setOnboardingStep("model");
-  }, [firstRunFailed, isReturningUser]);
+  }, [firstRunFailed, pickerRequested, isReturningUser]);
   // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
   // (bleibt über Neustarts), schmal als Overlay-Drawer.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);

@@ -165,7 +165,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }}
         className="workspace-nav__fluent"
       >
-        <div className="workspace-nav__primary" id="workspace-nav-items">
+        <div
+          className="workspace-nav__primary"
+          id="workspace-nav-items"
+          data-tour="nav-primary"
+        >
           {PRIMARY.map(item)}
         </div>
         <div className="workspace-nav__secondary">

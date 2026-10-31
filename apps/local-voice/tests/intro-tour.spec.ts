@@ -10,7 +10,8 @@ const setup = async (
   opts: {
     erststart?: string;
     onboardingCompleted?: boolean;
-    downloadFails?: boolean;
+    /** Wie oft download_model scheitert, bevor es gelingt. */
+    downloadFails?: number;
   } = {},
 ) => {
   page.on("pageerror", (error) => {
@@ -21,6 +22,7 @@ const setup = async (
       const callbacks = new Map<number, (e: unknown) => void>();
       const listeners = new Map<string, number[]>();
       let callback = 0;
+      let failures = downloadFails;
       const calls: { cmd: string; args: unknown }[] = [];
       const model = {
         id: nemotron,
@@ -113,11 +115,15 @@ const setup = async (
               if (erststart === undefined) throw new Error("not found");
               return Array.from(new TextEncoder().encode(erststart));
             }
-            if (cmd === "get_available_models") return [model];
+            // Kopie wie bei echter IPC (sonst sieht der Store keine Änderung).
+            if (cmd === "get_available_models") return [{ ...model }];
             if (cmd === "get_current_model" || cmd === "get_selected_model")
               return "";
             if (cmd === "download_model") {
-              if (downloadFails) throw "offline";
+              if (failures > 0) {
+                failures--;
+                throw "offline";
+              }
               return null;
             }
             if (cmd === "set_active_model") return null;
@@ -144,7 +150,7 @@ const setup = async (
       erststart: opts.erststart,
       onboardingCompleted: opts.onboardingCompleted ?? false,
       nemotron: NEMOTRON,
-      downloadFails: opts.downloadFails ?? false,
+      downloadFails: opts.downloadFails ?? 0,
     },
   );
 };
@@ -156,6 +162,26 @@ const commands = (page: Page) =>
         .__calls ?? []
     ).map((c) => ({ cmd: c.cmd, args: c.args })),
   );
+
+const emit = (page: Page, event: string, payload: unknown) =>
+  page.evaluate(
+    ([e, p]) =>
+      (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
+        e as string,
+        p,
+      ),
+    [event, payload] as const,
+  );
+
+const finishDownload = (page: Page) =>
+  page.evaluate((id) => {
+    const w = window as unknown as {
+      __emit: (e: string, p: unknown) => void;
+      __model: { is_downloaded: boolean };
+    };
+    w.__model.is_downloaded = true;
+    w.__emit("model-download-complete", id);
+  }, NEMOTRON);
 
 test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", async ({
   page,
@@ -169,9 +195,6 @@ test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", asy
   await expect(
     dialog.getByRole("heading", { name: "Schön, dass du da bist" }),
   ).toBeVisible();
-  await expect(dialog.getByRole("status")).toContainText(
-    "Nemotron 3.5 ASR Streaming wird eingerichtet",
-  );
   // Kein Auswahlbildschirm: Download ohne Rückfrage gestartet.
   await expect
     .poll(async () =>
@@ -183,43 +206,28 @@ test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", asy
     )
     .toBe(true);
 
-  // Fortschritt kommt als Ereignis aus dem Backend.
-  await page.evaluate((id) => {
-    (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(
-      "model-download-progress",
-      { model_id: id, downloaded: 40, total: 100, percentage: 40 },
-    );
-  }, NEMOTRON);
-  await expect(dialog.getByRole("progressbar")).toHaveAttribute(
-    "aria-valuenow",
-    "40",
+  // Fortschritt als progressbar; die Tour beginnt erst mit bereitem Modell.
+  await emit(page, "model-download-progress", {
+    model_id: NEMOTRON,
+    downloaded: 40,
+    total: 100,
+    percentage: 40,
+  });
+  const bar = dialog.getByRole("progressbar");
+  await expect(bar).toHaveAttribute("aria-valuenow", "40");
+  await expect(bar).toHaveAttribute(
+    "aria-valuetext",
+    /Nemotron 3.5 ASR Streaming wird eingerichtet … 40 %/,
   );
-
-  // Weiter: Diktieren mit Kürzel aus den Einstellungen.
-  await dialog.getByRole("button", { name: "Tour starten" }).click();
-  await expect(
-    tour.getByRole("heading", { name: "In jede App diktieren" }),
-  ).toBeVisible();
-  await expect(tour).toContainText("Strg + Leertaste gedrückt halten");
-
-  // Pfeiltaste: Übungsfeld, dann Spotlight auf „Verlauf“.
+  const start = dialog.getByRole("button", { name: "Tour starten" });
+  await expect(start).toBeDisabled();
   await page.keyboard.press("ArrowRight");
-  await expect(tour.getByRole("textbox", { name: /Übungsfeld/ })).toBeFocused();
-  await tour.getByRole("button", { name: "Weiter" }).click();
-  await expect(tour).toHaveAttribute("data-mode", "spot");
   await expect(
-    tour.getByRole("heading", { name: "Alles wiederfinden" }),
+    dialog.getByRole("heading", { name: "Schön, dass du da bist" }),
   ).toBeVisible();
 
-  // Download fertig: Modell wird zum Diktatmodell.
-  await page.evaluate((id) => {
-    const w = window as unknown as {
-      __emit: (e: string, p: unknown) => void;
-      __model: { is_downloaded: boolean };
-    };
-    w.__model.is_downloaded = true;
-    w.__emit("model-download-complete", id);
-  }, NEMOTRON);
+  // Download fertig: Modell wird zum Diktatmodell, Bereitschaft wird angesagt.
+  await finishDownload(page);
   await expect
     .poll(async () =>
       (await commands(page)).some(
@@ -229,14 +237,109 @@ test("Erstinstallation lädt Nemotron 3.5 und startet die Einführungstour", asy
       ),
     )
     .toBe(true);
+  await expect(tour.getByRole("alert")).toContainText("ist bereit");
+  await expect(start).toBeEnabled();
+  await expect(start).toBeFocused();
 
-  // Esc schließt die Tour; Startseite bietet sie erneut an.
+  // Diktieren mit Kürzel aus den Einstellungen; Schrittwechsel wird angesagt.
+  await start.click();
+  await expect(
+    tour.getByRole("heading", { name: "In Textfelder diktieren" }),
+  ).toBeVisible();
+  await expect(tour).toContainText("Strg + Leertaste gedrückt halten");
+  await expect(tour.getByRole("status")).toHaveText(
+    "2/6: In Textfelder diktieren",
+  );
+  // Fokus liegt auf „Weiter“: Pfeiltasten schalten dann nicht weiter.
+  const weiter = tour.getByRole("button", { name: "Weiter" });
+  await expect(weiter).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    tour.getByRole("heading", { name: "In Textfelder diktieren" }),
+  ).toBeVisible();
+
+  // Übungsfeld: beschriftet, freigegeben, fokussiert.
+  await weiter.click();
+  const field = tour.getByRole("textbox", { name: "Übungsfeld zum Diktieren" });
+  await expect(field).toBeEnabled();
+  await expect(field).toBeFocused();
+  // Esc im Übungsfeld schließt die Tour nicht (dort bricht Esc das Diktat ab).
+  await page.keyboard.press("Escape");
+  await expect(field).toBeVisible();
+
+  // Fokusfalle: Tab bleibt im Dialog.
+  for (let i = 0; i < 6; i++) await page.keyboard.press("Tab");
+  expect(
+    await page.evaluate(() =>
+      document.querySelector("[role=dialog]")?.contains(document.activeElement),
+    ),
+  ).toBe(true);
+
+  // Seiten im Spotlight.
+  await tour.getByRole("button", { name: "Weiter" }).click();
+  await expect(tour).toHaveAttribute("data-mode", "spot");
+  await expect(
+    tour.getByRole("heading", { name: "Alles auf einen Blick" }),
+  ).toBeVisible();
+
+  // Esc schließt die Tour; Fokus landet auf einem sinnvollen Ziel.
   await page.keyboard.press("Escape");
   await expect(tour).toHaveCount(0);
-  await page.getByTestId("workspace-start-tour").click();
+  const again = page.getByTestId("workspace-start-tour");
+  await expect(again).toBeFocused();
+
+  // Erneut starten löst keinen weiteren Download aus.
+  const downloads = (await commands(page)).filter(
+    (c) => c.cmd === "download_model",
+  ).length;
+  await again.click();
   await expect(
     page.getByRole("heading", { name: "Schön, dass du da bist" }),
   ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("intro-tour")
+      .getByRole("button", { name: "Tour starten" }),
+  ).toBeEnabled();
+  expect(
+    (await commands(page)).filter((c) => c.cmd === "download_model").length,
+  ).toBe(downloads);
+});
+
+test("Gescheiterter Download: Wiederholen in der Tour", async ({ page }) => {
+  await setup(page, { downloadFails: 1 });
+  await page.goto("/");
+  const tour = page.getByTestId("intro-tour");
+  await expect(tour.getByRole("alert")).toContainText(
+    "konnte nicht geladen werden",
+  );
+  await expect(
+    tour.getByRole("button", { name: "Tour starten" }),
+  ).toBeDisabled();
+  await tour.getByRole("button", { name: "Wiederholen" }).click();
+  await expect(tour.getByRole("progressbar")).toBeVisible();
+  expect(
+    (await commands(page)).filter((c) => c.cmd === "download_model").length,
+  ).toBe(2);
+  await finishDownload(page);
+  await expect(
+    tour.getByRole("button", { name: "Tour starten" }),
+  ).toBeEnabled();
+});
+
+test("Bewegung reduzieren zeigt das Diktat als Endzustand", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await setup(page);
+  await page.goto("/");
+  const tour = page.getByTestId("intro-tour");
+  await finishDownload(page);
+  await tour.getByRole("button", { name: "Tour starten" }).click();
+  await expect(tour).toHaveAttribute("data-reduced", "true");
+  await expect(tour.locator(".lv-tour-anim__field")).toHaveText(
+    "Sehr geehrte Frau Berger, vielen Dank für Ihre Nachricht.",
+  );
 });
 
 test("Installer ohne Diktatmodell zeigt die Modellauswahl", async ({
@@ -260,14 +363,11 @@ test("Bestehende Installation startet ohne Tour", async ({ page }) => {
   await expect(page.getByTestId("intro-tour")).toHaveCount(0);
 });
 
-test("Gescheiterter Download führt zur Modellauswahl", async ({ page }) => {
-  await setup(page, { downloadFails: true });
+test("Modell selbst wählen führt zur Modellauswahl", async ({ page }) => {
+  await setup(page, { downloadFails: 5 });
   await page.goto("/");
-  await expect(
-    page.getByText("Das Diktatmodell konnte nicht geladen werden", {
-      exact: false,
-    }),
-  ).toBeVisible();
+  const tour = page.getByTestId("intro-tour");
+  await tour.getByRole("button", { name: "Modell selbst wählen" }).click();
   await expect(page.getByTestId("intro-tour")).toHaveCount(0);
   await expect(page.getByText("Nemotron 3.5 ASR Streaming")).toBeVisible();
 });

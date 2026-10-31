@@ -6191,51 +6191,37 @@
       "loading": "Setting up dictation model {{model}} … {{percent}} %",
       "ready": "{{model}} is ready – you can dictate right away.",
       "failed": "The dictation model could not be downloaded. Pick a model to get started – or try again.",
-      "selected": "Dictation model set up – you can dictate now."
+      "selected": "Dictation model set up – you can dictate now.",
+      "failedShort": "The dictation model could not be downloaded. Check your internet connection and try again.",
+      "retry": "Retry",
+      "choose": "Choose a model myself"
     },
     "welcome": {
       "eyebrow": "Welcome",
       "title": "Glad you're here",
-      "body": "Local Voice AI turns speech into text – entirely on your device. In two minutes we'll show you where everything is.",
+      "body": "Local Voice AI turns speech into text – entirely on your device. As soon as the dictation model is ready, six short steps show you where everything is.",
       "note": "The download keeps running in the background, even if you skip the tour."
     },
     "dictate": {
       "eyebrow": "Dictation",
-      "title": "Dictate into any app",
-      "one": "Click into the text field of the target app – Word, Outlook, browser, anything.",
+      "title": "Dictate into text fields",
+      "one": "Click into a text field – for example in Word, Outlook or the browser. Dictation works wherever you could type.",
       "twoHold": "Hold {{shortcut}} and speak.",
       "twoToggle": "Press {{shortcut}} and speak.",
       "threeHold": "Release – the text is inserted.",
       "threeToggle": "Press {{shortcut}} again – the text is inserted.",
-      "note": "Cancel with Esc. Change the shortcut and mode (hold or toggle) under Settings › Dictation.",
+      "note": "During a recording, Esc cancels the dictation without inserting text. Change the shortcut and mode (hold or toggle) under Settings › Dictation.",
       "sample": "Dear Ms Berger, thank you for your message."
     },
     "try": {
       "eyebrow": "Try it",
       "title": "Give it a try",
-      "body": "Click into the field, use {{shortcut}} and say for example: “Today is a good day for dictation.”",
       "field": "Practice field for dictation",
-      "placeholder": "Your text appears here …"
-    },
-    "history": {
-      "eyebrow": "History",
-      "title": "Find everything again",
-      "body": "Every dictation lands in the history: copy text, play the recording, transcribe again or refine it."
-    },
-    "meetings": {
-      "eyebrow": "Recordings",
-      "title": "Record meetings",
-      "body": "Transcribe conversations live or import audio and video files – with speakers, timestamps, summary and export."
-    },
-    "tts": {
-      "eyebrow": "Read aloud",
-      "title": "Listen to texts",
-      "body": "Have texts and documents read aloud, choose voice and speaking style and save them as audio."
-    },
-    "voice": {
-      "eyebrow": "Voice chat",
-      "title": "Talk to the AI",
-      "body": "Like a phone call: speak freely and hear the answer. Typing and attaching files works too."
+      "placeholder": "Your text appears here …",
+      "bodyHold": "Click into the practice field, hold {{shortcut}} and say for example: “Today is a good day for dictation.” The text appears when you release.",
+      "bodyToggle": "Click into the practice field, press {{shortcut}} and say for example: “Today is a good day for dictation.” Press {{shortcut}} again and the text appears.",
+      "ready": "Esc in the practice field only cancels the recording. Leave the tour with “Next” or “Skip”.",
+      "locked": "The practice field unlocks as soon as the dictation model is ready."
     },
     "tools": {
       "eyebrow": "Tools",
@@ -6250,6 +6236,14 @@
       "title": "Let's go",
       "body": "You can restart the introduction any time from the help menu (question mark top right) and on the home page.",
       "stillLoading": "The dictation model is still downloading. Once it's done you can dictate – the status bar shows the progress."
+    },
+    "pages": {
+      "eyebrow": "Pages",
+      "title": "Everything at a glance",
+      "history": "History: find every dictation again, copy, play or transcribe it again.",
+      "meetings": "Recordings: transcribe meetings live or import audio and video files.",
+      "tts": "Read aloud: listen to texts and documents and save them as audio.",
+      "voice": "Voice chat: like a phone call with the AI – speak and hear the answer."
     }
   }
 }
