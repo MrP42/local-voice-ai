@@ -27,6 +27,7 @@
   },
   "tts": {
     "reader": {
+      "dockTools": "Voice and tools",
       "originalPage": "Page {{page}} in the original",
       "label": "Book pages",
       "roleBook": "book",
@@ -795,6 +796,9 @@
       "defaultVoice": "Default voice"
     },
     "layout": {
+      "hideColumn": "Hide right column",
+      "showColumn": "Show column",
+      "showColumnHint": "Show voice, tools and files on the right again",
       "sideBySide": "Show controls and files side by side",
       "resizePages": "Resize page list",
       "resizeRight": "Resize right column",

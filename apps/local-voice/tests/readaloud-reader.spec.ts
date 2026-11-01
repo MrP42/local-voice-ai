@@ -494,7 +494,7 @@ test("Weiterlesen: Play setzt an der gemerkten Stelle fort, „Von vorn“ verwi
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.getByTestId("reader-restart").click();
-  await expect(page.getByTestId("reader-where")).toHaveText(/^Seite 1 von/);
+  await expect(page.getByTestId("reader-where")).toHaveText(/^(Kapitel 1)?Seite 1 von/);
   await playFromBar(page, "Vorlesen");
   await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
 });
@@ -1369,4 +1369,121 @@ test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ 
   const last = menu.getByRole("menuitemcheckbox", { name: "Automatisch mitblättern" });
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport();
+});
+
+test("Variante A: rechte Spalte ausblenden, Stimme und Werkzeuge in der Leiste, Leiste nicht höher", async ({
+  page,
+}) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  const before = (await bar.boundingBox())!.height;
+  await page.getByTestId("right-column-hide").click();
+  await expect(page.getByTestId("tts-right-column")).toHaveCount(0);
+  const dock = page.getByTestId("reader-dock");
+  await expect(dock.getByTestId("voice-select")).toBeVisible();
+  await expect(dock.getByTestId("tts-action-menu")).toBeVisible();
+  await expect(dock.getByTestId("tts-action-add")).toBeVisible();
+  // Ohne eingerichtete Stimme: Warnknopf statt verborgenem Hinweistext.
+  await expect(dock.getByTestId("reader-dock-voice-setup")).toHaveAttribute(
+    "aria-label",
+    "Sprachausgabe einrichten",
+  );
+  // Die Leiste bleibt so hoch wie vorher (zwei Zeilen, keine dritte).
+  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(before + 1);
+  await expect(page.getByTestId("reader-where")).toBeVisible();
+  // Gemerkt; beschrifteter Knopf blendet wieder ein.
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  const show = page.getByTestId("right-column-show");
+  await expect(show).toHaveText("Spalte einblenden");
+  await show.click();
+  await expect(page.getByTestId("tts-right-column")).toBeVisible();
+  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
+});
+
+test("Variante A schmal: Werkzeuge hinter einem Knopf, Leiste einzeilig in der Transportzeile", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page, BOOK, 1000);
+  const bar = page.getByTestId("reader-player");
+  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
+  const btn = page.getByTestId("reader-dock-open");
+  await expect(btn).toHaveAttribute("aria-label", "Stimme und Werkzeuge");
+  // Transportzeile: Werkzeugknopf, Play und Tempo auf einer Höhe.
+  const y = async (id: string) => {
+    const b = (await page.getByTestId(id).boundingBox())!;
+    return b.y + b.height / 2;
+  };
+  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
+  const height = (await bar.boundingBox())!.height;
+  await btn.click();
+  const panel = page.getByTestId("reader-dock-panel");
+  await expect(panel.getByTestId("voice-select")).toBeVisible();
+  await expect(panel.getByTestId("tts-action-menu")).toBeVisible();
+  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(height + 1);
+  // Fokus im Fenster; Escape schließt und gibt ihn an den Knopf zurück.
+  await expect(panel.locator(":focus")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(btn).toBeFocused();
+  // Bei 390 px bleibt der Knopf neben Play, Kapitel/Satz im Überlaufmenü.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId("reader-dock-open")).toBeVisible();
+  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
+});
+
+test("Variante A: Kapitel und Satz in der Leiste, bei 390 px im Überlaufmenü", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page);
+  const where = page.getByTestId("reader-where");
+  // Ohne Sitzung: Kapitel über der Seitenangabe.
+  await expect(where.getByTestId("reader-chapter")).toHaveText("Kapitel 1");
+  await expect(where).toContainText("Seite 1 von");
+  // Mit Sitzung: Kapitel und Satz.
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 1, total: 6 });
+  await expect(where).toContainText("Kapitel 1");
+  await expect(where).toContainText("Satz 2 von 6");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(where).toBeHidden();
+  await page.getByRole("button", { name: "Weitere Optionen" }).click();
+  const head = page.getByTestId("reader-more-where");
+  await expect(head).toContainText("Kapitel 1");
+  await expect(head).toContainText("Satz 2 von 6");
+});
+
+test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const hide = page.getByRole("button", { name: "Rechte Spalte ausblenden" });
+  await expect(hide).toHaveAttribute("title", "Rechte Spalte ausblenden");
+  await hide.click();
+  const show = page.getByRole("button", { name: "Spalte einblenden" });
+  await expect(show).toHaveAttribute("title", /wieder rechts anzeigen/);
+  const bar = page.getByRole("region", { name: "Wiedergabe" });
+  await expect(
+    bar.getByRole("button", { name: "Sprachausgabe einrichten" }),
+  ).toHaveAttribute("title", /.+/);
+  for (const name of ["Hinzufügen", "Diktieren", "Als Audio speichern…", "Änderungen vorab erzeugen", "Weitere Aktionen"]) {
+    const btn = bar.getByRole("button", { name, exact: true });
+    await expect(btn, name).toBeVisible();
+    // Tooltip beim Fokus (IconAction / ActionMenu).
+    await btn.focus();
+    await expect(page.getByRole("tooltip").filter({ hasText: name }).first(), name).toBeVisible();
+    await btn.blur();
+  }
+  // Schmal: der Werkzeugknopf ist benannt und hat einen Tooltip.
+  await page.setViewportSize({ width: 1000, height: 900 });
+  const tools = bar.getByRole("button", { name: "Stimme und Werkzeuge" });
+  await expect(tools).toHaveAttribute("title", "Stimme und Werkzeuge");
+  await tools.click();
+  await expect(page.getByRole("dialog", { name: "Stimme und Werkzeuge" })).toBeVisible();
 });
