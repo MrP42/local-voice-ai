@@ -1,6 +1,14 @@
 fn main() {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    build_apple_intelligence_bridge();
+    // Das Ziel steht in CARGO_CFG_TARGET_*, nicht in `cfg!` – das beschreibt im
+    // Build-Skript den HOST. Sonst fehlt beim Bau fuer Apple Silicon auf einem Intel-Mac
+    // die Swift-Bruecke (Linkfehler `_is_apple_intelligence_available`), und auf einem
+    // Apple-Silicon-Mac landete sie im x86_64-Build.
+    #[cfg(target_os = "macos")]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
+    {
+        build_apple_intelligence_bridge();
+    }
 
     generate_tray_translations();
 
@@ -406,7 +414,7 @@ fn escape_string(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn build_apple_intelligence_bridge() {
     use std::env;
     use std::path::{Path, PathBuf};
@@ -590,7 +598,7 @@ fn build_apple_intelligence_bridge() {
 /// FoundationModelsMacros plugin, so the Apple Intelligence Swift path cannot
 /// compile (issue #1448). On any error we conservatively return false so the
 /// existing SDK-presence check decides.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn is_command_line_tools_only() -> bool {
     use std::process::Command;
 
