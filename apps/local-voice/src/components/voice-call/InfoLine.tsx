@@ -87,7 +87,7 @@ export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
   const model = ready?.llm || llm.label;
 
   return (
-    <div className="flex items-center gap-2.5 h-9 max-sm:h-[44px] px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
+    <div className="flex items-center gap-2.5 max-sm:gap-1 h-9 max-sm:h-[44px] px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
       {leading}
       <Popover positioning="below-start" withArrow={false}>
         <PopoverTrigger disableButtonEnhancement>
@@ -188,9 +188,9 @@ export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
       )}
       {total > 0 && (
         <>
-          <span className="w-px h-3.5 bg-mid-gray/30 shrink-0" />
+          <span className="w-px h-3.5 bg-mid-gray/30 shrink-0 max-sm:hidden" />
           <span
-            className="shrink-0 tabular-nums"
+            className="shrink-0 tabular-nums max-sm:hidden"
             title={t("voiceCall.info.tokensHint", {
               input: num(usage.promptTokens),
               output: num(usage.completionTokens),

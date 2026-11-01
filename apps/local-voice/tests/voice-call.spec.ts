@@ -2498,6 +2498,9 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
       const name = (await b.getAttribute("aria-label")) ?? "?";
       expect(box!.width, `${name} Breite`).toBeGreaterThanOrEqual(43.5);
       expect(box!.height, `${name} Höhe`).toBeGreaterThanOrEqual(43.5);
+      // Vollständig sichtbar, nicht vom überlaufenden Kopf abgeschnitten.
+      expect(box!.x, `${name} links`).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width, `${name} rechts`).toBeLessThanOrEqual(390);
     }
     for (const b of await page.getByRole("toolbar").getByRole("button").all()) {
       const box = await b.boundingBox();
