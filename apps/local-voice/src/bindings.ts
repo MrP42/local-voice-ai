@@ -4077,6 +4077,117 @@ async voiceToolCall(name: string, args: string) : Promise<Result<string, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Meldet eine Korrektur: `erkannt` ist, was die Erkennung geliefert hat, `korrigiert`, was der
+ * Nutzer daraus gemacht hat. Ist Lernen aus (Standard), passiert nichts (`reason` = `off`).
+ */
+async speechLearningFeedback(bereich: string, erkannt: string, korrigiert: string) : Promise<Result<FeedbackOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_feedback", { bereich, erkannt, korrigiert }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die gelernten Paare eines Bereichs, jüngste zuerst. Gleicht dabei ab, welche übernommenen
+ * Begriffe noch im Wortschatz stehen.
+ */
+async speechLearningList(bereich: string) : Promise<Result<LearnedPair[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_list", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt den Status eines Paares: `vorschlag`, `uebernommen` oder `abgelehnt`. Übernehmen trägt
+ * den Begriff in den eigenen Wortschatz ein, alles andere nimmt zurück, was von hier stammt.
+ */
+async speechLearningSetStatus(id: number, status: string) : Promise<Result<LearnedPair, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_set_status", { id, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht ein Paar wirklich.
+ */
+async speechLearningDelete(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht alle Paare eines Bereichs wirklich; Rückgabe: wie viele es waren.
+ */
+async speechLearningClear(bereich: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_clear", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Vorlesetext für die Einrichtung: fester Grundtext plus der eigene Wortschatz.
+ */
+async speechLearningSetupText() : Promise<SetupText> {
+    return await TAURI_INVOKE("speech_learning_setup_text");
+},
+/**
+ * Lädt das Spracherkennungsmodell, damit das Vorlesen gleich erkannt wird (die Aufnahme geht
+ * danach wie im Gespräch an `voice_call_transcribe`).
+ */
+async speechLearningSetupPrepare() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_prepare") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vergleicht die Erkennung des Vorlesens mit dem Vorlesetext und legt die Verhörer als
+ * Vorschläge ab. Bleibt vom Schalter „Aus Korrekturen lernen“ unberührt: Der Nutzer hat die
+ * Einrichtung selbst gestartet. Übernommen wird nichts ohne seinen Klick.
+ */
+async speechLearningSetupEvaluate(bereich: string, reference: string, transcript: string) : Promise<Result<SetupOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_evaluate", { bereich, reference, transcript }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Aus Korrekturen lernen“ (Standard aus).
+ */
+async changeSpeechLearningEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorschläge automatisch übernehmen“ (Standard aus; wirkt nur bei eingeschaltetem Lernen).
+ */
+async changeSpeechLearningAutoApplySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_auto_apply_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
@@ -6632,6 +6743,16 @@ meeting_mcp_include_transcript?: boolean;
  */
 voice_call_read_transcripts?: boolean; 
 /**
+ * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
+ * Schalter wird kein Paar gespeichert.
+ */
+speech_learning_enabled?: boolean; 
+/**
+ * Gelernte Paare mit genug Vorkommen gleich in `custom_words` übernehmen statt vorzuschlagen.
+ * Standard AUS; wirkt nur bei `speech_learning_enabled`.
+ */
+speech_learning_auto_apply?: boolean; 
+/**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
  * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -7541,6 +7662,22 @@ gedaempft: string;
  */
 linie: string }
 /**
+ * Was `feedback` gemacht hat. `reason`: `ok`, `nothing`, `rewrite` oder `off`.
+ */
+export type FeedbackOutcome = { reason: string; 
+/**
+ * Paare, die gespeichert oder hochgezählt wurden.
+ */
+learned: number; 
+/**
+ * Paare, die dadurch neu zum Vorschlag wurden.
+ */
+suggestions: number; 
+/**
+ * Paare, die dadurch (automatisch) übernommen wurden.
+ */
+adopted: number }
+/**
  * Wo in OneDrive geschrieben wird.
  */
 export type FilesMode = 
@@ -7888,6 +8025,14 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+/**
+ * Ein gelerntes Paar, wie es die Oberfläche sieht.
+ */
+export type LearnedPair = { id: number; bereich: string; gehoert: string; korrigiert: string; anzahl: number; zuletzt: string; 
+/**
+ * `beobachtet`, `vorschlag`, `uebernommen` oder `abgelehnt`.
+ */
+status: string }
 /**
  * Ein Briefkopf.
  */
@@ -9195,6 +9340,19 @@ export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" 
  * Ein Dienst, wie die Oberflaeche ihn fuer den Dialog „Integration hinzufuegen“ braucht.
  */
 export type ServiceInfo = { id: ServiceId; label: string; auth: AuthKind; capabilities: string[]; fields: ServiceField[]; token_help_url: string }
+/**
+ * Ergebnis der Einrichtung durch Vorlesen. `reason`: `ok`, `nothing` oder `rewrite`
+ * (der Nutzer hat etwas ganz anderes gelesen oder die Aufnahme war unbrauchbar).
+ */
+export type SetupOutcome = { reason: string; 
+/**
+ * Anteil der Wörter, die richtig erkannt wurden (0 bis 100).
+ */
+matched_percent: number; pairs: LearnedPair[] }
+/**
+ * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
+ */
+export type SetupText = { sentences: string[]; text: string }
 /**
  * Ein Pruefpunkt der Schild-Erklaerung. `id` wird in der Oberflaeche
  * uebersetzt, `detail` traegt Namen und Zahlen.

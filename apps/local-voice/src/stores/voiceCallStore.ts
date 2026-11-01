@@ -10,6 +10,7 @@ import {
   type CallUsageEvent,
   type TurnMetrics,
 } from "@/components/voice-call/engine";
+import { sendFeedback } from "@/components/voice-call/speechLearning";
 import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
 import {
@@ -50,6 +51,10 @@ export interface VoiceLine {
   latencyMs?: number;
   /** Gesprochen (Anruf) oder getippt; so steht es im gespeicherten Beitrag. */
   mode?: "typed" | "spoken";
+  /** Kennung der Äußerung in der Engine (für spätere Korrekturen im Verlauf der KI). */
+  turnId?: string;
+  /** Der Text, wie ihn die Spracherkennung geliefert hat; bleibt bei Korrekturen stehen. */
+  recognized?: string;
   /** Schon im Verlauf gespeichert (oder zum Speichern eingereiht). */
   persisted?: boolean;
   /** Dateien, die der Nutzer mitgeschickt hat (nur Name, Typ, Größe; kein Inhalt). */
@@ -129,7 +134,28 @@ function lineFromEntry(e: StoredEntry, id: number): VoiceLine {
     at: Date.parse(e.created_at) || Date.now(),
     mode: e.mode === "spoken" ? "spoken" : "typed",
     persisted: true,
+    turnId: `entry-${e.id}`,
+    recognized: e.role === "user" ? e.text : undefined,
   };
+}
+
+/**
+ * Darf die Zeile jetzt bearbeitet werden? Nur die eigene gesprochene Zeile, und nur wenn weder
+ * eine Antwort aussteht noch gerade gesprochen wird: sonst gehört der Text noch zu einem
+ * laufenden Schritt der Engine.
+ */
+export function lineEditable(
+  line: VoiceLine,
+  state: CallState,
+  textBusy: boolean,
+): boolean {
+  return (
+    line.role === "user" &&
+    line.mode === "spoken" &&
+    !!line.turnId &&
+    !textBusy &&
+    (state === "idle" || state === "listening")
+  );
 }
 
 function entryFromLine(
@@ -242,6 +268,11 @@ interface VoiceCallStore {
     display?: string,
     attachments?: HistoryAttachment[],
   ) => Promise<void>;
+  /**
+   * Eigene erkannte Zeile verbessern: Anzeige, Verlauf (gespeicherter Beitrag, Kontext der KI)
+   * und, nur bei eingeschaltetem Lernen, die Rückmeldung an die Spracherkennung.
+   */
+  editLine: (lineId: number, text: string) => Promise<void>;
   /** Leeres Gespräch; gespeichert wird erst beim ersten Beitrag. */
   newConversation: () => Promise<void>;
   loadConversations: () => Promise<void>;
@@ -312,7 +343,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
         onState: (state) => set({ state }),
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
         onLevel: (level) => levelListeners.forEach((fn) => fn(level)),
-        onUser: (text) => {
+        onUser: (text, turnId) => {
           const mode = typedNext ? "typed" : "spoken";
           const attachments = attachmentsNext;
           typedNext = false;
@@ -339,6 +370,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
                   at: Date.now(),
                   mode,
                   attachments,
+                  turnId,
+                  recognized: text,
                 },
               ],
             };
@@ -648,6 +681,39 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       }
     },
 
+    editLine: async (lineKey, text) => {
+      const { lines, state, textBusy } = get();
+      const line = lines.find((l) => l.id === lineKey);
+      const next = text.trim().slice(0, MAX_ENTRY_CHARS);
+      if (!line || !line.turnId || !lineEditable(line, state, textBusy)) return;
+      if (!next || next === line.text) return;
+      // Die Rückmeldung geht immer vom Original der Erkennung aus, auch nach einer zweiten Korrektur.
+      const heard = line.recognized ?? line.text;
+      set((s) => ({
+        lines: s.lines.map((l) =>
+          l.id === lineKey ? { ...l, text: next } : l,
+        ),
+      }));
+      engine?.correctUserText(line.turnId, next);
+      persistChain = persistChain.then(async () => {
+        const id = entryIds.get(lineKey);
+        // Ohne Kennung ist die Zeile noch nicht gespeichert: das Speichern nimmt den neuen Text mit.
+        if (!id) return;
+        try {
+          await invoke("conversation_update_entry", {
+            id,
+            text: next,
+            status: "complete",
+          });
+          await loadConversations();
+        } catch (e) {
+          set({ saveError: String(e) });
+        }
+      });
+      await persistChain;
+      await sendFeedback(heard, next);
+    },
+
     stopText: () => {
       engine?.cancelText(true);
       textRun++;
@@ -681,9 +747,17 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           .filter(
             (e) => (e.role === "user" || e.role === "assistant") && e.text,
           )
-          .map((e) => lineFromEntry(e, lineId++));
+          .map((e) => {
+            const l = lineFromEntry(e, lineId++);
+            entryIds.set(l.id, e.id);
+            return l;
+          });
         getEngine().setHistory(
-          lines.map((l) => ({ role: l.role, content: l.text })),
+          lines.map((l) => ({
+            role: l.role,
+            content: l.text,
+            turnId: l.turnId,
+          })),
         );
         switchTo(
           { id, titled: detail.conversation.title !== DEFAULT_TITLE },

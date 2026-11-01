@@ -21,7 +21,7 @@ import {
   SquarePen,
 } from "lucide-react";
 import { commands } from "@/bindings";
-import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import { lineEditable, useVoiceCallStore } from "@/stores/voiceCallStore";
 import { mimeForName } from "@/stores/voiceHistory";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
@@ -461,6 +461,8 @@ export const VoiceCallPage: React.FC = () => {
             toolStatus={toolStatus}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
+            onEditLine={(id, text) => void store.getState().editLine(id, text)}
+            canEdit={(line) => lineEditable(line, state, textBusy)}
           />
           <Composer
             value={draft}

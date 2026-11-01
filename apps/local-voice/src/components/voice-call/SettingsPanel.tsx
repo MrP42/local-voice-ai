@@ -14,6 +14,7 @@ import { VOICE_MANAGE, useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
 import { TEMPO_PRESETS, TEMPOS, tempoOf } from "./tempo";
 import { useActiveLlm, useSttModelName } from "./useVoiceInfo";
+import { RecognitionLearning } from "./RecognitionLearning";
 import {
   SOUVERAENITAET_STUFEN,
   blockedBy,
@@ -44,16 +45,6 @@ const Field: React.FC<{
         {hint}
       </span>
     )}
-  </div>
-);
-
-const Note: React.FC<{ title: string; children: React.ReactNode }> = ({
-  title,
-  children,
-}) => (
-  <div className="rounded-lg border border-mid-gray/25 bg-mid-gray/10 px-3 py-2.5">
-    <div className="font-semibold text-[13px]">{title}</div>
-    <div className="text-xs text-text/65 mt-0.5">{children}</div>
   </div>
 );
 
@@ -296,9 +287,7 @@ export const SettingsPanel: React.FC = () => {
             <Field label={t("voiceCall.settings.recognitionModel")}>
               <div className="text-sm">{stt ?? "–"}</div>
             </Field>
-            <Note title={t("voiceCall.settings.autoTitle")}>
-              {t("voiceCall.settings.autoSoon")}
-            </Note>
+            <RecognitionLearning />
           </>
         )}
         {tab === "models" && (

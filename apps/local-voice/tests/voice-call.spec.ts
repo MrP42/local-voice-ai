@@ -17,6 +17,13 @@ type Extra = {
   settings?: Record<string, unknown>;
   config?: Record<string, unknown>;
   tools?: Record<string, unknown>[];
+  /** Gespeichertes Gespräch, das schon im Verlauf steht (Stufe 3: Zeilen bearbeiten). */
+  seed?: {
+    title: string;
+    entries: { role: string; mode: string; text: string }[];
+  };
+  /** Gelernte Paare der Attrappe (Stufe 3). */
+  pairs?: Record<string, unknown>[];
 };
 
 async function install(
@@ -86,6 +93,37 @@ async function install(
       const c = convs.find((x) => x.id === id);
       if (!c) throw "Das Gespräch gibt es nicht (mehr).";
       return c;
+    };
+    if (extra.seed) {
+      const now = new Date().toISOString();
+      const c = {
+        id: "conv_seed000000000000000000",
+        title: extra.seed.title,
+        created_at: now,
+        updated_at: now,
+        kind: "voice",
+        pinned: false,
+        archived: false,
+      };
+      convs.push(c);
+      entries[c.id] = extra.seed.entries.map((e, i) => ({
+        id: `entry_seed${String(i).padStart(20, "0")}`,
+        conversation_id: c.id,
+        status: "complete",
+        created_at: now,
+        ...e,
+      }));
+    }
+    // Lernspeicher (Stufe 3): Paare im Speicher, Antworten der Einrichtung vorgebbar.
+    w.__pairs = JSON.parse(JSON.stringify(extra.pairs ?? [])) as Record<
+      string,
+      any
+    >[];
+    w.__transcript = "Das habe ich verstanden";
+    w.__setupOutcome = {
+      reason: "ok",
+      matched_percent: 91,
+      pairs: [] as Record<string, any>[],
     };
     w.__convs = convs;
     w.__failAppend = false;
@@ -262,6 +300,40 @@ async function install(
               found.status = args.status;
               return found;
             }
+            case "speech_learning_feedback":
+              return { reason: "ok", learned: 1, suggestions: 0, adopted: 0 };
+            case "speech_learning_list":
+              return w.__pairs;
+            case "speech_learning_set_status": {
+              const p = w.__pairs.find((x: any) => x.id === args.id);
+              if (!p) throw "Den Eintrag gibt es nicht (mehr).";
+              p.status = args.status;
+              return p;
+            }
+            case "speech_learning_delete":
+              w.__pairs = w.__pairs.filter((x: any) => x.id !== args.id);
+              return null;
+            case "speech_learning_clear": {
+              const n = w.__pairs.length;
+              w.__pairs = [];
+              return n;
+            }
+            case "speech_learning_setup_text":
+              return {
+                sentences: [
+                  "Der Bürgermeister bat die Verwaltung, den Bauantrag zu prüfen.",
+                  "Das Ordnungsamt versendet den Gebührenbescheid zur Grundsteuer.",
+                  "Außerdem noch einige Begriffe: Amtsblatt.",
+                ],
+                text: "Der Bürgermeister bat die Verwaltung, den Bauantrag zu prüfen. Das Ordnungsamt versendet den Gebührenbescheid zur Grundsteuer. Außerdem noch einige Begriffe: Amtsblatt.",
+              };
+            case "speech_learning_setup_prepare":
+              return null;
+            case "speech_learning_setup_evaluate":
+              w.__pairs.push(...w.__setupOutcome.pairs);
+              return w.__setupOutcome;
+            case "voice_call_transcribe":
+              return w.__transcript;
             case "plugin:dialog|open":
               return "C:\\Daten\\Protokoll.pdf";
             case "plugin:fs|stat":
@@ -1299,6 +1371,462 @@ test.describe("Sprachgespraech Orchestrator", () => {
   });
 });
 
+const SEED = {
+  title: "Grundsteuer klären",
+  entries: [
+    { role: "user", mode: "spoken", text: "Ich zahle die Grund Steuer morgen" },
+    { role: "assistant", mode: "typed", text: "Verstanden, bis morgen." },
+    { role: "user", mode: "typed", text: "Getippte Nachricht" },
+  ],
+};
+
+const PAIRS = [
+  {
+    id: 1,
+    bereich: "standard",
+    gehoert: "Grund Steuer",
+    korrigiert: "Grundsteuer",
+    anzahl: 3,
+    zuletzt: "2026-11-01T09:00:00.000Z",
+    status: "vorschlag",
+  },
+  {
+    id: 2,
+    bereich: "standard",
+    gehoert: "Wiederspruch",
+    korrigiert: "Widerspruch",
+    anzahl: 2,
+    zuletzt: "2026-11-01T08:00:00.000Z",
+    status: "uebernommen",
+  },
+  {
+    id: 3,
+    bereich: "standard",
+    gehoert: "Gemeinde Rat",
+    korrigiert: "Gemeinderat",
+    anzahl: 1,
+    zuletzt: "2026-10-31T08:00:00.000Z",
+    status: "beobachtet",
+  },
+];
+
+/** Öffnet das gespeicherte Gespräch aus der Attrappe. */
+async function openSeed(page: Page) {
+  await openPage(page);
+  await historyItem(page, SEED.title).click();
+  await expect(
+    page.getByRole("log").getByText("Ich zahle die Grund Steuer morgen"),
+  ).toBeVisible();
+}
+
+const editButton = (page: Page) =>
+  page.getByRole("button", { name: "Erkannten Text bearbeiten" });
+
+/** Wartet, bis laufende Übergänge fertig sind (z. B. der Reiter-Indikator). */
+async function settled(page: Page) {
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running"),
+  );
+}
+
+/** Gesprächseinstellungen, Reiter Erkennung. */
+async function openRecognition(page: Page) {
+  await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+  const panel = page.getByRole("complementary", {
+    name: "Gesprächseinstellungen",
+  });
+  const tab = panel.getByRole("tab", { name: "Erkennung" });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await settled(page);
+  return panel;
+}
+
+/** Ein Mikrofon aus einem Ton, damit die Aufnahme der Einrichtung Daten bekommt. */
+async function fakeMicrophone(page: Page) {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const c = new AudioContext();
+      const o = c.createOscillator();
+      const d = c.createMediaStreamDestination();
+      o.connect(d);
+      o.start();
+      return d.stream;
+    };
+  });
+}
+
+test.describe("Sprachgespraech Stufe 3: Lernen aus Korrekturen", () => {
+  test("Zeile bearbeiten: Enter speichert den Beitrag, Feedback nur bei eingeschaltetem Lernen", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      seed: SEED,
+      settings: { speech_learning_enabled: true },
+    });
+    await openSeed(page);
+    // Nur die eigene erkannte Zeile hat den Stift (nicht die Antwort, nicht getippter Text).
+    await expect(editButton(page)).toHaveCount(1);
+    await editButton(page).click();
+    const field = page.getByRole("textbox", {
+      name: "Erkannten Text bearbeiten",
+    });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("Ich zahle die Grund Steuer morgen");
+    await field.fill("Ich zahle die Grundsteuer morgen");
+    await field.press("Enter");
+    await expect(field).toHaveCount(0);
+    await expect(
+      page.getByRole("log").getByText("Ich zahle die Grundsteuer morgen"),
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await calls(page, "conversation_update_entry")).length)
+      .toBe(1);
+    const [update] = await calls(page, "conversation_update_entry");
+    expect(update.args).toMatchObject({
+      text: "Ich zahle die Grundsteuer morgen",
+      status: "complete",
+    });
+    await expect
+      .poll(async () => (await calls(page, "speech_learning_feedback")).length)
+      .toBe(1);
+    const [feedback] = await calls(page, "speech_learning_feedback");
+    expect(feedback.args).toEqual({
+      bereich: "standard",
+      erkannt: "Ich zahle die Grund Steuer morgen",
+      korrigiert: "Ich zahle die Grundsteuer morgen",
+    });
+  });
+
+  test("Zweite Bearbeitung derselben Zeile meldet weiter den erkannten Originaltext", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      seed: SEED,
+      settings: { speech_learning_enabled: true },
+    });
+    await openSeed(page);
+    const field = page.getByRole("textbox", {
+      name: "Erkannten Text bearbeiten",
+    });
+    await editButton(page).click();
+    await field.fill("Ich zahle die Grundsteuer morgen");
+    await field.press("Enter");
+    await expect(field).toHaveCount(0);
+    await editButton(page).click();
+    await field.fill("Ich zahle die Grundsteuer heute");
+    await field.press("Enter");
+    await expect(
+      page.getByRole("log").getByText("Ich zahle die Grundsteuer heute"),
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await calls(page, "conversation_update_entry")).length)
+      .toBe(2);
+    for (const c of await calls(page, "speech_learning_feedback")) {
+      expect(c.args.erkannt).toBe("Ich zahle die Grund Steuer morgen");
+    }
+  });
+
+  test("Zeile bearbeiten ohne Lernen: der Beitrag wird gespeichert, es geht kein Feedback raus", async ({
+    page,
+  }) => {
+    await install(page, "light", { seed: SEED });
+    await openSeed(page);
+    await editButton(page).click();
+    const field = page.getByRole("textbox", {
+      name: "Erkannten Text bearbeiten",
+    });
+    await field.fill("Ich zahle die Grundsteuer morgen");
+    await field.press("Enter");
+    await expect
+      .poll(async () => (await calls(page, "conversation_update_entry")).length)
+      .toBe(1);
+    await page.waitForTimeout(300);
+    expect(await calls(page, "speech_learning_feedback")).toHaveLength(0);
+  });
+
+  test("Esc bricht ab, unveränderter oder leerer Text speichert nichts", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      seed: SEED,
+      settings: { speech_learning_enabled: true },
+    });
+    await openSeed(page);
+    await editButton(page).click();
+    let field = page.getByRole("textbox", {
+      name: "Erkannten Text bearbeiten",
+    });
+    await field.fill("etwas ganz anderes");
+    await field.press("Escape");
+    await expect(field).toHaveCount(0);
+    await expect(
+      page.getByRole("log").getByText("Ich zahle die Grund Steuer morgen"),
+    ).toBeVisible();
+    // Unverändert bestätigen und leeren Text bestätigen.
+    await editButton(page).click();
+    field = page.getByRole("textbox", { name: "Erkannten Text bearbeiten" });
+    await field.press("Enter");
+    await editButton(page).click();
+    field = page.getByRole("textbox", { name: "Erkannten Text bearbeiten" });
+    await field.fill("   ");
+    await field.press("Enter");
+    await page.waitForTimeout(300);
+    expect(await calls(page, "conversation_update_entry")).toHaveLength(0);
+    expect(await calls(page, "speech_learning_feedback")).toHaveLength(0);
+    await expect(
+      page.getByRole("log").getByText("Ich zahle die Grund Steuer morgen"),
+    ).toBeVisible();
+  });
+
+  test("Einstellungen Erkennung: Schalter standardmäßig aus, Liste mit Übernehmen, Ablehnen, Löschen", async ({
+    page,
+  }) => {
+    await install(page, "light", { pairs: PAIRS });
+    await openPage(page);
+    const panel = await openRecognition(page);
+    const learn = panel.getByRole("switch", { name: "Aus Korrekturen lernen" });
+    const auto = panel.getByRole("switch", {
+      name: "Vorschläge automatisch übernehmen",
+    });
+    await expect(learn).not.toBeChecked();
+    await expect(auto).not.toBeChecked();
+    await expect(auto).toBeDisabled();
+    await expect(panel.getByText("Datenschutz", { exact: true })).toBeVisible();
+    await learn.click();
+    await expect
+      .poll(async () =>
+        (await calls(page, "change_speech_learning_enabled_setting")).map(
+          (c) => c.args.enabled,
+        ),
+      )
+      .toEqual([true]);
+    await expect(auto).toBeEnabled();
+    await auto.click();
+    await expect
+      .poll(async () =>
+        (await calls(page, "change_speech_learning_auto_apply_setting")).map(
+          (c) => c.args.enabled,
+        ),
+      )
+      .toEqual([true]);
+
+    const rows = panel.getByTestId("learned-pair");
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText("Grund Steuer");
+    await expect(rows.nth(0)).toContainText("Grundsteuer");
+    await expect(rows.nth(0)).toContainText("3×");
+    await expect(rows.nth(0)).toContainText("Vorschlag");
+    await expect(rows.nth(1)).toContainText("Übernommen");
+    await expect(rows.nth(2)).toContainText("Beobachtet");
+
+    await panel
+      .getByRole("button", { name: "„Grund Steuer → Grundsteuer“ übernehmen" })
+      .click();
+    await expect(rows.nth(0)).toContainText("Übernommen");
+    expect((await calls(page, "speech_learning_set_status"))[0].args).toEqual({
+      id: 1,
+      status: "uebernommen",
+    });
+    await panel
+      .getByRole("button", { name: "„Gemeinde Rat → Gemeinderat“ ablehnen" })
+      .click();
+    await expect(rows.nth(2)).toContainText("Abgelehnt");
+    await panel
+      .getByRole("button", { name: "„Wiederspruch → Widerspruch“ löschen" })
+      .click();
+    await expect(rows).toHaveCount(2);
+    expect((await calls(page, "speech_learning_delete"))[0].args).toEqual({
+      id: 2,
+    });
+  });
+
+  test("Alles löschen verlangt eine Bestätigung", async ({ page }) => {
+    await install(page, "light", { pairs: PAIRS });
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await expect(panel.getByTestId("learned-pair")).toHaveCount(3);
+    await panel.getByRole("button", { name: "Alles löschen" }).click();
+    const dialog = page.getByRole("dialog", { name: "Alles löschen?" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Abbrechen" }).last().click();
+    await expect(dialog).toHaveCount(0);
+    expect(await calls(page, "speech_learning_clear")).toHaveLength(0);
+    await panel.getByRole("button", { name: "Alles löschen" }).click();
+    await page
+      .getByRole("dialog", { name: "Alles löschen?" })
+      .getByRole("button", { name: "Endgültig löschen" })
+      .click();
+    await expect(panel.getByText("Noch nichts gelernt.")).toBeVisible();
+    expect(await calls(page, "speech_learning_clear")).toHaveLength(1);
+    expect((await calls(page, "speech_learning_clear"))[0].args).toEqual({
+      bereich: "standard",
+    });
+  });
+
+  test("Einrichtung durch Vorlesen: Text, Aufnahme, Auswertung, Vorschläge", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light");
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__transcript = "Der Bürgermeister bat die Verwaltung";
+      w.__setupOutcome = {
+        reason: "ok",
+        matched_percent: 91,
+        pairs: [
+          {
+            id: 11,
+            bereich: "standard",
+            gehoert: "Grund Steuer",
+            korrigiert: "Grundsteuer",
+            anzahl: 2,
+            zuletzt: "2026-11-01T09:00:00.000Z",
+            status: "vorschlag",
+          },
+          {
+            id: 12,
+            bereich: "standard",
+            gehoert: "Amtsplatt",
+            korrigiert: "Amtsblatt",
+            anzahl: 2,
+            zuletzt: "2026-11-01T09:00:00.000Z",
+            status: "vorschlag",
+          },
+        ],
+      };
+    });
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+    const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId("setup-text")).toContainText(
+      "Das Ordnungsamt versendet den Gebührenbescheid zur Grundsteuer.",
+    );
+    expect(await calls(page, "speech_learning_setup_prepare")).toHaveLength(1);
+    await dialog.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(dialog.getByText(/Aufnahme läuft/)).toBeVisible();
+    await page.waitForTimeout(1500);
+    await dialog.getByRole("button", { name: "Fertig" }).click();
+    await expect(dialog.getByText(/91 % der Wörter/)).toBeVisible();
+    const [transcribe] = await calls(page, "voice_call_transcribe");
+    expect(transcribe.args.pcm16B64.length).toBeGreaterThan(1000);
+    const [evaluate] = await calls(page, "speech_learning_setup_evaluate");
+    expect(evaluate.args.bereich).toBe("standard");
+    expect(evaluate.args.transcript).toBe(
+      "Der Bürgermeister bat die Verwaltung",
+    );
+    expect(evaluate.args.reference).toContain(
+      "Gebührenbescheid zur Grundsteuer",
+    );
+    const rows = dialog.getByTestId("learned-pair");
+    await expect(rows).toHaveCount(2);
+    await dialog
+      .getByRole("button", { name: "„Amtsplatt → Amtsblatt“ übernehmen" })
+      .click();
+    await dialog
+      .getByRole("button", { name: "„Grund Steuer → Grundsteuer“ ablehnen" })
+      .click();
+    await expect(rows.nth(0)).toContainText("Abgelehnt");
+    await expect(rows.nth(1)).toContainText("Übernommen");
+    const set = await calls(page, "speech_learning_set_status");
+    expect(set.map((c) => c.args)).toEqual([
+      { id: 12, status: "uebernommen" },
+      { id: 11, status: "abgelehnt" },
+    ]);
+    await dialog.getByRole("button", { name: "Schließen" }).last().click();
+    await expect(dialog).toHaveCount(0);
+    // Die Liste im Reiter zeigt die Ergebnisse.
+    await expect(panel.getByTestId("learned-pair")).toHaveCount(2);
+  });
+
+  test("Einrichtung: passt das Vorgelesene nicht, kommt ein Hinweis statt Vorschlägen", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light");
+    await page.addInitScript(() => {
+      (window as any).__setupOutcome = {
+        reason: "rewrite",
+        matched_percent: 12,
+        pairs: [],
+      };
+    });
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+    const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+    await dialog.getByRole("button", { name: "Aufnahme starten" }).click();
+    await page.waitForTimeout(1500);
+    await dialog.getByRole("button", { name: "Fertig" }).click();
+    await expect(dialog.getByText(/passt nicht zum Text \(12 %/)).toBeVisible();
+    await expect(dialog.getByTestId("learned-pair")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Noch einmal" }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Aufnahme starten" }),
+    ).toBeVisible();
+  });
+
+  test("Einrichtung: doppelter Start öffnet nur ein Mikrofon, Schließen gibt es frei", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__mic = { opened: 0, stopped: 0 };
+      navigator.mediaDevices.getUserMedia = async () => {
+        w.__mic.opened += 1;
+        await new Promise((r) => setTimeout(r, 200));
+        const c = new AudioContext();
+        const o = c.createOscillator();
+        const d = c.createMediaStreamDestination();
+        o.connect(d);
+        o.start();
+        for (const t of d.stream.getTracks()) {
+          const stop = t.stop.bind(t);
+          t.stop = () => {
+            w.__mic.stopped += 1;
+            stop();
+          };
+        }
+        return d.stream;
+      };
+    });
+    await install(page, "light");
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+    const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+    const start = dialog.getByRole("button", { name: "Aufnahme starten" });
+    await expect(start).toBeVisible();
+    await start.dblclick();
+    await expect(dialog.getByText(/Aufnahme läuft/)).toBeVisible();
+    const mic = () => page.evaluate(() => (window as any).__mic);
+    expect((await mic()).opened).toBe(1);
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect.poll(async () => (await mic()).stopped).toBeGreaterThan(0);
+  });
+
+  test("Einrichtung: Abbrechen während der Aufnahme wertet nichts aus", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light");
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+    const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+    await dialog.getByRole("button", { name: "Aufnahme starten" }).click();
+    await expect(dialog.getByText(/Aufnahme läuft/)).toBeVisible();
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(await calls(page, "voice_call_transcribe")).toHaveLength(0);
+    expect(await calls(page, "speech_learning_setup_evaluate")).toHaveLength(0);
+  });
+});
+
 test.describe("Screenshots @screenshots", () => {
   const conversation = async (page: Page) => {
     await openPage(page);
@@ -1446,6 +1974,60 @@ test.describe("Screenshots @screenshots", () => {
       await page.screenshot({
         path: `${dir}einstellungen-modelle-${name}.png`,
       });
+      await ctx.close();
+    }
+  });
+  test("Stufe 3: Reiter Erkennung, Einrichtungsdialog, Zeilenbearbeitung", async ({
+    browser,
+  }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    const dir = `${SHOTS}/stufe3/`;
+    mkdirSync(dir, { recursive: true });
+    for (const [name, size] of [
+      ["1440", { width: 1440, height: 900 }],
+      ["390", { width: 390, height: 844 }],
+    ] as const) {
+      const ctx = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await fakeMicrophone(page);
+      await install(page, "light", {
+        seed: SEED,
+        pairs: PAIRS,
+        settings: { speech_learning_enabled: true },
+      });
+      await openPage(page);
+      if (name === "390") await historyToggle(page).click();
+      await historyItem(page, SEED.title).click();
+      await expect(
+        page.getByRole("log").getByText("Ich zahle die Grund Steuer morgen"),
+      ).toBeVisible();
+      await settled(page);
+      await editButton(page).first().scrollIntoViewIfNeeded();
+      await expect(editButton(page).first()).toBeVisible();
+      await page.screenshot({ path: `${dir}stift-${name}.png` });
+      await editButton(page).click();
+      await page
+        .getByRole("textbox", { name: "Erkannten Text bearbeiten" })
+        .fill("Ich zahle die Grundsteuer morgen");
+      await page.screenshot({ path: `${dir}zeile-bearbeiten-${name}.png` });
+      await page.keyboard.press("Escape");
+      const panel = await openRecognition(page);
+      await expect(panel.getByTestId("learned-pair")).toHaveCount(3);
+      await page.screenshot({ path: `${dir}erkennung-${name}.png` });
+      await panel
+        .getByRole("heading", { name: "Gelernte Begriffe" })
+        .scrollIntoViewIfNeeded();
+      await panel
+        .getByRole("list", { name: "Gelernte Begriffe" })
+        .evaluate((el) => el.scrollIntoView({ block: "end" }));
+      await page.screenshot({ path: `${dir}erkennung-liste-${name}.png` });
+      await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+      const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+      await expect(dialog.getByTestId("setup-text")).toBeVisible();
+      await page.screenshot({ path: `${dir}einrichtung-${name}.png` });
       await ctx.close();
     }
   });

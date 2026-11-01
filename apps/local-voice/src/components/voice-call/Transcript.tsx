@@ -1,9 +1,62 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic } from "lucide-react";
+import { Mic, Pencil } from "lucide-react";
 import type { VoiceLine } from "@/stores/voiceCallStore";
 
 const SUGGESTIONS = ["s1", "s2", "s3", "s4"] as const;
+
+/** Bearbeiten der eigenen erkannten Zeile: Enter speichert, Esc bricht ab (Umschalt+Enter = neue Zeile). */
+const LineEditor: React.FC<{
+  initial: string;
+  onSave: (text: string) => void;
+  onCancel: () => void;
+  /** Meldet jede Änderung des Entwurfs, damit nichts still verloren geht. */
+  onDraft: (text: string) => void;
+}> = ({ initial, onSave, onCancel, onDraft }) => {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  return (
+    <div className="flex flex-col gap-1 w-[min(520px,70vw)]">
+      <textarea
+        ref={ref}
+        rows={Math.min(6, Math.max(2, Math.ceil(initial.length / 48)))}
+        value={value}
+        aria-label={t("voiceCall.edit.field")}
+        aria-describedby="voice-line-edit-hint"
+        data-testid="line-editor"
+        className="w-full rounded-xl border border-logo-primary bg-background px-3 py-2 text-sm text-text resize-y"
+        onChange={(e) => {
+          setValue(e.target.value);
+          onDraft(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onCancel();
+          } else if (
+            e.key === "Enter" &&
+            !e.shiftKey &&
+            !e.nativeEvent.isComposing
+          ) {
+            e.preventDefault();
+            onSave(value);
+          }
+        }}
+      />
+      <span id="voice-line-edit-hint" className="text-[11px] text-text/60">
+        {t("voiceCall.edit.hint")}
+      </span>
+    </div>
+  );
+};
 
 export const Transcript: React.FC<{
   lines: VoiceLine[];
@@ -15,6 +68,10 @@ export const Transcript: React.FC<{
   notice?: string | null;
   /** Öffnet die Einstellungen (Reiter Modelle), z. B. aus dem Hinweis zum gesperrten Modell. */
   onOpenSettings?: () => void;
+  /** Speichert die verbesserte Fassung einer eigenen erkannten Zeile. Ohne sie gibt es keinen Stift. */
+  onEditLine?: (id: number, text: string) => void;
+  /** Darf die Zeile jetzt bearbeitet werden? Ohne Angabe gilt jede gesprochene Nutzerzeile. */
+  canEdit?: (line: VoiceLine) => boolean;
 }> = ({
   lines,
   active,
@@ -22,9 +79,40 @@ export const Transcript: React.FC<{
   toolStatus = null,
   notice = null,
   onOpenSettings,
+  onEditLine,
+  canEdit,
 }) => {
   const { t, i18n } = useTranslation();
   const endRef = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const draft = useRef("");
+  /** Entwurf einer Zeile, die während der Bearbeitung ersetzt oder gesperrt wurde. */
+  const [lost, setLost] = useState<string | null>(null);
+  const pencils = useRef(new Map<number, HTMLButtonElement>());
+  /** Nach dem Schließen des Editors geht der Fokus zurück zum Stift dieser Zeile. */
+  const [refocus, setRefocus] = useState<number | null>(null);
+  const isEditable = (line: VoiceLine) =>
+    line.role === "user" &&
+    line.mode === "spoken" &&
+    !!onEditLine &&
+    (canEdit ? canEdit(line) : true);
+
+  // Verschwindet die Zeile oder wird sie gesperrt (neue Äußerung, Antwort läuft), schließt der
+  // Editor; der Entwurf bleibt in einem Hinweis stehen.
+  useEffect(() => {
+    if (editing === null) return;
+    const line = lines.find((l) => l.id === editing);
+    if (line && isEditable(line)) return;
+    setEditing(null);
+    if (draft.current.trim() && draft.current !== line?.text)
+      setLost(draft.current);
+  });
+
+  useEffect(() => {
+    if (refocus === null || editing !== null) return;
+    pencils.current.get(refocus)?.focus();
+    setRefocus(null);
+  }, [refocus, editing]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -110,6 +198,8 @@ export const Transcript: React.FC<{
       <div className="mx-auto max-w-[880px] flex flex-col gap-2.5">
         {lines.map((line) => {
           const user = line.role === "user";
+          const editable = isEditable(line);
+          const isEditing = editing === line.id && editable;
           return (
             <div
               key={line.id}
@@ -124,19 +214,54 @@ export const Transcript: React.FC<{
                 </span>
               )}
               <div className="min-w-0">
-                <div
-                  className={`px-3 py-2 rounded-xl text-sm whitespace-pre-wrap break-words ${
-                    user
-                      ? "bg-logo-primary/15 rounded-br-sm"
-                      : "bg-mid-gray/15 rounded-bl-sm"
-                  }`}
-                >
-                  {line.text}
-                  {line.interrupted ? " …" : ""}
-                </div>
+                {isEditing ? (
+                  <LineEditor
+                    initial={line.text}
+                    onDraft={(text) => (draft.current = text)}
+                    onCancel={() => {
+                      setEditing(null);
+                      setRefocus(line.id);
+                    }}
+                    onSave={(text) => {
+                      setEditing(null);
+                      setRefocus(line.id);
+                      onEditLine?.(line.id, text);
+                    }}
+                  />
+                ) : (
+                  <div
+                    className={`px-3 py-2 rounded-xl text-sm whitespace-pre-wrap break-words ${
+                      user
+                        ? "bg-logo-primary/15 rounded-br-sm"
+                        : "bg-mid-gray/15 rounded-bl-sm"
+                    }`}
+                  >
+                    {line.text}
+                    {line.interrupted ? " …" : ""}
+                  </div>
+                )}
                 <div
                   className={`mt-0.5 flex gap-2 text-[11px] text-text/50 ${user ? "justify-end" : ""}`}
                 >
+                  {editable && !isEditing && (
+                    <button
+                      type="button"
+                      aria-label={t("voiceCall.edit.button")}
+                      title={t("voiceCall.edit.button")}
+                      ref={(el) => {
+                        if (el) pencils.current.set(line.id, el);
+                        else pencils.current.delete(line.id);
+                      }}
+                      onClick={() => {
+                        draft.current = line.text;
+                        setLost(null);
+                        setEditing(line.id);
+                      }}
+                      className="grid place-items-center w-7 h-7 -my-1.5 rounded cursor-pointer text-text/80 hover:bg-mid-gray/15 hover:text-logo-primary focus-visible:text-text"
+                    >
+                      <Pencil className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  )}
                   <span>{time(line.at)}</span>
                   {line.latencyMs !== undefined && (
                     <span>
@@ -153,6 +278,23 @@ export const Transcript: React.FC<{
             </div>
           );
         })}
+        {lost !== null && (
+          <div
+            role="alert"
+            data-testid="edit-lost"
+            className="self-end max-w-[85%] rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-sm flex flex-col gap-1"
+          >
+            <span>{t("voiceCall.edit.lost")}</span>
+            <span className="italic break-words">{lost}</span>
+            <button
+              type="button"
+              onClick={() => setLost(null)}
+              className="self-start rounded border border-mid-gray/40 bg-background px-2 py-0.5 text-xs cursor-pointer text-text hover:border-logo-primary"
+            >
+              {t("voiceCall.edit.dismiss")}
+            </button>
+          </div>
+        )}
         {noticeBox}
         {liveRegion}
         <div ref={endRef} />
