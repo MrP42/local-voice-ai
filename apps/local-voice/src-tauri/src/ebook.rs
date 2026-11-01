@@ -684,13 +684,14 @@ pub fn reflow_plain_text(text: &str) -> String {
     paragraphs.join("\n\n")
 }
 
-/// Wie viele Zeilen oben und unten einer PDF-Seite als Kopf-/Fußzeile in
-/// Frage kommen.
+/// Wie viele Zeilen oben und unten einer PDF-Seite höchstens als Kopf-/Fußzeile
+/// in Frage kommen. Auf kurzen Seiten weniger (ein Viertel der Zeilen), damit
+/// der Fließtext einer kurzen Seite nie ganz als „Rand“ gilt.
 const RUNNING_LINES: usize = 3;
 
-/// Schlüssel einer Kopf-/Fußzeile: Ziffern zählen nicht („Kapitel 3 · 41“ und
-/// „Kapitel 3 · 42“ sind dieselbe Kopfzeile), Leerraum und Groß-/Kleinschreibung
-/// auch nicht.
+/// Schlüssel einer Kopf-/Fußzeile für den buchweiten Abgleich: Ziffern zählen
+/// nicht („Seite 41 von 300“ und „Seite 42 von 300“ sind dieselbe Fußzeile),
+/// Leerraum und Groß-/Kleinschreibung auch nicht.
 fn running_key(line: &str) -> String {
     line.split_whitespace()
         .collect::<Vec<_>>()
@@ -701,62 +702,113 @@ fn running_key(line: &str) -> String {
         .collect()
 }
 
-/// Nur eine Seitenzahl: „12“, „- 12 -“, „Seite 12“, „12 / 300“, „S. 12“.
+/// Nur eine Seitenzahl: „12“, „- 12 -“, „Seite 12“, „S. 12“, „12 / 300“.
+/// Kein Punkt am Ende („1914.“ ist ein Satzende, „1.“ ein Listenpunkt).
 fn is_page_number(line: &str) -> bool {
     let t = line.trim();
     let t = t
         .strip_prefix("Seite")
         .or_else(|| t.strip_prefix("S."))
         .or_else(|| t.strip_prefix("Page"))
-        .unwrap_or(t);
+        .unwrap_or(t)
+        .trim();
+    // „12 von 300“ / „12 of 300“ wie „12 / 300“.
+    let t = &t.replace(" von ", " / ").replace(" of ", " / ");
     let digits = t.chars().filter(char::is_ascii_digit).count();
     (1..=8).contains(&digits)
-        && t.chars().all(|c| {
-            c.is_ascii_digit() || c.is_whitespace() || matches!(c, '-' | '–' | '/' | '|' | '.')
-        })
+        && t.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit() || matches!(c, '-' | '–'))
+        && !t.ends_with('.')
+        && t.chars()
+            .all(|c| c.is_ascii_digit() || c.is_whitespace() || matches!(c, '-' | '–' | '/' | '|'))
+        && t.split(['/', '|'])
+            .all(|part| part.chars().filter(char::is_ascii_digit).count() <= 4)
+}
+
+/// Rand einer Seite: `Some(true)` oben, `Some(false)` unten, `None` Fließtext.
+fn page_zone(len: usize, i: usize) -> Option<bool> {
+    let k = RUNNING_LINES.min(len / 4);
+    if i < k {
+        Some(true)
+    } else if i + k >= len {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 /// PDF-Seiten (je Seite der Text) zu einem Text zusammenführen und dabei
-/// Kopf- und Fußzeilen entfernen, die sich über die Seiten wiederholen
-/// (Buchtitel, Kapitelname, „Seite 12 von 300“), sowie Seitenzahlen am
-/// Seitenrand. Danach [`reflow_plain_text`]; ein Absatz über eine Seitengrenze
-/// bleibt ein Absatz, weil die Seiten mit einem einfachen Umbruch aneinander
-/// gehängt werden.
+/// Kopf- und Fußzeilen entfernen sowie Seitenzahlen am Seitenrand:
+///
+/// - buchweit: eine Randzeile, die (ohne Ziffern verglichen) auf mindestens
+///   einem Drittel der Seiten an derselben Stelle (oben/unten) steht — Buchtitel,
+///   „Seite 12 von 300“; erst ab zehn Seiten, sonst wären „Abschnitt 1“,
+///   „Abschnitt 2“ … oben auf jeder Seite eines kurzen Texts Kopfzeilen;
+/// - kapitelweit: eine wortgleiche Randzeile auf mindestens drei Seiten mit
+///   höchstens einer Seite Abstand — „Kapitel 5 · Die Klippe“ über die Seiten des
+///   Kapitels. Wortgleich, damit „Abschnitt 1“, „Abschnitt 2“ … bleiben;
+/// - Seitenzahl: nur die erste oder letzte Zeile einer Seite.
+///
+/// Danach [`reflow_plain_text`]. Die Seiten hängen mit einem einfachen Umbruch
+/// aneinander — wie bisher bei `extract_text`, das auch keine Seitengrenze
+/// markiert —, damit ein Absatz über eine Seitengrenze ein Absatz bleibt.
 pub fn pdf_pages_to_text(pages: &[String]) -> String {
+    use std::collections::{HashMap, HashSet};
     let page_lines: Vec<Vec<&str>> = pages
         .iter()
         .map(|p| p.lines().filter(|l| !l.trim().is_empty()).collect())
         .collect();
-    let edge = |lines: &[&str], i: usize| i < RUNNING_LINES || i + RUNNING_LINES >= lines.len();
+    let exact_key = |line: &str| line.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    for lines in &page_lines {
-        let mut seen = std::collections::HashSet::new();
+    let mut masked: HashMap<(bool, String), usize> = HashMap::new();
+    let mut exact: HashMap<(bool, String), Vec<usize>> = HashMap::new();
+    for (p, lines) in page_lines.iter().enumerate() {
+        let mut seen = HashSet::new();
         for (i, line) in lines.iter().enumerate() {
-            if edge(lines, i) && seen.insert(running_key(line)) {
-                *counts.entry(running_key(line)).or_default() += 1;
+            let Some(top) = page_zone(lines.len(), i) else {
+                continue;
+            };
+            if seen.insert((top, running_key(line))) {
+                *masked.entry((top, running_key(line))).or_default() += 1;
+            }
+            let pages_of = exact.entry((top, exact_key(line))).or_default();
+            if pages_of.last() != Some(&p) {
+                pages_of.push(p);
             }
         }
     }
     let with_text = page_lines.iter().filter(|l| !l.is_empty()).count();
-    // Erst ab vier Seiten und mindestens einem Drittel der Seiten: ein Satz, der
-    // zufällig zweimal oben steht, ist keine Kopfzeile.
-    let threshold = (with_text.div_ceil(3)).max(3);
-    let running = |line: &str| {
-        with_text >= 4
-            && counts
-                .get(&running_key(line))
-                .is_some_and(|&n| n >= threshold)
+    let threshold = with_text.div_ceil(3).max(3);
+    let chapter_run = |pages_of: &[usize]| {
+        let mut run = 1;
+        pages_of.windows(2).any(|w| {
+            run = if w[1] - w[0] <= 2 { run + 1 } else { 1 };
+            run >= 3
+        })
+    };
+    let running = |top: bool, line: &str| {
+        (with_text >= 10
+            && masked
+                .get(&(top, running_key(line)))
+                .is_some_and(|&n| n >= threshold))
+            || exact
+                .get(&(top, exact_key(line)))
+                .is_some_and(|p| chapter_run(p))
     };
 
     let mut out = String::new();
     for lines in &page_lines {
         for (i, line) in lines.iter().enumerate() {
-            if edge(lines, i) && (running(line) || is_page_number(line)) {
-                continue;
+            let at_edge = i == 0 || i + 1 == lines.len();
+            let drop = match page_zone(lines.len(), i) {
+                Some(top) => running(top, line),
+                None => false,
+            } || (at_edge && is_page_number(line));
+            if !drop {
+                out.push_str(line);
+                out.push('\n');
             }
-            out.push_str(line);
-            out.push('\n');
         }
     }
     reflow_plain_text(&out)
@@ -1026,7 +1078,7 @@ mod tests {
         let worte = ["Möwen", "Wellen", "Laterne", "Treppe", "Nebel", "Stürme"];
         let pages: Vec<String> = (1..=6usize)
             .map(|n| {
-                let mut page = format!("Der Leuchtturm\nKapitel {} · Die Klippe\n", n / 3 + 1);
+                let mut page = format!("Der Leuchtturm\nKapitel {} · Die Klippe\n", (n - 1) / 3 + 1);
                 for z in 1..=10 {
                     let w = worte[(n + z) % worte.len()];
                     page.push_str(&format!(
@@ -1063,11 +1115,67 @@ mod tests {
 
     #[test]
     fn page_number_shapes() {
-        for yes in ["12", "- 12 -", "Seite 12", "S. 12", "12 / 300", "– 7 –"] {
+        for yes in [
+            "12",
+            "- 12 -",
+            "Seite 12",
+            "S. 12",
+            "12 / 300",
+            "– 7 –",
+            "Seite 3 von 6",
+            "Page 4 of 9",
+        ] {
             assert!(is_page_number(yes), "{yes}");
         }
-        for no in ["12 Stufen", "Kapitel 3", "", "2026-11-01 war ein Sonntag"] {
+        for no in [
+            "12 Stufen",
+            "Kapitel 3",
+            "",
+            "2026-11-01 war ein Sonntag",
+            "1914.",
+            "1.",
+            "1 000 000",
+            "0170 12345",
+        ] {
             assert!(!is_page_number(no), "{no}");
         }
+    }
+
+    #[test]
+    fn pdf_short_documents_keep_numbered_headings() {
+        // Sechs kurze Seiten, oben je „Abschnitt n“: das sind Überschriften,
+        // keine Kopfzeile, obwohl sie ohne Ziffern gleich aussehen.
+        let pages: Vec<String> = (1..=6)
+            .map(|n| {
+                format!(
+                    "Abschnitt {n}\nDer Wind drehte über der Klippe, Teil {n} beginnt hier.\nMara stieg die Treppe hinauf und sah nach Westen.\nDas Licht fiel schräg durch das Fenster der Laterne.\nEnde der Seite {n} kommt jetzt.\n"
+                )
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        for n in 1..=6 {
+            assert!(out.contains(&format!("Abschnitt {n}")), "{out}");
+        }
+    }
+
+    #[test]
+    fn pdf_chapter_running_header_is_dropped_in_long_books() {
+        // 30 Seiten, Kapitelkopf nur auf den Seiten seines Kapitels (je 5).
+        let pages: Vec<String> = (0..30)
+            .map(|p| {
+                let mut page = format!("Kapitel {} · Die Klippe\n", p / 5 + 1);
+                for z in 0..12 {
+                    page.push_str(&format!(
+                        "Satz {z} auf Seite {p}: Der Wind {} um den Turm, und Mara lauschte lange.\n",
+                        ["heulte", "pfiff", "strich", "fuhr"][(p + z) % 4]
+                    ));
+                }
+                page.push_str(&format!("{}\n", p + 1));
+                page
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(!out.contains("Die Klippe"), "{out}");
+        assert!(out.contains("Satz 0 auf Seite 7"), "{out}");
     }
 }
