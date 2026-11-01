@@ -1,11 +1,13 @@
 import { anchorAt, resolveAnchor } from "./resumePoint";
+import { getLocal, setLocal } from "../library/progress";
 
 /**
  * Lesezeichen je Seite und Reiter (lva#148). Wie beim Weiterlesen hält ein
  * Textanker die Stelle fest, wenn sich der Text davor ändert; ein Lesezeichen,
  * dessen Text verschwunden ist, wird nicht mehr angezeigt.
  */
-const PREFIX = "lva.ui.tts.bookmarks.";
+/** Unter `lva.ui.` – und dauerhaft im Kern gespiegelt (lva#152). */
+const PREFIX = "tts.bookmarks.";
 const LABEL = 48;
 
 interface StoredBookmark {
@@ -25,7 +27,7 @@ export interface Bookmark {
 
 const read = (key: string): StoredBookmark[] => {
   try {
-    const raw = window.localStorage.getItem(PREFIX + key);
+    const raw = getLocal(PREFIX + key);
     if (!raw) return [];
     const list = JSON.parse(raw) as unknown;
     return Array.isArray(list)
@@ -42,13 +44,7 @@ const read = (key: string): StoredBookmark[] => {
 };
 
 const write = (key: string, list: StoredBookmark[]) => {
-  try {
-    if (list.length)
-      window.localStorage.setItem(PREFIX + key, JSON.stringify(list));
-    else window.localStorage.removeItem(PREFIX + key);
-  } catch {
-    /* voller oder gesperrter Speicher: Lesezeichen sind eine Bequemlichkeit */
-  }
+  setLocal(PREFIX + key, list.length ? JSON.stringify(list) : null);
 };
 
 /** Anfang der Stelle als Klartext: ohne Sprecher, Tags und Markdown. */

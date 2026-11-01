@@ -73,6 +73,7 @@ import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
+import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
 import {
   clearResumePoint,
   loadResumePoint,
@@ -1522,6 +1523,12 @@ export const TtsSettings = () => {
     if (autoplayPage.current && autoplayPage.current !== activePage)
       autoplayPage.current = null;
   }, [activePage]);
+  // Bibliothek (lva#152): „Weiterhören“ öffnet die Seite und liest sofort.
+  useEffect(() => {
+    const page = takeLibraryAutoplay();
+    if (page && page === activePage) autoplayPage.current = page;
+    // Nur beim Öffnen von Vorlesen.
+  }, []);
   // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
   // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
   useEffect(() => {
@@ -1948,6 +1955,9 @@ export const TtsSettings = () => {
     setDictating(true);
   };
 
+  const textNowRef = useRef(text);
+  textNowRef.current = text;
+
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async () => {
     const picked = await open({
@@ -1959,7 +1969,6 @@ export const TtsSettings = () => {
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
-    const wasEmpty = !text.trim();
     const pageAtStart = activePage;
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
@@ -1967,22 +1976,22 @@ export const TtsSettings = () => {
       setLastError(result.error);
       return;
     }
+    const title = documentTitle(result.data, picked);
+    // Buch hinzufügen (lva#152): steht auf der Seite schon Text, bekommt das
+    // Buch eine eigene neue Seite – nichts wird überschrieben.
+    // Erst nach dem Laden prüfen: wer währenddessen tippt, verliert nichts.
+    if (textNowRef.current.trim() || activePageRef.current !== pageAtStart) {
+      const created = await createPageWithText(title, result.data);
+      if (!created) setLastError(t("tts.add.pageFailed"));
+      return;
+    }
     setTab("original");
     setText(result.data);
-    // Ein E-Book auf einer leeren Seite: die Seite heißt wie das Buch
-    // (lva#149). Nur die erste Zeile zählt, und nur, wenn der Nutzer
-    // während des Ladens nicht die Seite gewechselt hat.
-    const firstLine = result.data.trimStart().split("\n", 1)[0] ?? "";
-    const bookTitle = /^#[ \t]+(.+)$/.exec(firstLine)?.[1]?.trim();
-    if (
-      wasEmpty &&
-      /\.epub$/i.test(picked) &&
-      pageAtStart &&
-      activePageRef.current === pageAtStart &&
-      bookTitle
-    ) {
+    // Auf einer leeren Seite heißt die Seite wie das Buch (lva#149), aber
+    // nur, wenn der Nutzer während des Ladens nicht die Seite gewechselt hat.
+    if (pageAtStart && activePageRef.current === pageAtStart && title) {
       void commands
-        .pagesRename(pageAtStart, bookTitle.slice(0, 120))
+        .pagesRename(pageAtStart, title)
         .then(() => reloadPages());
     }
     openModeRef.current?.(result.data);
