@@ -31,6 +31,8 @@ interface ReaderPlayerBarProps {
   onSleep(): void;
   /** Play setzt an der gemerkten Stelle fort (lva#148). */
   resumable?: boolean;
+  /** Titel des aktuellen Kapitels, falls der Text Überschriften hat. */
+  chapter?: string | null;
   /** Seite der gemerkten Stelle (1-basiert), wenn bekannt. */
   resumePage?: number | null;
   /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
@@ -71,6 +73,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onSleep,
   resumable = false,
   resumePage = null,
+  chapter = null,
   onRestart,
 }) => {
   const { t } = useTranslation();
@@ -268,15 +271,32 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       <div className="reader-player__ctrls">
         <span
           className={`reader-player__where${
-            !progress && resumable ? " reader-player__where--resume" : ""
+            !progress && resumable
+              ? " reader-player__where--resume"
+              : progress && chapter
+                ? " reader-player__where--chapter"
+                : ""
           }`}
           data-testid="reader-where"
         >
           {progress ? (
-            t("tts.reader.sentenceOf", {
-              position: Math.min(progress.total, progress.position + 1),
-              count: progress.total,
-            })
+            <>
+              {chapter && (
+                <span
+                  className="reader-player__chapter"
+                  title={chapter}
+                  data-testid="reader-chapter"
+                >
+                  {chapter}
+                </span>
+              )}
+              <span className="reader-player__sentence">
+                {t("tts.reader.sentenceOf", {
+                  position: Math.min(progress.total, progress.position + 1),
+                  count: progress.total,
+                })}
+              </span>
+            </>
           ) : resumable ? (
             <>
               <span className="reader-player__hint" title={resumeTitle}>
@@ -403,6 +423,25 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                 }}
                 className="absolute right-0 bottom-full mb-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
               >
+                {progress && (
+                  <div
+                    className="mb-1 border-b border-mid-gray/30 px-3 pt-1 pb-1.5 text-xs text-text-muted"
+                    data-testid="reader-more-where"
+                  >
+                    {chapter && (
+                      <div
+                        className="truncate font-semibold text-text"
+                        title={chapter}
+                      >
+                        {chapter}
+                      </div>
+                    )}
+                    {t("tts.reader.sentenceOf", {
+                      position: Math.min(progress.total, progress.position + 1),
+                      count: progress.total,
+                    })}
+                  </div>
+                )}
                 {resumable && onRestart && (
                   <div
                     role="group"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -96,6 +96,8 @@ export const PagesSidebar: React.FC<{
   onReplaceSpeaker?: () => void;
   /** Breite in Pixeln (Ziehgriff); ohne Angabe gilt die Standardbreite. */
   width?: number;
+  /** Inhaltsverzeichnis der offenen Seite (Leseansicht). */
+  contents?: ReactNode;
 }> = ({
   pages,
   activeId,
@@ -105,6 +107,7 @@ export const PagesSidebar: React.FC<{
   onChanged,
   onReplaceSpeaker,
   width,
+  contents,
 }) => {
   const { t, i18n } = useTranslation();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -368,6 +371,8 @@ export const PagesSidebar: React.FC<{
           )}
         </div>
       ))}
+
+      {contents}
 
       {rowMenu.menu}
       <PageExportDialog
