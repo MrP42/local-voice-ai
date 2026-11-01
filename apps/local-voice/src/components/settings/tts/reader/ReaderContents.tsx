@@ -9,8 +9,8 @@ interface ReaderContentsProps {
   /** Index des aktuellen Kapitels (-1: vor der ersten Überschrift). */
   current: number;
   onGo(entry: ContentsEntry): void;
-  /** Seite (0-basiert) einer Stelle, für die Anzeige. */
-  pageOf?(offset: number): number | null;
+  /** Seite (0-basiert) je Eintrag, nach dem Umbruch gemessen. */
+  pages?: (number | null)[];
 }
 
 /**
@@ -21,7 +21,7 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
   entries,
   current,
   onGo,
-  pageOf,
+  pages,
 }) => {
   const { t } = useTranslation();
   // Einklappbar: im schmalen Fenster steht die Leiste über dem Buch.
@@ -61,7 +61,7 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
       </button>
       <ol id={listId} className="space-y-0.5" hidden={!open}>
         {entries.map((e, i) => {
-          const page = pageOf?.(e.start);
+          const page = pages?.[i];
           const active = i === current;
           return (
             <li key={`${e.start}-${i}`}>

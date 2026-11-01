@@ -1188,16 +1188,22 @@ export const TtsSettings = () => {
   // Inhaltsverzeichnis: Überschriften der offenen Seite; aktuelles Kapitel
   // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
   const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
-  const chapterIndex = useMemo(() => {
-    if (contents.length === 0) return -1;
+  // Nach dem Commit messen: im Render stünde noch das DOM des alten Umbruchs.
+  const [chapterIndex, setChapterIndex] = useState(-1);
+  const [contentsPages, setContentsPages] = useState<(number | null)[]>([]);
+  useEffect(() => {
+    const api = readerApiRef.current;
+    setContentsPages(contents.map((e) => api?.pageOfOffset(e.start) ?? null));
+    if (contents.length === 0) {
+      setChapterIndex(-1);
+      return;
+    }
     const reading =
       readRange && sessionResumeKey.current === resumeKey ? readRange.start : null;
     const shown =
-      pageInfo !== null
-        ? readerApiRef.current?.offsetOfPage(pageInfo.page) ?? null
-        : null;
+      pageInfo !== null ? (api?.offsetOfPage(pageInfo.page) ?? null) : null;
     const at = reading ?? shown;
-    return at === null ? -1 : chapterAt(contents, at);
+    setChapterIndex(at === null ? -1 : chapterAt(contents, at));
   }, [contents, readRange, pageInfo, resumeKey]);
   const goToChapter = (entry: ContentsEntry) => {
     setFollow(false);
@@ -1840,7 +1846,7 @@ export const TtsSettings = () => {
                 entries={contents}
                 current={chapterIndex}
                 onGo={goToChapter}
-                pageOf={(o) => readerApiRef.current?.pageOfOffset(o) ?? null}
+                pages={contentsPages}
               />
             ) : null
           }
