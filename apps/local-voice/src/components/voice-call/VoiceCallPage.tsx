@@ -461,6 +461,7 @@ export const VoiceCallPage: React.FC = () => {
             toolStatus={toolStatus}
             notice={notice}
             onOpenSettings={() => store.getState().openSettings("models")}
+            onEditLine={(id, text) => void store.getState().editLine(id, text)}
           />
           <Composer
             value={draft}

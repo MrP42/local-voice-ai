@@ -1,9 +1,56 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic } from "lucide-react";
+import { Mic, Pencil } from "lucide-react";
 import type { VoiceLine } from "@/stores/voiceCallStore";
 
 const SUGGESTIONS = ["s1", "s2", "s3", "s4"] as const;
+
+/** Bearbeiten der eigenen erkannten Zeile: Enter speichert, Esc bricht ab (Umschalt+Enter = neue Zeile). */
+const LineEditor: React.FC<{
+  initial: string;
+  onSave: (text: string) => void;
+  onCancel: () => void;
+}> = ({ initial, onSave, onCancel }) => {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(initial);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  return (
+    <div className="flex flex-col gap-1 w-[min(520px,70vw)]">
+      <textarea
+        ref={ref}
+        rows={Math.min(6, Math.max(2, Math.ceil(initial.length / 48)))}
+        value={value}
+        aria-label={t("voiceCall.edit.field")}
+        aria-describedby="voice-line-edit-hint"
+        data-testid="line-editor"
+        className="w-full rounded-xl border border-logo-primary bg-background px-3 py-2 text-sm text-text resize-y"
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          } else if (
+            e.key === "Enter" &&
+            !e.shiftKey &&
+            !e.nativeEvent.isComposing
+          ) {
+            e.preventDefault();
+            onSave(value);
+          }
+        }}
+      />
+      <span id="voice-line-edit-hint" className="text-[11px] text-text/60">
+        {t("voiceCall.edit.hint")}
+      </span>
+    </div>
+  );
+};
 
 export const Transcript: React.FC<{
   lines: VoiceLine[];
@@ -15,6 +62,8 @@ export const Transcript: React.FC<{
   notice?: string | null;
   /** Öffnet die Einstellungen (Reiter Modelle), z. B. aus dem Hinweis zum gesperrten Modell. */
   onOpenSettings?: () => void;
+  /** Speichert die verbesserte Fassung einer eigenen erkannten Zeile. Ohne sie gibt es keinen Stift. */
+  onEditLine?: (id: number, text: string) => void;
 }> = ({
   lines,
   active,
@@ -22,9 +71,11 @@ export const Transcript: React.FC<{
   toolStatus = null,
   notice = null,
   onOpenSettings,
+  onEditLine,
 }) => {
   const { t, i18n } = useTranslation();
   const endRef = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState<number | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -110,6 +161,8 @@ export const Transcript: React.FC<{
       <div className="mx-auto max-w-[880px] flex flex-col gap-2.5">
         {lines.map((line) => {
           const user = line.role === "user";
+          const editable = user && !!onEditLine && line.mode === "spoken";
+          const isEditing = editing === line.id && editable;
           return (
             <div
               key={line.id}
@@ -124,19 +177,41 @@ export const Transcript: React.FC<{
                 </span>
               )}
               <div className="min-w-0">
-                <div
-                  className={`px-3 py-2 rounded-xl text-sm whitespace-pre-wrap break-words ${
-                    user
-                      ? "bg-logo-primary/15 rounded-br-sm"
-                      : "bg-mid-gray/15 rounded-bl-sm"
-                  }`}
-                >
-                  {line.text}
-                  {line.interrupted ? " …" : ""}
-                </div>
+                {isEditing ? (
+                  <LineEditor
+                    initial={line.text}
+                    onCancel={() => setEditing(null)}
+                    onSave={(text) => {
+                      setEditing(null);
+                      onEditLine?.(line.id, text);
+                    }}
+                  />
+                ) : (
+                  <div
+                    className={`px-3 py-2 rounded-xl text-sm whitespace-pre-wrap break-words ${
+                      user
+                        ? "bg-logo-primary/15 rounded-br-sm"
+                        : "bg-mid-gray/15 rounded-bl-sm"
+                    }`}
+                  >
+                    {line.text}
+                    {line.interrupted ? " …" : ""}
+                  </div>
+                )}
                 <div
                   className={`mt-0.5 flex gap-2 text-[11px] text-text/50 ${user ? "justify-end" : ""}`}
                 >
+                  {editable && !isEditing && (
+                    <button
+                      type="button"
+                      aria-label={t("voiceCall.edit.button")}
+                      title={t("voiceCall.edit.button")}
+                      onClick={() => setEditing(line.id)}
+                      className="grid place-items-center w-6 h-6 -my-1 rounded cursor-pointer text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:text-text"
+                    >
+                      <Pencil className="w-3 h-3" aria-hidden="true" />
+                    </button>
+                  )}
                   <span>{time(line.at)}</span>
                   {line.latencyMs !== undefined && (
                     <span>

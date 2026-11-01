@@ -306,6 +306,11 @@ const settingUpdaters: {
   // Sprachgespräch Stufe 2
   voice_call_read_transcripts: (value) =>
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
+  // Sprachgespräch Stufe 3
+  speech_learning_enabled: (value) =>
+    commands.changeSpeechLearningEnabledSetting(value as boolean),
+  speech_learning_auto_apply: (value) =>
+    commands.changeSpeechLearningAutoApplySetting(value as boolean),
   // A2 (YouTube)
   meeting_youtube_private: (value) =>
     commands.changeMeetingYoutubePrivateSetting(value as boolean),

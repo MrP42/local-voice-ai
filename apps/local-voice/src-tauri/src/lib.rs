@@ -35,6 +35,7 @@ mod llm_keys;
 mod settings;
 mod shortcut;
 mod signal_handle;
+mod speech_learning; // Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
 mod summarizer;
 mod tagging;
 mod transcription_coordinator;
@@ -328,6 +329,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             app_handle.manage(Arc::new(store));
         }
         Err(e) => log::error!("Failed to initialize conversations store: {e}"),
+    }
+    // Stufe 3: Lernspeicher der Spracherkennung. Fehlt er, melden die Befehle „nicht verfügbar“.
+    match speech_learning::open_store(app_handle) {
+        Ok(store) => {
+            app_handle.manage(Arc::new(store));
+        }
+        Err(e) => log::error!("Failed to initialize speech learning store: {e}"),
     }
     app_handle.manage(commands::tts::AutoTagRun::default());
     app_handle.manage(commands::tts::BuilderRun::default());
@@ -2303,6 +2311,17 @@ pub fn run(cli_args: CliArgs) {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::voice_tool_call,
+            // Sprachgespraech Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
+            speech_learning::speech_learning_feedback,
+            speech_learning::speech_learning_list,
+            speech_learning::speech_learning_set_status,
+            speech_learning::speech_learning_delete,
+            speech_learning::speech_learning_clear,
+            speech_learning::speech_learning_setup_text,
+            speech_learning::speech_learning_setup_prepare,
+            speech_learning::speech_learning_setup_evaluate,
+            speech_learning::change_speech_learning_enabled_setting,
+            speech_learning::change_speech_learning_auto_apply_setting,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,

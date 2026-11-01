@@ -3941,6 +3941,28 @@ async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<n
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * „Aus Korrekturen lernen“ (Standard aus).
+ */
+async changeSpeechLearningEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorschläge automatisch übernehmen“ (Standard aus; wirkt nur bei eingeschaltetem Lernen).
+ */
+async changeSpeechLearningAutoApplySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_auto_apply_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_mcp_info") };
@@ -6445,6 +6467,14 @@ meeting_mcp_include_transcript?: boolean;
  * Stufe 2 des Sprachgesprächs: Transkripte lesen (Standard aus).
  */
 voice_call_read_transcripts?: boolean; 
+/**
+ * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (Standard aus).
+ */
+speech_learning_enabled?: boolean; 
+/**
+ * Gelernte Paare mit genug Vorkommen gleich in den eigenen Wortschatz übernehmen (Standard aus, nur mit Lernen).
+ */
+speech_learning_auto_apply?: boolean; 
 /**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI

@@ -968,6 +968,14 @@ pub struct AppSettings {
     /// (ADR-0021).
     #[serde(default)]
     pub voice_call_read_transcripts: bool,
+    /// Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
+    /// Schalter wird kein Paar gespeichert.
+    #[serde(default)]
+    pub speech_learning_enabled: bool,
+    /// Gelernte Paare mit genug Vorkommen gleich in `custom_words` übernehmen statt vorzuschlagen.
+    /// Standard AUS; wirkt nur bei `speech_learning_enabled`.
+    #[serde(default)]
+    pub speech_learning_auto_apply: bool,
     /// M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
     /// Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
     /// `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -1821,6 +1829,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
         voice_call_read_transcripts: false,
+        speech_learning_enabled: false,
+        speech_learning_auto_apply: false,
         calendar_graph_client_id: None,
         calendar_graph_tenant: None,
         meeting_youtube_private: false,
@@ -3211,6 +3221,9 @@ mod tests {
         assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
         assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
         assert!(!old.voice_call_read_transcripts, "ältere settings.json: aus");
+        assert!(!d.speech_learning_enabled, "Lernen aus Korrekturen: standardmäßig aus");
+        assert!(!d.speech_learning_auto_apply, "automatisch übernehmen: standardmäßig aus");
+        assert!(!old.speech_learning_enabled && !old.speech_learning_auto_apply);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_mcp_enabled": true,
             "meeting_mcp_include_transcript": false,

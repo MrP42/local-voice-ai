@@ -10,6 +10,7 @@ import {
   type CallUsageEvent,
   type TurnMetrics,
 } from "@/components/voice-call/engine";
+import { sendFeedback } from "@/components/voice-call/speechLearning";
 import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
 import {
@@ -242,6 +243,11 @@ interface VoiceCallStore {
     display?: string,
     attachments?: HistoryAttachment[],
   ) => Promise<void>;
+  /**
+   * Eigene erkannte Zeile verbessern: Anzeige, Verlauf (gespeicherter Beitrag, Kontext der KI)
+   * und, nur bei eingeschaltetem Lernen, die Rückmeldung an die Spracherkennung.
+   */
+  editLine: (lineId: number, text: string) => Promise<void>;
   /** Leeres Gespräch; gespeichert wird erst beim ersten Beitrag. */
   newConversation: () => Promise<void>;
   loadConversations: () => Promise<void>;
@@ -648,6 +654,37 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       }
     },
 
+    editLine: async (lineKey, text) => {
+      const line = get().lines.find((l) => l.id === lineKey);
+      const next = text.trim().slice(0, MAX_ENTRY_CHARS);
+      if (!line || line.role !== "user" || line.mode !== "spoken") return;
+      if (!next || next === line.text) return;
+      const heard = line.text;
+      set((s) => ({
+        lines: s.lines.map((l) =>
+          l.id === lineKey ? { ...l, text: next } : l,
+        ),
+      }));
+      engine?.correctUserText(heard, next);
+      persistChain = persistChain.then(async () => {
+        const id = entryIds.get(lineKey);
+        // Ohne Kennung ist die Zeile noch nicht gespeichert: das Speichern nimmt den neuen Text mit.
+        if (!id) return;
+        try {
+          await invoke("conversation_update_entry", {
+            id,
+            text: next,
+            status: "complete",
+          });
+          await loadConversations();
+        } catch (e) {
+          set({ saveError: String(e) });
+        }
+      });
+      await persistChain;
+      await sendFeedback(heard, next);
+    },
+
     stopText: () => {
       engine?.cancelText(true);
       textRun++;
@@ -681,7 +718,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           .filter(
             (e) => (e.role === "user" || e.role === "assistant") && e.text,
           )
-          .map((e) => lineFromEntry(e, lineId++));
+          .map((e) => {
+            const l = lineFromEntry(e, lineId++);
+            entryIds.set(l.id, e.id);
+            return l;
+          });
         getEngine().setHistory(
           lines.map((l) => ({ role: l.role, content: l.text })),
         );

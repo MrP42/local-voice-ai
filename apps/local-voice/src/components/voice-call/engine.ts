@@ -213,6 +213,16 @@ export class VoiceCallEngine {
     this.history = [];
   }
 
+  /** Der Nutzer hat eine erkannte Äußerung verbessert: die KI kennt ab jetzt die richtige Fassung. */
+  correctUserText(from: string, to: string): void {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const m = this.history[i];
+      if (m.role !== "user" || m.content !== from) continue;
+      this.history[i] = { ...m, content: to };
+      return;
+    }
+  }
+
   /** Gespeichertes Gespräch öffnen: die KI kennt ab jetzt genau diesen Verlauf. */
   setHistory(
     messages: { role: "user" | "assistant"; content: string }[],
