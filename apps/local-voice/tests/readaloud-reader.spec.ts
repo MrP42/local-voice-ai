@@ -867,7 +867,10 @@ test("Buchinfo: Titel und Autor des importierten Buchs über dem Inhalt", async 
 });
 
 test("ohne Autorzeile keine Buchinfo", async ({ page }) => {
-  await open(page, "# Kapitel 1\n\nDer Wind strich um den Turm.\n\n## Zwei\n\nNoch ein Satz.");
+  await open(
+    page,
+    "# Kapitel 1\n\nvon dort aus sah man das Meer.\n\n## Zwei\n\nNoch ein Satz.",
+  );
   await expect(page.getByTestId("reader-contents")).toBeVisible();
   await expect(page.getByTestId("reader-bookinfo")).toHaveCount(0);
 });
