@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import AxeBuilder from "@axe-core/playwright";
 
 // Seite „Sprachgespraech“ gegen die Tauri-Attrappe: Infozeile, Text-Chat mit
 // Token/Abo-Hinweis, Fussleisten-Menue „Gespraech“, Plus-Menue, Einstellungen.
@@ -3052,3 +3053,41 @@ test.describe("Screenshots Oberfläche @screenshots", () => {
     }
   });
 });
+
+// Farbkontrast (WCAG AA) im Sprachgespräch: Liste, Infozeile, Chat und Composer,
+// hell und dunkel, breit und schmal.
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`axe color-contrast Sprachgespräch ${theme} ${width}`, async ({
+      browser,
+    }) => {
+      const ctx = await browser.newContext({
+        viewport: { width, height: 900 },
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, theme, { settings: TWO_MODELS });
+      await openPage(page);
+      await exchange(page, "Hallo KI", "Hallo zurück.");
+      await settled(page);
+      const result = await new AxeBuilder({ page })
+        .exclude("[data-tabster-dummy]")
+        .withRules(["color-contrast"])
+        .analyze();
+      const findings = result.violations.flatMap((v) =>
+        v.nodes.map((n) => {
+          const d = (n.any[0]?.data ?? {}) as {
+            fgColor?: string;
+            bgColor?: string;
+            contrastRatio?: number;
+          };
+          return `${n.target.join(" ")} ${d.fgColor}/${d.bgColor} ${d.contrastRatio}`;
+        }),
+      );
+      // Die Prüfung muss die Seite wirklich erfasst haben.
+      expect(result.passes.some((p) => p.id === "color-contrast")).toBe(true);
+      expect(findings).toEqual([]);
+      await ctx.close();
+    });
+  }
+}

@@ -92,7 +92,7 @@ export const RecognitionLearning: React.FC = () => {
           aria-label={t("voiceCall.learning.enable")}
           aria-describedby="learning-enable-hint"
         />
-        <span id="learning-enable-hint" className="text-xs text-text/60">
+        <span id="learning-enable-hint" className="text-xs text-text-muted">
           {t("voiceCall.learning.enableHint")}
         </span>
       </div>
@@ -109,7 +109,7 @@ export const RecognitionLearning: React.FC = () => {
           aria-label={t("voiceCall.learning.auto")}
           aria-describedby="learning-auto-hint"
         />
-        <span id="learning-auto-hint" className="text-xs text-text/60">
+        <span id="learning-auto-hint" className="text-xs text-text-muted">
           {t("voiceCall.learning.autoHint")}
         </span>
       </div>
@@ -117,7 +117,7 @@ export const RecognitionLearning: React.FC = () => {
         <div className="font-semibold text-[13px]">
           {t("voiceCall.learning.privacyTitle")}
         </div>
-        <div className="text-xs text-text/65 mt-0.5">
+        <div className="text-xs text-text-muted mt-0.5">
           {t("voiceCall.learning.privacy")}
         </div>
       </div>
@@ -130,7 +130,7 @@ export const RecognitionLearning: React.FC = () => {
             {t("voiceCall.learning.setupButton")}
           </Button>
         </div>
-        <span className="text-xs text-text/60">
+        <span className="text-xs text-text-muted">
           {t("voiceCall.learning.setupHint")}
         </span>
       </div>
@@ -167,7 +167,7 @@ export const RecognitionLearning: React.FC = () => {
           </p>
         )}
         {pairs && pairs.length === 0 && !(actError ?? loadError) && (
-          <p className="m-0 text-xs text-text/60">
+          <p className="m-0 text-xs text-text-muted">
             {t("voiceCall.learning.empty")}
           </p>
         )}

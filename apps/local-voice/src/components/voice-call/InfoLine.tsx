@@ -87,13 +87,13 @@ export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
   const model = ready?.llm || llm.label;
 
   return (
-    <div className="flex items-center gap-2.5 max-sm:gap-1 h-9 max-sm:h-[44px] px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
+    <div className="flex items-center gap-2.5 max-sm:gap-1 h-9 max-sm:h-[44px] px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/85 whitespace-nowrap overflow-hidden">
       {leading}
       <Popover positioning="below-start" withArrow={false}>
         <PopoverTrigger disableButtonEnhancement>
           <button
             type="button"
-            className="grid place-items-center w-7 h-7 max-sm:w-[44px] max-sm:h-[44px] rounded cursor-pointer hover:bg-mid-gray/15 text-text/70 hover:text-text shrink-0"
+            className="grid place-items-center w-7 h-7 max-sm:w-[44px] max-sm:h-[44px] rounded cursor-pointer hover:bg-mid-gray/15 text-text/85 hover:text-text shrink-0"
             aria-label={t("voiceCall.info.open")}
           >
             <Info className="w-4 h-4" aria-hidden="true" />
@@ -139,7 +139,7 @@ export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
                 ].map(([k, v]) => (
                   <tr key={k} className="border-t border-mid-gray/20">
                     <td className="py-1 pe-3">{k}</td>
-                    <td className="py-1 text-end text-text/70">{v}</td>
+                    <td className="py-1 text-end text-text/85">{v}</td>
                   </tr>
                 ))}
               </tbody>

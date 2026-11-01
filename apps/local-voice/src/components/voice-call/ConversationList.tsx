@@ -339,7 +339,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   };
 
   const iconButton =
-    "grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text";
+    "grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 rounded-md cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text";
   const rowButton =
     "min-h-[44px] md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
 
@@ -509,7 +509,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                             </Phone>
                           )}
                           {item.archived && (
-                            <span className="shrink-0 rounded px-1 text-[10px] bg-mid-gray/20 text-text/70">
+                            <span className="shrink-0 rounded px-1 text-[10px] bg-mid-gray/20 text-text/85">
                               {labels.archivedBadge}
                             </span>
                           )}
@@ -536,7 +536,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           aria-label={labels.menu(item.title)}
                           title={labels.menu(item.title)}
                           onClick={(e) => openMenu(item.id, e.currentTarget)}
-                          className={`grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
+                          className={`grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/85 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
                             menu?.id === item.id ? "md:opacity-100" : ""
                           }`}
                         >

@@ -234,7 +234,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
                       on ? "bg-mid-gray/15" : ""
                     }`}
                   >
-                    <span className="shrink-0 text-text/70">{row.icon}</span>
+                    <span className="shrink-0 text-text/85">{row.icon}</span>
                     <span className="flex-1 min-w-0 truncate">{row.label}</span>
                     {row.shortcut && (
                       <kbd className="shrink-0 text-[11px] text-text-muted font-sans">
@@ -266,7 +266,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
               className={`min-h-9 max-sm:min-h-[44px] px-3 rounded-full text-xs cursor-pointer ${
                 filter === tab.id
                   ? "bg-mid-gray/20 text-text font-semibold"
-                  : "text-text/70 hover:bg-mid-gray/10"
+                  : "text-text/85 hover:bg-mid-gray/10"
               }`}
             >
               {tab.label}
