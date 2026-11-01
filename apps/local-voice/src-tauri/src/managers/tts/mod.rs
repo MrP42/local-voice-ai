@@ -888,7 +888,10 @@ impl TtsCore {
         // Einmal rechnen (lva#150): rechnet den Satz schon jemand (Vorpuffer oder
         // Wiedergabe), wartet dieser Abruf und trifft danach den Cache.
         // `Skip` (Vorpuffer) liefert dann leere Bytes: nichts zu tun.
-        let Some(_claim) = self.claim_sentence(cache_key, claim).await else {
+        let Some(_claim) = self.claim_sentence(cache_key, claim, cancel).await else {
+            if claim == Claim::Wait {
+                return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+            }
             return Ok(Vec::new());
         };
         if let Some(cached) = self.wav_cache.lock().unwrap().get(cache_key) {
@@ -925,7 +928,12 @@ impl TtsCore {
 
     /// Den Satz `key` fuer die eigene Berechnung belegen. `Claim::Wait` wartet,
     /// bis ein anderer fertig ist; `Claim::Skip` gibt dann `None` zurueck.
-    async fn claim_sentence(&self, key: u64, mode: Claim) -> Option<InflightClaim<'_>> {
+    async fn claim_sentence(
+        &self,
+        key: u64,
+        mode: Claim,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Option<InflightClaim<'_>> {
         let slot = {
             let mut map = self.inflight.lock().unwrap();
             Arc::clone(
@@ -934,7 +942,15 @@ impl TtsCore {
             )
         };
         let guard = match mode {
-            Claim::Wait => Arc::clone(&slot).lock_owned().await,
+            // Abbrechbar: ein Export, der auf den Vorpuffer wartet, haengt
+            // nach seinem Abbruch nicht bis zu dessen Ende.
+            Claim::Wait => match cancel {
+                Some(flag) => tokio::select! {
+                    guard = Arc::clone(&slot).lock_owned() => guard,
+                    _ = wait_cancelled(flag) => return None,
+                },
+                None => Arc::clone(&slot).lock_owned().await,
+            },
             Claim::Skip => Arc::clone(&slot).try_lock_owned().ok()?,
         };
         Some(InflightClaim {
@@ -1252,31 +1268,48 @@ impl TtsCore {
         mut ready: tokio::sync::watch::Receiver<usize>,
     ) {
         let lookahead = self.lookahead.load(Ordering::Acquire);
-        if lookahead == 0 {
+        // Anbieter (Netz, oft je Anfrage abgerechnet, mit Ratenlimit) bekommen
+        // keinen Vorpuffer: nach einem Stopp waeren sonst Saetze bezahlt, die
+        // niemand hoert, und zwei parallele Anfragen koennen ein 429 ausloesen.
+        if lookahead == 0 || matches!(self.engine_snapshot(), EngineImpl::Provider(_)) {
             return;
         }
         let max_chars = *self.max_chars.lock().unwrap();
+        let mut epoch = self.voice_epoch.subscribe();
+        let mut seen = *epoch.borrow_and_update();
         let mut next = 0usize;
         loop {
             if cancelled.load(Ordering::Acquire) {
                 return;
             }
+            // Neue Stimme: was voraus lag, gilt nicht mehr — ab dem naechsten
+            // Satz neu puffern.
+            let now = *epoch.borrow_and_update();
+            if now != seen {
+                seen = now;
+                next = 0;
+            }
             let current = *ready.borrow_and_update();
             let window = (current != usize::MAX).then(|| current + 1..=current + lookahead);
             match window {
-                Some(window) if next.max(*window.start()) <= *window.end() => {
+                Some(window)
+                    if next.max(*window.start()) <= *window.end()
+                        && next.max(*window.start()) < sentences.len() =>
+                {
                     next = next.max(*window.start());
                 }
                 _ => {
-                    // Noch kein Satz da oder Puffer voll: auf den naechsten warten.
-                    if ready.changed().await.is_err() {
-                        return;
+                    // Noch kein Satz da, Puffer voll oder Textende erreicht: auf
+                    // den naechsten Satz oder eine neue Stimme warten (nach einem
+                    // Wechsel puffert er neu).
+                    tokio::select! {
+                        changed = ready.changed() => if changed.is_err() {
+                            return;
+                        },
+                        _ = epoch.changed() => {}
                     }
                     continue;
                 }
-            }
-            if next >= sentences.len() {
-                return;
             }
             let (sentence, speaker) = &sentences[next];
             if let Some(prepared) = protocol::prepare_text(sentence, max_chars) {
@@ -1290,12 +1323,13 @@ impl TtsCore {
                     let voice = self.utterance_voice(speaker.as_ref());
                     let port = *self.port.lock().unwrap();
                     let seed = *self.seed.lock().unwrap();
-                    if self
-                        .fetch_wav_ahead(port, seed, &text, voice.as_deref(), cancelled)
-                        .await
-                        .is_err()
-                    {
-                        return;
+                    // Ein Stimmwechsel verwirft die laufende Anfrage sofort: sie
+                    // belegte sonst Server und GPU, waehrend die Wiedergabe den
+                    // ersten Satz mit der neuen Stimme braucht. Ein Fehler kostet
+                    // nur diesen Satz; die Wiedergabe meldet ihn selbst.
+                    tokio::select! {
+                        _ = self.fetch_wav_ahead(port, seed, &text, voice.as_deref(), cancelled) => {}
+                        _ = epoch.changed() => break,
                     }
                 }
             }
@@ -6582,6 +6616,13 @@ mod tests {
         wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
         wait_until("Vorpuffer voll", || stage.engine.finished().len() == 3).await;
         stage.switch_voice("B");
+        // Der Vorpuffer beginnt mit der neuen Stimme von vorn, waehrend Satz 1
+        // noch spielt.
+        wait_until("Satz 3 (B) im Vorpuffer", || {
+            stage.engine.started().contains(&job("Satz drei.", "B"))
+        })
+        .await;
+        assert_eq!(stage.player.started(), spielt(&["mock|A|Satz eins."]));
         stage.player.release(10);
         finish(run).await.unwrap();
         assert_eq!(
