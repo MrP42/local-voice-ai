@@ -1,7 +1,7 @@
 //! Dokumente und Medien als Eingabe (statt nur Texteingabe/WAV).
 //!
-//! - Text aus Dokumenten: TXT/MD direkt, PDF über pdf-extract (Zeilen zu
-//!   Absätzen, lva#149), DOCX über zip + Tag-Stripping von word/document.xml,
+//! - Text aus Dokumenten: TXT/MD direkt, PDF über pdf-extract (seitenweise,
+//!   ohne Kopf-/Fußzeilen und Seitenzahlen, Zeilen zu Absätzen, lva#149), DOCX über zip + Tag-Stripping von word/document.xml,
 //!   EPUB über `crate::ebook` (Kapitel und Formatierung als Markdown).
 //! - Beliebige Audio-/Videoformate (mp3, m4a, mp4, mov, mkv, …) werden über
 //!   das lokale ffmpeg zu Mono-WAV dekodiert; ohne ffmpeg gibt es eine
@@ -63,8 +63,9 @@ pub fn extract_document_text(path: &Path) -> Result<String, String> {
             String::from_utf8_lossy(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes))
                 .to_string()
         }
-        "pdf" => crate::ebook::reflow_plain_text(
-            &pdf_extract::extract_text(path)
+        // Seitenweise, damit Kopf-/Fußzeilen und Seitenzahlen erkannt werden (lva#149).
+        "pdf" => crate::ebook::pdf_pages_to_text(
+            &pdf_extract::extract_text_by_pages(path)
                 .map_err(|e| format!("PDF text extraction failed: {e}"))?,
         ),
         "docx" => extract_docx(path)?,
