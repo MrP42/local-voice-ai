@@ -36,6 +36,9 @@ interface Progress {
 }
 
 export interface ReadAloudActionsProps {
+  /** Einzeilig in der Spielerleiste (rechte Spalte ausgeblendet): kein
+   *  Trennstrich, kein Satzzähler (steht in der Leiste), Fortschritt daneben. */
+  compact?: boolean;
   tab: TtsTab;
   /** Der Text des aktiven Reiters ist nicht leer (Übersetzen, Aufbereiten …
    *  arbeiten immer auf dem Original). */
@@ -304,7 +307,13 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
   );
 
   return (
-    <div className="flex flex-col gap-2 border-t border-mid-gray/20 pt-3">
+    <div
+      className={
+        props.compact
+          ? "flex min-w-0 items-center gap-2"
+          : "flex flex-col gap-2 border-t border-mid-gray/20 pt-3"
+      }
+    >
       <div
         className="relative flex items-center gap-1.5"
         data-testid="tts-actions"
@@ -563,7 +572,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           onCancel={props.onCancelPrewarm}
         />
       )}
-      {sentenceCounter && (
+      {sentenceCounter && !props.compact && (
         // Feste Breite (tabular-nums + Mindestbreite nach der Stellenzahl der Gesamtzahl):
         // die Zeile springt nicht, wenn aus "Satz 9/12" "Satz 10/12" wird.
         <span

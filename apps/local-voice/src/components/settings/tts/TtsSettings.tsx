@@ -98,7 +98,13 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { HelpCircle, Replace, Settings } from "lucide-react";
+import {
+  HelpCircle,
+  PanelRightClose,
+  Replace,
+  Settings,
+  TriangleAlert,
+} from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
@@ -274,7 +280,17 @@ export const TtsSettings = () => {
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
   // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
-  const ws = useWorkspaceLayout(pagesCollapsed === "1", filesCollapsed === "1");
+  // Rechte Spalte ganz ausblenden (Variante A, Codex 01.11.).
+  const [rightHiddenStored, setRightHidden] = usePersistentState<"1" | "0">(
+    "tts.rightHidden",
+    "0",
+  );
+  const rightHidden = rightHiddenStored === "1";
+  const ws = useWorkspaceLayout(
+    pagesCollapsed === "1",
+    filesCollapsed === "1",
+    rightHidden,
+  );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
@@ -2087,6 +2103,274 @@ export const TtsSettings = () => {
   const showVramHint =
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
+  // Stimme und Werkzeuge: rechts in der Spalte oder, ist sie ausgeblendet,
+  // in der Spielerleiste (Variante A, Codex 01.11.). Gerendert wird jeweils
+  // nur an einer Stelle.
+  const voicePicker = (
+      <TooltipTrigger
+        className="block w-full"
+        tooltipId="voice-mode-tip"
+        width={300}
+        content={
+          <div className="text-xs">
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </div>
+        }
+      >
+        <div
+          className="w-full"
+          role="group"
+          aria-label={t("tts.voices.title")}
+          aria-describedby="voice-mode-hint"
+          data-testid="voice-select"
+          onContextMenu={(event) =>
+            voiceMenu.open(event, [
+              {
+                id: "replace",
+                label: t("tts.replaceSpeaker.voiceMenu"),
+                icon: Replace,
+                testId: "voice-menu-replace",
+                disabled: speakers.length < 2,
+                onSelect: () => setReplaceSpeaker({}),
+              },
+              {
+                id: "manage",
+                label: t("tts.voices.manage"),
+                icon: Settings,
+                testId: "voice-menu-manage",
+                onSelect: () => {
+                  window.localStorage.setItem(
+                    "lva.ui.settings.tab",
+                    "output",
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent("lv-navigate", {
+                      detail: { section: "settings" },
+                    }),
+                  );
+                },
+              },
+            ])
+          }
+        >
+          {/* Kennwert statt leerem Text fuer die Standardstimme:
+            "" gilt der Select-Komponente als "nichts gewaehlt" und
+            zeigte den Platzhalter "Select…" statt des Namens.
+            Piper-Stimmen stehen in derselben Liste (Wert
+            "piper:<id>"): wer eine waehlt, schaltet damit die
+            Engine um — die Engine-Einstellung im Reiter Vorlesen
+            bleibt als zweiter Weg bestehen. */}
+          <Select
+            menuPortal
+            value={voiceValue}
+            options={voiceOptions}
+            formatOptionLabel={(option, context) => {
+              const sample =
+                context === "menu"
+                  ? sampleOf(option.value)
+                  : undefined;
+              const target =
+                context === "menu" && !sample
+                  ? tryOf(option.value)
+                  : undefined;
+              if (!sample && !target) return option.label;
+              return (
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">
+                    {option.label}
+                  </span>
+                  {sample ? (
+                    <SamplePlayButton
+                      inline
+                      path={sample.path}
+                      name={sample.name}
+                      testId={`voice-sample-${option.value}`}
+                    />
+                  ) : (
+                    target && (
+                      <VoiceTryButton
+                        target={target}
+                        name={option.label}
+                        testId={`voice-sample-${option.value}`}
+                      />
+                    )
+                  )}
+                </span>
+              );
+            }}
+            onChange={(value) => {
+              if (!value) return;
+              if (value === "@manage") {
+                window.localStorage.setItem(
+                  "lva.ui.settings.tab",
+                  "output",
+                );
+                window.dispatchEvent(
+                  new CustomEvent("lv-navigate", {
+                    detail: { section: "settings" },
+                  }),
+                );
+                return;
+              }
+              applyVoiceValue(value);
+              setTabVoices((current) => ({
+                ...current,
+                [voiceKey]: value,
+              }));
+            }}
+            isClearable={false}
+          />
+          {providerEngineId && (
+            <div
+              role="status"
+              data-testid="voice-provider-hint"
+              className="mt-1 text-xs text-text/70"
+            >
+              <p>
+                {t("tts.providers.dropdown.hint", {
+                  name: providerLabel ?? providerEngineId,
+                })}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="voice-provider-open"
+                onClick={() =>
+                  openVoiceManager("providers")
+                }
+              >
+                {t("tts.providers.dropdown.open")}
+              </Button>
+            </div>
+          )}
+          {selectedVoiceNotSetUp && (
+            <div
+              role="status"
+              data-testid="voice-setup-hint"
+              className="mt-1 text-xs text-amber-700 dark:text-amber-400"
+            >
+              <p>
+                {noVoiceSetUp
+                  ? t("tts.voices.noEngineHint")
+                  : t("tts.voices.notSetUpHint")}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="voice-setup-button"
+                onClick={() => openModelsArea("voices")}
+              >
+                {t("tts.voices.setUp")}
+              </Button>
+            </div>
+          )}
+          {piperReaderVoice && (
+            <p
+              className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
+              data-testid="piper-reader-hint"
+            >
+              <span>
+                {t("tts.voices.autoLanguageReads", {
+                  name: piperVoiceLabel(piperReaderVoice),
+                })}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void updateSetting("tts_piper_auto_language", false)
+                }
+                data-testid="piper-auto-language-off"
+              >
+                {t("tts.voices.autoLanguageOff")}
+              </Button>
+            </p>
+          )}
+          <p
+            id="voice-mode-hint"
+            className="sr-only"
+            data-testid="voice-mode-hint"
+          >
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </p>
+        </div>
+      </TooltipTrigger>
+  );
+  const readAloudActions = (compact: boolean) => (
+      <ReadAloudActions
+        compact={compact}
+        tab={tab}
+        hasText={text.trim().length > 0}
+        hasSpokenText={spokenText.trim().length > 0}
+        onLoadDocument={() => void loadDocument()}
+        onLoadUrl={() => setUrlDialogOpen(true)}
+        onAddProjectFile={() => void addFileToProject()}
+        dictating={dictating}
+        onToggleDictation={toggleDictation}
+        saving={saving}
+        onSave={saveSpokenAudio}
+        exportProgress={exportProgress}
+        exportEta={exportEta}
+        formatEta={formatEta}
+        onCancelExport={cancelExport}
+        prewarm={prewarm}
+        onPrewarm={() => void startPrewarm()}
+        onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
+        sentenceCounter={sentenceCounter}
+        onOpenWorkshop={() => setWorkshopOpen(true)}
+        tidying={tidying}
+        onTidy={() => void tidyText()}
+        errorCount={errorCount}
+        onCheckScript={runScriptCheck}
+        autoTagBlockedReason={
+          pausesOnly
+            ? t("tts.autotag.noStyleTags", {
+                engine: engineCaps.providerLabel ?? "",
+              })
+            : undefined
+        }
+        autoTag={{
+          text,
+          suggestions: tagSuggestions,
+          sourceText: tagSuggestionsSourceText,
+          onSuggestionsChange: changeTagSuggestions,
+          onApplyText: applyAutoTagText,
+          options:
+            autoTagOptions ??
+            (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
+            defaultAutoTagOptions(),
+          onOptionsChange: setAutoTagOptions,
+          uiLang,
+        }}
+        targetLang={targetLang}
+        onTargetLangChange={(value) =>
+          void updateSetting("tts_translate_lang", value)
+        }
+        translating={translating}
+        onTranslate={translateText}
+        summarizing={summarizing}
+        onSummarize={summarize}
+        transformProgress={transformProgress}
+        onCancelTransform={(kind) =>
+          void commands.ttsTransformCancel(kind)
+        }
+        onSwapSpeakers={() => void openSpeakerSwap()}
+        sumLength={sumLength}
+        onSumLengthChange={setSumLength}
+        sumDetail={sumDetail}
+        onSumDetailChange={setSumDetail}
+        sumAudience={sumAudience}
+        onSumAudienceChange={setSumAudience}
+      />
+  );
+
   return (
     <PageShell
       title={t("tts.title")}
@@ -2238,6 +2522,7 @@ export const TtsSettings = () => {
                     onKeepAwake={toggleKeepAwake}
                     fullscreen={fullscreen}
                     onFullscreen={toggleFullscreen}
+                    onShowColumn={rightHidden ? () => setRightHidden("0") : undefined}
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
@@ -2477,6 +2762,45 @@ export const TtsSettings = () => {
                 resumable={resumeAt !== null && !canResume && !speaking}
                 resumePage={resumePage}
                 chapter={contents[chapterIndex]?.title ?? null}
+                dock={
+                  rightHidden
+                    ? (inPopover) => (
+                        <>
+                          <div
+                            className={
+                              inPopover ? "w-full" : "reader-dock__voice"
+                            }
+                          >
+                            {voicePicker}
+                          </div>
+                          {/* In der Zeile sind die Hinweise unter der Stimme
+                            verborgen: fehlt eine eingerichtete Stimme, steht
+                            der Weg dorthin als Warnknopf daneben. */}
+                          {!inPopover && selectedVoiceNotSetUp && (
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-amber-700 hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary dark:text-amber-400"
+                              aria-label={t("tts.voices.setUp")}
+                              title={
+                                noVoiceSetUp
+                                  ? t("tts.voices.noEngineHint")
+                                  : t("tts.voices.notSetUpHint")
+                              }
+                              onClick={() => openModelsArea("voices")}
+                              data-testid="reader-dock-voice-setup"
+                            >
+                              <TriangleAlert
+                                width={16}
+                                height={16}
+                                aria-hidden="true"
+                              />
+                            </button>
+                          )}
+                          {readAloudActions(!inPopover)}
+                        </>
+                      )
+                    : undefined
+                }
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);
@@ -2491,6 +2815,8 @@ export const TtsSettings = () => {
             (Griff davor, Breite ws.right); nebeneinander loest sich der
             Rahmen auf (display: contents) und die beiden stehen wie frueher
             als Geschwister neben dem Editor, der Griff sitzt vor den Dateien. */}
+          {!rightHidden && (
+            <>
           {ws.stacked && (
             <ResizeHandle
               testId="resize-right"
@@ -2519,7 +2845,7 @@ export const TtsSettings = () => {
               }`}
               aria-label={t("tts.controls")}
             >
-              <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex gap-1 items-start">
                 {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
                 as every audio player in the app — not text buttons. */}
@@ -2541,266 +2867,21 @@ export const TtsSettings = () => {
                   Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
-                <TooltipTrigger
-                  className="block w-full"
-                  tooltipId="voice-mode-tip"
-                  width={300}
-                  content={
-                    <div className="text-xs">
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </div>
-                  }
+                <div className="min-w-0 flex-1">{voicePicker}</div>
+                {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
+                  ziehen dann in die Spielerleiste unter dem Text. */}
+                <button
+                  type="button"
+                  className="flex h-9 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                  aria-label={t("tts.layout.hideColumn")}
+                  title={t("tts.layout.hideColumn")}
+                  onClick={() => setRightHidden("1")}
+                  data-testid="right-column-hide"
                 >
-                  <div
-                    className="w-full"
-                    role="group"
-                    aria-label={t("tts.voices.title")}
-                    aria-describedby="voice-mode-hint"
-                    data-testid="voice-select"
-                    onContextMenu={(event) =>
-                      voiceMenu.open(event, [
-                        {
-                          id: "replace",
-                          label: t("tts.replaceSpeaker.voiceMenu"),
-                          icon: Replace,
-                          testId: "voice-menu-replace",
-                          disabled: speakers.length < 2,
-                          onSelect: () => setReplaceSpeaker({}),
-                        },
-                        {
-                          id: "manage",
-                          label: t("tts.voices.manage"),
-                          icon: Settings,
-                          testId: "voice-menu-manage",
-                          onSelect: () => {
-                            window.localStorage.setItem(
-                              "lva.ui.settings.tab",
-                              "output",
-                            );
-                            window.dispatchEvent(
-                              new CustomEvent("lv-navigate", {
-                                detail: { section: "settings" },
-                              }),
-                            );
-                          },
-                        },
-                      ])
-                    }
-                  >
-                    {/* Kennwert statt leerem Text fuer die Standardstimme:
-                      "" gilt der Select-Komponente als "nichts gewaehlt" und
-                      zeigte den Platzhalter "Select…" statt des Namens.
-                      Piper-Stimmen stehen in derselben Liste (Wert
-                      "piper:<id>"): wer eine waehlt, schaltet damit die
-                      Engine um — die Engine-Einstellung im Reiter Vorlesen
-                      bleibt als zweiter Weg bestehen. */}
-                    <Select
-                      menuPortal
-                      value={voiceValue}
-                      options={voiceOptions}
-                      formatOptionLabel={(option, context) => {
-                        const sample =
-                          context === "menu"
-                            ? sampleOf(option.value)
-                            : undefined;
-                        const target =
-                          context === "menu" && !sample
-                            ? tryOf(option.value)
-                            : undefined;
-                        if (!sample && !target) return option.label;
-                        return (
-                          <span className="flex items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate">
-                              {option.label}
-                            </span>
-                            {sample ? (
-                              <SamplePlayButton
-                                inline
-                                path={sample.path}
-                                name={sample.name}
-                                testId={`voice-sample-${option.value}`}
-                              />
-                            ) : (
-                              target && (
-                                <VoiceTryButton
-                                  target={target}
-                                  name={option.label}
-                                  testId={`voice-sample-${option.value}`}
-                                />
-                              )
-                            )}
-                          </span>
-                        );
-                      }}
-                      onChange={(value) => {
-                        if (!value) return;
-                        if (value === "@manage") {
-                          window.localStorage.setItem(
-                            "lva.ui.settings.tab",
-                            "output",
-                          );
-                          window.dispatchEvent(
-                            new CustomEvent("lv-navigate", {
-                              detail: { section: "settings" },
-                            }),
-                          );
-                          return;
-                        }
-                        applyVoiceValue(value);
-                        setTabVoices((current) => ({
-                          ...current,
-                          [voiceKey]: value,
-                        }));
-                      }}
-                      isClearable={false}
-                    />
-                    {providerEngineId && (
-                      <div
-                        role="status"
-                        data-testid="voice-provider-hint"
-                        className="mt-1 text-xs text-text/70"
-                      >
-                        <p>
-                          {t("tts.providers.dropdown.hint", {
-                            name: providerLabel ?? providerEngineId,
-                          })}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-provider-open"
-                          onClick={() =>
-                            openVoiceManager("providers")
-                          }
-                        >
-                          {t("tts.providers.dropdown.open")}
-                        </Button>
-                      </div>
-                    )}
-                    {selectedVoiceNotSetUp && (
-                      <div
-                        role="status"
-                        data-testid="voice-setup-hint"
-                        className="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                      >
-                        <p>
-                          {noVoiceSetUp
-                            ? t("tts.voices.noEngineHint")
-                            : t("tts.voices.notSetUpHint")}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-setup-button"
-                          onClick={() => openModelsArea("voices")}
-                        >
-                          {t("tts.voices.setUp")}
-                        </Button>
-                      </div>
-                    )}
-                    {piperReaderVoice && (
-                      <p
-                        className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
-                        data-testid="piper-reader-hint"
-                      >
-                        <span>
-                          {t("tts.voices.autoLanguageReads", {
-                            name: piperVoiceLabel(piperReaderVoice),
-                          })}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            void updateSetting("tts_piper_auto_language", false)
-                          }
-                          data-testid="piper-auto-language-off"
-                        >
-                          {t("tts.voices.autoLanguageOff")}
-                        </Button>
-                      </p>
-                    )}
-                    <p
-                      id="voice-mode-hint"
-                      className="sr-only"
-                      data-testid="voice-mode-hint"
-                    >
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </p>
-                  </div>
-                </TooltipTrigger>
+                  <PanelRightClose width={16} height={16} aria-hidden="true" />
+                </button>
               </div>
-              <ReadAloudActions
-                tab={tab}
-                hasText={text.trim().length > 0}
-                hasSpokenText={spokenText.trim().length > 0}
-                onLoadDocument={() => void loadDocument()}
-                onLoadUrl={() => setUrlDialogOpen(true)}
-                onAddProjectFile={() => void addFileToProject()}
-                dictating={dictating}
-                onToggleDictation={toggleDictation}
-                saving={saving}
-                onSave={saveSpokenAudio}
-                exportProgress={exportProgress}
-                exportEta={exportEta}
-                formatEta={formatEta}
-                onCancelExport={cancelExport}
-                prewarm={prewarm}
-                onPrewarm={() => void startPrewarm()}
-                onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
-                sentenceCounter={sentenceCounter}
-                onOpenWorkshop={() => setWorkshopOpen(true)}
-                tidying={tidying}
-                onTidy={() => void tidyText()}
-                errorCount={errorCount}
-                onCheckScript={runScriptCheck}
-                autoTagBlockedReason={
-                  pausesOnly
-                    ? t("tts.autotag.noStyleTags", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })
-                    : undefined
-                }
-                autoTag={{
-                  text,
-                  suggestions: tagSuggestions,
-                  sourceText: tagSuggestionsSourceText,
-                  onSuggestionsChange: changeTagSuggestions,
-                  onApplyText: applyAutoTagText,
-                  options:
-                    autoTagOptions ??
-                    (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
-                    defaultAutoTagOptions(),
-                  onOptionsChange: setAutoTagOptions,
-                  uiLang,
-                }}
-                targetLang={targetLang}
-                onTargetLangChange={(value) =>
-                  void updateSetting("tts_translate_lang", value)
-                }
-                translating={translating}
-                onTranslate={translateText}
-                summarizing={summarizing}
-                onSummarize={summarize}
-                transformProgress={transformProgress}
-                onCancelTransform={(kind) =>
-                  void commands.ttsTransformCancel(kind)
-                }
-                onSwapSpeakers={() => void openSpeakerSwap()}
-                sumLength={sumLength}
-                onSumLengthChange={setSumLength}
-                sumDetail={sumDetail}
-                onSumDetailChange={setSumDetail}
-                sumAudience={sumAudience}
-                onSumAudienceChange={setSumAudience}
-              />
+              {readAloudActions(false)}
               {speaking && currentSentence && viewMode === "edit" && (
                 <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                   {currentSentence}
@@ -2819,7 +2900,9 @@ export const TtsSettings = () => {
                 onChange={ws.right.set}
               />
             )}
-            {helpOpen && <TtsHelpDock onClose={() => setHelpOpenValue("0")} />}
+            {helpOpen && !rightHidden && (
+              <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+            )}
             <FilesSidebar
               pageId={activePage}
               collapsed={filesCollapsed === "1"}
@@ -2839,6 +2922,13 @@ export const TtsSettings = () => {
               }}
             />
           </div>
+            </>
+          )}
+
+          {/* Hilfe bleibt auch bei ausgeblendeter Spalte erreichbar. */}
+          {helpOpen && rightHidden && (
+            <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+          )}
 
           <Dialog
             open={checkDialog !== null}

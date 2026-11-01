@@ -589,3 +589,37 @@
   color: var(--color-text);
   padding: 12px 24px 16px;
 }
+
+/* Variante A (Codex 01.11.): rechte Spalte ausgeblendet, Stimme und
+   Werkzeuge in der Transportzeile. Die Zeile bricht nie um (keine dritte
+   Zeile); Platz macht zuerst die Positionsangabe, dann wandern die
+   Werkzeuge hinter einen Knopf (ReaderPlayerBar, DOCK_INLINE_MIN). */
+.reader-player--docked .reader-player__ctrls {
+  flex-wrap: nowrap;
+}
+.reader-player--docked .reader-player__where {
+  flex: 1 1 0;
+  min-width: 90px;
+}
+.reader-player--docked .reader-player__extra {
+  flex: 0 0 auto;
+}
+.reader-dock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  max-height: 48px;
+}
+.reader-dock__voice {
+  flex: 0 0 170px;
+  width: 170px;
+}
+/* Hinweise unter der Stimme stehen im Knopf-Fenster und rechts, in der
+   einzeiligen Leiste nicht (dort Tooltip). */
+.reader-dock [role="status"],
+.reader-dock [data-testid="piper-reader-hint"] {
+  display: none;
+}

@@ -27,6 +27,7 @@
   },
   "tts": {
     "reader": {
+      "dockTools": "Stimme und Werkzeuge",
       "originalPage": "Seite {{page}} im Original",
       "label": "Buchseiten",
       "roleBook": "Buch",
@@ -795,6 +796,9 @@
       "defaultVoice": "Standardstimme"
     },
     "layout": {
+      "hideColumn": "Rechte Spalte ausblenden",
+      "showColumn": "Spalte einblenden",
+      "showColumnHint": "Stimme, Werkzeuge und Dateien wieder rechts anzeigen",
       "sideBySide": "Bedienung und Dateien nebeneinander anzeigen",
       "resizePages": "Breite der Seitenliste ändern",
       "resizeRight": "Breite der rechten Spalte ändern",
