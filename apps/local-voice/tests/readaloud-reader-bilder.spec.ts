@@ -317,6 +317,18 @@ for (const theme of ["light", "dark"]) {
       });
       await page.waitForTimeout(800);
       await page.screenshot({ path: `${DIR}/inhalt-${theme}-${width}.png` });
+      // Eingeklappt: das aktuelle Kapitel steht im Kopf.
+      await page.getByTestId("reader-contents-toggle").click();
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: `${DIR}/inhalt-eingeklappt-${theme}-${width}.png` });
+      await page.getByTestId("reader-contents-toggle").click();
+      if (width < 600) {
+        // Schmal steht das Kapitel im Überlaufmenü der Spielerleiste.
+        await page.getByTestId("reader-more").click();
+        await page.getByTestId("reader-more-where").waitFor();
+        await page.waitForTimeout(200);
+        await page.screenshot({ path: `${DIR}/inhalt-spieler-menue-${theme}-${width}.png` });
+      }
     });
   }
 }

@@ -691,6 +691,13 @@ test("Inhaltsverzeichnis: Kapitel links, aktuelles hervorgehoben, Klick blätter
     "location",
   );
   await expect(page.getByTestId("reader-chapter")).toHaveText("Zweites Kapitel");
+  // Schmal: das Kapitel steht im Überlaufmenü.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("reader-more").click();
+  await expect(page.getByTestId("reader-more-where")).toContainText("Zweites Kapitel");
+  await expect(page.getByTestId("reader-more-where")).toContainText("Satz 15 von 30");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
   // Einklappen zeigt das aktuelle Kapitel im Kopf.
   await page.getByTestId("reader-contents-toggle").click();
   await expect(page.getByTestId("reader-contents-toggle")).toHaveAttribute("aria-expanded", "false");
