@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { Pause, Play, RotateCcw, RotateCw, X } from "lucide-react";
 import type { LibraryBook } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
@@ -28,6 +28,17 @@ export const AudioBar: React.FC<{ book: LibraryBook; onClose(): void }> = ({
   const audio = useRef<HTMLAudioElement>(null);
   const lastSave = useRef(0);
   const key = audioProgressKey(book.id);
+  const [playing, setPlaying] = useState(false);
+  const skip = (seconds: number) => {
+    const el = audio.current;
+    if (el) el.currentTime = Math.max(0, el.currentTime + seconds);
+  };
+  const toggle = () => {
+    const el = audio.current;
+    if (!el) return;
+    if (el.paused) void el.play().catch(() => {});
+    else el.pause();
+  };
   const src = assetUrl(book.audio_path);
 
   const persist = (force = false) => {
@@ -85,15 +96,46 @@ export const AudioBar: React.FC<{ book: LibraryBook; onClose(): void }> = ({
             e.currentTarget.currentTime = saved.offset / 1000;
         }}
         onTimeUpdate={() => persist()}
-        onPause={() => persist(true)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => {
+          setPlaying(false);
+          persist(true);
+        }}
         onSeeked={() => persist(true)}
         onEnded={() => persist(true)}
       />
-      <IconButton
-        icon={<X size={16} aria-hidden="true" />}
-        label={t("library.audiobarClose")}
-        onClick={onClose}
-      />
+      {/* Eigene, große Touchflächen (≥ 44 px); die eingebaute Leiste bleibt
+          für Zeitanzeige und Springen per Schieber. */}
+      <div className="library-audiobar__keys">
+        <IconButton
+          icon={<RotateCcw size={18} aria-hidden="true" />}
+          label={t("library.back30")}
+          onClick={() => skip(-30)}
+        />
+        <IconButton
+          icon={
+            playing ? (
+              <Pause size={20} aria-hidden="true" />
+            ) : (
+              <Play size={20} aria-hidden="true" />
+            )
+          }
+          label={playing ? t("library.pause") : t("library.play")}
+          onClick={toggle}
+          data-testid="library-audiobar-toggle"
+        />
+        <IconButton
+          icon={<RotateCw size={18} aria-hidden="true" />}
+          label={t("library.forward30")}
+          onClick={() => skip(30)}
+        />
+        <IconButton
+          icon={<X size={18} aria-hidden="true" />}
+          label={t("library.audiobarClose")}
+          onClick={onClose}
+          data-testid="library-audiobar-close"
+        />
+      </div>
     </div>
   );
 };

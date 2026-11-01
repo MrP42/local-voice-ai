@@ -98,7 +98,11 @@ export const LibraryPage: React.FC = () => {
     "all",
     isFilter,
   );
-  const [sort, setSort] = usePersistentState<Sort>("library.sort", "recent", isSort);
+  const [sort, setSort] = usePersistentState<Sort>(
+    "library.sort",
+    "recent",
+    isSort,
+  );
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [listening, setListening] = useState<LibraryBook | null>(null);
@@ -114,7 +118,10 @@ export const LibraryPage: React.FC = () => {
   const counts = useMemo(
     () =>
       Object.fromEntries(
-        FILTERS.map((f) => [f, views.filter((v) => matchesFilter(v, f)).length]),
+        FILTERS.map((f) => [
+          f,
+          views.filter((v) => matchesFilter(v, f)).length,
+        ]),
       ) as Record<Filter, number>,
     [views],
   );
@@ -122,7 +129,10 @@ export const LibraryPage: React.FC = () => {
     views.filter((v) => matchesFilter(v, filter) && matchesSearch(v, query)),
     sort,
   );
-  const continueViews = sortViews(views.filter(isStarted), "recent").slice(0, 3);
+  const continueViews = sortViews(views.filter(isStarted), "recent").slice(
+    0,
+    3,
+  );
   const jobList = Object.values(jobs);
 
   const jobOf = (book: LibraryBook) =>
@@ -136,7 +146,8 @@ export const LibraryPage: React.FC = () => {
   const play = (v: BookView) => {
     if (
       v.book.audio_path &&
-      (v.resumeWith === "audio" || v.audioSource === "audiobook" && !v.book.text)
+      (v.resumeWith === "audio" ||
+        (v.audioSource === "audiobook" && !v.book.text))
     ) {
       setListening(v.book);
       return;
@@ -148,7 +159,8 @@ export const LibraryPage: React.FC = () => {
 
   const toggleFinished = async (v: BookView) => {
     const finished = !isFinished(v);
-    if (v.book.text) setFinished(`text:${v.book.text.page_id}:original`, finished);
+    if (v.book.text)
+      setFinished(`text:${v.book.text.page_id}:original`, finished);
     if (v.book.audio_path) setFinished(`audio:${v.book.id}`, finished);
     await save(v.book.id, (fresh) => ({ ...fresh, finished }));
   };
@@ -196,7 +208,9 @@ export const LibraryPage: React.FC = () => {
         return t("library.status.left", {
           time: formatDuration(rec.length - rec.offset),
         });
-      return t("library.status.percent", { percent: Math.round(v.fraction * 100) });
+      return t("library.status.percent", {
+        percent: Math.round(v.fraction * 100),
+      });
     }
     return v.book.text || v.book.audio_path
       ? t("library.status.notStarted")
@@ -204,7 +218,11 @@ export const LibraryPage: React.FC = () => {
   };
 
   const card = (v: BookView) => (
-    <article className="library-card" key={v.book.id} data-testid="library-card">
+    <article
+      className="library-card"
+      key={v.book.id}
+      data-testid="library-card"
+    >
       <div style={{ position: "relative" }}>
         <button
           type="button"
@@ -229,52 +247,54 @@ export const LibraryPage: React.FC = () => {
       <div className="library-meta">{statusLine(v)}</div>
       <div className="library-card__row">
         <Formats view={v} job={jobOf(v.book)} />
-        <ActionMenu
-          trigger={{
-            icon: MoreVertical,
-            label: t("library.more", { title: v.book.title }),
-            description: t("library.moreHint"),
-            testId: `library-more-${v.book.id}`,
-          }}
-          menuLabel={t("library.moreMenu")}
-          align="end"
-          items={[
-            {
-              id: "details",
-              label: t("library.details"),
-              icon: BookOpen,
-              onSelect: () => setOpenId(v.book.id),
-            },
-            ...(v.book.text
-              ? [
-                  {
-                    id: "read",
-                    label: t("library.read"),
-                    icon: BookOpen,
-                    onSelect: () => openInReader(v.book.text!.page_id, false),
-                  },
-                ]
-              : []),
-            ...(v.book.audio_path
-              ? [
-                  {
-                    id: "listen",
-                    label: t("library.listen"),
-                    icon: Headphones,
-                    onSelect: () => setListening(v.book),
-                  },
-                ]
-              : []),
-            {
-              id: "finished",
-              label: isFinished(v)
-                ? t("library.markUnfinished")
-                : t("library.markFinished"),
-              icon: BookOpen,
-              onSelect: () => void toggleFinished(v),
-            },
-          ]}
-        />
+        <span className="library-touch">
+          <ActionMenu
+            trigger={{
+              icon: MoreVertical,
+              label: t("library.more", { title: v.book.title }),
+              description: t("library.moreHint"),
+              testId: `library-more-${v.book.id}`,
+            }}
+            menuLabel={t("library.moreMenu")}
+            align="end"
+            items={[
+              {
+                id: "details",
+                label: t("library.details"),
+                icon: BookOpen,
+                onSelect: () => setOpenId(v.book.id),
+              },
+              ...(v.book.text
+                ? [
+                    {
+                      id: "read",
+                      label: t("library.read"),
+                      icon: BookOpen,
+                      onSelect: () => openInReader(v.book.text!.page_id, false),
+                    },
+                  ]
+                : []),
+              ...(v.book.audio_path
+                ? [
+                    {
+                      id: "listen",
+                      label: t("library.listen"),
+                      icon: Headphones,
+                      onSelect: () => setListening(v.book),
+                    },
+                  ]
+                : []),
+              {
+                id: "finished",
+                label: isFinished(v)
+                  ? t("library.markUnfinished")
+                  : t("library.markFinished"),
+                icon: BookOpen,
+                onSelect: () => void toggleFinished(v),
+              },
+            ]}
+          />
+        </span>
       </div>
     </article>
   );
@@ -296,7 +316,9 @@ export const LibraryPage: React.FC = () => {
     >
       <div
         className="library"
-        style={{ "--lib-bar": listening ? "64px" : "0px" } as React.CSSProperties}
+        style={
+          { "--lib-bar": listening ? "64px" : "0px" } as React.CSSProperties
+        }
       >
         {open ? (
           <BookDetail
@@ -332,7 +354,10 @@ export const LibraryPage: React.FC = () => {
                   value={sort}
                   isClearable={false}
                   ariaLabel={t("library.sortLabel")}
-                  options={SORTS.map((s) => ({ value: s, label: t(`library.sort.${s}`) }))}
+                  options={SORTS.map((s) => ({
+                    value: s,
+                    label: t(`library.sort.${s}`),
+                  }))}
                   onChange={(v) => v && setSort(v as Sort)}
                 />
               </div>
@@ -376,7 +401,10 @@ export const LibraryPage: React.FC = () => {
                     >
                       {continueViews.length > 0 && (
                         <section aria-labelledby="library-continue">
-                          <h2 id="library-continue" className="library-section__head">
+                          <h2
+                            id="library-continue"
+                            className="library-section__head"
+                          >
                             {t("library.continue")}
                             <small>{t("library.continueHint")}</small>
                           </h2>
@@ -403,7 +431,9 @@ export const LibraryPage: React.FC = () => {
                                       })}
                                     />
                                   </div>
-                                  <div className="library-meta">{statusLine(v)}</div>
+                                  <div className="library-meta">
+                                    {statusLine(v)}
+                                  </div>
                                 </div>
                                 {playButton(v)}
                               </div>
@@ -412,19 +442,30 @@ export const LibraryPage: React.FC = () => {
                         </section>
                       )}
                       {jobList.length > 0 && (
-                        <section className="library-jobs" aria-labelledby="library-jobs">
-                          <h2 id="library-jobs" className="library-section__head">
+                        <section
+                          className="library-jobs"
+                          aria-labelledby="library-jobs"
+                        >
+                          <h2
+                            id="library-jobs"
+                            className="library-section__head"
+                          >
                             {t("library.working")}
                             <small>{t("library.workingHint")}</small>
                           </h2>
                           {jobList.map((job) => {
-                            const book = books?.find((b) => b.id === job.bookId);
+                            const book = books?.find(
+                              (b) => b.id === job.bookId,
+                            );
                             if (!book) return null;
                             return (
                               <div className="library-job" key={job.bookId}>
                                 <BookCover book={book} size="xs" />
                                 <div style={{ minWidth: 0 }}>
-                                  <div className="library-title" style={{ WebkitLineClamp: 1 }}>
+                                  <div
+                                    className="library-title"
+                                    style={{ WebkitLineClamp: 1 }}
+                                  >
                                     {book.title}
                                   </div>
                                   <div className="library-meta">
@@ -456,7 +497,11 @@ export const LibraryPage: React.FC = () => {
           </>
         )}
         {listening && (
-          <AudioBar key={listening.id} book={listening} onClose={() => setListening(null)} />
+          <AudioBar
+            key={listening.id}
+            book={listening}
+            onClose={() => setListening(null)}
+          />
         )}
         <AddBookDialog
           open={adding}

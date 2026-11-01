@@ -439,7 +439,18 @@
 .library-audiobar audio {
   flex: 1 1 240px;
   min-width: 0;
-  height: 36px;
+  height: 44px;
+}
+.library-audiobar__keys {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+/* Touchflächen mindestens 44 × 44 px (Codex-Auflage b). */
+.library-audiobar__keys button,
+.library-touch button {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 /* Dialog „Hinzufügen“ */
@@ -546,4 +557,10 @@
     order: 3;
     flex-basis: 100%;
   }
+}
+.library-audiobar .library-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

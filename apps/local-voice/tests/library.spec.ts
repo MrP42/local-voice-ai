@@ -365,7 +365,11 @@ test("390 px: Produktseite gestapelt, ohne waagerechte Scrollleiste", async ({ p
   await page.screenshot({ path: shot("bibliothek-detail-390.png"), fullPage: true });
   await detail.getByRole("tab", { name: "Fassungen" }).click();
   await expect(page.getByTestId("library-status")).toContainText("Wird transkribiert");
-  await page.screenshot({ path: shot("bibliothek-fassungen-390.png"), fullPage: true });
+  // Ganze Reiterseite im Bild: Fenster so hoch wie der Inhalt.
+  await page.getByTestId("library-status").scrollIntoViewIfNeeded();
+  await page.setViewportSize({ width: 390, height: 1500 });
+  await expect(page.locator(".library-versions")).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: shot("bibliothek-fassungen-390.png") });
 });
 
 for (const width of [1440, 390]) {
@@ -379,6 +383,17 @@ for (const width of [1440, 390]) {
       .click();
     const bar = page.locator(".library-audiobar");
     await expect(bar).toBeVisible();
+    // Touchflächen: Mehrmenü der Karten und alle Knöpfe der Hörleiste ≥ 44 px.
+    const targets = [
+      ...(await bar.locator("button").all()),
+      ...(await page.locator(".library-touch button").all()),
+    ];
+    expect(targets.length).toBeGreaterThanOrEqual(7);
+    for (const target of targets) {
+      const box = await target.boundingBox();
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
     // Bis ans Ende gescrollt, liegt die letzte Karte ganz über der Leiste.
     const last = page.getByTestId("library-card").last();
     await last.scrollIntoViewIfNeeded();
