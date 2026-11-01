@@ -81,8 +81,16 @@ async function install(
       push_to_talk: true,
     };
     Object.assign(settings, extra.settings ?? {});
+    // Wie der Kern: ohne freigegebenen Bereich gibt es keine Werkzeuge. Tests mit Werkzeugen, die
+    // nichts anderes sagen, geben „Besprechungen“ frei.
+    if (
+      extra.tools?.length &&
+      !("voice_call_knowledge" in (extra.settings ?? {}))
+    )
+      settings.voice_call_knowledge = ["meetings"];
     w.__settings = settings;
     w.__tools = extra.tools ?? [];
+    w.__listed = [] as number[];
     w.__tool = null;
     w.__turnReplies = [] as string[];
     // Gespraechsverlauf (U3): Attrappe der Befehle `conversation*`, im Speicher.
@@ -194,8 +202,20 @@ async function install(
             case "voice_call_cancel":
               w.__hung?.get(args.requestId)?.("");
               return false;
-            case "voice_tools_list":
-              return w.__tools;
+            case "voice_tools_list": {
+              const granted = (
+                (settings.voice_call_knowledge ?? []) as string[]
+              ).length;
+              const list = granted ? w.__tools : [];
+              w.__listed.push(list.length);
+              return list;
+            }
+            case "change_voice_call_knowledge_setting":
+              settings.voice_call_knowledge = args.areas;
+              return null;
+            case "change_voice_call_read_transcripts_setting":
+              settings.voice_call_read_transcripts = args.enabled;
+              return null;
             case "voice_tool_call":
               return new Promise((resolve, reject) => {
                 w.__tool = { args, resolve, reject };
@@ -965,16 +985,20 @@ test.describe("Sprachgespraech", () => {
     await ctx.close();
   });
 
-  test("Einstellungs-Panel hat vier Reiter", async ({ page }) => {
+  test("Einstellungs-Panel hat fünf Reiter, Wissen zwischen Erkennung und Modelle", async ({
+    page,
+  }) => {
     await openPage(page);
     await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
     await expect(panel).toBeVisible();
-    await expect(panel.getByRole("tab")).toHaveCount(4);
-    for (const n of ["Gespräch", "Stimme", "Erkennung", "Modelle"])
+    await expect(panel.getByRole("tab")).toHaveCount(5);
+    const names = ["Gespräch", "Stimme", "Erkennung", "Wissen", "Modelle"];
+    for (const n of names)
       await expect(panel.getByRole("tab", { name: n })).toBeVisible();
+    await expect(panel.getByRole("tab")).toHaveText(names);
   });
 });
 
@@ -1336,21 +1360,6 @@ test.describe("Sprachgespraech Orchestrator", () => {
     const tools = panel.getByRole("switch", { name: "LVA-Werkzeuge nutzen" });
     await expect(tools).toBeChecked();
     await expect(panel.getByText("Aus", { exact: true })).toBeVisible();
-    // Transkripte im Sprachgespräch: Standard aus, Wahl geht an den Kern.
-    const transcripts = panel.getByRole("switch", {
-      name: "Transkripte im Sprachgespräch lesen",
-    });
-    await expect(transcripts).not.toBeChecked();
-    await transcripts.click();
-    await expect
-      .poll(async () => {
-        const c = await calls(
-          page,
-          "change_voice_call_read_transcripts_setting",
-        );
-        return c.map((x) => x.args.enabled);
-      })
-      .toEqual([true]);
     // Der Denker-Hinweis ist mit dem Feld verbunden.
     const denker = panel.getByRole("combobox", { name: "Denker-Modell" });
     const describedBy = await denker.getAttribute("aria-describedby");
@@ -1827,6 +1836,261 @@ test.describe("Sprachgespraech Stufe 3: Lernen aus Korrekturen", () => {
   });
 });
 
+/** Gesprächseinstellungen, Reiter Wissen. */
+async function openKnowledge(page: Page) {
+  const panel = page.getByRole("complementary", {
+    name: "Gesprächseinstellungen",
+  });
+  if (!(await panel.isVisible()))
+    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+  const tab = panel.getByRole("tab", { name: "Wissen" });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await settled(page);
+  return panel;
+}
+
+const AREA_SWITCHES = [
+  "Besprechungen",
+  "Transkripte",
+  "Diktate",
+  "Frühere Gespräche",
+  "Termine",
+  "Vorlesen",
+];
+
+const knowledgeCalls = async (page: Page) =>
+  (await calls(page, "change_voice_call_knowledge_setting")).map(
+    (c) => c.args.areas as string[],
+  );
+
+const DICTATIONS_TOOL = {
+  name: "dictations_search",
+  title: "Diktate durchsuchen",
+  description: "Sucht in den letzten Diktaten.",
+  parameters_json: JSON.stringify({
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
+    additionalProperties: false,
+  }),
+  capability: "knowledge.read",
+};
+
+test.describe("Sprachgespraech Wissen: Bereiche für das Modell", () => {
+  test("Reiter Wissen: alle Schalter aus, Transkripte erst mit Besprechungen, Wahl geht an den Kern", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    const panel = await openKnowledge(page);
+    await expect(
+      panel.getByText(
+        "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
+      ),
+    ).toBeVisible();
+    await expect(panel.getByRole("switch")).toHaveCount(AREA_SWITCHES.length);
+    for (const name of AREA_SWITCHES) {
+      const sw = panel.getByRole("switch", { name, exact: true });
+      await expect(sw).toBeVisible();
+      await expect(sw).not.toBeChecked();
+    }
+    const meetings = panel.getByRole("switch", { name: "Besprechungen" });
+    const transcripts = panel.getByRole("switch", { name: "Transkripte" });
+    await expect(transcripts).toBeDisabled();
+    // Jede Beschreibung hängt am Schalter.
+    for (const name of AREA_SWITCHES) {
+      const sw = panel.getByRole("switch", { name, exact: true });
+      const id = await sw.getAttribute("aria-describedby");
+      expect(id, name).toBeTruthy();
+      await expect(page.locator(`[id="${id}"]`)).not.toBeEmpty();
+    }
+
+    await meetings.click();
+    await panel.getByRole("switch", { name: "Termine" }).click();
+    await expect
+      .poll(() => knowledgeCalls(page))
+      .toEqual([["meetings"], ["meetings", "calendar"]]);
+    await expect(transcripts).toBeEnabled();
+    await transcripts.click();
+    await expect
+      .poll(async () =>
+        (await calls(page, "change_voice_call_read_transcripts_setting")).map(
+          (c) => c.args.enabled,
+        ),
+      )
+      .toEqual([true]);
+    await expect(transcripts).toBeChecked();
+    // Besprechungen aus: Transkripte sind wieder gesperrt und zeigen sich aus.
+    await meetings.click();
+    await expect(transcripts).toBeDisabled();
+    await expect(transcripts).not.toBeChecked();
+    expect((await knowledgeCalls(page)).at(-1)).toEqual(["calendar"]);
+  });
+
+  test("Der Chip „Kein Wissen freigegeben“ öffnet den Reiter Wissen; mit einem Bereich verschwindet er", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    const chip = page.getByTestId("knowledge-chip");
+    await expect(chip).toHaveText("Kein Wissen freigegeben");
+    await chip.click();
+    const panel = page.getByRole("complementary", {
+      name: "Gesprächseinstellungen",
+    });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("tab", { name: "Wissen" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await panel.getByRole("switch", { name: "Diktate" }).click();
+    await expect(chip).toHaveCount(0);
+    await panel.getByRole("switch", { name: "Diktate" }).click();
+    await expect(chip).toBeVisible();
+  });
+
+  test("Kein Chip, wenn schon ein Bereich frei ist", async ({ page }) => {
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: ["calendar"] },
+    });
+    await openPage(page);
+    await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
+  });
+
+  test("Mit einem freigegebenen Bereich bietet voice_tools_list Werkzeuge an", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: [] },
+      config: orchestration({}),
+      tools: [MEETINGS_TOOL],
+    });
+    await openPage(page);
+    // Standard: nichts frei, der Kern liefert keine Werkzeuge, es gilt der alte Weg.
+    await exchange(page, "Hallo", "Hallo zurück.");
+    expect(
+      await page.evaluate(() => (window as any).__listed as number[]),
+    ).toEqual([0]);
+    expect(await calls(page, "voice_call_turn")).toHaveLength(0);
+
+    // Bereich freigeben: der nächste Schritt lädt die Werkzeuge neu und bietet sie an.
+    const panel = await openKnowledge(page);
+    await panel.getByRole("switch", { name: "Besprechungen" }).click();
+    await expect.poll(() => knowledgeCalls(page)).toEqual([["meetings"]]);
+    await replies(page, [
+      "\u27e6werkzeug meetings_list {}\u27e7",
+      "Zwei Besprechungen.",
+    ]);
+    await send(page, "Welche Besprechungen gab es?");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__tool !== null))
+      .toBe(true);
+    expect(
+      await page.evaluate(() => (window as any).__listed as number[]),
+    ).toEqual([0, 1]);
+    await page.evaluate(() => (window as any).__tool.resolve("{}"));
+    await expect(
+      page.getByRole("log").getByText("Zwei Besprechungen."),
+    ).toBeVisible();
+    const tool = await calls(page, "voice_tool_call");
+    expect(tool.map((c) => c.args.name)).toEqual(["meetings_list"]);
+    // Das laufende Gespräch geht mit, damit es den Gesprächswerkzeugen verborgen bleibt.
+    expect(typeof tool[0].args.conversationId).toBe("string");
+  });
+
+  test("Der Aufruf nennt sich lesbar statt mit dem Werkzeugnamen", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: ["dictations"] },
+      config: orchestration({}),
+      tools: [DICTATIONS_TOOL],
+    });
+    await openPage(page);
+    await replies(page, [
+      '\u27e6werkzeug dictations_search {"query":"Grundsteuer"}\u27e7',
+      "Du hast gestern darüber diktiert.",
+    ]);
+    await send(page, "Habe ich etwas zur Grundsteuer diktiert?");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__tool !== null))
+      .toBe(true);
+    const status = page.getByTestId("call-status");
+    await expect(status).toHaveText("Durchsuche die Diktate …");
+    await expect(status).not.toContainText("dictations_search");
+    await page.evaluate(() => (window as any).__tool.resolve("{}"));
+    await expect(
+      page.getByRole("log").getByText("Du hast gestern darüber diktiert."),
+    ).toBeVisible();
+  });
+
+  test("System-Hinweis: fehlende Bereiche werden genannt, nichts Fehlendes bleibt unerwähnt", async ({
+    page,
+  }) => {
+    const prompt = async () => {
+      const chat = await page.evaluate(
+        () => (window as any).__chat.args.messages as { content: string }[],
+      );
+      return chat[0].content;
+    };
+    await install(page, "light", { settings: LOCAL_SPEAKER });
+    await openPage(page);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    const none = await prompt();
+    expect(none).toContain("Gesprächseinstellungen → Wissen");
+    expect(none).toContain("nicht freigegeben");
+    // Transkripte hängen an den Besprechungen und werden erst genannt, wenn diese frei sind.
+    expect(none).toContain(
+      "Besprechungen, Diktate, frühere Gespräche, Termine und Vorlesen-Seiten",
+    );
+    expect(none).not.toContain("Transkripte");
+    expect(none).toContain("Behaupte nie, die App habe solche Daten nicht");
+    // Die Anweisung des Nutzers bleibt vorn.
+    expect(none.startsWith("Du bist ein Gesprächspartner am Telefon.")).toBe(
+      true,
+    );
+  });
+
+  test("System-Hinweis nennt nur, was fehlt; alles frei: kein Hinweis", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        voice_call_knowledge: ["meetings", "calendar"],
+      },
+    });
+    await openPage(page);
+    await exchange(page, "Hallo", "Hallo zurück.");
+    const chat = () =>
+      page.evaluate(
+        () => (window as any).__chat.args.messages as { content: string }[],
+      );
+    const partial = (await chat())[0].content;
+    expect(partial).toContain(
+      "nicht freigegeben: Transkripte, Diktate, frühere Gespräche und Vorlesen-Seiten.",
+    );
+    expect(partial).not.toMatch(/freigegeben:[^.]*Termine/);
+    // Alles frei, auch Transkripte: kein Hinweis mehr (nach dem Umschalten im Reiter).
+    const panel = await openKnowledge(page);
+    for (const name of ["Diktate", "Frühere Gespräche", "Vorlesen"])
+      await panel.getByRole("switch", { name, exact: true }).click();
+    await panel.getByRole("switch", { name: "Transkripte" }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => (window as any).__settings.voice_call_read_transcripts,
+        ),
+      )
+      .toBe(true);
+    await exchange(page, "Und jetzt?", "Jetzt alles.");
+    const full = (await chat())[0].content;
+    expect(full).not.toContain("Gesprächseinstellungen → Wissen");
+    expect(full).not.toContain("nicht freigegeben");
+  });
+});
+
 test.describe("Screenshots @screenshots", () => {
   const conversation = async (page: Page) => {
     await openPage(page);
@@ -1975,6 +2239,54 @@ test.describe("Screenshots @screenshots", () => {
         path: `${dir}einstellungen-modelle-${name}.png`,
       });
       await ctx.close();
+    }
+  });
+  test("Wissen: Reiter und Chip", async ({ browser }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    const dir = `${SHOTS}/`;
+    mkdirSync(dir, { recursive: true });
+    for (const [name, size] of [
+      ["1440", { width: 1440, height: 900 }],
+      ["390", { width: 390, height: 844 }],
+    ] as const) {
+      const ctx = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, "light", {
+        settings: {
+          voice_call_knowledge: ["meetings", "calendar"],
+          voice_call_read_transcripts: true,
+        },
+      });
+      await openPage(page);
+      await settled(page);
+      // Mit freigegebenem Bereich gibt es keinen Chip; der Reiter zeigt die Schalter.
+      await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
+      await openKnowledge(page);
+      await page.screenshot({ path: `${dir}wissen-reiter-${name}.png` });
+      await ctx.close();
+
+      const bare = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const empty = await bare.newPage();
+      await install(empty, "light");
+      await openPage(empty);
+      await settled(empty);
+      await expect(empty.getByTestId("knowledge-chip")).toBeVisible();
+      await empty.screenshot({ path: `${dir}wissen-chip-${name}.png` });
+      await empty.getByTestId("knowledge-chip").click();
+      await settled(empty);
+      await expect(
+        empty
+          .getByRole("complementary", { name: "Gesprächseinstellungen" })
+          .getByRole("tab", { name: "Wissen" }),
+      ).toHaveAttribute("aria-selected", "true");
+      await empty.screenshot({ path: `${dir}wissen-chip-offen-${name}.png` });
+      await bare.close();
     }
   });
   test("Stufe 3: Reiter Erkennung, Einrichtungsdialog, Zeilenbearbeitung", async ({

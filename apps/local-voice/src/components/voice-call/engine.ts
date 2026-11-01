@@ -86,6 +86,8 @@ export interface CallCallbacks {
   onUsage?(usage: CallUsageEvent): void;
   /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
   onStatus?(status: CallStatus | null): void;
+  /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag. */
+  conversationId?(): string | null;
 }
 
 interface ChatMessage {
@@ -185,6 +187,7 @@ export class VoiceCallEngine {
       },
       onUsage: (u) => this.cb.onUsage?.(u),
       onStatus: (s) => this.cb.onStatus?.(s),
+      conversationId: () => this.cb.conversationId?.() ?? null,
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
     const invalidate = () => this.session.invalidate();
@@ -274,6 +277,11 @@ export class VoiceCallEngine {
       this.sentenceHandlers.get(e.payload.request_id)?.(e.payload);
     });
     await this.listening;
+  }
+
+  /** Wissensbereiche geändert: der nächste Schritt lädt Werkzeuge und Hinweis neu. */
+  invalidateKnowledge(): void {
+    this.session.invalidate();
   }
 
   updateConfig(cfg: CallConfig): void {
@@ -559,9 +567,9 @@ export class VoiceCallEngine {
       .map(({ role, content }) => ({ role, content }));
   }
 
-  private messagesFor(text: string): ChatMessage[] {
+  private messagesFor(text: string, systemPrompt: string): ChatMessage[] {
     return [
-      { role: "system", content: this.cfg.systemPrompt },
+      { role: "system", content: systemPrompt },
       ...this.plainHistory(),
       { role: "user", content: text },
     ];
@@ -590,7 +598,7 @@ export class VoiceCallEngine {
         run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
       };
-      const { side, blocked } = await this.orchestrate();
+      const { side, blocked, systemPrompt } = await this.orchestrate();
       if (stale() || blocked) return;
       let full = "";
       if (side) {
@@ -611,7 +619,7 @@ export class VoiceCallEngine {
         });
         full = await invoke<string>("voice_call_chat", {
           requestId: id,
-          messages: this.messagesFor(text),
+          messages: this.messagesFor(text, systemPrompt),
         });
         if (stale()) return;
         await Promise.race([
@@ -694,7 +702,7 @@ export class VoiceCallEngine {
       });
     };
 
-    const { side, blocked } = await this.orchestrate();
+    const { side, blocked, systemPrompt } = await this.orchestrate();
     if (dead()) return;
     if (blocked) {
       // Kein Gespräch mit einem gesperrten Modell: der Hinweis steht im Gespräch.
@@ -717,7 +725,7 @@ export class VoiceCallEngine {
       });
       await invoke<string>("voice_call_chat", {
         requestId: turn.id,
-        messages: this.messagesFor(text),
+        messages: this.messagesFor(text, systemPrompt),
       });
       // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
       if (!dead())

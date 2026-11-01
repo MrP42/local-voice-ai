@@ -526,6 +526,42 @@ impl HistoryManager {
         Ok(entry)
     }
 
+    /// Sprachgespraech (Wissen „Diktate“): Diktate mit Text, neueste zuerst. `from_s` einschliesslich,
+    /// `to_s` ausschliesslich (Unix-Sekunden). Nur lesend; die Verbindung ist die gewoehnliche.
+    pub fn dictations_between(
+        &self,
+        from_s: Option<i64>,
+        to_s: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<HistoryEntry>> {
+        let conn = self.get_connection()?;
+        Self::dictations_with_conn(&conn, from_s, to_s, limit)
+    }
+
+    fn dictations_with_conn(
+        conn: &Connection,
+        from_s: Option<i64>,
+        to_s: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<HistoryEntry>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+             FROM transcription_history
+             WHERE (transcription_text != '' OR COALESCE(post_processed_text, '') != '')
+               AND (?1 IS NULL OR timestamp >= ?1)
+               AND (?2 IS NULL OR timestamp < ?2)
+             ORDER BY timestamp DESC, id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(
+                params![from_s, to_s, limit.min(5_000) as i64],
+                Self::map_history_entry,
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Get the latest entry with non-empty transcription text.
     pub fn get_latest_completed_entry(&self) -> Result<Option<HistoryEntry>> {
         let conn = self.get_connection()?;
@@ -719,6 +755,28 @@ mod tests {
         assert_eq!(entry.timestamp, 200);
         assert_eq!(entry.transcription_text, "second");
         assert_eq!(entry.post_processed_text.as_deref(), Some("processed"));
+    }
+
+    #[test]
+    fn dictations_between_reads_newest_first_within_the_window() {
+        let conn = setup_conn();
+        insert_entry(&conn, 100, "alt", None);
+        insert_entry(&conn, 200, "mitte", Some("mitte nachbearbeitet"));
+        insert_entry(&conn, 300, "neu", None);
+        insert_entry(&conn, 400, "", None);
+
+        let all = HistoryManager::dictations_with_conn(&conn, None, None, 10).expect("lesen");
+        let times: Vec<i64> = all.iter().map(|e| e.timestamp).collect();
+        assert_eq!(times, vec![300, 200, 100], "neueste zuerst, ohne leeres Diktat");
+
+        let window =
+            HistoryManager::dictations_with_conn(&conn, Some(200), Some(300), 10).expect("lesen");
+        assert_eq!(window.len(), 1, "von einschliesslich, bis ausschliesslich");
+        assert_eq!(window[0].post_processed_text.as_deref(), Some("mitte nachbearbeitet"));
+
+        let limited = HistoryManager::dictations_with_conn(&conn, None, None, 1).expect("lesen");
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].timestamp, 300);
     }
 
     #[test]

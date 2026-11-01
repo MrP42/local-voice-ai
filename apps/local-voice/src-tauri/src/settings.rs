@@ -975,6 +975,13 @@ pub struct AppSettings {
     /// (ADR-0021).
     #[serde(default)]
     pub voice_call_read_transcripts: bool,
+    /// Wissensbereiche, die das Sprachgespräch nachschlagen darf (Schlüssel aus
+    /// `agent_bridge::voice::areas::Area`: `meetings`, `dictations`, `conversations`,
+    /// `calendar`, `tts`). Standard LEER: ohne Freigabe sieht das Modell nichts (ADR-0021).
+    /// Das Transkript ist der Unterschalter `voice_call_read_transcripts` und wirkt nur mit
+    /// `meetings`. Getrennt von den Rechten externer Agenten.
+    #[serde(default)]
+    pub voice_call_knowledge: Vec<String>,
     /// Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
     /// Schalter wird kein Paar gespeichert.
     #[serde(default)]
@@ -1867,6 +1874,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
         voice_call_read_transcripts: false,
+        voice_call_knowledge: Vec::new(),
         speech_learning_enabled: false,
         speech_learning_auto_apply: false,
         calendar_graph_client_id: None,
@@ -3413,6 +3421,10 @@ mod tests {
             !d.voice_call_read_transcripts,
             "Sprachgespräch: Transkripte standardmäßig aus"
         );
+        assert!(
+            d.voice_call_knowledge.is_empty(),
+            "Sprachgespräch: kein Wissensbereich standardmäßig frei"
+        );
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert!(
@@ -3426,6 +3438,10 @@ mod tests {
         assert!(
             !old.voice_call_read_transcripts,
             "ältere settings.json: aus"
+        );
+        assert!(
+            old.voice_call_knowledge.is_empty(),
+            "ältere settings.json: kein Bereich frei"
         );
         assert!(
             !d.speech_learning_enabled,

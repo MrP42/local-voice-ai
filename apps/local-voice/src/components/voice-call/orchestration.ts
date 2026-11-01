@@ -101,6 +101,8 @@ export interface OrchestrationDeps {
   ): Promise<() => void>;
   onUsage(usage: TurnUsage): void;
   onStatus(status: CallStatus | null): void;
+  /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag. */
+  conversationId?(): string | null;
 }
 
 export interface Prepared {
@@ -108,6 +110,8 @@ export interface Prepared {
   side: ChatSide | null;
   /** Der Sprecher ist bei der Souveränität gesperrt: es gibt kein Gespräch mit diesem Modell. */
   blocked: boolean;
+  /** Systemanweisung samt Hinweis auf nicht freigegebene Wissensbereiche (gilt auch für den alten Weg). */
+  systemPrompt: string;
 }
 
 /** Ländercodes der EU (ISO 3166-1 alpha-2): dort sitzende Anbieter gelten als „EU“. */
@@ -208,7 +212,101 @@ const ANNOUNCE: Record<string, string> = {
   meetings_list: "Moment, ich schaue in den Besprechungen nach.",
   meetings_search: "Moment, ich suche in den Besprechungen.",
   meeting_transcript: "Moment, ich lese im Transkript nach.",
+  dictations_recent: "Moment, ich schaue in den Diktaten nach.",
+  dictations_search: "Moment, ich suche in den Diktaten.",
+  conversations_list: "Moment, ich schaue in den früheren Gesprächen nach.",
+  conversations_search: "Moment, ich suche in den früheren Gesprächen.",
+  conversation_get: "Moment, ich lese das frühere Gespräch.",
+  calendar_events: "Moment, ich schaue in den Terminen nach.",
+  day_overview: "Moment, ich verschaffe mir einen Überblick über den Tag.",
+  tts_pages_list: "Moment, ich schaue in den Vorlesen-Seiten nach.",
+  tts_page_text: "Moment, ich lese die Seite.",
 };
+
+/** Wissensbereiche des Gesprächs (Schlüssel der Einstellung `voice_call_knowledge`). */
+export const KNOWLEDGE_AREAS = [
+  "meetings",
+  "dictations",
+  "conversations",
+  "calendar",
+  "tts",
+] as const;
+export type KnowledgeArea = (typeof KNOWLEDGE_AREAS)[number];
+
+/** Deutsche Namen der Bereiche für den Hinweis an das Modell (Transkripte hängen an den Besprechungen). */
+const AREA_LABEL: Record<KnowledgeArea | "transcripts", string> = {
+  meetings: "Besprechungen",
+  transcripts: "Transkripte",
+  dictations: "Diktate",
+  conversations: "frühere Gespräche",
+  calendar: "Termine",
+  tts: "Vorlesen-Seiten",
+};
+
+/** Die freigegebenen Bereiche samt Unterschalter, wie die Einstellungen sie halten. */
+export interface KnowledgeState {
+  areas: KnowledgeArea[];
+  /** `voice_call_read_transcripts`: wirkt nur mit „Besprechungen“. */
+  transcripts: boolean;
+}
+
+export const NO_KNOWLEDGE: KnowledgeState = { areas: [], transcripts: false };
+
+export function knowledgeFrom(
+  settings: Pick<
+    AppSettings,
+    "voice_call_knowledge" | "voice_call_read_transcripts"
+  > | null,
+): KnowledgeState {
+  const raw = settings?.voice_call_knowledge ?? [];
+  return {
+    areas: KNOWLEDGE_AREAS.filter((a) => raw.includes(a)),
+    transcripts: settings?.voice_call_read_transcripts ?? false,
+  };
+}
+
+/** Kein Bereich frei (der Standard): das Gespräch bekommt keine Wissenswerkzeuge. */
+export function noKnowledge(k: KnowledgeState): boolean {
+  return k.areas.length === 0;
+}
+
+const HINT_ORDER = [
+  "meetings",
+  "transcripts",
+  "dictations",
+  "conversations",
+  "calendar",
+  "tts",
+] as const;
+
+/** Namen der Bereiche, die das Modell nicht sieht (Transkripte nur, wenn die Besprechungen frei sind). */
+export function missingAreas(k: KnowledgeState): string[] {
+  return HINT_ORDER.filter((a) =>
+    a === "transcripts"
+      ? k.areas.includes("meetings") && !k.transcripts
+      : !k.areas.includes(a),
+  ).map((a) => AREA_LABEL[a]);
+}
+
+/**
+ * Kurzer Hinweis an das Modell, welche Bereiche es nicht sieht. Leer, wenn alles frei ist. Das Modell
+ * soll nie behaupten, die App habe solche Daten nicht, sondern auf die Freigabe verweisen.
+ */
+export function knowledgeHint(k: KnowledgeState): string {
+  const missing = missingAreas(k);
+  if (missing.length === 0) return "";
+  const list =
+    missing.length === 1
+      ? missing[0]
+      : `${missing.slice(0, -1).join(", ")} und ${missing[missing.length - 1]}`;
+  return `Die App kennt Besprechungen, Diktate, frühere Gespräche, Termine und Vorlesen-Seiten des Nutzers. Dir sind davon nicht freigegeben: ${list}. Behaupte nie, die App habe solche Daten nicht oder du hättest keinen Zugriff auf sie. Sage stattdessen kurz, dass der Nutzer sie unter „Gesprächseinstellungen → Wissen“ freigeben kann.`;
+}
+
+/** Systemanweisung samt Hinweis auf fehlende Bereiche. */
+export function withKnowledgeHint(prompt: string, k: KnowledgeState): string {
+  const hint = knowledgeHint(k);
+  return hint ? `${prompt}\n\n${hint}` : prompt;
+}
 
 /** Wie lange nach dem Rückgabewert noch auf den Verbrauch gewartet wird (ms). */
 const USAGE_WAIT_MS = 1500;
@@ -344,6 +442,8 @@ async function listTools(): Promise<VoiceTool[]> {
 interface LoadedModels {
   active: ModelDescription | null;
   all: ModelDescription[];
+  /** Freigegebene Wissensbereiche (Einstellungen), gelesen mit den Modellen. */
+  knowledge: KnowledgeState;
 }
 
 async function loadModels(): Promise<LoadedModels> {
@@ -351,10 +451,15 @@ async function loadModels(): Promise<LoadedModels> {
     commands.getAppSettings().catch(() => null),
     commands.complianceAssessModels().catch(() => null),
   ]);
-  if (!settings || settings.status !== "ok") return { active: null, all: [] };
+  if (!settings || settings.status !== "ok")
+    return { active: null, all: [], knowledge: NO_KNOWLEDGE };
   const all = describeModels(settings.data, assessedById(compliance));
   const activeId = settings.data.llm_active_model_id ?? null;
-  return { active: all.find((m) => m.id === activeId) ?? null, all };
+  return {
+    active: all.find((m) => m.id === activeId) ?? null,
+    all,
+    knowledge: knowledgeFrom(settings.data),
+  };
 }
 
 /** Fehlertext eines Werkzeugs für das Modell: kurz, ohne Steuerzeichen. */
@@ -370,6 +475,7 @@ function errorText(e: unknown): string {
 async function runTool(
   tool: VoiceTool,
   args: Record<string, unknown>,
+  conversationId: string | null,
 ): Promise<VoiceToolResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<VoiceToolResult>((resolve) => {
@@ -381,6 +487,7 @@ async function runTool(
   const call = invoke<string>("voice_tool_call", {
     name: tool.name,
     args: JSON.stringify(args),
+    conversationId,
   }).then(
     (text): VoiceToolResult => ({ text, bereich: tool.bereich }),
     (e: unknown): VoiceToolResult => ({
@@ -431,11 +538,12 @@ export class OrchestrationSession {
   ): Promise<Prepared> {
     const deps = this.deps;
     this.models ??= await loadModels();
-    const { active, all } = this.models;
-    if (!active) return { side: null, blocked: false };
+    const { active, all, knowledge } = this.models;
+    const systemPrompt = withKnowledgeHint(cfg.systemPrompt, knowledge);
+    if (!active) return { side: null, blocked: false, systemPrompt };
     if (blockedBy(active, cfg.souveraenitaet)) {
       deps.onStatus({ kind: "notice", code: "speaker_blocked" });
-      return { side: null, blocked: true };
+      return { side: null, blocked: true, systemPrompt };
     }
     if (cfg.useTools) this.tools ??= await listTools();
     const offered = cfg.useTools ? (this.tools ?? []) : [];
@@ -450,16 +558,18 @@ export class OrchestrationSession {
       denkerInfo && !blockedBy(denkerInfo, cfg.souveraenitaet)
         ? denkerInfo
         : undefined;
-    if (offered.length === 0 && !denker) return { side: null, blocked: false };
+    if (offered.length === 0 && !denker)
+      return { side: null, blocked: false, systemPrompt };
 
     const key = JSON.stringify([
       cfg,
+      systemPrompt,
       active.id,
       denker?.id ?? null,
       offered.map((t) => t.name),
     ]);
     if (this.side && key === this.sideKey)
-      return { side: this.side, blocked: false };
+      return { side: this.side, blocked: false, systemPrompt };
     this.dispose();
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
@@ -469,7 +579,7 @@ export class OrchestrationSession {
       tools: offered,
       bereich: SESSION_BEREICH,
       souveraenitaet: stufe,
-      systemPrompt: cfg.systemPrompt,
+      systemPrompt,
       authorize: async (tool, _args, bereich) =>
         bereich === SESSION_BEREICH &&
         tool.bereich === bereich &&
@@ -478,14 +588,14 @@ export class OrchestrationSession {
       run: async (tool, args, signal) => {
         if (!signal?.aborted) deps.onStatus({ kind: "tool", tool: tool.name });
         try {
-          return await runTool(tool, args);
+          return await runTool(tool, args, deps.conversationId?.() ?? null);
         } finally {
           deps.onStatus(null);
         }
       },
     });
     this.sideKey = key;
-    return { side: this.side, blocked: false };
+    return { side: this.side, blocked: false, systemPrompt };
   }
 }
 

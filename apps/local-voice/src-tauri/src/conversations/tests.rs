@@ -439,3 +439,24 @@ fn list_is_limited_to_500_rows() {
     }
     assert_eq!(s.list(true).unwrap().len(), 500);
 }
+
+#[test]
+fn recent_entries_are_newest_first_and_skip_archived() {
+    let s = store();
+    let open = s.create(Some("Offen".to_string())).unwrap();
+    let archived = s.create(Some("Archiviert".to_string())).unwrap();
+    s.append_entry(&open.id, entry("user", "erste Frage")).unwrap();
+    tick();
+    s.append_entry(&archived.id, entry("user", "versteckt")).unwrap();
+    tick();
+    s.append_entry(&open.id, entry("assistant", "zweite Antwort")).unwrap();
+    s.update(&archived.id, None, None, Some(true)).unwrap();
+
+    let hits = s.recent_entries(10).unwrap();
+    let texts: Vec<&str> = hits.iter().map(|h| h.text.as_str()).collect();
+    assert_eq!(texts, vec!["zweite Antwort", "erste Frage"]);
+    assert_eq!(hits[0].title, "Offen");
+    assert_eq!(hits[0].role, "assistant");
+    assert_eq!(hits[0].conversation_id, open.id);
+    assert_eq!(s.recent_entries(1).unwrap().len(), 1);
+}

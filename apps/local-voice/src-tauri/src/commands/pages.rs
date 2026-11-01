@@ -196,6 +196,18 @@ pub(crate) fn fresh_id() -> String {
     )
 }
 
+/// Nur lesend (Sprachgespräch, Wissen „Vorlesen-Seiten“): wie `pages_list`, legt aber nie eine
+/// Seite an. Titel, Änderungszeit und Textanfang; zuletzt geänderte zuerst.
+pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
+    let _guard = lock();
+    let mut index = load_index(app)?;
+    for page in &mut index.pages {
+        enrich(app, page);
+    }
+    index.pages.sort_by(|a, b| b.modified_ms.total_cmp(&a.modified_ms));
+    Ok(index.pages)
+}
+
 /// Alle Seiten in Anzeige-Reihenfolge. Gibt es keine, entsteht die erste —
 /// eine leere Liste hieße für die Oberfläche „nichts, worin man arbeiten
 /// kann", und diesen Zustand soll es nie geben.

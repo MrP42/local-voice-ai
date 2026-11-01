@@ -6333,7 +6333,21 @@
       "generic": "Using the tool \"{{name}}\" …",
       "meetings_list": "Looking through meetings …",
       "meetings_search": "Searching the meetings …",
-      "meeting_transcript": "Reading the transcript …"
+      "meeting_transcript": "Reading the transcript …",
+      "dictations_recent": "Looking through dictations …",
+      "dictations_search": "Searching the dictations …",
+      "conversations_list": "Looking through earlier conversations …",
+      "conversations_search": "Searching earlier conversations …",
+      "conversation_get": "Reading an earlier conversation …",
+      "calendar_events": "Looking through appointments …",
+      "day_overview": "Getting an overview of the day …",
+      "tts_pages_list": "Looking through read-aloud pages …",
+      "tts_page_text": "Reading a read-aloud page …",
+      "tts_providers_list": "Checking the speech providers …",
+      "tts_provider_capabilities": "Checking a provider's capabilities …",
+      "tts_provider_voices": "Looking through a provider's voices …",
+      "tts_provider_health": "Checking a speech provider …",
+      "tts_benchmark_results": "Reading benchmark results …"
     },
     "notice": {
       "speaker_blocked": "No conversation is possible with this answer model at the chosen sovereignty level: it would send data to a cloud service. Change the model or the sovereignty level.",
@@ -6532,6 +6546,7 @@
         "talk": "Conversation",
         "voice": "Voice",
         "recognition": "Recognition",
+        "knowledge": "Knowledge",
         "models": "Models"
       },
       "prompt": "Instruction for the AI",
@@ -6567,7 +6582,39 @@
       "transcriptsHint": "Off by default. When on, the AI may read and search meeting transcripts. The content then goes to the answer model, with \"local only\" that means a local one only.",
       "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
       "tools": "Use LVA tools",
-      "toolsHint": "Read-only: list and search meetings and read transcripts. The AI changes nothing, every call is in the integrations log."
+      "toolsHint": "Read-only: the AI looks things up in the areas you share under “Knowledge”. It changes nothing, every call is in the integrations log."
+    },
+    "knowledge": {
+      "intro": "What the model may look up during the conversation. Every access is logged.",
+      "toolsOff": "The tools are switched off under “Models”. While they are off, the model looks nothing up.",
+      "chip": "No knowledge shared",
+      "chipTitle": "The model cannot look anything up. Click to share areas.",
+      "areas": {
+        "meetings": {
+          "label": "Meetings",
+          "hint": "List and search of your meetings: title, date, duration and notes."
+        },
+        "transcripts": {
+          "label": "Transcripts",
+          "hint": "The model may also read transcripts. The content goes to the answer model, so with “local only” just to a local one."
+        },
+        "dictations": {
+          "label": "Dictations",
+          "hint": "Your dictation history: the latest dictations and search in them."
+        },
+        "conversations": {
+          "label": "Earlier conversations",
+          "hint": "Conversations from your history, without the current one."
+        },
+        "calendar": {
+          "label": "Appointments",
+          "hint": "Appointments from your connected calendars, the stored state only, no fetch over the network."
+        },
+        "tts": {
+          "label": "Read aloud",
+          "hint": "Pages of the read-aloud library and the speech providers."
+        }
+      }
     }
   },
   "introTour": {

@@ -6333,7 +6333,21 @@
       "generic": "Nutze das Werkzeug „{{name}}“ …",
       "meetings_list": "Schaue in Besprechungen nach …",
       "meetings_search": "Durchsuche die Besprechungen …",
-      "meeting_transcript": "Lese im Transkript nach …"
+      "meeting_transcript": "Lese im Transkript nach …",
+      "dictations_recent": "Schaue in den Diktaten nach …",
+      "dictations_search": "Durchsuche die Diktate …",
+      "conversations_list": "Schaue in früheren Gesprächen nach …",
+      "conversations_search": "Durchsuche frühere Gespräche …",
+      "conversation_get": "Lese ein früheres Gespräch …",
+      "calendar_events": "Schaue in den Terminen nach …",
+      "day_overview": "Verschaffe mir einen Überblick über den Tag …",
+      "tts_pages_list": "Schaue in den Vorlesen-Seiten nach …",
+      "tts_page_text": "Lese eine Vorlesen-Seite …",
+      "tts_providers_list": "Schaue bei den Sprachausgabe-Anbietern nach …",
+      "tts_provider_capabilities": "Prüfe die Fähigkeiten eines Anbieters …",
+      "tts_provider_voices": "Schaue in den Stimmen eines Anbieters nach …",
+      "tts_provider_health": "Prüfe einen Sprachausgabe-Anbieter …",
+      "tts_benchmark_results": "Lese Benchmark-Ergebnisse …"
     },
     "notice": {
       "speaker_blocked": "Mit diesem Antwortmodell ist bei der gewählten Souveränität kein Gespräch möglich: Es würde Daten an einen Cloud-Dienst senden. Ändere das Modell oder die Souveränität.",
@@ -6532,6 +6546,7 @@
         "talk": "Gespräch",
         "voice": "Stimme",
         "recognition": "Erkennung",
+        "knowledge": "Wissen",
         "models": "Modelle"
       },
       "prompt": "Anweisung an die KI",
@@ -6567,7 +6582,39 @@
       "transcriptsHint": "Standardmäßig aus. Ist es an, darf die KI Transkripte von Besprechungen lesen und in ihnen suchen. Der Inhalt geht dann an das Antwortmodell, bei „nur lokal“ also nur an ein lokales.",
       "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
       "tools": "LVA-Werkzeuge nutzen",
-      "toolsHint": "Nur lesend: Besprechungen auflisten, durchsuchen und Transkripte lesen. Die KI ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
+      "toolsHint": "Nur lesend: Die KI schlägt in den Bereichen nach, die du unter „Wissen“ freigibst. Sie ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
+    },
+    "knowledge": {
+      "intro": "Was das Modell im Gespräch nachschlagen darf. Jeder Zugriff wird protokolliert.",
+      "toolsOff": "Die Werkzeuge sind unter „Modelle“ ausgeschaltet. Solange sie aus sind, schlägt das Modell nichts nach.",
+      "chip": "Kein Wissen freigegeben",
+      "chipTitle": "Das Modell kann nichts nachschlagen. Klicke, um Bereiche freizugeben.",
+      "areas": {
+        "meetings": {
+          "label": "Besprechungen",
+          "hint": "Liste und Suche deiner Besprechungen: Titel, Datum, Dauer und Notizen."
+        },
+        "transcripts": {
+          "label": "Transkripte",
+          "hint": "Das Modell darf auch Transkripte lesen. Der Inhalt geht an das Antwortmodell, bei „nur lokal“ also nur an ein lokales."
+        },
+        "dictations": {
+          "label": "Diktate",
+          "hint": "Dein Diktat-Verlauf: die letzten Diktate und die Suche darin."
+        },
+        "conversations": {
+          "label": "Frühere Gespräche",
+          "hint": "Gespräche aus deinem Verlauf, ohne das laufende."
+        },
+        "calendar": {
+          "label": "Termine",
+          "hint": "Termine aus deinen verbundenen Kalendern, nur der gespeicherte Stand ohne Abruf im Netz."
+        },
+        "tts": {
+          "label": "Vorlesen",
+          "hint": "Seiten der Vorlesen-Bibliothek und die Sprachausgabe-Anbieter."
+        }
+      }
     }
   },
   "introTour": {

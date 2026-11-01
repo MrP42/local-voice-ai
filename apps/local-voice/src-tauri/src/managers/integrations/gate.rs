@@ -255,6 +255,25 @@ pub fn run<T>(
     }
 }
 
+/// Wie [`run`], aber OHNE Rechtepruefung: der Aufrufer hat selbst entschieden, dass der Zugriff
+/// erlaubt ist (Sprachgespraech: die Wissensbereiche des Nutzers, `agent_bridge::voice`). Das Audit
+/// bleibt: ein „laeuft“-Eintrag wird VOR der Aktion geschrieben (nicht schreibbar = nichts wird
+/// ausgefuehrt), danach das Ergebnis. Gedacht nur fuer lesende Aktionen. Fuer `Caller::User`
+/// gibt es kein Audit, deshalb lehnt diese Funktion ihn ab.
+pub fn run_authorized<T>(
+    conn: &Connection,
+    req: &Request<'_>,
+    now_ms: i64,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<GateOutcome<T>, IntegrationError> {
+    if req.caller == Caller::User {
+        return Err(IntegrationError::Invalid(
+            "Ohne Rechtepruefung braucht der Aufruf einen Aufrufer mit Audit.".to_string(),
+        ));
+    }
+    execute(conn, req, now_ms, action)
+}
+
 /// Fuehrt `action` aus, nachdem der Nutzer die Anfrage `approval_id`
 /// genehmigt hat. Die Genehmigung wird eingeloest (einmalig) und muss zu
 /// Aufrufer, Integration, Faehigkeit und Argumenten passen. Steht das Recht

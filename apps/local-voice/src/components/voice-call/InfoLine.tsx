@@ -17,6 +17,8 @@ import {
 } from "./useVoiceInfo";
 import { useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
+import { noKnowledge } from "./orchestration";
+import { useKnowledge } from "./useKnowledge";
 
 const DOT: Record<string, string> = {
   idle: "bg-mid-gray/60",
@@ -61,6 +63,8 @@ export const InfoLine: React.FC = () => {
   const ready = useVoiceCallStore((s) => s.ready);
   const metrics = useVoiceCallStore((s) => s.metrics);
   const usage = useVoiceCallStore((s) => s.usage);
+  const openSettings = useVoiceCallStore((s) => s.openSettings);
+  const knowledge = useKnowledge();
   const llm = useActiveLlm();
   const stt = useSttModelName();
   const cost = useCallCost(usage, llm);
@@ -202,6 +206,17 @@ export const InfoLine: React.FC = () => {
         >
           {costText.chip}
         </span>
+      )}
+      {noKnowledge(knowledge) && (
+        <button
+          type="button"
+          data-testid="knowledge-chip"
+          title={t("voiceCall.knowledge.chipTitle")}
+          onClick={() => openSettings("knowledge")}
+          className="shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border border-mid-gray/25 bg-mid-gray/10 text-[11px] cursor-pointer text-logo-primary hover:border-logo-primary"
+        >
+          {t("voiceCall.knowledge.chip")}
+        </button>
       )}
     </div>
   );

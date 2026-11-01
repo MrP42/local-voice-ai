@@ -4113,7 +4113,7 @@ async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
 },
 /**
- * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf.
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf (nach den Bereichen).
  */
 async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
     try {
@@ -4124,7 +4124,7 @@ async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
 }
 },
 /**
- * „Transkripte im Sprachgespräch lesen“ (Standard aus).
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus; wirkt nur mit dem Bereich Besprechungen).
  */
 async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -4135,12 +4135,26 @@ async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<n
 }
 },
 /**
- * Ruft ein lesendes Werkzeug über das Tor der Agentenbrücke (Recht, Audit). `args` ist ein
- * JSON-Objekt als Text. Die Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern abgelehnt.
+ * Wissensbereiche, die das Sprachgespräch nachschlagen darf (Standard: keiner). Gespeichert werden
+ * nur bekannte Bereiche, ohne Doppelte; „Transkripte“ hat den Unterschalter oben.
  */
-async voiceToolCall(name: string, args: string) : Promise<Result<string, string>> {
+async changeVoiceCallKnowledgeSetting(areas: string[]) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_knowledge_setting", { areas }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ruft ein lesendes Werkzeug (Bereich frei, Audit über das Tor). `args` ist ein JSON-Objekt als
+ * Text, `conversation_id` das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen). Die
+ * Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern
+ * abgelehnt.
+ */
+async voiceToolCall(name: string, args: string, conversationId: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args, conversationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6834,6 +6848,14 @@ meeting_mcp_include_transcript?: boolean;
  * (ADR-0021).
  */
 voice_call_read_transcripts?: boolean; 
+/**
+ * Wissensbereiche, die das Sprachgespräch nachschlagen darf (Schlüssel aus
+ * `agent_bridge::voice::areas::Area`: `meetings`, `dictations`, `conversations`,
+ * `calendar`, `tts`). Standard LEER: ohne Freigabe sieht das Modell nichts (ADR-0021).
+ * Das Transkript ist der Unterschalter `voice_call_read_transcripts` und wirkt nur mit
+ * `meetings`. Getrennt von den Rechten externer Agenten.
+ */
+voice_call_knowledge?: string[]; 
 /**
  * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
  * Schalter wird kein Paar gespeichert.
