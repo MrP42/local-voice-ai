@@ -663,10 +663,7 @@ test("Deutsch schon da: Englisch ist vorgewählt und wird mit einem Klick nachge
 }) => {
   await setup(page, { installedIds: ["phonon-runtime", "phonon-40m-de"] });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await page.getByTestId("tts-provider-open-phonon").click();
   const panel = page.getByTestId("phonon-setup");
   await expect(panel).toHaveAttribute("data-complete", "false");
