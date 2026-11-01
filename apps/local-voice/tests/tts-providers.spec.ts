@@ -311,18 +311,8 @@ async function setup(page: Page, cfg: Cfg) {
           }
           if (cmd === "tts_provider_set_config") {
             const parsed = JSON.parse(String(args?.json));
-            // Wie PhononConfig::validate: erstes Problem, Feld zuerst genannt.
+            // Wie PhononConfig::validate_stored: leere Pfade = App-Installation.
             if (String(args?.id) === "phonon") {
-              if (String(parsed.exe_path ?? "").trim() === "")
-                throw err(
-                  "invalid_config",
-                  "exe_path fehlt: Pfad zur ptts-Programmdatei eintragen",
-                );
-              if (String(parsed.model ?? "").trim() === "")
-                throw err(
-                  "invalid_config",
-                  "model fehlt: lokalen Modellordner oder hf://OWNER/MODEL@COMMIT angeben",
-                );
               if (parsed.threads !== null && parsed.threads > 256)
                 throw err(
                   "invalid_config",
@@ -458,6 +448,8 @@ async function setup(page: Page, cfg: Cfg) {
     });
     try {
       localStorage.setItem("lva.ui.settings.tab", "output");
+      localStorage.setItem("lva.ui.models.area", "voices");
+      localStorage.setItem("lva.ui.models.voices.view", "providers");
     } catch {
       /* egal */
     }
@@ -483,12 +475,28 @@ const emit = (page: Page, payload: Record<string, unknown>) =>
     payload,
   );
 
+/** Vorlesen unter Modelle, Ansicht "Anbieter" (die Anbieter stehen seit der Verwaltung dort). */
 const openGroup = async (page: Page) => {
   await page.goto("/");
   await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
+    .getByRole("navigation")
+    .getByRole("button", { name: "Modelle", exact: true })
     .click();
-  await expect(page.getByTestId("tts-provider-fish")).toBeVisible();
+  await expect(page.getByTestId("voice-providers-view")).toBeVisible();
+  await expect(page.getByTestId("tts-provider-open-fish")).toBeVisible();
+};
+
+/** Seitenblatt eines Anbieters (Zeile samt Einstellungen); ein offenes anderes wird geschlossen. */
+const openProvider = async (page: Page, id: string) => {
+  const close = page.getByTestId("voice-provider-sheet-close");
+  if (await close.isVisible()) {
+    await close.click();
+    await expect(page.getByTestId("voice-provider-sheet")).toHaveCount(0);
+  }
+  await page.getByTestId(`tts-provider-open-${id}`).click();
+  await expect(
+    page.getByTestId("voice-provider-sheet").getByTestId(`tts-provider-${id}`),
+  ).toBeVisible();
 };
 
 test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz je Anbieter", async ({
@@ -499,6 +507,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     over: { piper: { health: { version: "2023.11" } } },
   });
   await openGroup(page);
+  await openProvider(page, "fish");
 
   const fish = page.getByTestId("tts-provider-fish");
   await expect(fish).toContainText("Fish Speech");
@@ -520,6 +529,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     "nichtkommerziell",
   );
 
+  await openProvider(page, "piper");
   const piper = page.getByTestId("tts-provider-piper");
   await expect(piper).toContainText("2023.11");
   await expect(piper).toContainText("satzweise");
@@ -534,6 +544,7 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     "CPU",
   );
 
+  await openProvider(page, "phonon");
   const phonon = page.getByTestId("tts-provider-phonon");
   await expect(page.getByTestId("tts-provider-tier-phonon")).toHaveText(
     "Experimentell",
@@ -547,15 +558,18 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
   await expect(
     page.getByTestId("tts-provider-device-phonon"),
   ).not.toContainText("CUDA");
+  await openProvider(page, "openai-speech");
   // Echtes Streaming (Art "chunk") hat nur der OpenAI-kompatible Sprachserver.
   await expect(page.getByTestId("tts-provider-openai-speech")).toContainText(
     "echtes Streaming",
   );
+  await openProvider(page, "phonon");
   await expect(
     page.getByTestId("tts-provider-noncommercial-phonon"),
   ).toHaveText("nichtkommerziell");
   await expect(page.getByTestId("tts-provider-selected-phonon")).toHaveCount(0);
 
+  await openProvider(page, "ollama-speech");
   // Nicht verfügbar: Grund und Hinweis aus der Gesundheitsprüfung.
   const reason = page.getByTestId("tts-provider-reason-ollama-speech");
   await expect(reason).toContainText("Ollama ist nicht erreichbar");
@@ -564,10 +578,13 @@ test("Liste zeigt Stufe, Zustand, Gerät, Version, Streaming, Klonen und Lizenz 
     page.getByTestId("tts-provider-health-ollama-speech"),
   ).toHaveText("Nicht bereit");
 
+  await openProvider(page, "fish");
   // Fish/Piper ohne Opt-in: kein Schalter. Phonon: Schalter.
   await expect(page.getByTestId("tts-provider-enable-fish")).toHaveCount(0);
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-enable-phonon")).toHaveCount(1);
 
+  await openProvider(page, "piper");
   // Erneut prüfen ruft die Gesundheit dieses Anbieters.
   await page.getByTestId("tts-provider-recheck-piper").click();
   await expect
@@ -583,6 +600,7 @@ test("Aktivieren führt über den Lizenzdialog (Fingerabdruck) bis zur Freigabe"
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
 
   // Vor der Freigabe: gesperrt, Grund steht da, Auswahl nicht möglich.
   const blocked = page.getByTestId("tts-provider-blocked-phonon");
@@ -638,6 +656,7 @@ test("Fernzugriff: Aktivieren eines entfernten Anbieters verlangt die Freigabe m
     over: { "openai-speech": { license_acked: true, remote: true } },
   });
   await openGroup(page);
+  await openProvider(page, "openai-speech");
 
   await page.getByTestId("tts-provider-enable-openai-speech").click();
   // Lizenz ist bestätigt: kein Lizenzdialog, aber Fernzugriff.
@@ -673,6 +692,7 @@ test("Veraltete Lizenzbestätigung (bad_request) bleibt im Dialog und lädt die 
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
   await page.getByTestId("tts-provider-enable-phonon").click();
   const dialog = page.getByTestId("tts-provider-license-dialog");
   await expect(dialog).toBeVisible();
@@ -709,6 +729,7 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
+  await openProvider(page, "phonon");
 
   // Lizenz fehlt (aktiviert, aber nicht bestätigt): Weg zur Bestätigung.
   await page.evaluate(() => {
@@ -728,7 +749,10 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
       message: "Lizenz nicht bestätigt.",
     };
   });
+  // "Alle erneut prüfen" steht in der Karten-Ansicht, hinter dem Seitenblatt.
+  await page.getByTestId("voice-provider-sheet-close").click();
   await page.getByTestId("tts-providers-recheck-all").click();
+  await openProvider(page, "phonon");
   const blocked = page.getByTestId("tts-provider-blocked-phonon");
   await expect(blocked).toContainText("Lizenz ist noch nicht bestätigt");
   await expect(
@@ -736,12 +760,13 @@ test("Gesperrter Anbieter nennt, was fehlt, und lässt sich nicht als Stimme wä
   ).toBeVisible();
 
   // Entfernter Anbieter ohne Opt-in: zuerst fehlt die Aktivierung.
+  await openProvider(page, "openai-speech");
   const remote = page.getByTestId("tts-provider-blocked-openai-speech");
   await expect(remote).toHaveAttribute("data-kind", "license_blocked");
   await expect(remote).toContainText("nicht aktiviert");
 
   // Aufgeklappt: Stimmen sind erst nach Freigabe abrufbar, Auswahl und Probe aus.
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const details = page.getByTestId("tts-provider-details-phonon");
   await expect(details).toContainText("erst nach der Freigabe abrufbar");
   await expect(
@@ -755,7 +780,7 @@ test("Einstellungen: Felder aus der Konfiguration, Freigaben nicht als Feld, Val
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-openai-speech").click();
+  await openProvider(page, "openai-speech");
   const cfg = page.getByTestId("tts-provider-config-openai-speech");
   await expect(
     cfg.getByTestId("tts-provider-openai-speech-base_url"),
@@ -792,7 +817,7 @@ test("Einstellungen: Felder aus der Konfiguration, Freigaben nicht als Feld, Val
   expect(sent.languages).toEqual(["und"]);
 
   // Anbieter ohne Konfiguration (Piper): freundlicher Hinweis statt Fehler.
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await expect(page.getByTestId("tts-provider-config-piper")).toContainText(
     "keine eigenen Einstellungen",
   );
@@ -803,13 +828,14 @@ test("Stimme und Sprache wählen, als Vorlese-Stimme verwenden", async ({
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   const voices = page.getByTestId("tts-provider-voices-piper");
   await expect(voices).toBeVisible();
   // (Im Entwicklungsmodus mountet React Effekte doppelt: nach Sprache zählen.)
   const voiceCalls = async (language: string | null) =>
     (await calls(page, "tts_provider_voices")).filter(
-      ([, a]) => a?.language === language,
+      // Die Stimmenliste der Verwaltung fragt auch die anderen Anbieter: nur Piper zaehlt.
+      ([, a]) => a?.id === "piper" && a?.language === language,
     );
   await expect
     .poll(async () => (await voiceCalls(null)).length)
@@ -849,7 +875,7 @@ test("Probestimme: Phase, Zeit bis zum ersten Ton, Abbrechen (started kommt vor 
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   const text = page.getByTestId("tts-provider-preview-text-piper");
   await expect(text).toHaveValue(/Guten Tag\. Dies ist ein kurzer Probesatz/);
   await page.getByTestId("tts-provider-preview-play-piper").click();
@@ -911,7 +937,7 @@ test("Probestimme: Fehler beim Start (bad_request: Vorlesen läuft) und Fehler-E
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await page.evaluate(() => {
     (window as unknown as { __previewReject: unknown }).__previewReject = {
       kind: "bad_request",
@@ -952,7 +978,7 @@ test("Probestimme: started und first_audio vor der Befehlsantwort werden zugeord
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await page.evaluate(() => {
     const w = window as unknown as {
       __emit: (n: string, p: unknown) => void;
@@ -995,12 +1021,14 @@ test("Vorlesen-Seite: tts_engine = provider:phonon zeigt benannten Eintrag statt
   await expect(select).not.toContainText("Skript mit Sprechern");
   const hint = page.getByTestId("voice-provider-hint");
   await expect(hint).toContainText(
-    "Anbieter: Phonon (Einstellungen → Sprachausgabe-Anbieter)",
+    "Anbieter: Phonon (Modelle › Vorlesen › Anbieter)",
   );
   // Kein Fish-"nicht eingerichtet"-Hinweis.
   await expect(page.getByTestId("voice-setup-hint")).toHaveCount(0);
-  // Der Link führt in die Gruppe.
+  // Der Link führt in die Anbieter-Ansicht unter Modelle.
   await page.getByTestId("voice-provider-open").click();
+  await expect(page.getByTestId("voice-providers-view")).toBeVisible();
+  await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("tts-provider-phonon")).toBeVisible();
   await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
 });
@@ -1041,12 +1069,13 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   // Hoch genug, damit die ganze Gruppe ohne Rollen auf ein Bild passt.
   await page.setViewportSize({ width: 1100, height: 2700 });
   await openGroup(page);
+  await openProvider(page, "phonon");
   // Phonon freigeben, aufklappen, Probestimme laufen lassen.
   await page.getByTestId("tts-provider-enable-phonon").click();
   await page.getByTestId("tts-provider-license-checkbox").check();
   await page.getByTestId("tts-provider-license-confirm").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toHaveCount(0);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-voices-phonon")).toBeVisible();
   await page.getByTestId("tts-provider-preview-play-phonon").click();
   await emit(page, {
@@ -1068,7 +1097,7 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
   // Lizenzdialog (zweiter Anbieter).
   await page.getByTestId("tts-provider-enable-ollama-speech").click();
   await expect(page.getByTestId("tts-provider-license-dialog")).toBeVisible();
-  await page.getByRole("dialog").screenshot({
+  await page.locator(".lv-dialog").screenshot({
     path: `${dir}/tts-anbieter-lizenzdialog.png`,
     animations: "disabled",
   });
@@ -1082,183 +1111,109 @@ test("Bild der Gruppe (nur mit SCREENS_DIR)", async ({ page }) => {
 const phonon = (page: Page, suffix: string) =>
   page.getByTestId(`tts-provider-phonon-${suffix}`);
 
-test("Phonon: Durchsuchen wählt Programmdatei (Datei) und Modell (Ordner), q8 wird vorbelegt, Speichern gilt erst danach", async ({
-  page,
-}) => {
-  await setup(page, { engine: "fish" });
-  await page.addInitScript(() => {
-    const w = window as unknown as {
-      __configs: Record<string, any>;
-      __picks: unknown[];
-      __modelInfo: Record<string, unknown>;
-    };
-    Object.assign(w.__configs.phonon, {
-      exe_path: "",
-      model: "",
-      quant: null,
-    });
-    w.__picks.push(
-      "D:\\phonon\\bin\\ptts.exe",
-      "D:\\phonon\\models\\phonon-40m-de",
-    );
-    w.__modelInfo["D:\\phonon\\models\\phonon-40m-de"] = {
-      is_dir: true,
-      has_f32: false,
-      has_q8: true,
-    };
-  });
-  await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
-  const cfg = page.getByTestId("tts-provider-config-phonon");
-  await expect(phonon(page, "exe_path")).toHaveValue("");
-  // Noch nichts geaendert: kein Hinweis auf ungespeicherte Aenderungen.
-  await expect(
-    page.getByTestId("tts-provider-config-dirty-phonon"),
-  ).toHaveCount(0);
-
-  // Programmdatei: Dateiwahl.
-  await phonon(page, "exe_path-browse").click();
-  await expect(phonon(page, "exe_path")).toHaveValue(
-    "D:\\phonon\\bin\\ptts.exe",
-  );
-  // Modell: Ordnerwahl.
-  await phonon(page, "model-browse").click();
-  await expect(phonon(page, "model")).toHaveValue(
-    "D:\\phonon\\models\\phonon-40m-de",
-  );
-  const dialogs = (await calls(page, "plugin:dialog|open")).map(
-    ([, a]) => (a as { options: { directory: boolean } }).options.directory,
-  );
-  expect(dialogs).toEqual([false, true]);
-
-  // Im Ordner liegt nur model.q8.gguf: q8 ist vorbelegt und erklaert.
-  await expect(
-    cfg.getByRole("combobox", { name: "Quantisierung" }),
-  ).toBeVisible();
-  await expect(cfg).toContainText("q8 eingetragen");
-  await expect(
-    page.getByTestId("tts-provider-config-dirty-phonon"),
-  ).toContainText("Ungespeicherte Änderungen");
-  // Bis hierher wurde nichts gespeichert.
-  expect(await calls(page, "tts_provider_set_config")).toHaveLength(0);
-
-  await page.getByTestId("tts-provider-config-save-phonon").click();
-  await expect(cfg).toContainText("Gespeichert.");
-  await expect(
-    page.getByTestId("tts-provider-config-dirty-phonon"),
-  ).toHaveCount(0);
-  const saves = await calls(page, "tts_provider_set_config");
-  expect(saves).toHaveLength(1);
-  const sent = JSON.parse((saves[0][1] as { json: string }).json);
-  expect(sent).toMatchObject({
-    exe_path: "D:\\phonon\\bin\\ptts.exe",
-    model: "D:\\phonon\\models\\phonon-40m-de",
-    quant: "q8",
-  });
-
-  // Abbrechen im Dialog aendert nichts.
-  await phonon(page, "model-browse").click();
-  await expect(phonon(page, "model")).toHaveValue(
-    "D:\\phonon\\models\\phonon-40m-de",
-  );
-});
-
-test("Phonon: q8-Hinweis bei getipptem Modellordner (nur q8 vorhanden) mit Knopf", async ({
-  page,
-}) => {
-  await setup(page, { engine: "fish" });
-  await page.addInitScript(() => {
-    const w = window as unknown as {
-      __configs: Record<string, any>;
-      __modelInfo: Record<string, unknown>;
-    };
-    Object.assign(w.__configs.phonon, {
-      exe_path: "ptts",
-      model: "D:\\nur-q8",
-      quant: null,
-    });
-    w.__modelInfo["D:\\nur-q8"] = {
-      is_dir: true,
-      has_f32: false,
-      has_q8: true,
-    };
-  });
-  await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
-  const note = page.getByTestId("tts-provider-quant-note-phonon");
-  await expect(note).toContainText("nur model.q8.gguf");
-  await page.getByTestId("tts-provider-quant-use-phonon").click();
-  await expect(note).toHaveCount(0);
-  await page.getByTestId("tts-provider-config-save-phonon").click();
-  const saves = await calls(page, "tts_provider_set_config");
-  expect(JSON.parse((saves[0][1] as { json: string }).json).quant).toBe("q8");
-});
-
-test("Phonon: Fehler stehen am Feld, nichts wird gespeichert, die Anzeige oben erklärt den gespeicherten Stand", async ({
+test("Phonon: keine Pfadfelder; „Erweitert“ eingeklappt; eine Auswahl wird sofort gespeichert, leere Pfade bleiben leer", async ({
   page,
 }) => {
   await setup(page, { engine: "fish" });
   await page.addInitScript(() => {
     const w = window as unknown as { __configs: Record<string, any> };
-    Object.assign(w.__configs.phonon, { exe_path: "", model: "" });
+    Object.assign(w.__configs.phonon, { exe_path: "", model: "", quant: null });
   });
   await openGroup(page);
+  await openProvider(page, "phonon");
+  const cfg = page.getByTestId("tts-provider-config-phonon");
+  // Eingeklappt: die Einstellungen sind da, aber nicht sichtbar.
+  await expect(cfg).toHaveCount(1);
+  await expect(cfg.getByRole("combobox", { name: "Quantisierung" })).toBeHidden();
+  await page.getByTestId("tts-provider-advanced-phonon").click();
+  await expect(cfg.getByRole("combobox", { name: "Quantisierung" })).toBeVisible();
+  // Keine Pfade, kein Freitext für die Stimme, kein Speichern-Knopf, kein Hinweis auf Altwerte.
+  for (const key of ["exe_path", "model", "hf_home", "voice"]) {
+    await expect(phonon(page, key)).toHaveCount(0);
+  }
+  await expect(page.getByTestId("tts-provider-config-save-phonon")).toHaveCount(0);
+  await expect(page.getByTestId("tts-provider-legacy-phonon")).toHaveCount(0);
+  expect(await calls(page, "plugin:dialog|open")).toHaveLength(0);
 
-  // Oben: der GESPEICHERTE Stand, mit Verweis auf die Felder.
-  const reason = page.getByTestId("tts-provider-reason-phonon");
-  await expect(reason).toContainText("Gespeicherter Stand:");
-  await expect(reason).toContainText("exe_path fehlt");
-  await expect(
-    page.getByTestId("tts-provider-reason-fix-phonon"),
-  ).toContainText("erst danach gilt die Änderung");
-  // Der Verweis oeffnet die Felder.
-  await page.getByTestId("tts-provider-reason-open-phonon").click();
-  await expect(page.getByTestId("tts-provider-config-phonon")).toBeVisible();
-  await expect(page.getByTestId("tts-provider-reason-open-phonon")).toHaveCount(
-    0,
+  await cfg.getByRole("combobox", { name: "Quantisierung" }).click();
+  await page.getByRole("option", { name: "q8" }).click();
+  await expect
+    .poll(async () => (await calls(page, "tts_provider_set_config")).length)
+    .toBe(1);
+  const sent = JSON.parse(
+    ((await calls(page, "tts_provider_set_config"))[0][1] as { json: string })
+      .json,
   );
+  expect(sent).toMatchObject({ exe_path: "", model: "", quant: "q8" });
+});
 
-  // Nur die Programmdatei eingetragen, Modell leer: beide Pflichtfelder pruefen,
-  // der Fehler steht am Modell, nichts wird gespeichert.
-  await phonon(page, "exe_path").fill("C:\\ptts\\ptts.exe");
-  await page.getByTestId("tts-provider-config-save-phonon").click();
-  const modelError = page.getByTestId("tts-provider-field-error-phonon-model");
-  await expect(modelError).toContainText("Pflichtfeld");
-  await expect(
-    page.getByTestId("tts-provider-field-error-phonon-exe_path"),
-  ).toHaveCount(0);
-  await expect(
-    page.getByTestId("tts-provider-config-notsaved-phonon"),
-  ).toContainText("Nicht gespeichert");
-  await expect(phonon(page, "model")).toHaveAttribute("aria-invalid", "true");
-  expect(await calls(page, "tts_provider_set_config")).toHaveLength(0);
+test("Phonon: eigene Pfade aus früherer Einrichtung bleiben, bis der Nutzer nach Rückfrage umstellt", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      __configs: Record<string, any>;
+      __modelInfo: Record<string, unknown>;
+    };
+    Object.assign(w.__configs.phonon, {
+      exe_path: "D:\\tools\\ptts.exe",
+      model: "D:\\nur-q8",
+      quant: null,
+    });
+    w.__modelInfo["D:\\nur-q8"] = { is_dir: true, has_f32: false, has_q8: true };
+  });
+  await openGroup(page);
+  await openProvider(page, "phonon");
+  await page.getByTestId("tts-provider-advanced-phonon").click();
+  const legacy = page.getByTestId("tts-provider-legacy-phonon");
+  await expect(legacy).toContainText("Programmdatei (ptts)");
+  // q8-Hinweis zum hinterlegten Modellordner: Übernehmen speichert sofort, Pfade unverändert.
+  await expect(page.getByTestId("tts-provider-quant-note-phonon")).toContainText(
+    "nur model.q8.gguf",
+  );
+  await page.getByTestId("tts-provider-quant-use-phonon").click();
+  await expect
+    .poll(async () => (await calls(page, "tts_provider_set_config")).length)
+    .toBe(1);
+  let saves = await calls(page, "tts_provider_set_config");
+  expect(JSON.parse((saves[0][1] as { json: string }).json)).toMatchObject({
+    exe_path: "D:\\tools\\ptts.exe",
+    model: "D:\\nur-q8",
+    quant: "q8",
+  });
+  // Umstellen nur nach Rückfrage; Abbrechen ändert nichts.
+  await page.getByTestId("tts-provider-legacy-ask-phonon").click();
+  await legacy.getByRole("button", { name: "Abbrechen" }).click();
+  expect(await calls(page, "tts_provider_set_config")).toHaveLength(1);
+  await page.getByTestId("tts-provider-legacy-ask-phonon").click();
+  await page.getByTestId("tts-provider-legacy-reset-phonon").click();
+  await expect
+    .poll(async () => (await calls(page, "tts_provider_set_config")).length)
+    .toBe(2);
+  saves = await calls(page, "tts_provider_set_config");
+  expect(JSON.parse((saves[1][1] as { json: string }).json)).toMatchObject({
+    exe_path: "",
+    model: "",
+    hf_home: null,
+    quant: "q8",
+  });
+  await expect(legacy).toHaveCount(0);
+});
 
-  // Beide leer: beide Felder melden sich auf einmal.
-  await phonon(page, "exe_path").fill("");
-  await page.getByTestId("tts-provider-config-save-phonon").click();
-  await expect(
-    page.getByTestId("tts-provider-field-error-phonon-exe_path"),
-  ).toContainText("Pflichtfeld");
-  await expect(modelError).toContainText("Pflichtfeld");
-
-  // Tippen raeumt den Fehler dieses Feldes weg.
-  await phonon(page, "model").fill("D:\\modell");
-  await expect(modelError).toHaveCount(0);
-
-  // Fehlermeldung des Backends wird dem Feld zugeordnet (erstes Wort = Feld).
-  await phonon(page, "exe_path").fill("ptts");
+test("Phonon: ein Fehler des Backends steht am Feld (Threads, beim Verlassen gespeichert)", async ({
+  page,
+}) => {
+  await setup(page, { engine: "fish" });
+  await openGroup(page);
+  await openProvider(page, "phonon");
+  await page.getByTestId("tts-provider-advanced-phonon").click();
   await phonon(page, "threads").fill("999");
-  await page.getByTestId("tts-provider-config-save-phonon").click();
+  await phonon(page, "threads").blur();
   await expect(
     page.getByTestId("tts-provider-field-error-phonon-threads"),
   ).toContainText("threads 999 liegt nicht in 1 bis 256");
-  await expect(
-    page.getByTestId("tts-provider-config-error-phonon"),
-  ).toHaveCount(0);
-  expect(await calls(page, "tts_provider_set_config")).toHaveLength(1);
-  await expect(
-    page.getByTestId("tts-provider-config-dirty-phonon"),
-  ).toBeVisible();
+  await expect(page.getByTestId("tts-provider-config-error-phonon")).toHaveCount(0);
 });
 
 test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf Fish oder Piper", async ({
@@ -1267,6 +1222,7 @@ test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf 
   // Phonon gewaehlt, aber nicht bereit (echte Daten: exe_path fehlt) und gesperrt.
   await setup(page, { engine: "provider:phonon" });
   await openGroup(page);
+  await openProvider(page, "phonon");
   const warn = page.getByTestId("tts-provider-selected-warning-phonon");
   await expect(page.getByTestId("tts-provider-selected-phonon")).toBeVisible();
   await expect(warn).toContainText("Liest derzeit nicht");
@@ -1293,7 +1249,7 @@ test("Gewählter Anbieter, der nicht bereit ist: Warnhinweis ohne Rückfall auf 
     ).__entries.find((x) => x.descriptor.id === "phonon")!;
     e.health = { ...e.health, available: true, reason: null, hint: null };
   });
-  await page.getByTestId("tts-providers-recheck-all").click();
+  await page.getByTestId("tts-provider-recheck-phonon").click();
   await expect(warn).toHaveCount(0);
 });
 
@@ -1305,7 +1261,7 @@ test("Phonon-Stimmen: Geschlecht in der Auswahl, Lizenz der Stimme mit Quelle", 
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const voices = page.getByTestId("tts-provider-voices-phonon");
   await voices.getByLabel("Stimme", { exact: true }).click();
   await expect(
@@ -1330,7 +1286,7 @@ test("Phonon-Maske: Liste aller Stimmen mit Haken, Alle/Keine, gewählte Stimme 
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const list = page.getByTestId("tts-provider-visible-list-phonon");
   await expect(list).toBeVisible();
 
@@ -1424,9 +1380,9 @@ test("Phonon-Maske: gesperrter Anbieter zeigt keine Auswahl; Fish und Piper habe
 }) => {
   await setup(page, { engine: "fish" });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await expect(page.getByTestId("tts-provider-visible-phonon")).toHaveCount(0);
-  await page.getByTestId("tts-provider-toggle-piper").click();
+  await openProvider(page, "piper");
   await expect(page.getByTestId("tts-provider-voices-piper")).toBeVisible();
   await expect(page.getByTestId("tts-provider-visible-piper")).toHaveCount(0);
 });
@@ -1575,7 +1531,7 @@ test("Bild der Sichtbarkeitsliste (nur mit SCREENS_DIR)", async ({ page }) => {
   });
   await page.setViewportSize({ width: 1100, height: 1900 });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const voices = page.getByTestId("tts-provider-voices-phonon");
   await expect(
     page.getByTestId("tts-provider-visible-list-phonon"),
@@ -1615,6 +1571,7 @@ test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
   });
   await page.setViewportSize({ width: 1100, height: 2300 });
   await openGroup(page);
+  await openProvider(page, "phonon");
   const row = page.getByTestId("tts-provider-phonon");
   // 1) Gespeicherter Stand unvollstaendig, gewaehlt, nicht bereit.
   await row.screenshot({
@@ -1622,7 +1579,7 @@ test("Bild der Phonon-Maske (nur mit SCREENS_DIR)", async ({ page }) => {
     animations: "disabled",
   });
   // 2) Aufgeklappt, Pflichtfelder leer gespeichert: Fehler am Feld.
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   await page.getByTestId("tts-provider-config-save-phonon").click();
   await expect(
     page.getByTestId("tts-provider-field-error-phonon-model"),
@@ -1653,13 +1610,24 @@ test("Phonon-Maske: Reinhoeren spielt die fertige Hoerprobe, eine entstehende is
       w.__played.push(this.getAttribute("src") ?? this.src);
       return Promise.resolve();
     };
+    // Die Probe "laeuft", bis der Test sie stoppt: ohne preload=none laedt
+    // Chromium die Attrappen-Adresse sofort, scheitert und feuert "error" --
+    // der Spieler beendet die Probe dann, bevor die Pruefung greift (Mac:
+    // 2 von 3 Laeufen rot). Mit preload=none wird nichts geladen.
+    const NativeAudio = window.Audio;
+    window.Audio = function (src?: string) {
+      const audio = new NativeAudio();
+      audio.preload = "none";
+      if (src !== undefined) audio.src = src;
+      return audio;
+    } as unknown as typeof Audio;
   });
   await setup(page, {
     engine: "fish",
     over: { phonon: { enabled: true, license_acked: true } },
   });
   await openGroup(page);
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await openProvider(page, "phonon");
   const nele = page.getByTestId("tts-provider-sample-nele");
   await expect(nele).toBeVisible();
   await expect(nele).toHaveAttribute("aria-label", "Reinhören: Nele");

@@ -3,13 +3,16 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft } from "lucide-react";
 import type { ServiceId } from "@/bindings";
 import { Button } from "../ui/Button";
+import { secretStoreState } from "@/lib/platform/secretStore";
 import {
   CATALOG,
   SERVICE_GROUPS,
   SERVICE_LABELS,
+  needsSecret,
   type CatalogEntry,
 } from "./model";
 import { KindIcon } from "./KindIcon";
+import { SecretStoreNotice } from "./SecretStoreNotice";
 
 interface IntegrationCatalogProps {
   onBack: () => void;
@@ -30,6 +33,13 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
   onSetupService,
 }) => {
   const { t } = useTranslation();
+  const store = secretStoreState();
+  // Ohne sicheren Speicher: Arten mit Geheimnis gesperrt, Hinweis vorab.
+  const locked = (entry: CatalogEntry) =>
+    !store.available && needsSecret(entry.kind);
+  const lockedTitle = store.available
+    ? undefined
+    : t("integrations.secretStore.unavailable.short");
   return (
     <div className="space-y-4" data-testid="catalog">
       <div>
@@ -51,6 +61,7 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
           {t("integrations.catalog.description")}
         </p>
       </div>
+      {!store.available && <SecretStoreNotice state={store} />}
       <ul className="grid gap-3 sm:grid-cols-2">
         {CATALOG.map((entry) => (
           <li
@@ -94,6 +105,8 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
                 <Button
                   size="sm"
                   onClick={() => onSetup(entry)}
+                  disabled={locked(entry)}
+                  title={locked(entry) ? lockedTitle : undefined}
                   data-testid={`catalog-setup-${entry.id}`}
                 >
                   {t(`integrations.catalog.items.${entry.id}.action`)}
@@ -142,6 +155,8 @@ export const IntegrationCatalog: React.FC<IntegrationCatalogProps> = ({
                     size="sm"
                     variant="secondary"
                     onClick={() => onSetupService(id)}
+                    disabled={!store.available}
+                    title={lockedTitle}
                     data-testid={`catalog-setup-service-${id}`}
                   >
                     {t("integrations.catalog.services.connect")}

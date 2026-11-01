@@ -1,5 +1,6 @@
 import React, { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { useOsType } from "@/hooks/useOsType";
 import { useSettings } from "../../../hooks/useSettings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -11,7 +12,8 @@ import { Input } from "../../ui/Input";
 import { ShortcutInput } from "../ShortcutInput";
 import { VoiceLibrary } from "../tts/voices/VoiceLibrary";
 import { DEFAULT_TAG_PROVIDER_UI_VALUE } from "../tts/tags/AutoTagBar";
-import { TtsProvidersGroup } from "../tts/providers/TtsProvidersGroup";
+import { Button } from "../../ui/Button";
+import { openVoiceManager } from "../models/voices";
 
 /// Erlaubte MP3-Bitraten (kbit/s) — dieselben vier Stufen wie in
 /// `settings.rs`; mehr Stufen muesste die Oberflaeche auch erklaeren.
@@ -28,6 +30,9 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
  */
 export const ReadAloudTab = () => {
   const { t } = useTranslation();
+  // Ohne Tauri ("unknown") gilt der Windows-Pfad.
+  const osType = useOsType();
+  const isWindows = osType === "windows" || osType === "unknown";
   const { getSetting, updateSetting, isUpdating } = useSettings();
   // Fish Speech ist optional (Issue #29): nur wenn es auf diesem System
   // eingerichtet ist, erscheinen seine Detail-Einstellungen. Unbekannt
@@ -375,14 +380,17 @@ export const ReadAloudTab = () => {
             />
           </>
         )}
-        <ToggleSwitch
-          checked={getSetting("tts_context_menu") ?? false}
-          onChange={(checked) => updateSetting("tts_context_menu", checked)}
-          isUpdating={isUpdating("tts_context_menu")}
-          label={t("tts.settings.contextMenu")}
-          description={t("tts.settings.contextMenuDescription")}
-          grouped={true}
-        />
+        {/* Das Explorer-Kontextmenue gibt es nur unter Windows (Registry). */}
+        {isWindows && (
+          <ToggleSwitch
+            checked={getSetting("tts_context_menu") ?? false}
+            onChange={(checked) => updateSetting("tts_context_menu", checked)}
+            isUpdating={isUpdating("tts_context_menu")}
+            label={t("tts.settings.contextMenu")}
+            description={t("tts.settings.contextMenuDescription")}
+            grouped={true}
+          />
+        )}
         <SettingContainer
           title={t("tts.settings.maxChars")}
           description={t("tts.settings.maxCharsDescription")}
@@ -406,9 +414,29 @@ export const ReadAloudTab = () => {
         </SettingContainer>
       </SettingsGroup>
       {/* Weitere Sprachausgaben (Phonon, OpenAI-kompatible Server, Ollama):
-        ein Anbieter-Vertrag, Opt-in je Anbieter. Gehoert zum Vorlesen, daher
-        hier -- kein eigener Reiter, kein eigener Menuepunkt. */}
-      <TtsProvidersGroup />
+        ein Anbieter-Vertrag, Opt-in je Anbieter. Verwaltet werden sie unter
+        Modelle > Vorlesen (Ansicht "Anbieter", Seitenblatt je Anbieter);
+        hier bleibt nur der Weg dorthin. */}
+      <SettingsGroup
+        title={t("tts.providers.title")}
+        description={t("tts.providers.description")}
+        anchor="tts-providers"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-text/80">
+            {t("settings.models.voiceManager.providersMoved")}
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            data-testid="tts-providers-open-models"
+            onClick={() => openVoiceManager("providers")}
+          >
+            {t("settings.models.voiceManager.openProviders")}
+          </Button>
+        </div>
+      </SettingsGroup>
       {/* Stimmen anhoeren, aufnehmen, klonen, importieren, loeschen: eine
         Einstellung des Vorlesens, deshalb hier -- nicht auf der Modelle-Seite
         (Entscheidung Patrick 14.09.). Die Vorlesen-Seite verweist ueber den

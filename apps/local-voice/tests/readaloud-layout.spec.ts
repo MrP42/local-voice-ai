@@ -116,12 +116,6 @@ async function openReadAloud(
   await page.setViewportSize({ width, height });
   await page.goto("/");
   await goToReadAloud(page);
-  if (!firstStart) {
-    await page
-      .getByTestId("tts-files")
-      .getByRole("tab", { name: "Dateien", exact: true })
-      .click();
-  }
 }
 
 async function goToReadAloud(page: Page) {
@@ -384,11 +378,8 @@ test("handles are hidden in the wrapped layout (<= 1100 px)", async ({
   await expect(page.getByTestId("resize-right")).toBeHidden();
 });
 
-// Patricks Abnahme 0.20.4 (P10): die rechte Leiste faengt mit "Hilfe" an,
-// der Ausklappen-Knopf sitzt immer rechts, und Reiter- wie Klappzustand
-// ueberstehen Neuladen, Seitenwechsel und Modulwechsel.
-const tabOf = (page: Page, name: "Dateien" | "Hilfe") =>
-  page.getByTestId("tts-files").getByRole("tab", { name, exact: true });
+// Die rechte Leiste zeigt nur noch Dateien; die Hilfe dockt als eigene Spalte
+// am Fensterrand an (wie auf allen Seiten) und verschiebt die Dateiliste nicht.
 
 /** Seite in der Seitenliste waehlen. Die Zeilenaktionen blenden beim Hover
  *  ueber dem Titel ein und fangen einen Klick in der Mitte ab; links in der
@@ -401,7 +392,7 @@ async function selectPage(page: Page, title: string) {
     .click({ position: { x: 6, y: 6 } });
 }
 
-test("first start: stacked, files column open, help tab selected", async ({
+test("first start: stacked, files column open, help closed", async ({
   page,
 }) => {
   await openReadAloud(page, 1920, 1050, true);
@@ -409,16 +400,17 @@ test("first start: stacked, files column open, help tab selected", async ({
     "aria-pressed",
     "false",
   );
-  await expect(tabOf(page, "Hilfe")).toHaveAttribute("aria-selected", "true");
-  await expect(tabOf(page, "Dateien")).toHaveAttribute(
-    "aria-selected",
-    "false",
-  );
-  await expect(page.getByTestId("help-panel")).toBeVisible();
-  const help = await box(page, "help-panel");
-  expect(help.height).toBeGreaterThan(50);
-  // Kein gespeicherter Wert vorher: der Standard kommt aus dem Code.
-  // Ein vorhandener Wert bleibt unangetastet (siehe Persistenz-Tests).
+  await expect(page.getByTestId("tts-files")).toBeVisible();
+  await expect(page.getByTestId("help-panel")).toHaveCount(0);
+  const before = await box(page, "tts-files");
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await expect(page.locator(".lv-helpdock .help-panel")).toBeVisible();
+  const after = await box(page, "tts-files");
+  // Die Dateiliste bleibt in der Inhaltsspalte (links vom Dock) und auf ihrer
+  // Hoehe; die Inhaltsspalte selbst wird um das Dock schmaler.
+  expect(after.y).toBe(before.y);
+  const dock = await page.locator(".lv-helpdock").boundingBox();
+  expect(after.x + after.width).toBeLessThanOrEqual(dock!.x + 1);
 });
 
 for (const [width, height] of [
@@ -473,40 +465,36 @@ for (const [width, height] of [
   });
 }
 
-test("right tab choice survives reload, page switch and module switch", async ({
+test("help choice survives reload, page switch and module switch", async ({
   page,
 }) => {
   await openReadAloud(page, 1920, 1050, true);
-  await expect(tabOf(page, "Hilfe")).toHaveAttribute("aria-selected", "true");
-  await tabOf(page, "Dateien").click();
-  await expect(tabOf(page, "Dateien")).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("tts-files")).toContainText("notizen.txt");
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  const help = page.locator(".lv-helpdock .help-panel");
+  await expect(help).toBeVisible();
 
-  // Neuladen.
   await page.reload();
   await goToReadAloud(page);
-  await expect(tabOf(page, "Dateien")).toHaveAttribute("aria-selected", "true");
+  await expect(help).toBeVisible();
 
-  // Zweite Seite in der Seitenliste.
   await selectPage(page, "Zweite Seite");
-  await expect(tabOf(page, "Dateien")).toHaveAttribute("aria-selected", "true");
+  await expect(help).toBeVisible();
   await selectPage(page, "Der Sturm");
-  await expect(tabOf(page, "Dateien")).toHaveAttribute("aria-selected", "true");
+  await expect(help).toBeVisible();
 
-  // Modulwechsel: Verlauf und zurueck.
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Verlauf", exact: true })
     .click();
   await expect(page.getByTestId("tts-files")).toHaveCount(0);
   await goToReadAloud(page);
-  await expect(tabOf(page, "Dateien")).toHaveAttribute("aria-selected", "true");
+  await expect(help).toBeVisible();
 
-  // Und zurueck auf Hilfe: bleibt ebenfalls.
-  await tabOf(page, "Hilfe").click();
+  await page.getByRole("button", { name: "Hilfe schließen" }).click();
   await page.reload();
   await goToReadAloud(page);
-  await expect(tabOf(page, "Hilfe")).toHaveAttribute("aria-selected", "true");
+  await expect(help).toHaveCount(0);
 });
 
 test("collapsed files column survives reload, page switch and module switch", async ({

@@ -148,7 +148,7 @@ export const CallMenu: React.FC = () => {
           role="menu"
           aria-label={t("voiceCall.footer.label")}
           onKeyDown={onMenuKey}
-          className="absolute bottom-full mb-2 start-0 w-80 bg-background border border-mid-gray/40 rounded-lg shadow-lg z-50 overflow-hidden pb-1"
+          className="absolute bottom-full mb-2 end-0 w-80 bg-background border border-mid-gray/40 rounded-lg shadow-lg z-50 overflow-hidden pb-1"
         >
           <Heading>{t("voiceCall.footer.microphone")}</Heading>
           <div className="max-h-40 overflow-y-auto">

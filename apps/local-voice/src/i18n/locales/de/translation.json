@@ -30,6 +30,54 @@
       "title": "Sprachausgabe-Anbieter",
       "description": "Weitere Sprachausgaben neben Fish Speech und Piper. Experimentelle Anbieter bleiben aus, bis Sie sie freigeben; was an Lizenz oder Netzzugriff fehlt, steht bei jedem Anbieter.",
       "recheckAll": "Alle erneut prüfen",
+      "about": "Über diesen Anbieter",
+      "aboutHint": "Gerät, Version, Lizenzen, technischer Stand",
+      "setup": {
+        "title": "Ein Klick richtet alles ein",
+        "titleDone": "Eingerichtet",
+        "intro": "Programm, Modelle und alle Stimmen werden geladen, gegen die Prüfsummen der App geprüft und eingerichtet. Keine Pfade, keine Eingaben.",
+        "introDone": "Programm, Modelle und Stimmen liegen in der App. Einstellungen stehen unter „Erweitert“.",
+        "summaryDone_one": "{{languages}} · {{count}} Stimme. Einstellungen unter „Erweitert“.",
+        "summaryDone_other": "{{languages}} · {{count}} Stimmen. Einstellungen unter „Erweitert“.",
+        "partsShow": "Teile anzeigen",
+        "partsHide": "Teile ausblenden",
+        "program": "Programm ptts",
+        "languageModel": "{{language}} · {{name}}",
+        "voices_one": "{{count}} Stimme",
+        "voices_other": "{{count}} Stimmen",
+        "gatedNeedsVault": "Auf diesem System erst nach Zustimmung zur Klartext-Ablage des Zugangs verfügbar (Schlüsselbund folgt).",
+        "licenseConsent": "Ich habe die Lizenzen gelesen. Nichtkommerzielle Modelle nutze ich nur nichtkommerziell.",
+        "licenseOpen": "Lizenz von „{{name}}“ ansehen",
+        "access": {
+          "title": "Freigabe bei Hugging Face",
+          "steps": "Der Hersteller gibt das deutsche Modell nur nach Zustimmung frei. 1. Freigabe öffnen und zustimmen. 2. Einen Lesezugang anlegen (nur Lesen, nur dieses Modell) und kopieren. 3. „Aus Zwischenablage übernehmen“ – die App liest die Zwischenablage nur bei diesem Klick, zeigt den Zugang nie an und leert die Zwischenablage danach, sofern dort noch derselbe Zugang steht.",
+          "clipboardRisk": "Hinweis: Andere Programme, der Verlauf oder eine Synchronisierung der Zwischenablage können den Zugang kurz sehen. Den Zugang bei Bedarf auf huggingface.co widerrufen.",
+          "fileConsent": "Einverstanden: Ohne Schlüsselbund legt die App den Zugang im Klartext in der Hugging-Face-Datei ab (nur für mich lesbar, eine vorhandene Datei bleibt unverändert).",
+          "openTerms": "Freigabe öffnen ↗",
+          "openToken": "Lesezugang anlegen ↗",
+          "paste": "Aus Zwischenablage übernehmen",
+          "recheck": "Erneut prüfen",
+          "granted": "Freigabe geprüft: Hugging Face liefert das Modell aus.",
+          "remove": "Zugang entfernen",
+          "systemOwned": "Dieser Zugang stammt aus der Hugging-Face-Anmeldung des Systems (hf auth) und wird dort entfernt.",
+          "denied": "Hugging Face verweigert das Modell: Bedingungen noch nicht angenommen oder Zugang ungültig.",
+          "unreachable": "Hugging Face ist gerade nicht erreichbar. Später erneut prüfen.",
+          "missing": "Noch kein Zugang übernommen."
+        },
+        "start": "Einrichten ({{size}})",
+        "running": "Wird eingerichtet …",
+        "retry": "Wiederholen",
+        "cancel": "Abbrechen",
+        "whyNothing": "Mindestens eine Sprache wählen.",
+        "whyLicense": "Wird aktiv, sobald die Lizenz bestätigt ist.",
+        "whyAccess": "Wird aktiv, sobald die Freigabe geprüft ist – oder Deutsch abwählen und nur Englisch einrichten.",
+        "failed": "„{{name}}“ ließ sich nicht einrichten. Nichts Halbes bleibt zurück; „Wiederholen“ setzt fort.",
+        "statusRunning": "Lädt {{name}} …",
+        "statusDone_one": "Bereit: {{count}} Stimme eingerichtet.",
+        "statusDone_other": "Bereit: {{count}} Stimmen eingerichtet.",
+        "progressLabel": "Fortschritt {{name}}",
+        "progressBytes": "{{done}} von {{total}}"
+      },
       "recheck": "Erneut prüfen",
       "checking": "Anbieter werden geprüft …",
       "loadError": "Die Anbieterliste konnte nicht geladen werden: {{message}}",
@@ -102,6 +150,13 @@
         "hide": "Einstellungen von {{name}} ausblenden"
       },
       "config": {
+        "advanced": "Erweitert",
+        "advancedHint": "Quantisierung, Sprache, Threads",
+        "legacy": "Aus einer früheren Einrichtung sind eigene Angaben hinterlegt ({{fields}}). Sie haben Vorrang vor der App-Installation und bleiben, bis Sie umstellen.",
+        "legacyUse": "Auf App-Installation umstellen",
+        "legacyConfirm": "Eigene Angaben entfernen und die von der App eingerichtete Installation verwenden?",
+        "legacyConfirmEmpty": "Die App hat das Programm noch nicht eingerichtet. Nach dem Entfernen liest der Anbieter erst wieder vor, wenn oben „Einrichten“ gelaufen ist. Trotzdem entfernen?",
+        "legacyYes": "Ja, umstellen",
         "title": "Einstellungen",
         "none": "Dieser Anbieter hat hier keine eigenen Einstellungen.",
         "loadError": "Die Einstellungen konnten nicht geladen werden: {{message}}",
@@ -211,6 +266,9 @@
       },
       "phononVoices": {
         "title": "Eigene Stimmen",
+          "summary_one": "{{count}} vorhanden",
+          "summary_other": "{{count}} vorhanden",
+          "cloneBlocked": "Klonen ist auf diesem System noch gesperrt: Der Gradium-Schlüssel braucht den Schlüsselbund-Tresor, der mit dem nächsten Update kommt. Stimmdateien lassen sich schon importieren.",
         "intro": "Eigene Stimmen importieren oder mit Gradium aus einer Aufnahme erstellen, auch aus vorhandenen Fish-Stimmen. Sie liegen danach lokal im Phonon-Modell und werden ohne Netz benutzt.",
         "noModel": "Es ist noch kein Phonon-Modell installiert. Neue Stimmen werden gespeichert und stehen bereit, sobald auf der Modellseite ein Modell installiert ist.",
         "empty": "Noch keine eigenen Stimmen.",
@@ -224,8 +282,8 @@
         "removeTitle": "Eigene Stimme „{{name}}“ entfernen?",
         "removeText": "Die Stimmdatei wird gelöscht. Mitgelieferte Stimmen sind davon nicht betroffen.",
         "removeCloneNote": "Eine bei Gradium gespeicherte Kopie bleibt in Ihrem Gradium-Konto bestehen und muss dort gelöscht werden.",
-        "importButton": "Eigene Stimme importieren …",
-        "createButton": "Stimme erstellen …",
+        "importButton": "Stimmdatei importieren (.safetensors) …",
+        "createButton": "Aus Audiodatei oder Aufnahme klonen …",
         "imported": "Die Stimme „{{name}}“ wurde importiert.",
         "created": "Die Stimme „{{name}}“ wurde erstellt.",
         "import": {
@@ -293,7 +351,7 @@
           "saved": "Der Schlüssel wurde gespeichert."
         },
         "fish": {
-          "title": "Fish-Stimmen nach Phonon übernehmen",
+          "title": "Lokale Fish-Speech-Stimmen übernehmen",
           "hint": "Dafür wird die Referenzaufnahme der Fish-Stimme (ca. 10 s) an Gradium gesendet. Jede Stimme braucht ihre eigene Einwilligung.",
           "empty": "Keine Fish-Stimmen vorhanden.",
           "take": "Nach Phonon übernehmen …"
@@ -309,7 +367,7 @@
         "entry": "Anbieter: {{name}}",
         "voice": "{{provider}} · {{name}}",
         "script": "{{provider}} · Skript mit Sprechern",
-        "hint": "Anbieter: {{name}} (Einstellungen → Sprachausgabe-Anbieter)",
+        "hint": "Anbieter: {{name}} (Modelle › Vorlesen › Anbieter)",
         "open": "Anbieter-Einstellungen öffnen"
       }
     },
@@ -1369,8 +1427,8 @@
           "included_other": "{{count}} Stimmen enthalten",
           "missingChip": "Stimmen fehlen ({{present}} von {{total}})",
           "reload": "Stimmen nachladen",
-          "detailNew": "Zum Modell gehören {{total}} Stimmen. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein.",
-          "detail": "Zum Modell gehören {{total}} Stimmen, {{present}} davon sind installiert. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon ein."
+          "detailNew": "Zum Modell gehören {{total}} Stimmen. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Modelle > Vorlesen > Anbieter > Phonon ein.",
+          "detail": "Zum Modell gehören {{total}} Stimmen, {{present}} davon sind installiert. Sie werden mit dem Modell geladen und mit ihm gelöscht. Welche davon im Vorlesen erscheinen, stellst du unter Modelle > Vorlesen > Anbieter > Phonon ein."
         },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Mehrere Dateien: Größe und SHA-256 je Datei stehen im Katalog der App und werden beim Laden geprüft.",
@@ -1396,6 +1454,102 @@
           "phonon-31m-en": {
             "name": "Phonon 31m (Englisch)",
             "description": "Englisches Sprachmodell, 8-Bit-Fassung (q8), läuft auf der CPU. Apache-2.0, öffentlich, kein Konto nötig."
+          }
+        }
+      },
+      "voiceManager": {
+        "view": {
+          "label": "Ansicht",
+          "voices": "Stimmen",
+          "providers": "Anbieter"
+        },
+        "reading": "Liest vor",
+        "readingScope": "Gilt für Vorlesen, Aufnahmen und Skripte",
+        "scriptDescription": "Die Marker im Skript wechseln die Stimme; Text ohne Marker liest die Standardstimme.",
+        "multilingual": "mehrsprachig",
+        "loading": "Stimmen werden geladen …",
+        "count": "{{shown}} von {{total}} Stimmen",
+        "empty": "Es sind noch keine Stimmen eingerichtet. Unter „Anbieter“ lassen sich Anbieter aktivieren und einrichten; Piper-Stimmen stehen dort zum Laden bereit.",
+        "noMatch": "Keine Stimme passt zu den gewählten Filtern.",
+        "noVoicesFrom": "Noch keine Stimmen von: {{names}}. Sie erscheinen, sobald der Anbieter bereit ist.",
+        "generalHint": "Lautstärke, Klang verbessern, Exportformat, Zeichenlimit, Auto-Tags und Fish-Ordner stehen unter Einstellungen › Ausgabe › Vorlesen.",
+        "openOutput": "Einstellungen öffnen",
+        "providersMoved": "Die Anbieter (Aktivieren, Lizenz, Fernzugriff, Einstellungen, Stimmen, Probestimme) stehen jetzt unter Modelle › Vorlesen in der Ansicht „Anbieter“.",
+        "openProviders": "Anbieter öffnen",
+        "filter": {
+          "title": "Filter",
+          "button": "Filter",
+          "buttonCount": "Filter ({{count}})",
+          "reset": "Zurücksetzen",
+          "status": "Status",
+          "onlyInstalled": "Nur installierte",
+          "language": "Sprache",
+          "device": "Gerät",
+          "provider": "Anbieter",
+          "license": "Lizenz"
+        },
+        "device": {
+          "cpu": "CPU",
+          "gpu": "GPU",
+          "server": "Server"
+        },
+        "license": {
+          "free": "Lizenz geprüft",
+          "nonCommercial": "nichtkommerziell",
+          "unverified": "Lizenz ungeprüft"
+        },
+        "sort": {
+          "label": "Sortieren",
+          "recommended": "Empfohlen",
+          "name": "Name",
+          "language": "Sprache",
+          "provider": "Anbieter"
+        },
+        "layout": {
+          "label": "Darstellung",
+          "cards": "Karten",
+          "list": "Liste"
+        },
+        "voice": {
+          "selected": "Liest vor",
+          "use": "Verwenden",
+          "useNamed": "{{name}} zum Vorlesen verwenden",
+          "load": "Laden · {{size}}",
+          "loadNamed": "{{name}} laden ({{size}})",
+          "setUp": "Anbieter einrichten",
+          "notLoaded": "nicht geladen",
+          "providerNotReady": "Anbieter nicht bereit",
+          "hidden": "im Vorlesen ausgeblendet",
+          "assessment": "Einschätzung",
+          "quality": "Qualität",
+          "effort": "Rechenaufwand",
+          "notMeasured": "nicht gemessen",
+          "openProvider": "Anbieter öffnen: {{name}}",
+          "sampleAfterLoad": "Hörprobe erst nach dem Laden",
+          "sampleAfterSetup": "Hörprobe erst, wenn der Anbieter bereit ist",
+          "noSample": "Keine Hörprobe verfügbar"
+        },
+        "providers": {
+          "title": "Anbieter und Dienste",
+          "details": "Details",
+          "openNamed": "Details und Einstellungen: {{name}}",
+          "recheckNamed": "{{name}} erneut prüfen",
+          "voiceCount_one": "{{count}} Stimme",
+          "voiceCount_other": "{{count}} Stimmen",
+          "sheetHint": "Zustand, Freigaben, Einstellungen, Stimmen und Probestimme dieses Anbieters.",
+          "retry": "Erneut versuchen",
+          "manageDownloads": "Downloads verwalten",
+          "setUp": "Einrichten",
+          "downloadsSingle": "Einzelne Downloads verwalten",
+          "downloads": "Downloads",
+          "moreSettings": "App-weite Einstellungen zum Vorlesen (Lautstärke, Export, Fish-Ordner …) stehen unter Einstellungen › Ausgabe.",
+          "status": {
+            "notSetUp": "Nicht eingerichtet",
+            "ready": "Bereit",
+            "notReady": "Nicht bereit",
+            "blocked": "Gesperrt",
+            "notEnabled": "Nicht aktiviert",
+            "unavailable": "Nicht verfügbar"
           }
         }
       },
@@ -2275,8 +2429,8 @@
   },
   "meetings": {
     "presenter": {
-      "button": "An WAI Presenter senden",
-      "title": "An WAI Presenter senden",
+      "button": "An Presenter senden",
+      "title": "An Presenter senden",
       "description": "Legt ein Paket mit Transkript und den gewählten Dokumenten in den Austauschordner. Ein älteres Paket dieser Besprechung wird ersetzt.",
       "target": "Austauschordner",
       "documents": "Dokumente",
@@ -4118,7 +4272,63 @@
     "gpu": "GPU {{used}} / {{total}} GB",
     "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (gemeinsam) {{used}} / {{total}} GB",
+    "labelRam": "RAM",
+    "labelGpu": "GPU",
+    "open": "Speicher anzeigen und verwalten",
+    "ramTitle": "Arbeitsspeicher",
+    "gpuTitle": "Grafikspeicher",
+    "legendApp": "Local Voice AI",
+    "legendOther": "Andere",
+    "legendFree": "Frei",
+    "system": "System",
+    "systemValue": "{{used}} von {{total}} GB ({{percent}} %)",
+    "gpuValue": "{{used}} von {{total}} GB ({{percent}} %)",
+    "gpuSharedNote": "gemeinsam mit dem Arbeitsspeicher",
+    "gpuBudget": "{{name}} · Treiberbudget",
+    "release": "Speicher freigeben",
+    "releaseHint": "Entlädt Modelle, die gerade nicht arbeiten.",
+    "releasing": "Wird freigegeben …",
+    "released": "{{mb}} MB freigegeben",
+    "releasedNothing": "Nichts zu entladen",
+    "releaseFailed": "Speicher konnte nicht freigegeben werden",
+    "guardTitle": "Speicherschutz",
+    "guardSwitch": "Speicherschutz einschalten",
+    "guardLimit": "Grenze für den gesamten Arbeitsspeicher",
+    "guardExplain": "Die App lädt kein Modell, das die Grenze überschreiten würde, und entlädt vorher ungenutzte.",
+    "guardOffWarning": "Ohne Speicherschutz können große Modelle den Arbeitsspeicher füllen. Der PC kann dann stocken, einfrieren oder Programme beenden.",
     "hint": "RAM: verwendet / gesamt. GPU: belegt / Budget des Treibers — kein „freier VRAM“. App = Local Voice AI inkl. Modell-Server und Webansicht."
+  },
+  "roles": {
+    "stt": {
+      "role": "Spracherkennung",
+      "purpose": "Wandelt Gesprochenes in Text um"
+    },
+    "llm": {
+      "role": "KI-Modell",
+      "purpose": "Fasst zusammen, bearbeitet Text nach, beantwortet Fragen"
+    }
+  },
+  "titlebar": {
+    "searchPlaceholder": "Suchen ({{key}})",
+    "searchKey": "Strg+K",
+    "search": "Suchen",
+    "searchResults": "Treffer in der App",
+    "searchNone": "Keine Treffer",
+    "notifications": "Benachrichtigungen",
+    "noNotifications": "Keine Benachrichtigungen",
+    "help": "Hilfe",
+    "helpPage": "Hilfe zu dieser Seite",
+    "shortcuts": "Tastenkürzel",
+    "shortcutsTitle": "Tastenkürzel",
+    "shortcutSearch": "Suche öffnen",
+    "about": "Info über Local Voice AI",
+    "aboutName": "WAI Local Voice AI",
+    "aboutSuite": "Teil der WAI Suite · Wolff Applied AI",
+    "aboutVersion": "Version {{version}}",
+    "settings": "Einstellungen öffnen",
+    "profile": "Profil",
+    "localProfile": "Lokales Profil",
+    "close": "Schließen"
   },
   "help": {
     "title": "Hilfe",
@@ -4899,6 +5109,13 @@
     }
   },
   "integrations": {
+    "secretStore": {
+      "unavailable": {
+        "macos": "Auf macOS derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
+        "linux": "Unter Linux derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
+        "short": "Auf diesem System noch nicht verfügbar (keine sichere Speicherung von Zugangsdaten)."
+      }
+    },
     "m365": {
       "dialog": {
         "title": "Microsoft-365-Konto einrichten",
@@ -5175,7 +5392,7 @@
       "agent_local": "Lokaler Agent"
     },
     "kinds": {
-      "presenter": "WAI Presenter",
+      "presenter": "Presenter",
       "youtube": "YouTube",
       "ics": "Kalender (ICS)",
       "graph": "Microsoft-365-Kalender",
@@ -5183,7 +5400,7 @@
       "smtp": "Postfach (SMTP)",
       "folder": "Ordner",
       "obsidian": "Obsidian-Vault",
-      "wissen": "WAI-Wissensbasis",
+      "wissen": "Wissensbasis",
       "agent": "Agentenzugang",
       "webhook": "Webhook (n8n)",
       "service": "Dienst"
@@ -5198,8 +5415,8 @@
       "auto": "automatisch",
       "items": {
         "presenter": {
-          "name": "WAI Presenter",
-          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der WAI Presenter liest. Den Ordner wählst du selbst.",
+          "name": "Presenter",
+          "description": "Besprechungen mit Transkript und Dokumenten als Paket in einen Austauschordner geben, den der Presenter liest. Den Ordner wählst du selbst.",
           "action": "Austauschordner wählen"
         },
         "calendar_ics": {
@@ -5243,7 +5460,7 @@
           "action": "Vault verbinden"
         },
         "wissen": {
-          "name": "WAI-Wissensbasis",
+          "name": "Wissensbasis",
           "description": "In der Wissensbasis suchen (MCP-Endpunkt mit Zugangsschlüssel).",
           "action": "Wissensbasis verbinden"
         },
@@ -5626,10 +5843,10 @@
     },
     "target": {
       "presenter": {
-        "title": "WAI Presenter einrichten",
-        "titleEdit": "WAI-Presenter-Einstellungen",
+        "title": "Presenter einrichten",
+        "titleEdit": "Presenter-Einstellungen",
         "path": "Austauschordner",
-        "pathPlaceholder": "z. B. D:\\Austausch\\WAI Presenter",
+        "pathPlaceholder": "z. B. D:\\Austausch\\Presenter",
         "privacy": "Pakete enthalten Transkripte und Dokumente (vertraulich). Wähle einen Ordner, den nur du nutzt; einen geteilten OneDrive-Ordner nur bewusst.",
         "catalog": "Katalog der Besprechungen schreiben (nur Titel, Datum, Dauer, vorhandene Dokumente)"
       },
@@ -6128,6 +6345,77 @@
       "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
       "tools": "LVA-Werkzeuge nutzen",
       "toolsHint": "Nur lesend: Besprechungen auflisten, durchsuchen und Transkripte lesen. Die KI ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
+    }
+  },
+  "introTour": {
+    "stepOf": "{{step}}/{{total}}",
+    "start": "Tour starten",
+    "next": "Weiter",
+    "back": "Zurück",
+    "skip": "Überspringen",
+    "finish": "Loslegen",
+    "restart": "Einführung erneut starten",
+    "restartShort": "Einführung ansehen",
+    "download": {
+      "label": "Download des Diktatmodells",
+      "loading": "Diktatmodell {{model}} wird eingerichtet … {{percent}} %",
+      "ready": "{{model}} ist bereit – du kannst sofort diktieren.",
+      "failed": "Das Diktatmodell konnte nicht geladen werden. Wähle ein Modell, um loszulegen – oder versuche es erneut.",
+      "selected": "Diktatmodell eingerichtet – du kannst jetzt diktieren.",
+      "fallbackName": "das Diktatmodell",
+      "failedShort": "Das Diktatmodell konnte nicht geladen werden. Prüfe die Internetverbindung und versuche es erneut.",
+      "retry": "Download wiederholen",
+      "choose": "Anderes Modell auswählen"
+    },
+    "welcome": {
+      "eyebrow": "Willkommen",
+      "title": "Schön, dass du da bist",
+      "body": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. Sobald das Diktatmodell bereit ist, zeigen wir dir in sechs kurzen Schritten, wo du was findest.",
+      "note": "Der Download läuft im Hintergrund weiter, auch wenn du die Tour überspringst.",
+      "bodyReady": "Local Voice AI wandelt Sprache in Text um – vollständig auf deinem Gerät. In sechs kurzen Schritten zeigen wir dir, wo du was findest."
+    },
+    "dictate": {
+      "eyebrow": "Diktieren",
+      "title": "In Textfelder diktieren",
+      "one": "In ein Textfeld klicken – zum Beispiel in Word, Outlook oder im Browser. In manchen Feldern, etwa Passwortfeldern oder Programmen mit Administratorrechten, kann das Einfügen nicht funktionieren.",
+      "twoHold": "{{shortcut}} gedrückt halten und sprechen.",
+      "twoToggle": "{{shortcut}} drücken und sprechen.",
+      "threeHold": "Loslassen – der Text wird eingefügt.",
+      "threeToggle": "{{shortcut}} erneut drücken – der Text wird eingefügt.",
+      "note": "Während einer Aufnahme bricht {{cancel}} das Diktat ab, ohne Text einzufügen. Ohne laufende Aufnahme schließt {{cancel}} diese Einführung. Kürzel und Modus (halten oder umschalten) änderst du unter Einstellungen › Diktat.",
+      "sample": "Sehr geehrte Frau Berger, vielen Dank für Ihre Nachricht."
+    },
+    "try": {
+      "eyebrow": "Ausprobieren",
+      "title": "Probier es gleich aus",
+      "field": "Übungsfeld zum Diktieren",
+      "placeholder": "Hier erscheint dein Text …",
+      "bodyHold": "Klick ins Übungsfeld, halte {{shortcut}} gedrückt und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Beim Loslassen erscheint der Text.",
+      "bodyToggle": "Klick ins Übungsfeld, drück {{shortcut}} und sag zum Beispiel: „Heute ist ein guter Tag zum Diktieren.“ Drück {{shortcut}} erneut, dann erscheint der Text.",
+      "ready": "Während einer Aufnahme bricht {{cancel}} nur die Aufnahme ab. Ohne laufende Aufnahme schließt {{cancel}} die Einführung.",
+      "locked": "Das Übungsfeld wird freigegeben, sobald das Diktatmodell bereit ist."
+    },
+    "tools": {
+      "eyebrow": "Werkzeuge",
+      "title": "Modelle, Integrationen, Einstellungen",
+      "models": "Modelle: weitere Sprach- und Stimmmodelle laden.",
+      "integrations": "Integrationen: Verbindungen zu anderen Apps.",
+      "settings": "Einstellungen: Kürzel, Mikrofon, Sprache, Aussehen.",
+      "statusbar": "Unten in der Statusleiste siehst du jederzeit Modell und Mikrofon."
+    },
+    "end": {
+      "eyebrow": "Fertig",
+      "title": "Los geht’s",
+      "body": "Die Einführung findest du jederzeit wieder im Hilfe-Menü (Fragezeichen oben rechts) und auf der Startseite.",
+      "stillLoading": "Das Diktatmodell lädt noch. Sobald es fertig ist, kannst du diktieren – die Statusleiste zeigt den Stand."
+    },
+    "pages": {
+      "eyebrow": "Seiten",
+      "title": "Alles auf einen Blick",
+      "history": "Verlauf: jedes Diktat wiederfinden, kopieren, anhören oder neu transkribieren.",
+      "meetings": "Aufnahmen: Besprechungen live mitschreiben oder Audio- und Videodateien importieren.",
+      "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
+      "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
     }
   }
 }

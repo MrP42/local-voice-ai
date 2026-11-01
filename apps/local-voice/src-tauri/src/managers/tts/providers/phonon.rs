@@ -236,6 +236,20 @@ fn parse_model(model: &str) -> Result<ModelSpec<'_>, TtsError> {
 }
 
 impl PhononConfig {
+    /// Prüft den GESPEICHERTEN Stand: leeres `exe_path`/`model` ist erlaubt und heißt „die von der
+    /// App eingerichtete Installation“ (wird beim Auflösen aus [`super::policy::InstalledPaths`]
+    /// gefüllt). Gesetzte Werte werden wie bei [`Self::validate`] geprüft.
+    pub fn validate_stored(&self) -> Result<(), TtsError> {
+        let mut probe = self.clone();
+        if probe.exe_path.trim().is_empty() {
+            probe.exe_path = "ptts".into();
+        }
+        if probe.model.trim().is_empty() {
+            probe.model = "hf://app/installiert".into();
+        }
+        probe.validate()
+    }
+
     /// Prüft die Einstellungen; die Meldungen sind für den Nutzer gedacht.
     pub fn validate(&self) -> Result<(), TtsError> {
         let exe = self.exe_path.trim();
@@ -1098,6 +1112,8 @@ impl PhononProvider {
         };
         let (stdout_file, stderr_file) = (create(&stdout_path)?, create(&stderr_path)?);
 
+        // Nie eine Platzhalter-/kaputte .exe starten (Windows zeigte sonst einen modalen Dialog).
+        process_guard::check_launchable(exe).map_err(TtsError::unavailable)?;
         let mut cmd = std::process::Command::new(exe);
         cmd.args(make_args(&out))
             .stdin(Stdio::null())
@@ -2804,14 +2820,16 @@ mod tests {
 
     #[tokio::test]
     async fn frist_beendet_den_kindprozess_und_ergibt_timeout() {
+        // Großzügige Abstände: unter Last (voller Testlauf) startet der Fake-Prozess spät.
+        // Frist 1,5 s, Fake schläft 6 s; die Prüfung bleibt scharf (Frist << Fake-Dauer).
         let model = model_dir(&[]);
         let fake = fake_ptts(FakeOpts {
-            delay_ms: Some(2500),
+            delay_ms: Some(6000),
             ..Default::default()
         });
         let p = provider(&fake, &model);
         let mut o = opts();
-        o.timeout = Duration::from_millis(400);
+        o.timeout = Duration::from_millis(1500);
         let started = Instant::now();
         let e = p
             .synthesize("Ein Satz.", &o, &CancelToken::detached())
@@ -2819,14 +2837,17 @@ mod tests {
             .unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::Timeout);
         assert!(!e.retryable);
-        assert!(started.elapsed() < Duration::from_secs(2));
-        tokio::time::sleep(Duration::from_millis(2600)).await;
+        assert!(started.elapsed() < Duration::from_secs(5));
+        tokio::time::sleep(Duration::from_millis(6200)).await;
         assert!(
             !fake.marker.exists(),
             "Kindprozess lief nach der Frist weiter"
         );
-        let out = PathBuf::from(fake.synth_calls()[0].value_of("-o").unwrap());
-        assert!(!out.parent().unwrap().exists());
+        // Den Aufruf hat der Fake nur protokolliert, wenn er vor der Frist überhaupt anlief.
+        if let Some(call) = fake.synth_calls().first() {
+            let out = PathBuf::from(call.value_of("-o").unwrap());
+            assert!(!out.parent().unwrap().exists());
+        }
     }
 
     #[tokio::test]

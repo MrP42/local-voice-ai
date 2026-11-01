@@ -1,6 +1,8 @@
 //! Tauri-Commands des Vorlesen-Bereichs (TP1).
 
 use crate::managers::tts::builder;
+use crate::managers::tts::hf_access::{self, HfAccessCheck, HfAccessStatus};
+use crate::managers::tts::phonon_models;
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{portable, registry, voices, ReadingInfo, TtsManager, TtsStatus};
@@ -686,6 +688,66 @@ pub async fn tts_download_model(app: AppHandle, id: String) -> Result<(), String
         );
     }
     result
+}
+
+/// Zugang zu gesperrten Hugging-Face-Modellen: nur der Zustand, nie der Wert.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_hf_access_status(app: AppHandle) -> HfAccessStatus {
+    let dir = crate::managers::calendar::secret::secrets_dir_for(&app).ok();
+    hf_access::status(dir.as_deref(), &phonon_models::process_env)
+}
+
+/// Zugang aus der Zwischenablage uebernehmen: nur auf ausdruecklichen Klick des Nutzers. Der Wert
+/// geht nie durch die Oberflaeche (kein Clipboard-Recht im Frontend), wird nie angezeigt oder
+/// protokolliert. Danach wird die Zwischenablage geleert, aber nur, wenn sie noch genau diesen
+/// Zugang enthaelt (fremde neue Inhalte bleiben). Kein Netzzugriff.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_hf_access_from_clipboard(
+    app: AppHandle,
+    allow_file: bool,
+) -> Result<HfAccessStatus, String> {
+    let dir = crate::managers::calendar::secret::secrets_dir_for(&app)
+        .map_err(|_| "Der Ordner für Geheimnisse ist nicht erreichbar.".to_string())?;
+    let raw = zeroize::Zeroizing::new(app.clipboard().read_text().unwrap_or_default());
+    let token = zeroize::Zeroizing::new(hf_access::normalize(&raw)?);
+    let saved = {
+        let token = token.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            hf_access::save(&dir, &token, allow_file, &phonon_models::process_env)
+        })
+        .await
+        .map_err(|_| "Der Zugang ließ sich nicht ablegen.".to_string())??
+    };
+    let still_ours = app
+        .clipboard()
+        .read_text()
+        .map(|now| zeroize::Zeroizing::new(now).trim() == token.as_str())
+        .unwrap_or(false);
+    if still_ours {
+        let _ = app.clipboard().clear();
+    }
+    Ok(saved)
+}
+
+/// Wirkt der Zugang fuer dieses gesperrte Modell? HEAD an die erste Datei, nur `huggingface.co`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_hf_access_verify(app: AppHandle, model_id: String) -> HfAccessCheck {
+    let dir = crate::managers::calendar::secret::secrets_dir_for(&app).ok();
+    let token = hf_access::load(dir.as_deref(), &phonon_models::process_env);
+    hf_access::verify(token, &model_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn tts_hf_access_delete(app: AppHandle) -> HfAccessStatus {
+    let dir = crate::managers::calendar::secret::secrets_dir_for(&app).ok();
+    if let Some(d) = dir.as_deref() {
+        hf_access::delete(d);
+    }
+    hf_access::status(dir.as_deref(), &phonon_models::process_env)
 }
 
 #[tauri::command]

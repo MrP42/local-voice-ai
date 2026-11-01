@@ -350,9 +350,10 @@ Ein neuer Start löst eine laufende Probestimme ab; startet das Vorlesen, wird s
 
 ### Oberfläche
 
-Gruppe „Sprachausgabe-Anbieter“ im Reiter Ausgabe (`apps/local-voice/src/components/settings/tts/providers/`):
-`TtsProvidersGroup.tsx` lädt `ttsProvidersList` und zeigt, was die Befehle liefern (neue Anbieter erscheinen ohne
-UI-Änderung). Freigabe-Ablauf (`nextApprovalStep`, providerModel.ts:18): Schalter „Aktivieren“, dann Lizenzdialog (wenn
+Ansicht „Anbieter“ unter Modelle › Vorlesen (`apps/local-voice/src/components/settings/models/voices/`): Karten je Anbieter,
+die Einstellungen im Seitenblatt (`ProviderSheet.tsx`). `useTtsProviders.ts` (in `settings/tts/providers/`) lädt
+`ttsProvidersList` und zeigt, was die Befehle liefern (neue Anbieter erscheinen ohne UI-Änderung); die Freigabe-Dialoge
+stehen in `ProviderDialogs.tsx`. Unter Einstellungen › Ausgabe bleibt nur eine Verweiszeile. Freigabe-Ablauf (`nextApprovalStep`, providerModel.ts:18): Schalter „Aktivieren“, dann Lizenzdialog (wenn
 `license_needs_ack && !license_acked`), dann Fernzugriffsdialog (wenn `remote && !allow_remote`). Wählbar sind nur die
 Stufen `supported` und `experimental` (`isSelectableTier`, providerModel.ts:31). Details, Konfigurationsfelder, Stimmenwahl
 und Probestimme mit Abbrechen: `ProviderDetails.tsx`, `useProviderPreview.ts`.

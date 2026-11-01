@@ -101,7 +101,7 @@ mod tests {
     /// misst die Dämpfung des Filters bei dieser Frequenz.
     fn attenuation_db(freq: f32, cutoff: f64, rate: f64) -> f64 {
         let n = (rate * 2.0) as usize;
-        let mut filter = Biquad::highpass(cutoff, 0.7071, rate);
+        let mut filter = Biquad::highpass(cutoff, std::f64::consts::FRAC_1_SQRT_2, rate);
         let mut sum_in = 0.0;
         let mut sum_out = 0.0;
         for i in 0..n {

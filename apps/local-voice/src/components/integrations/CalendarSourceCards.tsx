@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { CalendarDays } from "lucide-react";
 import { commands, events, type CalendarSource } from "@/bindings";
 import { Button } from "../ui/Button";
+import { secretStoreState } from "@/lib/platform/secretStore";
+import { SecretStoreNotice } from "./SecretStoreNotice";
 
 /** Uhrzeit des letzten erfolgreichen Abrufs, in der Sprache der Oberflaeche. */
 const timeOf = (ms: number, language: string): string =>
@@ -93,6 +95,11 @@ export const CalendarSourceCards: React.FC<CalendarSourceCardsProps> = ({
   onChanged,
 }) => {
   const { t, i18n } = useTranslation();
+  // Kalenderquellen brauchen ein Geheimnis: ohne sicheren Tresor gesperrt (#134).
+  const store = secretStoreState();
+  const lockedTitle = store.available
+    ? undefined
+    : t("integrations.secretStore.unavailable.short");
   const { sources, loadFailed, syncing, refresh, remove } = calendar;
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -174,6 +181,8 @@ export const CalendarSourceCards: React.FC<CalendarSourceCardsProps> = ({
                     variant="secondary"
                     size="sm"
                     onClick={onConnect}
+                    disabled={!store.available}
+                    title={lockedTitle}
                     data-testid="calendar-graph-reauth"
                   >
                     {t("meetings.calendar.graph.reauth")}
@@ -250,8 +259,14 @@ export const CalendarSourceCards: React.FC<CalendarSourceCardsProps> = ({
           ))}
         </ul>
       )}
+      {!store.available && <SecretStoreNotice state={store} />}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onConnect} data-testid="calendar-connect">
+        <Button
+          onClick={onConnect}
+          disabled={!store.available}
+          title={lockedTitle}
+          data-testid="calendar-connect"
+        >
           {t("meetings.calendar.connect")}
         </Button>
         {sources.length > 0 && (

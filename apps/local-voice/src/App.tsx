@@ -25,10 +25,20 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
-import { PageHeaderSlotContext } from "./components/shell/PageHeaderSlot";
+import {
+  HelpDockSlotContext,
+  PageHeaderSlotContext,
+} from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
+import { TitlebarTools } from "./components/shell/TitlebarTools";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
+import { IntroTour } from "./components/intro-tour/IntroTour";
+import {
+  startFirstRunDictation,
+  useFirstRunModelSelection,
+} from "./components/intro-tour/firstRunSetup";
+import { useIntroTourStore } from "./stores/introTourStore";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -67,9 +77,36 @@ function App() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
+  const firstRunStarted = useRef(false);
+  const startIntroTour = useIntroTourStore((state) => state.startFirstTime);
+  const firstRunFailed = useIntroTourStore(
+    (state) => !!state.failedModelId && !state.open,
+  );
+  const pickerRequested = useIntroTourStore((state) => state.pickerRequested);
+  useFirstRunModelSelection();
+  // Download gescheitert und Tour geschlossen, oder „Modell selbst wählen“:
+  // zurück zur Modellauswahl, solange die Ersteinrichtung offen ist.
+  useEffect(() => {
+    if (!firstRunFailed && !pickerRequested) return;
+    if (isReturningUser) {
+      // Kein Erststart mehr: alten Fehler nicht in spätere Touren tragen.
+      useIntroTourStore.setState({
+        failedModelId: null,
+        pickerRequested: false,
+      });
+      return;
+    }
+    useIntroTourStore.setState({
+      open: false,
+      failedModelId: null,
+      pickerRequested: false,
+    });
+    setOnboardingStep("model");
+  }, [firstRunFailed, pickerRequested, isReturningUser]);
   // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
   // (bleibt über Neustarts), schmal als Overlay-Drawer.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
     "0",
@@ -366,15 +403,32 @@ function App() {
     }
   };
 
-  const handleAccessibilityComplete = () => {
+  const handleAccessibilityComplete = async () => {
     // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
+    if (isReturningUser) {
+      setOnboardingStep("done");
+      return;
+    }
+    // Erstinstallation: Diktatmodell (Vorgabe Nemotron 3.5) sofort laden und
+    // ohne Auswahlbildschirm in die App, die Einführungstour zeigt den
+    // Fortschritt. Hat der Installer das abgewählt, kommt die Modellauswahl.
+    // Der Berechtigungsschritt kann zweimal melden: nur einmal einrichten.
+    if (firstRunStarted.current) return;
+    firstRunStarted.current = true;
+    let automatic = false;
+    try {
+      automatic = await startFirstRunDictation();
+    } catch (e) {
+      console.warn("First-run dictation setup failed:", e);
+    }
+    setOnboardingStep(automatic ? "done" : "model");
+    if (automatic) startIntroTour();
   };
 
   const handleModelSelected = () => {
     // Transition to main app - user has started a download
     setOnboardingStep("done");
+    startIntroTour();
   };
 
   // Rendered once around every step below (including onboarding) so
@@ -435,6 +489,7 @@ function App() {
       >
         <WhatsNewGate />
         <ModelUpdateGate />
+        <IntroTour />
         {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
             daneben der Seitentitel mit den Aktionen der Seite (PageShell),
             rechts die Fensterknöpfe. Das Hauptfenster ist rahmenlos, dies ist
@@ -466,6 +521,10 @@ function App() {
           <span className="lv-titlebar__fallback">
             {t(SECTIONS_CONFIG[currentSection].labelKey)}
           </span>
+          <TitlebarTools
+            currentSection={currentSection}
+            onNavigate={setCurrentSection}
+          />
           <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
@@ -523,8 +582,11 @@ function App() {
               </div>
             </main>
           </div>
+          {/* Seitenhilfe dockt am rechten Fensterrand an (Suite-Standard),
+              neben der Inhaltsschicht: der Inhalt behält seine Breite. */}
+          <div ref={setHelpDock} className="lv-helpdock" />
         </div>
-        {/* Statusleiste (Leitlinie §2): Modell, Mikrofon, Sprachmodell, Version */}
+        {/* Statusleiste (Leitlinie §2, 24 px): Modelle links; Mikrofon, Speicher, Version rechts */}
         <footer className="lv-statusbar">
           <Footer />
         </footer>
@@ -534,8 +596,10 @@ function App() {
 
   return (
     <PageHeaderSlotContext.Provider value={headerSlot}>
-      {toaster}
-      {content}
+      <HelpDockSlotContext.Provider value={helpDock}>
+        {toaster}
+        {content}
+      </HelpDockSlotContext.Provider>
     </PageHeaderSlotContext.Provider>
   );
 }

@@ -107,7 +107,7 @@ pub fn process(samples: &mut [f32], sample_rate: u32, strength: Strength) {
     }
 
     // 1. Hochpass.
-    let mut hp = Biquad::highpass(cfg.highpass_hz, 0.7071, rate);
+    let mut hp = Biquad::highpass(cfg.highpass_hz, std::f64::consts::FRAC_1_SQRT_2, rate);
     for s in samples.iter_mut() {
         *s = hp.process(*s as f64) as f32;
     }

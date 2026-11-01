@@ -30,6 +30,54 @@
       "title": "Speech providers",
       "description": "More speech outputs besides Fish Speech and Piper. Experimental providers stay off until you enable them; each provider shows what is still missing for its license or network access.",
       "recheckAll": "Check all again",
+      "about": "About this provider",
+      "aboutHint": "Device, version, licences, technical state",
+      "setup": {
+        "title": "One click sets everything up",
+        "titleDone": "Set up",
+        "intro": "Program, models and all voices are downloaded, verified against the app's checksums and set up. No paths, no typing.",
+        "introDone": "Program, models and voices are stored in the app. Settings are under “Advanced”.",
+        "summaryDone_one": "{{languages}} · {{count}} voice. Settings under “Advanced”.",
+        "summaryDone_other": "{{languages}} · {{count}} voices. Settings under “Advanced”.",
+        "partsShow": "Show parts",
+        "partsHide": "Hide parts",
+        "program": "Program ptts",
+        "languageModel": "{{language}} · {{name}}",
+        "voices_one": "{{count}} voice",
+        "voices_other": "{{count}} voices",
+        "gatedNeedsVault": "On this system only after agreeing to store the access in plain text (keychain support follows).",
+        "licenseConsent": "I have read the licences. I use non-commercial models only non-commercially.",
+        "licenseOpen": "View licence of “{{name}}”",
+        "access": {
+          "title": "Hugging Face approval",
+          "steps": "The vendor only releases the German model after you agree. 1. Open the approval page and agree. 2. Create a read access (read only, this model only) and copy it. 3. “Take from clipboard” – the app reads the clipboard only on this click, never shows the access and clears the clipboard afterwards if it still holds the same access.",
+          "clipboardRisk": "Note: other programs, clipboard history or sync may briefly see the access. Revoke it on huggingface.co if needed.",
+          "fileConsent": "I agree: without a keychain the app stores the access in plain text in the Hugging Face file (readable only by me; an existing file stays untouched).",
+          "openTerms": "Open approval ↗",
+          "openToken": "Create read access ↗",
+          "paste": "Take from clipboard",
+          "recheck": "Check again",
+          "granted": "Approval verified: Hugging Face serves the model.",
+          "remove": "Remove access",
+          "systemOwned": "This access comes from the system Hugging Face login (hf auth); remove it there.",
+          "denied": "Hugging Face refuses the model: terms not accepted yet or access invalid.",
+          "unreachable": "Hugging Face is not reachable right now. Check again later.",
+          "missing": "No access taken over yet."
+        },
+        "start": "Set up ({{size}})",
+        "running": "Setting up …",
+        "retry": "Retry",
+        "cancel": "Cancel",
+        "whyNothing": "Choose at least one language.",
+        "whyLicense": "Becomes available once the licence is confirmed.",
+        "whyAccess": "Becomes available once the approval is verified – or untick German and set up English only.",
+        "failed": "“{{name}}” could not be set up. Nothing half-finished remains; “Retry” resumes.",
+        "statusRunning": "Downloading {{name}} …",
+        "statusDone_one": "Ready: {{count}} voice set up.",
+        "statusDone_other": "Ready: {{count}} voices set up.",
+        "progressLabel": "Progress {{name}}",
+        "progressBytes": "{{done}} of {{total}}"
+      },
       "recheck": "Check again",
       "checking": "Checking providers …",
       "loadError": "The provider list could not be loaded: {{message}}",
@@ -102,6 +150,13 @@
         "hide": "Hide settings of {{name}}"
       },
       "config": {
+        "advanced": "Advanced",
+        "advancedHint": "Quantisation, language, threads",
+        "legacy": "Custom values from an earlier setup are stored ({{fields}}). They take precedence over the app installation and stay until you switch.",
+        "legacyUse": "Switch to app installation",
+        "legacyConfirm": "Remove the custom values and use the installation set up by the app?",
+        "legacyConfirmEmpty": "The app has not set up the program yet. After removing, the provider only works again once “Set up” above has run. Remove anyway?",
+        "legacyYes": "Yes, switch",
         "title": "Settings",
         "none": "This provider has no settings of its own here.",
         "loadError": "The settings could not be loaded: {{message}}",
@@ -211,6 +266,9 @@
       },
       "phononVoices": {
         "title": "Own voices",
+          "summary_one": "{{count}} available",
+          "summary_other": "{{count}} available",
+          "cloneBlocked": "Cloning is still locked on this system: the Gradium key needs the keychain vault coming with the next update. Voice files can already be imported.",
         "intro": "Import your own voices or create them from a recording with Gradium, including from existing Fish voices. They are then stored locally in the Phonon model and used without a network.",
         "noModel": "No Phonon model is installed yet. New voices are saved and become available as soon as a model is installed on the models page.",
         "empty": "No own voices yet.",
@@ -224,8 +282,8 @@
         "removeTitle": "Remove own voice “{{name}}”?",
         "removeText": "The voice file is deleted. Voices that come with the model are not affected.",
         "removeCloneNote": "A copy stored at Gradium stays in your Gradium account and has to be deleted there.",
-        "importButton": "Import own voice …",
-        "createButton": "Create voice …",
+        "importButton": "Import voice file (.safetensors) …",
+        "createButton": "Clone from audio file or recording …",
         "imported": "The voice “{{name}}” was imported.",
         "created": "The voice “{{name}}” was created.",
         "import": {
@@ -293,7 +351,7 @@
           "saved": "The key was saved."
         },
         "fish": {
-          "title": "Take Fish voices over to Phonon",
+          "title": "Take over local Fish Speech voices",
           "hint": "This sends the reference recording of the Fish voice (about 10 s) to Gradium. Each voice needs its own consent.",
           "empty": "No Fish voices available.",
           "take": "Take over to Phonon …"
@@ -309,7 +367,7 @@
         "entry": "Provider: {{name}}",
         "voice": "{{provider}} · {{name}}",
         "script": "{{provider}} · Script with speakers",
-        "hint": "Provider: {{name}} (Settings → Speech providers)",
+        "hint": "Provider: {{name}} (Models › Read aloud › Providers)",
         "open": "Open provider settings"
       }
     },
@@ -1410,8 +1468,8 @@
           "included_other": "{{count}} voices included",
           "missingChip": "Voices missing ({{present}} of {{total}})",
           "reload": "Download voices",
-          "detailNew": "The model comes with {{total}} voices. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon.",
-          "detail": "The model comes with {{total}} voices, {{present}} of them installed. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Settings > Output > Speech providers > Phonon."
+          "detailNew": "The model comes with {{total}} voices. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Models > Read aloud > Providers > Phonon.",
+          "detail": "The model comes with {{total}} voices, {{present}} of them installed. They are downloaded with the model and deleted with it. Which of them appear in Read aloud is set under Models > Read aloud > Providers > Phonon."
         },
         "sha256": "SHA-256: {{sha}}",
         "sha256Files": "Several files: the size and SHA-256 of each file are in the app catalog and checked on download.",
@@ -1437,6 +1495,102 @@
           "phonon-31m-en": {
             "name": "Phonon 31m (English)",
             "description": "English speech model, 8-bit version (q8), runs on the CPU. Apache-2.0, public, no account needed."
+          }
+        }
+      },
+      "voiceManager": {
+        "view": {
+          "label": "View",
+          "voices": "Voices",
+          "providers": "Providers"
+        },
+        "reading": "Reading",
+        "readingScope": "Applies to reading aloud, recordings and scripts",
+        "scriptDescription": "Markers in the script switch the voice; text without markers uses the default voice.",
+        "multilingual": "multilingual",
+        "loading": "Loading voices …",
+        "count": "{{shown}} of {{total}} voices",
+        "empty": "No voices are set up yet. Under “Providers” you can enable and set up providers; Piper voices are ready to download there.",
+        "noMatch": "No voice matches the selected filters.",
+        "noVoicesFrom": "No voices yet from: {{names}}. They appear once the provider is ready.",
+        "generalHint": "Volume, enhance sound, export format, character limit, auto tags and the Fish folder are under Settings › Output › Read aloud.",
+        "openOutput": "Open settings",
+        "providersMoved": "Providers (enable, license, remote access, settings, voices, sample voice) now live under Models › Read aloud in the “Providers” view.",
+        "openProviders": "Open providers",
+        "filter": {
+          "title": "Filter",
+          "button": "Filter",
+          "buttonCount": "Filter ({{count}})",
+          "reset": "Reset",
+          "status": "Status",
+          "onlyInstalled": "Installed only",
+          "language": "Language",
+          "device": "Device",
+          "provider": "Provider",
+          "license": "License"
+        },
+        "device": {
+          "cpu": "CPU",
+          "gpu": "GPU",
+          "server": "Server"
+        },
+        "license": {
+          "free": "License verified",
+          "nonCommercial": "non-commercial",
+          "unverified": "License unverified"
+        },
+        "sort": {
+          "label": "Sort by",
+          "recommended": "Recommended",
+          "name": "Name",
+          "language": "Language",
+          "provider": "Provider"
+        },
+        "layout": {
+          "label": "Layout",
+          "cards": "Cards",
+          "list": "List"
+        },
+        "voice": {
+          "selected": "Reading",
+          "use": "Use",
+          "useNamed": "Use {{name}} for reading aloud",
+          "load": "Download · {{size}}",
+          "loadNamed": "Download {{name}} ({{size}})",
+          "setUp": "Set up provider",
+          "notLoaded": "not downloaded",
+          "providerNotReady": "Provider not ready",
+          "hidden": "hidden in Read aloud",
+          "assessment": "Assessment",
+          "quality": "Quality",
+          "effort": "Compute",
+          "notMeasured": "not measured",
+          "openProvider": "Open provider: {{name}}",
+          "sampleAfterLoad": "Sample available after download",
+          "sampleAfterSetup": "Sample available once the provider is ready",
+          "noSample": "No sample available"
+        },
+        "providers": {
+          "title": "Providers and services",
+          "details": "Details",
+          "openNamed": "Details and settings: {{name}}",
+          "recheckNamed": "Check {{name}} again",
+          "voiceCount_one": "{{count}} voice",
+          "voiceCount_other": "{{count}} voices",
+          "sheetHint": "State, approvals, settings, voices and sample voice of this provider.",
+          "retry": "Try again",
+          "manageDownloads": "Manage downloads",
+          "setUp": "Set up",
+          "downloadsSingle": "Manage single downloads",
+          "downloads": "Downloads",
+          "moreSettings": "App-wide read-aloud settings (volume, export, Fish folder …) are under Settings › Output.",
+          "status": {
+            "notSetUp": "Not set up",
+            "ready": "Ready",
+            "notReady": "Not ready",
+            "blocked": "Blocked",
+            "notEnabled": "Not enabled",
+            "unavailable": "Not available"
           }
         }
       },
@@ -2275,8 +2429,8 @@
   },
   "meetings": {
     "presenter": {
-      "button": "Send to WAI Presenter",
-      "title": "Send to WAI Presenter",
+      "button": "Send to Presenter",
+      "title": "Send to Presenter",
       "description": "Puts a package with the transcript and the chosen documents into the exchange folder. An older package of this meeting is replaced.",
       "target": "Exchange folder",
       "documents": "Documents",
@@ -4118,7 +4272,63 @@
     "gpu": "GPU {{used}} / {{total}} GB",
     "gpuApp": "GPU {{used}} / {{total}} GB (App {{app}})",
     "gpuShared": "GPU (shared) {{used}} / {{total}} GB",
+    "labelRam": "RAM",
+    "labelGpu": "GPU",
+    "open": "Show and manage memory",
+    "ramTitle": "Memory (RAM)",
+    "gpuTitle": "Graphics memory",
+    "legendApp": "Local Voice AI",
+    "legendOther": "Other",
+    "legendFree": "Free",
+    "system": "System",
+    "systemValue": "{{used}} of {{total}} GB ({{percent}} %)",
+    "gpuValue": "{{used}} of {{total}} GB ({{percent}} %)",
+    "gpuSharedNote": "shared with system memory",
+    "gpuBudget": "{{name}} · driver budget",
+    "release": "Free memory",
+    "releaseHint": "Unloads models that are not working right now.",
+    "releasing": "Freeing …",
+    "released": "{{mb}} MB freed",
+    "releasedNothing": "Nothing to unload",
+    "releaseFailed": "Memory could not be freed",
+    "guardTitle": "Memory protection",
+    "guardSwitch": "Turn on memory protection",
+    "guardLimit": "Limit for total memory use",
+    "guardExplain": "The app will not load a model that would exceed the limit, and unloads unused ones first.",
+    "guardOffWarning": "Without memory protection, large models can fill up memory. The PC may then stutter, freeze or close programs.",
     "hint": "RAM: used / total. GPU: in use / driver budget — not “free VRAM”. App = Local Voice AI incl. model servers and web view."
+  },
+  "roles": {
+    "stt": {
+      "role": "Speech recognition",
+      "purpose": "Turns speech into text"
+    },
+    "llm": {
+      "role": "AI model",
+      "purpose": "Summarises, refines text and answers questions"
+    }
+  },
+  "titlebar": {
+    "searchPlaceholder": "Search ({{key}})",
+    "searchKey": "Ctrl+K",
+    "search": "Search",
+    "searchResults": "Results in the app",
+    "searchNone": "No results",
+    "notifications": "Notifications",
+    "noNotifications": "No notifications",
+    "help": "Help",
+    "helpPage": "Help for this page",
+    "shortcuts": "Keyboard shortcuts",
+    "shortcutsTitle": "Keyboard shortcuts",
+    "shortcutSearch": "Open search",
+    "about": "About Local Voice AI",
+    "aboutName": "WAI Local Voice AI",
+    "aboutSuite": "Part of the WAI Suite · Wolff Applied AI",
+    "aboutVersion": "Version {{version}}",
+    "settings": "Open settings",
+    "profile": "Profile",
+    "localProfile": "Local profile",
+    "close": "Close"
   },
   "help": {
     "title": "Help",
@@ -4899,6 +5109,13 @@
     }
   },
   "integrations": {
+    "secretStore": {
+      "unavailable": {
+        "macos": "Not available on macOS yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
+        "linux": "Not available on Linux yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
+        "short": "Not available on this system yet (no secure credential storage)."
+      }
+    },
     "m365": {
       "dialog": {
         "title": "Set up a Microsoft 365 account",
@@ -5175,7 +5392,7 @@
       "agent_local": "Local agent"
     },
     "kinds": {
-      "presenter": "WAI Presenter",
+      "presenter": "Presenter",
       "youtube": "YouTube",
       "ics": "Calendar (ICS)",
       "graph": "Microsoft 365 calendar",
@@ -5183,7 +5400,7 @@
       "smtp": "Mailbox (SMTP)",
       "folder": "Folder",
       "obsidian": "Obsidian vault",
-      "wissen": "WAI knowledge base",
+      "wissen": "Knowledge base",
       "agent": "Agent access",
       "webhook": "Webhook (n8n)",
       "service": "Service"
@@ -5198,8 +5415,8 @@
       "auto": "automatic",
       "items": {
         "presenter": {
-          "name": "WAI Presenter",
-          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by WAI Presenter. You choose the folder.",
+          "name": "Presenter",
+          "description": "Hand meetings with transcript and documents as a package to an exchange folder read by Presenter. You choose the folder.",
           "action": "Choose exchange folder"
         },
         "calendar_ics": {
@@ -5243,7 +5460,7 @@
           "action": "Connect vault"
         },
         "wissen": {
-          "name": "WAI knowledge base",
+          "name": "Knowledge base",
           "description": "Search the knowledge base (MCP endpoint with an access key).",
           "action": "Connect knowledge base"
         },
@@ -5626,10 +5843,10 @@
     },
     "target": {
       "presenter": {
-        "title": "Set up WAI Presenter",
-        "titleEdit": "WAI Presenter settings",
+        "title": "Set up Presenter",
+        "titleEdit": "Presenter settings",
         "path": "Exchange folder",
-        "pathPlaceholder": "e.g. D:\\Exchange\\WAI Presenter",
+        "pathPlaceholder": "e.g. D:\\Exchange\\Presenter",
         "privacy": "Packages contain transcripts and documents (confidential). Choose a folder only you use; a shared OneDrive folder only deliberately.",
         "catalog": "Write the meeting catalog (title, date, duration, existing documents only)"
       },
@@ -6128,6 +6345,77 @@
       "speakerBlocked": "The answer model is not allowed at this sovereignty level. Pick a local model (footer) or a more open level, otherwise the AI will not answer.",
       "tools": "Use LVA tools",
       "toolsHint": "Read-only: list and search meetings and read transcripts. The AI changes nothing, every call is in the integrations log."
+    }
+  },
+  "introTour": {
+    "stepOf": "{{step}}/{{total}}",
+    "start": "Start tour",
+    "next": "Next",
+    "back": "Back",
+    "skip": "Skip",
+    "finish": "Get started",
+    "restart": "Restart the introduction",
+    "restartShort": "Take the tour",
+    "download": {
+      "label": "Dictation model download",
+      "loading": "Setting up dictation model {{model}} … {{percent}} %",
+      "ready": "{{model}} is ready – you can dictate right away.",
+      "failed": "The dictation model could not be downloaded. Pick a model to get started – or try again.",
+      "selected": "Dictation model set up – you can dictate now.",
+      "fallbackName": "the dictation model",
+      "failedShort": "The dictation model could not be downloaded. Check your internet connection and try again.",
+      "retry": "Retry download",
+      "choose": "Choose another model"
+    },
+    "welcome": {
+      "eyebrow": "Welcome",
+      "title": "Glad you're here",
+      "body": "Local Voice AI turns speech into text – entirely on your device. As soon as the dictation model is ready, six short steps show you where everything is.",
+      "note": "The download keeps running in the background, even if you skip the tour.",
+      "bodyReady": "Local Voice AI turns speech into text – entirely on your device. Six short steps show you where everything is."
+    },
+    "dictate": {
+      "eyebrow": "Dictation",
+      "title": "Dictate into text fields",
+      "one": "Click into a text field – for example in Word, Outlook or the browser. Some fields, such as password fields or apps running as administrator, may not accept the text.",
+      "twoHold": "Hold {{shortcut}} and speak.",
+      "twoToggle": "Press {{shortcut}} and speak.",
+      "threeHold": "Release – the text is inserted.",
+      "threeToggle": "Press {{shortcut}} again – the text is inserted.",
+      "note": "During a recording, {{cancel}} cancels the dictation without inserting text. Without a recording, {{cancel}} closes this introduction. Change the shortcut and mode (hold or toggle) under Settings › Dictation.",
+      "sample": "Dear Ms Berger, thank you for your message."
+    },
+    "try": {
+      "eyebrow": "Try it",
+      "title": "Give it a try",
+      "field": "Practice field for dictation",
+      "placeholder": "Your text appears here …",
+      "bodyHold": "Click into the practice field, hold {{shortcut}} and say for example: “Today is a good day for dictation.” The text appears when you release.",
+      "bodyToggle": "Click into the practice field, press {{shortcut}} and say for example: “Today is a good day for dictation.” Press {{shortcut}} again and the text appears.",
+      "ready": "During a recording, {{cancel}} only cancels the recording. Without a recording, {{cancel}} closes the introduction.",
+      "locked": "The practice field unlocks as soon as the dictation model is ready."
+    },
+    "tools": {
+      "eyebrow": "Tools",
+      "title": "Models, integrations, settings",
+      "models": "Models: download more speech and voice models.",
+      "integrations": "Integrations: connections to other apps.",
+      "settings": "Settings: shortcuts, microphone, language, appearance.",
+      "statusbar": "The status bar at the bottom always shows model and microphone."
+    },
+    "end": {
+      "eyebrow": "Done",
+      "title": "Let's go",
+      "body": "You can restart the introduction any time from the help menu (question mark top right) and on the home page.",
+      "stillLoading": "The dictation model is still downloading. Once it's done you can dictate – the status bar shows the progress."
+    },
+    "pages": {
+      "eyebrow": "Pages",
+      "title": "Everything at a glance",
+      "history": "History: find every dictation again, copy, play or transcribe it again.",
+      "meetings": "Recordings: transcribe meetings live or import audio and video files.",
+      "tts": "Read aloud: listen to texts and documents and save them as audio.",
+      "voice": "Voice chat: like a phone call with the AI – speak and hear the answer."
     }
   }
 }

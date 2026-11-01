@@ -6,7 +6,13 @@ import { type OSType } from "../lib/utils/keyboard";
  * This is a simple wrapper - type() is synchronous.
  */
 export function useOsType(): OSType {
-  const osType = type();
+  let osType: string;
+  try {
+    osType = type();
+  } catch {
+    // Ohne Tauri (Vorschau, Tests ohne OS-Mock) wirft type().
+    return "unknown";
+  }
   // type() returns "macos" | "windows" | "linux" | "ios" | "android"
   // OSType expects "macos" | "windows" | "linux" | "unknown"
   if (osType === "macos" || osType === "windows" || osType === "linux") {

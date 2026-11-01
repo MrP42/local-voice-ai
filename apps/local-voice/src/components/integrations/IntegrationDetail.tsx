@@ -23,7 +23,9 @@ import {
   iconKey,
   isTargetKind,
   kindName,
+  needsSecret,
 } from "./model";
+import { secretStoreState } from "@/lib/platform/secretStore";
 import { KindIcon } from "./KindIcon";
 import { AgentClientsPanel } from "./AgentClientsPanel";
 import { M365Panel } from "./M365Panel";
@@ -65,6 +67,9 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [removing, setRemoving] = useState(false);
   const [editingSettings, setEditingSettings] = useState(false);
+  // Ohne sicheren Tresor keine neuen Zugangsdaten eintragen (#134).
+  const secretLocked =
+    needsSecret(integration.kind) && !secretStoreState().available;
 
   const explain = (raw: string) => {
     const key = `integrations.errors.${raw}`;
@@ -369,7 +374,12 @@ export const IntegrationDetail: React.FC<IntegrationDetailProps> = ({
               <Button
                 variant="secondary"
                 size="sm"
-                disabled={busy}
+                disabled={busy || secretLocked}
+                title={
+                  secretLocked
+                    ? t("integrations.secretStore.unavailable.short")
+                    : undefined
+                }
                 onClick={() => setEditingSettings(true)}
                 data-testid="integration-edit-settings"
               >

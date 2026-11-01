@@ -132,7 +132,7 @@ test("the page is split into three areas and remembers the choice", async ({ pag
   await expect(page.getByRole("tab", { name: "Diktat" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toBeVisible();
   await page.getByRole("tab", { name: "Vorlesen" }).click();
-  await expect(page.locator('[data-models-section="voices"]')).toBeVisible();
+  await expect(page.getByTestId("voice-manager")).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
@@ -261,7 +261,8 @@ test("an app copy with a checked twin is marked and can be deleted after asking"
 
 test("search finds models in folded groups", async ({ page }) => {
   await openModels(page);
-  await page.getByPlaceholder(/suchen/i).fill("gpt-oss");
+  // Eindeutig das Suchfeld der Modellseite, nicht die Titelleisten-Suche.
+  await page.getByPlaceholder(/^Modelle nach Namen suchen/).fill("gpt-oss");
   await expect(card(page, "ext-bbbbbbbbbbbb")).toBeVisible();
   await expect(card(page, "llm-qwen3-4b-q4")).toHaveCount(0);
 });
