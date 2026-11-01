@@ -322,7 +322,7 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           </FluentSelect>
         </label>
         <p
-          className="text-text/70"
+          className="rounded-md border border-logo-primary/40 bg-logo-primary/10 px-3 py-2 text-text"
           role="status"
           data-testid="replace-speaker-preview"
         >
