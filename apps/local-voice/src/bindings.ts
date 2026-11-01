@@ -4895,6 +4895,102 @@ async pagesList() : Promise<Result<PageInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Mitgelieferte und eigene Vorlagen.
+ */
+async bookAiTemplates() : Promise<Result<BookTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigene Vorlage anlegen oder ändern. Eine mitgelieferte Vorlage (oder eine
+ * ohne ID) wird als neue eigene Vorlage gespeichert, also kopiert.
+ */
+async bookAiTemplateSave(template: BookTemplate) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_save", { template }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateExport(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_export", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateImport(path: string) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_import", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
+ */
+async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laufende Zusammenfassung abbrechen; sie endet nach dem aktuellen Schritt.
+ */
+async bookAiCancel() : Promise<void> {
+    await TAURI_INVOKE("book_ai_cancel");
+},
+async bookAiDocuments(pageId: string) : Promise<Result<KiDocument[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_documents", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentText(pageId: string, id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_text", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentUpdate(pageId: string, id: string, title: string | null, text: string | null) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_update", { pageId, id, title, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentDelete(pageId: string, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_delete", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -7127,6 +7223,36 @@ export type BookCharacter = { name: string;
  */
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+export type BookTemplate = { id: string; title: string; 
+/**
+ * Gruppe in der Auswahl: "ueberblick" | "lernen" | "analyse" | "anwenden".
+ */
+category: string; 
+/**
+ * Ein Satz für die Auswahl.
+ */
+description: string; 
+/**
+ * Zweck und Haltung des Ergebnisses.
+ */
+context: string; 
+/**
+ * Leer bei Fließtext ohne Gliederung.
+ */
+sections: BookTemplateSection[]; 
+/**
+ * Zielumfang des ganzen Ergebnisses in Wörtern.
+ */
+target_words: number; form: TemplateForm; 
+/**
+ * "allgemein" | "fachpublikum" | "management" | "einfache_sprache" | "lernende"
+ */
+audience: string; 
+/**
+ * Mitgeliefert und schreibgeschützt.
+ */
+builtin: boolean }
+export type BookTemplateSection = { title: string; instruction: string }
 /**
  * Zustand der Bruecke fuer die Oberflaeche.
  */
@@ -8149,6 +8275,15 @@ supported: boolean; present: boolean;
  */
 problem: string | null }
 export type KeyboardImplementation = "tauri" | "handy_keys"
+export type KiDocument = { id: string; title: string; template_id: string; template_title: string; source: SummarySource; 
+/**
+ * Anzeige der Quelle, z. B. „Ganzes Buch“ oder „Kapitel 3“.
+ */
+source_label: string; created_ms: number; modified_ms: number; words: number; 
+/**
+ * Anbieter und Modell, mit dem das Dokument entstand.
+ */
+model: string }
 /**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
@@ -9817,6 +9952,19 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+/**
+ * Was zusammengefasst wird.
+ */
+export type SummarySource = 
+/**
+ * Der ganze Seitentext.
+ */
+{ kind: "book" } | 
+/**
+ * Ein Ausschnitt, zum Beispiel ein Kapitel oder eine Markierung
+ * (UTF-16-Offsets, Ende exklusiv).
+ */
+{ kind: "range"; start: number; end: number }
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
@@ -9875,6 +10023,28 @@ fields: Partial<{ [key in string]: string }> | null;
  * WAI Presenter: Katalog der Besprechungen schreiben (Vorgabe an).
  */
 catalog: boolean | null }
+/**
+ * Wie das Ergebnis aufgebaut ist. Fließtext eignet sich am besten zum
+ * Vorlesen; die anderen Formen werden vor dem Vorlesen von Formatzeichen
+ * befreit.
+ */
+export type TemplateForm = 
+/**
+ * Zusammenhängender Text ohne Überschriften und Listen.
+ */
+"prose" | 
+/**
+ * Überschriften je Abschnitt, darunter Text.
+ */
+"structured" | 
+/**
+ * Aufzählung.
+ */
+"list" | 
+/**
+ * Markdown-Tabelle.
+ */
+"table"
 /**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
