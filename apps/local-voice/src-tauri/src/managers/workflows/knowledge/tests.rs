@@ -2591,8 +2591,10 @@ fn the_same_entry_twice_and_two_threads_into_one_channel_note_keep_every_entry()
         );
     }
     assert_eq!(w.notes_with_id("kanal-UCx"), 1);
-    // Das Schloss ist frei geblieben.
-    assert!(VAULT_LOCK.try_lock().is_ok());
+    // Das Schloss ist frei geblieben (nicht vergiftet und wieder zu bekommen). Kein
+    // `try_lock`: parallel laufende Tests desselben Moduls duerfen es gerade halten.
+    let frei = VAULT_LOCK.lock();
+    assert!(frei.is_ok(), "VAULT_LOCK ist vergiftet");
 }
 
 #[cfg(windows)]

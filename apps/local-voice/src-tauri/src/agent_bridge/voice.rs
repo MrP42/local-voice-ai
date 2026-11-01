@@ -196,8 +196,8 @@ pub fn list(registry: &ToolRegistry, opts: VoiceOptions) -> Vec<VoiceToolInfo> {
         let (Some(entry), Some(spec)) = (catalog::find(&name), registry.spec(&name)) else {
             continue;
         };
-        let allowed = is_read_only(entry)
-            && area_of_catalog(entry).is_some_and(|area| opts.areas.has(area));
+        let allowed =
+            is_read_only(entry) && area_of_catalog(entry).is_some_and(|area| opts.areas.has(area));
         if !allowed {
             continue;
         }
@@ -333,9 +333,7 @@ pub fn call(
         GateOutcome::Done(value) => clamp_result(value.to_string(), MAX_RESULT_CHARS),
         GateOutcome::Failed(message) => Err(message),
         GateOutcome::Denied { reason, .. } => Err(reason),
-        GateOutcome::Pending { .. } => {
-            Err("Der Zugriff wurde nicht ausgeführt.".to_string())
-        }
+        GateOutcome::Pending { .. } => Err("Der Zugriff wurde nicht ausgeführt.".to_string()),
     }
 }
 
