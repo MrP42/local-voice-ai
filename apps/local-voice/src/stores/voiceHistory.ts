@@ -129,7 +129,9 @@ export function mergeUsage(
     completion_tokens: a.completion_tokens + b.completion_tokens,
     usage_event_ids: [...ids(a), ...ids(b)],
     provider_id: b.provider_id ?? a.provider_id,
-    local: b.local ?? a.local,
+    // „Lokal“ nur, wenn alle Aufrufe lokal waren; ein Cloud-Aufruf macht das Ganze nicht lokal.
+    local:
+      a.local === false || b.local === false ? false : (b.local ?? a.local),
   };
 }
 

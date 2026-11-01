@@ -22,6 +22,8 @@
 //! - `view`: Ansichten fuer die Tauri-Commands (`commands/agent_bridge.rs`).
 //! - `runtime`: Start mit der App, Zustand fuer die Oberflaeche, headless Sandbox-Instanz.
 //! - `test_tools`: Echo-Werkzeuge nur fuer die headless Sandbox-Instanz.
+//! - `voice`: die lesenden Werkzeuge fuer den Orchestrator des Sprachgespraechs (Befehle in
+//!   `commands/voice_tools.rs`); jeder Aufruf geht durch dasselbe Tor mit Audit (Aufrufer `agent_local`).
 //! - `tools` (A8): die echten Werkzeuge (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme,
 //!   Sessions) mit Pfadpruefung (`tools::paths`), App-Anbindung (`tools::app_host`) und Attrappe
 //!   fuer die Sandbox (`tools::sandbox`).
@@ -80,6 +82,7 @@ pub mod test_tools;
 pub(crate) mod testkit;
 pub mod tools;
 pub mod view;
+pub mod voice; // Sprachgespraech Stufe 2: lesende Werkzeuge fuer den Orchestrator
 
 use std::time::Duration;
 
@@ -150,7 +153,7 @@ mod tests {
     /// verliert unter Last ein Schreiben (Audit, Freigabe, Zugang).
     #[test]
     fn production_code_opens_connections_only_through_open_connection() {
-        let files: [(&str, &str); 18] = [
+        let files: [(&str, &str); 21] = [
             ("bridge.rs", include_str!("bridge.rs")),
             ("catalog.rs", include_str!("catalog.rs")),
             ("client.rs", include_str!("client.rs")),
@@ -163,14 +166,20 @@ mod tests {
             ("schema.rs", include_str!("schema.rs")),
             ("server.rs", include_str!("server.rs")),
             ("view.rs", include_str!("view.rs")),
+            ("voice.rs", include_str!("voice.rs")),
             ("test_tools.rs", include_str!("test_tools.rs")),
             ("tools.rs", include_str!("tools.rs")),
             ("tools/app_host.rs", include_str!("tools/app_host.rs")),
+            ("tools/meetings.rs", include_str!("tools/meetings.rs")),
             ("tools/paths.rs", include_str!("tools/paths.rs")),
             ("tools/sandbox.rs", include_str!("tools/sandbox.rs")),
             (
                 "commands/agent_bridge.rs",
                 include_str!("../commands/agent_bridge.rs"),
+            ),
+            (
+                "commands/voice_tools.rs",
+                include_str!("../commands/voice_tools.rs"),
             ),
         ];
         for (name, src) in files {

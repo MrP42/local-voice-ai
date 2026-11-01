@@ -185,6 +185,10 @@ const settingUpdaters: {
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
+  memory_guard_enabled: (value) =>
+    commands.changeMemoryGuardEnabledSetting(value as boolean),
+  memory_guard_percent: (value) =>
+    commands.changeMemoryGuardPercentSetting(value as number),
   paste_delay_ms: (value) =>
     commands.changePasteDelayMsSetting(value as number),
   paste_delay_after_ms: (value) =>
@@ -303,6 +307,9 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // Sprachgespräch Stufe 2
+  voice_call_read_transcripts: (value) =>
+    commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   // A2 (YouTube)
   meeting_youtube_private: (value) =>
     commands.changeMeetingYoutubePrivateSetting(value as boolean),

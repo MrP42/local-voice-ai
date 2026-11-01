@@ -120,7 +120,7 @@ test("home exposes working destinations and remembers navigation", async ({
   await expect(
     page.getByRole("heading", { name: "Was möchtest du tun?" }),
   ).toBeVisible();
-  await expect(page.getByText("Ctrl+Space", { exact: true })).toBeVisible();
+  await expect(page.getByText("⌃ Space", { exact: true })).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
   await expect(
@@ -269,7 +269,9 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   await expect(page.getByTestId("help-panel")).toContainText(
     "Sprecher und Betonung im Text",
   );
-  await page.getByRole("tab", { name: "Dateien" }).click();
+  // Die Hilfe dockt am Fensterrand an; die Dateiliste bleibt, wo sie ist.
+  await expect(page.getByTestId("tts-files")).toBeVisible();
+  await page.getByRole("button", { name: "Hilfe schließen" }).click();
   await expect(page.getByTestId("help-panel")).toHaveCount(0);
   const editor = page.locator(".tts-workspace > .min-w-0");
   expect((await editor.boundingBox())!.width).toBeGreaterThan(600);

@@ -18,7 +18,11 @@ import { PhononModels, isPhononRow } from "./PhononModels";
  * Das Piper-Programm selbst steht bei den installierten, solange es fehlt
  * oder repariert werden muss.
  */
-export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
+export const VoicesSection: React.FC<{
+  query: string;
+  /** `piper`: nur Piper (Phonon steht dann im Seitenblatt seines Anbieters). */
+  scope?: "all" | "piper";
+}> = ({ query, scope = "all" }) => {
   const { t } = useTranslation();
   const {
     downloads: allDownloads,
@@ -246,7 +250,7 @@ export const VoicesSection: React.FC<{ query: string }> = ({ query }) => {
           {available.map(row)}
         </ModelSection>
       )}
-      <PhononModels query={query} />
+      {scope === "all" && <PhononModels query={query} />}
     </div>
   );
 };

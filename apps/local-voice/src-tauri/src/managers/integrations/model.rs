@@ -130,6 +130,7 @@ impl Kind {
                 YoutubeAdd,
                 WorkflowRead,
                 WorkflowRun,
+                MeetingRead,
             ],
             Kind::Webhook => &[WebhookPost],
             Kind::Presenter => &[PresenterSend, PresenterRequest],
@@ -237,6 +238,10 @@ pub enum Capability {
     /// Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
     #[serde(rename = "workflow.run")]
     WorkflowRun,
+    /// Besprechungen auflisten, durchsuchen und das Transkript lesen (Sprachgespraech Stufe 2).
+    /// Nur lesend; das Transkript folgt der Freigabe des lokalen MCP-Servers.
+    #[serde(rename = "meeting.read")]
+    MeetingRead,
     /// In einen Kanal posten (Slack, Teams, Discord).
     #[serde(rename = "chat.post")]
     ChatPost,
@@ -265,7 +270,7 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 26] = [
+    pub const ALL: [Capability; 27] = [
         Capability::CalendarRead,
         Capability::CalendarWrite,
         Capability::MailSend,
@@ -284,6 +289,7 @@ impl Capability {
         Capability::WebhookPost,
         Capability::WorkflowRead,
         Capability::WorkflowRun,
+        Capability::MeetingRead,
         Capability::ChatPost,
         Capability::TaskCreate,
         Capability::PageWrite,
@@ -314,6 +320,7 @@ impl Capability {
             Capability::WebhookPost => "webhook.post",
             Capability::WorkflowRead => "workflow.read",
             Capability::WorkflowRun => "workflow.run",
+            Capability::MeetingRead => "meeting.read",
             Capability::ChatPost => "chat.post",
             Capability::TaskCreate => "task.create",
             Capability::PageWrite => "page.write",
@@ -339,6 +346,7 @@ impl Capability {
             | Capability::KnowledgeRead
             | Capability::MediaFetch
             | Capability::TtsRead
+            | Capability::MeetingRead
             | Capability::WorkflowRead => Access::Read,
             _ => Access::Write,
         }

@@ -134,8 +134,6 @@ const openReadAloud = async (page: import("@playwright/test").Page) => {
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 };
 
 test("a long file name keeps its timestamp visible inside the row", async ({

@@ -85,6 +85,24 @@ export const CONTEXT_AREAS = [
 ] as const;
 export const TIERS = ["auto", "logged", "propose", "untouchable"] as const;
 
+/**
+ * Arten, die ein Geheimnis im Tresor brauchen (Spiegel von
+ * `integrations::secrets::required_slots` im Backend). Ohne sicheren Speicher
+ * (derzeit macOS/Linux) lassen sie sich nicht einrichten.
+ */
+export const SECRET_KINDS: ReadonlySet<Kind> = new Set<Kind>([
+  "ics",
+  "graph",
+  "m365",
+  "smtp",
+  "wissen",
+  "webhook",
+  "service",
+]);
+
+export const needsSecret = (kind: Kind | null): boolean =>
+  kind !== null && SECRET_KINDS.has(kind);
+
 /** Arten, die im Katalog stehen. `id` ist der Schluessel der Texte. */
 export type CatalogStatus = "available" | "auto" | "soon";
 

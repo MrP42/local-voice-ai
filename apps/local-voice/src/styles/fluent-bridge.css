@@ -275,6 +275,37 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   box-shadow: var(--shadow2);
 }
 
+/* Seitenhilfe am rechten Fensterrand (Suite-Standard, wie das Detailfenster
+   der @wai/ui-AppShell): eigene Spalte neben der Inhaltsschicht, eigener
+   Bildlauf. Leer nimmt sie keinen Platz. Schmal legt sie sich über den Inhalt. */
+.lv-helpdock {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+  background: var(--colorNeutralBackground1);
+}
+.lv-helpdock:empty {
+  display: none;
+}
+.lv-helpdock__panel {
+  width: 320px;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-inline-start: 1px solid var(--colorNeutralStroke2);
+}
+@media (max-width: 767px) {
+  .lv-helpdock:not(:empty) {
+    position: absolute;
+    inset-block: 48px 24px;
+    inset-inline-end: 0;
+    z-index: 20;
+    box-shadow: var(--shadow16);
+  }
+  .lv-helpdock__panel {
+    width: min(320px, 100vw);
+  }
+}
+
 .lv-statusbar {
   flex-shrink: 0;
   min-height: 24px;
@@ -501,5 +532,278 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 @media (pointer: coarse) {
   .lv-menu-item {
     min-height: 44px;
+  }
+}
+
+/* ==========================================================================
+   Statusleiste, flache Höhe (Suite-Rahmen, Variante B): 24 px, Schrift 12 px,
+   Knöpfe 22 px. Der Rahmen steht oben bei .lv-statusbar.
+   ========================================================================== */
+.lv-statusbar {
+  height: 24px;
+  min-height: 24px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.lv-statusbar .workspace-status {
+  height: 24px;
+  padding-block: 0;
+  display: flex;
+  align-items: center;
+}
+.lv-statusbar .workspace-status > div {
+  width: 100%;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding-inline: 8px;
+}
+.lv-statusbar .workspace-status > div > div {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.lv-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  min-width: 22px;
+  padding-inline: 5px;
+  border: 0;
+  border-radius: var(--borderRadiusMedium);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  justify-content: center;
+}
+.lv-status-btn:hover {
+  background: var(--colorSubtleBackgroundHover);
+  color: var(--colorNeutralForeground1);
+}
+.lv-status-btn:active {
+  background: var(--colorSubtleBackgroundPressed);
+}
+.lv-status-btn:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
+  outline-offset: -2px;
+}
+.lv-statusbar .workspace-status > div > div:first-child button,
+.lv-statusbar .workspace-status button.lv-status-btn,
+.lv-statusbar .workspace-status button:not(.lv-status-btn) {
+  min-height: 22px;
+  min-width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lv-status-sep {
+  width: 1px;
+  height: 14px;
+  margin-inline: 4px;
+  background: var(--colorNeutralStroke2);
+  flex-shrink: 0;
+}
+.lv-roletip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 260px;
+}
+.lv-roletip__purpose {
+  color: var(--colorNeutralForeground2);
+}
+
+/* Speicher-Säulen (RAM, GPU): 7×14 px, Füllhöhe = Systemauslastung, unten
+   der Anteil der App in Markenfarbe, ab 80 % orange, ab 90 % rot. */
+.lv-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lv-meter__col {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.lv-meter__label {
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+}
+.lv-meter__bar {
+  position: relative;
+  width: 7px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--colorNeutralStroke2);
+  border: 1px solid var(--colorNeutralStroke1);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.lv-meter__fill,
+.lv-meter__app {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+}
+.lv-meter__fill {
+  background: var(--colorNeutralForeground3);
+}
+.lv-meter__fill[data-level="warn"] {
+  background: var(--colorPaletteDarkOrangeForeground1, #d83b01);
+}
+.lv-meter__fill[data-level="crit"] {
+  background: var(--colorPaletteRedForeground1, #c50f1f);
+}
+.lv-meter__app {
+  background: var(--colorBrandBackground);
+}
+.lv-meter__limit {
+  position: absolute;
+  inset-inline: 0;
+  height: 1px;
+  background: var(--colorNeutralForeground1);
+  opacity: 0.8;
+}
+
+/* Popover Speicher */
+.lv-mem {
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--fontSizeBase200);
+}
+.lv-mem h3 {
+  margin: 0;
+  font-size: var(--fontSizeBase300);
+  font-weight: var(--fontWeightSemibold);
+}
+.lv-mem__stack {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--colorNeutralStroke2);
+}
+.lv-mem__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--colorNeutralForeground2);
+}
+.lv-mem__dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-inline-end: 4px;
+}
+.lv-mem__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--colorNeutralForeground2);
+}
+.lv-mem__row span:last-child {
+  color: var(--colorNeutralForeground1);
+  text-align: end;
+}
+.lv-mem__sep {
+  border: 0;
+  border-top: 1px solid var(--colorNeutralStroke2);
+  margin: 4px 0;
+}
+
+/* Statusleiste sehr schmal: der Rahmen darf auf zwei Zeilen wachsen */
+@media (max-width: 479px) {
+  .lv-statusbar,
+  .lv-statusbar .workspace-status {
+    height: auto;
+  }
+  .lv-statusbar .workspace-status > div {
+    flex-wrap: wrap;
+  }
+}
+
+/* Titelleiste rechts: Suche, Benachrichtigungen, Hilfe, Einstellungen, Profil */
+.lv-titlebar__tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.lv-search {
+  position: relative;
+  width: clamp(140px, 24vw, 320px);
+  margin-inline-end: 8px;
+}
+.lv-search .fui-SearchBox {
+  width: 100%;
+}
+.lv-search__list {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 4px);
+  z-index: 60;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--colorNeutralBackground1);
+  border: 1px solid var(--colorNeutralStroke2);
+  border-radius: var(--borderRadiusMedium);
+  box-shadow: var(--shadow16);
+}
+.lv-search__item,
+.lv-search__none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--borderRadiusSmall);
+  font-size: var(--fontSizeBase300);
+  cursor: pointer;
+}
+.lv-search__none {
+  cursor: default;
+  color: var(--colorNeutralForeground3);
+}
+.lv-search__item[data-active="true"],
+.lv-search__item:hover {
+  background: var(--colorSubtleBackgroundHover);
+}
+.lv-empty-note {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--colorNeutralForeground2);
+}
+.lv-titlebar__profile {
+  padding: 0 4px;
+  min-width: 36px;
+}
+.lv-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  margin: 0;
+}
+.lv-shortcuts dd {
+  margin: 0;
+  text-align: end;
+}
+.lv-shortcuts kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--colorNeutralStroke1);
+  border-radius: var(--borderRadiusSmall);
+  background: var(--colorNeutralBackground3);
+  font-family: inherit;
+  font-size: var(--fontSizeBase200);
+}
+/* Schmal: die Werkzeuge weichen den Fensterknöpfen (Navigation und
+   Einstellungen bleiben über den Navigationsbereich erreichbar). */
+@media (max-width: 767px) {
+  .lv-titlebar__tools {
+    display: none;
   }
 }

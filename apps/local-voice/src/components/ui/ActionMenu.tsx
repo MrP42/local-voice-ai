@@ -8,6 +8,7 @@ import React, {
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 import { IconAction, type IconActionProps } from "./IconAction";
+import { useDialogPortalTarget } from "./Dialog";
 
 // Menü und Popover an einem Symbol-Knopf. Beide werden per Portal nach
 // document.body gehängt und mit position: fixed aus dem Rechteck des Knopfes
@@ -208,6 +209,8 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  // In einem Dialog oder Seitenblatt (modal) gehoert das Menue in dessen Flaeche, sonst liegt es dahinter.
+  const portalTarget = useDialogPortalTarget() ?? document.body;
 
   const focusables = () =>
     Array.from(
@@ -342,7 +345,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
               );
             })}
           </div>,
-          document.body,
+          portalTarget,
         )}
     </div>
   );
@@ -372,6 +375,7 @@ export const ActionPopover: React.FC<ActionPopoverProps> = ({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
+  const portalTarget = useDialogPortalTarget() ?? document.body;
   // Die Zeile, in der der Knopf steht (der Wrapper selbst ist "contents").
   const rowRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
@@ -451,7 +455,7 @@ export const ActionPopover: React.FC<ActionPopoverProps> = ({
           >
             {children}
           </div>,
-          document.body,
+          portalTarget,
         )}
     </div>
   );

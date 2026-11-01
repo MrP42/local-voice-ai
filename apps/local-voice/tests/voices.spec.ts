@@ -220,12 +220,13 @@ test.beforeEach(async ({ page }) => {
 
 async function openVoices(page: import("@playwright/test").Page) {
   await page.goto("/");
-  // Stimmen wohnen unter Einstellungen -> Vorlesen (Entscheidung 14.09.).
+  // Stimmen wohnen unter Einstellungen -> Ausgabe (Abschnitt Vorlesen; die
+  // Einstellungen sind seit der Themen-Gliederung nach Eingabe/Ausgabe sortiert).
   await page
     .getByRole("button", { name: "Einstellungen", exact: true })
     .last()
     .click();
-  await page.getByRole("tab", { name: "Vorlesen", exact: true }).click();
+  await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByTestId("voice-library")).toBeVisible();
 }
 
@@ -292,8 +293,6 @@ test("a generated recording can be played from the file list", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const audioRow = page
     .locator("div", { hasText: /^Der-Sturm_2026-09-08_1405\.wav/ })
@@ -317,8 +316,6 @@ test("a recording carries its origin and hands the text back to the editor", asy
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();
@@ -343,8 +340,6 @@ test("the spoken line is highlighted while the recording plays", async ({
 }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
-  // Erster Start zeigt "Hilfe"; die Dateizeilen brauchen den Reiter "Dateien".
-  await page.getByRole("tab", { name: "Dateien", exact: true }).click();
 
   const filesArea = page.locator(".tts-workspace__files");
   await filesArea.getByRole("button", { name: "Anhören" }).click();
@@ -554,8 +549,9 @@ test("the voice list links to voice management under settings", async ({
   await page.getByRole("button", { name: "Vorlesen", exact: true }).click();
   await page.getByTestId("voice-select").click();
   await page.getByRole("option", { name: "Stimmen verwalten …" }).click();
+  // Seit der Themen-Gliederung liegt der Vorlesen-Abschnitt im Reiter Ausgabe.
   await expect(
-    page.getByRole("tab", { name: "Vorlesen", exact: true }),
+    page.getByRole("tab", { name: "Ausgabe", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("voice-library")).toBeVisible();
 });

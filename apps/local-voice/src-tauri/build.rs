@@ -1,6 +1,14 @@
 fn main() {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    build_apple_intelligence_bridge();
+    // Das Ziel steht in CARGO_CFG_TARGET_*, nicht in `cfg!` – das beschreibt im
+    // Build-Skript den HOST. Sonst fehlt beim Bau fuer Apple Silicon auf einem Intel-Mac
+    // die Swift-Bruecke (Linkfehler `_is_apple_intelligence_available`), und auf einem
+    // Apple-Silicon-Mac landete sie im x86_64-Build.
+    #[cfg(target_os = "macos")]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
+        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
+    {
+        build_apple_intelligence_bridge();
+    }
 
     generate_tray_translations();
 
@@ -16,6 +24,12 @@ fn main() {
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         println!("cargo:rustc-link-arg-bins=/STACK:16777216");
+        // Das Common-Controls-v6-Manifest kommt für ALLE Ziele aus `windows-app.manifest` (App-Binary UND Test-Binaries). Ohne
+        // Manifest brechen `cargo test`-EXEs mit STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139, TaskDialogIndirect aus tauri-plugin-dialog/rfd)
+        // samt Fehlerfenster ab. tauri-build bettet seines deshalb unten nicht mehr selbst ein (sonst CVT1100: doppelte Ressource).
+        println!("cargo:rerun-if-changed=windows-app.manifest");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("windows-app.manifest").display());
     }
 
     // Linux ships transcribe-cpp as a shared libtranscribe + loadable ggml
@@ -48,7 +62,13 @@ fn main() {
     // Must run after transcribe staging because that helper recreates transcribe-libs/.
     stage_vc_runtime_dlls();
 
-    tauri_build::build()
+    let mut attributes = tauri_build::Attributes::new();
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        attributes = attributes.windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    tauri_build::try_build(attributes).expect("tauri-build failed")
 }
 
 /// Stage the MSVC runtime DLLs into `transcribe-libs/` for app-local deployment.
@@ -394,11 +414,18 @@ fn escape_string(s: &str) -> String {
         .replace('\t', "\\t")
 }
 
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn build_apple_intelligence_bridge() {
     use std::env;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+
+    // Das Swift-Objekt wird fest fuer arm64 gebaut (`-target` unten); nur fuer dieses Ziel aufrufen.
+    assert_eq!(
+        env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+        Ok("aarch64"),
+        "Apple-Intelligence-Bruecke nur fuer aarch64-Ziele"
+    );
 
     const REAL_SWIFT_FILE: &str = "swift/apple_intelligence.swift";
     const STUB_SWIFT_FILE: &str = "swift/apple_intelligence_stub.swift";
@@ -578,7 +605,7 @@ fn build_apple_intelligence_bridge() {
 /// FoundationModelsMacros plugin, so the Apple Intelligence Swift path cannot
 /// compile (issue #1448). On any error we conservatively return false so the
 /// existing SDK-presence check decides.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[cfg(target_os = "macos")]
 fn is_command_line_tools_only() -> bool {
     use std::process::Command;
 

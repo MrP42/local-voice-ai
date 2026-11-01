@@ -166,7 +166,11 @@ pub async fn set_active_model(
     _transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    switch_active_model(&app_handle, &model_id)
+    // Laden und Speicherschutz blockieren (Messen, Warten): nicht auf einem
+    // Tokio-Worker.
+    tauri::async_runtime::spawn_blocking(move || switch_active_model(&app_handle, &model_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

@@ -22,6 +22,7 @@ mod local_update;
 mod llm_client;
 mod managers;
 mod media;
+mod memory_guard;
 pub mod mcp; // M6-P6e
 mod meeting_prompt; // M5-P5b
 mod overlay;
@@ -47,7 +48,8 @@ mod utils;
 mod voice_call; // Sprachgespräch mit der KI
 
 pub use cli::CliArgs;
-#[cfg(debug_assertions)]
+// Ohne cfg-Gate: `export_bindings` (headless Export) braucht die Typen auch im
+// Release-Build; sonst bricht `tauri build` ab (E0433).
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 
@@ -1871,20 +1873,10 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     0
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run(cli_args: CliArgs) {
-    // Detect portable mode before anything else
-    portable::init();
 
-    // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
-    // dem ersten Store-Zugriff laufen und ist idempotent.
-    appdata_migration::migrate_legacy_app_data();
-
-    // Parse console logging directives from RUST_LOG, falling back to info-level logging
-    // when the variable is unset
-    let console_filter = build_console_filter();
-
-    let specta_builder = Builder::<tauri::Wry>::new()
+/// Alle Commands und Events für tauri-specta (eine Quelle für App und Bindings-Export).
+fn specta_builder() -> Builder<tauri::Wry> {
+    Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -1944,6 +1936,9 @@ pub fn run(cli_args: CliArgs) {
             commands::compliance::compliance_set_profile,
             commands::compliance::compliance_set_training_opt_out,
             commands::llm::system_memory,
+            memory_guard::release_memory,
+            memory_guard::change_memory_guard_enabled_setting,
+            memory_guard::change_memory_guard_percent_setting,
             commands::llm::llm_local_fit,
             commands::usage::usage_summary,
             commands::usage::usage_events,
@@ -2226,6 +2221,7 @@ pub fn run(cli_args: CliArgs) {
             voice_call::voice_call_start,
             voice_call::voice_call_transcribe,
             voice_call::voice_call_chat,
+            voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
             conversations::conversations_list,
@@ -2301,6 +2297,10 @@ pub fn run(cli_args: CliArgs) {
             commands::agent_bridge::agent_client_delete,
             commands::agent_bridge::agent_client_set_tool_mode,
             commands::agent_bridge::agent_bridge_status,
+            // Sprachgespraech Stufe 2: lesende Werkzeuge fuer den Orchestrator
+            commands::voice_tools::voice_tools_list,
+            commands::voice_tools::change_voice_call_read_transcripts_setting,
+            commands::voice_tools::voice_tool_call,
             commands::sprachdienst::sprachdienst_status,
             commands::sprachdienst::sprachdienst_aktiv_setzen,
             commands::sprachdienst::sprachdienst_zugaenge,
@@ -2438,6 +2438,10 @@ pub fn run(cli_args: CliArgs) {
             commands::tts::tts_runtime_status,
             commands::tts::tts_download_model,
             commands::tts::tts_cancel_download,
+            commands::tts::tts_hf_access_status,
+            commands::tts::tts_hf_access_from_clipboard,
+            commands::tts::tts_hf_access_verify,
+            commands::tts::tts_hf_access_delete,
             commands::tts::tts_delete_model,
             commands::tts::tts_list_voice_infos,
             commands::tts::tts_get_voice_meta,
@@ -2528,7 +2532,34 @@ pub fn run(cli_args: CliArgs) {
             managers::tts::providers::preview::TtsProviderPreview,
             managers::tts::providers::samples::TtsProviderVoiceSample,
             managers::transcription::StreamPhaseEvent,
-        ]);
+        ])
+}
+
+/// Schreibt `bindings.ts` ohne App-Start (headless, z. B. im Windows-Tor):
+/// `cargo run --example bindings_export -- ../src/bindings.ts`.
+pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
+    specta_builder()
+        .export(
+            Typescript::default().bigint(BigIntExportBehavior::Number),
+            path,
+        )
+        .map_err(|e| format!("Bindings-Export nach {} fehlgeschlagen: {e}", path.display()))
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run(cli_args: CliArgs) {
+    // Detect portable mode before anything else
+    portable::init();
+
+    // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
+    // dem ersten Store-Zugriff laufen und ist idempotent.
+    appdata_migration::migrate_legacy_app_data();
+
+    // Parse console logging directives from RUST_LOG, falling back to info-level logging
+    // when the variable is unset
+    let console_filter = build_console_filter();
+
+    let specta_builder = specta_builder();
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder

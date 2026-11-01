@@ -356,12 +356,24 @@ const setMode = (page: Page, mode: string) =>
   }, mode);
 
 const openPhonon = async (page: Page) => {
+  // Die Anbieter stehen unter Modelle > Vorlesen (Ansicht "Anbieter"), ihre Einstellungen im Seitenblatt.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("lva.ui.models.area", "voices");
+      localStorage.setItem("lva.ui.models.voices.view", "providers");
+    } catch {
+      /* egal */
+    }
+  });
   await page.goto("/");
   await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
+    .getByRole("navigation")
+    .getByRole("button", { name: "Modelle", exact: true })
     .click();
-  await page.getByTestId("tts-provider-toggle-phonon").click();
+  await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("phonon-own-voices")).toBeVisible();
+  // „Eigene Stimmen“ ist im Seitenblatt eingeklappt.
+  await page.getByTestId("phonon-own-voices-toggle").click();
 };
 
 const shot = async (page: Page, name: string) => {
@@ -389,7 +401,7 @@ test("Import: Datei wählen, Name vergeben, Stimme erscheint; Ersetzen fragt zur
     "Meine Stimme",
   );
   // Der Import geht nicht ins Netz und sagt es.
-  await expect(page.getByRole("dialog")).toContainText(
+  await expect(page.locator(".lv-dialog")).toContainText(
     "Es geht nichts ins Netz",
   );
   await shot(page, "phonon-import");
@@ -619,7 +631,7 @@ test("Fish-Stimmen: jede braucht ihre eigene Einwilligung", async ({
   await setup(page);
   await openPhonon(page);
   const fish = page.getByTestId("phonon-fish-voices");
-  await expect(fish).toContainText("Fish-Stimmen nach Phonon übernehmen");
+  await expect(fish).toContainText("Lokale Fish-Speech-Stimmen übernehmen");
   await expect(fish).toContainText(
     "Jede Stimme braucht ihre eigene Einwilligung.",
   );
@@ -779,10 +791,10 @@ test("Entfernen: mit Rückfrage; bei einer erstellten Stimme der Hinweis auf das
 
   await page.getByTestId("phonon-own-remove-Alt").click();
   await expect(
-    page.getByRole("dialog").getByText("Eigene Stimme „Alt“ entfernen?"),
+    page.locator(".lv-dialog").getByText("Eigene Stimme „Alt“ entfernen?"),
   ).toBeVisible();
   // Importierte Stimme: kein Hinweis auf Gradium.
-  await expect(page.getByRole("dialog")).not.toContainText("Gradium-Konto");
+  await expect(page.locator(".lv-dialog")).not.toContainText("Gradium-Konto");
   await page.getByRole("button", { name: "Abbrechen" }).click();
   expect(await calls(page, "phonon_own_voice_remove")).toHaveLength(0);
 
@@ -808,7 +820,7 @@ test("Entfernen: mit Rückfrage; bei einer erstellten Stimme der Hinweis auf das
     .last()
     .click();
   await page.getByTestId("phonon-own-remove-g").click();
-  await expect(page.getByRole("dialog")).toContainText(
+  await expect(page.locator(".lv-dialog")).toContainText(
     "bleibt in Ihrem Gradium-Konto bestehen",
   );
 });

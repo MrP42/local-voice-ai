@@ -16,6 +16,7 @@ pub mod encode;
 pub mod engine;
 pub mod enhance;
 pub mod gradium;
+pub mod hf_access;
 pub mod loudness;
 pub mod models;
 pub mod phonon_clip;
@@ -2572,6 +2573,7 @@ impl TtsManager {
         let cpus = crate::process_guard::logical_cpus();
         let compile_threads = crate::process_guard::compile_threads_for(cpus).to_string();
         let cpu_threads = crate::process_guard::cpu_threads_for(cpus).to_string();
+        crate::process_guard::check_launchable(&python)?;
         let mut cmd = std::process::Command::new(&python);
         cmd.args([
             "tools/api_server.py",
