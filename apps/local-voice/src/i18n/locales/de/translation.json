@@ -10,6 +10,7 @@
     "cancel": "Abbrechen"
   },
   "sidebar": {
+    "library": "Bibliothek",
     "general": "Allgemein",
     "models": "Modelle",
     "integrations": "Integrationen",
@@ -6777,6 +6778,205 @@
       "meetings": "Aufnahmen: Besprechungen live mitschreiben oder Audio- und Videodateien importieren.",
       "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
       "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
+    }
+  },
+  "library": {
+    "title": "Bibliothek",
+    "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
+    "add": "Hinzufügen",
+    "search": "Titel, Autor, Sprecher suchen",
+    "sortLabel": "Sortieren:",
+    "filterLabel": "Filter",
+    "sort": {
+      "recent": "Zuletzt gehört",
+      "added": "Zuletzt hinzugefügt",
+      "title": "Titel",
+      "author": "Autor"
+    },
+    "filter": {
+      "all": "Alle",
+      "notStarted": "Nicht begonnen",
+      "inProgress": "Läuft",
+      "finished": "Fertig",
+      "noAudio": "Ohne Audio",
+      "working": "In Arbeit"
+    },
+    "continue": "Weitermachen",
+    "continueHint": "Hören und Lesen teilen sich die Stelle",
+    "working": "In Arbeit",
+    "workingHint": "läuft lokal im Hintergrund",
+    "all": "Alle Titel",
+    "count_one": "{{count}} Buch",
+    "count_other": "{{count}} Bücher",
+    "noMatch": "Keine Bücher passen zu Suche oder Filter.",
+    "empty": {
+      "title": "Noch keine Bücher",
+      "text": "Füge ein E-Book (EPUB, PDF, DOCX, TXT, MD) oder ein Hörbuch (MP3, M4B, M4A …) hinzu."
+    },
+    "play": "Abspielen",
+    "continuePlay": "Weiterhören",
+    "playTitle": "„{{title}}“ abspielen",
+    "openTitle": "„{{title}}“: Details öffnen",
+    "more": "Mehr zu „{{title}}“",
+    "moreHint": "Details, Lesen, Hören und Entfernen",
+    "moreMenu": "Aktionen",
+    "details": "Details",
+    "read": "Lesen",
+    "listen": "Hören",
+    "listenOriginal": "Hörbuch hören",
+    "markFinished": "Als fertig markieren",
+    "markUnfinished": "Als nicht fertig markieren",
+    "progressLabel": "Fortschritt von „{{title}}“",
+    "status": {
+      "finished": "Fertig",
+      "left": "noch {{time}}",
+      "leftOf": "noch {{left}} von {{total}}",
+      "percent": "{{percent}} %",
+      "notStarted": "Nicht begonnen",
+      "empty": "Ohne Inhalt"
+    },
+    "text": {
+      "ok": "Textfassung vorhanden",
+      "busy": "Textfassung entsteht (Transkription)",
+      "none": "Keine Textfassung"
+    },
+    "audio": {
+      "ok": "Audiofassung vorhanden",
+      "busy": "Audiofassung entsteht",
+      "none": "Noch nicht vertont"
+    },
+    "textShort": {
+      "ok": "Text",
+      "busy": "…",
+      "none": "Kein Text"
+    },
+    "audioShort": {
+      "ok": "Audio",
+      "busy": "…",
+      "none": "Kein Audio",
+      "audiobook": "Hörbuch",
+      "narrated": "Vertont"
+    },
+    "job": {
+      "queued": "Transkription wartet",
+      "processing": "Wird transkribiert",
+      "transcribing": "Wird transkribiert",
+      "ready": "Transkript wird übernommen",
+      "failed": "Transkription fehlgeschlagen",
+      "missing": "Transkription nicht gefunden"
+    },
+    "back": "Bibliothek",
+    "by": "von {{authors}}",
+    "tabs": "Buchansicht",
+    "tab": {
+      "overview": "Übersicht",
+      "versions": "Fassungen",
+      "metadata": "Metadaten"
+    },
+    "noDescription": "Noch kein Klappentext. Unter „Metadaten“ lässt er sich aus Open Library übernehmen oder selbst schreiben.",
+    "textVersion": "Textfassung",
+    "audioVersion": "Audiofassung",
+    "origin": {
+      "document": "Aus einer Datei",
+      "transcript": "Aus dem Hörbuch transkribiert"
+    },
+    "generatedAudio": "Vertonte Dateien liegen im Vorlesen bei der Seite.",
+    "generateHint": "Im Vorlesen mit einer Stimme vertonen.",
+    "openReader": "Im Vorlesen öffnen",
+    "transcribeHint": "Das Hörbuch lokal transkribieren; der Text erscheint danach im Reader.",
+    "transcribe": "Transkribieren",
+    "noText": "Keine Textfassung.",
+    "importedAudio": "Importiertes Hörbuch ({{file}})",
+    "noAudio": "Noch nicht vertont.",
+    "addAudio": "Hörbuch hinzufügen …",
+    "replaceAudio": "Hörbuch ersetzen …",
+    "field": {
+      "title": "Titel",
+      "subtitle": "Untertitel",
+      "authors": "Autoren",
+      "narrator": "Sprecher",
+      "isbn": "ISBN",
+      "publisher": "Verlag",
+      "date": "Erschienen",
+      "pages": "Seiten",
+      "language": "Sprache",
+      "source": "Metadaten",
+      "description": "Klappentext"
+    },
+    "source": {
+      "openlibrary": "Open Library",
+      "epub": "aus der EPUB",
+      "manual": "von Hand"
+    },
+    "save": "Speichern",
+    "saved": "Gespeichert.",
+    "coverFromFile": "Cover aus Datei …",
+    "coverFiles": "Bilder oder EPUB",
+    "coverGenerated": "Generiertes Cover verwenden",
+    "delete": "Aus der Bibliothek entfernen",
+    "deleteTitle": "„{{title}}“ entfernen?",
+    "deleteBody": "Eintrag, Cover und importiertes Hörbuch werden gelöscht. Die Seite im Vorlesen bleibt erhalten.",
+    "cancel": "Abbrechen",
+    "refetch": "Metadaten neu abrufen",
+    "privacyHint": "Open Library: gesendet werden nur Titel, Autor oder ISBN, nie Buchtext",
+    "metadataApplied": "Metadaten übernommen.",
+    "searchOpenLibrary": "Bei Open Library suchen",
+    "searching": "Suche …",
+    "apply": "Übernehmen",
+    "noHits": "Open Library kennt keine passende Ausgabe.",
+    "editions": "Ausgaben",
+    "audioFiles": "Hörbücher",
+    "audiobar": "Hörbuch „{{title}}“",
+    "back30": "30 Sekunden zurück",
+    "forward30": "30 Sekunden vor",
+    "pause": "Pause",
+    "seek": "Stelle im Hörbuch",
+    "audiobarClose": "Hörleiste schließen",
+    "addTitle": "Zur Bibliothek hinzufügen",
+    "files": "Bücher und Hörbücher",
+    "unsupported": "Dieses Format (.{{ext}}) wird nicht unterstützt.",
+    "pick": "Datei auswählen …",
+    "pickOther": "Andere Datei …",
+    "reading": "Lese Datei …",
+    "pickHint": "Text: EPUB, PDF, DOCX, TXT, MD. Audio: MP3, M4B, M4A, AAC, WAV, FLAC, OGG, OPUS, WMA.",
+    "kindAudio": "Hörbuch – wird als Audiofassung abgelegt",
+    "kindText": "Text – wird als Textfassung abgelegt und lässt sich vertonen",
+    "dupTitle": "Dieses Buch ist schon in der Bibliothek.",
+    "dupAttachText": "„{{title}}“ bekommt diesen Text als Textfassung – es entsteht kein zweiter Eintrag.",
+    "dupAttachAudio": "„{{title}}“ bekommt dieses Hörbuch als Audiofassung – es entsteht kein zweiter Eintrag.",
+    "dupReplaceText": "„{{title}}“ hat schon eine Textfassung; sie wird durch diese ersetzt (die alte Seite bleibt im Vorlesen).",
+    "dupReplaceAudio": "„{{title}}“ hat schon ein Hörbuch; es wird durch dieses ersetzt.",
+    "dupAttach": "An vorhandenes Buch anhängen",
+    "dupSeparate": "Doch als eigenes Buch (andere Ausgabe)",
+    "coverAndMeta": "Cover und Metadaten",
+    "candidateChosen": "Gewählt: „{{title}}“ – Cover und Metadaten werden übernommen.",
+    "coverEpub": "Ohne Auswahl: Cover aus der EPUB, sonst generiert.",
+    "coverGeneratedHint": "Ohne Auswahl: generiertes Cover aus Titel und Autor.",
+    "transcribeOption": "Nach dem Import lokal transkribieren, damit der Text mitläuft",
+    "copying": "Kopiere Hörbuch …",
+    "attach": "Anhängen",
+    "attached": "An „{{title}}“ angehängt.",
+    "added": "„{{title}}“ hinzugefügt.",
+    "continueRead": "Weiterlesen",
+    "readTitle": "„{{title}}“ lesen",
+    "audioSource": {
+      "audiobook": "Audio: importiertes Hörbuch",
+      "narrated": "Audio: per Sprachausgabe vertont",
+      "none": "Kein Audio – nur Lesen oder live vorlesen lassen"
+    },
+    "statusAudio": "Audio",
+    "statusNarration": "Vertonung (Sprachausgabe)",
+    "statusTranscription": "Transkription (Hörbuch → Text)",
+    "narration": {
+      "done": "Erzeugt",
+      "possible": "Nicht erzeugt – im Vorlesen möglich",
+      "none": "Nicht möglich (kein Text)"
+    },
+    "transcription": {
+      "done": "Fertig",
+      "running": "Läuft",
+      "possible": "Nicht gestartet",
+      "none": "Nicht nötig"
     }
   }
 }

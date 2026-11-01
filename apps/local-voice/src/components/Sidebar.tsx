@@ -19,6 +19,7 @@ import {
   Users,
   Volume2,
   House,
+  Library,
   UserRound,
   X,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { APP_NAME } from "./shell/frame";
 import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
 import { KontoProfilSeite } from "./konto/KontoProfilSeite";
+import { LibraryPage } from "./library/LibraryPage";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -88,6 +90,12 @@ export const SECTIONS_CONFIG = {
     icon: Volume2,
     component: TtsSettings,
   },
+  // lva#152: Bücher und Hörbücher, ein Eintrag je Werk.
+  library: {
+    labelKey: "sidebar.library",
+    icon: Library,
+    component: LibraryPage,
+  },
   settings: {
     labelKey: "sidebar.settings",
     icon: Cog,
@@ -116,7 +124,7 @@ interface SidebarProps {
   onDrawerOpenChange: (open: boolean) => void;
 }
 
-const PRIMARY = ["home", "history", "meetings", "tts", "voice"] as const;
+const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
 // Fußeinträge vor „Einstellungen“ (Leitlinie §3: Einstellungen unten zuletzt).
 const UTILITIES = ["models", "integrations"] as const;
 
