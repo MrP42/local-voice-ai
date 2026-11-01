@@ -286,8 +286,8 @@ for (const width of [390, 360]) {
       ).length;
       return { h: r.height, w: r.width, btns, scrolls };
     });
-    // ADR-0027 E7: ohne Modellwahl und Version bleiben drei Einträge (Mikrofon, Speicher, Gespräch)
-    expect(m.btns.length).toBeGreaterThanOrEqual(3);
+    // ADR-0027 E7 (Codex 01.11.): Standard nur Mikrofon und Gespräch
+    expect(m.btns.length).toBeGreaterThanOrEqual(2);
     for (const b of m.btns) {
       expect(b.l).toBeGreaterThanOrEqual(0);
       expect(b.r).toBeLessThanOrEqual(width);
