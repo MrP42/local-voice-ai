@@ -59,8 +59,9 @@ const ROLES: &[&str] = &["user", "assistant", "system", "tool"];
 const MODES: &[&str] = &["typed", "spoken", "dictated", "transcribed", "system"];
 const STATUSES: &[&str] = &["complete", "interrupted", "error"];
 
-static MIGRATIONS: &[M] = &[M::up(
-    "CREATE TABLE IF NOT EXISTS conversations (
+static MIGRATIONS: &[M] = &[
+    M::up(
+        "CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY NOT NULL,
         schema_version TEXT NOT NULL,
         ts TEXT NOT NULL,
@@ -102,7 +103,17 @@ static MIGRATIONS: &[M] = &[M::up(
     );
     CREATE INDEX IF NOT EXISTS conversation_entries_conv
         ON conversation_entries(conversation_id, created_at);",
-)];
+    ),
+    // Zeitpunkt des Anheftens (ms seit Epoche): angeheftete Gespräche stehen nach
+    // diesem Wert absteigend, das zuletzt angeheftete oben. Bereits angeheftete
+    // Gespräche übernehmen ihre letzte Änderung als Zeitpunkt.
+    M::up(
+        "ALTER TABLE conversations ADD COLUMN pinned_at INTEGER;
+         UPDATE conversations
+            SET pinned_at = CAST(strftime('%s', updated_at) AS INTEGER) * 1000
+          WHERE pinned = 1;",
+    ),
+];
 
 // ---------------------------------------------------------------------------
 // Vertragstypen
@@ -663,6 +674,16 @@ impl ConversationStore {
         Self::init(Connection::open_in_memory()?)
     }
 
+    /// Nur für Tests: legt zuerst das Schema der ersten Version an, lässt `seed`
+    /// Altdaten schreiben und migriert dann auf den neuesten Stand.
+    #[cfg(test)]
+    pub fn open_upgrading(path: &Path, seed: impl FnOnce(&Connection)) -> Result<Self> {
+        let mut conn = Connection::open(path)?;
+        Migrations::new(MIGRATIONS[..1].to_vec()).to_latest(&mut conn)?;
+        seed(&conn);
+        Self::init(conn)
+    }
+
     fn init(mut conn: Connection) -> Result<Self> {
         // SQLite prüft Fremdschlüssel nur, wenn man es je Verbindung einschaltet;
         // ohne das kaskadiert das Löschen nicht.
@@ -682,7 +703,7 @@ impl ConversationStore {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Angeheftete zuerst, dann nach letzter Änderung absteigend.
+    /// Angeheftete zuerst (zuletzt angeheftet oben), dann nach letzter Änderung absteigend.
     pub fn list(&self, include_archived: bool) -> Result<Vec<ConversationSummary>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
@@ -694,7 +715,7 @@ impl ConversationStore {
                       ORDER BY e.created_at DESC, e.rowid DESC LIMIT 1)
              FROM conversations c
              WHERE (?1 = 1 OR c.archived = 0)
-             ORDER BY c.pinned DESC, c.updated_at DESC, c.rowid DESC
+             ORDER BY c.pinned DESC, c.pinned_at DESC, c.updated_at DESC, c.rowid DESC
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(params![include_archived as i64, MAX_LIST_ROWS], |r| {
@@ -846,15 +867,28 @@ impl ConversationStore {
         let conn = self.lock();
         let current = Self::conversation(&conn, id)?;
         conn.execute(
-            "UPDATE conversations SET title = ?1, pinned = ?2, archived = ?3 WHERE id = ?4",
+            "UPDATE conversations SET title = ?1, pinned = ?2, archived = ?3,
+                    pinned_at = CASE
+                        WHEN ?2 = 0 THEN NULL
+                        WHEN ?5 = 1 THEN COALESCE(pinned_at, ?6)
+                        ELSE ?6 END
+              WHERE id = ?4",
             params![
                 title.unwrap_or(current.title),
                 pinned.unwrap_or(current.pinned) as i64,
                 archived.unwrap_or(current.archived) as i64,
                 id,
+                current.pinned as i64,
+                Utc::now().timestamp_millis(),
             ],
         )?;
         Self::conversation(&conn, id)
+    }
+
+    /// Heftet ein Gespräch an oder löst es. Erneutes Anheften behält den
+    /// ursprünglichen Zeitpunkt; `updated_at` bleibt unberührt.
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<Conversation> {
+        self.update(id, None, Some(pinned), None)
     }
 
     /// Löscht die Unterhaltung samt Beiträgen (Fremdschlüssel kaskadiert).

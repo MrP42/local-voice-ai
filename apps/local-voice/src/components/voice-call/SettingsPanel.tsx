@@ -24,7 +24,7 @@ import {
   type KnowledgeArea,
   type ModelDescription,
 } from "./orchestration";
-import { useKnowledge } from "./useKnowledge";
+import { useKnowledgeEditor } from "./useKnowledge";
 import { useSettings } from "@/hooks/useSettings";
 import { useComplianceStore } from "@/stores/complianceStore";
 import type { LlmConnection, LlmModelConfig } from "@/bindings";
@@ -173,23 +173,9 @@ const KnowledgeRow: React.FC<{
 /** Reiter „Wissen“: was das Modell im Gespräch nachschlagen darf. */
 const KnowledgeTab: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting, updateSetting } = useSettings();
-  const knowledge = useKnowledge();
-  const knowledgeChanged = useVoiceCallStore((s) => s.knowledgeChanged);
+  const { knowledge, save, toggle } = useKnowledgeEditor();
   const useTools = useVoiceCallStore((s) => s.config.orchestration.useTools);
   const ids = useId("knowledge");
-  // Nach dem Speichern verwirft das Gespräch Werkzeuge und Hinweis; der nächste Schritt lädt neu.
-  const save = (
-    key: "voice_call_knowledge" | "voice_call_read_transcripts",
-    value: string[] | boolean,
-  ) => void updateSetting(key, value as never).then(knowledgeChanged);
-  const toggle = (area: KnowledgeArea, on: boolean) => {
-    const current = (getSetting("voice_call_knowledge") ?? []) as string[];
-    const next = KNOWLEDGE_AREAS.filter((a) =>
-      a === area ? on : current.includes(a),
-    );
-    save("voice_call_knowledge", next);
-  };
   return (
     <>
       <p className="m-0 text-[13px]">{t("voiceCall.knowledge.intro")}</p>

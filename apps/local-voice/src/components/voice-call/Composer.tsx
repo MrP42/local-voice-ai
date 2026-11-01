@@ -5,7 +5,15 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Mic, MicOff, Plus, SendHorizontal, Square, X } from "lucide-react";
+import {
+  AudioLines,
+  Mic,
+  MicOff,
+  Plus,
+  SendHorizontal,
+  Square,
+  X,
+} from "lucide-react";
 
 /**
  * Eingabezeile eines Gesprächs: Anhang-Chips, Textfeld, darunter ＋-Menü,
@@ -44,6 +52,15 @@ export interface ComposerLabels {
   removeAttachment: (label: string) => string;
 }
 
+/** Runder Knopf für das Live-Sprachgespräch rechts neben dem Mikrofon. */
+export interface ComposerCallAction {
+  /** Ein Gespräch läuft: der Knopf beendet es (rot). */
+  active: boolean;
+  /** Beschriftung (Name und Tooltip) je nach Zustand. */
+  label: string;
+  onClick: () => void;
+}
+
 export interface ComposerProps {
   value: string;
   onChange: (value: string) => void;
@@ -54,6 +71,12 @@ export interface ComposerProps {
   menuItems?: ComposerMenuItem[];
   /** Statusanzeige (Welle, Zustand) zwischen Menü und Knöpfen. */
   children?: React.ReactNode;
+  /** Links neben dem ＋-Menü (Berechtigungs-Chip). */
+  leading?: React.ReactNode;
+  /** Rechts vor dem Mikrofon (Modellauswahl). */
+  tools?: React.ReactNode;
+  /** Live-Gespräch starten bzw. beenden. */
+  callAction?: ComposerCallAction;
   muted?: boolean;
   onToggleMute?: () => void;
   /** Senden läuft: Senden-Knopf gesperrt. */
@@ -73,6 +96,9 @@ export const Composer: React.FC<ComposerProps> = ({
   onRemoveAttachment,
   menuItems = [],
   children,
+  leading,
+  tools,
+  callAction,
   muted = false,
   onToggleMute,
   sending = false,
@@ -112,7 +138,7 @@ export const Composer: React.FC<ComposerProps> = ({
   }, [menuOpen]);
 
   const roundBtn =
-    "grid place-items-center w-9 h-9 rounded-full cursor-pointer transition-colors hover:bg-mid-gray/15 disabled:cursor-not-allowed disabled:opacity-50";
+    "grid place-items-center w-9 h-9 shrink-0 rounded-full cursor-pointer transition-colors hover:bg-mid-gray/15 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="flex justify-center px-4 pb-3 pt-2">
@@ -162,8 +188,9 @@ export const Composer: React.FC<ComposerProps> = ({
           role="toolbar"
           aria-label={labels.message}
         >
+          {leading && <div className="min-w-0 shrink">{leading}</div>}
           {menuItems.length > 0 && (
-            <div className="relative">
+            <div className="relative shrink-0">
               <button
                 type="button"
                 className={roundBtn}
@@ -224,6 +251,7 @@ export const Composer: React.FC<ComposerProps> = ({
           )}
           <span className="flex-1" />
           {children}
+          {tools && <div className="min-w-0 shrink">{tools}</div>}
           {onToggleMute && (
             <button
               type="button"
@@ -240,10 +268,26 @@ export const Composer: React.FC<ComposerProps> = ({
               )}
             </button>
           )}
+          {callAction && (
+            <button
+              type="button"
+              data-testid="call-button"
+              className={`grid place-items-center w-9 h-9 shrink-0 rounded-full cursor-pointer transition-colors ${
+                callAction.active
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : "bg-text/90 text-background hover:opacity-80"
+              }`}
+              aria-label={callAction.label}
+              title={callAction.label}
+              onClick={callAction.onClick}
+            >
+              <AudioLines className="w-[18px] h-[18px]" aria-hidden="true" />
+            </button>
+          )}
           {sending && onStop && (
             <button
               type="button"
-              className="grid place-items-center w-10 h-10 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
+              className="grid place-items-center w-9 h-9 shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
               aria-label={labels.stop}
               title={labels.stop}
               onClick={onStop}
@@ -258,7 +302,7 @@ export const Composer: React.FC<ComposerProps> = ({
           {canSend && (
             <button
               type="button"
-              className="grid place-items-center w-10 h-10 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
+              className="grid place-items-center w-9 h-9 shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
               aria-label={labels.send}
               title={labels.send}
               onClick={onSend}

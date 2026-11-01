@@ -3410,6 +3410,17 @@ async conversationUpdate(id: string, title: string | null, pinned: boolean | nul
 }
 },
 /**
+ * Heftet ein Gespräch an oder löst es.
+ */
+async conversationSetPinned(id: string, pinned: boolean) : Promise<Result<Conversation, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_set_pinned", { id, pinned }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Löscht die Unterhaltung samt aller Beiträge.
  */
 async conversationDelete(id: string) : Promise<Result<null, string>> {
