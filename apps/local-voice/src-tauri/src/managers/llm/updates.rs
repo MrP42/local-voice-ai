@@ -372,6 +372,7 @@ pub fn apply(s: &mut AppSettings, update: &ModelUpdate, now: i64) -> Result<Stri
         if s.llm_active_model_id.as_deref() == Some(old.id.as_str()) {
             s.llm_active_model_id = Some(new_id.clone());
         }
+        s.replace_function_model(&old.id, &new_id);
     }
     s.sync_legacy_from_llm();
     Ok(new_id)

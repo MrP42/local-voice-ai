@@ -12,8 +12,13 @@ import {
   MenuTrigger,
 } from "@fluentui/react-components";
 import { ChevronDown, Settings } from "lucide-react";
-import { commands, type LlmConnection, type LlmModelConfig } from "@/bindings";
-import { useVoiceCallStore } from "@/stores/voiceCallStore";
+import {
+  commands,
+  type FunctionModel,
+  type LlmConnection,
+  type LlmModelConfig,
+} from "@/bindings";
+import { VOICE_SPEAKER, speakerModelId } from "./orchestration";
 import { useSettings } from "@/hooks/useSettings";
 import { modelLabel } from "@/lib/modelNames";
 import { openSettingsTab } from "@/lib/openSettingsTab";
@@ -22,25 +27,22 @@ const isCli = (c: LlmConnection) =>
   c.kind === "claude_cli" || c.kind === "codex_cli";
 
 /**
- * Modellauswahl im Chatfeld („Claude Opus 5.5 Mittel ⌄“ wie bei ChatGPT). Die Wahl gilt nur für
- * den Sprecher der Gespräche: Modell und Effort stehen in `CallConfig.orchestration`
- * (`speakerModelId`, `speakerEffort`, für alle Gespräche, nicht je Unterhaltung). Leer heißt: das
- * globale aktive Modell der Fußleiste; dieses bleibt unberührt. Die Liste der Modelle und die
- * Effort-Stufen stammen aus denselben Einstellungen und Befehlen wie bei der Fußleiste.
+ * Modellauswahl im Chatfeld („Claude Opus 5.5 Mittel ⌄“ wie bei ChatGPT). Sie liest und schreibt
+ * die Funktionseinstellung `voice_speaker` („Modelle je Funktion“, `function_models`), also genau
+ * das, was auch die Einstellungen zeigen. Ohne eigene Wahl gilt das Standardmodell der Fußleiste;
+ * dieses bleibt unberührt. Modelle und Effort-Stufen stammen aus denselben Einstellungen und
+ * Befehlen wie dort.
  */
 export const ModelPicker: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const speakerModelId = useVoiceCallStore(
-    (s) => s.config.orchestration.speakerModelId,
-  );
-  const speakerEffort = useVoiceCallStore(
-    (s) => s.config.orchestration.speakerEffort,
-  );
-  const setConfig = useVoiceCallStore((s) => s.setConfig);
+  const { getSetting, refreshSettings } = useSettings();
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
   const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const functionModels = (getSetting("function_models") ?? {}) as Partial<
+    Record<string, FunctionModel>
+  >;
+  const entry = functionModels[VOICE_SPEAKER];
   const defaultEffort = (getSetting("llm_default_effort") ??
     "medium") as string;
   const [efforts, setEfforts] = useState<string[]>([]);
@@ -53,10 +55,13 @@ export const ModelPicker: React.FC = () => {
       .filter((m) => m.enabled !== false && on.has(m.connection_id))
       .map((model) => ({ model, connection: on.get(model.connection_id)! }));
   }, [connections, models]);
-  const active =
-    selectable.find((s) => s.model.id === speakerModelId) ??
-    selectable.find((s) => s.model.id === activeId) ??
-    null;
+  const speakerId = speakerModelId({
+    function_models: functionModels,
+    llm_active_model_id: activeId,
+    llm_models: models,
+    llm_connections: connections,
+  });
+  const active = selectable.find((s) => s.model.id === speakerId) ?? null;
   const activeModelId = active?.model.id;
   const activeConnectionId = active?.model.connection_id;
   const activeRemoteId = active?.model.remote_id;
@@ -82,24 +87,19 @@ export const ModelPicker: React.FC = () => {
 
   const effortText = (e: string) =>
     t(`settings.llm.effortLevels.${e}`, { defaultValue: e });
-  const chosen = active?.model.id === speakerModelId;
   const activeEffort = !active
     ? null
     : !isCli(active.connection)
       ? null
-      : chosen && speakerEffort
-        ? speakerEffort
+      : entry?.model_id === active.model.id && entry.effort
+        ? entry.effort
         : active.model.effort || defaultEffort;
-  const setSpeaker = (modelId: string, effort: string) =>
-    setConfig((c) => ({
-      ...c,
-      orchestration: {
-        ...c.orchestration,
-        speakerModelId: modelId,
-        speakerEffort: effort,
-      },
-    }));
-  const choose = (id: string) => setSpeaker(id, "");
+  const setSpeaker = (modelId: string, effort: string | null) =>
+    void commands
+      .llmSetFunctionModel(VOICE_SPEAKER, modelId, effort)
+      .then(() => refreshSettings())
+      .catch(() => undefined);
+  const choose = (id: string) => setSpeaker(id, null);
   const chooseEffort = (effort: string) => {
     if (active) setSpeaker(active.model.id, effort);
   };

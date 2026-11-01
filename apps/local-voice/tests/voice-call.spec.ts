@@ -306,6 +306,17 @@ async function install(
             case "llm_set_active_model":
               settings.llm_active_model_id = args.id;
               return null;
+            case "llm_set_function_model": {
+              const fm = { ...(settings.function_models ?? {}) };
+              if (args.modelId)
+                fm[args.forFunction] = {
+                  model_id: args.modelId,
+                  effort: args.effort ?? null,
+                };
+              else delete fm[args.forFunction];
+              settings.function_models = fm;
+              return null;
+            }
             case "llm_upsert_model": {
               settings.llm_models = settings.llm_models.map((m: any) =>
                 m.id === args.model.id ? args.model : m,
@@ -1169,6 +1180,40 @@ test.describe("Sprachgespraech Orchestrator", () => {
     await expect(page.getByText("220 Token")).toBeVisible();
   });
 
+  test("Modell je Funktion: der Sprecher folgt function_models.voice_speaker", async ({
+    page,
+  }) => {
+    // Standardmodell ist Sonnet (Protokoll usw.), fürs Gespräch gilt Gemma lokal.
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        llm_active_model_id: "cli:sonnet",
+        function_models: { voice_speaker: { model_id: "loc:gemma", effort: null } },
+      },
+      config: orchestration({
+        denkerModelId: "cli:sonnet",
+        souveraenitaet: "frei",
+        useTools: false,
+      }),
+    });
+    await openPage(page);
+    await replies(page, [
+      '\u27e6werkzeug denker_fragen {"frage":"Was ist ein Qubit?"}\u27e7',
+      "Ein Qubit ist die Recheneinheit eines Quantencomputers.",
+    ]);
+    await send(page, "Was ist ein Qubit?");
+    await expect(
+      page
+        .getByRole("log")
+        .getByText("Ein Qubit ist die Recheneinheit eines Quantencomputers."),
+    ).toBeVisible();
+    const turns = await calls(page, "voice_call_turn");
+    expect(turns.map((c) => [c.args.modelId, c.args.forFunction])).toEqual([
+      ["loc:gemma", "voice_speaker"],
+      ["cli:sonnet", null],
+    ]);
+  });
+
   test("Denker-Übergabe: zweites Modell antwortet, beide Verbräuche zählen", async ({
     page,
   }) => {
@@ -1424,8 +1469,6 @@ test.describe("Sprachgespraech Orchestrator", () => {
     );
     expect(saved.orchestration).toEqual({
       denkerModelId: "",
-      speakerModelId: "",
-      speakerEffort: "",
       souveraenitaet: "eu",
       useTools: false,
     });
@@ -2545,7 +2588,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
   });
 
-  test("Modellauswahl im Chatfeld speichert den Sprecher des Gesprächs, nicht das globale Modell", async ({
+  test("Modellauswahl im Chatfeld schreibt die Funktion voice_speaker, nicht das globale Modell", async ({
     page,
   }) => {
     await install(page, "light", { settings: TWO_MODELS });
@@ -2553,9 +2596,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     const picker = page.getByTestId("model-picker");
     const speaker = () =>
       page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("voice-call.config") ?? "{}")
-            .orchestration,
+        () => (window as any).__settings.function_models?.voice_speaker,
       );
     await expect(picker).toContainText("Claude Sonnet 5.5");
     await expect(picker).toContainText(/mittel/i);
@@ -2567,21 +2608,33 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(picker).toContainText(/hoch/i);
     await expect
       .poll(speaker)
-      .toMatchObject({ speakerModelId: "cli:opus", speakerEffort: "high" });
+      .toEqual({ model_id: "cli:opus", effort: "high" });
+    const sets = await calls(page, "llm_set_function_model");
+    expect(sets.at(-1)!.args).toMatchObject({
+      forFunction: "voice_speaker",
+      modelId: "cli:opus",
+      effort: "high",
+    });
     // Das globale Modell bleibt: kein Befehl, die Fußleiste zeigt weiter Sonnet.
     expect(await calls(page, "llm_set_active_model")).toHaveLength(0);
     expect(await calls(page, "llm_upsert_model")).toHaveLength(0);
-    await expect(
-      page.locator(".workspace-status").getByText(/Claude Sonnet 5.5/),
-    ).toBeVisible();
-    // Der Sprecher geht mit Modell und Effort in den Aufruf des Modells.
+    expect(
+      await page.evaluate(() => (window as any).__settings.llm_active_model_id),
+    ).toBe("cli:sonnet");
+    // Die Wahl steht nur noch in den Einstellungen, nicht mehr in der Gesprächskonfiguration.
+    const config = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("voice-call.config") ?? "{}"),
+    );
+    expect(config.orchestration ?? {}).not.toHaveProperty("speakerModelId");
+    // Der Aufruf nennt kein Modell mehr; Rust löst voice_speaker selbst auf.
     await message(page).fill("Hallo");
     await message(page).press("Enter");
     await expect
       .poll(() => page.evaluate(() => (window as any).__chat !== null))
       .toBe(true);
     const chat = (await calls(page, "voice_call_chat")).at(-1)!;
-    expect(chat.args).toMatchObject({ modelId: "cli:opus", effort: "high" });
+    expect(chat.args).not.toHaveProperty("modelId");
+    expect(chat.args).not.toHaveProperty("effort");
   });
 
   test("Suche: Lupe öffnet das Overlay, Aktionen, letzte Gespräche, Treffer, Tastatur", async ({

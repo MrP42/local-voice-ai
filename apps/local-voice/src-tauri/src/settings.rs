@@ -2,7 +2,7 @@ use log::{debug, warn};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use tauri::AppHandle;
 use tauri_plugin_store::StoreExt;
@@ -270,6 +270,28 @@ pub struct LlmModelSeen {
     #[serde(default)]
     pub replaced_by: Option<String>,
 }
+
+/// Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
+/// `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, Type)]
+pub struct FunctionModel {
+    #[serde(default)]
+    pub model_id: String,
+    /// Effort nur fuer diese Funktion (`low` … `max`); `None` = der des Modells.
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+/// Sprecher im Sprachgespraech (antwortet sofort, auch lokal).
+pub const FN_VOICE_SPEAKER: &str = "voice_speaker";
+/// Besprechungsprotokoll und Notizen (Protokoll, Projektprotokoll, Ausarbeitung).
+pub const FN_MEETING_PROTOCOL: &str = "meeting_protocol";
+/// KI-Nachbearbeitung des Diktats.
+pub const FN_DICTATION_REFINE: &str = "dictation_refine";
+
+/// Funktionen mit eigener Modellwahl. Der Denker des Gespraechs hat seine Wahl
+/// schon in den Gespraechseinstellungen (`denkerModelId`).
+pub const LLM_FUNCTIONS: [&str; 3] = [FN_VOICE_SPEAKER, FN_MEETING_PROTOCOL, FN_DICTATION_REFINE];
 
 fn default_llm_auto_update() -> String {
     "ask".to_string()
@@ -592,6 +614,9 @@ pub struct AppSettings {
     pub llm_models: Vec<LlmModelConfig>,
     #[serde(default)]
     pub llm_active_model_id: Option<String>,
+    /// Modelle je Funktion; fehlt ein Eintrag oder ist er leer, gilt das Standardmodell.
+    #[serde(default)]
+    pub function_models: BTreeMap<String, FunctionModel>,
     /// Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
     /// oder der Modellspeicher von Ollama). Die App laedt die Modelle von
     /// dort, statt sie ein zweites Mal herunterzuladen
@@ -1805,6 +1830,7 @@ pub fn get_default_settings() -> AppSettings {
         llm_connections: Vec::new(),
         llm_models: Vec::new(),
         llm_active_model_id: None,
+        function_models: BTreeMap::new(),
         llm_model_dirs: Vec::new(),
         compliance_profile: Default::default(),
         llm_default_effort: default_llm_effort(),
@@ -1965,6 +1991,63 @@ impl AppSettings {
             template.base_url = base_url;
         }
         self.post_process_models.insert(kind, remote);
+    }
+
+    /// Eintraege von Modellen entfernen, die es nicht mehr gibt (Freigabe oder
+    /// Verbindung entfernt); ein spaeter neu freigegebenes Modell bringt so keine
+    /// alte Wahl zurueck.
+    pub fn prune_function_models(&mut self) {
+        let models = &self.llm_models;
+        self.function_models
+            .retain(|_, f| models.iter().any(|m| m.id == f.model_id));
+    }
+
+    /// Ein Nachfolgemodell uebernimmt die Wahl aller Funktionen des alten.
+    pub fn replace_function_model(&mut self, old_id: &str, new_id: &str) {
+        for f in self.function_models.values_mut() {
+            if f.model_id == old_id {
+                f.model_id = new_id.to_string();
+            }
+        }
+    }
+
+    /// Ist das Modell freigegeben und seine Verbindung eingeschaltet?
+    pub fn llm_model_selectable(&self, id: &str) -> bool {
+        self.llm_models.iter().any(|m| {
+            m.id == id
+                && m.enabled
+                && self
+                    .llm_connections
+                    .iter()
+                    .any(|c| c.id == m.connection_id && c.enabled)
+        })
+    }
+
+    /// Das gewaehlte Modell einer Funktion, falls es (noch) waehlbar ist; sonst
+    /// `None` und das Standardmodell gilt (Rueckfall statt Fehler).
+    pub fn function_model(&self, function: &str) -> Option<&FunctionModel> {
+        self.function_models
+            .get(function)
+            .filter(|f| !f.model_id.trim().is_empty() && self.llm_model_selectable(&f.model_id))
+    }
+
+    /// Die Einstellungen, wie eine Funktion sie sieht: ihr Modell (und ihr Effort)
+    /// als aktives Modell, in die aelteren Felder gespiegelt. Ohne eigene Wahl
+    /// unveraendert. Das Regelwerk prueft jeden Aufruf in `llm_client` weiter
+    /// gegen genau dieses Modell.
+    pub fn for_function(&self, function: &str) -> AppSettings {
+        let mut s = self.clone();
+        let Some(chosen) = self.function_model(function).cloned() else {
+            return s;
+        };
+        s.llm_active_model_id = Some(chosen.model_id.clone());
+        if let Some(effort) = chosen.effort.filter(|e| !e.trim().is_empty()) {
+            if let Some(m) = s.llm_models.iter_mut().find(|m| m.id == chosen.model_id) {
+                m.effort = Some(effort);
+            }
+        }
+        s.sync_legacy_from_llm();
+        s
     }
 
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
@@ -3026,6 +3109,94 @@ mod tests {
                 .map(|p| p.base_url.as_str()),
             Some("https://proxy.example/v1")
         );
+    }
+
+    /// Modelle je Funktion: die Funktion sieht ihr Modell samt eigenem Effort,
+    /// alles andere das Standardmodell; ein verschwundenes faellt zurueck.
+    #[test]
+    fn for_function_uses_the_function_model_and_falls_back() {
+        let mut settings = get_default_settings();
+        settings.llm_connections.push(LlmConnection {
+            id: "claude_cli".into(),
+            kind: "claude_cli".into(),
+            label: "Claude".into(),
+            base_url: "cli://claude".into(),
+            enabled: true,
+            monthly_budget_usd: None,
+            budget_enforced: false,
+            training_opt_out: false,
+        });
+        settings.llm_models.extend([
+            llm_model("claude:opus", "claude_cli", "opus", true),
+            llm_model("claude:haiku", "claude_cli", "haiku", true),
+            llm_model("claude:alt", "claude_cli", "alt", false),
+        ]);
+        settings.llm_active_model_id = Some("claude:opus".into());
+        settings.sync_legacy_from_llm();
+        settings.function_models.insert(
+            FN_VOICE_SPEAKER.into(),
+            FunctionModel {
+                model_id: "claude:haiku".into(),
+                effort: Some("low".into()),
+            },
+        );
+        settings.function_models.insert(
+            FN_MEETING_PROTOCOL.into(),
+            FunctionModel {
+                model_id: "claude:alt".into(),
+                effort: None,
+            },
+        );
+        let model = |s: &AppSettings| s.post_process_models.get("claude_cli").cloned();
+
+        let speaker = settings.for_function(FN_VOICE_SPEAKER);
+        assert_eq!(speaker.llm_active_model_id.as_deref(), Some("claude:haiku"));
+        assert_eq!(model(&speaker).as_deref(), Some("haiku@low"));
+        // Abgeschaltetes Modell: Rueckfall auf das Standardmodell.
+        let protocol = settings.for_function(FN_MEETING_PROTOCOL);
+        assert_eq!(model(&protocol).as_deref(), Some("opus@medium"));
+        // Ohne Eintrag und im Original: unveraendert.
+        assert_eq!(
+            model(&settings.for_function(FN_DICTATION_REFINE)),
+            model(&settings)
+        );
+        assert_eq!(model(&settings).as_deref(), Some("opus@medium"));
+    }
+
+    /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.
+    #[test]
+    fn function_models_follow_removed_and_replaced_models() {
+        let mut settings = get_default_settings();
+        settings.llm_models.extend([
+            llm_model("c:a", "c", "a", true),
+            llm_model("c:b", "c", "b", true),
+        ]);
+        for (f, id) in [(FN_VOICE_SPEAKER, "c:a"), (FN_MEETING_PROTOCOL, "c:b")] {
+            settings.function_models.insert(
+                f.into(),
+                FunctionModel {
+                    model_id: id.into(),
+                    effort: None,
+                },
+            );
+        }
+        settings.replace_function_model("c:a", "c:a2");
+        assert_eq!(settings.function_models[FN_VOICE_SPEAKER].model_id, "c:a2");
+        settings.llm_models.retain(|m| m.id != "c:b");
+        settings.prune_function_models();
+        assert!(!settings.function_models.contains_key(FN_MEETING_PROTOCOL));
+        // c:a2 gibt es (noch) nicht als Freigabe: ebenfalls entfernt.
+        assert!(!settings.function_models.contains_key(FN_VOICE_SPEAKER));
+    }
+
+    /// Alte Einstellungsdateien ohne das Feld laden mit leerer Zuordnung.
+    #[test]
+    fn function_models_default_to_empty() {
+        let raw = serde_json::to_value(get_default_settings()).unwrap();
+        let mut obj = raw.as_object().unwrap().clone();
+        obj.remove("function_models");
+        let parsed: AppSettings = serde_json::from_value(serde_json::Value::Object(obj)).unwrap();
+        assert!(parsed.function_models.is_empty());
     }
 
     /// Abo-Modelle: Effort (sonst der Standard) und Fast reisen im Modellnamen

@@ -85,6 +85,41 @@ const ROW_ACTION_QUIET_DANGER =
  * und unten schieben, löschen — Löschen fragt nach, denn es nimmt den
  * Projektordner samt Dateien mit.
  */
+/** Eingeklappte Spalte: links wie rechts derselbe schmale Streifen mit nur
+ *  einem Symbol oben, Erklärung im Tooltip (Patrick 01.11.). Der Streifen
+ *  nimmt die halbe Spaltenlücke mit, damit er schmal bleibt. */
+export const ColumnStrip = ({
+  side,
+  label,
+  onClick,
+  testId,
+}: {
+  side: "left" | "right";
+  label: string;
+  onClick: () => void;
+  testId?: string;
+}) => (
+  <div
+    className={`tts-strip shrink-0 pt-1 ${side === "left" ? "-me-2" : "-ms-2"}`}
+    data-testid={testId ? `${testId}-strip` : undefined}
+  >
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+      className="flex h-7 w-6 cursor-pointer items-center justify-center rounded-md text-text/60 transition-colors hover:bg-mid-gray/20 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+    >
+      {side === "left" ? (
+        <PanelLeftOpen width={16} height={16} aria-hidden="true" />
+      ) : (
+        <PanelRightOpen width={16} height={16} aria-hidden="true" />
+      )}
+    </button>
+  </div>
+);
+
 export const PagesSidebar: React.FC<{
   pages: PageInfo[];
   activeId: string;
@@ -155,17 +190,12 @@ export const PagesSidebar: React.FC<{
 
   if (collapsed) {
     return (
-      <div className="shrink-0 pt-1">
-        <button
-          type="button"
-          onClick={onToggle}
-          title={t("tts.pages.expand")}
-          aria-label={t("tts.pages.expand")}
-          className="p-1.5 rounded-md text-text/50 hover:text-text hover:bg-mid-gray/20 transition-colors cursor-pointer"
-        >
-          <PanelLeftOpen width={16} height={16} />
-        </button>
-      </div>
+      <ColumnStrip
+        side="left"
+        label={t("tts.pages.expand")}
+        onClick={onToggle}
+        testId="pages-expand"
+      />
     );
   }
 

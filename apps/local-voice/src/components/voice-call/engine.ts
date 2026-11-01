@@ -586,15 +586,6 @@ export class VoiceCallEngine {
     });
   }
 
-  /** Sprecher-Wahl des Gesprächs für den alten Weg; leer = das globale Modell (Rust). */
-  private speakerArgs(): { modelId: string | null; effort: string | null } {
-    const { speakerModelId, speakerEffort } = this.cfg.orchestration;
-    return {
-      modelId: speakerModelId || null,
-      effort: speakerModelId && speakerEffort ? speakerEffort : null,
-    };
-  }
-
   /** Verlauf plus neue Äußerung, ohne Systemanweisung (die hält der Orchestrator). */
   private historyFor(text: string): ChatMessage[] {
     return [...this.plainHistory(), { role: "user", content: text }];
@@ -660,7 +651,6 @@ export class VoiceCallEngine {
         full = await invoke<string>("voice_call_chat", {
           requestId: id,
           messages: this.messagesFor(text, systemPrompt),
-          ...this.speakerArgs(),
         });
         if (stale()) return;
         await Promise.race([
@@ -767,7 +757,6 @@ export class VoiceCallEngine {
       await invoke<string>("voice_call_chat", {
         requestId: turn.id,
         messages: this.messagesFor(text, systemPrompt),
-        ...this.speakerArgs(),
       });
       // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
       if (!dead())

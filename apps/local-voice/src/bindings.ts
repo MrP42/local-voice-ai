@@ -356,6 +356,19 @@ async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Modell einer Funktion setzen (Modelle je Funktion). `model_id = None` oder
+ * leer: die Funktion nutzt wieder das Standardmodell. Gesperrte oder nicht
+ * freigegebene Modelle sind nicht waehlbar, wie beim Standardmodell.
+ */
+async llmSetFunctionModel(forFunction: string, modelId: string | null, effort: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_function_model", { forFunction, modelId, effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
  */
 async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boolean> {
@@ -3318,9 +3331,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[], modelId: st
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, effort: string | null) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, effort }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6469,6 +6482,10 @@ memory_guard_percent?: number; history_limit?: number; recording_retention_perio
  */
 llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; 
 /**
+ * Modelle je Funktion; fehlt ein Eintrag oder ist er leer, gilt das Standardmodell.
+ */
+function_models?: Partial<{ [key in string]: FunctionModel }>; 
+/**
  * Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
  * oder der Modellspeicher von Ollama). Die App laedt die Modelle von
  * dort, statt sie ein zweites Mal herunterzuladen
@@ -7890,6 +7907,15 @@ export type FollowupMode =
  * Als .eml-Datei speichern (`path`).
  */
 "eml"
+/**
+ * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
+ * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
+ */
+export type FunctionModel = { model_id?: string; 
+/**
+ * Effort nur fuer diese Funktion (`low` … `max`); `None` = der des Modells.
+ */
+effort?: string | null }
 /**
  * Fusszeile.
  */

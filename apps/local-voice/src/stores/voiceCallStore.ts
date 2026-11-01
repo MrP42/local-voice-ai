@@ -246,10 +246,6 @@ function normalizeOrchestration(
   return {
     denkerModelId:
       typeof stored?.denkerModelId === "string" ? stored.denkerModelId : "",
-    speakerModelId:
-      typeof stored?.speakerModelId === "string" ? stored.speakerModelId : "",
-    speakerEffort:
-      typeof stored?.speakerEffort === "string" ? stored.speakerEffort : "",
     souveraenitaet: stufe ?? DEFAULT_ORCHESTRATION.souveraenitaet,
     useTools:
       typeof stored?.useTools === "boolean"

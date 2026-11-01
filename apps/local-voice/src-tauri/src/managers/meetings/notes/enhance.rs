@@ -1644,6 +1644,8 @@ async fn run_enhance(
     limits: RunLimits,
     progress: Progress<'_>,
 ) -> Result<MeetingDocument, EnhanceError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let started = std::time::Instant::now();
     let meeting = store
         .get_meeting(meeting_id)
@@ -2148,6 +2150,8 @@ async fn run_instruction(
     instruction: &str,
     limits: RunLimits,
 ) -> Result<MeetingDocument, EnhanceError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let instruction = instruction.trim();
     let instruction_chars = instruction.chars().count();
     if instruction_chars == 0 || instruction_chars > MAX_INSTRUCTION_CHARS {
