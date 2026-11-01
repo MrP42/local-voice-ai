@@ -420,6 +420,13 @@ fn build_apple_intelligence_bridge() {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
+    // Das Swift-Objekt wird fest fuer arm64 gebaut (`-target` unten); nur fuer dieses Ziel aufrufen.
+    assert_eq!(
+        env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+        Ok("aarch64"),
+        "Apple-Intelligence-Bruecke nur fuer aarch64-Ziele"
+    );
+
     const REAL_SWIFT_FILE: &str = "swift/apple_intelligence.swift";
     const STUB_SWIFT_FILE: &str = "swift/apple_intelligence_stub.swift";
     const BRIDGE_HEADER: &str = "swift/apple_intelligence_bridge.h";
