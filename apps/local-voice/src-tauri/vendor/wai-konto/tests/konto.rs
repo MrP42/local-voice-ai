@@ -462,3 +462,112 @@ fn verwaiste_datei_ohne_flag_wird_nicht_ausgeliefert() {
     assert_eq!(s.bild_lesen(&id).unwrap(), None);
     assert_eq!(bild_dateien(&s).len(), 1);
 }
+
+/// Speicher mit aktivem Erstprofil (`erst`) und einem zweiten, inaktiven Profil (`anderes`).
+fn zwei_profile() -> (tempfile::TempDir, KontoSpeicher, String, String) {
+    let (t, s) = speicher();
+    let erst = s.aktiv().unwrap().id;
+    let anderes = s.profil_anlegen(eingabe("Zweit")).unwrap().id;
+    (t, s, erst, anderes)
+}
+
+#[test]
+fn aendern_wenn_aktiv_erfolgreich() {
+    let (_t, s, erst, _) = zwei_profile();
+    let g = s.lesen().unwrap().generation;
+    let p = s
+        .profil_aendern_wenn_aktiv(
+            &erst,
+            ProfilAenderung {
+                anzeigename: Some("Neu".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(p.anzeigename, "Neu");
+    assert_eq!(s.lesen().unwrap().generation, g + 1);
+}
+
+#[test]
+fn aendern_wenn_aktiv_lehnt_inaktives_profil_ab() {
+    let (_t, s, _, anderes) = zwei_profile();
+    let vorher = s.lesen().unwrap();
+    let r = s.profil_aendern_wenn_aktiv(
+        &anderes,
+        ProfilAenderung {
+            anzeigename: Some("Neu".into()),
+            ..Default::default()
+        },
+    );
+    let Err(KontoFehler::NichtAktiv(id)) = r else {
+        panic!("erwartet NichtAktiv, war {r:?}");
+    };
+    assert_eq!(id, anderes);
+    assert_eq!(s.lesen().unwrap(), vorher);
+    assert!(
+        KontoFehler::NichtAktiv(anderes.clone())
+            .to_string()
+            .contains("nicht (mehr) das aktive Profil")
+    );
+    // Das Original schreibt weiterhin auch für inaktive Profile.
+    s.profil_aendern(
+        &anderes,
+        ProfilAenderung {
+            anzeigename: Some("Neu".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn bild_setzen_wenn_aktiv_erfolgreich_und_nicht_aktiv_ohne_wirkung() {
+    let (_t, s, erst, anderes) = zwei_profile();
+    s.bild_setzen_wenn_aktiv(&erst, &png(40)).unwrap();
+    assert_eq!(s.bild_lesen(&erst).unwrap().unwrap(), png(40));
+    assert_eq!(bild_dateien(&s), vec![format!("{erst}.png")]);
+
+    // Anderes Profil ohne Bild: keine Bilddatei, Datei unverändert.
+    let vorher = s.lesen().unwrap();
+    let r = s.bild_setzen_wenn_aktiv(&anderes, &png(50));
+    assert!(matches!(r, Err(KontoFehler::NichtAktiv(ref i)) if *i == anderes));
+    assert_eq!(s.lesen().unwrap(), vorher);
+    assert_eq!(bild_dateien(&s), vec![format!("{erst}.png")]);
+    assert!(s.bild_lesen(&anderes).unwrap().is_none());
+
+    // Anderes Profil mit Bild: altes Bild bleibt erhalten.
+    s.bild_setzen(&anderes, &png(60)).unwrap();
+    let vorher = s.lesen().unwrap();
+    let r = s.bild_setzen_wenn_aktiv(&anderes, &png(70));
+    assert!(matches!(r, Err(KontoFehler::NichtAktiv(_))));
+    assert_eq!(s.lesen().unwrap(), vorher);
+    assert_eq!(s.bild_lesen(&anderes).unwrap().unwrap(), png(60));
+}
+
+#[test]
+fn bild_entfernen_wenn_aktiv_erfolgreich_und_nicht_aktiv_ohne_wirkung() {
+    let (_t, s, erst, anderes) = zwei_profile();
+    s.bild_setzen(&erst, &png(40)).unwrap();
+    s.bild_setzen(&anderes, &png(60)).unwrap();
+
+    let vorher = s.lesen().unwrap();
+    let r = s.bild_entfernen_wenn_aktiv(&anderes);
+    assert!(matches!(r, Err(KontoFehler::NichtAktiv(ref i)) if *i == anderes));
+    assert_eq!(s.lesen().unwrap(), vorher);
+    assert_eq!(s.bild_lesen(&anderes).unwrap().unwrap(), png(60));
+
+    s.bild_entfernen_wenn_aktiv(&erst).unwrap();
+    assert!(s.bild_lesen(&erst).unwrap().is_none());
+    assert_eq!(bild_dateien(&s), vec![format!("{anderes}.png")]);
+}
+
+#[test]
+fn wenn_aktiv_prueft_nach_profilwechsel() {
+    let (_t, s, erst, anderes) = zwei_profile();
+    s.aktivieren(&anderes).unwrap();
+    assert!(matches!(
+        s.bild_entfernen_wenn_aktiv(&erst),
+        Err(KontoFehler::NichtAktiv(_))
+    ));
+    s.bild_setzen_wenn_aktiv(&anderes, &png(30)).unwrap();
+}

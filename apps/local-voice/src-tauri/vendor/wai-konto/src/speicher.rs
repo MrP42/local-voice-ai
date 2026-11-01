@@ -143,12 +143,31 @@ impl KontoSpeicher {
         id: &str,
         aenderung: ProfilAenderung,
     ) -> Result<Profil, KontoFehler> {
+        self.profil_aendern_intern(id, aenderung, false)
+    }
+
+    /// Wie [`Self::profil_aendern`], prüft aber unter derselben Dateisperre und vor dem
+    /// Schreiben, dass `id` das aktive Profil ist. Sonst `NichtAktiv`; dann wird nichts
+    /// geschrieben. Schließt das Fenster zwischen „ist X aktiv?“ und dem Schreiben, in dem
+    /// eine andere Suite-App das aktive Profil wechseln kann.
+    pub fn profil_aendern_wenn_aktiv(
+        &self,
+        id: &str,
+        aenderung: ProfilAenderung,
+    ) -> Result<Profil, KontoFehler> {
+        self.profil_aendern_intern(id, aenderung, true)
+    }
+
+    /// Gemeinsame Umsetzung; `nur_aktiv` schaltet die Aktiv-Prüfung unter der Sperre ein.
+    fn profil_aendern_intern(
+        &self,
+        id: &str,
+        aenderung: ProfilAenderung,
+        nur_aktiv: bool,
+    ) -> Result<Profil, KontoFehler> {
         self.aendern(|d| {
-            let profil = d
-                .profile
-                .iter_mut()
-                .find(|p| p.id == id)
-                .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
+            aktiv_pruefen(d, id, nur_aktiv)?;
+            let profil = profil_suchen(d, id)?;
             anwenden(profil, aenderung)?;
             profil.geaendert_ms = jetzt_ms();
             Ok(profil.clone())
@@ -205,14 +224,24 @@ impl KontoSpeicher {
     /// ein neues Bild eines zuvor bildlosen Profils wird gelöscht. Nur wenn auch das
     /// Wiederherstellen scheitert, kann ein anderes gültiges Bild oder eine Waise bleiben.
     pub fn bild_setzen(&self, id: &str, png: &[u8]) -> Result<(), KontoFehler> {
+        self.bild_setzen_intern(id, png, false)
+    }
+
+    /// Wie [`Self::bild_setzen`], prüft aber unter derselben Dateisperre und vor jedem
+    /// Schreiben, dass `id` das aktive Profil ist. Sonst `NichtAktiv`; dann bleiben
+    /// `profile.json`, `generation` und das vorhandene Bild unverändert und es entsteht
+    /// keine Bilddatei. Ein ungültiges Bild wird weiterhin zuerst abgelehnt.
+    pub fn bild_setzen_wenn_aktiv(&self, id: &str, png: &[u8]) -> Result<(), KontoFehler> {
+        self.bild_setzen_intern(id, png, true)
+    }
+
+    /// Gemeinsame Umsetzung; `nur_aktiv` schaltet die Aktiv-Prüfung unter der Sperre ein.
+    fn bild_setzen_intern(&self, id: &str, png: &[u8], nur_aktiv: bool) -> Result<(), KontoFehler> {
         bild_pruefen(png)?;
         let _sperre = self.sperren()?;
         let mut datei = self.lesen()?;
-        let profil = datei
-            .profile
-            .iter_mut()
-            .find(|p| p.id == id)
-            .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
+        aktiv_pruefen(&datei, id, nur_aktiv)?;
+        let profil = profil_suchen(&mut datei, id)?;
         let ziel = self.bild_pfad(id)?;
         let alt = if profil.hat_bild {
             self.bild_lesen_roh(&ziel)?
@@ -244,13 +273,22 @@ impl KontoSpeicher {
     /// Fehler; [`Self::bild_lesen`] liefert sie nicht aus); das Flag zeigt nie auf eine
     /// bereits gelöschte Datei.
     pub fn bild_entfernen(&self, id: &str) -> Result<(), KontoFehler> {
+        self.bild_entfernen_intern(id, false)
+    }
+
+    /// Wie [`Self::bild_entfernen`], prüft aber unter derselben Dateisperre und vor dem
+    /// Schreiben, dass `id` das aktive Profil ist. Sonst `NichtAktiv`; dann bleiben
+    /// `profile.json`, `generation` und die Bilddatei unverändert.
+    pub fn bild_entfernen_wenn_aktiv(&self, id: &str) -> Result<(), KontoFehler> {
+        self.bild_entfernen_intern(id, true)
+    }
+
+    /// Gemeinsame Umsetzung; `nur_aktiv` schaltet die Aktiv-Prüfung unter der Sperre ein.
+    fn bild_entfernen_intern(&self, id: &str, nur_aktiv: bool) -> Result<(), KontoFehler> {
         self.aendern_dann(
             |d| {
-                let profil = d
-                    .profile
-                    .iter_mut()
-                    .find(|p| p.id == id)
-                    .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
+                aktiv_pruefen(d, id, nur_aktiv)?;
+                let profil = profil_suchen(d, id)?;
                 profil.hat_bild = false;
                 profil.geaendert_ms = jetzt_ms();
                 Ok(())
@@ -382,6 +420,23 @@ impl KontoSpeicher {
         atomar_schreiben(&self.datei_pfad(), &json)?;
         Ok(())
     }
+}
+
+/// Mit `nur_aktiv`: Fehler `NichtAktiv`, wenn `id` nicht das aktive Profil der Datei ist.
+fn aktiv_pruefen(datei: &ProfilDatei, id: &str, nur_aktiv: bool) -> Result<(), KontoFehler> {
+    if nur_aktiv && datei.aktiv != id {
+        return Err(KontoFehler::NichtAktiv(id.into()));
+    }
+    Ok(())
+}
+
+/// Sucht das Profil `id` veränderbar; sonst `NichtGefunden`.
+fn profil_suchen<'a>(datei: &'a mut ProfilDatei, id: &str) -> Result<&'a mut Profil, KontoFehler> {
+    datei
+        .profile
+        .iter_mut()
+        .find(|p| p.id == id)
+        .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))
 }
 
 /// Liest höchstens `max` + 1 Byte aus `leser`; das eine Byte mehr zeigt „zu groß“ an,
