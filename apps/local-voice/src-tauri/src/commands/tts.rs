@@ -72,6 +72,20 @@ pub fn tts_prewarm_cancel(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Anlauf fuer den naechsten Buchteil (lva#150): die ersten Saetze still
+/// vorberechnen. Kehrt sofort zurueck.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_prefetch_head(app: AppHandle, text: String) -> Result<(), String> {
+    let tts = app.state::<Arc<TtsManager>>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = tts.prefetch_head(&text).await {
+            log::warn!("prefetch: {e}");
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_speak_clipboard(app: AppHandle) -> Result<(), String> {

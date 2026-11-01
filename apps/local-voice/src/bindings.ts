@@ -5249,6 +5249,18 @@ async ttsPrewarmCancel() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Anlauf fuer den naechsten Buchteil (lva#150): die ersten Saetze still
+ * vorberechnen. Kehrt sofort zurueck.
+ */
+async ttsPrefetchHead(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_prefetch_head", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsServerStatus() : Promise<Result<TtsStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_server_status") };

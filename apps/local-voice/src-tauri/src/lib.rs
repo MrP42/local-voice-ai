@@ -2429,6 +2429,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_speak_text_at,
             commands::tts::tts_prewarm,
             commands::tts::tts_prewarm_cancel,
+            commands::tts::tts_prefetch_head,
             commands::tts::tts_server_status,
             commands::tts::tts_list_voices,
             commands::tts::tts_voice_demo,

@@ -86,11 +86,38 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status")
             return { phase: "stopped", message: null };
-          if (cmd === "pages_list") return [{ id: "p1", title: "Die Leuchtturmwärterin" }];
+          const parts = (
+            window as unknown as { __parts?: Record<string, string> }
+          ).__parts;
+          if (cmd === "pages_list")
+            return parts
+              ? Object.keys(parts).map((id, i) => ({ id, title: `Teil ${i + 1}` }))
+              : [{ id: "p1", title: "Die Leuchtturmwärterin" }];
+          if (cmd === "books_list")
+            return parts
+              ? [
+                  {
+                    id: "b1",
+                    title: "Buch",
+                    created_ms: 0,
+                    page_ids: Object.keys(parts),
+                    characters: [],
+                  },
+                ]
+              : [];
           if (cmd === "page_state_load")
             return JSON.stringify({
-              text: (window as unknown as { __pageText?: string }).__pageText ?? "",
+              text:
+                parts?.[String(args?.id)] ??
+                (window as unknown as { __pageText?: string }).__pageText ??
+                "",
               tab: "original",
+            });
+          if (cmd === "tts_speak_text" && parts)
+            // Die Sitzung endet erst, wenn der Test es sagt.
+            return new Promise((done) => {
+              (window as unknown as { __endSpeak: () => void }).__endSpeak = () =>
+                done(null);
             });
           if (cmd === "page_dir") return "C:\\projects\\p1";
           if (cmd === "plugin:dialog|open")
@@ -1015,4 +1042,57 @@ test("ISBN: Titelei mit Initialen wird ersetzt, nicht verdoppelt", async ({ page
     /^Der Leuchtturm am Ende der Welt/,
     /^Erstes Kapitel/,
   ]);
+});
+
+// Buchteile (lva#150): am Ende eines Teils im nächsten weiterlesen.
+const PARTS = {
+  p1: "# Teil eins\n\nDer Wind strich um den Turm. Mara stieg die Stufen hinauf.",
+  p2: "# Teil zwei\n\nOben brannte das Licht. Die Nacht war ruhig.",
+};
+
+const startPart = async (page: Page) => {
+  await page.addInitScript((parts) => {
+    (window as unknown as { __parts: Record<string, string> }).__parts = parts;
+    window.localStorage.setItem("lva.ui.tts.activePage", "p1");
+  }, PARTS);
+  await open(page, "");
+  await expect(page.getByTestId("reader-flow")).toContainText("Teil eins");
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
+};
+
+test("Buchteile: am Ende liest das Vorlesen im nächsten Teil weiter, vorberechnet", async ({
+  page,
+}) => {
+  await startPart(page);
+  // Der letzte Satz läuft: der Anfang von Teil zwei wird still vorberechnet.
+  await emit(page, "tts-speak-progress", { position: 1, total: 3 });
+  await expect
+    .poll(async () => (await calls(page, "tts_prefetch_head")).length)
+    .toBe(1);
+  const [prefetch] = await calls(page, "tts_prefetch_head");
+  expect(String(prefetch.text)).toContain("Oben brannte das Licht.");
+  expect(String(prefetch.text)).not.toContain("Der Wind");
+
+  await emit(page, "tts-speak-progress", { position: 3, total: 3 });
+  await page.evaluate(() =>
+    (window as unknown as { __endSpeak: () => void }).__endSpeak(),
+  );
+  await expect(page.getByTestId("reader-flow")).toContainText("Teil zwei");
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(2);
+  const [, second] = await calls(page, "tts_speak_text");
+  expect(String(second.text)).toContain("Oben brannte das Licht.");
+  await expect(page.getByText("Weiter mit „Teil 2“")).toBeVisible();
+});
+
+test("Buchteile: nach einem Stopp bleibt das Vorlesen im Teil", async ({ page }) => {
+  await startPart(page);
+  // Abgebrochen nach dem ersten von drei Sätzen.
+  await emit(page, "tts-speak-progress", { position: 1, total: 3 });
+  await page.evaluate(() =>
+    (window as unknown as { __endSpeak: () => void }).__endSpeak(),
+  );
+  await page.waitForTimeout(400);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(1);
+  await expect(page.getByTestId("reader-flow")).toContainText("Teil eins");
 });

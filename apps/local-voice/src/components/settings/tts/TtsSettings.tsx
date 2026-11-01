@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   commands,
   type AutoTagOptions,
+  type Book,
   type PageInfo,
   type TtsStatus,
 } from "@/bindings";
@@ -139,6 +140,9 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
 /// ein. Die ersten Saetze sind langsamer (das Modell laedt noch), eine rohe
 /// Hochrechnung springt deshalb von Satz zu Satz wild.
 const ETA_SMOOTHING = 0.3;
+/** Buchteile (lva#150): so viele Sätze vor dem Ende beginnt der Anlauf des
+ *  nächsten Teils — so viele, wie der Vorpuffer vorausrechnet. */
+const PART_LEAD_SENTENCES = 3;
 
 /// Restdauer als "2:30", ab einer Stunde als "1:05:00". Auf 5 Sekunden
 /// gerundet: sekundengenau zappelt die Zahl bei jedem Satz, ohne mehr zu
@@ -727,12 +731,16 @@ export const TtsSettings = () => {
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
     const canon = canonicalizeTagsAt(script, scriptOffset);
+    const pageAtStart = activePageRef.current;
+    partSession.current =
+      onlyOne || !pageAtStart ? null : { page: pageAtStart, prefetched: false };
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
       onlyOne,
     );
     if (result.status === "error") setLastError(result.error);
+    else if (!onlyOne) continueWithNextPart(pageAtStart);
   };
 
   // Vorab-Erzeugung: geaenderte Saetze in den Cache, ohne Wiedergabe.
@@ -791,10 +799,15 @@ export const TtsSettings = () => {
     locatorRef.current?.reset(0);
     lastLocated.current = null;
     sessionResumeKey.current = resumeKeyRef.current;
+    const pageAtStart = activePageRef.current;
+    partSession.current = pageAtStart
+      ? { page: pageAtStart, prefetched: false }
+      : null;
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") setLastError(result.error);
+    else continueWithNextPart(pageAtStart);
   };
 
   /**
@@ -1288,6 +1301,103 @@ export const TtsSettings = () => {
   } | null>(null);
   const activePageRef = useRef<string | null>(null);
   activePageRef.current = activePage ?? null;
+
+  // Buchteile (lva#150): Gehört die Seite zu einem Buch der Skript-Werkstatt,
+  // liest das Vorlesen am Ende im nächsten Teil weiter — ohne Abriss, weil
+  // die ersten Sätze des nächsten Teils schon vorberechnet sind, während der
+  // laufende Teil ausklingt.
+  const [books, setBooks] = useState<Book[]>([]);
+  useEffect(() => {
+    let live = true;
+    commands
+      .booksList()
+      .then((r) => {
+        if (live && r.status === "ok" && Array.isArray(r.data)) setBooks(r.data);
+      })
+      .catch(() => {
+        /* ohne Bücherliste liest das Vorlesen nur den einen Teil */
+      });
+    return () => {
+      live = false;
+    };
+  }, [pages]);
+  const nextPart = useMemo(() => {
+    if (!activePage) return null;
+    for (const b of books) {
+      const i = b.page_ids.indexOf(activePage);
+      if (i < 0) continue;
+      for (const id of b.page_ids.slice(i + 1)) {
+        const page = pages.find((p) => p.id === id);
+        if (page) return { id, title: page.title };
+      }
+    }
+    return null;
+  }, [books, activePage, pages]);
+  const nextPartRef = useRef(nextPart);
+  nextPartRef.current = nextPart;
+  const speakProgressRef = useRef(speakProgress);
+  speakProgressRef.current = speakProgress;
+  /** Seite, deren Sitzung gerade läuft, und ob ihr Anlauf schon angefragt ist. */
+  const partSession = useRef<{ page: string; prefetched: boolean } | null>(
+    null,
+  );
+  /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
+  const autoplayPage = useRef<string | null>(null);
+
+  // Die letzten Sätze laufen: den Anfang des nächsten Teils still vorberechnen.
+  useEffect(() => {
+    const session = partSession.current;
+    const next = nextPartRef.current;
+    if (!session || session.prefetched || !next || !speakProgress) return;
+    if (session.page !== activePageRef.current) return;
+    const { position, total } = speakProgress;
+    if (total === 0 || position < Math.max(0, total - PART_LEAD_SENTENCES))
+      return;
+    session.prefetched = true;
+    void commands.pageStateLoad(next.id).then((r) => {
+      if (r.status !== "ok" || !r.data) return;
+      let nextText = r.data;
+      try {
+        nextText = (JSON.parse(r.data) as { text?: string }).text ?? "";
+      } catch {
+        // Ältere Seiten speichern den Text roh.
+      }
+      if (!nextText.trim()) return;
+      void commands.ttsPrefetchHead(
+        canonicalizeTags(toSpokenScript(nextText)),
+      );
+    });
+  }, [speakProgress]);
+
+  /**
+   * Nach dem Ende einer Sitzung: war sie vollständig (letzter Satz gehört)
+   * und gibt es einen nächsten Teil, dorthin wechseln und weiterlesen.
+   */
+  const continueWithNextPart = (pageAtStart: string | null) => {
+    const session = partSession.current;
+    partSession.current = null;
+    const progress = speakProgressRef.current;
+    const next = nextPartRef.current;
+    if (!session || !pageAtStart || session.page !== pageAtStart) return;
+    if (!progress || progress.total === 0 || progress.position < progress.total)
+      return;
+    if (activePageRef.current !== pageAtStart || !next) return;
+    if (sessionTab.current !== "original") return;
+    autoplayPage.current = next.id;
+    setActivePage(next.id);
+    toast(t("tts.parts.next", { title: next.title }));
+  };
+  useEffect(() => {
+    if (!autoplayPage.current || autoplayPage.current !== activePage) return;
+    if (!pageLoaded.current || !spokenText.trim()) return;
+    autoplayPage.current = null;
+    // Nur im Originaltext: eine Übersetzung oder Zusammenfassung des nächsten
+    // Teils liest niemand ungefragt vor.
+    if (tab !== "original") return;
+    void speakNow();
+    // speakNow liest den aktuellen Stand; neu laufen soll das nur, wenn der
+    // Text des gewechselten Teils da ist.
+  }, [spokenText, activePage, tab]);
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
