@@ -17,6 +17,7 @@ mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod input;
+mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod llm_client;
 mod llm_keys;
@@ -2458,6 +2459,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_tidy_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
+            isbn::isbn_lookup,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,

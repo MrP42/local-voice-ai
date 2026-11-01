@@ -84,6 +84,23 @@
       "speakerMenuVoice": "Voice and speaking style for “{{name}}”…",
       "readFromHere": "Read from here"
     },
+    "isbn": {
+      "button": "Book details by ISBN",
+      "buttonHint": "Fetch title and author from Open Library – only the ISBN is sent",
+      "title": "Look up book details by ISBN",
+      "label": "ISBN",
+      "privacy": "The lookup asks Open Library (openlibrary.org) and sends only the ISBN, never the book text. Nothing is applied until you confirm.",
+      "search": "Search",
+      "searching": "Searching …",
+      "apply": "Apply",
+      "cancel": "Cancel",
+      "none": "Open Library does not know this ISBN.",
+      "by": "by {{authors}}",
+      "pages": "{{count}} pages",
+      "openLibrary": "View on Open Library",
+      "check": "Check that this is your edition. “Apply” puts title and author on the title page and renames the page.",
+      "applied": "Book details applied: {{title}}"
+    },
     "providers": {
       "title": "Speech providers",
       "description": "More speech outputs besides Fish Speech and Piper. Experimental providers stay off until you enable them; each provider shows what is still missing for its license or network access.",

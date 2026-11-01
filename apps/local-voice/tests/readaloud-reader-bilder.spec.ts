@@ -93,6 +93,22 @@ test.beforeEach(async ({ page }) => {
               tab: "original",
             });
           if (cmd === "page_dir") return "C:\\projects\\p1";
+          if (cmd === "isbn_lookup") {
+            const set = (window as unknown as { __isbn?: unknown }).__isbn;
+            if (set === null) return null;
+            if (typeof set === "string") throw set;
+          }
+          if (cmd === "isbn_lookup")
+            return {
+              isbn: "9783161484100",
+              title: "Der Leuchtturm am Ende der Welt",
+              subtitle: "Roman",
+              authors: ["Ada Beispiel", "Bo Muster"],
+              publishers: ["Beispielverlag"],
+              publish_date: "2020",
+              pages: 312,
+              url: "https://openlibrary.org/books/OL1M/Der_Leuchtturm",
+            };
           if (cmd === "tts_list_voice_infos")
             return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
           if (cmd === "tts_cached_translation") return null;
@@ -411,5 +427,67 @@ for (const theme of ["light", "dark"]) {
       await page.waitForTimeout(400);
       await page.screenshot({ path: `${DIR}/buchinfo-${theme}-${width}.png` });
     });
+  }
+}
+
+// Buchdaten per ISBN (lva#149): Dialog mit Treffer, danach die Leiste.
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild isbn ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      const text = ["# Leuchtturm", "", "von Unbekannt", "", "Impressum: ISBN 978-3-16-148410-0", "", PDF_BUCH].join("\n");
+      await open(page, text, 1440);
+      if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("reader-flow").waitFor();
+      await page.getByTestId("reader-isbn").click();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${DIR}/isbn-1-dialog-${theme}-${width}.png` });
+      await page.getByTestId("isbn-search").click();
+      await page.getByTestId("isbn-apply").waitFor();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${DIR}/isbn-2-treffer-${theme}-${width}.png` });
+      await page.getByTestId("isbn-apply").click();
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: `${DIR}/isbn-3-uebernommen-${theme}-${width}.png` });
+    });
+  }
+}
+
+// ISBN ohne Treffer und ohne Netz (Codex-Auflage zu lva#171).
+for (const [name, answer] of [
+  ["4-kein-treffer", null],
+  [
+    "5-offline",
+    "Open Library ist gerade nicht erreichbar. Prüfe die Internetverbindung und versuche es noch einmal.",
+  ],
+] as const) {
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1440, 390]) {
+      test(`bild isbn ${name} ${theme} ${width}`, async ({ page }) => {
+        test.skip(!DIR, "nur mit SCREENS_DIR");
+        await page.addInitScript(
+          ([t, a]) => {
+            const w = window as unknown as { __theme: string; __isbn: unknown };
+            w.__theme = t as string;
+            w.__isbn = a;
+          },
+          [theme, answer] as const,
+        );
+        await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+        const text = ["# Leuchtturm", "", "von Unbekannt", "", "Impressum: ISBN 978-3-16-148410-0", "", PDF_BUCH].join("\n");
+        await open(page, text, 1440);
+        if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+        await page.getByTestId("reader-flow").waitFor();
+        await page.getByTestId("reader-isbn").click();
+        await page.getByTestId("isbn-search").click();
+        await page.getByTestId("isbn-result").locator("p").first().waitFor();
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: `${DIR}/isbn-${name}-${theme}-${width}.png` });
+      });
+    }
   }
 }

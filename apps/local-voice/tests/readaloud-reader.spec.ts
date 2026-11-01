@@ -99,6 +99,11 @@ test.beforeEach(async ({ page }) => {
             return (window as unknown as { __extracted?: string }).__extracted ?? "";
           if (cmd === "tts_list_voice_infos")
             return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
+          if (cmd === "isbn_lookup") {
+            const hit = (window as unknown as { __isbn?: unknown }).__isbn;
+            if (typeof hit === "string") throw hit;
+            return hit ?? null;
+          }
           if (cmd === "tts_cached_translation") return null;
           if (cmd === "tts_list_downloads") return [];
           if (
@@ -873,4 +878,141 @@ test("ohne Autorzeile keine Buchinfo", async ({ page }) => {
   );
   await expect(page.getByTestId("reader-contents")).toBeVisible();
   await expect(page.getByTestId("reader-bookinfo")).toHaveCount(0);
+});
+
+const ISBN_TEXT = [
+  "# Leuchtturm",
+  "",
+  "von Unbekannt",
+  "",
+  "Impressum: ISBN 978-3-16-148410-0, Beispielverlag.",
+  "",
+  "## Erstes Kapitel",
+  "",
+  "Der Wind strich um den Turm.",
+].join("\n");
+
+const ISBN_HIT = {
+  isbn: "9783161484100",
+  title: "Der Leuchtturm am Ende der Welt",
+  subtitle: "Roman",
+  authors: ["Ada Beispiel", "Bo Muster"],
+  publishers: ["Beispielverlag"],
+  publish_date: "2020",
+  pages: 312,
+  url: "https://openlibrary.org/books/OL1M/Der_Leuchtturm",
+};
+
+test("ISBN: Abfrage erst auf Knopfdruck, Übernahme erst nach Bestätigung", async ({
+  page,
+}) => {
+  await page.addInitScript((hit) => {
+    (window as unknown as { __isbn: unknown }).__isbn = hit;
+  }, ISBN_HIT);
+  await open(page, ISBN_TEXT);
+  await page.getByTestId("reader-isbn").click();
+  // Vorschlag aus dem Impressum, aber noch keine Abfrage.
+  await expect(page.getByTestId("isbn-input")).toHaveValue("978-3-16-148410-0");
+  expect(await calls(page, "isbn_lookup")).toHaveLength(0);
+  await page.getByTestId("isbn-search").click();
+  await expect(page.getByTestId("isbn-result")).toContainText(
+    "Der Leuchtturm am Ende der Welt",
+  );
+  await expect(page.getByTestId("isbn-result")).toContainText(
+    "von Ada Beispiel, Bo Muster",
+  );
+  expect(await calls(page, "isbn_lookup")).toEqual([
+    { isbn: "978-3-16-148410-0" },
+  ]);
+  // Treffer angezeigt, aber noch nichts übernommen.
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("Unbekannt");
+  expect(await calls(page, "pages_rename")).toHaveLength(0);
+  await page.getByTestId("isbn-apply").click();
+  const info = page.getByTestId("reader-bookinfo");
+  await expect(info).toContainText("Der Leuchtturm am Ende der Welt");
+  await expect(info).toContainText("Ada Beispiel, Bo Muster");
+  await expect(info).not.toContainText("Unbekannt");
+  await expect
+    .poll(async () => (await calls(page, "pages_rename")).map((a) => a.title))
+    .toEqual(["Der Leuchtturm am Ende der Welt"]);
+  // Die alte Titelei ist ersetzt, nicht doppelt.
+  await expect(page.getByTestId("reader-contents-entry")).toHaveText([
+    /^Der Leuchtturm am Ende der Welt/,
+    /^Erstes Kapitel/,
+  ]);
+});
+
+test("ISBN: Abbrechen lässt den Text unverändert", async ({ page }) => {
+  await page.addInitScript((hit) => {
+    (window as unknown as { __isbn: unknown }).__isbn = hit;
+  }, ISBN_HIT);
+  await open(page, ISBN_TEXT);
+  await page.getByTestId("reader-isbn").click();
+  await page.getByTestId("isbn-search").click();
+  await expect(page.getByTestId("isbn-apply")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("isbn-input")).toHaveCount(0);
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("Unbekannt");
+  expect(await calls(page, "pages_rename")).toHaveLength(0);
+});
+
+test("ISBN: kein Treffer und Fehler werden gemeldet, nichts übernommen", async ({
+  page,
+}) => {
+  await open(page, ISBN_TEXT);
+  await page.getByTestId("reader-isbn").click();
+  await page.getByTestId("isbn-search").click();
+  await expect(page.getByTestId("isbn-result")).toContainText(
+    "Open Library kennt diese ISBN nicht.",
+  );
+  await expect(page.getByTestId("isbn-apply")).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as unknown as { __isbn: unknown }).__isbn =
+      "Keine gültige ISBN (10 oder 13 Stellen mit passender Prüfziffer).";
+  });
+  await page.getByTestId("isbn-input").fill("978-3-16-148410-1");
+  await page.getByTestId("isbn-search").click();
+  await expect(page.getByTestId("isbn-result")).toContainText("Keine gültige ISBN");
+  await expect(page.getByTestId("isbn-apply")).toHaveCount(0);
+  expect(await calls(page, "pages_rename")).toHaveLength(0);
+});
+
+test("ISBN: ohne Titelei wird eine vorangestellt", async ({ page }) => {
+  await page.addInitScript((hit) => {
+    (window as unknown as { __isbn: unknown }).__isbn = hit;
+  }, ISBN_HIT);
+  await open(page, "## Erstes Kapitel\n\nISBN 3-16-148410-X\n\nDer Wind strich um den Turm.");
+  await expect(page.getByTestId("reader-bookinfo")).toHaveCount(0);
+  await page.getByTestId("reader-isbn").click();
+  await expect(page.getByTestId("isbn-input")).toHaveValue("3-16-148410-X");
+  await page.getByTestId("isbn-search").click();
+  await page.getByTestId("isbn-apply").click();
+  await expect(page.getByTestId("reader-bookinfo")).toContainText(
+    "Der Leuchtturm am Ende der Welt",
+  );
+  await expect(page.getByTestId("reader-contents-entry")).toHaveText([
+    /^Der Leuchtturm am Ende der Welt/,
+    /^Erstes Kapitel/,
+  ]);
+});
+
+test("ISBN: Titelei mit Initialen wird ersetzt, nicht verdoppelt", async ({ page }) => {
+  await page.addInitScript((hit) => {
+    (window as unknown as { __isbn: unknown }).__isbn = hit;
+  }, ISBN_HIT);
+  await open(
+    page,
+    "# Alt\n\nvon A. B. Müller\n\nisbn 978-3-16-148410-1 (Druck), ISBN-13: 978-3-16-148410-0\n\n## Erstes Kapitel\n\nText.",
+  );
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("A. B. Müller");
+  await page.getByTestId("reader-isbn").click();
+  // Die erste ISBN hat eine falsche Prüfziffer: vorgeschlagen wird die gültige.
+  await expect(page.getByTestId("isbn-input")).toHaveValue("978-3-16-148410-0");
+  await page.getByTestId("isbn-search").click();
+  await page.getByTestId("isbn-apply").click();
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("Ada Beispiel");
+  await expect(page.getByTestId("reader-contents-entry")).toHaveText([
+    /^Der Leuchtturm am Ende der Welt/,
+    /^Erstes Kapitel/,
+  ]);
 });
