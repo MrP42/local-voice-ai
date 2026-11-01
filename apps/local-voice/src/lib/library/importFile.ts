@@ -49,6 +49,12 @@ export async function prepareFile(path: string): Promise<PreparedFile> {
 export const hasKind = (book: LibraryBook, kind: PreparedFile["kind"]) =>
   kind === "text" ? !!book.text : !!book.audio;
 
+/** Buch frisch aus dem Kern (nicht aus einem alten Oberflächenstand). */
+export async function freshBook(id: string): Promise<LibraryBook | null> {
+  const r = await commands.libraryList();
+  return r.status === "ok" ? (r.data.find((b) => b.id === id) ?? null) : null;
+}
+
 /** Vorhandenes Werk zu Titel/Autor/ISBN, sonst `null`. */
 export async function findWork(
   title: string,
@@ -84,7 +90,11 @@ export async function addToLibrary(
         .libraryDescription(candidate.work_key)
         .then((r) => (r.status === "ok" ? r.data : null))
     : null;
-  const base: LibraryBook = attachTo ?? {
+  // Anhängen immer an den aktuellen Stand: ein alter Schnappschuss würde eine
+  // inzwischen angehängte Fassung wieder entfernen.
+  const current = attachTo ? await freshBook(attachTo.id) : null;
+  if (attachTo && !current) throw new ImportError("Buch nicht gefunden.");
+  const base: LibraryBook = current ?? {
     id: "",
     title,
     subtitle: null,
@@ -116,7 +126,10 @@ export async function addToLibrary(
       created.data.id,
       JSON.stringify({ text: file.text, summary: "", sourceUrl: "", tab: "original" }),
     );
-    fail(stored);
+    if (stored.status === "error") {
+      await commands.pagesDelete(created.data.id);
+      throw new ImportError(stored.error);
+    }
     book = {
       ...book,
       text: { page_id: created.data.id, origin: "document", source_name: file.name },
@@ -164,5 +177,5 @@ export async function addToLibrary(
     const r = await commands.libraryCoverFromFile(book.id, file.path);
     if (r.status === "ok") book = r.data;
   }
-  return { book, attached: !!attachTo };
+  return { book, attached: !!current };
 }

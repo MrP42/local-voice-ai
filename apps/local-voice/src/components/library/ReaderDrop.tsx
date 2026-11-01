@@ -34,11 +34,11 @@ export const ReaderDrop: React.FC<{
       toast.error(t("library.unsupported", { ext: extensionOf(path) }));
       return;
     }
-    if (kind === "text") {
-      await onDocument(path);
-      return;
-    }
     try {
+      if (kind === "text") {
+        await onDocument(path);
+        return;
+      }
       const file = await prepareFile(path);
       const work = await findWork(file.title, file.authors);
       const { book } = await addToLibrary(file, {
@@ -54,7 +54,8 @@ export const ReaderDrop: React.FC<{
   };
 
   const drop = useFileDrop(".tts-workspace", (paths) => {
-    for (const path of paths) queue.current = queue.current.then(() => take(path));
+    for (const path of paths)
+      queue.current = queue.current.then(() => take(path)).catch(() => {});
   });
 
   if (!drop.over) return null;

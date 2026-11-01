@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { LibraryBook } from "@/bindings";
@@ -9,6 +9,7 @@ import { extensionOf, kindOfFile } from "@/lib/library/books";
 import {
   addToLibrary,
   findWork,
+  freshBook,
   hasKind,
   prepareFile,
   type PreparedFile,
@@ -41,11 +42,17 @@ export function useLibraryDrop(
   const { t } = useTranslation();
   const [question, setQuestion] = useState<Question | null>(null);
   const [working, setWorking] = useState<string | null>(null);
-  const booksRef = useRef(books);
-  booksRef.current = books;
+  const pending = useRef<((choice: Choice) => void) | null>(null);
 
   const ask = (q: Omit<Question, "resolve">) =>
-    new Promise<Choice>((resolve) => setQuestion({ ...q, resolve }));
+    new Promise<Choice>((resolve) => {
+      pending.current?.("cancel");
+      pending.current = resolve;
+      setQuestion({ ...q, resolve });
+    });
+
+  // Verlässt man die Bibliothek mit offener Frage: abbrechen, nicht hängen.
+  useEffect(() => () => pending.current?.("cancel"), []);
 
   const take = useCallback(
     async (path: string, targetId: string | null) => {
@@ -56,9 +63,8 @@ export function useLibraryDrop(
       setWorking(path.split(/[\\/]/).pop() ?? path);
       try {
         const file = await prepareFile(path);
-        const target = targetId
-          ? (booksRef.current ?? []).find((b) => b.id === targetId) ?? null
-          : null;
+        // Ziel frisch lesen: eine eben angehängte Fassung muss zählen.
+        const target = targetId ? await freshBook(targetId) : null;
         let attachTo: LibraryBook | null = null;
         if (target) {
           // Abgelegt auf ein Buch: fehlt die Fassung, passt sie.
@@ -107,11 +113,21 @@ export function useLibraryDrop(
 
   const queue = useRef(Promise.resolve());
   const drop = useFileDrop("[data-library-drop]", (paths, targetId) => {
-    for (const path of paths)
-      queue.current = queue.current.then(() => take(path, targetId));
+    // Mehrere Dateien auf ein Buch: nur die erste je Art gilt diesem Buch,
+    // die übrigen werden wie auf freier Fläche zugeordnet (mit Rückfrage).
+    const used = new Set<string>();
+    for (const path of paths) {
+      const kind = kindOfFile(path) ?? "";
+      const target = targetId && !used.has(kind) ? targetId : null;
+      if (target) used.add(kind);
+      queue.current = queue.current
+        .then(() => take(path, target))
+        .catch(() => {});
+    }
   });
 
   const answer = (choice: Choice) => {
+    pending.current = null;
     question?.resolve(choice);
     setQuestion(null);
   };

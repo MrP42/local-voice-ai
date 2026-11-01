@@ -556,3 +556,19 @@ test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async
   await expect.poll(async () => (await calls(page, "library_audio_import")).length).toBe(1);
   await expect(page.getByText("in die Bibliothek aufgenommen")).toBeVisible();
 });
+
+test("Mehrere Dateien auf ein Buch: je Art nur die erste, Fehler halten die Warteschlange nicht an", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await dragTo(page, await centerOf(page, effiCover(page)), [
+    "C:/x/kaputt.xyz",
+    "C:/Downloads/teil1.mp3",
+    "C:/Downloads/teil2.mp3",
+  ]);
+  // teil1 hängt an Effi; teil2 geht wie auf freie Fläche (unbekannt → neu).
+  await expect
+    .poll(async () => (await calls(page, "library_audio_import")).map((a) => a.id))
+    .toEqual(["book_1", "book_new"]);
+});
