@@ -2495,7 +2495,7 @@
         "empty": "No appointment in the next 7 days.",
         "start": "Record appointment",
         "startHint": "Start a recording for this appointment; title and attendees come from the calendar",
-        "more": "More events today ({{count}})"
+        "more_one": "More events today ({{count}})"
       }
     },
     "layout": {
@@ -5224,7 +5224,9 @@
       "calendars": "Calendars",
       "calendarsHint": "Calendar sources provide appointments for title suggestions, reminders and “Up next”.",
       "mcp": "MCP and agents",
-      "mcpHint": "Lets AI clients on this computer read your meetings. Writing access with rights per tool will follow."
+      "mcpHint": "Lets AI clients on this computer read your meetings. Writing access with rights per tool will follow.",
+      "sprachdienst": "Speech service for other apps",
+      "sprachdienstHint": "Lets paired WAI apps on this computer listen (speech recognition) and speak (speech output). Off by default."
     },
     "status": {
       "off": "Off",
@@ -5235,6 +5237,58 @@
       "read": "Read only",
       "write": "Write only",
       "both": "Read and write"
+    },
+    "sprachdienst": {
+      "loadError": "The speech service could not be loaded.",
+      "empty": "No app paired yet. An app that wants to use the speech service asks here; you confirm it with the code.",
+      "switch": {
+        "label": "Turn on the speech service",
+        "description": "Off by default. It only runs on this computer and only for you; each app has to be paired by you once."
+      },
+      "status": {
+        "running": "The speech service is running",
+        "stopped": "The speech service is not running",
+        "off": "The speech service is off",
+        "endpoint": "Endpoint: {{name}}",
+        "reason": "Reason: {{error}}",
+        "safe": "Only you can reach it (current user of this computer), not over the network."
+      },
+      "client": {
+        "active": "Paired",
+        "revoked": "Revoked",
+        "created": "Paired {{time}}",
+        "lastUsed": "Last used {{time}}",
+        "neverUsed": "Never used",
+        "revokedAt": "Revoked {{time}}",
+        "revoke": "Revoke",
+        "delete": "Remove",
+        "revokeConfirm": "Revoke {{name}}? The app can no longer use the speech service and has to be paired again.",
+        "deleteConfirm": "Remove {{name}} from the list?",
+        "revokeYes": "Revoke",
+        "deleteYes": "Remove",
+        "rightsHint": "What this app may do:"
+      },
+      "rights": {
+        "hoeren": "Listen (speech recognition)",
+        "sprechen": "Speak (speech output)"
+      },
+      "pairing": {
+        "title": "Pair this app?",
+        "body": "<name>{{name}}</name> wants to use the speech service. Does the app show the same code? Pair only if it matches exactly. Please also confirm in the app.",
+        "client": "Identifier:",
+        "warnings": {
+          "duplicateName": "An app with this name is already paired or waiting. Make sure it is not an imitation.",
+          "duplicateClient": "An app with this identifier is already paired or waiting."
+        },
+        "codeLabel": "Code",
+        "remaining": "{{seconds}} s left",
+        "afterwards": "After pairing you decide what the app may do (listen, speak).",
+        "confirm": "Pair",
+        "reject": "Decline",
+        "more_one": "{{count}} more request waiting",
+        "more_other": "{{count}} more requests waiting",
+        "expired": "The request has expired."
+      }
     },
     "agentClients": {
       "intro": "One access per program (Claude Code, Codex, a script), each with its own key. An access may only use the tools you set to “Ask” or “Allowed” for it here – and only as far as the rights matrix above (“External agent”) permits.",

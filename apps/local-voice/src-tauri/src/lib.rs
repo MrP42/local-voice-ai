@@ -1,6 +1,7 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
+pub mod sprachdienst; // ADR-0021 S2
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
@@ -421,6 +422,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             vec![agent_tools],
             Some(approval_notifier),
         ));
+        // ADR-0021 S2: Sprachdienst (Opt-in, standardmaessig aus).
+        app_handle.manage(sprachdienst::app::init(app_handle));
         // U7: die Import-Warteschlange (Aufnahme hat Vorrang, Enddurchlauf und
         // Wiederherstellung halten die gemeinsame Engine).
         let queue = {
@@ -2298,6 +2301,14 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::voice_tools::voice_tools_list,
             commands::voice_tools::change_voice_call_read_transcripts_setting,
             commands::voice_tools::voice_tool_call,
+            commands::sprachdienst::sprachdienst_status,
+            commands::sprachdienst::sprachdienst_aktiv_setzen,
+            commands::sprachdienst::sprachdienst_zugaenge,
+            commands::sprachdienst::sprachdienst_recht_setzen,
+            commands::sprachdienst::sprachdienst_widerrufen,
+            commands::sprachdienst::sprachdienst_entfernen,
+            commands::sprachdienst::sprachdienst_kopplungen,
+            commands::sprachdienst::sprachdienst_kopplung_entscheiden,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
