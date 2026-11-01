@@ -129,29 +129,43 @@ pub async fn voice_call_start(app: AppHandle) -> Result<VoiceCallReady, String> 
         );
     }
 
+    // Scheitert STT oder Stimme, braucht es auch den Sprecher nicht mehr.
+    let abort_warm = |task: &Option<tokio::task::JoinHandle<Result<(), String>>>| {
+        if let Some(t) = task {
+            t.abort();
+        }
+    };
     let stt = app.state::<Arc<TranscriptionManager>>().inner().clone();
-    let model = settings.selected_model.clone();
-    let stt_ready = tokio::task::spawn_blocking(move || {
-        stt.initiate_model_load();
-        stt.wait_until_loaded(&model, Duration::from_secs(90))
-    })
-    .await
-    .unwrap_or(false);
-    if !stt_ready {
+    let stt_model = settings.selected_model.clone();
+    if !load_stt(stt.clone(), stt_model.clone()).await {
+        abort_warm(&speaker_warm);
         return Err("Das Spracherkennungsmodell konnte nicht geladen werden (Einstellungen → Eingabe → Modell).".into());
     }
 
     let tts = app.state::<Arc<TtsManager>>().inner().clone();
     tts.refresh_from_settings();
-    tts.ensure_engine_ready()
-        .await
-        .map_err(|e| format!("Die Stimme ist nicht bereit: {e}"))?;
+    if let Err(e) = tts.ensure_engine_ready().await {
+        abort_warm(&speaker_warm);
+        return Err(format!("Die Stimme ist nicht bereit: {e}"));
+    }
 
     if let Some(task) = speaker_warm {
         // Höchstens LLM_WARM_TIMEOUT warten; ein langsamer Start ist ein Hinweis,
         // kein Fehler, und es gibt keinen Ausweich auf ein Cloud-Modell.
         match tokio::time::timeout(LLM_WARM_TIMEOUT, task).await {
-            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Ok(()))) => {
+                // Der Speicherschutz des lokalen Servers darf ein gerade untätiges
+                // Erkennungsmodell entladen haben: dann jetzt neu laden statt beim
+                // ersten Satz.
+                if stt.get_current_model().as_deref() != Some(stt_model.as_str())
+                    && !load_stt(stt.clone(), stt_model.clone()).await
+                {
+                    warnings.push(
+                        "Das Spracherkennungsmodell wurde wegen Speichermangel entladen; der erste Satz lädt es neu."
+                            .into(),
+                    );
+                }
+            }
             Ok(Ok(Err(e))) => warnings.push(format!(
                 "Das lokale Sprachmodell ist noch nicht bereit: {e}. Die erste Antwort kann dauern."
             )),
@@ -177,6 +191,16 @@ const LLM_WARM_TIMEOUT: Duration = Duration::from_secs(45);
 /// Antwort über den kompatiblen Pfad setzt die Frist auf Ollamas Standard
 /// (5 min) zurück; danach gibt Ollama ihn selbst frei.
 const OLLAMA_KEEP_ALIVE: &str = "15m";
+
+/// Lädt das Erkennungsmodell (höchstens 90 s) und sagt, ob es danach bereitsteht.
+async fn load_stt(stt: Arc<TranscriptionManager>, model: String) -> bool {
+    tokio::task::spawn_blocking(move || {
+        stt.initiate_model_load();
+        stt.wait_until_loaded(&model, Duration::from_secs(90))
+    })
+    .await
+    .unwrap_or(false)
+}
 
 /// Was beim Gesprächsstart vorzuwärmen ist.
 #[derive(Debug, Clone, PartialEq, Eq)]
