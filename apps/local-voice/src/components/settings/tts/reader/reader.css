@@ -279,6 +279,10 @@
   --reader-narrow: 1;
 }
 @media all {
+  /* Schmale Spalte: Blocksatz reißt große Wortlücken, auch mit Trennung. */
+  .reader-book--narrow .reader-flow {
+    text-align: left;
+  }
   .reader-book--narrow .reader-block {
     padding-left: 0;
   }

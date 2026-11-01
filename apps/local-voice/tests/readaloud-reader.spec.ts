@@ -1355,3 +1355,18 @@ test("Vollbild-Knopf schaltet die Lesespalte in den Vollbildmodus", async ({ pag
     .poll(() => page.evaluate(() => document.fullscreenElement === null))
     .toBe(true);
 });
+
+test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, BOOK, 1440);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("reader-display").click();
+  const menu = page.getByTestId("reader-display-menu");
+  const box = (await menu.boundingBox())!;
+  const frame = (await page.locator(".reader-frame").boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(Math.min(844, frame.y + frame.height));
+  // Der letzte Eintrag ist per Scrollen erreichbar und klickbar.
+  const last = menu.getByRole("menuitemcheckbox", { name: "Automatisch mitblättern" });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
+});

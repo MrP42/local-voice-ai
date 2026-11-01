@@ -2246,7 +2246,7 @@ export const TtsSettings = () => {
                         <p className="mb-1 font-semibold">
                           {t("tts.writingRules.title")}
                         </p>
-                <div className="space-y-1 text-xs text-text/80">
+                <div className="space-y-1.5 text-sm text-text/80">
                   <p>{t("tts.dialogHint")}</p>
                   {pausesOnly ? (
                     <p>
@@ -2351,7 +2351,7 @@ export const TtsSettings = () => {
                 <ReaderView
                   text={spokenText}
                   speakers={speakers}
-                  lang={tab === "translation" ? targetLangCode(targetLang) : undefined}
+                  lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
                   current={readRange}
                   clock={sessionTab.current === tab ? sentenceClock : null}
                   marks={readerMarks}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
@@ -106,6 +106,29 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
 }) => {
   const { t } = useTranslation();
   const [menu, setMenu] = useState(false);
+  // Das Menü darf nie unter den Fensterrand ragen (390 px): Höhe auf den
+  // Platz unter dem Knopf begrenzen, der Rest scrollt im Menü.
+  const [menuMax, setMenuMax] = useState<number | null>(null);
+  const displayBtnRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const fit = () => {
+      const btn = displayBtnRef.current;
+      if (!btn) return;
+      // Unterkante: Fenster oder ein scrollender Vorfahr (die Lesespalte
+      // schneidet sonst ab), je nachdem, was höher liegt.
+      let bottom = window.innerHeight;
+      for (let el = btn.parentElement; el; el = el.parentElement) {
+        const o = getComputedStyle(el).overflowY;
+        if (o !== "visible") bottom = Math.min(bottom, el.getBoundingClientRect().bottom);
+      }
+      const r = btn.getBoundingClientRect();
+      setMenuMax(Math.max(160, Math.floor(bottom - r.bottom - 12)));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [menu]);
   useEffect(() => {
     if (!menu) return;
     const onKey = (e: KeyboardEvent) => {
@@ -197,6 +220,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
               aria-expanded={menu}
               aria-label={t("tts.reader.display")}
               title={t("tts.reader.display")}
+              ref={displayBtnRef}
               onClick={() => setMenu((m) => !m)}
               data-testid="reader-display"
             >
@@ -208,7 +232,9 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
                 <div
                   role="menu"
                   aria-label={t("tts.reader.display")}
-                  className="absolute right-0 top-full z-40 mt-1 max-h-[70vh] w-60 overflow-y-auto rounded-lg border border-mid-gray/40 bg-background py-1 shadow-lg"
+                  className="absolute right-0 top-full z-40 mt-1 w-60 overflow-y-auto overscroll-contain rounded-lg border border-mid-gray/40 bg-background py-1 shadow-lg"
+                  style={{ maxHeight: menuMax ?? undefined }}
+                  data-testid="reader-display-menu"
                 >
                   <p className={MENU_HEAD} aria-hidden="true">
                     {t("tts.reader.sizeHead")}
