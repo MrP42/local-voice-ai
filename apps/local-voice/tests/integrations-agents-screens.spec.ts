@@ -8,6 +8,7 @@ import {
   installAgentClientsMock,
   type AgentClientsMockOptions,
 } from "./agentClientsMock";
+import { geheZu } from "./profilmenue";
 
 // A7 (#66, AK12 Bündel 2): Bilder der Zugangsliste der Agentenbrücke für die Abnahme:
 // Liste, Schlüssel (einmal), Werkzeugrechte mit dem Grund der Obergrenze, zurückgezogener
@@ -59,7 +60,7 @@ const setup = async (
   await page.goto("/");
   const nav = page.getByRole("navigation");
   if (narrow) await page.getByRole("button", { name: "Menü öffnen" }).click();
-  await nav.getByRole("button", { name: "Integrationen", exact: true }).click();
+  await geheZu(page, "Integrationen");
   await page
     .locator('[data-testid="integration-card"][data-integration-id="agent-1"]')
     .getByTestId("integration-open")

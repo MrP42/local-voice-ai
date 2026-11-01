@@ -6,6 +6,7 @@ import {
   hoursUntilEndOfDay,
   todaysEvents,
 } from "../src/lib/meetingCalendar";
+import { geheZu } from "./profilmenue";
 
 // M5-P5b: Kalender (seit A4 auf der Seite Integrationen) und auf der
 // Aufnahmeseite (Titelvorschlag, "Naechste Termine (heute)") gegen die
@@ -44,18 +45,12 @@ const setup = async (page: Page, init?: () => void) => {
 // A4: die Kalenderquellen wohnen auf der Seite "Integrationen"; in den
 // Einstellungen bleiben nur der Verweis und die Erinnerung.
 const openIntegrations = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(page.getByTestId("calendar-settings")).toBeVisible();
 };
 
 const openSettings = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("calendar-reminder-settings")).toBeVisible();
 };
 

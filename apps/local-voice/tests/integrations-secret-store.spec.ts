@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { installTauriMock } from "./calendarMock";
 import { installIntegrationsMock, NOW } from "./integrationsMock";
+import { geheZu } from "./profilmenue";
 
 // Ohne sicheren Tresor (macOS/Linux, Codex-Entscheidung 31.10.2026): Hinweis
 // vor jeder Eingabe, Arten mit Geheimnis gesperrt, kein Klartext-Ersatz.
@@ -26,10 +27,7 @@ const setup = async (page: Page, os: "macos" | "windows" | "linux") => {
   }, os);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await page.getByTestId("integrations-add").click();
   await expect(page.getByTestId("catalog")).toBeVisible();
 };

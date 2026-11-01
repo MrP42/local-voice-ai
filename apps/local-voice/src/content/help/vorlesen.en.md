@@ -62,9 +62,9 @@ The engine is chosen under **Settings → Output**. Piper voices are downloaded 
 Piper runs on the CPU, starts instantly and needs only a small voice. Download it under **Models → Reading voices**. If the Piper program is incomplete, the voice shows as "not usable" there and "Install program" repairs it.
 <!--/if:nofish-->
 
-## Language model and server in the footer
+## Language model (profile menu) and server (footer)
 
-- **Language model** (footer, drop-up menu): the model for translating, summarizing and auto-tagging. Its light pulses yellow while it works; the menu offers “Warm up” (loads it for ten minutes) and “Unload” (frees the memory).
+- **Language model** (profile menu at the bottom left, Models): the model for translating, summarizing and auto-tagging. Its light pulses yellow while it works; the menu offers “Warm up” (loads it for ten minutes) and “Unload” (frees the memory).
 <!--if:fish-->
 - **Server** (footer, left of the shield): the Fish Speech server. Grey off, yellow starting, green running, orange error. A click asks first: start, restart or stop.
 <!--/if:fish-->

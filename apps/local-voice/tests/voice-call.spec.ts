@@ -2740,7 +2740,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     ).toBeVisible();
   });
 
-  test("Suche: Strg+Umschalt+K öffnet sie, Strg+K bleibt der App-Suche; Strg+N legt ein neues Gespräch an", async ({
+  test("Suche: Strg+K und Strg+Umschalt+K öffnen sie; Strg+N legt ein neues Gespräch an", async ({
     page,
   }) => {
     await install(page);
@@ -2751,9 +2751,11 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(search).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
+    // ADR-0027 E5: Strg+K gehört der Suche des Moduls (keine Titelleisten-Suche mehr).
     await page.keyboard.press("Control+k");
+    await expect(search).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
-    await expect(page.locator("[data-titlebar-search]")).toBeFocused();
     await message(page).click();
     await page.keyboard.press("Control+n");
     await expect(emptyTitle(page)).toBeVisible();

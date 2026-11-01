@@ -1,6 +1,6 @@
 /**
- * Kopie aus @wai/ui konto (wai-sdk PR #991, ADR-0024). Nicht vom Original abweichen; Änderungen dort machen
- * und neu kopieren. Abweichungen hier: `Icon` -> lucide-react (siehe `Icon.tsx`), `cx` -> `cx.ts`.
+ * Kopie aus @wai/ui konto (wai-sdk PR #991, ADR-0024; Erweiterung #1046, ADR-0027). Nicht vom Original abweichen;
+ * Änderungen dort machen und neu kopieren. Abweichungen hier: `Icon` -> lucide-react (siehe `Icon.tsx`), `cx` -> `cx.ts`.
  */
 import {
   Avatar,
@@ -9,8 +9,16 @@ import {
   PopoverSurface,
   PopoverTrigger,
   Tooltip,
+  useArrowNavigationGroup,
 } from "@fluentui/react-components";
-import { useEffect, useState } from "react";
+import {
+  type ButtonHTMLAttributes,
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import "./konto.css";
 import { Icon } from "./Icon";
 import { cx } from "./cx";
@@ -112,7 +120,8 @@ export function ProfilBild({
     <span className="wai-konto-bild" data-groesse={groesse}>
       <Avatar
         size={groesse}
-        name={name}
+        // Ohne Initialen kein `name`: Fluent würde sonst selbst Initialen bilden („Lokales Profil“ → „LP“) statt des Symbols.
+        name={ini ? name : undefined}
         initials={ini}
         color={avatarFarbe(profil)}
         icon={ini ? undefined : <Icon name="user" />}
@@ -138,6 +147,10 @@ export interface ProfilmenueProps {
   onProfilWechseln?: (id: string) => void;
   onProfilHinzufuegen?: () => void;
   labels?: Partial<KontoLabels>;
+  /** ADR-0027: schlanke Form für den Profilkreis unten links (kleines Bild, Name und Status in einer Zeile). */
+  kompakt?: boolean;
+  /** ADR-0027: Einträge der App (Einstellungen, Modelle, Hilfe …) zwischen Person und Profilwechsel. */
+  eintraege?: ReactNode;
 }
 
 /** Inhalt des Profilmenüs (Variante A, „Me Control“ wie Microsoft 365). */
@@ -152,6 +165,8 @@ export function Profilmenue({
   onProfilWechseln,
   onProfilHinzufuegen,
   labels,
+  kompakt,
+  eintraege,
 }: ProfilmenueProps) {
   const l = { ...KONTO_LABELS, ...labels };
   const name = profilName(profil, l.lokalesProfil);
@@ -170,7 +185,11 @@ export function Profilmenue({
         ? onAnmelden && { text: l.erneutAnmelden, tun: onAnmelden }
         : onAbmelden && { text: l.abmeldenAlle, tun: onAbmelden };
   return (
-    <div className="wai-konto-menue" data-status={status}>
+    <div
+      className="wai-konto-menue"
+      data-status={status}
+      data-kompakt={kompakt || undefined}
+    >
       <div className="wai-konto-menue__kopf">
         <span>{kopf}</span>
         {kopfAktion && (
@@ -184,7 +203,11 @@ export function Profilmenue({
         )}
       </div>
       <div className="wai-konto-menue__person">
-        <ProfilBild profil={profil} groesse={64} labels={labels} />
+        <ProfilBild
+          profil={profil}
+          groesse={kompakt ? 40 : 64}
+          labels={labels}
+        />
         <div className="wai-konto-menue__text">
           <div className="wai-konto-menue__name">{name}</div>
           {profil.email && (
@@ -237,6 +260,7 @@ export function Profilmenue({
           <p>{l.abgelaufenHinweis}</p>
         </div>
       )}
+      {eintraege && <ProfilmenueEintraege>{eintraege}</ProfilmenueEintraege>}
       {(weitereProfile.length > 0 || onProfilHinzufuegen) && (
         <div className="wai-konto-menue__profile">
           {weitereProfile.map((p) => {
@@ -287,6 +311,101 @@ export interface ProfilknopfProps extends ProfilmenueProps {
   /** Name und Status neben dem Bild zeigen (breite Fenster). */
   mitName?: boolean;
   className?: string;
+  /**
+   * Ort des Knopfs. `"leiste"` (ADR-0027, Suite-Standard): Kreis unten in der App-Leiste, das Menü öffnet
+   * rechts daneben nach oben und ist kompakt. `"kopfleiste"` (ADR-0024 E6, abgelöst): oben rechts.
+   */
+  ort?: "kopfleiste" | "leiste";
+  /** Hinweispunkt am Bild, z. B. ungelesene Benachrichtigungen (ADR-0027 E3). */
+  hinweis?: boolean;
+}
+
+interface ProfilmenueKontextWert {
+  schliessen: () => void;
+}
+
+const ProfilmenueKontext = createContext<ProfilmenueKontextWert>({
+  schliessen: () => {},
+});
+
+/** Schließt das Profilmenü (für eigene Einträge der App). */
+export const useProfilmenue = () => useContext(ProfilmenueKontext);
+
+function ProfilmenueEintraege({ children }: { children: ReactNode }) {
+  const pfeile = useArrowNavigationGroup({ axis: "vertical", circular: true });
+  return (
+    <div className="wai-konto-menue__eintraege" {...pfeile}>
+      {children}
+    </div>
+  );
+}
+
+export interface ProfilmenueEintragProps extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "children"
+> {
+  symbol?: ReactNode;
+  text: ReactNode;
+  /** Tastenkürzel rechts, z. B. „Strg+,“. */
+  kuerzel?: string;
+  /** Zähler rechts, z. B. ungelesene Benachrichtigungen. */
+  zahl?: number;
+  /** Öffnet eine Unterebene (Pfeil rechts); das Menü bleibt offen. */
+  weiter?: boolean;
+  /** Menü bleibt nach dem Klick offen (z. B. „Zurück“ aus einer Unterebene), ohne Pfeil. */
+  bleibtOffen?: boolean;
+}
+
+/** Ein Eintrag im Profilmenü (ADR-0027 E2). Schließt das Menü nach dem Klick, außer bei `weiter`. */
+export function ProfilmenueEintrag({
+  symbol,
+  text,
+  kuerzel,
+  zahl,
+  weiter,
+  bleibtOffen,
+  onClick,
+  className,
+  ...rest
+}: ProfilmenueEintragProps) {
+  const { schliessen } = useProfilmenue();
+  return (
+    <button
+      type="button"
+      className={cx("wai-konto-menue__eintrag", className)}
+      // Name ohne Kürzeltext, damit „Einstellungen“ auch so heißt.
+      aria-label={
+        typeof text === "string"
+          ? zahl
+            ? `${text}, ${zahl}`
+            : text
+          : undefined
+      }
+      aria-haspopup={weiter ? "true" : undefined}
+      onClick={(e) => {
+        if (!weiter && !bleibtOffen) schliessen();
+        onClick?.(e);
+      }}
+      {...rest}
+    >
+      <span className="wai-konto-menue__eintragsymbol" aria-hidden="true">
+        {symbol}
+      </span>
+      <span className="wai-konto-menue__eintragtext">{text}</span>
+      {zahl !== undefined && zahl > 0 && (
+        <span className="wai-konto-menue__zahl">{zahl}</span>
+      )}
+      {kuerzel && <kbd className="wai-konto-menue__kuerzel">{kuerzel}</kbd>}
+      {weiter && (
+        <Icon name="chevronRight" className="wai-konto-menue__weiter" />
+      )}
+    </button>
+  );
+}
+
+/** Trennlinie zwischen Gruppen im Profilmenü. */
+export function ProfilmenueTrenner() {
+  return <hr className="wai-konto-menue__trenner" />;
 }
 
 /**
@@ -296,6 +415,8 @@ export interface ProfilknopfProps extends ProfilmenueProps {
 export function Profilknopf({
   mitName,
   className,
+  ort = "kopfleiste",
+  hinweis,
   ...menue
 }: ProfilknopfProps) {
   const [offen, setOffen] = useState(false);
@@ -312,7 +433,11 @@ export function Profilknopf({
     <Popover
       open={offen}
       onOpenChange={(_, d) => setOffen(d.open)}
-      positioning="below-end"
+      positioning={
+        ort === "leiste"
+          ? { position: "after", align: "bottom", offset: 8 }
+          : "below-end"
+      }
       trapFocus
     >
       <PopoverTrigger disableButtonEnhancement>
@@ -320,6 +445,7 @@ export function Profilknopf({
           <Button
             appearance="subtle"
             className={cx("wai-konto-knopf", className)}
+            data-ort={ort}
             aria-label={l.profilmenue(name)}
             aria-expanded={offen}
             data-status={menue.status}
@@ -332,26 +458,35 @@ export function Profilknopf({
             )}
             <ProfilBild
               profil={menue.profil}
-              groesse={28}
+              groesse={ort === "leiste" ? 32 : 28}
               status={menue.status}
               labels={menue.labels}
             />
+            {hinweis && (
+              <span className="wai-konto-knopf__hinweis" aria-hidden="true" />
+            )}
           </Button>
         </Tooltip>
       </PopoverTrigger>
       <PopoverSurface
         className="wai-konto-menue__flaeche"
+        data-ort={ort}
         aria-label={l.profilmenue(name)}
       >
-        <Profilmenue
-          {...menue}
-          onMeinProfil={zu(menue.onMeinProfil)}
-          onKontoGeraete={zu(menue.onKontoGeraete)}
-          onAnmelden={zu(menue.onAnmelden)}
-          onAbmelden={zu(menue.onAbmelden)}
-          onProfilWechseln={zu(menue.onProfilWechseln)}
-          onProfilHinzufuegen={zu(menue.onProfilHinzufuegen)}
-        />
+        <ProfilmenueKontext.Provider
+          value={{ schliessen: () => setOffen(false) }}
+        >
+          <Profilmenue
+            {...menue}
+            kompakt={menue.kompakt ?? ort === "leiste"}
+            onMeinProfil={zu(menue.onMeinProfil)}
+            onKontoGeraete={zu(menue.onKontoGeraete)}
+            onAnmelden={zu(menue.onAnmelden)}
+            onAbmelden={zu(menue.onAbmelden)}
+            onProfilWechseln={zu(menue.onProfilWechseln)}
+            onProfilHinzufuegen={zu(menue.onProfilHinzufuegen)}
+          />
+        </ProfilmenueKontext.Provider>
       </PopoverSurface>
     </Popover>
   );

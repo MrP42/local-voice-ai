@@ -2,7 +2,6 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import {
   Nav,
-  NavDivider,
   NavItem,
   OverlayDrawer,
   DrawerHeader,
@@ -122,17 +121,18 @@ interface SidebarProps {
   narrow: boolean;
   drawerOpen: boolean;
   onDrawerOpenChange: (open: boolean) => void;
+  /** Fuß der Navigation: der Profilkreis mit dem Profilmenü (ADR-0027 E1). */
+  fuss?: React.ReactNode;
 }
 
 const PRIMARY = ["home", "history", "meetings", "tts", "library", "voice"] as const;
-// Fußeinträge vor „Einstellungen“ (Leitlinie §3: Einstellungen unten zuletzt).
-const UTILITIES = ["models", "integrations"] as const;
+// Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
+// (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 
 /**
  * Navigationsbereich nach Fluent 2 (Leitlinie windows-fluent.md §2/§3):
- * Fluent Nav mit Auswahl-Pill, Arbeitsbereiche oben, Modelle und
- * Integrationen als Fußeinträge, Einstellungen ganz unten. Ein Tab-Stopp,
- * darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
+ * Fluent Nav mit Auswahl-Pill, nur die Arbeitsbereiche; unten der Profilkreis
+ * (ADR-0027). Ein Tab-Stopp, darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
  * Titelleiste); schmal öffnet der Hamburger einen Overlay-Drawer.
  */
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -142,6 +142,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   narrow,
   drawerOpen,
   onDrawerOpenChange,
+  fuss,
 }) => {
   const { t } = useTranslation();
   const iconOnly = collapsed && !narrow;
@@ -189,18 +190,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           {PRIMARY.map(item)}
         </div>
-        <div className="workspace-nav__secondary">
-          <div
-            id="workspace-more"
-            className="workspace-nav__utilities"
-            data-tour="nav-utilities"
-          >
-            {UTILITIES.map(item)}
-            <NavDivider className="workspace-nav__divider" />
-            {item("settings")}
-          </div>
-        </div>
       </Nav>
+      {fuss && <div className="workspace-nav__fuss">{fuss}</div>}
     </nav>
   );
 
@@ -221,7 +212,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <DrawerHeader>
         <DrawerHeaderTitle
           action={
-            <FluentTooltip content={t("workspace.navClose")} relationship="label">
+            <FluentTooltip
+              content={t("workspace.navClose")}
+              relationship="label"
+            >
               <FluentButton
                 appearance="subtle"
                 icon={<X size={20} aria-hidden="true" />}

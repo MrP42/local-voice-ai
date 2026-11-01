@@ -1,4 +1,4 @@
-/* Kopie aus @wai/ui (wai-sdk PR #991, ADR-0024): Klassen wai-konto-* und wai-profilseite*. Nicht von Hand ändern. */
+/* Kopie aus @wai/ui (wai-sdk PR #991, ADR-0024; #1046, ADR-0027): Klassen wai-konto-* und wai-profilseite*. Nicht von Hand ändern. */
 /* ---------- Konto: Profilknopf, Profilmenü, Profilseite (ADR-0024) ---------- */
 .wai-konto-bild {
   position: relative;
@@ -149,6 +149,101 @@
   inline-size: 24px;
   font-size: 18px;
   color: var(--colorNeutralForeground2, var(--color-text));
+}
+
+/* ADR-0027: Profilkreis unten in der App-Leiste, kompaktes Menü mit Einträgen der App */
+.wai-konto-knopf[data-ort="leiste"] {
+  position: relative;
+  padding: 0;
+  inline-size: 40px;
+  block-size: 40px;
+  min-inline-size: 40px;
+  border-radius: 50%;
+}
+.wai-konto-knopf__hinweis {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+  background: var(--colorPaletteRedBackground3, #d13438);
+  border: 2px solid var(--colorNeutralBackground3, var(--color-surface));
+}
+.wai-konto-menue__flaeche[data-ort="leiste"] {
+  inline-size: min(300px, calc(100vw - 16px));
+}
+.wai-konto-menue[data-kompakt] .wai-konto-menue__person {
+  gap: 10px;
+  padding: 4px 12px 10px;
+}
+.wai-konto-menue[data-kompakt] .wai-konto-menue__name {
+  font-size: var(--fontSizeBase300, 14px);
+  line-height: 20px;
+}
+.wai-konto-menue__eintraege {
+  border-block-start: 1px solid var(--colorNeutralStroke2, var(--color-border));
+  padding: 4px;
+}
+.wai-konto-menue__eintrag {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  inline-size: 100%;
+  min-block-size: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--colorNeutralForeground1, var(--color-text));
+  font: inherit;
+  font-size: var(--fontSizeBase300, 14px);
+  text-align: start;
+  cursor: pointer;
+}
+.wai-konto-menue__eintrag:hover {
+  background: var(--colorNeutralBackground1Hover, var(--color-surface-2));
+}
+.wai-konto-menue__eintrag:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, currentColor);
+  outline-offset: -2px;
+}
+.wai-konto-menue__eintrag:disabled {
+  color: var(--colorNeutralForegroundDisabled, var(--color-text-muted));
+  cursor: default;
+}
+.wai-konto-menue__eintragsymbol {
+  display: inline-flex;
+  inline-size: 20px;
+  justify-content: center;
+  flex: none;
+}
+.wai-konto-menue__eintragtext {
+  flex: 1;
+  min-inline-size: 0;
+}
+.wai-konto-menue__kuerzel {
+  font: inherit;
+  font-size: var(--fontSizeBase200, 12px);
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-konto-menue__zahl {
+  min-inline-size: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--colorPaletteRedBackground3, #d13438);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.wai-konto-menue__weiter {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-konto-menue__trenner {
+  border: 0;
+  border-block-start: 1px solid var(--colorNeutralStroke2, var(--color-border));
+  margin: 4px 2px;
 }
 
 .wai-profilseite {

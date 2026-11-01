@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Goal tts-provider, Paket P4: Gruppe "Sprachausgabe-Anbieter" im Reiter
 // Ausgabe. Liste mit Stufe/Zustand/Gerät/Lizenz, Freigabe-Ablauf (Aktivieren,
@@ -478,10 +479,7 @@ const emit = (page: Page, payload: Record<string, unknown>) =>
 /** Vorlesen unter Modelle, Ansicht "Anbieter" (die Anbieter stehen seit der Verwaltung dort). */
 const openGroup = async (page: Page) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await expect(page.getByTestId("voice-providers-view")).toBeVisible();
   await expect(page.getByTestId("tts-provider-open-fish")).toBeVisible();
 };

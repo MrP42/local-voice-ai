@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { installRecMock, openRecordings, pickMeeting } from "./recLayoutMock";
+import { geheZu } from "./profilmenue";
 
 // Farbkontrast app-weit (Goal Issues-Abschluss, G2e, Befund B4 aus #66):
 // axe-Regel `color-contrast` (WCAG 2.1 AA: 4,5:1 normaler Text, 3:1 grosser
@@ -41,6 +42,11 @@ const contrastFindings = async (page: Page): Promise<string[]> => {
 };
 
 const goTo = async (page: Page, nav: string) => {
+  // Suite-Shell (ADR-0027): Modelle, Integrationen und Einstellungen liegen im Profilmenü.
+  if (nav === "Modelle" || nav === "Integrationen" || nav === "Einstellungen") {
+    await geheZu(page, nav);
+    return;
+  }
   const button = page.getByRole("button", { name: nav, exact: true });
   if (!(await button.isVisible())) {
     const toggle = page.getByRole("button", { name: /Menü/ }).first();

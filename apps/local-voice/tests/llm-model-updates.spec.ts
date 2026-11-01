@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Neue Modelle der Anbieter: Pruefung nach dem Start (Backend entscheidet, was
 // uebernommen wird), Dialog mit den drei Antworten, Schalter in den
@@ -116,7 +117,7 @@ const calls = (page: Page) =>
 const afterStart = async (page: Page) => {
   await page.goto("/");
   // Erst wenn die Oberflaeche steht (und damit die Pruefung ihre Uhr gestellt hat).
-  await expect(page.getByRole("button", { name: "Einstellungen", exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: /^Profil:/ })).toBeVisible();
   await page.clock.fastForward(25_000);
   // Die Antwort des Backends kommt in Echtzeit; die Uhr danach noch einmal laufen
   // lassen, damit Dialog und Hinweis (Animation) sichtbar werden.
@@ -182,7 +183,7 @@ test("Schliessen ohne Antwort schickt nichts ans Backend", async ({ page }) => {
 test("der Schalter in den Einstellungen zeigt den Stand und ruft das Backend", async ({ page }) => {
   await setup(page, { mode: "ask", applied: [], pending: [] });
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
   const select = page.getByTestId("auto-update-models");
   await expect(select).toHaveValue("ask");
@@ -197,7 +198,7 @@ test("in der Modellliste einer Verbindung steht neu hinter neuen, nicht freigege
     { key: "ol:qwen3:8b", status: "seen", at: 1 },
   ]);
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
   await page.getByRole("button", { name: "Ollama", exact: true }).first().click();
   await page.getByRole("button", { name: "Modelle laden" }).click();
@@ -235,7 +236,7 @@ test("die Codex-CLI aktualisiert sich selbst: Hinweise vom Start bis zum Ende", 
 test("die Codex-CLI-Automatik ist an und laesst sich in den Einstellungen abschalten", async ({ page }) => {
   await setup(page, { mode: "ask", applied: [], pending: [] });
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
   const toggle = page.getByTestId("cli-auto-update");
   await expect(toggle).toBeChecked();

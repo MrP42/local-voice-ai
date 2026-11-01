@@ -63,6 +63,8 @@ export const HistorySettings: React.FC = () => {
   const { t } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  // Suche im Modulkopf (ADR-0027 E5): filtert die geladenen Einträge.
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -128,7 +130,9 @@ export const HistorySettings: React.FC = () => {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loading, hasMore, loadPage]);
+    // Nach jeder Seite und bei geänderter Suche neu beobachten: ein noch
+    // sichtbarer Sentinel meldet sich sonst nicht erneut (Suche ohne Treffer).
+  }, [loading, hasMore, loadPage, entries.length, query]);
 
   // Listen for new entries added from the transcription pipeline
   useEffect(() => {
@@ -234,6 +238,13 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  const needle = query.trim().toLocaleLowerCase();
+  const shown = needle
+    ? entries.filter((entry) =>
+        entry.transcription_text.toLocaleLowerCase().includes(needle),
+      )
+    : entries;
+
   let content: React.ReactNode;
 
   if (loading) {
@@ -242,18 +253,28 @@ export const HistorySettings: React.FC = () => {
         {t("settings.history.loading")}
       </div>
     );
-  } else if (entries.length === 0) {
+  } else if (shown.length === 0) {
+    // Die Suche filtert die geladenen Seiten; solange es ältere gibt, lädt
+    // der Sentinel weiter, statt „nichts gefunden“ zu behaupten.
+    const weiterSuchen = needle !== "" && hasMore;
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.empty")}
-      </div>
+      <>
+        <div className="px-4 py-3 text-center text-text/60">
+          {weiterSuchen
+            ? t("settings.history.loading")
+            : needle
+              ? t("titlebar.searchNone")
+              : t("settings.history.empty")}
+        </div>
+        {weiterSuchen && <div ref={sentinelRef} className="h-1" />}
+      </>
     );
   } else {
     content = (
       <>
         <AudioPlayerGroup>
           <div className="divide-y divide-mid-gray/20">
-            {entries.map((entry) => (
+            {shown.map((entry) => (
               <HistoryEntryComponent
                 key={entry.id}
                 entry={entry}
@@ -277,6 +298,11 @@ export const HistorySettings: React.FC = () => {
       title={t("settings.history.title")}
       description={t("workspace.historyHint")}
       help="verlauf"
+      search={{
+        value: query,
+        onChange: setQuery,
+        placeholder: t("shell.verlaufSuchen"),
+      }}
       actions={
         <OpenRecordingsButton
           onClick={openRecordingsFolder}

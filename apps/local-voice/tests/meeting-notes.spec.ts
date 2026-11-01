@@ -12,6 +12,7 @@ import {
   templateErrorText,
   validateSpecLocally,
 } from "../src/lib/meetingNotes";
+import { geheZu } from "./profilmenue";
 
 // M1-P1c: Notizblock (Aufnahmeseite + Detailansicht) und Vorlagenverwaltung
 // gegen die Tauri-Attrappe. Die Attrappe merkt sich jeden Aufruf in
@@ -1218,10 +1219,7 @@ test.describe("Systemton Vorgabe", () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(
       page.getByText("Systemton standardmäßig aufnehmen"),
     ).toBeVisible();
