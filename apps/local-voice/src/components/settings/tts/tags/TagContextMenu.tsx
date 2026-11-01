@@ -40,6 +40,10 @@ interface TagContextMenuProps {
   /** Eigene Abschnitte der Chip-Provider (z. B. „Sprecher einfügen"),
    *  unterhalb des Tag-Bereichs. */
   extraSections?: React.ReactNode;
+  /** Die Engine setzt nur Pausen um (z. B. Phonon): nur Pausen anbieten. */
+  pausesOnly?: boolean;
+  /** Name der Engine für den Hinweis bei `pausesOnly`. */
+  engineLabel?: string;
 }
 
 /** Höchstens so viele Suchtreffer zeigt die Tag-Zeile im Menü. */
@@ -100,16 +104,22 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
   onPaste,
   onInsertTag,
   extraSections,
+  pausesOnly = false,
+  engineLabel,
 }) => {
   const { t, i18n } = useTranslation();
   const uiLang = i18n.language?.split("-")[0] ?? "en";
   const { getSetting } = useSettings();
   const favoriteIds = getSetting("tts_tag_favorites") ?? [];
+  const allowed = (tag: TagDef) => !pausesOnly || tag.category === "pauses";
   const favorites = useMemo(
-    () => TAG_REGISTRY.filter((tag) => favoriteIds.includes(tag.id)),
+    () =>
+      TAG_REGISTRY.filter(
+        (tag) => favoriteIds.includes(tag.id) && allowed(tag),
+      ),
     // Der Settings-Hook liefert je Render ein frisches Array — der Inhalt
     // zählt, nicht die Identität.
-    [favoriteIds.join("|")],
+    [favoriteIds.join("|"), pausesOnly],
   );
 
   const [subOpen, setSubOpen] = useState(false);
@@ -117,9 +127,11 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
   const results = useMemo(
     () =>
       query.trim()
-        ? searchTags(query.trim(), uiLang).slice(0, MAX_MENU_RESULTS)
+        ? searchTags(query.trim(), uiLang)
+            .filter(allowed)
+            .slice(0, MAX_MENU_RESULTS)
         : [],
-    [query, uiLang],
+    [query, uiLang, pausesOnly],
   );
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -294,6 +306,14 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
 
         {subOpen && (
           <div className="border-t border-mid-gray/15 px-2 pt-2 pb-1">
+            {pausesOnly && (
+              <p
+                className="px-2 pb-1 text-xs text-text/60"
+                data-testid="tag-menu-pauses-only"
+              >
+                {t("tts.tags.legendPausesOnly", { engine: engineLabel ?? "" })}
+              </p>
+            )}
             <Input
               ref={searchRef}
               type="text"
@@ -339,7 +359,9 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                       ))}
                     </>
                   )}
-                  {TAG_CATEGORIES.map((category) => (
+                  {TAG_CATEGORIES.filter(
+                    (category) => !pausesOnly || category.id === "pauses",
+                  ).map((category) => (
                     <React.Fragment key={category.id}>
                       <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-text/40">
                         {t(`tts.tags.categories.${category.id}`)}

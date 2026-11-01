@@ -159,6 +159,10 @@ interface TtsChipEditorProps {
   onSpeakFrom?: (charOffset: number, onlyOne: boolean) => void;
   /** Sprecher `<Name>` auf allen Seiten ersetzen (Rechtsklick auf den Marker). */
   onReplaceSpeakerEverywhere?: (name: string) => void;
+  /** Kontextmenü bietet nur Pausen-Tags an (Engine ohne Stil-Tags). */
+  pausesOnly?: boolean;
+  /** Name der Engine für den Hinweis bei `pausesOnly`. */
+  engineLabel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +381,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   onRedo,
   onSpeakFrom,
   onReplaceSpeakerEverywhere,
+  pausesOnly,
+  engineLabel,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -1365,6 +1371,8 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
           onCopy={menuCopy}
           onPaste={menuPaste}
           onInsertTag={menuInsertTag}
+          pausesOnly={pausesOnly}
+          engineLabel={engineLabel}
           extraSections={[
             onSpeakFrom && (
               <React.Fragment key="speak-from">

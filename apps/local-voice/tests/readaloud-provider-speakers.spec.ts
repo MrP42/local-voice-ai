@@ -278,6 +278,17 @@ async function openSpeakerMenu(page: Page) {
     .evaluate((el) => (el as HTMLButtonElement).click());
 }
 
+/** Kontextmenü öffnen und „Tag einfügen“ aufklappen (die Palette unter dem Text
+ *  gibt es seit lva#148 nicht mehr; Tags kommen über das Kontextmenü). */
+async function openTagMenu(page: Page) {
+  const editor = editorOf(page);
+  await editor.click();
+  await editor.dispatchEvent("contextmenu", { clientX: 200, clientY: 200 });
+  await page
+    .getByRole("menuitem", { name: "Tag einfügen" })
+    .evaluate((el) => (el as HTMLButtonElement).click());
+}
+
 async function pickMenuItem(page: Page, testId: string) {
   await page.getByTestId("tts-action-menu").click();
   await page.getByTestId(testId).click();
@@ -416,18 +427,16 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
   await setup(page, { engine: "provider:phonon" });
   await gotoReadAloud(page);
   await editorOf(page).fill("Ein Satz.");
-  await page.locator("summary", { hasText: "Ausdruck" }).click();
-  const legend = page.getByTestId("tag-legend");
-  await expect(legend).toHaveAttribute("data-pauses-only", "true");
-  await expect(legend).toContainText("Phonon setzt keine Stil-Tags um");
-  // Keine Reiter, kein Freitextfeld für Stil-Tags.
-  await expect(page.getByRole("tab", { name: /Favoriten/ })).toHaveCount(0);
-  await expect(page.getByPlaceholder(/Eigenes Tag/i)).toHaveCount(0);
+  await openTagMenu(page);
+  await expect(page.getByTestId("tag-menu-pauses-only")).toContainText(
+    "Phonon setzt keine Stil-Tags um",
+  );
   // Pausen sind da, Gefühle nicht.
   await expect(
-    page.getByRole("button", { name: /Pause/ }).first(),
+    page.getByRole("menuitem", { name: /Pause/ }).first(),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: /Flüsternd/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 
   // Die Schreibregeln erklären nur Pausen, keine Emotions-Tags.
   const rules = writingRules(page);
@@ -478,12 +487,12 @@ test("Fish bleibt, wie es war: Sprecher sind die aufgenommenen Stimmen, volle Pa
   expect(await calls(page, "tts_provider_speakers")).toHaveLength(0);
   // Palette ganz, Auto-Tagging frei.
   await page.keyboard.press("Escape");
-  await page.locator("summary", { hasText: "Ausdruck" }).click();
-  await expect(page.getByTestId("tag-legend")).not.toHaveAttribute(
-    "data-pauses-only",
-    /.*/,
-  );
-  await expect(page.getByRole("tab", { name: /Favoriten/ })).toBeVisible();
+  await openTagMenu(page);
+  await expect(page.getByTestId("tag-menu-pauses-only")).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: /Flüsternd/ }).first(),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   const rules = writingRules(page);
   await rules.locator("summary").click();
   await expect(rules).toContainText("Emotions- und Effekt-Tags stehen");
@@ -697,7 +706,8 @@ test("Die Stimme gehört zur Seite: ein Seitenwechsel holt die Stimme der neuen 
   await page
     .getByText("Hörbuch", { exact: true })
     .click({ position: { x: 4, y: 4 } });
-  await expect(editorOf(page)).toHaveValue("Zweite Seite.");
+  // Eine Seite mit Text öffnet in der Leseansicht (lva#148).
+  await expect(page.getByTestId("reader-flow")).toContainText("Zweite Seite.");
   await expect(select).toContainText("Phonon · Anton");
   await expect.poll(async () => (await selects()).length).toBe(2);
 });

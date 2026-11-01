@@ -383,10 +383,10 @@ test("the end of the read-aloud page can actually be reached", async ({
     element.scrollTop = element.scrollHeight;
   });
 
-  // Die Stil-Klappe ist das letzte Element der Vorlesen-Seite. Sie muss
-  // danach vollstaendig sichtbar sein und darf nicht unter der Statusleiste
-  // liegen.
-  const last = page.getByText("Ausdruck & Sprechstil", { exact: true });
+  // Die Spielerleiste ist das letzte Element der Vorlesen-Seite (lva#148,
+  // ersetzt die Stil-Klappe). Sie muss danach vollstaendig sichtbar sein und
+  // darf nicht unter der Statusleiste liegen.
+  const last = page.getByTestId("reader-player");
   await expect(last).toBeInViewport();
   const box = (await last.boundingBox())!;
   const viewport = page.viewportSize()!;
