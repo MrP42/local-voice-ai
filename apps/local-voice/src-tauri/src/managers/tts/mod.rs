@@ -6,27 +6,27 @@
 //! Settings, Events, Prozess-Spawn, Idle-Watchdog und Exit-Teardown.
 
 pub mod abbreviations;
-pub mod pronunciation;
 pub mod availability;
 pub mod builder;
 pub mod compile_cache;
-pub mod notes;
 pub mod dsp;
 pub mod encode;
 pub mod engine;
 pub mod enhance;
 pub mod gradium;
 pub mod hf_access;
+pub mod lang;
 pub mod loudness;
 pub mod models;
+pub mod notes;
 pub mod phonon_clip;
 pub mod phonon_clone;
 pub mod phonon_models;
 pub mod phonon_voices;
 pub mod piper;
-pub mod lang;
 pub mod player;
 pub mod portable;
+pub mod pronunciation;
 pub mod protocol;
 pub mod providers;
 pub mod registry;
@@ -2253,7 +2253,9 @@ impl TtsManager {
                 emit(done, true);
                 return Err("abgebrochen".to_string());
             }
-            self.core.fetch_wav(port, seed, &text, voice.as_deref()).await?;
+            self.core
+                .fetch_wav(port, seed, &text, voice.as_deref())
+                .await?;
             done += 1;
             emit(done, false);
         }
@@ -2261,7 +2263,10 @@ impl TtsManager {
     }
 
     pub fn prewarm_cancel(&self) {
-        self.prewarm_cancel.lock().unwrap().store(true, Ordering::Release);
+        self.prewarm_cancel
+            .lock()
+            .unwrap()
+            .store(true, Ordering::Release);
     }
 
     /// Vorlesetext in Saetze samt Stimme zerlegen.
@@ -2719,11 +2724,7 @@ impl TtsManager {
     /// Grundlage dafuer, nur wirklich verwendbare Stimmen anzubieten (#29).
     pub fn runtime_status(&self) -> availability::TtsRuntimeStatus {
         let data = self.data_base_dir().unwrap_or_default();
-        availability::runtime_status(
-            &data,
-            &self.fish_dir(),
-            availability::current_platform_id(),
-        )
+        availability::runtime_status(&data, &self.fish_dir(), availability::current_platform_id())
     }
 
     /// `fish_dir` fuer die Command-Schicht: die Commands brauchen den Pfad,
@@ -3603,7 +3604,10 @@ impl TtsManager {
     /// Ob die abgelegte Hoerprobe noch gilt: sie muss existieren und darf
     /// nicht aelter sein als die Referenzaufnahme — wer eine Stimme unter
     /// demselben Namen neu aufnimmt, soll nicht die alte hoeren.
-    fn demo_is_fresh(out: &std::path::Path, reference_mtime: &Option<std::time::SystemTime>) -> bool {
+    fn demo_is_fresh(
+        out: &std::path::Path,
+        reference_mtime: &Option<std::time::SystemTime>,
+    ) -> bool {
         let Some(demo) = std::fs::metadata(out).ok().and_then(|m| m.modified().ok()) else {
             return false;
         };
@@ -3815,7 +3819,10 @@ impl TtsManager {
                     }
                     protocol::SpeechPart::Speak(text) => text,
                 };
-                let bytes = match self.core.fetch_wav(port, seed, &text, voice.as_deref()).await
+                let bytes = match self
+                    .core
+                    .fetch_wav(port, seed, &text, voice.as_deref())
+                    .await
                 {
                     Ok(bytes) => bytes,
                     // Die Vorpruefung sagte "alles im Cache", der Abruf sagt
@@ -3940,11 +3947,7 @@ impl TtsManager {
                                     spec.sample_rate,
                                     spec.channels,
                                 ),
-                                end_ms: notes::samples_to_ms(
-                                    *end,
-                                    spec.sample_rate,
-                                    spec.channels,
-                                ),
+                                end_ms: notes::samples_to_ms(*end, spec.sample_rate, spec.channels),
                             })
                             .collect()
                     })
@@ -5134,7 +5137,10 @@ fn without_speakers_unless_switching(
     if speaker_markers_apply(voice_switching, single_voice) {
         sentences
     } else {
-        sentences.into_iter().map(|(text, _)| (text, None)).collect()
+        sentences
+            .into_iter()
+            .map(|(text, _)| (text, None))
+            .collect()
     }
 }
 

@@ -121,7 +121,12 @@ fn world_with_probe(probe: Arc<dyn FileProbe>) -> World {
         n.config = json!({"path": inbox.path().to_string_lossy(), "subfolder": ""});
         integrations::create(&conn, &n, T0).unwrap();
         register(&conn, Kind::Agent, "app-automation");
-        set_grant(&conn, "app-automation", Capability::YoutubeAdd, GrantMode::Allow);
+        set_grant(
+            &conn,
+            "app-automation",
+            Capability::YoutubeAdd,
+            GrantMode::Allow,
+        );
     }
     let import = Arc::new(FakeImport::default());
     let youtube = Arc::new(FakeYoutube::default());
@@ -205,8 +210,14 @@ fn a_file_is_enqueued_once_and_the_meeting_is_handed_to_the_next_step() {
     let file = w.put("Kundentermin.WAV", b"RIFF audio");
     let (run, steps, outcome) = w.run(
         vec![
-            import_step(json!({"via": "eingang", "path": "{{trigger.path}}", "title": "Kundentermin"})),
-            step("n", "notify.local", json!({"title": "Besprechung {{meeting.id}}"})),
+            import_step(
+                json!({"via": "eingang", "path": "{{trigger.path}}", "title": "Kundentermin"}),
+            ),
+            step(
+                "n",
+                "notify.local",
+                json!({"title": "Besprechung {{meeting.id}}"}),
+            ),
         ],
         trigger_for(&file),
     );
@@ -254,9 +265,14 @@ fn the_title_defaults_to_the_file_name_without_extension_and_the_project_is_forw
 fn a_subtitle_file_is_ready_at_once() {
     let w = world();
     *w.import.subtitles_ready.lock().unwrap() = true;
-    let file = w.put("Untertitel.vtt", b"WEBVTT\n\n00:00.000 --> 00:01.000\nHallo\n");
+    let file = w.put(
+        "Untertitel.vtt",
+        b"WEBVTT\n\n00:00.000 --> 00:01.000\nHallo\n",
+    );
     let (_, steps, outcome) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
     assert_eq!(outcome, RunOutcome::Done);
@@ -269,19 +285,27 @@ fn a_relative_path_inside_the_folder_works_and_dotdot_does_not() {
     let w = world();
     w.put("Unter/ordner.wav", b"x");
     let (_, steps, outcome) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "Unter/ordner.wav"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "Unter/ordner.wav"}),
+        )],
         json!({}),
     );
     assert_eq!(outcome, RunOutcome::Done, "{steps:?}");
     assert_eq!(w.import.calls.lock().unwrap().len(), 1);
 
     let (run, steps, _) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "../draussen.wav"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "../draussen.wav"}),
+        )],
         json!({}),
     );
     assert_eq!(run.state, RunState::Failed);
     assert!(last_error(&steps).contains("nicht zulässig"), "{steps:?}");
-    assert_eq!(w.import.calls.lock().unwrap().len(), 1, "nichts weiter eingereiht");
+    assert_eq!(
+        w.import.calls.lock().unwrap().len(),
+        1,
+        "nichts weiter eingereiht"
+    );
 }
 
 #[test]
@@ -291,7 +315,9 @@ fn a_path_outside_the_folder_is_refused_for_good_and_nothing_is_enqueued() {
     let outside = elsewhere.path().join("fremd.wav");
     fs::write(&outside, b"geheim").unwrap();
     let (run, steps, outcome) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&outside),
     );
     assert!(matches!(outcome, RunOutcome::Failed { .. }), "{outcome:?}");
@@ -303,7 +329,11 @@ fn a_path_outside_the_folder_is_refused_for_good_and_nothing_is_enqueued() {
         last_error(&steps)
     );
     assert!(w.import.calls.lock().unwrap().is_empty());
-    assert_eq!(steps.len(), 1, "ein dauerhafter Fehler wird nicht wiederholt");
+    assert_eq!(
+        steps.len(),
+        1,
+        "ein dauerhafter Fehler wird nicht wiederholt"
+    );
 }
 
 #[test]
@@ -321,11 +351,17 @@ fn unsuitable_sources_are_refused_with_a_sentence() {
         (dir, "keine Datei"),
     ] {
         let (run, steps, _) = w.run(
-            vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+            vec![import_step(
+                json!({"via": "eingang", "path": "{{trigger.path}}"}),
+            )],
             trigger_for(&path),
         );
         assert_eq!(run.state, RunState::Failed, "{path:?}");
-        assert!(last_error(&steps).contains(expect), "{path:?}: {}", last_error(&steps));
+        assert!(
+            last_error(&steps).contains(expect),
+            "{path:?}: {}",
+            last_error(&steps)
+        );
     }
     assert!(w.import.calls.lock().unwrap().is_empty());
 }
@@ -337,13 +373,21 @@ fn only_a_folder_integration_is_a_source() {
     let file = w.put("a.wav", b"x");
     // Die Ordner-Integration „eingang“ gibt es; „vault“ hat FilesRead, ist aber kein Ordner.
     let (run, steps, _) = w.run(
-        vec![import_step(json!({"via": "vault", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "vault", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
     assert_eq!(run.state, RunState::Failed);
-    assert!(last_error(&steps).contains("keine Ordner-Integration"), "{}", last_error(&steps));
+    assert!(
+        last_error(&steps).contains("keine Ordner-Integration"),
+        "{}",
+        last_error(&steps)
+    );
     let (run, steps, _) = w.run(
-        vec![import_step(json!({"via": "gibtsnicht", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "gibtsnicht", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
     assert_eq!(run.state, RunState::Failed);
@@ -356,12 +400,15 @@ fn a_cloud_only_file_is_not_read_and_not_enqueued() {
     let w = world_with_probe(Arc::new(CloudProbe("platzhalter.wav")));
     let file = w.put("platzhalter.wav", b"inhalt");
     let (run, steps, _) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
     assert_eq!(run.state, RunState::Failed);
     assert!(
-        last_error(&steps).contains("nur in der Cloud") && last_error(&steps).contains("nicht heruntergeladen"),
+        last_error(&steps).contains("nur in der Cloud")
+            && last_error(&steps).contains("nicht heruntergeladen"),
         "{}",
         last_error(&steps)
     );
@@ -379,11 +426,16 @@ fn a_repeated_step_reuses_the_meeting_it_already_created() {
         state: ImportState::Queued,
     });
     let (run, steps, outcome) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
     assert_eq!(outcome, RunOutcome::Done, "{run:?}");
-    assert!(w.import.calls.lock().unwrap().is_empty(), "kein zweites Einreihen");
+    assert!(
+        w.import.calls.lock().unwrap().is_empty(),
+        "kein zweites Einreihen"
+    );
     let out: Value = serde_json::from_str(steps[0].output_json.as_deref().unwrap()).unwrap();
     assert_eq!(out["meeting_id"], "m-alt");
     assert_eq!(out["reused"], true);
@@ -396,16 +448,38 @@ fn a_repeated_step_reuses_the_meeting_it_already_created() {
 #[test]
 fn queue_errors_are_classified_so_that_retries_are_safe() {
     // Nichts entstanden: wiederholen.
-    for code in ["queue_enqueue_failed: database is locked", "meeting_create_failed: disk full", "meetings_unavailable"] {
-        assert!(matches!(map_import_error(code), StepError::Transient(_)), "{code}");
+    for code in [
+        "queue_enqueue_failed: database is locked",
+        "meeting_create_failed: disk full",
+        "meetings_unavailable",
+    ] {
+        assert!(
+            matches!(map_import_error(code), StepError::Transient(_)),
+            "{code}"
+        );
     }
     // Wird nie gelingen.
-    for code in ["folder_not_found", "subtitle_invalid", "subtitle_unreadable: x", "import_path_invalid"] {
-        assert!(matches!(map_import_error(code), StepError::Permanent(_)), "{code}");
+    for code in [
+        "folder_not_found",
+        "subtitle_invalid",
+        "subtitle_unreadable: x",
+        "import_path_invalid",
+    ] {
+        assert!(
+            matches!(map_import_error(code), StepError::Permanent(_)),
+            "{code}"
+        );
     }
     // Unklar, ob etwas zurueckblieb: nie von selbst wiederholen.
-    for code in ["segments_store_failed: x", "status_ready_failed", "etwas anderes"] {
-        assert!(matches!(map_import_error(code), StepError::Unknown(_)), "{code}");
+    for code in [
+        "segments_store_failed: x",
+        "status_ready_failed",
+        "etwas anderes",
+    ] {
+        assert!(
+            matches!(map_import_error(code), StepError::Unknown(_)),
+            "{code}"
+        );
     }
 }
 
@@ -419,15 +493,23 @@ fn a_transient_enqueue_error_is_retried_and_then_succeeds_without_a_second_meeti
         .unwrap()
         .push_back("queue_enqueue_failed: database is locked".to_string());
     let (run, steps, outcome) = w.run(
-        vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))],
+        vec![import_step(
+            json!({"via": "eingang", "path": "{{trigger.path}}"}),
+        )],
         trigger_for(&file),
     );
-    assert!(matches!(outcome, RunOutcome::Parked { .. }), "{outcome:?} {run:?}");
+    assert!(
+        matches!(outcome, RunOutcome::Parked { .. }),
+        "{outcome:?} {run:?}"
+    );
     assert_eq!(steps.last().unwrap().state, StepState::Retrying);
     // Nach der Wartezeit gelingt der zweite Versuch.
     w.clock.advance(10 * 60_000);
     let report = w.engine.tick().unwrap();
-    assert!(report.outcomes.iter().any(|(_, o)| *o == RunOutcome::Done), "{report:?}");
+    assert!(
+        report.outcomes.iter().any(|(_, o)| *o == RunOutcome::Done),
+        "{report:?}"
+    );
     assert_eq!(w.import.calls.lock().unwrap().len(), 1);
 }
 
@@ -435,14 +517,26 @@ fn a_transient_enqueue_error_is_retried_and_then_succeeds_without_a_second_meeti
 fn the_right_files_read_is_checked_before_anything_is_enqueued() {
     let w = world();
     let file = w.put("recht.wav", b"x");
-    let steps_def = vec![import_step(json!({"via": "eingang", "path": "{{trigger.path}}"}))];
+    let steps_def = vec![import_step(
+        json!({"via": "eingang", "path": "{{trigger.path}}"}),
+    )];
     // „aus“: der Schritt wird abgelehnt.
-    set_grant(&w.fx.conn(), "eingang", Capability::FilesRead, GrantMode::Off);
+    set_grant(
+        &w.fx.conn(),
+        "eingang",
+        Capability::FilesRead,
+        GrantMode::Off,
+    );
     let (run, steps, _) = w.run(steps_def.clone(), trigger_for(&file));
     assert_eq!(run.state, RunState::Failed);
     assert_eq!(steps.last().unwrap().state, StepState::Denied, "{steps:?}");
     // „fragen“: der Lauf wartet auf die Freigabe.
-    set_grant(&w.fx.conn(), "eingang", Capability::FilesRead, GrantMode::Ask);
+    set_grant(
+        &w.fx.conn(),
+        "eingang",
+        Capability::FilesRead,
+        GrantMode::Ask,
+    );
     let (_, _, outcome) = w.run(steps_def, trigger_for(&file));
     assert_eq!(outcome, RunOutcome::AwaitingApproval);
     assert!(w.import.calls.lock().unwrap().is_empty());
@@ -495,7 +589,11 @@ fn a_video_becomes_a_source_with_its_meeting_and_the_project() {
     let (run, steps, outcome) = w.run(
         vec![
             add_step(json!({"via": "app-automation", "url": "{{trigger.url}}", "project": "p-1"})),
-            step("n", "notify.local", json!({"title": "Quelle {{meeting.id}}"})),
+            step(
+                "n",
+                "notify.local",
+                json!({"title": "Quelle {{meeting.id}}"}),
+            ),
         ],
         json!({"url": "https://www.youtube.com/watch?v=Vid00000001&t=30&si=TRACK"}),
     );
@@ -506,7 +604,10 @@ fn a_video_becomes_a_source_with_its_meeting_and_the_project() {
     let out: Value = serde_json::from_str(steps[0].output_json.as_deref().unwrap()).unwrap();
     assert_eq!(out["meeting_id"], "yt-1");
     assert_eq!(out["video_id"], "Vid00000001");
-    assert_eq!(out["url"], "https://www.youtube.com/watch?v=Vid00000001", "die bereinigte Adresse");
+    assert_eq!(
+        out["url"], "https://www.youtube.com/watch?v=Vid00000001",
+        "die bereinigte Adresse"
+    );
     assert_eq!(out["reused"], false);
     assert_eq!(w.notify.calls()[0].params["title"], "Quelle yt-1");
 }
@@ -520,7 +621,9 @@ fn the_same_video_is_never_added_twice() {
         created_at_ms: T0 - 86_400_000,
     });
     let (_, steps, outcome) = w.run(
-        vec![add_step(json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}))],
+        vec![add_step(
+            json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}),
+        )],
         json!({}),
     );
     assert_eq!(outcome, RunOutcome::Done);
@@ -533,7 +636,11 @@ fn the_same_video_is_never_added_twice() {
 #[test]
 fn a_bad_link_and_a_missing_right_stop_the_step_before_any_network_call() {
     let w = world();
-    for url in ["https://www.youtube.com/playlist?list=PLx", "kein link", "https://vimeo.com/1"] {
+    for url in [
+        "https://www.youtube.com/playlist?list=PLx",
+        "kein link",
+        "https://vimeo.com/1",
+    ] {
         let (run, steps, _) = w.run(
             vec![add_step(json!({"via": "app-automation", "url": url}))],
             json!({}),
@@ -541,9 +648,16 @@ fn a_bad_link_and_a_missing_right_stop_the_step_before_any_network_call() {
         assert_eq!(run.state, RunState::Failed, "{url}");
         assert_eq!(steps.last().unwrap().state, StepState::Failed, "{url}");
     }
-    set_grant(&w.fx.conn(), "app-automation", Capability::YoutubeAdd, GrantMode::Off);
+    set_grant(
+        &w.fx.conn(),
+        "app-automation",
+        Capability::YoutubeAdd,
+        GrantMode::Off,
+    );
     let (_, steps, _) = w.run(
-        vec![add_step(json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}))],
+        vec![add_step(
+            json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}),
+        )],
         json!({}),
     );
     assert_eq!(steps.last().unwrap().state, StepState::Denied);
@@ -562,29 +676,48 @@ fn youtube_errors_are_classified_by_what_may_have_happened() {
         E::BadResponse("x".into()),
         E::Store("x".into()),
     ] {
-        assert!(matches!(map_youtube_error(&e), StepError::Transient(_)), "{e:?}");
+        assert!(
+            matches!(map_youtube_error(&e), StepError::Transient(_)),
+            "{e:?}"
+        );
     }
     assert!(matches!(
         map_youtube_error(&E::Disabled("aus".into())),
         StepError::Denied(_)
     ));
-    for e in [E::Unavailable, E::Project, E::Link(crate::managers::youtube::link::LinkError::Playlist)] {
-        assert!(matches!(map_youtube_error(&e), StepError::Permanent(_)), "{e:?}");
+    for e in [
+        E::Unavailable,
+        E::Project,
+        E::Link(crate::managers::youtube::link::LinkError::Playlist),
+    ] {
+        assert!(
+            matches!(map_youtube_error(&e), StepError::Permanent(_)),
+            "{e:?}"
+        );
     }
 }
 
 #[test]
 fn a_network_error_while_adding_is_retried_and_creates_one_source() {
     let w = world();
-    w.youtube.errors.lock().unwrap().push_back(YoutubeError::Timeout);
+    w.youtube
+        .errors
+        .lock()
+        .unwrap()
+        .push_back(YoutubeError::Timeout);
     let (_, _, outcome) = w.run(
-        vec![add_step(json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}))],
+        vec![add_step(
+            json!({"via": "app-automation", "url": "https://youtu.be/Vid00000001"}),
+        )],
         json!({}),
     );
     assert!(matches!(outcome, RunOutcome::Parked { .. }), "{outcome:?}");
     w.clock.advance(10 * 60_000);
     let report = w.engine.tick().unwrap();
-    assert!(report.outcomes.iter().any(|(_, o)| *o == RunOutcome::Done), "{report:?}");
+    assert!(
+        report.outcomes.iter().any(|(_, o)| *o == RunOutcome::Done),
+        "{report:?}"
+    );
     assert_eq!(w.youtube.adds.lock().unwrap().len(), 1);
 }
 

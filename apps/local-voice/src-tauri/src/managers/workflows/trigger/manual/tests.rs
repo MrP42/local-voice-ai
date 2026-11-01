@@ -112,7 +112,11 @@ fn an_agent_start_has_the_origin_agent_and_names_the_client_in_the_key() {
     assert!(r.created && r.dry_run);
     let run = store::get_run(&fx.conn(), &r.run_id).unwrap().unwrap();
     assert_eq!(run.origin, Origin::Agent);
-    assert!(run.trigger_key.starts_with("agent:C-1:"), "{}", run.trigger_key);
+    assert!(
+        run.trigger_key.starts_with("agent:C-1:"),
+        "{}",
+        run.trigger_key
+    );
     // Ohne Anfragekennung ist jeder Start ein eigener Lauf.
     let b = start_as(&e, &wf, Map::new(), true, Origin::Agent, Some("C-1"), None).unwrap();
     assert_ne!(r.run_id, b.run_id);
@@ -123,13 +127,49 @@ fn an_agent_start_has_the_origin_agent_and_names_the_client_in_the_key() {
 fn a_request_id_makes_a_repeated_agent_start_the_same_run() {
     let (fx, e) = world();
     let wf = armed_workflow(&e, &def(vec![note("a")]));
-    let a = start_as(&e, &wf, Map::new(), true, Origin::Agent, Some("C-1"), Some("R1")).unwrap();
-    let b = start_as(&e, &wf, Map::new(), true, Origin::Agent, Some("C-1"), Some("R1")).unwrap();
+    let a = start_as(
+        &e,
+        &wf,
+        Map::new(),
+        true,
+        Origin::Agent,
+        Some("C-1"),
+        Some("R1"),
+    )
+    .unwrap();
+    let b = start_as(
+        &e,
+        &wf,
+        Map::new(),
+        true,
+        Origin::Agent,
+        Some("C-1"),
+        Some("R1"),
+    )
+    .unwrap();
     assert!(a.created && !b.created);
     assert_eq!(a.run_id, b.run_id);
     // Eine andere Anfrage oder ein anderer Zugang ist ein anderer Lauf.
-    let c = start_as(&e, &wf, Map::new(), true, Origin::Agent, Some("C-1"), Some("R2")).unwrap();
-    let d = start_as(&e, &wf, Map::new(), true, Origin::Agent, Some("C-2"), Some("R1")).unwrap();
+    let c = start_as(
+        &e,
+        &wf,
+        Map::new(),
+        true,
+        Origin::Agent,
+        Some("C-1"),
+        Some("R2"),
+    )
+    .unwrap();
+    let d = start_as(
+        &e,
+        &wf,
+        Map::new(),
+        true,
+        Origin::Agent,
+        Some("C-2"),
+        Some("R1"),
+    )
+    .unwrap();
     assert!(c.created && d.created);
     assert_eq!(run_count(&fx, &wf), 3);
 }
@@ -151,7 +191,16 @@ fn an_agent_never_runs_more_live_than_the_workflow() {
     // Nicht scharf geschaltet: auch ein Start „live“ plant nur.
     let row = e.save_workflow(None, &def(vec![note("a")])).unwrap();
     e.set_enabled(&row.id, true).unwrap();
-    let r = start_as(&e, &row.id, Map::new(), false, Origin::Agent, Some("C-1"), None).unwrap();
+    let r = start_as(
+        &e,
+        &row.id,
+        Map::new(),
+        false,
+        Origin::Agent,
+        Some("C-1"),
+        None,
+    )
+    .unwrap();
     assert!(r.dry_run, "ein nicht scharfer Ablauf plant nur");
     // Ausgeschaltet: ein echter Lauf wird abgewiesen, der Trockenlauf geht.
     let wf = armed_workflow(&e, &def(vec![note("b")]));

@@ -583,7 +583,8 @@ impl TranscriptionManager {
         {
             return false;
         }
-        if self.app_handle
+        if self
+            .app_handle
             .try_state::<Arc<AudioRecordingManager>>()
             .is_some_and(|a| a.is_recording())
         {
@@ -2295,7 +2296,8 @@ impl TranscriptionManager {
     // match) so the dictation path stays byte-identical and M3-stable; the
     // duplication is the price of that stability.
     pub fn transcribe_segments(&self, audio: Vec<f32>) -> Result<Vec<TimedSegment>> {
-        self.transcribe_segments_detecting(audio).map(|(segments, _)| segments)
+        self.transcribe_segments_detecting(audio)
+            .map(|(segments, _)| segments)
     }
 
     /// G5: wie [`Self::transcribe_segments`], dazu die Sprache, die das Modell selbst
@@ -2416,8 +2418,8 @@ impl TranscriptionManager {
                 );
             }
 
-            let transcribe_result =
-                catch_unwind(AssertUnwindSafe(|| -> Result<(Vec<TimedSegment>, Option<String>)> {
+            let transcribe_result = catch_unwind(AssertUnwindSafe(
+                || -> Result<(Vec<TimedSegment>, Option<String>)> {
                     match &mut engine {
                         LoadedEngine::TranscribeCpp(session) => {
                             // Custom words become the initial prompt ONLY for models
@@ -2463,7 +2465,9 @@ impl TranscriptionManager {
                             };
                             parakeet_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("Parakeet transcription failed: {}", e)
                                 })
@@ -2493,7 +2497,9 @@ impl TranscriptionManager {
                             };
                             sense_voice_engine
                                 .transcribe_with(&audio, &params)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| {
                                     anyhow::anyhow!("SenseVoice transcription failed: {}", e)
                                 })
@@ -2515,7 +2521,9 @@ impl TranscriptionManager {
                             };
                             canary_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
                         }
                         LoadedEngine::Cohere(cohere_engine) => {
@@ -2530,11 +2538,14 @@ impl TranscriptionManager {
                             };
                             cohere_engine
                                 .transcribe(&audio, &options)
-                                .map(|r| (segments_from_result(&r.text, r.segments, audio_ms), None))
+                                .map(|r| {
+                                    (segments_from_result(&r.text, r.segments, audio_ms), None)
+                                })
                                 .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                         }
                     }
-                }));
+                },
+            ));
 
             match transcribe_result {
                 Ok(inner_result) => {
@@ -3510,12 +3521,28 @@ mod tests {
         assert_eq!(
             words,
             vec![
-                WordTime { text: "Guten".into(), start_ms: 120, end_ms: 480 },
-                WordTime { text: "Morgen".into(), start_ms: 520, end_ms: 3_000 },
-                WordTime { text: "x".into(), start_ms: 0, end_ms: 0 },
+                WordTime {
+                    text: "Guten".into(),
+                    start_ms: 120,
+                    end_ms: 480
+                },
+                WordTime {
+                    text: "Morgen".into(),
+                    start_ms: 520,
+                    end_ms: 3_000
+                },
+                WordTime {
+                    text: "x".into(),
+                    start_ms: 0,
+                    end_ms: 0
+                },
             ]
         );
-        assert_eq!(words_from_rows(&[], 1_000), None, "keine Wortzeiten, nie leere Liste");
+        assert_eq!(
+            words_from_rows(&[], 1_000),
+            None,
+            "keine Wortzeiten, nie leere Liste"
+        );
         assert_eq!(words_from_rows(&[(" ".into(), 0, 5)], 1_000), None);
     }
 
@@ -3644,7 +3671,10 @@ mod tests {
 
     #[test]
     fn an_extra_engine_belongs_to_the_thread_that_bound_it() {
-        assert!(!extra_engine_bound(), "ohne Bindung rechnet jeder mit der gemeinsamen Engine");
+        assert!(
+            !extra_engine_bound(),
+            "ohne Bindung rechnet jeder mit der gemeinsamen Engine"
+        );
         let binding = bind_extra_engine(ExtraEngine {
             engine: None,
             model_id: "eigenes-modell".into(),
@@ -3658,7 +3688,10 @@ mod tests {
         // Eine Engine, die es nicht mehr gibt (Panik im Lauf), wird nicht erfunden.
         assert!(take_bound_engine().is_none());
         drop(binding);
-        assert!(!extra_engine_bound(), "mit der Bindung ist auch die Engine frei");
+        assert!(
+            !extra_engine_bound(),
+            "mit der Bindung ist auch die Engine frei"
+        );
         assert_eq!(bound_model_id(), None);
     }
 
@@ -3682,8 +3715,14 @@ mod tests {
     #[test]
     fn the_live_model_loads_when_the_ram_gate_is_open() {
         // Genau auf der Grenze (Bedarf + Systemreserve): laden.
-        assert_eq!(plan_live_load(1_500, None, need(1_500), 0), LiveLoadPlan::Target);
-        assert_eq!(plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0), LiveLoadPlan::Target);
+        assert_eq!(
+            plan_live_load(1_500, None, need(1_500), 0),
+            LiveLoadPlan::Target
+        );
+        assert_eq!(
+            plan_live_load(1_500, Some(("diktat", 600)), 64_000, 0),
+            LiveLoadPlan::Target
+        );
     }
 
     #[test]
@@ -3703,7 +3742,10 @@ mod tests {
         // Ohne Rueckfall (ausdrueckliche Wahl) oder mit zu grossem Rueckfall: nichts laden.
         assert_eq!(
             plan_live_load(1_500, None, free, 0),
-            LiveLoadPlan::Refuse { need_mb: need(1_500), free_mb: free }
+            LiveLoadPlan::Refuse {
+                need_mb: need(1_500),
+                free_mb: free
+            }
         );
         assert!(matches!(
             plan_live_load(1_500, Some(("gross", 3_000)), free, 0),
@@ -3717,9 +3759,15 @@ mod tests {
     #[test]
     fn the_memory_of_the_model_being_replaced_counts_as_available() {
         let free = need(1_500) - 500;
-        assert!(matches!(plan_live_load(1_500, None, free, 0), LiveLoadPlan::Refuse { .. }));
+        assert!(matches!(
+            plan_live_load(1_500, None, free, 0),
+            LiveLoadPlan::Refuse { .. }
+        ));
         assert_eq!(plan_live_load(1_500, None, free, 500), LiveLoadPlan::Target);
-        assert!(matches!(plan_live_load(1_500, None, free, 499), LiveLoadPlan::Refuse { .. }));
+        assert!(matches!(
+            plan_live_load(1_500, None, free, 499),
+            LiveLoadPlan::Refuse { .. }
+        ));
     }
 
     /// Ist nur die Grenze der Modellgroesse unbekannt (Modell nicht im Katalog, 0 MB),

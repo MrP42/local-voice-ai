@@ -338,7 +338,11 @@ fn a_directory_swapped_for_a_junction_after_the_check_never_leaks_a_foreign_file
     std::fs::create_dir(&sub).unwrap();
     let original = b"ORIGINAL-FASSUNG-0001";
     let foreign = b"FREMDE-DATEI-GEHEIM-0";
-    assert_eq!(original.len(), foreign.len(), "gleiche Laenge: die Groessenpruefung faengt es nicht");
+    assert_eq!(
+        original.len(),
+        foreign.len(),
+        "gleiche Laenge: die Groessenpruefung faengt es nicht"
+    );
     let path = write(&sub, "a.docx", original);
     let outside = temp_dir();
     write(&outside, "a.docx", foreign);

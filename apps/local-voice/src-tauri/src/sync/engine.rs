@@ -2,11 +2,11 @@
 //! pullen und anwenden. Ein Lauf zur Zeit; Auslöser sind der Takt (60 s), ein
 //! Anstoß aus der Oberfläche (entprellt) und der Start.
 
+use super::account::{self, SyncConfig};
 use super::client::{HubClient, HubError, PushObject, RemoteObject};
 use super::collect::{self, LocalObject};
 use super::crypto;
 use super::ledger::{self, Entry, Ledger};
-use super::account::{self, SyncConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -56,7 +56,11 @@ pub struct SyncEngine {
 
 impl Default for SyncEngine {
     fn default() -> Self {
-        Self { status: Mutex::new(SyncStatus::default()), run_lock: tokio::sync::Mutex::new(()), notify: Notify::new() }
+        Self {
+            status: Mutex::new(SyncStatus::default()),
+            run_lock: tokio::sync::Mutex::new(()),
+            notify: Notify::new(),
+        }
     }
 }
 
@@ -96,7 +100,11 @@ impl SyncEngine {
             s.device_name = cfg.as_ref().map(|c| c.device_name.clone());
             s.hub_url = cfg.as_ref().map(|c| c.url.clone());
             s.dead_letters = led.dead.len() as u32;
-            s.pages = led.objects.keys().filter(|k| k.starts_with("page/")).count() as u32;
+            s.pages = led
+                .objects
+                .keys()
+                .filter(|k| k.starts_with("page/"))
+                .count() as u32;
             if cfg.is_none() {
                 s.last_error = None;
                 s.pending = 0;
@@ -189,8 +197,10 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
 
     // ---- Push -----------------------------------------------------------
     let locals = collect::collect(app).map_err(HubError::Other)?;
-    let by_key: HashMap<String, &LocalObject> =
-        locals.iter().map(|o| (ledger::key(o.collection, &o.id), o)).collect();
+    let by_key: HashMap<String, &LocalObject> = locals
+        .iter()
+        .map(|o| (ledger::key(o.collection, &o.id), o))
+        .collect();
 
     let mut to_push: Vec<(PushObject, String, Option<&LocalObject>)> = Vec::new(); // (obj, hash, local)
     for o in &locals {
@@ -203,9 +213,16 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             led.mark_dead(o.collection, &o.id, &h, "too_large");
             continue;
         }
-        let base = led.get(o.collection, &o.id).map(|e| e.revision).unwrap_or(0);
-        let sealed = crypto::seal(&key, &crypto::aad(cfg.user_id, o.collection, &o.id), plain.as_bytes())
-            .map_err(HubError::Other)?;
+        let base = led
+            .get(o.collection, &o.id)
+            .map(|e| e.revision)
+            .unwrap_or(0);
+        let sealed = crypto::seal(
+            &key,
+            &crypto::aad(cfg.user_id, o.collection, &o.id),
+            plain.as_bytes(),
+        )
+        .map_err(HubError::Other)?;
         to_push.push((
             PushObject {
                 collection: o.collection.to_string(),
@@ -262,14 +279,23 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         let objs: Vec<PushObject> = chunk.iter().map(|(o, _, _)| o.clone()).collect();
         let results = client.push(&cfg.device_id, &objs).await?;
         for r in results {
-            let Some((sent, h, local)) =
-                chunk.iter().find(|(o, _, _)| o.collection == r.collection && o.object_id == r.object_id)
+            let Some((sent, h, local)) = chunk
+                .iter()
+                .find(|(o, _, _)| o.collection == r.collection && o.object_id == r.object_id)
             else {
                 continue;
             };
             match r.outcome.as_str() {
                 "accepted" => {
-                    led.set(&sent.collection, &sent.object_id, Entry { revision: r.revision, hash: h.clone(), deleted: sent.deleted });
+                    led.set(
+                        &sent.collection,
+                        &sent.object_id,
+                        Entry {
+                            revision: r.revision,
+                            hash: h.clone(),
+                            deleted: sent.deleted,
+                        },
+                    );
                 }
                 "superseded" => {
                     match r.current {
@@ -277,24 +303,47 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                             if remote.key_id != my_key_id {
                                 return Ok(finish(app, led, changed, pending + 1, true));
                             }
-                            let synced = led.get(&remote.collection, &remote.object_id).map(|e| e.hash.clone());
+                            let synced = led
+                                .get(&remote.collection, &remote.object_id)
+                                .map(|e| e.hash.clone());
                             let _ = local;
                             let applied = apply_remote(app, cfg, &key, &remote, synced.as_deref())
                                 .map_err(HubError::Other)?;
                             if applied {
                                 changed = true;
                             }
-                            led.set(&remote.collection, &remote.object_id, Entry { revision: remote.revision, hash: remote_hash(&key, cfg, &remote), deleted: remote.deleted });
+                            led.set(
+                                &remote.collection,
+                                &remote.object_id,
+                                Entry {
+                                    revision: remote.revision,
+                                    hash: remote_hash(&key, cfg, &remote),
+                                    deleted: remote.deleted,
+                                },
+                            );
                         }
                         None => {
                             // Server kennt das Objekt nicht (mehr): nächster Lauf mit Basis 0.
-                            led.set(&sent.collection, &sent.object_id, Entry { revision: 0, hash: String::new(), deleted: false });
+                            led.set(
+                                &sent.collection,
+                                &sent.object_id,
+                                Entry {
+                                    revision: 0,
+                                    hash: String::new(),
+                                    deleted: false,
+                                },
+                            );
                             pending += 1;
                         }
                     }
                 }
                 "rejected" => {
-                    led.mark_dead(&sent.collection, &sent.object_id, h, r.reason.as_deref().unwrap_or("rejected"));
+                    led.mark_dead(
+                        &sent.collection,
+                        &sent.object_id,
+                        h,
+                        r.reason.as_deref().unwrap_or("rejected"),
+                    );
                 }
                 _ => {
                     // retry / unbekannt: beim nächsten Lauf erneut.
@@ -313,7 +362,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     'pull: loop {
         pages_seen += 1;
         if pages_seen > PULL_MAX_PAGES {
-            return Err(HubError::Other("Pull ohne Ende: zu viele Seiten in einem Lauf".into()));
+            return Err(HubError::Other(
+                "Pull ohne Ende: zu viele Seiten in einem Lauf".into(),
+            ));
         }
         let page = match client.pull(since, PULL_LIMIT).await {
             Ok(p) => p,
@@ -325,10 +376,16 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             Err(e) => return Err(e),
         };
         if page.more && page.cursor <= since {
-            return Err(HubError::Other("Pull ohne Fortschritt: Cursor bewegt sich nicht".into()));
+            return Err(HubError::Other(
+                "Pull ohne Fortschritt: Cursor bewegt sich nicht".into(),
+            ));
         }
         for remote in &page.objects {
-            if remote.device_id == cfg.device_id && led.get(&remote.collection, &remote.object_id).is_some_and(|e| e.revision == remote.revision) {
+            if remote.device_id == cfg.device_id
+                && led
+                    .get(&remote.collection, &remote.object_id)
+                    .is_some_and(|e| e.revision == remote.revision)
+            {
                 continue; // eigene, schon bestätigte Änderung
             }
             if !remote.deleted && remote.key_id != my_key_id {
@@ -339,11 +396,21 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             // frischen Stand unter der Seiten-Sperre und sichert vorher die
             // Konfliktkopie -- ein Schnappschuss vom Zyklusanfang reicht
             // dafuer nicht (Review-Befund 14.09.).
-            let synced = led.get(&remote.collection, &remote.object_id).map(|e| e.hash.clone());
+            let synced = led
+                .get(&remote.collection, &remote.object_id)
+                .map(|e| e.hash.clone());
             if apply_remote(app, cfg, &key, remote, synced.as_deref()).map_err(HubError::Other)? {
                 changed = true;
             }
-            led.set(&remote.collection, &remote.object_id, Entry { revision: remote.revision, hash: remote_hash(&key, cfg, remote), deleted: remote.deleted });
+            led.set(
+                &remote.collection,
+                &remote.object_id,
+                Entry {
+                    revision: remote.revision,
+                    hash: remote_hash(&key, cfg, remote),
+                    deleted: remote.deleted,
+                },
+            );
         }
         led.cursor = page.cursor.max(since);
         since = led.cursor;
@@ -355,14 +422,24 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     Ok(finish(app, led, changed, pending, key_mismatch))
 }
 
-fn finish(app: &AppHandle, led: Ledger, changed: bool, pending: u32, key_mismatch: bool) -> Outcome {
+fn finish(
+    app: &AppHandle,
+    led: Ledger,
+    changed: bool,
+    pending: u32,
+    key_mismatch: bool,
+) -> Outcome {
     let _ = ledger::save(app, &led);
     Outcome {
         changed,
         pending,
         dead_letters: led.dead.len() as u32,
         key_mismatch,
-        pages: led.objects.keys().filter(|k| k.starts_with("page/")).count() as u32,
+        pages: led
+            .objects
+            .keys()
+            .filter(|k| k.starts_with("page/"))
+            .count() as u32,
     }
 }
 
@@ -370,11 +447,21 @@ fn remote_hash(key: &[u8; crypto::KEY_LEN], cfg: &SyncConfig, remote: &RemoteObj
     if remote.deleted {
         return String::new();
     }
-    decrypt(key, cfg, remote).map(|v| collect::hash(&v)).unwrap_or_default()
+    decrypt(key, cfg, remote)
+        .map(|v| collect::hash(&v))
+        .unwrap_or_default()
 }
 
-fn decrypt(key: &[u8; crypto::KEY_LEN], cfg: &SyncConfig, remote: &RemoteObject) -> Result<serde_json::Value, String> {
-    let plain = crypto::open(key, &crypto::aad(cfg.user_id, &remote.collection, &remote.object_id), &remote.payload)?;
+fn decrypt(
+    key: &[u8; crypto::KEY_LEN],
+    cfg: &SyncConfig,
+    remote: &RemoteObject,
+) -> Result<serde_json::Value, String> {
+    let plain = crypto::open(
+        key,
+        &crypto::aad(cfg.user_id, &remote.collection, &remote.object_id),
+        &remote.payload,
+    )?;
     serde_json::from_slice(&plain).map_err(|e| format!("Objekt unlesbar: {e}"))
 }
 
@@ -396,7 +483,13 @@ fn apply_remote(
                 return Ok(true);
             }
             let value = decrypt(key, cfg, remote)?;
-            collect::apply_page(app, &remote.object_id, &value, synced_hash, &cfg.device_name)?;
+            collect::apply_page(
+                app,
+                &remote.object_id,
+                &value,
+                synced_hash,
+                &cfg.device_name,
+            )?;
             Ok(true)
         }
         collect::COLLECTION_SETTINGS => {

@@ -1632,8 +1632,12 @@ mod tests {
     fn ungueltige_konfiguration_wird_abgelehnt_und_aendert_nichts() {
         let mut s = TtsProvidersSettings::default();
         let before = s.clone();
-        let e = apply_config_json(&mut s, "phonon", r#"{"exe_path":"","model":"","threads":999}"#)
-            .unwrap_err();
+        let e = apply_config_json(
+            &mut s,
+            "phonon",
+            r#"{"exe_path":"","model":"","threads":999}"#,
+        )
+        .unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);
         let e = apply_config_json(&mut s, "phonon", "kein json").unwrap_err();
         assert_eq!(e.kind, TtsErrorKind::InvalidConfig);

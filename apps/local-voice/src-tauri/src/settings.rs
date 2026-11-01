@@ -2836,7 +2836,10 @@ mod tests {
         let (conn, model) = settings.active_llm_model().expect("aktives Modell");
         assert_eq!(conn.kind, "openai");
         assert_eq!(model.remote_id, "gpt-4.1-mini");
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
     }
 
     /// Schema 3 schaltet das Offenhalten des Mikrofons einmalig ein, auch wenn
@@ -2854,7 +2857,10 @@ mod tests {
         });
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert!(settings.lazy_stream_close);
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
 
         settings.lazy_stream_close = false;
         let raw = serde_json::json!({
@@ -2863,7 +2869,10 @@ mod tests {
             "llm_connections": []
         });
         apply_settings_migrations(&mut settings, &raw);
-        assert!(!settings.lazy_stream_close, "Nutzerwahl bleibt nach der Migration");
+        assert!(
+            !settings.lazy_stream_close,
+            "Nutzerwahl bleibt nach der Migration"
+        );
     }
 
     #[test]
@@ -2890,7 +2899,10 @@ mod tests {
         assert!(apply_settings_migrations(&mut settings, &raw));
         assert_eq!(settings.dictation_audio, DictationAudio::Duck);
         assert_eq!(settings.dictation_audio_duck_percent, 10);
-        assert_eq!(settings.settings_schema_version, CURRENT_SETTINGS_SCHEMA_VERSION);
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -2960,16 +2972,22 @@ mod tests {
             budget_enforced: false,
             training_opt_out: false,
         });
-        settings
-            .llm_models
-            .push(llm_model("zweitkonto:gpt-4.1", "zweitkonto", "gpt-4.1", true));
+        settings.llm_models.push(llm_model(
+            "zweitkonto:gpt-4.1",
+            "zweitkonto",
+            "gpt-4.1",
+            true,
+        ));
         settings.llm_active_model_id = Some("zweitkonto:gpt-4.1".into());
 
         settings.sync_legacy_from_llm();
 
         assert_eq!(settings.post_process_provider_id, "openai");
         assert_eq!(
-            settings.post_process_models.get("openai").map(String::as_str),
+            settings
+                .post_process_models
+                .get("openai")
+                .map(String::as_str),
             Some("gpt-4.1")
         );
         assert_eq!(
@@ -3369,7 +3387,10 @@ mod tests {
         assert!(!d.meeting_reminder_all_events);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert_eq!(old.meeting_reminder_lead_s, 60, "nicht 0 (aus) wie beim u32-Typ");
+        assert_eq!(
+            old.meeting_reminder_lead_s, 60,
+            "nicht 0 (aus) wie beim u32-Typ"
+        );
         assert!(!old.meeting_reminder_all_events);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_reminder_lead_s": 0,
@@ -3388,14 +3409,32 @@ mod tests {
         let d = get_default_settings();
         assert!(!d.meeting_mcp_enabled);
         assert!(d.meeting_mcp_include_transcript);
-        assert!(!d.voice_call_read_transcripts, "Sprachgespräch: Transkripte standardmäßig aus");
+        assert!(
+            !d.voice_call_read_transcripts,
+            "Sprachgespräch: Transkripte standardmäßig aus"
+        );
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
-        assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
-        assert!(!old.voice_call_read_transcripts, "ältere settings.json: aus");
-        assert!(!d.speech_learning_enabled, "Lernen aus Korrekturen: standardmäßig aus");
-        assert!(!d.speech_learning_auto_apply, "automatisch übernehmen: standardmäßig aus");
+        assert!(
+            !old.meeting_mcp_enabled,
+            "ältere settings.json: Server bleibt aus"
+        );
+        assert!(
+            old.meeting_mcp_include_transcript,
+            "nicht false wie beim bool-Typ"
+        );
+        assert!(
+            !old.voice_call_read_transcripts,
+            "ältere settings.json: aus"
+        );
+        assert!(
+            !d.speech_learning_enabled,
+            "Lernen aus Korrekturen: standardmäßig aus"
+        );
+        assert!(
+            !d.speech_learning_auto_apply,
+            "automatisch übernehmen: standardmäßig aus"
+        );
         assert!(!old.speech_learning_enabled && !old.speech_learning_auto_apply);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_mcp_enabled": true,
@@ -3419,7 +3458,10 @@ mod tests {
         assert_eq!(d.meeting_youtube_tool_path, None);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert!(!old.meeting_youtube_private, "ältere settings.json: bleibt aus");
+        assert!(
+            !old.meeting_youtube_private,
+            "ältere settings.json: bleibt aus"
+        );
         assert_eq!(old.meeting_youtube_tool_path, None);
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_youtube_private": true,
@@ -3503,10 +3545,9 @@ mod tests {
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert_eq!(old.meeting_self_name, None);
-        let set: AppSettings = serde_json::from_value(
-            serde_json::json!({ "meeting_self_name": "Patrick Wolff" }),
-        )
-        .unwrap();
+        let set: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_self_name": "Patrick Wolff" }))
+                .unwrap();
         assert_eq!(set.meeting_self_name.as_deref(), Some("Patrick Wolff"));
     }
 
@@ -3516,10 +3557,9 @@ mod tests {
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert!(old.meeting_self_emails.is_empty());
-        let set: AppSettings = serde_json::from_value(
-            serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }),
-        )
-        .unwrap();
+        let set: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_self_emails": ["ich@wolff.de"] }))
+                .unwrap();
         assert_eq!(set.meeting_self_emails, vec!["ich@wolff.de".to_string()]);
     }
 
@@ -3571,7 +3611,10 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(set.meeting_detect_mode, DetectMode::AllApps);
-        assert_eq!(set.meeting_detect_ignored_apps, vec!["obs64.exe".to_string()]);
+        assert_eq!(
+            set.meeting_detect_ignored_apps,
+            vec!["obs64.exe".to_string()]
+        );
     }
 
     // M2-P2d
@@ -3592,7 +3635,10 @@ mod tests {
         assert_eq!(get_default_settings().meeting_import_parallel, 1);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
-        assert_eq!(old.meeting_import_parallel, 1, "aeltere settings.json: ein Lauf");
+        assert_eq!(
+            old.meeting_import_parallel, 1,
+            "aeltere settings.json: ein Lauf"
+        );
         let two: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_import_parallel": 2 })).unwrap();
         assert_eq!(two.meeting_import_parallel, 2);

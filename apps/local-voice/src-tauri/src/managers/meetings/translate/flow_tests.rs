@@ -102,8 +102,14 @@ async fn a_translation_becomes_a_new_inactive_variant_with_source_model_and_toke
     assert_eq!(translated.kind, variants::KIND_TRANSLATION);
     assert_eq!(translated.language.as_deref(), Some("de"));
     assert_eq!(translated.source_language.as_deref(), Some("en"));
-    assert_eq!(translated.source_variant_id.as_deref(), Some(original.as_str()));
-    assert!(!translated.active, "das Original bleibt das aktive Transkript");
+    assert_eq!(
+        translated.source_variant_id.as_deref(),
+        Some(original.as_str())
+    );
+    assert!(
+        !translated.active,
+        "das Original bleibt das aktive Transkript"
+    );
     assert_eq!(translated.flagged, 0);
     assert_eq!(seen.last(), Some(&(1, 1)));
 
@@ -119,7 +125,10 @@ async fn a_translation_becomes_a_new_inactive_variant_with_source_model_and_toke
     assert_eq!(translation.len(), before.len());
     assert_eq!(translation[1].text, "Wir zahlen jeden Monat 1.200,50 Euro.");
     for (t, o) in translation.iter().zip(&before) {
-        assert_eq!((t.start_ms, t.end_ms, t.speaker_index), (o.start_ms, o.end_ms, o.speaker_index));
+        assert_eq!(
+            (t.start_ms, t.end_ms, t.speaker_index),
+            (o.start_ms, o.end_ms, o.speaker_index)
+        );
     }
 
     // Herkunft: Quelle = Ausgangsfassung, Modell, Token, Ledger.
@@ -128,14 +137,18 @@ async fn a_translation_becomes_a_new_inactive_variant_with_source_model_and_toke
     let e = &entries[0];
     assert_eq!(e.operation, "translation");
     assert_eq!(
-        e.sources.iter().map(|s| s.reference.as_str()).collect::<Vec<_>>(),
+        e.sources
+            .iter()
+            .map(|s| s.reference.as_str())
+            .collect::<Vec<_>>(),
         vec![original.as_str()]
     );
     assert!(e.model_id.is_some());
     assert_eq!(e.prompt_tokens, Some(150));
     assert_eq!(e.completion_tokens, Some(60));
     assert!(e.usage_event_id.is_some());
-    let params: serde_json::Value = serde_json::from_str(e.params_json.as_deref().unwrap()).unwrap();
+    let params: serde_json::Value =
+        serde_json::from_str(e.params_json.as_deref().unwrap()).unwrap();
     assert_eq!(params["target_language"], "de");
     assert_eq!(params["source_language"], "en");
     assert_eq!(params["flagged"], 0);
@@ -152,10 +165,16 @@ async fn a_deviating_sentence_is_marked_in_the_report_and_kept_in_the_text() {
     let translated = translate_variant(&settings, &store, &meeting, &original, "de", go, |_, _| {})
         .await
         .unwrap();
-    assert_eq!(translated.flagged, 1, "der Satz mit der falschen Zahl ist markiert");
+    assert_eq!(
+        translated.flagged, 1,
+        "der Satz mit der falschen Zahl ist markiert"
+    );
     let conn = store.get_connection().unwrap();
     let (_, translation) = variants::get_segments(&conn, &translated.id).unwrap();
-    assert_eq!(translation[1].text, "Wir zahlen jeden Monat 120,50 Euro.", "nicht still verworfen");
+    assert_eq!(
+        translation[1].text, "Wir zahlen jeden Monat 120,50 Euro.",
+        "nicht still verworfen"
+    );
     let report: TranslationReport =
         serde_json::from_str(&variants::get_meta(&conn, &translated.id).unwrap().unwrap()).unwrap();
     assert_eq!(report.flagged.len(), 1);
@@ -178,7 +197,10 @@ async fn a_server_failure_leaves_no_variant_and_the_original_untouched() {
     assert!(err.starts_with("translate_llm_failed"), "{err}");
     let mut conn = store.get_connection().unwrap();
     assert_eq!(variants::list(&mut conn, &meeting).unwrap().len(), 1);
-    assert_eq!(store.get_segments(&meeting).unwrap()[0].text, "Good morning, this is Anna from Siemens.");
+    assert_eq!(
+        store.get_segments(&meeting).unwrap()[0].text,
+        "Good morning, this is Anna from Siemens."
+    );
 }
 
 #[tokio::test]
@@ -194,9 +216,17 @@ async fn a_stop_leaves_no_variant_and_asks_the_model_nothing() {
     let settings = settings_with_mock_provider(port);
     let fx = Fx::new();
     let (store, meeting, original) = english_meeting(&fx);
-    let err = translate_variant(&settings, &store, &meeting, &original, "de", || std::future::ready(Control::Stop), |_, _| {})
-        .await
-        .unwrap_err();
+    let err = translate_variant(
+        &settings,
+        &store,
+        &meeting,
+        &original,
+        "de",
+        || std::future::ready(Control::Stop),
+        |_, _| {},
+    )
+    .await
+    .unwrap_err();
     assert_eq!(err, "translate_cancelled");
     assert_eq!(asked.load(Ordering::SeqCst), 0);
     let mut conn = store.get_connection().unwrap();
@@ -219,26 +249,53 @@ async fn argument_errors_come_before_any_model_call() {
     let settings = settings_with_mock_provider(port);
     // Gleiche Sprache.
     assert_eq!(
-        translate_variant(&settings, &store, &meeting, &original, "en-US", go, |_, _| {})
-            .await
-            .unwrap_err(),
+        translate_variant(
+            &settings,
+            &store,
+            &meeting,
+            &original,
+            "en-US",
+            go,
+            |_, _| {}
+        )
+        .await
+        .unwrap_err(),
         "translate_same_language"
     );
     // Keine gueltige Zielsprache.
     assert_eq!(
-        translate_variant(&settings, &store, &meeting, &original, "auto", go, |_, _| {})
-            .await
-            .unwrap_err(),
+        translate_variant(
+            &settings,
+            &store,
+            &meeting,
+            &original,
+            "auto",
+            go,
+            |_, _| {}
+        )
+        .await
+        .unwrap_err(),
         "translate_same_language"
     );
     // Unbekannte Fassung, Fassung einer anderen Besprechung.
     assert_eq!(
-        translate_variant(&settings, &store, &meeting, "gibt-es-nicht", "de", go, |_, _| {})
-            .await
-            .unwrap_err(),
+        translate_variant(
+            &settings,
+            &store,
+            &meeting,
+            "gibt-es-nicht",
+            "de",
+            go,
+            |_, _| {}
+        )
+        .await
+        .unwrap_err(),
         "variant_not_found"
     );
-    let other = store.create_meeting("x", MeetingSource::Import, None).unwrap().id;
+    let other = store
+        .create_meeting("x", MeetingSource::Import, None)
+        .unwrap()
+        .id;
     assert_eq!(
         translate_variant(&settings, &store, &other, &original, "de", go, |_, _| {})
             .await
@@ -274,7 +331,10 @@ async fn the_translation_can_be_translated_again_into_another_language() {
     let french = translate_variant(&settings, &store, &meeting, &german.id, "fr", go, |_, _| {})
         .await
         .unwrap();
-    assert_eq!(french.source_variant_id.as_deref(), Some(german.id.as_str()));
+    assert_eq!(
+        french.source_variant_id.as_deref(),
+        Some(german.id.as_str())
+    );
     assert_eq!(french.source_language.as_deref(), Some("de"));
     let mut conn = store.get_connection().unwrap();
     assert_eq!(variants::list(&mut conn, &meeting).unwrap().len(), 3);

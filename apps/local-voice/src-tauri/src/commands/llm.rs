@@ -58,7 +58,11 @@ pub fn llm_remove_connection(app: AppHandle, id: String) -> Result<(), String> {
 #[specta::specta]
 pub fn llm_upsert_model(app: AppHandle, mut model: LlmModelConfig) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
-    if !s.llm_connections.iter().any(|c| c.id == model.connection_id) {
+    if !s
+        .llm_connections
+        .iter()
+        .any(|c| c.id == model.connection_id)
+    {
         return Err(format!("Unbekannte Verbindung: {}", model.connection_id));
     }
     if model.remote_id.trim().is_empty() {
@@ -252,8 +256,12 @@ pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> 
     if first {
         // Arbeitskopie, damit die zweite Runde sieht, was die erste vermerkt hat.
         let mut work = s0.clone();
-        let connections: Vec<LlmConnection> =
-            s0.llm_connections.iter().filter(|c| c.enabled).cloned().collect();
+        let connections: Vec<LlmConnection> = s0
+            .llm_connections
+            .iter()
+            .filter(|c| c.enabled)
+            .cloned()
+            .collect();
         for c in connections {
             if crate::commands::compliance::assess_connection(&work, &c).verdict
                 == crate::managers::compliance::Verdict::Blocked
@@ -444,7 +452,11 @@ pub fn llm_set_default_effort(app: AppHandle, effort: String) -> Result<(), Stri
 /// frei benannte Verbindung abweisen.
 #[tauri::command]
 #[specta::specta]
-pub fn llm_set_api_key(app: AppHandle, connection_id: String, api_key: String) -> Result<(), String> {
+pub fn llm_set_api_key(
+    app: AppHandle,
+    connection_id: String,
+    api_key: String,
+) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     if !s.llm_connections.iter().any(|c| c.id == connection_id) {
         return Err(format!("Unbekannte Verbindung: {connection_id}"));
@@ -528,7 +540,10 @@ pub async fn llm_local_stop(app: AppHandle) -> Result<(), String> {
 #[specta::specta]
 pub async fn llm_local_backend(app: AppHandle) -> Result<String, String> {
     let manager = app.state::<Arc<LlmRuntimeManager>>().inner().clone();
-    manager.resolve_runtime().await.map(|(_, backend, _)| backend)
+    manager
+        .resolve_runtime()
+        .await
+        .map(|(_, backend, _)| backend)
 }
 
 /// Ein geladenes lokales Modell zum aktiven Modell machen -- in einem Zug:
@@ -716,7 +731,10 @@ pub async fn llm_local_fit(
     let gpu = memory.gpus.iter().find(|g| !g.shared);
     let (free_mb, on_gpu) = match gpu {
         Some(g) => (g.budget_mb.saturating_sub(g.used_mb), true),
-        None => (memory.ram_total_mb.saturating_sub(memory.ram_used_mb), false),
+        None => (
+            memory.ram_total_mb.saturating_sub(memory.ram_used_mb),
+            false,
+        ),
     };
     let est = estimate::estimate(size, shape, context);
     let verdict = estimate::verdict(est.total_mb, free_mb, on_gpu);

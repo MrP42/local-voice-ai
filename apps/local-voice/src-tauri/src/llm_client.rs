@@ -101,9 +101,11 @@ fn thinking_off_kwargs(local: bool, model: &str) -> Option<Value> {
 /// kaputten JSON. Entfernte Anbieter bleiben unveraendert.
 fn clean_local_content(local: bool, content: Option<String>) -> Option<String> {
     match content {
-        Some(text) if local && text.contains("think>") => {
-            Some(crate::managers::meetings::chat::citations::strip_think(&text).trim_start().to_string())
-        }
+        Some(text) if local && text.contains("think>") => Some(
+            crate::managers::meetings::chat::citations::strip_think(&text)
+                .trim_start()
+                .to_string(),
+        ),
         other => other,
     }
 }
@@ -446,8 +448,12 @@ async fn send_cli(
     };
     let model = model.to_string();
     let first = {
-        let (binary, model, system, user_content) =
-            (binary.clone(), model.clone(), system.clone(), user_content.clone());
+        let (binary, model, system, user_content) = (
+            binary.clone(),
+            model.clone(),
+            system.clone(),
+            user_content.clone(),
+        );
         tokio::task::spawn_blocking(move || {
             cli::call(cli, &binary, &model, system.as_deref(), &user_content)
         })
@@ -461,9 +467,11 @@ async fn send_cli(
             crate::managers::llm::cli_update::remember_error(&e);
             // Ist die CLI zu alt, aktualisiert die App sie und versucht es einmal neu.
             let retry = crate::managers::llm::cli_update::on_cli_error(cli, &e)
-                && tokio::task::spawn_blocking(crate::managers::llm::cli_update::ensure_codex_updated)
-                    .await
-                    .unwrap_or(false);
+                && tokio::task::spawn_blocking(
+                    crate::managers::llm::cli_update::ensure_codex_updated,
+                )
+                .await
+                .unwrap_or(false);
             if !retry {
                 return Err(e);
             }
@@ -1150,7 +1158,10 @@ pub async fn post_image_prompt(
         .build()
         .map_err(|e| format!("request_failed: {e}"))?;
     let response = client
-        .post(format!("{}/chat/completions", base_url.trim_end_matches('/')))
+        .post(format!(
+            "{}/chat/completions",
+            base_url.trim_end_matches('/')
+        ))
         .json(&body)
         .send()
         .await
@@ -1396,7 +1407,12 @@ mod stream_tests {
         assert!(remote.get("chat_template_kwargs").is_none());
         // Sonst nur die bisherigen Felder.
         let body = request_json(true, "llm-gemma4-e4b-q4");
-        let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         keys.sort_unstable();
         assert_eq!(keys, vec!["messages", "model"]);
     }
@@ -1431,26 +1447,39 @@ mod stream_tests {
             request_json_for(true, "llm-gemma4-e4b-q4", Purpose::TranscriptTranslation);
         assert_eq!(translation["temperature"].as_f64(), Some(0.0));
         assert_eq!(translation["seed"], CHAT_SEED);
-        let translation_remote =
-            request_json_for(false, "gpt-4.1", Purpose::TranscriptTranslation);
+        let translation_remote = request_json_for(false, "gpt-4.1", Purpose::TranscriptTranslation);
         assert!(
             translation_remote.get("temperature").is_none()
                 && translation_remote.get("seed").is_none()
         );
         // Andere lokale Zwecke (Diktat, Tagging, ...) bleiben unveraendert.
-        for purpose in [Purpose::PostProcess, Purpose::Tagging, Purpose::Translation, Purpose::Summary] {
+        for purpose in [
+            Purpose::PostProcess,
+            Purpose::Tagging,
+            Purpose::Translation,
+            Purpose::Summary,
+        ] {
             let other = request_json_for(true, "llm-gemma4-e4b-q4", purpose);
-            assert!(other.get("temperature").is_none() && other.get("seed").is_none(), "{purpose:?}");
+            assert!(
+                other.get("temperature").is_none() && other.get("seed").is_none(),
+                "{purpose:?}"
+            );
         }
     }
 
     #[test]
     fn think_leftovers_are_removed_from_local_answers_only() {
         let raw = Some("<think>\nerst nachdenken\n</think>\n\n{\"a\":1}".to_string());
-        assert_eq!(clean_local_content(true, raw.clone()).as_deref(), Some("{\"a\":1}"));
+        assert_eq!(
+            clean_local_content(true, raw.clone()).as_deref(),
+            Some("{\"a\":1}")
+        );
         // Nur ein schliessendes Tag (Vorlage hat das oeffnende schon gesetzt).
         let tail = Some("Gedanken</think>\n{\"a\":1}".to_string());
-        assert_eq!(clean_local_content(true, tail).as_deref(), Some("{\"a\":1}"));
+        assert_eq!(
+            clean_local_content(true, tail).as_deref(),
+            Some("{\"a\":1}")
+        );
         // Nicht geschlossen: nichts Brauchbares dahinter.
         let open = Some("<think>ohne Ende".to_string());
         assert_eq!(clean_local_content(true, open).as_deref(), Some(""));
@@ -1686,7 +1715,10 @@ mod image_tests {
             "data:image/png;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(png)
         );
-        assert_eq!(content[0]["image_url"]["url"].as_str(), Some(expected.as_str()));
+        assert_eq!(
+            content[0]["image_url"]["url"].as_str(),
+            Some(expected.as_str())
+        );
         assert_eq!(
             content[1],
             serde_json::json!({ "type": "text", "text": "Was steht da?" })

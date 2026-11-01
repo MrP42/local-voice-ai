@@ -77,7 +77,8 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
     let mut out = Vec::new();
     let index = pages::load_index(app)?;
     for page in &index.pages {
-        let state_raw = std::fs::read_to_string(pages::page_path(app, &page.id)?.join("state.json")).ok();
+        let state_raw =
+            std::fs::read_to_string(pages::page_path(app, &page.id)?.join("state.json")).ok();
         let state = state_raw
             .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
             .unwrap_or(Value::Null);
@@ -90,7 +91,9 @@ pub fn collect(app: &AppHandle) -> Result<Vec<LocalObject>, String> {
     out.push(LocalObject {
         collection: COLLECTION_SETTINGS,
         id: SETTINGS_OBJECT_ID.to_string(),
-        value: settings_subset(&serde_json::to_value(crate::settings::get_settings(app)).unwrap_or(Value::Null)),
+        value: settings_subset(
+            &serde_json::to_value(crate::settings::get_settings(app)).unwrap_or(Value::Null),
+        ),
     });
     Ok(out)
 }
@@ -145,7 +148,11 @@ pub fn apply_page(
             conflict = true;
         }
     }
-    let title = value.get("title").and_then(Value::as_str).unwrap_or("Seite").to_string();
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Seite")
+        .to_string();
     let state = value.get("state").cloned().unwrap_or(Value::Null);
     let dir = pages::page_path(app, id)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Seitenordner: {e}"))?;
@@ -156,7 +163,11 @@ pub fn apply_page(
     let mut index = pages::load_index(app)?;
     match index.pages.iter_mut().find(|p| p.id == id) {
         Some(p) => p.title = title,
-        None => index.pages.push(pages::PageInfo { id: id.to_string(), title, ..Default::default() }),
+        None => index.pages.push(pages::PageInfo {
+            id: id.to_string(),
+            title,
+            ..Default::default()
+        }),
     }
     pages::store_index(app, &index)?;
     Ok(conflict)
@@ -191,7 +202,10 @@ pub fn tombstone_page(app: &AppHandle, id: &str) -> Result<(), String> {
 /// hier direkt fortgeschrieben statt über den Befehl `pages_create`, der
 /// die Sperre selbst nähme.
 pub fn conflict_copy(app: &AppHandle, local: &Value, device_name: &str) -> Result<String, String> {
-    let title = local.get("title").and_then(Value::as_str).unwrap_or("Seite");
+    let title = local
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Seite");
     let page = pages::PageInfo {
         id: pages::fresh_id(),
         title: format!("{title} (Konflikt von {device_name})"),
@@ -271,6 +285,9 @@ mod tests {
         let c = json!({"title": "T", "state": {"text": "y", "tab": "original"}});
         assert!(!pages_differ(&a, &b));
         assert!(pages_differ(&a, &c));
-        assert!(pages_differ(&a, &json!({"title": "U", "state": {"text": "x"}})));
+        assert!(pages_differ(
+            &a,
+            &json!({"title": "U", "state": {"text": "x"}})
+        ));
     }
 }

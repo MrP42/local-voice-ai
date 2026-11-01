@@ -172,7 +172,8 @@ pub fn check(params: &Map<String, Value>) -> Vec<(&'static str, String)> {
         if bad {
             out.push((
                 "extensions",
-                "Endungen bestehen aus Buchstaben und Ziffern (z. B. „wav“ oder „.mp3“).".to_string(),
+                "Endungen bestehen aus Buchstaben und Ziffern (z. B. „wav“ oder „.mp3“)."
+                    .to_string(),
             ));
         }
     }
@@ -263,11 +264,7 @@ impl FileProbe for SystemProbe {
     fn locked(&self, path: &Path) -> bool {
         use std::os::windows::fs::OpenOptionsExt;
         // FILE_SHARE_READ: scheitert, solange ein anderer Prozess Schreibzugriff hat.
-        match fs::OpenOptions::new()
-            .read(true)
-            .share_mode(1)
-            .open(path)
-        {
+        match fs::OpenOptions::new().read(true).share_mode(1).open(path) {
             Ok(_) => false,
             // ERROR_SHARING_VIOLATION (32), ERROR_LOCK_VIOLATION (33)
             Err(e) => matches!(e.raw_os_error(), Some(32) | Some(33)),

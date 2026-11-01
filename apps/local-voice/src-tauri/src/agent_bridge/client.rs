@@ -79,7 +79,9 @@ impl<R: BufRead, W: Write> Client<R, W> {
         let id = self.next_id;
         let line = json!({ "id": id, "method": method, "params": params }).to_string();
         if line.len() > MAX_LINE_BYTES {
-            return Err(ClientError::Protocol("Die Anfrage ist zu groß.".to_string()));
+            return Err(ClientError::Protocol(
+                "Die Anfrage ist zu groß.".to_string(),
+            ));
         }
         self.writer
             .write_all(line.as_bytes())
@@ -134,10 +136,13 @@ impl<R: BufRead, W: Write> Client<R, W> {
                 }
             }
             if buf.len() > 2 * MAX_LINE_BYTES {
-                return Err(ClientError::Protocol("Die Antwort ist zu lang.".to_string()));
+                return Err(ClientError::Protocol(
+                    "Die Antwort ist zu lang.".to_string(),
+                ));
             }
         }
-        String::from_utf8(buf).map_err(|_| ClientError::Protocol("Antwort nicht UTF-8.".to_string()))
+        String::from_utf8(buf)
+            .map_err(|_| ClientError::Protocol("Antwort nicht UTF-8.".to_string()))
     }
 
     /// Meldet die Verbindung an (`token`: `None` = anonym, nur `status`).

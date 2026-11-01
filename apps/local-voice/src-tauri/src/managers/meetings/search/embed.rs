@@ -86,7 +86,10 @@ pub fn embed_error_from(message: &str) -> EmbedError {
 /// Liest die Antwort von `/v1/embeddings` (OpenAI-Form `{data: [{index,
 /// embedding}]}`) in Eingabereihenfolge. Anzahl, Indizes und Laengen muessen
 /// passen, sonst `Failed` -- eine halbe Antwort wird nie gespeichert.
-pub fn parse_embeddings(json: &serde_json::Value, expected: usize) -> Result<Vec<Vec<f32>>, EmbedError> {
+pub fn parse_embeddings(
+    json: &serde_json::Value,
+    expected: usize,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
     let bad = |what: &str| EmbedError::Failed(format!("embedding_response_invalid: {what}"));
     let data = json
         .get("data")
@@ -119,7 +122,10 @@ pub fn parse_embeddings(json: &serde_json::Value, expected: usize) -> Result<Vec
         }
         out[index] = Some(vec);
     }
-    let vectors: Vec<Vec<f32>> = out.into_iter().collect::<Option<_>>().ok_or_else(|| bad("Luecke"))?;
+    let vectors: Vec<Vec<f32>> = out
+        .into_iter()
+        .collect::<Option<_>>()
+        .ok_or_else(|| bad("Luecke"))?;
     let dim = vectors.first().map(Vec::len).unwrap_or(0);
     if vectors.iter().any(|v| v.len() != dim) {
         return Err(bad("Dimension"));
@@ -174,7 +180,10 @@ impl LlamaEmbedder {
         }
         if !status.is_success() {
             // Der Fehlertext des Servers kann Eingabetext zitieren: nicht weitergeben.
-            return Err(EmbedError::Failed(format!("embedding_http_status: {}", status.as_u16())));
+            return Err(EmbedError::Failed(format!(
+                "embedding_http_status: {}",
+                status.as_u16()
+            )));
         }
         let json: serde_json::Value = response
             .json()
@@ -223,7 +232,10 @@ mod tests {
     fn server_errors_map_to_codes() {
         assert_eq!(embed_error_from("no_model: fehlt"), EmbedError::NoModel);
         assert_eq!(embed_error_from("no_runtime: keine"), EmbedError::NoModel);
-        assert_eq!(embed_error_from("memory_low: 1 GB frei"), EmbedError::MemoryLow);
+        assert_eq!(
+            embed_error_from("memory_low: 1 GB frei"),
+            EmbedError::MemoryLow
+        );
         assert_eq!(embed_error_from("busy: laedt"), EmbedError::Busy);
         assert_eq!(embed_error_from("failed: weg").code(), "failed");
         assert_eq!(embed_error_from("irgendwas").code(), "failed");
@@ -261,7 +273,10 @@ mod tests {
         let _g = crate::managers::llm::tests::global_embed_lock();
         let e = LlamaEmbedder::new(llm::EMBED_MODEL_ID);
         assert!(!e.available());
-        assert_eq!(e.embed(&[], EmbedKind::Query).await.unwrap(), Vec::<Vec<f32>>::new());
+        assert_eq!(
+            e.embed(&[], EmbedKind::Query).await.unwrap(),
+            Vec::<Vec<f32>>::new()
+        );
         let err = e
             .embed(&["Hallo".to_string()], EmbedKind::Document)
             .await

@@ -181,7 +181,11 @@ fn canonical(v: &Value) -> Value {
         Value::Object(map) => {
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort();
-            Value::Object(keys.into_iter().map(|k| (k.clone(), canonical(&map[k]))).collect())
+            Value::Object(
+                keys.into_iter()
+                    .map(|k| (k.clone(), canonical(&map[k])))
+                    .collect(),
+            )
         }
         Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
         other => other.clone(),
@@ -367,7 +371,13 @@ impl Bridge {
                 ))
             }
             Ok(None) => {
-                self.audit_denied(&conn, None, "token_invalid", None, json!({ "phase": "connected" }));
+                self.audit_denied(
+                    &conn,
+                    None,
+                    "token_invalid",
+                    None,
+                    json!({ "phase": "connected" }),
+                );
                 Err(BridgeError::new(
                     code::TOKEN_INVALID,
                     "Dieser Zugang gibt es nicht mehr.",
@@ -390,7 +400,11 @@ impl Bridge {
                 now,
             );
             if matches!(all, Limit::Allowed) && is_call {
-                l.hit(&format!("call:{}", client.id), self.cfg.calls_per_minute, now)
+                l.hit(
+                    &format!("call:{}", client.id),
+                    self.cfg.calls_per_minute,
+                    now,
+                )
             } else {
                 all
             }
@@ -456,7 +470,11 @@ impl Bridge {
         Ok(v)
     }
 
-    fn client_row(&self, conn: &Connection, client: &ClientCtx) -> Result<AgentClient, BridgeError> {
+    fn client_row(
+        &self,
+        conn: &Connection,
+        client: &ClientCtx,
+    ) -> Result<AgentClient, BridgeError> {
         match clients::get(conn, &client.id) {
             Ok(Some(c)) if c.is_active() => Ok(c),
             Ok(_) => Err(BridgeError::new(
@@ -474,7 +492,11 @@ impl Bridge {
         self.tools_list_with(&conn, client)
     }
 
-    fn tools_list_with(&self, conn: &Connection, client: &ClientCtx) -> Result<Vec<Value>, BridgeError> {
+    fn tools_list_with(
+        &self,
+        conn: &Connection,
+        client: &ClientCtx,
+    ) -> Result<Vec<Value>, BridgeError> {
         let row = self.client_row(conn, client)?;
         let mut out = vec![json!({
             "name": STATUS_TOOL,
@@ -490,7 +512,8 @@ impl Bridge {
             "mode": "allow"
         })];
         for name in self.registry.names() {
-            let (Some(entry), Some(spec)) = (catalog::find(&name), self.registry.spec(&name)) else {
+            let (Some(entry), Some(spec)) = (catalog::find(&name), self.registry.spec(&name))
+            else {
                 continue;
             };
             let (mode, _) = tool_rights(conn, &row, entry).map_err(|e| BridgeError::store(&e))?;
@@ -608,7 +631,9 @@ impl Bridge {
                     );
                     return Err(BridgeError::new(
                         code::TOOL_UNAVAILABLE,
-                        format!("Das Werkzeug „{name}“ ist in dieser Version noch nicht verfügbar."),
+                        format!(
+                            "Das Werkzeug „{name}“ ist in dieser Version noch nicht verfügbar."
+                        ),
                     ));
                 };
                 let ctx = CallContext {
@@ -648,7 +673,10 @@ impl Bridge {
         let conn = self.conn()?;
         let row = self.client_row(&conn, client)?;
         let Some(entry) = catalog::find(name) else {
-            return Err(BridgeError::new(code::UNKNOWN_TOOL, "Unbekanntes Werkzeug."));
+            return Err(BridgeError::new(
+                code::UNKNOWN_TOOL,
+                "Unbekanntes Werkzeug.",
+            ));
         };
         let args = Self::normalize_args(args)?;
         self.run_approved(&conn, client, &row, entry, &args, approval_id)
@@ -777,7 +805,11 @@ impl Bridge {
     }
 
     /// Antwort fuer `approval/status` und das Werkzeug `get_action_status`.
-    pub fn action_status(&self, client: &ClientCtx, approval_id: &str) -> Result<Value, BridgeError> {
+    pub fn action_status(
+        &self,
+        client: &ClientCtx,
+        approval_id: &str,
+    ) -> Result<Value, BridgeError> {
         let info = self.approval_phase(client, approval_id)?;
         let hint = match info.phase {
             Phase::Pending => "Der Nutzer hat noch nicht entschieden. Später erneut abfragen.",
@@ -804,7 +836,10 @@ fn truncate_name(name: &str) -> String {
 /// Antwort fuer eine Freigabe, die nicht (mehr) ausfuehrbar ist.
 fn phase_error(phase: Phase) -> BridgeError {
     match phase {
-        Phase::Denied => BridgeError::new(code::APPROVAL_DENIED, "Der Nutzer hat die Freigabe abgelehnt."),
+        Phase::Denied => BridgeError::new(
+            code::APPROVAL_DENIED,
+            "Der Nutzer hat die Freigabe abgelehnt.",
+        ),
         Phase::Expired => BridgeError::new(
             code::APPROVAL_EXPIRED,
             "Die Freigabe ist abgelaufen. Das Werkzeug bitte neu aufrufen.",
@@ -813,9 +848,10 @@ fn phase_error(phase: Phase) -> BridgeError {
             code::APPROVAL_USED,
             "Diese Freigabe wurde schon verwendet. Jede Freigabe gilt für genau eine Ausführung.",
         ),
-        Phase::Pending | Phase::Approved => {
-            BridgeError::new(code::APPROVAL_NOT_FOUND, "Die Freigabe ist nicht mehr gültig.")
-        }
+        Phase::Pending | Phase::Approved => BridgeError::new(
+            code::APPROVAL_NOT_FOUND,
+            "Die Freigabe ist nicht mehr gültig.",
+        ),
     }
 }
 

@@ -1,32 +1,31 @@
 mod actions;
 mod agent; // C1 (Goal Lokaler Agent)
 pub mod agent_bridge; // A7
-pub mod sprachdienst; // ADR-0021 S2
 mod appdata_migration;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod apple_intelligence;
 mod audio_feedback;
-mod books;
 pub mod audio_toolkit;
+mod books;
 mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
-mod sync;
 #[cfg(windows)]
 mod context_menu;
-mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
+mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod input;
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
-mod local_update;
 mod llm_client;
+mod llm_keys;
+mod local_update;
 mod managers;
-mod media;
-mod memory_guard;
 pub mod mcp; // M6-P6e
+mod media;
 mod meeting_prompt; // M5-P5b
+mod memory_guard;
 mod overlay;
 mod paste_guard;
 mod paste_session;
@@ -35,12 +34,13 @@ mod process_guard;
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
-mod llm_keys;
 mod settings;
 mod shortcut;
 mod signal_handle;
 mod speech_learning; // Stufe 3: Lernen aus Korrekturen, Einrichtung durch Vorlesen
+pub mod sprachdienst; // ADR-0021 S2
 mod summarizer;
+mod sync;
 mod tagging;
 mod transcription_coordinator;
 mod translator;
@@ -408,12 +408,12 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         let index_store = store.clone(); // M4-P4b
         let calendar_store = store.clone(); // M5-P5b
         let workflow_store = store.clone(); // B2
-        // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). A8: die Werkzeuge der App
-        // (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme, Sessions) sind die Handler;
-        // sie loesen Warteschlange, Recorder und Sprachausgabe erst beim Aufruf auf. Eine neue
-        // Freigabe fuer `start_recording` zeigt sofort die Bitte um Einwilligung (dasselbe
-        // Hinweisfenster wie bei den Ablaeufen); alles andere entscheidet der Nutzer auf der
-        // Seite Integrationen.
+                                            // A7: Agentenbruecke (Named Pipe, nur aktueller Benutzer). A8: die Werkzeuge der App
+                                            // (Datei transkribieren, YouTube-Quelle, Vorlesen, Aufnahme, Sessions) sind die Handler;
+                                            // sie loesen Warteschlange, Recorder und Sprachausgabe erst beim Aufruf auf. Eine neue
+                                            // Freigabe fuer `start_recording` zeigt sofort die Bitte um Einwilligung (dasselbe
+                                            // Hinweisfenster wie bei den Ablaeufen); alles andere entscheidet der Nutzer auf der
+                                            // Seite Integrationen.
         let agent_tools: Arc<dyn agent_bridge::catalog::ToolHandler> =
             Arc::new(agent_bridge::tools::AppTools::new(
                 store.clone(),
@@ -920,7 +920,11 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         );
         return 2;
     }
-    let job_script = match args.job_script.as_deref().map(managers::meetings::job_harness::parse_script) {
+    let job_script = match args
+        .job_script
+        .as_deref()
+        .map(managers::meetings::job_harness::parse_script)
+    {
         Some(Ok(steps)) => Some(steps),
         Some(Err(e)) => {
             eprintln!("error: --job-script: {e}");
@@ -1031,8 +1035,7 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
         recorder.wait_final_jobs();
         println!("CONTINUE_MS={}", started.elapsed().as_millis());
         if args.dump_meeting.is_none() {
-            let mut payload =
-                meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
+            let mut payload = meeting_payload(&store, &id).unwrap_or_else(|| serde_json::json!({}));
             payload["meeting_id"] = serde_json::json!(id);
             payload["continue_ms"] = serde_json::json!(started.elapsed().as_millis() as u64);
             emit_headless_payload(&payload, args.out.as_deref());
@@ -1078,9 +1081,9 @@ fn run_headless_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
 
         let started = std::time::Instant::now();
         start_job_script(); // P8a: Pause/Stopp wie die Knoepfe (nur mit --job-script)
-        // Consent is confirmed by the caller: a headless import is an
-        // explicit, deliberate act by whoever typed the flag (the UI gate
-        // itself is covered by the consent-gate scenario, not by this path).
+                            // Consent is confirmed by the caller: a headless import is an
+                            // explicit, deliberate act by whoever typed the flag (the UI gate
+                            // itself is covered by the consent-gate scenario, not by this path).
         let result = tauri::async_runtime::block_on(managers::meetings::import::import_media_file(
             app,
             Arc::clone(&store),
@@ -1235,9 +1238,10 @@ fn run_simulate_opts(
 ) -> i32 {
     use managers::meetings::simulate::simulate_with_app;
 
-    let model_id = args.model.clone().unwrap_or_else(|| {
-        tm.meeting_model_target(&get_settings(app))
-    });
+    let model_id = args
+        .model
+        .clone()
+        .unwrap_or_else(|| tm.meeting_model_target(&get_settings(app)));
     if model_id.is_empty() {
         eprintln!("error: no model selected (pass --model or pick one in the app)");
         return 2;
@@ -1320,9 +1324,7 @@ fn simulate_notes(
             runtime.set_model_dirs(settings::get_settings(app).llm_model_dirs);
             Arc::new(runtime)
         }
-        Err(e) => {
-            return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") })
-        }
+        Err(e) => return serde_json::json!({ "ran": false, "error": format!("llm runtime: {e}") }),
     };
     let llm_server = Arc::new(managers::llm::LocalLlmServer::new());
     managers::llm::install_globals(llm_runtime, llm_server.clone());
@@ -1884,7 +1886,6 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     }
     0
 }
-
 
 /// Alle Commands und Events für tauri-specta (eine Quelle für App und Bindings-Export).
 fn specta_builder() -> Builder<tauri::Wry> {
@@ -2573,7 +2574,12 @@ pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
             Typescript::default().bigint(BigIntExportBehavior::Number),
             path,
         )
-        .map_err(|e| format!("Bindings-Export nach {} fehlgeschlagen: {e}", path.display()))
+        .map_err(|e| {
+            format!(
+                "Bindings-Export nach {} fehlgeschlagen: {e}",
+                path.display()
+            )
+        })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2903,9 +2909,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_workflow_run(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_workflow_run(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2919,9 +2924,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_audit_dump(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_audit_dump(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -2935,9 +2939,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_agent_bridge(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_agent_bridge(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -3036,9 +3039,8 @@ pub fn run(cli_args: CliArgs) {
                     let app_handle = app.handle().clone();
                     let args = cli_args.clone();
                     std::thread::spawn(move || {
-                        let code = run_headless_guarded(|| {
-                            run_headless_eval_agent(&app_handle, &args)
-                        });
+                        let code =
+                            run_headless_guarded(|| run_headless_eval_agent(&app_handle, &args));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();
@@ -3535,7 +3537,10 @@ fn run_headless_audit_dump(app: &AppHandle, args: &CliArgs) -> i32 {
     if args.json {
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
-        println!("{}", managers::integrations::dump::format_audit_table(&payload));
+        println!(
+            "{}",
+            managers::integrations::dump::format_audit_table(&payload)
+        );
         if let Some(path) = args.out.as_deref() {
             if let Err(e) = std::fs::write(
                 path,
@@ -3579,10 +3584,17 @@ fn run_headless_agent_bridge(app: &AppHandle, args: &CliArgs) -> i32 {
     } else if let Some(dir) = sandbox.as_deref() {
         // A8: die echten Handler gegen die Sandbox-Datenbank, mit der Attrappe des Hosts
         // (keine Warteschlange, kein Recorder, ein Testton statt der Sprach-Engine).
-        let pages = agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
-        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(store.clone(), pages));
+        let pages =
+            agent_bridge::tools::sandbox::SandboxHost::pages_dir_for(std::path::Path::new(dir));
+        let host = Arc::new(agent_bridge::tools::sandbox::SandboxHost::new(
+            store.clone(),
+            pages,
+        ));
         host.start_workflow_worker(); // B8: Laeufe der Automationen werden fertig
-        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(store.clone(), host)));
+        handlers.push(Arc::new(agent_bridge::tools::AppTools::new(
+            store.clone(),
+            host,
+        )));
     }
     agent_bridge::runtime::run_headless(store, handlers, args.seconds)
 }
@@ -3927,7 +3939,9 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
             }
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&segments).unwrap_or_default().hash(&mut hasher);
+        serde_json::to_string(&segments)
+            .unwrap_or_default()
+            .hash(&mut hasher);
         (active, segments, hasher.finish())
     };
     let started = std::time::Instant::now();
@@ -3983,7 +3997,9 @@ fn run_headless_translate_meeting(app: &AppHandle, args: &CliArgs, id: &str) -> 
                     .map(|(_, s)| s)
                     .unwrap_or_default();
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                serde_json::to_string(&after).unwrap_or_default().hash(&mut hasher);
+                serde_json::to_string(&after)
+                    .unwrap_or_default()
+                    .hash(&mut hasher);
                 let translated = variants::get_segments(&conn, &variant.id)
                     .map(|(_, s)| s)
                     .unwrap_or_default();
@@ -4106,17 +4122,18 @@ fn run_headless_followup_draft(app: &AppHandle, args: &CliArgs, id: &str) -> i32
             eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
         });
     }
-    let (recipients, addressee) = match participant_recipients(&store, id, &settings.meeting_self_emails) {
-        Ok(r) if !r.names.is_empty() => {
-            let names = r.names.join(", ");
-            (r, names)
-        }
-        Ok(r) => (r, "die Teilnehmenden".to_string()),
-        Err(e) => {
-            eprintln!("error: {e}");
-            return 1;
-        }
-    };
+    let (recipients, addressee) =
+        match participant_recipients(&store, id, &settings.meeting_self_emails) {
+            Ok(r) if !r.names.is_empty() => {
+                let names = r.names.join(", ");
+                (r, names)
+            }
+            Ok(r) => (r, "die Teilnehmenden".to_string()),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return 1;
+            }
+        };
     let result = tauri::async_runtime::block_on(draft(
         &settings,
         store.clone(),
@@ -4215,8 +4232,7 @@ fn run_headless_reindex_meetings(app: &AppHandle, args: &CliArgs) -> i32 {
             payload["mode"] = serde_json::json!("reindex_meetings");
             payload["seeded"] = serde_json::json!(seeded);
             payload["db"] = serde_json::json!(store.db_path().display().to_string());
-            payload["embed_server_running"] =
-                serde_json::json!(managers::llm::embedding_running());
+            payload["embed_server_running"] = serde_json::json!(managers::llm::embedding_running());
             emit_headless_payload(&payload, args.out.as_deref());
             if report.model_ready && report.vectors != report.chunks {
                 3
@@ -4257,7 +4273,10 @@ fn seed_meetings_from_fixtures(
         let fixture: MeetingFixture = match serde_json::from_str(&std::fs::read_to_string(&file)?) {
             Ok(f) => f,
             Err(_) => {
-                eprintln!("seed: {} ist keine Besprechungs-Fixture, uebersprungen", file.display());
+                eprintln!(
+                    "seed: {} ist keine Besprechungs-Fixture, uebersprungen",
+                    file.display()
+                );
                 continue;
             }
         };
@@ -4364,7 +4383,12 @@ fn run_headless_eval_chat(app: &AppHandle, args: &CliArgs, dir: &std::path::Path
 // keine Besprechungsdaten. Exit 0 Gate erfuellt, 3 verfehlt, 1 Fehler, 2 ohne --model.
 fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
     crate::selftest::begin_headless_run();
-    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+    let Some(model) = args
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    else {
         eprintln!("error: --eval-agent needs --model <id> (see --list-models)");
         return 2;
     };
@@ -4415,7 +4439,12 @@ fn run_headless_eval_agent(app: &AppHandle, args: &CliArgs) -> i32 {
 // Einstellungen, keine Besprechungsdaten. Exit 0 Ergebnis, 3 no_action, 1 Fehler, 2 ohne --model.
 fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path::Path) -> i32 {
     crate::selftest::begin_headless_run();
-    let Some(model) = args.model.as_deref().map(str::trim).filter(|m| !m.is_empty()) else {
+    let Some(model) = args
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+    else {
         eprintln!("error: --agent-extract needs --model <id> (see --list-models)");
         return 2;
     };
@@ -4451,7 +4480,12 @@ fn run_headless_agent_extract(app: &AppHandle, args: &CliArgs, path: &std::path:
     if args.json {
         emit_headless_payload(&payload, args.out.as_deref());
     } else {
-        println!("{}", payload["summary"].as_str().unwrap_or("agent-extract: kein Ergebnis"));
+        println!(
+            "{}",
+            payload["summary"]
+                .as_str()
+                .unwrap_or("agent-extract: kein Ergebnis")
+        );
         if let Some(path) = args.out.as_deref() {
             match std::fs::write(
                 path,
@@ -4564,7 +4598,10 @@ fn run_headless_eval_minutes(app: &AppHandle, args: &CliArgs, dir: &std::path::P
             eprintln!("error: memory watchdog stopped the LLM server at {free_mb} MB free");
         });
     }
-    let sandbox = match tempfile::Builder::new().prefix("lva-eval-minutes-").tempdir() {
+    let sandbox = match tempfile::Builder::new()
+        .prefix("lva-eval-minutes-")
+        .tempdir()
+    {
         Ok(dir) => dir,
         Err(e) => {
             eprintln!("error: no sandbox directory: {e}");
@@ -4641,7 +4678,10 @@ fn run_headless_eval_diarization(app: &AppHandle, args: &CliArgs, dir: &std::pat
         }
         Err(e) => {
             eprintln!("error: {e}");
-            let code = if matches!(e, DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)) {
+            let code = if matches!(
+                e,
+                DiarizeError::ModelMissing(_) | DiarizeError::WrongModel(_)
+            ) {
                 2
             } else {
                 1

@@ -61,7 +61,8 @@ pub fn install_globals(runtime: Arc<LlmRuntimeManager>, server: Arc<LocalLlmServ
 /// Ist dieser Anbieter der lokale Server? Erkannt an Vorlage oder
 /// Platzhalter-Adresse, nicht am Namen der Verbindung.
 pub fn is_local(provider: &PostProcessProvider) -> bool {
-    provider.id == LOCAL_PROVIDER_ID || provider.base_url.trim_end_matches('/') == LOCAL_PLACEHOLDER_URL.trim_end_matches('/')
+    provider.id == LOCAL_PROVIDER_ID
+        || provider.base_url.trim_end_matches('/') == LOCAL_PLACEHOLDER_URL.trim_end_matches('/')
 }
 
 /// Geladene lokale Modelle -- das, was ein "Modelle laden" fuer den lokalen
@@ -97,7 +98,10 @@ pub fn is_server_crashed(err: &str) -> bool {
 /// Die Adresse, an die eine Anfrage fuer `model` geht: fuer jeden Anbieter
 /// seine eigene -- fuer den lokalen die des laufenden Servers, der dafuer
 /// bei Bedarf gestartet wird.
-pub async fn resolve_base_url(provider: &PostProcessProvider, model: &str) -> Result<String, String> {
+pub async fn resolve_base_url(
+    provider: &PostProcessProvider,
+    model: &str,
+) -> Result<String, String> {
     if is_local(provider) {
         ensure_local(model).await
     } else {
@@ -148,7 +152,12 @@ async fn ensure_local_with(model_id: &str, vision: bool) -> Result<String, Strin
         let path = runtime
             .projector_path(vision::VISION_PROJECTOR_ID)
             .filter(|p| p.is_file())
-            .ok_or_else(|| format!("{}: Bild-Projektor nicht geladen", vision::CODE_NO_PROJECTOR))?;
+            .ok_or_else(|| {
+                format!(
+                    "{}: Bild-Projektor nicht geladen",
+                    vision::CODE_NO_PROJECTOR
+                )
+            })?;
         Some(path)
     } else {
         None
@@ -230,8 +239,12 @@ pub fn slots_busy(body: &str) -> bool {
         .and_then(|v| v.as_array().cloned())
         .is_some_and(|slots| {
             slots.iter().any(|s| {
-                s.get("is_processing").and_then(|b| b.as_bool()).unwrap_or(false)
-                    || s.get("state").and_then(|b| b.as_u64()).is_some_and(|n| n != 0)
+                s.get("is_processing")
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false)
+                    || s.get("state")
+                        .and_then(|b| b.as_u64())
+                        .is_some_and(|n| n != 0)
             })
         })
 }
@@ -241,7 +254,9 @@ pub fn slots_busy(body: &str) -> bool {
 /// nach "Schliessen" im Infobereich weiterlaeuft. Der naechste Aufruf startet
 /// ihn neu (`ensure_local`). Liefert, ob gestoppt wurde.
 pub async fn stop_local_if_idle(limit: Option<std::time::Duration>) -> bool {
-    let Some(server) = SERVER.get() else { return false };
+    let Some(server) = SERVER.get() else {
+        return false;
+    };
     if limit.is_none() || !server.has_process() {
         return false;
     }
@@ -276,8 +291,14 @@ async fn server_busy(server: &LocalLlmServer) -> bool {
     else {
         return false;
     };
-    match client.get(format!("http://127.0.0.1:{port}/slots")).send().await {
-        Ok(resp) if resp.status().is_success() => slots_busy(&resp.text().await.unwrap_or_default()),
+    match client
+        .get(format!("http://127.0.0.1:{port}/slots"))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            slots_busy(&resp.text().await.unwrap_or_default())
+        }
         _ => false,
     }
 }
@@ -288,7 +309,9 @@ async fn server_busy(server: &LocalLlmServer) -> bool {
 /// anderen (eine Anfrage hat sich an den Projektor-Server gehaengt), bleibt er: der
 /// Leerlauf-Stopp (`stop_local_if_idle`) raeumt ihn spaeter ab. Liefert, ob gestoppt wurde.
 pub async fn release_vision() -> bool {
-    let Some(server) = SERVER.get() else { return false };
+    let Some(server) = SERVER.get() else {
+        return false;
+    };
     if !server.has_vision() || server_busy(server).await {
         return false;
     }
@@ -316,7 +339,9 @@ async fn plan_context(model_path: &std::path::Path, backend: &str) -> u32 {
 }
 
 fn set_active_context(model_id: &str, context_tokens: u32) {
-    *ACTIVE_CONTEXT.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+    *ACTIVE_CONTEXT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
         Some((model_id.to_string(), context_tokens));
 }
 
@@ -364,7 +389,11 @@ pub async fn context_for_model(model_id: &str) -> u32 {
 /// echte Aufruf (RAM-Gate, Absturz) mit dem richtigen Code.
 pub async fn local_server_root(model_id: &str) -> Option<String> {
     let base = ensure_local(model_id).await.ok()?;
-    Some(base.trim_end_matches('/').trim_end_matches("/v1").to_string())
+    Some(
+        base.trim_end_matches('/')
+            .trim_end_matches("/v1")
+            .to_string(),
+    )
 }
 
 /// Wartezeit fuer `/tokenize`: ein Aufruf dauert Millisekunden. Haengt der
@@ -379,7 +408,10 @@ pub async fn tokenize_count(root: &str, text: &str) -> Option<usize> {
     if text.is_empty() {
         return Some(0);
     }
-    let client = reqwest::Client::builder().timeout(TOKENIZE_TIMEOUT).build().ok()?;
+    let client = reqwest::Client::builder()
+        .timeout(TOKENIZE_TIMEOUT)
+        .build()
+        .ok()?;
     let response = client
         .post(format!("{}/tokenize", root.trim_end_matches('/')))
         .json(&serde_json::json!({ "content": text, "add_special": false }))
@@ -566,7 +598,10 @@ pub fn stop_embedding_if_idle(idle: std::time::Duration) -> bool {
     if now_ms().saturating_sub(last) < idle.as_millis() as u64 {
         return false;
     }
-    log::info!("Embedding-Server: {} s ohne Nutzung, wird beendet", idle.as_secs());
+    log::info!(
+        "Embedding-Server: {} s ohne Nutzung, wird beendet",
+        idle.as_secs()
+    );
     stop_embedding();
     true
 }
@@ -598,7 +633,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn a_cloud_provider_keeps_its_own_address() {
         let p = provider("openai", "https://api.openai.com/v1");
-        assert_eq!(resolve_base_url(&p, "gpt-4.1").await.unwrap(), "https://api.openai.com/v1");
+        assert_eq!(
+            resolve_base_url(&p, "gpt-4.1").await.unwrap(),
+            "https://api.openai.com/v1"
+        );
     }
 
     /// Ohne initialisierte Laufzeit kann kein lokaler Server starten -- der
@@ -607,9 +645,11 @@ pub(crate) mod tests {
     async fn the_local_provider_fails_readably_when_uninitialised() {
         let p = provider("local", "http://127.0.0.1:0/v1");
         let err = resolve_base_url(&p, "llm-qwen3-4b-q4").await.unwrap_err();
-        assert!(err.contains("nicht initialisiert") || err.contains("nicht geladen"), "{err}");
+        assert!(
+            err.contains("nicht initialisiert") || err.contains("nicht geladen"),
+            "{err}"
+        );
     }
-
 
     // ---- P1i: /tokenize ---------------------------------------------------
 
@@ -632,8 +672,16 @@ pub(crate) mod tests {
     async fn tokenize_count_reads_the_token_array_of_the_server() {
         let root = tokenize_mock().await;
         assert_eq!(tokenize_count(&root, "abcdefghi").await, Some(3));
-        assert_eq!(tokenize_count(&format!("{root}/"), "abcd").await, Some(2), "Schraegstrich am Ende");
-        assert_eq!(tokenize_count(&root, "").await, Some(0), "leerer Text braucht keinen Aufruf");
+        assert_eq!(
+            tokenize_count(&format!("{root}/"), "abcd").await,
+            Some(2),
+            "Schraegstrich am Ende"
+        );
+        assert_eq!(
+            tokenize_count(&root, "").await,
+            Some(0),
+            "leerer Text braucht keinen Aufruf"
+        );
     }
 
     /// Kein Endpunkt, kaputte Antwort, toter Server, null Token fuer echten
@@ -641,23 +689,39 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn tokenize_count_gives_up_instead_of_guessing() {
         let not_found = spawn_llm_mock_with(|_| MockReply::Status(404)).await;
-        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{not_found}"), "text").await, None);
+        assert_eq!(
+            tokenize_count(&format!("http://127.0.0.1:{not_found}"), "text").await,
+            None
+        );
 
         let garbage = spawn_llm_mock_with(|_| MockReply::Body("kein json".into())).await;
-        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{garbage}"), "text").await, None);
+        assert_eq!(
+            tokenize_count(&format!("http://127.0.0.1:{garbage}"), "text").await,
+            None
+        );
 
         let no_tokens = spawn_llm_mock_with(|_| MockReply::Body(r#"{"tokens":[]}"#.into())).await;
-        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{no_tokens}"), "text").await, None);
+        assert_eq!(
+            tokenize_count(&format!("http://127.0.0.1:{no_tokens}"), "text").await,
+            None
+        );
 
-        let wrong_shape = spawn_llm_mock_with(|_| MockReply::Body(r#"{"tokens":"x"}"#.into())).await;
-        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{wrong_shape}"), "text").await, None);
+        let wrong_shape =
+            spawn_llm_mock_with(|_| MockReply::Body(r#"{"tokens":"x"}"#.into())).await;
+        assert_eq!(
+            tokenize_count(&format!("http://127.0.0.1:{wrong_shape}"), "text").await,
+            None
+        );
 
         // Nichts lauscht auf dem Port (Server abgestuerzt).
         let dead = {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.local_addr().unwrap().port()
         };
-        assert_eq!(tokenize_count(&format!("http://127.0.0.1:{dead}"), "text").await, None);
+        assert_eq!(
+            tokenize_count(&format!("http://127.0.0.1:{dead}"), "text").await,
+            None
+        );
     }
 
     /// Ohne Laufzeit startet kein Server: die Wurzel gibt es nicht, der Aufrufer
@@ -672,7 +736,8 @@ pub(crate) mod tests {
     /// Tests, die den globalen Embedding-Server anfassen, laufen nacheinander.
     pub(crate) fn global_embed_lock() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        LOCK.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Ohne Laufzeit startet kein Embedding-Server; der Fehler traegt einen
@@ -698,7 +763,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn concurrent_embedding_starts_are_serialised() {
         let _g = global_embed_lock();
-        let (a, b) = tokio::join!(ensure_embedding(EMBED_MODEL_ID), ensure_embedding(EMBED_MODEL_ID));
+        let (a, b) = tokio::join!(
+            ensure_embedding(EMBED_MODEL_ID),
+            ensure_embedding(EMBED_MODEL_ID)
+        );
         assert!(a.is_err() && b.is_err());
         assert!(!embedding_running());
     }
@@ -720,7 +788,10 @@ pub(crate) mod tests {
         embed_server().adopt_for_test(child, EMBED_MODEL_ID);
         assert!(embedding_running());
         let result = ensure_embedding(EMBED_MODEL_ID).await;
-        assert!(result.is_err(), "toter Server darf nicht als bereit gelten: {result:?}");
+        assert!(
+            result.is_err(),
+            "toter Server darf nicht als bereit gelten: {result:?}"
+        );
         assert!(!embedding_running(), "toter Prozess abgeraeumt");
     }
 
@@ -728,11 +799,15 @@ pub(crate) mod tests {
     /// eindeutig erkennbar; Praefix allein oder ein Fremdtext zaehlt nicht.
     #[test]
     fn a_crashed_server_error_is_recognised_by_its_code() {
-        assert!(is_server_crashed("server_crashed: Das lokale Sprachmodell ist abgestuerzt."));
+        assert!(is_server_crashed(
+            "server_crashed: Das lokale Sprachmodell ist abgestuerzt."
+        ));
         assert!(is_server_crashed(&format!("{CODE_SERVER_CRASHED}: x")));
         assert!(!is_server_crashed("server_crashed_at_all"));
         assert!(!is_server_crashed("failed: server_crashed: x"));
-        assert!(!is_server_crashed("HTTP request failed: connection refused"));
+        assert!(!is_server_crashed(
+            "HTTP request failed: connection refused"
+        ));
     }
 
     #[test]
@@ -755,10 +830,17 @@ mod idle_tests {
     #[test]
     fn idle_limit_follows_the_unload_setting_but_never_undercuts_two_minutes() {
         assert_eq!(local_idle_limit(None), None, "Nie entladen = nie stoppen");
-        assert_eq!(local_idle_limit(Some(0)), Some(LOCAL_MIN_IDLE), "\"sofort\" gilt nicht fuer das Sprachmodell");
+        assert_eq!(
+            local_idle_limit(Some(0)),
+            Some(LOCAL_MIN_IDLE),
+            "\"sofort\" gilt nicht fuer das Sprachmodell"
+        );
         assert_eq!(local_idle_limit(Some(15)), Some(LOCAL_MIN_IDLE));
         assert_eq!(local_idle_limit(Some(300)), Some(Duration::from_secs(300)));
-        assert_eq!(local_idle_limit(Some(3600)), Some(Duration::from_secs(3600)));
+        assert_eq!(
+            local_idle_limit(Some(3600)),
+            Some(Duration::from_secs(3600))
+        );
     }
 
     #[test]
@@ -770,13 +852,21 @@ mod idle_tests {
         // Rechnet der Server, wird er nie weggenommen, egal wie lange es her ist.
         assert!(!local_idle_expired(Duration::from_secs(4000), limit, true));
         // Ohne Grenze nie.
-        assert!(!local_idle_expired(Duration::from_secs(99_999), None, false));
+        assert!(!local_idle_expired(
+            Duration::from_secs(99_999),
+            None,
+            false
+        ));
     }
 
     #[test]
     fn slots_report_is_read_defensively() {
-        assert!(slots_busy(r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":true}]"#));
-        assert!(!slots_busy(r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":false}]"#));
+        assert!(slots_busy(
+            r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":true}]"#
+        ));
+        assert!(!slots_busy(
+            r#"[{"id":0,"is_processing":false},{"id":1,"is_processing":false}]"#
+        ));
         assert!(slots_busy(r#"[{"id":0,"state":1}]"#));
         assert!(!slots_busy(r#"[{"id":0,"state":0}]"#));
         // Kein Endpunkt / Fehlertext / leer: nicht "beschaeftigt" (Zeit entscheidet).

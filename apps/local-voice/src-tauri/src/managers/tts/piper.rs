@@ -355,7 +355,11 @@ impl PiperEngine {
 
     /// Wie `resolve`, zusätzlich mit allen geladenen Stimmen als Kandidaten
     /// für die automatische Sprachwahl.
-    pub fn resolve_auto(app_data: Option<&Path>, voice_id: Option<&str>, auto_language: bool) -> Self {
+    pub fn resolve_auto(
+        app_data: Option<&Path>,
+        voice_id: Option<&str>,
+        auto_language: bool,
+    ) -> Self {
         let mut engine = Self::resolve(app_data, voice_id);
         engine.auto_language = auto_language;
         if let Some(data) = app_data {
@@ -447,8 +451,16 @@ impl TtsEngine for PiperEngine {
         }
         // Mit Auto-Sprache haengt die Stimme eines Satzes von den geladenen
         // Stimmen ab: kommt eine dazu, muss derselbe Satz neu entstehen.
-        let langs: Vec<&str> = self.alternatives.iter().map(|(id, _, _)| id.as_str()).collect();
-        format!("piper/{}/auto:{}", self.voice_id.as_deref().unwrap_or(""), langs.join(","))
+        let langs: Vec<&str> = self
+            .alternatives
+            .iter()
+            .map(|(id, _, _)| id.as_str())
+            .collect();
+        format!(
+            "piper/{}/auto:{}",
+            self.voice_id.as_deref().unwrap_or(""),
+            langs.join(",")
+        )
     }
 
     async fn ensure_ready(&self) -> Result<(), String> {
@@ -589,12 +601,30 @@ mod tests {
             std::fs::write(&c, b"{}").unwrap();
         }
         let e = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), true);
-        assert!(e.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("en_US-lessac-medium.onnx"));
-        assert!(e.paths_for("Es war ein ruhiger Abend über den Hügeln.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
-        assert!(e.paths_for("Luminara").unwrap().model.ends_with("de_DE-thorsten-high.onnx"), "unklar = gewaehlte Stimme");
+        assert!(e
+            .paths_for("It was a quiet evening in the hills.")
+            .unwrap()
+            .model
+            .ends_with("en_US-lessac-medium.onnx"));
+        assert!(e
+            .paths_for("Es war ein ruhiger Abend über den Hügeln.")
+            .unwrap()
+            .model
+            .ends_with("de_DE-thorsten-high.onnx"));
+        assert!(
+            e.paths_for("Luminara")
+                .unwrap()
+                .model
+                .ends_with("de_DE-thorsten-high.onnx"),
+            "unklar = gewaehlte Stimme"
+        );
         // Ohne Auto-Sprache bleibt es bei der Wahl, egal was der Text sagt.
         let fest = PiperEngine::resolve_auto(Some(dir.path()), Some("de_DE-thorsten-high"), false);
-        assert!(fest.paths_for("It was a quiet evening in the hills.").unwrap().model.ends_with("de_DE-thorsten-high.onnx"));
+        assert!(fest
+            .paths_for("It was a quiet evening in the hills.")
+            .unwrap()
+            .model
+            .ends_with("de_DE-thorsten-high.onnx"));
         assert_ne!(e.cache_tag(None), fest.cache_tag(None));
         // Keine Stimme gewaehlt, aber geladen: die erste springt ein.
         let ohne = PiperEngine::resolve_auto(Some(dir.path()), None, true);
@@ -827,7 +857,11 @@ mod tests {
             Some("en_US-amy-medium")
         );
         assert_eq!(engine(true).replacement_voice_id(german), None);
-        assert_eq!(engine(false).replacement_voice_id(english), None, "Auto aus");
+        assert_eq!(
+            engine(false).replacement_voice_id(english),
+            None,
+            "Auto aus"
+        );
         // Ohne geladene englische Stimme liest die gewaehlte -- nichts zu melden.
         let mut only_german = engine(true);
         only_german.alternatives.truncate(1);

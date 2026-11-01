@@ -117,7 +117,10 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +162,9 @@ pub fn ensure_agent_integration(
     now_ms: i64,
 ) -> Result<Integration, IntegrationError> {
     let find = |conn: &Connection| -> Result<Option<Integration>, IntegrationError> {
-        Ok(store::list(conn)?.into_iter().find(|i| i.kind == Kind::Agent))
+        Ok(store::list(conn)?
+            .into_iter()
+            .find(|i| i.kind == Kind::Agent))
     };
     if let Some(i) = find(conn)? {
         return Ok(i);
@@ -277,8 +282,14 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), IntegrationError> {
     if get(&tx, id)?.is_none() {
         return Err(IntegrationError::NotFound(id.to_string()));
     }
-    tx.execute("DELETE FROM agent_tool_grants WHERE client_id = ?1", params![id])?;
-    tx.execute("DELETE FROM agent_approvals WHERE client_id = ?1", params![id])?;
+    tx.execute(
+        "DELETE FROM agent_tool_grants WHERE client_id = ?1",
+        params![id],
+    )?;
+    tx.execute(
+        "DELETE FROM agent_approvals WHERE client_id = ?1",
+        params![id],
+    )?;
     tx.execute("DELETE FROM agent_clients WHERE id = ?1", params![id])?;
     tx.commit()?;
     Ok(())
@@ -320,8 +331,7 @@ pub fn tool_modes(
     conn: &Connection,
     client_id: &str,
 ) -> Result<HashMap<String, GrantMode>, IntegrationError> {
-    let mut stmt =
-        conn.prepare("SELECT tool, mode FROM agent_tool_grants WHERE client_id = ?1")?;
+    let mut stmt = conn.prepare("SELECT tool, mode FROM agent_tool_grants WHERE client_id = ?1")?;
     let rows = stmt
         .query_map(params![client_id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))

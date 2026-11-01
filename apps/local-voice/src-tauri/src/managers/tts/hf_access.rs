@@ -26,8 +26,8 @@ use serde::Serialize;
 use specta::Type;
 
 use super::phonon_models;
-use crate::managers::calendar::secret::{self, SecretRef, SecretStatus};
 use crate::catalog::{self, Purpose};
+use crate::managers::calendar::secret::{self, SecretRef, SecretStatus};
 use crate::managers::model::download::{Origin, Secret};
 
 /// Kürzere Werte sind sicher kein Zugang (Hugging Face: `hf_` + 34 Zeichen).
@@ -86,7 +86,12 @@ fn hf_token_file(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
         return Some(PathBuf::from(cache).join("huggingface").join("token"));
     }
     let home = non_empty("HOME").or_else(|| non_empty("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".cache").join("huggingface").join("token"))
+    Some(
+        PathBuf::from(home)
+            .join(".cache")
+            .join("huggingface")
+            .join("token"),
+    )
 }
 
 /// Zugang für den Download: erst der Tresor der App, dann System (`HF_TOKEN`/Token-Datei).
@@ -262,15 +267,23 @@ mod tests {
     const GOOD: &str = "hf_abcdefghijklmnopqrstuvwxyz012345678";
 
     fn env_of(pairs: &[(&str, String)]) -> impl Fn(&str) -> Option<String> {
-        let map: HashMap<String, String> =
-            pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect();
         move |k| map.get(k).cloned()
     }
 
     #[test]
     fn nur_echte_zugaenge_werden_angenommen() {
         assert_eq!(normalize(&format!("  {GOOD}\n")).unwrap(), GOOD);
-        for bad in ["", "hf_kurz", "abc_defghijklmnopqrstuvwxyz0123", "hf_mit leerzeichen_abcdefghijk", "hf_ümlaut_abcdefghijklmnopqrs"] {
+        for bad in [
+            "",
+            "hf_kurz",
+            "abc_defghijklmnopqrstuvwxyz0123",
+            "hf_mit leerzeichen_abcdefghijk",
+            "hf_ümlaut_abcdefghijklmnopqrs",
+        ] {
             assert!(normalize(bad).is_err(), "{bad:?}");
         }
     }
@@ -306,7 +319,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let env = env_of(&[("HF_TOKEN", "hf_veraltetveraltetveraltet".to_string())]);
         save(tmp.path(), GOOD, false, &env).unwrap();
-        assert_eq!(status(Some(tmp.path()), &env).source, Some(HfAccessSource::App));
+        assert_eq!(
+            status(Some(tmp.path()), &env).source,
+            Some(HfAccessSource::App)
+        );
         assert_eq!(
             load(Some(tmp.path()), &env).and_then(|s| s.bearer()),
             Secret::new(GOOD).and_then(|s| s.bearer())
@@ -338,7 +354,10 @@ mod tests {
         std::fs::write(hf_home.join("token"), "  \n").unwrap();
         let env = env_of(&[("HF_HOME", hf_home.display().to_string())]);
         assert!(save(tmp.path(), GOOD, true, &env).is_err());
-        assert_eq!(std::fs::read_to_string(hf_home.join("token")).unwrap(), "  \n");
+        assert_eq!(
+            std::fs::read_to_string(hf_home.join("token")).unwrap(),
+            "  \n"
+        );
     }
 
     #[cfg(unix)]

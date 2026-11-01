@@ -155,9 +155,11 @@ fn current_platform() -> Option<&'static str> {
 /// Lesbare Meldung zu einem `unsupported_reason` des Katalogs.
 fn unsupported_message(reason: &str) -> String {
     match reason {
-        "incomplete_archive" => "Für dieses System gibt es noch keine vollständige Piper-Laufzeit: \
+        "incomplete_archive" => {
+            "Für dieses System gibt es noch keine vollständige Piper-Laufzeit: \
              das offizielle Archiv enthält die benötigten Bibliotheken nicht."
-            .to_string(),
+                .to_string()
+        }
         other => format!("Piper ist auf diesem System nicht verfügbar ({other})."),
     }
 }
@@ -399,7 +401,10 @@ impl TtsModelManager {
         // abgelegte (`hf_access`).
         let secrets_dir = crate::managers::calendar::secret::secrets_dir_for(&self.app_handle).ok();
         let token = || {
-            crate::managers::tts::hf_access::load(secrets_dir.as_deref(), &phonon_models::process_env)
+            crate::managers::tts::hf_access::load(
+                secrets_dir.as_deref(),
+                &phonon_models::process_env,
+            )
         };
         let env = InstallEnv {
             dirs: &self.phonon_dirs,
@@ -885,7 +890,11 @@ mod tests {
         );
 
         // Binary + data, but the linked libraries missing (the macOS bug of #29).
-        fs::write(rt_dir.join(super::super::availability::piper_binary(platform)), b"fake").unwrap();
+        fs::write(
+            rt_dir.join(super::super::availability::piper_binary(platform)),
+            b"fake",
+        )
+        .unwrap();
         fs::create_dir_all(rt_dir.join("espeak-ng-data")).unwrap();
         fs::write(rt_dir.join("espeak-ng-data").join("phontab"), b"x").unwrap();
         fs::write(rt_dir.join("espeak-ng-data").join("phondata"), b"x").unwrap();
@@ -899,7 +908,10 @@ mod tests {
         crate::managers::tts::availability::write_piper_fixture(&rt_dir, platform);
         let downloads = TtsModelManager::build_downloads(&piper_dir, |_| false);
         assert!(downloads[0].is_downloaded);
-        assert_eq!(downloads[0].is_usable, downloads[0].unsupported_reason.is_none());
+        assert_eq!(
+            downloads[0].is_usable,
+            downloads[0].unsupported_reason.is_none()
+        );
     }
 
     /// Eine Stimme ist erst verwendbar, wenn auch die Laufzeit vollstaendig ist:
@@ -943,14 +955,23 @@ mod tests {
     fn license_info_reaches_the_download_rows() {
         let dir = tempfile::TempDir::new().unwrap();
         let downloads = TtsModelManager::build_downloads(dir.path(), |_| false);
-        let ryan = downloads.iter().find(|d| d.id == "en_US-ryan-high").unwrap();
+        let ryan = downloads
+            .iter()
+            .find(|d| d.id == "en_US-ryan-high")
+            .unwrap();
         assert!(ryan.license_non_commercial);
         assert_eq!(ryan.license.as_deref(), Some("CC-BY-NC-SA-4.0"));
-        let thorsten = downloads.iter().find(|d| d.id == "de_DE-thorsten-high").unwrap();
+        let thorsten = downloads
+            .iter()
+            .find(|d| d.id == "de_DE-thorsten-high")
+            .unwrap();
         // Datensatz CC0, aber vom Lessac-Modell (Blizzard-2013-Forschungslizenz) abgeleitet (K1).
         assert!(thorsten.license_non_commercial);
         assert_eq!(thorsten.license.as_deref(), Some("CC0-1.0"));
-        let eva = downloads.iter().find(|d| d.id == "de_DE-eva_k-x_low").unwrap();
+        let eva = downloads
+            .iter()
+            .find(|d| d.id == "de_DE-eva_k-x_low")
+            .unwrap();
         assert!(!eva.license_non_commercial);
     }
 

@@ -168,11 +168,7 @@ pub(crate) fn get_in(dir: &Path, name: &str) -> Result<Option<Zeroizing<Vec<u8>>
     get_raw(dir, name, &entropy_for(name))
 }
 
-fn get_raw(
-    dir: &Path,
-    name: &str,
-    entropy: &[u8],
-) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+fn get_raw(dir: &Path, name: &str, entropy: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
     let path = secret_path(dir, name)?;
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
@@ -313,10 +309,7 @@ pub(crate) fn put_ref_in(dir: &Path, r: &SecretRef, data: &[u8]) -> Result<(), S
     put_raw(dir, &name, &entropy_for_ns(r.ns, &name), data)
 }
 
-pub(crate) fn get_ref_in(
-    dir: &Path,
-    r: &SecretRef,
-) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+pub(crate) fn get_ref_in(dir: &Path, r: &SecretRef) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
     let name = r.name()?;
     get_raw(dir, &name, &entropy_for_ns(r.ns, &name))
 }

@@ -13,9 +13,8 @@ use tokio::sync::oneshot;
 use ulid::Ulid;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::{
-    CreateWellKnownSid, GetAce, GetAclInformation, GetKernelObjectSecurity,
-    GetSecurityDescriptorDacl, AclSizeInformation, ACL, ACL_SIZE_INFORMATION, PSECURITY_DESCRIPTOR,
-    PSID, WinWorldSid,
+    AclSizeInformation, CreateWellKnownSid, GetAce, GetAclInformation, GetKernelObjectSecurity,
+    GetSecurityDescriptorDacl, WinWorldSid, ACL, ACL_SIZE_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
 };
 
 use super::*;
@@ -105,7 +104,10 @@ fn a_custom_pipe_name_is_only_honoured_in_the_sandbox_and_only_with_safe_charact
         resolve_pipe_name(true, Some("lva-test.1"), "abc").unwrap(),
         r"\\.\pipe\lva-test.1"
     );
-    assert!(resolve_pipe_name(false, Some("lva-test"), "abc").is_err(), "ausserhalb der Sandbox nie");
+    assert!(
+        resolve_pipe_name(false, Some("lva-test"), "abc").is_err(),
+        "ausserhalb der Sandbox nie"
+    );
     for bad in ["a b", "a\\b", "a/b", "..\\x", "a:b", &"x".repeat(65)] {
         assert!(resolve_pipe_name(true, Some(bad), "abc").is_err(), "{bad}");
     }
@@ -119,7 +121,10 @@ fn a_custom_pipe_name_is_only_honoured_in_the_sandbox_and_only_with_safe_charact
 #[test]
 fn sids_are_formatted_like_windows_does() {
     let sid = current_user_sid().unwrap().to_sid_string();
-    assert!(sid.starts_with("S-1-5-21-") || sid.starts_with("S-1-5-"), "{sid}");
+    assert!(
+        sid.starts_with("S-1-5-21-") || sid.starts_with("S-1-5-"),
+        "{sid}"
+    );
     assert_eq!(world_sid().to_sid_string(), "S-1-1-0");
 }
 
@@ -139,7 +144,13 @@ async fn the_pipe_dacl_allows_only_the_current_user_and_denies_network_logons() 
     // Insbesondere nichts fuer Jeden, Benutzer, authentifizierte Benutzer, SYSTEM, Administratoren.
     for (kind, sid) in &entries {
         if *kind == 0 {
-            for broad in ["S-1-1-0", "S-1-5-32-545", "S-1-5-11", "S-1-5-18", "S-1-5-32-544"] {
+            for broad in [
+                "S-1-1-0",
+                "S-1-5-32-545",
+                "S-1-5-11",
+                "S-1-5-18",
+                "S-1-5-32-544",
+            ] {
                 assert_ne!(sid, broad);
             }
         }
@@ -194,8 +205,15 @@ async fn remote_clients_are_rejected() {
         .create(&control_name)
         .unwrap();
     let unc = |leaf: &str| format!(r"\\127.0.0.1\pipe\{leaf}");
-    if OpenOptions::new().read(true).write(true).open(unc(&control_leaf)).is_err() {
-        eprintln!("UNC-Weg ueber 127.0.0.1 ist auf diesem Rechner nicht verfuegbar: Test uebersprungen");
+    if OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(unc(&control_leaf))
+        .is_err()
+    {
+        eprintln!(
+            "UNC-Weg ueber 127.0.0.1 ist auf diesem Rechner nicht verfuegbar: Test uebersprungen"
+        );
         return;
     }
     // Die gesicherte Pipe der Bruecke weist denselben Weg ab.
@@ -204,9 +222,16 @@ async fn remote_clients_are_rejected() {
     let mut sec = PipeSecurity::only(current_user_sid().unwrap()).unwrap();
     let _pipe = create_instance(&name, &mut sec, true).unwrap();
     let remote = OpenOptions::new().read(true).write(true).open(unc(&leaf));
-    assert!(remote.is_err(), "Fernzugriff muss scheitern, ging aber durch");
+    assert!(
+        remote.is_err(),
+        "Fernzugriff muss scheitern, ging aber durch"
+    );
     // Lokal geht sie auf.
-    assert!(OpenOptions::new().read(true).write(true).open(&name).is_ok());
+    assert!(OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&name)
+        .is_ok());
 }
 
 // --- Gegenueber -------------------------------------------------------------------
@@ -222,7 +247,10 @@ fn a_process_of_the_current_user_passes_and_another_sid_does_not() {
 
 // --- Ende zu Ende -----------------------------------------------------------------
 
-async fn start_server(f: &Fixture, name: &str) -> (Arc<Server>, tokio::task::JoinHandle<io::Result<()>>) {
+async fn start_server(
+    f: &Fixture,
+    name: &str,
+) -> (Arc<Server>, tokio::task::JoinHandle<io::Result<()>>) {
     let server = Server::new(f.bridge.clone());
     let (tx, rx) = oneshot::channel();
     let s2 = server.clone();
@@ -235,7 +263,9 @@ async fn start_server(f: &Fixture, name: &str) -> (Arc<Server>, tokio::task::Joi
 /// Fuehrt `work` mit einem verbundenen Client auf einem Arbeitsthread aus.
 async fn with_client<T: Send + 'static>(
     name: &str,
-    work: impl FnOnce(&mut Client<std::io::BufReader<std::fs::File>, std::fs::File>) -> T + Send + 'static,
+    work: impl FnOnce(&mut Client<std::io::BufReader<std::fs::File>, std::fs::File>) -> T
+        + Send
+        + 'static,
 ) -> T {
     let name = name.to_string();
     tokio::task::spawn_blocking(move || {
@@ -259,15 +289,26 @@ async fn end_to_end_status_login_list_and_call_over_the_real_pipe() {
         let hello = c.hello(Some(&token)).unwrap();
         let tools = c.request("tools/list", json!({})).unwrap();
         let call = c
-            .request("tools/call", json!({"name": "create_meeting", "arguments": {"title": "T"}}))
+            .request(
+                "tools/call",
+                json!({"name": "create_meeting", "arguments": {"title": "T"}}),
+            )
             .unwrap();
-        let off = c.request("tools/call", json!({"name": "transcribe_file", "arguments": {}}));
+        let off = c.request(
+            "tools/call",
+            json!({"name": "transcribe_file", "arguments": {}}),
+        );
         (anon, hello, tools, call, off)
     })
     .await;
     assert_eq!(out.0["authenticated"], json!(false));
     assert_eq!(out.1["authenticated"], json!(true));
-    let names: Vec<&str> = out.2["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = out.2["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
     assert!(names.contains(&"create_meeting") && !names.contains(&"transcribe_file"));
     assert_eq!(out.3["status"], json!("done"));
     match out.4 {
@@ -285,8 +326,14 @@ async fn an_invalid_token_over_the_real_pipe_is_refused_and_audited() {
     let f = Fixture::new();
     let name = unique_name();
     let (_server, _h) = start_server(&f, &name).await;
-    let err = with_client(&name, |c| c.hello(Some(&crate::agent_bridge::clients::generate_token()))).await;
-    assert!(matches!(&err, Err(ClientError::Remote { code, .. }) if code == "token_invalid"), "{err:?}");
+    let err = with_client(&name, |c| {
+        c.hello(Some(&crate::agent_bridge::clients::generate_token()))
+    })
+    .await;
+    assert!(
+        matches!(&err, Err(ClientError::Remote { code, .. }) if code == "token_invalid"),
+        "{err:?}"
+    );
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "denied");
@@ -322,7 +369,10 @@ async fn a_peer_of_another_sid_is_cut_off_and_audited() {
     tokio::spawn(async move { serve_with(s2, &n2, Some(tx), world_sid()).await });
     rx.await.unwrap().unwrap();
     let result = with_client(&name, |c| c.request("status", json!({}))).await;
-    assert!(result.is_err(), "die Verbindung wird abgewiesen: {result:?}");
+    assert!(
+        result.is_err(),
+        "die Verbindung wird abgewiesen: {result:?}"
+    );
     // Das Audit wird im Hintergrund geschrieben.
     for _ in 0..100 {
         if !f.audit().is_empty() {
@@ -333,7 +383,11 @@ async fn a_peer_of_another_sid_is_cut_off_and_audited() {
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "denied");
-    assert!(rows[0].detail_json.as_deref().unwrap().contains("peer_not_current_user"));
+    assert!(rows[0]
+        .detail_json
+        .as_deref()
+        .unwrap()
+        .contains("peer_not_current_user"));
 }
 
 #[tokio::test]
@@ -341,7 +395,11 @@ async fn the_client_refuses_a_server_of_another_user() {
     let f = Fixture::new();
     let name = unique_name();
     let (_server, _h) = start_server(&f, &name).await;
-    let file = OpenOptions::new().read(true).write(true).open(&name).unwrap();
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&name)
+        .unwrap();
     // Mit dem eigenen Benutzer als Erwartung ist alles in Ordnung ...
     verify_server(&file).unwrap();
     // ... mit einem anderen nicht.
@@ -354,8 +412,14 @@ async fn the_client_refuses_a_server_of_another_user() {
 #[tokio::test]
 async fn no_app_means_not_running() {
     let name = unique_name();
-    let r = tokio::task::spawn_blocking(move || Client::connect(&name)).await.unwrap();
-    assert!(matches!(r, Err(ClientError::NotRunning(_))), "{:?}", r.err());
+    let r = tokio::task::spawn_blocking(move || Client::connect(&name))
+        .await
+        .unwrap();
+    assert!(
+        matches!(r, Err(ClientError::NotRunning(_))),
+        "{:?}",
+        r.err()
+    );
 }
 
 #[tokio::test]
@@ -364,7 +428,11 @@ async fn shutting_the_server_down_frees_the_name() {
     let name = unique_name();
     let (server, handle) = start_server(&f, &name).await;
     server.shutdown();
-    tokio::time::timeout(Duration::from_secs(5), handle).await.unwrap().unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
     // Danach laesst sich der Name wieder als erste Instanz anlegen (kein Rest bleibt haengen).
     let mut sec = PipeSecurity::only(current_user_sid().unwrap()).unwrap();
     let mut ok = false;

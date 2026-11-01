@@ -1,15 +1,23 @@
 use super::*;
 
-const DE: &str = "Wir sprechen heute über den Lastgang der Stadtwerke und danach über den Speicher, \
+const DE: &str =
+    "Wir sprechen heute über den Lastgang der Stadtwerke und danach über den Speicher, \
 den wir im nächsten Jahr beschaffen wollen, damit die Spitzen am Montagmorgen flacher werden.";
 const EN: &str = "Today we are going to talk about the load profile of the municipal utility and \
 afterwards about the storage system that we want to buy next year so that the peaks flatten out.";
-const FR: &str = "Aujourd'hui nous allons parler du profil de charge de la régie municipale et ensuite \
+const FR: &str =
+    "Aujourd'hui nous allons parler du profil de charge de la régie municipale et ensuite \
 du stockage que nous voulons acheter l'année prochaine afin d'aplatir les pics du lundi matin.";
 const ES: &str = "Hoy vamos a hablar del perfil de carga de la empresa municipal y después del \
 almacenamiento que queremos comprar el año que viene para que los picos del lunes se aplanen.";
 
-fn model(id: &str, langs: &[&str], downloaded: bool, size_mb: u64, accuracy: u32) -> ModelCandidate {
+fn model(
+    id: &str,
+    langs: &[&str],
+    downloaded: bool,
+    size_mb: u64,
+    accuracy: u32,
+) -> ModelCandidate {
     ModelCandidate {
         id: id.to_string(),
         name: id.to_string(),
@@ -94,7 +102,10 @@ fn a_text_gets_its_language() {
 fn a_short_text_gets_no_language_instead_of_a_guess() {
     assert_eq!(detect_text("Okay, gut."), None);
     assert_eq!(detect_text(""), None);
-    assert_eq!(detect_text("12345 67890 12345 67890 12345 67890 12345 67890 12345"), None);
+    assert_eq!(
+        detect_text("12345 67890 12345 67890 12345 67890 12345 67890 12345"),
+        None
+    );
 }
 
 // ---- Stufe 1: Probenfenster --------------------------------------------------------
@@ -139,7 +150,10 @@ fn a_long_recording_gives_one_loud_window_per_third() {
     for window in &windows {
         assert_eq!(window.len(), PROBE_WINDOW_MS * 16);
         let loudness = window.iter().map(|s| f64::from(s.abs())).sum::<f64>() / window.len() as f64;
-        assert!(loudness > 0.1, "ein leises Fenster wurde gewaehlt: {loudness}");
+        assert!(
+            loudness > 0.1,
+            "ein leises Fenster wurde gewaehlt: {loudness}"
+        );
     }
 }
 
@@ -208,7 +222,12 @@ fn another_language_keeps_a_default_that_covers_it() {
 fn an_english_only_default_is_replaced_by_the_best_installed_multilingual_model() {
     // Standard = reines Englisch-Modell, Aufnahme Deutsch: das installierte
     // mehrsprachige Modell, nicht das nur-englische (obwohl dessen Katalogwert hoeher ist).
-    let catalog = [english_only(true), parakeet_v3(true), qwen(true), whisper_turbo(false)];
+    let catalog = [
+        english_only(true),
+        parakeet_v3(true),
+        qwen(true),
+        whisper_turbo(false),
+    ];
     let choice = choose_model(Some("de"), &catalog[0], false, &catalog);
     assert_eq!(choice.reason, ModelReason::Switched);
     assert_eq!(choice.id, "qwen3-asr-1.7b", "mehrsprachig und genauer");
@@ -228,7 +247,10 @@ fn a_language_the_default_lacks_goes_to_an_installed_model_that_has_it() {
 fn a_not_installed_model_is_never_chosen_only_suggested() {
     let catalog = [parakeet_v3(true), qwen(false), whisper_turbo(false)];
     let choice = choose_model(Some("ja"), &catalog[0], false, &catalog);
-    assert_eq!(choice.id, "parakeet-v3", "das geladene bleibt: nichts wird still geladen");
+    assert_eq!(
+        choice.id, "parakeet-v3",
+        "das geladene bleibt: nichts wird still geladen"
+    );
     assert_eq!(choice.reason, ModelReason::NoneInstalled);
     assert_eq!(choice.covers, Some(false));
     // Qwen3-ASR (90) schlaegt Whisper (88) bei gleich mehrsprachiger Abdeckung.
@@ -303,7 +325,11 @@ fn a_user_choice_stays_even_when_the_text_disagrees() {
     .unwrap();
     assert_eq!(stored.code, "de");
     assert_eq!(stored.source, SOURCE_USER);
-    assert_eq!(stored.mismatch.as_deref(), Some("en"), "der Widerspruch wird gemeldet");
+    assert_eq!(
+        stored.mismatch.as_deref(),
+        Some("en"),
+        "der Widerspruch wird gemeldet"
+    );
     assert_eq!(stored.forced, None);
 }
 
@@ -349,7 +375,10 @@ fn a_probe_result_stays_and_a_disagreement_is_noted() {
 #[test]
 fn without_a_plan_the_text_decides_or_nothing() {
     let stored = settle(None, Some(detection("fr", 0.8)), None).unwrap();
-    assert_eq!((stored.code.as_str(), stored.source.as_str()), ("fr", SOURCE_TEXT));
+    assert_eq!(
+        (stored.code.as_str(), stored.source.as_str()),
+        ("fr", SOURCE_TEXT)
+    );
     assert_eq!(settle(None, None, None), None);
 }
 
@@ -365,7 +394,10 @@ fn the_stored_language_round_trips_through_json_without_empty_fields() {
     };
     let json = serde_json::to_string(&stored).unwrap();
     assert!(!json.contains("forced") && !json.contains("mismatch"));
-    assert_eq!(serde_json::from_str::<StoredLanguage>(&json).unwrap(), stored);
+    assert_eq!(
+        serde_json::from_str::<StoredLanguage>(&json).unwrap(),
+        stored
+    );
 }
 
 // ---- Entscheidung eines Laufs ------------------------------------------------------------------
@@ -399,7 +431,10 @@ fn the_probe_runs_only_when_nothing_fixes_the_language() {
     assert!(needs_probe(None, ""));
     assert!(!needs_probe(Some("en"), "auto"), "Wahl im Dialog");
     assert!(!needs_probe(None, "de"), "feste Einstellung");
-    assert!(needs_probe(Some("auto"), "de"), "'auto' im Dialog heisst erkennen");
+    assert!(
+        needs_probe(Some("auto"), "de"),
+        "'auto' im Dialog heisst erkennen"
+    );
 }
 
 #[test]
@@ -411,8 +446,15 @@ fn a_probe_result_decides_the_language_and_the_model_covers_it() {
     );
     let (code, source, _) = decision.planned.clone().unwrap();
     assert_eq!((code.as_str(), source), ("en", SOURCE_PROBE));
-    assert_eq!(decision.choice.id, "parakeet-v3", "Parakeet v3 deckt Englisch ab: kein Wechsel");
-    assert_eq!(decision.force.as_deref(), Some("en"), "die erkannte Sprache wird fuer den Lauf festgelegt");
+    assert_eq!(
+        decision.choice.id, "parakeet-v3",
+        "Parakeet v3 deckt Englisch ab: kein Wechsel"
+    );
+    assert_eq!(
+        decision.force.as_deref(),
+        Some("en"),
+        "die erkannte Sprache wird fuer den Lauf festgelegt"
+    );
 }
 
 #[test]
@@ -422,7 +464,10 @@ fn a_detected_language_the_default_lacks_switches_to_an_installed_multilingual_m
         native: vec![Some("ja".into())],
         text: String::new(),
     };
-    let decision = decide_run(&input(None, "auto", &catalog[0], false, &catalog), Some(&japanese));
+    let decision = decide_run(
+        &input(None, "auto", &catalog[0], false, &catalog),
+        Some(&japanese),
+    );
     assert_eq!(decision.choice.reason, ModelReason::Switched);
     assert_eq!(decision.choice.id, "qwen3-asr-1.7b");
     assert_eq!(decision.force.as_deref(), Some("ja"));
@@ -456,7 +501,10 @@ fn the_users_model_stays_even_for_a_language_it_lacks_and_the_language_is_not_fo
     assert_eq!(decision.choice.id, "parakeet-v2-en");
     assert_eq!(decision.choice.reason, ModelReason::UserChoice);
     assert_eq!(decision.choice.covers, Some(false));
-    assert_eq!(decision.force, None, "ein Modell ohne die Sprache bekommt sie nicht aufgezwungen");
+    assert_eq!(
+        decision.force, None,
+        "ein Modell ohne die Sprache bekommt sie nicht aufgezwungen"
+    );
 }
 
 #[test]
@@ -501,7 +549,10 @@ fn the_info_suggests_a_not_installed_model_when_none_installed_fits() {
     let catalog = [english_only(true), qwen(false)];
     let info = build_info(None, Some("ja"), Some("parakeet-v2-en"), &catalog);
     assert_eq!(info.code.as_deref(), Some("ja"));
-    assert_eq!(info.source, None, "ohne gespeicherte Herkunft keine Behauptung");
+    assert_eq!(
+        info.source, None,
+        "ohne gespeicherte Herkunft keine Behauptung"
+    );
     let suggestion = info.suggestion.unwrap();
     assert_eq!(suggestion.model_id, "qwen3-asr-1.7b");
     assert!(!suggestion.downloaded);
@@ -521,6 +572,13 @@ fn the_info_without_a_language_or_with_a_fitting_model_has_no_suggestion() {
 fn the_info_takes_the_meeting_column_when_nothing_was_stored() {
     let catalog = [parakeet_v3(true)];
     let info = build_info(None, Some("en-US"), None, &catalog);
-    assert_eq!(info.code.as_deref(), Some("en"), "Regionalcode auf die Sprache gekuerzt");
-    assert_eq!(info.model_covers, None, "kein Modell bekannt: keine Behauptung");
+    assert_eq!(
+        info.code.as_deref(),
+        Some("en"),
+        "Regionalcode auf die Sprache gekuerzt"
+    );
+    assert_eq!(
+        info.model_covers, None,
+        "kein Modell bekannt: keine Behauptung"
+    );
 }

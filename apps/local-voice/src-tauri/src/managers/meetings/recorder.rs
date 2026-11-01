@@ -19,11 +19,11 @@ use tauri::{AppHandle, Manager};
 use tauri_specta::Event;
 
 use super::chunker::Chunk;
-use super::empty::{coded_error, EmptyFill};
 use super::dsp::{
     ChannelFeed, DspConfig, DspControl, DspNotice, EchoSetup, LivePipeline, MeetingTimeline,
     PcmSink, VadFactory, WavFileSink,
 };
+use super::empty::{coded_error, EmptyFill};
 use super::final_pass::{self, FinalChoice, FinalPlan, JobSpec, KeepReason};
 use super::mic_capture::MeetingMicCapture;
 use super::signal_watch::HealthState;
@@ -147,11 +147,7 @@ pub fn begin_live_row(
 /// `failed`, Dateien weg, Pfade geleert, Ordner weg, wenn danach leer. Fremde
 /// Dateien im Ordner bleiben. Best effort: was sich nicht loeschen laesst (noch
 /// offen), steht im Log.
-pub(crate) fn discard_failed_start(
-    store: &MeetingStore,
-    meeting_id: &str,
-    dir: &std::path::Path,
-) {
+pub(crate) fn discard_failed_start(store: &MeetingStore, meeting_id: &str, dir: &std::path::Path) {
     if let Err(e) = store.set_status(meeting_id, MeetingStatus::Failed) {
         warn!("meetings: failed start of {meeting_id}: status not stored: {e}");
     }
@@ -191,7 +187,9 @@ pub fn apply_pause(state: &mut MeetingRunState, paused: bool) -> Result<(), Stri
 /// nie halb geschrieben. Wer auf dem Hotkey-Pfad `lock().unwrap()` ruft, nimmt
 /// sonst das Diktat mit in die Panik (#15).
 fn lock_recovering<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Die Zustandsregeln des Recorders mit der Sitzung als Typparameter, damit sie
@@ -612,7 +610,8 @@ impl MeetingRecorderManager {
                 if let Some(previous) = previous {
                     let _ = previous.handle.join();
                 }
-                let mut env = final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
+                let mut env =
+                    final_pass::AppEnv::new(&app, Arc::clone(&tm), Arc::clone(&job_cancel));
                 for job in &thread_jobs {
                     final_pass::run_job(&store, job, &mut env);
                 }
@@ -1280,7 +1279,10 @@ impl MeetingRecorderManager {
         final_pass::prepare_orphan(&self.store, &meeting)
             .map_err(|e| format!("status_processing_failed: {e}"))?;
         let plan = if meeting.source == "live" {
-            final_pass::plan_for_app(&self.app, &FinalChoice::parse(&settings.meeting_final_model))
+            final_pass::plan_for_app(
+                &self.app,
+                &FinalChoice::parse(&settings.meeting_final_model),
+            )
         } else {
             FinalPlan::Keep(KeepReason::NotLive)
         };
@@ -1636,11 +1638,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
         let folder = store.folder_save(None, "Kunde", None).unwrap().id;
-        let target = store.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+        let target = store
+            .create_empty_meeting("Neue Besprechung", Some(&folder))
+            .unwrap();
 
         let started = begin_live_row(&store, "Montag", 99, Some(&target.id)).unwrap();
         assert_eq!(started.id, target.id, "kein neuer Eintrag");
-        assert_eq!((started.source.as_str(), started.status.as_str()), ("live", "recording"));
+        assert_eq!(
+            (started.source.as_str(), started.status.as_str()),
+            ("live", "recording")
+        );
         assert_eq!(started.title, "Montag");
         assert_eq!(started.consent_confirmed_at, Some(99));
         assert_eq!(store.meeting_folder_ids(&target.id).unwrap(), vec![folder]);
@@ -1651,7 +1658,10 @@ mod tests {
             begin_live_row(&store, "Nochmal", 100, Some(&target.id)).unwrap_err(),
             "target_not_empty"
         );
-        assert_eq!(store.get_meeting(&target.id).unwrap().unwrap().title, "Montag");
+        assert_eq!(
+            store.get_meeting(&target.id).unwrap().unwrap().title,
+            "Montag"
+        );
         assert_eq!(
             begin_live_row(&store, "x", 1, Some("gibt-es-nicht")).unwrap_err(),
             "meeting_not_found"
@@ -1713,9 +1723,15 @@ mod tests {
             "ein zweiter Klick startet keinen zweiten Auftrag"
         );
         let gone = meeting_with("cancelled", Some("C:/weg.wav"), None);
-        assert_eq!(check_can_continue(&gone, false, &exists), Err("audio_missing".to_string()));
+        assert_eq!(
+            check_can_continue(&gone, false, &exists),
+            Err("audio_missing".to_string())
+        );
         let none = meeting_with("cancelled", None, None);
-        assert_eq!(check_can_continue(&none, false, &exists), Err("audio_missing".to_string()));
+        assert_eq!(
+            check_can_continue(&none, false, &exists),
+            Err("audio_missing".to_string())
+        );
     }
 
     // ---- #15: Zustandsfenster, Vergiftung, Geisteraufnahme ---------------------------
@@ -1759,8 +1775,14 @@ mod tests {
         let (session, ticket) = core.begin_stop().unwrap();
         assert_eq!(session, "sitzung");
         // Das Mikrofon ist noch offen: Diktat-Hotkey und neuer Start sehen es.
-        assert!(core.is_recording(), "Fenster 'Zustand Idle vor Capture-Stopp' ist zu");
-        assert_eq!(core.begin_start().err(), Some("already_recording".to_string()));
+        assert!(
+            core.is_recording(),
+            "Fenster 'Zustand Idle vor Capture-Stopp' ist zu"
+        );
+        assert_eq!(
+            core.begin_start().err(),
+            Some("already_recording".to_string())
+        );
         // Ein zweiter Stopp hat nichts mehr zu stoppen.
         assert_eq!(core.begin_stop().err(), Some("not_recording".to_string()));
         ticket.finish();
@@ -1787,19 +1809,34 @@ mod tests {
     fn a_start_in_progress_counts_as_recording_and_refuses_a_second_start() {
         let core = Core::new();
         let ticket = core.begin_start().unwrap();
-        assert!(core.is_recording(), "waehrend des Starts gilt es schon als Aufnahme");
-        assert_eq!(core.begin_start().err(), Some("already_recording".to_string()));
+        assert!(
+            core.is_recording(),
+            "waehrend des Starts gilt es schon als Aufnahme"
+        );
+        assert_eq!(
+            core.begin_start().err(),
+            Some("already_recording".to_string())
+        );
         drop(ticket);
-        assert!(!core.is_recording(), "auch ein gescheiterter Start gibt es frei");
+        assert!(
+            !core.is_recording(),
+            "auch ein gescheiterter Start gibt es frei"
+        );
     }
 
     #[test]
     fn pause_needs_a_running_session_not_just_a_state() {
         let core = Core::new();
         // Weder vor dem Start noch im Startfenster (Capture laeuft, Sitzung fehlt noch).
-        assert_eq!(core.set_paused(true, |_| {}), Err("not_recording".to_string()));
+        assert_eq!(
+            core.set_paused(true, |_| {}),
+            Err("not_recording".to_string())
+        );
         let _starting = core.begin_start().unwrap();
-        assert_eq!(core.set_paused(true, |_| {}), Err("not_recording".to_string()));
+        assert_eq!(
+            core.set_paused(true, |_| {}),
+            Err("not_recording".to_string())
+        );
         core.publish_started("m1", "sitzung");
         let applied = std::cell::Cell::new(false);
         assert_eq!(
@@ -1816,7 +1853,10 @@ mod tests {
         ));
         // Nach dem Stopp-Beginn gibt es nichts mehr zu pausieren (kein falsches Ereignis).
         let (_s, ticket) = core.begin_stop().unwrap();
-        assert_eq!(core.set_paused(false, |_| {}), Err("not_recording".to_string()));
+        assert_eq!(
+            core.set_paused(false, |_| {}),
+            Err("not_recording".to_string())
+        );
         ticket.finish();
     }
 
@@ -1881,14 +1921,20 @@ mod tests {
     #[test]
     fn a_failed_start_removes_the_zero_header_wavs_clears_the_paths_and_marks_the_row_failed() {
         let (_dir, store, id, folder) = failed_start_fixture();
-        assert!(folder.join("mic.wav").exists(), "Voraussetzung: Debris liegt da");
+        assert!(
+            folder.join("mic.wav").exists(),
+            "Voraussetzung: Debris liegt da"
+        );
 
         discard_failed_start(&store, &id, &folder);
 
         assert!(!folder.exists(), "Ordner weg, wenn er danach leer ist");
         let meeting = store.get_meeting(&id).unwrap().unwrap();
         assert_eq!(meeting.status, "failed");
-        assert_eq!((meeting.mic_audio_path, meeting.system_audio_path), (None, None));
+        assert_eq!(
+            (meeting.mic_audio_path, meeting.system_audio_path),
+            (None, None)
+        );
         assert!(
             !is_orphan_status(&meeting.status),
             "beim naechsten App-Start darf daraus keine 'wiederhergestellte' Aufnahme werden"
@@ -1900,15 +1946,24 @@ mod tests {
         let (_dir, store, id, folder) = failed_start_fixture();
         std::fs::write(folder.join("notizen.txt"), b"gehoert dem Nutzer").unwrap();
         // mic_aec.wav entsteht in der Echo-Stufe der Pipeline und gehoert dazu.
-        std::fs::write(folder.join(crate::managers::meetings::MIC_AEC_FILE), b"RIFF").unwrap();
+        std::fs::write(
+            folder.join(crate::managers::meetings::MIC_AEC_FILE),
+            b"RIFF",
+        )
+        .unwrap();
 
         discard_failed_start(&store, &id, &folder);
 
         assert!(folder.join("notizen.txt").exists(), "Fremdes bleibt");
         assert!(!folder.join("mic.wav").exists());
         assert!(!folder.join("system.wav").exists());
-        assert!(!folder.join(crate::managers::meetings::MIC_AEC_FILE).exists());
-        assert!(folder.exists(), "der Ordner bleibt, solange etwas Fremdes darin liegt");
+        assert!(!folder
+            .join(crate::managers::meetings::MIC_AEC_FILE)
+            .exists());
+        assert!(
+            folder.exists(),
+            "der Ordner bleibt, solange etwas Fremdes darin liegt"
+        );
     }
 
     #[test]
@@ -1920,7 +1975,10 @@ mod tests {
             .unwrap();
         // Der Ordner wurde nie angelegt (z. B. `meeting_dir_failed`).
         discard_failed_start(&store, &meeting.id, &dir.path().join("gibt-es-nicht"));
-        assert_eq!(store.get_meeting(&meeting.id).unwrap().unwrap().status, "failed");
+        assert_eq!(
+            store.get_meeting(&meeting.id).unwrap().unwrap().status,
+            "failed"
+        );
         // Und eine unbekannte Besprechung bringt nichts zum Absturz.
         discard_failed_start(&store, "gibt-es-nicht", &dir.path().join("x"));
     }

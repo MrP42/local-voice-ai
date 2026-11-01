@@ -154,7 +154,7 @@ impl Fixture {
                 registry,
                 cfg,
             )
-                .with_clock(Arc::new(move || c2.load(Ordering::SeqCst))),
+            .with_clock(Arc::new(move || c2.load(Ordering::SeqCst))),
         );
         let conn = fx.conn();
         let (client, token) = clients::create(&conn, "Claude Code", None, NOW).unwrap();
@@ -200,8 +200,14 @@ impl Fixture {
             GrantMode::Allow
         };
         let client = clients::get(&conn, client_id).unwrap().unwrap();
-        store::set_grant(&conn, &client.integration_id, entry.capability, Caller::AgentExternal, ceiling)
-            .unwrap();
+        store::set_grant(
+            &conn,
+            &client.integration_id,
+            entry.capability,
+            Caller::AgentExternal,
+            ceiling,
+        )
+        .unwrap();
         clients::set_tool_mode(&conn, client_id, tool, mode).unwrap();
     }
 
@@ -209,8 +215,14 @@ impl Fixture {
     pub fn ceiling(&self, tool: &str, mode: GrantMode) {
         let conn = self.conn();
         let entry = catalog::find(tool).unwrap();
-        store::set_grant(&conn, &self.client.integration_id, entry.capability, Caller::AgentExternal, mode)
-            .unwrap();
+        store::set_grant(
+            &conn,
+            &self.client.integration_id,
+            entry.capability,
+            Caller::AgentExternal,
+            mode,
+        )
+        .unwrap();
     }
 
     pub fn second_client(&self, label: &str) -> (ClientCtx, String) {

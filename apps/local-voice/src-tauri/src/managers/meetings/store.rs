@@ -860,7 +860,9 @@ impl MeetingStore {
         // A1, A3, U7 angleichen. Ein Fehler hier laesst die Datenbank unveraendert
         // (eine Transaktion); `to_latest` meldet dann den eigentlichen Fehler.
         match adopt_u7_first_database(&mut conn) {
-            Ok(true) => info!("Meetings database from a U7-only build adopted into the merged migration order"),
+            Ok(true) => info!(
+                "Meetings database from a U7-only build adopted into the merged migration order"
+            ),
             Ok(false) => {}
             Err(e) => warn!("Could not adopt a U7-only meetings database: {e}"),
         }
@@ -911,8 +913,8 @@ impl MeetingStore {
     /// A1: gleicht das Register der Integrationen mit `calendar_sources` ab.
     fn reconcile_integrations(&self) -> Result<()> {
         let conn = self.get_connection()?;
-        let report = crate::managers::integrations::adopt::reconcile(&conn)
-            .map_err(|e| anyhow!("{e}"))?;
+        let report =
+            crate::managers::integrations::adopt::reconcile(&conn).map_err(|e| anyhow!("{e}"))?;
         if report.changed() > 0 {
             info!(
                 "integrations: {} adopted, {} updated, {} removed",
@@ -3270,8 +3272,14 @@ mod tests {
     #[test]
     fn metadata_keys_are_merged_not_overwritten() {
         let s = store();
-        let m = s.create_meeting("Meta", MeetingSource::Live, Some(1)).unwrap();
-        assert_eq!(s.metadata_json(&m.id).unwrap(), None, "neue Besprechung: leer");
+        let m = s
+            .create_meeting("Meta", MeetingSource::Live, Some(1))
+            .unwrap();
+        assert_eq!(
+            s.metadata_json(&m.id).unwrap(),
+            None,
+            "neue Besprechung: leer"
+        );
         s.set_metadata_key(
             &m.id,
             "timeline",
@@ -3292,7 +3300,9 @@ mod tests {
     #[test]
     fn foreign_metadata_is_kept_and_garbage_is_never_overwritten() {
         let s = store();
-        let m = s.create_meeting("Alt", MeetingSource::Live, Some(1)).unwrap();
+        let m = s
+            .create_meeting("Alt", MeetingSource::Live, Some(1))
+            .unwrap();
         let conn = s.get_connection().unwrap();
         conn.execute(
             "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
@@ -3321,7 +3331,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(raw, "kein json", "nichts ueberschrieben");
-        assert!(s.set_metadata_key("gibt-es-nicht", "a", serde_json::json!(1)).is_err());
+        assert!(s
+            .set_metadata_key("gibt-es-nicht", "a", serde_json::json!(1))
+            .is_err());
     }
 
     #[test]
@@ -3483,10 +3495,18 @@ mod tests {
         )
         .unwrap();
         // Ein echtes Fehlen: Besprechung ohne Transkript, und ein falscher Index.
-        let none = s.create_meeting("Leer", MeetingSource::Live, Some(1)).unwrap();
-        let missing = s.update_segment_text(&none.id, 0, "x").unwrap_err().to_string();
+        let none = s
+            .create_meeting("Leer", MeetingSource::Live, Some(1))
+            .unwrap();
+        let missing = s
+            .update_segment_text(&none.id, 0, "x")
+            .unwrap_err()
+            .to_string();
         assert!(missing.contains("No transcript"), "war: {missing}");
-        let wrong = s.update_segment_text(&m.id, 99, "x").unwrap_err().to_string();
+        let wrong = s
+            .update_segment_text(&m.id, 99, "x")
+            .unwrap_err()
+            .to_string();
         assert!(wrong.contains("Segment 99 not found"), "war: {wrong}");
 
         // Ein DB-Fehler (Tabelle weg, wie bei einer beschaedigten Datei).
@@ -3494,12 +3514,18 @@ mod tests {
             .unwrap()
             .execute_batch("DROP TABLE transcripts")
             .unwrap();
-        let broken = s.update_segment_text(&m.id, 0, "x").unwrap_err().to_string();
+        let broken = s
+            .update_segment_text(&m.id, 0, "x")
+            .unwrap_err()
+            .to_string();
         assert!(
             !broken.contains("No transcript"),
             "ein Datenbankfehler ist kein fehlendes Transkript, war: {broken}"
         );
-        assert!(broken.contains("transcripts"), "die DB-Ursache bleibt sichtbar: {broken}");
+        assert!(
+            broken.contains("transcripts"),
+            "die DB-Ursache bleibt sichtbar: {broken}"
+        );
     }
 
     #[test]
@@ -4454,7 +4480,10 @@ mod tests {
     }
 
     fn p2d_deltas(s: &MeetingStore) -> i64 {
-        scalar(&s.get_connection().unwrap(), "SELECT COUNT(*) FROM transcript_deltas")
+        scalar(
+            &s.get_connection().unwrap(),
+            "SELECT COUNT(*) FROM transcript_deltas",
+        )
     }
 
     #[test]
@@ -4462,10 +4491,17 @@ mod tests {
         let (_dir, s) = tmp_store();
         let m = p2d_live(&s);
         let before = s.transcript_snapshot(&m.id).unwrap();
-        assert_eq!((before.epoch, before.revision, before.segments.len()), (0, 2, 2));
+        assert_eq!(
+            (before.epoch, before.revision, before.segments.len()),
+            (0, 2, 2)
+        );
         assert_eq!(p2d_deltas(&s), 2);
 
-        let mut fresh = vec![p2d_seg(0, "neu", 0), p2d_seg(1, "neu", 900), p2d_seg(2, "neu", 2_000)];
+        let mut fresh = vec![
+            p2d_seg(0, "neu", 0),
+            p2d_seg(1, "neu", 900),
+            p2d_seg(2, "neu", 2_000),
+        ];
         fresh[1].words = Some(vec![WordTime {
             text: "neu".into(),
             start_ms: 950,
@@ -4503,9 +4539,21 @@ mod tests {
         let snap = s.transcript_snapshot(&m.id).unwrap();
         s.update_segment_text(&m.id, 0, "von Hand").unwrap();
         let err = s
-            .replace_segments(&m.id, &[p2d_seg(0, "neu", 0)], "x", "segment@1", snap.revision)
+            .replace_segments(
+                &m.id,
+                &[p2d_seg(0, "neu", 0)],
+                "x",
+                "segment@1",
+                snap.revision,
+            )
             .unwrap_err();
-        assert_eq!(err, ReplaceError::Conflict { expected: 2, found: 3 });
+        assert_eq!(
+            err,
+            ReplaceError::Conflict {
+                expected: 2,
+                found: 3
+            }
+        );
         let now = s.transcript_snapshot(&m.id).unwrap();
         assert_eq!(now.epoch, 0);
         assert_eq!(now.segments[0].text, "von Hand");

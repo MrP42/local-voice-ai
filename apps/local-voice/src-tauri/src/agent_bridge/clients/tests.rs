@@ -69,7 +69,13 @@ fn the_token_is_stored_only_as_a_hash() {
     let conn = fx.conn();
     let (client, token) = create(&conn, "Claude Code", None, NOW).unwrap();
     // Keine Spalte der Tabelle enthaelt das Token.
-    for table in ["agent_clients", "agent_tool_grants", "agent_approvals", "audit_log", "integrations"] {
+    for table in [
+        "agent_clients",
+        "agent_tool_grants",
+        "agent_approvals",
+        "audit_log",
+        "integrations",
+    ] {
         assert!(
             !table_dump(&conn, table).contains(&token),
             "Token im Klartext in {table}"
@@ -103,7 +109,10 @@ fn the_token_is_stored_only_as_a_hash() {
 fn creating_makes_the_default_agent_integration_once() {
     let fx = Fx::new();
     let conn = fx.conn();
-    assert!(store::list(&conn).unwrap().iter().all(|i| i.kind != Kind::Agent));
+    assert!(store::list(&conn)
+        .unwrap()
+        .iter()
+        .all(|i| i.kind != Kind::Agent));
     let (a, _) = create(&conn, "Claude Code", None, NOW).unwrap();
     let (b, _) = create(&conn, "Codex", None, NOW + 1).unwrap();
     assert_eq!(a.integration_id, DEFAULT_INTEGRATION_ID);
@@ -122,7 +131,12 @@ fn creating_makes_the_default_agent_integration_once() {
 fn a_client_can_belong_to_a_chosen_agent_integration_but_not_to_another_kind() {
     let fx = Fx::new();
     let conn = fx.conn();
-    let other = store::create(&conn, &NewIntegration::new(Kind::Agent, "Zweiter Zugang"), NOW).unwrap();
+    let other = store::create(
+        &conn,
+        &NewIntegration::new(Kind::Agent, "Zweiter Zugang"),
+        NOW,
+    )
+    .unwrap();
     let (c, _) = create(&conn, "Skript", Some(&other.id), NOW).unwrap();
     assert_eq!(c.integration_id, other.id);
 
@@ -150,9 +164,15 @@ fn an_unknown_or_malformed_token_is_invalid() {
     let fx = Fx::new();
     let conn = fx.conn();
     create(&conn, "Claude Code", None, NOW).unwrap();
-    assert_eq!(authenticate(&conn, &generate_token()), Err(AuthError::Invalid));
+    assert_eq!(
+        authenticate(&conn, &generate_token()),
+        Err(AuthError::Invalid)
+    );
     assert_eq!(authenticate(&conn, ""), Err(AuthError::Invalid));
-    assert_eq!(authenticate(&conn, "lvat_' OR 1=1 --"), Err(AuthError::Invalid));
+    assert_eq!(
+        authenticate(&conn, "lvat_' OR 1=1 --"),
+        Err(AuthError::Invalid)
+    );
 }
 
 #[test]
@@ -170,8 +190,14 @@ fn a_revoked_token_is_reported_as_revoked_and_stays_unusable() {
     }
     // Zweites Zurueckziehen aendert nichts und ist kein Fehler.
     assert!(!revoke(&conn, &client.id, NOW + 99).unwrap());
-    assert_eq!(get(&conn, &client.id).unwrap().unwrap().revoked_at, Some(NOW + 5));
-    assert!(matches!(revoke(&conn, "gibt-es-nicht", NOW), Err(IntegrationError::NotFound(_))));
+    assert_eq!(
+        get(&conn, &client.id).unwrap().unwrap().revoked_at,
+        Some(NOW + 5)
+    );
+    assert!(matches!(
+        revoke(&conn, "gibt-es-nicht", NOW),
+        Err(IntegrationError::NotFound(_))
+    ));
 }
 
 #[test]
@@ -185,21 +211,36 @@ fn a_deleted_client_leaves_nothing_and_its_token_is_invalid() {
     assert_eq!(authenticate(&conn, &token), Err(AuthError::Invalid));
     assert!(tool_modes(&conn, &client.id).unwrap().is_empty());
     assert!(approval_link(&conn, "A1").unwrap().is_none());
-    assert!(matches!(delete(&conn, &client.id), Err(IntegrationError::NotFound(_))));
+    assert!(matches!(
+        delete(&conn, &client.id),
+        Err(IntegrationError::NotFound(_))
+    ));
 }
 
 #[test]
 fn labels_are_checked() {
     let fx = Fx::new();
     let conn = fx.conn();
-    for bad in ["", "   ", &"x".repeat(MAX_LABEL_CHARS + 1), "zwei\nZeilen", "tab\there"] {
+    for bad in [
+        "",
+        "   ",
+        &"x".repeat(MAX_LABEL_CHARS + 1),
+        "zwei\nZeilen",
+        "tab\there",
+    ] {
         assert!(
-            matches!(create(&conn, bad, None, NOW), Err(IntegrationError::Invalid(_))),
+            matches!(
+                create(&conn, bad, None, NOW),
+                Err(IntegrationError::Invalid(_))
+            ),
             "{bad:?}"
         );
     }
     let (c, _) = create(&conn, "  Claude Code  ", None, NOW).unwrap();
-    assert_eq!(c.label, "Claude Code", "Leerraum an den Raendern faellt weg");
+    assert_eq!(
+        c.label, "Claude Code",
+        "Leerraum an den Raendern faellt weg"
+    );
 }
 
 #[test]
@@ -225,7 +266,10 @@ fn last_use_is_written_at_most_once_a_minute() {
     let conn = fx.conn();
     let (c, _) = create(&conn, "Claude Code", None, NOW).unwrap();
     touch(&conn, &c.id, NOW + 1).unwrap();
-    assert_eq!(get(&conn, &c.id).unwrap().unwrap().last_used_at, Some(NOW + 1));
+    assert_eq!(
+        get(&conn, &c.id).unwrap().unwrap().last_used_at,
+        Some(NOW + 1)
+    );
     touch(&conn, &c.id, NOW + 1_000).unwrap();
     assert_eq!(
         get(&conn, &c.id).unwrap().unwrap().last_used_at,
@@ -258,9 +302,15 @@ fn tool_rights_roundtrip_and_overwrite() {
     let conn = fx.conn();
     let (c, _) = create(&conn, "Claude Code", None, NOW).unwrap();
     set_tool_mode(&conn, &c.id, "transcribe_file", GrantMode::Ask).unwrap();
-    assert_eq!(tool_mode(&conn, &c.id, "transcribe_file").unwrap(), Some(GrantMode::Ask));
+    assert_eq!(
+        tool_mode(&conn, &c.id, "transcribe_file").unwrap(),
+        Some(GrantMode::Ask)
+    );
     set_tool_mode(&conn, &c.id, "transcribe_file", GrantMode::Allow).unwrap();
-    assert_eq!(tool_mode(&conn, &c.id, "transcribe_file").unwrap(), Some(GrantMode::Allow));
+    assert_eq!(
+        tool_mode(&conn, &c.id, "transcribe_file").unwrap(),
+        Some(GrantMode::Allow)
+    );
     set_tool_mode(&conn, &c.id, "create_meeting", GrantMode::Off).unwrap();
     let all = tool_modes(&conn, &c.id).unwrap();
     assert_eq!(all.len(), 2);
@@ -333,7 +383,14 @@ fn an_approval_belongs_to_one_client_and_tool_and_old_links_are_pruned() {
     link_approval(&conn, "A1", "anderer", "create_meeting", NOW + 1).unwrap();
     assert_eq!(approval_link(&conn, "A1").unwrap().unwrap().0, c.id);
     // Nach der doppelten Lebensdauer einer Freigabe verschwindet die Zuordnung.
-    link_approval(&conn, "A2", &c.id, "transcribe_file", NOW + APPROVAL_LINK_TTL_MS + 5).unwrap();
+    link_approval(
+        &conn,
+        "A2",
+        &c.id,
+        "transcribe_file",
+        NOW + APPROVAL_LINK_TTL_MS + 5,
+    )
+    .unwrap();
     assert!(approval_link(&conn, "A1").unwrap().is_none());
     assert!(approval_link(&conn, "A2").unwrap().is_some());
 }

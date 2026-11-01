@@ -13,10 +13,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::Result;
+use hf_hub::api::tokio::CancellationToken;
 use serde::Serialize;
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
-use hf_hub::api::tokio::CancellationToken;
 
 use super::external::{self, Compat, ExternalModel, ExternalSource, ModelIdent, ProbeCache};
 use crate::catalog::{self, Purpose, TtsCatalogEntry};
@@ -600,7 +600,8 @@ impl LlmRuntimeManager {
     /// Runtime-Bibliotheken). Alle landen im selben Ordner; fehlt eines,
     /// gilt die Laufzeit als nicht installiert.
     async fn download_runtime(&self, entry: &TtsCatalogEntry) -> Result<(), String> {
-        let platform = current_platform().ok_or_else(|| "Plattform nicht unterstuetzt".to_string())?;
+        let platform =
+            current_platform().ok_or_else(|| "Plattform nicht unterstuetzt".to_string())?;
         if backend_of(&entry.id, platform).is_none() {
             return Err(format!("{} ist nicht fuer diesen Rechner", entry.name));
         }
@@ -614,7 +615,14 @@ impl LlmRuntimeManager {
                     .join("runtime")
                     .join(format!("{}.{index}.download", entry.id));
                 let outcome = self
-                    .run_download(&entry.id, &file.url, &archive, file.size_bytes, file.sha256.as_deref(), &cancel)
+                    .run_download(
+                        &entry.id,
+                        &file.url,
+                        &archive,
+                        file.size_bytes,
+                        file.sha256.as_deref(),
+                        &cancel,
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 if matches!(outcome, HttpDownloadOutcome::Cancelled) {
@@ -637,26 +645,40 @@ impl LlmRuntimeManager {
         self.release(&entry.id);
         result?;
         self.forget_backend();
-        let _ = self.app_handle.emit("model-download-complete", entry.id.clone());
+        let _ = self
+            .app_handle
+            .emit("model-download-complete", entry.id.clone());
         Ok(())
     }
 
     async fn download_model(&self, entry: &TtsCatalogEntry) -> Result<(), String> {
-        let file = entry.files.first().ok_or_else(|| "Eintrag ohne Datei".to_string())?;
+        let file = entry
+            .files
+            .first()
+            .ok_or_else(|| "Eintrag ohne Datei".to_string())?;
         let dir = self.models_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let partial = dir.join(format!("{}.download", file.filename));
         let final_path = dir.join(&file.filename);
         let cancel = self.claim(&entry.id);
         let outcome = self
-            .run_download(&entry.id, &file.url, &partial, file.size_bytes, file.sha256.as_deref(), &cancel)
+            .run_download(
+                &entry.id,
+                &file.url,
+                &partial,
+                file.size_bytes,
+                file.sha256.as_deref(),
+                &cancel,
+            )
             .await;
         self.release(&entry.id);
         match outcome.map_err(|e| e.to_string())? {
             HttpDownloadOutcome::Cancelled => Ok(()),
             HttpDownloadOutcome::Completed => {
                 std::fs::rename(&partial, &final_path).map_err(|e| e.to_string())?;
-                let _ = self.app_handle.emit("model-download-complete", entry.id.clone());
+                let _ = self
+                    .app_handle
+                    .emit("model-download-complete", entry.id.clone());
                 Ok(())
             }
         }
@@ -806,7 +828,10 @@ mod tests {
         );
         // Fremde Plattform: kein Backend, nicht ladbar.
         assert_eq!(backend_of("llm-runtime-macos-aarch64", "windows-x64"), None);
-        assert_eq!(backend_of("llm-runtime-windows-x64-vulkan", "macos-aarch64"), None);
+        assert_eq!(
+            backend_of("llm-runtime-windows-x64-vulkan", "macos-aarch64"),
+            None
+        );
     }
 
     /// Der Selbsttest liest die Geraetezeilen; die Ueberschrift und Leerzeilen

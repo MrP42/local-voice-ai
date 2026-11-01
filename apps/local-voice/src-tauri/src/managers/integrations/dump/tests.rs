@@ -210,10 +210,42 @@ fn put(
 fn the_audit_dump_lists_every_entry_oldest_first_with_parsed_detail_and_totals() {
     let fx = Fx::new();
     let conn = fx.conn();
-    put(&conn, "agent_external", "transcribe.file", AuditOutcome::Ok, "transcribe_file · Claude Code (C1)", Some(json!({"phase": "done"})), 1_000);
-    put(&conn, "agent_external", "recording.start", AuditOutcome::Pending, "start_recording · Claude Code (C1)", Some(json!({"phase": "approval"})), 2_000);
-    put(&conn, "user", "media.fetch", AuditOutcome::Ok, "youtube:dQw4w9WgXcQ", None, 3_000);
-    put(&conn, "agent_external", "tts.render", AuditOutcome::Denied, "tts_render_audio · Claude Code (C1)", Some(json!({"reason": "tool_off"})), 4_000);
+    put(
+        &conn,
+        "agent_external",
+        "transcribe.file",
+        AuditOutcome::Ok,
+        "transcribe_file · Claude Code (C1)",
+        Some(json!({"phase": "done"})),
+        1_000,
+    );
+    put(
+        &conn,
+        "agent_external",
+        "recording.start",
+        AuditOutcome::Pending,
+        "start_recording · Claude Code (C1)",
+        Some(json!({"phase": "approval"})),
+        2_000,
+    );
+    put(
+        &conn,
+        "user",
+        "media.fetch",
+        AuditOutcome::Ok,
+        "youtube:dQw4w9WgXcQ",
+        None,
+        3_000,
+    );
+    put(
+        &conn,
+        "agent_external",
+        "tts.render",
+        AuditOutcome::Denied,
+        "tts_render_audio · Claude Code (C1)",
+        Some(json!({"reason": "tool_off"})),
+        4_000,
+    );
     let dump = build_audit(&conn, Some(&fx.db_path), None).unwrap();
 
     assert_eq!(dump["returned"], 4);
@@ -222,13 +254,31 @@ fn the_audit_dump_lists_every_entry_oldest_first_with_parsed_detail_and_totals()
     assert_eq!(dump["retention"]["rows"], 4);
     assert!(dump["db"].as_str().unwrap().ends_with("meetings.db"));
     let entries = dump["entries"].as_array().unwrap();
-    let caps: Vec<&str> = entries.iter().map(|e| e["capability"].as_str().unwrap()).collect();
-    assert_eq!(caps, ["transcribe.file", "recording.start", "media.fetch", "tts.render"], "aelteste zuerst");
-    assert_eq!(entries[0]["detail"]["phase"], "done", "das Detail ist ein Objekt, kein Text");
+    let caps: Vec<&str> = entries
+        .iter()
+        .map(|e| e["capability"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        caps,
+        [
+            "transcribe.file",
+            "recording.start",
+            "media.fetch",
+            "tts.render"
+        ],
+        "aelteste zuerst"
+    );
+    assert_eq!(
+        entries[0]["detail"]["phase"], "done",
+        "das Detail ist ein Objekt, kein Text"
+    );
     assert_eq!(entries[2]["detail"], Value::Null);
     assert_eq!(entries[3]["detail"]["reason"], "tool_off");
     assert_eq!(entries[1]["target"], "start_recording · Claude Code (C1)");
-    assert_eq!(dump["by_outcome"], json!({"denied": 1, "ok": 2, "pending": 1}));
+    assert_eq!(
+        dump["by_outcome"],
+        json!({"denied": 1, "ok": 2, "pending": 1})
+    );
     assert_eq!(dump["by_caller"], json!({"agent_external": 3, "user": 1}));
     assert_eq!(dump["by_capability"]["recording.start"], 1);
     assert_eq!(dump["by_capability"]["media.fetch"], 1);
@@ -239,19 +289,36 @@ fn the_audit_dump_is_capped_by_the_limit_and_says_so() {
     let fx = Fx::new();
     let conn = fx.conn();
     for i in 0..30 {
-        put(&conn, "agent_external", "meeting.create", AuditOutcome::Ok, &format!("create_meeting #{i}"), None, 1_000 + i);
+        put(
+            &conn,
+            "agent_external",
+            "meeting.create",
+            AuditOutcome::Ok,
+            &format!("create_meeting #{i}"),
+            None,
+            1_000 + i,
+        );
     }
     let dump = build_audit(&conn, None, Some(10)).unwrap();
     assert_eq!(dump["returned"], 10);
     assert_eq!(dump["truncated"], true);
-    assert_eq!(dump["retention"]["rows"], 30, "die Summen gelten fuer die ganze Tabelle");
+    assert_eq!(
+        dump["retention"]["rows"], 30,
+        "die Summen gelten fuer die ganze Tabelle"
+    );
     assert_eq!(dump["by_outcome"]["ok"], 30);
     let entries = dump["entries"].as_array().unwrap();
-    assert_eq!(entries[0]["target"], "create_meeting #20", "die neuesten zehn, aelteste davon zuerst");
+    assert_eq!(
+        entries[0]["target"], "create_meeting #20",
+        "die neuesten zehn, aelteste davon zuerst"
+    );
     assert_eq!(entries[9]["target"], "create_meeting #29");
     // Null wird auf eins angehoben; ohne Angabe gilt die Vorgabe.
     assert_eq!(build_audit(&conn, None, Some(0)).unwrap()["returned"], 1);
-    assert_eq!(build_audit(&conn, None, None).unwrap()["limit"], AUDIT_DUMP_DEFAULT_LIMIT);
+    assert_eq!(
+        build_audit(&conn, None, None).unwrap()["limit"],
+        AUDIT_DUMP_DEFAULT_LIMIT
+    );
 }
 
 #[test]
@@ -268,20 +335,52 @@ fn the_audit_retention_is_capped_and_the_dump_reports_the_cap() {
     ))
     .unwrap();
     for i in 0..20 {
-        put(&conn, "agent_external", "youtube.add", AuditOutcome::Ok, &format!("neu #{i}"), None, cap + i);
+        put(
+            &conn,
+            "agent_external",
+            "youtube.add",
+            AuditOutcome::Ok,
+            &format!("neu #{i}"),
+            None,
+            cap + i,
+        );
     }
     let dump = build_audit(&conn, None, Some(u32::MAX)).unwrap();
-    assert_eq!(dump["retention"]["rows"], cap, "die Tabelle haelt hoechstens MAX_ROWS Zeilen");
+    assert_eq!(
+        dump["retention"]["rows"], cap,
+        "die Tabelle haelt hoechstens MAX_ROWS Zeilen"
+    );
     assert_eq!(dump["retention"]["max_rows"], cap);
-    assert_eq!(dump["limit"], cap, "der Dump liefert nie mehr als die Aufbewahrung");
+    assert_eq!(
+        dump["limit"], cap,
+        "der Dump liefert nie mehr als die Aufbewahrung"
+    );
     assert_eq!(dump["returned"], cap);
     assert_eq!(dump["truncated"], false);
     let entries = dump["entries"].as_array().unwrap();
-    assert!(entries[0]["id"].as_i64().unwrap() > 15, "die aeltesten Zeilen sind gefallen");
-    assert_eq!(entries.last().unwrap()["target"], "neu #19", "die neueste bleibt");
+    assert!(
+        entries[0]["id"].as_i64().unwrap() > 15,
+        "die aeltesten Zeilen sind gefallen"
+    );
+    assert_eq!(
+        entries.last().unwrap()["target"],
+        "neu #19",
+        "die neueste bleibt"
+    );
     // Nochmal schreiben: es bleibt bei der Grenze.
-    put(&conn, "agent_external", "youtube.add", AuditOutcome::Ok, "noch eine", None, cap + 100);
-    assert_eq!(build_audit(&conn, None, Some(1)).unwrap()["retention"]["rows"], cap);
+    put(
+        &conn,
+        "agent_external",
+        "youtube.add",
+        AuditOutcome::Ok,
+        "noch eine",
+        None,
+        cap + 100,
+    );
+    assert_eq!(
+        build_audit(&conn, None, Some(1)).unwrap()["retention"]["rows"],
+        cap
+    );
 }
 
 #[test]
@@ -293,9 +392,22 @@ fn the_audit_dump_of_an_empty_log_is_valid_and_secrets_stay_redacted() {
     assert_eq!(empty["truncated"], false);
     assert_eq!(empty["entries"], json!([]));
     assert_eq!(empty["by_outcome"], json!({}));
-    put(&conn, "agent_external", "mail.send", AuditOutcome::Error, "x", Some(json!({"password": "geheim123", "error": "Anmeldung bei https://u:pw@host/p fehlgeschlagen"})), 1);
+    put(
+        &conn,
+        "agent_external",
+        "mail.send",
+        AuditOutcome::Error,
+        "x",
+        Some(
+            json!({"password": "geheim123", "error": "Anmeldung bei https://u:pw@host/p fehlgeschlagen"}),
+        ),
+        1,
+    );
     let text = build_audit(&conn, None, None).unwrap().to_string();
-    assert!(!text.contains("geheim123") && !text.contains("u:pw"), "{text}");
+    assert!(
+        !text.contains("geheim123") && !text.contains("u:pw"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -303,10 +415,20 @@ fn the_audit_table_format_names_every_row_and_marks_truncation() {
     let fx = Fx::new();
     let conn = fx.conn();
     for i in 0..3 {
-        put(&conn, "workflow", "files.write", AuditOutcome::Ok, &format!("Ablage #{i}"), None, i);
+        put(
+            &conn,
+            "workflow",
+            "files.write",
+            AuditOutcome::Ok,
+            &format!("Ablage #{i}"),
+            None,
+            i,
+        );
     }
     let text = format_audit_table(&build_audit(&conn, None, Some(2)).unwrap());
     assert!(text.starts_with("audit: 2 of 3 rows"), "{text}");
-    assert!(text.contains("truncated") && text.contains("Ablage #2") && text.contains("files.write"));
+    assert!(
+        text.contains("truncated") && text.contains("Ablage #2") && text.contains("files.write")
+    );
     assert!(!text.contains("Ablage #0"));
 }

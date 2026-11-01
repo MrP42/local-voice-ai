@@ -2696,7 +2696,11 @@ mod tests {
             seg(1, "  Nur ein Satz  ", 65_000),
         ];
         let rendered = render_transcript_for_prompt(&segs);
-        assert_eq!(rendered.lines().count(), 2, "ein Segment = eine Zeile: {rendered:?}");
+        assert_eq!(
+            rendered.lines().count(),
+            2,
+            "ein Segment = eine Zeile: {rendered:?}"
+        );
         assert_eq!(
             rendered,
             "Ich [00:00]: Erste Zeile zweite Zeile dritte\nIch [01:05]: Nur ein Satz"
@@ -3388,7 +3392,10 @@ mod tests {
         )
         .await
         .expect_err("ohne Transkript gibt es kein Protokoll");
-        assert_ne!(err.code, "meeting_not_finished", "der Status ist kein Hindernis");
+        assert_ne!(
+            err.code, "meeting_not_finished",
+            "der Status ist kein Hindernis"
+        );
     }
 
     #[tokio::test]

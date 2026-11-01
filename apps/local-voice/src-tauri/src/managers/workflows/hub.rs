@@ -425,7 +425,10 @@ impl WorkflowHub {
 /// Startet `work` auf einem benannten Thread; ein Fehler beim Start ist nur ein Logeintrag (der
 /// naechste Takt versucht es wieder).
 fn spawn_scan(name: &str, work: impl FnOnce() + Send + 'static) {
-    if let Err(e) = std::thread::Builder::new().name(name.to_string()).spawn(work) {
+    if let Err(e) = std::thread::Builder::new()
+        .name(name.to_string())
+        .spawn(work)
+    {
         log::warn!("workflows: Thread {name} nicht gestartet: {e}");
     }
 }

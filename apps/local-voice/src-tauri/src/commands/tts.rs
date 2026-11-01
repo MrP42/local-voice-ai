@@ -2,8 +2,8 @@
 
 use crate::managers::tts::builder;
 use crate::managers::tts::hf_access::{self, HfAccessCheck, HfAccessStatus};
-use crate::managers::tts::phonon_models;
 use crate::managers::tts::models::{TtsDownloadInfo, TtsModelManager};
+use crate::managers::tts::phonon_models;
 use crate::managers::tts::registry::{ReferenceAnalysis, VoiceInfo, VoiceMeta};
 use crate::managers::tts::{portable, registry, voices, ReadingInfo, TtsManager, TtsStatus};
 use std::sync::Arc;
@@ -276,7 +276,12 @@ pub fn tts_cached_translation(app: AppHandle, text: String, target_lang: String)
 /// ablegen; `tts_cached_translation` liefert danach SIE statt der maschinellen.
 #[tauri::command]
 #[specta::specta]
-pub fn tts_store_translation(app: AppHandle, text: String, target_lang: String, translation: String) {
+pub fn tts_store_translation(
+    app: AppHandle,
+    text: String,
+    target_lang: String,
+    translation: String,
+) {
     app.state::<Arc<TtsManager>>()
         .save_corrected_translation(&text, &target_lang, &translation);
 }
@@ -520,7 +525,8 @@ pub async fn tts_voice_changed(app: AppHandle) {
 pub fn tts_piper_voice_for_text(app: AppHandle, text: String) -> Option<String> {
     // Eine Stichprobe reicht fuer die Sprache; ganze Buecher gehen nicht ueber die Bruecke.
     let sample: String = text.chars().take(2000).collect();
-    app.state::<Arc<TtsManager>>().piper_replacement_for(&sample)
+    app.state::<Arc<TtsManager>>()
+        .piper_replacement_for(&sample)
 }
 
 /// Laufende Übersetzung (`translation`) oder Zusammenfassung (`summary`)

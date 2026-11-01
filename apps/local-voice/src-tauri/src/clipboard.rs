@@ -608,7 +608,10 @@ fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), Str
 /// Schickt dieser Einfuegeweg Tasten (und muss deshalb auf das Loslassen der
 /// Hotkey-Tasten warten)? `None` und `ExternalScript` senden keine.
 fn paste_method_sends_keys(paste_method: PasteMethod) -> bool {
-    !matches!(paste_method, PasteMethod::None | PasteMethod::ExternalScript)
+    !matches!(
+        paste_method,
+        PasteMethod::None | PasteMethod::ExternalScript
+    )
 }
 
 /// Wartet vor dem Einfuegen, bis die Umschalttasten des Hotkeys losgelassen sind
@@ -1108,8 +1111,15 @@ mod tests {
         for method in [PasteMethod::None, PasteMethod::ExternalScript] {
             let (mut held, polls) = keyboard(u32::MAX);
             let waited = wait_for_chord_release(method, &mut held, Duration::from_secs(5), POLL);
-            assert_eq!(polls.get(), 0, "{method:?}: die Tastatur wird gar nicht gefragt");
-            assert!(waited < Duration::from_millis(500), "{method:?}: {waited:?}");
+            assert_eq!(
+                polls.get(),
+                0,
+                "{method:?}: die Tastatur wird gar nicht gefragt"
+            );
+            assert!(
+                waited < Duration::from_millis(500),
+                "{method:?}: {waited:?}"
+            );
         }
     }
 
@@ -1118,7 +1128,10 @@ mod tests {
         let mut held = || true;
         let limit = Duration::from_millis(40);
         let waited = wait_for_chord_release(PasteMethod::CtrlV, &mut held, limit, POLL);
-        assert!(waited >= limit && waited < Duration::from_secs(2), "{waited:?}");
+        assert!(
+            waited >= limit && waited < Duration::from_secs(2),
+            "{waited:?}"
+        );
     }
 
     /// Der geschuetzte Pfad wird nur mit einem `AppHandle` und einem Fenster

@@ -42,7 +42,8 @@ pub async fn agent_client_create(
     integration_id: Option<String>,
 ) -> Result<NewAgentClient, String> {
     let conn = conn(&store)?;
-    view::create_client(&conn, &label, integration_id.as_deref(), now_ms()).map_err(|e| e.to_string())
+    view::create_client(&conn, &label, integration_id.as_deref(), now_ms())
+        .map_err(|e| e.to_string())
 }
 
 /// Alle Zugaenge (auch zurueckgezogene) mit ihren Werkzeugen: Recht des Zugangs, wirksames

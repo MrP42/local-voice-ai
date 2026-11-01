@@ -3372,9 +3372,7 @@ pub(crate) mod tests {
         // Geloeschte Ordner zaehlen nicht mit; ein neuer landet hinten.
         s.folder_delete(&b.id).unwrap();
         assert_eq!(
-            s.folders_reorder(&[b.id.clone()])
-                .unwrap_err()
-                .to_string(),
+            s.folders_reorder(&[b.id.clone()]).unwrap_err().to_string(),
             "folder_not_found"
         );
         let d = s.folder_save(None, "Delta", None).unwrap();
@@ -3396,7 +3394,8 @@ pub(crate) mod tests {
         let f = s.folder_save(None, "Kunden", None).unwrap();
         let gone = s.folder_save(None, "Alt", None).unwrap();
         s.set_meeting_folders(&filed.id, &[f.id.clone()]).unwrap();
-        s.set_meeting_folders(&orphan.id, &[gone.id.clone()]).unwrap();
+        s.set_meeting_folders(&orphan.id, &[gone.id.clone()])
+            .unwrap();
         s.folder_delete(&gone.id).unwrap();
 
         let unfiled = MeetingFilter {
@@ -3404,7 +3403,10 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let page = s.search_meetings("", &unfiled, 0, 25).unwrap();
-        assert_eq!(meeting_titles(&page), vec!["Ohne Projekt", "Projekt geloescht"]);
+        assert_eq!(
+            meeting_titles(&page),
+            vec!["Ohne Projekt", "Projekt geloescht"]
+        );
         assert_eq!(page.total, 2);
         // Auch mit Suchtext (Such-Index-Pfad) und als Zaehler fuer die Liste.
         // Drei gleiche Texte haben gleichen Rang: ihre Reihenfolge ist Sache

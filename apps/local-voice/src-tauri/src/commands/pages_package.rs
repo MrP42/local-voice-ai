@@ -140,7 +140,9 @@ pub fn pages_export(
     rights_confirmed: bool,
 ) -> Result<String, String> {
     if !voice_ids.is_empty() && !rights_confirmed {
-        return Err("Für die Weitergabe von Stimmen ist die Bestätigung der Rechte erforderlich".into());
+        return Err(
+            "Für die Weitergabe von Stimmen ist die Bestätigung der Rechte erforderlich".into(),
+        );
     }
     let preview = pages_export_preview(app.clone(), id.clone())?;
     let dir = page_path(&app, &id)?;
@@ -153,20 +155,28 @@ pub fn pages_export(
     }
     if let Some(parent) = out.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
         }
     }
     let tmp = out.with_extension(format!("{PACKAGE_EXTENSION}.tmp-{}", std::process::id()));
-    let file = std::fs::File::create(&tmp).map_err(|e| format!("could not create {}: {e}", tmp.display()))?;
+    let file = std::fs::File::create(&tmp)
+        .map_err(|e| format!("could not create {}: {e}", tmp.display()))?;
     let mut zip = zip::ZipWriter::new(file);
     let deflated: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let stored: zip::write::FileOptions<'_, ()> =
         zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
-    let put = |zip: &mut zip::ZipWriter<std::fs::File>, name: &str, bytes: &[u8], opts| -> Result<(), String> {
-        zip.start_file(name, opts).map_err(|e| format!("could not add {name}: {e}"))?;
-        zip.write_all(bytes).map_err(|e| format!("could not write {name}: {e}"))
+    let put = |zip: &mut zip::ZipWriter<std::fs::File>,
+               name: &str,
+               bytes: &[u8],
+               opts|
+     -> Result<(), String> {
+        zip.start_file(name, opts)
+            .map_err(|e| format!("could not add {name}: {e}"))?;
+        zip.write_all(bytes)
+            .map_err(|e| format!("could not write {name}: {e}"))
     };
 
     // Stimmen: nur die gewählten, nur die vollständigen.
@@ -175,11 +185,20 @@ pub fn pages_export(
         if !voice_ids.contains(&voice.id) || !voice.present {
             continue;
         }
-        let tmp_voice = std::env::temp_dir().join(format!("lv-page-voice-{}-{}.lvvoice", std::process::id(), voice.id));
+        let tmp_voice = std::env::temp_dir().join(format!(
+            "lv-page-voice-{}-{}.lvvoice",
+            std::process::id(),
+            voice.id
+        ));
         portable::export_voice(&fish_dir, &voice.id, &tmp_voice)?;
         let bytes = std::fs::read(&tmp_voice).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_file(&tmp_voice);
-        put(&mut zip, &format!("voices/{}.lvvoice", voice.id), &bytes, stored)?;
+        put(
+            &mut zip,
+            &format!("voices/{}.lvvoice", voice.id),
+            &bytes,
+            stored,
+        )?;
         packed_voices.push(voice.clone());
     }
 
@@ -195,12 +214,18 @@ pub fn pages_export(
     let state = std::fs::read(dir.join(STATE)).unwrap_or_default();
     put(&mut zip, STATE, &state, deflated)?;
     for name in &preview.files {
-        let bytes = std::fs::read(dir.join(name)).map_err(|e| format!("could not read {name}: {e}"))?;
+        let bytes =
+            std::fs::read(dir.join(name)).map_err(|e| format!("could not read {name}: {e}"))?;
         // Audio ist schon komprimiert; Text lohnt Deflate.
-        let opts = if name.ends_with(".wav") || name.ends_with(".mp3") { stored } else { deflated };
+        let opts = if name.ends_with(".wav") || name.ends_with(".mp3") {
+            stored
+        } else {
+            deflated
+        };
         put(&mut zip, &format!("files/{name}"), &bytes, opts)?;
     }
-    zip.finish().map_err(|e| format!("could not finish package: {e}"))?;
+    zip.finish()
+        .map_err(|e| format!("could not finish package: {e}"))?;
     std::fs::rename(&tmp, &out).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("could not write {}: {e}", out.display())
@@ -209,11 +234,15 @@ pub fn pages_export(
 }
 
 fn open_package(path: &Path) -> Result<zip::ZipArchive<std::fs::File>, String> {
-    let file = std::fs::File::open(path).map_err(|e| format!("could not open {}: {e}", path.display()))?;
+    let file =
+        std::fs::File::open(path).map_err(|e| format!("could not open {}: {e}", path.display()))?;
     let zip = zip::ZipArchive::new(file).map_err(|e| format!("kein gültiges Seiten-Paket: {e}"))?;
     for i in 0..zip.len() {
         let name = zip.name_for_index(i).unwrap_or_default();
-        let bad = name.contains("..") || name.starts_with('/') || name.starts_with('\\') || name.contains(':');
+        let bad = name.contains("..")
+            || name.starts_with('/')
+            || name.starts_with('\\')
+            || name.contains(':');
         if bad {
             return Err(format!("Paket enthält einen unzulässigen Pfad: {name}"));
         }
@@ -222,12 +251,16 @@ fn open_package(path: &Path) -> Result<zip::ZipArchive<std::fs::File>, String> {
 }
 
 fn read_entry(zip: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Result<Vec<u8>, String> {
-    let mut entry = zip.by_name(name).map_err(|e| format!("{name} fehlt im Paket: {e}"))?;
+    let mut entry = zip
+        .by_name(name)
+        .map_err(|e| format!("{name} fehlt im Paket: {e}"))?;
     if entry.size() > MAX_ENTRY_BYTES {
         return Err(format!("{name} ist zu groß"));
     }
     let mut bytes = Vec::with_capacity(entry.size() as usize);
-    entry.read_to_end(&mut bytes).map_err(|e| format!("could not read {name}: {e}"))?;
+    entry
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("could not read {name}: {e}"))?;
     Ok(bytes)
 }
 
@@ -277,14 +310,22 @@ pub fn pages_import(app: AppHandle, path: String, import_voices: bool) -> Result
         let _guard = lock();
         let mut index = load_index(&app)?;
         let base = manifest.title.trim();
-        let base = if base.is_empty() { "Importierte Seite" } else { base };
+        let base = if base.is_empty() {
+            "Importierte Seite"
+        } else {
+            base
+        };
         let mut title = base.to_string();
         let mut n = 2;
         while index.pages.iter().any(|p| p.title == title) {
             title = format!("{base} ({n})");
             n += 1;
         }
-        let page = PageInfo { id: fresh_id(), title, ..Default::default() };
+        let page = PageInfo {
+            id: fresh_id(),
+            title,
+            ..Default::default()
+        };
         let dir = page_path(&app, &page.id)?;
         std::fs::create_dir_all(&dir).map_err(|e| format!("could not create page dir: {e}"))?;
         write_atomic(&dir.join(STATE), &state)?;
@@ -303,7 +344,8 @@ pub fn pages_import(app: AppHandle, path: String, import_voices: bool) -> Result
                 continue;
             }
             let bytes = read_entry(&mut zip, name)?;
-            std::fs::write(dir.join(file), bytes).map_err(|e| format!("could not write {file}: {e}"))?;
+            std::fs::write(dir.join(file), bytes)
+                .map_err(|e| format!("could not write {file}: {e}"))?;
         }
     }
 
@@ -318,7 +360,11 @@ pub fn pages_import(app: AppHandle, path: String, import_voices: bool) -> Result
                 continue;
             }
             let bytes = read_entry(&mut zip, &entry)?;
-            let tmp = std::env::temp_dir().join(format!("lv-page-import-{}-{}.lvvoice", std::process::id(), voice.id));
+            let tmp = std::env::temp_dir().join(format!(
+                "lv-page-import-{}-{}.lvvoice",
+                std::process::id(),
+                voice.id
+            ));
             std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
             let result = portable::import_voice(&fish_dir, &tmp, Some(&voice.display_name));
             let _ = std::fs::remove_file(&tmp);

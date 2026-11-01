@@ -1,5 +1,5 @@
-use std::fs::OpenOptions;
 use super::*;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 
 fn sandbox() -> (tempfile::TempDir, Sandbox) {
@@ -539,7 +539,11 @@ fn a_full_disk_while_copying_leaves_nothing_behind() {
         })
         .unwrap_err();
     assert!(matches!(err, FolderError::Io(_)));
-    assert_eq!(std::fs::read_dir(sb.root()).unwrap().count(), 0, "auch kein leerer Unterordner");
+    assert_eq!(
+        std::fs::read_dir(sb.root()).unwrap().count(),
+        0,
+        "auch kein leerer Unterordner"
+    );
 }
 
 #[test]

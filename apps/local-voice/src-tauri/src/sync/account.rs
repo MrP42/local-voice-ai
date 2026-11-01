@@ -76,7 +76,8 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
         .mode(0o600)
         .open(path)
         .map_err(|e| format!("sync.json anlegen: {e}"))?;
-    f.write_all(bytes).map_err(|e| format!("sync.json schreiben: {e}"))?;
+    f.write_all(bytes)
+        .map_err(|e| format!("sync.json schreiben: {e}"))?;
     // Bestehende Datei: Rechte nachziehen (mode gilt nur beim Anlegen).
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| format!("sync.json Rechte: {e}"))
@@ -114,7 +115,6 @@ pub fn remove(app: &AppHandle) {
     }
 }
 
-
 pub fn new_device_id() -> String {
     let mut bytes = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut bytes);
@@ -131,7 +131,10 @@ pub fn default_device_name() -> String {
 /// Der Hub akzeptiert `[A-Za-z0-9_-]{8,64}`; eine Geräte-Kennung aus
 /// `new_device_id` erfüllt das, eine fremde nicht unbedingt.
 pub fn valid_device_id(id: &str) -> bool {
-    (8..=64).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 #[cfg(test)]
@@ -160,7 +163,10 @@ mod tests {
             enc_key_b64: B64.encode(key),
         };
         assert_eq!(cfg.key().unwrap(), key);
-        let bad = SyncConfig { enc_key_b64: "AAAA".into(), ..cfg };
+        let bad = SyncConfig {
+            enc_key_b64: "AAAA".into(),
+            ..cfg
+        };
         assert!(bad.key().is_err());
     }
 }

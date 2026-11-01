@@ -330,7 +330,10 @@ impl MeetingImport {
                 source.name
             ),
             (ImportState::Queued, true) => {
-                format!("„{}“ war schon eingereiht; dieselbe Besprechung.", source.name)
+                format!(
+                    "„{}“ war schon eingereiht; dieselbe Besprechung.",
+                    source.name
+                )
             }
         });
         out.sources = vec![SourceRef::new("file", &source.name, Some(&source.name))];
@@ -445,7 +448,10 @@ impl YoutubeAddSource {
             "reused": reused,
         }));
         out.summary = Some(if reused {
-            format!("Das Video „{}“ ist schon als Quelle angelegt.", meeting.title)
+            format!(
+                "Das Video „{}“ ist schon als Quelle angelegt.",
+                meeting.title
+            )
         } else {
             format!("Quelle „{}“ angelegt.", meeting.title)
         });
@@ -493,7 +499,8 @@ impl Action for YoutubeAddSource {
     fn run(&self, _ctx: &RunCtx<'_>, params: &Value) -> Result<StepOutput, StepError> {
         let url = text(params, "url")
             .ok_or_else(|| permanent("Der Parameter „url“ (Video-Link) fehlt oder ist leer."))?;
-        let video = normalize_link(url).map_err(|e| permanent(YoutubeError::Link(e).to_string()))?;
+        let video =
+            normalize_link(url).map_err(|e| permanent(YoutubeError::Link(e).to_string()))?;
         // Dasselbe Video nie zweimal als Quelle.
         if let Some(found) = self.control.find_video(&video.video_id) {
             return Ok(Self::output(&video.video_id, &found, true));
@@ -521,11 +528,7 @@ impl Action for YoutubeAddSource {
 // ---------------------------------------------------------------------------
 
 /// Haengt beide Bausteine in die Engine (ersetzt die Katalogbausteine).
-pub fn install(
-    engine: &Engine,
-    import: Arc<dyn ImportControl>,
-    youtube: Arc<dyn YoutubeControl>,
-) {
+pub fn install(engine: &Engine, import: Arc<dyn ImportControl>, youtube: Arc<dyn YoutubeControl>) {
     engine.register_action(Arc::new(MeetingImport::new(import)));
     engine.register_action(Arc::new(YoutubeAddSource::new(youtube)));
 }

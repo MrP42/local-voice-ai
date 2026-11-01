@@ -187,7 +187,9 @@ pub fn build_audit(
         let pairs = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(Value::Object(pairs.into_iter().map(|(k, n)| (k, json!(n))).collect()))
+        Ok(Value::Object(
+            pairs.into_iter().map(|(k, n)| (k, json!(n))).collect(),
+        ))
     };
     Ok(json!({
         "schema_version": count(conn, "PRAGMA user_version"),
@@ -210,7 +212,11 @@ pub fn format_audit_table(dump: &Value) -> String {
         dump["returned"],
         dump["retention"]["rows"],
         dump["retention"]["max_rows"],
-        if dump["truncated"].as_bool().unwrap_or(false) { ", truncated" } else { "" },
+        if dump["truncated"].as_bool().unwrap_or(false) {
+            ", truncated"
+        } else {
+            ""
+        },
     );
     for e in dump["entries"].as_array().cloned().unwrap_or_default() {
         out.push_str(&format!(

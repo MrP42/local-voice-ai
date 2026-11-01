@@ -171,7 +171,12 @@ impl Server {
                 LineRead::InvalidUtf8 => {
                     if send(
                         &mut wr,
-                        &protocol::err_line(&Value::Null, code::BAD_REQUEST, "Die Zeile ist kein gültiges UTF-8.", None),
+                        &protocol::err_line(
+                            &Value::Null,
+                            code::BAD_REQUEST,
+                            "Die Zeile ist kein gültiges UTF-8.",
+                            None,
+                        ),
                         cfg.write_timeout,
                     )
                     .await
@@ -197,7 +202,8 @@ impl Server {
                 ),
                 Incoming::Request { id, method, params } => (
                     id.clone(),
-                    self.dispatch(&mut session, &mut rd, &mut shutdown, &id, &method, &params).await,
+                    self.dispatch(&mut session, &mut rd, &mut shutdown, &id, &method, &params)
+                        .await,
                 ),
             };
             if let Some(line) = reply {
@@ -258,7 +264,8 @@ impl Server {
                     Err(e) => {
                         session.client = None;
                         session.auth_failures += 1;
-                        let close = session.auth_failures >= self.bridge.config().max_auth_failures_per_connection;
+                        let close = session.auth_failures
+                            >= self.bridge.config().max_auth_failures_per_connection;
                         (
                             Some(protocol::err_line(id, e.code, &e.message, e.data.as_ref())),
                             if close { Next::Close } else { Next::Continue },
@@ -285,7 +292,8 @@ impl Server {
                     {
                         Ok(v) => ok(v),
                         Err(e) => {
-                            let drop_session = matches!(e.code, code::TOKEN_REVOKED | code::TOKEN_INVALID);
+                            let drop_session =
+                                matches!(e.code, code::TOKEN_REVOKED | code::TOKEN_INVALID);
                             if drop_session {
                                 session.client = None;
                             }
@@ -330,7 +338,8 @@ impl Server {
                         }
                     }
                     "approval/status" => {
-                        let Some(approval_id) = params.get("approval_id").and_then(Value::as_str) else {
+                        let Some(approval_id) = params.get("approval_id").and_then(Value::as_str)
+                        else {
                             return fail(BridgeError::new(code::BAD_REQUEST, "approval_id fehlt."));
                         };
                         let approval_id = approval_id.to_string();
@@ -345,7 +354,10 @@ impl Server {
             }
             other => fail(BridgeError::new(
                 code::UNKNOWN_METHOD,
-                format!("Die Methode „{}“ gibt es nicht.", other.chars().take(64).collect::<String>()),
+                format!(
+                    "Die Methode „{}“ gibt es nicht.",
+                    other.chars().take(64).collect::<String>()
+                ),
             )),
         }
     }
@@ -368,14 +380,20 @@ impl Server {
             )
         };
         let Some(name) = params.get("name").and_then(Value::as_str) else {
-            return fail(BridgeError::new(code::BAD_REQUEST, "name fehlt oder ist kein Text."));
+            return fail(BridgeError::new(
+                code::BAD_REQUEST,
+                "name fehlt oder ist kein Text.",
+            ));
         };
         let args = params.get("arguments").cloned().unwrap_or(Value::Null);
         let approval_id = match params.get("approval_id") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) => Some(s.clone()),
             Some(_) => {
-                return fail(BridgeError::new(code::BAD_REQUEST, "approval_id muss ein Text sein."));
+                return fail(BridgeError::new(
+                    code::BAD_REQUEST,
+                    "approval_id muss ein Text sein.",
+                ));
             }
         };
         let (name, ctx2) = (name.to_string(), ctx.clone());
@@ -386,7 +404,10 @@ impl Server {
             Err(e) => return fail(e),
             Ok(CallStep::Done(v)) => {
                 return (
-                    Some(protocol::ok_line(id, json!({ "status": "done", "result": v }))),
+                    Some(protocol::ok_line(
+                        id,
+                        json!({ "status": "done", "result": v }),
+                    )),
                     Next::Continue,
                 )
             }
@@ -409,10 +430,15 @@ impl Server {
                 Next::Continue,
             ),
             Wait::Decided(Phase::Approved) => {
-                let (bridge, ctx2, approval2) = (self.bridge.clone(), ctx.clone(), approval.clone());
-                match blocking(move || bridge.call_approved(&ctx2, &name, &args, &approval2)).await {
+                let (bridge, ctx2, approval2) =
+                    (self.bridge.clone(), ctx.clone(), approval.clone());
+                match blocking(move || bridge.call_approved(&ctx2, &name, &args, &approval2)).await
+                {
                     Ok(v) => (
-                        Some(protocol::ok_line(id, json!({ "status": "done", "result": v }))),
+                        Some(protocol::ok_line(
+                            id,
+                            json!({ "status": "done", "result": v }),
+                        )),
                         Next::Continue,
                     ),
                     Err(e) => fail(e),
@@ -484,7 +510,11 @@ enum Wait {
 /// Schreibt eine Zeile samt Leeren des Puffers, hoechstens `limit` lang. Ablauf der Frist ist ein
 /// Fehler (`TimedOut`): der Aufrufer schliesst die Verbindung. Das Schreiben ist ueberlappend
 /// (async) und wird beim Ablauf abgebrochen, haelt also keinen Arbeitsthread fest.
-async fn send<W: AsyncWrite + Unpin>(wr: &mut W, line: &str, limit: Duration) -> std::io::Result<()> {
+async fn send<W: AsyncWrite + Unpin>(
+    wr: &mut W,
+    line: &str,
+    limit: Duration,
+) -> std::io::Result<()> {
     let mut out = String::with_capacity(line.len() + 1);
     out.push_str(line);
     out.push('\n');

@@ -274,16 +274,23 @@ fn world_with(
     {
         let conn = fx.conn();
         for (id, dir) in [("folder-eingang", &in_dir), ("folder-protokolle", &out_dir)] {
-            let mut n = NewIntegration::new(
-                crate::managers::integrations::model::Kind::Folder,
-                id,
-            );
+            let mut n = NewIntegration::new(crate::managers::integrations::model::Kind::Folder, id);
             n.id = Some(id.to_string());
             n.config = json!({ "path": dir.to_string_lossy() });
             crate::managers::integrations::store::create(&conn, &n, T0).unwrap();
         }
-        set_grant(&conn, "folder-eingang", Capability::FilesRead, GrantMode::Allow);
-        set_grant(&conn, "folder-protokolle", Capability::FilesWrite, GrantMode::Allow);
+        set_grant(
+            &conn,
+            "folder-eingang",
+            Capability::FilesRead,
+            GrantMode::Allow,
+        );
+        set_grant(
+            &conn,
+            "folder-protokolle",
+            Capability::FilesWrite,
+            GrantMode::Allow,
+        );
     }
     World {
         fx,
@@ -297,7 +304,10 @@ fn world_with(
 }
 
 fn world() -> World {
-    world_with(|_| MockReply::Body(chat_body(&minutes_reply())), MeetingStatus::Ready)
+    world_with(
+        |_| MockReply::Body(chat_body(&minutes_reply())),
+        MeetingStatus::Ready,
+    )
 }
 
 impl World {
@@ -534,7 +544,10 @@ fn an_export_target_that_is_off_denies_the_step_and_audits_it() {
     assert_eq!(w.step_state(&run, "protokoll"), StepState::Done);
     assert_eq!(w.step_state(&run, "word"), StepState::Denied);
     assert_eq!(w.detail(&run).run.state, RunState::Failed);
-    assert!(w.files_in_target().is_empty(), "nichts darf geschrieben sein");
+    assert!(
+        w.files_in_target().is_empty(),
+        "nichts darf geschrieben sein"
+    );
     let denied: Vec<_> = w
         .audit()
         .into_iter()
@@ -542,7 +555,10 @@ fn an_export_target_that_is_off_denies_the_step_and_audits_it() {
         .collect();
     assert_eq!(denied.len(), 1, "genau ein Audit-Eintrag „abgelehnt“");
     assert_eq!(denied[0].caller, "workflow");
-    assert_eq!(denied[0].integration_id.as_deref(), Some("folder-protokolle"));
+    assert_eq!(
+        denied[0].integration_id.as_deref(),
+        Some("folder-protokolle")
+    );
 }
 
 #[test]
@@ -557,8 +573,15 @@ fn an_export_target_that_asks_waits_for_the_approval_and_writes_after_it() {
     let wf = w.shipped();
     let run = w.file_arrives(&wf, "Kundentermin.wav");
     let report = w.engine.tick().unwrap();
-    assert_eq!(report.outcomes[0].1, RunOutcome::AwaitingApproval, "{report:?}");
-    assert!(w.files_in_target().is_empty(), "vor der Freigabe nichts schreiben");
+    assert_eq!(
+        report.outcomes[0].1,
+        RunOutcome::AwaitingApproval,
+        "{report:?}"
+    );
+    assert!(
+        w.files_in_target().is_empty(),
+        "vor der Freigabe nichts schreiben"
+    );
     let pending = approvals::list_pending(&w.conn(), T0).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].tool_or_capability, "files.write");
@@ -590,7 +613,10 @@ fn minutes_wait_for_a_meeting_that_is_still_processing_without_calling_the_model
     );
     assert_eq!(w.step_state(&run, "protokoll"), StepState::Waiting);
     assert_eq!(w.llm_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(w.detail(&run).run.next_run_at, Some(T0 + READY_POLL_MS as i64));
+    assert_eq!(
+        w.detail(&run).run.next_run_at,
+        Some(T0 + READY_POLL_MS as i64)
+    );
 
     // Die Verarbeitung ist fertig: der Lauf geht weiter, ein Versuch, ein Modellaufruf.
     let id = w.import.made()[0].clone();
@@ -631,9 +657,18 @@ fn a_failed_or_stopped_meeting_is_a_permanent_failure_not_a_wait() {
         let id = make_meeting(&w.services.store, "X", status);
         let direct = Direct::new(Some(&id));
         let err = direct
-            .run(&w, &*action_of(&w, "meeting.minutes"), "R", "min", &json!({}))
+            .run(
+                &w,
+                &*action_of(&w, "meeting.minutes"),
+                "R",
+                "min",
+                &json!({}),
+            )
             .unwrap_err();
-        assert!(matches!(err, StepError::Permanent(_)), "{status:?}: {err:?}");
+        assert!(
+            matches!(err, StepError::Permanent(_)),
+            "{status:?}: {err:?}"
+        );
     }
 }
 
@@ -676,7 +711,11 @@ fn a_repeated_minutes_step_returns_the_document_it_made_before() {
         .run(&w, &*action, "R1", "protokoll", &json!({}))
         .unwrap();
     assert_eq!(first.data["document_id"], second.data["document_id"]);
-    assert_eq!(w.llm_calls.load(Ordering::SeqCst), 1, "kein zweiter Modellaufruf");
+    assert_eq!(
+        w.llm_calls.load(Ordering::SeqCst),
+        1,
+        "kein zweiter Modellaufruf"
+    );
     let docs = w.services.store.get_documents(&id).unwrap();
     assert_eq!(docs.iter().filter(|d| d.kind == "minutes").count(), 1);
     // Ein anderer Lauf (neue Kennung) erzeugt bewusst eine neue Fassung.
@@ -698,7 +737,10 @@ fn a_repeated_minutes_step_returns_the_document_it_made_before() {
         Some(crate::managers::provenance::ActorKind::Workflow)
     );
     assert_eq!(mine.operation, "minutes");
-    assert!(mine.sources.iter().any(|s| s.kind == "meeting" && s.reference == id));
+    assert!(mine
+        .sources
+        .iter()
+        .any(|s| s.kind == "meeting" && s.reference == id));
     assert!(mine
         .params_json
         .as_deref()
@@ -712,7 +754,13 @@ fn a_repeated_export_step_does_not_make_a_second_file() {
     let id = make_meeting(&w.services.store, TITLE, MeetingStatus::Ready);
     let direct = Direct::new(Some(&id));
     direct
-        .run(&w, &*action_of(&w, "meeting.minutes"), "R1", "min", &json!({}))
+        .run(
+            &w,
+            &*action_of(&w, "meeting.minutes"),
+            "R1",
+            "min",
+            &json!({}),
+        )
         .unwrap();
     let export = action_of(&w, "export.document");
     let params = json!({"format": "md", "target": "folder-protokolle", "name": "Protokoll"});
@@ -736,7 +784,13 @@ fn export_writes_markdown_with_the_protocol_and_the_meeting_title() {
     let id = make_meeting(&w.services.store, TITLE, MeetingStatus::Ready);
     let direct = Direct::new(Some(&id));
     direct
-        .run(&w, &*action_of(&w, "meeting.minutes"), "R", "min", &json!({}))
+        .run(
+            &w,
+            &*action_of(&w, "meeting.minutes"),
+            "R",
+            "min",
+            &json!({}),
+        )
         .unwrap();
     let out = direct
         .run(
@@ -787,7 +841,10 @@ fn export_refuses_a_target_that_is_not_a_folder_or_does_not_exist() {
     }
     let direct = Direct::new(Some(&id));
     let export = action_of(&w, "export.document");
-    for (target, needle) in [("smtp-1", "weder ein Ordner"), ("folder-nirgends", "gibt es nicht")] {
+    for (target, needle) in [
+        ("smtp-1", "weder ein Ordner"),
+        ("folder-nirgends", "gibt es nicht"),
+    ] {
         let err = direct
             .run(
                 &w,
@@ -810,7 +867,13 @@ fn a_target_folder_that_vanished_is_transient_and_an_escaping_subfolder_permanen
     let id = make_meeting(&w.services.store, TITLE, MeetingStatus::Ready);
     let direct = Direct::new(Some(&id));
     direct
-        .run(&w, &*action_of(&w, "meeting.minutes"), "R", "min", &json!({}))
+        .run(
+            &w,
+            &*action_of(&w, "meeting.minutes"),
+            "R",
+            "min",
+            &json!({}),
+        )
         .unwrap();
     let export = action_of(&w, "export.document");
     let escape = direct
@@ -885,7 +948,9 @@ fn a_template_can_be_named_by_title_or_id_and_unknown_ones_are_refused() {
     );
     // Der Schluessel ohne Praefix und der Titel gehen auch.
     assert_eq!(
-        resolve_template(store, Some("Allgemein")).unwrap().as_deref(),
+        resolve_template(store, Some("Allgemein"))
+            .unwrap()
+            .as_deref(),
         Some("builtin:allgemein")
     );
     let err = resolve_template(store, Some("gibt-es-nicht")).unwrap_err();
@@ -943,14 +1008,22 @@ fn model_trouble_maps_to_the_right_step_error_class() {
     assert!(busy(classify_generation_error(
         "Zu wenig freier Arbeitsspeicher: 2.0 GB frei"
     )));
-    for code in ["no_provider", "no_model", "no_transcript", "template_not_found", "meeting_not_found"] {
+    for code in [
+        "no_provider",
+        "no_model",
+        "no_transcript",
+        "template_not_found",
+        "meeting_not_found",
+    ] {
         assert!(
             matches!(classify_generation_error(code), ServiceError::Permanent(_)),
             "{code}"
         );
     }
     assert!(matches!(
-        classify_generation_error("Kein LLM-Provider konfiguriert (Einstellungen → Nachbearbeitung)"),
+        classify_generation_error(
+            "Kein LLM-Provider konfiguriert (Einstellungen → Nachbearbeitung)"
+        ),
         ServiceError::Permanent(_)
     ));
     assert_eq!(
@@ -973,7 +1046,10 @@ fn model_trouble_maps_to_the_right_step_error_class() {
             reason: "x".into()
         }
         .into_step_error(),
-        StepError::Defer { retry_after_ms: 5, .. }
+        StepError::Defer {
+            retry_after_ms: 5,
+            ..
+        }
     ));
     assert!(matches!(
         ServiceError::Cancelled.into_step_error(),
@@ -1018,7 +1094,9 @@ fn a_summary_of_the_protocol_comes_back_as_text_and_leaves_a_provenance_entry() 
     let w = world_with(
         |body| {
             if body.contains("Summarize the following text") {
-                MockReply::Body(chat_body("Kurz gesagt: Der Go-Live ist auf Ende Oktober gelegt."))
+                MockReply::Body(chat_body(
+                    "Kurz gesagt: Der Go-Live ist auf Ende Oktober gelegt.",
+                ))
             } else {
                 MockReply::Body(chat_body(&minutes_reply()))
             }
@@ -1034,10 +1112,22 @@ fn a_summary_of_the_protocol_comes_back_as_text_and_leaves_a_provenance_entry() 
         .unwrap_err();
     assert!(matches!(err, StepError::Permanent(m) if m.contains("kein Protokoll")));
     direct
-        .run(&w, &*action_of(&w, "meeting.minutes"), "R", "min", &json!({}))
+        .run(
+            &w,
+            &*action_of(&w, "meeting.minutes"),
+            "R",
+            "min",
+            &json!({}),
+        )
         .unwrap();
     let out = direct
-        .run(&w, &*sum, "R", "z", &json!({"source": "minutes", "style": "management"}))
+        .run(
+            &w,
+            &*sum,
+            "R",
+            "z",
+            &json!({"source": "minutes", "style": "management"}),
+        )
         .unwrap();
     assert_eq!(
         out.data["text"],
@@ -1045,7 +1135,8 @@ fn a_summary_of_the_protocol_comes_back_as_text_and_leaves_a_provenance_entry() 
     );
     assert_eq!(out.data["truncated"], false);
     assert_eq!(out.data["meeting_id"], id);
-    let entries = crate::managers::provenance::list(&w.conn(), SubjectKind::Summary, "R:z").unwrap();
+    let entries =
+        crate::managers::provenance::list(&w.conn(), SubjectKind::Summary, "R:z").unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].actor_ref.as_deref(), Some("wf-test/R/z"));
     assert_eq!(out.sources.len(), 1);
@@ -1061,7 +1152,13 @@ fn a_summary_of_a_given_text_or_the_transcript_works_and_a_wrong_style_is_refuse
     // Ein Text ohne Besprechung im Lauf.
     let direct = Direct::new(None);
     let out = direct
-        .run(&w, &*sum, "R", "z", &json!({"source": "Ein langer Text über Größe und Änderung."}))
+        .run(
+            &w,
+            &*sum,
+            "R",
+            "z",
+            &json!({"source": "Ein langer Text über Größe und Änderung."}),
+        )
         .unwrap();
     assert_eq!(out.data["text"], "Zusammenfassung ohne Besprechung.");
     assert!(out.data.get("meeting_id").is_none());
@@ -1098,7 +1195,11 @@ fn speech_goes_into_the_meeting_audio_folder_once_per_step() {
     let first = direct.run(&w, &*tts, "R1", "vorlesen", &params).unwrap();
     let path = PathBuf::from(first.data["path"].as_str().unwrap());
     assert!(path.starts_with(w.services.audio_dir.join(&id)), "{path:?}");
-    assert!(path.file_name().unwrap().to_string_lossy().contains("R1-vorlesen"));
+    assert!(path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .contains("R1-vorlesen"));
     assert!(path.exists());
     assert_eq!(w.services.speech_calls.load(Ordering::SeqCst), 1);
     // Wiederholung nach einem Absturz: dieselbe Datei, kein zweiter Aufruf der Sprachausgabe.
@@ -1157,7 +1258,9 @@ fn a_notification_is_cleaned_shortened_and_forwarded() {
     assert_eq!(sent[0].1.chars().count(), MAX_NOTIFY_BODY_CHARS);
     assert!(sent[0].1.ends_with('…'));
     assert!(matches!(
-        direct.run(&w, &*notify, "R", "n2", &json!({"title": "  "})).unwrap_err(),
+        direct
+            .run(&w, &*notify, "R", "n2", &json!({"title": "  "}))
+            .unwrap_err(),
         StepError::Permanent(_)
     ));
 }
@@ -1222,7 +1325,13 @@ fn every_block_has_a_catalog_entry_and_the_right_effect_and_right() {
     assert_eq!(needs.integration_id, "folder-protokolle");
     assert_eq!(needs.capability, Capability::FilesWrite);
     assert_eq!(needs.target.as_deref(), Some("A"));
-    for id in ["meeting.notes", "meeting.minutes", "text.summarize", "tts.render", "notify.local"] {
+    for id in [
+        "meeting.notes",
+        "meeting.minutes",
+        "text.summarize",
+        "tts.render",
+        "notify.local",
+    ] {
         assert_eq!(action_of(&w, id).needs(&json!({})).unwrap(), None, "{id}");
     }
 }
@@ -1242,7 +1351,11 @@ fn without_the_app_the_blocks_report_that_they_are_not_built_in() {
                 &json!({"title": "t", "text": "t", "source": "transcript", "format": "md", "target": "folder-protokolle"}),
             )
             .unwrap_err();
-        assert!(matches!(err, StepError::NotAvailable(_)), "{}: {err:?}", a.id());
+        assert!(
+            matches!(err, StepError::NotAvailable(_)),
+            "{}: {err:?}",
+            a.id()
+        );
     }
 }
 
@@ -1252,7 +1365,10 @@ fn the_shipped_folder_template_is_valid_and_the_dry_run_names_every_new_block() 
     let def = crate::managers::workflows::validate::parse_definition_str(text).unwrap();
     assert_eq!(def.trigger.kind, "folder.file_added");
     let actions: Vec<&str> = def.steps.iter().map(|s| s.action.as_str()).collect();
-    assert_eq!(actions, ["meeting.import", "meeting.minutes", "export.document"]);
+    assert_eq!(
+        actions,
+        ["meeting.import", "meeting.minutes", "export.document"]
+    );
     assert!(templates::all()
         .iter()
         .any(|(id, _)| *id == "eingangsordner-word"));
@@ -1261,8 +1377,14 @@ fn the_shipped_folder_template_is_valid_and_the_dry_run_names_every_new_block() 
     let result = cli::dry_run(&w.conn(), text);
     assert_eq!(result.payload["valid"], true, "{}", result.payload);
     let table = cli::format_text(&result);
-    assert!(table.contains("Protokoll zur Besprechung erzeugen"), "{table}");
-    assert!(table.contains("als docx in folder-protokolle ablegen"), "{table}");
+    assert!(
+        table.contains("Protokoll zur Besprechung erzeugen"),
+        "{table}"
+    );
+    assert!(
+        table.contains("als docx in folder-protokolle ablegen"),
+        "{table}"
+    );
 }
 
 #[test]

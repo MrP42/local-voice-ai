@@ -173,7 +173,10 @@ pub fn active_model_is_local(settings: &AppSettings) -> bool {
         .split(['/', ':'])
         .next()
         .unwrap_or("");
-    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1" | "0.0.0.0")
+    matches!(
+        host,
+        "localhost" | "127.0.0.1" | "[::1]" | "::1" | "0.0.0.0"
+    )
 }
 
 /// Blockgroesse fuer die Uebersetzung: lokal klein, sonst eine Anfrage.
@@ -189,9 +192,18 @@ pub fn translation_block_chars(settings: &AppSettings) -> usize {
 /// ausgelastet, Mengenbegrenzung, kurzer Ausfall.
 pub fn is_transient_error(err: &str) -> bool {
     let e = err.to_ascii_lowercase();
-    ["at capacity", "overloaded", "rate limit", "rate_limit", "429", "503", "try again", "temporarily"]
-        .iter()
-        .any(|m| e.contains(m))
+    [
+        "at capacity",
+        "overloaded",
+        "rate limit",
+        "rate_limit",
+        "429",
+        "503",
+        "try again",
+        "temporarily",
+    ]
+    .iter()
+    .any(|m| e.contains(m))
 }
 
 /// Abbruch der laufenden Übersetzung (`tts_transform_cancel`).
@@ -343,7 +355,10 @@ where
         if is_marker || !part.chars().any(char::is_alphabetic) {
             out.push_str(&part);
         } else {
-            out.push_str(&keep_padding(&part, &translate(part.trim().to_string()).await?));
+            out.push_str(&keep_padding(
+                &part,
+                &translate(part.trim().to_string()).await?,
+            ));
         }
     }
     Ok(out)
@@ -401,7 +416,11 @@ mod block_tests {
 
     fn settings_with(provider: &str, base_url: &str) -> AppSettings {
         let mut s = crate::settings::get_default_settings();
-        if let Some(p) = s.post_process_providers.iter_mut().find(|p| p.id == provider) {
+        if let Some(p) = s
+            .post_process_providers
+            .iter_mut()
+            .find(|p| p.id == provider)
+        {
             p.base_url = base_url.to_string();
         }
         s.post_process_provider_id = provider.to_string();
@@ -415,7 +434,10 @@ mod block_tests {
         assert_eq!(translation_block_chars(&cloud), BLOCK_CHARS_CLOUD);
         // Vier Seiten Text (~12 000 Zeichen): bei Cloud EIN Block, lokal mehrere.
         let text = "Ein Satz im Text. ".repeat(700);
-        assert_eq!(split_blocks(&text, translation_block_chars(&cloud)).len(), 1);
+        assert_eq!(
+            split_blocks(&text, translation_block_chars(&cloud)).len(),
+            1
+        );
         let local = settings_with("ollama", "http://localhost:11434/v1");
         assert!(active_model_is_local(&local));
         assert_eq!(translation_block_chars(&local), BLOCK_CHARS_LOCAL);
@@ -424,7 +446,11 @@ mod block_tests {
     #[test]
     fn a_remote_model_behind_a_custom_address_is_not_local() {
         let set_url = |s: &mut AppSettings, url: &str| {
-            if let Some(p) = s.post_process_providers.iter_mut().find(|p| p.id == "custom") {
+            if let Some(p) = s
+                .post_process_providers
+                .iter_mut()
+                .find(|p| p.id == "custom")
+            {
                 p.base_url = url.to_string();
             }
         };
@@ -438,9 +464,15 @@ mod block_tests {
 
     #[test]
     fn busy_or_rate_limited_models_are_retried_other_errors_are_not() {
-        assert!(is_transient_error("cli_failed: {\"message\":\"Selected model is at capacity. Please try again\"}"));
-        assert!(is_transient_error("Übersetzung fehlgeschlagen: 429 Too Many Requests"));
-        assert!(!is_transient_error("cli_model_not_in_plan: Dieses Modell nimmt der Server nicht an"));
+        assert!(is_transient_error(
+            "cli_failed: {\"message\":\"Selected model is at capacity. Please try again\"}"
+        ));
+        assert!(is_transient_error(
+            "Übersetzung fehlgeschlagen: 429 Too Many Requests"
+        ));
+        assert!(!is_transient_error(
+            "cli_model_not_in_plan: Dieses Modell nimmt der Server nicht an"
+        ));
         assert!(!is_transient_error("Kein Modell eingetragen"));
     }
 
@@ -480,15 +512,21 @@ mod block_tests {
     }
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
-        tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(f)
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
     }
 
     #[test]
     fn speakers_are_never_translated() {
-        let out = block_on(translate_block("<Erzählerin> Guten Tag.", |s: String| async move {
-            // Ein Modell, das brav die Platzhalter haelt.
-            Ok(s.replace("Guten Tag.", "Good day."))
-        }))
+        let out = block_on(translate_block(
+            "<Erzählerin> Guten Tag.",
+            |s: String| async move {
+                // Ein Modell, das brav die Platzhalter haelt.
+                Ok(s.replace("Guten Tag.", "Good day."))
+            },
+        ))
         .unwrap();
         assert_eq!(out, "<Erzählerin> Good day.");
     }
@@ -504,7 +542,8 @@ mod block_tests {
                     Ok(if s.contains('⟦') {
                         "<Female narrator> Good day. <Male narrator> Hello.".to_string()
                     } else {
-                        s.replace("Guten Tag.", "Good day.").replace("Hallo.", "Hello.")
+                        s.replace("Guten Tag.", "Good day.")
+                            .replace("Hallo.", "Hello.")
                     })
                 }
             },

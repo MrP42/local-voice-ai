@@ -95,7 +95,9 @@ fn gpu_memory() -> Vec<GpuMemory> {
         while let Ok(adapter) = factory.EnumAdapters1(index) {
             index += 1;
             let adapter: IDXGIAdapter1 = adapter;
-            let Ok(desc) = adapter.GetDesc1() else { continue };
+            let Ok(desc) = adapter.GetDesc1() else {
+                continue;
+            };
             if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32) != 0 {
                 continue;
             }

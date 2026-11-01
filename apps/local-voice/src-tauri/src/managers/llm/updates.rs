@@ -123,7 +123,10 @@ pub fn parse_model(remote_id: &str) -> Option<ParsedModel> {
 pub fn is_newer(a: &[u32], b: &[u32]) -> bool {
     let n = a.len().max(b.len());
     for i in 0..n {
-        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        let (x, y) = (
+            a.get(i).copied().unwrap_or(0),
+            b.get(i).copied().unwrap_or(0),
+        );
         if x != y {
             return x > y;
         }
@@ -205,7 +208,10 @@ fn find_replaced<'a>(
         .filter_map(|m| parse_model(&m.remote_id).map(|p| (m, p)))
         .filter(|(_, p)| p.family == new.family)
         .collect();
-    if same.iter().any(|(_, p)| !is_newer(&new.version, &p.version)) {
+    if same
+        .iter()
+        .any(|(_, p)| !is_newer(&new.version, &p.version))
+    {
         return None;
     }
     same.into_iter()
@@ -269,7 +275,11 @@ pub fn record_offered(
 /// nicht freigegeben, Verbindung vorhanden und eingeschaltet.
 pub fn pending_updates(s: &AppSettings) -> Vec<ModelUpdate> {
     let mut out = Vec::new();
-    for h in s.llm_model_history.iter().filter(|h| h.status == STATUS_NEW) {
+    for h in s
+        .llm_model_history
+        .iter()
+        .filter(|h| h.status == STATUS_NEW)
+    {
         if s.llm_models.iter().any(|m| m.id == h.key) {
             continue;
         }
@@ -399,7 +409,12 @@ pub struct ProbeRun {
 
 /// Die Kandidaten, die in diesem Lauf drankommen: nie Gepruefte zuerst, dann
 /// die laenger als sieben Tage zurueckliegenden; hoechstens [`PROBE_PER_RUN`].
-pub fn due_candidates(s: &AppSettings, connection_id: &str, known: &[String], now: i64) -> Vec<String> {
+pub fn due_candidates(
+    s: &AppSettings,
+    connection_id: &str,
+    known: &[String],
+    now: i64,
+) -> Vec<String> {
     let mut fresh = Vec::new();
     let mut stale = Vec::new();
     for name in claude_candidates(known) {
@@ -465,7 +480,11 @@ pub fn restore_claude_extras(s: &AppSettings) {
         .filter(|c| Cli::from_base_url(&c.base_url) == Some(Cli::Claude))
     {
         let prefix = format!("{}:", c.id);
-        for h in s.llm_model_history.iter().filter(|h| h.status != STATUS_ABSENT) {
+        for h in s
+            .llm_model_history
+            .iter()
+            .filter(|h| h.status != STATUS_ABSENT)
+        {
             if let Some(remote) = h.key.strip_prefix(&prefix) {
                 if !cli::CLAUDE_MODELS.contains(&remote) && parse_model(remote).is_some() {
                     extra.push(remote.to_string());
@@ -525,7 +544,10 @@ mod tests {
         let p = parse_model("claude-haiku-4-5-20251001").unwrap();
         assert_eq!((p.family.as_str(), p.version), ("claude-haiku", vec![4, 5]));
         let p = parse_model("claude-sonnet-5-5").unwrap();
-        assert_eq!((p.family.as_str(), p.version), ("claude-sonnet", vec![5, 5]));
+        assert_eq!(
+            (p.family.as_str(), p.version),
+            ("claude-sonnet", vec![5, 5])
+        );
         let p = parse_model("claude-opus-4").unwrap();
         assert_eq!(p.version, vec![4]);
         let p = parse_model("gpt-6.1-sol").unwrap();
@@ -536,7 +558,15 @@ mod tests {
 
     #[test]
     fn aliases_and_foreign_names_have_no_version() {
-        for id in ["haiku", "sonnet", "fable", "qwen3:4b", "gpt-4.1", "claude-haiku", "claude-x-1-2-3-4"] {
+        for id in [
+            "haiku",
+            "sonnet",
+            "fable",
+            "qwen3:4b",
+            "gpt-4.1",
+            "claude-haiku",
+            "claude-x-1-2-3-4",
+        ] {
             assert_eq!(parse_model(id), None, "{id}");
         }
     }
@@ -552,16 +582,24 @@ mod tests {
 
     #[test]
     fn candidates_follow_the_highest_known_version_per_family() {
-        let known: Vec<String> = ["haiku", "claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-fable-5-1"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let known: Vec<String> = [
+            "haiku",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-5-5",
+            "claude-fable-5-1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let c = claude_candidates(&known);
         assert!(c.contains(&"claude-haiku-5-5".to_string()), "{c:?}");
         assert!(c.contains(&"claude-haiku-4-6".to_string()));
         assert!(c.contains(&"claude-sonnet-5-6".to_string()));
         assert!(c.contains(&"claude-fable-5-2".to_string()));
-        assert!(!c.contains(&"claude-sonnet-5-5".to_string()), "bekannte nie");
+        assert!(
+            !c.contains(&"claude-sonnet-5-5".to_string()),
+            "bekannte nie"
+        );
         // Mit Haiku 5.5 bekannt: der Nachfolger richtet sich danach.
         let mut known2 = known.clone();
         known2.push("claude-haiku-5-5".into());
@@ -575,14 +613,27 @@ mod tests {
     #[test]
     fn haiku_5_5_is_among_the_first_candidates_of_the_very_first_run() {
         let s = settings_with(&[]);
-        let known: Vec<String> = ["fable", "opus", "sonnet", "haiku", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let known: Vec<String> = [
+            "fable",
+            "opus",
+            "sonnet",
+            "haiku",
+            "claude-fable-5-1",
+            "claude-opus-5-5",
+            "claude-sonnet-5-5",
+            "claude-haiku-4-5-20251001",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let due = due_candidates(&s, "claude", &known, 1);
         assert!(due.contains(&"claude-haiku-5-5".to_string()), "{due:?}");
         // Reihum: die ersten vier sind je eine Familie.
-        let first: Vec<&str> = due.iter().take(4).map(|d| d.split('-').nth(1).unwrap()).collect();
+        let first: Vec<&str> = due
+            .iter()
+            .take(4)
+            .map(|d| d.split('-').nth(1).unwrap())
+            .collect();
         let mut unique = first.clone();
         unique.sort();
         unique.dedup();
@@ -593,7 +644,13 @@ mod tests {
     fn first_run_is_a_baseline_not_a_flood_of_new_models() {
         let s = settings_with(&[]);
         let c = s.llm_connections[1].clone();
-        let seen = record_offered(&s, &c, &["gpt-6.1-sol".into(), "gpt-6-astra".into()], false, 100);
+        let seen = record_offered(
+            &s,
+            &c,
+            &["gpt-6.1-sol".into(), "gpt-6-astra".into()],
+            false,
+            100,
+        );
         assert!(seen.iter().all(|h| h.status == STATUS_SEEN), "{seen:?}");
         assert_eq!(seen.len(), 2);
     }
@@ -602,25 +659,51 @@ mod tests {
     fn later_runs_flag_only_never_seen_models_as_new() {
         let mut s = settings_with(&[("codex", "gpt-6.1-sol")]);
         s.llm_model_history = vec![
-            LlmModelSeen { key: "codex:gpt-6.1-sol".into(), status: STATUS_SEEN.into(), at: 1, replaced_by: None },
-            LlmModelSeen { key: "codex:gpt-6-astra".into(), status: "dismissed".into(), at: 1, replaced_by: None },
+            LlmModelSeen {
+                key: "codex:gpt-6.1-sol".into(),
+                status: STATUS_SEEN.into(),
+                at: 1,
+                replaced_by: None,
+            },
+            LlmModelSeen {
+                key: "codex:gpt-6-astra".into(),
+                status: "dismissed".into(),
+                at: 1,
+                replaced_by: None,
+            },
         ];
         let c = s.llm_connections[1].clone();
         let seen = record_offered(
             &s,
             &c,
-            &["gpt-6.1-sol".into(), "gpt-6-astra".into(), "gpt-7-sol".into()],
+            &[
+                "gpt-6.1-sol".into(),
+                "gpt-6-astra".into(),
+                "gpt-7-sol".into(),
+            ],
             false,
             100,
         );
-        assert_eq!(seen.len(), 1, "bekannte und abgelehnte nicht erneut: {seen:?}");
-        assert_eq!((seen[0].key.as_str(), seen[0].status.as_str()), ("codex:gpt-7-sol", STATUS_NEW));
+        assert_eq!(
+            seen.len(),
+            1,
+            "bekannte und abgelehnte nicht erneut: {seen:?}"
+        );
+        assert_eq!(
+            (seen[0].key.as_str(), seen[0].status.as_str()),
+            ("codex:gpt-7-sol", STATUS_NEW)
+        );
     }
 
     #[test]
     fn helper_models_of_api_providers_are_not_flagged_but_ollama_names_are() {
         let mut s = settings_with(&[]);
-        s.llm_model_history = vec![LlmModelSeen { key: "codex:gpt-6-astra".into(), status: STATUS_SEEN.into(), at: 1, replaced_by: None }];
+        s.llm_model_history = vec![LlmModelSeen {
+            key: "codex:gpt-6-astra".into(),
+            status: STATUS_SEEN.into(),
+            at: 1,
+            replaced_by: None,
+        }];
         let c = s.llm_connections[1].clone();
         let offered = ["dall-e-4".to_string(), "qwen3:8b".to_string()];
         let api = record_offered(&s, &c, &offered, false, 5);
@@ -633,7 +716,12 @@ mod tests {
     fn a_replaced_model_that_the_provider_still_lists_is_not_new_again() {
         let mut s = settings_with(&[("codex", "gpt-7-sol")]);
         s.llm_model_history = vec![
-            LlmModelSeen { key: "codex:gpt-7-sol".into(), status: STATUS_SEEN.into(), at: 1, replaced_by: None },
+            LlmModelSeen {
+                key: "codex:gpt-7-sol".into(),
+                status: STATUS_SEEN.into(),
+                at: 1,
+                replaced_by: None,
+            },
             LlmModelSeen {
                 key: "codex:gpt-6.1-sol".into(),
                 status: STATUS_REPLACED.into(),
@@ -642,12 +730,22 @@ mod tests {
             },
         ];
         let c = s.llm_connections[1].clone();
-        assert!(record_offered(&s, &c, &["gpt-7-sol".into(), "gpt-6.1-sol".into()], false, 5).is_empty());
+        assert!(record_offered(
+            &s,
+            &c,
+            &["gpt-7-sol".into(), "gpt-6.1-sol".into()],
+            false,
+            5
+        )
+        .is_empty());
     }
 
     #[test]
     fn pending_pairs_a_new_model_with_the_older_one_of_its_family() {
-        let mut s = settings_with(&[("claude", "claude-haiku-4-5-20251001"), ("claude", "claude-sonnet-5-5")]);
+        let mut s = settings_with(&[
+            ("claude", "claude-haiku-4-5-20251001"),
+            ("claude", "claude-sonnet-5-5"),
+        ]);
         s.llm_active_model_id = Some("claude:claude-haiku-4-5-20251001".into());
         s.llm_model_history = vec![LlmModelSeen {
             key: "claude:claude-haiku-5-5".into(),
@@ -657,7 +755,10 @@ mod tests {
         }];
         let p = pending_updates(&s);
         assert_eq!(p.len(), 1);
-        assert_eq!(p[0].replaces.as_deref(), Some("claude:claude-haiku-4-5-20251001"));
+        assert_eq!(
+            p[0].replaces.as_deref(),
+            Some("claude:claude-haiku-4-5-20251001")
+        );
         assert!(p[0].replaces_active);
     }
 
@@ -695,7 +796,10 @@ mod tests {
         assert_eq!(s.llm_models[0].remote_id, "claude-haiku-5-5");
         assert_eq!(s.llm_models[0].effort.as_deref(), Some("high"));
         assert_eq!(s.llm_models[0].price_input_per_mtok, Some(1.0));
-        assert_eq!(s.llm_active_model_id.as_deref(), Some("claude:claude-haiku-5-5"));
+        assert_eq!(
+            s.llm_active_model_id.as_deref(),
+            Some("claude:claude-haiku-5-5")
+        );
         // Der Spiegel in die aelteren Felder zieht mit.
         assert_eq!(
             s.post_process_models.get("claude").map(String::as_str),
@@ -704,13 +808,19 @@ mod tests {
         let old = entry(&s, "claude:claude-haiku-4-5-20251001").unwrap();
         assert_eq!(old.status, STATUS_REPLACED);
         assert_eq!(old.replaced_by.as_deref(), Some("claude:claude-haiku-5-5"));
-        assert_eq!(entry(&s, "claude:claude-haiku-5-5").unwrap().status, STATUS_SEEN);
+        assert_eq!(
+            entry(&s, "claude:claude-haiku-5-5").unwrap().status,
+            STATUS_SEEN
+        );
         assert!(pending_updates(&s).is_empty());
     }
 
     #[test]
     fn apply_leaves_the_active_model_alone_when_another_one_is_replaced() {
-        let mut s = settings_with(&[("claude", "claude-haiku-4-5-20251001"), ("claude", "claude-sonnet-5-5")]);
+        let mut s = settings_with(&[
+            ("claude", "claude-haiku-4-5-20251001"),
+            ("claude", "claude-sonnet-5-5"),
+        ]);
         s.llm_active_model_id = Some("claude:claude-sonnet-5-5".into());
         s.llm_model_history = vec![LlmModelSeen {
             key: "claude:claude-haiku-5-5".into(),
@@ -720,7 +830,10 @@ mod tests {
         }];
         let update = pending_updates(&s).remove(0);
         apply(&mut s, &update, 1).unwrap();
-        assert_eq!(s.llm_active_model_id.as_deref(), Some("claude:claude-sonnet-5-5"));
+        assert_eq!(
+            s.llm_active_model_id.as_deref(),
+            Some("claude:claude-sonnet-5-5")
+        );
     }
 
     #[test]
@@ -751,7 +864,10 @@ mod tests {
         }];
         let update = pending_updates(&s).remove(0);
         let err = apply(&mut s, &update, 1).unwrap_err();
-        assert!(err.contains(crate::managers::compliance::CODE_COMPLIANCE_BLOCKED), "{err}");
+        assert!(
+            err.contains(crate::managers::compliance::CODE_COMPLIANCE_BLOCKED),
+            "{err}"
+        );
         assert_eq!(s.llm_models.len(), 1, "nichts verändert");
     }
 
@@ -759,11 +875,22 @@ mod tests {
     fn probe_outcomes_are_classified_conservatively() {
         assert_eq!(classify_probe(&Ok(())), Probe::Available);
         assert_eq!(
-            classify_probe(&Err("cli_failed: There's an issue with the selected model (x). It may not exist".into())),
+            classify_probe(&Err(
+                "cli_failed: There's an issue with the selected model (x). It may not exist".into()
+            )),
             Probe::Absent
         );
-        assert_eq!(classify_probe(&Err("cli_model_not_in_plan: x".into())), Probe::Absent);
-        for e in ["cli_limit_reached: x", "cli_not_logged_in: x", "cli_timeout: x", "cli_missing: x", "cli_failed: Netzwerk"] {
+        assert_eq!(
+            classify_probe(&Err("cli_model_not_in_plan: x".into())),
+            Probe::Absent
+        );
+        for e in [
+            "cli_limit_reached: x",
+            "cli_not_logged_in: x",
+            "cli_timeout: x",
+            "cli_missing: x",
+            "cli_failed: Netzwerk",
+        ] {
             assert_eq!(classify_probe(&Err(e.into())), Probe::Abort, "{e}");
         }
     }
@@ -804,19 +931,36 @@ mod tests {
     #[test]
     fn due_candidates_are_capped_and_remember_absent_ones_for_a_week() {
         let mut s = settings_with(&[]);
-        let known: Vec<String> = ["claude-haiku-4-5-20251001", "claude-sonnet-5-5", "claude-fable-5-1", "claude-opus-5-5"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let known: Vec<String> = [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-5-5",
+            "claude-fable-5-1",
+            "claude-opus-5-5",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let now = 1_000_000;
-        assert_eq!(due_candidates(&s, "claude", &known, now).len(), PROBE_PER_RUN);
+        assert_eq!(
+            due_candidates(&s, "claude", &known, now).len(),
+            PROBE_PER_RUN
+        );
         // Alle Kandidaten gerade als abwesend gemerkt -> nichts zu tun.
         for name in claude_candidates(&known) {
-            set_history(&mut s.llm_model_history, &LlmModelConfig::make_id("claude", &name), STATUS_ABSENT, now - 10, None);
+            set_history(
+                &mut s.llm_model_history,
+                &LlmModelConfig::make_id("claude", &name),
+                STATUS_ABSENT,
+                now - 10,
+                None,
+            );
         }
         assert!(due_candidates(&s, "claude", &known, now).is_empty());
         // Nach einer Woche wieder faellig.
         let later = now + ABSENT_RECHECK_SECS;
-        assert_eq!(due_candidates(&s, "claude", &known, later).len(), PROBE_PER_RUN);
+        assert_eq!(
+            due_candidates(&s, "claude", &known, later).len(),
+            PROBE_PER_RUN
+        );
     }
 }

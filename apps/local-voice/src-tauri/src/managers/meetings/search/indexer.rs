@@ -34,12 +34,12 @@ use specta::Type;
 use super::super::notes::enhance::DOC_FORMAT;
 use super::super::notes::model::{EnhancedNotes, NoteBlock};
 use super::super::slides::store::MeetingSlide;
+use super::super::speakers::SpeakerDirectory;
 use super::super::store::{MeetingStore, StoredSegment};
 use super::chunking::{
     chunk_enhanced, chunk_slides, chunk_title, chunk_transcript_with, chunk_user_notes, ChunkDraft,
     ChunkHead, ChunkSource,
 };
-use super::super::speakers::SpeakerDirectory;
 use super::embed::{EmbedError, EmbedKind, Embedder};
 use super::index::{IndexState, STATUS_ERROR, STATUS_LEXICAL, STATUS_PENDING};
 use super::vectors::{global_cache, VectorCache, IDLE_TTL};
@@ -200,10 +200,13 @@ impl MeetingStore {
             .optional()?
             .unwrap_or_else(|| ("[]".to_string(), 0, 0));
         // Beschaedigtes JSON kostet diese Quelle, nicht den ganzen Index.
-        let segments: Vec<StoredSegment> = serde_json::from_str(&segments_json).unwrap_or_else(|_| {
-            log::warn!("Indexer: Transkript von {meeting_id} nicht lesbar, ohne Transkript indexiert");
-            Vec::new()
-        });
+        let segments: Vec<StoredSegment> =
+            serde_json::from_str(&segments_json).unwrap_or_else(|_| {
+                log::warn!(
+                    "Indexer: Transkript von {meeting_id} nicht lesbar, ohne Transkript indexiert"
+                );
+                Vec::new()
+            });
         let (blocks_json, notes_revision): (String, i64) = tx
             .query_row(
                 "SELECT blocks_json, revision FROM meeting_notes
@@ -256,7 +259,9 @@ impl MeetingStore {
         let slides = match self.slides_list(meeting_id) {
             Ok(slides) => Some(slides),
             Err(e) => {
-                log::warn!("Indexer: Folien von {meeting_id} nicht lesbar ({e}), Folien-Chunks bleiben");
+                log::warn!(
+                    "Indexer: Folien von {meeting_id} nicht lesbar ({e}), Folien-Chunks bleiben"
+                );
                 None
             }
         };
@@ -339,7 +344,11 @@ fn is_stale(e: &anyhow::Error) -> bool {
 }
 
 fn normalized(v: &[f32]) -> Vec<f32> {
-    let norm = v.iter().map(|x| f64::from(*x) * f64::from(*x)).sum::<f64>().sqrt();
+    let norm = v
+        .iter()
+        .map(|x| f64::from(*x) * f64::from(*x))
+        .sum::<f64>()
+        .sqrt();
     if norm <= 0.0 || !norm.is_finite() {
         return v.to_vec();
     }
@@ -585,8 +594,10 @@ impl IndexerCore {
         };
         // D5: die Folien haben keinen Zaehler im Index-Zustand; der Vergleich der Chunks
         // (Text, Folie, Zeit) sagt, ob sie sich geaendert haben.
-        let slide_drafts: Option<Vec<ChunkDraft>> =
-            snap.slides.as_ref().map(|slides| chunk_slides(slides, &head));
+        let slide_drafts: Option<Vec<ChunkDraft>> = snap
+            .slides
+            .as_ref()
+            .map(|slides| chunk_slides(slides, &head));
         if !full {
             if let Some(drafts) = &slide_drafts {
                 if self.store.slide_chunks_differ(&snap.meeting_id, drafts)? {
@@ -715,8 +726,7 @@ impl IndexerCore {
     }
 
     fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
-        let result =
-            tauri::async_runtime::block_on(self.embed.embed(texts, EmbedKind::Document))?;
+        let result = tauri::async_runtime::block_on(self.embed.embed(texts, EmbedKind::Document))?;
         if result.len() != texts.len() {
             return Err(EmbedError::Failed("embedding_count_mismatch".into()));
         }
@@ -880,10 +890,7 @@ impl IndexerCore {
             return Duration::ZERO;
         }
         let mut wait = TICK;
-        if self.want_vectors
-            && self.vectors_allowed(now).is_ok()
-            && self.gate_closed().is_none()
-        {
+        if self.want_vectors && self.vectors_allowed(now).is_ok() && self.gate_closed().is_none() {
             return Duration::ZERO;
         }
         if self.want_vectors {
@@ -994,7 +1001,9 @@ fn worker(core: &mut IndexerCore, rx: Receiver<Msg>, shared: &Shared) {
         while let Ok(msg) = rx.try_recv() {
             apply(core, msg);
         }
-        shared.busy.store(core.has_pending_work(), Ordering::Release);
+        shared
+            .busy
+            .store(core.has_pending_work(), Ordering::Release);
         // Ein Fehler im Indexer darf die App nicht mitnehmen und den Thread
         // nicht beenden: Panik abfangen, Backoff, weiter.
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| core.tick(Instant::now())));
@@ -1003,7 +1012,9 @@ fn worker(core: &mut IndexerCore, rx: Receiver<Msg>, shared: &Shared) {
             core.backoff_until = Some(Instant::now() + BACKOFF);
             core.last_error = Some("panic");
         }
-        shared.busy.store(core.has_pending_work(), Ordering::Release);
+        shared
+            .busy
+            .store(core.has_pending_work(), Ordering::Release);
         *shared
             .last_error
             .lock()
@@ -1484,7 +1495,9 @@ mod tests {
     fn sources_of(store: &MeetingStore, meeting_id: &str) -> Vec<String> {
         let conn = store.get_connection().unwrap();
         let mut stmt = conn
-            .prepare("SELECT DISTINCT source FROM meeting_chunks WHERE meeting_id = ?1 ORDER BY source")
+            .prepare(
+                "SELECT DISTINCT source FROM meeting_chunks WHERE meeting_id = ?1 ORDER BY source",
+            )
             .unwrap();
         let rows = stmt
             .query_map(params![meeting_id], |r| r.get::<_, String>(0))
@@ -1529,7 +1542,10 @@ mod tests {
             sources_of(&r.store, &m.id),
             vec!["ai_notes", "title", "transcript", "user_notes"]
         );
-        assert!(chunks(&r.store) >= 4, "langes Transkript ergibt mehrere Chunks");
+        assert!(
+            chunks(&r.store) >= 4,
+            "langes Transkript ergibt mehrere Chunks"
+        );
         assert_eq!(status(&r.store, &m.id), STATUS_LEXICAL);
         // Titel, Notiz und KI-Notiz sind per Wortsuche findbar.
         for word in ["meyer", "zeppelinstrasse", "spedition"] {
@@ -1574,16 +1590,34 @@ mod tests {
                 )
                 .unwrap();
         };
-        describe(&r, "Thema: Zeppelinstrasse 12
-Ansprechpartnerin Frau Lindner");
+        describe(
+            &r,
+            "Thema: Zeppelinstrasse 12
+Ansprechpartnerin Frau Lindner",
+        );
         r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
-        assert_eq!(r.core.run_lexical(t0), 1, "die Beschreibung aendert den Kopf: Neuaufbau");
+        assert_eq!(
+            r.core.run_lexical(t0),
+            1,
+            "die Beschreibung aendert den Kopf: Neuaufbau"
+        );
         let page = find(&r, "lindner");
-        assert_eq!(page.total, 1, "die Beschreibung ist durchsuchbar (Teilwort, Kleinschreibung)");
+        assert_eq!(
+            page.total, 1,
+            "die Beschreibung ist durchsuchbar (Teilwort, Kleinschreibung)"
+        );
         assert_eq!(page.items[0].meeting.id, m.id);
-        assert_eq!(page.items[0].hit_source, Some(ChunkSource::Title), "Treffer steht im Kopf-Chunk");
+        assert_eq!(
+            page.items[0].hit_source,
+            Some(ChunkSource::Title),
+            "Treffer steht im Kopf-Chunk"
+        );
         assert_eq!(find(&r, "zeppelinstrasse").total, 1);
-        assert_eq!(find(&r, "budget").total, 1, "das Transkript bleibt auffindbar");
+        assert_eq!(
+            find(&r, "budget").total,
+            1,
+            "das Transkript bleibt auffindbar"
+        );
 
         // Ohne Aenderung nichts Neues.
         r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
@@ -1614,8 +1648,16 @@ Ansprechpartnerin Frau Lindner");
         r.core.tick(t0);
         assert!(chunks(&r.store) > 0, "lexikalisch laeuft trotz Aufnahme");
         assert_eq!(vectors(&r.store), 0, "keine Vektoren waehrend der Aufnahme");
-        assert_eq!(r.embed.calls.load(Ordering::SeqCst), 0, "Server nie gefragt");
-        assert_eq!(r.core.next_wakeup(t0), TICK, "Gate: pollt im Takt, kein Heisslauf");
+        assert_eq!(
+            r.embed.calls.load(Ordering::SeqCst),
+            0,
+            "Server nie gefragt"
+        );
+        assert_eq!(
+            r.core.next_wakeup(t0),
+            TICK,
+            "Gate: pollt im Takt, kein Heisslauf"
+        );
 
         r.gates.recording.store(false, Ordering::SeqCst);
         assert_eq!(run_all_vectors(&mut r.core, t0), VectorStep::Done);
@@ -1663,8 +1705,16 @@ Ansprechpartnerin Frau Lindner");
         assert!(chunks(&r.store) as usize > EMBED_BATCH);
         let step = r.core.run_vectors(t0, 8);
         assert_eq!(step, VectorStep::Blocked("recording_active"));
-        assert_eq!(vectors(&r.store) as usize, EMBED_BATCH, "genau die laufende Charge");
-        assert_eq!(r.embed.releases.load(Ordering::SeqCst), 1, "Server sofort beendet");
+        assert_eq!(
+            vectors(&r.store) as usize,
+            EMBED_BATCH,
+            "genau die laufende Charge"
+        );
+        assert_eq!(
+            r.embed.releases.load(Ordering::SeqCst),
+            1,
+            "Server sofort beendet"
+        );
         // Aufnahme vorbei: der Rest wird nachgeholt.
         r.gates.recording.store(false, Ordering::SeqCst);
         *r.embed.close_gate_after.lock().unwrap() = None;
@@ -1682,7 +1732,10 @@ Ansprechpartnerin Frau Lindner");
         r.core.tick(t0);
         assert_eq!(r.embed.calls.load(Ordering::SeqCst), 0);
         assert_eq!(status(&r.store, &m.id), STATUS_LEXICAL);
-        assert!(!r.core.has_pending_work(), "wartet auf EmbedPending, pollt nicht");
+        assert!(
+            !r.core.has_pending_work(),
+            "wartet auf EmbedPending, pollt nicht"
+        );
 
         // Modell geladen, aber Einstellung aus: weiterhin nichts.
         r.embed.available.store(true, Ordering::SeqCst);
@@ -1729,11 +1782,17 @@ Ansprechpartnerin Frau Lindner");
         assert_eq!(state.status, STATUS_LEXICAL);
         assert!(r.store.stale_meetings(10).unwrap().is_empty());
         assert_eq!(
-            count(&r.store, "SELECT COUNT(*) FROM meeting_chunks WHERE source = 'transcript'"),
+            count(
+                &r.store,
+                "SELECT COUNT(*) FROM meeting_chunks WHERE source = 'transcript'"
+            ),
             1
         );
         assert_eq!(
-            count(&r.store, "SELECT MIN(id) FROM meeting_chunks WHERE source = 'user_notes'"),
+            count(
+                &r.store,
+                "SELECT MIN(id) FROM meeting_chunks WHERE source = 'user_notes'"
+            ),
             notes_before,
             "Notizen-Chunks unveraendert (ihre Vektoren bleiben)"
         );
@@ -1765,7 +1824,11 @@ Ansprechpartnerin Frau Lindner");
         r.core.handle(IndexJob::Meeting(m.id.clone()), t0);
         assert_eq!(r.core.run_lexical(t0), 1);
         assert_eq!(
-            r.store.index_state(&m.id).unwrap().unwrap().transcript_epoch,
+            r.store
+                .index_state(&m.id)
+                .unwrap()
+                .unwrap()
+                .transcript_epoch,
             Some(1)
         );
     }
@@ -1780,21 +1843,28 @@ Ansprechpartnerin Frau Lindner");
         assert_eq!(r.core.run_lexical(t0), 2);
         assert_eq!(run_all_vectors(&mut r.core, t0), VectorStep::Done);
         // Cache laden, damit auch der RAM-Teil geprueft wird.
-        let loaded = r
-            .cache
-            .with_index(&r.store, MODEL, |i| i.len())
-            .unwrap();
+        let loaded = r.cache.with_index(&r.store, MODEL, |i| i.len()).unwrap();
         assert_eq!(loaded as i64, vectors(&r.store));
 
         r.store.soft_delete_meeting(&gone.id).unwrap();
         r.core.handle(IndexJob::Deleted(gone.id.clone()), t0);
         assert_eq!(
-            count(&r.store, &format!("SELECT COUNT(*) FROM meeting_chunks WHERE meeting_id = '{}'", gone.id)),
+            count(
+                &r.store,
+                &format!(
+                    "SELECT COUNT(*) FROM meeting_chunks WHERE meeting_id = '{}'",
+                    gone.id
+                )
+            ),
             0
         );
         assert_eq!(vectors(&r.store), chunks(&r.store), "keine Waisen-Vektoren");
         let after = r.cache.with_index(&r.store, MODEL, |i| i.len()).unwrap();
-        assert_eq!(after as i64, vectors(&r.store), "Cache ohne die geloeschte Besprechung");
+        assert_eq!(
+            after as i64,
+            vectors(&r.store),
+            "Cache ohne die geloeschte Besprechung"
+        );
         assert!(r.store.index_state(&gone.id).unwrap().is_none());
         assert_eq!(status(&r.store, &keep.id), STATUS_READY);
         // Ein spaeter eintreffender Auftrag fuer die geloeschte Besprechung ist harmlos.
@@ -1813,8 +1883,15 @@ Ansprechpartnerin Frau Lindner");
         assert_eq!(r.core.run_vectors(t0, 8), VectorStep::Error("memory_low"));
         assert_eq!(r.core.last_error(), Some("memory_low"));
         assert_eq!(r.embed.calls.load(Ordering::SeqCst), 1);
-        assert!(r.embed.releases.load(Ordering::SeqCst) >= 1, "Speicher freigeben");
-        assert_eq!(status(&r.store, &m.id), STATUS_LEXICAL, "bleibt lexikalisch nutzbar");
+        assert!(
+            r.embed.releases.load(Ordering::SeqCst) >= 1,
+            "Speicher freigeben"
+        );
+        assert_eq!(
+            status(&r.store, &m.id),
+            STATUS_LEXICAL,
+            "bleibt lexikalisch nutzbar"
+        );
 
         // Kein Retry-Sturm: 9 min spaeter wird nicht erneut gefragt.
         *r.embed.fail_with.lock().unwrap() = None;
@@ -1875,9 +1952,16 @@ Ansprechpartnerin Frau Lindner");
         let t20 = t0 + Duration::from_secs(20);
         let rev = save("Zweiter Stand Walfisch", rev);
         r.core.debounce(m.id.clone(), t20);
-        assert_eq!(r.core.run_lexical(t0 + Duration::from_secs(31)), 0, "20 s nach dem letzten Speichern");
+        assert_eq!(
+            r.core.run_lexical(t0 + Duration::from_secs(31)),
+            0,
+            "20 s nach dem letzten Speichern"
+        );
         let wait = r.core.next_wakeup(t0 + Duration::from_secs(31));
-        assert!(wait <= Duration::from_secs(19) && wait > Duration::ZERO, "{wait:?}");
+        assert!(
+            wait <= Duration::from_secs(19) && wait > Duration::ZERO,
+            "{wait:?}"
+        );
         assert_eq!(r.core.run_lexical(t20 + NOTES_DEBOUNCE), 1);
         let state = r.store.index_state(&m.id).unwrap().unwrap();
         assert_eq!(state.notes_revision, Some(rev));
@@ -1916,7 +2000,11 @@ Ansprechpartnerin Frau Lindner");
         // Nicht fertig: wird nicht indexiert.
         let open = r
             .store
-            .create_meeting("Laeuft noch", crate::managers::meetings::store::MeetingSource::Live, Some(1))
+            .create_meeting(
+                "Laeuft noch",
+                crate::managers::meetings::store::MeetingSource::Live,
+                Some(1),
+            )
             .unwrap();
         let t0 = Instant::now();
         r.core.handle(IndexJob::Backfill, t0);
@@ -1929,7 +2017,10 @@ Ansprechpartnerin Frau Lindner");
         }
         assert!(r.store.index_state(&open.id).unwrap().is_none());
         assert_eq!(vectors(&r.store), chunks(&r.store));
-        assert!(r.embed.idle_checks.load(Ordering::SeqCst) >= 1, "Leerlauf-Stopp geprueft");
+        assert!(
+            r.embed.idle_checks.load(Ordering::SeqCst) >= 1,
+            "Leerlauf-Stopp geprueft"
+        );
         assert!(r.store.stale_meetings(10).unwrap().is_empty());
     }
 
@@ -1948,7 +2039,10 @@ Ansprechpartnerin Frau Lindner");
         assert_eq!(report.vectors, report.chunks);
         assert_eq!(report.embedded_meetings, 2);
         assert!(!report.embed_server_running);
-        assert!(embed.releases.load(Ordering::SeqCst) >= 1, "Server am Ende beendet");
+        assert!(
+            embed.releases.load(Ordering::SeqCst) >= 1,
+            "Server am Ende beendet"
+        );
         for id in [&a.id, &b.id] {
             assert_eq!(status(&store, id), STATUS_READY);
         }
@@ -2070,7 +2164,12 @@ Ansprechpartnerin Frau Lindner");
         use crate::managers::meetings::search::index::MeetingFilter;
         let mut r = rig();
         let m = meeting_with_content(&r.store, "Quartalsvortrag");
-        add_slide(&r.store, &m.id, 12_000, Some("Umsatz Region Nordlicht 13,1 Mio. EUR"));
+        add_slide(
+            &r.store,
+            &m.id,
+            12_000,
+            Some("Umsatz Region Nordlicht 13,1 Mio. EUR"),
+        );
         add_slide(&r.store, &m.id, 30_000, Some("Zeitplan Wasserturmallee"));
         assert_eq!(index_now(&mut r, &m.id), 1);
         assert_eq!(
@@ -2119,7 +2218,11 @@ Ansprechpartnerin Frau Lindner");
         let t0 = Instant::now();
         run_all_vectors(&mut r.core, t0);
         let all_chunks = chunks(&r.store);
-        assert_eq!(vectors(&r.store), all_chunks, "alle Chunks haben einen Vektor");
+        assert_eq!(
+            vectors(&r.store),
+            all_chunks,
+            "alle Chunks haben einen Vektor"
+        );
 
         // Ohne Aenderung: nichts neu.
         assert_eq!(index_now(&mut r, &m.id), 0);
@@ -2128,20 +2231,35 @@ Ansprechpartnerin Frau Lindner");
         // Folie ausblenden: ihr Chunk verschwindet samt Vektor, die anderen bleiben.
         r.store.slide_set_hidden(&a.id, true).unwrap();
         assert_eq!(index_now(&mut r, &m.id), 1);
-        assert_eq!(slide_chunk_texts(&r.store, &m.id), vec!["Folie 2 00:30: Beta Zeitplan"]);
+        assert_eq!(
+            slide_chunk_texts(&r.store, &m.id),
+            vec!["Folie 2 00:30: Beta Zeitplan"]
+        );
         assert_eq!(chunks(&r.store), all_chunks - 1);
         // Nur der neue Folien-Chunk braucht noch einen Vektor.
-        assert_eq!(vectors(&r.store), all_chunks - 2, "die uebrigen Vektoren sind unberuehrt");
+        assert_eq!(
+            vectors(&r.store),
+            all_chunks - 2,
+            "die uebrigen Vektoren sind unberuehrt"
+        );
 
         // Neuer OCR-Text (z. B. Gemma-OCR ersetzt Windows-OCR): der alte Text ist weg, der neue findbar.
         r.store
-            .slide_set_text(&a.id, Some("Gamma Korrektur 13,1"), Some("gemma-4-e4b"), Some("text"))
+            .slide_set_text(
+                &a.id,
+                Some("Gamma Korrektur 13,1"),
+                Some("gemma-4-e4b"),
+                Some("text"),
+            )
             .unwrap();
         r.store.slide_set_hidden(&a.id, false).unwrap();
         assert_eq!(index_now(&mut r, &m.id), 1);
         assert_eq!(
             slide_chunk_texts(&r.store, &m.id),
-            vec!["Folie 1 00:12: Gamma Korrektur 13,1", "Folie 2 00:30: Beta Zeitplan"]
+            vec![
+                "Folie 1 00:12: Gamma Korrektur 13,1",
+                "Folie 2 00:30: Beta Zeitplan"
+            ]
         );
         let find = |word: &str| {
             r.store
@@ -2150,7 +2268,11 @@ Ansprechpartnerin Frau Lindner");
                 .len()
         };
         assert_eq!((find("alpha"), find("gamma")), (0, 1));
-        assert_eq!(status(&r.store, &m.id), STATUS_LEXICAL, "neue Chunks warten auf Vektoren");
+        assert_eq!(
+            status(&r.store, &m.id),
+            STATUS_LEXICAL,
+            "neue Chunks warten auf Vektoren"
+        );
     }
 
     #[test]
@@ -2203,7 +2325,11 @@ Ansprechpartnerin Frau Lindner");
             )
             .unwrap();
         assert_eq!(index_now(&mut r, &m.id), 1, "der Kopf hat sich geaendert");
-        assert_eq!(slide_chunk_texts(&r.store, &m.id).len(), 1, "Folien-Chunks bleiben");
+        assert_eq!(
+            slide_chunk_texts(&r.store, &m.id).len(),
+            1,
+            "Folien-Chunks bleiben"
+        );
     }
 
     #[test]
