@@ -1172,7 +1172,10 @@ export const TtsSettings = () => {
   const awakeShift = useKeepAwake(keepAwake);
   const toggleKeepAwake = (on: boolean) => {
     setKeepAwake(on);
-    if (on) toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
+    // Im Vollbild ist nur die Lesespalte sichtbar, Meldungen nicht: der
+    // Hinweis kommt beim nächsten Einschalten außerhalb des Vollbilds.
+    if (on && !document.fullscreenElement)
+      toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
   };
   const readerFrameRef = useRef<HTMLDivElement | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -2208,7 +2211,7 @@ export const TtsSettings = () => {
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
-                <div className="ml-auto pb-1">
+                <div className="ml-auto max-w-full pb-1">
                   <ReaderToolbar
                     mode={viewMode}
                     canRead={spokenText.trim().length > 0}

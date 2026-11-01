@@ -557,6 +557,16 @@
   --color-text-muted: #ababab;
 }
 .reader-frame[data-reader-theme]:not([data-reader-theme="auto"]) {
+  /* Fluent-Steuerelemente (Reiter) lesen eigene Tokens: mitfärben. */
+  --colorNeutralForeground1: var(--color-text);
+  --colorNeutralForeground1Hover: var(--color-text);
+  --colorNeutralForeground1Pressed: var(--color-text);
+  --colorNeutralForeground1Selected: var(--color-text);
+  --colorNeutralForeground2: var(--color-text-muted);
+  --colorNeutralForeground2Hover: var(--color-text);
+  --colorNeutralForeground2Pressed: var(--color-text);
+  --colorNeutralForeground2Selected: var(--color-text);
+  --colorNeutralForeground3: var(--color-text-muted);
   background: var(--color-background);
   color: var(--color-text);
   color-scheme: light;

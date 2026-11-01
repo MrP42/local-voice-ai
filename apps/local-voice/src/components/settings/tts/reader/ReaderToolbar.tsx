@@ -136,7 +136,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
     ? t("tts.reader.twoPagesTooNarrow")
     : t("tts.reader.twoPages");
   return (
-    <div className="flex shrink-0 items-center gap-2" data-testid="reader-toolbar">
+    <div className="flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1" data-testid="reader-toolbar">
       <div className={SEG} role="group" aria-label={t("tts.reader.modeLabel")}>
         <button
           type="button"

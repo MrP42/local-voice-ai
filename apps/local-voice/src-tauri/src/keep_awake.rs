@@ -31,11 +31,26 @@ pub fn set(on: bool) -> Result<bool, String> {
         release(slot.take());
         return Ok(false);
     }
-    if slot.is_some() {
+    if alive(slot.as_mut()) {
         return Ok(true);
     }
+    release(slot.take());
     *slot = acquire()?;
     Ok(slot.is_some())
+}
+
+/// Hält der bestehende Halter noch? Ein von außen beendetes `caffeinate`
+/// wird so bemerkt und neu gestartet.
+fn alive(holder: Option<&mut Holder>) -> bool {
+    match holder {
+        #[cfg(target_os = "macos")]
+        Some(Holder::Child(child)) => matches!(child.try_wait(), Ok(None)),
+        #[cfg(windows)]
+        Some(Holder::Thread(_)) => true,
+        #[allow(unreachable_patterns)]
+        Some(_) => false,
+        None => false,
+    }
 }
 
 #[cfg(windows)]

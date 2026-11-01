@@ -4,7 +4,7 @@ import { commands } from "@/bindings";
 /** Alle so viele ms verschiebt sich der Inhalt um 1 px (OLED-Dimmung). */
 const SHIFT_EVERY_MS = 45_000;
 
-type WakeLockSentinelLike = { release(): Promise<void> };
+type WakeLockSentinelLike = { readonly released?: boolean; release(): Promise<void> };
 
 /**
  * Bildschirm wach halten, solange `on` (Sonnen-Knopf im Vorlesen):
@@ -26,20 +26,28 @@ export function useKeepAwake(on: boolean): number {
       return;
     }
     let lock: WakeLockSentinelLike | null = null;
+    let pending = false;
     let alive = true;
     const requestLock = () => {
+      // Höchstens eine Sperre: eine noch gültige oder angefragte genügt.
+      if (pending || (lock && !lock.released)) return;
       const wl = (
         navigator as Navigator & {
           wakeLock?: { request(kind: "screen"): Promise<WakeLockSentinelLike> };
         }
       ).wakeLock;
-      wl?.request("screen")
+      if (!wl) return;
+      pending = true;
+      wl.request("screen")
         .then((l) => {
           if (alive) lock = l;
           else void l.release();
         })
         .catch(() => {
           /* ohne Wake-Lock hält der Kern die Anzeige an */
+        })
+        .finally(() => {
+          pending = false;
         });
     };
     requestLock();

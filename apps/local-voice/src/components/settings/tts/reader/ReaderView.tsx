@@ -111,6 +111,18 @@ export function wordAt(text: string, at: number, within: SourceRange): SourceRan
 /** Seitenstand je Text, damit die Ansicht beim Zurückkehren dort steht, wo
  *  sie war — ohne Umblättern von Seite 1 her. */
 const lastPages = new Map<string, number>();
+const LAST_PAGES_MAX = 50;
+
+/** Kurzer Fingerabdruck des Texts (FNV-1a), damit gleich lange Texte mit
+ *  gleichem Titel (Original/Übersetzung) nicht dieselbe Seite teilen. */
+function textKey(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${text.length}:${(h >>> 0).toString(36)}`;
+}
 
 /** Einen Lauf an den Grenzen von Hervorhebung und Befunden zerteilen. */
 function piecesOf(
@@ -247,16 +259,25 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     pages: 1,
     narrow: false,
   });
-  const pageKey = `${title ?? ""}:${text.length}`;
+  const textId = useMemo(() => textKey(text), [text]);
+  const pageKey = `${title ?? ""}:${textId}`;
   const [page, setPageRaw] = useState(() => lastPages.get(pageKey) ?? 0);
   // Animiert wird nur echtes Blättern (Knopf, Taste, Wischen, Mitblättern) —
   // nicht das Wiederherstellen nach einem App-Wechsel oder ein neuer Umbruch
   // nach einer Einstellung.
   const [animate, setAnimate] = useState(false);
-  const setPage = setPageRaw;
-  const turnTo = useCallback((next: React.SetStateAction<number>) => {
-    setAnimate(true);
+  // Nicht animierte Wechsel (Umbruch, Sprung, Wiederherstellen) beenden eine
+  // noch laufende Blätter-Animation, statt in ihr mitzugleiten.
+  const setPage = useCallback((next: React.SetStateAction<number>) => {
+    setAnimate(false);
     setPageRaw(next);
+  }, []);
+  const turnTo = useCallback((next: React.SetStateAction<number>) => {
+    setPageRaw((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      if (value !== prev) setAnimate(true);
+      return value;
+    });
   }, []);
   useEffect(() => {
     if (!animate) return;
@@ -266,14 +287,25 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   // Text oder Titel kommen oft erst nach dem ersten Rendern: dann den
   // gemerkten Stand dieses Texts holen (ohne Animation).
   const pageKeyRef = useRef(pageKey);
+  const titleRef = useRef(title);
   useLayoutEffect(() => {
     if (pageKeyRef.current === pageKey) return;
     pageKeyRef.current = pageKey;
     const saved = lastPages.get(pageKey);
-    if (saved !== undefined) setPageRaw(saved);
-  }, [pageKey]);
+    const otherDoc = titleRef.current !== title;
+    titleRef.current = title;
+    // Gemerkter Stand gewinnt; ein anderes Dokument beginnt vorn, eine
+    // Änderung am selben Text behält die Seite (die Klammer greift danach).
+    if (saved !== undefined) setPage(saved);
+    else if (otherDoc) setPage(0);
+  }, [pageKey, title, setPage]);
   useEffect(() => {
+    lastPages.delete(pageKeyRef.current);
     lastPages.set(pageKeyRef.current, page);
+    if (lastPages.size > LAST_PAGES_MAX) {
+      const oldest = lastPages.keys().next().value;
+      if (oldest !== undefined) lastPages.delete(oldest);
+    }
   }, [page]);
   const step = geo.colW + geo.gap;
 
