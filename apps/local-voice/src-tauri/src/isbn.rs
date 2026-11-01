@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 const OPEN_LIBRARY: &str = "https://openlibrary.org/api/books";
+const OFFLINE: &str =
+    "Open Library ist gerade nicht erreichbar. Prüfe die Internetverbindung und versuche es noch einmal.";
 
 /// Was Open Library zu einer ISBN weiß, so weit es die App braucht.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Default)]
@@ -136,7 +138,11 @@ pub async fn isbn_lookup(isbn: String) -> Result<Option<IsbnBook>, String> {
         ])
         .send()
         .await
-        .map_err(|e| format!("Open Library nicht erreichbar: {e}"))?;
+        .map_err(|e| {
+            // Technische Ursache ins Log, verstaendlicher Satz in den Dialog.
+            log::warn!("ISBN-Abfrage: Open Library nicht erreichbar: {e}");
+            OFFLINE.to_string()
+        })?;
     if !response.status().is_success() {
         return Err(format!("Open Library antwortete mit {}", response.status()));
     }
