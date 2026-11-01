@@ -539,6 +539,34 @@ async systemMemory() : Promise<Result<SystemMemory, string>> {
 }
 },
 /**
+ * "Speicher freigeben": entlaedt nicht arbeitende Modelle und liefert die
+ * freigegebenen MB (RAM vorher minus nachher, gemessen; nie negativ).
+ */
+async releaseMemory() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("release_memory") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMemoryGuardEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_memory_guard_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeMemoryGuardPercentSetting(percent: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_memory_guard_percent_setting", { percent }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Passt das Modell in den Speicher? Prognose gegen das freie Budget der
  * dedizierten Grafikkarte -- oder gegen den RAM, wenn keine messbar ist;
  * dann ist das Urteil "unbekannt", nicht "passt".
@@ -5320,6 +5348,35 @@ async ttsCancelDownload(id: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Zugang zu gesperrten Hugging-Face-Modellen: nur der Zustand, nie der Wert.
+ */
+async ttsHfAccessStatus() : Promise<HfAccessStatus> {
+    return await TAURI_INVOKE("tts_hf_access_status");
+},
+/**
+ * Zugang aus der Zwischenablage uebernehmen: nur auf ausdruecklichen Klick des Nutzers. Der Wert
+ * geht nie durch die Oberflaeche (kein Clipboard-Recht im Frontend), wird nie angezeigt oder
+ * protokolliert. Danach wird die Zwischenablage geleert, aber nur, wenn sie noch genau diesen
+ * Zugang enthaelt (fremde neue Inhalte bleiben). Kein Netzzugriff.
+ */
+async ttsHfAccessFromClipboard(allowFile: boolean) : Promise<Result<HfAccessStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_hf_access_from_clipboard", { allowFile }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Wirkt der Zugang fuer dieses gesperrte Modell? HEAD an die erste Datei, nur `huggingface.co`.
+ */
+async ttsHfAccessVerify(modelId: string) : Promise<HfAccessCheck> {
+    return await TAURI_INVOKE("tts_hf_access_verify", { modelId });
+},
+async ttsHfAccessDelete() : Promise<HfAccessStatus> {
+    return await TAURI_INVOKE("tts_hf_access_delete");
+},
 async ttsDeleteModel(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_delete_model", { id }) };
@@ -6062,7 +6119,16 @@ local_update_dir?: string | null; show_whats_new_on_update?: boolean;
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
+whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; 
+/**
+ * Speicherschutz: kein Modell laden, das die RAM-Grenze ueberschreiten
+ * wuerde (siehe `memory_guard`).
+ */
+memory_guard_enabled?: boolean; 
+/**
+ * Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
+ */
+memory_guard_percent?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; 
 /**
  * Sprachmodell-Verbindungen und freigegebene Modelle (Schema 2). Die
  * aelteren Felder `post_process_provider_id` / `post_process_models`
@@ -7497,6 +7563,46 @@ export type GrantMode = "off" | "ask" | "allow"
  * `LoopbackDied` sind einmalige Meldungen des Recorders und bleiben stehen.
  */
 export type HealthState = "no_data" | "digital_zero" | "silent" | "clipping" | "queue_overflow" | "vad_unavailable" | "loopback_died" | "recovered"
+/**
+ * Ergebnis der Zugangsprüfung.
+ */
+export type HfAccessCheck = 
+/**
+ * Hugging Face liefert das Modell aus.
+ */
+"granted" | 
+/**
+ * Kein Zugang abgelegt.
+ */
+"missing" | 
+/**
+ * Zugang abgelehnt: Bedingungen noch nicht angenommen oder Zugang ungültig.
+ */
+"denied" | 
+/**
+ * Netz oder Server: später erneut prüfen.
+ */
+"unreachable"
+/**
+ * Woher der Zugang kommt.
+ */
+export type HfAccessSource = 
+/**
+ * `HF_TOKEN` oder die Token-Datei von Hugging Face.
+ */
+"system" | 
+/**
+ * Im Tresor der App.
+ */
+"app"
+/**
+ * Zustand für die Oberfläche; nie der Wert selbst.
+ */
+export type HfAccessStatus = { present: boolean; source: HfAccessSource | null; 
+/**
+ * Ein abgelegter Zugang ist nicht lesbar (anderes Konto, beschädigt).
+ */
+problem: string | null }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 export type HubDevice = { device: string; last_push?: string | null }

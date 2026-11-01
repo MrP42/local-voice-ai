@@ -549,6 +549,13 @@ pub struct AppSettings {
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
     pub word_correction_threshold: f64,
+    /// Speicherschutz: kein Modell laden, das die RAM-Grenze ueberschreiten
+    /// wuerde (siehe `memory_guard`).
+    #[serde(default = "default_memory_guard_enabled")]
+    pub memory_guard_enabled: bool,
+    /// Grenze fuer den gesamten Arbeitsspeicher in Prozent (60 bis 98).
+    #[serde(default = "default_memory_guard_percent")]
+    pub memory_guard_percent: u8,
     #[serde(default = "default_history_limit")]
     pub history_limit: usize,
     #[serde(default = "default_recording_retention_period")]
@@ -1082,8 +1089,15 @@ fn default_tts_compile() -> bool {
     true
 }
 
+/// Fish, wo es laeuft; sonst (z. B. Mac mit Intel) Piper.
 fn default_tts_engine() -> String {
-    "fish".to_string()
+    if crate::managers::tts::availability::fish_supported(
+        crate::managers::tts::availability::current_platform_id(),
+    ) {
+        "fish".to_string()
+    } else {
+        "piper".to_string()
+    }
 }
 
 /// Standardmäßig an: eine deutsche Piper-Stimme liest englischen Text sonst
@@ -1289,6 +1303,14 @@ fn default_log_level() -> LogLevel {
 
 fn default_word_correction_threshold() -> f64 {
     0.18
+}
+
+fn default_memory_guard_enabled() -> bool {
+    true
+}
+
+fn default_memory_guard_percent() -> u8 {
+    90
 }
 
 fn default_paste_delay_ms() -> u64 {
@@ -1625,6 +1647,20 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
 pub const SETTINGS_STORE_PATH: &str = "settings_store.json";
 
+/// Frueherer Standard fuer „Zwischenablage vorlesen“ auf allen Systemen.
+const SPEAK_CLIPBOARD_LEGACY: &str = "ctrl+alt+space";
+
+/// Standard fuer „Zwischenablage vorlesen“. Auf dem Mac ist ⌃⌥ die
+/// VoiceOver-Taste (⌃⌥Space = VO-Aktivieren); dort darum ⌃⇧Space. macOS
+/// belegt es nicht (⌘Space Spotlight, ⌃Space/⌃⌥Space Eingabequelle, ⌥⌘Space
+/// Finder, ⌃⌘Space Emoji); ⇧⌘Space waere 1Password-Schnellzugriff. Reihenfolge
+/// wie der Tastenrekorder (ctrl, option, shift, command), damit eine neu
+/// aufgenommene gleiche Taste als Standard gilt.
+#[cfg(target_os = "macos")]
+const SPEAK_CLIPBOARD_DEFAULT: &str = "ctrl+shift+space";
+#[cfg(not(target_os = "macos"))]
+const SPEAK_CLIPBOARD_DEFAULT: &str = SPEAK_CLIPBOARD_LEGACY;
+
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
@@ -1682,8 +1718,8 @@ pub fn get_default_settings() -> AppSettings {
             id: "speak_clipboard".to_string(),
             name: "Speak Clipboard".to_string(),
             description: "Reads the current clipboard text aloud.".to_string(),
-            default_binding: "ctrl+alt+space".to_string(),
-            current_binding: "ctrl+alt+space".to_string(),
+            default_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
+            current_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
         },
     );
 
@@ -1714,6 +1750,8 @@ pub fn get_default_settings() -> AppSettings {
         custom_words: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
+        memory_guard_enabled: default_memory_guard_enabled(),
+        memory_guard_percent: default_memory_guard_percent(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
         paste_method: PasteMethod::default(),
@@ -2200,7 +2238,69 @@ fn apply_settings_migrations(
         updated = true;
     }
 
+    // Mac: Wer „Zwischenablage vorlesen“ noch auf dem alten Standard ⌃⌥Space hat
+    // (= VoiceOver-Aktivieren), bekommt den neuen Mac-Standard. Eine eigene
+    // Belegung bleibt. Idempotent.
+    // Nicht, wenn eine andere Aktion den neuen Standard schon belegt: zwei
+    // gleiche Kuerzel liessen eines davon beim Registrieren ausfallen.
+    let taken = settings
+        .bindings
+        .values()
+        .any(|b| b.id != "speak_clipboard" && b.current_binding == SPEAK_CLIPBOARD_DEFAULT);
+    if !taken {
+        if let Some(b) = settings.bindings.get_mut("speak_clipboard") {
+            if migrate_speak_clipboard_binding(b, SPEAK_CLIPBOARD_DEFAULT) {
+                updated = true;
+            }
+        }
+    }
+
+    // Vorlesen ohne Fish-Unterstuetzung (z. B. Mac mit Intel): eine gespeicherte
+    // Wahl, die auf Fish hinauslaeuft (auch Altwerte wie "system"), wird Piper.
+    // Sonst zeigte die Oberflaeche „Liest vor: Fish Speech – nicht eingerichtet“
+    // fuer eine Engine, die es hier nie geben kann. Idempotent.
+    if let Some(engine) = tts_engine_for_platform(
+        &settings.tts_engine,
+        crate::managers::tts::availability::current_platform_id(),
+    ) {
+        settings.tts_engine = engine;
+        updated = true;
+    }
+
     updated
+}
+
+/// Meldung, wenn der `tts_engine`-Wert `engine` (z. B. "fish", "provider:<id>")
+/// auf diesem System nie laufen kann; die Setter lehnen dann ab, statt dass das
+/// naechste Laden still Piper daraus macht.
+pub(crate) fn tts_engine_unsupported_here(engine: &str) -> Option<String> {
+    tts_engine_for_platform(
+        engine,
+        crate::managers::tts::availability::current_platform_id(),
+    )
+    .map(|_| "Fish Speech wird auf diesem System nicht unterstützt; Piper liest vor.".to_string())
+}
+
+/// Hebt eine Belegung vom alten Standard auf `default` an, solange der Nutzer sie
+/// nicht selbst geaendert hat; `true` = geaendert.
+fn migrate_speak_clipboard_binding(b: &mut ShortcutBinding, default: &str) -> bool {
+    let mut changed = false;
+    if b.default_binding == SPEAK_CLIPBOARD_LEGACY && default != SPEAK_CLIPBOARD_LEGACY {
+        if b.current_binding == SPEAK_CLIPBOARD_LEGACY {
+            b.current_binding = default.to_string();
+        }
+        b.default_binding = default.to_string();
+        changed = true;
+    }
+    changed
+}
+
+/// Ersatz-Engine, wenn `engine` auf Fish hinauslaeuft, Fish auf `platform`
+/// aber nicht laeuft; `None` = Wahl bleibt.
+fn tts_engine_for_platform(engine: &str, platform: &str) -> Option<String> {
+    use crate::managers::tts::{availability::fish_supported, engine::TtsEngineKind};
+    (TtsEngineKind::from_setting(engine) == TtsEngineKind::Fish && !fish_supported(platform))
+        .then(|| "piper".to_string())
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
@@ -3076,12 +3176,81 @@ mod tests {
         assert_eq!(s.tts_seed, 42);
         assert_eq!(s.tts_idle_minutes, 15);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish");
+        assert_eq!(
+            s.tts_engine,
+            default_tts_engine(),
+            "Fish, wo es laeuft, sonst Piper"
+        );
         assert_eq!(s.tts_preview_engine, "", "Vorschau-Engine ist aus");
         assert_eq!(s.tts_piper_voice, None);
         let b = &s.bindings["speak_clipboard"];
-        assert_eq!(b.default_binding, "ctrl+alt+space");
+        assert_eq!(b.default_binding, SPEAK_CLIPBOARD_DEFAULT);
+        assert_eq!(b.current_binding, SPEAK_CLIPBOARD_DEFAULT);
+        if cfg!(target_os = "macos") {
+            let mac = "ctrl+shift+space";
+            assert_eq!(b.default_binding, mac, "nicht ⌃⌥ (VoiceOver)");
+        } else {
+            assert_eq!(b.default_binding, "ctrl+alt+space");
+        }
+    }
+
+    #[test]
+    fn speak_clipboard_moves_off_the_old_default_but_keeps_own_bindings() {
+        let binding = |current: &str| ShortcutBinding {
+            id: "speak_clipboard".to_string(),
+            name: "Speak Clipboard".to_string(),
+            description: String::new(),
+            default_binding: "ctrl+alt+space".to_string(),
+            current_binding: current.to_string(),
+        };
+        let new = "ctrl+shift+space";
+        // Alter Standard unveraendert: beide auf den neuen Standard.
+        let mut b = binding("ctrl+alt+space");
+        assert!(migrate_speak_clipboard_binding(&mut b, new));
+        assert_eq!(b.current_binding, new);
+        assert_eq!(b.default_binding, new);
+        assert!(!migrate_speak_clipboard_binding(&mut b, new));
+        // Eigene Belegung bleibt, nur der Standard wandert.
+        let mut b = binding("ctrl+shift+f9");
+        assert!(migrate_speak_clipboard_binding(&mut b, new));
+        assert_eq!(b.current_binding, "ctrl+shift+f9");
+        assert_eq!(b.default_binding, new);
+        // Wo der Standard gleich bleibt (Windows/Linux), aendert sich nichts.
+        let mut b = binding("ctrl+alt+space");
+        assert!(!migrate_speak_clipboard_binding(&mut b, "ctrl+alt+space"));
         assert_eq!(b.current_binding, "ctrl+alt+space");
+    }
+
+    #[test]
+    fn tts_engine_falls_back_to_piper_where_fish_cannot_run() {
+        for v in ["fish", "provider:fish", "system", ""] {
+            assert_eq!(
+                tts_engine_for_platform(v, "macos-x64").as_deref(),
+                Some("piper"),
+                "{v:?}"
+            );
+            assert_eq!(tts_engine_for_platform(v, "windows-x64"), None, "{v:?}");
+            assert_eq!(tts_engine_for_platform(v, "macos-aarch64"), None, "{v:?}");
+        }
+        for v in ["piper", "provider:phonon"] {
+            assert_eq!(tts_engine_for_platform(v, "macos-x64"), None, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn the_migration_applies_the_fish_fallback_once() {
+        let fish_here = crate::managers::tts::availability::fish_supported(
+            crate::managers::tts::availability::current_platform_id(),
+        );
+        let stored = serde_json::json!({ "tts_engine": "system" });
+        let mut s: AppSettings = serde_json::from_value(stored.clone()).unwrap();
+        apply_settings_migrations(&mut s, &stored);
+        let expected = if fish_here { "system" } else { "piper" };
+        assert_eq!(s.tts_engine, expected);
+        // Idempotent: ein zweiter Lauf aendert nichts mehr an der Engine.
+        let again = serde_json::to_value(&s).unwrap();
+        apply_settings_migrations(&mut s, &again);
+        assert_eq!(s.tts_engine, expected);
     }
 
     #[test]
@@ -3090,7 +3259,11 @@ mod tests {
         let s: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
         assert_eq!(s.tts_port, 8080);
         assert_eq!(s.tts_max_chars, 5000);
-        assert_eq!(s.tts_engine, "fish", "ohne Engine-Key bleibt es bei Fish");
+        assert_eq!(
+            s.tts_engine,
+            default_tts_engine(),
+            "ohne Engine-Key gilt der Plattform-Standard"
+        );
     }
 
     /// P3a: das Feld `tts_providers` ist optional. Eine Datei aus der Zeit
@@ -3111,7 +3284,7 @@ mod tests {
 
         let d = get_default_settings();
         assert_eq!(d.tts_providers, Default::default());
-        assert_eq!(d.tts_engine, "fish", "der Standard bleibt Fish");
+        assert_eq!(d.tts_engine, default_tts_engine(), "der Plattform-Standard");
     }
 
     /// Eine Datei mit einem Teil des Feldes lädt mit Vorgaben für den Rest;

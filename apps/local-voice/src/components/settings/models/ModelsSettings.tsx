@@ -7,7 +7,7 @@ import { TabList } from "@/components/ui/TabList";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { LlmSection } from "./LlmSection";
 import { DictationSection } from "./DictationSection";
-import { VoicesSection } from "./VoicesSection";
+import { VoiceManager } from "./voices";
 
 export type ModelsArea = "llm" | "dictation" | "voices";
 type Area = ModelsArea;
@@ -94,7 +94,7 @@ export const ModelsSettings: React.FC = () => {
       <div role="tabpanel">
         {area === "llm" && <LlmSection query={query} />}
         {area === "dictation" && <DictationSection query={query} />}
-        {area === "voices" && <VoicesSection query={query} />}
+        {area === "voices" && <VoiceManager query={query} />}
       </div>
     </PageShell>
   );

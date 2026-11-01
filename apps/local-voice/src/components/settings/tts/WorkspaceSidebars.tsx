@@ -14,7 +14,8 @@ import { IconButton } from "../../ui/IconButton";
 import { Input } from "../../ui/Input";
 import { Dialog } from "../../ui/Dialog";
 import { useContextMenu } from "../../ui/ContextMenu";
-import { TabList } from "../../ui/TabList";
+import { createPortal } from "react-dom";
+import { useHelpDockSlot } from "../../shell/PageHeaderSlot";
 import { splitFileNameTail } from "@/lib/utils/exportName";
 import { HelpPanel } from "../../help/HelpPanel";
 import { PageExportDialog, PageImportDialog } from "./pages/PagePackageDialogs";
@@ -38,6 +39,7 @@ import {
   Rows2,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 
 /**
@@ -438,11 +440,6 @@ export const FilesSidebar: React.FC<{
   onToggle: () => void;
   /** Holt den Text einer erzeugten Aufnahme zurueck in den Editor. */
   onUseText?: (text: string) => void;
-  /** Zweiter Reiter der Leiste: Hilfe zu diesem Bereich, an Ort und Stelle.
-      Ohne `onTabChange` gibt es nur die Dateien. */
-  tab?: RightTab;
-  onTabChange?: (tab: RightTab) => void;
-  helpSection?: string;
   /** Breite in Pixeln (Ziehgriff) im Nebeneinander-Layout. */
   width?: number;
   /** Gestapelt unter der Bedienung: volle Spaltenbreite, füllt die Resthöhe. */
@@ -454,9 +451,6 @@ export const FilesSidebar: React.FC<{
   collapsed,
   onToggle,
   onUseText,
-  tab = "files",
-  onTabChange,
-  helpSection = "vorlesen",
   width,
   stacked = false,
   onLayoutToggle,
@@ -571,24 +565,11 @@ export const FilesSidebar: React.FC<{
       }
     >
       <div className="flex items-center justify-between pb-1">
-        {onTabChange ? (
-          <TabList<RightTab>
-            compact
-            tabs={[
-              { id: "files", label: t("tts.files.title") },
-              { id: "help", label: t("help.title") },
-            ]}
-            value={tab}
-            onChange={onTabChange}
-            ariaLabel={t("tts.files.tabsLabel")}
-          />
-        ) : (
-          <span className="text-xs font-semibold text-text/60">
-            {t("tts.files.title")}
-          </span>
-        )}
+        <span className="text-xs font-semibold text-text/60">
+          {t("tts.files.title")}
+        </span>
         <div className="flex items-center">
-          {tab === "files" && (
+          {(
             <>
               <IconButton
                 onClick={addFile}
@@ -630,8 +611,7 @@ export const FilesSidebar: React.FC<{
         </div>
       </div>
 
-      {tab === "help" && <HelpPanel section={helpSection} />}
-      {tab === "files" && (
+      {(
         <>
           {error && <p className="text-xs text-red-400 break-words">{error}</p>}
           {files.length === 0 && (
@@ -856,5 +836,35 @@ export const FilesSidebar: React.FC<{
         </p>
       </Dialog>
     </div>
+  );
+};
+
+/**
+ * Hilfe zu Vorlesen: dockt wie die Seitenhilfe aller Seiten (PageShell) als
+ * eigene Spalte am rechten Fensterrand an. Die Dateiliste bleibt, wo sie ist.
+ * Ohne Dock (Tests) steht sie nicht im Inhalt, sondern gar nicht.
+ */
+export const TtsHelpDock: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const { t } = useTranslation();
+  const dock = useHelpDockSlot();
+  if (!dock) return null;
+  return createPortal(
+    <aside
+      className="lv-helpdock__panel space-y-2"
+      aria-label={t("help.title")}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-text/50">
+          {t("help.title")}
+        </span>
+        <IconButton
+          onClick={onClose}
+          label={t("help.close")}
+          icon={<X width={14} height={14} />}
+        />
+      </div>
+      <HelpPanel section="vorlesen" />
+    </aside>,
+    dock,
   );
 };

@@ -8,8 +8,9 @@ import { mkdirSync } from "node:fs";
 
 type Call = { cmd: string; args: Record<string, any> };
 
-const SHOTS =
-  process.env.LV_SHOTS_DIR ?? "/mnt/project-files/sprachgespraech/umsetzung";
+// Abnahmebilder nur auf Wunsch (wie die anderen Bildstrecken): ein fester
+// Ablagepfad brach den Lauf auf Mac und Windows ab.
+const SHOTS = process.env.SCREENS_DIR ?? "";
 
 /** Ergänzungen der Attrappe: Einstellungen, gespeicherte Gesprächskonfiguration, Werkzeuge. */
 type Extra = {
@@ -1312,6 +1313,7 @@ test.describe("Screenshots @screenshots", () => {
   test("hell und dunkel, Menues, Einstellungen, schmal", async ({
     browser,
   }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
     mkdirSync(SHOTS, { recursive: true });
     const shoot = async (
       theme: "light" | "dark",
@@ -1390,7 +1392,8 @@ test.describe("Screenshots @screenshots", () => {
   test("Stufe 2: Einstellungen Modelle und Werkzeug-Statuszeile", async ({
     browser,
   }) => {
-    const dir = "/mnt/project-files/sprachgespraech/stufe2/";
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    const dir = `${SHOTS}/stufe2/`;
     mkdirSync(dir, { recursive: true });
     {
       const ctx = await browser.newContext({

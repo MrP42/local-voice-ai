@@ -31,7 +31,7 @@ Jede Seite ist ein Arbeitsblatt mit eigenem Text und eigenem Ordner. Die Liste z
 ## Stimmen
 
 - Ausgewählt wird in der Leiste über dem Player. Piper-Stimmen stehen dort mit Sprache und Qualität, etwa „Thorsten · Deutsch · HQ · Piper". Jeder Reiter merkt sich seine Stimme.
-- **Anbieter wie Phonon** (Einstellungen → Ausgabe → Sprachausgabe-Anbieter) lesen mit mehreren Sprechern, solange im Stimmenmenü „Phonon · Skript mit Sprechern" steht: `<Nele>` und `<Anton>` im Text schalten zwischen den Stimmen des Anbieters (Rechtsklick → „Sprecher einfügen"). Text ohne Sprecher liest die Standardstimme. Eine einzelne Stimme („Phonon · Nele") liest dagegen den ganzen Text. Emotions-Tags setzen diese Anbieter nicht um, nur Pausen.
+- **Anbieter wie Phonon** (Modelle → Vorlesen → Anbieter) lesen mit mehreren Sprechern, solange im Stimmenmenü „Phonon · Skript mit Sprechern" steht: `<Nele>` und `<Anton>` im Text schalten zwischen den Stimmen des Anbieters (Rechtsklick → „Sprecher einfügen"). Text ohne Sprecher liest die Standardstimme. Eine einzelne Stimme („Phonon · Nele") liest dagegen den ganzen Text. Emotions-Tags setzen diese Anbieter nicht um, nur Pausen.
 <!--if:fish-->
 - Anhören, klonen, importieren und löschen: **Einstellungen → Ausgabe**, oder direkt über „Stimmen verwalten …" am Ende der Stimmenliste.
 <!--/if:fish-->

@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // Issue #29 (Paket G2d): Stimmen werden nur angeboten, wenn ihre Laufzeit
 // vollstaendig und startfaehig ist; sonst stehen sie als "nicht eingerichtet"
@@ -57,11 +59,17 @@ const runtimeState = (piperReady: boolean, fishReady: boolean, fishSupported = t
   fish_dir: "C:\\AI\\fish-speech",
 });
 
+// Anbieterliste fuer die Verwaltung: die echten Daten, unveraendert.
+const PROVIDERS = JSON.parse(
+  readFileSync(resolve(process.cwd(), "tests", "fixtures", "tts-providers-real.json"), "utf8"),
+) as unknown[];
+
 async function setup(page: Page, cfg: Cfg) {
   page.on("pageerror", (error) => {
     throw error;
   });
-  await page.addInitScript((cfg: Cfg) => {
+  await page.addInitScript((arg: { cfg: Cfg; providers: unknown[] }) => {
+    const { cfg, providers } = arg;
     const callbacks = new Map<number, unknown>();
     let callback = 0;
     const w = window as unknown as Record<string, unknown>;
@@ -110,6 +118,7 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
           if (cmd === "tts_runtime_status") return cfg.runtime;
           if (cmd === "tts_list_downloads") return cfg.downloads;
+          if (cmd === "tts_providers_list") return w.__withProviders ? providers : null;
           if (cmd === "get_available_models") return cfg.models;
           if (cmd === "tts_list_voices" || cmd === "tts_list_voice_infos") return [];
           if (cmd === "pages_list") return [{ id: "p1", title: "Seite" }];
@@ -125,7 +134,7 @@ async function setup(page: Page, cfg: Cfg) {
         },
       },
     });
-  }, cfg);
+  }, { cfg, providers: PROVIDERS });
 }
 
 const openReadAloud = async (page: Page) => {
@@ -176,7 +185,8 @@ test("a downloaded Piper voice without a complete runtime is marked not set up, 
   // Bereich Vorlesen.
   await page.getByTestId("voice-setup-button").click();
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
-  const card = page.locator("[data-tts-download]", { hasText: "Thorsten" }).first();
+  // Die Stimme steht als Karte in der Stimmenverwaltung; der Weg zum Einrichten steht auf der Karte.
+  const card = page.locator("[data-voice-card]", { hasText: "Thorsten" }).first();
   await expect(card.getByText("Programm fehlt – nicht nutzbar")).toBeVisible();
   await card.getByRole("button", { name: "Programm installieren" }).click();
   const calls = await page.evaluate(() => (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls);
@@ -258,7 +268,7 @@ test("models: an unsupported Piper runtime is not offered for download, with the
     runtime: { ...runtimeState(false, false), platform: "macos-x64" },
     models: [],
   });
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "piper");
   await openGroup(page, "tts-available");
   const runtimeCard = page.locator('[data-tts-download="piper-runtime"]');
   await expect(runtimeCard.getByRole("button", { name: "Herunterladen" })).toHaveCount(0);
@@ -268,10 +278,26 @@ test("models: an unsupported Piper runtime is not offered for download, with the
 });
 
 /** Modellseite, gewuenschter Bereich (seit 06.10.2026 drei Bereiche). */
-async function openModelsArea(page: import("@playwright/test").Page, area: string) {
+async function openModelsArea(page: import("@playwright/test").Page, area: string, sheet?: string) {
+  // Die Anbieterliste liefert die Attrappe nur, wo die Verwaltung sie braucht (sonst bliebe die Vorlesen-Seite wie zuvor).
+  if (sheet) await page.addInitScript(() => ((window as unknown as { __withProviders: boolean }).__withProviders = true));
   await page.goto("/");
   await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
   await page.getByRole("tab", { name: area }).click();
+  if (sheet) await openProviderSheet(page, sheet);
+}
+/** Piper-/Phonon-Downloads stehen seit der Stimmenverwaltung im Seitenblatt ihres Anbieters (Ansicht "Anbieter"). */
+async function openProviderSheet(page: import("@playwright/test").Page, id: string) {
+  const close = page.getByTestId("voice-provider-sheet-close");
+  if (await close.isVisible()) {
+    await close.click();
+    await expect(page.getByTestId("voice-provider-sheet")).toHaveCount(0);
+  }
+  await page.getByTestId("voice-view-providers").click();
+  await page.getByTestId(`tts-provider-open-${id}`).click();
+  await expect(page.getByTestId("voice-provider-sheet")).toBeVisible();
+  // Phonon: die einzelnen Downloads stehen eingeklappt unter dem „Einrichten“-Bereich.
+  if (id === "phonon") await page.locator('[data-testid="phonon-downloads-details"] > summary').click();
 }
 async function openGroup(page: import("@playwright/test").Page, id: string) {
   const header = page.locator(`[data-model-section="${id}"] > div button[aria-expanded]`).first();
@@ -320,6 +346,7 @@ test("models: non-commercial Piper voices and Canary 1B carry a clear license wa
     runtime: runtimeState(false, false),
     models: [canary, whisper],
   });
+  await page.addInitScript(() => ((window as unknown as { __withProviders: boolean }).__withProviders = true));
   await openModelsArea(page, "Diktat");
   await openGroup(page, "asr-available");
   // Das Kennzeichen steht schon in der zugeklappten Zeile ...
@@ -335,6 +362,7 @@ test("models: non-commercial Piper voices and Canary 1B carry a clear license wa
   await expect(note).toContainText("nur für nicht-kommerzielle Nutzung");
   // Auch die nicht-kommerzielle Stimme warnt.
   await page.getByRole("tab", { name: "Vorlesen" }).click();
+  await openProviderSheet(page, "piper");
   await openGroup(page, "tts-available");
   const ryan = page.locator('[data-tts-download="en_US-ryan-high"]');
   await expect(ryan.getByText("Nur nicht-kommerziell")).toBeVisible();
@@ -357,7 +385,7 @@ test("models: Piper voices derived from a research/NC voice are marked non-comme
     runtime: runtimeState(false, false),
     models: [],
   });
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "piper");
   await openGroup(page, "tts-available");
   const thorsten = page.locator('[data-tts-download="de_DE-thorsten-high"]');
   const kerstin = page.locator('[data-tts-download="de_DE-kerstin-low"]');
@@ -381,7 +409,7 @@ test("help hides Fish content when Fish is not set up and shows it when it is", 
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: /Hilfe/ }).first().click();
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Sprachausgabe einrichten");
   await expect(help).not.toContainText("Zwei Engines");
@@ -397,7 +425,7 @@ test("help shows the Fish sections once Fish is set up", async ({ page }) => {
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: /Hilfe/ }).first().click();
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Zwei Engines");
   await expect(help).not.toContainText("Sprachausgabe einrichten");
@@ -512,9 +540,11 @@ const phononSetup = async (page: Page, downloads: unknown[]) => {
 
 test("models: Phonon program and models are offered with size incl. voices, license, access hint and an install path", async ({ page }) => {
   await phononSetup(page, [piperRow(), voiceRow(), phononRuntime(), phononDe(), phononEn()]);
-  await openModelsArea(page, "Vorlesen");
-  // Die Piper-Zeilen bleiben, wo sie waren; Phonon hat seinen eigenen Block.
+  // Die Piper-Zeilen stehen im Seitenblatt von Piper (ohne Phonon); Phonon hat sein eigenes.
+  await openModelsArea(page, "Vorlesen", "piper");
   await expect(page.locator('[data-models-section="voices"] [data-tts-download="de_DE-thorsten-medium"]')).toHaveCount(1);
+  await expect(page.locator('[data-models-section="phonon"]')).toHaveCount(0);
+  await openProviderSheet(page, "phonon");
   await expect(page.locator('[data-models-section="phonon"]').getByText("Phonon (experimentell)")).toBeVisible();
   await expect(page.locator('[data-models-section="phonon"] [data-tts-download="de_DE-thorsten-medium"]')).toHaveCount(0);
   await openGroup(page, "phonon-available");
@@ -571,7 +601,7 @@ test("models: installed Phonon parts sit under Installed and are deleted after a
     phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 37 }),
     phononDe(),
   ]);
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "phonon");
   const installed = page.locator('[data-model-section="phonon-installed"]');
   await expect(installed.locator("[data-model-row]")).toHaveCount(2);
   // Alle Stimmen da: weder Warnung noch Nachladen.
@@ -601,7 +631,7 @@ test("models: an installed Phonon model without its voices says so and reloads o
     phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 3 }),
     phononDe({ is_downloaded: true, is_usable: true, bundled_voices_present: 0 }),
   ]);
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "phonon");
   const installed = page.locator('[data-model-section="phonon-installed"]');
   const en = installed.locator('[data-tts-download="phonon-31m-en"]');
   await expect(en.getByText("Stimmen fehlen (3 von 37)")).toBeVisible();
@@ -635,7 +665,7 @@ test("models: an installed Phonon model without its program is marked, with a wa
     phononRuntime(),
     phononEn({ is_downloaded: true, is_usable: false, bundled_voices_present: 37 }),
   ]);
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "phonon");
   const en = page.locator('[data-model-section="phonon-installed"] [data-tts-download="phonon-31m-en"]');
   await expect(en.getByText("Programm fehlt – nicht nutzbar")).toBeVisible();
   await en.getByRole("button", { name: "Programm installieren" }).click();
@@ -650,7 +680,7 @@ test("models: Phonon shows progress, can be cancelled and reports a refused acce
     phononEn(),
     phononDe(),
   ]);
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "phonon");
   await openGroup(page, "phonon-available");
   await page.locator('[data-tts-download="phonon-31m-en"]').getByRole("button", { name: "Herunterladen" }).click();
   await page.evaluate(() =>
@@ -691,7 +721,7 @@ test("Bild der Modellseite mit Phonon (nur mit SCREENS_DIR)", async ({ page }) =
     phononEn({ is_downloaded: true, is_usable: true, bundled_voices_present: 3 }),
     phononDe(),
   ]);
-  await openModelsArea(page, "Vorlesen");
+  await openModelsArea(page, "Vorlesen", "phonon");
   await openGroup(page, "phonon-available");
   await openRow(page.locator('[data-tts-download="phonon-40m-de"]'));
   await expect(page.getByTestId("phonon-gated-note")).toBeVisible();

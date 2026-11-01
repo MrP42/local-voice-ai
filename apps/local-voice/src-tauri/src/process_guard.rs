@@ -282,9 +282,128 @@ pub fn spawn_memory_watchdog(stop_all: impl Fn(u64) + Send + 'static) {
         .expect("memory watchdog thread");
 }
 
+/// Kann diese Datei als Programm gestartet werden, ohne dass Windows einen Systemdialog zeigt?
+///
+/// Ein `.exe` ohne gültigen PE-Kopf (Platzhalter, abgebrochener Download, beschädigte Datei)
+/// würde Windows als 16-Bit-Anwendung deuten und den modalen Dialog „Nicht unterstützte
+/// 16 Bit-Anwendung“ öffnen – mitten in einer Synthese oder einem Testlauf. Deshalb wird
+/// vor jedem Start eigener Hilfsprogramme der Kopf geprüft. Nur `.exe` auf Windows; Skripte
+/// (`.cmd`, `.bat`) und andere Systeme bleiben unberührt (dort scheitert ein falsches Format
+/// still mit einem Fehlercode).
+pub fn check_launchable(path: &std::path::Path) -> Result<(), String> {
+    suppress_error_dialogs();
+    let is_exe = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+    if !(cfg!(windows) && is_exe) {
+        return Ok(());
+    }
+    let mut head = [0u8; 4096];
+    let n = {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path)
+            .map_err(|e| format!("{} lässt sich nicht öffnen: {e}", path.display()))?;
+        let mut filled = 0;
+        while filled < head.len() {
+            match f.read(&mut head[filled..]) {
+                Ok(0) => break,
+                Ok(k) => filled += k,
+                Err(e) => return Err(format!("{} ist nicht lesbar: {e}", path.display())),
+            }
+        }
+        filled
+    };
+    if looks_like_pe(&head[..n]) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} ist kein gültiges Windows-Programm (beschädigt oder unvollständig); bitte neu einrichten.",
+            path.display()
+        ))
+    }
+}
+
+/// PE-Kopf: `MZ`, Verweis auf `PE\0\0` innerhalb der ersten 4 KiB, bekannte Maschine
+/// (x64, ARM64, x86).
+pub(crate) fn looks_like_pe(head: &[u8]) -> bool {
+    if head.len() < 0x40 || &head[..2] != b"MZ" {
+        return false;
+    }
+    let e_lfanew = u32::from_le_bytes([head[0x3C], head[0x3D], head[0x3E], head[0x3F]]) as usize;
+    let Some(end) = e_lfanew.checked_add(6) else {
+        return false;
+    };
+    if e_lfanew < 0x40 || end > head.len() || &head[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
+        return false;
+    }
+    let machine = u16::from_le_bytes([head[e_lfanew + 4], head[e_lfanew + 5]]);
+    matches!(machine, 0x8664 | 0xAA64 | 0x014C)
+}
+
+/// Windows: Fehlerdialoge des Systems für diesen Prozess abschalten (kritische Fehler,
+/// Absturzdialog). Kindprozesse erben den Modus; Fehler kommen dann als Rückgabewert statt
+/// als modales Fenster. Einmal je Prozess.
+pub fn suppress_error_dialogs() {
+    #[cfg(windows)]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            use windows::Win32::System::Diagnostics::Debug::{
+                SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX,
+            };
+            // SAFETY: setzt nur ein Prozess-Flag, keine Zeiger.
+            unsafe {
+                SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pe(machine: u16) -> Vec<u8> {
+        let mut v = vec![0u8; 0x200];
+        v[..2].copy_from_slice(b"MZ");
+        v[0x3C..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        v[0x80..0x84].copy_from_slice(b"PE\0\0");
+        v[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn nur_echte_pe_programme_gelten_als_startbar() {
+        assert!(looks_like_pe(&pe(0x8664)));
+        assert!(looks_like_pe(&pe(0xAA64)));
+        assert!(!looks_like_pe(b"fixture"), "Platzhalter aus Tests");
+        assert!(!looks_like_pe(b"MZ"), "nur Signatur");
+        let mut dos = vec![0x90u8; 300_000];
+        dos[..2].copy_from_slice(b"MZ");
+        assert!(!looks_like_pe(&dos), "DOS-Kopf ohne PE");
+        assert!(!looks_like_pe(&pe(0x0200)), "Itanium/unbekannt");
+        let mut far = pe(0x8664);
+        far[0x3C..0x40].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(!looks_like_pe(&far), "Verweis hinter dem Kopf");
+    }
+
+    #[test]
+    fn platzhalter_exe_wird_vor_dem_start_abgelehnt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("piper.exe");
+        std::fs::write(&fake, b"fixture").unwrap();
+        let script = dir.path().join("fake.cmd");
+        std::fs::write(&script, b"@echo off").unwrap();
+        assert!(check_launchable(&script).is_ok(), "Skripte bleiben startbar");
+        if cfg!(windows) {
+            assert!(check_launchable(&fake).unwrap_err().contains("kein gültiges"));
+            let real = dir.path().join("echt.exe");
+            std::fs::write(&real, pe(0x8664)).unwrap();
+            assert!(check_launchable(&real).is_ok());
+        } else {
+            assert!(check_launchable(&fake).is_ok(), "nur Windows prüft den PE-Kopf");
+        }
+    }
 
     #[test]
     #[cfg(not(windows))]

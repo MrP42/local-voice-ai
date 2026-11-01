@@ -121,8 +121,13 @@ on the MacBook (from `apps/local-voice`, tag checked out,
 `TAURI_SIGNING_PRIVATE_KEY` exported):
 
 ```bash
+scripts/release-macos-check.sh          # preflight: tools, Rust targets, gh login, key, tag, release
 scripts/release-macos-local.sh          # aarch64 + x86_64; or: aarch64 | x86_64
 ```
+
+The Mac build is ad-hoc signed (`signingIdentity: "-"`), not notarized: the first install of a
+downloaded DMG needs right-click → Open (Gatekeeper); in-app updates are verified by the updater
+signature and are unaffected.
 
 It builds both DMGs, uploads DMG, `.app.tar.gz` and `.sig` to the release and
 merges the `darwin-*` entries into the release's `latest.json`. The Apple
@@ -178,7 +183,7 @@ Handy is a cross-platform desktop speech-to-text application built with Tauri 2.
   - `shared/`, `ui/`, `icons/`, `footer/` - Shared components
 - `hooks/useSettings.ts` - Settings state management hook
 - `stores/settingsStore.ts` - Zustand store for settings
-- `bindings.ts` - Auto-generated Tauri type bindings (via tauri-specta)
+- `bindings.ts` - Auto-generated Tauri type bindings (via tauri-specta). Headless neu erzeugen: in `src-tauri` `cargo run --example bindings_export -- ../src/bindings.ts` (Debug-Start der App schreibt sie ebenfalls).
 - `overlay/` - Recording overlay window entry point
 - `lib/types.ts` - Shared TypeScript type definitions
 

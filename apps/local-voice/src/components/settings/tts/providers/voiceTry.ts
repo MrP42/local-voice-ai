@@ -41,16 +41,31 @@ export const useTryingKey = (): string | null =>
     () => state?.key ?? null,
   );
 
+// Randfall: `voice === null` (Standardstimme) und `voice === ""` ergeben denselben
+// Schluessel `<anbieter>:`; eine Fish-Probe mit leerer Stimmen-Kennung (Phase ""
+// ohne Sprecher) bleibt davon getrennt, weil ihr Schluessel mit `fish:` beginnt.
 export const tryKey = (target: VoiceTryTarget): string =>
   target.kind === "fish"
     ? `fish:${target.voiceId}`
     : `${target.providerId}:${target.voice ?? ""}`;
+
+/** Wird gerufen, wenn eine Karten-Hoerprobe startet (z. B. um die Anbieter-Probestimme zu beenden). */
+const tryStartHooks = new Set<() => void>();
+export const onTryStart = (hook: () => void): (() => void) => {
+  tryStartHooks.add(hook);
+  return () => tryStartHooks.delete(hook);
+};
 
 const cancelRunning = () => {
   seq += 1;
   const requestId = state?.requestId;
   if (requestId) void commands.ttsProviderCancel(requestId).catch(() => null);
   set(null);
+};
+
+/** Laufende Karten-Hoerprobe beenden (Anbieter-Probestimme startet). */
+export const stopTry = () => {
+  if (state) cancelRunning();
 };
 
 let wired = false;
@@ -86,6 +101,7 @@ export async function toggleTry(target: VoiceTryTarget, text: string) {
   cancelRunning();
   stopSample();
   if (wasRunning) return;
+  tryStartHooks.forEach((h) => h());
   wire();
   const mine = seq;
   set({ key, requestId: null });

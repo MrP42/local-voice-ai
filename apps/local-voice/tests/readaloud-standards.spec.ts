@@ -159,10 +159,6 @@ async function openReadAloud(page: Page) {
   await expect(page.getByTestId("tts-pages")).toBeVisible();
   await expect(page.getByTestId("tts-files")).toBeVisible();
   // Erster Start zeigt den Reiter "Hilfe"; die Dateizeilen brauchen "Dateien".
-  await page
-    .getByTestId("tts-files")
-    .getByRole("tab", { name: "Dateien", exact: true })
-    .click();
   await expect(page.getByTestId("tts-files").getByText(AUDIO)).toBeVisible();
 }
 
@@ -236,40 +232,15 @@ test("editor tabs are real tabs with keyboard navigation and standard height", a
   );
 });
 
-test("files/help tabs are real tabs with keyboard navigation", async ({
+test("help opens in the dock and leaves the files list in place", async ({
   page,
 }) => {
   await openReadAloud(page);
   const files = page.getByTestId("tts-files");
-  const dateien = files.getByRole("tab", { name: "Dateien", exact: true });
-  const hilfe = files.getByRole("tab", { name: "Hilfe", exact: true });
-
-  await expect(dateien).toHaveAttribute("aria-selected", "true");
-  await dateien.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(hilfe).toBeFocused();
-  await expect(hilfe).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("help-panel")).toBeVisible();
-  await page.keyboard.press("Home");
-  await expect(dateien).toBeFocused();
-  await expect(dateien).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("End");
-  await expect(hilfe).toBeFocused();
-
-  // In der schmalen Leiste darf es kompakter sein, aber nicht unter 32 px.
-  expect((await size(dateien)).height).toBeGreaterThanOrEqual(32);
-  // Unterstrich statt Pille: kein Hintergrund, keine Großbuchstaben; inaktiv
-  // Regular (Fluent 2, Leitlinie §8), gewählt Semibold.
-  await expect(dateien.locator(".fui-Tab__content")).toHaveCSS(
-    "font-weight",
-    "400",
-  );
-  await expect(hilfe.locator(".fui-Tab__content")).toHaveCSS(
-    "font-weight",
-    "600",
-  );
-  await expect(dateien).toHaveCSS("text-transform", "none");
-  await expect(dateien).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(files.getByRole("tab")).toHaveCount(0);
+  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await expect(page.locator(".lv-helpdock").getByTestId("help-panel")).toBeVisible();
+  await expect(files).toBeVisible();
 });
 
 // Abnahme 0.20.4: beim Hover blendeten Umbenennen + Loeschen ein und schoben
