@@ -47,7 +47,8 @@ mod utils;
 mod voice_call; // Sprachgespräch mit der KI
 
 pub use cli::CliArgs;
-#[cfg(debug_assertions)]
+// Ohne cfg-Gate: `export_bindings` (headless Export) braucht die Typen auch im
+// Release-Build; sonst bricht `tauri build` ab (E0433).
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
 
