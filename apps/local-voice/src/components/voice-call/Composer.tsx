@@ -138,7 +138,7 @@ export const Composer: React.FC<ComposerProps> = ({
   }, [menuOpen]);
 
   const roundBtn =
-    "grid place-items-center w-9 h-9 shrink-0 rounded-full cursor-pointer transition-colors hover:bg-mid-gray/15 disabled:cursor-not-allowed disabled:opacity-50";
+    "grid place-items-center w-9 h-9 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded-full cursor-pointer transition-colors hover:bg-mid-gray/15 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <div className="flex justify-center px-4 pb-3 pt-2">
@@ -154,7 +154,9 @@ export const Composer: React.FC<ComposerProps> = ({
                 className="inline-flex items-center gap-1.5 h-7 ps-2.5 pe-1 rounded-md border border-mid-gray/25 bg-mid-gray/10 text-xs"
               >
                 <span className="truncate max-w-48">{a.label}</span>
-                {a.detail && <small className="text-text/50">{a.detail}</small>}
+                {a.detail && (
+                  <small className="text-text-muted">{a.detail}</small>
+                )}
                 <button
                   type="button"
                   className="grid place-items-center w-5 h-5 rounded cursor-pointer hover:bg-mid-gray/20"
@@ -181,7 +183,7 @@ export const Composer: React.FC<ComposerProps> = ({
             e.preventDefault();
             if (canSend) onSend();
           }}
-          className="block w-full resize-none border-0 bg-transparent px-2 py-1.5 text-sm text-text outline-none placeholder:text-text/40 min-h-9"
+          className="block w-full resize-none border-0 bg-transparent px-2 py-1.5 text-sm text-text outline-none placeholder:text-text-muted min-h-9"
         />
         <div
           className="flex items-center gap-1"
@@ -237,7 +239,7 @@ export const Composer: React.FC<ComposerProps> = ({
                         <span className="flex flex-col min-w-0">
                           <span>{item.label}</span>
                           {item.hint && (
-                            <span className="text-xs text-text/55">
+                            <span className="text-xs text-text-muted">
                               {item.hint}
                             </span>
                           )}
@@ -272,7 +274,7 @@ export const Composer: React.FC<ComposerProps> = ({
             <button
               type="button"
               data-testid="call-button"
-              className={`grid place-items-center w-9 h-9 shrink-0 rounded-full cursor-pointer transition-colors ${
+              className={`grid place-items-center w-9 h-9 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded-full cursor-pointer transition-colors ${
                 callAction.active
                   ? "bg-red-600 text-white hover:bg-red-700"
                   : "bg-text/90 text-background hover:opacity-80"
@@ -287,7 +289,7 @@ export const Composer: React.FC<ComposerProps> = ({
           {sending && onStop && (
             <button
               type="button"
-              className="grid place-items-center w-9 h-9 shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
+              className="grid place-items-center w-9 h-9 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
               aria-label={labels.stop}
               title={labels.stop}
               onClick={onStop}
@@ -302,7 +304,7 @@ export const Composer: React.FC<ComposerProps> = ({
           {canSend && (
             <button
               type="button"
-              className="grid place-items-center w-9 h-9 shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
+              className="grid place-items-center w-9 h-9 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded-full bg-logo-primary text-white cursor-pointer hover:opacity-90"
               aria-label={labels.send}
               title={labels.send}
               onClick={onSend}

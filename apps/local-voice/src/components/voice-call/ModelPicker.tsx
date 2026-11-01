@@ -130,16 +130,16 @@ export const ModelPicker: React.FC = () => {
             effort: activeEffort ? effortText(activeEffort) : "",
           })}
           title={t("voiceCall.model.title")}
-          className="inline-flex items-center gap-1 h-8 min-w-8 max-w-full rounded-full px-2 text-xs cursor-pointer hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary"
+          className="inline-flex items-center gap-1 h-8 min-w-8 max-sm:h-[44px] max-sm:min-w-[44px] max-w-full rounded-full px-2 text-xs cursor-pointer hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary"
         >
           <span className="truncate font-semibold text-text/90">{name}</span>
           {activeEffort && (
-            <span className="shrink-0 capitalize text-text/55 max-sm:hidden">
+            <span className="shrink-0 capitalize text-text-muted max-sm:hidden">
               {effortText(activeEffort)}
             </span>
           )}
           <ChevronDown
-            className="w-3 h-3 shrink-0 text-text/50"
+            className="w-3 h-3 shrink-0 text-text-muted"
             aria-hidden="true"
           />
         </button>

@@ -66,12 +66,12 @@ export const PermissionChip: React.FC = () => {
           data-testid="permission-chip"
           aria-label={t("voiceCall.permission.aria", { label })}
           title={t("voiceCall.permission.title")}
-          className="inline-flex items-center gap-1.5 h-8 min-w-8 max-w-full rounded-full px-2 text-xs cursor-pointer text-text/80 hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary"
+          className="inline-flex items-center gap-1.5 h-8 min-w-8 max-sm:h-[44px] max-sm:min-w-[44px] max-w-full rounded-full px-2 text-xs cursor-pointer text-text/80 hover:bg-mid-gray/15 border border-transparent focus-visible:border-logo-primary"
         >
           <Shield className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span className="truncate max-sm:hidden">{label}</span>
           <ChevronDown
-            className="w-3 h-3 shrink-0 text-text/50 max-sm:hidden"
+            className="w-3 h-3 shrink-0 text-text-muted max-sm:hidden"
             aria-hidden="true"
           />
         </button>

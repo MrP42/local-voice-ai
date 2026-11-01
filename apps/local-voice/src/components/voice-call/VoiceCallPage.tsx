@@ -433,7 +433,7 @@ export const VoiceCallPage: React.FC = () => {
                   aria-label={t("voiceCall.history.toggle")}
                   title={t("voiceCall.history.toggle")}
                   onClick={toggleHistory}
-                  className="grid place-items-center w-8 h-8 shrink-0 rounded cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text"
+                  className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text"
                 >
                   <PanelLeftOpen className="w-4 h-4" aria-hidden="true" />
                 </button>
@@ -510,7 +510,7 @@ export const VoiceCallPage: React.FC = () => {
             }}
           >
             <span
-              className={`items-center gap-2 px-2 text-xs text-text/70 ${
+              className={`items-center gap-2 px-2 text-xs text-text/85 ${
                 inCall || textBusy ? "inline-flex" : "inline-flex max-sm:hidden"
               }`}
             >
