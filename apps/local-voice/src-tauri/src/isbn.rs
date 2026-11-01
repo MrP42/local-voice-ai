@@ -28,11 +28,17 @@ pub struct IsbnBook {
 /// „ISBN 3-16-148410-X“ — mit Prüfziffer, sonst `None`.
 pub fn normalize_isbn(input: &str) -> Option<String> {
     let s = input.trim();
-    let s = s
-        .strip_prefix("ISBN")
-        .or_else(|| s.strip_prefix("isbn"))
-        .unwrap_or(s)
-        .trim_start_matches([':', ' ', '-'].as_ref());
+    // „ISBN“, „isbn“, „ISBN-13:“ … vorn abschneiden.
+    let s = match s.get(..4) {
+        Some(p) if p.eq_ignore_ascii_case("isbn") => {
+            let rest = &s[4..];
+            rest.strip_prefix("-13")
+                .or_else(|| rest.strip_prefix("-10"))
+                .unwrap_or(rest)
+        }
+        _ => s,
+    };
+    let s = s.trim_start_matches([':', ' ', '-', '\u{a0}'].as_ref());
     let chars: Vec<char> = s
         .chars()
         .filter(|c| !matches!(c, '-' | ' ' | '\u{2010}' | '\u{2011}'))
@@ -155,6 +161,14 @@ mod tests {
         assert_eq!(
             normalize_isbn("isbn: 0-306-40615-2").as_deref(),
             Some("0306406152")
+        );
+        assert_eq!(
+            normalize_isbn("ISBN-13: 978-3-16-148410-0").as_deref(),
+            Some("9783161484100")
+        );
+        assert_eq!(
+            normalize_isbn("Isbn-10: 3-16-148410-X").as_deref(),
+            Some("316148410X")
         );
         assert_eq!(normalize_isbn("978-3-16-148410-1"), None);
         assert_eq!(normalize_isbn("3-16-148410-9"), None);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog } from "../../../ui/Dialog";
 import { Button } from "../../../ui/Button";
@@ -38,16 +38,28 @@ export const IsbnDialog: React.FC<IsbnDialogProps> = ({
   const [isbn, setIsbn] = useState(initialIsbn);
   const [lookup, setLookup] = useState<Lookup>({ state: "idle" });
 
+  // Jede Abfrage bekommt eine Nummer; späte Antworten auf eine alte Eingabe
+  // oder einen früheren Dialog werden verworfen.
+  const request = useRef(0);
+
   useEffect(() => {
     if (!open) return;
+    request.current += 1;
     setIsbn(initialIsbn);
     setLookup({ state: "idle" });
   }, [open, initialIsbn]);
 
   const search = async () => {
     if (!isbn.trim() || lookup.state === "loading") return;
+    const id = ++request.current;
     setLookup({ state: "loading" });
-    const result = await commands.isbnLookup(isbn);
+    let result: Awaited<ReturnType<typeof commands.isbnLookup>>;
+    try {
+      result = await commands.isbnLookup(isbn);
+    } catch (e) {
+      result = { status: "error", error: String(e) };
+    }
+    if (id !== request.current) return;
     if (result.status === "error")
       setLookup({ state: "error", message: String(result.error) });
     else if (!result.data) setLookup({ state: "none" });
@@ -109,7 +121,8 @@ export const IsbnDialog: React.FC<IsbnDialogProps> = ({
             value={isbn}
             onChange={(e) => {
               setIsbn(e.target.value);
-              if (lookup.state !== "loading") setLookup({ state: "idle" });
+              request.current += 1;
+              setLookup({ state: "idle" });
             }}
             placeholder="978-3-…"
             className="w-full"

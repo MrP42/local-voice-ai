@@ -58,8 +58,11 @@ export function bookInfo(blocks: ReaderBlock[]): BookInfo | null {
       .join("")
       .replace(/\s+/g, " ")
       .trim();
-  // Eine Autorzeile, kein Satz: „von dort aus sah man das Meer.“ ist keine.
-  const authors = /^von (\p{Lu}[^.!?…]{0,200})$/u.exec(text(by))?.[1]?.trim();
+  // Eine Autorzeile, kein Satz: „von dort aus sah man das Meer.“ ist keine,
+  // Initialen („von A. B. Müller“) schon (wie TITLE_PAGE in isbn.ts).
+  const authors = /^von (\p{Lu}(?:[^!?…]{0,200}[^.!?…:;,])?)$/u
+    .exec(text(by))?.[1]
+    ?.trim();
   const title = text(head);
   return title && authors ? { title, authors } : null;
 }

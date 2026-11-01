@@ -995,3 +995,24 @@ test("ISBN: ohne Titelei wird eine vorangestellt", async ({ page }) => {
     /^Erstes Kapitel/,
   ]);
 });
+
+test("ISBN: Titelei mit Initialen wird ersetzt, nicht verdoppelt", async ({ page }) => {
+  await page.addInitScript((hit) => {
+    (window as unknown as { __isbn: unknown }).__isbn = hit;
+  }, ISBN_HIT);
+  await open(
+    page,
+    "# Alt\n\nvon A. B. Müller\n\nisbn 978-3-16-148410-1 (Druck), ISBN-13: 978-3-16-148410-0\n\n## Erstes Kapitel\n\nText.",
+  );
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("A. B. Müller");
+  await page.getByTestId("reader-isbn").click();
+  // Die erste ISBN hat eine falsche Prüfziffer: vorgeschlagen wird die gültige.
+  await expect(page.getByTestId("isbn-input")).toHaveValue("978-3-16-148410-0");
+  await page.getByTestId("isbn-search").click();
+  await page.getByTestId("isbn-apply").click();
+  await expect(page.getByTestId("reader-bookinfo")).toContainText("Ada Beispiel");
+  await expect(page.getByTestId("reader-contents-entry")).toHaveText([
+    /^Der Leuchtturm am Ende der Welt/,
+    /^Erstes Kapitel/,
+  ]);
+});

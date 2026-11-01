@@ -1756,6 +1756,9 @@ export const TtsSettings = () => {
       action: {
         label: t("tts.autotag.undo"),
         onClick: () => {
+          // Nur auf derselben Seite: sonst landete der alte Text per
+          // Autosave auf der jetzt offenen Seite.
+          if (activePageRef.current !== page) return;
           setText(previousText);
           if (page && oldTitle)
             void commands.pagesRename(page, oldTitle).then(() => reloadPages());
