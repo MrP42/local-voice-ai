@@ -530,10 +530,10 @@ mod dpapi {
                 as_key(&v).map(Some)
             }
             Err(e) if e.code() == NOT_FOUND => Ok(None),
-            Err(_) => Err(
-                "Der Schlüsselbund verweigert den Zugriff auf den Tresor (Zugriff in der Abfrage erlauben)."
-                    .to_string(),
-            ),
+            Err(e) => Err(format!(
+                "Der Schlüsselbund verweigert den Zugriff auf den Tresor (Zugriff in der Abfrage erlauben, Code {}).",
+                e.code()
+            )),
         }
     }
 
@@ -571,8 +571,11 @@ mod dpapi {
                 *slot = Some(k.clone());
                 return Ok(Some(k));
             }
-            Err(_) => {
-                return Err("Der Tresor-Schlüssel lässt sich nicht im Schlüsselbund ablegen.".to_string())
+            Err(e) => {
+                return Err(format!(
+                    "Der Tresor-Schlüssel lässt sich nicht im Schlüsselbund ablegen (Code {}).",
+                    e.code()
+                ))
             }
         }
         *slot = Some(fresh.clone());

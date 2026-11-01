@@ -301,7 +301,7 @@ mod tests {
         assert!(load(Some(tmp.path()), &env).is_some());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn der_eigene_zugang_hat_vorrang_vor_hf_token() {
         let tmp = tempfile::tempdir().unwrap();
