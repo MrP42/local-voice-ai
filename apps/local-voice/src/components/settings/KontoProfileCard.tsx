@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { Button } from "../ui/Button";
@@ -54,7 +55,11 @@ export const KontoProfileCard: React.FC = () => {
                   variant="secondary"
                   size="sm"
                   aria-label={labels.profilWechseln(name)}
-                  onClick={() => void konto.aktivieren(p.id)}
+                  onClick={() =>
+                    konto
+                      .aktivieren(p.id)
+                      .catch(() => toast.error(t("konto.wechselnFehler")))
+                  }
                 >
                   {t("konto.profileKarte.wechseln")}
                 </Button>

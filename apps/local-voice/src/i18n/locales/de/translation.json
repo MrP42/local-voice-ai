@@ -4338,6 +4338,7 @@
     "close": "Hilfe schließen"
   },
   "konto": {
+    "wechselnFehler": "Das Profil konnte nicht gewechselt werden.",
     "lokalesProfil": "Lokales Profil",
     "suite": "WAI Suite",
     "status": {

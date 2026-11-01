@@ -141,6 +141,9 @@ export function useKonto(): KontoAnsicht {
         }),
       );
       if (mein !== lauf.current) return;
+      const ids = new Set(alle.map((dto) => dto.id));
+      for (const id of bilder.current.keys())
+        if (!ids.has(id)) bilder.current.delete(id);
       setAktiv(profile[0]);
       setWeitere(profile.slice(1));
       setVerfuegbar(true);

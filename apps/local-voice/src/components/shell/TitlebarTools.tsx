@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Button as FluentButton,
@@ -269,7 +270,11 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
         weitereProfile={konto.weitere}
         onMeinProfil={() => onNavigate("profile")}
         onKontoGeraete={() => openSettingsTab("account")}
-        onProfilWechseln={(id) => void konto.aktivieren(id)}
+        onProfilWechseln={(id) =>
+          konto
+            .aktivieren(id)
+            .catch(() => toast.error(t("konto.wechselnFehler")))
+        }
         onProfilHinzufuegen={() => setProfilDialog(true)}
         labels={kontoLabels}
         className="lv-titlebar__profile"

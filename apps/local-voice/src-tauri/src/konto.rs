@@ -195,13 +195,13 @@ fn melden(app: &AppHandle) {
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_status(state: State<'_, KontoState>) -> Result<KontoStatus, String> {
+pub async fn konto_status(state: State<'_, KontoState>) -> Result<KontoStatus, String> {
     status_aus(state.speicher()?.lesen().map_err(fehler)?)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_aendern(
+pub async fn konto_aendern(
     app: AppHandle,
     state: State<'_, KontoState>,
     id: String,
@@ -217,7 +217,7 @@ pub fn konto_aendern(
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_aktivieren(
+pub async fn konto_aktivieren(
     app: AppHandle,
     state: State<'_, KontoState>,
     id: String,
@@ -230,7 +230,7 @@ pub fn konto_aktivieren(
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_anlegen(
+pub async fn konto_anlegen(
     app: AppHandle,
     state: State<'_, KontoState>,
     anzeigename: String,
@@ -249,12 +249,16 @@ pub fn konto_anlegen(
 /// Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`).
 #[tauri::command]
 #[specta::specta]
-pub fn konto_bild_setzen(
+pub async fn konto_bild_setzen(
     app: AppHandle,
     state: State<'_, KontoState>,
     id: String,
     bytes: String,
 ) -> Result<(), String> {
+    // Vor dem Dekodieren begrenzen: 256 KB Bild sind höchstens ~342 KB Base64.
+    if bytes.len() > 256 * 1024 / 3 * 4 + 8 {
+        return Err("Das Profilbild ist größer als 256 KB.".to_string());
+    }
     let png = B64
         .decode(bytes.trim())
         .map_err(|_| "Das Profilbild ist nicht lesbar.".to_string())?;
@@ -265,7 +269,7 @@ pub fn konto_bild_setzen(
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_bild_entfernen(
+pub async fn konto_bild_entfernen(
     app: AppHandle,
     state: State<'_, KontoState>,
     id: String,
@@ -277,7 +281,7 @@ pub fn konto_bild_entfernen(
 
 #[tauri::command]
 #[specta::specta]
-pub fn konto_bild_lesen(
+pub async fn konto_bild_lesen(
     state: State<'_, KontoState>,
     id: String,
 ) -> Result<Option<String>, String> {
