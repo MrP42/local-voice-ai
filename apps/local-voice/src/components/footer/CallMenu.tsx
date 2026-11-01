@@ -2,6 +2,8 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, MessageSquarePlus, Settings } from "lucide-react";
 import { useSettings } from "../../hooks/useSettings";
+import { useOsType } from "@/hooks/useOsType";
+import { formatKeyCombination } from "@/lib/utils/keyboard";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { MicLevelMeter } from "../settings/MicLevelMeter";
 import { VOICE_MANAGE, useVoiceChoice } from "../settings/tts/useVoiceChoice";
@@ -51,6 +53,9 @@ export const CallMenu: React.FC = () => {
   const openSettings = useVoiceCallStore((s) => s.openSettings);
   const pageOpen = useVoiceCallStore((s) => s.active);
   const hasMain = useVoiceCallStore((s) => s.mainConversationId !== null);
+  const osType = useOsType();
+  const binding = getSetting("bindings")?.voice_call?.current_binding ?? "";
+  const keys = binding ? formatKeyCombination(binding, osType) : "";
   const phase = useServerPhase();
   const { options, voiceValue, applyVoiceValue, openVoiceManagement } =
     useVoiceChoice(phase);
@@ -296,6 +301,14 @@ export const CallMenu: React.FC = () => {
           )}
 
           <div className="my-1 h-px bg-mid-gray/20" role="separator" />
+          {keys && (
+            <p
+              className="px-3 pt-1 pb-1 text-xs text-text/55"
+              role="presentation"
+            >
+              {t("voiceCall.footer.shortcutHint", { keys })}
+            </p>
+          )}
           {hasMain && (
             <button
               type="button"

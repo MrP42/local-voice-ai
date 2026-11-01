@@ -474,6 +474,12 @@ static OVERLAY_STATE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn show_overlay_state(app_handle: &AppHandle, state: &str) {
     OVERLAY_STATE_GENERATION.fetch_add(1, Ordering::AcqRel);
+    // Diktat, Hinweis oder Besprechungsanzeige uebernehmen das Overlay: das
+    // Gespraech zeigt sich erst wieder, wenn sie es freigegeben haben.
+    if !state.starts_with("call-") {
+        CALL_OVERLAY_SHOWN.store(false, Ordering::Release);
+        OTHER_OVERLAY_ACTIVE.store(true, Ordering::Release);
+    }
 
     // Whether the overlay shows at all is governed by overlay_style; position
     // only chooses Top vs Bottom placement. The "notice" state is exempt: it
@@ -764,6 +770,8 @@ pub fn hide_recording_overlay(app_handle: &AppHandle) {
 fn hide_overlay_window(app_handle: &AppHandle) {
     // Always hide the overlay regardless of settings - if setting was changed while recording,
     // we still want to hide it properly
+    OTHER_OVERLAY_ACTIVE.store(false, Ordering::Release);
+    CALL_OVERLAY_SHOWN.store(false, Ordering::Release);
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         let generation = OVERLAY_STATE_GENERATION.load(Ordering::Acquire);
         // Emit event to trigger fade-out animation
@@ -1006,14 +1014,20 @@ const CALL_OVERLAY_STATES: [&str; 4] = [
 /// es ausblenden (ein Diktat oder Hinweis, das inzwischen uebernommen hat, bleibt).
 static CALL_OVERLAY_SHOWN: AtomicBool = AtomicBool::new(false);
 
+/// Ein anderer Zustand (Diktat, Transkription, Hinweis, Besprechung) besitzt das
+/// Overlay, bis es ausgeblendet wird. Solange zeigt das Gespraech nichts.
+static OTHER_OVERLAY_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// Rein: Was soll ein Gespraechszustand am Overlay tun? `None` = nichts.
-/// Ein laufendes Diktat hat Vorrang; unbekannte Zustaende werden verworfen.
+/// `blocked`: ein Diktat, Hinweis oder die Besprechungsanzeige besitzt das Overlay,
+/// oder es ist abgeschaltet; dann zeigt und verbirgt das Gespraech nichts.
+/// Unbekannte Zustaende werden verworfen.
 pub(crate) fn call_overlay_action(
     state: Option<&str>,
-    dictating: bool,
+    blocked: bool,
     call_shown: bool,
 ) -> Option<Option<&'static str>> {
-    if dictating {
+    if blocked {
         return None;
     }
     match state {
@@ -1037,7 +1051,9 @@ pub fn voice_call_overlay(app: AppHandle, state: Option<String>) {
         .map(|m| m.is_recording())
         .unwrap_or(false);
     let shown = CALL_OVERLAY_SHOWN.load(Ordering::Acquire);
-    match call_overlay_action(state.as_deref(), dictating, shown) {
+    let style_off = settings::get_settings(&app).overlay_style == OverlayStyle::None;
+    let blocked = dictating || style_off || OTHER_OVERLAY_ACTIVE.load(Ordering::Acquire);
+    match call_overlay_action(state.as_deref(), blocked, shown) {
         Some(Some(s)) => {
             CALL_OVERLAY_SHOWN.store(true, Ordering::Release);
             show_overlay_state(&app, s);

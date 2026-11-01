@@ -430,6 +430,14 @@
   align-items: center;
   gap: 6px;
 }
+.scall-hear {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.scall-hear .swork-label {
+  padding-inline-end: 4px;
+}
 .scall-spin {
   width: 10px;
   height: 10px;

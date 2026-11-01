@@ -360,7 +360,7 @@ const RecordingOverlay: React.FC = () => {
         className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
       >
         <div
-          className={`scard compact scall ${hearing ? "" : "cworking"} ${state}`}
+          className={`scard compact scall cworking ${state}`}
           role="status"
           aria-label={`${t("overlay.call.title")}: ${label}`}
         >
@@ -378,7 +378,10 @@ const RecordingOverlay: React.FC = () => {
               </svg>
             </div>
             {hearing ? (
-              waveform
+              <span className="scall-hear">
+                <span className="swork-label">{label}</span>
+                {waveform}
+              </span>
             ) : state === "call-thinking" ? (
               <span className="swork-label">
                 <span className="sspinner scall-spin" />

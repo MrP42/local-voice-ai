@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   DEFAULT_CALL_CONFIG,
   DEFAULT_SYSTEM_PROMPT,
+  START_ABORTED,
   VoiceCallEngine,
   type CallConfig,
   type CallReady,
@@ -370,6 +371,8 @@ let engine: VoiceCallEngine | null = null;
 let lineId = 0;
 /** Zählt Text-Anfragen, damit nur die jüngste `textBusy` zurücksetzt. */
 let textRun = 0;
+/** `toggleMainCall` läuft gerade (Tastenkürzel oder Telefon). */
+let toggling = false;
 /** Zählt Besuche der Seite: ein spätes `leave()` (StrictMode, schneller Rückweg) darf einen neuen Besuch nicht abmelden. */
 let visit = 0;
 /**
@@ -412,8 +415,16 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     engine = new VoiceCallEngine(
       {
         // Endet der Anruf (auch durch einen Fehler), gehört kein Anruf mehr zum Hauptgespräch.
-        onState: (state) =>
-          set(state === "idle" ? { state, mainCall: false } : { state }),
+        onState: (state) => {
+          if (state !== "idle") {
+            set({ state });
+            return;
+          }
+          // Endet ein Hauptgespräch (auch durch einen Fehler), die letzte Zeile mitspeichern.
+          const wasMain = get().mainCall;
+          set({ state, mainCall: false });
+          if (wasMain) flushLines(true);
+        },
         // Der Pegel läuft am Store vorbei: 50 Bilder je Sekunde gehören nicht in den Zustand.
         onLevel: (level) => levelListeners.forEach((fn) => fn(level)),
         onUser: (text, turnId) => {
@@ -682,6 +693,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
   const clearMain = (): void => {
     saveMainConversationId(null);
     target.main = false;
+    engine?.setHistoryLimit(undefined);
     set({ mainConversationId: null });
   };
 
@@ -694,6 +706,43 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       await get().newConversation();
     target.main = true;
     engine?.setHistoryLimit(MAIN_HISTORY_LIMIT);
+  };
+
+  /** Kern von `toggleMainCall`; läuft nie zweimal gleichzeitig. */
+  const toggleMain = async (): Promise<void> => {
+    const { state, mainCall } = get();
+    if (state !== "idle" && mainCall) {
+      await get().stopCall();
+      return;
+    }
+    // Ein Anruf in einem anderen Gespräch endet, bevor das Hauptgespräch spricht.
+    if (state !== "idle") await get().stopCall();
+    // Erst fertig speichern: ein gerade angelegtes Hauptgespräch kennt dann seine Kennung.
+    await persistChain;
+    const mainId = get().mainConversationId;
+    if (mainId && get().conversationId !== mainId) {
+      set({ error: null });
+      await get().openConversation(mainId);
+      if (get().conversationId !== mainId) {
+        // Ohne Fehler hat ein anderer Wechsel übernommen: nichts starten.
+        if (!get().error) return;
+        // Gelöscht oder nicht lesbar: ein neues Hauptgespräch beginnt.
+        clearMain();
+        set({ error: null });
+        await startFreshMain();
+      }
+    } else if (!mainId) {
+      await startFreshMain();
+    } else {
+      target.main = true;
+    }
+    if (get().switching) return;
+    // Kontext klein halten: nur die jüngsten Wechsel, nach langer Pause gar keiner.
+    getEngine().setHistoryLimit(MAIN_HISTORY_LIMIT);
+    getEngine().setHistory(compactMainHistory(get().lines, Date.now()));
+    set({ mainCall: true });
+    await get().startCall();
+    if (get().state === "idle") set({ mainCall: false });
   };
 
   return {
@@ -749,7 +798,9 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       try {
         set({ ready: await getEngine().start() });
       } catch (e) {
-        set({ error: String(e) });
+        // Gestoppt, bevor der Start fertig war: kein Fehler.
+        if (!(e instanceof Error && e.message === START_ABORTED))
+          set({ error: String(e) });
       }
     },
 
@@ -858,6 +909,10 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             entryIds.set(l.id, e.id);
             return l;
           });
+        // Das Limit des Ziels gilt schon beim Laden (Hauptgespräch: kompakt).
+        getEngine().setHistoryLimit(
+          id === get().mainConversationId ? MAIN_HISTORY_LIMIT : undefined,
+        );
         getEngine().setHistory(
           lines.map((l) => ({
             role: l.role,
@@ -950,40 +1005,27 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     },
 
     toggleMainCall: async () => {
-      if (get().switching) return;
-      const { state, mainCall } = get();
-      if (state !== "idle" && mainCall) {
-        await get().stopCall();
+      // Ein Druck während eines laufenden Umschaltens: läuft gerade der Start, bricht er
+      // ihn ab (der Start kann lange laden); sonst wird er verworfen. Nie zwei Starts.
+      if (toggling) {
+        if (get().state === "starting") await engine?.stop();
         return;
       }
-      // Ein Anruf in einem anderen Gespräch endet, bevor das Hauptgespräch spricht.
-      if (state !== "idle") await get().stopCall();
-      const mainId = get().mainConversationId;
-      if (mainId && get().conversationId !== mainId) {
-        await get().openConversation(mainId);
-        // Gelöscht oder nicht lesbar: ein neues Hauptgespräch beginnt.
-        if (get().conversationId !== mainId) {
-          clearMain();
-          await startFreshMain();
-        }
-      } else if (!mainId) {
-        await startFreshMain();
-      } else {
-        target.main = true;
-      }
       if (get().switching) return;
-      // Kontext klein halten: nur die jüngsten Wechsel, nach langer Pause gar keiner.
-      getEngine().setHistoryLimit(MAIN_HISTORY_LIMIT);
-      getEngine().setHistory(compactMainHistory(get().lines, Date.now()));
-      set({ mainCall: true });
-      await get().startCall();
-      if (get().state === "idle") set({ mainCall: false });
+      toggling = true;
+      try {
+        await toggleMain();
+      } finally {
+        toggling = false;
+      }
     },
 
     newMainConversation: async () => {
+      const wasOpen = target.main;
       if (get().state !== "idle" && get().mainCall) await get().stopCall();
       clearMain();
-      if (target.main) await startFreshMain();
+      // Ist das alte Hauptgespräch offen, beginnt gleich ein leeres als neues.
+      if (wasOpen) await startFreshMain();
     },
   };
 });

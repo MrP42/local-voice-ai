@@ -6570,6 +6570,7 @@
         "end": "End conversation"
       },
       "newMain": "Start a new main conversation",
+      "shortcutHint": "Main conversation shortcut: {{keys}}",
       "title": "Conversation: microphone, voice and flow",
       "microphone": "Microphone",
       "output": "Output",

@@ -6570,6 +6570,7 @@
         "end": "Gespräch beenden"
       },
       "newMain": "Neues Hauptgespräch beginnen",
+      "shortcutHint": "Hauptgespräch per Tastenkürzel: {{keys}}",
       "title": "Gespräch: Mikrofon, Stimme und Sprachfluss",
       "microphone": "Mikrofon",
       "output": "Ausgabe",
