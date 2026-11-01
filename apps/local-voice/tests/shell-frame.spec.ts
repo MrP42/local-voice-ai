@@ -124,6 +124,22 @@ test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts
   await diagnose.click();
   await expect(diagnose).toHaveAttribute("aria-expanded", "false");
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
+  // Eingeklappt bleibt eingeklappt (auch nach Neustart), Ausklappen holt alles zurück
+  await page.reload();
+  await expect(bar.getByTestId("statusbar-diagnose")).toHaveAttribute("aria-expanded", "false");
+  await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
+  await bar.getByTestId("statusbar-diagnose").click();
+  await expect(bar.locator("[data-resource-meter]")).toBeVisible();
+  await expect(bar.locator("[data-compliance-shield]")).toBeVisible();
+  // Abschalten im Menü entfernt auch den Knopf
+  await oeffneProfilmenue(page);
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await menue.locator('[data-profilmenue="diagnose"]').click();
+  await page.keyboard.press("Escape");
+  await expect(bar.getByTestId("statusbar-diagnose")).toHaveCount(0);
+  await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
 });
 
 test("Profilmenü ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) => {
@@ -242,8 +258,13 @@ test("Modulkopf: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", as
   const kopf = page.locator(".page-shell__head");
   await expect(kopf.locator("#page-title")).toHaveText("Verlauf");
   await expect(page.locator(".page-shell__description")).toHaveCount(0);
-  await kopf.getByTestId("page-info").hover();
-  await expect(page.getByRole("tooltip")).toBeVisible();
+  // Titel-ⓘ: nur die Kurzbeschreibung, als Beschreibung am Knopf verknüpft
+  const info = kopf.getByTestId("page-info");
+  await info.hover();
+  const tip = page.getByRole("tooltip");
+  await expect(tip).toHaveText("Texte wiederfinden, kopieren und Aufnahmen anhören.");
+  await expect(info).toHaveAccessibleDescription("Texte wiederfinden, kopieren und Aufnahmen anhören.");
+  await expect(tip.locator("a, button")).toHaveCount(0);
   await page.keyboard.press(isMac ? "Meta+k" : "Control+k");
   await expect(kopf.getByRole("searchbox")).toBeFocused();
   // E4: kein Hilfe-Knopf auf der Seite, F1 öffnet die Seitenhilfe
