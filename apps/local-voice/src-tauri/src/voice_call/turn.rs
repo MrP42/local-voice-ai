@@ -73,9 +73,21 @@ fn resolve(
     settings: &AppSettings,
     model_id: &str,
     stufe: &str,
+    function: Option<&str>,
 ) -> Result<ResolvedProvider, String> {
     let mut chosen = settings.clone();
     chosen.llm_active_model_id = Some(model_id.to_string());
+    // Effort der Funktion (Modelle je Funktion), nur wenn sie genau dieses Modell gewaehlt hat.
+    let effort = function
+        .and_then(|f| settings.function_model(f))
+        .filter(|f| f.model_id == model_id)
+        .and_then(|f| f.effort.clone())
+        .filter(|e| !e.trim().is_empty());
+    if let Some(effort) = effort {
+        if let Some(m) = chosen.llm_models.iter_mut().find(|m| m.id == model_id) {
+            m.effort = Some(effort);
+        }
+    }
     let assessment = {
         let (connection, _) = chosen
             .active_llm_model()
@@ -96,6 +108,7 @@ pub async fn voice_call_turn(
     messages: Vec<VoiceCallMessage>,
     model_id: String,
     stufe: String,
+    for_function: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
@@ -106,7 +119,8 @@ pub async fn voice_call_turn(
         return Ok(String::new());
     }
     let settings = crate::settings::get_settings(&app);
-    let (provider, model, api_key) = resolve(&settings, &model_id, &stufe)?;
+    let (provider, model, api_key) =
+        resolve(&settings, &model_id, &stufe, for_function.as_deref())?;
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
@@ -184,7 +198,7 @@ mod tests {
     #[test]
     fn unknown_model_is_refused() {
         let settings = crate::settings::get_default_settings();
-        let err = resolve(&settings, "gibt-es-nicht:modell", "frei").unwrap_err();
+        let err = resolve(&settings, "gibt-es-nicht:modell", "frei", None).unwrap_err();
         assert!(err.contains("nicht verfügbar"));
     }
 

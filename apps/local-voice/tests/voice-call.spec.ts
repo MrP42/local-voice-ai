@@ -1126,6 +1126,40 @@ test.describe("Sprachgespraech Orchestrator", () => {
     await expect(page.getByText("220 Token")).toBeVisible();
   });
 
+  test("Modell je Funktion: der Sprecher folgt function_models.voice_speaker", async ({
+    page,
+  }) => {
+    // Standardmodell ist Sonnet (Protokoll usw.), fürs Gespräch gilt Gemma lokal.
+    await install(page, "light", {
+      settings: {
+        ...LOCAL_SPEAKER,
+        llm_active_model_id: "cli:sonnet",
+        function_models: { voice_speaker: { model_id: "loc:gemma", effort: null } },
+      },
+      config: orchestration({
+        denkerModelId: "cli:sonnet",
+        souveraenitaet: "frei",
+        useTools: false,
+      }),
+    });
+    await openPage(page);
+    await replies(page, [
+      '\u27e6werkzeug denker_fragen {"frage":"Was ist ein Qubit?"}\u27e7',
+      "Ein Qubit ist die Recheneinheit eines Quantencomputers.",
+    ]);
+    await send(page, "Was ist ein Qubit?");
+    await expect(
+      page
+        .getByRole("log")
+        .getByText("Ein Qubit ist die Recheneinheit eines Quantencomputers."),
+    ).toBeVisible();
+    const turns = await calls(page, "voice_call_turn");
+    expect(turns.map((c) => [c.args.modelId, c.args.forFunction])).toEqual([
+      ["loc:gemma", "voice_speaker"],
+      ["cli:sonnet", null],
+    ]);
+  });
+
   test("Denker-Übergabe: zweites Modell antwortet, beide Verbräuche zählen", async ({
     page,
   }) => {

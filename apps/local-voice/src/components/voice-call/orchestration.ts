@@ -329,6 +329,34 @@ function wireMessages(
 
 let turnCounter = 0;
 
+/** Funktion des Sprechers in `function_models` (wie `FN_VOICE_SPEAKER` in Rust). */
+export const VOICE_SPEAKER = "voice_speaker";
+
+type SpeakerSettings = Pick<
+  AppSettings,
+  "function_models" | "llm_active_model_id" | "llm_models" | "llm_connections"
+>;
+
+/**
+ * Kennung des Sprechers wie in Rust (`for_function`): das Modell der Funktion
+ * „Sprachgespräch“, wenn es freigegeben und seine Verbindung an ist, sonst das
+ * Standardmodell. Gilt für Orchestrator, Infozeile und Gesprächseinstellungen.
+ */
+export function speakerModelId(s: Partial<SpeakerSettings>): string | null {
+  const chosen = s.function_models?.[VOICE_SPEAKER]?.model_id;
+  const on = new Set(
+    (s.llm_connections ?? [])
+      .filter((c) => c.enabled !== false)
+      .map((c) => c.id),
+  );
+  const selectable =
+    !!chosen &&
+    (s.llm_models ?? []).some(
+      (m) => m.id === chosen && m.enabled !== false && on.has(m.connection_id),
+    );
+  return selectable ? chosen : (s.llm_active_model_id ?? null);
+}
+
 /**
  * Ein Modell als `VoiceModel`: jeder Durchgang ist ein `voice_call_turn` mit eigener Kennung
  * (so bricht der Abbruch genau ihn ab) und ausdrücklicher Modellkennung samt Souveränitätsstufe
@@ -339,6 +367,7 @@ function makeModel(
   info: ModelDescription,
   stufe: Souveraenitaet,
   deps: OrchestrationDeps,
+  forFunction: string | null = null,
 ): VoiceModel {
   return {
     id: info.id,
@@ -373,6 +402,7 @@ function makeModel(
           messages: wireMessages(req.messages),
           modelId: info.id,
           stufe,
+          forFunction,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
@@ -454,9 +484,9 @@ async function loadModels(): Promise<LoadedModels> {
   if (!settings || settings.status !== "ok")
     return { active: null, all: [], knowledge: NO_KNOWLEDGE };
   const all = describeModels(settings.data, assessedById(compliance));
-  const activeId = settings.data.llm_active_model_id ?? null;
+  const speakerId = speakerModelId(settings.data);
   return {
-    active: all.find((m) => m.id === activeId) ?? null,
+    active: all.find((m) => m.id === speakerId) ?? null,
     all,
     knowledge: knowledgeFrom(settings.data),
   };
@@ -574,7 +604,7 @@ export class OrchestrationSession {
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
     this.side = createOrchestrator({
-      sprecher: makeModel(active, stufe, deps),
+      sprecher: makeModel(active, stufe, deps, VOICE_SPEAKER),
       denker: denker ? makeModel(denker, stufe, deps) : undefined,
       tools: offered,
       bereich: SESSION_BEREICH,

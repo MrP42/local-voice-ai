@@ -232,6 +232,8 @@ fn should_suppress_final_paste(source: TranscriptionSource, stream_injected_any:
 }
 
 async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
+    // Modelle je Funktion: die Nachbearbeitung nutzt ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_DICTATION_REFINE);
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
         return None;

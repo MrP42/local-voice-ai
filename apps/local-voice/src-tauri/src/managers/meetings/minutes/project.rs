@@ -862,6 +862,8 @@ async fn run_project_minutes(
     guard: &MinutesRunGuard,
     on_progress: ProgressFn<'_>,
 ) -> Result<ProjectMinutes, MinutesError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let started = std::time::Instant::now();
     let project = store
         .folders_list()

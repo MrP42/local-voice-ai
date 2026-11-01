@@ -101,7 +101,9 @@ fn usage_payload(calls: &[CapturedCall]) -> serde_json::Value {
 #[specta::specta]
 pub async fn voice_call_start(app: AppHandle) -> Result<VoiceCallReady, String> {
     let started = Instant::now();
-    let settings = crate::settings::get_settings(&app);
+    // Der Sprecher des Gespraechs: eigenes Modell (Modelle je Funktion), sonst das Standardmodell.
+    let settings =
+        crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let mut warnings = Vec::new();
 
     let (llm, llm_local) = match crate::managers::meetings::llm_call::resolve_provider(&settings) {
@@ -180,7 +182,8 @@ pub async fn voice_call_chat(
     {
         return Ok(String::new());
     }
-    let settings = crate::settings::get_settings(&app);
+    let settings =
+        crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let (provider, model, api_key) =
         crate::managers::meetings::llm_call::resolve_provider(&settings)?;
     let messages: Vec<StreamMessage> = messages
