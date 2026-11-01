@@ -344,4 +344,9 @@ test("Spielerleiste: Fortschritt, Satz n von m und Tooltips", async ({ page }) =
   await page.getByTestId("reader-sleep").click();
   await page.getByRole("menuitemradio", { name: "15 Minuten" }).click();
   await expect(page.getByTestId("reader-sleep")).toContainText("noch 15 min");
+  // Escape schließt die Auswahl wieder.
+  await page.getByTestId("reader-sleep").click();
+  await expect(page.getByRole("menu", { name: "Timer" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu", { name: "Timer" })).toHaveCount(0);
 });

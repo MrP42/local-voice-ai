@@ -25,7 +25,12 @@ interface Stream {
   mapEnd: number[];
 }
 
-const fold = (c: string) => c.toLocaleLowerCase("de");
+/** Kleinschreibung je Zeichen; Faltungen, die die Länge ändern („İ“), bleiben
+ *  unverändert, damit Strom und Offset-Karte gleich lang bleiben. */
+const fold = (c: string) => {
+  const f = c.toLocaleLowerCase("de");
+  return f.length === c.length ? f : c;
+};
 
 /** Sichtbaren Text aller Blöcke als normalisierten Strom mit Offsets bauen. */
 export function buildStream(blocks: ReaderBlock[]): Stream {
@@ -60,14 +65,16 @@ export function buildStream(blocks: ReaderBlock[]): Stream {
 
 /** Den gemeldeten Satz so normalisieren wie den Strom. */
 export function normalizeSentence(sentence: string): string {
-  return fold(
-    sentence
+  return [
+    ...sentence
       .replace(/<[^<>\n]{1,60}>/g, " ")
       .replace(/\[[^\]\n]*\]/g, " ")
       .replace(/\*\*|(^|\s)[*_]|[*_](?=\s|$)/g, "$1")
       .replace(/\s+/g, " ")
       .trim(),
-  );
+  ]
+    .map(fold)
+    .join("");
 }
 
 export class SentenceLocator {

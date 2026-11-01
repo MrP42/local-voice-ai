@@ -286,7 +286,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     if (p < page || p >= page + geo.perView) setPage(clampPage(p));
   }, [current, follow, geo, pageOfElement, clampPage]);
 
-  const currentPage = current ? pageOfElement(curEl()) : null;
+  // Nach dem Commit messen: im Render stünde noch das DOM der Vorgängerfassung.
+  const [currentPage, setCurrentPage] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    setCurrentPage(current ? pageOfElement(curEl()) : null);
+  }, [current, geo, pageOfElement]);
   useEffect(() => {
     onPageInfo?.({ page, pages: geo.pages, perView: geo.perView, currentPage });
   }, [page, geo.pages, geo.perView, currentPage, onPageInfo]);
@@ -394,6 +398,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           }}
           onKeyDown={onKeyDown}
           onClick={onClick}
+          onFocus={(e) => {
+            // Fokus auf einer verdeckten Seite (Tab auf einen Sprecher):
+            // der Browser scrollt sonst den Rahmen zusätzlich zur Verschiebung.
+            if (bookRef.current) bookRef.current.scrollLeft = 0;
+            if (e.target === e.currentTarget) return;
+            const p = pageOfElement(e.target);
+            if (p !== null && (p < page || p >= page + geo.perView)) {
+              setPage(clampPage(p));
+              if (current) onFollowChange(false);
+            }
+          }}
           onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
           onTouchEnd={(e) => {
             if (touchX.current === null) return;

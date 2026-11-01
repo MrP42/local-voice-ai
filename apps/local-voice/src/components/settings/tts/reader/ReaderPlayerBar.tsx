@@ -73,6 +73,19 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const onSleepRef = useRef(onSleep);
   onSleepRef.current = onSleep;
 
+  // Escape schließt die offenen Auswahlen (Tempo, Schlaf-Timer).
+  useEffect(() => {
+    if (!speedOpen && !sleepOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setSpeedOpen(false);
+      setSleepOpen(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [speedOpen, sleepOpen]);
+
   useEffect(() => {
     if (sleepUntil === null) return;
     const id = window.setInterval(() => {
@@ -130,8 +143,12 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             onSeekFraction(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
           }}
           onKeyDown={(e) => {
-            if (e.key === "ArrowRight") onJumpToPage(Math.min(pages - 1, shownPage));
-            else if (e.key === "ArrowLeft") onJumpToPage(Math.max(0, shownPage - 2));
+            if (e.key === "ArrowRight" || e.key === "PageDown")
+              onJumpToPage(Math.min(pages - 1, shownPage));
+            else if (e.key === "ArrowLeft" || e.key === "PageUp")
+              onJumpToPage(Math.max(0, shownPage - 2));
+            else if (e.key === "Home") onJumpToPage(0);
+            else if (e.key === "End") onJumpToPage(pages - 1);
             else return;
             e.preventDefault();
           }}

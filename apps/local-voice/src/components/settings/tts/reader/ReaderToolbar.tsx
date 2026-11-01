@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BookOpen, Check, Eye, FileText, PenLine, Type } from "lucide-react";
 
@@ -48,6 +48,16 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
 }) => {
   const { t } = useTranslation();
   const [menu, setMenu] = useState(false);
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setMenu(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [menu]);
   const twoTitle = twoPagesTooNarrow
     ? t("tts.reader.twoPagesTooNarrow")
     : t("tts.reader.twoPages");

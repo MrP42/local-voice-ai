@@ -687,11 +687,21 @@ export const TtsSettings = () => {
     // Die Engine bekommt den Text ohne Markdown (lva#148); der Offset wandert
     // mit — ebenso beim Umschreiben der Tags in die englische Form.
     const script = toSpokenScript(spokenText);
+    // Offset über eine Marke im ganzen Text abbilden statt über den
+    // abgeschnittenen Anfang: ein Schnitt in *kursiv* oder einer Überschrift
+    // verschöbe sonst die Stelle um ein Zeichen.
+    const MARK = "\uE000";
     const scriptOffset =
       script === spokenText
         ? charOffset
-        : toSpokenScript(spokenText.slice(0, charOffset)).length;
+        : Math.max(
+            0,
+            toSpokenScript(
+              spokenText.slice(0, charOffset) + MARK + spokenText.slice(charOffset),
+            ).indexOf(MARK),
+          );
     locatorRef.current?.reset(charOffset);
+    lastLocated.current = null;
     const canon = canonicalizeTagsAt(script, scriptOffset);
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
@@ -748,6 +758,7 @@ export const TtsSettings = () => {
     setTruncated(null);
     sessionTab.current = tab;
     locatorRef.current?.reset(0);
+    lastLocated.current = null;
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
@@ -1062,22 +1073,49 @@ export const TtsSettings = () => {
   const locator = useMemo(() => new SentenceLocator(readerBlocks), [readerBlocks]);
   locatorRef.current = locator;
   const [readRange, setReadRange] = useState<SourceRange | null>(null);
-  const lastReadIndex = useRef<number | null>(null);
+  const readRangeRef = useRef<SourceRange | null>(null);
+  readRangeRef.current = readRange;
+  /** Zuletzt geortete Meldung; null nach Start einer neuen Sitzung. */
+  const lastLocated = useRef<{
+    sentence: string;
+    index: number | null;
+    locator: SentenceLocator;
+  } | null>(null);
   useEffect(() => {
     if (!currentSentence || sessionTab.current !== tab) {
       if (!currentSentence) setReadRange(null);
       return;
     }
-    // Ein Sprung zurück: von vorn suchen, sonst träfe die Vorwärtssuche den
-    // nächsten gleichlautenden Satz.
+    const last = lastLocated.current;
+    // Dieselbe Meldung (der Fortschritt setzt den Index nur zurück) nicht
+    // erneut suchen: die Vorwärtssuche träfe sonst ein späteres Vorkommen.
     if (
-      currentIndex !== null &&
-      lastReadIndex.current !== null &&
-      currentIndex < lastReadIndex.current
+      last &&
+      last.locator === locator &&
+      last.sentence === currentSentence &&
+      (currentIndex === null || currentIndex === last.index)
     ) {
+      return;
+    }
+    if (last && last.locator !== locator) {
+      // Neuer Text oder Sprecher während der Wiedergabe: an der bisherigen
+      // Stelle weitersuchen, nicht am Anfang.
+      locator.reset(readRangeRef.current?.start ?? 0);
+    } else if (
+      last &&
+      currentIndex !== null &&
+      last.index !== null &&
+      currentIndex < last.index
+    ) {
+      // Ein Sprung zurück: von vorn suchen, sonst träfe die Vorwärtssuche den
+      // nächsten gleichlautenden Satz.
       locator.reset(0);
     }
-    lastReadIndex.current = currentIndex;
+    lastLocated.current = {
+      sentence: currentSentence,
+      index: currentIndex ?? last?.index ?? null,
+      locator,
+    };
     setReadRange(locator.locate(currentSentence));
   }, [currentSentence, currentIndex, locator, tab]);
   useEffect(() => {
