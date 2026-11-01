@@ -81,6 +81,7 @@ import {
   removeBookmark,
   type Bookmark,
 } from "../../../lib/reader/bookmarks";
+import { buildContents, chapterAt, type ContentsEntry } from "../../../lib/reader/contents";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
@@ -103,6 +104,7 @@ import {
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
+import { ReaderContents } from "./reader/ReaderContents";
 import { ReaderToolbar } from "./reader/ReaderToolbar";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { toSpokenScript } from "@/lib/reader/spokenScript";
@@ -1183,6 +1185,24 @@ export const TtsSettings = () => {
     const p = readerApiRef.current?.pageOfOffset(resumeAt);
     return p === null || p === undefined ? null : p + 1;
   }, [resumeAt, pageInfo]);
+  // Inhaltsverzeichnis: Überschriften der offenen Seite; aktuelles Kapitel
+  // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
+  const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
+  const chapterIndex = useMemo(() => {
+    if (contents.length === 0) return -1;
+    const reading =
+      readRange && sessionResumeKey.current === resumeKey ? readRange.start : null;
+    const shown =
+      pageInfo !== null
+        ? readerApiRef.current?.offsetOfPage(pageInfo.page) ?? null
+        : null;
+    const at = reading ?? shown;
+    return at === null ? -1 : chapterAt(contents, at);
+  }, [contents, readRange, pageInfo, resumeKey]);
+  const goToChapter = (entry: ContentsEntry) => {
+    setFollow(false);
+    readerApiRef.current?.revealOffset(entry.start);
+  };
   // Lesezeichen je Seite und Reiter.
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   useEffect(() => {
@@ -1814,6 +1834,16 @@ export const TtsSettings = () => {
           onChanged={() => void reloadPages()}
           onReplaceSpeaker={() => setReplaceSpeaker({})}
           width={ws.pages.width}
+          contents={
+            viewMode === "read" ? (
+              <ReaderContents
+                entries={contents}
+                current={chapterIndex}
+                onGo={goToChapter}
+                pageOf={(o) => readerApiRef.current?.pageOfOffset(o) ?? null}
+              />
+            ) : null
+          }
         />
         {pagesCollapsed !== "1" && (
           <ResizeHandle
@@ -2079,6 +2109,7 @@ export const TtsSettings = () => {
                 onSleep={pauseSpeaking}
                 resumable={resumeAt !== null && !canResume && !speaking}
                 resumePage={resumePage}
+                chapter={chapterIndex >= 0 ? contents[chapterIndex].title : null}
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);

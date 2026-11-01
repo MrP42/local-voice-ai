@@ -335,7 +335,7 @@ test("Spielerleiste: Fortschritt, Satz n von m und Tooltips", async ({ page }) =
   const bar = page.getByTestId("reader-player");
   await expect(bar.getByRole("button", { name: "Vorlesen" })).toBeEnabled();
   await emit(page, "tts-speak-progress", { position: 9, total: 44 });
-  await expect(page.getByTestId("reader-where")).toHaveText("Satz 10 von 44");
+  await expect(page.getByTestId("reader-where")).toHaveText("Kapitel 1Satz 10 von 44");
   await expect(bar.getByRole("button", { name: "Vorheriger Satz" })).toHaveAttribute(
     "title",
     "Vorheriger Satz",
@@ -636,4 +636,68 @@ test("Lesezeichen am Anfang: Play beginnt danach vorn", async ({ page }) => {
       return String(a.text).slice(Number(a.charOffset)).startsWith("Absatz 1:") ? "vorn" : "falsch";
     })
     .toBe("vorn");
+});
+
+test("Inhaltsverzeichnis: Kapitel links, aktuelles hervorgehoben, Klick blättert", async ({
+  page,
+}) => {
+  const text = [
+    "# Teil Eins",
+    "",
+    ...Array.from({ length: 12 }, (_, i) => `Absatz ${i + 1}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch.`),
+    "",
+    "## Zweites Kapitel",
+    "",
+    ...Array.from({ length: 12 }, (_, i) => `Zeile ${i + 1}: Der Wind drehte, und das Licht fiel schräg durch das Fenster.`),
+    "",
+    "## Drittes Kapitel",
+    "",
+    "Das ist der letzte Satz des Buches.",
+  ].join("\n\n");
+  await open(page, text);
+  const toc = page.getByTestId("reader-contents");
+  await expect(toc.getByTestId("reader-contents-entry")).toHaveText([
+    /^Teil Eins/,
+    /^Zweites Kapitel/,
+    /^Drittes Kapitel/,
+  ]);
+  await expect(toc.getByTestId("reader-contents-entry").nth(0)).toHaveAttribute(
+    "aria-current",
+    "location",
+  );
+  await toc.getByRole("button", { name: /Drittes Kapitel/ }).click();
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  await expect(
+    page.getByTestId("reader-flow").getByText("Drittes Kapitel", { exact: true }),
+  ).toBeInViewport();
+  await expect(toc.getByTestId("reader-contents-entry").nth(2)).toHaveAttribute(
+    "aria-current",
+    "location",
+  );
+  // Beim Vorlesen folgt das Kapitel der gelesenen Stelle; die Leiste nennt es.
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Das ist der letzte Satz", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-speak-progress", { position: 14, total: 30 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 14,
+    text: "Zeile 2: Der Wind drehte, und das Licht fiel schräg durch das Fenster.",
+  });
+  await expect(toc.getByTestId("reader-contents-entry").nth(1)).toHaveAttribute(
+    "aria-current",
+    "location",
+  );
+  await expect(page.getByTestId("reader-chapter")).toHaveText("Zweites Kapitel");
+  // Einklappen zeigt das aktuelle Kapitel im Kopf.
+  await page.getByTestId("reader-contents-toggle").click();
+  await expect(page.getByTestId("reader-contents-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("reader-contents-toggle")).toContainText("Zweites Kapitel");
+  await expect(toc.getByTestId("reader-contents-entry").first()).toBeHidden();
+  await page.getByTestId("reader-contents-toggle").click();
+  // In der Bearbeiten-Ansicht kein Inhaltsverzeichnis.
+  await page.getByTestId("reader-mode-edit").click();
+  await expect(toc).toHaveCount(0);
 });

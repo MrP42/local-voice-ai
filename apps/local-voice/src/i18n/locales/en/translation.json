@@ -43,6 +43,8 @@
       "jumpToPage": "Go to page",
       "sentenceOf": "Sentence {{position}} of {{count}}",
       "sleepTimer": "Timer",
+      "contents": "Contents",
+      "chapterOf": "{{chapter}} · sentence {{position}} of {{count}}",
       "sleepMinutesShort": "{{minutes}} min",
       "bookmarkPage": "p. {{page}}",
       "resumeShort": "Continue where you left off",

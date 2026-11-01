@@ -31,6 +31,8 @@ interface ReaderPlayerBarProps {
   onSleep(): void;
   /** Play setzt an der gemerkten Stelle fort (lva#148). */
   resumable?: boolean;
+  /** Titel des aktuellen Kapitels, falls der Text Überschriften hat. */
+  chapter?: string | null;
   /** Seite der gemerkten Stelle (1-basiert), wenn bekannt. */
   resumePage?: number | null;
   /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
@@ -71,6 +73,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onSleep,
   resumable = false,
   resumePage = null,
+  chapter = null,
   onRestart,
 }) => {
   const { t } = useTranslation();
@@ -268,15 +271,32 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       <div className="reader-player__ctrls">
         <span
           className={`reader-player__where${
-            !progress && resumable ? " reader-player__where--resume" : ""
+            !progress && resumable
+              ? " reader-player__where--resume"
+              : progress && chapter
+                ? " reader-player__where--chapter"
+                : ""
           }`}
           data-testid="reader-where"
         >
           {progress ? (
-            t("tts.reader.sentenceOf", {
-              position: Math.min(progress.total, progress.position + 1),
-              count: progress.total,
-            })
+            <>
+              {chapter && (
+                <span
+                  className="reader-player__chapter"
+                  title={chapter}
+                  data-testid="reader-chapter"
+                >
+                  {chapter}
+                </span>
+              )}
+              <span className="reader-player__sentence">
+                {t("tts.reader.sentenceOf", {
+                  position: Math.min(progress.total, progress.position + 1),
+                  count: progress.total,
+                })}
+              </span>
+            </>
           ) : resumable ? (
             <>
               <span className="reader-player__hint" title={resumeTitle}>

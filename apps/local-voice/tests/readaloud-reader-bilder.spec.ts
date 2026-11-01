@@ -259,3 +259,64 @@ for (const theme of ["light", "dark"]) {
     });
   }
 }
+
+// Inhaltsverzeichnis links und Kapitel in der Spielerleiste (lva#159).
+const CHAPTERS = [
+  "# Die Leuchtturmwärterin",
+  "",
+  "## Erstes Kapitel: Die Klippe",
+  "",
+  ...Array.from(
+    { length: 8 },
+    (_, i) =>
+      `<Erzählerin> Absatz ${i + 1}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.`,
+  ),
+  "",
+  "## Zweites Kapitel: Der Sturm",
+  "",
+  ...Array.from(
+    { length: 8 },
+    (_, i) =>
+      `<Mara> Zeile ${i + 1}: Der Wind drehte, und das Licht fiel schräg durch das schmale Fenster.`,
+  ),
+  "",
+  "### Ein kurzer Abschnitt",
+  "",
+  "<Erzählerin> Danach wurde es still.",
+  "",
+  "## Drittes Kapitel: Morgen",
+  "",
+  "<Erzählerin> Das ist der letzte Satz des Buches.",
+].join("\n");
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild inhalt ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      await page.addInitScript((t) => {
+        (window as unknown as { __pageText: string }).__pageText = t;
+        window.localStorage.removeItem("lva.ui.tts.view");
+      }, CHAPTERS);
+      await page.goto("/");
+      await gotoVorlesen(page, width);
+      await page.getByTestId("reader-flow").waitFor();
+      await page
+        .getByTestId("reader-flow")
+        .getByText("Zeile 2:", { exact: false })
+        .click();
+      await emit(page, "tts-speak-progress", { position: 12, total: 24 });
+      await emit(page, "tts-current-sentence", {
+        context: "speak",
+        index: 12,
+        text: "Zeile 2: Der Wind drehte, und das Licht fiel schräg durch das schmale Fenster.",
+      });
+      await page.waitForTimeout(800);
+      await page.screenshot({ path: `${DIR}/inhalt-${theme}-${width}.png` });
+    });
+  }
+}
