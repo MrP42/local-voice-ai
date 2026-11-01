@@ -235,9 +235,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
                     }`}
                   >
                     <span className="shrink-0 text-text/70">{row.icon}</span>
-                    <span className="flex-1 min-w-0 truncate">
-                      {row.label}
-                    </span>
+                    <span className="flex-1 min-w-0 truncate">{row.label}</span>
                     {row.shortcut && (
                       <kbd className="shrink-0 text-[11px] text-text/55 font-sans">
                         {row.shortcut}

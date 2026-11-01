@@ -385,9 +385,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
-          <p className="m-0 px-2 py-4 text-sm text-text/60">
-            {labels.empty}
-          </p>
+          <p className="m-0 px-2 py-4 text-sm text-text/60">{labels.empty}</p>
         )}
         {groups.map((group) => {
           const headingId = `${baseId}-${group.id}`;

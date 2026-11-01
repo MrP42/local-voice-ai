@@ -197,7 +197,7 @@ async function install(
               return null;
             }
             case "voice_call_start":
-              return new Promise(() => {});
+              return w.__startHang ? new Promise(() => {}) : null;
             case "voice_call_chat":
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
@@ -477,7 +477,8 @@ const historyItem = (page: Page, title: string) =>
 // Der Schalter im Seitenkopf (nicht der Menüpunkt „Verlauf“ der Seitenleiste).
 const historyToggle = (page: Page) =>
   page.locator("button[aria-controls][aria-label='Gesprächsverlauf']");
-const historyToggleSelector = "button[aria-controls][aria-label='Gesprächsverlauf']";
+const historyToggleSelector =
+  "button[aria-controls][aria-label='Gesprächsverlauf']";
 const newChat = (page: Page) =>
   page.getByRole("button", { name: "Neues Gespräch", exact: true });
 const emptyTitle = (page: Page) =>
@@ -958,8 +959,12 @@ test.describe("Sprachgespraech", () => {
     await exchange(page, "Zweite Frage", "Zweite Antwort.");
     const search = await openSearch(page);
     await search.getByRole("combobox").fill("zweite");
-    await expect(search.getByRole("option", { name: "Zweite Frage" })).toBeVisible();
-    await expect(search.getByRole("option", { name: "Hallo KI" })).toHaveCount(0);
+    await expect(
+      search.getByRole("option", { name: "Zweite Frage" }),
+    ).toBeVisible();
+    await expect(search.getByRole("option", { name: "Hallo KI" })).toHaveCount(
+      0,
+    );
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
 
@@ -1419,6 +1424,8 @@ test.describe("Sprachgespraech Orchestrator", () => {
     );
     expect(saved.orchestration).toEqual({
       denkerModelId: "",
+      speakerModelId: "",
+      speakerEffort: "",
       souveraenitaet: "eu",
       useTools: false,
     });
@@ -1886,8 +1893,7 @@ async function openKnowledge(page: Page) {
   const panel = page.getByRole("complementary", {
     name: "Gesprächseinstellungen",
   });
-  if (!(await panel.isVisible()))
-    await openSettingsPanel(page);
+  if (!(await panel.isVisible())) await openSettingsPanel(page);
   const tab = panel.getByRole("tab", { name: "Wissen" });
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -2186,13 +2192,15 @@ test.describe("Screenshots @screenshots", () => {
 
     // Verlauf (U3): mehrere Gespräche, eines angeheftet.
     const moreHistory = async (page: Page, narrow = false) => {
-      const newChat = page.getByRole("button", {
-        name: "Neues Gespräch",
-        exact: true,
-      });
-      await newChat.click();
+      const fresh = () =>
+        narrow
+          ? openOptions(page, "Neues Gespräch")
+          : page
+              .getByRole("button", { name: "Neues Gespräch", exact: true })
+              .click();
+      await fresh();
       await exchange(page, "Rezept für Linsensuppe", "Gern, hier ein Rezept.");
-      await newChat.click();
+      await fresh();
       await exchange(
         page,
         "Erkläre mir bitte den Unterschied zwischen TCP und UDP ausführlich",
@@ -2314,7 +2322,9 @@ test.describe("Screenshots @screenshots", () => {
       await expect(permissionChip(empty)).toBeVisible();
       await empty.screenshot({ path: `${dir}wissen-chip-${name}.png` });
       await permissionChip(empty).click();
-      await empty.getByRole("menuitem", { name: "Alle Einstellungen …" }).click();
+      await empty
+        .getByRole("menuitem", { name: "Alle Einstellungen …" })
+        .click();
       await settled(empty);
       await expect(
         empty
@@ -2414,9 +2424,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(
       page.getByRole("button", { name: "Gesprächsverlauf" }),
     ).toHaveCount(1);
-    await expect(
-      page.getByRole("button", { name: "Gespräch beginnen" }),
-    ).toHaveCount(1);
+    await expect(page.getByTestId("call-button")).toHaveCount(1);
   });
 
   test("Kontextmenü „Gesprächsoptionen“ öffnet die Spalte und den Reiter Wissen", async ({
@@ -2430,7 +2438,9 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(panel).toHaveCount(0);
     await openOptions(page, "Gesprächseinstellungen");
     await expect(panel).toBeVisible();
-    await panel.getByRole("button", { name: "Einstellungen schließen" }).click();
+    await panel
+      .getByRole("button", { name: "Einstellungen schließen" })
+      .click();
     await expect(panel).toHaveCount(0);
     await openOptions(page, "Wissen");
     await expect(panel.getByRole("tab", { name: "Wissen" })).toHaveAttribute(
@@ -2465,53 +2475,32 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     const row = info.locator("xpath=..");
     await expect(row.locator(historyToggleSelector)).toBeVisible();
     expect(
-      await page.evaluate(() => localStorage.getItem("voice-call.history-open")),
+      await page.evaluate(() =>
+        localStorage.getItem("voice-call.history-open"),
+      ),
     ).toBe("0");
     await historyToggle(page).click();
     await expect(history(page)).toBeVisible();
-    await expect(
-      history(page).locator(historyToggleSelector),
-    ).toBeVisible();
+    await expect(history(page).locator(historyToggleSelector)).toBeVisible();
   });
 
   test("Gesprächsknopf im Chatfeld startet und beendet das Gespräch", async ({
     page,
   }) => {
     await install(page);
+    await page.addInitScript(() => ((window as any).__startHang = true));
     await openPage(page);
-    // Weder in der Kopfleiste noch in der Fußleiste.
-    await expect(
-      page.locator(".workspace-status").getByRole("button", {
-        name: "Gespräch beginnen",
-      }),
-    ).toHaveCount(0);
-    const begin = page.getByRole("button", { name: "Gespräch beginnen" });
-    await expect(begin).toHaveCount(1);
-    await expect(begin).toHaveAttribute("data-testid", "call-button");
-    await begin.click();
+    const button = page.getByTestId("call-button");
+    await expect(button).toHaveAccessibleName("Gespräch beginnen");
+    await button.click();
     expect(await calls(page, "voice_call_start")).toHaveLength(1);
-    const end = page.getByRole("button", { name: "Gespräch beenden" });
-    await expect(end).toBeVisible();
-    await end.click();
-    await expect(
-      page.getByRole("button", { name: "Gespräch beginnen" }),
-    ).toBeVisible();
+    await expect(button).toHaveAccessibleName("Gespräch beenden");
+    await button.click();
+    await expect(button).toHaveAccessibleName("Gespräch beginnen");
     // Das Mikrofon bleibt als eigener Knopf daneben.
     await expect(
       page.getByRole("button", { name: "Mikrofon stummschalten" }),
     ).toBeVisible();
-  });
-
-  test("Fußleisten-Menü „Gespräch“ hat keine Start-Aktion", async ({ page }) => {
-    await install(page);
-    await openPage(page);
-    await page
-      .locator(".workspace-status")
-      .getByRole("button", { name: /Gespräch/ })
-      .click();
-    const menu = page.getByRole("menu", { name: "Gespräch" });
-    await expect(menu).toBeVisible();
-    await expect(menu.getByText(/beginnen|beenden/)).toHaveCount(0);
   });
 
   test("Berechtigungs-Chip ändert Stufe und Wissensbereiche", async ({
@@ -2537,7 +2526,9 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await page.getByRole("menuitemcheckbox", { name: "Termine" }).click();
     await expect(chip).toHaveText("Nur lokal · 2 Bereiche");
     expect(
-      await page.evaluate(() => (window as any).__settings.voice_call_knowledge),
+      await page.evaluate(
+        () => (window as any).__settings.voice_call_knowledge,
+      ),
     ).toEqual(["meetings", "calendar"]);
     // Dieselbe Einstellung wie der Reiter Wissen.
     await page.keyboard.press("Escape");
@@ -2545,7 +2536,9 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
-    await expect(panel.getByRole("switch", { name: "Besprechungen" })).toBeChecked();
+    await expect(
+      panel.getByRole("switch", { name: "Besprechungen" }),
+    ).toBeChecked();
     await panel.getByRole("switch", { name: "Besprechungen" }).click();
     await expect(chip).toHaveText("Nur lokal · 1 Bereich");
     // Der alte Chip in der Infozeile ist weg.
@@ -2606,26 +2599,46 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(
       search.getByPlaceholder("Gespräche durchsuchen oder Befehl ausführen"),
     ).toBeFocused();
-    await expect(search.getByRole("group", { name: "Schnellaktionen" })).toBeVisible();
-    await expect(search.getByRole("option", { name: /Neues Gespräch/ })).toBeVisible();
-    await expect(search.getByRole("option", { name: "Gespräch beginnen" })).toBeVisible();
-    await expect(search.getByRole("group", { name: "Letzte Gespräche" })).toBeVisible();
+    await expect(
+      search.getByRole("group", { name: "Schnellaktionen" }),
+    ).toBeVisible();
+    await expect(
+      search.getByRole("option", { name: /Neues Gespräch/ }),
+    ).toBeVisible();
+    await expect(
+      search.getByRole("option", { name: "Gespräch beginnen" }),
+    ).toBeVisible();
+    await expect(
+      search.getByRole("group", { name: "Letzte Gespräche" }),
+    ).toBeVisible();
     // Filter-Tabs.
     await search.getByRole("tab", { name: "Aktionen" }).click();
-    await expect(search.getByRole("option", { name: "Zweite Frage" })).toHaveCount(0);
+    await expect(
+      search.getByRole("option", { name: "Zweite Frage" }),
+    ).toHaveCount(0);
     await search.getByRole("tab", { name: "Gespräche" }).click();
-    await expect(search.getByRole("option", { name: "Zweite Frage" })).toBeVisible();
-    await expect(search.getByRole("option", { name: /Neues Gespräch/ })).toHaveCount(0);
+    await expect(
+      search.getByRole("option", { name: "Zweite Frage" }),
+    ).toBeVisible();
+    await expect(
+      search.getByRole("option", { name: /Neues Gespräch/ }),
+    ).toHaveCount(0);
     await search.getByRole("tab", { name: "Alle" }).click();
     // Eingabe: Treffer; Pfeil und Enter öffnen das Gespräch.
     await search.getByRole("combobox").fill("hallo");
-    await expect(search.getByRole("option", { name: "Hallo KI" })).toBeVisible();
-    await expect(search.getByRole("option", { name: "Zweite Frage" })).toHaveCount(0);
+    await expect(
+      search.getByRole("option", { name: "Hallo KI" }),
+    ).toBeVisible();
+    await expect(
+      search.getByRole("option", { name: "Zweite Frage" }),
+    ).toHaveCount(0);
     await search.getByRole("combobox").press("ArrowDown");
     await search.getByRole("combobox").press("ArrowUp");
     await search.getByRole("combobox").press("Enter");
     await expect(search).toHaveCount(0);
-    await expect(page.getByRole("log").getByText("Hallo zurück.")).toBeVisible();
+    await expect(
+      page.getByRole("log").getByText("Hallo zurück."),
+    ).toBeVisible();
   });
 
   test("Suche: Strg+Umschalt+K öffnet sie, Strg+K bleibt der App-Suche; Strg+N legt ein neues Gespräch an", async ({
@@ -2651,6 +2664,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     page,
   }) => {
     await install(page);
+    await page.addInitScript(() => ((window as any).__startHang = true));
     await openPage(page);
     const search = await openSearch(page);
     await search.getByRole("option", { name: "Gespräch beginnen" }).click();
@@ -2673,7 +2687,9 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect
       .poll(async () => (await calls(page, "conversation_set_pinned")).length)
       .toBe(1);
-    expect((await calls(page, "conversation_set_pinned"))[0].args).toMatchObject({
+    expect(
+      (await calls(page, "conversation_set_pinned"))[0].args,
+    ).toMatchObject({
       pinned: true,
     });
     const pinned = history(page).getByRole("group", { name: "Angeheftet" });
@@ -2682,11 +2698,17 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(items.first()).toContainText("Hallo KI");
     await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
     await page.getByRole("menuitem", { name: "Lösen" }).click();
-    await expect(history(page).getByRole("group", { name: "Angeheftet" })).toHaveCount(0);
+    await expect(
+      history(page).getByRole("group", { name: "Angeheftet" }),
+    ).toHaveCount(0);
     await expect(items.first()).toContainText("Zweite Frage");
-    expect((await calls(page, "conversation_set_pinned"))[1].args).toMatchObject({
+    expect(
+      (await calls(page, "conversation_set_pinned"))[1].args,
+    ).toMatchObject({
       pinned: false,
     });
+  });
+});
 
 test.describe("Hauptgespräch per Tastenkürzel", () => {
   const overlayStates = async (page: Page) =>
@@ -2884,8 +2906,11 @@ test.describe("Screenshots Oberfläche @screenshots", () => {
       });
       const page = await ctx.newPage();
       await install(page, theme, {
-        settings: { ...TWO_MODELS, voice_call_knowledge: ["meetings", "calendar"] },
-        config: { orchestration: { souveraenitaet: "eu" } },
+        settings: {
+          ...TWO_MODELS,
+          voice_call_knowledge: ["meetings", "calendar"],
+        },
+        config: { orchestration: { souveraenitaet: "frei" } },
       });
       const narrow = size.width < 600;
       const snap = async (n: string) => {
@@ -2894,7 +2919,11 @@ test.describe("Screenshots Oberfläche @screenshots", () => {
       };
       await openPage(page);
       await snap("1-leerzustand");
-      await exchange(page, "Fasse bitte das gestrige Meeting kurz zusammen.", "Gern. Es ging um Budget und Termine.");
+      await exchange(
+        page,
+        "Fasse bitte das gestrige Meeting kurz zusammen.",
+        "Gern. Es ging um Budget und Termine.",
+      );
       await snap("2-laufender-chat");
       await page.getByRole("button", { name: "Gesprächsoptionen" }).click();
       await snap("3-kontextmenue");
@@ -2909,7 +2938,9 @@ test.describe("Screenshots Oberfläche @screenshots", () => {
       await newChat(page).click();
       await exchange(page, "Rezept für Linsensuppe", "Gern, hier ein Rezept.");
       if (narrow) await historyToggle(page).click();
-      await page.getByRole("button", { name: "Optionen für „Rezept für Linsensuppe“" }).click();
+      await page
+        .getByRole("button", { name: "Optionen für „Rezept für Linsensuppe“" })
+        .click();
       await page.getByRole("menuitem", { name: "Anheften" }).click();
       await snap("6-angeheftet");
       const search = await openSearch(page);

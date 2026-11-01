@@ -12,11 +12,7 @@ import {
   MenuTrigger,
 } from "@fluentui/react-components";
 import { ChevronDown, Settings } from "lucide-react";
-import {
-  commands,
-  type LlmConnection,
-  type LlmModelConfig,
-} from "@/bindings";
+import { commands, type LlmConnection, type LlmModelConfig } from "@/bindings";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { useSettings } from "@/hooks/useSettings";
 import { modelLabel } from "@/lib/modelNames";
@@ -165,9 +161,7 @@ export const ModelPicker: React.FC = () => {
             <>
               <MenuDivider />
               <MenuGroup>
-                <MenuGroupHeader>
-                  {t("voiceCall.model.effort")}
-                </MenuGroupHeader>
+                <MenuGroupHeader>{t("voiceCall.model.effort")}</MenuGroupHeader>
                 {efforts.map((e) => (
                   <MenuItemRadio key={e} name="effort" value={e}>
                     {effortText(e)}

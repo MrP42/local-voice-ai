@@ -389,10 +389,7 @@ export const VoiceCallPage: React.FC = () => {
   ];
 
   return (
-    <PageShell
-      title={t("voiceCall.title")}
-      fill
-    >
+    <PageShell title={t("voiceCall.title")} fill>
       <div className="relative flex h-full min-h-0 overflow-hidden">
         {historyOpen && !narrow && (
           <aside
