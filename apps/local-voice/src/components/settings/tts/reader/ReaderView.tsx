@@ -122,43 +122,58 @@ const Runs: React.FC<{
   block: ReaderBlock;
   current: SourceRange | null;
   marks: ReaderMark[];
-}> = ({ block, current, marks }) => (
-  <>
-    {block.runs.map((run) => {
-      if (run.tag) return null;
-      const pieces = piecesOf(run, current, marks);
-      const inner = pieces.map((p) => {
-        const cls = [
-          p.cur ? "reader-cur" : "",
-          p.mark ? "reader-mark" : "",
-          p.mark?.selected ? "reader-mark--sel" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return (
-          <span
-            key={p.start}
-            data-start={p.start}
-            className={cls || undefined}
-            data-cur={p.cur ? "" : undefined}
-            data-mark={p.mark?.selected ? "" : undefined}
-          >
-            {p.text}
-          </span>
-        );
-      });
-      if (run.bold && run.italic)
-        return (
-          <strong key={run.start}>
-            <em>{inner}</em>
-          </strong>
-        );
-      if (run.bold) return <strong key={run.start}>{inner}</strong>;
-      if (run.italic) return <em key={run.start}>{inner}</em>;
-      return <React.Fragment key={run.start}>{inner}</React.Fragment>;
-    })}
-  </>
-);
+}> = ({ block, current, marks }) => {
+  const { t } = useTranslation();
+  return (
+    <>
+      {block.runs.map((run) => {
+        if (run.page !== undefined)
+          return (
+            <span
+              key={run.start}
+              className="reader-pagemark"
+              role="note"
+              aria-label={t("tts.reader.originalPage", { page: run.page })}
+              title={t("tts.reader.originalPage", { page: run.page })}
+            >
+              {run.page}
+            </span>
+          );
+        if (run.tag) return null;
+        const pieces = piecesOf(run, current, marks);
+        const inner = pieces.map((p) => {
+          const cls = [
+            p.cur ? "reader-cur" : "",
+            p.mark ? "reader-mark" : "",
+            p.mark?.selected ? "reader-mark--sel" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <span
+              key={p.start}
+              data-start={p.start}
+              className={cls || undefined}
+              data-cur={p.cur ? "" : undefined}
+              data-mark={p.mark?.selected ? "" : undefined}
+            >
+              {p.text}
+            </span>
+          );
+        });
+        if (run.bold && run.italic)
+          return (
+            <strong key={run.start}>
+              <em>{inner}</em>
+            </strong>
+          );
+        if (run.bold) return <strong key={run.start}>{inner}</strong>;
+        if (run.italic) return <em key={run.start}>{inner}</em>;
+        return <React.Fragment key={run.start}>{inner}</React.Fragment>;
+      })}
+    </>
+  );
+};
 
 /**
  * Buchansicht des Vorlesetexts (lva#148): Seiten statt Endlos-Scroll, ein- oder

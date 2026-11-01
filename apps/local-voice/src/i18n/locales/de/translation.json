@@ -27,6 +27,7 @@
   },
   "tts": {
     "reader": {
+      "originalPage": "Seite {{page}} im Original",
       "label": "Buchseiten",
       "roleBook": "Buch",
       "pageShown": "Seite {{page}} von {{count}}",

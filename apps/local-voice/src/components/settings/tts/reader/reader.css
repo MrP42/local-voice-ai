@@ -115,6 +115,21 @@
 .reader-book--nospeakers .reader-block {
   padding-left: 8px;
 }
+/* Seitenzahl des Originals (PDF-Import): klein, gedämpft, nicht vorgelesen. */
+.reader-pagemark {
+  display: inline-block;
+  margin: 0;
+  padding: 0 0.3em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-mid-gray) 16%, transparent);
+  color: var(--color-text-muted);
+  font:
+    500 0.62em/1.5 "Segoe UI",
+    system-ui,
+    sans-serif;
+  vertical-align: 0.25em;
+  text-indent: 0;
+}
 .reader-quote {
   font-style: italic;
   color: var(--color-text-muted);

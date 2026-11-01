@@ -824,3 +824,28 @@ test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page
   await expect(flow.getByRole("button", { name: /Sprecher Bob/ })).toHaveCount(0);
   await expect(flow.getByRole("button", { name: /Sprecher Mara/ })).toHaveCount(3);
 });
+
+test("Seitenmarken aus dem PDF: klein im Text, nicht vorgelesen", async ({ page }) => {
+  const text = [
+    "{{S. 11}} Der Leuchtturm stand auf der Klippe, und der Wind",
+    "",
+    "Noch zwölf {{S. 12}} Stufen bis zur Laterne. Dann war sie oben.",
+  ].join("\n");
+  await open(page, text);
+  const flow = page.getByTestId("reader-flow");
+  await expect(flow).not.toContainText("{{");
+  const mark = flow.getByRole("note", { name: "Seite 12 im Original" });
+  await expect(mark).toHaveText("12");
+  await expect(flow.getByRole("note")).toHaveCount(2);
+  await flow.getByText("Dann war sie oben", { exact: false }).click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  const spoken = String(args.text);
+  expect(spoken).not.toContain("{{");
+  expect(spoken).toContain("Noch zwölf Stufen bis zur Laterne.");
+  expect(spoken.startsWith("Der Leuchtturm")).toBe(true);
+  const offset = Number(args.charOffset);
+  // Der Klickpunkt liegt im dritten Absatz des bereinigten Texts.
+  expect(offset).toBeGreaterThanOrEqual(spoken.indexOf("Noch zwölf"));
+  expect(offset).toBeLessThanOrEqual(spoken.length);
+});

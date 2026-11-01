@@ -107,7 +107,7 @@ import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
 import { ReaderToolbar } from "./reader/ReaderToolbar";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
-import { toSpokenScript } from "@/lib/reader/spokenScript";
+import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
   SentenceLocator,
   type SourceRange,
@@ -1472,7 +1472,7 @@ export const TtsSettings = () => {
     setLastError(null);
     setTranslating(true);
     setTransformProgress(null);
-    const result = await commands.ttsTranslate(text, targetLang);
+    const result = await commands.ttsTranslate(stripPageMarks(text), targetLang);
     setTranslating(false);
     setTransformProgress(null);
     if (result.status === "error") {
@@ -1766,7 +1766,7 @@ export const TtsSettings = () => {
     setLastError(null);
     setTidying(true);
     const previousText = text;
-    const result = await commands.ttsTidyText(text);
+    const result = await commands.ttsTidyText(stripPageMarks(text));
     setTidying(false);
     if (result.status === "error") {
       setLastError(result.error);
@@ -1792,7 +1792,7 @@ export const TtsSettings = () => {
     setLastError(null);
     setSummarizing(true);
     setTransformProgress(null);
-    const result = await commands.ttsSummarizeText(text, {
+    const result = await commands.ttsSummarizeText(stripPageMarks(text), {
       length: sumLength,
       detail: sumDetail,
       audience: sumAudience,
