@@ -148,6 +148,13 @@ pub struct TtsCore {
     /// vorbei ([`Self::pass_voice_switch`]) und sieht damit nie einen halb
     /// uebernommenen Stand -- etwa die neue Engine, deren Server noch nicht steht.
     voice_switch: tokio::sync::Mutex<()>,
+    /// Saetze, die gerade berechnet werden (Cache-Schluessel -> Sperre). Vorpuffer
+    /// und Wiedergabe fragen oft denselben Satz an; so rechnet ihn nur einer, der
+    /// andere wartet und trifft danach den Cache (lva#150).
+    inflight: Mutex<std::collections::HashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
+    /// Vorpuffer: so viele Saetze rechnet die Pipeline hinter dem naechsten
+    /// voraus ([`LOOKAHEAD_SENTENCES`]; 0 = nur der Folgesatz wie bisher).
+    lookahead: std::sync::atomic::AtomicUsize,
     /// Ist im Stimmenfeld eine FESTE Stimme gewaehlt (`tts_voice` gesetzt)? Dann liest
     /// sie alles, auch Saetze mit Sprecher aus dem Skript. Eigenes Flag, weil
     /// `voice` die Seed-Referenz der Standardstimme tragen kann (siehe
@@ -304,6 +311,56 @@ struct SynthIdentity {
 
 /// Wartet, bis das Abbruch-Flag gesetzt ist (Abfrage alle 25 ms, wie bei den
 /// Anbietern -- ein Abbruch wirkt damit auch mitten in einer Berechnung).
+/// Vorpuffer (lva#150): so viele Saetze rechnet die Pipeline im Hintergrund
+/// voraus, damit ein langsamer Satz (lang, Stimmwechsel, kurz belegte GPU) beim
+/// Vorlesen keine Luecke reisst. Drei Saetze sind bei Hoerbuchtext gut eine
+/// halbe Minute Vorlauf, ohne bei einem Abbruch viel umsonst zu rechnen.
+const LOOKAHEAD_SENTENCES: usize = 3;
+
+/// Wie ein Abruf mit einem Satz umgeht, den gerade ein anderer berechnet.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Claim {
+    /// Warten und danach den Cache treffen (Wiedergabe, Export).
+    Wait,
+    /// Ueberspringen (Vorpuffer): wer ihn rechnet, legt ihn ohnehin ab.
+    Skip,
+}
+
+/// Cache-Verhalten eines Abrufs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Fetch {
+    /// Mit Cache; rechnet ein anderer den Satz gerade, gilt [`Claim`].
+    Cached(Claim),
+    /// Ohne Cache (Sprachdienst, ADR-0021).
+    Uncached,
+}
+
+/// Haelt einen Satz fuer die Dauer seiner Berechnung; raeumt beim Verlassen
+/// (auch bei Abbruch des Futures) den Eintrag wieder ab.
+struct InflightClaim<'a> {
+    map: &'a Mutex<std::collections::HashMap<u64, Arc<tokio::sync::Mutex<()>>>>,
+    key: u64,
+    slot: Arc<tokio::sync::Mutex<()>>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Drop for InflightClaim<'_> {
+    fn drop(&mut self) {
+        // Erst die Sperre freigeben, dann aufraeumen: Wartende sind dann schon
+        // geweckt und halten ihren eigenen Verweis.
+        self.guard.take();
+        let mut map = self.map.lock().unwrap();
+        // Eintrag + dieser Verweis: niemand sonst wartet mehr darauf.
+        if Arc::strong_count(&self.slot) <= 2 {
+            if let Some(current) = map.get(&self.key) {
+                if Arc::ptr_eq(current, &self.slot) {
+                    map.remove(&self.key);
+                }
+            }
+        }
+    }
+}
+
 async fn wait_cancelled(flag: &AtomicBool) {
     while !flag.load(Ordering::Acquire) {
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -338,6 +395,8 @@ impl TtsCore {
             voice_sounds: Mutex::new(std::collections::HashMap::new()),
             voice_epoch: tokio::sync::watch::Sender::new(0),
             voice_switch: tokio::sync::Mutex::new(()),
+            inflight: Mutex::new(std::collections::HashMap::new()),
+            lookahead: std::sync::atomic::AtomicUsize::new(LOOKAHEAD_SENTENCES),
             fixed_voice: AtomicBool::new(false),
             on_phase_change: Mutex::new(None),
         }
@@ -738,8 +797,30 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
-        self.fetch_wav_inner(port, seed, text, voice, cancel, true)
+        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Cached(Claim::Wait))
             .await
+    }
+
+    /// Vorpuffer (lva#150): den Satz in den Cache legen, ohne auf einen
+    /// anderen zu warten, der ihn gerade rechnet. `Ok(false)`: uebersprungen.
+    async fn fetch_wav_ahead(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<bool, String> {
+        self.fetch_wav_inner(
+            port,
+            seed,
+            text,
+            voice,
+            Some(cancel),
+            Fetch::Cached(Claim::Skip),
+        )
+        .await
+        .map(|bytes| !bytes.is_empty())
     }
 
     /// Wie [`Self::fetch_wav_cancellable`], aber OHNE Cache: weder aus dem Speicher- noch aus dem
@@ -754,7 +835,7 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
-        self.fetch_wav_inner(port, seed, text, voice, cancel, false)
+        self.fetch_wav_inner(port, seed, text, voice, cancel, Fetch::Uncached)
             .await
     }
 
@@ -765,7 +846,7 @@ impl TtsCore {
         text: &str,
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
-        use_cache: bool,
+        fetch: Fetch,
     ) -> Result<Vec<u8>, String> {
         // Laeuft gerade ein Stimmwechsel, erst danach Stimme und Engine lesen:
         // sonst entstuende ein Satz mit der neuen Engine, die noch nicht bereit
@@ -799,11 +880,17 @@ impl TtsCore {
         // synthetisiert ist, braucht keine Engine — egal welche.
         let engine_tag = engine.cache_tag(voice.as_deref());
         let cache_key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
-        if !use_cache {
+        let Fetch::Cached(claim) = fetch else {
             return self
                 .engine_synthesize(&engine, port, seed, text, voice.as_deref(), cancel)
                 .await;
-        }
+        };
+        // Einmal rechnen (lva#150): rechnet den Satz schon jemand (Vorpuffer oder
+        // Wiedergabe), wartet dieser Abruf und trifft danach den Cache.
+        // `Skip` (Vorpuffer) liefert dann leere Bytes: nichts zu tun.
+        let Some(_claim) = self.claim_sentence(cache_key, claim).await else {
+            return Ok(Vec::new());
+        };
         if let Some(cached) = self.wav_cache.lock().unwrap().get(cache_key) {
             return Ok(cached);
         }
@@ -834,6 +921,28 @@ impl TtsCore {
             }
         }
         Ok(bytes)
+    }
+
+    /// Den Satz `key` fuer die eigene Berechnung belegen. `Claim::Wait` wartet,
+    /// bis ein anderer fertig ist; `Claim::Skip` gibt dann `None` zurueck.
+    async fn claim_sentence(&self, key: u64, mode: Claim) -> Option<InflightClaim<'_>> {
+        let slot = {
+            let mut map = self.inflight.lock().unwrap();
+            Arc::clone(
+                map.entry(key)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let guard = match mode {
+            Claim::Wait => Arc::clone(&slot).lock_owned().await,
+            Claim::Skip => Arc::clone(&slot).try_lock_owned().ok()?,
+        };
+        Some(InflightClaim {
+            map: &self.inflight,
+            key,
+            slot,
+            guard: Some(guard),
+        })
     }
 
     /// Wiedergabefaktor für einen synthetisierten Satz.
@@ -1088,9 +1197,17 @@ impl TtsCore {
     ///   Satz spielt derweil weiter);
     /// * unmittelbar vor dem Abspielen noch einmal, auch ohne Benachrichtigung.
     ///
-    /// Es liegt nie mehr als ein Satz voraus; verworfenes Audio belegt keinen
-    /// Speicher über den Satz hinaus. Der Player selbst (der Audio-Thread) wird
-    /// nicht angefasst.
+    /// In der Pipeline liegt nie mehr als ein Satz voraus; verworfenes Audio
+    /// belegt keinen Speicher über den Satz hinaus. Der Player selbst (der
+    /// Audio-Thread) wird nicht angefasst.
+    ///
+    /// ## Vorpuffer (lva#150)
+    ///
+    /// Daneben rechnet [`Self::warm_ahead`] die nächsten
+    /// [`LOOKAHEAD_SENTENCES`] Sätze in den Cache. Die Pipeline trifft sie dann
+    /// dort; rechnet der Vorpuffer einen Satz gerade, wartet sie auf ihn statt
+    /// ihn ein zweites Mal anzufordern ([`Claim`]). Der Vorpuffer beginnt erst,
+    /// wenn der erste Satz da ist — der Einstieg wird nicht langsamer.
     async fn fetch_and_play_pipelined(
         &self,
         sentences: &[Utterance],
@@ -1098,6 +1215,104 @@ impl TtsCore {
         cancelled: Arc<AtomicBool>,
         on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    ) -> Result<usize, String> {
+        let (ready, ready_rx) = tokio::sync::watch::channel(usize::MAX);
+        let play = self.play_pipelined(
+            sentences,
+            start_index,
+            cancelled.clone(),
+            on_playing,
+            on_played,
+            ready,
+        );
+        let warm = self.warm_ahead(sentences, &cancelled, ready_rx);
+        tokio::pin!(play);
+        tokio::pin!(warm);
+        // Endet die Wiedergabe (fertig, Abbruch, Fehler), faellt der Vorpuffer
+        // mitsamt laufender Anfrage weg — sonst stuende das Ende um einen Satz
+        // Rechenzeit spaeter fest.
+        let mut warm_done = false;
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut play => return result,
+                () = &mut warm, if !warm_done => warm_done = true,
+            }
+        }
+    }
+
+    /// Vorpuffer: rechnet die Saetze hinter dem zuletzt bereitgestellten
+    /// (`ready`) voraus, hoechstens `lookahead` weit, in Lesereihenfolge.
+    /// Fehler bleiben hier stumm — die Pipeline trifft denselben Satz und meldet
+    /// sie dort, wo sie hingehoeren.
+    async fn warm_ahead(
+        &self,
+        sentences: &[Utterance],
+        cancelled: &Arc<AtomicBool>,
+        mut ready: tokio::sync::watch::Receiver<usize>,
+    ) {
+        let lookahead = self.lookahead.load(Ordering::Acquire);
+        if lookahead == 0 {
+            return;
+        }
+        let max_chars = *self.max_chars.lock().unwrap();
+        let mut next = 0usize;
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            let current = *ready.borrow_and_update();
+            let window = (current != usize::MAX).then(|| current + 1..=current + lookahead);
+            match window {
+                Some(window) if next.max(*window.start()) <= *window.end() => {
+                    next = next.max(*window.start());
+                }
+                _ => {
+                    // Noch kein Satz da oder Puffer voll: auf den naechsten warten.
+                    if ready.changed().await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            }
+            if next >= sentences.len() {
+                return;
+            }
+            let (sentence, speaker) = &sentences[next];
+            if let Some(prepared) = protocol::prepare_text(sentence, max_chars) {
+                for part in protocol::split_pauses(&prepared.text) {
+                    let protocol::SpeechPart::Speak(text) = part else {
+                        continue;
+                    };
+                    if cancelled.load(Ordering::Acquire) || ready.has_changed().is_err() {
+                        return;
+                    }
+                    let voice = self.utterance_voice(speaker.as_ref());
+                    let port = *self.port.lock().unwrap();
+                    let seed = *self.seed.lock().unwrap();
+                    if self
+                        .fetch_wav_ahead(port, seed, &text, voice.as_deref(), cancelled)
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+            next += 1;
+        }
+    }
+
+    /// Die eigentliche Satz-Pipeline (siehe [`Self::fetch_and_play_pipelined`]).
+    /// `ready` meldet dem Vorpuffer jeden Satz, der zum Abspielen bereitliegt.
+    async fn play_pipelined(
+        &self,
+        sentences: &[Utterance],
+        start_index: usize,
+        cancelled: Arc<AtomicBool>,
+        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        ready: tokio::sync::watch::Sender<usize>,
     ) -> Result<usize, String> {
         let max_chars = *self.max_chars.lock().unwrap();
         // Der Index wird erst nach dem LETZTEN Stück eines Satzes gemeldet —
@@ -1229,6 +1444,8 @@ impl TtsCore {
                 }
                 break blobs;
             };
+            // Vorpuffer weiterschieben: dieser Satz liegt bereit.
+            ready.send_replace(offset);
 
             if blobs.is_empty() {
                 notify(offset, cancelled.load(Ordering::Acquire));
@@ -6196,6 +6413,9 @@ mod tests {
         let engine = Arc::new(MockEngine::new());
         *core.engine.lock().unwrap() = EngineImpl::Mock(Arc::clone(&engine));
         *core.voice.lock().unwrap() = Some(voice.to_string());
+        // Die Stimmwechsel-Faelle zaehlen Syntheseauftraege Satz fuer Satz; der
+        // Vorpuffer hat eigene Tests (`vorpuffer_*`).
+        core.lookahead.store(0, Ordering::SeqCst);
         Stage {
             core,
             engine,
@@ -6245,6 +6465,133 @@ mod tests {
             .await
             .expect("die Sitzung endet nicht")
             .expect("der Sitzungs-Task ist abgestürzt")
+    }
+
+    /// Vorpuffer (lva#150): waehrend Satz 1 spielt, liegen die naechsten
+    /// `LOOKAHEAD_SENTENCES` Saetze schon bereit — und jeder Satz wird genau
+    /// EINMAL berechnet, obwohl Vorpuffer und Pipeline ihn beide anfordern.
+    #[tokio::test]
+    async fn vorpuffer_rechnet_voraus_und_jeden_satz_nur_einmal() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        stage.player.gate_playback();
+        let saetze = ["S1.", "S2.", "S3.", "S4.", "S5.", "S6."];
+
+        let run = stage.run(&saetze);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Vorpuffer voll", || {
+            stage.engine.finished().len() == 1 + LOOKAHEAD_SENTENCES
+        })
+        .await;
+        // Ein wenig Zeit fuer einen (falschen) Satz zu viel.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            stage.engine.started(),
+            vec![
+                job("S1.", "A"),
+                job("S2.", "A"),
+                job("S3.", "A"),
+                job("S4.", "A")
+            ],
+            "drei Saetze voraus, in Lesereihenfolge, keiner doppelt"
+        );
+
+        stage.player.release(10);
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|S1.",
+                "mock|A|S2.",
+                "mock|A|S3.",
+                "mock|A|S4.",
+                "mock|A|S5.",
+                "mock|A|S6."
+            ])
+        );
+        assert_eq!(
+            stage.engine.started().len(),
+            saetze.len(),
+            "jeder Satz genau einmal berechnet: {:?}",
+            stage.engine.started()
+        );
+    }
+
+    /// Der Einstieg wird durch den Vorpuffer nicht langsamer: solange Satz 1
+    /// rechnet, laeuft kein zweiter Auftrag daneben.
+    #[tokio::test]
+    async fn vorpuffer_wartet_auf_den_ersten_satz() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 beginnt", || stage.engine.started().len() == 1).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(stage.engine.started(), vec![job("Satz eins.", "A")]);
+
+        gate.add_permits(10);
+        finish(run).await.unwrap();
+        assert_eq!(stage.engine.started().len(), SAETZE.len());
+    }
+
+    /// Abbruch: die Sitzung endet sofort, auch wenn der Vorpuffer gerade an
+    /// einem Satz rechnet; der wird nicht mehr fertig.
+    #[tokio::test]
+    async fn vorpuffer_endet_mit_dem_abbruch() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        let gate = Arc::new(tokio::sync::Semaphore::new(1));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Satz 2 rechnet", || stage.engine.started().len() >= 2).await;
+        stage.core.cancel_core();
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.engine.finished(),
+            vec![job("Satz eins.", "A")],
+            "nach dem Abbruch wird nichts mehr fertig"
+        );
+    }
+
+    /// Nach einem Stimmwechsel liest die Pipeline mit der neuen Stimme, auch
+    /// wenn der Vorpuffer die Saetze schon mit der alten bereitgelegt hatte.
+    #[tokio::test]
+    async fn vorpuffer_mit_alter_stimme_wird_nicht_abgespielt() {
+        let stage = stage("A");
+        stage
+            .core
+            .lookahead
+            .store(LOOKAHEAD_SENTENCES, Ordering::SeqCst);
+        stage.player.gate_playback();
+
+        let run = stage.run(&SAETZE);
+        wait_until("Satz 1 spielt", || stage.player.started().len() == 1).await;
+        wait_until("Vorpuffer voll", || stage.engine.finished().len() == 3).await;
+        stage.switch_voice("B");
+        stage.player.release(10);
+        finish(run).await.unwrap();
+        assert_eq!(
+            stage.player.started(),
+            spielt(&[
+                "mock|A|Satz eins.",
+                "mock|B|Satz zwei.",
+                "mock|B|Satz drei."
+            ])
+        );
     }
 
     /// FEHLERFALL "Wechsel mitten in der Berechnung des Folgesatzes": Satz 1
