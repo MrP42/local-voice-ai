@@ -19,6 +19,7 @@ mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod helpers;
 mod input;
+mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod local_update;
 mod llm_client;
 mod managers;
@@ -347,6 +348,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // nach dem Setup und laeuft nur, wenn sync.json existiert.
     app_handle.manage(sync::SyncEngine::default());
     sync::start(app_handle.clone());
+    // ADR-0024: gemeinsamer Kontospeicher der Suite (nur lokales Profil).
+    konto::init(app_handle);
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
@@ -1960,6 +1963,13 @@ fn specta_builder() -> Builder<tauri::Wry> {
             sync::sync_now,
             sync::sync_touch,
             sync::sync_default_device_name,
+            konto::konto_status,
+            konto::konto_aendern,
+            konto::konto_aktivieren,
+            konto::konto_anlegen,
+            konto::konto_bild_setzen,
+            konto::konto_bild_entfernen,
+            konto::konto_bild_lesen,
             sync::sync_hub_status,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,

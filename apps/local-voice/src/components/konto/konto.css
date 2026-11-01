@@ -1,0 +1,305 @@
+/* Kopie aus @wai/ui (wai-sdk PR #991, ADR-0024): Klassen wai-konto-* und wai-profilseite*. Nicht von Hand ändern. */
+/* ---------- Konto: Profilknopf, Profilmenü, Profilseite (ADR-0024) ---------- */
+.wai-konto-bild {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.wai-konto-bild__status {
+  position: absolute;
+  inset-inline-end: -2px;
+  inset-block-end: -2px;
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--colorNeutralBackground3, var(--color-surface));
+  background: var(--colorNeutralForeground4, #8a8a8a);
+}
+.wai-konto-bild__status[data-status="angemeldet"] {
+  background: var(--colorPaletteGreenBackground3, #54b054);
+}
+.wai-konto-bild__status[data-status="abgelaufen"] {
+  background: var(--colorPaletteMarigoldBackground3, #f2a33a);
+}
+.wai-konto-knopf {
+  min-inline-size: 0;
+  gap: var(--space-2, 8px);
+  padding-inline: 6px;
+}
+.wai-konto-knopf__name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: var(--fontSizeBase200, 12px);
+  line-height: var(--lineHeightBase200, 16px);
+  font-weight: 400;
+  white-space: nowrap;
+  max-inline-size: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wai-konto-knopf__name small {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+  font-size: inherit;
+}
+@media (max-width: 640px) {
+  .wai-konto-knopf__name {
+    display: none;
+  }
+}
+.wai-konto-menue__flaeche {
+  padding: 0;
+  inline-size: min(340px, calc(100vw - 16px));
+  overflow: hidden;
+}
+.wai-konto-menue__kopf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2, 8px);
+  padding: 8px 8px 4px 14px;
+  font-size: var(--fontSizeBase200, 12px);
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-konto-menue__person {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 6px 14px 14px;
+}
+.wai-konto-menue__text {
+  min-inline-size: 0;
+}
+.wai-konto-menue__name {
+  font-weight: 600;
+  font-size: var(--fontSizeBase400, 16px);
+  line-height: var(--lineHeightBase400, 22px);
+  overflow-wrap: anywhere;
+}
+.wai-konto-menue__zusatz {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+  font-size: var(--fontSizeBase200, 12px);
+  overflow-wrap: anywhere;
+}
+.wai-konto-menue__links {
+  display: flex;
+  flex-wrap: wrap;
+  margin-inline-start: -8px;
+}
+.wai-konto-menue__links button {
+  color: var(--colorBrandForegroundLink, var(--colorBrandForeground1));
+}
+.wai-konto-menue__hinweis {
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border-radius: var(--borderRadiusMedium, 4px);
+  background: var(--colorBrandBackground2, var(--color-surface-2));
+  font-size: var(--fontSizeBase200, 12px);
+  line-height: 16px;
+  display: grid;
+  gap: 10px;
+}
+.wai-konto-menue__hinweis p {
+  margin: 0;
+}
+.wai-konto-menue__hinweis[data-art="warnung"] {
+  background: var(--colorPaletteMarigoldBackground1, rgba(242, 163, 58, 0.16));
+}
+.wai-konto-menue__profile {
+  border-block-start: 1px solid var(--colorNeutralStroke2, var(--color-border));
+  padding-block: 4px;
+}
+.wai-konto-menue__profil {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  inline-size: 100%;
+  min-block-size: 40px;
+  padding: 6px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--colorNeutralForeground1, var(--color-text));
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.wai-konto-menue__profil:hover {
+  background: var(--colorNeutralBackground1Hover, var(--color-surface-2));
+}
+.wai-konto-menue__profil:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, currentColor);
+  outline-offset: -2px;
+}
+.wai-konto-menue__profiltext {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  font-size: var(--fontSizeBase300, 14px);
+  line-height: 18px;
+}
+.wai-konto-menue__profiltext small {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+  font-size: var(--fontSizeBase200, 12px);
+}
+.wai-konto-menue__schloss {
+  margin-inline-start: auto;
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-konto-menue__plus {
+  inline-size: 24px;
+  font-size: 18px;
+  color: var(--colorNeutralForeground2, var(--color-text));
+}
+
+.wai-profilseite {
+  display: grid;
+  gap: 16px;
+  inline-size: 100%;
+  max-inline-size: 1160px;
+  margin-inline: auto;
+}
+.wai-profilseite__beschreibung {
+  margin: 0;
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-profilseite__karte {
+  background: var(--colorNeutralBackground1, var(--color-surface));
+  border: 1px solid var(--colorNeutralStroke2, var(--color-border));
+  border-radius: var(--borderRadiusLarge, 8px);
+  overflow: hidden;
+}
+.wai-profilseite__held {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 20px 18px;
+  flex-wrap: wrap;
+}
+.wai-profilseite__wer {
+  min-inline-size: 0;
+  flex: 1 1 14rem;
+}
+.wai-profilseite__name {
+  font-size: var(--fontSizeBase500, 20px);
+  line-height: var(--lineHeightBase500, 28px);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wai-profilseite__email {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+  overflow-wrap: anywhere;
+}
+.wai-profilseite__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-block-start: 4px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--fontSizeBase200, 12px);
+  background: var(--colorNeutralBackground3, var(--color-surface-2));
+  color: var(--colorNeutralForeground2, var(--color-text));
+}
+.wai-profilseite__status i {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--colorNeutralForeground4, #8a8a8a);
+}
+.wai-profilseite__status[data-status="angemeldet"] i {
+  background: var(--colorPaletteGreenBackground3, #54b054);
+}
+.wai-profilseite__status[data-status="abgelaufen"] i {
+  background: var(--colorPaletteMarigoldBackground3, #f2a33a);
+}
+.wai-profilseite__aktionen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-start: 10px;
+}
+.wai-profilseite__kopf {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-block-end: 1px solid var(--colorNeutralStroke2, var(--color-border));
+  flex-wrap: wrap;
+}
+.wai-profilseite__kopf h2 {
+  margin: 0;
+  font-size: var(--fontSizeBase300, 14px);
+  font-weight: 600;
+}
+.wai-profilseite__kopf > :last-child {
+  margin-inline-start: auto;
+}
+.wai-profilseite__symbol {
+  font-size: 20px;
+  color: var(--colorNeutralForeground2, var(--color-text));
+  flex: none;
+}
+.wai-profilseite__unter {
+  font-size: var(--fontSizeBase200, 12px);
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-profilseite__rechts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wai-profilseite__zeile {
+  padding: 8px 18px;
+  border-block-start: 1px solid var(--colorNeutralStroke3, var(--color-border));
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr) !important;
+}
+.wai-profilseite__zeile:first-of-type {
+  border-block-start: 0;
+}
+@media (max-width: 640px) {
+  .wai-profilseite__zeile {
+    grid-template-columns: 1fr !important;
+  }
+}
+.wai-profilseite__meldung {
+  margin: 0;
+  padding: 8px 18px;
+  font-size: var(--fontSizeBase200, 12px);
+}
+.wai-profilseite__meldung[data-art="fehler"] {
+  color: var(--colorPaletteRedForeground1, #e3575c);
+}
+.wai-profilseite__info {
+  margin: 0;
+  padding: 12px 18px;
+  color: var(--colorNeutralForeground2, var(--color-text));
+}
+.wai-profilseite__liste {
+  margin: 0;
+  padding: 4px 18px 12px;
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(0, 1fr);
+  gap: 8px 12px;
+}
+.wai-profilseite__liste dt {
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+}
+.wai-profilseite__liste dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.wai-profilseite__fuss {
+  padding: 4px 10px 8px;
+  border-block-start: 1px solid var(--colorNeutralStroke3, var(--color-border));
+}
+.wai-konto-menue__text .wai-profilseite__status {
+  margin-block-start: 6px;
+}
+.wai-profilseite__info[data-art="herkunft"] {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: var(--fontSizeBase200, 12px);
+  color: var(--colorNeutralForeground3, var(--color-text-muted));
+  border-block-end: 1px solid var(--colorNeutralStroke3, var(--color-border));
+}
