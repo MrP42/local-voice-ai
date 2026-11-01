@@ -14,7 +14,8 @@
 import { parseInline } from "./readerDoc";
 
 const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,}|⁂|\* \* \*)\s*$/;
-const HAS_MARKDOWN = /(^|\n)\s*(#{1,3}\s|>\s?|[-*•]\s|-{3,}|\*{3,}|⁂)|\*\*|(^|[\s(„"])[*_][^\s*_]/;
+const HAS_MARKDOWN =
+  /(^|\n)\s*(#{1,3}\s|>\s?|[-*•]\s|-{3,}|\*{3,}|⁂)|\*\*|(^|[\s(„"])[*_][^\s*_]/;
 
 export function toSpokenScript(text: string): string {
   if (!HAS_MARKDOWN.test(text)) return text;

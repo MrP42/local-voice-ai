@@ -402,3 +402,193 @@ test("Spielerleiste bei 390 px: einzeilig, Tempo und Timer im Überlaufmenü", a
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(menu).toHaveCount(0);
 });
+
+const playFromBar = async (page: Page, name: string) => {
+  await page.getByTestId("reader-player").getByRole("button", { name, exact: true }).click();
+  // Befunde der Skriptprüfung fragen beim Start nach; hier einfach weiter.
+  const proceed = page.getByTestId("script-check-proceed");
+  if (await proceed.isVisible().catch(() => false)) await proceed.click();
+};
+
+test("Weiterlesen: Play setzt an der gemerkten Stelle fort, „Von vorn“ verwirft sie", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-speak-progress", { position: 23, total: 46 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 23,
+    text: "Absatz 20: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20");
+
+  // Neustart der App: die Seite schlägt die Stelle auf, Play heißt „Weiterlesen“.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-where")).toContainText(/Weiter ab Seite \d+/);
+  // Der Hinweis wird nicht gekürzt.
+  expect(
+    await page
+      .getByTestId("reader-where")
+      .evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  await expect(page.getByTestId("reader-flow").getByText("Absatz 20:", { exact: false })).toBeInViewport();
+  await playFromBar(page, "Weiterlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  const text = String(args.text);
+  expect(text.slice(Number(args.charOffset)).startsWith("Absatz 20:")).toBe(true);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(0);
+
+  // „Von vorn“: die Stelle ist vergessen, Play beginnt am Anfang.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByTestId("reader-restart").click();
+  await expect(page.getByTestId("reader-where")).toHaveText(/^Seite 1 von/);
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
+});
+
+test("Weiterlesen: zu Ende gelesen beginnt Play wieder vorn", async ({ page }) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 45,
+    text: "Das ist der letzte Satz des Buches.",
+  });
+  await expect(page.locator(".reader-cur")).toHaveCount(1);
+  await emit(page, "tts-speak-progress", { position: 46, total: 46 });
+  // Erst prüfen, dass die Stelle verworfen ist, dann neu laden.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Object.keys(window.localStorage).filter((k) => k.startsWith("lva.ui.tts.resume.")),
+      ),
+    )
+    .toEqual([]);
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-flow")).toBeVisible();
+  await expect(
+    page.getByTestId("reader-player").getByRole("button", { name: "Weiterlesen" }),
+  ).toHaveCount(0);
+});
+
+test("Lesezeichen: setzen, nach Neustart aufschlagen, ab dort weiterlesen, entfernen", async ({
+  page,
+}) => {
+  await open(page);
+  const bookmarksBtn = page.getByTestId("reader-bookmarks");
+  await expect(bookmarksBtn).toHaveAttribute("title", "Lesezeichen (0)");
+  // Beim Vorlesen gilt die gelesene Stelle.
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 33,
+    text: "Absatz 30: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 30");
+  await bookmarksBtn.click();
+  const menu = page.getByRole("menu", { name: "Lesezeichen" });
+  await expect(menu).toContainText("Noch keine Lesezeichen");
+  await expect(page.getByTestId("reader-bookmark-add")).toBeFocused();
+  await page.getByTestId("reader-bookmark-add").click();
+  await expect(bookmarksBtn).toHaveAttribute("title", "Lesezeichen (1)");
+  // Dieselbe Stelle gibt es nicht doppelt.
+  await bookmarksBtn.click();
+  await page.getByTestId("reader-bookmark-add").click();
+  await expect(bookmarksBtn).toHaveAttribute("title", "Lesezeichen (1)");
+
+  // Neustart, zurück auf Seite 1, dann das Lesezeichen öffnen.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByTestId("reader-restart").click();
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "0");
+  await bookmarksBtn.click();
+  const item = page.getByTestId("reader-bookmark");
+  await expect(item).toHaveText(/^Absatz 30: Die Stunden/);
+  await item.click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  await expect(
+    page.getByTestId("reader-flow").getByText("Absatz 30:", { exact: false }),
+  ).toBeInViewport();
+  await playFromBar(page, "Weiterlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  expect(String(args.text).slice(Number(args.charOffset)).startsWith("Absatz 30:")).toBe(true);
+
+  // Entfernen; Klick daneben schließt das Menü.
+  await bookmarksBtn.click();
+  await page.getByTestId("reader-bookmark-remove").click();
+  await expect(menu).toContainText("Noch keine Lesezeichen");
+  await page.getByTestId("reader-player").click({ position: { x: 5, y: 5 } });
+  await expect(menu).toHaveCount(0);
+  await expect(bookmarksBtn).toHaveAttribute("title", "Lesezeichen (0)");
+});
+
+test("Lesezeichen ohne Vorlesen: Anfang der sichtbaren Seite", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("reader-jump").fill("3");
+  await page.getByTestId("reader-jump").press("Enter");
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  await page.getByTestId("reader-bookmarks").click();
+  await page.getByTestId("reader-bookmark-add").click();
+  await page.getByTestId("reader-bookmarks").click();
+  await expect(page.getByTestId("reader-bookmark")).toHaveText(/^Absatz \d+/);
+});
+
+test("Weiterlesen schmal: Hinweis und „Von vorn“ im Überlaufmenü", async ({ page }) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 23,
+    text: "Absatz 20: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20");
+  await page.setViewportSize({ width: 768, height: 900 });
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-where")).toBeHidden();
+  await page.getByTestId("reader-more").click();
+  await expect(page.getByTestId("reader-more-resume")).toContainText(/Seite \d+/);
+  await page.getByTestId("reader-more-restart").click();
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "0");
+  await page.getByTestId("reader-more").click();
+  await expect(page.getByTestId("reader-more-resume")).toHaveCount(0);
+});

@@ -29,6 +29,12 @@ interface ReaderPlayerBarProps {
   onSeekFraction(fraction: number): void;
   /** Der Schlaf-Timer ist abgelaufen. */
   onSleep(): void;
+  /** Play setzt an der gemerkten Stelle fort (lva#148). */
+  resumable?: boolean;
+  /** Seite der gemerkten Stelle (1-basiert), wenn bekannt. */
+  resumePage?: number | null;
+  /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
+  onRestart?(): void;
 }
 
 const formatTime = (seconds: number): string => {
@@ -63,6 +69,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onJumpToPage,
   onSeekFraction,
   onSleep,
+  resumable = false,
+  resumePage = null,
+  onRestart,
 }) => {
   const { t } = useTranslation();
   const [speedOpen, setSpeedOpen] = useState(false);
@@ -76,6 +85,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const speedHeadId = useId();
   const sleepHeadId = useId();
+  const resumeHeadId = useId();
   const chooseSleep = (minutes: number) => {
     setSleepChoice(minutes);
     setSleepUntil(minutes === 0 ? null : Date.now() + minutes * 60000);
@@ -169,6 +179,15 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     setJump("");
   };
 
+  const resumeShort =
+    resumePage !== null
+      ? t("tts.reader.resumeFromPage", { page: resumePage })
+      : t("tts.reader.resumeShort");
+  const resumeTitle =
+    resumePage !== null
+      ? t("tts.reader.resumeHintPage", { page: resumePage })
+      : t("tts.reader.resumeHint");
+
   const sleepLeft =
     sleepUntil !== null
       ? Math.max(0, Math.ceil((sleepUntil - now) / 60000))
@@ -247,13 +266,39 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         </label>
       </div>
       <div className="reader-player__ctrls">
-        <span className="reader-player__where" data-testid="reader-where">
-          {progress
-            ? t("tts.reader.sentenceOf", {
-                position: Math.min(progress.total, progress.position + 1),
-                count: progress.total,
-              })
-            : t("tts.reader.pageOf", { page: shownPage, count: pages })}
+        <span
+          className={`reader-player__where${
+            !progress && resumable ? " reader-player__where--resume" : ""
+          }`}
+          data-testid="reader-where"
+        >
+          {progress ? (
+            t("tts.reader.sentenceOf", {
+              position: Math.min(progress.total, progress.position + 1),
+              count: progress.total,
+            })
+          ) : resumable ? (
+            <>
+              <span className="reader-player__hint" title={resumeTitle}>
+                {resumeShort}
+              </span>
+              {onRestart && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <button
+                    type="button"
+                    className="reader-player__link"
+                    onClick={onRestart}
+                    data-testid="reader-restart"
+                  >
+                    {t("tts.reader.restart")}
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            t("tts.reader.pageOf", { page: shownPage, count: pages })
+          )}
         </span>
         <div className="mediabar">
           <button
@@ -271,7 +316,14 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             className="mbtn mbtn--primary mbtn--lg"
             onClick={onPlayPause}
             disabled={!speaking && !canPlay}
-            aria-label={speaking ? t("tts.pause") : t("tts.speak")}
+            aria-label={
+              speaking
+                ? t("tts.pause")
+                : resumable
+                  ? t("tts.reader.resume")
+                  : t("tts.speak")
+            }
+            title={resumable && !speaking ? resumeTitle : undefined}
             data-testid="reader-play"
           >
             <Glyph name={speaking ? "pause" : "play"} />
@@ -332,7 +384,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   e.preventDefault();
                   const items = Array.from(
                     e.currentTarget.querySelectorAll<HTMLElement>(
-                      '[role="menuitemradio"]',
+                      '[role="menuitemradio"], [role="menuitem"]',
                     ),
                   );
                   const i = items.indexOf(
@@ -349,8 +401,37 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                           items.length;
                   items[next]?.focus();
                 }}
-                className="absolute right-0 bottom-full mb-1 w-48 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+                className="absolute right-0 bottom-full mb-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
               >
+                {resumable && onRestart && (
+                  <div
+                    role="group"
+                    aria-labelledby={resumeHeadId}
+                    className="mb-1 border-b border-mid-gray/30 pb-1"
+                  >
+                    <div
+                      id={resumeHeadId}
+                      className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
+                      data-testid="reader-more-resume"
+                    >
+                      {resumeTitle}
+                    </div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      tabIndex={-1}
+                      onClick={() => {
+                        onRestart();
+                        setMoreOpen(false);
+                        moreBtnRef.current?.focus();
+                      }}
+                      className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
+                      data-testid="reader-more-restart"
+                    >
+                      {t("tts.reader.restart")}
+                    </button>
+                  </div>
+                )}
                 <div role="group" aria-labelledby={speedHeadId}>
                   <div
                     id={speedHeadId}
@@ -358,27 +439,25 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   >
                     {t("tts.settings.speed")}
                   </div>
-                  {speeds.map((value) => (
-                    <button
-                      key={`s${value}`}
-                      type="button"
-                      role="menuitemradio"
-                      tabIndex={-1}
-                      aria-checked={speed === value}
-                      onClick={() => {
-                        onSpeed(value);
-                        setMoreOpen(false);
-                        moreBtnRef.current?.focus();
-                      }}
-                      className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                        speed === value
-                          ? "text-text font-medium"
-                          : "text-text/80"
-                      }`}
-                    >
-                      {speedLabel(value)}
-                    </button>
-                  ))}
+                  <div role="none" className="reader-player__chips">
+                    {speeds.map((value) => (
+                      <button
+                        key={`s${value}`}
+                        type="button"
+                        role="menuitemradio"
+                        tabIndex={-1}
+                        aria-checked={speed === value}
+                        onClick={() => {
+                          onSpeed(value);
+                          setMoreOpen(false);
+                          moreBtnRef.current?.focus();
+                        }}
+                        className="reader-player__chip tabular-nums"
+                      >
+                        {speedLabel(value)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div role="group" aria-labelledby={sleepHeadId}>
                   <div
@@ -389,25 +468,32 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                       ? `${t("tts.reader.sleepTimer")} · ${t("tts.reader.sleepLeft", { minutes: sleepLeft })}`
                       : t("tts.reader.sleepTimer")}
                   </div>
-                  {SLEEP_CHOICES.map((minutes) => (
-                    <button
-                      key={`t${minutes}`}
-                      type="button"
-                      role="menuitemradio"
-                      tabIndex={-1}
-                      aria-checked={minutes === sleepChoice}
-                      onClick={() => {
-                        chooseSleep(minutes);
-                        setMoreOpen(false);
-                        moreBtnRef.current?.focus();
-                      }}
-                      className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
-                    >
-                      {minutes === 0
-                        ? t("tts.reader.sleepOff")
-                        : t("tts.reader.sleepMinutes", { minutes })}
-                    </button>
-                  ))}
+                  <div role="none" className="reader-player__chips">
+                    {SLEEP_CHOICES.map((minutes) => (
+                      <button
+                        key={`t${minutes}`}
+                        type="button"
+                        role="menuitemradio"
+                        tabIndex={-1}
+                        aria-checked={minutes === sleepChoice}
+                        onClick={() => {
+                          chooseSleep(minutes);
+                          setMoreOpen(false);
+                          moreBtnRef.current?.focus();
+                        }}
+                        aria-label={
+                          minutes === 0
+                            ? t("tts.reader.sleepOff")
+                            : t("tts.reader.sleepMinutes", { minutes })
+                        }
+                        className="reader-player__chip"
+                      >
+                        {minutes === 0
+                          ? t("tts.reader.sleepOff")
+                          : t("tts.reader.sleepMinutesShort", { minutes })}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </>

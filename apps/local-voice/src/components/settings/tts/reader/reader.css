@@ -331,6 +331,9 @@
   flex-wrap: wrap;
 }
 .reader-player__where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 140px;
   min-width: 0;
   font-size: 12.5px;
@@ -364,6 +367,10 @@
    Tempo und Timer wandern ins Überlaufmenü. */
 .reader-player {
   container-type: inline-size;
+  /* container-type bildet einen Stapelkontext: die Menüs der Leiste müssen
+     über den Nachbarbereichen liegen, die das Fenster schmal darüber setzt. */
+  position: relative;
+  z-index: 20;
 }
 .reader-player__more {
   display: none;
@@ -392,4 +399,49 @@
   .reader-player__jump input {
     width: 40px;
   }
+}
+
+.reader-player__link {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* Der Weiterlesen-Hinweis wird nie gekürzt (Codex zu #160). */
+.reader-player__where--resume {
+  flex: 0 0 auto;
+  min-width: max-content;
+}
+.reader-player__link {
+  flex: none;
+}
+
+/* Überlaufmenü kompakt: Tempo und Timer als Kacheln, damit es auch über
+   einer niedrigen Leiste ganz sichtbar bleibt (Codex zu #160). */
+.reader-player__chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 2px 8px 6px;
+}
+.reader-player__chip {
+  height: 30px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--color-text) 85%, transparent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reader-player__chip:hover,
+.reader-player__chip:focus-visible {
+  background: color-mix(in srgb, var(--color-mid-gray) 18%, transparent);
+  outline: none;
+}
+.reader-player__chip:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-text);
+}
+.reader-player__chip[aria-checked="true"] {
+  background: color-mix(in srgb, var(--color-logo-primary) 16%, transparent);
+  color: var(--color-text);
+  font-weight: 600;
 }

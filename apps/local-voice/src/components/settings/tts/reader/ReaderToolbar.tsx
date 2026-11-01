@@ -23,6 +23,8 @@ interface ReaderToolbarProps {
   onShowSpeakers(show: boolean): void;
   follow: boolean;
   onFollow(follow: boolean): void;
+  /** Lesezeichen-Knopf (nur in der Leseansicht). */
+  bookmarks?: React.ReactNode;
 }
 
 const SEG =
@@ -45,6 +47,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
   onShowSpeakers,
   follow,
   onFollow,
+  bookmarks,
 }) => {
   const { t } = useTranslation();
   const [menu, setMenu] = useState(false);
@@ -112,6 +115,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
               <BookOpen width={14} height={14} aria-hidden="true" />
             </button>
           </div>
+          {bookmarks}
           <div className="relative">
             <button
               type="button"

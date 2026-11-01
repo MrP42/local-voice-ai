@@ -201,3 +201,61 @@ for (const theme of ["light", "dark"]) {
     });
   }
 }
+
+// Weiterlesen nach Neustart (lva#160, Codex): 1440, 768 und 390 px; bei 390 px
+// über den Menüknopf, wie ein Nutzer auf dem Telefon.
+const gotoVorlesen = async (page: Page, width: number) => {
+  if (width < 600) {
+    await page.locator(".lv-titlebar__hamburger").click();
+  }
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .filter({ visible: true })
+    .first()
+    .click();
+};
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 768, 390]) {
+    test(`bild weiterlesen ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await open(page, BOOK, 1440);
+      await page
+        .getByTestId("reader-flow")
+        .getByText("Noch zwölf Stufen", { exact: false })
+        .click();
+      await expect
+        .poll(async () => (await calls(page, "tts_speak_text_from")).length)
+        .toBe(1);
+      await emit(page, "tts-current-sentence", {
+        context: "speak",
+        index: 23,
+        text: "Absatz 20: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+      });
+      await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20");
+      await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+      await page.reload();
+      await gotoVorlesen(page, width);
+      await page.getByTestId("reader-flow").waitFor();
+      await page.waitForTimeout(800);
+      await page.screenshot({ path: `${DIR}/weiterlesen-${theme}-${width}.png` });
+      if (width < 1000) {
+        await page.getByTestId("reader-more").click();
+        await page.getByTestId("reader-more-resume").waitFor();
+        await page.waitForTimeout(200);
+        await page.screenshot({ path: `${DIR}/weiterlesen-${theme}-${width}-menue.png` });
+        await page.keyboard.press("Escape");
+      }
+      await page.getByTestId("reader-bookmarks").click();
+      await page.getByTestId("reader-bookmark-add").click();
+      await page.getByTestId("reader-bookmarks").click();
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: `${DIR}/lesezeichen-${theme}-${width}.png` });
+    });
+  }
+}
