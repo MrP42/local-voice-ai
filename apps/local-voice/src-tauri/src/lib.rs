@@ -19,8 +19,8 @@ mod helpers;
 mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
-mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
+mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod llm_client;
 mod llm_keys;
 mod local_update;

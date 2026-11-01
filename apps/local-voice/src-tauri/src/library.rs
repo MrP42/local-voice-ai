@@ -506,8 +506,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push((h * 16 + l) as u8);
                 i += 3;
                 continue;
             }
@@ -526,11 +527,27 @@ fn progress_path(root: &Path) -> PathBuf {
     root.join("fortschritt.json")
 }
 
-fn load_progress(root: &Path) -> BTreeMap<String, String> {
-    std::fs::read_to_string(progress_path(root))
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+/// Gespeicherten Fortschritt lesen. Fehlt die Datei, ist er leer. Ist sie
+/// unlesbar, wird sie als `fortschritt.json.defekt-<ms>` beiseitegelegt statt
+/// beim nächsten Sichern überschrieben – so bleibt der alte Stand rettbar.
+fn load_progress(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    let path = progress_path(root);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(format!("Fortschritt nicht lesbar: {e}")),
+    };
+    match serde_json::from_str(&raw) {
+        Ok(map) => Ok(map),
+        Err(e) => {
+            let aside = root.join(format!("fortschritt.json.defekt-{}", now_ms() as i64));
+            std::fs::rename(&path, &aside).map_err(|r| {
+                format!("Fortschritt beschädigt ({e}), Sichern fehlgeschlagen: {r}")
+            })?;
+            log::warn!("fortschritt.json beschädigt ({e}), beiseitegelegt");
+            Ok(BTreeMap::new())
+        }
+    }
 }
 
 /// Einträge einpflegen (`None` löscht). Ungültige Schlüssel oder übergroße
@@ -538,13 +555,17 @@ fn load_progress(root: &Path) -> BTreeMap<String, String> {
 pub fn merge_progress(map: &mut BTreeMap<String, String>, entries: Vec<ProgressEntry>) {
     for entry in entries {
         if entry.key.is_empty() || entry.key.len() > MAX_PROGRESS_KEY {
+            log::warn!("Fortschritts-Schlüssel ungültig, verworfen");
             continue;
         }
         match entry.value {
             Some(v) if v.len() <= MAX_PROGRESS_VALUE => {
                 map.insert(entry.key, v);
             }
-            Some(_) => {}
+            Some(_) => log::warn!(
+                "Fortschritt zu groß, verworfen ({} Zeichen Schlüssel)",
+                entry.key.len()
+            ),
             None => {
                 map.remove(&entry.key);
             }
@@ -583,7 +604,10 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     let dir = book_dir(&root, &book.id)?;
     if let Some(audio) = &book.audio {
         // Nur ein Dateiname im eigenen audio-Ordner, kein Pfad.
-        if audio.file.contains(['/', '\\']) || audio.file.starts_with('.') {
+        let plain = Path::new(&audio.file)
+            .file_name()
+            .is_some_and(|n| n == std::ffi::OsStr::new(&audio.file));
+        if !plain || audio.file.contains(['/', '\\', ':']) || audio.file.starts_with('.') {
             return Err("Ungültiger Dateiname der Audiofassung.".into());
         }
     }
@@ -711,7 +735,20 @@ pub async fn library_cover_fetch(
     if !response.status().is_success() {
         return Err("Für diese Ausgabe gibt es kein Cover.".into());
     }
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_COVER_BYTES as u64)
+    {
+        return Err("Das Cover ist zu groß.".into());
+    }
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        if bytes.len() + chunk.len() > MAX_COVER_BYTES {
+            return Err("Das Cover ist zu groß.".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let _guard = lock();
     let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
     store_cover(&dir, &bytes)?;
@@ -807,24 +844,41 @@ pub async fn library_audio_import(
         std::fs::create_dir_all(&audio_dir).map_err(|e| e.to_string())?;
         // Erst vollständig kopieren, dann umbenennen: ein Abbruch hinterlässt
         // keine halbe Datei unter dem endgültigen Namen.
-        let tmp = target.with_extension("part");
-        std::fs::copy(&source, &tmp).map_err(|e| format!("Kopieren fehlgeschlagen: {e}"))?;
+        // Altes Hörbuch erst entfernen, wenn das neue an seinem Platz ist.
+        let tmp = audio_dir.join(format!(
+            "{}.part",
+            target.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::copy(&source, &tmp).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("Kopieren fehlgeschlagen: {e}")
+        })?;
+        std::fs::rename(&tmp, &target).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            e.to_string()
+        })?;
         for entry in std::fs::read_dir(&audio_dir)
             .into_iter()
             .flatten()
             .flatten()
         {
             let p = entry.path();
-            if p != tmp && p.file_stem().is_some_and(|s| s == "hoerbuch") {
+            if p != target && p.file_stem().is_some_and(|s| s == "hoerbuch") {
                 let _ = std::fs::remove_file(p);
             }
         }
-        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())??;
     let _guard = lock();
-    let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let Some(mut book) = read_book(&dir) else {
+        // Während des Kopierens gelöscht: keinen verwaisten Ordner zurücklassen.
+        if !dir.join("buch.json").exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        return Err("Buch nicht gefunden.".into());
+    };
     let previous = book.audio.take().unwrap_or_default();
     book.audio = Some(AudioVersion {
         file,
@@ -841,7 +895,8 @@ pub async fn library_audio_import(
 #[specta::specta]
 pub fn library_progress_load(app: AppHandle) -> Result<BTreeMap<String, String>, String> {
     let root = library_root(&app)?;
-    Ok(load_progress(&root))
+    let _guard = lock();
+    load_progress(&root)
 }
 
 /// Fortschritt sichern: Einträge einpflegen und die Datei atomar ersetzen.
@@ -853,7 +908,7 @@ pub fn library_progress_put(app: AppHandle, entries: Vec<ProgressEntry>) -> Resu
     }
     let _guard = lock();
     let root = library_root(&app)?;
-    let mut map = load_progress(&root);
+    let mut map = load_progress(&root)?;
     merge_progress(&mut map, entries);
     let json = serde_json::to_vec(&map).map_err(|e| e.to_string())?;
     write_atomic(&progress_path(&root), &json)
@@ -1067,5 +1122,39 @@ mod tests {
         assert_eq!(listed[0].cover_source, "generated");
         assert_eq!(listed[0].audio_path, None, "Hörbuchdatei fehlt");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn broken_progress_file_is_kept_aside_not_overwritten() {
+        let root = std::env::temp_dir().join(format!("lv-lib-pr-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(
+            load_progress(&root).unwrap().is_empty(),
+            "fehlende Datei = leer"
+        );
+        std::fs::write(progress_path(&root), "{ kaputt").unwrap();
+        assert!(load_progress(&root).unwrap().is_empty());
+        let aside: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("fortschritt.json.defekt-")
+            })
+            .collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(aside[0].path()).unwrap(),
+            "{ kaputt"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn percent_decode_survives_multibyte_after_percent() {
+        assert_eq!(percent_decode("a%20b"), "a b");
+        assert_eq!(percent_decode("x%é.jpg"), "x%é.jpg");
+        assert_eq!(percent_decode("Cover%C3%A4.png"), "Coverä.png");
     }
 }

@@ -61,8 +61,36 @@ const storage = (): Storage | null => {
 
 const mirrored = (key: string) => MIRRORED.some((p) => key.startsWith(p));
 
+/**
+ * Noch nicht im Kern gesicherte Änderungen. Liegen zusätzlich im localStorage
+ * (außerhalb von `lva.ui.`), damit eine Löschung, die vor dem Sichern endet
+ * (Fenster zu, Absturz), beim nächsten Start nicht aus dem Kern zurückkommt.
+ */
+const PENDING_KEY = "lva.progress.pending";
 const pending = new Map<string, string | null>();
 let timer: number | null = null;
+let failures = 0;
+
+function persistPending() {
+  try {
+    if (pending.size)
+      storage()?.setItem(PENDING_KEY, JSON.stringify([...pending]));
+    else storage()?.removeItem(PENDING_KEY);
+  } catch {
+    /* voller Speicher: bleibt im Arbeitsspeicher */
+  }
+}
+
+function restorePending() {
+  try {
+    const raw = storage()?.getItem(PENDING_KEY);
+    if (!raw) return;
+    for (const [key, value] of JSON.parse(raw) as [string, string | null][])
+      if (typeof key === "string" && !pending.has(key)) pending.set(key, value);
+  } catch {
+    /* unlesbar: verwerfen */
+  }
+}
 
 async function flush(): Promise<void> {
   if (timer !== null) {
@@ -75,18 +103,23 @@ async function flush(): Promise<void> {
   try {
     const result = await commands.libraryProgressPut(entries);
     if (result.status === "error") throw new Error(result.error);
+    failures = 0;
+    persistPending();
   } catch {
-    // Kern nicht erreichbar (z. B. im Browser-Test): beim nächsten Mal erneut.
+    // Kern nicht erreichbar: zurück in die Warteschlange, später erneut.
     for (const { key, value } of entries)
       if (!pending.has(key)) pending.set(key, value);
+    persistPending();
+    failures = Math.min(failures + 1, 6);
+    schedule(FLUSH_MS * 2 ** failures);
   }
 }
 
 export const flushProgress = flush;
 
-function schedule() {
+function schedule(delay = FLUSH_MS) {
   if (timer !== null) return;
-  timer = window.setTimeout(() => void flush(), FLUSH_MS);
+  timer = window.setTimeout(() => void flush(), delay);
 }
 
 if (typeof window !== "undefined") {
@@ -110,6 +143,7 @@ export function setLocal(key: string, value: string | null): void {
   }
   if (!mirrored(key)) return;
   pending.set(key, value);
+  persistPending();
   schedule();
 }
 
@@ -137,6 +171,7 @@ const updatedOf = (raw: string | null): number => {
  * gibt es ihn nur lokal, geht er in den Kern.
  */
 export async function hydrateProgress(): Promise<void> {
+  restorePending();
   let remote: Partial<Record<string, string>> = {};
   try {
     const result = await commands.libraryProgressLoad();
@@ -148,9 +183,23 @@ export async function hydrateProgress(): Promise<void> {
   const local = storage();
   if (!local) return;
   for (const [key, value] of Object.entries(remote)) {
-    if (value === undefined || !mirrored(key)) continue;
+    // Ungesicherte lokale Änderung (auch Löschung) hat Vorrang.
+    if (value === undefined || !mirrored(key) || pending.has(key)) continue;
     const mine = local.getItem(LS_PREFIX + key);
-    if (mine === null || updatedOf(value) > updatedOf(mine)) {
+    const merged =
+      mine !== null && key.startsWith("progress.")
+        ? mergeRecordText(mine, value)
+        : null;
+    if (merged !== null) {
+      if (merged !== mine) {
+        try {
+          local.setItem(LS_PREFIX + key, merged);
+        } catch {
+          /* ignorieren */
+        }
+      }
+      if (merged !== value) pending.set(key, merged);
+    } else if (mine === null || updatedOf(value) > updatedOf(mine)) {
       try {
         local.setItem(LS_PREFIX + key, value);
       } catch {
@@ -164,13 +213,42 @@ export async function hydrateProgress(): Promise<void> {
     const full = local.key(i);
     if (!full?.startsWith(LS_PREFIX)) continue;
     const key = full.slice(LS_PREFIX.length);
-    if (mirrored(key) && !(key in remote)) {
+    if (mirrored(key) && !(key in remote) && !pending.has(key)) {
       const value = local.getItem(full);
       if (value !== null) pending.set(key, value);
     }
   }
   if (pending.size) await flush();
   window.dispatchEvent(new Event(HYDRATED_EVENT));
+}
+
+/**
+ * Zwei Fassungen desselben Datensatzes zusammenführen: gehörte und gelesene
+ * Bereiche beider Seiten bleiben, Stelle und Anker vom neueren, „fertig“ wenn
+ * eine Seite es sagt. `null`, wenn eine Seite kein Datensatz ist.
+ */
+function mergeRecordText(a: string, b: string): string | null {
+  try {
+    const x = JSON.parse(a) as ProgressRecord;
+    const y = JSON.parse(b) as ProgressRecord;
+    if (typeof x?.offset !== "number" || typeof y?.offset !== "number") return null;
+    const [older, newer] = (x.updated ?? 0) >= (y.updated ?? 0) ? [y, x] : [x, y];
+    const merged: ProgressRecord = {
+      ...older,
+      ...newer,
+      heard: mergeRanges([...(older.heard ?? []), ...(newer.heard ?? [])]),
+      read: mergeRanges([...(older.read ?? []), ...(newer.read ?? [])]),
+      length: Math.max(newer.length ?? 0, older.length ?? 0),
+    };
+    if (older.finished || newer.finished) merged.finished = true;
+    const text = JSON.stringify(merged);
+    // Unverändert gegenüber einer Seite: deren Text behalten (kein Schreiben).
+    if (text === JSON.stringify(x)) return a;
+    if (text === JSON.stringify(y)) return b;
+    return text;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

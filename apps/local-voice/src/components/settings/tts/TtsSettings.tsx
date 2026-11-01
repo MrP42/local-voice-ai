@@ -1955,6 +1955,9 @@ export const TtsSettings = () => {
     setDictating(true);
   };
 
+  const textNowRef = useRef(text);
+  textNowRef.current = text;
+
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async () => {
     const picked = await open({
@@ -1966,7 +1969,6 @@ export const TtsSettings = () => {
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
-    const wasEmpty = !text.trim();
     const pageAtStart = activePage;
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
@@ -1977,8 +1979,10 @@ export const TtsSettings = () => {
     const title = documentTitle(result.data, picked);
     // Buch hinzufügen (lva#152): steht auf der Seite schon Text, bekommt das
     // Buch eine eigene neue Seite – nichts wird überschrieben.
-    if (!wasEmpty) {
-      await createPageWithText(title, result.data);
+    // Erst nach dem Laden prüfen: wer währenddessen tippt, verliert nichts.
+    if (textNowRef.current.trim() || activePageRef.current !== pageAtStart) {
+      const created = await createPageWithText(title, result.data);
+      if (!created) setLastError(t("tts.add.pageFailed"));
       return;
     }
     setTab("original");

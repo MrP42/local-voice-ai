@@ -134,6 +134,8 @@ test.beforeEach(async ({ page }) => {
             return hit ?? null;
           }
           if (cmd === "tts_cached_translation") return null;
+          if (cmd === "library_progress_load")
+            return (window as unknown as { __remoteProgress?: unknown }).__remoteProgress ?? {};
           if (cmd === "tts_list_downloads") return [];
           if (
             cmd === "llm_ps" ||
@@ -834,6 +836,47 @@ test("Weiterlesen-Stelle geht dauerhaft in den App-Kern", async ({ page }) => {
     .toEqual(
       expect.arrayContaining(["tts.resume.p1:original", "progress.text:p1:original"]),
     );
+});
+
+test("Fortschritt beim Start: Löschung bleibt gelöscht, gehörte Bereiche werden vereinigt", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __remoteProgress: Record<string, string> };
+    // Kern: alte Weiterlesen-Stelle und ein Datensatz mit anderem gehörtem Bereich.
+    w.__remoteProgress = {
+      "tts.resume.p9:original": JSON.stringify({ offset: 5 }),
+      "progress.text:p9:original": JSON.stringify({
+        offset: 900, length: 1000, heard: [[500, 900]], read: [], updated: 2,
+      }),
+    };
+    // Lokal: die Stelle wurde gelöscht, bevor sie gesichert war.
+    window.localStorage.setItem(
+      "lva.progress.pending",
+      JSON.stringify([["tts.resume.p9:original", null]]),
+    );
+    window.localStorage.setItem(
+      "lva.ui.progress.text:p9:original",
+      JSON.stringify({ offset: 100, length: 1000, heard: [[0, 100]], read: [], updated: 1 }),
+    );
+  });
+  await open(page);
+  await expect
+    .poll(async () =>
+      (await calls(page, "library_progress_put")).flatMap((a) =>
+        (a.entries as { key: string; value: string | null }[]).map((e) => [e.key, e.value]),
+      ),
+    )
+    .toContainEqual(["tts.resume.p9:original", null]);
+  const state = await page.evaluate(() => ({
+    resume: window.localStorage.getItem("lva.ui.tts.resume.p9:original"),
+    record: JSON.parse(window.localStorage.getItem("lva.ui.progress.text:p9:original") ?? "{}"),
+    queue: window.localStorage.getItem("lva.progress.pending"),
+  }));
+  expect(state.resume).toBeNull();
+  expect(state.record.offset).toBe(900);
+  expect(state.record.heard).toEqual([[0, 100], [500, 900]]);
+  expect(state.queue).toBeNull();
 });
 
 test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page }) => {
