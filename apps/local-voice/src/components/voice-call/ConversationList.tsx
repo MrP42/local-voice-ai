@@ -354,7 +354,6 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             type="button"
             aria-controls={controlsId}
             aria-expanded="true"
-            aria-pressed="true"
             aria-label={labels.collapse}
             title={labels.collapse}
             onClick={onCollapse}

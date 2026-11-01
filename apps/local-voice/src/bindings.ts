@@ -3320,9 +3320,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[], modelId: string | null, effort: string | null) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, modelId, effort }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

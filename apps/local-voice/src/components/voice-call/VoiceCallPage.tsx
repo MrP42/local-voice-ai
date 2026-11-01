@@ -122,6 +122,9 @@ export const VoiceCallPage: React.FC = () => {
       if (!(isMac ? e.metaKey : e.ctrlKey) || e.altKey) return;
       const key = e.key.toLowerCase();
       if (key === "n" && !e.shiftKey) {
+        // Nicht hinter einem offenen Dialog (Suche, Einstellungen) ein Gespräch beenden.
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
         e.preventDefault();
         void store.getState().newConversation();
       } else if (key === "k" && e.shiftKey) {
@@ -427,7 +430,6 @@ export const VoiceCallPage: React.FC = () => {
                   type="button"
                   aria-controls={historyId}
                   aria-expanded="false"
-                  aria-pressed="false"
                   aria-label={t("voiceCall.history.toggle")}
                   title={t("voiceCall.history.toggle")}
                   onClick={toggleHistory}

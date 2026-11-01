@@ -144,7 +144,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
       if (flat.length === 0) return;
       const step = e.key === "ArrowDown" ? 1 : -1;
       setActive((index + step + flat.length) % flat.length);
-    } else if (e.key === "Enter") {
+    } else if (e.key === "Enter" && e.target === inputRef.current) {
       e.preventDefault();
       run(flat[index]);
     }
