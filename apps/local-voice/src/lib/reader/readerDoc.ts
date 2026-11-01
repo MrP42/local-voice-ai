@@ -10,6 +10,8 @@
  * - Ein schlankes Markdown-Subset für die Darstellung: `#`/`##`/`###`
  *   Überschriften, `> ` Zitat, `- `/`* ` Aufzählung, `---`/`***`/`⁂`
  *   Trenner, `**fett**`, `*kursiv*`/`_kursiv_`.
+ * - Seitenmarken `{{S. 12}}` aus dem PDF-Import: die Seitenzahl des Originals.
+ *   Die Buchansicht zeigt sie klein im Text, die Synthese liest sie nicht.
  *
  * Die Buchansicht zeigt Sprecher am Rand und blendet Tags aus; die Synthese
  * bekommt den Text ohne Markdown-Zeichen (`spokenScript`). Alle Offsets sind
@@ -29,9 +31,15 @@ export interface ReaderRun {
   end: number;
   bold?: boolean;
   italic?: boolean;
-  /** `[…]`-Tag: im Lesemodus ausgeblendet, im Bearbeiten-Modus ein Chip. */
+  /** `[…]`-Tag: im Lesemodus ausgeblendet, im Bearbeiten-Modus ein Chip.
+   *  Auch Seitenmarken sind `tag` (kein Lesetext), zusätzlich mit `page`. */
   tag?: boolean;
+  /** Seitenzahl des Originals aus `{{S. n}}`. */
+  page?: number;
 }
+
+/** Seitenmarke `{{S. 12}}` (lva#149), am Anfang des restlichen Texts. */
+export const PAGE_MARK = /^\{\{S\. ?(\d{1,5})\}\}/;
 
 export type ReaderBlockKind =
   "heading" | "paragraph" | "quote" | "item" | "rule";
@@ -121,6 +129,22 @@ export function parseInline(text: string, offset: number): ReaderRun[] {
   let i = 0;
   while (i < text.length) {
     const c = text[i];
+    if (c === "{" && text[i + 1] === "{") {
+      const m = PAGE_MARK.exec(text.slice(i, i + 16));
+      if (m) {
+        flush(i);
+        runs.push({
+          text: m[0],
+          start: offset + i,
+          end: offset + i + m[0].length,
+          tag: true,
+          page: Number(m[1]),
+        });
+        i += m[0].length;
+        bufStart = offset + i;
+        continue;
+      }
+    }
     if (c === "[") {
       const close = text.indexOf("]", i + 1);
       const nl = text.indexOf("\n", i + 1);

@@ -367,3 +367,30 @@ for (const theme of ["light", "dark"]) {
     });
   }
 }
+
+// Seitenzahlen des Originals im PDF-Import (lva#149).
+const PDF_BUCH = [
+  "# Erstes Kapitel",
+  "",
+  "{{S. 11}} Der Leuchtturm stand seit über hundert Jahren auf der Klippe, und der Wind strich Tag und Nacht um seine weißen Mauern, bis die Farbe abblätterte und das Salz in jeder Fuge saß.",
+  "",
+  "Mara zählte die Stufen, wie sie es jeden Abend tat: einhundertzwölf bis zur Laterne, keine mehr und keine {{S. 12}} weniger. Oben angekommen, wischte sie das Glas und sah hinaus aufs Meer.",
+  "",
+  "Draußen zog ein Schiff vorbei, ohne Licht und ohne Laut, und erst als es hinter der Landzunge verschwand, merkte sie, dass sie den Atem angehalten hatte.",
+].join("\n");
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild seitenmarken ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await open(page, PDF_BUCH, 1440);
+      if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("reader-flow").waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${DIR}/seitenmarken-${theme}-${width}.png` });
+    });
+  }
+}

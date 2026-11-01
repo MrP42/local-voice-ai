@@ -603,11 +603,27 @@ pub fn xhtml_to_markdown(xhtml: &str) -> String {
 /// Anders als beim EPUB bleiben `<…>` und `[…]` stehen: PDFs sind oft
 /// eigene Skripte mit Sprechern und Tags.
 pub fn reflow_plain_text(text: &str) -> String {
-    let lines: Vec<String> = text
+    let lines: Vec<(String, Option<u32>)> = text
         .replace('\u{0C}', "\n\n")
         .lines()
-        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|l| (l.to_string(), None))
         .collect();
+    reflow_lines(lines)
+}
+
+/// Seitenmarke im Seitentext: `{{S. 12}}`. Die Buchansicht zeigt sie als
+/// Seitenzahl des Originals, die Synthese liest sie nicht vor.
+pub fn page_mark(page: u32) -> String {
+    format!("{{{{S. {page}}}}}")
+}
+
+/// Wie [`reflow_plain_text`], aber je Zeile optional die Seite des Originals,
+/// die mit dieser Zeile beginnt; sie landet als [`page_mark`] im Absatz.
+fn reflow_lines(raw: Vec<(String, Option<u32>)>) -> String {
+    let (lines, starts): (Vec<String>, Vec<Option<u32>>) = raw
+        .into_iter()
+        .map(|(l, m)| (l.split_whitespace().collect::<Vec<_>>().join(" "), m))
+        .unzip();
     let mut lengths: Vec<usize> = lines
         .iter()
         .map(|l| l.chars().count())
@@ -619,15 +635,24 @@ pub fn reflow_plain_text(text: &str) -> String {
     let starts_block = |line: &str| LIST_LINE_RE.is_match(line) || SPEAKER_LINE_RE.is_match(line);
     let mut paragraphs: Vec<String> = Vec::new();
     let mut current = String::new();
-    let end_paragraph = |current: &mut String, paragraphs: &mut Vec<String>| {
-        if !current.trim().is_empty() {
-            paragraphs.push(current.trim().to_string());
-        }
-        current.clear();
-    };
+    // Seitenanfänge im laufenden Absatz: (Byte-Position, Seite).
+    let mut marks: Vec<(usize, u32)> = Vec::new();
+    let mut pending: Option<u32> = None;
+    let end_paragraph =
+        |current: &mut String, marks: &mut Vec<(usize, u32)>, paragraphs: &mut Vec<String>| {
+            let text = insert_page_marks(current, marks);
+            if !text.trim().is_empty() {
+                paragraphs.push(text.trim().to_string());
+            }
+            current.clear();
+            marks.clear();
+        };
     for (i, line) in lines.iter().enumerate() {
+        if let Some(page) = starts[i] {
+            pending = Some(page);
+        }
         if line.is_empty() {
-            end_paragraph(&mut current, &mut paragraphs);
+            end_paragraph(&mut current, &mut marks, &mut paragraphs);
             continue;
         }
         let at_gap = |j: Option<usize>| j.and_then(|j| lines.get(j)).is_none_or(String::is_empty);
@@ -638,10 +663,13 @@ pub fn reflow_plain_text(text: &str) -> String {
             continue;
         }
         if starts_block(line) {
-            end_paragraph(&mut current, &mut paragraphs);
+            end_paragraph(&mut current, &mut marks, &mut paragraphs);
         }
         let first_word = line.split(' ').next().unwrap_or_default();
         if current.is_empty() {
+            if let Some(page) = pending.take() {
+                marks.push((0, page));
+            }
             current.push_str(line);
         } else if current.ends_with('-')
             && !current.ends_with(" -")
@@ -661,9 +689,15 @@ pub fn reflow_plain_text(text: &str) -> String {
             } else if next_lower {
                 current.push(' ');
             }
+            if let Some(page) = pending.take() {
+                marks.push((current.len(), page));
+            }
             current.push_str(line);
         } else {
             current.push(' ');
+            if let Some(page) = pending.take() {
+                marks.push((current.len(), page));
+            }
             current.push_str(line);
         }
         let n = line.chars().count();
@@ -677,11 +711,43 @@ pub fn reflow_plain_text(text: &str) -> String {
         let short_heading =
             typical > 0 && n * 2 < typical && !line.ends_with([',', '-', ';']) && next_upper;
         if typical > 0 && ((ends_sentence && n * 10 < typical * 8) || short_heading) {
-            end_paragraph(&mut current, &mut paragraphs);
+            end_paragraph(&mut current, &mut marks, &mut paragraphs);
         }
     }
-    end_paragraph(&mut current, &mut paragraphs);
+    end_paragraph(&mut current, &mut marks, &mut paragraphs);
     paragraphs.join("\n\n")
+}
+
+/// Seitenmarken in einen Absatz setzen: vor das erste Wort der Seite, oder —
+/// wenn die Seite mitten im Wort beginnt (getrenntes Wort über die
+/// Seitengrenze) — hinter dieses Wort.
+fn insert_page_marks(text: &str, marks: &[(usize, u32)]) -> String {
+    let mut out = String::with_capacity(text.len() + marks.len() * 12);
+    let mut from = 0;
+    for &(at, page) in marks {
+        let at = at.min(text.len());
+        let mid_word = text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+            && text[at..].chars().next().is_some_and(char::is_alphanumeric);
+        if mid_word {
+            let end = text[at..]
+                .find(char::is_whitespace)
+                .map_or(text.len(), |e| at + e);
+            out.push_str(&text[from..end]);
+            out.push(' ');
+            out.push_str(&page_mark(page));
+            from = end;
+        } else {
+            out.push_str(&text[from..at]);
+            out.push_str(&page_mark(page));
+            out.push(' ');
+            from = at;
+        }
+    }
+    out.push_str(&text[from..]);
+    out
 }
 
 /// Wie viele Zeilen oben und unten einer PDF-Seite höchstens als Kopf-/Fußzeile
@@ -797,8 +863,31 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
                 .is_some_and(|p| chapter_run(p))
     };
 
-    let mut out = String::new();
-    for lines in &page_lines {
+    // Gedruckte Seitenzahl = Seitenindex + Versatz (Vorspann ohne Zahl,
+    // Kapitelanfänge ohne Zahl): der häufigste Versatz der erkannten Zahlen.
+    let mut offsets: HashMap<i64, usize> = HashMap::new();
+    for (p, lines) in page_lines.iter().enumerate() {
+        let printed = [lines.first(), lines.last()]
+            .into_iter()
+            .flatten()
+            .find(|l| is_page_number(l))
+            .and_then(|l| first_number(l));
+        if let Some(n) = printed {
+            *offsets.entry(n as i64 - p as i64).or_default() += 1;
+        }
+    }
+    let offset = offsets
+        .into_iter()
+        .max_by_key(|&(o, n)| (n, -o.abs()))
+        .map_or(1, |(o, _)| o);
+
+    let mut out: Vec<(String, Option<u32>)> = Vec::new();
+    for (p, lines) in page_lines.iter().enumerate() {
+        // Ohne zweite Seite keine Marken: ein Einseiter braucht keine Seitenzahl.
+        let mut mark = (pages.len() > 1)
+            .then(|| u32::try_from(p as i64 + offset).ok())
+            .flatten()
+            .filter(|&n| n > 0);
         for (i, line) in lines.iter().enumerate() {
             let at_edge = i == 0 || i + 1 == lines.len();
             let drop = match page_zone(lines.len(), i) {
@@ -806,12 +895,18 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
                 None => false,
             } || (at_edge && is_page_number(line));
             if !drop {
-                out.push_str(line);
-                out.push('\n');
+                out.push((line.to_string(), mark.take()));
             }
         }
     }
-    reflow_plain_text(&out)
+    reflow_lines(out)
+}
+
+/// Erste Zahl einer Seitenzahl-Zeile („Seite 12 von 300“ → 12).
+fn first_number(line: &str) -> Option<u32> {
+    line.split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())
+        .and_then(|s| s.parse().ok())
 }
 
 #[cfg(test)]
@@ -1099,7 +1194,7 @@ mod tests {
         assert!(out.contains("vom Meer heraufkam, Nebel am Ende."), "{out}");
         // Ein Satz über die Seitengrenze bleibt zusammen.
         assert!(
-            out.contains("läuft über die Seitengrenze in Stürme im Turm, Zeile 1"),
+            out.contains("läuft über die Seitengrenze in {{S. 4}} Stürme im Turm, Zeile 1"),
             "{out}"
         );
     }
@@ -1177,5 +1272,41 @@ mod tests {
         let out = pdf_pages_to_text(&pages);
         assert!(!out.contains("Die Klippe"), "{out}");
         assert!(out.contains("Satz 0 auf Seite 7"), "{out}");
+    }
+    #[test]
+    fn pdf_page_marks_follow_printed_numbers_and_split_words() {
+        // Vorspann: zwei Seiten ohne Zahl, dann Seite 1, 2, 3 … gedruckt unten.
+        let line = "Der Wind strich um den Turm, und Mara lauschte lange auf das Meer";
+        let pages: Vec<String> = (0..6)
+            .map(|p| {
+                let mut page = String::new();
+                for z in 0..6 {
+                    page.push_str(&format!("{line} {p}{z} und weiter\n"));
+                }
+                if p == 2 {
+                    page.push_str("und dann kam die Stun-\n");
+                }
+                if p >= 2 {
+                    page.push_str(&format!("{}\n", p - 1));
+                }
+                page
+            })
+            .map(|mut page| {
+                if page.starts_with(line) && page.contains(" 30 ") {
+                    page = format!("de der Wahrheit am Ende\n{page}");
+                }
+                page
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        // Versatz aus den gedruckten Zahlen: Seite mit Index 3 ist „2“.
+        assert!(out.contains("Stunde {{S. 2}} der Wahrheit"), "{out}");
+        assert!(!out.contains("{{S. 0}}"), "{out}");
+        assert!(out.starts_with(line), "{out}");
+    }
+
+    #[test]
+    fn reflow_without_pages_has_no_marks() {
+        assert!(!reflow_plain_text("Eins.\n\nZwei.").contains("{{"));
     }
 }
