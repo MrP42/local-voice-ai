@@ -6,7 +6,7 @@ Text in die Mitte, Stimme wählen, Vorlesen drücken. Alles läuft auf diesem Re
 
 - **Text** tippen, einfügen oder diktieren (Mikrofon-Symbol).
 - **Symbolzeile** unter der Stimmenwahl: lauter gleich große Symbole ohne Beschriftung. Ein Tooltip nennt Namen und Wirkung, per Maus nach kurzem Verweilen, per Tastatur beim Fokus. Seltenes liegt hinter dem Menü (☰) am rechten Rand.
-- **Hinzufügen (+)**: ein Dokument (TXT, MD, PDF, DOCX), eine Web-Adresse oder eine Datei ins Projekt holen.
+- **Hinzufügen (+)**: ein Dokument oder E-Book (TXT, MD, PDF, DOCX, EPUB; DRM-frei), eine Web-Adresse oder eine Datei ins Projekt holen.
 - **Übersetzen** (Sprachsymbol, im Reiter Übersetzung, daneben die Zielsprache) und **Zusammenfassen** (Dokumentsymbol, im Reiter Zusammenfassung; Umfang, Detailgrad und Zielgruppe stehen hinter dem Reglersymbol daneben) legen das Ergebnis in einen eigenen Reiter. Das Original bleibt unverändert.
 - **Vorlesen** liest Satz für Satz. Die Pfeile springen zum vorigen oder nächsten Satz, Pause hält an.
 - **Als Audio speichern** (Pfeil nach unten) schreibt die Aufnahme in den Projektordner der Seite. Sie erscheint rechts unter Dateien.

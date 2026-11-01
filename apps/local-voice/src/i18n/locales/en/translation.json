@@ -776,7 +776,7 @@
     },
     "add": {
       "title": "Add — document, web page, or a file for the project",
-      "document": "Load document (TXT, MD, PDF, DOCX)",
+      "document": "Load document (TXT, MD, PDF, DOCX, EPUB)",
       "url": "Load web page (URL)…",
       "projectFile": "Copy a file into the project files",
       "urlDialogTitle": "Load a web page as text",

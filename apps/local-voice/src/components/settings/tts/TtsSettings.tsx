@@ -1695,6 +1695,7 @@ export const TtsSettings = () => {
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
+    const wasEmpty = !text.trim();
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
     if (result.status === "error") {
@@ -1703,6 +1704,13 @@ export const TtsSettings = () => {
     }
     setTab("original");
     setText(result.data);
+    // Ein Buch auf einer leeren Seite: die Seite heißt wie das Buch (lva#149).
+    const bookTitle = /^#\s+(.+)$/m.exec(result.data)?.[1]?.trim();
+    if (wasEmpty && activePage && bookTitle) {
+      void commands
+        .pagesRename(activePage, bookTitle.slice(0, 120))
+        .then(() => reloadPages());
+    }
     openModeRef.current?.(result.data);
   };
 
