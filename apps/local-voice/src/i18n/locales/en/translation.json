@@ -84,6 +84,9 @@
       "speakerMenuVoice": "Voice and speaking style for “{{name}}”…",
       "readFromHere": "Read from here"
     },
+    "parts": {
+      "next": "Continuing with “{{title}}”"
+    },
     "isbn": {
       "button": "Book details by ISBN",
       "buttonHint": "Fetch title and author from Open Library – only the ISBN is sent",

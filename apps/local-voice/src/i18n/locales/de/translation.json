@@ -84,6 +84,9 @@
       "speakerMenuVoice": "Stimme und Sprechstil für „{{name}}“…",
       "readFromHere": "Ab hier vorlesen"
     },
+    "parts": {
+      "next": "Weiter mit „{{title}}“"
+    },
     "isbn": {
       "button": "Buchdaten per ISBN",
       "buttonHint": "Titel und Autor aus Open Library holen – nur die ISBN geht ins Netz",

@@ -1594,6 +1594,8 @@ pub struct TtsManager {
     export_cancel: Mutex<Arc<AtomicBool>>,
     /// Abbruch-Flag der Vorab-Erzeugung (eigenes Flag, wie beim Export).
     prewarm_cancel: Mutex<Arc<AtomicBool>>,
+    /// Abbruch-Flag des Anlaufs fuer den naechsten Buchteil (lva#150).
+    prefetch_cancel: Mutex<Arc<AtomicBool>>,
     /// Registry der Sprachausgabe-Anbieter (Goal tts-provider, P3a).
     provider_host: providers::setup::ProviderHost,
     /// Probestimme der Anbieter (streamt; siehe `providers::preview`).
@@ -2179,6 +2181,7 @@ impl TtsManager {
                 speak_session: Mutex::new(None),
                 export_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 prewarm_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                prefetch_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 provider_host,
                 provider_preview,
                 provider_roster: Mutex::new(None),
@@ -2366,6 +2369,10 @@ impl TtsManager {
     }
 
     pub fn cancel(&self) {
+        self.prefetch_cancel
+            .lock()
+            .unwrap()
+            .store(true, Ordering::Release);
         self.core.cancel_core();
     }
 
@@ -2518,6 +2525,68 @@ impl TtsManager {
             .lock()
             .unwrap()
             .store(true, Ordering::Release);
+    }
+
+    /// Anlauf fuer den naechsten Buchteil (lva#150): die ersten
+    /// [`LOOKAHEAD_SENTENCES`] Saetze still in den Cache legen, waehrend der
+    /// laufende Teil zu Ende spielt. So beginnt der naechste Teil ohne Pause.
+    /// Ohne Fortschrittsmeldung; ein neuer Aufruf oder ein Stopp bricht ab.
+    /// Laeuft nur, wenn die Engine schon bereit ist (kein Serverstart dafuer)
+    /// und nicht fuer Netz-Anbieter (wie der Vorpuffer). Gibt die Zahl der
+    /// angefragten Stuecke zurueck.
+    pub async fn prefetch_head(self: &Arc<Self>, raw: &str) -> Result<u32, String> {
+        if matches!(self.core.engine_snapshot(), EngineImpl::Provider(_)) {
+            return Ok(0);
+        }
+        if !matches!(self.core.phase(), TtsPhase::Ready | TtsPhase::Speaking) {
+            return Ok(0);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut slot = self.prefetch_cancel.lock().unwrap();
+            slot.store(true, Ordering::Release);
+            *slot = cancel.clone();
+        }
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Dieselbe Aufbereitung wie die Sitzung (`run_speak_session`), sonst
+        // passten die Cache-Schluessel nicht.
+        let utterances = without_speakers_unless_switching(
+            self.utterances(raw.trim()).await,
+            self.core.engine_caps().voice_switching,
+            self.core.fixed_voice.load(Ordering::Acquire),
+        );
+        let mut done = 0u32;
+        let mut sentences = 0usize;
+        for (sentence, speaker) in &utterances {
+            if sentences >= LOOKAHEAD_SENTENCES {
+                break;
+            }
+            let Some(prepared) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            sentences += 1;
+            for part in protocol::split_pauses(&prepared.text) {
+                let protocol::SpeechPart::Speak(text) = part else {
+                    continue;
+                };
+                if cancel.load(Ordering::Acquire) {
+                    return Ok(done);
+                }
+                let voice = self.core.utterance_voice(speaker.as_ref());
+                let port = *self.core.port.lock().unwrap();
+                let seed = *self.core.seed.lock().unwrap();
+                // Fehler bleiben still: der Teil liest dann eben ohne Anlauf.
+                if self
+                    .core
+                    .fetch_wav_ahead(port, seed, &text, voice.as_deref(), &cancel)
+                    .await
+                    .is_ok()
+                {
+                    done += 1;
+                }
+            }
+        }
+        Ok(done)
     }
 
     /// Vorlesetext in Saetze samt Stimme zerlegen.
@@ -6552,6 +6621,52 @@ mod tests {
             "jeder Satz genau einmal berechnet: {:?}",
             stage.engine.started()
         );
+    }
+
+    /// Ein Export (eigenes Abbruch-Flag) wartet auf einen Satz, den gerade der
+    /// Vorpuffer rechnet. Bricht der Nutzer den Export ab, kehrt er sofort
+    /// zurueck, statt bis zum Ende der fremden Berechnung zu haengen.
+    #[tokio::test]
+    async fn warten_auf_einen_belegten_satz_ist_abbrechbar() {
+        let stage = stage("A");
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *stage.engine.gate.lock().unwrap() = Some(gate.clone());
+        let ahead_cancel = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&stage.core);
+        let flag = Arc::clone(&ahead_cancel);
+        // Der Vorpuffer belegt den Satz und haengt in der Synthese.
+        let ahead = tokio::spawn(async move {
+            core.fetch_wav_ahead(8080, 0, "Belegt.", Some("A"), &flag)
+                .await
+        });
+        wait_until("Vorpuffer rechnet", || stage.engine.started().len() == 1).await;
+
+        let export_cancel = Arc::new(AtomicBool::new(false));
+        let core = Arc::clone(&stage.core);
+        let flag = Arc::clone(&export_cancel);
+        let export = tokio::spawn(async move {
+            core.fetch_wav_cancellable(8080, 0, "Belegt.", Some("A"), Some(&flag))
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!export.is_finished(), "der Export wartet auf den Vorpuffer");
+        export_cancel.store(true, Ordering::Release);
+        let result = tokio::time::timeout(Duration::from_secs(1), export)
+            .await
+            .expect("der abgebrochene Export kehrt sofort zurueck")
+            .unwrap();
+        assert_eq!(
+            result,
+            Err(providers::pipeline::CANCELLED_MESSAGE.to_string())
+        );
+        assert_eq!(
+            stage.engine.started().len(),
+            1,
+            "der Export hat den Satz nicht ein zweites Mal angefordert"
+        );
+
+        gate.add_permits(10);
+        assert_eq!(ahead.await.unwrap(), Ok(true));
     }
 
     /// Der Einstieg wird durch den Vorpuffer nicht langsamer: solange Satz 1

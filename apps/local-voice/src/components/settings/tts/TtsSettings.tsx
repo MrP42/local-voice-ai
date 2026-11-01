@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   commands,
   type AutoTagOptions,
+  type Book,
   type PageInfo,
   type TtsStatus,
 } from "@/bindings";
@@ -139,6 +140,9 @@ const EXPORT_BITRATES = [128, 192, 256, 320];
 /// ein. Die ersten Saetze sind langsamer (das Modell laedt noch), eine rohe
 /// Hochrechnung springt deshalb von Satz zu Satz wild.
 const ETA_SMOOTHING = 0.3;
+/** Buchteile (lva#150): so viele Sätze vor dem Ende beginnt der Anlauf des
+ *  nächsten Teils — so viele, wie der Vorpuffer vorausrechnet. */
+const PART_LEAD_SENTENCES = 3;
 
 /// Restdauer als "2:30", ab einer Stunde als "1:05:00". Auf 5 Sekunden
 /// gerundet: sekundengenau zappelt die Zahl bei jedem Satz, ohne mehr zu
@@ -266,6 +270,8 @@ export const TtsSettings = () => {
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
+  /** Zählt fertig geladene Seiten (Buchteile: Weiterlesen nach dem Laden). */
+  const [pageLoadTick, setPageLoadTick] = useState(0);
   /** Zu welchem Reiter die laufende Sprechsitzung gehoert. Fortsetzen und
    *  Satzspruenge gelten nur fuer sie — ein anderer Reiter startet neu. */
   const sessionTab = useRef<"original" | "translation" | "summary">("original");
@@ -350,6 +356,9 @@ export const TtsSettings = () => {
     position: number;
     total: number;
   } | null>(null);
+  /** Fortschritt ohne Render-Verzug — der Listener setzt ihn sofort. */
+  const speakProgressRef = useRef(speakProgress);
+  speakProgressRef.current = speakProgress;
   const [currentSentence, setCurrentSentence] = useState<string | null>(null);
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
@@ -443,6 +452,9 @@ export const TtsSettings = () => {
     const unProgress = listen<{ position: number; total: number }>(
       "tts-speak-progress",
       (e) => {
+        // Sofort, nicht erst beim Rendern: das Ende der Sitzung kann vor dem
+        // Render des letzten Fortschritts ankommen (Buchteile, lva#150).
+        speakProgressRef.current = e.payload;
         setSpeakProgress(e.payload);
         // Nach einem Sprung oder einem fertigen Satz gilt der alte Satz nicht mehr.
         setCurrentIndex((index) =>
@@ -601,6 +613,7 @@ export const TtsSettings = () => {
       }
       setTranslation(null);
       pageLoaded.current = true;
+      setPageLoadTick((n) => n + 1);
     });
   }, [activePage]);
 
@@ -727,12 +740,18 @@ export const TtsSettings = () => {
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
     const canon = canonicalizeTagsAt(script, scriptOffset);
+    // „Nur diesen Satz“ liest nie im nächsten Teil weiter.
+    if (onlyOne) partSession.current = null;
+    const session = onlyOne ? null : startPartSession();
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
       onlyOne,
     );
-    if (result.status === "error") setLastError(result.error);
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else continueWithNextPart(session);
   };
 
   // Vorab-Erzeugung: geaenderte Saetze in den Cache, ohne Wiedergabe.
@@ -791,10 +810,14 @@ export const TtsSettings = () => {
     locatorRef.current?.reset(0);
     lastLocated.current = null;
     sessionResumeKey.current = resumeKeyRef.current;
+    const session = startPartSession();
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
-    if (result.status === "error") setLastError(result.error);
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else continueWithNextPart(session);
   };
 
   /**
@@ -820,6 +843,9 @@ export const TtsSettings = () => {
    */
   const stopSpeaking = () => {
     void commands.ttsCancel();
+    partSession.current = null;
+    lastSessionPage.current = null;
+    autoplayPage.current = null;
     setSpeakProgress(null);
     setCurrentIndex(null);
     // Stopp gilt der Sitzung, nicht der gerade offenen Seite.
@@ -828,8 +854,14 @@ export const TtsSettings = () => {
 
   const resumeSpeaking = async () => {
     setLastError(null);
+    // Nach einer Pause setzt Play die Sitzung derselben Seite fort — dann
+    // gilt auch das Weiterlesen im nächsten Buchteil wieder.
+    const session = startPartSession(lastSessionPage.current);
     const result = await commands.ttsSpeakResume();
-    if (result.status === "error") setLastError(result.error);
+    if (result.status === "error") {
+      endPartSession(session);
+      setLastError(result.error);
+    } else continueWithNextPart(session);
   };
 
   /**
@@ -1288,6 +1320,136 @@ export const TtsSettings = () => {
   } | null>(null);
   const activePageRef = useRef<string | null>(null);
   activePageRef.current = activePage ?? null;
+
+  // Buchteile (lva#150): Gehört die Seite zu einem Buch der Skript-Werkstatt,
+  // liest das Vorlesen am Ende im nächsten Teil weiter — ohne Abriss, weil
+  // die ersten Sätze des nächsten Teils schon vorberechnet sind, während der
+  // laufende Teil ausklingt.
+  const [books, setBooks] = useState<Book[]>([]);
+  useEffect(() => {
+    let live = true;
+    commands
+      .booksList()
+      .then((r) => {
+        if (live && r.status === "ok" && Array.isArray(r.data)) setBooks(r.data);
+      })
+      .catch(() => {
+        /* ohne Bücherliste liest das Vorlesen nur den einen Teil */
+      });
+    return () => {
+      live = false;
+    };
+  }, [pages]);
+  const nextPart = useMemo(() => {
+    if (!activePage) return null;
+    for (const b of books) {
+      const i = b.page_ids.indexOf(activePage);
+      if (i < 0) continue;
+      for (const id of b.page_ids.slice(i + 1)) {
+        const page = pages.find((p) => p.id === id);
+        if (page) return { id, title: page.title };
+      }
+    }
+    return null;
+  }, [books, activePage, pages]);
+  const nextPartRef = useRef(nextPart);
+  nextPartRef.current = nextPart;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+  /** Seite, deren Sitzung gerade läuft, und ob ihr Anlauf schon angefragt ist.
+   *  Jede Sitzung hat ihr eigenes Objekt: eine später endende alte Sitzung
+   *  darf die neue nicht abräumen. */
+  type PartSession = { page: string; prefetched: boolean };
+  const partSession = useRef<PartSession | null>(null);
+  /** Seite der zuletzt gestarteten Sitzung — Play nach Pause setzt sie fort. */
+  const lastSessionPage = useRef<string | null>(null);
+  /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
+  const autoplayPage = useRef<string | null>(null);
+
+  const startPartSession = (
+    page: string | null = activePageRef.current,
+  ): PartSession | null => {
+    lastSessionPage.current = page;
+    const session = page ? { page, prefetched: false } : null;
+    partSession.current = session;
+    return session;
+  };
+  const endPartSession = (session: PartSession | null) => {
+    if (session && partSession.current === session) partSession.current = null;
+  };
+
+  // Die letzten Sätze laufen: den Anfang des nächsten Teils still vorberechnen.
+  // Nur im Original — Übersetzung und Zusammenfassung lesen nicht weiter.
+  useEffect(() => {
+    const session = partSession.current;
+    if (!session || session.prefetched || !nextPart || !speakProgress) return;
+    if (session.page !== activePageRef.current) return;
+    if (sessionTab.current !== "original" || tab !== "original") return;
+    const { position, total } = speakProgress;
+    if (total === 0 || position < Math.max(0, total - PART_LEAD_SENTENCES))
+      return;
+    session.prefetched = true;
+    commands
+      .pageStateLoad(nextPart.id)
+      .then((r) => {
+        // Inzwischen gestoppt oder neu gestartet: nichts mehr vorrechnen.
+        if (partSession.current !== session) return;
+        if (r.status !== "ok" || !r.data) return;
+        let nextText = r.data;
+        try {
+          nextText = (JSON.parse(r.data) as { text?: string }).text ?? "";
+        } catch {
+          // Ältere Seiten speichern den Text roh.
+        }
+        if (!nextText.trim()) return;
+        void commands.ttsPrefetchHead(
+          canonicalizeTags(toSpokenScript(nextText)),
+        );
+      })
+      .catch(() => {
+        /* ohne Anlauf liest der nächste Teil trotzdem, nur mit Pause */
+      });
+  }, [speakProgress, nextPart, tab]);
+
+  /**
+   * Nach dem Ende einer Sitzung: war sie vollständig (letzter Satz gehört),
+   * ist sie noch die aktuelle und gibt es einen nächsten Teil, dorthin
+   * wechseln und weiterlesen.
+   */
+  const continueWithNextPart = (session: PartSession | null) => {
+    if (!session || partSession.current !== session) return;
+    partSession.current = null;
+    const progress = speakProgressRef.current;
+    const next = nextPartRef.current;
+    if (!progress || progress.total === 0 || progress.position < progress.total)
+      return;
+    if (activePageRef.current !== session.page || !next) return;
+    if (sessionTab.current !== "original" || tabRef.current !== "original")
+      return;
+    autoplayPage.current = next.id;
+    setActivePage(next.id);
+    toast(t("tts.parts.next", { title: next.title }));
+  };
+  // Woanders hingewechselt, bevor der nächste Teil geladen war: kein
+  // Weiterlesen mehr, auch nicht, wenn die Seite später von Hand geöffnet wird.
+  useEffect(() => {
+    if (autoplayPage.current && autoplayPage.current !== activePage)
+      autoplayPage.current = null;
+  }, [activePage]);
+  // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
+  // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
+  useEffect(() => {
+    if (!autoplayPage.current || autoplayPage.current !== activePage) return;
+    if (!pageLoaded.current) return;
+    autoplayPage.current = null;
+    // Nur im Originaltext und nur, wenn es etwas zu lesen gibt: eine
+    // Übersetzung oder Zusammenfassung des nächsten Teils liest niemand
+    // ungefragt vor.
+    if (tab !== "original" || !spokenText.trim()) return;
+    void speakNow();
+    // speakNow liest den aktuellen Stand; neu laufen soll das nur, wenn der
+    // gewechselte Teil fertig geladen ist.
+  }, [pageLoadTick, activePage, tab, spokenText]);
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
@@ -2182,7 +2344,7 @@ export const TtsSettings = () => {
                 onSleep={pauseSpeaking}
                 resumable={resumeAt !== null && !canResume && !speaking}
                 resumePage={resumePage}
-                chapter={chapterIndex >= 0 ? contents[chapterIndex].title : null}
+                chapter={contents[chapterIndex]?.title ?? null}
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);
