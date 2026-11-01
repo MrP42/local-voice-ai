@@ -476,9 +476,14 @@ fn get_provenance(args: &Value, backend: &Backend) -> Res<ToolOutcome> {
     let wanted = |name: &str| part.is_none_or(|p| p == name);
     let mut entries: Vec<Value> = Vec::new();
     let mut note = |kind: SubjectKind, subject: &str, label: &str| -> Res<()> {
-        let list = provenance::get(&conn, kind, subject)
-            .map_err(|e| ToolOutcome::error(format!("Die Herkunft ließ sich nicht lesen ({e}).")))?;
-        entries.extend(list.iter().take(PROVENANCE_LIMIT).map(|e| provenance_json(label, e)));
+        let list = provenance::get(&conn, kind, subject).map_err(|e| {
+            ToolOutcome::error(format!("Die Herkunft ließ sich nicht lesen ({e})."))
+        })?;
+        entries.extend(
+            list.iter()
+                .take(PROVENANCE_LIMIT)
+                .map(|e| provenance_json(label, e)),
+        );
         Ok(())
     };
     if wanted("transcript") {

@@ -56,7 +56,12 @@ impl AppBridge {
 
     /// Werkzeuge, die diese App-Version ausfuehren kann (fuer die Ansicht der Zugaenge).
     pub fn available_tools(&self) -> HashSet<String> {
-        self.server.bridge().registry().names().into_iter().collect()
+        self.server
+            .bridge()
+            .registry()
+            .names()
+            .into_iter()
+            .collect()
     }
 
     pub fn server(&self) -> &Arc<Server> {

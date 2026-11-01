@@ -281,7 +281,9 @@ pub fn plan_final_pass(
 // ---------------------------------------------------------------------------
 
 fn overlap_ms(a: &StoredSegment, b: &StoredSegment) -> u64 {
-    a.end_ms.min(b.end_ms).saturating_sub(a.start_ms.max(b.start_ms))
+    a.end_ms
+        .min(b.end_ms)
+        .saturating_sub(a.start_ms.max(b.start_ms))
 }
 
 fn gap_ms(a: &StoredSegment, b: &StoredSegment) -> u64 {
@@ -434,7 +436,9 @@ impl Cutter {
 
     fn push(&mut self, samples: &[i16], base_ms: u64, out: &mut Vec<(Chunk, Option<SegmentMeta>)>) {
         match self {
-            Cutter::Vad(seg) => out.extend(seg.push(samples).into_iter().map(|s| to_chunk(s, base_ms))),
+            Cutter::Vad(seg) => {
+                out.extend(seg.push(samples).into_iter().map(|s| to_chunk(s, base_ms)))
+            }
             Cutter::Chunker(c) => {
                 if let Some(mut chunk) = c.push(samples) {
                     chunk.offset_ms += base_ms;
@@ -553,7 +557,11 @@ pub fn final_tracks(meeting: &Meeting, metadata: Option<&serde_json::Value>) -> 
             .and_then(|a| a.get("wav_kept"))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true);
-        let path = if aec.exists() && aec_complete { aec } else { mic };
+        let path = if aec.exists() && aec_complete {
+            aec
+        } else {
+            mic
+        };
         if path.exists() {
             out.push(Track {
                 path,
@@ -623,7 +631,9 @@ struct LiveCopy {
 /// Epoche der vorhandenen Live-Kopie (`None`: keine oder unlesbar).
 fn live_copy_epoch(dir: &Path) -> Option<u32> {
     let text = std::fs::read_to_string(dir.join(LIVE_TRANSCRIPT_FILE)).ok()?;
-    serde_json::from_str::<LiveCopy>(&text).ok().map(|c| c.epoch)
+    serde_json::from_str::<LiveCopy>(&text)
+        .ok()
+        .map(|c| c.epoch)
 }
 
 /// Schreibt die Live-Kopie: erst `…tmp` vollstaendig und auf die Platte,
@@ -773,7 +783,10 @@ fn catch_up(
                 let timed = match env.transcribe(model_id, &chunk) {
                     Ok(t) => t,
                     Err(e) => {
-                        warn!("meetings: catch-up block at {} ms failed: {e}", chunk.offset_ms);
+                        warn!(
+                            "meetings: catch-up block at {} ms failed: {e}",
+                            chunk.offset_ms
+                        );
                         return false;
                     }
                 };
@@ -880,10 +893,7 @@ fn final_pass(
     }
     // P8a: die Phase mit der Gesamtdauer beider Spuren, schon vor dem Laden des
     // Modells (das Laden eines grossen Modells dauert Sekunden).
-    let total_ms: u64 = tracks
-        .iter()
-        .filter_map(|t| wav_duration_ms(&t.path))
-        .sum();
+    let total_ms: u64 = tracks.iter().filter_map(|t| wav_duration_ms(&t.path)).sum();
     env.phase(JobPhase::FinalPass, total_ms);
     report.load_ms = env.load(model_id)?;
 
@@ -922,12 +932,22 @@ fn final_pass(
             report.transcribe_ms += started.elapsed().as_millis() as u64;
             report.blocks += 1;
             report.audio_ms += chunk.samples.len() as u64 / SAMPLES_PER_MS;
-            env.progress(track_base_ms + chunk.offset_ms + chunk.samples.len() as u64 / SAMPLES_PER_MS);
+            env.progress(
+                track_base_ms + chunk.offset_ms + chunk.samples.len() as u64 / SAMPLES_PER_MS,
+            );
             let mut index = 0;
-            fresh.extend(live_segments(timed, &chunk, channel, meta, &mut index, &stats));
+            fresh.extend(live_segments(
+                timed, &chunk, channel, meta, &mut index, &stats,
+            ));
             true
         };
-        match segment_wav(&track.path, 0, max_segment_ms, vad.as_ref(), &mut on_segment) {
+        match segment_wav(
+            &track.path,
+            0,
+            max_segment_ms,
+            vad.as_ref(),
+            &mut on_segment,
+        ) {
             Ok(run) if run.stopped => {
                 return Err(failure.unwrap_or(KeepReason::TranscribeFailed));
             }
@@ -1079,9 +1099,7 @@ fn turns_before_stt(
     // P8a: die Phase "Sprecher" nur, wenn das Modell auch rechnen wird (sonst
     // blitzte sie fuer einen Augenblick auf). Erst melden, dann den Diarisierer
     // ausleihen: beides braucht `env`.
-    let will_run = env
-        .diarizer()
-        .is_some_and(|d| d.unavailable().is_none());
+    let will_run = env.diarizer().is_some_and(|d| d.unavailable().is_none());
     if will_run {
         env.phase(JobPhase::Speakers, 0);
     }
@@ -1214,7 +1232,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
         outcome
     }));
     let result = result.unwrap_or_else(|_| {
-        error!("meetings: final pass panicked ({}) - live transcript kept", job.meeting_id);
+        error!(
+            "meetings: final pass panicked ({}) - live transcript kept",
+            job.meeting_id
+        );
         Err(KeepReason::Panic)
     });
     report.wall_ms = started.elapsed().as_millis() as u64;
@@ -1238,7 +1259,10 @@ pub fn run_job(store: &MeetingStore, job: &JobSpec, env: &mut dyn FinalEnv) -> J
             report.epoch = epoch;
             // Gewollt Live = Ende: das Live-Modell ist das Endmodell. Sonst
             // (Fehler) meldet `model: None` "Enddurchlauf uebersprungen".
-            let model = reason.is_by_design().then(|| job.live_model.clone()).flatten();
+            let model = reason
+                .is_by_design()
+                .then(|| job.live_model.clone())
+                .flatten();
             if !reason.is_by_design() {
                 warn!(
                     "meetings: final pass skipped for {} ({reason:?}) - live transcript stays",
@@ -1559,8 +1583,7 @@ impl AppDiarizer {
 
     /// Abbruch der Engine (neue Aufnahme) oder Stopp des Nutzers.
     fn stop_requested(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
-            || self.job.as_ref().is_some_and(|j| j.is_stopped())
+        self.cancel.load(Ordering::Relaxed) || self.job.as_ref().is_some_and(|j| j.is_stopped())
     }
 }
 
@@ -1690,7 +1713,9 @@ impl FinalEnv for AppEnv {
     /// `load_model` vor dem neuen frei (nie zwei grosse Modelle im Speicher).
     fn load(&mut self, model_id: &str) -> Result<u64, KeepReason> {
         let started = Instant::now();
-        if let Err(e) = crate::process_guard::check_ram_for_start(ram_need_mb(self.size_mb(model_id))) {
+        if let Err(e) =
+            crate::process_guard::check_ram_for_start(ram_need_mb(self.size_mb(model_id)))
+        {
             warn!("meetings: final model not loaded, RAM gate: {e}");
             return Err(KeepReason::LowRam);
         }
@@ -1848,7 +1873,8 @@ mod tests {
 
     const LARGE: &str = "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q5_K_M.gguf";
     const QWEN: &str = "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q5_K_M.gguf";
-    const TURBO: &str = "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf";
+    const TURBO: &str =
+        "handy-computer/whisper-large-v3-turbo-gguf/whisper-large-v3-turbo-Q8_0.gguf";
 
     fn installed(ids: &[&str]) -> Vec<(String, u64)> {
         ids.iter().map(|id| (id.to_string(), 1_100)).collect()
@@ -1873,7 +1899,11 @@ mod tests {
     #[test]
     fn the_setting_parses_auto_off_and_model_ids() {
         assert_eq!(FinalChoice::parse("auto"), FinalChoice::Auto);
-        assert_eq!(FinalChoice::parse(""), FinalChoice::Auto, "aeltere Einstellungen");
+        assert_eq!(
+            FinalChoice::parse(""),
+            FinalChoice::Auto,
+            "aeltere Einstellungen"
+        );
         assert_eq!(FinalChoice::parse(" off "), FinalChoice::Off);
         assert_eq!(FinalChoice::parse(QWEN), FinalChoice::Model(QWEN.into()));
     }
@@ -1903,16 +1933,25 @@ mod tests {
             "ohne Qwen3-ASR bleibt Whisper large-v3"
         );
         // Eine andere Quantisierung desselben Repos zaehlt, turbo nicht.
-        let q8 = installed(&[TURBO, "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q8_0.gguf"]);
+        let q8 = installed(&[
+            TURBO,
+            "handy-computer/whisper-large-v3-gguf/whisper-large-v3-Q8_0.gguf",
+        ]);
         assert!(matches!(
             plan_final_pass(&FinalChoice::Auto, &gpu(), &q8),
             FinalPlan::Run { model_id, .. } if model_id.ends_with("large-v3-Q8_0.gguf")
         ));
-        let qwen_q8 = installed(&[LARGE, "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q8_0.gguf"]);
-        assert!(matches!(
-            plan_final_pass(&FinalChoice::Auto, &gpu(), &qwen_q8),
-            FinalPlan::Run { model_id, .. } if model_id.ends_with("Qwen3-ASR-1.7B-Q8_0.gguf")
-        ), "jede Quantisierung des Qwen-Repos zaehlt");
+        let qwen_q8 = installed(&[
+            LARGE,
+            "handy-computer/Qwen3-ASR-1.7B-gguf/Qwen3-ASR-1.7B-Q8_0.gguf",
+        ]);
+        assert!(
+            matches!(
+                plan_final_pass(&FinalChoice::Auto, &gpu(), &qwen_q8),
+                FinalPlan::Run { model_id, .. } if model_id.ends_with("Qwen3-ASR-1.7B-Q8_0.gguf")
+            ),
+            "jede Quantisierung des Qwen-Repos zaehlt"
+        );
         assert_eq!(
             plan_final_pass(&FinalChoice::Auto, &gpu(), &installed(&[TURBO])),
             FinalPlan::Keep(KeepReason::NoModel)
@@ -1988,7 +2027,11 @@ mod tests {
 
     #[test]
     fn remap_follows_the_largest_overlap_in_the_same_channel() {
-        let old = vec![seg(0, 0, 0, 4_000), seg(1, 1, 3_000, 6_000), seg(2, 0, 7_000, 9_000)];
+        let old = vec![
+            seg(0, 0, 0, 4_000),
+            seg(1, 1, 3_000, 6_000),
+            seg(2, 0, 7_000, 9_000),
+        ];
         let new = vec![
             seg(0, 0, 0, 1_000),
             seg(1, 0, 1_000, 5_000), // 3 s Ueberlappung mit alt 0
@@ -1996,17 +2039,39 @@ mod tests {
             seg(3, 0, 5_500, 9_500),
         ];
         assert_eq!(remap_sources(&old, &new, &[0]), vec![1]);
-        assert_eq!(remap_sources(&old, &new, &[1]), vec![2], "nie ueber Kanaele");
-        assert_eq!(remap_sources(&old, &new, &[2, 0, 2]), vec![3, 1], "Reihenfolge, keine Doppelten");
-        assert!(remap_sources(&old, &new, &[42]).is_empty(), "unbekannter Beleg");
+        assert_eq!(
+            remap_sources(&old, &new, &[1]),
+            vec![2],
+            "nie ueber Kanaele"
+        );
+        assert_eq!(
+            remap_sources(&old, &new, &[2, 0, 2]),
+            vec![3, 1],
+            "Reihenfolge, keine Doppelten"
+        );
+        assert!(
+            remap_sources(&old, &new, &[42]).is_empty(),
+            "unbekannter Beleg"
+        );
     }
 
     #[test]
     fn remap_without_overlap_takes_the_nearest_close_segment_or_drops_it() {
         let old = vec![seg(5, 0, 10_000, 11_000), seg(6, 0, 40_000, 41_000)];
-        let new = vec![seg(0, 0, 11_500, 13_000), seg(1, 0, 7_000, 9_500), seg(2, 0, 20_000, 21_000)];
-        assert_eq!(remap_sources(&old, &new, &[5]), vec![0], "500 ms vor 500 ms: kleinerer Index");
-        assert!(remap_sources(&old, &new, &[6]).is_empty(), "nichts in 2 s Naehe");
+        let new = vec![
+            seg(0, 0, 11_500, 13_000),
+            seg(1, 0, 7_000, 9_500),
+            seg(2, 0, 20_000, 21_000),
+        ];
+        assert_eq!(
+            remap_sources(&old, &new, &[5]),
+            vec![0],
+            "500 ms vor 500 ms: kleinerer Index"
+        );
+        assert!(
+            remap_sources(&old, &new, &[6]).is_empty(),
+            "nichts in 2 s Naehe"
+        );
     }
 
     // ---- Ablaeufe mit Attrappe ---------------------------------------------
@@ -2139,7 +2204,11 @@ mod tests {
         fn diarizer(&mut self) -> Option<&mut dyn ChannelDiarizer> {
             self.diar.as_mut().map(|d| d as &mut dyn ChannelDiarizer)
         }
-        fn transcribe(&mut self, model_id: &str, chunk: &Chunk) -> Result<Vec<TimedSegment>, String> {
+        fn transcribe(
+            &mut self,
+            model_id: &str,
+            chunk: &Chunk,
+        ) -> Result<Vec<TimedSegment>, String> {
             self.calls += 1;
             if let Some(f) = self.on_call.as_mut() {
                 f(self.calls);
@@ -2170,7 +2239,11 @@ mod tests {
                 }]);
             }
             Ok(vec![TimedSegment {
-                text: format!("{} bei {}", model_id.rsplit('/').next().unwrap(), chunk.offset_ms),
+                text: format!(
+                    "{} bei {}",
+                    model_id.rsplit('/').next().unwrap(),
+                    chunk.offset_ms
+                ),
                 start_ms: 0,
                 end_ms: ms,
                 words: Some(vec![crate::managers::transcription::WordTime {
@@ -2237,7 +2310,9 @@ mod tests {
     fn fixture(with_system: bool, status: MeetingStatus) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
-        let m = store.create_meeting("t", MeetingSource::Live, Some(0)).unwrap();
+        let m = store
+            .create_meeting("t", MeetingSource::Live, Some(0))
+            .unwrap();
         let meeting_dir = dir.path().join(&m.id);
         std::fs::create_dir_all(&meeting_dir).unwrap();
         let mic = meeting_dir.join("mic.wav");
@@ -2303,7 +2378,10 @@ mod tests {
         assert_eq!(snap.segments.len(), 4, "2 Aeusserungen x 2 Kanaele");
         let idx: Vec<u32> = snap.segments.iter().map(|s| s.segment_index).collect();
         assert_eq!(idx, vec![0, 1, 2, 3]);
-        assert!(snap.segments.windows(2).all(|w| w[0].start_ms <= w[1].start_ms));
+        assert!(snap
+            .segments
+            .windows(2)
+            .all(|w| w[0].start_ms <= w[1].start_ms));
         assert_eq!(snap.segments.iter().filter(|s| s.channel == 1).count(), 2);
         assert!(snap.segments.iter().all(|s| s.text.contains("large-v3")));
         // Wortzeiten auf der Kanal-Achse.
@@ -2332,7 +2410,9 @@ mod tests {
     /// A1: der Enddurchlauf legt die Herkunft des neuen Transkripts an.
     #[test]
     fn the_final_pass_records_model_duration_and_source_of_the_new_transcript() {
-        use crate::managers::provenance::{self, ActorKind, Locality, ProvenanceOrigin, SubjectKind};
+        use crate::managers::provenance::{
+            self, ActorKind, Locality, ProvenanceOrigin, SubjectKind,
+        };
         let f = fixture(true, MeetingStatus::Processing);
         let mut env = FakeEnv::new();
         run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
@@ -2354,9 +2434,17 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(e.subject_revision, Some(revision), "Revision des neuen Transkripts");
-        assert_eq!((e.sources[0].kind.as_str(), e.sources[0].reference.as_str()), ("audio", f.id.as_str()));
-        let params: serde_json::Value = serde_json::from_str(e.params_json.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            e.subject_revision,
+            Some(revision),
+            "Revision des neuen Transkripts"
+        );
+        assert_eq!(
+            (e.sources[0].kind.as_str(), e.sources[0].reference.as_str()),
+            ("audio", f.id.as_str())
+        );
+        let params: serde_json::Value =
+            serde_json::from_str(e.params_json.as_deref().unwrap()).unwrap();
         assert_eq!(params["segments"], 4);
         assert_eq!(params["live_epoch"], 0);
         assert_eq!(params["epoch"], 1);
@@ -2373,11 +2461,17 @@ mod tests {
         env.fail_transcribe = true;
         run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         let conn = f.store.get_connection().unwrap();
-        assert!(provenance::list(&conn, SubjectKind::Transcript, &f.id).unwrap().is_empty());
+        assert!(provenance::list(&conn, SubjectKind::Transcript, &f.id)
+            .unwrap()
+            .is_empty());
         let shown = provenance::get(&conn, SubjectKind::Transcript, &f.id).unwrap();
         if let Some(e) = shown.first() {
             assert_eq!(e.origin, ProvenanceOrigin::Derived);
-            assert_ne!(e.model_id.as_deref(), Some(LARGE), "das grosse Modell lief nie");
+            assert_ne!(
+                e.model_id.as_deref(),
+                Some(LARGE),
+                "das grosse Modell lief nie"
+            );
         }
     }
 
@@ -2385,9 +2479,17 @@ mod tests {
     fn keep_by_design_sends_transcript_final_at_once_with_the_live_model_and_no_hint() {
         let f = fixture(false, MeetingStatus::Processing);
         let mut env = FakeEnv::new();
-        let out = run_job(&f.store, &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)), &mut env);
+        let out = run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
         assert_eq!(out.epoch, 0);
-        assert_eq!(env.kinds(), vec!["state", "final"], "kein Hinweis, kein Laden");
+        assert_eq!(
+            env.kinds(),
+            vec!["state", "final"],
+            "kein Hinweis, kein Laden"
+        );
         assert_eq!(env.final_event(), (0, Some("live-model".to_string())));
         assert!(env.loads.is_empty());
         assert_eq!(f.store.get_segments(&f.id).unwrap().len(), 2, "Live bleibt");
@@ -2485,7 +2587,10 @@ mod tests {
         let mut env = FakeEnv::new();
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         assert_kept(&f, &env, &out, KeepReason::BackupFailed);
-        assert!(!f.meeting_dir.join("transcript_live.json.tmp").exists(), "kein Rest");
+        assert!(
+            !f.meeting_dir.join("transcript_live.json.tmp").exists(),
+            "kein Rest"
+        );
     }
 
     #[test]
@@ -2505,7 +2610,9 @@ mod tests {
         run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         let before = std::fs::read_to_string(f.meeting_dir.join(LIVE_TRANSCRIPT_FILE)).unwrap();
         // Absturz nach dem Ersatz, vor `ready`: der Lauf beginnt erneut.
-        f.store.set_status(&f.id, MeetingStatus::Processing).unwrap();
+        f.store
+            .set_status(&f.id, MeetingStatus::Processing)
+            .unwrap();
         let mut env = FakeEnv::new();
         let out = run_job(&f.store, &job(&f, run_plan(QWEN)), &mut env);
         assert_eq!(out.report.kept, Some(KeepReason::AlreadyFinal));
@@ -2525,7 +2632,13 @@ mod tests {
         write_wav(&aec, &speech());
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         let tracks = final_tracks(&meeting, None);
-        assert_eq!(tracks[0], Track { path: aec.clone(), channel: 0 });
+        assert_eq!(
+            tracks[0],
+            Track {
+                path: aec.clone(),
+                channel: 0
+            }
+        );
         assert_eq!(tracks[1].channel, 1);
         let incomplete = serde_json::json!({ "aec": { "wav_kept": false } });
         let tracks = final_tracks(&meeting, Some(&incomplete));
@@ -2540,11 +2653,17 @@ mod tests {
         let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
         spec.catch_up_model = Some("meeting-model".into());
         let out = run_job(&f.store, &spec, &mut env);
-        assert_eq!(out.report.catch_up_segments, 2, "je Kanal die zweite Aeusserung");
+        assert_eq!(
+            out.report.catch_up_segments, 2,
+            "je Kanal die zweite Aeusserung"
+        );
         let segs = f.store.get_segments(&f.id).unwrap();
         assert_eq!(segs.len(), 4);
         assert!(segs[2].start_ms >= 2_500 && segs[2].text.contains("meeting-model"));
-        assert_eq!(segs.iter().map(|s| s.segment_index).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+        assert_eq!(
+            segs.iter().map(|s| s.segment_index).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
         assert_eq!(env.loads, vec!["meeting-model".to_string()]);
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
         assert_eq!(env.final_event(), (0, Some("live-model".to_string())));
@@ -2570,7 +2689,10 @@ mod tests {
 
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         assert_eq!(meeting.status, "processing");
-        assert_eq!(meeting.ended_at, None, "Voraussetzung: der Absturz schrieb keine Endzeit");
+        assert_eq!(
+            meeting.ended_at, None,
+            "Voraussetzung: der Absturz schrieb keine Endzeit"
+        );
         assert_eq!(prepare_orphan(&f.store, &meeting).unwrap(), Some(6_000));
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         assert_eq!(meeting.duration_ms, Some(6_000));
@@ -2578,7 +2700,10 @@ mod tests {
         // #15: auch die Endzeit kommt aus der Reparatur (Liste zeigte sonst `--:--`).
         let ended = meeting.ended_at.expect("Endzeit des Absturzrests");
         let now = chrono::Utc::now().timestamp();
-        assert!((now - 60..=now + 5).contains(&ended), "aus der Dateizeit: {ended} vs {now}");
+        assert!(
+            (now - 60..=now + 5).contains(&ended),
+            "aus der Dateizeit: {ended} vs {now}"
+        );
 
         let mut env = FakeEnv::new();
         let mut spec = job(&f, FinalPlan::Keep(KeepReason::CpuOnly));
@@ -2589,7 +2714,12 @@ mod tests {
         assert_eq!(meeting.status, "ready");
         assert!(meeting.duration_ms.unwrap() > 0);
         let segs = f.store.get_segments(&f.id).unwrap();
-        let last_mic = segs.iter().filter(|s| s.channel == 0).map(|s| s.end_ms).max().unwrap();
+        let last_mic = segs
+            .iter()
+            .filter(|s| s.channel == 0)
+            .map(|s| s.end_ms)
+            .max()
+            .unwrap();
         assert!(last_mic >= 5_000, "Segmente bis zum Ende: {last_mic}");
         assert_eq!(env.kinds().last(), Some(&"final"));
     }
@@ -2946,7 +3076,10 @@ mod tests {
         let out = run_job(&f.store, &spec, &mut env);
         assert_eq!(out.report.catch_up_gaps, 1);
         let segs = f.store.get_segments(&f.id).unwrap();
-        let gap = segs.iter().find(|s| s.channel == 0 && s.start_ms == 2_500).unwrap();
+        let gap = segs
+            .iter()
+            .find(|s| s.channel == 0 && s.start_ms == 2_500)
+            .unwrap();
         assert_eq!(gap.end_ms, 6_000);
         assert!(gap.text.starts_with("[Nicht transkribiert"));
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
@@ -2976,12 +3109,20 @@ mod tests {
             "nie rueckwaerts: {:?}",
             env.progress_log
         );
-        assert_eq!(env.progress_log.last(), Some(&12_000), "endet am Ende der Audiodauer");
+        assert_eq!(
+            env.progress_log.last(),
+            Some(&12_000),
+            "endet am Ende der Audiodauer"
+        );
         assert!(
             env.progress_log.contains(&6_000),
             "die zweite Spur beginnt bei 6 s der gemeinsamen Achse"
         );
-        assert_eq!(env.job_log, vec!["job_begin", "job_end"], "je Auftrag genau einmal");
+        assert_eq!(
+            env.job_log,
+            vec!["job_begin", "job_end"],
+            "je Auftrag genau einmal"
+        );
     }
 
     #[test]
@@ -2997,10 +3138,18 @@ mod tests {
         let texts: Vec<&str> = snap.segments.iter().map(|s| s.text.as_str()).collect();
         assert_eq!(texts, vec!["s0", "s1"], "Live-Transkript unveraendert");
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
-        assert_eq!(errors_of(&env), vec![STOPPED_CODE.to_string()], "eigener Hinweis, nicht 'uebersprungen'");
+        assert_eq!(
+            errors_of(&env),
+            vec![STOPPED_CODE.to_string()],
+            "eigener Hinweis, nicht 'uebersprungen'"
+        );
         assert!(!env.kinds().contains(&"reset"));
         assert_eq!(env.final_event(), (0, None));
-        assert_eq!(env.job_log, vec!["job_begin", "job_end"], "der Auftrag ist ausgetragen");
+        assert_eq!(
+            env.job_log,
+            vec!["job_begin", "job_end"],
+            "der Auftrag ist ausgetragen"
+        );
     }
 
     #[test]
@@ -3010,21 +3159,27 @@ mod tests {
         env.user_stop_after = Some(0);
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
         assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
-        assert!(env.loads.is_empty(), "kein Modell fuer einen gestoppten Lauf");
+        assert!(
+            env.loads.is_empty(),
+            "kein Modell fuer einen gestoppten Lauf"
+        );
         assert_eq!(env.calls, 0);
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
     }
 
     #[test]
-    fn a_stop_in_the_speaker_step_skips_the_final_pass_but_the_speakers_reach_the_live_transcript() {
+    fn a_stop_in_the_speaker_step_skips_the_final_pass_but_the_speakers_reach_the_live_transcript()
+    {
         let f = fixture(true, MeetingStatus::Processing);
-        let (mut env, runs) = FakeEnv::new().with_turns(&[
-            (0, vec![turn(0, 6_000, 1)]),
-            (1, vec![turn(0, 6_000, 1)]),
-        ]);
+        let (mut env, runs) = FakeEnv::new()
+            .with_turns(&[(0, vec![turn(0, 6_000, 1)]), (1, vec![turn(0, 6_000, 1)])]);
         env.user_stop_after = Some(0);
         let out = run_job(&f.store, &job(&f, run_plan(LARGE)), &mut env);
-        assert_eq!(*runs.borrow(), 1, "die Turns der Gegenseite liefen (Modell vor dem End-STT)");
+        assert_eq!(
+            *runs.borrow(),
+            1,
+            "die Turns der Gegenseite liefen (Modell vor dem End-STT)"
+        );
         assert_eq!(out.report.kept, Some(KeepReason::UserStopped));
         assert!(env.loads.is_empty() && env.calls == 0, "kein End-STT");
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
@@ -3036,8 +3191,16 @@ mod tests {
         let f = fixture(false, MeetingStatus::Processing);
         let mut env = FakeEnv::new();
         env.user_stop_after = Some(0);
-        let out = run_job(&f.store, &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)), &mut env);
-        assert_eq!(out.report.kept, Some(KeepReason::CpuOnly), "der geplante Grund bleibt");
+        let out = run_job(
+            &f.store,
+            &job(&f, FinalPlan::Keep(KeepReason::CpuOnly)),
+            &mut env,
+        );
+        assert_eq!(
+            out.report.kept,
+            Some(KeepReason::CpuOnly),
+            "der geplante Grund bleibt"
+        );
         assert!(errors_of(&env).is_empty());
         assert_eq!(f.store.get_meeting(&f.id).unwrap().unwrap().status, "ready");
     }
@@ -3057,9 +3220,14 @@ mod tests {
         assert_eq!(meeting.status, "cancelled");
         assert!(meeting.ended_at.is_some(), "Endzeit nachgetragen");
         let segs = f.store.get_segments(&f.id).unwrap();
-        assert_eq!(segs.len(), 3, "2 Live-Segmente + der eine nachgeholte Block");
+        assert_eq!(
+            segs.len(),
+            3,
+            "2 Live-Segmente + der eine nachgeholte Block"
+        );
         assert!(
-            segs.iter().all(|s| !s.text.starts_with("[Nicht transkribiert")),
+            segs.iter()
+                .all(|s| !s.text.starts_with("[Nicht transkribiert")),
             "kein Luecken-Platzhalter: der Rest wird beim Fortsetzen nachgeholt"
         );
         // Zustand -> `cancelled`, aber kein TranscriptFinal (nicht vollstaendig).
@@ -3074,7 +3242,10 @@ mod tests {
             })
             .collect();
         assert_eq!(status, vec!["cancelled".to_string()]);
-        assert_eq!(env.phases, vec![(JobPhase::Transcription, 6_000 - 2_500 + 6_000 - 2_400)]);
+        assert_eq!(
+            env.phases,
+            vec![(JobPhase::Transcription, 6_000 - 2_500 + 6_000 - 2_400)]
+        );
         let md = f.store.metadata_json(&f.id).unwrap().unwrap();
         assert_eq!(md[REPORT_KEY]["kept"], "user_stopped");
     }
@@ -3097,7 +3268,9 @@ mod tests {
         assert_eq!(after_stop.len(), 3);
 
         // "Fortsetzen": Status wieder `processing`, derselbe Auftrag ohne Stopp.
-        f.store.set_status(&f.id, MeetingStatus::Processing).unwrap();
+        f.store
+            .set_status(&f.id, MeetingStatus::Processing)
+            .unwrap();
         let mut second = FakeEnv::new();
         let out = run_job(&f.store, &spec, &mut second);
         let segs = f.store.get_segments(&f.id).unwrap();
@@ -3170,19 +3343,28 @@ mod tests {
         // Der Stopp des Nutzers beendet den Modelllauf, ohne das Modell zu laden.
         handle.stop().unwrap();
         assert!(d.cancelled());
-        assert!(matches!(d.diarize(1, &[0.0; 16]), Err(DiarizeError::Cancelled)));
+        assert!(matches!(
+            d.diarize(1, &[0.0; 16]),
+            Err(DiarizeError::Cancelled)
+        ));
         assert!(d.loaded.is_none());
 
         // Ohne Auftrag ist `progress` wirkungslos.
         d.detach_job();
         d.progress(1, 2);
-        assert!(!d.cancelled(), "ohne Auftrag zaehlt nur der Abbruch der Engine");
+        assert!(
+            !d.cancelled(),
+            "ohne Auftrag zaehlt nur der Abbruch der Engine"
+        );
     }
 
     #[test]
     fn the_end_of_an_orphan_comes_from_the_file_time_then_start_plus_duration_then_creation() {
         // Dateizeit gewinnt (der Kopf wird sekuendlich geschrieben).
-        assert_eq!(orphan_ended_at(Some(5_000), Some(1_000), 900, Some(60_000)), 5_000);
+        assert_eq!(
+            orphan_ended_at(Some(5_000), Some(1_000), 900, Some(60_000)),
+            5_000
+        );
         // Ohne Dateizeit: Start + Dauer.
         assert_eq!(orphan_ended_at(None, Some(1_000), 900, Some(60_000)), 1_060);
         // Ohne Start (Import): Anlage + Dauer.
@@ -3220,11 +3402,16 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(store.get_meeting(&m.id).unwrap().unwrap().status, "processing");
+        assert_eq!(
+            store.get_meeting(&m.id).unwrap().unwrap().status,
+            "processing"
+        );
 
         // Neustart: die Wiederherstellung sieht `processing` ...
         let meeting = store.get_meeting(&m.id).unwrap().unwrap();
-        assert!(crate::managers::meetings::recorder::is_orphan_status(&meeting.status));
+        assert!(crate::managers::meetings::recorder::is_orphan_status(
+            &meeting.status
+        ));
         assert_eq!(prepare_orphan(&store, &meeting).unwrap(), Some(6_000));
         let mut env = FakeEnv::new();
         let spec = JobSpec {
@@ -3240,7 +3427,10 @@ mod tests {
         assert_eq!(out.report.catch_up_gaps, 0);
         let segs = store.get_segments(&m.id).unwrap();
         assert!(segs.iter().all(|s| s.channel == 2), "gemischte Spur");
-        assert!(segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000, "bis zum Ende");
+        assert!(
+            segs.iter().map(|s| s.end_ms).max().unwrap() >= 5_000,
+            "bis zum Ende"
+        );
         assert_eq!(
             segs.iter().map(|s| s.segment_index).collect::<Vec<_>>(),
             (0..segs.len() as u32).collect::<Vec<_>>()
@@ -3256,6 +3446,8 @@ mod tests {
         let f = fixture(false, MeetingStatus::Cancelled);
         let meeting = f.store.get_meeting(&f.id).unwrap().unwrap();
         assert_eq!(meeting.status, "cancelled");
-        assert!(!crate::managers::meetings::recorder::is_orphan_status(&meeting.status));
+        assert!(!crate::managers::meetings::recorder::is_orphan_status(
+            &meeting.status
+        ));
     }
 }

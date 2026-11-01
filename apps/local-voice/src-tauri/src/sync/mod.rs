@@ -36,7 +36,11 @@ pub async fn sync_login(
     check_hub_url(&url)?;
     let device_name = {
         let d = device_name.trim();
-        if d.is_empty() { account::default_device_name() } else { d.chars().take(60).collect() }
+        if d.is_empty() {
+            account::default_device_name()
+        } else {
+            d.chars().take(60).collect()
+        }
     };
 
     // Passwort nur in Puffern, die beim Freigeben ueberschrieben werden.
@@ -78,7 +82,8 @@ pub async fn sync_login(
 /// Erlaubt: https zu einem Host ohne Zugangsdaten in der URL, oder http nur
 /// zu localhost/127.0.0.1. `http://localhost@evil.example` faellt durch.
 fn check_hub_url(url: &str) -> Result<(), String> {
-    let parsed = url::Url::parse(url).map_err(|_| "Hub-Adresse ist keine gueltige URL.".to_string())?;
+    let parsed =
+        url::Url::parse(url).map_err(|_| "Hub-Adresse ist keine gueltige URL.".to_string())?;
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("Hub-Adresse darf keine Zugangsdaten enthalten.".into());
     }
@@ -94,7 +99,10 @@ fn check_hub_url(url: &str) -> Result<(), String> {
 /// Die Seiten bleiben auf diesem Gerät.
 #[tauri::command]
 #[specta::specta]
-pub async fn sync_logout(app: AppHandle, engine: State<'_, SyncEngine>) -> Result<SyncStatus, String> {
+pub async fn sync_logout(
+    app: AppHandle,
+    engine: State<'_, SyncEngine>,
+) -> Result<SyncStatus, String> {
     if let Some(cfg) = account::load(&app) {
         let client = client::HubClient::new(&cfg.url, &cfg.token);
         if let Err(e) = client.logout().await {

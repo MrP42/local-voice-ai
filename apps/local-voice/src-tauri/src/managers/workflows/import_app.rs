@@ -205,12 +205,10 @@ impl QueueProbe for AppQueueProbe {
     }
 
     fn import_busy(&self) -> bool {
-        self.app
-            .try_state::<Arc<ImportQueue>>()
-            .is_some_and(|q| {
-                let s = q.snapshot();
-                !s.waiting.is_empty() || !s.running.is_empty()
-            })
+        self.app.try_state::<Arc<ImportQueue>>().is_some_and(|q| {
+            let s = q.snapshot();
+            !s.waiting.is_empty() || !s.running.is_empty()
+        })
     }
 }
 

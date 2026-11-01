@@ -140,12 +140,11 @@ fn feedback_thread() -> &'static std::sync::Mutex<std::sync::mpsc::Sender<PlayRe
                     if result.is_err() {
                         // Einmal frisch versuchen: Geraet weg, Stream tot.
                         current = None;
-                        let retry = open_output(&req.device)
-                            .and_then(|stream| {
-                                let r = play_on(&stream, &req.path, req.volume);
-                                current = Some((req.device.clone(), stream));
-                                r
-                            });
+                        let retry = open_output(&req.device).and_then(|stream| {
+                            let r = play_on(&stream, &req.path, req.volume);
+                            current = Some((req.device.clone(), stream));
+                            r
+                        });
                         let _ = req.done.send(retry);
                     } else {
                         let _ = req.done.send(result);
@@ -166,7 +165,9 @@ fn open_output(selected_device: &Option<String>) -> Result<rodio::OutputStream, 
                 .map_err(|e| e.to_string())?
                 .find(|d| d.name().map(|n| n == *device_name).unwrap_or(false));
             match found {
-                Some(device) => OutputStreamBuilder::from_device(device).map_err(|e| e.to_string())?,
+                Some(device) => {
+                    OutputStreamBuilder::from_device(device).map_err(|e| e.to_string())?
+                }
                 None => {
                     warn!("Device '{}' not found, using default device", device_name);
                     OutputStreamBuilder::from_default_device().map_err(|e| e.to_string())?

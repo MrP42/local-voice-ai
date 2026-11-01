@@ -465,7 +465,10 @@ mod tests {
             )
             .unwrap();
         let st = index_status_from(&s, "m").unwrap();
-        assert_eq!((st.total, st.pending, st.lexical_done, st.embedded), (2, 1, 1, 0));
+        assert_eq!(
+            (st.total, st.pending, st.lexical_done, st.embedded),
+            (2, 1, 1, 0)
+        );
         assert_eq!((st.chunks, st.vectors), (1, 0));
         s.put_vectors("m", &[(ids[0], vec![1.0, 0.0])]).unwrap();
         s.set_index_status(&a.id, "ready", None, Some("m")).unwrap();

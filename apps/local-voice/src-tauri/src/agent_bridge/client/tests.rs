@@ -6,7 +6,10 @@ use super::*;
 
 /// Ein Client, dessen Antworten fest vorgegeben sind; `sent` zeigt, was er geschrieben hat.
 fn canned(reply: &str) -> (Client<Cursor<Vec<u8>>, Vec<u8>>, ()) {
-    (Client::new(Cursor::new(reply.as_bytes().to_vec()), Vec::new()), ())
+    (
+        Client::new(Cursor::new(reply.as_bytes().to_vec()), Vec::new()),
+        (),
+    )
 }
 
 #[test]
@@ -36,7 +39,11 @@ fn a_remote_error_keeps_code_message_and_data() {
         "{\"id\":1,\"error\":{\"code\":\"tool_off\",\"message\":\"Aus.\",\"data\":{\"reason\":\"grant_off\"}}}\n",
     );
     match c.request("tools/call", json!({})).unwrap_err() {
-        ClientError::Remote { code, message, data } => {
+        ClientError::Remote {
+            code,
+            message,
+            data,
+        } => {
             assert_eq!(code, "tool_off");
             assert_eq!(message, "Aus.");
             assert_eq!(data.unwrap()["reason"], json!("grant_off"));
@@ -48,7 +55,8 @@ fn a_remote_error_keeps_code_message_and_data() {
 #[test]
 fn an_error_line_without_a_matching_id_still_counts_as_an_error() {
     // So antwortet der Server, wenn er die Verbindung sofort ablehnt (zu viele Verbindungen).
-    let (mut c, _) = canned("{\"id\":null,\"error\":{\"code\":\"too_many_connections\",\"message\":\"x\"}}\n");
+    let (mut c, _) =
+        canned("{\"id\":null,\"error\":{\"code\":\"too_many_connections\",\"message\":\"x\"}}\n");
     assert_eq!(
         remote_code(&c.request("status", json!({})).unwrap_err()),
         Some("too_many_connections")
@@ -58,7 +66,10 @@ fn an_error_line_without_a_matching_id_still_counts_as_an_error() {
 #[test]
 fn a_result_for_another_request_is_a_protocol_error() {
     let (mut c, _) = canned("{\"id\":99,\"result\":{}}\n");
-    assert!(matches!(c.request("status", json!({})), Err(ClientError::Protocol(_))));
+    assert!(matches!(
+        c.request("status", json!({})),
+        Err(ClientError::Protocol(_))
+    ));
 }
 
 #[test]
@@ -70,14 +81,23 @@ fn a_closed_connection_is_a_transport_error() {
     }
     // Ende mitten in der Zeile ebenfalls.
     let (mut c, _) = canned("{\"id\":1,\"res");
-    assert!(matches!(c.request("status", json!({})), Err(ClientError::Transport(_))));
+    assert!(matches!(
+        c.request("status", json!({})),
+        Err(ClientError::Transport(_))
+    ));
 }
 
 #[test]
 fn garbage_replies_are_protocol_errors() {
     for reply in ["kein json\n", "[1]\n", "{\"id\":1}\n", "\u{fffd}\n"] {
         let (mut c, _) = canned(reply);
-        assert!(matches!(c.request("status", json!({})), Err(ClientError::Protocol(_))), "{reply:?}");
+        assert!(
+            matches!(
+                c.request("status", json!({})),
+                Err(ClientError::Protocol(_))
+            ),
+            "{reply:?}"
+        );
     }
 }
 
@@ -85,14 +105,20 @@ fn garbage_replies_are_protocol_errors() {
 fn an_oversized_request_is_not_sent() {
     let (mut c, _) = canned("");
     let big = "x".repeat(MAX_LINE_BYTES + 1);
-    assert!(matches!(c.request("tools/call", json!({"blob": big})), Err(ClientError::Protocol(_))));
+    assert!(matches!(
+        c.request("tools/call", json!({"blob": big})),
+        Err(ClientError::Protocol(_))
+    ));
     assert!(c.writer.is_empty(), "nichts wurde gesendet");
 }
 
 #[test]
 fn an_endless_reply_line_is_cut_off() {
     let (mut c, _) = canned(&"x".repeat(3 * MAX_LINE_BYTES));
-    assert!(matches!(c.request("status", json!({})), Err(ClientError::Protocol(_))));
+    assert!(matches!(
+        c.request("status", json!({})),
+        Err(ClientError::Protocol(_))
+    ));
 }
 
 #[test]
@@ -115,8 +141,12 @@ fn auth_errors_are_recognised_by_code() {
 fn hello_sends_the_token_only_when_given() {
     let (mut c, _) = canned("{\"id\":1,\"result\":{}}\n");
     c.hello(Some("lvat_abc")).unwrap();
-    assert!(String::from_utf8(c.writer.clone()).unwrap().contains("lvat_abc"));
+    assert!(String::from_utf8(c.writer.clone())
+        .unwrap()
+        .contains("lvat_abc"));
     let (mut c, _) = canned("{\"id\":1,\"result\":{}}\n");
     c.hello(None).unwrap();
-    assert!(!String::from_utf8(c.writer.clone()).unwrap().contains("token"));
+    assert!(!String::from_utf8(c.writer.clone())
+        .unwrap()
+        .contains("token"));
 }

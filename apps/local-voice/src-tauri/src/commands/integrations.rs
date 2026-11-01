@@ -16,8 +16,8 @@ use crate::managers::integrations::model::{
 use crate::managers::integrations::secrets;
 use crate::managers::integrations::smtp::ConnectOpts;
 use crate::managers::integrations::targets;
-use crate::managers::integrations::wissen::HttpOpts;
 use crate::managers::integrations::view::{self, IntegrationView, PendingApproval, TestResult};
+use crate::managers::integrations::wissen::HttpOpts;
 use crate::managers::meetings::store::MeetingStore;
 
 fn conn(store: &MeetingStore) -> Result<rusqlite::Connection, String> {

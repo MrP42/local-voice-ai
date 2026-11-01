@@ -722,7 +722,9 @@ mod tests {
     fn a_file_enqueued_into_an_empty_entry_fills_that_very_meeting() {
         let (_dir, s) = tmp_store();
         let folder = s.folder_save(None, "Kunde", None).unwrap().id;
-        let empty = s.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+        let empty = s
+            .create_empty_meeting("Neue Besprechung", Some(&folder))
+            .unwrap();
         let other = enqueue(&s, "davor");
         let filled = s
             .queue_enqueue_into(&empty.id, "montag", "C:/in/montag.m4a", Some(5))
@@ -734,7 +736,11 @@ mod tests {
         assert_eq!(filled.consent_confirmed_at, Some(5));
         assert_eq!(filled.title, "montag", "vorgeschlagener Titel wird ersetzt");
         assert_eq!(s.meeting_folder_ids(&empty.id).unwrap(), vec![folder]);
-        assert_eq!(order(&s), vec![other, empty.id.clone()], "hinten eingereiht");
+        assert_eq!(
+            order(&s),
+            vec![other, empty.id.clone()],
+            "hinten eingereiht"
+        );
         assert_eq!(s.list_meetings(0, 10).unwrap().len(), 2, "keine Dublette");
     }
 
@@ -752,13 +758,16 @@ mod tests {
     #[test]
     fn a_file_is_refused_for_a_target_that_is_not_empty_and_nothing_is_queued() {
         let (_dir, s) = tmp_store();
-        let live = s.create_meeting("Live", MeetingSource::Live, Some(1)).unwrap();
+        let live = s
+            .create_meeting("Live", MeetingSource::Live, Some(1))
+            .unwrap();
         let err = s
             .queue_enqueue_into(&live.id, "x", "C:/in/x.wav", Some(1))
             .unwrap_err();
         assert_eq!(err.to_string(), "target_not_empty");
         let empty = s.create_empty_meeting("Neue Besprechung", None).unwrap();
-        s.queue_enqueue_into(&empty.id, "x", "C:/in/x.wav", Some(1)).unwrap();
+        s.queue_enqueue_into(&empty.id, "x", "C:/in/x.wav", Some(1))
+            .unwrap();
         let again = s
             .queue_enqueue_into(&empty.id, "y", "C:/in/y.wav", Some(1))
             .unwrap_err();

@@ -348,7 +348,10 @@ impl Server {
         match link.tools() {
             Ok(list) => list,
             Err(e) => {
-                eprintln!("local-voice-ai --mcp: schreibende Werkzeuge nicht verfügbar: {}", e.text);
+                eprintln!(
+                    "local-voice-ai --mcp: schreibende Werkzeuge nicht verfügbar: {}",
+                    e.text
+                );
                 Vec::new()
             }
         }
@@ -372,7 +375,11 @@ impl Server {
                     None | Some(Value::Null) => {}
                     Some(Value::String(a)) => approval = Some(a),
                     Some(_) => {
-                        return call_result("„approval_id“ muss ein Text sein.".to_string(), None, true)
+                        return call_result(
+                            "„approval_id“ muss ein Text sein.".to_string(),
+                            None,
+                            true,
+                        )
                     }
                 }
             }
@@ -1333,7 +1340,10 @@ mod tests {
         let list = fx.tool_json("list_meetings", json!({}));
         let meetings = list["meetings"].as_array().unwrap();
         let mine = meetings.iter().find(|m| m["id"] == fx.a.as_str()).unwrap();
-        assert_eq!(mine["description"], "Thema: Budget 2027\nTeilnehmer: Vertrieb");
+        assert_eq!(
+            mine["description"],
+            "Thema: Budget 2027\nTeilnehmer: Vertrieb"
+        );
         assert!(
             meetings
                 .iter()
@@ -1828,7 +1838,10 @@ mod tests {
     fn an_empty_entry_is_listed_and_readable_without_errors() {
         use crate::managers::meetings::notes::model::{NoteBlock, NoteBlockKind};
         let fx = Fx::new();
-        let empty = fx.store.create_empty_meeting("Neue Besprechung", None).unwrap();
+        let empty = fx
+            .store
+            .create_empty_meeting("Neue Besprechung", None)
+            .unwrap();
         let list = fx.tool_json("list_meetings", json!({}));
         assert!(list["meetings"]
             .as_array()

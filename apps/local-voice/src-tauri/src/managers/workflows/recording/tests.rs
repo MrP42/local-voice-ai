@@ -348,8 +348,14 @@ fn a_refused_request_never_starts_a_recording() {
     let run = w.trigger_event(&wf, "t1", 61);
     w.tick();
     let approval = w.pending()[0].id.clone();
-    crate::managers::workflows::consent::decide(&w.conn(), &approval, false, true, w.clock.now_ms())
-        .unwrap();
+    crate::managers::workflows::consent::decide(
+        &w.conn(),
+        &approval,
+        false,
+        true,
+        w.clock.now_ms(),
+    )
+    .unwrap();
     let report = w.tick();
     assert_eq!(
         outcome_of(&report, &run),

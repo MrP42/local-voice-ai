@@ -413,7 +413,8 @@ mod tests {
     impl KeySink for FakeSink {
         fn send_key(&mut self, key: Key, direction: Direction) -> Result<(), String> {
             if self.fail_on == Some((key, direction)) {
-                self.events.push(format!("{:?} {:?} FAILED", direction, key));
+                self.events
+                    .push(format!("{:?} {:?} FAILED", direction, key));
                 return Err("injection refused".to_string());
             }
             self.events.push(format!("{:?} {:?}", direction, key));
@@ -474,7 +475,6 @@ mod tests {
         assert_eq!(releases, vec!["Release Shift", "Release Control"]);
     }
 
-
     #[test]
     fn replacement_context_requires_same_window_focus_and_input_generation() {
         let captured = ReplacementContext {
@@ -530,10 +530,14 @@ mod modifier_release_tests {
     #[test]
     fn the_wait_ends_as_soon_as_the_chord_is_let_go() {
         let (mut held, polls) = keyboard(3); // Strg+Win noch 3 Abfragen unten
-        let waited = wait_for_modifiers_released_with(&mut held, std::time::Duration::from_secs(5), STEP);
+        let waited =
+            wait_for_modifiers_released_with(&mut held, std::time::Duration::from_secs(5), STEP);
         assert_eq!(polls.get(), 4, "3x gehalten, dann losgelassen");
         assert!(waited >= STEP * 3, "es wurde wirklich gewartet: {waited:?}");
-        assert!(waited < std::time::Duration::from_secs(1), "und nicht bis zum Limit: {waited:?}");
+        assert!(
+            waited < std::time::Duration::from_secs(1),
+            "und nicht bis zum Limit: {waited:?}"
+        );
     }
 
     #[test]
@@ -548,9 +552,16 @@ mod modifier_release_tests {
     #[test]
     fn nothing_held_costs_one_query_and_no_sleep() {
         let (mut held, polls) = keyboard(0);
-        let waited = wait_for_modifiers_released_with(&mut held, std::time::Duration::from_secs(5), std::time::Duration::from_secs(5));
+        let waited = wait_for_modifiers_released_with(
+            &mut held,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(5),
+        );
         assert_eq!(polls.get(), 1);
-        assert!(waited < std::time::Duration::from_millis(500), "kein Takt-Schlaf: {waited:?}");
+        assert!(
+            waited < std::time::Duration::from_millis(500),
+            "kein Takt-Schlaf: {waited:?}"
+        );
     }
 
     /// Ohne gedrueckte Taste darf das Warten nichts kosten — sonst wuerde
@@ -563,6 +574,9 @@ mod modifier_release_tests {
             return;
         }
         let waited = wait_for_modifiers_released(MODIFIER_RELEASE_TIMEOUT);
-        assert!(waited < std::time::Duration::from_millis(50), "waited {waited:?}");
+        assert!(
+            waited < std::time::Duration::from_millis(50),
+            "waited {waited:?}"
+        );
     }
 }

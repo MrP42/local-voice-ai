@@ -12,8 +12,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use specta::Type;
 use serde_json::{Map, Value};
+use specta::Type;
 
 /// Kennung des Schemas in `"schema"` jeder Definition.
 pub const SCHEMA_ID: &str = "lva-workflow@1";

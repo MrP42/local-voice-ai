@@ -423,10 +423,7 @@ pub async fn ask_json<T: DeserializeOwned>(
                     "{}-Antwort vom Server abgeschnitten (Kontext voll) -- kein Retry mit demselben Prompt",
                     opts.noun
                 );
-                return Err(format!(
-                    "{}-{TRUNCATED_MARKER} (Kontext voll)",
-                    opts.noun
-                ));
+                return Err(format!("{}-{TRUNCATED_MARKER} (Kontext voll)", opts.noun));
             }
             Err(e) => {
                 let full = e.to_string();
@@ -667,9 +664,11 @@ mod tests {
     /// Follow-up (sie stehen alle auf `head_facts_block`).
     #[test]
     fn the_description_reaches_the_model_as_background_context() {
-        let block = head_facts_block(&head_with("Thema: Angebot Nordlicht
+        let block = head_facts_block(&head_with(
+            "Thema: Angebot Nordlicht
 
-  Beteiligt: Vertrieb"));
+  Beteiligt: Vertrieb",
+        ));
         assert!(
             block.contains("Description (written by the user; background context only"),
             "{block}"
@@ -679,8 +678,10 @@ mod tests {
             "eine Zeile, Leerraum vereinheitlicht: {block}"
         );
         // Ohne Beschreibung bleibt der Block wie vor U7.
-        let plain = head_facts_block(&head_with("  
- "));
+        let plain = head_facts_block(&head_with(
+            "  
+ ",
+        ));
         assert!(!plain.contains("Description"), "{plain}");
     }
 
@@ -699,7 +700,10 @@ mod tests {
             "{block}"
         );
         // Die Fakten selbst stehen weiter drin.
-        assert!(block.contains("Title: Kick-off") && block.contains("Date: 2026-09-30"), "{block}");
+        assert!(
+            block.contains("Title: Kick-off") && block.contains("Date: 2026-09-30"),
+            "{block}"
+        );
     }
 
     #[test]

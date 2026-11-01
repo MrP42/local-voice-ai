@@ -137,13 +137,20 @@ pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> 
     );
     let mut parts = Vec::with_capacity(chunks.len());
     for chunk in &chunks {
-        parts.push(ask_llm(settings, tidy_prompt(chunk)).await?.trim().to_string());
+        parts.push(
+            ask_llm(settings, tidy_prompt(chunk))
+                .await?
+                .trim()
+                .to_string(),
+        );
     }
     let out = parts.join("\n\n");
     // Ein Modell, das kuerzt, ist hier ein Fehler: die Aufbereitung darf
     // Artefakte nehmen, keinen Inhalt. Unter 60 % der Zeichen ist Verdacht.
     if out.chars().count() * 10 < trimmed.chars().count() * 6 {
-        return Err("Die Aufbereitung hat zu viel Text verworfen – Ergebnis nicht übernommen.".into());
+        return Err(
+            "Die Aufbereitung hat zu viel Text verworfen – Ergebnis nicht übernommen.".into(),
+        );
     }
     Ok(out)
 }
@@ -226,7 +233,7 @@ async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, Strin
         None,
         None,
     )
-        .await
+    .await
     {
         Ok(Some(content)) => {
             let trimmed = content.trim().to_string();
@@ -337,9 +344,15 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_detected_language() {
-        let p = summary_prompt(&opts(), "Die drei Feen und die Wolke voller Wünsche über den Hügeln.");
+        let p = summary_prompt(
+            &opts(),
+            "Die drei Feen und die Wolke voller Wünsche über den Hügeln.",
+        );
         assert!(p.contains("write in German"));
-        let e = summary_prompt(&opts(), "It was a quiet evening and the flowers had closed.");
+        let e = summary_prompt(
+            &opts(),
+            "It was a quiet evening and the flowers had closed.",
+        );
         assert!(e.contains("write in English"));
         assert!(!summary_prompt(&opts(), "Luminara").contains("write in"));
     }

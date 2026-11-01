@@ -1564,10 +1564,7 @@ mod tests {
         f.store
             .set_metadata_key(&f.id, "diarize_mic", json!(true))
             .unwrap();
-        let mut fake = Fake::new(&[
-            (0, vec![turn(0, 4_000, 1)]),
-            (1, vec![turn(0, 4_000, 1)]),
-        ]);
+        let mut fake = Fake::new(&[(0, vec![turn(0, 4_000, 1)]), (1, vec![turn(0, 4_000, 1)])]);
         let (r, _) = collect(&f, &m, &mut fake, true);
         assert!(r.unwrap().is_some());
         assert_eq!(
@@ -1582,7 +1579,11 @@ mod tests {
         let mut fake = Fake::new(&[]);
         fake.run_error = Some(|| DiarizeError::Run("kaputt".into()));
         let (_r, _) = collect(&f, &m, &mut fake, true);
-        assert_eq!(fake.progress.last(), Some(&(4_000, 4_000)), "Balken bleibt nicht stehen");
+        assert_eq!(
+            fake.progress.last(),
+            Some(&(4_000, 4_000)),
+            "Balken bleibt nicht stehen"
+        );
     }
 
     #[test]

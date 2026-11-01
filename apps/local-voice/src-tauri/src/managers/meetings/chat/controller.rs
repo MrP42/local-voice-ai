@@ -991,7 +991,10 @@ mod tests {
             )
             .unwrap();
         let line = card_line(&card_for(&store, reference(), &folders));
-        assert!(line.contains("Beschreibung: Angebot Nordlicht mit dem Vertrieb"), "{line}");
+        assert!(
+            line.contains("Beschreibung: Angebot Nordlicht mit dem Vertrieb"),
+            "{line}"
+        );
         // Lange Beschreibungen werden fuer die Karte gekuerzt.
         store
             .update_metadata(
@@ -1003,7 +1006,10 @@ mod tests {
             )
             .unwrap();
         let long = description_part(&store, &m.id);
-        assert!(long.chars().count() <= "Beschreibung: ".chars().count() + 200, "{long}");
+        assert!(
+            long.chars().count() <= "Beschreibung: ".chars().count() + 200,
+            "{long}"
+        );
         assert!(long.ends_with('…'));
     }
 
@@ -1911,7 +1917,9 @@ mod tests {
         let bodies = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
         let seen = Arc::clone(&bodies);
         let port = spawn_llm_mock_with(move |body| {
-            seen.lock().unwrap().push(serde_json::from_str(body).unwrap());
+            seen.lock()
+                .unwrap()
+                .push(serde_json::from_str(body).unwrap());
             MockReply::Body(chat_body(reply))
         })
         .await;
@@ -1919,7 +1927,10 @@ mod tests {
     }
 
     fn content_of(body: &serde_json::Value, index: usize) -> String {
-        body["messages"][index]["content"].as_str().unwrap().to_string()
+        body["messages"][index]["content"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     #[tokio::test]
@@ -1949,23 +1960,42 @@ mod tests {
 
         let bodies = bodies.lock().unwrap();
         let (system, prompt) = (content_of(&bodies[0], 0), content_of(&bodies[0], 1));
-        assert_eq!(system, format!("{SYSTEM_PROMPT_FOR_TESTS}
-{SLIDE_RULE_FOR_TESTS}"));
-        assert!(system.contains("Bild:"), "die Regel fuer Bildbeschreibungen steht im System-Prompt");
+        assert_eq!(
+            system,
+            format!(
+                "{SYSTEM_PROMPT_FOR_TESTS}
+{SLIDE_RULE_FOR_TESTS}"
+            )
+        );
+        assert!(
+            system.contains("Bild:"),
+            "die Regel fuer Bildbeschreibungen steht im System-Prompt"
+        );
         assert!(
             prompt.contains("[Q1] B1 · Folie 1 · 00:10\nFolie 1 00:10: Umsatz 13,1 Mio. EUR\nBild: Balkendiagramm"),
             "{prompt}"
         );
-        assert!(prompt.contains("[Q2] B1 · Transkript"), "das Transkript steht daneben: {prompt}");
+        assert!(
+            prompt.contains("[Q2] B1 · Transkript"),
+            "das Transkript steht daneben: {prompt}"
+        );
         assert_eq!(answer.text, "Der Umsatz liegt bei 13,1 Mio. EUR [1].");
         let c = &answer.citations[0];
         assert_eq!(
             (c.source, c.ref_key.as_deref(), c.start_ms, c.segment_index),
-            (ChunkSource::Slide, Some(slide.id.as_str()), Some(10_000), None)
+            (
+                ChunkSource::Slide,
+                Some(slide.id.as_str()),
+                Some(10_000),
+                None
+            )
         );
         // Gespeichert und wieder lesbar: die Quelle `slide` ueberlebt den Weg durch die Datenbank.
         let (_, messages) = store.thread_get(&answer.thread_id).unwrap().unwrap();
-        assert_eq!(ChatMessage::from_row(&messages[1]).citations, answer.citations);
+        assert_eq!(
+            ChatMessage::from_row(&messages[1]).citations,
+            answer.citations
+        );
     }
 
     #[tokio::test]
@@ -1973,7 +2003,11 @@ mod tests {
         let (_dir, store) = tmp_store();
         let store = Arc::new(store);
         let m = ready_meeting(&store, "Nordlicht", 1_789_214_400);
-        segments(&store, &m, &["Guten Morgen.", "Das Budget liegt bei 5 000 Euro."]);
+        segments(
+            &store,
+            &m,
+            &["Guten Morgen.", "Das Budget liegt bei 5 000 Euro."],
+        );
         // Ausgeblendete und textlose Folien zaehlen nicht.
         let hidden = add_slide(&store, &m.id, 1_000, Some("Sprecherbild"));
         store.slide_set_hidden(&hidden.id, true).unwrap();
@@ -1995,7 +2029,10 @@ mod tests {
         let bodies = bodies.lock().unwrap();
         assert_eq!(content_of(&bodies[0], 0), SYSTEM_PROMPT_FOR_TESTS);
         let prompt = content_of(&bodies[0], 1);
-        assert!(!prompt.contains("Folie") && !prompt.contains("Sprecherbild"), "{prompt}");
+        assert!(
+            !prompt.contains("Folie") && !prompt.contains("Sprecherbild"),
+            "{prompt}"
+        );
         assert!(prompt.contains("[Q1] B1 · Transkript"));
     }
 
@@ -2010,7 +2047,12 @@ mod tests {
         let other = ready_meeting(&store, "Andere", 1_789_214_500);
         index(&store, &other, &[("Wir sprechen ueber das Wetter", 1)]);
         // Der Begriff steht NUR auf einer Folie.
-        let slide = add_slide(&store, &m.id, 252_000, Some("Wasserturmallee Umsatz 13,1 Mio. EUR"));
+        let slide = add_slide(
+            &store,
+            &m.id,
+            252_000,
+            Some("Wasserturmallee Umsatz 13,1 Mio. EUR"),
+        );
         let drafts = chunk_slides(&store.slides_list(&m.id).unwrap(), &ChunkHead::default());
         store
             .replace_meeting_chunks(
@@ -2022,21 +2064,38 @@ mod tests {
             .unwrap();
         let (port, bodies) = body_mock("Auf der Folie steht der Umsatz [Q1].").await;
         let settings = settings_with_mock_provider(port);
-        let answer = run(&settings, &store, request(global(), "Was steht zur Wasserturmallee?"))
-            .await
-            .unwrap();
+        let answer = run(
+            &settings,
+            &store,
+            request(global(), "Was steht zur Wasserturmallee?"),
+        )
+        .await
+        .unwrap();
         let bodies = bodies.lock().unwrap();
         let prompt = content_of(&bodies[0], 1);
         assert!(
             prompt.contains("Folie 1 04:12: Wasserturmallee Umsatz 13,1 Mio. EUR"),
             "{prompt}"
         );
-        assert!(content_of(&bodies[0], 0).contains("Bild:"), "Regel fuer Folien im System-Prompt");
+        assert!(
+            content_of(&bodies[0], 0).contains("Bild:"),
+            "Regel fuer Folien im System-Prompt"
+        );
         assert!(!answer.not_found);
         let c = &answer.citations[0];
         assert_eq!(
-            (c.source, c.ref_key.as_deref(), c.start_ms, c.meeting_id.as_str()),
-            (ChunkSource::Slide, Some(slide.id.as_str()), Some(252_000), m.id.as_str())
+            (
+                c.source,
+                c.ref_key.as_deref(),
+                c.start_ms,
+                c.meeting_id.as_str()
+            ),
+            (
+                ChunkSource::Slide,
+                Some(slide.id.as_str()),
+                Some(252_000),
+                m.id.as_str()
+            )
         );
     }
 }

@@ -27,17 +27,35 @@ fn the_verbs_and_global_flags_parse_in_any_order() {
     assert!(a.json && matches!(a.verb, Verb::Status));
     let a = parse(&["--json", "--out", "x.json", "status"]);
     assert!(a.json && a.out.as_deref() == Some(Path::new("x.json")));
-    let a = parse(&["call", "transcribe_file", "--args", "{}", "--approval", "A1", "--json"]);
+    let a = parse(&[
+        "call",
+        "transcribe_file",
+        "--args",
+        "{}",
+        "--approval",
+        "A1",
+        "--json",
+    ]);
     match a.verb {
-        Verb::Call { tool, args, approval } => {
+        Verb::Call {
+            tool,
+            args,
+            approval,
+        } => {
             assert_eq!(tool, "transcribe_file");
             assert_eq!(args.as_deref(), Some("{}"));
             assert_eq!(approval.as_deref(), Some("A1"));
         }
         other => panic!("{other:?}"),
     }
-    assert!(matches!(parse(&["approval", "01ABC"]).verb, Verb::Approval { .. }));
-    assert!(matches!(parse(&["tools", "--token-file", "t.txt"]).verb, Verb::Tools));
+    assert!(matches!(
+        parse(&["approval", "01ABC"]).verb,
+        Verb::Approval { .. }
+    ));
+    assert!(matches!(
+        parse(&["tools", "--token-file", "t.txt"]).verb,
+        Verb::Tools
+    ));
 }
 
 #[test]
@@ -54,7 +72,16 @@ fn the_workflow_verbs_map_to_the_workflow_tools() {
     let (tool, a, _) = call(&["workflow", "run", "WF1"]);
     assert_eq!((tool, a), ("run_workflow", json!({ "workflow_id": "WF1" })));
     let (_, a, approval) = call(&[
-        "workflow", "run", "WF1", "--live", "--vars", r#"{"thema":"x"}"#, "--request-id", "R9", "--approval", "A1",
+        "workflow",
+        "run",
+        "WF1",
+        "--live",
+        "--vars",
+        r#"{"thema":"x"}"#,
+        "--request-id",
+        "R9",
+        "--approval",
+        "A1",
     ]);
     assert_eq!(
         a,
@@ -92,11 +119,18 @@ fn the_token_comes_from_a_file_first_then_the_environment_and_is_cleaned() {
     let file = dir.path().join("t.txt");
     std::fs::write(&file, "\u{feff}lvat_aaa  \r\nzweite Zeile\r\n").unwrap();
     assert_eq!(
-        read_token(Some(&file), Some("lvat_env".into())).unwrap().as_deref(),
+        read_token(Some(&file), Some("lvat_env".into()))
+            .unwrap()
+            .as_deref(),
         Some("lvat_aaa"),
         "Datei hat Vorrang, BOM und Rest der Datei fallen weg"
     );
-    assert_eq!(read_token(None, Some("  lvat_env \n".into())).unwrap().as_deref(), Some("lvat_env"));
+    assert_eq!(
+        read_token(None, Some("  lvat_env \n".into()))
+            .unwrap()
+            .as_deref(),
+        Some("lvat_env")
+    );
     assert_eq!(read_token(None, None).unwrap(), None);
     assert_eq!(read_token(None, Some("   ".into())).unwrap(), None);
     assert!(read_token(Some(&dir.path().join("fehlt.txt")), None).is_err());
@@ -107,13 +141,19 @@ fn the_token_comes_from_a_file_first_then_the_environment_and_is_cleaned() {
 
 #[test]
 fn call_arguments_must_be_a_json_object_inline_or_from_a_file() {
-    assert_eq!(parse_args(r#"{"path": "C:/a.wav"}"#).unwrap(), json!({"path": "C:/a.wav"}));
+    assert_eq!(
+        parse_args(r#"{"path": "C:/a.wav"}"#).unwrap(),
+        json!({"path": "C:/a.wav"})
+    );
     assert!(parse_args("[1]").is_err());
     assert!(parse_args("kein json").is_err());
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("a.json");
     std::fs::write(&f, "\u{feff}{\"x\": 1}").unwrap();
-    assert_eq!(parse_args(&format!("@{}", f.display())).unwrap(), json!({"x": 1}));
+    assert_eq!(
+        parse_args(&format!("@{}", f.display())).unwrap(),
+        json!({"x": 1})
+    );
     assert!(parse_args("@/gibt/es/nicht.json").is_err());
 }
 
@@ -138,15 +178,37 @@ fn error_codes_map_to_the_documented_exit_codes() {
     ] {
         assert_eq!(exit_for_remote(c), exit, "{c}");
     }
-    assert_eq!((EXIT_OK, EXIT_ERROR, EXIT_NOT_RUNNING, EXIT_DENIED, EXIT_AUTH, EXIT_PENDING), (0, 1, 2, 3, 4, 5));
+    assert_eq!(
+        (
+            EXIT_OK,
+            EXIT_ERROR,
+            EXIT_NOT_RUNNING,
+            EXIT_DENIED,
+            EXIT_AUTH,
+            EXIT_PENDING
+        ),
+        (0, 1, 2, 3, 4, 5)
+    );
 }
 
 #[test]
 fn client_errors_map_to_exit_codes() {
-    assert_eq!(from_error(&ClientError::NotRunning("x".into())).exit, EXIT_NOT_RUNNING);
-    assert_eq!(from_error(&ClientError::UntrustedServer("x".into())).exit, EXIT_NOT_RUNNING);
-    assert_eq!(from_error(&ClientError::Transport("x".into())).exit, EXIT_NOT_RUNNING);
-    assert_eq!(from_error(&ClientError::Protocol("x".into())).exit, EXIT_ERROR);
+    assert_eq!(
+        from_error(&ClientError::NotRunning("x".into())).exit,
+        EXIT_NOT_RUNNING
+    );
+    assert_eq!(
+        from_error(&ClientError::UntrustedServer("x".into())).exit,
+        EXIT_NOT_RUNNING
+    );
+    assert_eq!(
+        from_error(&ClientError::Transport("x".into())).exit,
+        EXIT_NOT_RUNNING
+    );
+    assert_eq!(
+        from_error(&ClientError::Protocol("x".into())).exit,
+        EXIT_ERROR
+    );
     let r = from_error(&ClientError::Remote {
         code: "tool_off".into(),
         message: "Aus.".into(),
@@ -230,7 +292,9 @@ mod live {
 
     async fn ctl(args: &[&str], env: CtlEnv) -> CtlResult {
         let parsed = parse(args);
-        tokio::task::spawn_blocking(move || execute(&parsed, &env)).await.unwrap()
+        tokio::task::spawn_blocking(move || execute(&parsed, &env))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -271,7 +335,10 @@ mod live {
         let name = unique_name();
         let _s = start(&f, &name).await;
         let bad = clients::generate_token();
-        assert_eq!(ctl(&["status"], env(&name, Some(&bad))).await.exit, EXIT_AUTH);
+        assert_eq!(
+            ctl(&["status"], env(&name, Some(&bad))).await.exit,
+            EXIT_AUTH
+        );
         assert_eq!(ctl(&["tools"], env(&name, None)).await.exit, EXIT_AUTH);
         clients::revoke(&f.conn(), &f.client.id, f.now()).unwrap();
         let r = ctl(&["call", "create_meeting"], env(&name, Some(&f.token))).await;
@@ -285,14 +352,23 @@ mod live {
         let f = Fixture::new();
         let name = unique_name();
         let _s = start(&f, &name).await;
-        let r = ctl(&["call", "transcribe_file", "--json"], env(&name, Some(&f.token))).await;
+        let r = ctl(
+            &["call", "transcribe_file", "--json"],
+            env(&name, Some(&f.token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_DENIED, "{r:?}");
         assert_eq!(r.json["error"]["code"], json!("tool_off"));
         assert_eq!(f.calls.len(), 0);
         // Es fehlt auch in der Liste.
         let list = ctl(&["tools", "--json"], env(&name, Some(&f.token))).await;
         assert_eq!(list.exit, EXIT_OK);
-        let names: Vec<&str> = list.json["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = list.json["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
         assert!(!names.contains(&"transcribe_file"));
     }
 
@@ -302,7 +378,17 @@ mod live {
         f.grant("create_meeting", GrantMode::Allow);
         let name = unique_name();
         let _s = start(&f, &name).await;
-        let r = ctl(&["call", "create_meeting", "--args", r#"{"title":"T"}"#, "--json"], env(&name, Some(&f.token))).await;
+        let r = ctl(
+            &[
+                "call",
+                "create_meeting",
+                "--args",
+                r#"{"title":"T"}"#,
+                "--json",
+            ],
+            env(&name, Some(&f.token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_OK, "{r:?}");
         assert_eq!(r.json["result"]["status"], json!("done"));
         assert_eq!(r.json["result"]["result"]["ran"], json!("create_meeting"));
@@ -328,20 +414,41 @@ mod live {
         }
         assert_eq!(f.calls.len(), 0);
         // Ohne Token: Exit 4 (wie bei `call`).
-        assert_eq!(ctl(&["workflow", "list"], env(&name, None)).await.exit, EXIT_AUTH);
+        assert_eq!(
+            ctl(&["workflow", "list"], env(&name, None)).await.exit,
+            EXIT_AUTH
+        );
 
         // Mit Recht: Exit 0, die Argumente kommen genau so an.
         f.grant("run_workflow", GrantMode::Allow);
         f.grant("list_workflows", GrantMode::Allow);
         f.grant("get_run", GrantMode::Allow);
-        let r = ctl(&["workflow", "run", "WF1", "--json"], env(&name, Some(&f.token))).await;
+        let r = ctl(
+            &["workflow", "run", "WF1", "--json"],
+            env(&name, Some(&f.token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_OK, "{r:?}");
         assert_eq!(r.json["result"]["status"], json!("done"));
         assert_eq!(r.json["result"]["result"]["ran"], json!("run_workflow"));
-        let r = ctl(&["workflow", "run", "WF1", "--live", "--json"], env(&name, Some(&f.token))).await;
+        let r = ctl(
+            &["workflow", "run", "WF1", "--live", "--json"],
+            env(&name, Some(&f.token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_OK, "{r:?}");
-        assert_eq!(ctl(&["workflow", "list"], env(&name, Some(&f.token))).await.exit, EXIT_OK);
-        assert_eq!(ctl(&["workflow", "get", "RUN1"], env(&name, Some(&f.token))).await.exit, EXIT_OK);
+        assert_eq!(
+            ctl(&["workflow", "list"], env(&name, Some(&f.token)))
+                .await
+                .exit,
+            EXIT_OK
+        );
+        assert_eq!(
+            ctl(&["workflow", "get", "RUN1"], env(&name, Some(&f.token)))
+                .await
+                .exit,
+            EXIT_OK
+        );
         let calls = f.calls.all();
         assert_eq!(calls[0].0, "run_workflow");
         assert_eq!(calls[0].1, json!({ "workflow_id": "WF1" }));
@@ -360,13 +467,28 @@ mod live {
         f.grant("run_workflow", GrantMode::Ask);
         let name = unique_name();
         let _s = start(&f, &name).await;
-        let r = ctl(&["workflow", "run", "WF1", "--live", "--json"], env(&name, Some(&f.token))).await;
+        let r = ctl(
+            &["workflow", "run", "WF1", "--live", "--json"],
+            env(&name, Some(&f.token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_PENDING, "{r:?}");
-        let id = r.json["result"]["approval_id"].as_str().unwrap().to_string();
+        let id = r.json["result"]["approval_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(f.calls.len(), 0);
         f.user_decides(&id, true);
         let r = ctl(
-            &["workflow", "run", "WF1", "--live", "--approval", &id, "--json"],
+            &[
+                "workflow",
+                "run",
+                "WF1",
+                "--live",
+                "--approval",
+                &id,
+                "--json",
+            ],
             env(&name, Some(&f.token)),
         )
         .await;
@@ -386,10 +508,23 @@ mod live {
         let _s = start(&f, &name).await;
         let token = f.token.clone();
 
-        let r = ctl(&["call", "transcribe_file", "--args", r#"{"path":"C:/a.wav"}"#, "--json"], env(&name, Some(&token))).await;
+        let r = ctl(
+            &[
+                "call",
+                "transcribe_file",
+                "--args",
+                r#"{"path":"C:/a.wav"}"#,
+                "--json",
+            ],
+            env(&name, Some(&token)),
+        )
+        .await;
         assert_eq!(r.exit, EXIT_PENDING, "{r:?}");
         assert_eq!(r.json["ok"], json!(false));
-        let id = r.json["result"]["approval_id"].as_str().unwrap().to_string();
+        let id = r.json["result"]["approval_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(f.calls.len(), 0);
 
         // Noch offen: Exit 5.
@@ -401,7 +536,15 @@ mod live {
         assert_eq!(s.exit, EXIT_OK);
         // ... und der Aufruf mit der Freigabe laeuft.
         let r = ctl(
-            &["call", "transcribe_file", "--args", r#"{"path":"C:/a.wav"}"#, "--approval", &id, "--json"],
+            &[
+                "call",
+                "transcribe_file",
+                "--args",
+                r#"{"path":"C:/a.wav"}"#,
+                "--approval",
+                &id,
+                "--json",
+            ],
             env(&name, Some(&token)),
         )
         .await;
@@ -419,13 +562,33 @@ mod live {
         f.grant("transcribe_file", GrantMode::Ask);
         let name = unique_name();
         let _s = start(&f, &name).await;
-        let r = ctl(&["call", "transcribe_file", "--args", r#"{"path":"C:/a.wav"}"#, "--json"], env(&name, Some(&f.token))).await;
-        let id = r.json["result"]["approval_id"].as_str().unwrap().to_string();
+        let r = ctl(
+            &[
+                "call",
+                "transcribe_file",
+                "--args",
+                r#"{"path":"C:/a.wav"}"#,
+                "--json",
+            ],
+            env(&name, Some(&f.token)),
+        )
+        .await;
+        let id = r.json["result"]["approval_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         f.user_decides(&id, false);
         let s = ctl(&["approval", &id], env(&name, Some(&f.token))).await;
         assert_eq!(s.exit, EXIT_DENIED);
         let r = ctl(
-            &["call", "transcribe_file", "--args", r#"{"path":"C:/a.wav"}"#, "--approval", &id],
+            &[
+                "call",
+                "transcribe_file",
+                "--args",
+                r#"{"path":"C:/a.wav"}"#,
+                "--approval",
+                &id,
+            ],
             env(&name, Some(&f.token)),
         )
         .await;
@@ -445,11 +608,19 @@ mod live {
         let server = start(&f, &name).await;
         let (n2, t2) = (name.clone(), f.token.clone());
         let call = tokio::task::spawn_blocking(move || {
-            execute(&parse(&["call", "transcribe_file", "--args", r#"{"path":"C:/a.wav"}"#]), &CtlEnv {
-                pipe_name: Ok(n2),
-                token: Ok(Some(t2)),
-                deadline: Duration::from_secs(20),
-            })
+            execute(
+                &parse(&[
+                    "call",
+                    "transcribe_file",
+                    "--args",
+                    r#"{"path":"C:/a.wav"}"#,
+                ]),
+                &CtlEnv {
+                    pipe_name: Ok(n2),
+                    token: Ok(Some(t2)),
+                    deadline: Duration::from_secs(20),
+                },
+            )
         });
         // Warten, bis die Freigabe angelegt ist, dann endet die App.
         for _ in 0..200 {
@@ -500,7 +671,11 @@ mod live {
 #[test]
 fn finish_writes_the_output_file_in_the_chosen_form() {
     let dir = tempfile::tempdir().unwrap();
-    let result = CtlResult::failure(EXIT_NOT_RUNNING, "not_running", "Local Voice AI läuft nicht.");
+    let result = CtlResult::failure(
+        EXIT_NOT_RUNNING,
+        "not_running",
+        "Local Voice AI läuft nicht.",
+    );
     // JSON
     let out = dir.path().join("ctl.json");
     let args = CtlArgs {
@@ -510,7 +685,8 @@ fn finish_writes_the_output_file_in_the_chosen_form() {
         verb: Verb::Status,
     };
     assert_eq!(finish(&args, &result), EXIT_NOT_RUNNING);
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
     assert_eq!(v["exit"], json!(2));
     assert_eq!(v["error"]["code"], json!("not_running"));
     // Text: der Fehlertext
@@ -522,7 +698,9 @@ fn finish_writes_the_output_file_in_the_chosen_form() {
         verb: Verb::Status,
     };
     finish(&args, &result);
-    assert!(std::fs::read_to_string(&out).unwrap().contains("läuft nicht"));
+    assert!(std::fs::read_to_string(&out)
+        .unwrap()
+        .contains("läuft nicht"));
     // Eine nicht schreibbare Datei aendert den Exit-Code nicht.
     let args = CtlArgs {
         json: true,

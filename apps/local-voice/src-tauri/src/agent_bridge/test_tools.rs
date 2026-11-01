@@ -20,7 +20,10 @@ impl ToolHandler for EchoTools {
                 Some(ToolSpec {
                     name: (*n).to_string(),
                     title: e.title.to_string(),
-                    description: format!("{} (Testwerkzeug: gibt die Anfrage zurück)", e.description),
+                    description: format!(
+                        "{} (Testwerkzeug: gibt die Anfrage zurück)",
+                        e.description
+                    ),
                     input_schema: json!({ "type": "object", "additionalProperties": true }),
                 })
             })
@@ -63,7 +66,9 @@ mod tests {
             approved: true,
             now_ms: 0,
         };
-        let v = EchoTools.call(&ctx, "create_meeting", &json!({"a": 1})).unwrap();
+        let v = EchoTools
+            .call(&ctx, "create_meeting", &json!({"a": 1}))
+            .unwrap();
         assert_eq!(v["echo"], json!({"a": 1}));
         assert_eq!(v["approved"], json!(true));
     }

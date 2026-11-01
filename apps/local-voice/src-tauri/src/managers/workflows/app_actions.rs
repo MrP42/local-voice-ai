@@ -358,9 +358,9 @@ pub fn classify_generation_error(err: &str) -> ServiceError {
         }
         "minutes_cancelled" => ServiceError::Cancelled,
         // Der Nutzer hat den Auftrag im Statusbereich gestoppt: kein neuer Versuch.
-        "stopped" => ServiceError::Permanent(
-            "Die Erzeugung wurde vom Nutzer gestoppt.".to_string(),
-        ),
+        "stopped" => {
+            ServiceError::Permanent("Die Erzeugung wurde vom Nutzer gestoppt.".to_string())
+        }
         _ if crate::managers::meetings::llm_call::is_memory_error(err) => ServiceError::Busy {
             retry_after_ms: MEMORY_RETRY_MS,
             reason: "Wartet auf Arbeitsspeicher für das Sprachmodell.".to_string(),
@@ -438,9 +438,7 @@ pub(super) fn ready_meeting(
     let store = services.store().map_err(svc)?;
     let meeting = store
         .get_meeting(meeting_id)
-        .map_err(|e| {
-            StepError::Transient(format!("Die Besprechung ließ sich nicht lesen ({e})."))
-        })?
+        .map_err(|e| StepError::Transient(format!("Die Besprechung ließ sich nicht lesen ({e}).")))?
         .filter(|m| m.deleted_at.is_none())
         .ok_or_else(|| StepError::Permanent("Die Besprechung gibt es nicht mehr.".to_string()))?;
     match meeting_state(&meeting.status) {
@@ -619,8 +617,7 @@ fn resolve_template(store: &MeetingStore, wanted: Option<&str>) -> Result<Option
     let lower = wanted.to_lowercase();
     let found = infos.iter().find(|i| i.id == wanted).or_else(|| {
         infos.iter().find(|i| {
-            i.title.to_lowercase() == lower
-                || i.id.to_lowercase() == format!("builtin:{lower}")
+            i.title.to_lowercase() == lower || i.id.to_lowercase() == format!("builtin:{lower}")
         })
     });
     found
@@ -692,7 +689,8 @@ impl Action for MeetingDocAction {
         let (store, meeting) = ready_meeting(ctx, &*self.services, &meeting_id)?;
 
         // Ein frueherer Versuch dieses Schritts hat das Dokument schon erzeugt.
-        if let Some((doc_id, _)) = previous_result(ctx, SubjectKind::Document, self.kind.operation())
+        if let Some((doc_id, _)) =
+            previous_result(ctx, SubjectKind::Document, self.kind.operation())
         {
             if let Ok(Some(doc)) = store.get_document(&doc_id) {
                 return Ok(doc_output(self.kind, &meeting, &doc, true));
@@ -703,8 +701,8 @@ impl Action for MeetingDocAction {
             variant_id: text_param(params, "variant_id").map(str::to_string),
             output_language: output_language(params).map_err(StepError::Permanent)?,
         };
-        let template_id =
-            resolve_template(&store, text_param(params, "template")).map_err(StepError::Permanent)?;
+        let template_id = resolve_template(&store, text_param(params, "template"))
+            .map_err(StepError::Permanent)?;
         let req = GenRequest {
             meeting_id: meeting_id.clone(),
             template_id,
@@ -833,7 +831,10 @@ impl Action for Summarize {
 
     fn run(&self, ctx: &RunCtx<'_>, params: &Value) -> Result<StepOutput, StepError> {
         let source = text_param(params, "source").ok_or_else(|| {
-            StepError::Permanent("Es ist keine Quelle angegeben (minutes, notes, transcript oder ein Text).".to_string())
+            StepError::Permanent(
+                "Es ist keine Quelle angegeben (minutes, notes, transcript oder ein Text)."
+                    .to_string(),
+            )
         })?;
         let opts = summary_options(text_param(params, "style")).map_err(StepError::Permanent)?;
 
@@ -845,13 +846,17 @@ impl Action for Summarize {
                 let text = match source {
                     "transcript" => {
                         let segments = store.get_segments(&id).map_err(|e| {
-                            StepError::Transient(format!("Das Transkript ließ sich nicht lesen ({e})."))
+                            StepError::Transient(format!(
+                                "Das Transkript ließ sich nicht lesen ({e})."
+                            ))
                         })?;
                         crate::managers::meetings::minutes::render_transcript_for_prompt(&segments)
                     }
                     _ => {
                         let bundle = export::build_bundle(&store, &id).map_err(|e| {
-                            StepError::Transient(format!("Die Besprechung ließ sich nicht lesen ({e})."))
+                            StepError::Transient(format!(
+                                "Die Besprechung ließ sich nicht lesen ({e})."
+                            ))
                         })?;
                         let have = if source == "minutes" {
                             bundle.minutes_md.is_some()
@@ -887,7 +892,10 @@ impl Action for Summarize {
         }
 
         let cancel = || ctx.cancelled();
-        let summary = self.services.summarize(&text, &opts, &cancel).map_err(svc)?;
+        let summary = self
+            .services
+            .summarize(&text, &opts, &cancel)
+            .map_err(svc)?;
 
         let truncated = summary.chars().count() > MAX_SUMMARY_CHARS;
         let shown: String = summary.chars().take(MAX_SUMMARY_CHARS).collect();
@@ -1020,12 +1028,14 @@ impl Action for ExportDocument {
 
         // Ziel: eine Ordner-Integration oder OneDrive (Microsoft 365, Welle 2). Das Recht hat die
         // Engine vor `run` geprueft.
-        let conn = ctx
-            .conn()
-            .map_err(|e| StepError::Transient(format!("Das Register ist nicht erreichbar ({e}).")))?;
+        let conn = ctx.conn().map_err(|e| {
+            StepError::Transient(format!("Das Register ist nicht erreichbar ({e})."))
+        })?;
         let integration = integrations_store::get(&conn, target_id)
             .map_err(|e| StepError::Transient(format!("Das Register ist nicht erreichbar ({e}).")))?
-            .ok_or_else(|| StepError::Permanent(format!("Das Ziel „{target_id}“ gibt es nicht.")))?;
+            .ok_or_else(|| {
+                StepError::Permanent(format!("Das Ziel „{target_id}“ gibt es nicht."))
+            })?;
         drop(conn);
         if integration.kind == Kind::M365 {
             return self.to_onedrive(ctx, &store, &meeting, &integration, format, content, params);
@@ -1035,10 +1045,12 @@ impl Action for ExportDocument {
                 "Das Ziel „{target_id}“ ist weder ein Ordner noch ein OneDrive-Konto."
             )));
         }
-        let cfg = FolderConfig::from_config_json(&integration.config_json)
-            .map_err(folder_error)?;
+        let cfg = FolderConfig::from_config_json(&integration.config_json).map_err(folder_error)?;
         let sandbox = Sandbox::open(&cfg.path).map_err(folder_error)?;
-        let rel_dir = join_rel(&[&cfg.subfolder, text_param(params, "subfolder").unwrap_or("")]);
+        let rel_dir = join_rel(&[
+            &cfg.subfolder,
+            text_param(params, "subfolder").unwrap_or(""),
+        ]);
 
         // Ein frueherer Versuch dieses Schritts hat die Datei schon abgelegt.
         if let Some((_, Some(prev))) = previous_result(ctx, SubjectKind::Export, "export") {
@@ -1080,7 +1092,13 @@ impl Action for ExportDocument {
                 "bytes": placed.bytes,
             }),
         );
-        Ok(export_output(&sandbox, &placed.path, format, placed.bytes, false))
+        Ok(export_output(
+            &sandbox,
+            &placed.path,
+            format,
+            placed.bytes,
+            false,
+        ))
     }
 }
 
@@ -1309,8 +1327,9 @@ impl Action for TtsRender {
         if text_param(params, "voice").is_some() {
             return Err(StepError::Permanent(VOICE_NOT_SUPPORTED.to_string()));
         }
-        let text = text_param(params, "text")
-            .ok_or_else(|| StepError::Permanent("Es ist kein Text zum Sprechen angegeben.".to_string()))?;
+        let text = text_param(params, "text").ok_or_else(|| {
+            StepError::Permanent("Es ist kein Text zum Sprechen angegeben.".to_string())
+        })?;
         if text.chars().count() > MAX_TTS_CHARS {
             return Err(StepError::Permanent(format!(
                 "Der Text ist zu lang für die Sprachausgabe ({} Zeichen, höchstens {MAX_TTS_CHARS}).",
@@ -1326,11 +1345,19 @@ impl Action for TtsRender {
             }
         }
         let meeting_id = meeting_id_of(ctx);
-        let dir = self.services.audio_dir(meeting_id.as_deref()).map_err(svc)?;
+        let dir = self
+            .services
+            .audio_dir(meeting_id.as_deref())
+            .map_err(svc)?;
         std::fs::create_dir_all(&dir).map_err(|e| {
-            StepError::Transient(format!("Der Ordner für die Audiodatei ließ sich nicht anlegen ({e})."))
+            StepError::Transient(format!(
+                "Der Ordner für die Audiodatei ließ sich nicht anlegen ({e})."
+            ))
         })?;
-        let out = dir.join(format!("vorlesen-{}.wav", file_stem_of(&ctx.idempotency_key)));
+        let out = dir.join(format!(
+            "vorlesen-{}.wav",
+            file_stem_of(&ctx.idempotency_key)
+        ));
         let cancel = || ctx.cancelled();
         let final_path = self
             .services

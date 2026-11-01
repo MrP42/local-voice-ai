@@ -156,7 +156,11 @@ fn trigger_of(run: &store::RunRow) -> Value {
 fn three() -> String {
     feed_xml(
         CHANNEL,
-        &[("Vid00000003", "Drei"), ("Vid00000002", "Zwei"), ("Vid00000001", "Eins")],
+        &[
+            ("Vid00000003", "Drei"),
+            ("Vid00000002", "Zwei"),
+            ("Vid00000001", "Eins"),
+        ],
     )
 }
 
@@ -174,15 +178,25 @@ fn the_real_feed_format_is_parsed_with_entities_umlauts_and_times() {
         "der Titel des Kanals, nicht der eines Videos"
     );
     let ids: Vec<&str> = feed.videos.iter().map(|v| v.video_id.as_str()).collect();
-    assert_eq!(ids, vec!["Vid00000003", "Vid00000002", "Vid00000001"], "neueste zuerst");
+    assert_eq!(
+        ids,
+        vec!["Vid00000003", "Vid00000002", "Vid00000001"],
+        "neueste zuerst"
+    );
     assert_eq!(
         feed.videos[0].title,
         "Lokale KI im Mittelstand: Was \"datenschutzfreundlich\" wirklich heißt",
         "nicht der Titel aus media:group, sondern der des Eintrags, Entitaeten aufgeloest"
     );
     assert_eq!(feed.videos[1].title, "Agenten & MCP in 10 Minuten");
-    assert_eq!(feed.videos[2].title, "Warum Transkripte nie fertig sind äN", "Zeichenverweise");
-    assert_eq!(feed.videos[0].published.as_deref(), Some("2026-09-30T08:00:00Z"));
+    assert_eq!(
+        feed.videos[2].title, "Warum Transkripte nie fertig sind äN",
+        "Zeichenverweise"
+    );
+    assert_eq!(
+        feed.videos[0].published.as_deref(),
+        Some("2026-09-30T08:00:00Z")
+    );
     assert_eq!(
         feed.videos[1].published.as_deref(),
         Some("2026-09-28T15:30:00Z"),
@@ -196,7 +210,10 @@ fn hostile_or_broken_feeds_are_rejected_or_cleaned() {
     let bomb = "<?xml version=\"1.0\"?>\n<!DOCTYPE feed [<!ENTITY a \"aaaa\">]>\n<feed><entry><yt:videoId>Vid00000001</yt:videoId></entry></feed>";
     assert_eq!(parse_feed(bomb).unwrap_err().code(), "feed_bad");
     // Kein Feed.
-    assert_eq!(parse_feed("<html>nope</html>").unwrap_err().code(), "feed_bad");
+    assert_eq!(
+        parse_feed("<html>nope</html>").unwrap_err().code(),
+        "feed_bad"
+    );
     assert_eq!(parse_feed("").unwrap_err().code(), "feed_bad");
     // Ein leerer Feed ist gueltig (ein Kanal ohne Videos).
     let empty = parse_feed(&feed_xml(CHANNEL, &[])).unwrap();
@@ -208,7 +225,10 @@ fn hostile_or_broken_feeds_are_rejected_or_cleaned() {
         &[
             ("kurz", "zu kurz"),
             ("Vid0000000!", "Sonderzeichen"),
-            ("Vid00000001", &format!("Zeile\u{0007}eins\nZeile zwei {long}")),
+            (
+                "Vid00000001",
+                &format!("Zeile\u{0007}eins\nZeile zwei {long}"),
+            ),
         ],
     );
     let feed = parse_feed(&xml).unwrap();
@@ -221,7 +241,8 @@ fn hostile_or_broken_feeds_are_rejected_or_cleaned() {
     let feed = parse_feed(cdata).unwrap();
     assert_eq!(feed.videos[0].title, "Fett & <b>roh</b>");
     // Eine Zeit, die keine ist, bleibt leer statt zu raten.
-    let xml = feed_xml(CHANNEL, &[("Vid00000001", "T")]).replace("2026-09-30T08:00:00+00:00", "gestern");
+    let xml =
+        feed_xml(CHANNEL, &[("Vid00000001", "T")]).replace("2026-09-30T08:00:00+00:00", "gestern");
     assert_eq!(parse_feed(&xml).unwrap().videos[0].published, None);
 }
 
@@ -229,7 +250,15 @@ fn hostile_or_broken_feeds_are_rejected_or_cleaned() {
 fn channel_ids_have_a_strict_shape() {
     assert!(valid_channel_id(CHANNEL));
     assert!(valid_channel_id("UC_-AZaz09_-AZaz09_-AZaz"));
-    for bad in ["", "@wolff", "UCtooshort", "ucabcdefghijklmnopqrstuv", "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", "UCabcdefghijklmnopqrstu!", "UCabcdefghijklmnopqrstuvw"] {
+    for bad in [
+        "",
+        "@wolff",
+        "UCtooshort",
+        "ucabcdefghijklmnopqrstuv",
+        "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv",
+        "UCabcdefghijklmnopqrstu!",
+        "UCabcdefghijklmnopqrstuvw",
+    ] {
         assert!(!valid_channel_id(bad), "{bad}");
     }
 }
@@ -247,7 +276,11 @@ fn the_definition_check_rejects_handles_and_links_with_a_sentence() {
         .iter()
         .find(|i| i.path == "/trigger/channel_id")
         .unwrap_or_else(|| panic!("{issues:?}"));
-    assert!(issue.message.contains("UC") && issue.message.contains("24"), "{}", issue.message);
+    assert!(
+        issue.message.contains("UC") && issue.message.contains("24"),
+        "{}",
+        issue.message
+    );
     d["trigger"] = json!({"type": KIND, "channel_id": CHANNEL, "poll_minutes": 30, "backfill": 2});
     w.engine.save_workflow(None, &d).unwrap();
 }
@@ -269,21 +302,23 @@ fn ak11_a_feed_with_three_videos_makes_exactly_three_runs_and_the_second_fetch_n
     // Zweiter Abruf desselben Feeds: 0 neue Laeufe, und es wird nicht einmal eingereiht.
     let again = w.tick_after(60);
     assert!(again.started.is_empty(), "{again:?}");
-    assert_eq!(again.duplicates, 0, "das Ledger kennt sie: kein Einreihversuch");
+    assert_eq!(
+        again.duplicates, 0,
+        "das Ledger kennt sie: kein Einreihversuch"
+    );
     assert_eq!(w.runs().len(), 3);
     assert_eq!(w.fetcher.calls(), 3);
 
     // Die Daten jedes Laufs; entstanden in der Reihenfolge der Veroeffentlichung (aelteste zuerst).
     let runs = w.runs();
-    let keys: Vec<String> = w
-        .fx
-        .conn()
-        .prepare("SELECT trigger_key FROM workflow_runs ORDER BY rowid")
-        .unwrap()
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
+    let keys: Vec<String> =
+        w.fx.conn()
+            .prepare("SELECT trigger_key FROM workflow_runs ORDER BY rowid")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
     assert_eq!(
         keys,
         vec![
@@ -292,7 +327,11 @@ fn ak11_a_feed_with_three_videos_makes_exactly_three_runs_and_the_second_fetch_n
             "yt:UCabcdefghijklmnopqrstuv:Vid00000003"
         ]
     );
-    let t = trigger_of(runs.iter().find(|r| r.trigger_key.ends_with("Vid00000003")).unwrap());
+    let t = trigger_of(
+        runs.iter()
+            .find(|r| r.trigger_key.ends_with("Vid00000003"))
+            .unwrap(),
+    );
     assert_eq!(t["channel_id"], CHANNEL);
     assert_eq!(t["channel_title"], "Wolff Applied AI & Friends");
     assert_eq!(t["video_id"], "Vid00000003");
@@ -318,10 +357,17 @@ fn the_first_fetch_marks_existing_videos_as_known_without_a_flood() {
     let mut w = world();
     w.fetcher.push(Ok(FIXTURE.to_string()));
     let first = w.tick();
-    assert!(first.started.is_empty(), "keine Flut beim ersten Abruf: {first:?}");
+    assert!(
+        first.started.is_empty(),
+        "keine Flut beim ersten Abruf: {first:?}"
+    );
     assert_eq!(w.runs().len(), 0);
     let conn = w.fx.conn();
-    assert_eq!(ledger::count(&conn, "yt:").unwrap(), 3, "drei bekannte Videos");
+    assert_eq!(
+        ledger::count(&conn, "yt:").unwrap(),
+        3,
+        "drei bekannte Videos"
+    );
     assert!(ledger::exists(&conn, &ledger::channel_init_key(&w.wf, CHANNEL)).unwrap());
     // Ein neues Video: genau ein Lauf, mit seinen Daten.
     w.fetcher.push(Ok(feed_xml(
@@ -352,7 +398,11 @@ fn backfill_takes_the_newest_n_and_marks_the_rest_known() {
     ids.sort();
     assert_eq!(ids, vec!["Vid00000002", "Vid00000003"], "die zwei neuesten");
     assert!(
-        ledger::exists(&w.fx.conn(), &ledger::video_key(&w.wf, CHANNEL, "Vid00000001")).unwrap(),
+        ledger::exists(
+            &w.fx.conn(),
+            &ledger::video_key(&w.wf, CHANNEL, "Vid00000001")
+        )
+        .unwrap(),
         "das aelteste ist bekannt"
     );
 }
@@ -379,11 +429,15 @@ fn a_video_published_while_the_app_was_closed_is_caught_up() {
     let mut w = world();
     w.fetcher.push(Ok(three()));
     w.tick(); // erster Abruf: alle bekannt
-    // Die App war aus; inzwischen kam Nr. 4.
+              // Die App war aus; inzwischen kam Nr. 4.
     w.state = State::default();
     w.fetcher.push(Ok(feed_xml(
         CHANNEL,
-        &[("Vid00000004", "Neu"), ("Vid00000003", "Drei"), ("Vid00000002", "Zwei")],
+        &[
+            ("Vid00000004", "Neu"),
+            ("Vid00000003", "Drei"),
+            ("Vid00000002", "Zwei"),
+        ],
     )));
     let r = w.tick_after(24 * 60);
     assert_eq!(r.started.len(), 1, "{r:?}");
@@ -429,7 +483,10 @@ fn the_interval_is_clamped_to_fifteen_minutes_and_a_day() {
         kind: KIND.to_string(),
         params: json!({"channel_id": CHANNEL}).as_object().unwrap().clone(),
     };
-    assert_eq!(Spec::from_def(&t).unwrap().poll_ms, DEFAULT_POLL_MINUTES * MIN);
+    assert_eq!(
+        Spec::from_def(&t).unwrap().poll_ms,
+        DEFAULT_POLL_MINUTES * MIN
+    );
 }
 
 #[test]
@@ -446,7 +503,11 @@ fn at_most_three_channels_are_fetched_per_tick() {
     let _ = w.tick();
     assert_eq!(w.fetcher.calls(), MAX_FETCH_PER_TICK);
     let _ = w.tick();
-    assert_eq!(w.fetcher.calls(), 6, "der Rest folgt im naechsten Takt, nicht zweimal");
+    assert_eq!(
+        w.fetcher.calls(),
+        6,
+        "der Rest folgt im naechsten Takt, nicht zweimal"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -489,7 +550,10 @@ fn repeated_failures_make_one_outage_report_one_audit_entry_and_a_recovery() {
     // Der Kanal ist wieder da: Rueckkehr gemeldet, Zaehler zurueck, Audit ok.
     w.fetcher.push(Ok(three()));
     let r = w.tick_after(60);
-    assert!(r.skipped.iter().any(|s| s.contains("wieder erreichbar")), "{r:?}");
+    assert!(
+        r.skipped.iter().any(|s| s.contains("wieder erreichbar")),
+        "{r:?}"
+    );
     let st = w.state.status().remove(0);
     assert!(!st.outage && st.failures == 0 && st.last_error.is_none());
     assert!(st.last_ok_ms.is_some());
@@ -501,7 +565,11 @@ fn after_a_failure_the_retry_comes_sooner_than_the_interval_but_never_later() {
     w.fetcher.push(Err(FeedError::Timeout));
     w.tick();
     let st = w.state.status().remove(0);
-    assert_eq!(st.next_fetch_ms, w.now + 5 * MIN, "nach einem Fehlschlag in 5 min");
+    assert_eq!(
+        st.next_fetch_ms,
+        w.now + 5 * MIN,
+        "nach einem Fehlschlag in 5 min"
+    );
     w.tick_after(5);
     let st = w.state.status().remove(0);
     assert_eq!(st.next_fetch_ms, w.now + 10 * MIN, "5 min mal Fehlerzahl");
@@ -516,21 +584,36 @@ fn after_a_failure_the_retry_comes_sooner_than_the_interval_but_never_later() {
         w15.tick_after(15);
     }
     let st = w15.state.status().remove(0);
-    assert!(st.next_fetch_ms - w15.now <= 15 * MIN, "nie seltener als das Intervall");
+    assert!(
+        st.next_fetch_ms - w15.now <= 15 * MIN,
+        "nie seltener als das Intervall"
+    );
 }
 
 #[test]
 fn a_feed_of_another_channel_or_garbage_counts_as_a_failure_not_as_videos() {
     let mut w = world();
-    w.fetcher.push(Ok(feed_xml("UCzzzzzzzzzzzzzzzzzzzzzz", &[("Vid00000001", "Fremd")])));
+    w.fetcher.push(Ok(feed_xml(
+        "UCzzzzzzzzzzzzzzzzzzzzzz",
+        &[("Vid00000001", "Fremd")],
+    )));
     let r = w.tick();
     assert!(r.started.is_empty());
     assert_eq!(w.state.status()[0].failures, 1);
-    assert!(w.state.status()[0].last_error.as_ref().unwrap().contains("anderen Kanal"));
-    w.fetcher.push(Ok("<html>Bitte Cookies akzeptieren</html>".to_string()));
+    assert!(w.state.status()[0]
+        .last_error
+        .as_ref()
+        .unwrap()
+        .contains("anderen Kanal"));
+    w.fetcher
+        .push(Ok("<html>Bitte Cookies akzeptieren</html>".to_string()));
     w.tick_after(5);
     assert_eq!(w.state.status()[0].failures, 2);
-    assert_eq!(ledger::count(&w.fx.conn(), "yt:").unwrap(), 0, "nichts als bekannt vermerkt");
+    assert_eq!(
+        ledger::count(&w.fx.conn(), "yt:").unwrap(),
+        0,
+        "nichts als bekannt vermerkt"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +625,8 @@ fn a_failed_enqueue_leaves_the_video_unknown_and_the_retry_comes_within_five_min
     let mut w = world();
     w.fetcher.push(Ok(feed_xml(CHANNEL, &[])));
     w.tick(); // Anfangsmarke
-    w.fetcher.push(Ok(feed_xml(CHANNEL, &[("Vid00000001", "Eins")])));
+    w.fetcher
+        .push(Ok(feed_xml(CHANNEL, &[("Vid00000001", "Eins")])));
     let sink = FlakySink::new(&w.engine, 1); // Platte voll beim ersten Einreihen
     w.now += 60 * MIN;
     let r = on_tick(&sink, &w.state, &w.fetcher, &w.fx.db_path, w.now);
@@ -614,7 +698,10 @@ fn a_disabled_or_foreign_youtube_integration_stops_the_fetch_and_says_why_once()
     d["trigger"] = json!({"type": KIND, "channel_id": "UCabcdefghijklmnopqrstu9", "integration": "gibtsnicht"});
     armed_workflow(&w.engine, &d);
     let r = w.tick_after(1);
-    assert!(r.skipped.iter().any(|s| s.contains("gibt es nicht")), "{r:?}");
+    assert!(
+        r.skipped.iter().any(|s| s.contains("gibt es nicht")),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -628,11 +715,20 @@ fn two_workflows_on_one_channel_each_get_their_own_runs() {
     let r = w.tick();
     assert_eq!(r.started.len(), 3, "nur der Ablauf mit backfill: {r:?}");
     assert_eq!(runs_of(&w.fx, &second).len(), 3);
-    assert_eq!(w.runs().len(), 0, "der erste Ablauf hat sie als bekannt vermerkt");
+    assert_eq!(
+        w.runs().len(),
+        0,
+        "der erste Ablauf hat sie als bekannt vermerkt"
+    );
     // Ein neues Video: beide Ablaeufe bekommen ihren Lauf.
     w.fetcher.push(Ok(feed_xml(
         CHANNEL,
-        &[("Vid00000004", "Neu"), ("Vid00000003", "Drei"), ("Vid00000002", "Zwei"), ("Vid00000001", "Eins")],
+        &[
+            ("Vid00000004", "Neu"),
+            ("Vid00000003", "Drei"),
+            ("Vid00000002", "Zwei"),
+            ("Vid00000001", "Eins"),
+        ],
     )));
     let r = w.tick_after(60);
     assert_eq!(r.started.len(), 2, "{r:?}");
@@ -682,9 +778,16 @@ async fn the_http_fetcher_asks_for_the_feed_with_only_the_channel_id() {
     assert_eq!(parse_feed(&body).unwrap().videos.len(), 3);
     let req = seen.lock().unwrap()[0].clone();
     let line = req.lines().next().unwrap();
-    assert!(line.starts_with(&format!("GET /oembed?channel_id={CHANNEL} ")), "{line}");
+    assert!(
+        line.starts_with(&format!("GET /oembed?channel_id={CHANNEL} ")),
+        "{line}"
+    );
     let lower = req.to_ascii_lowercase();
-    assert!(!lower.contains("cookie:") && !lower.contains("referer:") && !lower.contains("authorization:"));
+    assert!(
+        !lower.contains("cookie:")
+            && !lower.contains("referer:")
+            && !lower.contains("authorization:")
+    );
     assert!(lower.contains("user-agent: localvoiceai/"));
 }
 
@@ -706,7 +809,10 @@ async fn the_http_fetcher_maps_statuses_redirects_and_oversize_to_codes() {
     }
     // Zu gross: schon am Anfang abgewiesen, wenn Content-Length es verraet ...
     let (base, _) = serve(vec![http_ok(&"x".repeat(5_000))]).await;
-    let err = fetcher_for(base, 1_000).fetch_async(CHANNEL).await.unwrap_err();
+    let err = fetcher_for(base, 1_000)
+        .fetch_async(CHANNEL)
+        .await
+        .unwrap_err();
     assert_eq!(err, FeedError::TooBig);
     // ... und ungueltige Kennungen gehen gar nicht erst ins Netz.
     let (base, seen) = serve(vec![http_ok(FIXTURE)]).await;
@@ -726,7 +832,10 @@ async fn the_http_fetcher_gives_up_after_the_timeout() {
         ..fetcher_for(base, MAX_BODY_BYTES)
     };
     let start = std::time::Instant::now();
-    assert_eq!(f.fetch_async(CHANNEL).await.unwrap_err(), FeedError::Timeout);
+    assert_eq!(
+        f.fetch_async(CHANNEL).await.unwrap_err(),
+        FeedError::Timeout
+    );
     assert!(start.elapsed() < Duration::from_secs(3));
 }
 
@@ -737,7 +846,10 @@ fn an_override_address_counts_only_inside_the_sandbox() {
         "http://127.0.0.1:9/f"
     );
     assert_eq!(feed_base_from(Some("http://127.0.0.1:9/f"), None), FEED_URL);
-    assert_eq!(feed_base_from(Some("http://127.0.0.1:9/f"), Some("  ")), FEED_URL);
+    assert_eq!(
+        feed_base_from(Some("http://127.0.0.1:9/f"), Some("  ")),
+        FEED_URL
+    );
     assert_eq!(feed_base_from(Some("ftp://x/y"), Some("C:/s")), FEED_URL);
     assert_eq!(feed_base_from(None, Some("C:/s")), FEED_URL);
 }

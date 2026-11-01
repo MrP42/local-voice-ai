@@ -47,7 +47,11 @@ fn fixture(texts: &[&str]) -> Fx {
         .append_delta(
             &meeting,
             &TranscriptDelta {
-                new_segments: texts.iter().enumerate().map(|(i, t)| seg(i as u32, t)).collect(),
+                new_segments: texts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| seg(i as u32, t))
+                    .collect(),
             },
         )
         .unwrap();
@@ -84,14 +88,24 @@ fn the_override_is_restored_when_it_ends_and_nests() {
     {
         let _outer = LanguageOverride::set(Some("en".into()), Some("model-a".into()));
         assert_eq!(LanguageOverride::current().as_deref(), Some("en"));
-        assert_eq!(LanguageOverride::current_model().as_deref(), Some("model-a"));
+        assert_eq!(
+            LanguageOverride::current_model().as_deref(),
+            Some("model-a")
+        );
         {
             let _inner = LanguageOverride::set(Some("auto".into()), None);
             assert_eq!(LanguageOverride::current().as_deref(), Some("auto"));
             assert_eq!(LanguageOverride::current_model(), None);
         }
-        assert_eq!(LanguageOverride::current().as_deref(), Some("en"), "aussen wieder da");
-        assert_eq!(LanguageOverride::current_model().as_deref(), Some("model-a"));
+        assert_eq!(
+            LanguageOverride::current().as_deref(),
+            Some("en"),
+            "aussen wieder da"
+        );
+        assert_eq!(
+            LanguageOverride::current_model().as_deref(),
+            Some("model-a")
+        );
     }
     assert_eq!(LanguageOverride::current(), None);
     assert_eq!(LanguageOverride::current_model(), None);
@@ -102,7 +116,11 @@ fn two_threads_never_see_each_others_override() {
     // Zwei gleichzeitige Importe der Warteschlange: je Thread eine eigene Sprache.
     let _mine = LanguageOverride::set(Some("de".into()), None);
     let other = std::thread::spawn(|| {
-        assert_eq!(LanguageOverride::current(), None, "ein neuer Thread startet leer");
+        assert_eq!(
+            LanguageOverride::current(),
+            None,
+            "ein neuer Thread startet leer"
+        );
         let _theirs = LanguageOverride::set(Some("fr".into()), None);
         LanguageOverride::current()
     })
@@ -119,7 +137,11 @@ fn a_panic_inside_the_scope_still_restores_the_override() {
         panic!("Engine abgestuerzt");
     });
     assert!(result.is_err());
-    assert_eq!(LanguageOverride::current(), None, "kein Rest fuer den naechsten Lauf");
+    assert_eq!(
+        LanguageOverride::current(),
+        None,
+        "kein Rest fuer den naechsten Lauf"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +167,14 @@ fn the_language_is_stored_everywhere_it_is_read() {
     assert_eq!(transcript_language(&f).as_deref(), Some("en"));
     let mut conn = f.store.get_connection().unwrap();
     let list = variants::list(&mut conn, &f.meeting).unwrap();
-    assert_eq!(list.iter().find(|v| v.id == variant).unwrap().language.as_deref(), Some("en"));
+    assert_eq!(
+        list.iter()
+            .find(|v| v.id == variant)
+            .unwrap()
+            .language
+            .as_deref(),
+        Some("en")
+    );
     assert_eq!(stored_language(&f.store, &f.meeting), Some(stored));
 }
 
@@ -188,7 +217,10 @@ fn without_a_plan_the_language_comes_from_the_transcript_text() {
     let f = fixture(&EN);
     finalize_from_text(&f.store, &f.meeting, Some("whisper".into()));
     let stored = stored_language(&f.store, &f.meeting).unwrap();
-    assert_eq!((stored.code.as_str(), stored.source.as_str()), ("en", SOURCE_TEXT));
+    assert_eq!(
+        (stored.code.as_str(), stored.source.as_str()),
+        ("en", SOURCE_TEXT)
+    );
     assert_eq!(stored.model_id.as_deref(), Some("whisper"));
     assert_eq!(meeting_language(&f).as_deref(), Some("en"));
 }
@@ -228,7 +260,9 @@ fn gap_placeholders_do_not_count_as_text() {
     // das Urteil ueber den englischen Rest nicht kippen.
     let mut texts: Vec<String> = EN.iter().map(|s| (*s).to_string()).collect();
     for _ in 0..4 {
-        texts.push(crate::managers::meetings::import::gap_placeholder(1000, 5000));
+        texts.push(crate::managers::meetings::import::gap_placeholder(
+            1000, 5000,
+        ));
     }
     let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
     let f = fixture(&refs);
@@ -256,7 +290,10 @@ fn a_matching_probe_result_is_stored_as_found() {
     let plan = LanguagePlan::planned_for_test(Some(("de".to_string(), SOURCE_PROBE, 1.0)), "m");
     finalize(&f.store, &f.meeting, &plan, None);
     let stored = stored_language(&f.store, &f.meeting).unwrap();
-    assert_eq!((stored.code.as_str(), stored.source.as_str()), ("de", SOURCE_PROBE));
+    assert_eq!(
+        (stored.code.as_str(), stored.source.as_str()),
+        ("de", SOURCE_PROBE)
+    );
     assert_eq!(stored.mismatch, None);
     assert_eq!(stored.model_id.as_deref(), Some("m"));
 }
@@ -266,10 +303,12 @@ fn a_matching_probe_result_is_stored_as_found() {
 // ---------------------------------------------------------------------------
 
 fn catalog() -> Vec<ModelCandidate> {
-    let wide: Vec<String> = ["en", "de", "fr", "ja", "es", "it", "pt", "nl", "pl", "ru", "tr", "ar"]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
+    let wide: Vec<String> = [
+        "en", "de", "fr", "ja", "es", "it", "pt", "nl", "pl", "ru", "tr", "ar",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
     vec![
         ModelCandidate {
             id: "english-only".into(),
@@ -327,14 +366,22 @@ fn the_model_for_a_language_prefers_a_covering_installed_one() {
     assert_eq!(suggestion.model_id, "multi");
     assert!(suggestion.downloaded);
     // Das aktuelle Modell deckt die Sprache ab: es bleibt.
-    assert_eq!(model_for_language(&catalog(), "english-only", "en").unwrap().model_id, "english-only");
+    assert_eq!(
+        model_for_language(&catalog(), "english-only", "en")
+            .unwrap()
+            .model_id,
+        "english-only"
+    );
     assert_eq!(model_for_language(&catalog(), "multi", "auto"), None);
 }
 
 #[test]
 fn the_info_of_an_unknown_meeting_is_an_error_code() {
     let f = fixture(&EN);
-    assert_eq!(info(&f.store, &catalog(), "gibt-es-nicht").unwrap_err(), "meeting_not_found");
+    assert_eq!(
+        info(&f.store, &catalog(), "gibt-es-nicht").unwrap_err(),
+        "meeting_not_found"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -356,8 +403,17 @@ fn two_agreeing_windows_end_the_probe_early() {
 
 #[test]
 fn one_window_or_a_disagreement_keeps_probing() {
-    assert!(!probe_agrees(&probe_of(&[Some("en")])), "ein Fenster entscheidet nicht");
-    assert!(!probe_agrees(&probe_of(&[Some("en"), Some("de")])), "Widerspruch: weiter");
-    assert!(!probe_agrees(&probe_of(&[None, None])), "ohne eigene Erkennung gibt es nichts zu bestaetigen");
+    assert!(
+        !probe_agrees(&probe_of(&[Some("en")])),
+        "ein Fenster entscheidet nicht"
+    );
+    assert!(
+        !probe_agrees(&probe_of(&[Some("en"), Some("de")])),
+        "Widerspruch: weiter"
+    );
+    assert!(
+        !probe_agrees(&probe_of(&[None, None])),
+        "ohne eigene Erkennung gibt es nichts zu bestaetigen"
+    );
     assert!(!probe_agrees(&probe_of(&[])));
 }

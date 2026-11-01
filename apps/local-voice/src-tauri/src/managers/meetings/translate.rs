@@ -38,7 +38,9 @@ use serde_json::{json, Value};
 use specta::Type;
 
 use super::language::{self, name_en, normalize_code};
-use super::llm_call::{ask_json, resolve_provider_coded, retry_chunk, should_retry, AskOptions, SemanticRetry};
+use super::llm_call::{
+    ask_json, resolve_provider_coded, retry_chunk, should_retry, AskOptions, SemanticRetry,
+};
 use super::notes::budget::{balanced_block_limit, pack_ranges};
 use super::store::{MeetingStore, StoredSegment};
 use super::variants::{self, NewVariant, TranscriptVariant, TranslationExtra};
@@ -188,11 +190,17 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    pub fn report(&self, source_variant_id: &str, model: Option<&str>, target_language: &str) -> TranslationReport {
+    pub fn report(
+        &self,
+        source_variant_id: &str,
+        model: Option<&str>,
+        target_language: &str,
+    ) -> TranslationReport {
         TranslationReport {
             source_variant_id: source_variant_id.to_string(),
             source_language: self.source_language.clone(),
-            target_language: normalize_code(target_language).unwrap_or_else(|| target_language.to_string()),
+            target_language: normalize_code(target_language)
+                .unwrap_or_else(|| target_language.to_string()),
             model: model.map(str::to_string),
             checked: u32::try_from(self.segments.len()).unwrap_or(u32::MAX),
             flagged: self.flagged.clone(),
@@ -214,7 +222,11 @@ fn canonical_number(token: &str) -> String {
     let groups: Vec<&str> = token.split(['.', ',']).collect();
     let strip = |s: &str| {
         let t = s.trim_start_matches('0');
-        if t.is_empty() { "0".to_string() } else { t.to_string() }
+        if t.is_empty() {
+            "0".to_string()
+        } else {
+            t.to_string()
+        }
     };
     if groups.len() == 1 {
         return strip(groups[0]);
@@ -225,7 +237,11 @@ fn canonical_number(token: &str) -> String {
     }
     let int = strip(&groups[..groups.len() - 1].concat());
     let frac = last.trim_end_matches('0');
-    if frac.is_empty() { int } else { format!("{int}.{frac}") }
+    if frac.is_empty() {
+        int
+    } else {
+        format!("{int}.{frac}")
+    }
 }
 
 /// Alle Zahlen eines Textes (kanonisch, sortiert): fuer den Vergleich als Menge mit
@@ -268,7 +284,10 @@ pub fn numbers_in(text: &str) -> Vec<String> {
             }
             break;
         }
-        let token: String = chars[start..j].iter().filter(|c| !c.is_whitespace()).collect();
+        let token: String = chars[start..j]
+            .iter()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         out.push(canonical_number(&token));
         i = j;
     }
@@ -289,7 +308,10 @@ const ABBREVIATIONS: &[&str] = &[
 fn strip_abbreviations(text: &str) -> String {
     let mut out = text.to_string();
     for abbreviation in ABBREVIATIONS {
-        let plain: String = abbreviation.chars().filter(|c| *c != '.' && *c != ' ').collect();
+        let plain: String = abbreviation
+            .chars()
+            .filter(|c| *c != '.' && *c != ' ')
+            .collect();
         let mut result = String::with_capacity(out.len());
         let mut rest = out.as_str();
         while let Some(at) = rest.find(abbreviation) {
@@ -372,16 +394,85 @@ const NOUN_CAPITALIZING: &[&str] = &["de", "lb"];
 
 /// Grossgeschriebene Woerter, die kein Eigenname sind und beim Uebersetzen wechseln.
 const NOT_NAMES: &[&str] = &[
-    "i", "ok", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-    "january", "february", "march", "april", "may", "june", "july", "august", "september",
-    "october", "november", "december", "english", "german", "french", "spanish", "italian",
-    "dutch", "montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag",
-    "januar", "februar", "märz", "juni", "juli", "oktober", "dezember", "lundi", "mardi",
-    "mercredi", "jeudi", "vendredi", "samedi", "dimanche", "janvier", "février", "mars",
-    "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-    "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo", "enero",
-    "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
-    "noviembre", "diciembre",
+    "i",
+    "ok",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "english",
+    "german",
+    "french",
+    "spanish",
+    "italian",
+    "dutch",
+    "montag",
+    "dienstag",
+    "mittwoch",
+    "donnerstag",
+    "freitag",
+    "samstag",
+    "sonntag",
+    "januar",
+    "februar",
+    "märz",
+    "juni",
+    "juli",
+    "oktober",
+    "dezember",
+    "lundi",
+    "mardi",
+    "mercredi",
+    "jeudi",
+    "vendredi",
+    "samedi",
+    "dimanche",
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ];
 
 fn clean_token(token: &str) -> String {
@@ -411,7 +502,9 @@ fn ends_sentence(previous: &str) -> bool {
         return false;
     }
     let lower = previous.to_lowercase();
-    !ABBREVIATIONS.iter().any(|a| lower.ends_with(&a.to_lowercase().replace(' ', "")))
+    !ABBREVIATIONS
+        .iter()
+        .any(|a| lower.ends_with(&a.to_lowercase().replace(' ', "")))
 }
 
 fn noun_capitalizing(language: Option<&str>) -> bool {
@@ -461,7 +554,10 @@ pub fn required_names(
     let lower = source.to_lowercase();
     for name in known {
         let name = name.trim();
-        if name.chars().count() >= 2 && lower.contains(&name.to_lowercase()) && !out.iter().any(|n| n == name) {
+        if name.chars().count() >= 2
+            && lower.contains(&name.to_lowercase())
+            && !out.iter().any(|n| n == name)
+        {
             out.push(name.to_string());
         }
     }
@@ -508,7 +604,11 @@ impl Checker {
     /// Die Gruende, aus denen `translated` von `source` abweicht (leer: treu).
     pub fn check(&self, source: &str, translated: &str) -> Vec<&'static str> {
         if translated.trim().is_empty() {
-            return if source.trim().is_empty() { Vec::new() } else { vec![REASON_EMPTY] };
+            return if source.trim().is_empty() {
+                Vec::new()
+            } else {
+                vec![REASON_EMPTY]
+            };
         }
         let words = normalized_words(source);
         if words.len() >= 3
@@ -522,14 +622,25 @@ impl Checker {
             reasons.push(REASON_NUMBERS);
         }
         let lower = translated.to_lowercase();
-        let required = required_names(source, &self.document, &self.known, self.source_language.as_deref());
-        if required.iter().any(|name| !lower.contains(&name.to_lowercase())) {
+        let required = required_names(
+            source,
+            &self.document,
+            &self.known,
+            self.source_language.as_deref(),
+        );
+        if required
+            .iter()
+            .any(|name| !lower.contains(&name.to_lowercase()))
+        {
             reasons.push(REASON_NAMES);
         }
         if sentence_count(source) != sentence_count(translated) {
             reasons.push(REASON_SENTENCES);
         }
-        let (a, b) = (source.trim().chars().count(), translated.trim().chars().count());
+        let (a, b) = (
+            source.trim().chars().count(),
+            translated.trim().chars().count(),
+        );
         if self.check_length && a >= MIN_LENGTH_CHECK_CHARS {
             let ratio = b as f64 / a as f64;
             if !(MIN_LENGTH_RATIO..=MAX_LENGTH_RATIO).contains(&ratio) {
@@ -589,7 +700,11 @@ names.\n\
 pub fn user_prompt(block: &[StoredSegment], first_number: u32) -> String {
     let mut text = String::from("# Transcript (numbered lines)\n");
     for (i, segment) in block.iter().enumerate() {
-        text.push_str(&format!("[{}] {}\n", first_number + i as u32, one_line(&segment.text)));
+        text.push_str(&format!(
+            "[{}] {}\n",
+            first_number + i as u32,
+            one_line(&segment.text)
+        ));
     }
     text
 }
@@ -716,12 +831,18 @@ where
         }
         if missing * 2 >= block.len().max(1) {
             failed_blocks += 1;
-            log::warn!("Übersetzung: Block {}/{blocks} weitgehend unbrauchbar", index + 1);
+            log::warn!(
+                "Übersetzung: Block {}/{blocks} weitgehend unbrauchbar",
+                index + 1
+            );
         }
         progress(index + 1, blocks);
     }
     if failed_blocks * 2 > blocks {
-        return Err(TranslateError::Rejected { failed: failed_blocks, blocks });
+        return Err(TranslateError::Rejected {
+            failed: failed_blocks,
+            blocks,
+        });
     }
     Ok(Outcome {
         segments,
@@ -741,13 +862,20 @@ fn label(v: &TranscriptVariant) -> String {
         "v{} {}{}",
         v.number,
         v.kind,
-        v.language.as_deref().map(|l| format!(" ({l})")).unwrap_or_default()
+        v.language
+            .as_deref()
+            .map(|l| format!(" ({l})"))
+            .unwrap_or_default()
     )
 }
 
 /// Die Sprache einer Fassung: die gespeicherte, sonst die der Besprechung, sonst die des
 /// Textes. `None`, wenn nichts davon verlaesslich ist.
-fn source_language_of(variant: &TranscriptVariant, segments: &[StoredSegment], store: &MeetingStore) -> Option<String> {
+fn source_language_of(
+    variant: &TranscriptVariant,
+    segments: &[StoredSegment],
+    store: &MeetingStore,
+) -> Option<String> {
     variant
         .language
         .as_deref()
@@ -761,7 +889,12 @@ fn source_language_of(variant: &TranscriptVariant, segments: &[StoredSegment], s
                 .and_then(|l| normalize_code(&l))
         })
         .or_else(|| {
-            let sample: String = segments.iter().take(40).map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+            let sample: String = segments
+                .iter()
+                .take(40)
+                .map(|s| s.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             language::detect_text(&sample).map(|d| d.code)
         })
 }
@@ -902,7 +1035,11 @@ where
                 actor_kind: ActorKind::User,
                 actor_ref: None,
                 started,
-                sources: vec![SourceRef::new("transcript", &source.id, Some(&label(&source)))],
+                sources: vec![SourceRef::new(
+                    "transcript",
+                    &source.id,
+                    Some(&label(&source)),
+                )],
                 params: json!({
                     "source_variant": source.id,
                     "source_language": source_language,

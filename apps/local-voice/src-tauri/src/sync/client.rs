@@ -146,7 +146,12 @@ async fn error_from(res: reqwest::Response) -> HubError {
     }
 }
 
-pub async fn login(url: &str, email: &str, password: &str, device_name: &str) -> Result<LoginResponse, HubError> {
+pub async fn login(
+    url: &str,
+    email: &str,
+    password: &str,
+    device_name: &str,
+) -> Result<LoginResponse, HubError> {
     let res = http()?
         .post(format!("{}/api/v1/voice/auth/login", base(url)))
         .json(&serde_json::json!({ "email": email, "password": password, "device_name": device_name }))
@@ -172,14 +177,21 @@ pub struct HubClient {
 
 impl HubClient {
     pub fn new(url: &str, token: &str) -> Self {
-        Self { url: base(url), token: token.to_string() }
+        Self {
+            url: base(url),
+            token: token.to_string(),
+        }
     }
 
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         rb.bearer_auth(&self.token)
     }
 
-    pub async fn push(&self, device_id: &str, objects: &[PushObject]) -> Result<Vec<PushResult>, HubError> {
+    pub async fn push(
+        &self,
+        device_id: &str,
+        objects: &[PushObject],
+    ) -> Result<Vec<PushResult>, HubError> {
         let res = self
             .auth(http()?.post(format!("{}/api/v1/voice/sync/push", self.url)))
             .json(&serde_json::json!({ "device_id": device_id, "objects": objects }))
@@ -219,7 +231,9 @@ impl HubClient {
         if !res.status().is_success() {
             return Err(error_from(res).await);
         }
-        res.json().await.map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+        res.json()
+            .await
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
     }
 
     pub async fn logout(&self) -> Result<(), HubError> {

@@ -217,7 +217,15 @@ pub fn create_meeting_into(
     target: Option<&str>,
     now_ms: i64,
 ) -> Result<String, YoutubeError> {
-    create_meeting_for(conn, video, meta, project_id, target, now_ms, &Origin::user())
+    create_meeting_for(
+        conn,
+        video,
+        meta,
+        project_id,
+        target,
+        now_ms,
+        &Origin::user(),
+    )
 }
 
 /// Wie `create_meeting_into`, mit Angabe, wer anlegt (A8).
@@ -292,12 +300,8 @@ pub fn create_meeting_for(
     // eigene Transkription (A3) haengen ihre Eintraege dahinter an.
     let mut source = SourceRef::new("youtube", &video.video_id, Some(&meta.title));
     source.url = Some(url);
-    let mut entry = NewProvenance::new(
-        SubjectKind::Transcript,
-        &id,
-        "youtube_source",
-        origin.actor,
-    );
+    let mut entry =
+        NewProvenance::new(SubjectKind::Transcript, &id, "youtube_source", origin.actor);
     entry.actor_ref = origin.actor_ref.clone();
     entry.provider = Some("youtube".to_string());
     entry.sources = vec![source];

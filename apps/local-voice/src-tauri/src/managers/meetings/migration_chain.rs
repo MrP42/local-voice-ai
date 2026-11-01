@@ -25,7 +25,10 @@ const OLD_TABLES: [(&str, &str); 6] = [
         "id, title, status, source, source_path, started_at, ended_at, language, duration_ms, \
          created_at, updated_at, deleted_at",
     ),
-    ("transcripts", "id, meeting_id, model, segments_json, created_at"),
+    (
+        "transcripts",
+        "id, meeting_id, model, segments_json, created_at",
+    ),
     ("meeting_notes", "meeting_id, blocks_json, revision"),
     ("humans", "id, name, email"),
     ("action_items", "id, meeting_id, text, status, source, kind"),
@@ -184,7 +187,12 @@ fn the_chain_is_register_then_variants_then_queue() {
         (
             6,
             &["integrations", "provenance"],
-            &["transcript_variants", "import_queue", "meeting_slides", "workflows"],
+            &[
+                "transcript_variants",
+                "import_queue",
+                "meeting_slides",
+                "workflows",
+            ],
         ),
         (
             7,
@@ -194,7 +202,12 @@ fn the_chain_is_register_then_variants_then_queue() {
         (
             8,
             &["integrations", "transcript_variants", "import_queue"],
-            &["project_minutes", "transcript_variants_g5", "meeting_slides", "workflows"],
+            &[
+                "project_minutes",
+                "transcript_variants_g5",
+                "meeting_slides",
+                "workflows",
+            ],
         ),
         // Stufe 9 = G3 (Projekt-Protokolle, Index 8): die Tabelle ist da.
         (
@@ -307,7 +320,11 @@ fn a_database_of_0_20_9_with_data_migrates_through_all_three_steps() {
         "transcript_variants",
         "meeting_id, kind, number, active",
     );
-    assert_eq!(variants.len(), 3, "L1, I1, S1; das leere E1 nicht: {variants:?}");
+    assert_eq!(
+        variants.len(),
+        3,
+        "L1, I1, S1; das leere E1 nicht: {variants:?}"
+    );
     assert_eq!(
         count(
             &conn,
@@ -364,8 +381,11 @@ fn an_abort_in_the_last_step_leaves_the_0_20_9_database_untouched() {
     // A1 und A3 laufen durch, U7 bricht am Ende ab: alles muss zurueckrollen
     // (eine Transaktion ueber die ganze Kette).
     let broken: &'static str = Box::leak(
-        format!("{} SELECT no_such_function();", super::queue_store::QUEUE_MIGRATION)
-            .into_boxed_str(),
+        format!(
+            "{} SELECT no_such_function();",
+            super::queue_store::QUEUE_MIGRATION
+        )
+        .into_boxed_str(),
     );
     let mut steps = MIGRATIONS[..7].to_vec();
     steps.push(M::up(broken));
@@ -418,11 +438,8 @@ fn a_database_from_a_u7_only_build_is_adopted() {
             [],
         )
         .unwrap();
-        conn.execute(
-            "UPDATE meetings SET status = 'queued' WHERE id = 'E1'",
-            [],
-        )
-        .unwrap();
+        conn.execute("UPDATE meetings SET status = 'queued' WHERE id = 'E1'", [])
+            .unwrap();
         conn.execute(
             "INSERT INTO import_queue (meeting_id, seq, state, enqueued_at)
              VALUES ('E1', 1, 'waiting', 1790300000)",
@@ -451,12 +468,21 @@ fn a_database_from_a_u7_only_build_is_adopted() {
         "A3 nachgeholt, Fassungen zurueckgefuellt"
     );
     assert_eq!(
-        store.get_meeting("L1").unwrap().unwrap().description.as_deref(),
+        store
+            .get_meeting("L1")
+            .unwrap()
+            .unwrap()
+            .description
+            .as_deref(),
         Some("Notiz zur Aufnahme"),
         "die Beschreibung aus U7 bleibt"
     );
     let rows = store.queue_rows().unwrap();
-    assert_eq!(rows.len(), 1, "die wartende Datei bleibt in der Warteschlange");
+    assert_eq!(
+        rows.len(),
+        1,
+        "die wartende Datei bleibt in der Warteschlange"
+    );
     assert_eq!(rows[0].meeting_id, "E1");
     drop(conn);
     drop(store);

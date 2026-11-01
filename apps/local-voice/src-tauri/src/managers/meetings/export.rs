@@ -2084,7 +2084,9 @@ pub(crate) mod tests {
     fn ein_leerer_eintrag_laesst_sich_in_jedem_format_exportieren() {
         let dir = tempfile::tempdir().unwrap();
         let store = MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap();
-        let empty = store.create_empty_meeting("Neue Besprechung", None).unwrap();
+        let empty = store
+            .create_empty_meeting("Neue Besprechung", None)
+            .unwrap();
         store
             .save_notes(
                 &empty.id,
@@ -2101,7 +2103,10 @@ pub(crate) mod tests {
         let b = build_bundle(&store, &empty.id).unwrap();
         assert!(b.segments.is_empty() && b.minutes_md.is_none() && b.enhanced.is_none());
         let md = bundle_to_markdown(&b, &ExportParts::all());
-        assert!(md.contains("Nur eine Notiz") && !md.contains("## Transkript"), "{md}");
+        assert!(
+            md.contains("Nur eine Notiz") && !md.contains("## Transkript"),
+            "{md}"
+        );
         for (name, format) in [
             ("e.md", ExportFormat::Markdown),
             ("e.txt", ExportFormat::PlainText),

@@ -140,7 +140,9 @@ impl AppServices for AppServicesImpl {
 
     fn audio_dir(&self, meeting_id: Option<&str>) -> Result<PathBuf, ServiceError> {
         let transient = |e: String| {
-            ServiceError::Transient(format!("Der Ordner für die Audiodatei ist nicht erreichbar ({e})."))
+            ServiceError::Transient(format!(
+                "Der Ordner für die Audiodatei ist nicht erreichbar ({e})."
+            ))
         };
         match meeting_id {
             Some(id) => Ok(crate::managers::meetings::meetings_data_dir(&self.app)
@@ -187,8 +189,9 @@ impl AppServices for AppServicesImpl {
     }
 
     fn notify(&self, title: &str, body: &str) -> Result<(), ServiceError> {
-        toast::show(&self.app.config().identifier, title, body)
-            .map_err(|e| ServiceError::Transient(format!("Die Mitteilung ließ sich nicht anzeigen ({e}).")))
+        toast::show(&self.app.config().identifier, title, body).map_err(|e| {
+            ServiceError::Transient(format!("Die Mitteilung ließ sich nicht anzeigen ({e})."))
+        })
     }
 
     fn self_emails(&self) -> Vec<String> {

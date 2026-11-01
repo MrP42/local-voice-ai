@@ -1,5 +1,4 @@
 pub mod agent_bridge; // A7
-pub mod sprachdienst; // ADR-0021 S2
 pub mod audio;
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
 pub mod calendar; // M5-P5b
@@ -9,34 +8,35 @@ pub mod integration_targets; // A6
 pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod llm;
-pub mod usage;
-pub mod voice_tools; // Sprachgespraech Stufe 2
-pub mod workflows; // B7
 pub mod meeting_chat; // M4-P4c
-pub mod meeting_mcp; // M6-P6e
-pub mod meeting_notes;
-pub mod meeting_variants; // A3
-pub mod meeting_language; // G5
+pub mod meeting_documents; // Dokumenttypen neben dem Protokoll
 pub mod meeting_enhance;
 pub mod meeting_jobs; // P8a
-pub mod meeting_documents; // Dokumenttypen neben dem Protokoll
-pub mod presenter; // Etappe 4: Uebergabe an den WAI Presenter
+pub mod meeting_language; // G5
+pub mod meeting_mcp; // M6-P6e
 pub mod meeting_minutes; // P1k
+pub mod meeting_notes;
 pub mod meeting_queue; // U7
 pub mod meeting_search;
 pub mod meeting_slides; // D1 (#70, M7)
 pub mod meeting_speakers; // M3-P3c
+pub mod meeting_variants; // A3
 pub mod meetings;
 pub mod models;
-pub mod people; // M5-P5d
 pub mod pages;
 pub mod pages_package;
+pub mod people; // M5-P5d
+pub mod phonon_voices;
+pub mod presenter; // Etappe 4: Uebergabe an den WAI Presenter
 pub mod project_minutes; // G3 (#70)
 pub mod provenance; // A1
+pub mod sprachdienst; // ADR-0021 S2
 pub mod transcription;
 pub mod tts;
 pub mod tts_providers;
-pub mod phonon_voices;
+pub mod usage;
+pub mod voice_tools; // Sprachgespraech Stufe 2
+pub mod workflows; // B7
 pub mod youtube; // A2
 
 use crate::settings::{get_settings, write_settings, AppSettings, LogLevel};

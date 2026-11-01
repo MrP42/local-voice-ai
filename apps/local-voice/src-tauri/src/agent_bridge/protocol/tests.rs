@@ -20,7 +20,10 @@ fn bad(line: &str) -> String {
 #[test]
 fn a_request_is_split_into_id_method_and_params() {
     let (id, m, p) = req(r#"{"id": 7, "method": "tools/call", "params": {"name": "x"}}"#);
-    assert_eq!((id, m.as_str(), p), (json!(7), "tools/call", json!({"name": "x"})));
+    assert_eq!(
+        (id, m.as_str(), p),
+        (json!(7), "tools/call", json!({"name": "x"}))
+    );
     let (id, _, p) = req(r#"{"id": "a-1", "method": "status"}"#);
     assert_eq!((id, p), (json!("a-1"), json!({})));
     let (id, _, p) = req(r#"{"method": "status", "params": null}"#);
@@ -52,8 +55,16 @@ fn an_invalid_request_keeps_the_id_when_it_has_a_usable_one() {
 fn replies_are_single_json_lines_with_the_id_echoed() {
     let ok = ok_line(&json!("x"), json!({"a": 1}));
     assert!(!ok.contains('\n'));
-    assert_eq!(serde_json::from_str::<Value>(&ok).unwrap(), json!({"id": "x", "result": {"a": 1}}));
-    let err = err_line(&json!(3), code::TOOL_OFF, "Das Werkzeug ist aus.", Some(&json!({"reason": "grant_off"})));
+    assert_eq!(
+        serde_json::from_str::<Value>(&ok).unwrap(),
+        json!({"id": "x", "result": {"a": 1}})
+    );
+    let err = err_line(
+        &json!(3),
+        code::TOOL_OFF,
+        "Das Werkzeug ist aus.",
+        Some(&json!({"reason": "grant_off"})),
+    );
     let v: Value = serde_json::from_str(&err).unwrap();
     assert_eq!(v["id"], json!(3));
     assert_eq!(v["error"]["code"], json!("tool_off"));
@@ -98,7 +109,10 @@ async fn an_overlong_line_stops_reading_instead_of_buffering() {
     let got = read_all(b"abcdefghijklmnop\nrest", 10).await;
     assert_eq!(got, vec![LineRead::TooLong]);
     // Genau an der Grenze geht noch.
-    assert_eq!(read_all(b"abcdefghij\n", 10).await[0], LineRead::Line("abcdefghij".into()));
+    assert_eq!(
+        read_all(b"abcdefghij\n", 10).await[0],
+        LineRead::Line("abcdefghij".into())
+    );
 }
 
 #[tokio::test]
@@ -134,7 +148,11 @@ fn an_overlong_id_is_refused_and_never_reflected() {
 fn a_reply_over_the_cap_becomes_a_short_error_with_the_same_id() {
     let id = json!("abc");
     let small = ok_line(&id, json!({"a": 1}));
-    assert_eq!(cap_reply(&id, small.clone(), 1024), small, "kleine Antworten bleiben");
+    assert_eq!(
+        cap_reply(&id, small.clone(), 1024),
+        small,
+        "kleine Antworten bleiben"
+    );
     let big = ok_line(&id, json!({"blob": "x".repeat(5000)}));
     let capped = cap_reply(&id, big, 1024);
     assert!(capped.len() < 300, "{}", capped.len());

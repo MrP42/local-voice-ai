@@ -195,7 +195,8 @@ impl ProcessGuard {
             }
 
             let cpu = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION {
-                ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+                ControlFlags: JOB_OBJECT_CPU_RATE_CONTROL_ENABLE
+                    | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
                 Anonymous: JOBOBJECT_CPU_RATE_CONTROL_INFORMATION_0 {
                     // Hundertstel Prozent der Gesamt-CPU.
                     CpuRate: cpu_percent.clamp(10, 100) * 100,
@@ -394,14 +395,22 @@ mod tests {
         std::fs::write(&fake, b"fixture").unwrap();
         let script = dir.path().join("fake.cmd");
         std::fs::write(&script, b"@echo off").unwrap();
-        assert!(check_launchable(&script).is_ok(), "Skripte bleiben startbar");
+        assert!(
+            check_launchable(&script).is_ok(),
+            "Skripte bleiben startbar"
+        );
         if cfg!(windows) {
-            assert!(check_launchable(&fake).unwrap_err().contains("kein gültiges"));
+            assert!(check_launchable(&fake)
+                .unwrap_err()
+                .contains("kein gültiges"));
             let real = dir.path().join("echt.exe");
             std::fs::write(&real, pe(0x8664)).unwrap();
             assert!(check_launchable(&real).is_ok());
         } else {
-            assert!(check_launchable(&fake).is_ok(), "nur Windows prüft den PE-Kopf");
+            assert!(
+                check_launchable(&fake).is_ok(),
+                "nur Windows prüft den PE-Kopf"
+            );
         }
     }
 
@@ -446,7 +455,10 @@ mod tests {
     #[cfg(windows)]
     fn job_limit_stops_a_runaway_child() {
         let child = std::process::Command::new("python")
-            .args(["-c", "b = bytearray(3 * 1024 * 1024 * 1024); print('ALLOCATED', len(b))"])
+            .args([
+                "-c",
+                "b = bytearray(3 * 1024 * 1024 * 1024); print('ALLOCATED', len(b))",
+            ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
@@ -455,9 +467,16 @@ mod tests {
         let out = child.wait_with_output().expect("wait");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        eprintln!("exit={:?} stdout={stdout} stderr={}", out.status.code(), stderr.lines().last().unwrap_or(""));
+        eprintln!(
+            "exit={:?} stdout={stdout} stderr={}",
+            out.status.code(),
+            stderr.lines().last().unwrap_or("")
+        );
         drop(guard);
-        assert!(!stdout.contains("ALLOCATED"), "3 GB unter 1-GB-Deckel duerfen nicht gelingen");
+        assert!(
+            !stdout.contains("ALLOCATED"),
+            "3 GB unter 1-GB-Deckel duerfen nicht gelingen"
+        );
         assert!(!out.status.success());
     }
 
@@ -504,7 +523,10 @@ mod tests {
             !grandchildren.is_empty()
         });
         assert!(started, "cmd hat keinen Enkel gestartet");
-        assert!(child.try_wait().unwrap().is_none(), "Kind lebt vor dem Schliessen");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "Kind lebt vor dem Schliessen"
+        );
 
         drop(guard); // KILL_ON_JOB_CLOSE
 

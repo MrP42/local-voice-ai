@@ -800,10 +800,7 @@ pub fn change_tts_engine_setting(app: AppHandle, value: String) -> Result<(), St
 /// Welche geladene Piper-Stimme vorliest. `None` heisst: keine gewaehlt.
 #[tauri::command]
 #[specta::specta]
-pub fn change_tts_piper_voice_setting(
-    app: AppHandle,
-    value: Option<String>,
-) -> Result<(), String> {
+pub fn change_tts_piper_voice_setting(app: AppHandle, value: Option<String>) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.tts_piper_voice = value.filter(|id| !id.trim().is_empty());
     settings::write_settings(&app, settings);

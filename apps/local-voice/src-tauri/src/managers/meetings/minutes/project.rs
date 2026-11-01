@@ -57,9 +57,9 @@ use log::info;
 use serde_json::{json, Map, Value};
 
 use super::{
-    ask_options, classify_llm_error, entry_text, no_retry, nullable_string, object_schema,
-    template_block, Limits, MinutesError, MinutesPhase, MinutesProgress, MinutesRunGuard,
-    ProgressFn, Reporter, base_rules, CODE_CANCELLED,
+    ask_options, base_rules, classify_llm_error, entry_text, no_retry, nullable_string,
+    object_schema, template_block, Limits, MinutesError, MinutesPhase, MinutesProgress,
+    MinutesRunGuard, ProgressFn, Reporter, CODE_CANCELLED,
 };
 use crate::managers::meetings::llm_call::{
     ask_json, is_splittable_error, is_truncation_error, resolve_provider_coded, retry_chunk,

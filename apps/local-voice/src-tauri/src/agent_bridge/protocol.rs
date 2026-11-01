@@ -78,7 +78,10 @@ pub fn parse_request(line: &str) -> Incoming {
     };
     let id = map.remove("id").unwrap_or(Value::Null);
     if !matches!(id, Value::Null | Value::String(_) | Value::Number(_)) {
-        return invalid(Value::Null, "Die Kennung (id) muss Text, Zahl oder null sein.");
+        return invalid(
+            Value::Null,
+            "Die Kennung (id) muss Text, Zahl oder null sein.",
+        );
     }
     // Die Kennung kommt in jeder Antwort zurueck: ohne Grenze liesse sich eine Antwort mit
     // bis zu 1 MiB aufblasen (B23). Zu lang: abgelehnt, ohne sie zu spiegeln.

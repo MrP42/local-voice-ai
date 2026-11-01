@@ -506,7 +506,9 @@ mod tests {
     fn llm_entries_are_complete_and_stay_out_of_the_asr_catalog() {
         let runtimes = tts_entries(Purpose::LlmRuntime);
         assert!(
-            runtimes.iter().any(|e| e.id == "llm-runtime-windows-x64-vulkan"),
+            runtimes
+                .iter()
+                .any(|e| e.id == "llm-runtime-windows-x64-vulkan"),
             "Windows-Vulkan-Laufzeit fehlt"
         );
         assert!(runtimes.iter().any(|e| e.id == "llm-runtime-macos-aarch64"));
@@ -515,8 +517,18 @@ mod tests {
         for entry in runtimes.iter().chain(models.iter()) {
             assert!(!entry.files.is_empty(), "{}: keine Datei", entry.id);
             for f in &entry.files {
-                assert!(f.sha256.is_some(), "{}: {} ohne Pruefsumme", entry.id, f.filename);
-                assert!(f.size_bytes > 0, "{}: {} ohne Groesse", entry.id, f.filename);
+                assert!(
+                    f.sha256.is_some(),
+                    "{}: {} ohne Pruefsumme",
+                    entry.id,
+                    f.filename
+                );
+                assert!(
+                    f.size_bytes > 0,
+                    "{}: {} ohne Groesse",
+                    entry.id,
+                    f.filename
+                );
             }
         }
         assert!(
@@ -545,7 +557,9 @@ mod tests {
             file.sha256.as_deref(),
             Some("950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167")
         );
-        assert!(file.url.starts_with("https://huggingface.co/gpustack/bge-m3-GGUF/"));
+        assert!(file
+            .url
+            .starts_with("https://huggingface.co/gpustack/bge-m3-GGUF/"));
         assert!(tts_entries(Purpose::LlmModel)
             .iter()
             .all(|e| e.id != "emb-bge-m3-q8"));
@@ -625,7 +639,10 @@ mod tests {
     fn license_is_non_commercial_erkennt_nc_lizenzen() {
         assert!(license_is_non_commercial(Some("cc-by-nc-4.0"), false));
         assert!(license_is_non_commercial(Some("CC-BY-NC-SA-4.0"), false));
-        assert!(license_is_non_commercial(Some("Blizzard-2013-Research-Licence"), true));
+        assert!(license_is_non_commercial(
+            Some("Blizzard-2013-Research-Licence"),
+            true
+        ));
         assert!(!license_is_non_commercial(Some("cc-by-4.0"), false));
         assert!(!license_is_non_commercial(Some("Apache-2.0"), false));
         assert!(!license_is_non_commercial(Some("Unclear"), false));
@@ -683,7 +700,11 @@ mod tests {
             .filter(|d| d.license_non_commercial)
             .map(|d| d.id.as_str())
             .collect();
-        assert_eq!(nc.len(), 1, "nur Canary 1B ist im ASR-Katalog nicht-kommerziell: {nc:?}");
+        assert_eq!(
+            nc.len(),
+            1,
+            "nur Canary 1B ist im ASR-Katalog nicht-kommerziell: {nc:?}"
+        );
     }
 
     #[test]
@@ -711,7 +732,9 @@ mod tests {
             ])
         );
         // Von Grund auf trainiert (M-AILABS, BSD-3-Clause): frei.
-        assert!(!voices.iter().any(|v| v.id == "de_DE-eva_k-x_low" && v.license_non_commercial));
+        assert!(!voices
+            .iter()
+            .any(|v| v.id == "de_DE-eva_k-x_low" && v.license_non_commercial));
     }
 
     #[test]
@@ -1005,7 +1028,9 @@ mod tests {
             Some("incomplete_archive")
         );
         assert_eq!(
-            by("piper-runtime-macos-aarch64").unsupported_reason.as_deref(),
+            by("piper-runtime-macos-aarch64")
+                .unsupported_reason
+                .as_deref(),
             Some("incomplete_archive")
         );
         assert!(by("piper-runtime-windows-x64").unsupported_reason.is_none());

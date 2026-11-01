@@ -64,13 +64,18 @@ impl Ledger {
 
     pub fn is_dead(&self, collection: &str, object_id: &str, hash: &str) -> bool {
         // Ein geänderter Inhalt bekommt eine neue Chance.
-        self.dead.get(&key(collection, object_id)).is_some_and(|d| d.hash == hash)
+        self.dead
+            .get(&key(collection, object_id))
+            .is_some_and(|d| d.hash == hash)
     }
 
     pub fn mark_dead(&mut self, collection: &str, object_id: &str, hash: &str, reason: &str) {
         self.dead.insert(
             key(collection, object_id),
-            DeadEntry { reason: reason.to_string(), hash: hash.to_string() },
+            DeadEntry {
+                reason: reason.to_string(),
+                hash: hash.to_string(),
+            },
         );
     }
 }
@@ -111,11 +116,30 @@ mod tests {
     fn dirty_folgt_dem_hash() {
         let mut l = Ledger::default();
         assert!(l.is_dirty("page", "p1", "h1"), "unbekannt = dirty");
-        l.set("page", "p1", Entry { revision: 1, hash: "h1".into(), deleted: false });
+        l.set(
+            "page",
+            "p1",
+            Entry {
+                revision: 1,
+                hash: "h1".into(),
+                deleted: false,
+            },
+        );
         assert!(!l.is_dirty("page", "p1", "h1"));
         assert!(l.is_dirty("page", "p1", "h2"));
-        l.set("page", "p1", Entry { revision: 2, hash: "h1".into(), deleted: true });
-        assert!(l.is_dirty("page", "p1", "h1"), "Tombstone bestätigt, Seite lebt wieder");
+        l.set(
+            "page",
+            "p1",
+            Entry {
+                revision: 2,
+                hash: "h1".into(),
+                deleted: true,
+            },
+        );
+        assert!(
+            l.is_dirty("page", "p1", "h1"),
+            "Tombstone bestätigt, Seite lebt wieder"
+        );
     }
 
     #[test]
@@ -123,9 +147,23 @@ mod tests {
         let mut l = Ledger::default();
         l.mark_dead("page", "p1", "h1", "payload_size");
         assert!(l.is_dead("page", "p1", "h1"));
-        assert!(!l.is_dead("page", "p1", "h2"), "geänderter Inhalt wird erneut versucht");
-        assert!(l.is_dirty("page", "p1", "h1"), "abgewiesen bleibt ungesichert");
-        l.set("page", "p1", Entry { revision: 1, hash: "h2".into(), deleted: false });
+        assert!(
+            !l.is_dead("page", "p1", "h2"),
+            "geänderter Inhalt wird erneut versucht"
+        );
+        assert!(
+            l.is_dirty("page", "p1", "h1"),
+            "abgewiesen bleibt ungesichert"
+        );
+        l.set(
+            "page",
+            "p1",
+            Entry {
+                revision: 1,
+                hash: "h2".into(),
+                deleted: false,
+            },
+        );
         assert!(l.dead.is_empty(), "Bestätigung löscht den Dead-Letter");
     }
 }

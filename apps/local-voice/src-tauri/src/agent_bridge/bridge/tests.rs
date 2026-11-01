@@ -41,13 +41,20 @@ fn a_valid_token_logs_in_and_marks_the_use() {
 #[test]
 fn an_invalid_token_is_refused_and_audited() {
     let f = Fixture::new();
-    let e = f.bridge.authenticate(&clients::generate_token()).unwrap_err();
+    let e = f
+        .bridge
+        .authenticate(&clients::generate_token())
+        .unwrap_err();
     assert_eq!(e.code, code::TOKEN_INVALID);
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].caller, "agent_external");
     assert_eq!(rows[0].outcome, "denied");
-    assert!(rows[0].detail_json.as_deref().unwrap().contains("token_invalid"));
+    assert!(rows[0]
+        .detail_json
+        .as_deref()
+        .unwrap()
+        .contains("token_invalid"));
     // Weder das erfundene Token noch ein Teil davon steht im Audit.
     assert!(rows[0].target.is_none());
 }
@@ -70,7 +77,11 @@ fn a_revoked_token_is_refused_by_name_and_audited() {
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "denied");
-    assert!(rows[0].detail_json.as_deref().unwrap().contains("token_revoked"));
+    assert!(rows[0]
+        .detail_json
+        .as_deref()
+        .unwrap()
+        .contains("token_revoked"));
     assert!(
         rows[0].target.as_deref().unwrap().contains(&f.client.id),
         "das Audit nennt den Zugang"
@@ -87,13 +98,19 @@ fn failed_logins_are_limited_and_the_limit_is_audited_once() {
     let f = Fixture::with(cfg, &ALL_TOOLS);
     for _ in 0..3 {
         assert_eq!(
-            f.bridge.authenticate(&clients::generate_token()).unwrap_err().code,
+            f.bridge
+                .authenticate(&clients::generate_token())
+                .unwrap_err()
+                .code,
             code::TOKEN_INVALID
         );
     }
     for _ in 0..10 {
         assert_eq!(
-            f.bridge.authenticate(&clients::generate_token()).unwrap_err().code,
+            f.bridge
+                .authenticate(&clients::generate_token())
+                .unwrap_err()
+                .code,
             code::RATE_LIMITED
         );
     }
@@ -103,7 +120,11 @@ fn failed_logins_are_limited_and_the_limit_is_audited_once() {
     let rows = f.audit();
     let limited = rows
         .iter()
-        .filter(|r| r.detail_json.as_deref().is_some_and(|d| d.contains("auth_rate_limited")))
+        .filter(|r| {
+            r.detail_json
+                .as_deref()
+                .is_some_and(|d| d.contains("auth_rate_limited"))
+        })
         .count();
     assert_eq!(limited, 1, "die Flut steht als EINE Zeile im Audit");
 }
@@ -113,9 +134,15 @@ fn refresh_cuts_off_a_client_revoked_or_removed_mid_connection() {
     let f = Fixture::new();
     assert!(f.bridge.refresh(&f.client.id).is_ok());
     clients::revoke(&f.conn(), &f.client.id, NOW + 1).unwrap();
-    assert_eq!(f.bridge.refresh(&f.client.id).unwrap_err().code, code::TOKEN_REVOKED);
+    assert_eq!(
+        f.bridge.refresh(&f.client.id).unwrap_err().code,
+        code::TOKEN_REVOKED
+    );
     clients::delete(&f.conn(), &f.client.id).unwrap();
-    assert_eq!(f.bridge.refresh(&f.client.id).unwrap_err().code, code::TOKEN_INVALID);
+    assert_eq!(
+        f.bridge.refresh(&f.client.id).unwrap_err().code,
+        code::TOKEN_INVALID
+    );
 }
 
 // --- Status -------------------------------------------------------------------
@@ -129,7 +156,10 @@ fn the_anonymous_status_shows_only_the_basics() {
     assert_eq!(v["app"], json!("local-voice-ai"));
     let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
     for secret in ["client", "tools", "pending_approvals"] {
-        assert!(!keys.contains(&secret), "{secret} gehoert nicht in den anonymen Stand");
+        assert!(
+            !keys.contains(&secret),
+            "{secret} gehoert nicht in den anonymen Stand"
+        );
     }
 }
 
@@ -138,10 +168,23 @@ fn the_authenticated_status_counts_own_pending_approvals_and_visible_tools() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let ctx = f.ctx();
-    wait_id(f.bridge.call(&ctx, "transcribe_file", &json!({"path": "C:/a.wav"}), None).unwrap());
+    wait_id(
+        f.bridge
+            .call(&ctx, "transcribe_file", &json!({"path": "C:/a.wav"}), None)
+            .unwrap(),
+    );
     let (other, _) = f.second_client("Codex");
     f.grant_for(&other.id, "transcribe_file", GrantMode::Ask);
-    wait_id(f.bridge.call(&other, "transcribe_file", &json!({"path": "C:/b.wav"}), None).unwrap());
+    wait_id(
+        f.bridge
+            .call(
+                &other,
+                "transcribe_file",
+                &json!({"path": "C:/b.wav"}),
+                None,
+            )
+            .unwrap(),
+    );
     let s = f.bridge.status(&ctx).unwrap();
     assert_eq!(s["authenticated"], json!(true));
     assert_eq!(s["client"]["label"], json!("Claude Code"));
@@ -168,8 +211,14 @@ fn a_tool_set_to_off_is_missing_and_one_set_to_ask_or_allow_is_listed_with_its_m
     let n = names(&list);
     assert!(n.contains(&"transcribe_file".to_string()));
     assert!(n.contains(&"create_meeting".to_string()));
-    assert!(!n.contains(&"tts_page_create".to_string()), "aus: fehlt in tools/list");
-    assert!(!n.contains(&"start_recording".to_string()), "nie freigegeben: fehlt");
+    assert!(
+        !n.contains(&"tts_page_create".to_string()),
+        "aus: fehlt in tools/list"
+    );
+    assert!(
+        !n.contains(&"start_recording".to_string()),
+        "nie freigegeben: fehlt"
+    );
     let mode = |t: &str| list.iter().find(|x| x["name"] == t).unwrap()["mode"].clone();
     assert_eq!(mode("transcribe_file"), json!("ask"));
     assert_eq!(mode("create_meeting"), json!("allow"));
@@ -189,11 +238,15 @@ fn the_client_right_hides_a_tool_even_when_the_ceiling_allows_it() {
     let f = Fixture::new();
     f.ceiling("transcribe_file", GrantMode::Allow);
     // Kein Recht des Zugangs: aus.
-    assert!(!names(&f.bridge.tools_list(&f.ctx()).unwrap()).contains(&"transcribe_file".to_string()));
+    assert!(
+        !names(&f.bridge.tools_list(&f.ctx()).unwrap()).contains(&"transcribe_file".to_string())
+    );
     // Ein ANDERER Zugang mit Recht aendert daran nichts.
     let (other, _) = f.second_client("Codex");
     f.grant_for(&other.id, "transcribe_file", GrantMode::Allow);
-    assert!(!names(&f.bridge.tools_list(&f.ctx()).unwrap()).contains(&"transcribe_file".to_string()));
+    assert!(
+        !names(&f.bridge.tools_list(&f.ctx()).unwrap()).contains(&"transcribe_file".to_string())
+    );
     assert!(names(&f.bridge.tools_list(&other).unwrap()).contains(&"transcribe_file".to_string()));
 }
 
@@ -222,7 +275,10 @@ fn switching_the_agent_integration_off_empties_the_list() {
         NOW,
     )
     .unwrap();
-    assert_eq!(names(&f.bridge.tools_list(&f.ctx()).unwrap()), vec![STATUS_TOOL.to_string()]);
+    assert_eq!(
+        names(&f.bridge.tools_list(&f.ctx()).unwrap()),
+        vec![STATUS_TOOL.to_string()]
+    );
     assert_eq!(
         err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None)).code,
         code::TOOL_OFF
@@ -234,7 +290,12 @@ fn switching_the_agent_integration_off_empties_the_list() {
 #[test]
 fn a_call_to_a_tool_that_is_off_is_refused_audited_and_never_runs() {
     let f = Fixture::new();
-    let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &json!({"path": "C:/a.wav"}), None));
+    let e = err(f.bridge.call(
+        &f.ctx(),
+        "transcribe_file",
+        &json!({"path": "C:/a.wav"}),
+        None,
+    ));
     assert_eq!(e.code, code::TOOL_OFF);
     assert!(e.data.as_ref().unwrap()["reason"].is_string());
     assert_eq!(f.calls.len(), 0);
@@ -243,7 +304,11 @@ fn a_call_to_a_tool_that_is_off_is_refused_audited_and_never_runs() {
     assert_eq!(rows[0].outcome, "denied");
     assert_eq!(rows[0].capability.as_deref(), Some("transcribe.file"));
     assert_eq!(rows[0].caller, "agent_external");
-    assert_eq!(f.count("SELECT COUNT(*) FROM approvals"), 0, "aus: keine Freigabe");
+    assert_eq!(
+        f.count("SELECT COUNT(*) FROM approvals"),
+        0,
+        "aus: keine Freigabe"
+    );
 }
 
 #[test]
@@ -257,7 +322,10 @@ fn a_call_is_refused_when_only_the_clients_own_right_is_off() {
     assert_eq!(f.calls.len(), 0);
     // Dasselbe mit ausdruecklich „aus“ gesetztem Recht des Zugangs.
     f.grant("create_meeting", GrantMode::Off);
-    assert_eq!(err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None)).code, code::TOOL_OFF);
+    assert_eq!(
+        err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None)).code,
+        code::TOOL_OFF
+    );
     assert_eq!(f.calls.len(), 0);
 }
 
@@ -265,15 +333,31 @@ fn a_call_is_refused_when_only_the_clients_own_right_is_off() {
 fn an_allowed_call_runs_once_and_is_audited_from_start_to_end() {
     let f = Fixture::new();
     f.grant("create_meeting", GrantMode::Allow);
-    let step = f.bridge.call(&f.ctx(), "create_meeting", &json!({"title": "Test"}), None).unwrap();
-    assert_eq!(step, CallStep::Done(json!({"ran": "create_meeting", "client": "Claude Code"})));
-    assert_eq!(f.calls.all(), vec![("create_meeting".to_string(), json!({"title": "Test"}), false)]);
+    let step = f
+        .bridge
+        .call(&f.ctx(), "create_meeting", &json!({"title": "Test"}), None)
+        .unwrap();
+    assert_eq!(
+        step,
+        CallStep::Done(json!({"ran": "create_meeting", "client": "Claude Code"}))
+    );
+    assert_eq!(
+        f.calls.all(),
+        vec![(
+            "create_meeting".to_string(),
+            json!({"title": "Test"}),
+            false
+        )]
+    );
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "ok");
     assert_eq!(rows[0].capability.as_deref(), Some("meeting.create"));
     let target = rows[0].target.as_deref().unwrap();
-    assert!(target.starts_with("create_meeting · Claude Code ("), "{target}");
+    assert!(
+        target.starts_with("create_meeting · Claude Code ("),
+        "{target}"
+    );
     assert!(target.contains(&f.client.id));
 }
 
@@ -295,11 +379,16 @@ fn a_panicking_tool_is_contained_and_the_bridge_keeps_working() {
     *f.behavior.lock().unwrap() = Behavior::Panic;
     let e = err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None));
     assert_eq!(e.code, code::FAILED);
-    assert!(!e.message.contains("absichtlich"), "keine internen Texte nach aussen");
+    assert!(
+        !e.message.contains("absichtlich"),
+        "keine internen Texte nach aussen"
+    );
     assert_eq!(f.audit()[0].outcome, "error");
     *f.behavior.lock().unwrap() = Behavior::Ok;
     assert!(matches!(
-        f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None).unwrap(),
+        f.bridge
+            .call(&f.ctx(), "create_meeting", &json!({}), None)
+            .unwrap(),
         CallStep::Done(_)
     ));
 }
@@ -309,7 +398,11 @@ fn an_oversized_answer_is_replaced_but_the_call_still_counts_as_done() {
     let f = Fixture::new();
     f.grant("create_meeting", GrantMode::Allow);
     *f.behavior.lock().unwrap() = Behavior::Huge;
-    let CallStep::Done(v) = f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None).unwrap() else {
+    let CallStep::Done(v) = f
+        .bridge
+        .call(&f.ctx(), "create_meeting", &json!({}), None)
+        .unwrap()
+    else {
         panic!("done erwartet");
     };
     assert_eq!(v["truncated"], json!(true));
@@ -325,7 +418,11 @@ fn an_unknown_tool_is_refused_and_audited() {
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "denied");
-    assert!(rows[0].detail_json.as_deref().unwrap().contains("unknown_tool"));
+    assert!(rows[0]
+        .detail_json
+        .as_deref()
+        .unwrap()
+        .contains("unknown_tool"));
     assert_eq!(f.calls.len(), 0);
 }
 
@@ -335,7 +432,10 @@ fn an_allowed_tool_without_a_handler_says_unavailable_and_is_audited() {
     f.grant("transcribe_file", GrantMode::Allow);
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &json!({}), None));
     assert_eq!(e.code, code::TOOL_UNAVAILABLE);
-    assert!(f.audit().iter().any(|r| r.detail_json.as_deref().is_some_and(|d| d.contains("tool_unavailable"))));
+    assert!(f.audit().iter().any(|r| r
+        .detail_json
+        .as_deref()
+        .is_some_and(|d| d.contains("tool_unavailable"))));
 }
 
 #[test]
@@ -349,7 +449,9 @@ fn arguments_must_be_an_object() {
     assert_eq!(f.calls.len(), 0);
     // null ist „keine Argumente“.
     assert!(matches!(
-        f.bridge.call(&f.ctx(), "create_meeting", &Value::Null, None).unwrap(),
+        f.bridge
+            .call(&f.ctx(), "create_meeting", &Value::Null, None)
+            .unwrap(),
         CallStep::Done(_)
     ));
     assert_eq!(f.calls.all()[0].1, json!({}));
@@ -363,7 +465,12 @@ fn ask_creates_an_approval_with_a_readable_preview_and_does_not_run() {
     f.grant("transcribe_file", GrantMode::Ask);
     let id = wait_id(
         f.bridge
-            .call(&f.ctx(), "transcribe_file", &json!({"path": "C:/Aufnahmen/a.wav", "language": "de"}), None)
+            .call(
+                &f.ctx(),
+                "transcribe_file",
+                &json!({"path": "C:/Aufnahmen/a.wav", "language": "de"}),
+                None,
+            )
             .unwrap(),
     );
     assert_eq!(f.calls.len(), 0, "fragen: noch nichts ausgefuehrt");
@@ -373,8 +480,14 @@ fn ask_creates_an_approval_with_a_readable_preview_and_does_not_run() {
     assert_eq!(a.tool_or_capability, "transcribe.file");
     assert_eq!(a.state, ApprovalState::Pending);
     let preview = a.args_preview.unwrap();
-    assert!(preview.starts_with("Ziel: transcribe_file · Claude Code ("), "{preview}");
-    assert!(preview.contains("C:/Aufnahmen/a.wav"), "der Pfad steht vollstaendig da: {preview}");
+    assert!(
+        preview.starts_with("Ziel: transcribe_file · Claude Code ("),
+        "{preview}"
+    );
+    assert!(
+        preview.contains("C:/Aufnahmen/a.wav"),
+        "der Pfad steht vollstaendig da: {preview}"
+    );
     // Audit: Freigabe angefragt (pending).
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
@@ -387,8 +500,16 @@ fn the_same_ask_twice_gives_the_same_approval() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let a = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
-    let b = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let a = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
+    let b = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     assert_eq!(a, b);
     assert_eq!(f.count("SELECT COUNT(*) FROM approvals"), 1);
     assert_eq!(f.audit().len(), 1, "keine zweite Audit-Zeile");
@@ -404,7 +525,12 @@ fn concurrent_identical_asks_share_one_approval() {
             std::thread::spawn(move || {
                 wait_id(
                     f.bridge
-                        .call(&f.ctx(), "transcribe_file", &json!({"path": "C:/a.wav"}), None)
+                        .call(
+                            &f.ctx(),
+                            "transcribe_file",
+                            &json!({"path": "C:/a.wav"}),
+                            None,
+                        )
                         .unwrap(),
                 )
             })
@@ -422,10 +548,22 @@ fn two_clients_asking_the_same_thing_get_separate_approvals() {
     let (other, _) = f.second_client("Codex");
     f.grant_for(&other.id, "transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let a = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
-    let b = wait_id(f.bridge.call(&other, "transcribe_file", &args, None).unwrap());
+    let a = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
+    let b = wait_id(
+        f.bridge
+            .call(&other, "transcribe_file", &args, None)
+            .unwrap(),
+    );
     assert_ne!(a, b);
-    let pb = approvals::get(&f.conn(), &b).unwrap().unwrap().args_preview.unwrap();
+    let pb = approvals::get(&f.conn(), &b)
+        .unwrap()
+        .unwrap()
+        .args_preview
+        .unwrap();
     assert!(pb.contains("Codex"), "die Freigabe nennt den Zugang: {pb}");
 }
 
@@ -434,14 +572,33 @@ fn an_approved_approval_runs_the_tool_exactly_once() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
-    assert_eq!(f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase, Phase::Pending);
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
+    assert_eq!(
+        f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase,
+        Phase::Pending
+    );
     f.user_decides(&id, true);
-    assert_eq!(f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase, Phase::Approved);
-    let step = f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)).unwrap();
+    assert_eq!(
+        f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase,
+        Phase::Approved
+    );
+    let step = f
+        .bridge
+        .call(&f.ctx(), "transcribe_file", &args, Some(&id))
+        .unwrap();
     assert!(matches!(step, CallStep::Done(_)));
-    assert_eq!(f.calls.all(), vec![("transcribe_file".to_string(), args.clone(), true)]);
-    assert_eq!(f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase, Phase::Used);
+    assert_eq!(
+        f.calls.all(),
+        vec![("transcribe_file".to_string(), args.clone(), true)]
+    );
+    assert_eq!(
+        f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase,
+        Phase::Used
+    );
     // Audit: angefragt (pending) und ausgefuehrt (ok).
     let outcomes: Vec<String> = f.audit().iter().map(|r| r.outcome.clone()).collect();
     assert_eq!(outcomes, vec!["pending", "ok"]);
@@ -452,9 +609,15 @@ fn an_approval_cannot_be_used_twice() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
-    f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)).unwrap();
+    f.bridge
+        .call(&f.ctx(), "transcribe_file", &args, Some(&id))
+        .unwrap();
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)));
     assert_eq!(e.code, code::APPROVAL_USED);
     assert_eq!(f.calls.len(), 1);
@@ -465,16 +628,27 @@ fn an_approval_used_by_two_threads_runs_once() {
     let f = Arc::new(Fixture::new());
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
     let threads: Vec<_> = (0..5)
         .map(|_| {
             let (f, id, args) = (f.clone(), id.clone(), args.clone());
-            std::thread::spawn(move || f.bridge.call_approved(&f.ctx(), "transcribe_file", &args, &id))
+            std::thread::spawn(move || {
+                f.bridge
+                    .call_approved(&f.ctx(), "transcribe_file", &args, &id)
+            })
         })
         .collect();
     let results: Vec<_> = threads.into_iter().map(|t| t.join().unwrap()).collect();
-    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+    assert_eq!(
+        results.iter().filter(|r| r.is_ok()).count(),
+        1,
+        "{results:?}"
+    );
     assert_eq!(f.calls.len(), 1);
 }
 
@@ -483,9 +657,16 @@ fn a_denied_approval_never_runs() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, false);
-    assert_eq!(f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase, Phase::Denied);
+    assert_eq!(
+        f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase,
+        Phase::Denied
+    );
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)));
     assert_eq!(e.code, code::APPROVAL_DENIED);
     assert_eq!(f.calls.len(), 0);
@@ -496,9 +677,16 @@ fn an_approval_expires_after_an_hour() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.advance(approvals::TTL_MS + 1);
-    assert_eq!(f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase, Phase::Expired);
+    assert_eq!(
+        f.bridge.approval_phase(&f.ctx(), &id).unwrap().phase,
+        Phase::Expired
+    );
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)));
     assert_eq!(e.code, code::APPROVAL_EXPIRED);
     assert_eq!(f.calls.len(), 0);
@@ -509,8 +697,16 @@ fn calling_again_with_a_pending_approval_waits_for_the_same_one() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
-    let again = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
+    let again = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, Some(&id))
+            .unwrap(),
+    );
     assert_eq!(id, again);
 }
 
@@ -521,22 +717,38 @@ fn another_clients_approval_is_unusable_and_invisible() {
     let (other, _) = f.second_client("Codex");
     f.grant_for(&other.id, "transcribe_file", GrantMode::Allow);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
     // Der andere Zugang sieht den Stand nicht und kann die Genehmigung nicht verbrauchen.
-    assert_eq!(f.bridge.approval_phase(&other, &id).unwrap_err().code, code::APPROVAL_NOT_FOUND);
-    assert_eq!(f.bridge.action_status(&other, &id).unwrap_err().code, code::APPROVAL_NOT_FOUND);
+    assert_eq!(
+        f.bridge.approval_phase(&other, &id).unwrap_err().code,
+        code::APPROVAL_NOT_FOUND
+    );
+    assert_eq!(
+        f.bridge.action_status(&other, &id).unwrap_err().code,
+        code::APPROVAL_NOT_FOUND
+    );
     assert_eq!(
         err(f.bridge.call(&other, "transcribe_file", &args, Some(&id))).code,
         code::APPROVAL_NOT_FOUND
     );
     assert_eq!(
-        f.bridge.call_approved(&other, "transcribe_file", &args, &id).unwrap_err().code,
+        f.bridge
+            .call_approved(&other, "transcribe_file", &args, &id)
+            .unwrap_err()
+            .code,
         code::APPROVAL_NOT_FOUND
     );
     assert_eq!(f.calls.len(), 0);
     // Der Besitzer kann sie danach noch benutzen.
-    assert!(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)).is_ok());
+    assert!(f
+        .bridge
+        .call(&f.ctx(), "transcribe_file", &args, Some(&id))
+        .is_ok());
 }
 
 #[test]
@@ -545,18 +757,31 @@ fn an_approval_does_not_carry_over_to_other_arguments_or_another_tool() {
     f.grant("transcribe_file", GrantMode::Ask);
     f.grant("create_meeting", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
     // Andere Argumente: genehmigt war nur diese Datei.
-    let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &json!({"path": "C:/geheim.wav"}), Some(&id)));
+    let e = err(f.bridge.call(
+        &f.ctx(),
+        "transcribe_file",
+        &json!({"path": "C:/geheim.wav"}),
+        Some(&id),
+    ));
     assert_eq!(e.code, code::APPROVAL_MISMATCH);
     // Anderes Werkzeug.
-    let e = err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), Some(&id)));
+    let e = err(f
+        .bridge
+        .call(&f.ctx(), "create_meeting", &json!({}), Some(&id)));
     assert_eq!(e.code, code::APPROVAL_NOT_FOUND);
     assert_eq!(f.calls.len(), 0);
     // Die Genehmigung ist dabei nicht verbraucht worden.
     assert!(matches!(
-        f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)).unwrap(),
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, Some(&id))
+            .unwrap(),
         CallStep::Done(_)
     ));
 }
@@ -565,13 +790,30 @@ fn an_approval_does_not_carry_over_to_other_arguments_or_another_tool() {
 fn argument_order_does_not_change_the_approval() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
-    let a: Value = serde_json::from_str(r#"{"path": "C:/a.wav", "language": "de", "nested": {"x": 1, "y": 2}}"#).unwrap();
-    let b: Value = serde_json::from_str(r#"{"nested": {"y": 2, "x": 1}, "language": "de", "path": "C:/a.wav"}"#).unwrap();
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &a, None).unwrap());
-    let same = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &b, None).unwrap());
+    let a: Value = serde_json::from_str(
+        r#"{"path": "C:/a.wav", "language": "de", "nested": {"x": 1, "y": 2}}"#,
+    )
+    .unwrap();
+    let b: Value = serde_json::from_str(
+        r#"{"nested": {"y": 2, "x": 1}, "language": "de", "path": "C:/a.wav"}"#,
+    )
+    .unwrap();
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &a, None)
+            .unwrap(),
+    );
+    let same = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &b, None)
+            .unwrap(),
+    );
     assert_eq!(id, same);
     f.user_decides(&id, true);
-    assert!(f.bridge.call(&f.ctx(), "transcribe_file", &b, Some(&id)).is_ok());
+    assert!(f
+        .bridge
+        .call(&f.ctx(), "transcribe_file", &b, Some(&id))
+        .is_ok());
 }
 
 #[test]
@@ -579,7 +821,11 @@ fn rights_withdrawn_after_approval_stop_the_run() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
     f.grant("transcribe_file", GrantMode::Off);
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)));
@@ -592,7 +838,11 @@ fn a_revoked_client_cannot_use_its_approval() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
     f.user_decides(&id, true);
     clients::revoke(&f.conn(), &f.client.id, f.now()).unwrap();
     let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &args, Some(&id)));
@@ -616,12 +866,21 @@ fn recording_is_never_run_without_asking_even_when_the_database_says_allow() {
         rusqlite::params![f.client.id],
     )
     .unwrap();
-    let step = f.bridge.call(&f.ctx(), "start_recording", &json!({}), None).unwrap();
-    assert!(matches!(step, CallStep::Wait(_)), "Aufnahme: nie ohne Freigabe: {step:?}");
+    let step = f
+        .bridge
+        .call(&f.ctx(), "start_recording", &json!({}), None)
+        .unwrap();
+    assert!(
+        matches!(step, CallStep::Wait(_)),
+        "Aufnahme: nie ohne Freigabe: {step:?}"
+    );
     assert_eq!(f.calls.len(), 0);
     let listed = f.bridge.tools_list(&f.ctx()).unwrap();
     assert_eq!(
-        listed.iter().find(|t| t["name"] == "start_recording").unwrap()["mode"],
+        listed
+            .iter()
+            .find(|t| t["name"] == "start_recording")
+            .unwrap()["mode"],
         json!("ask")
     );
 }
@@ -633,7 +892,12 @@ fn one_client_cannot_flood_the_open_approvals() {
     let mut open = 0;
     let mut refused = None;
     for i in 0..(approvals::MAX_PENDING_PER_SOURCE + 3) {
-        match f.bridge.call(&f.ctx(), "transcribe_file", &json!({"path": format!("C:/{i}.wav")}), None) {
+        match f.bridge.call(
+            &f.ctx(),
+            "transcribe_file",
+            &json!({"path": format!("C:/{i}.wav")}),
+            None,
+        ) {
             Ok(CallStep::Wait(_)) => open += 1,
             Ok(other) => panic!("{other:?}"),
             Err(e) => {
@@ -653,7 +917,9 @@ fn a_request_that_cannot_be_shown_in_full_is_refused_not_clipped() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let long = format!("C:/{}.wav", "x".repeat(400));
-    let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &json!({"path": long}), None));
+    let e = err(f
+        .bridge
+        .call(&f.ctx(), "transcribe_file", &json!({"path": long}), None));
     assert_eq!(e.code, code::DENIED);
     assert_eq!(e.data.unwrap()["reason"], json!("preview_unsafe"));
     assert_eq!(f.count("SELECT COUNT(*) FROM approvals"), 0);
@@ -673,7 +939,10 @@ fn a_failing_audit_write_blocks_the_tool() {
     let e = err(f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None));
     assert_eq!(e.code, code::STORE_UNAVAILABLE);
     assert_eq!(f.calls.len(), 0, "ohne Protokoll keine Aktion");
-    assert!(!e.message.contains("disk full"), "keine Datenbanktexte nach aussen");
+    assert!(
+        !e.message.contains("disk full"),
+        "keine Datenbanktexte nach aussen"
+    );
 }
 
 #[test]
@@ -685,7 +954,12 @@ fn a_failing_audit_write_leaves_no_open_approval_behind() {
             "CREATE TRIGGER block_audit BEFORE INSERT ON audit_log BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
         )
         .unwrap();
-    let e = err(f.bridge.call(&f.ctx(), "transcribe_file", &json!({"path": "C:/a.wav"}), None));
+    let e = err(f.bridge.call(
+        &f.ctx(),
+        "transcribe_file",
+        &json!({"path": "C:/a.wav"}),
+        None,
+    ));
     assert_eq!(e.code, code::STORE_UNAVAILABLE);
     assert_eq!(
         f.count("SELECT COUNT(*) FROM approvals WHERE state = 'pending'"),
@@ -707,10 +981,16 @@ fn a_briefly_locked_database_makes_the_call_wait_and_then_go_through() {
         blocker.execute_batch("ROLLBACK;").unwrap();
     });
     let started = std::time::Instant::now();
-    let step = f.bridge.call(&f.ctx(), "create_meeting", &json!({}), None).unwrap();
+    let step = f
+        .bridge
+        .call(&f.ctx(), "create_meeting", &json!({}), None)
+        .unwrap();
     release.join().unwrap();
     assert!(matches!(step, CallStep::Done(_)));
-    assert!(started.elapsed() >= std::time::Duration::from_millis(400), "es wurde gewartet");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(400),
+        "es wurde gewartet"
+    );
     assert_eq!(f.calls.len(), 1, "genau einmal ausgefuehrt");
 }
 
@@ -728,12 +1008,19 @@ fn calls_are_limited_per_client_and_the_refusal_is_audited_once() {
         f.bridge.rate_check(&ctx, true).unwrap();
     }
     for _ in 0..20 {
-        assert_eq!(f.bridge.rate_check(&ctx, true).unwrap_err().code, code::RATE_LIMITED);
+        assert_eq!(
+            f.bridge.rate_check(&ctx, true).unwrap_err().code,
+            code::RATE_LIMITED
+        );
     }
     let limited: Vec<_> = f
         .audit()
         .into_iter()
-        .filter(|r| r.detail_json.as_deref().is_some_and(|d| d.contains("rate_limited")))
+        .filter(|r| {
+            r.detail_json
+                .as_deref()
+                .is_some_and(|d| d.contains("rate_limited"))
+        })
         .collect();
     assert_eq!(limited.len(), 1, "die Flut ist EINE Zeile");
     // Ein anderer Zugang ist nicht betroffen, ebenso Anfragen, die keine Aufrufe sind.
@@ -752,7 +1039,10 @@ fn all_requests_are_limited_too() {
     for _ in 0..5 {
         f.bridge.rate_check(&f.ctx(), false).unwrap();
     }
-    assert_eq!(f.bridge.rate_check(&f.ctx(), false).unwrap_err().code, code::RATE_LIMITED);
+    assert_eq!(
+        f.bridge.rate_check(&f.ctx(), false).unwrap_err().code,
+        code::RATE_LIMITED
+    );
 }
 
 // --- Status einer Freigabe ----------------------------------------------------------------
@@ -762,8 +1052,16 @@ fn the_status_tool_answers_for_own_approvals_only() {
     let f = Fixture::new();
     f.grant("transcribe_file", GrantMode::Ask);
     let args = json!({"path": "C:/a.wav"});
-    let id = wait_id(f.bridge.call(&f.ctx(), "transcribe_file", &args, None).unwrap());
-    let CallStep::Done(v) = f.bridge.call(&f.ctx(), STATUS_TOOL, &json!({"approval_id": id}), None).unwrap() else {
+    let id = wait_id(
+        f.bridge
+            .call(&f.ctx(), "transcribe_file", &args, None)
+            .unwrap(),
+    );
+    let CallStep::Done(v) = f
+        .bridge
+        .call(&f.ctx(), STATUS_TOOL, &json!({"approval_id": id}), None)
+        .unwrap()
+    else {
         panic!()
     };
     assert_eq!(v["state"], json!("pending"));
@@ -774,7 +1072,10 @@ fn the_status_tool_answers_for_own_approvals_only() {
     assert!(v["hint"].as_str().unwrap().contains("erneut aufrufen"));
     let (other, _) = f.second_client("Codex");
     assert_eq!(
-        err(f.bridge.call(&other, STATUS_TOOL, &json!({"approval_id": id}), None)).code,
+        err(f
+            .bridge
+            .call(&other, STATUS_TOOL, &json!({"approval_id": id}), None))
+        .code,
         code::APPROVAL_NOT_FOUND
     );
     assert_eq!(
@@ -782,7 +1083,10 @@ fn the_status_tool_answers_for_own_approvals_only() {
         code::BAD_REQUEST
     );
     assert_eq!(
-        f.bridge.action_status(&f.ctx(), "gibt-es-nicht").unwrap_err().code,
+        f.bridge
+            .action_status(&f.ctx(), "gibt-es-nicht")
+            .unwrap_err()
+            .code,
         code::APPROVAL_NOT_FOUND
     );
 }
@@ -795,7 +1099,11 @@ fn rejected_connections_are_audited_without_a_client() {
     let rows = f.audit();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].outcome, "denied");
-    assert!(rows[0].detail_json.as_deref().unwrap().contains("peer_not_current_user"));
+    assert!(rows[0]
+        .detail_json
+        .as_deref()
+        .unwrap()
+        .contains("peer_not_current_user"));
 }
 
 #[test]
@@ -813,11 +1121,18 @@ fn the_agent_never_sees_secrets_in_audit_or_preview() {
             )
             .unwrap(),
     );
-    let preview = approvals::get(&f.conn(), &id).unwrap().unwrap().args_preview.unwrap();
+    let preview = approvals::get(&f.conn(), &id)
+        .unwrap()
+        .unwrap()
+        .args_preview
+        .unwrap();
     assert!(!preview.contains("abcdefghijklmnop"), "{preview}");
     assert!(!preview.contains("geheim123"), "{preview}");
     for row in f.audit() {
         let text = format!("{:?}", row);
-        assert!(!text.contains("geheim123") && !text.contains("abcdefghijklmnop"), "{text}");
+        assert!(
+            !text.contains("geheim123") && !text.contains("abcdefghijklmnop"),
+            "{text}"
+        );
     }
 }

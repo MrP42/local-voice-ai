@@ -385,7 +385,11 @@ pub fn auto_tag_system_prompt(allowed_tags: &[String], options: &AutoTagOptions)
     let tags_list = if preferred.is_empty() {
         allowed_tags.join(", ")
     } else {
-        preferred.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        preferred
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     let only = if preferred.is_empty() {
         "kurze freie Beschreibungen sind erlaubt"
@@ -644,7 +648,11 @@ mod tests {
 
     #[test]
     fn prompt_reflects_preferred_tags_coverage_and_style() {
-        let allowed = vec!["whisper".to_string(), "excited".to_string(), "calm".to_string()];
+        let allowed = vec![
+            "whisper".to_string(),
+            "excited".to_string(),
+            "calm".to_string(),
+        ];
         let opts = AutoTagOptions {
             preferred_tags: vec!["whisper".to_string(), "unbekannt".to_string()],
             coverage: "sparse".to_string(),
@@ -972,7 +980,17 @@ mod tests {
         tags: &[String],
     ) -> Result<Vec<TagInsertion>, String> {
         let (tx, rx) = tokio::sync::watch::channel(false);
-        let result = auto_tag(settings, text, tags, &AutoTagOptions::default(), None, true, rx, |_, _, _| {}).await;
+        let result = auto_tag(
+            settings,
+            text,
+            tags,
+            &AutoTagOptions::default(),
+            None,
+            true,
+            rx,
+            |_, _, _| {},
+        )
+        .await;
         drop(tx);
         result
     }

@@ -122,8 +122,7 @@ pub fn import_subtitle_file_into(
     target: Option<&str>,
 ) -> Result<String, String> {
     // Fehler als Code (#15, `meetingErrors.ts`): `subtitle_unreadable`, `subtitle_invalid`.
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("subtitle_unreadable: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("subtitle_unreadable: {e}"))?;
     let segments = parse_subtitles(&content)?;
     let segment_count = segments.len();
 
@@ -315,7 +314,11 @@ pub(super) fn run_import(
             .join(meeting_id);
         std::fs::create_dir_all(&dir).map_err(|e| format!("meeting_dir_failed: {e}"))?;
         let import_wav_path = dir.join("import.wav");
-        copy_import_wav_with(|from, to| std::fs::copy(from, to), &wav_path, &import_wav_path)?;
+        copy_import_wav_with(
+            |from, to| std::fs::copy(from, to),
+            &wav_path,
+            &import_wav_path,
+        )?;
 
         let duration_ms = (samples.len() as u64 * 1_000) / 16_000;
         // P8a: die Pfade stehen VOR der Transkription. Ein Absturz oder Stopp
@@ -365,7 +368,15 @@ pub(super) fn run_import(
             mark_import_ready(store, meeting_id)?;
             // A1: Herkunft des Transkripts (Modell, Dauer, Quelldatei). Das
             // tatsaechlich geladene Modell zaehlt (ein Ausweichmodell eingeschlossen).
-            record_import_provenance(app, store, tm, meeting_id, path, duration_ms, import_started);
+            record_import_provenance(
+                app,
+                store,
+                tm,
+                meeting_id,
+                path,
+                duration_ms,
+                import_started,
+            );
             // Imports have no separate "recording ended" moment, so `now`
             // stands in for `ended_at` here too (mirrors the live recorder's
             // `stop()`) — and is persisted so later recomputations (minutes
@@ -386,12 +397,7 @@ pub(super) fn run_import(
         }
         Ok(ImportEnd::Stopped) => {
             let policy = crate::settings::get_meeting_audio_retention(app);
-            match mark_stopped(
-                store,
-                meeting_id,
-                chrono::Utc::now().timestamp(),
-                &policy,
-            ) {
+            match mark_stopped(store, meeting_id, chrono::Utc::now().timestamp(), &policy) {
                 Ok(()) => {
                     emit_state(app, meeting_id, "cancelled");
                     info!("meetings: import stopped by the user ({meeting_id})");
@@ -922,10 +928,17 @@ Willkommen zum Gespräch.
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].operation, "subtitles_import");
         assert_eq!(entries[0].actor_kind, Some(ActorKind::User));
-        assert_eq!(entries[0].model_id, None, "kein Modell: die Untertitel kommen fertig");
+        assert_eq!(
+            entries[0].model_id, None,
+            "kein Modell: die Untertitel kommen fertig"
+        );
         assert_eq!(entries[0].sources[0].kind, "subtitle");
         assert_eq!(entries[0].sources[0].reference, "interview.vtt");
-        assert!(entries[0].params_json.as_deref().unwrap().contains("\"segments\":2"));
+        assert!(entries[0]
+            .params_json
+            .as_deref()
+            .unwrap()
+            .contains("\"segments\":2"));
 
         // Ist die Tabelle unbrauchbar, scheitert der Import nicht.
         conn.execute_batch("DROP TABLE provenance").unwrap();
@@ -941,14 +954,20 @@ Willkommen zum Gespräch.
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
         let folder = store.folder_save(None, "Kunde", None).unwrap().id;
-        let target = store.create_empty_meeting("Neue Besprechung", Some(&folder)).unwrap();
+        let target = store
+            .create_empty_meeting("Neue Besprechung", Some(&folder))
+            .unwrap();
         store.set_title(&target.id, "Mein Titel").unwrap();
         let vtt = dir.path().join("interview.vtt");
-        std::fs::write(&vtt, "WEBVTT
+        std::fs::write(
+            &vtt,
+            "WEBVTT
 
 00:00:00.000 --> 00:00:02.000
 Guten Tag.
-").unwrap();
+",
+        )
+        .unwrap();
         let bad = dir.path().join("kaputt.vtt");
         std::fs::write(&bad, "").unwrap();
 
@@ -960,12 +979,19 @@ Guten Tag.
             .unwrap();
         assert_eq!(id, target.id, "dieselbe Besprechung");
         let m = store.get_meeting(&id).unwrap().unwrap();
-        assert_eq!((m.source.as_str(), m.status.as_str()), ("subtitle", "ready"));
+        assert_eq!(
+            (m.source.as_str(), m.status.as_str()),
+            ("subtitle", "ready")
+        );
         assert_eq!(m.title, "Mein Titel", "umbenannter Titel bleibt");
         assert_eq!(m.consent_confirmed_at, Some(3));
         assert_eq!(store.get_segments(&id).unwrap().len(), 1);
         assert_eq!(store.meeting_folder_ids(&id).unwrap(), vec![folder]);
-        assert_eq!(store.list_meetings(0, 10).unwrap().len(), 1, "keine zweite Besprechung");
+        assert_eq!(
+            store.list_meetings(0, 10).unwrap().len(),
+            1,
+            "keine zweite Besprechung"
+        );
 
         // Zweiter Versuch: das Ziel ist nicht mehr leer.
         let err = import_subtitle_file_into(&store, "noch", &vtt, None, Some(&id)).unwrap_err();
@@ -1205,7 +1231,11 @@ Guten Tag.
     fn every_block_is_stored_in_order_and_the_progress_reaches_the_end_of_the_audio() {
         let (job, _events) = job_with_events();
         job.begin_phase(JobPhase::Transcription, 180_000);
-        let chunks = vec![block(0, 60_000), block(60_000, 60_000), block(120_000, 60_000)];
+        let chunks = vec![
+            block(0, 60_000),
+            block(60_000, 60_000),
+            block(120_000, 60_000),
+        ];
         let mut stored: Vec<Vec<StoredSegment>> = Vec::new();
         let run = drive_chunks(
             chunks,
@@ -1221,10 +1251,19 @@ Guten Tag.
             &mut || {},
         )
         .unwrap();
-        assert_eq!(run, TranscribeRun { next_index: 8, stopped: false });
+        assert_eq!(
+            run,
+            TranscribeRun {
+                next_index: 8,
+                stopped: false
+            }
+        );
         let starts: Vec<u64> = stored.iter().map(|b| b[0].start_ms).collect();
         assert_eq!(starts, vec![0, 60_000, 120_000]);
-        assert_eq!(stored[2][0].segment_index, 7, "Indizes laufen ab first_index weiter");
+        assert_eq!(
+            stored[2][0].segment_index, 7,
+            "Indizes laufen ab first_index weiter"
+        );
         let snap = job.snapshot();
         assert_eq!((snap.done, snap.total), (180_000, 180_000));
     }
@@ -1260,8 +1299,16 @@ Guten Tag.
         .unwrap();
         assert!(run.stopped);
         assert_eq!(run.next_index, 2);
-        assert_eq!(transcribed, vec![0, 60_000], "Block 3 und 4 nie transkribiert");
-        assert_eq!(stored, vec![0, 60_000], "der laufende Block ist gespeichert");
+        assert_eq!(
+            transcribed,
+            vec![0, 60_000],
+            "Block 3 und 4 nie transkribiert"
+        );
+        assert_eq!(
+            stored,
+            vec![0, 60_000],
+            "der laufende Block ist gespeichert"
+        );
         assert_eq!(job.snapshot().done, 120_000);
     }
 
@@ -1327,13 +1374,20 @@ Guten Tag.
         assert_eq!(job.snapshot().done, 60_000, "Block 1 ist verbucht");
         job.resume().unwrap();
         for expected in [60_000, 120_000, 180_000] {
-            assert_eq!(entered_rx.recv_timeout(Duration::from_secs(2)), Ok(expected));
+            assert_eq!(
+                entered_rx.recv_timeout(Duration::from_secs(2)),
+                Ok(expected)
+            );
             release_tx.send(()).unwrap();
         }
         let run = worker.join().unwrap().unwrap();
         assert!(!run.stopped);
         assert_eq!(run.next_index, 4, "kein Block verloren, keiner doppelt");
-        assert_eq!(*resumed.lock().unwrap(), 1, "Modell einmal nach der Pause angefordert");
+        assert_eq!(
+            *resumed.lock().unwrap(),
+            1,
+            "Modell einmal nach der Pause angefordert"
+        );
     }
 
     #[test]
@@ -1393,7 +1447,11 @@ Guten Tag.
         );
         assert_eq!(result, Err("delta_store_failed: Platte voll".to_string()));
         assert_eq!(transcribed, 1);
-        assert_eq!(job.snapshot().done, 0, "ein nicht gespeicherter Block zaehlt nicht");
+        assert_eq!(
+            job.snapshot().done,
+            0,
+            "ein nicht gespeicherter Block zaehlt nicht"
+        );
     }
 
     #[test]
@@ -1416,7 +1474,11 @@ Guten Tag.
         )
         .unwrap();
         assert_eq!((run.next_index, stored), (0, 0));
-        assert_eq!(job.snapshot().done, 120_000, "Stille ist trotzdem verarbeitet");
+        assert_eq!(
+            job.snapshot().done,
+            120_000,
+            "Stille ist trotzdem verarbeitet"
+        );
     }
 
     #[test]
@@ -1488,7 +1550,13 @@ Guten Tag.
         );
 
         // Doppelt aufgerufen (Stopp waehrend des Stopps): derselbe Endzustand.
-        mark_stopped(&store, &meeting.id, now + 5, &MeetingAudioRetention::Days(7)).unwrap();
+        mark_stopped(
+            &store,
+            &meeting.id,
+            now + 5,
+            &MeetingAudioRetention::Days(7),
+        )
+        .unwrap();
         let again = store.get_meeting(&meeting.id).unwrap().unwrap();
         assert_eq!(again.status, "cancelled");
         assert_eq!(store.get_segments(&meeting.id).unwrap().len(), 2);
@@ -1500,10 +1568,18 @@ Guten Tag.
         let meeting = store
             .create_meeting("Abgebrochen", MeetingSource::Import, None)
             .unwrap();
-        mark_stopped(&store, &meeting.id, 1_800_000_000, &MeetingAudioRetention::AfterMinutes)
-            .unwrap();
+        mark_stopped(
+            &store,
+            &meeting.id,
+            1_800_000_000,
+            &MeetingAudioRetention::AfterMinutes,
+        )
+        .unwrap();
         let after = store.get_meeting(&meeting.id).unwrap().unwrap();
-        assert_eq!(after.audio_retention_until, None, "kein Protokoll, also bleibt die WAV");
+        assert_eq!(
+            after.audio_retention_until, None,
+            "kein Protokoll, also bleibt die WAV"
+        );
         assert_eq!(after.status, "cancelled");
     }
 
@@ -1569,11 +1645,18 @@ Guten Tag.
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
         let vtt = dir.path().join("ohne-einwilligung.vtt");
-        std::fs::write(&vtt, "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nGuten Tag.\n").unwrap();
+        std::fs::write(
+            &vtt,
+            "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nGuten Tag.\n",
+        )
+        .unwrap();
         let id = import_subtitle_file(&store, "ohne", &vtt, None).unwrap();
         let meeting = store.get_meeting(&id).unwrap().unwrap();
         assert_eq!(meeting.status, "ready");
-        assert_eq!(meeting.consent_confirmed_at, None, "kein Haken, kein Zeitstempel");
+        assert_eq!(
+            meeting.consent_confirmed_at, None,
+            "kein Haken, kein Zeitstempel"
+        );
     }
 
     /// #15: Fehler des Untertitel-Imports sind Codes (`code` oder `code: Detail`), keine
@@ -1582,9 +1665,13 @@ Guten Tag.
     fn subtitle_import_errors_are_codes_not_prose() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(MeetingStore::open_at(&dir.path().join("meetings.db")).unwrap());
-        let missing = import_subtitle_file(&store, "x", &dir.path().join("gibt-es-nicht.vtt"), None)
-            .unwrap_err();
-        assert!(missing.starts_with("subtitle_unreadable: "), "war: {missing}");
+        let missing =
+            import_subtitle_file(&store, "x", &dir.path().join("gibt-es-nicht.vtt"), None)
+                .unwrap_err();
+        assert!(
+            missing.starts_with("subtitle_unreadable: "),
+            "war: {missing}"
+        );
         let bad = dir.path().join("kaputt.vtt");
         std::fs::write(&bad, "das ist kein Untertitel").unwrap();
         assert_eq!(

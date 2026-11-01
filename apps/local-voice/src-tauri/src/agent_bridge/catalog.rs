@@ -215,7 +215,10 @@ impl std::fmt::Display for RegisterError {
             RegisterError::NotInCatalog(n) => write!(f, "Werkzeug „{n}“ steht nicht im Katalog."),
             RegisterError::Duplicate(n) => write!(f, "Werkzeug „{n}“ ist schon registriert."),
             RegisterError::CapabilityNotOffered(n) => {
-                write!(f, "Die Fähigkeit von „{n}“ bietet die Agent-Integration nicht an.")
+                write!(
+                    f,
+                    "Die Fähigkeit von „{n}“ bietet die Agent-Integration nicht an."
+                )
             }
         }
     }

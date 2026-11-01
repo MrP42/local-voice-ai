@@ -555,10 +555,10 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 
 /// Abkürzungen, nach deren Punkt kein Satz endet (klein geschrieben, ohne Punkt).
 const ABBREVIATIONS: &[&str] = &[
-    "ca", "bzw", "usw", "etc", "ggf", "inkl", "exkl", "evtl", "vgl", "bspw", "zzgl", "abzgl",
-    "dr", "prof", "nr", "abs", "art", "ziff", "kap", "bd", "hr", "fr", "str", "tel", "mio",
-    "mrd", "jh", "st", "max", "min", "mind", "sog", "geb", "gem", "lt", "allg", "insb",
-    "zb", "dh", "ua", "uä", "od", "jew",
+    "ca", "bzw", "usw", "etc", "ggf", "inkl", "exkl", "evtl", "vgl", "bspw", "zzgl", "abzgl", "dr",
+    "prof", "nr", "abs", "art", "ziff", "kap", "bd", "hr", "fr", "str", "tel", "mio", "mrd", "jh",
+    "st", "max", "min", "mind", "sog", "geb", "gem", "lt", "allg", "insb", "zb", "dh", "ua", "uä",
+    "od", "jew",
 ];
 
 /// Ist `word` (ohne Punkt, beliebige Schreibweise) eine bekannte Abkuerzung, nach
@@ -570,9 +570,30 @@ pub fn is_known_abbreviation(word: &str) -> bool {
 }
 
 const MONTHS: &[&str] = &[
-    "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september",
-    "oktober", "november", "dezember", "jan", "feb", "mär", "apr", "jun", "jul", "aug", "sep",
-    "sept", "okt", "nov", "dez",
+    "januar",
+    "februar",
+    "märz",
+    "april",
+    "mai",
+    "juni",
+    "juli",
+    "august",
+    "september",
+    "oktober",
+    "november",
+    "dezember",
+    "jan",
+    "feb",
+    "mär",
+    "apr",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "sept",
+    "okt",
+    "nov",
+    "dez",
 ];
 
 /// Endet bei `chars[pos] == '.'` wirklich ein Satz? Nein nach bekannten
@@ -849,10 +870,18 @@ mod tests {
             id: "die-drei-fragezeichen-erzaehler".into(),
             names: vec!["die-drei-fragezeichen-erzaehler".into(), "Erzähler".into()],
         }];
-        for raw in ["<Erzaehler> Hallo.", "<Erzähler> Hallo.", "<ERZÄHLER> Hallo."] {
+        for raw in [
+            "<Erzaehler> Hallo.",
+            "<Erzähler> Hallo.",
+            "<ERZÄHLER> Hallo.",
+        ] {
             let segs = split_speaker_segments(raw, &speakers);
             assert_eq!(segs.len(), 1, "{raw}");
-            assert_eq!(segs[0].voice.as_deref(), Some("die-drei-fragezeichen-erzaehler"), "{raw}");
+            assert_eq!(
+                segs[0].voice.as_deref(),
+                Some("die-drei-fragezeichen-erzaehler"),
+                "{raw}"
+            );
         }
         assert_eq!(fold_speaker_name("Erzählerin  1"), "erzaehlerin 1");
         assert_eq!(fold_speaker_name("leo_lausemaus"), "leo lausemaus");
@@ -860,10 +889,17 @@ mod tests {
 
     #[test]
     fn saetze_werden_im_rohtext_trotz_marker_und_umbruechen_verortet() {
-        let raw = "<Erzähler> Es war einmal ein Haus.\n<Mara> [calm] Wer wohnt darin?  Niemand weiß es.";
+        let raw =
+            "<Erzähler> Es war einmal ein Haus.\n<Mara> [calm] Wer wohnt darin?  Niemand weiß es.";
         let speakers = vec![
-            KnownSpeaker { id: "erz".into(), names: vec!["Erzähler".into()] },
-            KnownSpeaker { id: "mara".into(), names: vec!["Mara".into()] },
+            KnownSpeaker {
+                id: "erz".into(),
+                names: vec!["Erzähler".into()],
+            },
+            KnownSpeaker {
+                id: "mara".into(),
+                names: vec!["Mara".into()],
+            },
         ];
         let sentences: Vec<String> = split_speaker_segments(raw, &speakers)
             .into_iter()
@@ -965,7 +1001,11 @@ mod tests {
             "Das ist laut Abs. 3 der Vereinbarung so festgelegt.",
             "Der Beitrag steht in der Ausgabe Nr. 12 auf Seite fünf.",
         ] {
-            assert_eq!(split_sentences(text), vec![text.to_string()], "geschnitten: {text}");
+            assert_eq!(
+                split_sentences(text),
+                vec![text.to_string()],
+                "geschnitten: {text}"
+            );
         }
     }
 
@@ -1457,16 +1497,31 @@ patrick: Hi.",
 
     #[test]
     fn strip_tag_spans_entfernt_tags_und_glaettet_leerzeichen() {
-        assert_eq!(strip_tag_spans("[calm] Es war ruhig [laughing] , sagte er."), "Es war ruhig, sagte er.");
+        assert_eq!(
+            strip_tag_spans("[calm] Es war ruhig [laughing] , sagte er."),
+            "Es war ruhig, sagte er."
+        );
         assert_eq!(strip_tag_spans("Ohne Tag."), "Ohne Tag.");
-        assert_eq!(strip_tag_spans("Zeile eins [x]\n[y] Zeile zwei"), "Zeile eins\nZeile zwei");
-        assert_eq!(strip_tag_spans("[offen bleibt stehen"), "[offen bleibt stehen");
+        assert_eq!(
+            strip_tag_spans("Zeile eins [x]\n[y] Zeile zwei"),
+            "Zeile eins\nZeile zwei"
+        );
+        assert_eq!(
+            strip_tag_spans("[offen bleibt stehen"),
+            "[offen bleibt stehen"
+        );
     }
 
     #[test]
     fn strip_speaker_markers_entfernt_bekannte_und_unbekannte_marker() {
-        assert_eq!(strip_speaker_markers("<German Father> Die drei Feen.[break]"), "Die drei Feen.[break]");
-        assert_eq!(strip_speaker_markers("<Mara:neugierig> Glaubst du das?"), "Glaubst du das?");
+        assert_eq!(
+            strip_speaker_markers("<German Father> Die drei Feen.[break]"),
+            "Die drei Feen.[break]"
+        );
+        assert_eq!(
+            strip_speaker_markers("<Mara:neugierig> Glaubst du das?"),
+            "Glaubst du das?"
+        );
         assert_eq!(strip_speaker_markers("a < b und b > c"), "a < b und b > c");
     }
 

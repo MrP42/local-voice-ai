@@ -351,12 +351,17 @@ mod tests {
     #[test]
     fn the_system_prompt_only_grows_when_slide_excerpts_are_in_the_context() {
         let plain = {
-            let mut ex = transcript_blocks(&meeting("m1"), &[seg(0, 0, "Hallo")], 0, 1_200).remove(0);
+            let mut ex =
+                transcript_blocks(&meeting("m1"), &[seg(0, 0, "Hallo")], 0, 1_200).remove(0);
             ex.qid = 1;
             ex
         };
         assert_eq!(system_prompt_for(&[]), SYSTEM_PROMPT);
-        assert_eq!(system_prompt_for(&[plain.clone()]), SYSTEM_PROMPT, "ohne Folien byteweise wie vorher");
+        assert_eq!(
+            system_prompt_for(&[plain.clone()]),
+            SYSTEM_PROMPT,
+            "ohne Folien byteweise wie vorher"
+        );
         let with = system_prompt_for(&[plain, slide_excerpt()]);
         assert!(with.starts_with(SYSTEM_PROMPT));
         assert!(with.ends_with(SLIDE_RULE));
