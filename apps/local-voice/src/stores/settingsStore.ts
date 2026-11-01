@@ -310,6 +310,8 @@ const settingUpdaters: {
   // Sprachgespräch Stufe 2
   voice_call_read_transcripts: (value) =>
     commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
+  voice_call_knowledge: (value) =>
+    commands.changeVoiceCallKnowledgeSetting(value as string[]),
   // Sprachgespräch Stufe 3
   speech_learning_enabled: (value) =>
     commands.changeSpeechLearningEnabledSetting(value as boolean),

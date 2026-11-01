@@ -5,7 +5,7 @@ import {
   PopoverSurface,
   PopoverTrigger,
 } from "@fluentui/react-components";
-import { Info } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import {
   formatUsd,
@@ -17,6 +17,8 @@ import {
 } from "./useVoiceInfo";
 import { useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
+import { noKnowledge } from "./orchestration";
+import { useKnowledge } from "./useKnowledge";
 
 const DOT: Record<string, string> = {
   idle: "bg-mid-gray/60",
@@ -61,6 +63,8 @@ export const InfoLine: React.FC = () => {
   const ready = useVoiceCallStore((s) => s.ready);
   const metrics = useVoiceCallStore((s) => s.metrics);
   const usage = useVoiceCallStore((s) => s.usage);
+  const openSettings = useVoiceCallStore((s) => s.openSettings);
+  const knowledge = useKnowledge();
   const llm = useActiveLlm();
   const stt = useSttModelName();
   const cost = useCallCost(usage, llm);
@@ -194,7 +198,11 @@ export const InfoLine: React.FC = () => {
       )}
       {costText.chip && (
         <span
+          // Schmal hat der Hinweis „Kein Wissen freigegeben“ Vorrang; die Kosten
+          // stehen weiter in den Details hinter dem i-Symbol.
           className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] ${
+            noKnowledge(knowledge) ? "max-sm:hidden " : ""
+          }${
             cost.kind === "usd"
               ? "bg-logo-primary/15 border-transparent text-logo-primary"
               : "bg-mid-gray/10 border-mid-gray/25"
@@ -202,6 +210,18 @@ export const InfoLine: React.FC = () => {
         >
           {costText.chip}
         </span>
+      )}
+      {noKnowledge(knowledge) && (
+        <button
+          type="button"
+          data-testid="knowledge-chip"
+          title={t("voiceCall.knowledge.chipTitle")}
+          onClick={() => openSettings("knowledge")}
+          className="shrink-0 inline-flex items-center h-5 ps-1.5 pe-1 rounded-full border border-logo-primary/40 bg-logo-primary/10 text-[11px] cursor-pointer text-logo-primary underline-offset-2 hover:underline hover:border-logo-primary"
+        >
+          {t("voiceCall.knowledge.chip")}
+          <ChevronRight className="w-3 h-3 ms-0.5" aria-hidden="true" />
+        </button>
       )}
     </div>
   );

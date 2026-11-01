@@ -16,11 +16,14 @@ import { TEMPO_PRESETS, TEMPOS, tempoOf } from "./tempo";
 import { useActiveLlm, useSttModelName } from "./useVoiceInfo";
 import { RecognitionLearning } from "./RecognitionLearning";
 import {
+  KNOWLEDGE_AREAS,
   SOUVERAENITAET_STUFEN,
   blockedBy,
   describeModels,
+  type KnowledgeArea,
   type ModelDescription,
 } from "./orchestration";
+import { useKnowledge } from "./useKnowledge";
 import { useSettings } from "@/hooks/useSettings";
 import { useComplianceStore } from "@/stores/complianceStore";
 import type { LlmConnection, LlmModelConfig } from "@/bindings";
@@ -28,7 +31,13 @@ import type { LlmConnection, LlmModelConfig } from "@/bindings";
 /** Auswahlwert für „kein Denker“ (die Auswahl kennt keinen leeren Wert). */
 const DENKER_OFF = "off";
 
-const TAB_IDS: VoiceSettingsTab[] = ["talk", "voice", "recognition", "models"];
+const TAB_IDS: VoiceSettingsTab[] = [
+  "talk",
+  "voice",
+  "recognition",
+  "knowledge",
+  "models",
+];
 
 const Field: React.FC<{
   label: string;
@@ -136,6 +145,89 @@ function useVoiceModels(): ModelDescription[] {
   );
 }
 
+/** Eine Zeile des Reiters „Wissen“: Schalter mit einer Zeile Beschreibung darunter. */
+const KnowledgeRow: React.FC<{
+  id: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  disabled?: boolean;
+  nested?: boolean;
+  onChange: (checked: boolean) => void;
+}> = ({ id, label, hint, checked, disabled, nested, onChange }) => (
+  <div className={`flex flex-col ${nested ? "ms-6" : ""}`}>
+    <Switch
+      checked={checked}
+      disabled={disabled}
+      onChange={(_e, d) => onChange(d.checked)}
+      label={label}
+      aria-describedby={id}
+    />
+    <span id={id} className="ps-[52px] -mt-1 text-xs text-text/60">
+      {hint}
+    </span>
+  </div>
+);
+
+/** Reiter „Wissen“: was das Modell im Gespräch nachschlagen darf. */
+const KnowledgeTab: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting } = useSettings();
+  const knowledge = useKnowledge();
+  const knowledgeChanged = useVoiceCallStore((s) => s.knowledgeChanged);
+  const useTools = useVoiceCallStore((s) => s.config.orchestration.useTools);
+  const ids = useId("knowledge");
+  // Nach dem Speichern verwirft das Gespräch Werkzeuge und Hinweis; der nächste Schritt lädt neu.
+  const save = (
+    key: "voice_call_knowledge" | "voice_call_read_transcripts",
+    value: string[] | boolean,
+  ) => void updateSetting(key, value as never).then(knowledgeChanged);
+  const toggle = (area: KnowledgeArea, on: boolean) => {
+    const current = (getSetting("voice_call_knowledge") ?? []) as string[];
+    const next = KNOWLEDGE_AREAS.filter((a) =>
+      a === area ? on : current.includes(a),
+    );
+    save("voice_call_knowledge", next);
+  };
+  return (
+    <>
+      <p className="m-0 text-[13px]">{t("voiceCall.knowledge.intro")}</p>
+      {!useTools && (
+        <p
+          role="note"
+          className="m-0 rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
+        >
+          {t("voiceCall.knowledge.toolsOff")}
+        </p>
+      )}
+      {KNOWLEDGE_AREAS.map((area) => (
+        <React.Fragment key={area}>
+          <KnowledgeRow
+            id={`${ids}-${area}`}
+            label={t(`voiceCall.knowledge.areas.${area}.label`)}
+            hint={t(`voiceCall.knowledge.areas.${area}.hint`)}
+            checked={knowledge.areas.includes(area)}
+            onChange={(on) => toggle(area, on)}
+          />
+          {area === "meetings" && (
+            <KnowledgeRow
+              id={`${ids}-transcripts`}
+              nested
+              label={t("voiceCall.knowledge.areas.transcripts.label")}
+              hint={t("voiceCall.knowledge.areas.transcripts.hint")}
+              checked={
+                knowledge.transcripts && knowledge.areas.includes("meetings")
+              }
+              disabled={!knowledge.areas.includes("meetings")}
+              onChange={(on) => save("voice_call_read_transcripts", on)}
+            />
+          )}
+        </React.Fragment>
+      ))}
+    </>
+  );
+};
+
 export const SettingsPanel: React.FC = () => {
   const { t } = useTranslation();
   const config = useVoiceCallStore((s) => s.config);
@@ -148,8 +240,7 @@ export const SettingsPanel: React.FC = () => {
   const stt = useSttModelName();
   const ready = useVoiceCallStore((s) => s.ready);
   const models = useVoiceModels();
-  const { getSetting, updateSetting } = useSettings();
-  const readTranscripts = getSetting("voice_call_read_transcripts") ?? false;
+  const { getSetting } = useSettings();
   const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
   const speaker = models.find((m) => m.id === activeId);
   const speakerBlocked =
@@ -290,6 +381,7 @@ export const SettingsPanel: React.FC = () => {
             <RecognitionLearning />
           </>
         )}
+        {tab === "knowledge" && <KnowledgeTab />}
         {tab === "models" && (
           <>
             <Field
@@ -367,19 +459,6 @@ export const SettingsPanel: React.FC = () => {
                 checked={orch.useTools}
                 onChange={(_e, d) => setOrch({ useTools: d.checked })}
                 aria-label={t("voiceCall.settings.tools")}
-              />
-            </Field>
-            <Field
-              label={t("voiceCall.settings.transcripts")}
-              hint={t("voiceCall.settings.transcriptsHint")}
-            >
-              <Switch
-                checked={readTranscripts}
-                disabled={!orch.useTools}
-                onChange={(_e, d) =>
-                  void updateSetting("voice_call_read_transcripts", d.checked)
-                }
-                aria-label={t("voiceCall.settings.transcripts")}
               />
             </Field>
           </>

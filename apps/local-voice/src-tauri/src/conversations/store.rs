@@ -311,6 +311,16 @@ pub struct ConversationSummary {
     pub last_text: String,
 }
 
+/// Ein Beitrag mit Gespräch und Titel (Suche des Sprachgesprächs, nur lesend).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EntryHit {
+    pub conversation_id: String,
+    pub title: String,
+    pub role: String,
+    pub created_at: String,
+    pub text: String,
+}
+
 /// Unterhaltung samt Beiträgen, älteste zuerst.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct ConversationDetail {
@@ -699,6 +709,29 @@ impl ConversationStore {
                     .get::<_, Option<String>>(6)?
                     .map(|t| one_line(&t))
                     .unwrap_or_default(),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Beitraege nicht archivierter Gespraeche, neueste zuerst, hoechstens `limit` (Sprachgespraech:
+    /// Suche in frueheren Gespraechen). Je Beitrag: Gespraech, Titel, Rolle, Zeitstempel, Text.
+    pub fn recent_entries(&self, limit: usize) -> Result<Vec<EntryHit>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT e.conversation_id, c.title, e.role, e.created_at, e.text
+             FROM conversation_entries e JOIN conversations c ON c.id = e.conversation_id
+             WHERE c.archived = 0
+             ORDER BY e.created_at DESC, e.rowid DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit.min(5_000) as i64], |r| {
+            Ok(EntryHit {
+                conversation_id: r.get(0)?,
+                title: r.get(1)?,
+                role: r.get(2)?,
+                created_at: r.get(3)?,
+                text: r.get(4)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

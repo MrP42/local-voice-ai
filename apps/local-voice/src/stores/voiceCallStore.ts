@@ -37,7 +37,8 @@ import {
 /** Schlüssel der gespeicherten Gesprächseinstellungen (unverändert seit Stufe 0). */
 export const VOICE_CALL_CONFIG_KEY = "voice-call.config";
 
-export type VoiceSettingsTab = "talk" | "voice" | "recognition" | "models";
+export type VoiceSettingsTab =
+  "talk" | "voice" | "recognition" | "knowledge" | "models";
 
 export interface VoiceLine {
   id: number;
@@ -260,6 +261,8 @@ interface VoiceCallStore {
   openSettings: (tab?: VoiceSettingsTab) => void;
   closeSettings: () => void;
   setSettingsTab: (tab: VoiceSettingsTab) => void;
+  /** Wissensbereiche geändert: das Gespräch lädt Werkzeuge und Hinweis beim nächsten Schritt neu. */
+  knowledgeChanged: () => void;
   startCall: () => Promise<void>;
   stopCall: () => Promise<void>;
   /** `display`: was im Verlauf steht, wenn es vom gesendeten Text abweicht (Anhänge). */
@@ -436,6 +439,12 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
         onError: (error) => set({ error }),
+        conversationId: async () => {
+          // Erst fertig speichern lassen: so kennt der Aufruf das laufende Gespräch,
+          // und das Backend kann es ausnehmen (ohne Kennung sperrt es Gesprächswerkzeuge).
+          await persistChain;
+          return get().conversationId;
+        },
         onStatus: (status) => {
           if (status === null) set({ toolStatus: null });
           else if (status.kind === "tool") set({ toolStatus: status.tool });
@@ -637,6 +646,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       set((s) => ({ settingsOpen: true, settingsTab: tab ?? s.settingsTab })),
     closeSettings: () => set({ settingsOpen: false }),
     setSettingsTab: (settingsTab) => set({ settingsTab }),
+    knowledgeChanged: () => engine?.invalidateKnowledge(),
 
     startCall: async () => {
       if (get().state !== "idle" || get().switching) return;
