@@ -1204,6 +1204,11 @@ export const TtsSettings = () => {
     // Aufschlagen und als Weiterlesen-Stelle merken: Play liest ab dort.
     setFollow(false);
     readerApiRef.current?.revealOffset(b.offset);
+    // Ein Lesezeichen am Anfang heißt: Play beginnt vorn.
+    if (b.offset <= 0) {
+      forgetResumePoint(resumeKey);
+      return;
+    }
     saveResumePoint(resumeKey, spokenText, b.offset);
     setResumeAt(loadResumePoint(resumeKey, spokenText));
   };
