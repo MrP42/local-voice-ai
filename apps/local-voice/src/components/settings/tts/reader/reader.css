@@ -76,9 +76,11 @@
   text-align: left;
   break-after: avoid;
 }
-/* Kapitel (# und ##) beginnen wie im gedruckten Buch auf einer neuen Seite. */
-.reader-flow > h2:not(:first-child),
-.reader-flow > h3:not(:first-child) {
+/* Kapitel (# und ##) beginnen wie im gedruckten Buch auf einer neuen Seite.
+   Folgt eine Überschrift direkt auf eine andere („# Teil 1“, „## Kapitel 1“),
+   bleiben beide zusammen, sonst stünde der Teil allein auf einer Seite. */
+.reader-flow > :not(h2, h3) + h2,
+.reader-flow > :not(h2, h3) + h3 {
   break-before: column;
   margin-top: 1.2em;
 }
