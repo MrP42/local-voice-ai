@@ -107,7 +107,56 @@ struct Tok {
     key: String,
 }
 
+/// Funktionswörter (Artikel, Präpositionen, Pronomen, Bindewörter): sie werden nie gelernt und
+/// gehören nie in den Wortschatz.
+const FUNCTION_WORDS: &[&str] = &[
+    "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer", "eines",
+    "und", "oder", "aber", "auch", "nicht", "kein", "keine", "keinen", "keinem", "keiner", "ich",
+    "du", "er", "sie", "es", "wir", "ihr", "mich", "mir", "dich", "dir", "ihn", "ihm", "uns",
+    "euch", "ihnen", "mein", "meine", "dein", "deine", "sein", "seine", "unser", "unsere", "euer",
+    "in", "im", "an", "am", "auf", "aus", "bei", "mit", "nach", "von", "vom", "vor", "zu", "zum",
+    "zur", "für", "über", "unter", "um", "durch", "gegen", "ohne", "bis", "seit", "als", "wie",
+    "wenn", "dass", "so", "da", "dann", "noch", "nur", "schon", "ja", "nein",
+];
+
+pub fn is_function_word(key: &str) -> bool {
+    FUNCTION_WORDS.contains(&key)
+}
+
+/// Steht in `text` (ein Wort oder mehrere) ein Funktionswort?
+pub fn has_function_word(text: &str) -> bool {
+    tokenize(text).iter().any(|t| is_function_word(&t.key))
+}
+
+/// Setzt zerlegte Umlaute (Grundbuchstabe plus U+0308) zu einem Zeichen zusammen; mehr braucht
+/// deutscher Text nicht, und eine Abhängigkeit für die volle Normalisierung wäre übertrieben.
+pub fn compose(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if chars.peek() == Some(&'\u{0308}') {
+            let composed = match c {
+                'a' => Some('ä'),
+                'o' => Some('ö'),
+                'u' => Some('ü'),
+                'A' => Some('Ä'),
+                'O' => Some('Ö'),
+                'U' => Some('Ü'),
+                _ => None,
+            };
+            if let Some(m) = composed {
+                chars.next();
+                out.push(m);
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn tokenize(text: &str) -> Vec<Tok> {
+    let text = compose(text);
     text.split_whitespace()
         .filter_map(|raw| {
             let shown = raw.trim_matches(|c: char| !c.is_alphanumeric());
@@ -189,6 +238,20 @@ fn judge(a: &[Tok], b: &[Tok], hunk: &Hunk) -> Learnable {
     if hunk.dels.len() > MAX_PAIR_WORDS || hunk.ins.len() > MAX_PAIR_WORDS {
         return Learnable::Rewrite;
     }
+    // Funktionswörter am Rand gehören nicht zum Paar: auf die tatsächlich geänderten Wörter kürzen.
+    let trim = |toks: &[Tok], idx: &[usize]| -> Vec<usize> {
+        let start = idx.iter().position(|&i| !is_function_word(&toks[i].key));
+        let end = idx.iter().rposition(|&i| !is_function_word(&toks[i].key));
+        match (start, end) {
+            (Some(s), Some(e)) => idx[s..=e].to_vec(),
+            _ => Vec::new(),
+        }
+    };
+    let dels = trim(a, &hunk.dels);
+    let ins = trim(b, &hunk.ins);
+    if dels.is_empty() || ins.is_empty() {
+        return Learnable::Skip;
+    }
     let side = |toks: &[Tok], idx: &[usize]| -> (String, String) {
         let shown = idx
             .iter()
@@ -202,8 +265,8 @@ fn judge(a: &[Tok], b: &[Tok], hunk: &Hunk) -> Learnable {
             .join(" ");
         (shown, key)
     };
-    let (heard, heard_key) = side(a, &hunk.dels);
-    let (corrected, corrected_key) = side(b, &hunk.ins);
+    let (heard, heard_key) = side(a, &dels);
+    let (corrected, corrected_key) = side(b, &ins);
     if heard.chars().count() > MAX_PAIR_CHARS || corrected.chars().count() > MAX_PAIR_CHARS {
         return Learnable::Rewrite;
     }
@@ -213,7 +276,10 @@ fn judge(a: &[Tok], b: &[Tok], hunk: &Hunk) -> Learnable {
     if similarity(&heard_key, &corrected_key) < MIN_SIMILARITY {
         return Learnable::Rewrite;
     }
-    if letters(&corrected) < MIN_CORRECTED_LETTERS || has_forbidden_chars(&corrected) {
+    if letters(&corrected) < MIN_CORRECTED_LETTERS
+        || has_forbidden_chars(&corrected)
+        || corrected_key.split(' ').any(is_function_word)
+    {
         return Learnable::Skip;
     }
     Learnable::Yes(Pair { heard, corrected })

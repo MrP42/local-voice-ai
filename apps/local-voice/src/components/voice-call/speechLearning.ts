@@ -1,10 +1,18 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from "@/bindings";
+import type {
+  FeedbackOutcome,
+  LearnedPair,
+  SetupOutcome,
+  SetupText,
+} from "@/bindings";
 import { useSettingsStore } from "@/stores/settingsStore";
+
+export type { FeedbackOutcome, LearnedPair, SetupOutcome, SetupText };
 
 /**
  * Lernen aus Korrekturen und Einrichtung der Erkennung (Stufe 3, ADR-0021).
- * Die Befehle liegen im Kern unter `src-tauri/src/speech_learning/`; Typen und Werte
- * folgen ihm. Texte und Paare gehören nie ins Log.
+ * Die Befehle liegen im Kern unter `src-tauri/src/speech_learning/`. Texte und Paare
+ * gehören nie ins Log.
  */
 
 /** Bereich der Paare; vorerst gibt es nur einen. Muster `[a-z0-9_-]{1,32}`. */
@@ -12,36 +20,32 @@ export const LEARNING_BEREICH = "standard";
 /** Längster Text für `feedback` und `setup_evaluate` (Zeichen). */
 export const MAX_LEARNING_TEXT = 2000;
 
+/** Status eines Paares (`LearnedPair.status` ist im Kern ein Text). */
 export type LearnedStatus =
   "beobachtet" | "vorschlag" | "uebernommen" | "abgelehnt";
 
-export interface LearnedPair {
-  id: number;
-  bereich: string;
-  gehoert: string;
-  korrigiert: string;
-  anzahl: number;
-  zuletzt: string;
-  status: LearnedStatus;
+const STATUSES: LearnedStatus[] = [
+  "beobachtet",
+  "vorschlag",
+  "uebernommen",
+  "abgelehnt",
+];
+
+export function statusOf(pair: LearnedPair): LearnedStatus {
+  return STATUSES.find((s) => s === pair.status) ?? "beobachtet";
 }
 
-export interface FeedbackOutcome {
-  reason: "ok" | "nothing" | "rewrite" | "off";
-  learned: number;
-  suggestions: number;
-  adopted: number;
+/** Packt das Ergebnis eines Befehls aus; ein Fehler wird geworfen (nur der Text des Kerns). */
+function unwrap<T>(
+  r: { status: "ok"; data: T } | { status: "error"; error: string },
+): T {
+  if (r.status === "error") throw new Error(r.error);
+  return r.data;
 }
 
-export interface SetupText {
-  sentences: string[];
-  text: string;
-}
-
-export interface SetupOutcome {
-  reason: "ok" | "nothing" | "rewrite";
-  matched_percent: number;
-  pairs: LearnedPair[];
-}
+/** Fehlertext für die Anzeige. */
+export const errorText = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e);
 
 /** Ist „Aus Korrekturen lernen“ an? (Standard aus.) */
 export function learningEnabled(): boolean {
@@ -61,39 +65,39 @@ export async function sendFeedback(
   if (heard.length > MAX_LEARNING_TEXT || corrected.length > MAX_LEARNING_TEXT)
     return null;
   try {
-    return await invoke<FeedbackOutcome>("speech_learning_feedback", {
-      bereich: LEARNING_BEREICH,
-      erkannt: heard,
-      korrigiert: corrected,
-    });
+    return unwrap(
+      await commands.speechLearningFeedback(LEARNING_BEREICH, heard, corrected),
+    );
   } catch {
     return null;
   }
 }
 
-export const listPairs = () =>
-  invoke<LearnedPair[]>("speech_learning_list", { bereich: LEARNING_BEREICH });
+export const listPairs = async () =>
+  unwrap(await commands.speechLearningList(LEARNING_BEREICH));
 
-export const setPairStatus = (id: number, status: LearnedStatus) =>
-  invoke<LearnedPair>("speech_learning_set_status", { id, status });
+export const setPairStatus = async (id: number, status: LearnedStatus) =>
+  unwrap(await commands.speechLearningSetStatus(id, status));
 
-export const deletePair = (id: number) =>
-  invoke<null>("speech_learning_delete", { id });
+export const deletePair = async (id: number) =>
+  unwrap(await commands.speechLearningDelete(id));
 
-export const clearPairs = () =>
-  invoke<number>("speech_learning_clear", { bereich: LEARNING_BEREICH });
+export const clearPairs = async () =>
+  unwrap(await commands.speechLearningClear(LEARNING_BEREICH));
 
-export const getSetupText = () =>
-  invoke<SetupText>("speech_learning_setup_text");
+export const getSetupText = () => commands.speechLearningSetupText();
 
-export const prepareSetup = () => invoke<null>("speech_learning_setup_prepare");
+export const prepareSetup = async () =>
+  unwrap(await commands.speechLearningSetupPrepare());
 
-export const evaluateSetup = (reference: string, transcript: string) =>
-  invoke<SetupOutcome>("speech_learning_setup_evaluate", {
-    bereich: LEARNING_BEREICH,
-    reference,
-    transcript,
-  });
+export const evaluateSetup = async (reference: string, transcript: string) =>
+  unwrap(
+    await commands.speechLearningSetupEvaluate(
+      LEARNING_BEREICH,
+      reference,
+      transcript,
+    ),
+  );
 
 /** Der Wortschatz hat sich im Kern geändert: Einstellungen neu laden (Liste „Eigene Wörter“). */
 export const refreshWords = () => useSettingsStore.getState().refreshSettings();

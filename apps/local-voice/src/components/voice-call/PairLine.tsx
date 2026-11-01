@@ -2,7 +2,11 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Trash2, X } from "lucide-react";
 import { Button } from "../ui/Button";
-import type { LearnedPair, LearnedStatus } from "./speechLearning";
+import {
+  statusOf,
+  type LearnedPair,
+  type LearnedStatus,
+} from "./speechLearning";
 
 const STATUS_STYLE: Record<LearnedStatus, string> = {
   beobachtet: "bg-mid-gray/20 text-text/70",
@@ -35,12 +39,12 @@ export const PairLine: React.FC<{
           {t("voiceCall.learning.times", { count: pair.anzahl })}
         </span>
         <span
-          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_STYLE[pair.status]}`}
+          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_STYLE[statusOf(pair)]}`}
         >
-          {t(`voiceCall.learning.status.${pair.status}`)}
+          {t(`voiceCall.learning.status.${statusOf(pair)}`)}
         </span>
         <span className="ms-auto flex flex-wrap items-center gap-1">
-          {pair.status !== "uebernommen" && (
+          {statusOf(pair) !== "uebernommen" && (
             <Button
               size="sm"
               type="button"
@@ -51,7 +55,7 @@ export const PairLine: React.FC<{
               {t("voiceCall.learning.adopt")}
             </Button>
           )}
-          {pair.status !== "abgelehnt" && (
+          {statusOf(pair) !== "abgelehnt" && (
             <Button
               size="sm"
               type="button"

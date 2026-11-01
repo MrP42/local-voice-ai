@@ -20,7 +20,7 @@ pub mod store;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
@@ -53,19 +53,29 @@ where
         .map_err(|e| e.to_string())
 }
 
-/// Schreibt die Änderung am Wortschatz in die Einstellungen.
-fn apply_delta(app: &AppHandle, delta: &WordsDelta) {
-    if delta.is_empty() {
-        return;
-    }
-    let mut settings = get_settings(app);
-    if delta.apply(&mut settings.custom_words) {
-        write_settings(app, settings);
-    }
-}
+/// Eine Sperre für alle Schreiber des Wortschatzes im Lernpfad: lesen, ändern, schreiben läuft
+/// am Stück, damit sich zwei Aufrufe nichts überschreiben.
+static WORDS_LOCK: Mutex<()> = Mutex::new(());
 
-fn current_words(app: &AppHandle) -> Vec<String> {
-    get_settings(app).custom_words
+/// Führt `f` auf einem Blockier-Thread gegen den Speicher aus, mit frisch gelesenem Wortschatz.
+/// Die Änderung am Wortschatz, die `f` meldet, geht noch unter derselben Sperre in die
+/// Einstellungen; entfernt wird nur ein Begriff in genau der Schreibweise, die dort steht.
+async fn run_words<T, F>(app: &AppHandle, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&SpeechLearningStore, &[String]) -> anyhow::Result<(T, WordsDelta)> + Send + 'static,
+{
+    let handle = app.clone();
+    run(app, move |store| {
+        let _guard = WORDS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut settings = get_settings(&handle);
+        let (value, delta) = f(store, &settings.custom_words)?;
+        if !delta.is_empty() && delta.apply(&mut settings.custom_words) {
+            write_settings(&handle, settings);
+        }
+        Ok(value)
+    })
+    .await
 }
 
 /// Meldet eine Korrektur: `erkannt` ist, was die Erkennung geliefert hat, `korrigiert`, was der
@@ -86,23 +96,24 @@ pub async fn speech_learning_feedback(
         return Ok(FeedbackOutcome::empty("off"));
     }
     let auto_apply = settings.speech_learning_auto_apply;
-    let words = settings.custom_words;
-    let (outcome, delta) = run(&app, move |s| {
-        s.feedback(&bereich, &erkannt, &korrigiert, auto_apply, &words)
+    run_words(&app, move |s, words| {
+        s.feedback(&bereich, &erkannt, &korrigiert, auto_apply, words)
     })
-    .await?;
-    apply_delta(&app, &delta);
-    Ok(outcome)
+    .await
 }
 
-/// Die gelernten Paare eines Bereichs, jüngste zuerst.
+/// Die gelernten Paare eines Bereichs, jüngste zuerst. Gleicht dabei ab, welche übernommenen
+/// Begriffe noch im Wortschatz stehen.
 #[tauri::command]
 #[specta::specta]
 pub async fn speech_learning_list(
     app: AppHandle,
     bereich: String,
 ) -> Result<Vec<LearnedPair>, String> {
-    run(&app, move |s| s.list(&bereich)).await
+    run_words(&app, move |s, words| {
+        Ok((s.list(&bereich, words)?, WordsDelta::default()))
+    })
+    .await
 }
 
 /// Setzt den Status eines Paares: `vorschlag`, `uebernommen` oder `abgelehnt`. Übernehmen trägt
@@ -114,35 +125,28 @@ pub async fn speech_learning_set_status(
     id: u32,
     status: String,
 ) -> Result<LearnedPair, String> {
-    let words = current_words(&app);
-    let (pair, delta) = run(&app, move |s| s.set_status(id, &status, &words)).await?;
-    apply_delta(&app, &delta);
-    Ok(pair)
+    run_words(&app, move |s, words| s.set_status(id, &status, words)).await
 }
 
 /// Löscht ein Paar wirklich.
 #[tauri::command]
 #[specta::specta]
 pub async fn speech_learning_delete(app: AppHandle, id: u32) -> Result<(), String> {
-    let delta = run(&app, move |s| s.delete(id)).await?;
-    apply_delta(&app, &delta);
-    Ok(())
+    run_words(&app, move |s, words| Ok(((), s.delete(id, words)?))).await
 }
 
 /// Löscht alle Paare eines Bereichs wirklich; Rückgabe: wie viele es waren.
 #[tauri::command]
 #[specta::specta]
 pub async fn speech_learning_clear(app: AppHandle, bereich: String) -> Result<u32, String> {
-    let (count, delta) = run(&app, move |s| s.clear(&bereich)).await?;
-    apply_delta(&app, &delta);
-    Ok(count)
+    run_words(&app, move |s, words| s.clear(&bereich, words)).await
 }
 
 /// Der Vorlesetext für die Einrichtung: fester Grundtext plus der eigene Wortschatz.
 #[tauri::command]
 #[specta::specta]
 pub fn speech_learning_setup_text(app: AppHandle) -> SetupText {
-    setup::setup_text(&current_words(&app))
+    setup::setup_text(&get_settings(&app).custom_words)
 }
 
 /// Lädt das Spracherkennungsmodell, damit das Vorlesen gleich erkannt wird (die Aufnahme geht
@@ -176,8 +180,11 @@ pub async fn speech_learning_setup_evaluate(
     reference: String,
     transcript: String,
 ) -> Result<SetupOutcome, String> {
-    run(&app, move |s| {
-        s.setup_evaluate(&bereich, &reference, &transcript)
+    run_words(&app, move |s, words| {
+        Ok((
+            s.setup_evaluate(&bereich, &reference, &transcript, words)?,
+            WordsDelta::default(),
+        ))
     })
     .await
 }
@@ -186,6 +193,7 @@ pub async fn speech_learning_setup_evaluate(
 #[tauri::command]
 #[specta::specta]
 pub fn change_speech_learning_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let _guard = WORDS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut settings = get_settings(&app);
     settings.speech_learning_enabled = enabled;
     write_settings(&app, settings);
@@ -199,6 +207,7 @@ pub fn change_speech_learning_auto_apply_setting(
     app: AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
+    let _guard = WORDS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut settings = get_settings(&app);
     settings.speech_learning_auto_apply = enabled;
     write_settings(&app, settings);

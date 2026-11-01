@@ -6231,7 +6231,9 @@
     "edit": {
       "button": "Edit recognized text",
       "field": "Edit recognized text",
-      "hint": "Enter saves, Esc cancels."
+      "hint": "Enter saves, Esc cancels.",
+      "lost": "Your change was not saved because the line was replaced or locked (a new turn started). Your text:",
+      "dismiss": "Dismiss notice"
     },
     "learning": {
       "enable": "Learn from corrections",
@@ -6239,7 +6241,7 @@
       "auto": "Adopt suggestions automatically",
       "autoHint": "Off by default and only with learning on. Recognition then adds a pair to your word list itself after the second occurrence.",
       "privacyTitle": "Privacy",
-      "privacy": "Only short word pairs are stored (at most 3 words and 64 characters per side), locally on this device. Never whole sentences, never audio. If you reword a line instead of fixing a misheard word, nothing is learned. You can delete each entry or everything; deleting is final.",
+      "privacy": "Only short word pairs are stored (at most 3 words and 64 characters per side), locally on this device, as unencrypted plain text in a file in the app data folder. Never whole sentences, never audio. If you reword a line instead of fixing a misheard word, nothing is learned. You can delete each entry or everything; deleting is final.",
       "setupTitle": "Setup",
       "setupButton": "Set up recognition",
       "setupHint": "Read a short text aloud. Recognition compares what it understood with the text and suggests improvements. The audio stays in memory only.",
@@ -6264,13 +6266,20 @@
       "clearBody": "All learned terms are deleted for good. Terms that came from here into your word list are removed from it again.",
       "clearYes": "Delete for good",
       "cancel": "Cancel",
-      "loadError": "The learned terms could not be loaded."
+      "loadError": "The learned terms could not be loaded.",
+      "announce": {
+        "uebernommen": "\"{{gehoert}} → {{korrigiert}}\" adopted.",
+        "abgelehnt": "\"{{gehoert}} → {{korrigiert}}\" rejected.",
+        "deleted": "\"{{gehoert}} → {{korrigiert}}\" deleted.",
+        "cleared": "All learned terms deleted."
+      }
     },
     "setup": {
       "title": "Set up recognition",
       "intro": "Read the text aloud at a normal pace. Recognition then shows where it understood you differently. The audio stays in memory only and is not stored. Only what you confirm is adopted.",
       "textLabel": "Reading text",
       "loading": "Preparing the text and the recognition model …",
+      "starting": "Starting the recording …",
       "start": "Start recording",
       "stop": "Done",
       "cancel": "Cancel",

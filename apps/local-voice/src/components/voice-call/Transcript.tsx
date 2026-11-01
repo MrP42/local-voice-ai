@@ -10,7 +10,9 @@ const LineEditor: React.FC<{
   initial: string;
   onSave: (text: string) => void;
   onCancel: () => void;
-}> = ({ initial, onSave, onCancel }) => {
+  /** Meldet jede Änderung des Entwurfs, damit nichts still verloren geht. */
+  onDraft: (text: string) => void;
+}> = ({ initial, onSave, onCancel, onDraft }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState(initial);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -30,10 +32,14 @@ const LineEditor: React.FC<{
         aria-describedby="voice-line-edit-hint"
         data-testid="line-editor"
         className="w-full rounded-xl border border-logo-primary bg-background px-3 py-2 text-sm text-text resize-y"
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          onDraft(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
+            e.stopPropagation();
             onCancel();
           } else if (
             e.key === "Enter" &&
@@ -64,6 +70,8 @@ export const Transcript: React.FC<{
   onOpenSettings?: () => void;
   /** Speichert die verbesserte Fassung einer eigenen erkannten Zeile. Ohne sie gibt es keinen Stift. */
   onEditLine?: (id: number, text: string) => void;
+  /** Darf die Zeile jetzt bearbeitet werden? Ohne Angabe gilt jede gesprochene Nutzerzeile. */
+  canEdit?: (line: VoiceLine) => boolean;
 }> = ({
   lines,
   active,
@@ -72,10 +80,39 @@ export const Transcript: React.FC<{
   notice = null,
   onOpenSettings,
   onEditLine,
+  canEdit,
 }) => {
   const { t, i18n } = useTranslation();
   const endRef = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState<number | null>(null);
+  const draft = useRef("");
+  /** Entwurf einer Zeile, die während der Bearbeitung ersetzt oder gesperrt wurde. */
+  const [lost, setLost] = useState<string | null>(null);
+  const pencils = useRef(new Map<number, HTMLButtonElement>());
+  /** Nach dem Schließen des Editors geht der Fokus zurück zum Stift dieser Zeile. */
+  const [refocus, setRefocus] = useState<number | null>(null);
+  const isEditable = (line: VoiceLine) =>
+    line.role === "user" &&
+    line.mode === "spoken" &&
+    !!onEditLine &&
+    (canEdit ? canEdit(line) : true);
+
+  // Verschwindet die Zeile oder wird sie gesperrt (neue Äußerung, Antwort läuft), schließt der
+  // Editor; der Entwurf bleibt in einem Hinweis stehen.
+  useEffect(() => {
+    if (editing === null) return;
+    const line = lines.find((l) => l.id === editing);
+    if (line && isEditable(line)) return;
+    setEditing(null);
+    if (draft.current.trim() && draft.current !== line?.text)
+      setLost(draft.current);
+  });
+
+  useEffect(() => {
+    if (refocus === null || editing !== null) return;
+    pencils.current.get(refocus)?.focus();
+    setRefocus(null);
+  }, [refocus, editing]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -161,7 +198,7 @@ export const Transcript: React.FC<{
       <div className="mx-auto max-w-[880px] flex flex-col gap-2.5">
         {lines.map((line) => {
           const user = line.role === "user";
-          const editable = user && !!onEditLine && line.mode === "spoken";
+          const editable = isEditable(line);
           const isEditing = editing === line.id && editable;
           return (
             <div
@@ -180,9 +217,14 @@ export const Transcript: React.FC<{
                 {isEditing ? (
                   <LineEditor
                     initial={line.text}
-                    onCancel={() => setEditing(null)}
+                    onDraft={(text) => (draft.current = text)}
+                    onCancel={() => {
+                      setEditing(null);
+                      setRefocus(line.id);
+                    }}
                     onSave={(text) => {
                       setEditing(null);
+                      setRefocus(line.id);
                       onEditLine?.(line.id, text);
                     }}
                   />
@@ -206,7 +248,15 @@ export const Transcript: React.FC<{
                       type="button"
                       aria-label={t("voiceCall.edit.button")}
                       title={t("voiceCall.edit.button")}
-                      onClick={() => setEditing(line.id)}
+                      ref={(el) => {
+                        if (el) pencils.current.set(line.id, el);
+                        else pencils.current.delete(line.id);
+                      }}
+                      onClick={() => {
+                        draft.current = line.text;
+                        setLost(null);
+                        setEditing(line.id);
+                      }}
                       className="grid place-items-center w-6 h-6 -my-1 rounded cursor-pointer text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:text-text"
                     >
                       <Pencil className="w-3 h-3" aria-hidden="true" />
@@ -228,6 +278,23 @@ export const Transcript: React.FC<{
             </div>
           );
         })}
+        {lost !== null && (
+          <div
+            role="alert"
+            data-testid="edit-lost"
+            className="self-end max-w-[85%] rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-sm flex flex-col gap-1"
+          >
+            <span>{t("voiceCall.edit.lost")}</span>
+            <span className="italic break-words">{lost}</span>
+            <button
+              type="button"
+              onClick={() => setLost(null)}
+              className="self-start rounded border border-mid-gray/40 bg-background px-2 py-0.5 text-xs cursor-pointer text-text hover:border-logo-primary"
+            >
+              {t("voiceCall.edit.dismiss")}
+            </button>
+          </div>
+        )}
         {noticeBox}
         {liveRegion}
         <div ref={endRef} />

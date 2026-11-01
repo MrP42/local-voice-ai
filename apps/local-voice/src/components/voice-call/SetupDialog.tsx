@@ -7,6 +7,7 @@ import { Dialog } from "../ui/Dialog";
 import { CAPTURE_RATE, floatToPcm16Base64, startCapture } from "./audio";
 import type { Capture } from "./audio";
 import {
+  errorText,
   evaluateSetup,
   getSetupText,
   prepareSetup,
@@ -27,6 +28,7 @@ const MIN_SECONDS = 1;
 type Phase =
   | { kind: "loading" }
   | { kind: "idle" }
+  | { kind: "starting" }
   | { kind: "recording" }
   | { kind: "working" }
   | { kind: "result"; outcome: SetupOutcome }
@@ -48,18 +50,23 @@ export const SetupDialog: React.FC<{
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [text, setText] = useState<SetupText | null>(null);
   const [seconds, setSeconds] = useState(0);
+  /** Fehler beim Übernehmen oder Ablehnen: das Ergebnis bleibt stehen, der Fehler steht daneben. */
+  const [decideError, setDecideError] = useState<string | null>(null);
   const [pairs, setPairs] = useState<LearnedPair[]>([]);
   const frames = useRef<Float32Array[]>([]);
   const capture = useRef<Capture | null>(null);
   const ctx = useRef<AudioContext | null>(null);
   const timer = useRef<number | null>(null);
   const run = useRef(0);
+  /** Sperre gegen einen zweiten Start, bevor die Phase umgeschaltet ist (Doppelklick). */
+  const starting = useRef(false);
 
   const releaseAudio = useCallback(() => {
     if (timer.current !== null) window.clearInterval(timer.current);
     timer.current = null;
     capture.current?.stop();
     capture.current = null;
+    starting.current = false;
     void ctx.current?.close().catch(() => {});
     ctx.current = null;
   }, []);
@@ -71,6 +78,7 @@ export const SetupDialog: React.FC<{
     setPhase({ kind: "loading" });
     setText(null);
     setPairs([]);
+    setDecideError(null);
     frames.current = [];
     void (async () => {
       try {
@@ -80,7 +88,7 @@ export const SetupDialog: React.FC<{
         setPhase({ kind: "idle" });
       } catch (e) {
         if (mine === run.current)
-          setPhase({ kind: "error", message: String(e) });
+          setPhase({ kind: "error", message: errorText(e) });
       }
     })();
     return () => {
@@ -119,7 +127,7 @@ export const SetupDialog: React.FC<{
         onChanged();
       } catch (e) {
         if (mine === run.current)
-          setPhase({ kind: "error", message: String(e) });
+          setPhase({ kind: "error", message: errorText(e) });
       }
     },
     [onChanged, t],
@@ -131,9 +139,13 @@ export const SetupDialog: React.FC<{
   }, [evaluate, releaseAudio, text]);
 
   const start = async () => {
+    if (starting.current || capture.current) return;
+    starting.current = true;
     const mine = run.current;
     frames.current = [];
     setSeconds(0);
+    setDecideError(null);
+    setPhase({ kind: "starting" });
     try {
       const context = new AudioContext({ latencyHint: "interactive" });
       ctx.current = context;
@@ -149,8 +161,27 @@ export const SetupDialog: React.FC<{
       setPhase({ kind: "recording" });
       timer.current = window.setInterval(() => setSeconds((s) => s + 1), 1000);
     } catch {
+      // Ein späterer Lauf (Dialog geschlossen oder neu geöffnet) gehört nicht mehr uns.
+      if (mine !== run.current) return;
       releaseAudio();
       setPhase({ kind: "error", message: t("voiceCall.setup.micError") });
+    }
+  };
+
+  /** „Noch einmal“: neuer Vorlesetext (der Wortschatz kann sich durch Übernehmen geändert haben). */
+  const again = async () => {
+    const mine = run.current;
+    setDecideError(null);
+    setPhase({ kind: "loading" });
+    try {
+      const setup = await getSetupText();
+      if (mine !== run.current) return;
+      setText(setup);
+      setPairs([]);
+      setPhase({ kind: "idle" });
+    } catch (e) {
+      if (mine === run.current)
+        setPhase({ kind: "error", message: errorText(e) });
     }
   };
 
@@ -160,17 +191,21 @@ export const SetupDialog: React.FC<{
   }, [phase.kind, seconds, stop]);
 
   const decide = async (pair: LearnedPair, status: LearnedStatus) => {
+    setDecideError(null);
     try {
       const next = await setPairStatus(pair.id, status);
       setPairs((all) => all.map((p) => (p.id === next.id ? next : p)));
       await refreshWords();
       onChanged();
     } catch (e) {
-      setPhase({ kind: "error", message: String(e) });
+      setDecideError(errorText(e));
     }
   };
 
-  const busy = phase.kind === "loading" || phase.kind === "working";
+  const busy =
+    phase.kind === "loading" ||
+    phase.kind === "starting" ||
+    phase.kind === "working";
   const footer =
     phase.kind === "recording" ? (
       <>
@@ -189,12 +224,7 @@ export const SetupDialog: React.FC<{
           </Button>
         )}
         {(phase.kind === "result" || phase.kind === "error") && (
-          <Button
-            variant="primary"
-            type="button"
-            onClick={() => setPhase({ kind: "idle" })}
-            disabled={!text}
-          >
+          <Button variant="primary" type="button" onClick={() => void again()}>
             {t("voiceCall.setup.again")}
           </Button>
         )}
@@ -241,6 +271,7 @@ export const SetupDialog: React.FC<{
               {t("voiceCall.setup.recording", { seconds })}
             </p>
           )}
+          {phase.kind === "starting" && <p>{t("voiceCall.setup.starting")}</p>}
           {phase.kind === "working" && <p>{t("voiceCall.setup.working")}</p>}
           {phase.kind === "error" && (
             <p role="alert" className="text-red-600 dark:text-red-400">
@@ -267,6 +298,11 @@ export const SetupDialog: React.FC<{
                     />
                   ))}
                 </ul>
+              )}
+              {decideError && (
+                <p role="alert" className="m-0 text-red-600 dark:text-red-400">
+                  {decideError}
+                </p>
               )}
             </>
           )}

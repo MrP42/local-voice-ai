@@ -6231,7 +6231,9 @@
     "edit": {
       "button": "Erkannten Text bearbeiten",
       "field": "Erkannten Text bearbeiten",
-      "hint": "Enter speichert, Esc bricht ab."
+      "hint": "Enter speichert, Esc bricht ab.",
+      "lost": "Deine Änderung wurde nicht gespeichert, weil die Zeile ersetzt oder gesperrt wurde (ein neuer Beitrag hat begonnen). Dein Text:",
+      "dismiss": "Hinweis schließen"
     },
     "learning": {
       "enable": "Aus Korrekturen lernen",
@@ -6239,7 +6241,7 @@
       "auto": "Vorschläge automatisch übernehmen",
       "autoHint": "Standardmäßig aus und nur mit eingeschaltetem Lernen. Dann trägt die Erkennung ein Paar nach dem zweiten Vorkommen selbst in deinen Wortschatz ein.",
       "privacyTitle": "Datenschutz",
-      "privacy": "Gespeichert werden nur kurze Wortpaare (höchstens 3 Wörter und 64 Zeichen je Seite), lokal auf diesem Gerät. Nie ganze Sätze, nie Audio. Formulierst du eine Zeile um, statt ein falsch verstandenes Wort zu verbessern, wird nichts gelernt. Du kannst jeden Eintrag oder alles löschen; Löschen ist endgültig.",
+      "privacy": "Gespeichert werden nur kurze Wortpaare (höchstens 3 Wörter und 64 Zeichen je Seite), lokal auf diesem Gerät und unverschlüsselt im Klartext in einer Datei im App-Datenordner. Nie ganze Sätze, nie Audio. Formulierst du eine Zeile um, statt ein falsch verstandenes Wort zu verbessern, wird nichts gelernt. Du kannst jeden Eintrag oder alles löschen; Löschen ist endgültig.",
       "setupTitle": "Einrichtung",
       "setupButton": "Erkennung einrichten",
       "setupHint": "Lies einen kurzen Text vor. Die Erkennung vergleicht, was sie verstanden hat, mit dem Text und schlägt Verbesserungen vor. Das Audio bleibt nur im Arbeitsspeicher.",
@@ -6264,13 +6266,20 @@
       "clearBody": "Alle gelernten Begriffe werden endgültig gelöscht. Begriffe, die von hier in deinen Wortschatz kamen, werden dort wieder entfernt.",
       "clearYes": "Endgültig löschen",
       "cancel": "Abbrechen",
-      "loadError": "Die gelernten Begriffe konnten nicht geladen werden."
+      "loadError": "Die gelernten Begriffe konnten nicht geladen werden.",
+      "announce": {
+        "uebernommen": "„{{gehoert}} → {{korrigiert}}“ übernommen.",
+        "abgelehnt": "„{{gehoert}} → {{korrigiert}}“ abgelehnt.",
+        "deleted": "„{{gehoert}} → {{korrigiert}}“ gelöscht.",
+        "cleared": "Alle gelernten Begriffe gelöscht."
+      }
     },
     "setup": {
       "title": "Erkennung einrichten",
       "intro": "Lies den Text in normalem Tempo vor. Danach zeigt dir die Erkennung, wo sie dich anders verstanden hat. Das Audio bleibt nur im Arbeitsspeicher und wird nicht gespeichert. Übernommen wird nur, was du bestätigst.",
       "textLabel": "Vorlesetext",
       "loading": "Text und Erkennungsmodell werden vorbereitet …",
+      "starting": "Aufnahme wird gestartet …",
       "start": "Aufnahme starten",
       "stop": "Fertig",
       "cancel": "Abbrechen",

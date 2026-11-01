@@ -1488,6 +1488,35 @@ test.describe("Sprachgespraech Stufe 3: Lernen aus Korrekturen", () => {
     });
   });
 
+  test("Zweite Bearbeitung derselben Zeile meldet weiter den erkannten Originaltext", async ({
+    page,
+  }) => {
+    await install(page, "light", {
+      seed: SEED,
+      settings: { speech_learning_enabled: true },
+    });
+    await openSeed(page);
+    const field = page.getByRole("textbox", {
+      name: "Erkannten Text bearbeiten",
+    });
+    await editButton(page).click();
+    await field.fill("Ich zahle die Grundsteuer morgen");
+    await field.press("Enter");
+    await expect(field).toHaveCount(0);
+    await editButton(page).click();
+    await field.fill("Ich zahle die Grundsteuer heute");
+    await field.press("Enter");
+    await expect(
+      page.getByRole("log").getByText("Ich zahle die Grundsteuer heute"),
+    ).toBeVisible();
+    await expect
+      .poll(async () => (await calls(page, "conversation_update_entry")).length)
+      .toBe(2);
+    for (const c of await calls(page, "speech_learning_feedback")) {
+      expect(c.args.erkannt).toBe("Ich zahle die Grund Steuer morgen");
+    }
+  });
+
   test("Zeile bearbeiten ohne Lernen: der Beitrag wird gespeichert, es geht kein Feedback raus", async ({
     page,
   }) => {
@@ -1730,6 +1759,45 @@ test.describe("Sprachgespraech Stufe 3: Lernen aus Korrekturen", () => {
     ).toBeVisible();
   });
 
+  test("Einrichtung: doppelter Start öffnet nur ein Mikrofon, Schließen gibt es frei", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__mic = { opened: 0, stopped: 0 };
+      navigator.mediaDevices.getUserMedia = async () => {
+        w.__mic.opened += 1;
+        await new Promise((r) => setTimeout(r, 200));
+        const c = new AudioContext();
+        const o = c.createOscillator();
+        const d = c.createMediaStreamDestination();
+        o.connect(d);
+        o.start();
+        for (const t of d.stream.getTracks()) {
+          const stop = t.stop.bind(t);
+          t.stop = () => {
+            w.__mic.stopped += 1;
+            stop();
+          };
+        }
+        return d.stream;
+      };
+    });
+    await install(page, "light");
+    await openPage(page);
+    const panel = await openRecognition(page);
+    await panel.getByRole("button", { name: "Erkennung einrichten" }).click();
+    const dialog = page.getByRole("dialog", { name: "Erkennung einrichten" });
+    const start = dialog.getByRole("button", { name: "Aufnahme starten" });
+    await expect(start).toBeVisible();
+    await start.dblclick();
+    await expect(dialog.getByText(/Aufnahme läuft/)).toBeVisible();
+    const mic = () => page.evaluate(() => (window as any).__mic);
+    expect((await mic()).opened).toBe(1);
+    await dialog.getByRole("button", { name: "Abbrechen" }).click();
+    await expect.poll(async () => (await mic()).stopped).toBeGreaterThan(0);
+  });
+
   test("Einrichtung: Abbrechen während der Aufnahme wertet nichts aus", async ({
     page,
   }) => {
@@ -1902,8 +1970,8 @@ test.describe("Screenshots @screenshots", () => {
   test("Stufe 3: Reiter Erkennung, Einrichtungsdialog, Zeilenbearbeitung", async ({
     browser,
   }) => {
-    const dir =
-      process.env.LV_SHOTS_DIR ?? "/mnt/project-files/sprachgespraech/stufe3/";
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    const dir = `${SHOTS}/stufe3/`;
     mkdirSync(dir, { recursive: true });
     for (const [name, size] of [
       ["1440", { width: 1440, height: 900 }],

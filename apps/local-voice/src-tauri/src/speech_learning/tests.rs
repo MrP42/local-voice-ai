@@ -387,7 +387,7 @@ fn first_time_is_only_observed() {
     assert_eq!(out.reason, "ok");
     assert_eq!((out.learned, out.suggestions, out.adopted), (1, 0, 0));
     assert!(delta.is_empty());
-    let list = s.list("standard").unwrap();
+    let list = s.list("standard", &[]).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].gehoert, "Grund Steuer");
     assert_eq!(list[0].korrigiert, "Grundsteuer");
@@ -405,12 +405,12 @@ fn the_second_time_it_becomes_a_suggestion() {
         delta.is_empty(),
         "ohne automatisch übernehmen bleibt der Wortschatz unberührt"
     );
-    let list = s.list("standard").unwrap();
+    let list = s.list("standard", &[]).unwrap();
     assert_eq!(list[0].anzahl, 2);
     assert_eq!(list[0].status, STATUS_SUGGESTED);
     let (out, _) = feed(&s, false, &no_words());
     assert_eq!(out.suggestions, 0, "schon Vorschlag, nicht neu");
-    assert_eq!(s.list("standard").unwrap()[0].anzahl, 3);
+    assert_eq!(s.list("standard", &[]).unwrap()[0].anzahl, 3);
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn case_variants_are_the_same_pair() {
         &[],
     )
     .unwrap();
-    let list = s.list("standard").unwrap();
+    let list = s.list("standard", &[]).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].anzahl, 2);
 }
@@ -435,12 +435,12 @@ fn auto_apply_adopts_on_the_second_occurrence() {
     let s = store();
     let (_, d1) = feed(&s, true, &no_words());
     assert!(d1.is_empty(), "ein Vorkommen genügt nicht");
-    assert_eq!(s.list("standard").unwrap()[0].status, STATUS_OBSERVED);
+    assert_eq!(s.list("standard", &[]).unwrap()[0].status, STATUS_OBSERVED);
     let (out, d2) = feed(&s, true, &no_words());
     assert_eq!((out.suggestions, out.adopted), (1, 1));
     assert_eq!(d2.add, vec!["Grundsteuer".to_string()]);
     assert!(d2.remove.is_empty());
-    assert_eq!(s.list("standard").unwrap()[0].status, STATUS_ADOPTED);
+    assert_eq!(s.list("standard", &[]).unwrap()[0].status, STATUS_ADOPTED);
     let mut words = vec!["Amtsblatt".to_string()];
     assert!(d2.apply(&mut words));
     assert_eq!(words, vec!["Amtsblatt", "Grundsteuer"]);
@@ -457,10 +457,13 @@ fn adoption_into_custom_words_is_skipped_for_known_words_and_left_alone_on_delet
         delta.is_empty(),
         "der Begriff stand schon (Groß-/Kleinschreibung egal) im Wortschatz"
     );
-    let id = s.list("standard").unwrap()[0].id;
-    assert_eq!(s.list("standard").unwrap()[0].status, STATUS_ADOPTED);
+    let id = s.list("standard", &words).unwrap()[0].id;
+    assert_eq!(
+        s.list("standard", &words).unwrap()[0].status,
+        STATUS_ADOPTED
+    );
     assert!(
-        s.delete(id).unwrap().is_empty(),
+        s.delete(id, &words).unwrap().is_empty(),
         "ein selbst eingetragener Begriff bleibt beim Löschen"
     );
 }
@@ -470,14 +473,14 @@ fn a_rejected_pair_stays_rejected_and_never_adopts() {
     let s = store();
     feed(&s, false, &no_words());
     feed(&s, false, &no_words());
-    let id = s.list("standard").unwrap()[0].id;
+    let id = s.list("standard", &[]).unwrap()[0].id;
     let (row, delta) = s.set_status(id, STATUS_REJECTED, &no_words()).unwrap();
     assert_eq!(row.status, STATUS_REJECTED);
     assert!(delta.is_empty());
     let (out, delta) = feed(&s, true, &no_words());
     assert_eq!((out.suggestions, out.adopted), (0, 0));
     assert!(delta.is_empty());
-    let row = &s.list("standard").unwrap()[0];
+    let row = &s.list("standard", &[]).unwrap()[0];
     assert_eq!(row.status, STATUS_REJECTED);
     assert_eq!(row.anzahl, 3);
 }
@@ -487,7 +490,7 @@ fn set_status_adopts_and_takes_back() {
     let s = store();
     feed(&s, false, &no_words());
     feed(&s, false, &no_words());
-    let id = s.list("standard").unwrap()[0].id;
+    let id = s.list("standard", &[]).unwrap()[0].id;
     let (row, delta) = s.set_status(id, STATUS_ADOPTED, &no_words()).unwrap();
     assert_eq!(row.status, STATUS_ADOPTED);
     assert_eq!(delta.add, vec!["Grundsteuer".to_string()]);
@@ -509,7 +512,7 @@ fn set_status_adopts_and_takes_back() {
 fn set_status_validates_its_input() {
     let s = store();
     feed(&s, false, &no_words());
-    let id = s.list("standard").unwrap()[0].id;
+    let id = s.list("standard", &[]).unwrap()[0].id;
     assert!(s.set_status(id, "beobachtet", &[]).is_err());
     assert!(s.set_status(id, "egal", &[]).is_err());
     assert!(s.set_status(id + 99, STATUS_ADOPTED, &[]).is_err());
@@ -530,7 +533,7 @@ fn a_term_that_does_not_fit_the_word_list_cannot_be_adopted() {
         )
         .unwrap();
     }
-    let row = &s.list("standard").unwrap()[0];
+    let row = &s.list("standard", &[]).unwrap()[0];
     assert_eq!(
         row.status, STATUS_SUGGESTED,
         "auto_apply übernimmt ihn nicht"
@@ -540,7 +543,7 @@ fn a_term_that_does_not_fit_the_word_list_cannot_be_adopted() {
         .unwrap_err()
         .to_string();
     assert!(!err.contains("aaaa"));
-    assert_eq!(s.list("standard").unwrap()[0].status, STATUS_SUGGESTED);
+    assert_eq!(s.list("standard", &[]).unwrap()[0].status, STATUS_SUGGESTED);
 }
 
 #[test]
@@ -567,7 +570,7 @@ fn two_pairs_with_one_term_keep_it_until_the_last_is_gone() {
         )
         .unwrap();
     }
-    let list = s.list("standard").unwrap();
+    let list = s.list("standard", &[]).unwrap();
     assert_eq!(list.len(), 2, "{list:?}");
     let mut words: Vec<String> = Vec::new();
     for p in &list {
@@ -575,9 +578,9 @@ fn two_pairs_with_one_term_keep_it_until_the_last_is_gone() {
         d.apply(&mut words);
     }
     assert_eq!(words, vec!["Grundsteuer"]);
-    let d1 = s.delete(list[0].id).unwrap();
+    let d1 = s.delete(list[0].id, &words).unwrap();
     assert!(d1.is_empty(), "das andere Paar hält den Begriff noch");
-    let d2 = s.delete(list[1].id).unwrap();
+    let d2 = s.delete(list[1].id, &words).unwrap();
     assert_eq!(d2.remove, vec!["Grundsteuer".to_string()]);
 }
 
@@ -585,13 +588,13 @@ fn two_pairs_with_one_term_keep_it_until_the_last_is_gone() {
 fn delete_is_real_deletion() {
     let s = store();
     feed(&s, false, &no_words());
-    let id = s.list("standard").unwrap()[0].id;
-    s.delete(id).unwrap();
-    assert!(s.list("standard").unwrap().is_empty());
-    assert!(s.delete(id).is_err(), "gibt es nicht mehr");
+    let id = s.list("standard", &[]).unwrap()[0].id;
+    s.delete(id, &[]).unwrap();
+    assert!(s.list("standard", &[]).unwrap().is_empty());
+    assert!(s.delete(id, &[]).is_err(), "gibt es nicht mehr");
     // Erneutes Lernen beginnt bei 1.
     feed(&s, false, &no_words());
-    assert_eq!(s.list("standard").unwrap()[0].anzahl, 1);
+    assert_eq!(s.list("standard", &[]).unwrap()[0].anzahl, 1);
 }
 
 #[test]
@@ -600,21 +603,25 @@ fn clear_removes_everything_in_one_bereich_and_what_it_added() {
     for _ in 0..2 {
         feed(&s, true, &no_words());
     }
-    s.feedback("kasse", HEARD, FIXED, false, &[]).unwrap();
+    let words = vec!["Grundsteuer".to_string(), "Eigenwort".to_string()];
+    s.feedback("kasse", HEARD, FIXED, false, &words).unwrap();
     s.feedback(
         "standard",
         "Es gibt Wiederspruch hier",
         "Es gibt Widerspruch hier",
         false,
-        &[],
+        &words,
     )
     .unwrap();
-    let words = vec!["Grundsteuer".to_string(), "Eigenwort".to_string()];
-    let (count, delta) = s.clear("standard").unwrap();
+    let (count, delta) = s.clear("standard", &words).unwrap();
     assert_eq!(count, 2);
     assert_eq!(delta.remove, vec!["Grundsteuer".to_string()]);
-    assert!(s.list("standard").unwrap().is_empty());
-    assert_eq!(s.list("kasse").unwrap().len(), 1, "andere Bereiche bleiben");
+    assert!(s.list("standard", &[]).unwrap().is_empty());
+    assert_eq!(
+        s.list("kasse", &[]).unwrap().len(),
+        1,
+        "andere Bereiche bleiben"
+    );
     let mut w = words;
     delta.apply(&mut w);
     assert_eq!(w, vec!["Eigenwort"]);
@@ -626,9 +633,9 @@ fn bereiche_are_kept_apart() {
     s.feedback("standard", HEARD, FIXED, false, &[]).unwrap();
     s.feedback("standard", HEARD, FIXED, false, &[]).unwrap();
     s.feedback("bauamt", HEARD, FIXED, false, &[]).unwrap();
-    assert_eq!(s.list("standard").unwrap()[0].anzahl, 2);
-    assert_eq!(s.list("bauamt").unwrap()[0].anzahl, 1);
-    assert!(s.list("leer").unwrap().is_empty());
+    assert_eq!(s.list("standard", &[]).unwrap()[0].anzahl, 2);
+    assert_eq!(s.list("bauamt", &[]).unwrap()[0].anzahl, 1);
+    assert!(s.list("leer", &[]).unwrap().is_empty());
 }
 
 #[test]
@@ -636,8 +643,8 @@ fn feedback_validates_bereich_and_length() {
     let s = store();
     assert!(s.feedback("Standard", HEARD, FIXED, false, &[]).is_err());
     assert!(s.feedback("", HEARD, FIXED, false, &[]).is_err());
-    assert!(s.list("a b").is_err());
-    assert!(s.clear("ä").is_err());
+    assert!(s.list("a b", &[]).is_err());
+    assert!(s.clear("ä", &[]).is_err());
     let long = "wort ".repeat(500);
     assert!(long.chars().count() > MAX_TEXT_CHARS);
     let err = s
@@ -651,7 +658,7 @@ fn feedback_validates_bereich_and_length() {
     assert!(s
         .feedback("standard", &at_limit, &at_limit, false, &[])
         .is_ok());
-    assert!(s.list("standard").unwrap().is_empty());
+    assert!(s.list("standard", &[]).unwrap().is_empty());
 }
 
 #[test]
@@ -672,7 +679,7 @@ fn rewordings_and_nothing_store_nothing() {
         .feedback("standard", "hallo welt", "Hallo, Welt!", true, &[])
         .unwrap();
     assert_eq!((out.reason.as_str(), out.learned), ("nothing", 0));
-    assert!(s.list("standard").unwrap().is_empty());
+    assert!(s.list("standard", &[]).unwrap().is_empty());
 }
 
 fn name(mut n: u32) -> String {
@@ -703,9 +710,9 @@ fn an_area_holds_at_most_500_pairs_and_drops_the_oldest_suggestions() {
     for n in 0..MAX_PAIRS {
         assert_eq!(learn_n(&s, n).learned, 1);
     }
-    assert_eq!(s.list("standard").unwrap().len(), MAX_PAIRS as usize);
+    assert_eq!(s.list("standard", &[]).unwrap().len(), MAX_PAIRS as usize);
     assert_eq!(learn_n(&s, MAX_PAIRS).learned, 1);
-    let list = s.list("standard").unwrap();
+    let list = s.list("standard", &[]).unwrap();
     assert_eq!(list.len(), MAX_PAIRS as usize, "nie mehr als 500");
     assert!(list.iter().any(|p| p.korrigiert == name(MAX_PAIRS)));
     assert!(
@@ -715,8 +722,8 @@ fn an_area_holds_at_most_500_pairs_and_drops_the_oldest_suggestions() {
     // Ein anderer Bereich hat sein eigenes Fach.
     s.feedback("zweiter", "x abcdefq y", "x abcdef y", false, &[])
         .unwrap();
-    assert_eq!(s.list("zweiter").unwrap().len(), 1);
-    assert_eq!(s.list("standard").unwrap().len(), MAX_PAIRS as usize);
+    assert_eq!(s.list("zweiter", &[]).unwrap().len(), 1);
+    assert_eq!(s.list("standard", &[]).unwrap().len(), MAX_PAIRS as usize);
 }
 
 #[test]
@@ -726,12 +733,12 @@ fn a_full_area_of_kept_pairs_takes_no_more() {
     for n in 0..MAX_PAIRS {
         learn_n(&s, n);
     }
-    for p in s.list("standard").unwrap() {
+    for p in s.list("standard", &[]).unwrap() {
         let (_, d) = s.set_status(p.id, STATUS_ADOPTED, &words).unwrap();
         d.apply(&mut words);
     }
     assert_eq!(learn_n(&s, MAX_PAIRS + 7).learned, 0, "nichts darf weichen");
-    assert_eq!(s.list("standard").unwrap().len(), MAX_PAIRS as usize);
+    assert_eq!(s.list("standard", &[]).unwrap().len(), MAX_PAIRS as usize);
     assert_eq!(words.len(), MAX_PAIRS as usize);
 }
 
@@ -753,7 +760,7 @@ fn the_data_survives_reopening_the_file() {
     }
     {
         let s = SpeechLearningStore::open(&path).unwrap();
-        let list = s.list("standard").unwrap();
+        let list = s.list("standard", &[]).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].gehoert, "Grund Steuer");
     }
@@ -804,15 +811,21 @@ fn setup_text_takes_at_most_twelve_words_and_stays_short() {
     assert!(t.text.chars().count() <= MAX_TEXT_CHARS);
 }
 
+fn aw() -> Vec<String> {
+    vec!["Amtsblatt".to_string()]
+}
+
 fn reference() -> String {
-    setup_text(&["Amtsblatt".to_string()]).text
+    setup_text(&aw()).text
 }
 
 #[test]
 fn reading_that_is_recognised_perfectly_yields_nothing() {
     let s = store();
     let r = reference();
-    let out = s.setup_evaluate("standard", &r, &r.to_lowercase()).unwrap();
+    let out = s
+        .setup_evaluate("standard", &r, &r.to_lowercase(), &aw())
+        .unwrap();
     assert_eq!(out.reason, "nothing");
     assert_eq!(out.matched_percent, 100);
     assert!(out.pairs.is_empty());
@@ -827,7 +840,7 @@ fn misrecognised_words_become_suggestions_at_once() {
         .replace("Widerspruchsbelehrung", "Wiederspruchsbelehrung")
         .replace("Gemeinderats", "Gemeinde Rats")
         .replace("Amtsblatt", "Amtsplatt");
-    let out = s.setup_evaluate("standard", &r, &heard).unwrap();
+    let out = s.setup_evaluate("standard", &r, &heard, &aw()).unwrap();
     assert_eq!(out.reason, "ok");
     assert!(out.matched_percent >= 80, "{}", out.matched_percent);
     let mut got: Vec<(String, String)> = out
@@ -852,7 +865,7 @@ fn misrecognised_words_become_suggestions_at_once() {
         .pairs
         .iter()
         .all(|p| p.status == STATUS_SUGGESTED && p.anzahl == MIN_COUNT));
-    assert_eq!(s.list("standard").unwrap().len(), 4);
+    assert_eq!(s.list("standard", &[]).unwrap().len(), 4);
 }
 
 #[test]
@@ -860,8 +873,8 @@ fn reading_twice_does_not_adopt_anything_by_itself() {
     let s = store();
     let r = reference();
     let heard = r.replace("Grundsteuer", "Grund Steuer");
-    s.setup_evaluate("standard", &r, &heard).unwrap();
-    let out = s.setup_evaluate("standard", &r, &heard).unwrap();
+    s.setup_evaluate("standard", &r, &heard, &aw()).unwrap();
+    let out = s.setup_evaluate("standard", &r, &heard, &aw()).unwrap();
     assert_eq!(out.pairs[0].anzahl, 3);
     assert_eq!(out.pairs[0].status, STATUS_SUGGESTED);
 }
@@ -874,23 +887,26 @@ fn reading_something_else_is_a_rewrite() {
             "standard",
             &reference(),
             "Das ist ganz etwas anderes als der Text",
+            &aw(),
         )
         .unwrap();
     assert_eq!(out.reason, "rewrite");
     assert!(out.pairs.is_empty());
-    let out = s.setup_evaluate("standard", &reference(), "").unwrap();
+    let out = s
+        .setup_evaluate("standard", &reference(), "", &aw())
+        .unwrap();
     assert_eq!(out.reason, "rewrite");
     assert_eq!(out.matched_percent, 0);
-    assert!(s.list("standard").unwrap().is_empty());
+    assert!(s.list("standard", &[]).unwrap().is_empty());
 }
 
 #[test]
 fn setup_evaluate_validates_its_input() {
     let s = store();
     let long = "a ".repeat(1500);
-    assert!(s.setup_evaluate("Standard", "a", "b").is_err());
-    assert!(s.setup_evaluate("standard", &long, "b").is_err());
-    assert!(s.setup_evaluate("standard", "a", &long).is_err());
+    assert!(s.setup_evaluate("Standard", "a", "b", &[]).is_err());
+    assert!(s.setup_evaluate("standard", &long, "b", &[]).is_err());
+    assert!(s.setup_evaluate("standard", "a", &long, &[]).is_err());
 }
 
 // ---------------------------------------------------------------------------
@@ -898,13 +914,22 @@ fn setup_evaluate_validates_its_input() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn words_delta_adds_and_removes_ignoring_case() {
+fn words_delta_adds_ignoring_case_and_removes_exactly() {
     let mut words = vec!["Eins".to_string(), "Zwei".to_string()];
     let delta = WordsDelta {
         add: vec!["zwei".to_string(), "Drei".to_string()],
-        remove: vec!["EINS".to_string()],
+        remove: vec!["Eins".to_string()],
     };
     assert!(delta.apply(&mut words));
+    assert_eq!(words, vec!["Zwei", "Drei"]);
+    let other_case = WordsDelta {
+        add: vec![],
+        remove: vec!["ZWEI".to_string()],
+    };
+    assert!(
+        !other_case.apply(&mut words),
+        "entfernt wird nur in genau dieser Schreibweise"
+    );
     assert_eq!(words, vec!["Zwei", "Drei"]);
     assert!(!WordsDelta::default().apply(&mut words));
 }
@@ -926,4 +951,291 @@ fn custom_word_filter() {
         Some(MAX_WORD_CHARS)
     );
     assert_eq!(custom_word(&"x".repeat(MAX_WORD_CHARS + 1)), None);
+}
+
+// ---------------------------------------------------------------------------
+// Echtes Löschen
+// ---------------------------------------------------------------------------
+
+fn temp_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "lva-sl-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Alle Rohbytes der Datenbank und ihres Journals.
+fn raw_bytes(dir: &std::path::Path) -> Vec<u8> {
+    let mut all = Vec::new();
+    for name in ["speech_learning.db", "speech_learning.db-wal"] {
+        if let Ok(b) = std::fs::read(dir.join(name)) {
+            all.extend(b);
+        }
+    }
+    all
+}
+
+fn contains(haystack: &[u8], needle: &str) -> bool {
+    let n = needle.as_bytes();
+    haystack.windows(n.len()).any(|w| w == n)
+}
+
+fn learn_twice(s: &SpeechLearningStore, heard: &str, fixed: &str) {
+    for _ in 0..2 {
+        s.feedback(
+            "standard",
+            &format!("Wir sehen {heard} heute"),
+            &format!("Wir sehen {fixed} heute"),
+            false,
+            &[],
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn clear_leaves_no_trace_in_the_files() {
+    let dir = temp_dir("clear");
+    let s = SpeechLearningStore::open(&dir.join("speech_learning.db")).unwrap();
+    learn_twice(&s, "Zebrastreifenwort", "Zebrastreifenwortt");
+    assert!(
+        contains(&raw_bytes(&dir), "Zebrastreifenwort"),
+        "Gegenprobe: vor dem Löschen steht das Wort in den Dateien"
+    );
+    s.clear("standard", &[]).unwrap();
+    assert!(!contains(&raw_bytes(&dir), "Zebrastreifenwort"));
+    drop(s);
+    assert!(!contains(&raw_bytes(&dir), "Zebrastreifenwort"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn delete_leaves_no_trace_in_the_files() {
+    let dir = temp_dir("delete");
+    let s = SpeechLearningStore::open(&dir.join("speech_learning.db")).unwrap();
+    learn_twice(&s, "Quallenfrachtwort", "Quallenfrachtwortt");
+    learn_twice(&s, "Stehengebliebenes", "Stehengebliebeness");
+    let id = s
+        .list("standard", &[])
+        .unwrap()
+        .into_iter()
+        .find(|p| p.gehoert == "Quallenfrachtwort")
+        .unwrap()
+        .id;
+    s.delete(id, &[]).unwrap();
+    let raw = raw_bytes(&dir);
+    assert!(!contains(&raw, "Quallenfrachtwort"));
+    assert!(contains(&raw, "Stehengebliebenes"), "das andere bleibt");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pair_dropped_by_the_limit_leaves_no_trace_either() {
+    let dir = temp_dir("limit");
+    let s = SpeechLearningStore::open(&dir.join("speech_learning.db")).unwrap();
+    s.feedback(
+        "standard",
+        "x Aelteswortzz y",
+        "x Aeltesworttt y",
+        false,
+        &[],
+    )
+    .unwrap();
+    for n in 0..MAX_PAIRS - 1 {
+        learn_n(&s, n);
+    }
+    assert!(contains(&raw_bytes(&dir), "Aelteswortzz"));
+    learn_n(&s, MAX_PAIRS + 1);
+    assert!(!s
+        .list("standard", &[])
+        .unwrap()
+        .iter()
+        .any(|p| p.gehoert == "Aelteswortzz"));
+    assert!(!contains(&raw_bytes(&dir), "Aelteswortzz"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// Rücknahme gegen den echten Wortschatz
+// ---------------------------------------------------------------------------
+
+fn adopted_store() -> (SpeechLearningStore, u32, Vec<String>) {
+    let s = store();
+    feed(&s, false, &no_words());
+    feed(&s, false, &no_words());
+    let id = s.list("standard", &[]).unwrap()[0].id;
+    let mut words = vec!["Eigenwort".to_string()];
+    let (_, d) = s.set_status(id, STATUS_ADOPTED, &words).unwrap();
+    d.apply(&mut words);
+    assert_eq!(words, vec!["Eigenwort", "Grundsteuer"]);
+    (s, id, words)
+}
+
+#[test]
+fn a_term_the_user_removed_is_forgotten_and_a_new_entry_is_never_taken_back() {
+    let (s, id, _) = adopted_store();
+    // Der Nutzer hat „Grundsteuer“ entfernt und später selbst neu eingetragen.
+    let words = vec!["Eigenwort".to_string(), "Grundsteuer".to_string()];
+    let without = vec!["Eigenwort".to_string()];
+    s.list("standard", &without).unwrap();
+    let d = s.set_status(id, STATUS_REJECTED, &words).unwrap().1;
+    assert!(d.is_empty(), "das neu eingetragene Wort bleibt: {d:?}");
+}
+
+#[test]
+fn listing_reconciles_before_any_takeback() {
+    let (s, id, _) = adopted_store();
+    s.list("standard", &["Eigenwort".to_string()]).unwrap();
+    let d = s
+        .delete(id, &["Eigenwort".to_string(), "Grundsteuer".to_string()])
+        .unwrap();
+    assert!(d.is_empty());
+}
+
+#[test]
+fn takeback_removes_only_the_exact_spelling() {
+    let (s, id, _) = adopted_store();
+    let changed_case = vec!["Eigenwort".to_string(), "grundsteuer".to_string()];
+    let d = s.set_status(id, STATUS_REJECTED, &changed_case).unwrap().1;
+    assert!(
+        d.is_empty(),
+        "„grundsteuer“ ist ein anderes Wort als „Grundsteuer“"
+    );
+    let (s, id, words) = adopted_store();
+    let d = s.set_status(id, STATUS_REJECTED, &words).unwrap().1;
+    assert_eq!(d.remove, vec!["Grundsteuer".to_string()]);
+    let mut w = words;
+    assert!(d.apply(&mut w));
+    assert_eq!(w, vec!["Eigenwort"]);
+}
+
+#[test]
+fn clear_does_not_touch_a_term_the_user_removed_and_re_entered() {
+    let (s, _, _) = adopted_store();
+    s.list("standard", &["Eigenwort".to_string()]).unwrap();
+    let (_, d) = s
+        .clear(
+            "standard",
+            &["Eigenwort".to_string(), "Grundsteuer".to_string()],
+        )
+        .unwrap();
+    assert!(d.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Vorlesen: Referenz und Menge
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_reference_that_is_not_the_server_text_is_refused() {
+    let s = store();
+    let err = s
+        .setup_evaluate(
+            "standard",
+            "Ein ganz anderer Vorlesetext",
+            "irgendwas",
+            &aw(),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(!err.contains("anderer"));
+    let r = reference();
+    assert!(
+        s.setup_evaluate("standard", &r, &r, &[]).is_err(),
+        "andere Begriffe, anderer Text"
+    );
+    assert!(s.setup_evaluate("standard", &r, &r, &aw()).is_ok());
+}
+
+#[test]
+fn one_reading_creates_at_most_twelve_pairs() {
+    let s = store();
+    let words: Vec<String> = Vec::new();
+    let base = setup_text(&words).text;
+    let mut heard = base.clone();
+    for w in [
+        "Bürgermeister",
+        "Verwaltung",
+        "Bauantrag",
+        "Kindertagesstätte",
+        "Freitag",
+        "Haushaltsplan",
+        "Sanierung",
+        "Grundschule",
+        "Erneuerung",
+        "Straßenbeleuchtung",
+        "Ordnungsamt",
+        "Gebührenbescheid",
+        "Grundsteuer",
+        "Widerspruchsbelehrung",
+        "Gemeinderats",
+        "Tagesordnung",
+    ] {
+        let broken = format!("{}x", &w[..w.len() - 1]);
+        heard = heard.replace(w, &broken);
+    }
+    let out = s.setup_evaluate("standard", &base, &heard, &words).unwrap();
+    assert_eq!(out.pairs.len(), MAX_SETUP_PAIRS);
+}
+
+// ---------------------------------------------------------------------------
+// Normalisierung und Funktionswörter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn decomposed_umlauts_equal_composed_ones() {
+    assert_eq!(compose("Mu\u{0308}ll Ao\u{0308}"), "Müll Aö");
+    assert_eq!(compose("e\u{0308}"), "e\u{0308}", "nur deutsche Umlaute");
+    assert_eq!(
+        normalize_key("Mu\u{0308}llabfuhr"),
+        normalize_key("Müllabfuhr")
+    );
+    let a = learn(
+        "Die Mu\u{0308}labfuhr kommt heute",
+        "Die Müllabfuhr kommt heute",
+    );
+    assert_eq!(a.pairs, vec![pair("Mülabfuhr", "Müllabfuhr")]);
+    assert_eq!(
+        learn("Die Mu\u{0308}llabfuhr kommt", "Die Müllabfuhr kommt").verdict,
+        Verdict::Nothing
+    );
+}
+
+#[test]
+fn function_words_are_never_learned() {
+    for (a, b) in [
+        ("Das ist der Antrag hier", "Das ist die Antrag hier"),
+        ("Er geht in den Park heute", "Er geht im Park heute"),
+        ("Wir sehen ein Haus dort", "Wir sehen eine Haus dort"),
+        ("Das gilt für mich sehr", "Das gilt für mir sehr"),
+    ] {
+        let r = learn(a, b);
+        assert!(r.pairs.is_empty(), "{a} / {b}: {:?}", r.pairs);
+    }
+}
+
+#[test]
+fn function_words_at_the_edge_of_a_block_are_cut_off() {
+    let a = learn(
+        "Es geht um den Grund Steuer Fall",
+        "Es geht um die Grundsteuer Fall",
+    );
+    assert_eq!(a.pairs, vec![pair("Grund Steuer", "Grundsteuer")]);
+}
+
+#[test]
+fn a_term_with_a_function_word_cannot_be_adopted() {
+    assert_eq!(custom_word("Grundsteuer"), Some("Grundsteuer".to_string()));
+    assert_eq!(
+        custom_word("Max Mustermann"),
+        Some("Max Mustermann".to_string())
+    );
+    assert_eq!(custom_word("Haus und Hof"), None);
+    assert_eq!(custom_word("der"), None);
 }

@@ -4088,23 +4088,101 @@ async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
 }
 },
 /**
- * „Transkripte im Sprachgespräch lesen“ (Standard aus).
- */
-async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Ruft ein lesendes Werkzeug über das Tor der Agentenbrücke (Recht, Audit). `args` ist ein
  * JSON-Objekt als Text. Die Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern abgelehnt.
  */
 async voiceToolCall(name: string, args: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Meldet eine Korrektur: `erkannt` ist, was die Erkennung geliefert hat, `korrigiert`, was der
+ * Nutzer daraus gemacht hat. Ist Lernen aus (Standard), passiert nichts (`reason` = `off`).
+ */
+async speechLearningFeedback(bereich: string, erkannt: string, korrigiert: string) : Promise<Result<FeedbackOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_feedback", { bereich, erkannt, korrigiert }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Die gelernten Paare eines Bereichs, jüngste zuerst. Gleicht dabei ab, welche übernommenen
+ * Begriffe noch im Wortschatz stehen.
+ */
+async speechLearningList(bereich: string) : Promise<Result<LearnedPair[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_list", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt den Status eines Paares: `vorschlag`, `uebernommen` oder `abgelehnt`. Übernehmen trägt
+ * den Begriff in den eigenen Wortschatz ein, alles andere nimmt zurück, was von hier stammt.
+ */
+async speechLearningSetStatus(id: number, status: string) : Promise<Result<LearnedPair, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_set_status", { id, status }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht ein Paar wirklich.
+ */
+async speechLearningDelete(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Löscht alle Paare eines Bereichs wirklich; Rückgabe: wie viele es waren.
+ */
+async speechLearningClear(bereich: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_clear", { bereich }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Der Vorlesetext für die Einrichtung: fester Grundtext plus der eigene Wortschatz.
+ */
+async speechLearningSetupText() : Promise<SetupText> {
+    return await TAURI_INVOKE("speech_learning_setup_text");
+},
+/**
+ * Lädt das Spracherkennungsmodell, damit das Vorlesen gleich erkannt wird (die Aufnahme geht
+ * danach wie im Gespräch an `voice_call_transcribe`).
+ */
+async speechLearningSetupPrepare() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_prepare") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Vergleicht die Erkennung des Vorlesens mit dem Vorlesetext und legt die Verhörer als
+ * Vorschläge ab. Bleibt vom Schalter „Aus Korrekturen lernen“ unberührt: Der Nutzer hat die
+ * Einrichtung selbst gestartet. Übernommen wird nichts ohne seinen Klick.
+ */
+async speechLearningSetupEvaluate(bereich: string, reference: string, transcript: string) : Promise<Result<SetupOutcome, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_evaluate", { bereich, reference, transcript }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7470,6 +7548,22 @@ export type ExternalSource =
  */
 "ollama"
 /**
+ * Was `feedback` gemacht hat. `reason`: `ok`, `nothing`, `rewrite` oder `off`.
+ */
+export type FeedbackOutcome = { reason: string; 
+/**
+ * Paare, die gespeichert oder hochgezählt wurden.
+ */
+learned: number; 
+/**
+ * Paare, die dadurch neu zum Vorschlag wurden.
+ */
+suggestions: number; 
+/**
+ * Paare, die dadurch (automatisch) übernommen wurden.
+ */
+adopted: number }
+/**
  * Farben als `#RRGGBB`.
  */
 export type Farben = { 
@@ -7845,6 +7939,14 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+/**
+ * Ein gelerntes Paar, wie es die Oberfläche sieht.
+ */
+export type LearnedPair = { id: number; bereich: string; gehoert: string; korrigiert: string; anzahl: number; zuletzt: string; 
+/**
+ * `beobachtet`, `vorschlag`, `uebernommen` oder `abgelehnt`.
+ */
+status: string }
 /**
  * Ein Briefkopf.
  */
@@ -9120,6 +9222,19 @@ export type ScriptTemplate = { id: string; name: string; body: string; builtin: 
  * Eingebaute Vorlage, deren Text der Nutzer geändert hat.
  */
 modified: boolean }
+/**
+ * Ergebnis der Einrichtung durch Vorlesen. `reason`: `ok`, `nothing` oder `rewrite`
+ * (der Nutzer hat etwas ganz anderes gelesen oder die Aufnahme war unbrauchbar).
+ */
+export type SetupOutcome = { reason: string; 
+/**
+ * Anteil der Wörter, die richtig erkannt wurden (0 bis 100).
+ */
+matched_percent: number; pairs: LearnedPair[] }
+/**
+ * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
+ */
+export type SetupText = { sentences: string[]; text: string }
 export type SecretMap = Partial<{ [key in string]: string }>
 /**
  * Ein Fach fuer ein Geheimnis und sein Zustand (`present`, `missing`, `broken`).

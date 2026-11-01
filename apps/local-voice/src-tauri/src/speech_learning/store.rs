@@ -18,8 +18,10 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use super::diff::{
-    analyze, check_bereich, check_text, has_forbidden_chars, normalize_key, Mode, Pair, Verdict,
+    analyze, check_bereich, check_text, has_forbidden_chars, has_function_word, normalize_key,
+    Mode, Pair, Verdict,
 };
+use super::setup::setup_text;
 
 pub const STATUS_OBSERVED: &str = "beobachtet";
 pub const STATUS_SUGGESTED: &str = "vorschlag";
@@ -32,6 +34,8 @@ pub const MIN_COUNT: u32 = 2;
 pub const MAX_PAIRS: u32 = 500;
 /// Längste Eintragung im eigenen Wortschatz (wie `CustomWords.tsx`).
 pub const MAX_WORD_CHARS: usize = 50;
+/// Höchstens so viele Paare legt ein Vorlesen an.
+pub const MAX_SETUP_PAIRS: usize = 12;
 
 const TS_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
 
@@ -122,7 +126,8 @@ impl WordsDelta {
     /// Wendet die Änderung auf die Wortliste an; `true`, wenn sich etwas geändert hat.
     pub fn apply(&self, words: &mut Vec<String>) -> bool {
         let before = words.clone();
-        words.retain(|w| !self.remove.iter().any(|r| same_word(r, w)));
+        // Entfernt wird nur, was in genau dieser Schreibweise dasteht.
+        words.retain(|w| !self.remove.iter().any(|r| r == w));
         for w in &self.add {
             if !contains_word(words, w) {
                 words.push(w.clone());
@@ -135,7 +140,11 @@ impl WordsDelta {
 /// Die Form, in der ein Begriff in den eigenen Wortschatz geht; `None`, wenn er dort nicht passt.
 pub fn custom_word(korrigiert: &str) -> Option<String> {
     let w = korrigiert.trim();
-    if w.is_empty() || w.chars().count() > MAX_WORD_CHARS || has_forbidden_chars(w) {
+    if w.is_empty()
+        || w.chars().count() > MAX_WORD_CHARS
+        || has_forbidden_chars(w)
+        || has_function_word(w)
+    {
         return None;
     }
     Some(w.to_string())
@@ -173,6 +182,24 @@ fn require(tx: &Transaction<'_>, id: u32) -> Result<LearnedPair> {
     fetch(tx, id)?.ok_or_else(|| anyhow!("Den Eintrag gibt es nicht (mehr)."))
 }
 
+/// Zustand eines Laufs über mehrere Paare: der Wortschatz (um die Einträge dieses Laufs
+/// ergänzt), die daraus folgende Änderung und ob Paare wegen der Obergrenze gelöscht wurden.
+struct Run {
+    words: Vec<String>,
+    delta: WordsDelta,
+    dropped: bool,
+}
+
+impl Run {
+    fn new(words: &[String]) -> Self {
+        Self {
+            words: words.to_vec(),
+            delta: WordsDelta::default(),
+            dropped: false,
+        }
+    }
+}
+
 /// Was ein Paar nach dem Eintragen ist, und was sich dabei geändert hat.
 struct Touched {
     pair: LearnedPair,
@@ -196,6 +223,8 @@ impl SpeechLearningStore {
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
+        // Gelöschtes wird überschrieben, nicht nur ausgetragen („Löschen ist echtes Löschen“).
+        conn.pragma_update(None, "secure_delete", "ON")?;
         let migrations = Migrations::new(MIGRATIONS.to_vec());
         #[cfg(debug_assertions)]
         migrations
@@ -211,6 +240,33 @@ impl SpeechLearningStore {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Schreibt das Journal in die Datei und kürzt es, damit gelöschte Inhalte nirgends bleiben.
+    fn checkpoint(conn: &Connection) {
+        let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+    }
+
+    /// Gleicht `entered_word` mit dem Wortschatz ab: Steht ein Begriff nicht mehr (in genau dieser
+    /// Schreibweise) darin, hat ihn der Nutzer entfernt und er gehört uns nicht mehr. So entfernt
+    /// eine spätere Rücknahme nie ein vom Nutzer neu eingetragenes Wort.
+    fn reconcile(tx: &Transaction<'_>, words: &[String]) -> Result<()> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, entered_word FROM learned_pairs WHERE entered_word IS NOT NULL",
+            )?;
+            let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        for (id, word) in rows {
+            if !words.iter().any(|w| *w == word) {
+                tx.execute(
+                    "UPDATE learned_pairs SET entered_word = NULL WHERE id = ?1",
+                    params![id],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Nimmt ein Paar auf oder zählt es hoch. `floor` ist die Mindestzahl, auf die das Paar
     /// gesetzt wird (1 bei einer Korrektur, `MIN_COUNT` bei der Einrichtung per Vorlesen).
     /// `words` ist der Wortschatz, gegen den eine Übernahme geprüft wird; Einträge dieses
@@ -222,8 +278,7 @@ impl SpeechLearningStore {
         pair: &Pair,
         floor: u32,
         auto_apply: bool,
-        words: &mut Vec<String>,
-        delta: &mut WordsDelta,
+        run: &mut Run,
     ) -> Result<Option<Touched>> {
         let heard_key = normalize_key(&pair.heard);
         let corrected_key = normalize_key(&pair.corrected);
@@ -262,8 +317,9 @@ impl SpeechLearningStore {
                 (id, old_status == STATUS_SUGGESTED)
             }
             None => {
-                if !make_room(tx, bereich)? {
-                    return Ok(None);
+                match make_room(tx, bereich)? {
+                    None => return Ok(None),
+                    Some(dropped) => run.dropped |= dropped,
                 }
                 let next = floor.max(1);
                 let status = if next >= MIN_COUNT {
@@ -292,7 +348,10 @@ impl SpeechLearningStore {
         let mut row = require(tx, id)?;
         let became_suggestion = row.status == STATUS_SUGGESTED && !was_suggested;
         let mut became_adopted = false;
-        if auto_apply && row.status == STATUS_SUGGESTED && adopt(tx, &mut row, words, delta)? {
+        if auto_apply
+            && row.status == STATUS_SUGGESTED
+            && adopt(tx, &mut row, &mut run.words, &mut run.delta)?
+        {
             became_adopted = true;
         }
         Ok(Some(Touched {
@@ -326,12 +385,11 @@ impl SpeechLearningStore {
         }
         let mut conn = self.lock();
         let tx = conn.transaction()?;
-        let mut live = words.to_vec();
-        let mut delta = WordsDelta::default();
+        Self::reconcile(&tx, words)?;
+        let mut run = Run::new(words);
         let mut outcome = FeedbackOutcome::empty("ok");
         for pair in &analysis.pairs {
-            let Some(t) = Self::touch(&tx, bereich, pair, 1, auto_apply, &mut live, &mut delta)?
-            else {
+            let Some(t) = Self::touch(&tx, bereich, pair, 1, auto_apply, &mut run)? else {
                 continue;
             };
             outcome.learned += 1;
@@ -339,7 +397,10 @@ impl SpeechLearningStore {
             outcome.adopted += u32::from(t.became_adopted);
         }
         tx.commit()?;
-        Ok((outcome, delta))
+        if run.dropped {
+            Self::checkpoint(&conn);
+        }
+        Ok((outcome, run.delta))
     }
 
     /// Wertet das Vorlesen aus: `reference` ist der Vorlesetext, `transcript` die Erkennung.
@@ -349,10 +410,14 @@ impl SpeechLearningStore {
         bereich: &str,
         reference: &str,
         transcript: &str,
+        words: &[String],
     ) -> Result<SetupOutcome> {
         check_bereich(bereich).map_err(|e| anyhow!(e))?;
         check_text(reference).map_err(|e| anyhow!(e))?;
         check_text(transcript).map_err(|e| anyhow!(e))?;
+        if reference != setup_text(words).text {
+            bail!("Der Vorlesetext stimmt nicht (mehr). Bitte starte die Einrichtung neu.");
+        }
         let analysis = analyze(transcript, reference, Mode::Reading);
         let percent = if analysis.total == 0 {
             0
@@ -374,23 +439,27 @@ impl SpeechLearningStore {
         }
         let mut conn = self.lock();
         let tx = conn.transaction()?;
-        let mut live = Vec::new();
-        let mut delta = WordsDelta::default();
-        for pair in &analysis.pairs {
-            if let Some(t) =
-                Self::touch(&tx, bereich, pair, MIN_COUNT, false, &mut live, &mut delta)?
-            {
+        Self::reconcile(&tx, words)?;
+        let mut run = Run::new(&[]);
+        for pair in analysis.pairs.iter().take(MAX_SETUP_PAIRS) {
+            if let Some(t) = Self::touch(&tx, bereich, pair, MIN_COUNT, false, &mut run)? {
                 out.pairs.push(t.pair);
             }
         }
         tx.commit()?;
+        if run.dropped {
+            Self::checkpoint(&conn);
+        }
         Ok(out)
     }
 
     /// Alle Paare eines Bereichs, jüngste zuerst.
-    pub fn list(&self, bereich: &str) -> Result<Vec<LearnedPair>> {
+    pub fn list(&self, bereich: &str, words: &[String]) -> Result<Vec<LearnedPair>> {
         check_bereich(bereich).map_err(|e| anyhow!(e))?;
-        let conn = self.lock();
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        Self::reconcile(&tx, words)?;
+        tx.commit()?;
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS} FROM learned_pairs WHERE bereich = ?1 ORDER BY zuletzt DESC, id DESC"
         ))?;
@@ -410,6 +479,7 @@ impl SpeechLearningStore {
         }
         let mut conn = self.lock();
         let tx = conn.transaction()?;
+        Self::reconcile(&tx, words)?;
         let mut row = require(&tx, id)?;
         let mut live = words.to_vec();
         let mut delta = WordsDelta::default();
@@ -430,22 +500,25 @@ impl SpeechLearningStore {
     }
 
     /// Löscht ein Paar wirklich. Hat es einen Begriff in den Wortschatz gebracht, geht der wieder.
-    pub fn delete(&self, id: u32) -> Result<WordsDelta> {
+    pub fn delete(&self, id: u32, words: &[String]) -> Result<WordsDelta> {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
+        Self::reconcile(&tx, words)?;
         let row = require(&tx, id)?;
         let mut delta = WordsDelta::default();
         release(&tx, &row, &mut delta)?;
         tx.execute("DELETE FROM learned_pairs WHERE id = ?1", params![id])?;
         tx.commit()?;
+        Self::checkpoint(&conn);
         Ok(delta)
     }
 
     /// Löscht alle Paare eines Bereichs wirklich; Rückgabe: wie viele es waren.
-    pub fn clear(&self, bereich: &str) -> Result<(u32, WordsDelta)> {
+    pub fn clear(&self, bereich: &str, words: &[String]) -> Result<(u32, WordsDelta)> {
         check_bereich(bereich).map_err(|e| anyhow!(e))?;
         let mut conn = self.lock();
         let tx = conn.transaction()?;
+        Self::reconcile(&tx, words)?;
         let rows: Vec<LearnedPair> = {
             let mut stmt = tx.prepare(&format!(
                 "SELECT {COLUMNS} FROM learned_pairs WHERE bereich = ?1"
@@ -463,20 +536,24 @@ impl SpeechLearningStore {
             params![bereich],
         )?;
         tx.commit()?;
+        // VACUUM schreibt die Datei neu, der Checkpoint leert das Journal.
+        conn.execute_batch("VACUUM")?;
+        Self::checkpoint(&conn);
         Ok((rows.len() as u32, delta))
     }
 }
 
 /// Schafft Platz für ein neues Paar: bei vollem Bereich fällt das älteste Beobachtete oder
-/// Vorgeschlagene weg. `false`, wenn nichts mehr weichen darf (alles übernommen oder abgelehnt).
-fn make_room(tx: &Transaction<'_>, bereich: &str) -> Result<bool> {
+/// Vorgeschlagene weg (`Some(true)`). `None`, wenn nichts mehr weichen darf (alles übernommen
+/// oder abgelehnt).
+fn make_room(tx: &Transaction<'_>, bereich: &str) -> Result<Option<bool>> {
     let count: i64 = tx.query_row(
         "SELECT COUNT(*) FROM learned_pairs WHERE bereich = ?1",
         params![bereich],
         |r| r.get(0),
     )?;
     if count < i64::from(MAX_PAIRS) {
-        return Ok(true);
+        return Ok(Some(false));
     }
     let oldest: Option<i64> = tx
         .query_row(
@@ -489,9 +566,9 @@ fn make_room(tx: &Transaction<'_>, bereich: &str) -> Result<bool> {
     match oldest {
         Some(id) => {
             tx.execute("DELETE FROM learned_pairs WHERE id = ?1", params![id])?;
-            Ok(true)
+            Ok(Some(true))
         }
-        None => Ok(false),
+        None => Ok(None),
     }
 }
 

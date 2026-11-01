@@ -78,7 +78,8 @@ interface VoiceCallEvent {
 export interface CallCallbacks {
   onState(state: CallState): void;
   onLevel(level: number): void;
-  onUser(text: string): void;
+  /** `turnId`: Kennung der Äußerung, damit eine spätere Korrektur genau sie trifft. */
+  onUser(text: string, turnId: string): void;
   onAssistant(text: string, final: boolean, interrupted: boolean): void;
   onMetrics(m: TurnMetrics): void;
   onError(message: string): void;
@@ -90,6 +91,8 @@ export interface CallCallbacks {
 interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  /** Äußerung des Nutzers, zu der die Nachricht gehört (für `correctUserText`). */
+  turnId?: string;
 }
 
 interface Utterance {
@@ -213,19 +216,24 @@ export class VoiceCallEngine {
     this.history = [];
   }
 
-  /** Der Nutzer hat eine erkannte Äußerung verbessert: die KI kennt ab jetzt die richtige Fassung. */
-  correctUserText(from: string, to: string): void {
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      const m = this.history[i];
-      if (m.role !== "user" || m.content !== from) continue;
-      this.history[i] = { ...m, content: to };
-      return;
-    }
+  /**
+   * Der Nutzer hat eine erkannte Äußerung verbessert: die KI kennt ab jetzt die richtige Fassung.
+   * Gesucht wird nach der Kennung der Äußerung, nicht nach dem Text (gleiche Sätze kommen vor).
+   */
+  correctUserText(turnId: string, to: string): void {
+    const i = this.history.findIndex(
+      (m) => m.role === "user" && m.turnId === turnId,
+    );
+    if (i >= 0) this.history[i] = { ...this.history[i], content: to };
   }
 
   /** Gespeichertes Gespräch öffnen: die KI kennt ab jetzt genau diesen Verlauf. */
   setHistory(
-    messages: { role: "user" | "assistant"; content: string }[],
+    messages: {
+      role: "user" | "assistant";
+      content: string;
+      turnId?: string;
+    }[],
   ): void {
     this.resetHistory();
     this.history = messages.slice(-MAX_HISTORY);
@@ -541,16 +549,20 @@ export class VoiceCallEngine {
 
   /** Verlauf plus neue Äußerung, ohne Systemanweisung (die hält der Orchestrator). */
   private historyFor(text: string): ChatMessage[] {
-    return [
-      ...this.history.slice(-MAX_HISTORY),
-      { role: "user", content: text },
-    ];
+    return [...this.plainHistory(), { role: "user", content: text }];
+  }
+
+  /** Der Verlauf ohne die Kennungen: sie gehen nicht an das Modell. */
+  private plainHistory(): ChatMessage[] {
+    return this.history
+      .slice(-MAX_HISTORY)
+      .map(({ role, content }) => ({ role, content }));
   }
 
   private messagesFor(text: string): ChatMessage[] {
     return [
       { role: "system", content: this.cfg.systemPrompt },
-      ...this.history.slice(-MAX_HISTORY),
+      ...this.plainHistory(),
       { role: "user", content: text },
     ];
   }
@@ -573,7 +585,7 @@ export class VoiceCallEngine {
     try {
       await this.ensureListener();
       if (stale()) return;
-      this.cb.onUser(shown);
+      this.cb.onUser(shown, id);
       const onPiece = (piece: string) => {
         run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
@@ -610,7 +622,7 @@ export class VoiceCallEngine {
       }
       const answer = full.trim() || run.partial;
       if (answer) {
-        this.history.push({ role: "user", content: shown });
+        this.history.push({ role: "user", content: shown, turnId: id });
         this.history.push({ role: "assistant", content: answer });
         this.cb.onAssistant(answer, true, false);
       }
@@ -634,7 +646,7 @@ export class VoiceCallEngine {
   ): Promise<void> {
     const dead = () => turn.cancelled || this.turn !== turn;
     turn.userText = display ?? text;
-    this.cb.onUser(turn.userText);
+    this.cb.onUser(turn.userText, turn.id);
 
     const tChat = performance.now();
     let firstSentenceAt = 0;
@@ -723,7 +735,11 @@ export class VoiceCallEngine {
       this.dropTurn(turn);
       return;
     }
-    this.history.push({ role: "user", content: turn.userText });
+    this.history.push({
+      role: "user",
+      content: turn.userText,
+      turnId: turn.id,
+    });
     this.history.push({ role: "assistant", content: assistantText });
     turn.historyPushed = true;
     this.cb.onAssistant(assistantText, true, false);
@@ -760,7 +776,11 @@ export class VoiceCallEngine {
       // Nur das tatsächlich Gesprochene gehört in den Verlauf.
       if (turn.historyPushed) this.history.splice(-2, 2);
       const said = turn.spoken.join(" ");
-      this.history.push({ role: "user", content: turn.userText });
+      this.history.push({
+        role: "user",
+        content: turn.userText,
+        turnId: turn.id,
+      });
       this.history.push({ role: "assistant", content: `${said} …` });
       this.cb.onAssistant(said, true, true);
     }
