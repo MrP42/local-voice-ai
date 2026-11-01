@@ -106,11 +106,16 @@ pub async fn voice_call_start(app: AppHandle) -> Result<VoiceCallReady, String> 
         crate::settings::get_settings(&app).for_function(crate::settings::FN_VOICE_SPEAKER);
     let mut warnings = Vec::new();
 
+    let mut speaker_warm = None;
     let (llm, llm_local) = match crate::managers::meetings::llm_call::resolve_provider(&settings) {
-        Ok((provider, model, _)) => (
-            format!("{} · {}", provider.label, model),
-            crate::managers::llm::is_local(&provider),
-        ),
+        Ok((provider, model, _)) => {
+            let target = warm_target(&provider, &model);
+            let local = target.is_some() || crate::managers::llm::is_local(&provider);
+            // Lokaler Sprecher: parallel zu STT und Stimme laden, damit der erste
+            // Satz nicht auf den Modellstart wartet (Codex E2).
+            speaker_warm = target.map(|t| tokio::spawn(warm_speaker(t)));
+            (format!("{} · {}", provider.label, model), local)
+        }
         Err(e) => {
             warnings.push(e);
             (String::new(), false)
@@ -142,12 +147,83 @@ pub async fn voice_call_start(app: AppHandle) -> Result<VoiceCallReady, String> 
         .await
         .map_err(|e| format!("Die Stimme ist nicht bereit: {e}"))?;
 
+    if let Some(task) = speaker_warm {
+        // Höchstens LLM_WARM_TIMEOUT warten; ein langsamer Start ist ein Hinweis,
+        // kein Fehler, und es gibt keinen Ausweich auf ein Cloud-Modell.
+        match tokio::time::timeout(LLM_WARM_TIMEOUT, task).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => warnings.push(format!(
+                "Das lokale Sprachmodell ist noch nicht bereit: {e}. Die erste Antwort kann dauern."
+            )),
+            Ok(Err(_)) | Err(_) => warnings.push(
+                "Das lokale Sprachmodell lädt noch. Die erste Antwort kann einige Sekunden dauern."
+                    .into(),
+            ),
+        }
+    }
+
     Ok(VoiceCallReady {
         llm,
         llm_local,
         warnings,
         warmup_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
     })
+}
+
+/// Höchstdauer, die der Gesprächsstart auf das Vorwärmen des lokalen Sprechers
+/// wartet. Länger lädt das Modell im Hintergrund weiter.
+const LLM_WARM_TIMEOUT: Duration = Duration::from_secs(45);
+/// So lange hält Ollama den Sprecher nach dem Vorwärmen im Speicher. Jede
+/// Antwort über den kompatiblen Pfad setzt die Frist auf Ollamas Standard
+/// (5 min) zurück; danach gibt Ollama ihn selbst frei.
+const OLLAMA_KEEP_ALIVE: &str = "15m";
+
+/// Was beim Gesprächsstart vorzuwärmen ist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WarmTarget {
+    /// Der eingebaute lokale Server (llama.cpp) mit diesem Modell.
+    BuiltIn(String),
+    /// Ein Ollama-Dienst auf diesem Rechner: `/api/generate` ohne Prompt lädt das Modell.
+    Ollama { url: String, model: String },
+}
+
+/// Rein: Ziel des Vorwärmens; `None` für Cloud-, Abo- und fremde Dienste.
+fn warm_target(provider: &crate::settings::PostProcessProvider, model: &str) -> Option<WarmTarget> {
+    if crate::managers::llm::is_local(provider) {
+        return Some(WarmTarget::BuiltIn(model.to_string()));
+    }
+    let base = provider.base_url.trim_end_matches('/');
+    let is_ollama = provider.id == "ollama" || base.contains(":11434");
+    if !is_ollama {
+        return None;
+    }
+    let chat = llm_client::ollama_native_url(base)?;
+    Some(WarmTarget::Ollama {
+        url: chat.replace("/api/chat", "/api/generate"),
+        model: model.to_string(),
+    })
+}
+
+/// Lädt den Sprecher. Der eingebaute Server startet über `ensure_local` (mit
+/// Speicherschutz); Ollama lädt das Modell bei einem leeren Aufruf.
+async fn warm_speaker(target: WarmTarget) -> Result<(), String> {
+    match target {
+        WarmTarget::BuiltIn(model) => crate::managers::llm::ensure_local(&model).await.map(|_| ()),
+        WarmTarget::Ollama { url, model } => {
+            let body = serde_json::json!({ "model": model, "keep_alive": OLLAMA_KEEP_ALIVE });
+            let resp = reqwest::Client::new()
+                .post(&url)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Ollama nicht erreichbar ({e})"))?;
+            if resp.status().is_success() {
+                Ok(())
+            } else {
+                Err(format!("Ollama antwortet {}", resp.status()))
+            }
+        }
+    }
 }
 
 /// Erkennt ein Stück Sprache. `pcm16_b64` = 16 kHz, mono, 16 Bit little endian.
@@ -320,6 +396,53 @@ pub async fn voice_call_synthesize(app: AppHandle, text: String) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn provider(id: &str, base: &str) -> crate::settings::PostProcessProvider {
+        crate::settings::PostProcessProvider {
+            id: id.into(),
+            label: id.into(),
+            base_url: base.into(),
+            allow_base_url_edit: false,
+            models_endpoint: None,
+            supports_structured_output: false,
+        }
+    }
+
+    #[test]
+    fn warms_only_local_speakers() {
+        assert_eq!(
+            warm_target(&provider("local", "http://127.0.0.1:0/v1"), "qwen3-4b"),
+            Some(WarmTarget::BuiltIn("qwen3-4b".into()))
+        );
+        assert_eq!(
+            warm_target(
+                &provider("ollama", "http://127.0.0.1:11434/v1"),
+                "gemma3:4b"
+            ),
+            Some(WarmTarget::Ollama {
+                url: "http://127.0.0.1:11434/api/generate".into(),
+                model: "gemma3:4b".into()
+            })
+        );
+        // Cloud, Abo-CLI und andere lokale Dienste (LM Studio, vLLM): nichts vorwärmen.
+        assert_eq!(
+            warm_target(&provider("openai", "https://api.openai.com/v1"), "gpt"),
+            None
+        );
+        assert_eq!(
+            warm_target(&provider("claude_cli", "cli://claude"), "haiku@low"),
+            None
+        );
+        assert_eq!(
+            warm_target(&provider("lmstudio", "http://localhost:1234/v1"), "m"),
+            None
+        );
+        // Ollama auf einem anderen Rechner: kein Vorwärmen über das Netz.
+        assert_eq!(
+            warm_target(&provider("ollama", "http://192.168.1.5:11434/v1"), "m"),
+            None
+        );
+    }
 
     #[test]
     fn decodes_pcm16() {
