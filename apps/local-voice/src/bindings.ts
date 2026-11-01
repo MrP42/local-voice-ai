@@ -3969,39 +3969,6 @@ async changeMeetingMcpIncludeTranscriptSetting(enabled: boolean) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * „Transkripte im Sprachgespräch lesen“ (Standard aus).
- */
-async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * „Aus Korrekturen lernen“ (Standard aus).
- */
-async changeSpeechLearningEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * „Vorschläge automatisch übernehmen“ (Standard aus; wirkt nur bei eingeschaltetem Lernen).
- */
-async changeSpeechLearningAutoApplySetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_auto_apply_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async meetingMcpInfo() : Promise<Result<McpInfo, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_mcp_info") };
@@ -4088,96 +4055,23 @@ async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
 }
 },
 /**
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus).
+ */
+async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Ruft ein lesendes Werkzeug über das Tor der Agentenbrücke (Recht, Audit). `args` ist ein
  * JSON-Objekt als Text. Die Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern abgelehnt.
  */
 async voiceToolCall(name: string, args: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Schaltet den Dienst ein oder aus. Aus: Der Endpunkt verschwindet, laufende Verbindungen enden.
- */
-async sprachdienstAktivSetzen(aktiv: boolean) : Promise<Result<SprachdienstStatus, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_aktiv_setzen", { aktiv }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async sprachdienstZugaenge() : Promise<Result<SprachZugang[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_zugaenge") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Setzt `hoeren` oder `sprechen` für eine gekoppelte App. Ein Entzug wirkt sofort auch in
- * laufenden Verbindungen.
- */
-async sprachdienstRechtSetzen(zugang: string, recht: string, an: boolean) : Promise<Result<SprachZugang, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_recht_setzen", { zugang, recht, an }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Widerruft eine App: Rechte weg, laufende Verbindungen enden sofort, die Zeile bleibt als Spur.
- */
-async sprachdienstWiderrufen(zugang: string) : Promise<Result<SprachZugang, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_widerrufen", { zugang }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Entfernt eine App ganz aus der Liste.
- */
-async sprachdienstEntfernen(zugang: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_entfernen", { zugang }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Offene Kopplungsanfragen (mit Code), neueste zuletzt.
- */
-async sprachdienstKopplungen() : Promise<Result<SprachKopplung[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplungen") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Bestätigt oder lehnt eine Kopplungsanfrage ab. `false` in der Antwort: die Anfrage gab es
- * nicht mehr (Frist abgelaufen oder die App hat aufgelegt).
- */
-async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplung_entscheiden", { id, bestaetigen }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4267,6 +4161,112 @@ async speechLearningSetupPrepare() : Promise<Result<null, string>> {
 async speechLearningSetupEvaluate(bereich: string, reference: string, transcript: string) : Promise<Result<SetupOutcome, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("speech_learning_setup_evaluate", { bereich, reference, transcript }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Aus Korrekturen lernen“ (Standard aus).
+ */
+async changeSpeechLearningEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Vorschläge automatisch übernehmen“ (Standard aus; wirkt nur bei eingeschaltetem Lernen).
+ */
+async changeSpeechLearningAutoApplySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_speech_learning_auto_apply_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet den Dienst ein oder aus. Aus: Der Endpunkt verschwindet, laufende Verbindungen enden.
+ */
+async sprachdienstAktivSetzen(aktiv: boolean) : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_aktiv_setzen", { aktiv }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstZugaenge() : Promise<Result<SprachZugang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_zugaenge") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt `hoeren` oder `sprechen` für eine gekoppelte App. Ein Entzug wirkt sofort auch in
+ * laufenden Verbindungen.
+ */
+async sprachdienstRechtSetzen(zugang: string, recht: string, an: boolean) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_recht_setzen", { zugang, recht, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft eine App: Rechte weg, laufende Verbindungen enden sofort, die Zeile bleibt als Spur.
+ */
+async sprachdienstWiderrufen(zugang: string) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_widerrufen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine App ganz aus der Liste.
+ */
+async sprachdienstEntfernen(zugang: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_entfernen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Kopplungsanfragen (mit Code), neueste zuletzt.
+ */
+async sprachdienstKopplungen() : Promise<Result<SprachKopplung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestätigt oder lehnt eine Kopplungsanfrage ab. `false` in der Antwort: die Anfrage gab es
+ * nicht mehr (Frist abgelaufen oder die App hat aufgelegt).
+ */
+async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplung_entscheiden", { id, bestaetigen }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6743,11 +6743,13 @@ meeting_mcp_include_transcript?: boolean;
  */
 voice_call_read_transcripts?: boolean; 
 /**
- * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (Standard aus).
+ * Stufe 3 des Sprachgesprächs: aus Korrekturen lernen (ADR-0021). Standard AUS; ohne diesen
+ * Schalter wird kein Paar gespeichert.
  */
 speech_learning_enabled?: boolean; 
 /**
- * Gelernte Paare mit genug Vorkommen gleich in den eigenen Wortschatz übernehmen (Standard aus, nur mit Lernen).
+ * Gelernte Paare mit genug Vorkommen gleich in `custom_words` übernehmen statt vorzuschlagen.
+ * Standard AUS; wirkt nur bei `speech_learning_enabled`.
  */
 speech_learning_auto_apply?: boolean; 
 /**
@@ -7632,22 +7634,6 @@ export type ExternalSource =
  */
 "ollama"
 /**
- * Was `feedback` gemacht hat. `reason`: `ok`, `nothing`, `rewrite` oder `off`.
- */
-export type FeedbackOutcome = { reason: string; 
-/**
- * Paare, die gespeichert oder hochgezählt wurden.
- */
-learned: number; 
-/**
- * Paare, die dadurch neu zum Vorschlag wurden.
- */
-suggestions: number; 
-/**
- * Paare, die dadurch (automatisch) übernommen wurden.
- */
-adopted: number }
-/**
  * Farben als `#RRGGBB`.
  */
 export type Farben = { 
@@ -7675,6 +7661,22 @@ gedaempft: string;
  * Linien und Tabellenraster.
  */
 linie: string }
+/**
+ * Was `feedback` gemacht hat. `reason`: `ok`, `nothing`, `rewrite` oder `off`.
+ */
+export type FeedbackOutcome = { reason: string; 
+/**
+ * Paare, die gespeichert oder hochgezählt wurden.
+ */
+learned: number; 
+/**
+ * Paare, die dadurch neu zum Vorschlag wurden.
+ */
+suggestions: number; 
+/**
+ * Paare, die dadurch (automatisch) übernommen wurden.
+ */
+adopted: number }
 /**
  * Wo in OneDrive geschrieben wird.
  */
@@ -9306,19 +9308,6 @@ export type ScriptTemplate = { id: string; name: string; body: string; builtin: 
  * Eingebaute Vorlage, deren Text der Nutzer geändert hat.
  */
 modified: boolean }
-/**
- * Ergebnis der Einrichtung durch Vorlesen. `reason`: `ok`, `nothing` oder `rewrite`
- * (der Nutzer hat etwas ganz anderes gelesen oder die Aufnahme war unbrauchbar).
- */
-export type SetupOutcome = { reason: string; 
-/**
- * Anteil der Wörter, die richtig erkannt wurden (0 bis 100).
- */
-matched_percent: number; pairs: LearnedPair[] }
-/**
- * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
- */
-export type SetupText = { sentences: string[]; text: string }
 export type SecretMap = Partial<{ [key in string]: string }>
 /**
  * Ein Fach fuer ein Geheimnis und sein Zustand (`present`, `missing`, `broken`).
@@ -9351,6 +9340,19 @@ export type ServiceId = "slack" | "teams" | "discord" | "notion" | "confluence" 
  * Ein Dienst, wie die Oberflaeche ihn fuer den Dialog „Integration hinzufuegen“ braucht.
  */
 export type ServiceInfo = { id: ServiceId; label: string; auth: AuthKind; capabilities: string[]; fields: ServiceField[]; token_help_url: string }
+/**
+ * Ergebnis der Einrichtung durch Vorlesen. `reason`: `ok`, `nothing` oder `rewrite`
+ * (der Nutzer hat etwas ganz anderes gelesen oder die Aufnahme war unbrauchbar).
+ */
+export type SetupOutcome = { reason: string; 
+/**
+ * Anteil der Wörter, die richtig erkannt wurden (0 bis 100).
+ */
+matched_percent: number; pairs: LearnedPair[] }
+/**
+ * Der Vorlesetext, einmal als Sätze (zum Anzeigen) und einmal am Stück (zum Vergleichen).
+ */
+export type SetupText = { sentences: string[]; text: string }
 /**
  * Ein Pruefpunkt der Schild-Erklaerung. `id` wird in der Oberflaeche
  * uebersetzt, `detail` traegt Namen und Zahlen.
