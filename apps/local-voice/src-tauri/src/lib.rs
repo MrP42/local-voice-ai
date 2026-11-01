@@ -15,6 +15,7 @@ mod commands;
 mod sync;
 #[cfg(windows)]
 mod context_menu;
+mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod helpers;
 mod input;
