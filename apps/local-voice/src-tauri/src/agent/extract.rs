@@ -121,7 +121,10 @@ impl Kinds {
             }
         }
         if !(kinds.todos || kinds.deadlines || kinds.decisions) {
-            return Err("Mindestens eine Liste (todos, deadlines, decisions) muss gewählt sein.".to_string());
+            return Err(
+                "Mindestens eine Liste (todos, deadlines, decisions) muss gewählt sein."
+                    .to_string(),
+            );
         }
         Ok(kinds)
     }
@@ -339,9 +342,7 @@ impl NoActionReason {
         matches!(
             self,
             NoActionReason::Failed(
-                AgentError::Unavailable(_)
-                    | AgentError::Busy { .. }
-                    | AgentError::Timeout { .. }
+                AgentError::Unavailable(_) | AgentError::Busy { .. } | AgentError::Timeout { .. }
             )
         )
     }
@@ -387,8 +388,16 @@ impl Extraction {
             .todos
             .iter()
             .flat_map(|t| t.evidence.segments.iter())
-            .chain(self.deadlines.iter().flat_map(|d| d.evidence.segments.iter()))
-            .chain(self.decisions.iter().flat_map(|d| d.evidence.segments.iter()));
+            .chain(
+                self.deadlines
+                    .iter()
+                    .flat_map(|d| d.evidence.segments.iter()),
+            )
+            .chain(
+                self.decisions
+                    .iter()
+                    .flat_map(|d| d.evidence.segments.iter()),
+            );
         all.filter(|id| seen.insert(**id)).copied().collect()
     }
 
@@ -397,9 +406,8 @@ impl Extraction {
         if let Outcome::NoAction(reason) = &self.outcome {
             return format!("Nichts extrahiert: {}", reason.describe());
         }
-        let plural = |n: usize, one: &str, many: &str| {
-            format!("{n} {}", if n == 1 { one } else { many })
-        };
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
         let mut text = format!(
             "{}, {}, {} extrahiert",
             plural(self.todos.len(), "To-do", "To-dos"),
@@ -430,11 +438,11 @@ impl Extraction {
             .todos
             .iter()
             .map(|t| {
-                let (date, phrase, source) = t
-                    .due
-                    .as_ref()
-                    .map(due_json)
-                    .unwrap_or((Value::Null, Value::Null, Value::Null));
+                let (date, phrase, source) =
+                    t.due
+                        .as_ref()
+                        .map(due_json)
+                        .unwrap_or((Value::Null, Value::Null, Value::Null));
                 json!({
                     "text": t.text, "assignee": t.assignee,
                     "due": date, "due_phrase": phrase, "due_source": source,
@@ -744,7 +752,8 @@ struct RawOut {
 }
 
 fn parse_reply(raw: &str, kinds: Kinds) -> Result<RawOut, String> {
-    let out: RawOut = serde_json::from_str(strip_code_fence(raw)).map_err(|e| describe_json_error(&e))?;
+    let out: RawOut =
+        serde_json::from_str(strip_code_fence(raw)).map_err(|e| describe_json_error(&e))?;
     for (wanted, present, name) in [
         (kinds.todos, out.todos.is_some(), "todos"),
         (kinds.deadlines, out.deadlines.is_some(), "deadlines"),
@@ -945,7 +954,10 @@ impl Acc {
             let dropped = refs.len() - valid_refs;
             self.note(
                 "segment_dropped",
-                format!("{dropped} Segmentangabe(n) ohne Gegenstück im Transkript verworfen: „{}“", clean_text(&clean, 50)),
+                format!(
+                    "{dropped} Segmentangabe(n) ohne Gegenstück im Transkript verworfen: „{}“",
+                    clean_text(&clean, 50)
+                ),
             );
         }
         Some((
@@ -1069,7 +1081,9 @@ impl Acc {
                 t.due_phrase.as_deref(),
                 t.due_date.as_deref(),
                 &checked.evidence.quote,
-                t.due_phrase.as_deref().is_some_and(|p| !p.trim().is_empty()),
+                t.due_phrase
+                    .as_deref()
+                    .is_some_and(|p| !p.trim().is_empty()),
             ) {
                 DueResult::Settled(due) => Some(due),
                 DueResult::Missing => None,
@@ -1155,7 +1169,10 @@ enum DueResult {
     /// Weder Angabe noch Datum.
     Missing,
     Settled(Due),
-    Rejected { reason: &'static str, detail: String },
+    Rejected {
+        reason: &'static str,
+        detail: String,
+    },
 }
 
 /// Konfidenz eines Eintrags: Zitat-Ueberdeckung, Anteil gueltiger Segmentangaben und
@@ -1167,12 +1184,7 @@ fn item_confidence(checked: &Checked, date_factor: f64) -> f64 {
 /// Konfidenz des Laufs: Mittel der Eintraege, gemindert um einen Wiederholversuch (x0,9),
 /// einen unvollstaendigen Lauf (x0,8) und verworfene Eintraege (bis x0,5). `None` ohne
 /// Eintraege.
-fn run_confidence(
-    items: &[f64],
-    dropped: usize,
-    retried: bool,
-    partial: bool,
-) -> Option<f64> {
+fn run_confidence(items: &[f64], dropped: usize, retried: bool, partial: bool) -> Option<f64> {
     if items.is_empty() {
         return None;
     }
@@ -1292,8 +1304,7 @@ pub async fn extract(rt: &AgentRuntime, source: &Source, opts: &ExtractOptions) 
     let kinds = opts.kinds;
     let parse = move |raw: &str| parse_reply(raw, kinds);
 
-    let mut queue: VecDeque<(Range<usize>, u8)> =
-        planned.into_iter().map(|r| (r, 0u8)).collect();
+    let mut queue: VecDeque<(Range<usize>, u8)> = planned.into_iter().map(|r| (r, 0u8)).collect();
     let mut retried = false;
     let mut last_failure: Option<AgentError> = None;
     let mut parts_done = 0usize;

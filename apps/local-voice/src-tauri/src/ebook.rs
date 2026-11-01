@@ -49,6 +49,19 @@ re!(
     r"^(?:<[^<>]{1,40}>|[A-ZÄÖÜ][\w .'-]{0,30}:\s)"
 );
 re!(BODY_RE, r"(?is)<body\b[^>]*>(.*)</body\s*>");
+re!(DC_TITLE_RE, r"(?is)<dc:title\b[^>]*>(.*?)</dc:title\s*>");
+re!(
+    DC_CREATOR_RE,
+    r"(?is)<dc:creator\b([^>]*)>(.*?)</dc:creator\s*>"
+);
+re!(
+    ROLE_META_RE,
+    r#"(?is)<meta\b[^>]*\brefines\s*=\s*["']#([^"']+)["'][^>]*\bproperty\s*=\s*["']role["'][^>]*>\s*([^<\s]+)\s*</meta>"#
+);
+re!(
+    ENC_ALGO_RE,
+    r#"(?is)<(?:\w+:)?EncryptionMethod\b[^>]*\bAlgorithm\s*=\s*["']([^"']*)["']"#
+);
 re!(
     TAG_RE,
     r#"(?s)<(/?)([A-Za-z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(/?)>"#
@@ -137,6 +150,7 @@ fn resolve_path(base_dir: &str, href: &str) -> String {
 pub fn epub_to_markdown<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
 ) -> Result<String, String> {
+    reject_drm(archive)?;
     let container = read_entry(archive, "META-INF/container.xml")?;
     let opf_path = ROOTFILE_RE
         .find_iter(&container)
@@ -199,7 +213,103 @@ pub fn epub_to_markdown<R: Read + Seek>(
     if text.trim().is_empty() {
         return Err("Das EPUB enthält keinen lesbaren Text (evtl. DRM-geschützt)".into());
     }
-    Ok(text)
+    Ok(with_title_page(&opf, text))
+}
+
+/// Klartext eines Metadatenfelds (Tags, Entities, Leerraum bereinigt).
+fn metadata_text(raw: &str) -> String {
+    let plain = TAG_RE.replace_all(raw, "");
+    neutralize(&decode_entities(&plain))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Titel und Autor aus dem OPF voranstellen (lva#149) — als Überschrift, damit
+/// Inhaltsverzeichnis und Seitentitel sie kennen. Nicht, wenn das Buch schon
+/// mit dem Titel beginnt (eigene Titelseite).
+fn with_title_page(opf: &str, text: String) -> String {
+    let Some(title) = DC_TITLE_RE
+        .captures(opf)
+        .map(|c| metadata_text(&c[1]))
+        .filter(|t| !t.is_empty())
+    else {
+        return text;
+    };
+    // Eigene Titelseite: eine der ersten Zeilen IST der Titel. Ein bloßes
+    // Vorkommen genügt nicht — kurze Titel („1984“) stehen fast überall.
+    let norm = |l: &str| {
+        l.trim_start_matches(['#', '>', ' '])
+            .trim_matches(['*', ' '])
+            .to_lowercase()
+    };
+    let wanted = title.to_lowercase();
+    if text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(3)
+        .any(|l| norm(l) == wanted)
+    {
+        return text;
+    }
+    // Nur Autorinnen und Autoren, nicht Übersetzung oder Illustration
+    // (EPUB 2: opf:role, EPUB 3: <meta refines property="role">).
+    let other_roles: Vec<String> = ROLE_META_RE
+        .captures_iter(opf)
+        .filter(|c| !c[2].eq_ignore_ascii_case("aut"))
+        .map(|c| c[1].to_string())
+        .collect();
+    let authors: Vec<String> = DC_CREATOR_RE
+        .captures_iter(opf)
+        .filter(|c| {
+            let attrs = attributes(&format!("<x{}>", &c[1]));
+            let role_ok = attrs
+                .iter()
+                .find(|(k, _)| k.ends_with("role"))
+                .is_none_or(|(_, v)| v.eq_ignore_ascii_case("aut"));
+            let id_ok = attrs
+                .get("id")
+                .is_none_or(|id| !other_roles.iter().any(|o| o == id));
+            role_ok && id_ok
+        })
+        .map(|c| metadata_text(&c[2]))
+        .filter(|a| !a.is_empty())
+        .collect();
+    if authors.is_empty() {
+        format!("# {title}\n\n{text}")
+    } else {
+        format!("# {title}\n\nvon {}\n\n{text}", authors.join(", "))
+    }
+}
+
+/// Kopiergeschützte EPUBs (Adobe ADEPT, Apple FairPlay, Readium LCP u. a.)
+/// ablehnen, mit einer verständlichen Meldung statt Zeichensalat. Erlaubt
+/// bleibt die Schriftverschleierung nach IDPF/Adobe — die betrifft nur Fonts.
+fn reject_drm<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> Result<(), String> {
+    const DRM: &str = "Dieses E-Book ist kopiergeschützt (DRM) und kann nicht \
+         vorgelesen werden. Bitte eine DRM-freie Ausgabe verwenden.";
+    let has = |archive: &zip::ZipArchive<R>, name: &str| {
+        archive.file_names().any(|n| n.eq_ignore_ascii_case(name))
+    };
+    if has(archive, "META-INF/rights.xml")
+        || has(archive, "META-INF/sinf.xml")
+        || has(archive, "META-INF/license.lcpl")
+    {
+        return Err(DRM.into());
+    }
+    if !has(archive, "META-INF/encryption.xml") {
+        return Ok(());
+    }
+    let enc = read_entry(archive, "META-INF/encryption.xml")?;
+    let font_only = ENC_ALGO_RE.captures_iter(&enc).all(|c| {
+        let algo = c[1].trim();
+        algo == "http://www.idpf.org/2008/embedding" || algo == "http://ns.adobe.com/pdf/enc#RC"
+    });
+    if font_only {
+        Ok(())
+    } else {
+        Err(DRM.into())
+    }
 }
 
 /// Benannte und numerische Entities auflösen (die üblichen in E-Books).
@@ -637,7 +747,8 @@ mod tests {
         let md = epub_to_markdown(&mut a).unwrap();
         assert_eq!(
             md,
-            "# Kapitel 1\n\n\
+            "# Der Leuchtturm\n\n\
+             # Kapitel 1\n\n\
              Der Leuchtturm stand *seit über* hundert Jahren auf der **Klippe**.\n\n\
              Er war ca. 42 Meter hoch & „schön“.\n\n\
              > Ein Zitat.\n\n\
@@ -741,5 +852,94 @@ mod tests {
              <ul><li><p>Punkt</p></li></ul></body>",
         );
         assert_eq!(md, "Textmehr\n\nEcht á x y\n\n- Punkt".replace("x y", "xy"));
+    }
+
+    fn simple_epub(
+        opf_meta: &str,
+        extra: &[(&str, &str)],
+    ) -> zip::ZipArchive<std::io::Cursor<Vec<u8>>> {
+        let opf = format!(
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">{opf_meta}</metadata>
+  <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>"#
+        );
+        let mut files: Vec<(&str, &str)> = vec![
+            ("mimetype", "application/epub+zip"),
+            ("META-INF/container.xml", CONTAINER),
+            (
+                "OEBPS/c1.xhtml",
+                "<html><body><h1>Erstes Kapitel</h1><p>Es war einmal.</p></body></html>",
+            ),
+        ];
+        files.extend_from_slice(extra);
+        files.push(("OEBPS/content.opf", &opf));
+        epub(&files)
+    }
+
+    #[test]
+    fn epub_title_and_authors_open_the_book() {
+        let mut a = simple_epub(
+            r#"<dc:title id="t">Die Leuchtturm&#173;wärterin</dc:title>
+               <dc:creator opf:role="aut">Mara Beispiel</dc:creator>
+               <dc:creator>Jonas &amp; Co</dc:creator>"#,
+            &[],
+        );
+        let md = epub_to_markdown(&mut a).unwrap();
+        assert!(
+            md.starts_with(
+                "# Die Leuchtturmwärterin\n\nvon Mara Beispiel, Jonas & Co\n\n# Erstes Kapitel"
+            ),
+            "{md}"
+        );
+        // Ohne Titel bleibt der Text unverändert; ein vorhandener Titel wird nicht doppelt gesetzt.
+        let mut b = simple_epub("", &[]);
+        assert!(epub_to_markdown(&mut b)
+            .unwrap()
+            .starts_with("# Erstes Kapitel"));
+        let mut c = simple_epub("<dc:title>Erstes Kapitel</dc:title>", &[]);
+        assert!(epub_to_markdown(&mut c)
+            .unwrap()
+            .starts_with("# Erstes Kapitel"));
+        // Ein kurzer Titel, der nur im Text vorkommt, wird trotzdem gesetzt;
+        // Übersetzung und Illustration sind keine Autoren.
+        let mut d = simple_epub(
+            r##"<dc:title>Es</dc:title>
+               <dc:creator id="a1">Anna Autorin</dc:creator>
+               <dc:creator id="t1">Tom Übersetzer</dc:creator>
+               <meta refines="#a1" property="role" scheme="marc:relators">aut</meta>
+               <meta refines="#t1" property="role" scheme="marc:relators">trl</meta>
+               <dc:creator opf:role="ill">Ida Illustratorin</dc:creator>"##,
+            &[],
+        );
+        let md = epub_to_markdown(&mut d).unwrap();
+        assert!(
+            md.starts_with("# Es\n\nvon Anna Autorin\n\n# Erstes Kapitel"),
+            "{md}"
+        );
+    }
+
+    #[test]
+    fn drm_is_rejected_but_font_obfuscation_is_fine() {
+        let fonts = r#"<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"
+  xmlns:enc="http://www.w3.org/2001/04/xmlenc#">
+  <enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>
+  <enc:CipherData><enc:CipherReference URI="OEBPS/font.otf"/></enc:CipherData></enc:EncryptedData>
+</encryption>"#;
+        let mut ok = simple_epub("", &[("META-INF/encryption.xml", fonts)]);
+        assert!(epub_to_markdown(&mut ok).is_ok());
+
+        let aes = r#"<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+  <EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/>
+  <CipherData><CipherReference URI="OEBPS/c1.xhtml"/></CipherData></EncryptedData>
+</encryption>"#;
+        let mut drm = simple_epub("", &[("META-INF/encryption.xml", aes)]);
+        let err = epub_to_markdown(&mut drm).unwrap_err();
+        assert!(err.contains("kopiergeschützt"), "{err}");
+
+        let mut adept = simple_epub("", &[("META-INF/rights.xml", "<rights/>")]);
+        assert!(epub_to_markdown(&mut adept).unwrap_err().contains("DRM"));
     }
 }

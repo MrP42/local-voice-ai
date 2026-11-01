@@ -93,6 +93,10 @@ test.beforeEach(async ({ page }) => {
               tab: "original",
             });
           if (cmd === "page_dir") return "C:\\projects\\p1";
+          if (cmd === "plugin:dialog|open")
+            return (window as unknown as { __pick?: string }).__pick ?? null;
+          if (cmd === "tts_extract_document")
+            return (window as unknown as { __extracted?: string }).__extracted ?? "";
           if (cmd === "tts_cached_translation") return null;
           if (cmd === "tts_list_downloads") return [];
           if (
@@ -707,4 +711,46 @@ test("Inhaltsverzeichnis: Kapitel links, aktuelles hervorgehoben, Klick blätter
   // In der Bearbeiten-Ansicht kein Inhaltsverzeichnis.
   await page.getByTestId("reader-mode-edit").click();
   await expect(toc).toHaveCount(0);
+});
+
+test("EPUB auf leerer Seite: Seite heißt wie das Buch, Titel steht im Inhalt", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __pick: string; __extracted: string };
+    w.__pick = "C:/buecher/leuchtturm.epub";
+    w.__extracted = [
+      "# Die Leuchtturmwärterin",
+      "",
+      "von Mara Beispiel",
+      "",
+      "# Erstes Kapitel",
+      "",
+      "Es war einmal ein Leuchtturm.",
+    ].join("\n");
+  });
+  await open(page, "");
+  await page.getByRole("button", { name: /^Hinzufügen/ }).first().click();
+  await page.getByRole("menuitem", { name: /Dokument laden.*EPUB/ }).click();
+  await expect
+    .poll(async () => (await calls(page, "pages_rename")).map((a) => a.title))
+    .toEqual(["Die Leuchtturmwärterin"]);
+  await expect(page.getByTestId("reader-contents-entry")).toHaveText([
+    /^Die Leuchtturmwärterin/,
+    /^Erstes Kapitel/,
+  ]);
+});
+
+test("Import auf einer Seite mit Text benennt die Seite nicht um", async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __pick: string; __extracted: string };
+    w.__pick = "C:/buecher/x.epub";
+    w.__extracted = "# Anderes Buch\n\nText.";
+  });
+  await open(page);
+  await page.getByRole("button", { name: /^Hinzufügen/ }).first().click();
+  await page.getByRole("menuitem", { name: /Dokument laden/ }).click();
+  await expect.poll(async () => (await calls(page, "tts_extract_document")).length).toBe(1);
+  await page.waitForTimeout(300);
+  expect(await calls(page, "pages_rename")).toHaveLength(0);
 });
