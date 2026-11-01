@@ -165,18 +165,23 @@
   opacity: 0.94;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
 }
+/* Formate links, Menü rechts: Titel und Autor haben die volle Breite. */
 .library-card__row {
   display: flex;
   gap: 4px;
-  align-items: flex-start;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-top: 2px;
 }
-.library-card__row > div {
+.library-card__row > .library-fmt {
   flex: 1;
   min-width: 0;
 }
 .library-title {
   font-weight: 600;
   line-height: 1.25;
+  hyphens: auto;
+  overflow-wrap: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -284,7 +289,12 @@
   line-height: 1.12;
   font-weight: 700;
   text-wrap: balance;
-  overflow-wrap: anywhere;
+  hyphens: auto;
+  overflow-wrap: break-word;
+}
+/* Im Raster liegt unten rechts der Abspielknopf: Titel darüber halten. */
+.library-card .book-cover--generated {
+  padding-bottom: 30%;
 }
 .book-cover--xs .book-cover__author {
   font-size: 4px;
@@ -418,10 +428,16 @@
   box-shadow: 0 -4px 12px rgb(0 0 0 / 0.06);
 }
 .library-audiobar .book-cover {
+  flex: 0 0 30px;
   width: 30px;
+  height: 45px;
+  /* Sonst setzt die Mindestbreite aus dem Seitenverhältnis die Breite. */
+  min-width: 0;
+  min-height: 0;
+  padding: 3px;
 }
 .library-audiobar audio {
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 0;
   height: 36px;
 }
@@ -515,4 +531,19 @@
 
 .library-sort {
   min-width: 11rem;
+}
+
+@media (max-width: 760px) {
+  /* Schmal: Wiedergabe in eigener, voller Zeile unter Titel und Schließen. */
+  .library-audiobar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .library-audiobar > div {
+    flex: 1;
+  }
+  .library-audiobar audio {
+    order: 3;
+    flex-basis: 100%;
+  }
 }

@@ -56,9 +56,12 @@ export const Formats: React.FC<{ view: BookView; job?: TranscriptJob }> = ({
             })
           : t(`library.textShort.${view.text}`)}
       </span>
-      <span data-state={view.audio} title={t(`library.audio.${view.audio}`)}>
+      <span
+        data-state={view.audio}
+        title={t(`library.audioSource.${view.audioSource ?? "none"}`)}
+      >
         <Headphones size={12} aria-hidden="true" />
-        {t(`library.audioShort.${view.audio}`)}
+        {t(`library.audioShort.${view.audioSource ?? "none"}`)}
       </span>
     </span>
   );
@@ -125,26 +128,51 @@ export const LibraryPage: React.FC = () => {
   const jobOf = (book: LibraryBook) =>
     book.audio?.transcript_job ? jobs[book.audio.transcript_job] : undefined;
 
-  /** Sofort weiter: Text im Reader mit Vorlesen, Hörbuch in der Hörleiste. */
+  /**
+   * Sofort weiter, nur mit vorhandenem Audio: Hörbuch in der Hörleiste,
+   * vertonte Textfassung im Reader mit Autostart. Ohne Audio gibt es kein
+   * Abspielen, sondern Lesen.
+   */
   const play = (v: BookView) => {
-    if (v.resumeWith === "audio" && v.book.audio_path) {
+    if (
+      v.book.audio_path &&
+      (v.resumeWith === "audio" || v.audioSource === "audiobook" && !v.book.text)
+    ) {
       setListening(v.book);
       return;
     }
-    if (v.book.text) openInReader(v.book.text.page_id, true);
+    if (v.book.text && v.audioSource === "narrated")
+      openInReader(v.book.text.page_id, true);
+    else if (v.book.audio_path) setListening(v.book);
   };
 
   const toggleFinished = async (v: BookView) => {
     const finished = !isFinished(v);
     if (v.book.text) setFinished(`text:${v.book.text.page_id}:original`, finished);
     if (v.book.audio_path) setFinished(`audio:${v.book.id}`, finished);
-    await save({ ...v.book, finished });
+    await save(v.book.id, (fresh) => ({ ...fresh, finished }));
   };
 
   const open = openId ? views.find((v) => v.book.id === openId) : undefined;
 
   const playButton = (v: BookView, className = "") =>
-    v.book.text || v.book.audio_path ? (
+    !v.audioSource ? (
+      v.book.text ? (
+        <button
+          type="button"
+          className={`library-play library-play--read ${className}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            openInReader(v.book.text!.page_id, false);
+          }}
+          aria-label={t("library.readTitle", { title: v.book.title })}
+          title={t("library.read")}
+          data-testid="library-read-quick"
+        >
+          <BookOpen size={18} aria-hidden="true" />
+        </button>
+      ) : null
+    ) : (
       <button
         type="button"
         className={`library-play ${className}`}
@@ -158,7 +186,7 @@ export const LibraryPage: React.FC = () => {
       >
         <Play size={18} fill="currentColor" aria-hidden="true" />
       </button>
-    ) : null;
+    );
 
   const statusLine = (v: BookView) => {
     if (isFinished(v)) return t("library.status.finished");
@@ -194,15 +222,13 @@ export const LibraryPage: React.FC = () => {
           label={t("library.progressLabel", { title: v.book.title })}
         />
       )}
+      <div className="library-title" lang="de">
+        {v.book.title}
+      </div>
+      <div className="library-meta">{v.book.authors.join(", ")}</div>
+      <div className="library-meta">{statusLine(v)}</div>
       <div className="library-card__row">
-        <div>
-          <div className="library-title">{v.book.title}</div>
-          <div className="library-meta">{v.book.authors.join(", ")}</div>
-          <div className="library-meta">{statusLine(v)}</div>
-          <div style={{ marginTop: 4 }}>
-            <Formats view={v} job={jobOf(v.book)} />
-          </div>
-        </div>
+        <Formats view={v} job={jobOf(v.book)} />
         <ActionMenu
           trigger={{
             icon: MoreVertical,
@@ -430,7 +456,7 @@ export const LibraryPage: React.FC = () => {
           </>
         )}
         {listening && (
-          <AudioBar book={listening} onClose={() => setListening(null)} />
+          <AudioBar key={listening.id} book={listening} onClose={() => setListening(null)} />
         )}
         <AddBookDialog
           open={adding}

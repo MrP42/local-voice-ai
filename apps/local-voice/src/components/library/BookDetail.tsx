@@ -39,7 +39,11 @@ interface Props {
   onPlay(): void;
   onListen(): void;
   onToggleFinished(): void;
-  onSave(book: LibraryBook): Promise<LibraryBook | null>;
+  /** Ändert den frisch gelesenen Stand des Buchs (siehe useLibrary.save). */
+  onSave(
+    id: string,
+    update: (fresh: LibraryBook) => LibraryBook,
+  ): Promise<LibraryBook | null>;
   onDeleted(): Promise<void>;
   onChanged(): Promise<void>;
 }
@@ -63,9 +67,22 @@ export const BookDetail: React.FC<Props> = ({
   const { book } = view;
   const [tab, setTab] = useState<Tab>("overview");
   const [draft, setDraft] = useState(book);
+  const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  useEffect(() => setDraft(book), [book]);
+  // Neues Buch: Formular zurücksetzen. Neu geladener Stand desselben Buchs
+  // (z. B. Cover fertig) nur übernehmen, solange nichts getippt ist.
+  useEffect(() => {
+    setDraft(book);
+    setDirty(false);
+  }, [book.id]);
+  useEffect(() => {
+    if (!dirty) setDraft(book);
+  }, [book, dirty]);
+  const edit = (patch: Partial<LibraryBook>) => {
+    setDraft((d) => ({ ...d, ...patch }));
+    setDirty(true);
+  };
 
   const run = async (label: string, task: () => Promise<void>) => {
     setBusy(label);
@@ -116,7 +133,10 @@ export const BookDetail: React.FC<Props> = ({
       // Einwilligung fehlen könnte.
       const r = await commands.meetingsImportFile(book.audio_path, true, null);
       if (r.status === "error") throw new Error(r.error);
-      await onSave({ ...book, audio: { ...book.audio, transcript_job: r.data } });
+      await onSave(book.id, (fresh) => ({
+        ...fresh,
+        audio: fresh.audio ? { ...fresh.audio, transcript_job: r.data } : fresh.audio,
+      }));
     });
 
   const remove = () =>
@@ -129,11 +149,23 @@ export const BookDetail: React.FC<Props> = ({
 
   const saveDraft = () =>
     run("save", async () => {
-      await onSave({
-        ...draft,
+      await onSave(book.id, (fresh) => ({
+        ...fresh,
+        title: draft.title,
+        subtitle: draft.subtitle,
         authors: draft.authors.map((a) => a.trim()).filter(Boolean),
+        language: draft.language,
+        isbn: draft.isbn,
+        publisher: draft.publisher,
+        publish_date: draft.publish_date,
+        pages: draft.pages,
+        description: draft.description,
         metadata_source: "manual",
-      });
+        audio: fresh.audio
+          ? { ...fresh.audio, narrator: draft.audio?.narrator ?? null }
+          : fresh.audio,
+      }));
+      setDirty(false);
       toast(t("library.saved"));
     });
 
@@ -200,7 +232,7 @@ export const BookDetail: React.FC<Props> = ({
           </dl>
         </div>
         <div className="library-actions">
-          {(book.text || book.audio_path) && (
+          {view.audioSource && (
             <Button
               variant="primary"
               size="lg"
@@ -216,11 +248,12 @@ export const BookDetail: React.FC<Props> = ({
           {book.text && (
             <Button
               size="lg"
+              variant={view.audioSource ? undefined : "primary"}
               icon={<BookOpen size={16} aria-hidden="true" />}
               onClick={() => openInReader(book.text!.page_id, false)}
               data-testid="library-detail-read"
             >
-              {t("library.read")}
+              {!view.audioSource && view.fraction > 0 && !isFinished(view) ? t("library.continueRead") : t("library.read")}
             </Button>
           )}
           {book.audio_path && view.resumeWith !== "audio" && (
@@ -270,6 +303,26 @@ export const BookDetail: React.FC<Props> = ({
 
       {tab === "versions" && (
         <div className="library-versions">
+          <dl className="library-kv library-status" data-testid="library-status">
+            <dt>{t("library.statusAudio")}</dt>
+            <dd>{t(`library.audioSource.${view.audioSource ?? "none"}`)}</dd>
+            <dt>{t("library.statusNarration")}</dt>
+            <dd>
+              {view.audioSource === "narrated"
+                ? t("library.narration.done")
+                : book.text
+                  ? t("library.narration.possible")
+                  : t("library.narration.none")}
+            </dd>
+            <dt>{t("library.statusTranscription")}</dt>
+            <dd>
+              {view.transcription === "running" && job
+                ? t(`library.job.${job.status}`, {
+                    defaultValue: t("library.job.processing"),
+                  })
+                : t(`library.transcription.${view.transcription}`)}
+            </dd>
+          </dl>
           <section className="library-version" aria-labelledby="ver-text">
             <h3 id="ver-text">
               <BookOpen size={14} aria-hidden="true" />
@@ -343,14 +396,14 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.field.title")}
               <Input
                 value={draft.title}
-                onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                onChange={(e) => edit({ title: e.target.value })}
               />
             </label>
             <label>
               {t("library.field.subtitle")}
               <Input
                 value={draft.subtitle ?? ""}
-                onChange={(e) => setDraft({ ...draft, subtitle: e.target.value || null })}
+                onChange={(e) => edit({ subtitle: e.target.value || null })}
               />
             </label>
             <label>
@@ -358,7 +411,7 @@ export const BookDetail: React.FC<Props> = ({
               <Input
                 value={draft.authors.join(", ")}
                 onChange={(e) =>
-                  setDraft({ ...draft, authors: e.target.value.split(/\s*[,;]\s*/) })
+                  edit({ authors: e.target.value.split(/\s*[,;]\s*/) })
                 }
               />
             </label>
@@ -369,8 +422,7 @@ export const BookDetail: React.FC<Props> = ({
                 disabled={!draft.audio}
                 onChange={(e) =>
                   draft.audio &&
-                  setDraft({
-                    ...draft,
+                  edit({
                     audio: { ...draft.audio, narrator: e.target.value || null },
                   })
                 }
@@ -380,14 +432,14 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.field.isbn")}
               <Input
                 value={draft.isbn ?? ""}
-                onChange={(e) => setDraft({ ...draft, isbn: e.target.value || null })}
+                onChange={(e) => edit({ isbn: e.target.value || null })}
               />
             </label>
             <label>
               {t("library.field.publisher")}
               <Input
                 value={draft.publisher ?? ""}
-                onChange={(e) => setDraft({ ...draft, publisher: e.target.value || null })}
+                onChange={(e) => edit({ publisher: e.target.value || null })}
               />
             </label>
             <label>
@@ -395,7 +447,7 @@ export const BookDetail: React.FC<Props> = ({
               <Input
                 value={draft.publish_date ?? ""}
                 onChange={(e) =>
-                  setDraft({ ...draft, publish_date: e.target.value || null })
+                  edit({ publish_date: e.target.value || null })
                 }
               />
             </label>
@@ -403,7 +455,7 @@ export const BookDetail: React.FC<Props> = ({
               {t("library.field.language")}
               <Input
                 value={draft.language ?? ""}
-                onChange={(e) => setDraft({ ...draft, language: e.target.value || null })}
+                onChange={(e) => edit({ language: e.target.value || null })}
               />
             </label>
           </div>
@@ -412,7 +464,7 @@ export const BookDetail: React.FC<Props> = ({
             <Textarea
               value={draft.description ?? ""}
               onChange={(e) =>
-                setDraft({ ...draft, description: e.target.value || null })
+                edit({ description: e.target.value || null })
               }
             />
           </label>
@@ -464,7 +516,7 @@ export const BookDetail: React.FC<Props> = ({
               isbn={book.isbn}
               onApply={(patch, coverId) =>
                 run("meta", async () => {
-                  const saved = await onSave({ ...book, ...patch });
+                  const saved = await onSave(book.id, (fresh) => ({ ...fresh, ...patch }));
                   if (saved && (coverId || patch.isbn)) {
                     const r = await commands.libraryCoverFetch(
                       saved.id,

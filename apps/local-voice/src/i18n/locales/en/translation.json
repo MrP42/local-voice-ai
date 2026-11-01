@@ -6769,8 +6769,8 @@
       "noAudio": "No audio",
       "working": "Processing"
     },
-    "continue": "Continue listening",
-    "continueHint": "Listening and reading share one position",
+    "continue": "Pick up",
+    "continueHint": "Listening and reading share the position",
     "working": "Processing",
     "workingHint": "runs locally in the background",
     "all": "All titles",
@@ -6816,12 +6816,14 @@
     "textShort": {
       "ok": "Text",
       "busy": "…",
-      "none": "–"
+      "none": "No text"
     },
     "audioShort": {
       "ok": "Audio",
       "busy": "…",
-      "none": "–"
+      "none": "No audio",
+      "audiobook": "Audiobook",
+      "narrated": "Narrated"
     },
     "job": {
       "queued": "Transcription queued",
@@ -6918,6 +6920,27 @@
     "copying": "Copying audiobook…",
     "attach": "Attach",
     "attached": "Attached to “{{title}}”.",
-    "added": "Added “{{title}}”."
+    "added": "Added “{{title}}”.",
+    "continueRead": "Continue reading",
+    "readTitle": "Read “{{title}}”",
+    "audioSource": {
+      "audiobook": "Audio: imported audiobook",
+      "narrated": "Audio: narrated by speech synthesis",
+      "none": "No audio – read or have it read aloud live"
+    },
+    "statusAudio": "Audio",
+    "statusNarration": "Narration (speech synthesis)",
+    "statusTranscription": "Transcription (audiobook → text)",
+    "narration": {
+      "done": "Generated",
+      "possible": "Not generated – possible in Read aloud",
+      "none": "Not possible (no text)"
+    },
+    "transcription": {
+      "done": "Done",
+      "running": "Running",
+      "possible": "Not started",
+      "none": "Not needed"
+    }
   }
 }

@@ -120,7 +120,7 @@ export const BookCover: React.FC<{
     >
       <Pattern kind={pattern} />
       <span className="book-cover__author">{author}</span>
-      <span className="book-cover__title">{book.title}</span>
+      <span className="book-cover__title" lang="de">{book.title}</span>
     </div>
   );
 };

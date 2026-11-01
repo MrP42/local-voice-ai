@@ -47,6 +47,8 @@ export const AddBookDialog: React.FC<{
   const [title, setTitle] = useState("");
   const [authors, setAuthors] = useState("");
   const [duplicate, setDuplicate] = useState<LibraryBook | null>(null);
+  /** Dublettenprüfung läuft: so lange kein Absenden (sonst falsches Werk). */
+  const [checking, setChecking] = useState(false);
   const [attach, setAttach] = useState(true);
   const [candidate, setCandidate] = useState<MetadataCandidate | null>(null);
   const [transcribe, setTranscribe] = useState(true);
@@ -69,8 +71,11 @@ export const AddBookDialog: React.FC<{
   useEffect(() => {
     if (!title.trim()) {
       setDuplicate(null);
+      setChecking(false);
       return;
     }
+    let stale = false;
+    setChecking(true);
     const handle = window.setTimeout(() => {
       void commands
         .libraryFindDuplicate(
@@ -78,9 +83,16 @@ export const AddBookDialog: React.FC<{
           candidate?.authors.length ? candidate.authors : splitAuthors(authors),
           candidate?.isbn ?? null,
         )
-        .then((r) => setDuplicate(r.status === "ok" ? r.data : null));
+        .then((r) => {
+          if (stale) return;
+          setDuplicate(r.status === "ok" ? r.data : null);
+          setChecking(false);
+        });
     }, 250);
-    return () => window.clearTimeout(handle);
+    return () => {
+      stale = true;
+      window.clearTimeout(handle);
+    };
   }, [title, authors, candidate]);
 
   const pick = async () => {
@@ -195,6 +207,11 @@ export const AddBookDialog: React.FC<{
               audio: { ...book.audio, transcript_job: job.data },
             });
             if (withJob.status === "ok") book = withJob.data;
+            else {
+              // Ohne Verweis am Buch fände niemand den Auftrag wieder.
+              await commands.meetingsDelete(job.data);
+              toast.error(withJob.error);
+            }
           } else toast.error(job.error);
         }
       }
@@ -244,7 +261,7 @@ export const AddBookDialog: React.FC<{
           <Button
             variant="primary"
             onClick={() => void submit()}
-            disabled={!picked || !title.trim() || busy !== null}
+            disabled={!picked || !title.trim() || busy !== null || checking}
             data-testid="library-add-submit"
           >
             {busy === "copy"

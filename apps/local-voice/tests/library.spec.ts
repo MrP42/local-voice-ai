@@ -47,6 +47,27 @@ const BOOKS = [
     cover_path: null,
     audio_path: "C:/lib/book_2/audio/hoerbuch.m4b",
   },
+  {
+    id: "book_3",
+    title: "Die Verwandlung",
+    subtitle: null,
+    authors: ["Franz Kafka"],
+    language: "Deutsch",
+    isbn: null,
+    publisher: null,
+    publish_date: "1915",
+    pages: 96,
+    description: null,
+    metadata_source: "manual",
+    cover_source: "generated",
+    // Textfassung, im Vorlesen vertont (Audiodateien im Seitenordner).
+    text: { page_id: "page_3", origin: "document", source_name: "kafka.epub" },
+    audio: null,
+    added_ms: 3,
+    finished: false,
+    cover_path: null,
+    audio_path: null,
+  },
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -120,7 +141,10 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "library_list") return list;
           if (cmd === "library_progress_load") return {};
           if (cmd === "library_progress_put") return null;
-          if (cmd === "page_files") return [];
+          if (cmd === "page_files")
+            return args?.id === "page_3"
+              ? [{ name: "teil-01.mp3", size: 1, modified_ms: 0 }]
+              : [];
           if (cmd === "meetings_list")
             return [{ id: "m1", title: "x", status: "processing" }];
           if (cmd === "plugin:dialog|open")
@@ -146,7 +170,11 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "meetings_import_file") return "m2";
           // Das Vorlesen nach „Lesen“/Play braucht seine Grunddaten.
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
-          if (cmd === "pages_list") return [{ id: "page_1", title: "Effi Briest" }];
+          if (cmd === "pages_list")
+            return [
+              { id: "page_1", title: "Effi Briest" },
+              { id: "page_3", title: "Die Verwandlung" },
+            ];
           if (cmd === "page_state_load")
             return JSON.stringify({ text: "# Effi Briest\n\nIn Front des Herrenhauses.", tab: "original" });
           if (cmd === "page_dir") return "C:/projects/page_1";
@@ -186,12 +214,23 @@ test("Raster: ein Eintrag je Buch mit Text-/Audio-Kennzeichen und Fortschritt", 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const cards = page.getByTestId("library-card");
-  await expect(cards).toHaveCount(2);
+  await expect(cards).toHaveCount(3);
+  await page.screenshot({ path: shot("bibliothek-raster-mehrere-1440.png") });
   const effi = cards.filter({ hasText: "Effi Briest" });
   await expect(effi.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
   await expect(effi).toContainText("Text");
-  // Weiterhören zeigt das begonnene Buch, „In Arbeit“ die Transkription.
-  await expect(page.getByRole("heading", { name: /Weiterhören/ })).toBeVisible();
+  // Ohne Audio eindeutig beschriftet, kein Abspielen, sondern Lesen.
+  await expect(effi).toContainText("Kein Audio");
+  await expect(effi.getByTestId("library-play")).toHaveCount(0);
+  await expect(effi.getByTestId("library-read-quick")).toBeVisible();
+  const kafka = cards.filter({ hasText: "Die Verwandlung" });
+  await expect(kafka).toContainText("Vertont");
+  await expect(kafka.getByTestId("library-play")).toBeVisible();
+  const storm = cards.filter({ hasText: "Der Schimmelreiter" });
+  await expect(storm).toContainText("Hörbuch");
+  await expect(storm).toContainText("Wird transkribiert");
+  // Weitermachen zeigt das begonnene Buch, „In Arbeit“ die Transkription.
+  await expect(page.getByRole("heading", { name: /Weitermachen/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /In Arbeit/ })).toBeVisible();
   await expect(page.locator(".library-jobs")).toContainText("Wird transkribiert");
   // Filter „Ohne Audio“: nur Effi (Text ohne vertonte Dateien).
@@ -209,6 +248,14 @@ test("Klick aufs Cover öffnet die Produktseite, Lesen springt ins Vorlesen", as
   await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
   const detail = page.getByTestId("library-detail");
   await expect(detail.getByRole("heading", { name: "Effi Briest" })).toBeVisible();
+  // Ohne Audio kein Abspielen; Lesen ist die Hauptaktion.
+  await expect(page.getByTestId("library-detail-play")).toHaveCount(0);
+  await detail.getByRole("tab", { name: "Fassungen" }).click();
+  const status = page.getByTestId("library-status");
+  await expect(status).toContainText("Kein Audio");
+  await expect(status).toContainText("Nicht erzeugt");
+  await expect(status).toContainText("Nicht nötig");
+  await detail.getByRole("tab", { name: "Übersicht" }).click();
   await expect(detail).toContainText("Reclam");
   await expect(detail).toContainText("Die siebzehnjährige Effi");
   await page.screenshot({ path: shot("bibliothek-detail-1440.png") });
@@ -225,7 +272,7 @@ test("Play auf der Karte startet sofort: Vorlesen mit Autostart", async ({ page 
   await page.goto("/");
   await page
     .getByTestId("library-card")
-    .filter({ hasText: "Effi Briest" })
+    .filter({ hasText: "Die Verwandlung" })
     .getByTestId("library-play")
     .click();
   // Das Vorlesen übernimmt den Auftrag und spricht sofort los.
@@ -272,12 +319,12 @@ test("Neues Hörbuch: eigener Eintrag und Transkription in der Warteschlange", a
 }) => {
   await page.addInitScript(() => {
     (window as unknown as { __pick: string }).__pick =
-      "C:/hoerbuecher/Franz Kafka - Die Verwandlung.m4b";
+      "C:/hoerbuecher/Franz Kafka - Der Prozess.m4b";
   });
   await page.goto("/");
   await page.getByTestId("library-add").click();
   await page.getByTestId("library-add-pick").click();
-  await expect(page.getByTestId("library-add-title")).toHaveValue("Die Verwandlung");
+  await expect(page.getByTestId("library-add-title")).toHaveValue("Der Prozess");
   await expect(page.getByTestId("library-add-authors")).toHaveValue("Franz Kafka");
   await expect(page.getByTestId("library-duplicate")).toHaveCount(0);
   await page.getByTestId("library-add-submit").click();
@@ -295,7 +342,7 @@ test("390 px: zwei Spalten, keine waagerechte Scrollleiste", async ({ page }) =>
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   const cards = page.getByTestId("library-card");
-  await expect(cards).toHaveCount(2);
+  await expect(cards).toHaveCount(3);
   const [a, b] = await Promise.all([cards.nth(0).boundingBox(), cards.nth(1).boundingBox()]);
   expect(Math.abs((a?.y ?? 0) - (b?.y ?? 1))).toBeLessThan(2);
   const overflow = await page.evaluate(
@@ -304,3 +351,44 @@ test("390 px: zwei Spalten, keine waagerechte Scrollleiste", async ({ page }) =>
   expect(overflow).toBeLessThanOrEqual(0);
   await page.screenshot({ path: shot("bibliothek-raster-390.png"), fullPage: true });
 });
+
+test("390 px: Produktseite gestapelt, ohne waagerechte Scrollleiste", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Der Schimmelreiter“: Details öffnen" }).click();
+  const detail = page.getByTestId("library-detail");
+  await expect(detail.getByRole("heading", { name: "Der Schimmelreiter" })).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+  await page.screenshot({ path: shot("bibliothek-detail-390.png"), fullPage: true });
+  await detail.getByRole("tab", { name: "Fassungen" }).click();
+  await expect(page.getByTestId("library-status")).toContainText("Wird transkribiert");
+  await page.screenshot({ path: shot("bibliothek-fassungen-390.png"), fullPage: true });
+});
+
+for (const width of [1440, 390]) {
+  test(`Mini-Player (${width} px) verdeckt keinen Inhalt`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width > 500 ? 900 : 844 });
+    await page.goto("/");
+    await page
+      .getByTestId("library-card")
+      .filter({ hasText: "Der Schimmelreiter" })
+      .getByTestId("library-play")
+      .click();
+    const bar = page.locator(".library-audiobar");
+    await expect(bar).toBeVisible();
+    // Bis ans Ende gescrollt, liegt die letzte Karte ganz über der Leiste.
+    const last = page.getByTestId("library-card").last();
+    await last.scrollIntoViewIfNeeded();
+    await page.evaluate(() =>
+      document.querySelectorAll("*").forEach((el) => {
+        if (el.scrollHeight > el.clientHeight + 1) el.scrollTop = el.scrollHeight;
+      }),
+    );
+    const [cardBox, barBox] = await Promise.all([last.boundingBox(), bar.boundingBox()]);
+    expect((cardBox?.y ?? 0) + (cardBox?.height ?? 0)).toBeLessThanOrEqual((barBox?.y ?? 0) + 1);
+    await page.screenshot({ path: shot(`bibliothek-miniplayer-${width}.png`) });
+  });
+}

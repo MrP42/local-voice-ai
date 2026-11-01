@@ -6769,7 +6769,7 @@
       "noAudio": "Ohne Audio",
       "working": "In Arbeit"
     },
-    "continue": "Weiterhören",
+    "continue": "Weitermachen",
     "continueHint": "Hören und Lesen teilen sich die Stelle",
     "working": "In Arbeit",
     "workingHint": "läuft lokal im Hintergrund",
@@ -6816,12 +6816,14 @@
     "textShort": {
       "ok": "Text",
       "busy": "…",
-      "none": "–"
+      "none": "Kein Text"
     },
     "audioShort": {
       "ok": "Audio",
       "busy": "…",
-      "none": "–"
+      "none": "Kein Audio",
+      "audiobook": "Hörbuch",
+      "narrated": "Vertont"
     },
     "job": {
       "queued": "Transkription wartet",
@@ -6918,6 +6920,27 @@
     "copying": "Kopiere Hörbuch …",
     "attach": "Anhängen",
     "attached": "An „{{title}}“ angehängt.",
-    "added": "„{{title}}“ hinzugefügt."
+    "added": "„{{title}}“ hinzugefügt.",
+    "continueRead": "Weiterlesen",
+    "readTitle": "„{{title}}“ lesen",
+    "audioSource": {
+      "audiobook": "Audio: importiertes Hörbuch",
+      "narrated": "Audio: per Sprachausgabe vertont",
+      "none": "Kein Audio – nur Lesen oder live vorlesen lassen"
+    },
+    "statusAudio": "Audio",
+    "statusNarration": "Vertonung (Sprachausgabe)",
+    "statusTranscription": "Transkription (Hörbuch → Text)",
+    "narration": {
+      "done": "Erzeugt",
+      "possible": "Nicht erzeugt – im Vorlesen möglich",
+      "none": "Nicht möglich (kein Text)"
+    },
+    "transcription": {
+      "done": "Fertig",
+      "running": "Läuft",
+      "possible": "Nicht gestartet",
+      "none": "Nicht nötig"
+    }
   }
 }
