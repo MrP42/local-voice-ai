@@ -805,7 +805,8 @@ export const TtsSettings = () => {
     void commands.ttsCancel();
     setSpeakProgress(null);
     setCurrentIndex(null);
-    forgetResumePoint();
+    // Stopp gilt der Sitzung, nicht der gerade offenen Seite.
+    forgetResumePoint(sessionResumeKey.current ?? resumeKeyRef.current);
   };
 
   const resumeSpeaking = async () => {
@@ -1154,9 +1155,9 @@ export const TtsSettings = () => {
     setResumeAt(loadResumePoint(resumeKeyRef.current, spokenText));
     // spokenText bewusst nicht: gespeichert wird beim Satzwechsel.
   }, [readRange]);
-  const forgetResumePoint = () => {
-    clearResumePoint(resumeKeyRef.current);
-    setResumeAt(null);
+  const forgetResumePoint = (key: string = resumeKeyRef.current) => {
+    clearResumePoint(key);
+    if (key === resumeKeyRef.current) setResumeAt(null);
   };
   // Zu Ende gelesen: beim nächsten Play wieder von vorn.
   useEffect(() => {
@@ -1164,25 +1165,31 @@ export const TtsSettings = () => {
       speakProgress &&
       speakProgress.total > 0 &&
       speakProgress.position >= speakProgress.total &&
-      sessionResumeKey.current === resumeKeyRef.current
+      sessionResumeKey.current !== null
     ) {
-      clearResumePoint(resumeKeyRef.current);
-      setResumeAt(null);
+      forgetResumePoint(sessionResumeKey.current);
     }
   }, [speakProgress]);
   // Beim Öffnen einer Seite die gemerkte Stelle aufschlagen.
   const revealedResumeFor = useRef<string | null>(null);
   useEffect(() => {
-    if (viewMode !== "read" || !spokenText) return;
+    if (viewMode !== "read" || !spokenText || pageInfo === null) return;
     if (revealedResumeFor.current === resumeKey) return;
-    revealedResumeFor.current = resumeKey;
     const at = loadResumePoint(resumeKey, spokenText);
-    if (at === null) return;
-    const id = window.requestAnimationFrame(() =>
-      readerApiRef.current?.revealOffset(at),
-    );
+    if (at === null) {
+      revealedResumeFor.current = resumeKey;
+      return;
+    }
+    // Erst als erledigt merken, wenn der Reader die Stelle wirklich zeigt:
+    // ein abgebrochener Frame oder ein noch fehlender Reader versucht es neu.
+    const id = window.requestAnimationFrame(() => {
+      const api = readerApiRef.current;
+      if (!api) return;
+      api.revealOffset(at);
+      revealedResumeFor.current = resumeKey;
+    });
     return () => window.cancelAnimationFrame(id);
-  }, [resumeKey, spokenText, viewMode]);
+  }, [resumeKey, spokenText, viewMode, pageInfo]);
   /** Geschätzte Lesedauer bei Tempo 1: ~14 Zeichen je Sekunde. */
   const readEstimate = useMemo(
     () => Math.max(1, toSpokenScript(spokenText).replace(/<[^<>\n]{1,60}>|\[[^\]\n]*\]/g, "").length / 14),
@@ -2017,7 +2024,7 @@ export const TtsSettings = () => {
                 onSleep={pauseSpeaking}
                 resumable={resumeAt !== null && !canResume && !speaking}
                 onRestart={() => {
-                  forgetResumePoint();
+                  forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);
                 }}
               />
