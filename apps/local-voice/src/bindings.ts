@@ -8061,7 +8061,12 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  */
 export type KontoAenderung = { anzeigename: string | null; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number | null }
 export type KontoAnmeldungDto = { issuer: string; subject: string; seitMs: number; idpFelder: string[] }
-export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; anmeldung: KontoAnmeldungDto | null }
+export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; 
+/**
+ * Zeitpunkt der letzten Änderung des Profils (auch von Bild setzen/entfernen); das
+ * Frontend lädt das Bild nur nach, wenn sich dieser Wert ändert.
+ */
+geaendertMs: number; anmeldung: KontoAnmeldungDto | null }
 export type KontoStatus = { aktiv: KontoProfilDto; weitere: KontoProfilDto[]; sitzungsrevision: number }
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**

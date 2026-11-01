@@ -1,5 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { PageShell } from "../ui/PageShell";
 import { openSettingsTab } from "../../lib/openSettingsTab";
 import { Profilseite } from "./Profilseite";
@@ -14,6 +15,9 @@ export const KontoProfilSeite: React.FC = () => {
   const { t } = useTranslation();
   const konto = useKonto();
   const labels = useKontoLabels();
+  // Die Ziel-ID ist das Profil, das diese Ansicht gerade zeigt; der Kern lehnt ab, wenn
+  // inzwischen ein anderes aktiv ist.
+  const id = konto.aktiv.id;
   return (
     <PageShell
       title={t("konto.meinProfil")}
@@ -24,9 +28,13 @@ export const KontoProfilSeite: React.FC = () => {
         <Profilseite
           profil={konto.aktiv}
           status={konto.status}
-          onSpeichern={konto.aendern}
-          onBild={konto.bildSetzen}
-          onBildEntfernen={() => void konto.bildEntfernen()}
+          onSpeichern={(aenderung) => konto.aendern(id, aenderung)}
+          onBild={(datei) => konto.bildSetzen(id, datei)}
+          onBildEntfernen={() =>
+            void konto
+              .bildEntfernen(id)
+              .catch(() => toast.error(t("konto.bildEntfernenFehler")))
+          }
           onKontoGeraete={() => openSettingsTab("account")}
           labels={labels}
         />

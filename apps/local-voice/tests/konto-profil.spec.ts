@@ -69,6 +69,7 @@ test.beforeEach(async ({ page }) => {
                 farbe: 15,
                 hatBild: false,
                 gesperrt: false,
+                geaendertMs: 1,
                 anmeldung: null,
               },
             ],
@@ -106,7 +107,26 @@ test.beforeEach(async ({ page }) => {
             }
           };
           if (cmd === "konto_status") return status();
+          const nurAktiv = () => {
+            if (args?.id !== w.__konto.aktiv)
+              throw "Das aktive Profil hat sich geändert. Die Änderung wurde nicht übernommen.";
+          };
+          if (cmd === "konto_bild_lesen") {
+            const p = w.__konto.profile.find((x: any) => x.id === args?.id);
+            return p?.hatBild
+              ? "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+              : null;
+          }
+          if (cmd === "konto_bild_entfernen") {
+            nurAktiv();
+            if (w.__bildEntfernenFehler) throw "kaputt";
+            const p = w.__konto.profile.find((x: any) => x.id === args?.id);
+            p.hatBild = false;
+            p.geaendertMs += 1;
+            return null;
+          }
           if (cmd === "konto_aendern") {
+            nurAktiv();
             const p = w.__konto.profile.find((x: any) => x.id === args?.id);
             for (const [k, v] of Object.entries(args?.aenderung ?? {})) {
               if (v !== null) p[k] = v === "" ? null : v;
@@ -120,6 +140,7 @@ test.beforeEach(async ({ page }) => {
               farbe: 3,
               hatBild: false,
               gesperrt: false,
+              geaendertMs: 1,
               anmeldung: null,
             };
             w.__konto.profile.push(p);
@@ -359,4 +380,137 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
   expect(
     (await calls(page)).filter(([c]) => c === "konto_aktivieren").length,
   ).toBe(2);
+});
+
+const mitBild = (page: Page) =>
+  page.addInitScript(() => {
+    (window as any).__konto = {
+      aktiv: "p1",
+      profile: [
+        {
+          id: "p1",
+          anzeigename: "Lokales Profil",
+          farbe: 15,
+          hatBild: true,
+          gesperrt: false,
+          geaendertMs: 5,
+          anmeldung: null,
+        },
+        {
+          id: "p2",
+          anzeigename: "Zweites Profil",
+          farbe: 3,
+          hatBild: true,
+          gesperrt: false,
+          geaendertMs: 7,
+          anmeldung: null,
+        },
+      ],
+    };
+  });
+
+const bildLesungen = async (page: Page) =>
+  (await calls(page)).filter(([c]) => c === "konto_bild_lesen").length;
+
+test("Profilbilder werden nur nachgeladen, wenn sich das Profil geaendert hat", async ({
+  page,
+}) => {
+  await mitBild(page);
+  await page.goto("/");
+  await expect(
+    page
+      .locator(".lv-titlebar")
+      .getByRole("button", { name: "Profil: Lokales Profil" }),
+  ).toBeVisible();
+  await expect.poll(() => bildLesungen(page)).toBeGreaterThanOrEqual(2);
+  const erste = await bildLesungen(page);
+
+  // Fenster-Fokus und Ereignis ohne Aenderung: kein erneutes Uebertragen.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    (window as any).__emit("konto-geaendert");
+  });
+  await expect
+    .poll(
+      async () =>
+        (await calls(page)).filter(([c]) => c === "konto_status").length,
+    )
+    .toBeGreaterThanOrEqual(3);
+  expect(await bildLesungen(page)).toBe(erste);
+
+  // Aenderung an p2: nur dessen Bild wird neu gelesen (mehrere Hook-Instanzen lesen je einmal).
+  const lesungen = async (id: string) =>
+    (await calls(page)).filter(
+      ([c, a]) => c === "konto_bild_lesen" && a.id === id,
+    ).length;
+  const p1 = await lesungen("p1");
+  const p2 = await lesungen("p2");
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__konto.profile[1].geaendertMs += 1;
+    w.__emit("konto-geaendert");
+  });
+  await expect.poll(() => lesungen("p2")).toBeGreaterThan(p2);
+  expect(await lesungen("p1")).toBe(p1);
+});
+
+test("Mein Profil: Aenderung geht mit der gezeigten Profil-ID an den Kern, Abweisung wird gezeigt", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page
+    .locator(".lv-titlebar")
+    .getByRole("button", { name: /^Profil:/ })
+    .click();
+  await page
+    .locator(".wai-konto-menue")
+    .getByRole("button", { name: "Mein Profil" })
+    .click();
+  // Eine andere App macht ein anderes Profil aktiv; die Ansicht weiss es noch nicht.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__konto.profile.push({
+      id: "p9",
+      anzeigename: "Fremd",
+      farbe: 3,
+      hatBild: false,
+      gesperrt: false,
+      geaendertMs: 1,
+      anmeldung: null,
+    });
+    w.__konto.aktiv = "p9";
+  });
+  await page.getByLabel("Anzeigename").fill("Anna Beispiel");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Das aktive Profil hat sich geändert",
+  );
+  const call = (await calls(page)).find(([c]) => c === "konto_aendern");
+  expect(call?.[1]).toMatchObject({ id: "p1" });
+});
+
+test("Mein Profil: Bild entfernen zeigt bei Fehler eine Meldung", async ({
+  page,
+}) => {
+  await mitBild(page);
+  await page.addInitScript(() => {
+    (window as any).__bildEntfernenFehler = true;
+  });
+  await page.goto("/");
+  await page
+    .locator(".lv-titlebar")
+    .getByRole("button", { name: /^Profil:/ })
+    .click();
+  await page
+    .locator(".wai-konto-menue")
+    .getByRole("button", { name: "Mein Profil" })
+    .click();
+  await page.getByRole("button", { name: "Bild entfernen" }).click();
+  await expect(
+    page.locator("[data-sonner-toast]").filter({
+      hasText: "Das Bild konnte nicht entfernt werden.",
+    }),
+  ).toBeVisible();
+  const call = (await calls(page)).find(([c]) => c === "konto_bild_entfernen");
+  expect(call?.[1]).toMatchObject({ id: "p1" });
 });
