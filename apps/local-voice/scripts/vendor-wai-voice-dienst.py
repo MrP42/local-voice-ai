@@ -2,10 +2,9 @@
 """wai-voice-dienst aus dem WAI-SDK in Local Voice AI übernehmen (Vendoring, ADR-0021 Paket S2).
 
 Quelle:   https://github.com/MrP42/wai-sdk, Pfad crates/wai-voice-dienst
-Commit:   ee5eee00 (Branch claude/project-thread-irqf6e, PR #994, noch nicht gemergt: `willkommen` mit
+Commit:   e624d851 (origin/main nach Merge von PR #994: `willkommen` mit
           Gegenbeweis, `hallo.zufall` und Kopplung mit Schluesselaustausch/Vergleichscode). Vorher a624d690, 6ecea3ad und
-          249a4db3 (origin/main, #985). Nach dem Merge von #994 wird auf main nachgezogen
-          (`--commit origin/main`). Der volle Commit steht in VENDOR.toml.
+          249a4db3 (origin/main, #985). Der volle Commit steht in VENDOR.toml.
 Ziel:     apps/local-voice/src-tauri/vendor/wai-voice-dienst/
 
 Muster: wai-digitaler-posteingang/scripts/vendor-wai-rules.py. Kopiert `src/` des festen Commits per
@@ -40,7 +39,7 @@ ZIEL = WURZEL / "src-tauri" / "vendor" / "wai-voice-dienst"
 QUELLE = "crates/wai-voice-dienst"
 UEBERNOMMEN = ("src/",)
 VENDOR_DATEI = "VENDOR.toml"
-STANDARD_REV = "ee5eee00"
+STANDARD_REV = "e624d851"
 REPO = "https://github.com/MrP42/wai-sdk"
 # Versionen, die Local Voice AI schon nutzt (src-tauri/Cargo.toml und Cargo.lock). Sie ersetzen die
 # Workspace-Versionen des SDK, damit im Lock nichts Zweites entsteht.
