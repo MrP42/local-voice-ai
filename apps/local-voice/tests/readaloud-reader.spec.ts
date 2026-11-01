@@ -592,3 +592,48 @@ test("Weiterlesen schmal: Hinweis und „Von vorn“ im Überlaufmenü", async (
   await page.getByTestId("reader-more").click();
   await expect(page.getByTestId("reader-more-resume")).toHaveCount(0);
 });
+
+test("Lesezeichen am Anfang: Play beginnt danach vorn", async ({ page }) => {
+  const plain = Array.from(
+    { length: 40 },
+    (_, n) => `Absatz ${n + 1}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.`,
+  ).join("\n\n");
+  await open(page, plain);
+  // Lesezeichen auf Seite 1 (Offset 0), dann weiter hinten lesen.
+  await page.getByTestId("reader-bookmarks").click();
+  await page.getByTestId("reader-bookmark-add").click();
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Absatz 3:", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 23,
+    text: "Absatz 20: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20");
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-where")).toContainText(/Weiter ab Seite/);
+  await page.getByTestId("reader-bookmarks").click();
+  await page.getByTestId("reader-bookmark").click();
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "0");
+  // Die alte Stelle (Absatz 20) gilt nicht mehr: Play beginnt am Anfang.
+  const play = page.getByTestId("reader-play");
+  const label = await play.getAttribute("aria-label");
+  await playFromBar(page, label ?? "Vorlesen");
+  await expect
+    .poll(async () => {
+      const from = await calls(page, "tts_speak_text_from");
+      const whole = await calls(page, "tts_speak_text");
+      if (whole.length) return "vorn";
+      if (!from.length) return "nichts";
+      const a = from[from.length - 1];
+      return String(a.text).slice(Number(a.charOffset)).startsWith("Absatz 1:") ? "vorn" : "falsch";
+    })
+    .toBe("vorn");
+});
