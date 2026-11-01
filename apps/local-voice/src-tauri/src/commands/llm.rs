@@ -47,6 +47,7 @@ pub fn llm_remove_connection(app: AppHandle, id: String) -> Result<(), String> {
             s.llm_active_model_id = None;
         }
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }
@@ -90,6 +91,7 @@ pub fn llm_remove_model(app: AppHandle, id: String) -> Result<(), String> {
     if s.llm_active_model_id.as_deref() == Some(id.as_str()) {
         s.llm_active_model_id = None;
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }

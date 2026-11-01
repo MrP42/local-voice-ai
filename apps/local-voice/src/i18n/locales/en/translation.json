@@ -2311,7 +2311,9 @@
       },
       "functions": {
         "title": "Models per function",
-        "description": "A separate model for individual tasks, saved permanently. “Default model” follows the active model above and the footer.",
+        "description": "A separate model for individual tasks, saved permanently. “Default” follows the active model above and the footer.",
+        "fallback": "If the chosen function model is not available (switched off or removed), the default model is used.",
+        "compliance": "Before every call, the model in use is checked against the selected policy. A blocked model is not called.",
         "default": "Default: {{model}}",
         "defaultNone": "Default model",
         "effort": "Effort for {{name}}",

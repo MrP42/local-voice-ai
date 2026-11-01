@@ -64,6 +64,13 @@ export const FunctionModels: React.FC<Props> = ({
           run={run}
         />
       ))}
+      <ul
+        className="px-4 py-2 text-xs text-text/60 space-y-0.5 list-disc list-inside"
+        data-function-notes
+      >
+        <li>{t("settings.llm.functions.fallback")}</li>
+        <li>{t("settings.llm.functions.compliance")}</li>
+      </ul>
     </SettingsGroup>
   );
 };

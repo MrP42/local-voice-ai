@@ -1993,6 +1993,24 @@ impl AppSettings {
         self.post_process_models.insert(kind, remote);
     }
 
+    /// Eintraege von Modellen entfernen, die es nicht mehr gibt (Freigabe oder
+    /// Verbindung entfernt); ein spaeter neu freigegebenes Modell bringt so keine
+    /// alte Wahl zurueck.
+    pub fn prune_function_models(&mut self) {
+        let models = &self.llm_models;
+        self.function_models
+            .retain(|_, f| models.iter().any(|m| m.id == f.model_id));
+    }
+
+    /// Ein Nachfolgemodell uebernimmt die Wahl aller Funktionen des alten.
+    pub fn replace_function_model(&mut self, old_id: &str, new_id: &str) {
+        for f in self.function_models.values_mut() {
+            if f.model_id == old_id {
+                f.model_id = new_id.to_string();
+            }
+        }
+    }
+
     /// Ist das Modell freigegeben und seine Verbindung eingeschaltet?
     pub fn llm_model_selectable(&self, id: &str) -> bool {
         self.llm_models.iter().any(|m| {
@@ -3143,6 +3161,32 @@ mod tests {
             model(&settings)
         );
         assert_eq!(model(&settings).as_deref(), Some("opus@medium"));
+    }
+
+    /// Entfernte Modelle verlieren ihre Funktionswahl, Nachfolger erben sie.
+    #[test]
+    fn function_models_follow_removed_and_replaced_models() {
+        let mut settings = get_default_settings();
+        settings.llm_models.extend([
+            llm_model("c:a", "c", "a", true),
+            llm_model("c:b", "c", "b", true),
+        ]);
+        for (f, id) in [(FN_VOICE_SPEAKER, "c:a"), (FN_MEETING_PROTOCOL, "c:b")] {
+            settings.function_models.insert(
+                f.into(),
+                FunctionModel {
+                    model_id: id.into(),
+                    effort: None,
+                },
+            );
+        }
+        settings.replace_function_model("c:a", "c:a2");
+        assert_eq!(settings.function_models[FN_VOICE_SPEAKER].model_id, "c:a2");
+        settings.llm_models.retain(|m| m.id != "c:b");
+        settings.prune_function_models();
+        assert!(!settings.function_models.contains_key(FN_MEETING_PROTOCOL));
+        // c:a2 gibt es (noch) nicht als Freigabe: ebenfalls entfernt.
+        assert!(!settings.function_models.contains_key(FN_VOICE_SPEAKER));
     }
 
     /// Alte Einstellungsdateien ohne das Feld laden mit leerer Zuordnung.

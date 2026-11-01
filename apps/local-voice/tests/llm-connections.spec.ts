@@ -239,6 +239,9 @@ test("models with a fast mode get a lightning switch", async ({ page }) => {
 test("each function keeps its own model and effort", async ({ page }) => {
   await openTab(page);
   await expect(page.getByText("Modelle je Funktion", { exact: true })).toBeVisible();
+  const notes = page.locator("[data-function-notes]");
+  await expect(notes).toContainText("wird das Standardmodell verwendet");
+  await expect(notes).toContainText("Vor jedem Aufruf wird geprüft");
   const speaker = page.locator("[data-function-select=voice_speaker]");
   // Leer = Standardmodell, mit Namen des aktiven Modells.
   await expect(speaker.locator("option").first()).toHaveText("Standard: GPT-4.1-Mini");

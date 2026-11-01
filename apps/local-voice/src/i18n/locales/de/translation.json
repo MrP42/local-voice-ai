@@ -2311,7 +2311,9 @@
       },
       "functions": {
         "title": "Modelle je Funktion",
-        "description": "Eigenes Modell für einzelne Aufgaben, dauerhaft gespeichert. „Standardmodell“ folgt dem aktiven Modell oben und der Fußleiste.",
+        "description": "Eigenes Modell für einzelne Aufgaben, dauerhaft gespeichert. „Standard“ folgt dem aktiven Modell oben und der Fußleiste.",
+        "fallback": "Ist das gewählte Funktionsmodell nicht verfügbar (abgeschaltet oder entfernt), wird das Standardmodell verwendet.",
+        "compliance": "Vor jedem Aufruf wird geprüft, ob das verwendete Modell dem gewählten Regelwerk entspricht. Ein gesperrtes Modell wird nicht aufgerufen.",
         "default": "Standard: {{model}}",
         "defaultNone": "Standardmodell",
         "effort": "Effort für {{name}}",
