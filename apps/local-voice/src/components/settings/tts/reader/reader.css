@@ -37,8 +37,8 @@
 .reader-run {
   position: absolute;
   top: 10px;
-  left: 40px;
-  right: 40px;
+  left: 52px;
+  right: 52px;
   font-size: 11.5px;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -47,13 +47,13 @@
 }
 .reader-flow {
   position: absolute;
-  top: 34px;
-  bottom: 34px;
+  top: 42px;
+  bottom: 40px;
   column-fill: auto;
   transition: transform 0.3s ease;
   font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   font-size: var(--reader-fs, 18px);
-  line-height: 1.62;
+  line-height: 1.72;
   hyphens: auto;
   text-align: justify;
   outline: none;
@@ -76,6 +76,12 @@
   text-align: left;
   break-after: avoid;
 }
+/* Kapitel (# und ##) beginnen wie im gedruckten Buch auf einer neuen Seite. */
+.reader-flow > h2:not(:first-child),
+.reader-flow > h3:not(:first-child) {
+  break-before: column;
+  margin-top: 1.2em;
+}
 .reader-h1 {
   font-size: 1.5em;
 }
@@ -96,7 +102,7 @@
 }
 .reader-block {
   position: relative;
-  margin: 0 0 0.7em;
+  margin: 0 0 0.9em;
   padding-left: 96px;
   padding-right: 8px;
   orphans: 2;
@@ -122,6 +128,14 @@
   width: 3px;
   border-radius: 2px;
   background: var(--speaker-c);
+}
+/* Sprecher ohne eingerichtete Stimme: Farbe bleibt, der Strich ist gestrichelt. */
+.reader-block--novoice > .reader-bar {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--speaker-c) 0 5px,
+    transparent 5px 9px
+  );
 }
 .reader-who {
   position: absolute;

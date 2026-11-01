@@ -97,6 +97,8 @@ test.beforeEach(async ({ page }) => {
             return (window as unknown as { __pick?: string }).__pick ?? null;
           if (cmd === "tts_extract_document")
             return (window as unknown as { __extracted?: string }).__extracted ?? "";
+          if (cmd === "tts_list_voice_infos")
+            return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
           if (cmd === "tts_cached_translation") return null;
           if (cmd === "tts_list_downloads") return [];
           if (
@@ -753,4 +755,54 @@ test("Import auf einer Seite mit Text benennt die Seite nicht um", async ({ page
   await expect.poll(async () => (await calls(page, "tts_extract_document")).length).toBe(1);
   await page.waitForTimeout(300);
   expect(await calls(page, "pages_rename")).toHaveLength(0);
+});
+
+test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __voices: unknown[] }).__voices = [
+      { id: "v-erz", meta: { display_name: "Erzählerin", color: "amber", language: "de" } },
+      { id: "v-mara", meta: { display_name: "Mara", color: "teal", language: "de" } },
+    ];
+  });
+  const text = [
+    "<Erzählerin> Der Leuchtturm stand auf der Klippe.",
+    "",
+    "<Mara> Noch zwölf Stufen.",
+    "",
+    "<Bob> Ich habe keine Stimme.",
+    "",
+    "<Bob> Noch einmal Bob.",
+  ].join("\n");
+  await open(page, text);
+  const flow = page.getByTestId("reader-flow");
+  const mara = flow.locator(".reader-block", { hasText: "Noch zwölf Stufen" });
+  const bob = flow.locator(".reader-block", { hasText: "Ich habe keine Stimme" });
+  // Bekannte Stimme: ihre Farbe am Rand. Ohne Stimme: trotzdem farbig, aber gestrichelt.
+  await expect(mara).toHaveAttribute("style", /--speaker-c: #14b8a6/);
+  await expect(mara).not.toHaveClass(/reader-block--novoice/);
+  await expect(bob).toHaveClass(/reader-block--novoice/);
+  await expect(bob).not.toHaveAttribute("style", /mid-gray/);
+
+  await page.getByTestId("tts-action-menu").click();
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-check")).toContainText("Bob");
+  const assign = page.getByTestId("script-assign-voice");
+  await expect(assign).toBeEnabled();
+  await assign.click();
+  const menu = page.getByTestId("script-assign-voice-menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Erzählerin", "Mara"]);
+  // Pfeiltasten und Escape bedienen das Menü.
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: "Mara" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(assign).toBeFocused();
+
+  await assign.click();
+  await menu.getByRole("menuitem", { name: "Mara" }).click();
+  // Alle Stellen von Bob sprechen jetzt mit Maras Stimme.
+  await expect(flow.locator(".reader-block--novoice")).toHaveCount(0);
+  await expect(flow.getByRole("button", { name: /Sprecher Bob/ })).toHaveCount(0);
+  await expect(flow.getByRole("button", { name: /Sprecher Mara/ })).toHaveCount(3);
 });

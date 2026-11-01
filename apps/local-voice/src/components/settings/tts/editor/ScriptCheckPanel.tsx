@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   ChevronLast,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -59,6 +60,106 @@ const PRIMARY_CLASSES =
   "h-7 cursor-pointer rounded-md border border-logo-primary/60 bg-logo-primary/15 px-2 text-xs font-medium text-text hover:bg-logo-primary/30 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary";
 const NAV_CLASSES =
   "flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/20 hover:text-text disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary";
+
+/**
+ * „Stimme zuweisen“ direkt in der Fundleiste (lva#159): ein Sprecher ohne
+ * Stimme bekommt mit einem Klick eine der eingerichteten Stimmen, an allen
+ * Stellen der Gruppe. Das Menü schließt bei Escape und Klick daneben.
+ */
+const AssignVoiceMenu: React.FC<{
+  name: string;
+  count: number;
+  speakers: SpeakerRef[];
+  onPick: (speaker: SpeakerRef) => void;
+  /** Gibt es schon eine Empfehlung, ist sie die Hauptaktion. */
+  secondary?: boolean;
+}> = ({ name, count, speakers, onPick, secondary }) => {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    rootRef.current
+      ?.querySelector<HTMLButtonElement>("[role=menuitem]")
+      ?.focus();
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  const onMenuKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(
+      e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=menuitem]"),
+    );
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    }
+  };
+
+  const none = speakers.length === 0;
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        ref={buttonRef}
+        type="button"
+        data-testid="script-assign-voice"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={none}
+        onClick={() => setOpen((o) => !o)}
+        className={`${secondary ? ACTION_CLASSES : PRIMARY_CLASSES} inline-flex items-center gap-1 whitespace-nowrap`}
+        title={
+          none
+            ? t("tts.scriptCheck.assignVoiceNone")
+            : t("tts.scriptCheck.assignVoiceTitle", { name, count })
+        }
+      >
+        {t("tts.scriptCheck.assignVoice")}
+        <ChevronDown width={12} height={12} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          aria-label={t("tts.scriptCheck.assignVoiceTitle", { name, count })}
+          data-testid="script-assign-voice-menu"
+          onKeyDown={onMenuKey}
+          className="absolute right-0 top-full z-50 mt-1 max-h-72 min-w-[12rem] overflow-y-auto rounded-md border border-mid-gray/30 bg-background p-1 shadow-lg"
+        >
+          {speakers.map((speaker) => (
+            <button
+              key={speaker.id}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onPick(speaker);
+              }}
+              className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm text-text hover:bg-mid-gray/15 focus-visible:bg-mid-gray/15 focus-visible:outline-none"
+            >
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: speaker.color }}
+              />
+              <span className="truncate">{speaker.displayName}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 /**
  * Eine Gruppe (ein Problem, n Stellen): Beschreibung, Stellen zum
@@ -231,18 +332,31 @@ const GroupCard: React.FC<{
     : t("tts.scriptCheck.groupTag", { tag: group.name, count });
 
   return (
-    <div data-testid="script-finding" className="min-w-0 flex-1">
+    <div data-testid="script-finding" className="@container min-w-0 flex-1">
       {/* Eine Zeile: Befund, Stellen blättern, eine Hauptaktion, Rest im
         Mehr-Menü (lva#148, Codex). Keine Liste aller Zeilen mehr. */}
-      <div className="flex min-w-0 items-center gap-2">
+      {/* Schmal (unter 34rem): Befund in der ersten Zeile, Aktionen darunter,
+        statt dass Knöpfe rechts abgeschnitten werden. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @[34rem]:flex-nowrap">
         <p
-          className="min-w-0 flex-1 truncate text-sm text-text"
+          className="min-w-0 flex-1 basis-full truncate text-sm text-text @[34rem]:basis-0"
           title={`${label} — ${message}`}
         >
           <span className="font-medium">{label}</span>
           <span className="text-text/70"> — {message}</span>
         </p>
         {spotNav}
+        {group.kind === "unknown-speaker" && (
+          <AssignVoiceMenu
+            name={group.name}
+            count={count}
+            speakers={speakers}
+            secondary={!!primary}
+            onPick={(speaker) =>
+              actions.replace(current, speakerReplacement(speaker), true)
+            }
+          />
+        )}
         {primary && (
           <button
             type="button"
