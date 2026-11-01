@@ -445,11 +445,14 @@ fn recent_entries_are_newest_first_and_skip_archived() {
     let s = store();
     let open = s.create(Some("Offen".to_string())).unwrap();
     let archived = s.create(Some("Archiviert".to_string())).unwrap();
-    s.append_entry(&open.id, entry("user", "erste Frage")).unwrap();
+    s.append_entry(&open.id, entry("user", "erste Frage"))
+        .unwrap();
     tick();
-    s.append_entry(&archived.id, entry("user", "versteckt")).unwrap();
+    s.append_entry(&archived.id, entry("user", "versteckt"))
+        .unwrap();
     tick();
-    s.append_entry(&open.id, entry("assistant", "zweite Antwort")).unwrap();
+    s.append_entry(&open.id, entry("assistant", "zweite Antwort"))
+        .unwrap();
     s.update(&archived.id, None, None, Some(true)).unwrap();
 
     let hits = s.recent_entries(10).unwrap();

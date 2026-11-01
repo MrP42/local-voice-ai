@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   Pencil,
+  Phone,
   Pin,
   PinOff,
   Search,
@@ -34,6 +35,8 @@ export interface ConversationListItem {
   updatedAt: number;
   pinned: boolean;
   archived: boolean;
+  /** Das Hauptgespräch (Tastenkürzel und Telefon der Fußleiste setzen es fort). */
+  main?: boolean;
   /** Anfang des jüngsten Beitrags; die Suche schaut auch hier hinein. */
   lastText: string;
 }
@@ -68,6 +71,8 @@ export interface ConversationListLabels {
   confirmNo: string;
   showArchived: string;
   archivedBadge: string;
+  /** Beschriftung des Hauptgespräch-Symbols. */
+  mainBadge: string;
 }
 
 export interface ConversationListProps {
@@ -495,6 +500,15 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           <span className="flex-1 min-w-0 truncate">
                             {item.title}
                           </span>
+                          {item.main && (
+                            <Phone
+                              className="w-3 h-3 shrink-0 text-logo-primary/80"
+                              aria-label={labels.mainBadge}
+                              role="img"
+                            >
+                              <title>{labels.mainBadge}</title>
+                            </Phone>
+                          )}
                           {item.archived && (
                             <span className="shrink-0 rounded px-1 text-[10px] bg-mid-gray/20 text-text/70">
                               {labels.archivedBadge}

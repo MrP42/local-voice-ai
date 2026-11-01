@@ -767,12 +767,19 @@ mod tests {
 
         let all = HistoryManager::dictations_with_conn(&conn, None, None, 10).expect("lesen");
         let times: Vec<i64> = all.iter().map(|e| e.timestamp).collect();
-        assert_eq!(times, vec![300, 200, 100], "neueste zuerst, ohne leeres Diktat");
+        assert_eq!(
+            times,
+            vec![300, 200, 100],
+            "neueste zuerst, ohne leeres Diktat"
+        );
 
         let window =
             HistoryManager::dictations_with_conn(&conn, Some(200), Some(300), 10).expect("lesen");
         assert_eq!(window.len(), 1, "von einschliesslich, bis ausschliesslich");
-        assert_eq!(window[0].post_processed_text.as_deref(), Some("mitte nachbearbeitet"));
+        assert_eq!(
+            window[0].post_processed_text.as_deref(),
+            Some("mitte nachbearbeitet")
+        );
 
         let limited = HistoryManager::dictations_with_conn(&conn, None, None, 1).expect("lesen");
         assert_eq!(limited.len(), 1);

@@ -558,20 +558,27 @@ test.describe("Sprachgespraech", () => {
     await expect(page.getByText("Abo · keine API-Kosten")).toBeVisible();
   });
 
-  test("Fussleiste zeigt Gespräch nur auf dieser Seite", async ({ page }) => {
+  test("Fußleiste: Telefon immer sichtbar, Gesprächsmenü nur auf dieser Seite", async ({
+    page,
+  }) => {
     await openPage(page);
-    const trigger = page.getByRole("button", { name: /^Gespräch$/ }).last();
-    const footerBtn = page.locator(".workspace-status").getByRole("button", {
-      name: /Gespräch/,
+    const status = page.locator(".workspace-status");
+    const phone = status.locator("[data-call-button]");
+    const menuBtn = status.getByRole("button", {
+      name: "Gespräch: Mikrofon, Stimme und Sprachfluss",
     });
-    await expect(footerBtn).toBeVisible();
-    await footerBtn.click();
+    // Kein Wort „Gespräch“ mehr in der Leiste: nur das Telefon, grau ohne Anruf.
+    await expect(phone).toBeVisible();
+    await expect(phone).toHaveAttribute("data-state", "idle");
+    await expect(phone).toHaveAttribute("aria-pressed", "false");
+    await expect(status.getByText("Gespräch", { exact: true })).toHaveCount(0);
+    await menuBtn.click();
     await expect(page.getByRole("menu", { name: "Gespräch" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu", { name: "Gespräch" })).toHaveCount(0);
-    void trigger;
     await goTo(page, "Verlauf");
-    await expect(footerBtn).toHaveCount(0);
+    await expect(menuBtn).toHaveCount(0);
+    await expect(phone).toBeVisible();
   });
 
   test("Plus-Menü bietet Dateien und deaktiviertes Corporate LLM", async ({
@@ -2680,5 +2687,239 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     expect((await calls(page, "conversation_set_pinned"))[1].args).toMatchObject({
       pinned: false,
     });
+
+test.describe("Hauptgespräch per Tastenkürzel", () => {
+  const overlayStates = async (page: Page) =>
+    (await calls(page, "voice_call_overlay")).map((c) => c.args.state);
+
+  test("Kürzel startet das Hauptgespräch auch auf einer anderen Seite und beendet es wieder", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light");
+    await page.goto("/");
+    await goTo(page, "Verlauf");
+    await page.waitForFunction(
+      () => (window as any).__listening("voice-call-hotkey") > 0,
+    );
+    const phone = page.locator(".workspace-status [data-call-button]");
+    await expect(phone).toHaveAttribute("data-state", "idle");
+
+    await page.evaluate(() =>
+      (window as any).__emit("voice-call-hotkey", null),
+    );
+    await expect(phone).toHaveAttribute("data-state", "active");
+    expect(await calls(page, "voice_call_start")).toHaveLength(1);
+    // Status wie beim Diktat im Overlay; nichts wird eingefügt.
+    await expect.poll(() => overlayStates(page)).toContain("call-listening");
+    expect(await calls(page, "paste_text")).toHaveLength(0);
+
+    await page.evaluate(() =>
+      (window as any).__emit("voice-call-hotkey", null),
+    );
+    await expect(phone).toHaveAttribute("data-state", "idle");
+    await expect
+      .poll(async () => (await overlayStates(page)).at(-1))
+      .toBeNull();
+  });
+
+  test("Verlassen der Seite beendet das Hauptgespräch nicht, Klick aufs Telefon schon", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light");
+    await openPage(page);
+    const phone = page.locator(".workspace-status [data-call-button]");
+    await phone.click();
+    await expect(phone).toHaveAttribute("data-state", "active");
+    await goTo(page, "Verlauf");
+    await expect(phone).toHaveAttribute("data-state", "active");
+    await phone.click();
+    await expect(phone).toHaveAttribute("data-state", "idle");
+  });
+
+  test("Kürzel spricht ins Hauptgespräch, nicht ins offene andere Gespräch", async ({
+    page,
+  }) => {
+    await fakeMicrophone(page);
+    await install(page, "light", {
+      seed: {
+        title: "Anderes Thema",
+        entries: [
+          { role: "user", mode: "typed", text: "Etwas anderes" },
+          { role: "assistant", mode: "typed", text: "Gern." },
+        ],
+      },
+    });
+    // Das Hauptgespräch ist ein anderes, schon gespeichertes Gespräch.
+    const mainId = "conv_seed000000000000000000";
+    await page.addInitScript((id) => {
+      localStorage.setItem("voice-call.main", id);
+    }, mainId);
+    await openPage(page);
+    await newChat(page).click();
+    await page.evaluate(() =>
+      (window as any).__emit("voice-call-hotkey", null),
+    );
+    const phone = page.locator(".workspace-status [data-call-button]");
+    await expect(phone).toHaveAttribute("data-state", "active");
+    // Das Hauptgespräch ist jetzt offen (sein Verlauf steht im Chat).
+    await expect(
+      page.getByRole("log").getByText("Etwas anderes"),
+    ).toBeVisible();
+    expect(
+      (await calls(page, "conversation_get")).some((c) => c.args.id === mainId),
+    ).toBe(true);
+  });
+});
+
+test.describe("Hauptgespräch Abnahmebilder @screenshots", () => {
+  test("Fußleiste und Overlay, hell und dunkel", async ({ browser }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    mkdirSync(SHOTS, { recursive: true });
+    for (const theme of ["light", "dark"] as const) {
+      const ctx = await browser.newContext({
+        viewport: { width: 1280, height: 760 },
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await fakeMicrophone(page);
+      await install(page, theme, {
+        settings: {
+          bindings: {
+            voice_call: {
+              id: "voice_call",
+              name: "Main conversation",
+              description: "",
+              default_binding: "ctrl+alt+g",
+              current_binding: "ctrl+alt+g",
+            },
+          },
+        },
+      });
+      await page.goto("/");
+      await goTo(page, "Verlauf");
+      const status = page.locator(".workspace-status");
+      const phone = status.locator("[data-call-button]");
+      await phone.hover();
+      await page.waitForTimeout(600);
+      await status.screenshot({ path: `${SHOTS}/fusszeile-${theme}-aus.png` });
+      await page.screenshot({ path: `${SHOTS}/seite-${theme}-aus.png` });
+      await page.evaluate(() =>
+        (window as any).__emit("voice-call-hotkey", null),
+      );
+      await expect(phone).toHaveAttribute("data-state", "active");
+      await page.mouse.move(10, 10);
+      await page.waitForTimeout(400);
+      await status.screenshot({ path: `${SHOTS}/fusszeile-${theme}-an.png` });
+      await status
+        .getByRole("button", {
+          name: "Gespräch: Mikrofon, Stimme und Sprachfluss",
+        })
+        .click();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: `${SHOTS}/menue-${theme}-an.png` });
+      await ctx.close();
+
+      // Overlay: dieselbe Attrappe, eigenes Fenster.
+      const octx = await browser.newContext({
+        viewport: { width: 260, height: 80 },
+        baseURL: test.info().project.use.baseURL,
+        colorScheme: theme,
+      });
+      const ov = await octx.newPage();
+      await install(ov, theme);
+      await ov.goto("/src/overlay/index.html");
+      await ov.waitForFunction(
+        () => (window as any).__listening("show-overlay") > 0,
+      );
+      for (const state of [
+        "call-listening",
+        "call-thinking",
+        "call-speaking",
+      ]) {
+        await ov.evaluate(
+          (s) => (window as any).__emit("show-overlay", s),
+          state,
+        );
+        if (state === "call-listening")
+          for (let i = 0; i < 12; i++) {
+            await ov.evaluate(
+              (k) =>
+                (window as any).__emit(
+                  "mic-level",
+                  Array.from(
+                    { length: 16 },
+                    (_, j) => Math.abs(Math.sin(k + j)) * 0.9,
+                  ),
+                ),
+              i,
+            );
+            await ov.waitForTimeout(30);
+          }
+        await ov.waitForTimeout(500);
+        await ov.screenshot({ path: `${SHOTS}/overlay-${theme}-${state}.png` });
+      }
+      await octx.close();
+    }
+  });
+});
+
+test.describe("Screenshots Oberfläche @screenshots", () => {
+  test("aufgeräumte Oberfläche: Leerzustand, Chat, Menüs, Verlauf, Suche, Angeheftet", async ({
+    browser,
+  }) => {
+    test.skip(!SHOTS, "nur fuer Abnahmebilder (SCREENS_DIR)");
+    const dir = `${SHOTS}/`;
+    mkdirSync(dir, { recursive: true });
+    const runs = [
+      ["hell-1440", "light", { width: 1440, height: 900 }],
+      ["hell-390", "light", { width: 390, height: 844 }],
+      ["dunkel-1440", "dark", { width: 1440, height: 900 }],
+    ] as const;
+    for (const [name, theme, size] of runs) {
+      const ctx = await browser.newContext({
+        viewport: size,
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, theme, {
+        settings: { ...TWO_MODELS, voice_call_knowledge: ["meetings", "calendar"] },
+        config: { orchestration: { souveraenitaet: "eu" } },
+      });
+      const narrow = size.width < 600;
+      const snap = async (n: string) => {
+        await settled(page);
+        await page.screenshot({ path: `${dir}${n}-${name}.png` });
+      };
+      await openPage(page);
+      await snap("1-leerzustand");
+      await exchange(page, "Fasse bitte das gestrige Meeting kurz zusammen.", "Gern. Es ging um Budget und Termine.");
+      await snap("2-laufender-chat");
+      await page.getByRole("button", { name: "Gesprächsoptionen" }).click();
+      await snap("3-kontextmenue");
+      await page.keyboard.press("Escape");
+      await permissionChip(page).click();
+      await snap("4-berechtigungsmenue");
+      await page.keyboard.press("Escape");
+      await page.getByTestId("model-picker").click();
+      await snap("5-modellmenue");
+      await page.keyboard.press("Escape");
+      if (narrow) await historyToggle(page).click();
+      await newChat(page).click();
+      await exchange(page, "Rezept für Linsensuppe", "Gern, hier ein Rezept.");
+      if (narrow) await historyToggle(page).click();
+      await page.getByRole("button", { name: "Optionen für „Rezept für Linsensuppe“" }).click();
+      await page.getByRole("menuitem", { name: "Anheften" }).click();
+      await snap("6-angeheftet");
+      const search = await openSearch(page);
+      await expect(search).toBeVisible();
+      await snap("7-suche");
+      await page.keyboard.press("Escape");
+      if (narrow) await page.keyboard.press("Escape");
+      else await historyToggle(page).click();
+      await snap("8-verlauf-eingeklappt");
+      await ctx.close();
+    }
   });
 });

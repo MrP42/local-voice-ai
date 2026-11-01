@@ -204,7 +204,9 @@ pub(crate) fn pages_snapshot(app: &AppHandle) -> Result<Vec<PageInfo>, String> {
     for page in &mut index.pages {
         enrich(app, page);
     }
-    index.pages.sort_by(|a, b| b.modified_ms.total_cmp(&a.modified_ms));
+    index
+        .pages
+        .sort_by(|a, b| b.modified_ms.total_cmp(&a.modified_ms));
     Ok(index.pages)
 }
 

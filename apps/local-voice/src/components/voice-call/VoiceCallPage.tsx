@@ -92,6 +92,7 @@ export const VoiceCallPage: React.FC = () => {
   const settingsOpen = useVoiceCallStore((s) => s.settingsOpen);
   const conversations = useVoiceCallStore((s) => s.conversations);
   const conversationId = useVoiceCallStore((s) => s.conversationId);
+  const mainConversationId = useVoiceCallStore((s) => s.mainConversationId);
   const showArchived = useVoiceCallStore((s) => s.showArchived);
   const store = useVoiceCallStore;
   const narrow = useNarrow();
@@ -158,9 +159,10 @@ export const VoiceCallPage: React.FC = () => {
         updatedAt: Date.parse(c.updated_at) || 0,
         pinned: c.pinned,
         archived: c.archived,
+        main: c.id === mainConversationId,
         lastText: c.last_text,
       })),
-    [conversations],
+    [conversations, mainConversationId],
   );
   const historyLabels = useMemo(
     () => ({
@@ -190,6 +192,7 @@ export const VoiceCallPage: React.FC = () => {
       confirmNo: t("voiceCall.history.confirmNo"),
       showArchived: t("voiceCall.history.showArchived"),
       archivedBadge: t("voiceCall.history.archivedBadge"),
+      mainBadge: t("voiceCall.history.mainBadge"),
     }),
     [t, keySearch],
   );

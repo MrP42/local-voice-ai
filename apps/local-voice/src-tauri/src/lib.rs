@@ -2246,6 +2246,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
+            overlay::voice_call_overlay,
             conversations::conversations_list,
             conversations::conversation_get,
             conversations::conversation_create,

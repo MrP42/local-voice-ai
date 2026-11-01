@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import "./RecordingOverlay.css";
@@ -13,8 +13,19 @@ import i18n, { syncLanguageFromSettings } from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 
+type CallOverlayState =
+  "call-listening" | "call-hearing" | "call-thinking" | "call-speaking";
+
 type OverlayState =
-  "recording" | "streaming" | "transcribing" | "processing" | "notice";
+  | "recording"
+  | "streaming"
+  | "transcribing"
+  | "processing"
+  | "notice"
+  | CallOverlayState;
+
+const isCallState = (s: OverlayState): s is CallOverlayState =>
+  s.startsWith("call-");
 
 type PasteFallbackNotice = {
   reason: string;
@@ -332,6 +343,71 @@ const RecordingOverlay: React.FC = () => {
                 true,
               )
             : listeningRow(open, true)}
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Sprachgespräch (Hauptgespräch per Tastenkürzel): derselbe kleine Rahmen wie
+  // beim Diktat, links ein Telefon statt des Punkts, in der Mitte Welle (hört zu)
+  // oder Beschriftung (denkt nach / spricht), rechts Beenden. Es wird nichts eingefügt.
+  if (isCallState(state)) {
+    const hearing = state === "call-listening" || state === "call-hearing";
+    const label = t(`overlay.call.${state.slice(5)}`);
+    return (
+      <div
+        dir={direction}
+        className={`ov-stage ${position} ov-fade ${isVisible ? "show" : ""}`}
+      >
+        <div
+          className={`scard compact scall cworking ${state}`}
+          role="status"
+          aria-label={`${t("overlay.call.title")}: ${label}`}
+        >
+          <div className="sbase">
+            <div className="sbase-l">
+              <svg
+                className="scall-phone"
+                viewBox="0 0 16 16"
+                aria-hidden="true"
+              >
+                <path
+                  d="M5.2 2.2 6.6 5a1 1 0 0 1-.2 1.1l-.9.9a8 8 0 0 0 3.5 3.5l.9-.9a1 1 0 0 1 1.1-.2l2.8 1.4a1 1 0 0 1 .5 1.2l-.4 1.2a1.7 1.7 0 0 1-1.8 1.1A11.6 11.6 0 0 1 1.7 3.9 1.7 1.7 0 0 1 2.8 2.1L4 1.7a1 1 0 0 1 1.2.5Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </div>
+            {hearing ? (
+              <span className="scall-hear">
+                <span className="swork-label">{label}</span>
+                {waveform}
+              </span>
+            ) : state === "call-thinking" ? (
+              <span className="swork-label">
+                <span className="sspinner scall-spin" />
+                {label}
+              </span>
+            ) : (
+              <span className="swork-label scall-speaking">{label}</span>
+            )}
+            <div className="sbase-r">
+              <button
+                className="sx"
+                aria-label={t("overlay.call.end")}
+                title={t("overlay.call.end")}
+                onClick={() => void emitTo("main", "voice-call-end")}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path
+                    d="M4 4 L12 12 M12 4 L4 12"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );

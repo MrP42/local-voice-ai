@@ -135,6 +135,9 @@ const SILENT_FRAME = new Float32Array(FRAME_SAMPLES);
 const PHANTOMS =
   /^(untertitel|vielen dank|danke(schön)?\.?|tschüss|bis zum nächsten mal|\[.*\]|\(.*\))/i;
 
+/** Fehlertext eines abgebrochenen Starts (gestoppt, bevor er fertig war); kein echter Fehler. */
+export const START_ABORTED = "abgebrochen";
+
 let counter = 0;
 const newId = () => `vc-${Date.now().toString(36)}-${counter++}`;
 
@@ -157,6 +160,10 @@ export class VoiceCallEngine {
   private utt: Utterance | null = null;
   private turn: Turn | null = null;
   private history: ChatMessage[] = [];
+  /** Höchstzahl Nachrichten, die an die KI gehen (Hauptgespräch: kleiner). */
+  private historyLimit = MAX_HISTORY;
+  /** Nummer des jüngsten `start()`. */
+  private startGen = 0;
   private sentenceHandlers = new Map<string, (e: VoiceCallEvent) => void>();
   private muted = false;
   /** Laufende Text-Anfrage (Textmodus ohne Anruf). */
@@ -239,7 +246,20 @@ export class VoiceCallEngine {
     }[],
   ): void {
     this.resetHistory();
-    this.history = messages.slice(-MAX_HISTORY);
+    this.history = messages.slice(-this.historyLimit);
+  }
+
+  /**
+   * Wie viele Nachrichten die KI vom Verlauf sieht; `undefined` = Vorgabe. Der Textverlauf
+   * bleibt davon unberührt, nur der Kontext (und damit die Token je Antwort) wird kleiner.
+   */
+  setHistoryLimit(limit?: number): void {
+    this.historyLimit = Math.max(
+      2,
+      Math.min(MAX_HISTORY, limit ?? MAX_HISTORY),
+    );
+    if (this.history.length > this.historyLimit * 2)
+      this.history = this.history.slice(-this.historyLimit * 2);
   }
 
   /**
@@ -297,31 +317,42 @@ export class VoiceCallEngine {
   }
 
   async start(): Promise<CallReady> {
+    // Jeder Start hat eine Nummer: Wird er gestoppt und gleich neu gestartet, solange
+    // `voice_call_start` noch lädt, darf der alte nach dem Warten nichts mehr anlegen.
+    const gen = ++this.startGen;
+    const aborted = () => this.stopped || gen !== this.startGen;
     this.stopped = false;
     this.setState("starting");
+    let ctx: AudioContext | null = null;
     try {
       const ready = await invoke<CallReady>("voice_call_start");
-      if (this.stopped) throw new Error("abgebrochen");
-      this.ctx = new AudioContext({ latencyHint: "interactive" });
-      await this.ctx.resume();
-      if (this.stopped) throw new Error("abgebrochen");
-      this.player = new SpeechPlayer(this.ctx);
+      if (aborted()) throw new Error(START_ABORTED);
+      ctx = new AudioContext({ latencyHint: "interactive" });
+      this.ctx = ctx;
+      await ctx.resume();
+      if (aborted()) throw new Error(START_ABORTED);
+      this.player = new SpeechPlayer(ctx);
       this.player.onIdle = () => {
         if (this.turn?.audible && this.turn.done) this.finishTurn();
       };
       await this.ensureListener();
-      const capture = await startCapture(this.ctx, {
+      const capture = await startCapture(ctx, {
         onFrame: (f) => this.onFrame(f),
       });
-      if (this.stopped) {
+      if (aborted()) {
         capture.stop();
-        throw new Error("abgebrochen");
+        throw new Error(START_ABORTED);
       }
       this.capture = capture;
       this.setState("listening");
       return ready;
     } catch (e) {
-      await this.stop();
+      if (gen === this.startGen) await this.stop();
+      else if (ctx) {
+        // Ein neuerer Start läuft: nur das Eigene aufräumen, nicht seinen Zustand.
+        if (this.ctx === ctx) this.ctx = null;
+        await ctx.close().catch(() => undefined);
+      }
       throw e;
     }
   }
@@ -572,7 +603,7 @@ export class VoiceCallEngine {
   /** Der Verlauf ohne die Kennungen: sie gehen nicht an das Modell. */
   private plainHistory(): ChatMessage[] {
     return this.history
-      .slice(-MAX_HISTORY)
+      .slice(-this.historyLimit)
       .map(({ role, content }) => ({ role, content }));
   }
 
