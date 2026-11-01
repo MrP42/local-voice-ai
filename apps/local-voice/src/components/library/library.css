@@ -436,10 +436,22 @@
   min-height: 0;
   padding: 3px;
 }
-.library-audiobar audio {
+.library-audiobar__seek {
   flex: 1 1 240px;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-variant-numeric: tabular-nums;
+}
+.library-audiobar__seek input {
+  flex: 1;
+  min-width: 0;
   height: 44px;
+  margin: 0;
+  accent-color: var(--color-logo-primary);
+  cursor: pointer;
 }
 .library-audiobar__keys {
   display: flex;
@@ -553,7 +565,7 @@
   .library-audiobar > div {
     flex: 1;
   }
-  .library-audiobar audio {
+  .library-audiobar__seek {
     order: 3;
     flex-basis: 100%;
   }

@@ -6898,6 +6898,7 @@
     "back30": "Back 30 seconds",
     "forward30": "Forward 30 seconds",
     "pause": "Pause",
+    "seek": "Position in audiobook",
     "audiobarClose": "Close player",
     "addTitle": "Add to library",
     "files": "Books and audiobooks",

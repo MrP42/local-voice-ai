@@ -4,7 +4,7 @@ import { Pause, Play, RotateCcw, RotateCw, X } from "lucide-react";
 import type { LibraryBook } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
-import { assetUrl } from "@/lib/library/books";
+import { assetUrl, formatDuration } from "@/lib/library/books";
 import {
   audioProgressKey,
   flushProgress,
@@ -29,6 +29,12 @@ export const AudioBar: React.FC<{ book: LibraryBook; onClose(): void }> = ({
   const lastSave = useRef(0);
   const key = audioProgressKey(book.id);
   const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState({ at: 0, total: 0 });
+  const syncTime = (el: HTMLAudioElement) =>
+    setTime({
+      at: el.currentTime,
+      total: Number.isFinite(el.duration) ? el.duration : 0,
+    });
   const skip = (seconds: number) => {
     const el = audio.current;
     if (el) el.currentTime = Math.max(0, el.currentTime + seconds);
@@ -87,15 +93,19 @@ export const AudioBar: React.FC<{ book: LibraryBook; onClose(): void }> = ({
       <audio
         ref={audio}
         src={src}
-        controls
         autoPlay
         preload="metadata"
         onLoadedMetadata={(e) => {
           const saved = loadProgress(key);
           if (saved && !saved.finished && saved.offset > 0)
             e.currentTarget.currentTime = saved.offset / 1000;
+          syncTime(e.currentTarget);
         }}
-        onTimeUpdate={() => persist()}
+        onDurationChange={(e) => syncTime(e.currentTarget)}
+        onTimeUpdate={(e) => {
+          syncTime(e.currentTarget);
+          persist();
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => {
           setPlaying(false);
@@ -104,8 +114,27 @@ export const AudioBar: React.FC<{ book: LibraryBook; onClose(): void }> = ({
         onSeeked={() => persist(true)}
         onEnded={() => persist(true)}
       />
-      {/* Eigene, große Touchflächen (≥ 44 px); die eingebaute Leiste bleibt
-          für Zeitanzeige und Springen per Schieber. */}
+      {/* Eigene Bedienung statt der eingebauten Leiste: alle Trefferflächen
+          mindestens 44 px hoch (Codex-Auflage). */}
+      <label className="library-audiobar__seek">
+        <span className="library-meta">{formatDuration(time.at * 1000)}</span>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(time.total, 0.001)}
+          step={1}
+          value={Math.min(time.at, time.total)}
+          disabled={!time.total}
+          aria-label={t("library.seek")}
+          aria-valuetext={`${formatDuration(time.at * 1000)} / ${formatDuration(time.total * 1000)}`}
+          onChange={(e) => {
+            const el = audio.current;
+            if (el) el.currentTime = Number(e.target.value);
+          }}
+          data-testid="library-audiobar-seek"
+        />
+        <span className="library-meta">{formatDuration(time.total * 1000)}</span>
+      </label>
       <div className="library-audiobar__keys">
         <IconButton
           icon={<RotateCcw size={18} aria-hidden="true" />}

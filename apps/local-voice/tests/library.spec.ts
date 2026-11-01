@@ -389,6 +389,12 @@ for (const width of [1440, 390]) {
       ...(await page.locator(".library-touch button").all()),
     ];
     expect(targets.length).toBeGreaterThanOrEqual(7);
+    // Keine eingebaute Audioleiste; Schieber mit voller Trefferhöhe.
+    await expect(bar.locator("audio")).toBeHidden();
+    expect(await bar.locator("audio").getAttribute("controls")).toBeNull();
+    const seek = await bar.getByTestId("library-audiobar-seek").boundingBox();
+    expect(seek?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(seek?.width ?? 0).toBeGreaterThanOrEqual(120);
     for (const target of targets) {
       const box = await target.boundingBox();
       expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
