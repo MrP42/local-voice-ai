@@ -42,7 +42,10 @@ export const ReaderDrop: React.FC<{
       const file = await prepareFile(path);
       const work = await findWork(file.title, file.authors);
       const { book } = await addToLibrary(file, {
-        attachTo: work && !hasKind(work, "audio") ? work : null,
+        // Ohne Rückfrage nur anhängen, wenn Titel UND Autor passen
+        // („Track 01“ allein darf an kein fremdes Buch geraten).
+        attachTo:
+          work && file.authors.length > 0 && !hasKind(work, "audio") ? work : null,
         onWarning: (m) => toast.error(m),
       });
       toast(t("library.drop.readerAudio", { title: book.title }), {

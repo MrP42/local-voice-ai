@@ -14,9 +14,24 @@ import {
   prepareFile,
   type PreparedFile,
 } from "@/lib/library/importFile";
+import {
+  audioProgressKey,
+  loadProgress,
+  progressFraction,
+  textProgressKey,
+} from "@/lib/library/progress";
 import { useFileDrop } from "./useFileDrop";
 
 type Choice = "attach" | "new" | "cancel";
+
+/** Fortschritt der Fassung, die ein Ersetzen verwerfen würde (0–100). */
+function progressOf(book: LibraryBook, kind: PreparedFile["kind"]): number {
+  const key =
+    kind === "text"
+      ? book.text && textProgressKey(book.text.page_id)
+      : book.audio && audioProgressKey(book.id);
+  return key ? Math.round(progressFraction(loadProgress(key)) * 100) : 0;
+}
 
 interface Question {
   file: PreparedFile;
@@ -44,18 +59,29 @@ export function useLibraryDrop(
   const [working, setWorking] = useState<string | null>(null);
   const pending = useRef<((choice: Choice) => void) | null>(null);
 
+  const gone = useRef(false);
+
   const ask = (q: Omit<Question, "resolve">) =>
     new Promise<Choice>((resolve) => {
+      if (gone.current) return resolve("cancel");
       pending.current?.("cancel");
       pending.current = resolve;
       setQuestion({ ...q, resolve });
     });
 
-  // Verlässt man die Bibliothek mit offener Frage: abbrechen, nicht hängen.
-  useEffect(() => () => pending.current?.("cancel"), []);
+  // Verlässt man die Bibliothek: offene Frage abbrechen und die restliche
+  // Warteschlange leerlaufen lassen, statt an einer toten Frage zu hängen.
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+      pending.current?.("cancel");
+    };
+  }, []);
 
   const take = useCallback(
-    async (path: string, targetId: string | null) => {
+    async (path: string, targetId: string | null, asNew = false) => {
+      if (gone.current) return;
       if (!kindOfFile(path)) {
         toast.error(t("library.unsupported", { ext: extensionOf(path) }));
         return;
@@ -79,7 +105,7 @@ export function useLibraryDrop(
             if (choice === "cancel") return;
             attachTo = choice === "attach" ? target : null;
           }
-        } else {
+        } else if (!asNew) {
           const work = await findWork(file.title, file.authors);
           if (work) {
             const choice = await ask({
@@ -101,11 +127,11 @@ export function useLibraryDrop(
             ? t("library.attached", { title: book.title })
             : t("library.added", { title: book.title }),
         );
-        await onChanged();
+        if (!gone.current) await onChanged();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : String(e));
       } finally {
-        setWorking(null);
+        if (!gone.current) setWorking(null);
       }
     },
     [onChanged, t],
@@ -114,14 +140,16 @@ export function useLibraryDrop(
   const queue = useRef(Promise.resolve());
   const drop = useFileDrop("[data-library-drop]", (paths, targetId) => {
     // Mehrere Dateien auf ein Buch: nur die erste je Art gilt diesem Buch,
-    // die übrigen werden wie auf freier Fläche zugeordnet (mit Rückfrage).
+    // weitere gleicher Art werden eigene Bücher (keine Ersetzen-Rückfrage
+    // für das eben angehängte Buch).
     const used = new Set<string>();
     for (const path of paths) {
       const kind = kindOfFile(path) ?? "";
-      const target = targetId && !used.has(kind) ? targetId : null;
+      const extra = !!targetId && used.has(kind);
+      const target = targetId && !extra ? targetId : null;
       if (target) used.add(kind);
       queue.current = queue.current
-        .then(() => take(path, target))
+        .then(() => take(path, target, extra))
         .catch(() => {});
     }
   });
@@ -135,6 +163,8 @@ export function useLibraryDrop(
   const kindLabel = question
     ? t(question.file.kind === "audio" ? "library.drop.kindAudio" : "library.drop.kindText")
     : "";
+  const isAudio = question?.file.kind === "audio";
+  const progress = question?.replaces ? progressOf(question.book, question.file.kind) : 0;
   const dialog = (
     <Dialog
       open={question !== null}
@@ -156,7 +186,9 @@ export function useLibraryDrop(
             onClick={() => answer("attach")}
             data-testid="library-drop-attach"
           >
-            {question?.replaces ? t("library.drop.replace") : t("library.drop.attach")}
+            {question?.replaces
+              ? t(isAudio ? "library.drop.replaceAudio" : "library.drop.replaceText")
+              : t("library.drop.attach")}
           </Button>
         </>
       }
@@ -164,19 +196,42 @@ export function useLibraryDrop(
       {question && (
         <div className="library-add__merge" data-testid="library-drop-question">
           <BookCover book={question.book} size="xs" />
-          <div>
+          <div className="library-drop-question__text">
             <strong style={{ overflowWrap: "anywhere" }}>{question.file.name}</strong>
-            <div className="library-meta">
-              {question.replaces
-                ? t("library.drop.replaceHint", {
-                    kind: kindLabel,
-                    title: question.book.title,
-                  })
-                : t("library.drop.attachHint", {
-                    kind: kindLabel,
-                    title: question.book.title,
-                  })}
-            </div>
+            {question.replaces ? (
+              <>
+                <p data-testid="library-drop-consequence">
+                  {t(
+                    isAudio
+                      ? "library.drop.replaceHintAudio"
+                      : "library.drop.replaceHintText",
+                    { title: question.book.title },
+                  )}
+                </p>
+                {progress > 0 && (
+                  <p data-testid="library-drop-progress">
+                    <strong>
+                      {t(
+                        isAudio
+                          ? "library.drop.progressAudio"
+                          : "library.drop.progressText",
+                        { pct: progress },
+                      )}
+                    </strong>
+                  </p>
+                )}
+              </>
+            ) : (
+              <p>
+                {t("library.drop.attachHint", {
+                  kind: kindLabel,
+                  title: question.book.title,
+                })}
+              </p>
+            )}
+            <p className="library-meta">
+              {t("library.drop.newHint", { title: question.book.title })}
+            </p>
           </div>
         </div>
       )}

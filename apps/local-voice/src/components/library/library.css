@@ -58,7 +58,7 @@
 }
 .library-chip__n {
   margin-left: 4px;
-  opacity: 0.7;
+  font-weight: 600;
 }
 .library-section__head {
   display: flex;
@@ -591,7 +591,8 @@
 /* Schwebt über dem Inhalt, ohne ihn zu verschieben. */
 .library-drop-hint {
   position: fixed;
-  top: 64px;
+  /* Unten, über der Hörleiste: verdeckt weder Kopf noch Einführungstext. */
+  bottom: calc(16px + var(--lib-bar, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -625,4 +626,23 @@
   background: var(--color-logo-primary);
   color: #fff;
   font-weight: 600;
+}
+
+/* Touch (≤ 760 px): Filter, Sortierung und Menüs mit Trefferfläche ≥ 44 px. */
+@media (max-width: 760px) {
+  .library-chip {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .library-sort .app-select__control {
+    min-height: 44px;
+  }
+  .library-sort .app-select__indicator {
+    min-width: 44px;
+    min-height: 42px;
+    justify-content: center;
+  }
+}
+.library-drop-question__text p {
+  margin: 6px 0 0;
 }

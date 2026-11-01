@@ -6,6 +6,7 @@ import {
   guessFromText,
   kindOfFile,
 } from "./books";
+import { audioProgressKey, removeProgress } from "./progress";
 
 /**
  * Datei in die Bibliothek aufnehmen (lva#152). Gemeinsamer Weg für den
@@ -52,7 +53,7 @@ export const hasKind = (book: LibraryBook, kind: PreparedFile["kind"]) =>
 /** Buch frisch aus dem Kern (nicht aus einem alten Oberflächenstand). */
 export async function freshBook(id: string): Promise<LibraryBook | null> {
   const r = await commands.libraryList();
-  return r.status === "ok" ? (r.data.find((b) => b.id === id) ?? null) : null;
+  return r.status === "ok" ? ((r.data ?? []).find((b) => b.id === id) ?? null) : null;
 }
 
 /** Vorhandenes Werk zu Titel/Autor/ISBN, sonst `null`. */
@@ -136,15 +137,23 @@ export async function addToLibrary(
     };
   }
   const saved = await commands.librarySave(book);
-  fail(saved);
-  if (saved.status !== "ok") throw new ImportError();
+  if (saved.status !== "ok") {
+    // Keine verwaiste Vorlesen-Seite zurücklassen.
+    if (file.kind === "text" && book.text) await commands.pagesDelete(book.text.page_id);
+    throw new ImportError(saved.error);
+  }
   book = saved.data;
 
   if (file.kind === "audio") {
     const imported = await commands.libraryAudioImport(book.id, file.path);
-    fail(imported);
-    if (imported.status !== "ok") throw new ImportError();
+    if (imported.status !== "ok") {
+      // Neues Buch ohne jede Fassung wieder entfernen.
+      if (!current) await commands.libraryDelete(book.id);
+      throw new ImportError(imported.error);
+    }
     book = imported.data;
+    // Neue Hördatei: die alte Hörposition passt nicht mehr (Rückfrage sagt es).
+    if (current?.audio) removeProgress(audioProgressKey(book.id));
     if (transcribe && !book.text && book.audio_path && book.audio) {
       // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
       const job = await commands.meetingsImportFile(book.audio_path, true, null);

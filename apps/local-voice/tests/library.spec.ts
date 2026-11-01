@@ -182,11 +182,14 @@ test.beforeEach(async ({ page }) => {
           }
           if (cmd === "library_audio_import") {
             const b = list.find((x) => x.id === args?.id)!;
-            return {
+            // Wie der Kern: die Audiofassung wird am Buch gespeichert.
+            const withAudio = {
               ...b,
               audio: { file: "hoerbuch.mp3", duration_ms: null, narrator: null, transcript_job: null },
               audio_path: "C:/lib/x/audio/hoerbuch.mp3",
             };
+            w.__books = [...list.filter((x) => x.id !== b.id), withAudio];
+            return withAudio;
           }
           if (cmd === "meetings_import_file") return "m2";
           // Das Vorlesen nach „Lesen“/Play braucht seine Grunddaten.
@@ -481,6 +484,12 @@ test("Ablegen auf ein Buch ohne Audio: Hörbuch wird ohne Rückfrage angehängt"
   await expect(page.getByTestId("library-drop-question")).toHaveCount(0);
   // Effi hat schon Text: keine Transkription.
   expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  // Ergebnis sichtbar: Hinweis „angehängt“, Karte zeigt jetzt Audio.
+  await expect(page.getByText("An „Effi Briest“ angehängt.")).toBeVisible();
+  await expect(
+    page.getByTestId("library-card").filter({ hasText: "Effi Briest" }),
+  ).toContainText("Hörbuch");
+  await page.screenshot({ path: shot("bibliothek-drop-angehaengt-1440.png") });
 });
 
 test("Ablegen auf ein Buch mit gleicher Fassung: Rückfrage, „Als neues Buch“ legt neu an", async ({
@@ -495,7 +504,14 @@ test("Ablegen auf ein Buch mit gleicher Fassung: Rückfrage, „Als neues Buch�
   await dragTo(page, await centerOf(page, effiCover(page)), ["C:/Buecher/effi.epub"]);
   const question = page.getByTestId("library-drop-question");
   await expect(question).toContainText("effi.epub");
-  await expect(page.getByTestId("library-drop-attach")).toHaveText("Fassung ersetzen");
+  await expect(page.getByTestId("library-drop-attach")).toHaveText("Textfassung ersetzen");
+  await expect(page.getByTestId("library-drop-consequence")).toContainText(
+    "Lesefortschritt beginnt von vorn",
+  );
+  await expect(page.getByTestId("library-drop-consequence")).toContainText(
+    "bleibt als Seite im Vorlesen erhalten",
+  );
+  await expect(page.getByTestId("library-drop-progress")).toContainText("%");
   await page.screenshot({ path: shot("bibliothek-drop-rueckfrage-1440.png") });
   await page.getByTestId("library-drop-new").click();
   await expect
@@ -555,6 +571,36 @@ test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async
   await dragTo(page, at, ["C:/Hoerbuecher/Franz Kafka - Der Prozess.mp3"]);
   await expect.poll(async () => (await calls(page, "library_audio_import")).length).toBe(1);
   await expect(page.getByText("in die Bibliothek aufgenommen")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Zur Bibliothek" })).toBeVisible();
+  await page.screenshot({ path: shot("vorlesen-drop-hoerbuch-toast-1440.png") });
+});
+
+test("390 px: Filter-Chips, Sortierung und Menüknöpfe haben Trefferflächen ≥ 44 px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const targets = [
+    ...(await page.locator(".library-chip").all()),
+    page.locator(".library-sort .app-select__control"),
+    ...(await page.locator(".library-card .library-touch button").all()),
+  ];
+  expect(targets.length).toBeGreaterThan(5);
+  for (const target of targets) {
+    const box = (await target.boundingBox())!;
+    expect(box.width, await target.evaluate((e) => e.className)).toBeGreaterThanOrEqual(44);
+    expect(box.height, await target.evaluate((e) => e.className)).toBeGreaterThanOrEqual(44);
+  }
+  // Der Sortierpfeil liegt in der 44 px hohen Fläche, die als Ganzes öffnet;
+  // er selbst ist mindestens 44 px breit.
+  const arrow = (await page
+    .locator(".library-sort .app-select__dropdown-indicator")
+    .boundingBox())!;
+  expect(arrow.width).toBeGreaterThanOrEqual(44);
+  await page.locator(".library-sort .app-select__dropdown-indicator").click();
+  await expect(page.locator(".app-select__menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.screenshot({ path: shot("bibliothek-trefferflaechen-390.png") });
 });
 
 test("Mehrere Dateien auf ein Buch: je Art nur die erste, Fehler halten die Warteschlange nicht an", async ({
