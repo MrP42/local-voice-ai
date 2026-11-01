@@ -74,12 +74,13 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   // Ersetzen lässt sich nur, wer vorkommt: offene Seite zuerst, die übrigen
   // kommen nach dem Laden dazu. Häufigster Sprecher der offenen Seite zuerst.
   const usage = useMemo(() => {
+    if (!open) return { onActive: new Map<string, number>(), all: new Map() };
     const value = (s: SpeakerRef) => valueOf(providerId, s);
     const onActive = speakerUsage(active, speakers, value);
     const all = new Map(onActive);
     for (const o of others) speakerUsage(o.fields, speakers, value, all);
     return { onActive, all };
-  }, [active, others, speakers, providerId]);
+  }, [open, active, others, speakers, providerId]);
   const present = useMemo(
     () =>
       speakers
@@ -90,8 +91,8 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
         ),
     [speakers, usage],
   );
-  const presentRef = useRef(present);
-  presentRef.current = present;
+  /** Hat der Nutzer „Ersetze“ selbst gewählt? Dann gilt seine Wahl. */
+  const picked = useRef(false);
 
   const defaults = (list: SpeakerRef[], from?: string) => {
     const needle = from ? foldSpeakerName(from) : "";
@@ -109,27 +110,42 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   };
   // Beim Oeffnen vorbelegen -- nicht bei jeder neuen Sprecherliste (Stimmen-
   // ereignisse), das wuerde die Wahl und das "Fertig" zuruecksetzen.
+  // Die übrigen Seiten der letzten Sitzung gelten nicht mehr.
   useEffect(() => {
     if (!open) return;
     setDone(null);
-    defaults(presentRef.current, initialFrom);
+    setOthers([]);
+    setFromId("");
+    picked.current = false;
   }, [open, initialFrom]);
-  // Verschwindet eine gewaehlte Stimme aus der Liste (oder kommt sie erst
-  // jetzt, etwa nach dem Laden der übrigen Seiten), neu vorbelegen.
+  // Vorbelegen, sobald die Liste steht, und nachziehen, wenn der aufrufende
+  // Sprecher erst mit den übrigen Seiten auftaucht. Eine eigene Wahl bleibt,
+  // solange sie gültig ist; ungültig wird sie erst nach fertigem Laden.
   useEffect(() => {
     if (!open || done) return;
-    if (
-      !present.some((s) => s.id === fromId) ||
-      !speakers.some((s) => s.id === toId)
-    ) {
+    const fromValid = present.some((s) => s.id === fromId);
+    const callerHere =
+      !picked.current &&
+      initialFrom &&
+      present.some(
+        (s) =>
+          s.id !== fromId &&
+          [s.id, s.displayName, ...(s.aliases ?? [])].some(
+            (n) => foldSpeakerName(n) === foldSpeakerName(initialFrom),
+          ),
+      );
+    if (!fromId || callerHere || (loaded && !fromValid)) {
       defaults(present, initialFrom);
+    } else if (!speakers.some((s) => s.id === toId)) {
+      setToId(speakers.find((s) => s.id !== fromId)?.id ?? "");
     }
-  }, [present, speakers]);
+  }, [present, speakers, loaded, open]);
 
   useEffect(() => {
     if (!open) return;
     let alive = true;
-    setOthers([]);
+    // Kein Leeren: beim Neuladen (Sync, Autosave) bleibt die Liste stehen,
+    // bis der neue Stand da ist.
     setLoaded(false);
     void Promise.all(
       pages
@@ -284,7 +300,10 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           <span className="w-20 shrink-0">{t("tts.replaceSpeaker.from")}</span>
           <FluentSelect
             value={fromId}
-            onChange={(e) => setFromId(e.target.value)}
+            onChange={(e) => {
+              picked.current = true;
+              setFromId(e.target.value);
+            }}
             className="flex-1"
             data-testid="replace-speaker-from"
           >
