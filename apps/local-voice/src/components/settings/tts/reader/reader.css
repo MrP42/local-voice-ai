@@ -359,3 +359,37 @@
   cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
+
+/* Codex-Must-fix (lva#155): schmal bleibt die Kontrollfläche einzeilig,
+   Tempo und Timer wandern ins Überlaufmenü. */
+.reader-player {
+  container-type: inline-size;
+}
+.reader-player__more {
+  display: none;
+}
+.reader-player__pill--icon {
+  padding: 0 8px;
+}
+@container (max-width: 560px) {
+  .reader-player__ctrls {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+  }
+  .reader-player__where,
+  .reader-player__extra {
+    display: none;
+  }
+  .reader-player__more {
+    display: block;
+  }
+  .reader-player__prog {
+    gap: 6px;
+  }
+  .reader-player__jump-label {
+    display: none;
+  }
+  .reader-player__jump input {
+    width: 40px;
+  }
+}

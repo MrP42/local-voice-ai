@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Moon } from "lucide-react";
+import { Moon, MoreHorizontal } from "lucide-react";
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
 
@@ -67,7 +67,20 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const { t } = useTranslation();
   const [speedOpen, setSpeedOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [sleepUntil, setSleepUntil] = useState<number | null>(null);
+  /** Gewählte Timer-Dauer in Minuten (0 = aus) — für aria-checked. */
+  const [sleepChoice, setSleepChoice] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const speedHeadId = useId();
+  const sleepHeadId = useId();
+  const chooseSleep = (minutes: number) => {
+    setSleepChoice(minutes);
+    setSleepUntil(minutes === 0 ? null : Date.now() + minutes * 60000);
+    setNow(Date.now());
+  };
   const [now, setNow] = useState(() => Date.now());
   const [jump, setJump] = useState("");
   const onSleepRef = useRef(onSleep);
@@ -75,16 +88,57 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
 
   // Escape schließt die offenen Auswahlen (Tempo, Schlaf-Timer).
   useEffect(() => {
-    if (!speedOpen && !sleepOpen) return;
+    if (!speedOpen && !sleepOpen && !moreOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
+      if (moreOpen) moreBtnRef.current?.focus();
       setSpeedOpen(false);
       setSleepOpen(false);
+      setMoreOpen(false);
     };
+    // Klick daneben schließt. Kein fixed-Hintergrund: die Leiste ist ein
+    // Größen-Container (Container-Query) und damit Bezugsrahmen für fixed.
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.("[data-reader-popup]")) return;
+      setSpeedOpen(false);
+      setSleepOpen(false);
+      setMoreOpen(false);
+    };
+    // Wechselt die Breite die Bedienform, schließt die nun verborgene Auswahl.
+    const ro = new ResizeObserver(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      root
+        .querySelectorAll<HTMLElement>("[data-reader-popup]")
+        .forEach((el) => {
+          if (el.offsetParent !== null) return;
+          const kind = el.dataset.readerPopup;
+          if (kind === "more") setMoreOpen(false);
+          else if (kind === "speed") setSpeedOpen(false);
+          else if (kind === "sleep") setSleepOpen(false);
+        });
+    });
+    if (rootRef.current) ro.observe(rootRef.current);
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, [speedOpen, sleepOpen]);
+    document.addEventListener("pointerdown", onDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onDown, true);
+      ro.disconnect();
+    };
+  }, [speedOpen, sleepOpen, moreOpen]);
+
+  // Geöffnetes Überlaufmenü: Fokus auf den gewählten Eintrag.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const menu = moreMenuRef.current;
+    const first =
+      menu?.querySelector<HTMLElement>('[aria-checked="true"]') ??
+      menu?.querySelector<HTMLElement>('[role="menuitemradio"]');
+    first?.focus();
+  }, [moreOpen]);
 
   useEffect(() => {
     if (sleepUntil === null) return;
@@ -93,6 +147,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       setNow(n);
       if (n >= sleepUntil) {
         setSleepUntil(null);
+        setSleepChoice(0);
         onSleepRef.current();
       }
     }, 1000);
@@ -105,9 +160,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       : 0;
   const total = estimateSeconds / Math.max(0.25, speed);
   const elapsed = total * fraction;
-  const shownPage = page
-    ? (page.currentPage ?? page.page) + 1
-    : 1;
+  const shownPage = page ? (page.currentPage ?? page.page) + 1 : 1;
   const pages = page?.pages ?? 1;
 
   const submitJump = () => {
@@ -117,10 +170,13 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   };
 
   const sleepLeft =
-    sleepUntil !== null ? Math.max(0, Math.ceil((sleepUntil - now) / 60000)) : null;
+    sleepUntil !== null
+      ? Math.max(0, Math.ceil((sleepUntil - now) / 60000))
+      : null;
 
   return (
     <div
+      ref={rootRef}
       className="reader-player"
       role="region"
       aria-label={t("tts.reader.player")}
@@ -136,11 +192,16 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           aria-valuemin={1}
           aria-valuemax={pages}
           aria-valuenow={shownPage}
-          aria-valuetext={t("tts.reader.pageOf", { page: shownPage, count: pages })}
+          aria-valuetext={t("tts.reader.pageOf", {
+            page: shownPage,
+            count: pages,
+          })}
           data-testid="reader-progress"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            onSeekFraction(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)));
+            onSeekFraction(
+              Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+            );
           }}
           onKeyDown={(e) => {
             if (e.key === "ArrowRight" || e.key === "PageDown")
@@ -163,9 +224,13 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             style={{ left: `${fraction * 100}%` }}
           />
         </div>
-        <span data-testid="reader-remaining">−{formatTime(total - elapsed)}</span>
+        <span data-testid="reader-remaining">
+          −{formatTime(total - elapsed)}
+        </span>
         <label className="reader-player__jump">
-          <span>{t("tts.reader.page")}</span>
+          <span className="reader-player__jump-label">
+            {t("tts.reader.page")}
+          </span>
           <input
             inputMode="numeric"
             value={jump}
@@ -232,8 +297,124 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             <Glyph name="stop" />
           </button>
         </div>
+        <div className="reader-player__more relative" data-reader-popup="more">
+          <button
+            type="button"
+            ref={moreBtnRef}
+            className="reader-player__pill reader-player__pill--icon"
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            aria-label={t("tts.reader.moreOptions")}
+            title={t("tts.reader.moreOptions")}
+            data-testid="reader-more"
+          >
+            {sleepLeft !== null && (
+              <Moon width={14} height={14} aria-hidden="true" />
+            )}
+            <span className="tabular-nums">{speedLabel(speed)}</span>
+            <MoreHorizontal width={16} height={16} aria-hidden="true" />
+          </button>
+          {moreOpen && (
+            <>
+              <div
+                ref={moreMenuRef}
+                role="menu"
+                aria-label={t("tts.reader.moreOptions")}
+                onKeyDown={(e) => {
+                  if (
+                    e.key !== "ArrowDown" &&
+                    e.key !== "ArrowUp" &&
+                    e.key !== "Home" &&
+                    e.key !== "End"
+                  )
+                    return;
+                  e.preventDefault();
+                  const items = Array.from(
+                    e.currentTarget.querySelectorAll<HTMLElement>(
+                      '[role="menuitemradio"]',
+                    ),
+                  );
+                  const i = items.indexOf(
+                    document.activeElement as HTMLElement,
+                  );
+                  const next =
+                    e.key === "Home"
+                      ? 0
+                      : e.key === "End"
+                        ? items.length - 1
+                        : (i +
+                            (e.key === "ArrowDown" ? 1 : -1) +
+                            items.length) %
+                          items.length;
+                  items[next]?.focus();
+                }}
+                className="absolute right-0 bottom-full mb-1 w-48 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+              >
+                <div role="group" aria-labelledby={speedHeadId}>
+                  <div
+                    id={speedHeadId}
+                    className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
+                  >
+                    {t("tts.settings.speed")}
+                  </div>
+                  {speeds.map((value) => (
+                    <button
+                      key={`s${value}`}
+                      type="button"
+                      role="menuitemradio"
+                      tabIndex={-1}
+                      aria-checked={speed === value}
+                      onClick={() => {
+                        onSpeed(value);
+                        setMoreOpen(false);
+                        moreBtnRef.current?.focus();
+                      }}
+                      className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                        speed === value
+                          ? "text-text font-medium"
+                          : "text-text/80"
+                      }`}
+                    >
+                      {speedLabel(value)}
+                    </button>
+                  ))}
+                </div>
+                <div role="group" aria-labelledby={sleepHeadId}>
+                  <div
+                    id={sleepHeadId}
+                    className="mt-1 border-t border-mid-gray/30 px-3 pt-1.5 pb-0.5 text-xs text-text-muted"
+                  >
+                    {sleepLeft !== null
+                      ? `${t("tts.reader.sleepTimer")} · ${t("tts.reader.sleepLeft", { minutes: sleepLeft })}`
+                      : t("tts.reader.sleepTimer")}
+                  </div>
+                  {SLEEP_CHOICES.map((minutes) => (
+                    <button
+                      key={`t${minutes}`}
+                      type="button"
+                      role="menuitemradio"
+                      tabIndex={-1}
+                      aria-checked={minutes === sleepChoice}
+                      onClick={() => {
+                        chooseSleep(minutes);
+                        setMoreOpen(false);
+                        moreBtnRef.current?.focus();
+                      }}
+                      className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
+                    >
+                      {minutes === 0
+                        ? t("tts.reader.sleepOff")
+                        : t("tts.reader.sleepMinutes", { minutes })}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
         <div className="reader-player__extra">
-          <div className="relative">
+          <div className="relative" data-reader-popup="speed">
             <button
               type="button"
               className="reader-player__pill"
@@ -247,7 +428,6 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             </button>
             {speedOpen && (
               <>
-                <div className="fixed inset-0 z-30" onClick={() => setSpeedOpen(false)} />
                 <div
                   role="listbox"
                   aria-label={t("tts.settings.speed")}
@@ -264,7 +444,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                         setSpeedOpen(false);
                       }}
                       className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                        speed === value ? "text-text font-medium" : "text-text/80"
+                        speed === value
+                          ? "text-text font-medium"
+                          : "text-text/80"
                       }`}
                     >
                       {speedLabel(value)}
@@ -274,7 +456,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               </>
             )}
           </div>
-          <div className="relative">
+          <div className="relative" data-reader-popup="sleep">
             <button
               type="button"
               className="reader-player__pill"
@@ -293,7 +475,6 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             </button>
             {sleepOpen && (
               <>
-                <div className="fixed inset-0 z-30" onClick={() => setSleepOpen(false)} />
                 <div
                   role="menu"
                   aria-label={t("tts.reader.sleepTimer")}
@@ -304,12 +485,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                       key={minutes}
                       type="button"
                       role="menuitemradio"
-                      aria-checked={
-                        minutes === 0 ? sleepUntil === null : false
-                      }
+                      aria-checked={minutes === sleepChoice}
                       onClick={() => {
-                        setSleepUntil(minutes === 0 ? null : Date.now() + minutes * 60000);
-                        setNow(Date.now());
+                        chooseSleep(minutes);
                         setSleepOpen(false);
                       }}
                       className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"

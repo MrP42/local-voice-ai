@@ -349,4 +349,56 @@ test("Spielerleiste: Fortschritt, Satz n von m und Tooltips", async ({ page }) =
   await expect(page.getByRole("menu", { name: "Timer" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu", { name: "Timer" })).toHaveCount(0);
+  // Der aktive Timer ist als gewählt erkennbar; Klick daneben schließt.
+  await page.getByTestId("reader-sleep").click();
+  await expect(
+    page.getByRole("menuitemradio", { name: "15 Minuten" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("reader-flow").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByRole("menu", { name: "Timer" })).toHaveCount(0);
+});
+
+test("Spielerleiste bei 390 px: einzeilig, Tempo und Timer im Überlaufmenü", async ({
+  page,
+}) => {
+  await open(page, BOOK, 1440);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bar = page.getByTestId("reader-player");
+  await expect(page.getByTestId("reader-sleep")).toBeHidden();
+  await expect(page.getByTestId("reader-where")).toBeHidden();
+  const more = page.getByTestId("reader-more");
+  await expect(more).toBeVisible();
+  // Transport und Überlauf stehen auf einer Zeile.
+  const play = await bar.getByTestId("reader-play").boundingBox();
+  const mb = await more.boundingBox();
+  expect(play && mb).toBeTruthy();
+  expect(Math.abs(play!.y + play!.height / 2 - (mb!.y + mb!.height / 2))).toBeLessThan(8);
+  // Keine horizontale Überbreite der Leiste.
+  const overflow = await bar.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+  await more.click();
+  const menu = page.getByRole("menu", { name: "Weitere Optionen: Tempo und Timer" });
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitemradio", { name: "30 Minuten" }).click();
+  await expect(menu).toHaveCount(0);
+  await more.click();
+  await expect(menu).toContainText("noch 30 min");
+  await expect(menu.getByRole("group", { name: "Wiedergabegeschwindigkeit" })).toBeVisible();
+  await expect(
+    menu.getByRole("menuitemradio", { name: "30 Minuten" }),
+  ).toHaveAttribute("aria-checked", "true");
+  // Fokus liegt auf dem gewählten Tempo; Pfeiltasten wandern.
+  await expect(menu.getByRole("menuitemradio", { name: "1,00×" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemradio", { name: "1,00×" })).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(more).toBeFocused();
+  // Klick daneben schließt; Verbreitern schließt das verborgene Menü.
+  await more.click();
+  await page.getByTestId("reader-flow").click({ position: { x: 5, y: 5 } });
+  await expect(menu).toHaveCount(0);
+  await more.click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(menu).toHaveCount(0);
 });

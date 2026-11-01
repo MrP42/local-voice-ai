@@ -43,6 +43,7 @@
       "jumpToPage": "Zu Seite springen",
       "sentenceOf": "Satz {{position}} von {{count}}",
       "sleepTimer": "Timer",
+      "moreOptions": "Weitere Optionen: Tempo und Timer",
       "sleepLeft": "noch {{minutes}} min",
       "sleepOff": "Aus",
       "sleepMinutes": "{{minutes}} Minuten",
