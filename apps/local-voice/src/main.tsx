@@ -24,6 +24,11 @@ useModelStore.getState().initialize();
 import { useTtsModelStore } from "./stores/ttsModelStore";
 useTtsModelStore.getState().initialize();
 
+// Fortschritt (Weiterlesen, Gehörtes, Lesezeichen) aus dem App-Kern abgleichen,
+// damit er einen geleerten WebView-Speicher übersteht (lva#152).
+import { hydrateProgress } from "./lib/library/progress";
+void hydrateProgress();
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <FluentRoot>

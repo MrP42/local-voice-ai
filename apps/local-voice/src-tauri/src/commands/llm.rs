@@ -47,6 +47,7 @@ pub fn llm_remove_connection(app: AppHandle, id: String) -> Result<(), String> {
             s.llm_active_model_id = None;
         }
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }
@@ -90,6 +91,7 @@ pub fn llm_remove_model(app: AppHandle, id: String) -> Result<(), String> {
     if s.llm_active_model_id.as_deref() == Some(id.as_str()) {
         s.llm_active_model_id = None;
     }
+    s.prune_function_models();
     settings::write_settings(&app, s);
     Ok(())
 }
@@ -430,6 +432,64 @@ pub fn llm_model_offers_fast(app: AppHandle, connection_id: String, remote_id: S
         .find(|c| c.id == connection_id)
         .and_then(|c| crate::managers::llm::cli::Cli::from_base_url(&c.base_url))
         .is_some_and(|cli| cli.offers_fast(&remote_id))
+}
+
+/// Modell einer Funktion setzen (Modelle je Funktion). `model_id = None` oder
+/// leer: die Funktion nutzt wieder das Standardmodell. Gesperrte oder nicht
+/// freigegebene Modelle sind nicht waehlbar, wie beim Standardmodell.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_set_function_model(
+    app: AppHandle,
+    for_function: String,
+    model_id: Option<String>,
+    effort: Option<String>,
+) -> Result<(), String> {
+    let function = for_function;
+    if !settings::LLM_FUNCTIONS.contains(&function.as_str()) {
+        return Err(format!("Unbekannte Funktion: {function}"));
+    }
+    let effort = effort.filter(|e| !e.trim().is_empty());
+    if let Some(ref e) = effort {
+        if !crate::managers::llm::cli::valid_effort(e) {
+            return Err(format!("Unbekannte Effort-Stufe: {e}"));
+        }
+    }
+    let mut s = settings::get_settings(&app);
+    match model_id.filter(|m| !m.trim().is_empty()) {
+        None => {
+            s.function_models.remove(&function);
+        }
+        Some(id) => {
+            if !s.llm_model_selectable(&id) {
+                return Err(format!("Modell nicht waehlbar: {id}"));
+            }
+            if let Some(c) = s
+                .llm_models
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| s.llm_connections.iter().find(|c| c.id == m.connection_id))
+            {
+                let a = crate::commands::compliance::assess_connection(&s, c);
+                if a.verdict == crate::managers::compliance::Verdict::Blocked {
+                    return Err(format!(
+                        "{}: {}",
+                        crate::managers::compliance::CODE_COMPLIANCE_BLOCKED,
+                        a.reasons.join(", ")
+                    ));
+                }
+            }
+            s.function_models.insert(
+                function,
+                settings::FunctionModel {
+                    model_id: id,
+                    effort,
+                },
+            );
+        }
+    }
+    settings::write_settings(&app, s);
+    Ok(())
 }
 
 /// Standard-Effort fuer Abo-Modelle ohne eigenen Effort (`low` … `max`).

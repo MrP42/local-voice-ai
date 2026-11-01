@@ -55,7 +55,7 @@ use specta::Type;
 use super::contract::{is_valid_provider_id, ProviderDescriptor, TtsError, TtsErrorKind};
 use super::ollama_speech::{OllamaSpeechConfig, OLLAMA_ID};
 use super::openai_speech::{is_loopback_url, OpenAiSpeechConfig, DEFAULT_ID as OPENAI_DEFAULT_ID};
-use super::phonon::{PhononConfig, PHONON_ID};
+use super::phonon::{PhononConfig, PhononModelRef, PHONON_ID};
 
 pub const FISH_ID: &str = "fish";
 pub const PIPER_ID: &str = "piper";
@@ -212,6 +212,9 @@ pub struct ProviderOverrides {
 pub struct InstalledPhonon {
     pub exe_path: Option<String>,
     pub model: Option<String>,
+    /// Weitere vollstaendig installierte Modelle anderer Sprachen (z. B. das englische neben dem
+    /// deutschen). Der Anbieter bietet ihre Stimmen als `<sprache>:<stimme>` an.
+    pub others: Vec<PhononModelRef>,
 }
 
 /// Was die Modellseite installiert hat, für die Auflösungsstufe „installiert“.
@@ -990,6 +993,7 @@ mod tests {
             phonon: InstalledPhonon {
                 exe_path: Some("D:/app/tts/phonon/windows-x64/ptts.exe".into()),
                 model: Some("D:/app/tts/phonon/models/phonon-40m-de".into()),
+                ..Default::default()
             },
         }
     }
@@ -1084,6 +1088,7 @@ mod tests {
             phonon: InstalledPhonon {
                 exe_path: Some("D:/x/ptts.exe".into()),
                 model: None,
+                ..Default::default()
             },
         };
         let r = resolve_provider_configs_with(

@@ -1014,6 +1014,7 @@ mod tests {
             phonon: policy::InstalledPhonon {
                 exe_path: Some("C:/app/tts/phonon/windows-x64/ptts.exe".into()),
                 model: Some("C:/app/tts/phonon/models/phonon-test".into()),
+                ..Default::default()
             },
         };
         let mut p = TtsProvidersSettings::default();

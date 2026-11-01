@@ -20,6 +20,7 @@ import {
   SOUVERAENITAET_STUFEN,
   blockedBy,
   describeModels,
+  speakerModelId,
   type KnowledgeArea,
   type ModelDescription,
 } from "./orchestration";
@@ -241,7 +242,12 @@ export const SettingsPanel: React.FC = () => {
   const ready = useVoiceCallStore((s) => s.ready);
   const models = useVoiceModels();
   const { getSetting } = useSettings();
-  const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const activeId = speakerModelId({
+    function_models: getSetting("function_models"),
+    llm_active_model_id: getSetting("llm_active_model_id"),
+    llm_models: getSetting("llm_models"),
+    llm_connections: getSetting("llm_connections"),
+  });
   const speaker = models.find((m) => m.id === activeId);
   const speakerBlocked =
     !!speaker && blockedBy(speaker, config.orchestration.souveraenitaet);

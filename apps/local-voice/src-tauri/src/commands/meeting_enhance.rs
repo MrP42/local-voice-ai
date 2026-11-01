@@ -77,7 +77,8 @@ fn recording_conflict(
     settings: &crate::settings::AppSettings,
     recording_active: bool,
 ) -> Result<(), EnhanceError> {
-    match resolve_provider_coded(settings) {
+    // Wie `run_enhance`: das Modell der Funktion Protokoll/Notizen pruefen.
+    match resolve_provider_coded(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)) {
         Ok((provider, _, _)) => {
             check_recording_conflict(crate::managers::llm::is_local(&provider), recording_active)
         }
@@ -266,7 +267,8 @@ pub fn auto_enhance_decision(
     if !has_user_notes {
         return Skip(AutoEnhanceSkip::NoUserNotes);
     }
-    match resolve_provider_coded(settings) {
+    // Wie `run_enhance`: das Modell der Funktion Protokoll/Notizen pruefen.
+    match resolve_provider_coded(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)) {
         Err(e) => Skip(AutoEnhanceSkip::NoProvider(e.code)),
         Ok((provider, _, _)) => {
             if check_recording_conflict(crate::managers::llm::is_local(&provider), recording_active)

@@ -356,6 +356,19 @@ async llmSetDefaultEffort(effort: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Modell einer Funktion setzen (Modelle je Funktion). `model_id = None` oder
+ * leer: die Funktion nutzt wieder das Standardmodell. Gesperrte oder nicht
+ * freigegebene Modelle sind nicht waehlbar, wie beim Standardmodell.
+ */
+async llmSetFunctionModel(forFunction: string, modelId: string | null, effort: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_set_function_model", { forFunction, modelId, effort }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Bietet ein Modell einer Verbindung den Fast-Modus an? (Codex laut Katalog)
  */
 async llmModelOffersFast(connectionId: string, remoteId: string) : Promise<boolean> {
@@ -3318,9 +3331,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<R
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, forFunction: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, forFunction }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4882,6 +4895,102 @@ async pagesList() : Promise<Result<PageInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Mitgelieferte und eigene Vorlagen.
+ */
+async bookAiTemplates() : Promise<Result<BookTemplate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_templates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigene Vorlage anlegen oder ändern. Eine mitgelieferte Vorlage (oder eine
+ * ohne ID) wird als neue eigene Vorlage gespeichert, also kopiert.
+ */
+async bookAiTemplateSave(template: BookTemplate) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_save", { template }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateExport(id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_export", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTemplateImport(path: string) : Promise<Result<BookTemplate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_template_import", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
+ */
+async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laufende Zusammenfassung abbrechen; sie endet nach dem aktuellen Schritt.
+ */
+async bookAiCancel() : Promise<void> {
+    await TAURI_INVOKE("book_ai_cancel");
+},
+async bookAiDocuments(pageId: string) : Promise<Result<KiDocument[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_documents", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentText(pageId: string, id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_text", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentUpdate(pageId: string, id: string, title: string | null, text: string | null) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_update", { pageId, id, title, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiDocumentDelete(pageId: string, id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_delete", { pageId, id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -5553,6 +5662,138 @@ async ttsExtractUrl(url: string) : Promise<Result<string, string>> {
 async isbnLookup(isbn: string) : Promise<Result<IsbnBook | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("isbn_lookup", { isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryList() : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anlegen (leere Kennung) oder ändern. Gibt das gespeicherte Buch zurück.
+ */
+async librarySave(book: LibraryBook) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_save", { book }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
+ * Die Vorlesen-Seite der Textfassung bleibt (sie löscht die Oberfläche auf
+ * Wunsch selbst), ebenso der Fortschritt bis zum nächsten Aufräumen.
+ */
+async libraryDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
+ */
+async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_find_duplicate", { title, authors, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ausgaben bei Open Library suchen: per ISBN oder per Titel und Autor.
+ */
+async libraryMetadataSearch(title: string, author: string, isbn: string | null) : Promise<Result<MetadataCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_metadata_search", { title, author, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Klappentext eines Werks (`/works/OL…W`).
+ */
+async libraryDescription(workKey: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_description", { workKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus Open Library laden (per Cover-Kennung oder ISBN) und ablegen.
+ */
+async libraryCoverFetch(id: string, coverId: number | null, isbn: string | null) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_fetch", { id, coverId, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus einer Bilddatei oder dem Coverbild einer EPUB übernehmen.
+ */
+async libraryCoverFromFile(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenes Cover entfernen: die Oberfläche zeichnet wieder das generierte.
+ */
+async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
+ * Kopie macht das Buch unabhängig davon, ob die Quelldatei liegen bleibt.
+ */
+async libraryAudioImport(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_audio_import", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gesamter gespeicherter Fortschritt (Schlüssel → JSON-Text).
+ */
+async libraryProgressLoad() : Promise<Result<Partial<{ [key in string]: string }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_load") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fortschritt sichern: Einträge einpflegen und die Datei atomar ersetzen.
+ */
+async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_put", { entries }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6458,6 +6699,10 @@ memory_guard_percent?: number; history_limit?: number; recording_retention_perio
  */
 llm_connections?: LlmConnection[]; llm_models?: LlmModelConfig[]; llm_active_model_id?: string | null; 
 /**
+ * Modelle je Funktion; fehlt ein Eintrag oder ist er leer, gilt das Standardmodell.
+ */
+function_models?: Partial<{ [key in string]: FunctionModel }>; 
+/**
  * Weitere Ordner mit Sprachmodellen (GGUF-Ordner wie der von LM Studio
  * oder der Modellspeicher von Ollama). Die App laedt die Modelle von
  * dort, statt sie ein zweites Mal herunterzuladen
@@ -7002,6 +7247,15 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+export type AudioVersion = { 
+/**
+ * Dateiname unter `<id>/audio/`.
+ */
+file: string; duration_ms: number | null; narrator: string | null; 
+/**
+ * Laufende Transkription (Import-Warteschlange), bis der Text übernommen ist.
+ */
+transcript_job: string | null }
 /**
  * Ein Eintrag des Audit-Logs.
  */
@@ -7110,6 +7364,36 @@ export type BookCharacter = { name: string;
  */
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+export type BookTemplate = { id: string; title: string; 
+/**
+ * Gruppe in der Auswahl: "ueberblick" | "lernen" | "analyse" | "anwenden".
+ */
+category: string; 
+/**
+ * Ein Satz für die Auswahl.
+ */
+description: string; 
+/**
+ * Zweck und Haltung des Ergebnisses.
+ */
+context: string; 
+/**
+ * Leer bei Fließtext ohne Gliederung.
+ */
+sections: BookTemplateSection[]; 
+/**
+ * Zielumfang des ganzen Ergebnisses in Wörtern.
+ */
+target_words: number; form: TemplateForm; 
+/**
+ * "allgemein" | "fachpublikum" | "management" | "einfache_sprache" | "lernende"
+ */
+audience: string; 
+/**
+ * Mitgeliefert und schreibgeschützt.
+ */
+builtin: boolean }
+export type BookTemplateSection = { title: string; instruction: string }
 /**
  * Zustand der Bruecke fuer die Oberflaeche.
  */
@@ -7880,6 +8164,15 @@ export type FollowupMode =
  */
 "eml"
 /**
+ * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
+ * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
+ */
+export type FunctionModel = { model_id?: string; 
+/**
+ * Effort nur fuer diese Funktion (`low` … `max`); `None` = der des Modells.
+ */
+effort?: string | null }
+/**
  * Fusszeile.
  */
 export type Fusszeile = { zeilen?: string[]; seitenzahl?: boolean }
@@ -8123,6 +8416,15 @@ supported: boolean; present: boolean;
  */
 problem: string | null }
 export type KeyboardImplementation = "tauri" | "handy_keys"
+export type KiDocument = { id: string; title: string; template_id: string; template_title: string; source: SummarySource; 
+/**
+ * Anzeige der Quelle, z. B. „Ganzes Buch“ oder „Kapitel 3“.
+ */
+source_label: string; created_ms: number; modified_ms: number; words: number; 
+/**
+ * Anbieter und Modell, mit dem das Dokument entstand.
+ */
+model: string }
 /**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
@@ -8201,6 +8503,28 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+export type LibraryBook = { 
+/**
+ * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
+ */
+id: string; title: string; subtitle: string | null; authors: string[]; language: string | null; isbn: string | null; publisher: string | null; publish_date: string | null; pages: number | null; description: string | null; 
+/**
+ * Woher die Metadaten stammen: `openlibrary`, `epub`, `manual`.
+ */
+metadata_source: string | null; 
+/**
+ * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+ */
+cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
+ * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
+ */
+cover_path: string | null; 
+/**
+ * Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs.
+ */
+audio_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -8637,6 +8961,18 @@ export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: n
 from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
+ */
+export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
+/**
+ * Open-Library-Cover-Kennung (`cover_i`).
+ */
+cover_id: number | null; 
+/**
+ * Werk-Schlüssel (`/works/OL…W`) für den Klappentext.
+ */
+work_key: string | null }
 /**
  * Was geaendert werden soll. `None` = unveraendert; eine leere Beschreibung
  * loescht sie; `participant_ids` und `folder_ids` ersetzen die Menge.
@@ -9108,6 +9444,11 @@ export type PostProcessProvider = { id: string; label: string; base_url: string;
  * Phase im Ereignis [`TtsProviderPreview`].
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
+export type ProgressEntry = { key: string; 
+/**
+ * `None` löscht den Eintrag.
+ */
+value: string | null }
 /**
  * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
  */
@@ -9791,6 +10132,19 @@ detail: string;
  * "allgemein" | "fachpublikum" | "management" | "einfache_sprache"
  */
 audience: string }
+/**
+ * Was zusammengefasst wird.
+ */
+export type SummarySource = 
+/**
+ * Der ganze Seitentext.
+ */
+{ kind: "book" } | 
+/**
+ * Ein Ausschnitt, zum Beispiel ein Kapitel oder eine Markierung
+ * (UTF-16-Offsets, Ende exklusiv).
+ */
+{ kind: "range"; start: number; end: number }
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
@@ -9850,6 +10204,28 @@ fields: Partial<{ [key in string]: string }> | null;
  */
 catalog: boolean | null }
 /**
+ * Wie das Ergebnis aufgebaut ist. Fließtext eignet sich am besten zum
+ * Vorlesen; die anderen Formen werden vor dem Vorlesen von Formatzeichen
+ * befreit.
+ */
+export type TemplateForm = 
+/**
+ * Zusammenhängender Text ohne Überschriften und Listen.
+ */
+"prose" | 
+/**
+ * Überschriften je Abschnitt, darunter Text.
+ */
+"structured" | 
+/**
+ * Aufzählung.
+ */
+"list" | 
+/**
+ * Markdown-Tabelle.
+ */
+"table"
+/**
  * Vorlage samt Metadaten, wie sie an die UI geht. `builtin` = mitgeliefert
  * (ID `builtin:<key>`, schreibgeschuetzt). `updated_at` in Sekunden.
  */
@@ -9879,6 +10255,20 @@ code: string;
  * Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
  */
 detail: string | null }
+export type TextVersion = { 
+/**
+ * Vorlesen-Seite mit dem Text. Sie bleibt die Quelle, damit Leseposition,
+ * Lesezeichen und Seitenmarken erhalten bleiben.
+ */
+page_id: string; 
+/**
+ * `document` (EPUB, PDF, DOCX, TXT, MD) oder `transcript` (aus dem Hörbuch).
+ */
+origin: string; 
+/**
+ * Dateiname der Quelle, nur zur Anzeige.
+ */
+source_name: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

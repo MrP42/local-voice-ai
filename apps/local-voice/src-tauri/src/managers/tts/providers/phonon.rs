@@ -735,7 +735,20 @@ const GATED_HINT: &str = "Auf der Hugging-Face-Seite des Modells die Bedingungen
 
 // ---- Provider ----------------------------------------------------------------
 
+/// Ein weiteres installiertes Modell einer anderen Sprache (Modellordner und Sprache).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhononModelRef {
+    /// Sprache des Modells laut Katalog (`en`, `de`, ...).
+    pub lang: String,
+    /// Modellordner.
+    pub model: String,
+}
+
+/// Trennzeichen zwischen Sprache und Stimme bei Stimmen eines weiteren Modells (`en:Zoey`).
+const SIBLING_SEP: char = ':';
+
 /// Phonon über `ptts` (siehe Moduldoku).
+#[derive(Clone)]
 pub struct PhononProvider {
     cfg: PhononConfig,
     ram_gate: fn(u64) -> Result<u64, String>,
@@ -744,6 +757,8 @@ pub struct PhononProvider {
     max_wav_bytes: u64,
     env_get: fn(&str) -> Option<String>,
     list_voices_timeout: Duration,
+    /// Weitere Modelle anderer Sprachen; ihre Stimmen heißen `<sprache>:<stimme>`.
+    siblings: Vec<PhononModelRef>,
 }
 
 /// Warum der Anbieter nicht bereit ist: Fehler plus Hinweis für die Anzeige.
@@ -772,7 +787,124 @@ impl PhononProvider {
             max_wav_bytes: MAX_WAV_BYTES,
             env_get: real_env,
             list_voices_timeout: LIST_VOICES_TIMEOUT,
+            siblings: Vec::new(),
         }
+    }
+
+    /// Weitere installierte Modelle anderer Sprachen (die Stufe „installiert“, z. B. das englische
+    /// neben dem deutschen). Ihre Stimmen erscheinen als `<sprache>:<stimme>`; die Synthese nimmt
+    /// dafür das Modell und die Sprache dieses Modells. Modelle der eigenen Sprache, unbekannte
+    /// Sprachen und doppelte Sprachen fallen weg.
+    pub fn with_siblings(mut self, siblings: Vec<PhononModelRef>) -> Self {
+        let own = self.cfg.lang_arg();
+        let mut kept: Vec<PhononModelRef> = Vec::new();
+        for s in siblings {
+            let lang = s.lang.trim().to_ascii_lowercase();
+            if lang == own
+                || !LANGS.contains(&lang.as_str())
+                || kept.iter().any(|k| k.lang == lang)
+                || s.model.trim().is_empty()
+            {
+                continue;
+            }
+            kept.push(PhononModelRef {
+                lang,
+                model: s.model,
+            });
+        }
+        self.siblings = kept;
+        self
+    }
+
+    /// Gehört die Stimme zu einem weiteren Modell (`<sprache>:<stimme>`)? Dann der Anbieter für
+    /// dieses Modell und der Stimmenname darin (`default` = Standardstimme des Modells).
+    fn sibling_for(&self, voice: &str) -> Option<(PhononProvider, String)> {
+        let (lang, rest) = voice.trim().split_once(SIBLING_SEP)?;
+        let rest = rest.trim();
+        if rest.is_empty() {
+            return None;
+        }
+        let sibling = self.siblings.iter().find(|s| s.lang == lang)?;
+        let mut p = self.clone();
+        p.cfg.model = sibling.model.clone();
+        p.cfg.lang = sibling.lang.clone();
+        p.cfg.voice = None;
+        p.siblings = Vec::new();
+        Some((p, rest.to_string()))
+    }
+
+    /// Die Stimmen im Ordner `voices/` des (lokalen) Modells, ohne Netz.
+    fn local_voices(&self, make: &dyn Fn(&str, &str) -> VoiceDescriptor) -> Vec<VoiceDescriptor> {
+        let mut voices = Vec::new();
+        let Ok(ModelSpec::Local(dir)) = parse_model(&self.cfg.model) else {
+            return voices;
+        };
+        // Mit `voices/SOURCE.json` tragen die Stimmen Geschlecht, Kurzbeschreibung
+        // und Lizenz; ohne sie bleibt es bei den Dateinamen.
+        let source = read_voice_source(Path::new(dir));
+        let license = source.as_ref().and_then(VoiceSource::license_info);
+        let mut names: Vec<String> = std::fs::read_dir(Path::new(dir).join("voices"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                (p.extension().is_some_and(|x| x == "safetensors"))
+                    .then(|| p.file_stem()?.to_str().map(String::from))
+                    .flatten()
+            })
+            .collect();
+        names.sort();
+        for n in names {
+            let mut voice = make(&n, &n);
+            if let Some(info) = source.as_ref().and_then(|s| s.find(&n)) {
+                voice.label = voice_label(info, &n);
+                voice.gender = info.gender.clone();
+                // Eigene Stimmen (Import, Klon) haben eigene Rechte: die Lizenz des
+                // Modells gilt nicht fuer sie.
+                voice.license = match info.origin.as_deref() {
+                    Some(o) if phonon_voices::origin_is_own(o) => {
+                        Some(phonon_voices::own_voice_license(o))
+                    }
+                    _ => license.clone(),
+                };
+            }
+            voices.push(voice);
+        }
+        voices
+    }
+
+    /// Stimmen der weiteren Modelle (`<sprache>:<stimme>`), nur aus deren Ordnern.
+    fn sibling_voices(&self) -> Vec<VoiceDescriptor> {
+        let mut out = Vec::new();
+        for s in &self.siblings {
+            let Some((p, _)) = self.sibling_for(&format!("{}{SIBLING_SEP}default", s.lang)) else {
+                continue;
+            };
+            if p.check_model().is_err() {
+                continue;
+            }
+            let lang = p.voice_language();
+            let make = |id: &str, label: &str| VoiceDescriptor {
+                id: format!("{}{SIBLING_SEP}{id}", s.lang),
+                label: label.to_string(),
+                language: lang.clone(),
+                gender: None,
+                license: None,
+            };
+            let mut default = make("default", "Standardstimme des Modells");
+            default.label = format!("Standardstimme des Modells ({})", s.lang);
+            default.license = Some(p.license());
+            out.push(default);
+            let model_license = p.license();
+            for mut v in p.local_voices(&make) {
+                if v.license.is_none() {
+                    v.license = Some(model_license.clone());
+                }
+                out.push(v);
+            }
+        }
+        out
     }
 
     /// Wie [`new`](Self::new), aber mit sofortiger Prüfung.
@@ -1346,7 +1478,9 @@ impl TtsProvider for PhononProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         let lang = self.cfg.lang_arg();
         let languages = if LANGS.contains(&lang.as_str()) {
-            vec![lang]
+            let mut l = vec![lang];
+            l.extend(self.siblings.iter().map(|s| s.lang.clone()));
+            l
         } else {
             LANGS.map(String::from).to_vec()
         };
@@ -1400,7 +1534,17 @@ impl TtsProvider for PhononProvider {
             if let Some(why) = self
                 .cfg
                 .configured_voice()
-                .and_then(|v| self.voice_problem(v))
+                .and_then(|v| match self.sibling_for(v) {
+                    Some((p, name)) if name == "default" => {
+                        p.check_model().err().map(|e| e.error.message)
+                    }
+                    Some((p, name)) => p
+                        .check_model()
+                        .err()
+                        .map(|e| e.error.message)
+                        .or_else(|| p.voice_problem(&name)),
+                    None => self.voice_problem(v),
+                })
             {
                 return fail(
                     why,
@@ -1461,44 +1605,18 @@ impl TtsProvider for PhononProvider {
                 license: None,
             };
             let mut voices = vec![make("default", "Standardstimme des Modells")];
-            if let Some(v) = self.cfg.configured_voice() {
+            // Eine konfigurierte Stimme eines weiteren Modells steht unten mit Sprache und Lizenz.
+            if let Some(v) = self
+                .cfg
+                .configured_voice()
+                .filter(|v| self.sibling_for(v).is_none())
+            {
                 voices.push(make(v, v));
             }
             // Offline nur, was im Modellordner liegt.
-            if let Ok(ModelSpec::Local(dir)) = parse_model(&self.cfg.model) {
-                // Mit `voices/SOURCE.json` tragen die Stimmen Geschlecht, Kurzbeschreibung
-                // und Lizenz; ohne sie bleibt es bei den Dateinamen.
-                let source = read_voice_source(Path::new(dir));
-                let license = source.as_ref().and_then(VoiceSource::license_info);
-                let mut names: Vec<String> = std::fs::read_dir(Path::new(dir).join("voices"))
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter_map(|e| {
-                        let p = e.path();
-                        (p.extension().is_some_and(|x| x == "safetensors"))
-                            .then(|| p.file_stem()?.to_str().map(String::from))
-                            .flatten()
-                    })
-                    .collect();
-                names.sort();
-                for n in names {
-                    let mut voice = make(&n, &n);
-                    if let Some(info) = source.as_ref().and_then(|s| s.find(&n)) {
-                        voice.label = voice_label(info, &n);
-                        voice.gender = info.gender.clone();
-                        // Eigene Stimmen (Import, Klon) haben eigene Rechte: die Lizenz des
-                        // Modells gilt nicht fuer sie.
-                        voice.license = match info.origin.as_deref() {
-                            Some(o) if phonon_voices::origin_is_own(o) => {
-                                Some(phonon_voices::own_voice_license(o))
-                            }
-                            _ => license.clone(),
-                        };
-                    }
-                    voices.push(voice);
-                }
-            }
+            voices.extend(self.local_voices(&make));
+            // Dazu die Stimmen weiterer installierter Modelle anderer Sprachen.
+            voices.extend(self.sibling_voices());
             // Den Hugging-Face-Katalog nur mit Netzfreigabe.
             if self.cfg.allow_network {
                 let listed = tokio::time::timeout(
@@ -1526,9 +1644,15 @@ impl TtsProvider for PhononProvider {
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<AudioClip, TtsError>> {
         Box::pin(async move {
+            let voice = self.effective_voice(opts.voice.as_deref())?;
+            // Stimme eines weiteren Modells (`en:Zoey`): dessen Modell und Sprache vorlesen lassen.
+            if let Some((p, name)) = voice.as_deref().and_then(|v| self.sibling_for(v)) {
+                let mut o = opts.clone();
+                o.voice = Some(name);
+                return p.synthesize(text, &o, cancel).await;
+            }
             let exe = self.check_ready().map_err(|p| p.error)?;
             let text = prepare_text(text)?;
-            let voice = self.effective_voice(opts.voice.as_deref())?;
             // Ohne Netzfreigabe lädt `ptts` keine Stimme nach: Katalognamen scheitern
             // hier, ohne Prozessstart.
             if let Some(v) = voice.as_deref() {
@@ -1552,6 +1676,13 @@ impl TtsProvider for PhononProvider {
     /// und Sprache ab (anderes Modell oder `q8` klingt anders, verschiedene
     /// Ordner gleichen Namens dürfen sich nicht überschneiden).
     fn cache_tag(&self, voice: Option<&str>) -> String {
+        let chosen = voice
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .or_else(|| self.cfg.configured_voice());
+        if let Some((p, name)) = chosen.and_then(|v| self.sibling_for(v)) {
+            return p.cache_tag(Some(&name));
+        }
         let model = self.cfg.model.trim();
         let base = model
             .rsplit(['/', '\\'])
@@ -3237,5 +3368,152 @@ mod tests {
             resolve_exe(&fake.exe.display().to_string()),
             Some(fake.exe.clone())
         );
+    }
+
+    // ---- Weitere Modelle anderer Sprachen (englische Stimmen neben dem deutschen Modell) ----
+
+    fn with_english(fake: &FakePtts, de: &TempDir, en: &TempDir) -> PhononProvider {
+        provider(fake, de).with_siblings(vec![PhononModelRef {
+            lang: "en".into(),
+            model: en.path().display().to_string(),
+        }])
+    }
+
+    #[tokio::test]
+    async fn stimmen_des_englischen_modells_erscheinen_als_en_doppelpunkt_name() {
+        let de = model_dir(&["Nele"]);
+        let en = model_dir(&["Zoey", "Hugh"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = with_english(&fake, &de, &en);
+        assert_eq!(p.descriptor().caps.languages, vec!["de", "en"]);
+        let v = p.list_voices(None).await.unwrap();
+        let ids: Vec<(&str, &str)> = v
+            .iter()
+            .map(|v| (v.id.as_str(), v.language.as_str()))
+            .collect();
+        assert!(ids.contains(&("Nele", "de")), "{ids:?}");
+        assert!(ids.contains(&("en:default", "en")), "{ids:?}");
+        assert!(ids.contains(&("en:Zoey", "en")), "{ids:?}");
+        assert!(ids.contains(&("en:Hugh", "en")), "{ids:?}");
+        // Sprachfilter: nur die englischen.
+        let only_en = p.list_voices(Some("en")).await.unwrap();
+        assert!(!only_en.is_empty());
+        assert!(
+            only_en.iter().all(|v| v.id.starts_with("en:")),
+            "{only_en:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn eine_englische_stimme_liest_mit_dem_englischen_modell_und_lang_en() {
+        let de = model_dir(&["Nele"]);
+        let en = model_dir(&["Zoey"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = with_english(&fake, &de, &en);
+        for voice in ["en:Zoey", "en:default", "Nele"] {
+            let mut o = opts();
+            o.voice = Some(voice.into());
+            p.synthesize("Hello.", &o, &CancelToken::detached())
+                .await
+                .unwrap();
+        }
+        let calls = fake.synth_calls();
+        let en_dir = en.path().display().to_string();
+        let de_dir = de.path().display().to_string();
+        assert_eq!(calls[0].value_of("--model"), Some(en_dir.as_str()));
+        assert_eq!(calls[0].value_of("--lang"), Some("en"));
+        assert_eq!(calls[0].value_of("--voice"), Some("Zoey"));
+        assert_eq!(calls[1].value_of("--model"), Some(en_dir.as_str()));
+        assert!(!calls[1].has("--voice"), "en:default = Standardstimme");
+        assert_eq!(calls[2].value_of("--model"), Some(de_dir.as_str()));
+        assert_eq!(calls[2].value_of("--lang"), Some("de"));
+        assert_eq!(calls[2].value_of("--voice"), Some("Nele"));
+    }
+
+    #[tokio::test]
+    async fn ohne_weiteres_modell_bleibt_en_doppelpunkt_ein_gewoehnlicher_name() {
+        let de = model_dir(&["Nele"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = provider(&fake, &de);
+        let mut o = opts();
+        o.voice = Some("en:Zoey".into());
+        // Keine englische Installation: ohne Netzfreigabe nicht ladbar, kein Prozessstart.
+        let err = p
+            .synthesize("Hello.", &o, &CancelToken::detached())
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("en:Zoey"), "{}", err.message);
+        assert!(fake.synth_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn eine_konfigurierte_englische_stimme_steht_einmal_mit_sprache_en_in_der_liste() {
+        let de = model_dir(&["Nele"]);
+        let en = model_dir(&["Zoey"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let mut c = cfg(&fake, &de);
+        c.voice = Some("en:Zoey".into());
+        let p = PhononProvider::new(c)
+            .with_ram_gate(|_| Ok(64 * 1024))
+            .with_siblings(vec![PhononModelRef {
+                lang: "en".into(),
+                model: en.path().display().to_string(),
+            }]);
+        let all = p.list_voices(None).await.unwrap();
+        let zoey: Vec<_> = all.iter().filter(|v| v.id == "en:Zoey").collect();
+        assert_eq!(zoey.len(), 1, "{all:?}");
+        assert_eq!(zoey[0].language, "en");
+        let only_en = p.list_voices(Some("en")).await.unwrap();
+        assert!(only_en.iter().any(|v| v.id == "en:Zoey"), "{only_en:?}");
+        assert!(p.health_check().await.available);
+    }
+
+    #[test]
+    fn weitere_modelle_der_eigenen_oder_unbekannten_sprache_fallen_weg() {
+        let de = model_dir(&[]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = provider(&fake, &de).with_siblings(vec![
+            PhononModelRef {
+                lang: "de".into(),
+                model: "x".into(),
+            },
+            PhononModelRef {
+                lang: "xx".into(),
+                model: "y".into(),
+            },
+            PhononModelRef {
+                lang: "EN".into(),
+                model: "en1".into(),
+            },
+            PhononModelRef {
+                lang: "en".into(),
+                model: "en2".into(),
+            },
+            PhononModelRef {
+                lang: "fr".into(),
+                model: " ".into(),
+            },
+        ]);
+        assert_eq!(
+            p.siblings,
+            vec![PhononModelRef {
+                lang: "en".into(),
+                model: "en1".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn der_cache_tag_einer_englischen_stimme_ist_der_des_englischen_modells() {
+        let de = model_dir(&["Zoey"]);
+        let en = model_dir(&["Zoey"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let p = with_english(&fake, &de, &en);
+        let alone = PhononProvider::new(PhononConfig {
+            lang: "en".into(),
+            ..cfg(&fake, &en)
+        });
+        assert_eq!(p.cache_tag(Some("en:Zoey")), alone.cache_tag(Some("Zoey")));
+        assert_ne!(p.cache_tag(Some("en:Zoey")), p.cache_tag(Some("Zoey")));
     }
 }

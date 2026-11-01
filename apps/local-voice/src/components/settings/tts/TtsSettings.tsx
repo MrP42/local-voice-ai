@@ -22,6 +22,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
   FilesSidebar,
+  ColumnStrip,
   PagesSidebar,
   TtsHelpDock,
 } from "./WorkspaceSidebars";
@@ -71,6 +72,7 @@ import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
+import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
 import {
   clearResumePoint,
   loadResumePoint,
@@ -98,6 +100,7 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
+  Mic,
   PanelRightClose,
   Replace,
   Settings,
@@ -1518,6 +1521,12 @@ export const TtsSettings = () => {
     if (autoplayPage.current && autoplayPage.current !== activePage)
       autoplayPage.current = null;
   }, [activePage]);
+  // Bibliothek (lva#152): „Weiterhören“ öffnet die Seite und liest sofort.
+  useEffect(() => {
+    const page = takeLibraryAutoplay();
+    if (page && page === activePage) autoplayPage.current = page;
+    // Nur beim Öffnen von Vorlesen.
+  }, []);
   // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
   // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
   useEffect(() => {
@@ -1944,6 +1953,9 @@ export const TtsSettings = () => {
     setDictating(true);
   };
 
+  const textNowRef = useRef(text);
+  textNowRef.current = text;
+
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async () => {
     const picked = await open({
@@ -1955,7 +1967,6 @@ export const TtsSettings = () => {
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
-    const wasEmpty = !text.trim();
     const pageAtStart = activePage;
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
@@ -1963,22 +1974,22 @@ export const TtsSettings = () => {
       setLastError(result.error);
       return;
     }
+    const title = documentTitle(result.data, picked);
+    // Buch hinzufügen (lva#152): steht auf der Seite schon Text, bekommt das
+    // Buch eine eigene neue Seite – nichts wird überschrieben.
+    // Erst nach dem Laden prüfen: wer währenddessen tippt, verliert nichts.
+    if (textNowRef.current.trim() || activePageRef.current !== pageAtStart) {
+      const created = await createPageWithText(title, result.data);
+      if (!created) setLastError(t("tts.add.pageFailed"));
+      return;
+    }
     setTab("original");
     setText(result.data);
-    // Ein E-Book auf einer leeren Seite: die Seite heißt wie das Buch
-    // (lva#149). Nur die erste Zeile zählt, und nur, wenn der Nutzer
-    // während des Ladens nicht die Seite gewechselt hat.
-    const firstLine = result.data.trimStart().split("\n", 1)[0] ?? "";
-    const bookTitle = /^#[ \t]+(.+)$/.exec(firstLine)?.[1]?.trim();
-    if (
-      wasEmpty &&
-      /\.epub$/i.test(picked) &&
-      pageAtStart &&
-      activePageRef.current === pageAtStart &&
-      bookTitle
-    ) {
+    // Auf einer leeren Seite heißt die Seite wie das Buch (lva#149), aber
+    // nur, wenn der Nutzer während des Ladens nicht die Seite gewechselt hat.
+    if (pageAtStart && activePageRef.current === pageAtStart && title) {
       void commands
-        .pagesRename(pageAtStart, bookTitle.slice(0, 120))
+        .pagesRename(pageAtStart, title)
         .then(() => reloadPages());
     }
     openModeRef.current?.(result.data);
@@ -2104,7 +2115,11 @@ export const TtsSettings = () => {
   // Stimme und Werkzeuge: rechts in der Spalte oder, ist sie ausgeblendet,
   // in der Spielerleiste (Variante A, Codex 01.11.). Gerendert wird jeweils
   // nur an einer Stelle.
-  const voicePicker = (
+  // `compact`: in der Spielerleiste nur der Dropdown-Knopf (Symbol + Pfeil),
+  // der Name steht im Tooltip und in der offenen Liste (Patrick 01.11.).
+  const voiceLabel =
+    voiceOptions.find((option) => option.value === voiceValue)?.label ?? "";
+  const voicePickerOf = (compact = false) => (
       <TooltipTrigger
         className="block w-full"
         tooltipId="voice-mode-tip"
@@ -2162,9 +2177,22 @@ export const TtsSettings = () => {
             bleibt als zweiter Weg bestehen. */}
           <Select
             menuPortal
+            compactMenuWidth={compact ? 300 : undefined}
+            ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
             options={voiceOptions}
             formatOptionLabel={(option, context) => {
+              if (compact && context === "value")
+                return (
+                  <span
+                    className="flex items-center"
+                    title={`${t("tts.voices.title")}: ${option.label}`}
+                    data-testid="voice-compact"
+                  >
+                    <Mic width={16} height={16} aria-hidden="true" />
+                    <span className="sr-only">{option.label}</span>
+                  </span>
+                );
               const sample =
                 context === "menu"
                   ? sampleOf(option.value)
@@ -2372,7 +2400,7 @@ export const TtsSettings = () => {
   return (
     <PageShell
       title={t("tts.title")}
-      description={t("workspace.ttsHint")}
+      /* Ohne Untertitel (Patrick 01.11.): der Weg steht in der Hilfe. */
       fill
       actions={
         // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
@@ -2513,7 +2541,6 @@ export const TtsSettings = () => {
                     onKeepAwake={toggleKeepAwake}
                     fullscreen={fullscreen}
                     onFullscreen={toggleFullscreen}
-                    onShowColumn={rightHidden ? () => setRightHidden("0") : undefined}
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
@@ -2762,7 +2789,7 @@ export const TtsSettings = () => {
                               inPopover ? "w-full" : "reader-dock__voice"
                             }
                           >
-                            {voicePicker}
+                            {voicePickerOf(!inPopover)}
                           </div>
                           {/* In der Zeile sind die Hinweise unter der Stimme
                             verborgen: fehlt eine eingerichtete Stimme, steht
@@ -2858,7 +2885,7 @@ export const TtsSettings = () => {
                   Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
-                <div className="min-w-0 flex-1">{voicePicker}</div>
+                <div className="min-w-0 flex-1">{voicePickerOf()}</div>
                 {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
                   ziehen dann in die Spielerleiste unter dem Text. */}
                 <button
@@ -2919,6 +2946,15 @@ export const TtsSettings = () => {
           {/* Hilfe bleibt auch bei ausgeblendeter Spalte erreichbar. */}
           {helpOpen && rightHidden && (
             <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+          )}
+          {/* Ausgeblendete rechte Spalte: derselbe Streifen wie links. */}
+          {rightHidden && (
+            <ColumnStrip
+              side="right"
+              label={t("tts.layout.showColumn")}
+              onClick={() => setRightHidden("0")}
+              testId="right-column-show"
+            />
           )}
 
           <Dialog

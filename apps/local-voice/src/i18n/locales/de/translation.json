@@ -797,7 +797,7 @@
     },
     "layout": {
       "hideColumn": "Rechte Spalte ausblenden",
-      "showColumn": "Spalte einblenden",
+      "showColumn": "Rechte Spalte einblenden",
       "showColumnHint": "Stimme, Werkzeuge und Dateien wieder rechts anzeigen",
       "sideBySide": "Bedienung und Dateien nebeneinander anzeigen",
       "resizePages": "Breite der Seitenliste ändern",
@@ -818,7 +818,8 @@
     },
     "add": {
       "title": "Hinzufügen — Dokument, Webseite oder Datei fürs Projekt",
-      "document": "Dokument laden (TXT, MD, PDF, DOCX, EPUB)",
+      "document": "Buch oder Dokument laden (EPUB, PDF, DOCX, TXT, MD)",
+      "pageFailed": "Für das Buch konnte keine neue Seite angelegt werden.",
       "url": "Webseite laden (URL) …",
       "projectFile": "Datei zu den Projekt-Dateien kopieren",
       "urlDialogTitle": "Webseite als Text laden",
@@ -2308,6 +2309,25 @@
         "description": "Wird für Nachbearbeitung, Zusammenfassung, Übersetzung, Protokoll und Tagging verwendet. Wechseln geht auch unten in der Fußleiste.",
         "placeholder": "Modell wählen…",
         "none": "Noch kein Modell freigegeben — unten eine Verbindung anlegen und Modelle freigeben."
+      },
+      "functions": {
+        "title": "Modelle je Funktion",
+        "description": "Eigenes Modell für einzelne Aufgaben, dauerhaft gespeichert. „Standard“ folgt dem aktiven Modell oben und der Fußleiste.",
+        "fallback": "Ist das gewählte Funktionsmodell nicht verfügbar (abgeschaltet oder entfernt), wird das Standardmodell verwendet.",
+        "compliance": "Vor jedem Aufruf wird geprüft, ob das verwendete Modell dem gewählten Regelwerk entspricht. Ein gesperrtes Modell wird nicht aufgerufen.",
+        "default": "Standard: {{model}}",
+        "defaultNone": "Standardmodell",
+        "effort": "Effort für {{name}}",
+        "names": {
+          "voice_speaker": "Sprachgespräch (Sprecher)",
+          "meeting_protocol": "Besprechungsprotokoll und Notizen",
+          "dictation_refine": "Diktat-Nachbearbeitung"
+        },
+        "hints": {
+          "voice_speaker": "Antwortet im Gespräch und im Hauptgespräch. Ein schnelles oder lokales Modell hält die Antwortzeit kurz; schwere Fragen gehen an den Denker.",
+          "meeting_protocol": "Schreibt Protokolle, Projektprotokolle und verbessert Notizen.",
+          "dictation_refine": "Überarbeitet diktierten Text nach der Erkennung."
+        }
       },
       "connections": {
         "title": "Verbindungen",

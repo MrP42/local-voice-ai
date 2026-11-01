@@ -797,7 +797,7 @@
     },
     "layout": {
       "hideColumn": "Hide right column",
-      "showColumn": "Show column",
+      "showColumn": "Show right column",
       "showColumnHint": "Show voice, tools and files on the right again",
       "sideBySide": "Show controls and files side by side",
       "resizePages": "Resize page list",
@@ -818,7 +818,8 @@
     },
     "add": {
       "title": "Add — document, web page, or a file for the project",
-      "document": "Load document (TXT, MD, PDF, DOCX, EPUB)",
+      "document": "Load book or document (EPUB, PDF, DOCX, TXT, MD)",
+      "pageFailed": "Could not create a new page for the book.",
       "url": "Load web page (URL)…",
       "projectFile": "Copy a file into the project files",
       "urlDialogTitle": "Load a web page as text",
@@ -2308,6 +2309,25 @@
         "description": "Used for polishing, summaries, translation, minutes and tagging. You can also switch it in the footer.",
         "placeholder": "Choose a model…",
         "none": "No model released yet — add a connection below and release models."
+      },
+      "functions": {
+        "title": "Models per function",
+        "description": "A separate model for individual tasks, saved permanently. “Default” follows the active model above and the footer.",
+        "fallback": "If the chosen function model is not available (switched off or removed), the default model is used.",
+        "compliance": "Before every call, the model in use is checked against the selected policy. A blocked model is not called.",
+        "default": "Default: {{model}}",
+        "defaultNone": "Default model",
+        "effort": "Effort for {{name}}",
+        "names": {
+          "voice_speaker": "Voice conversation (speaker)",
+          "meeting_protocol": "Meeting minutes and notes",
+          "dictation_refine": "Dictation refinement"
+        },
+        "hints": {
+          "voice_speaker": "Answers in conversations and the main conversation. A fast or local model keeps response times short; hard questions go to the thinker.",
+          "meeting_protocol": "Writes minutes, project minutes and improves notes.",
+          "dictation_refine": "Refines dictated text after recognition."
+        }
       },
       "connections": {
         "title": "Connections",

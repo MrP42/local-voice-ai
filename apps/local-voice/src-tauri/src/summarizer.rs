@@ -22,7 +22,7 @@ const CHUNK_CHARS_CLOUD: usize = 300_000;
 /// Eingabe, deshalb eine kleinere Grenze.
 const TIDY_CHARS_CLOUD: usize = 100_000;
 
-fn chunk_chars(settings: &AppSettings) -> usize {
+pub(crate) fn chunk_chars(settings: &AppSettings) -> usize {
     if crate::translator::active_model_is_local(settings) {
         CHUNK_CHARS
     } else {
@@ -89,7 +89,7 @@ pub fn summary_prompt(opts: &SummaryOptions, text: &str) -> String {
 /// Kleine Modelle antworten auf einen englischen Prompt gern auf Englisch,
 /// egal was "same language" sagt. Deshalb wird die erkannte Sprache der
 /// Quelle beim Namen genannt — das hält auch Qwen 3 4B in der Spur.
-fn language_clause(text: &str) -> String {
+pub(crate) fn language_clause(text: &str) -> String {
     match crate::managers::tts::lang::detect_language(text) {
         Some("de") => " (that is: write in German)".into(),
         Some("en") => " (that is: write in English)".into(),
@@ -171,28 +171,37 @@ pub fn combine_prompt(opts: &SummaryOptions, partials: &[String]) -> String {
 
 /// Text an Absatz-/Satzgrenzen in Blöcke von höchstens `max_chars` teilen.
 pub fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
+    // Zeichenzahlen werden mitgeführt statt je Absatz neu gezählt: ganze
+    // Bücher ohne Zeilenumbruch liefen sonst quadratisch (lva#182).
+    let max_chars = max_chars.max(1);
     let mut chunks = Vec::new();
     let mut current = String::new();
+    let mut current_len = 0usize;
     for paragraph in text.split_inclusive("\n") {
-        if current.chars().count() + paragraph.chars().count() > max_chars
-            && !current.trim().is_empty()
-        {
+        let len = paragraph.chars().count();
+        if current_len + len > max_chars && !current.trim().is_empty() {
             chunks.push(current.trim().to_string());
             current = String::new();
+            current_len = 0;
         }
         // Ein einzelner Absatz über dem Limit wird hart an Zeichengrenzen geteilt.
-        if paragraph.chars().count() > max_chars {
+        if len > max_chars {
             let mut piece = String::new();
+            let mut piece_len = 0usize;
             for c in paragraph.chars() {
                 piece.push(c);
-                if piece.chars().count() >= max_chars {
+                piece_len += 1;
+                if piece_len >= max_chars {
                     chunks.push(piece.trim().to_string());
                     piece = String::new();
+                    piece_len = 0;
                 }
             }
             current.push_str(&piece);
+            current_len += piece_len;
         } else {
             current.push_str(paragraph);
+            current_len += len;
         }
     }
     if !current.trim().is_empty() {
@@ -201,7 +210,7 @@ pub fn chunk_text(text: &str, max_chars: usize) -> Vec<String> {
     chunks
 }
 
-async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, String> {
+pub(crate) async fn ask_llm(settings: &AppSettings, prompt: String) -> Result<String, String> {
     let provider = settings
         .active_post_process_provider()
         .cloned()
