@@ -48,3 +48,10 @@ export function toSpokenScript(text: string): string {
     })
     .join("\n");
 }
+
+/** Seitenmarken entfernen, z. B. bevor ein Sprachmodell den Text übersetzt,
+ *  glättet oder zusammenfasst: es würde sie sonst mit übersetzen oder verlieren. */
+export const stripPageMarks = (text: string): string =>
+  text.replace(PAGE_MARKS, (m, at: number) =>
+    at > 0 && m.startsWith(" ") && m.endsWith(" ") ? " " : "",
+  );

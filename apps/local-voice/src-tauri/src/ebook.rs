@@ -668,7 +668,13 @@ fn reflow_lines(raw: Vec<(String, Option<u32>)>) -> String {
         let first_word = line.split(' ').next().unwrap_or_default();
         if current.is_empty() {
             if let Some(page) = pending.take() {
-                marks.push((0, page));
+                // Hinter `- `, `1. ` oder `Name:`, damit Liste und Sprecher
+                // in der Buchansicht erkannt bleiben.
+                let prefix = LIST_LINE_RE
+                    .find(line)
+                    .or_else(|| SPEAKER_LINE_RE.find(line))
+                    .map_or(0, |m| m.end());
+                marks.push((prefix, page));
             }
             current.push_str(line);
         } else if current.ends_with('-')
@@ -725,11 +731,13 @@ fn insert_page_marks(text: &str, marks: &[(usize, u32)]) -> String {
     let mut out = String::with_capacity(text.len() + marks.len() * 12);
     let mut from = 0;
     for &(at, page) in marks {
-        let at = at.min(text.len());
+        let at = at.min(text.len()).max(from);
+        // Mitten im Wort auch nach einem stehen gebliebenen Bindestrich
+        // („Süd-“ / „Ost“ auf der nächsten Seite).
         let mid_word = text[..at]
             .chars()
             .next_back()
-            .is_some_and(char::is_alphanumeric)
+            .is_some_and(|c| c.is_alphanumeric() || c == '-')
             && text[at..].chars().next().is_some_and(char::is_alphanumeric);
         if mid_word {
             let end = text[at..]
@@ -1308,5 +1316,28 @@ mod tests {
     #[test]
     fn reflow_without_pages_has_no_marks() {
         assert!(!reflow_plain_text("Eins.\n\nZwei.").contains("{{"));
+    }
+    #[test]
+    fn page_marks_stay_behind_list_and_speaker_prefixes() {
+        let out = reflow_lines(vec![
+            ("- Erster Punkt der Liste.".into(), Some(5)),
+            ("".into(), None),
+            ("Mara: Hallo, wer ist da?".into(), Some(6)),
+            ("".into(), None),
+            ("Der Wind kam aus Süd-".into(), None),
+            ("Ost, wie jeden Abend.".into(), Some(7)),
+        ]);
+        assert!(out.contains("- {{S. 5}} Erster"), "{out}");
+        assert!(out.contains("Mara: {{S. 6}} Hallo"), "{out}");
+        assert!(out.contains("Süd-Ost, {{S. 7}}"), "{out}");
+    }
+
+    #[test]
+    fn page_marks_never_slice_backwards() {
+        let out = insert_page_marks("Stun-de,x weiter", &[(5, 1), (4, 2)]);
+        assert!(
+            out.contains("{{S. 1}}") && out.contains("{{S. 2}}"),
+            "{out}"
+        );
     }
 }
