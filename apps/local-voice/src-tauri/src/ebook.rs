@@ -684,6 +684,84 @@ pub fn reflow_plain_text(text: &str) -> String {
     paragraphs.join("\n\n")
 }
 
+/// Wie viele Zeilen oben und unten einer PDF-Seite als Kopf-/Fußzeile in
+/// Frage kommen.
+const RUNNING_LINES: usize = 3;
+
+/// Schlüssel einer Kopf-/Fußzeile: Ziffern zählen nicht („Kapitel 3 · 41“ und
+/// „Kapitel 3 · 42“ sind dieselbe Kopfzeile), Leerraum und Groß-/Kleinschreibung
+/// auch nicht.
+fn running_key(line: &str) -> String {
+    line.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_digit() { '#' } else { c })
+        .collect()
+}
+
+/// Nur eine Seitenzahl: „12“, „- 12 -“, „Seite 12“, „12 / 300“, „S. 12“.
+fn is_page_number(line: &str) -> bool {
+    let t = line.trim();
+    let t = t
+        .strip_prefix("Seite")
+        .or_else(|| t.strip_prefix("S."))
+        .or_else(|| t.strip_prefix("Page"))
+        .unwrap_or(t);
+    let digits = t.chars().filter(char::is_ascii_digit).count();
+    (1..=8).contains(&digits)
+        && t.chars().all(|c| {
+            c.is_ascii_digit() || c.is_whitespace() || matches!(c, '-' | '–' | '/' | '|' | '.')
+        })
+}
+
+/// PDF-Seiten (je Seite der Text) zu einem Text zusammenführen und dabei
+/// Kopf- und Fußzeilen entfernen, die sich über die Seiten wiederholen
+/// (Buchtitel, Kapitelname, „Seite 12 von 300“), sowie Seitenzahlen am
+/// Seitenrand. Danach [`reflow_plain_text`]; ein Absatz über eine Seitengrenze
+/// bleibt ein Absatz, weil die Seiten mit einem einfachen Umbruch aneinander
+/// gehängt werden.
+pub fn pdf_pages_to_text(pages: &[String]) -> String {
+    let page_lines: Vec<Vec<&str>> = pages
+        .iter()
+        .map(|p| p.lines().filter(|l| !l.trim().is_empty()).collect())
+        .collect();
+    let edge = |lines: &[&str], i: usize| i < RUNNING_LINES || i + RUNNING_LINES >= lines.len();
+
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for lines in &page_lines {
+        let mut seen = std::collections::HashSet::new();
+        for (i, line) in lines.iter().enumerate() {
+            if edge(lines, i) && seen.insert(running_key(line)) {
+                *counts.entry(running_key(line)).or_default() += 1;
+            }
+        }
+    }
+    let with_text = page_lines.iter().filter(|l| !l.is_empty()).count();
+    // Erst ab vier Seiten und mindestens einem Drittel der Seiten: ein Satz, der
+    // zufällig zweimal oben steht, ist keine Kopfzeile.
+    let threshold = (with_text.div_ceil(3)).max(3);
+    let running = |line: &str| {
+        with_text >= 4
+            && counts
+                .get(&running_key(line))
+                .is_some_and(|&n| n >= threshold)
+    };
+
+    let mut out = String::new();
+    for lines in &page_lines {
+        for (i, line) in lines.iter().enumerate() {
+            if edge(lines, i) && (running(line) || is_page_number(line)) {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    reflow_plain_text(&out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -941,5 +1019,55 @@ mod tests {
 
         let mut adept = simple_epub("", &[("META-INF/rights.xml", "<rights/>")]);
         assert!(epub_to_markdown(&mut adept).unwrap_err().contains("DRM"));
+    }
+    #[test]
+    fn pdf_running_headers_and_page_numbers_are_dropped() {
+        // Fließtext ist von Seite zu Seite verschieden (Wörter, nicht nur Zahlen).
+        let worte = ["Möwen", "Wellen", "Laterne", "Treppe", "Nebel", "Stürme"];
+        let pages: Vec<String> = (1..=6usize)
+            .map(|n| {
+                let mut page = format!("Der Leuchtturm\nKapitel {} · Die Klippe\n", n / 3 + 1);
+                for z in 1..=10 {
+                    let w = worte[(n + z) % worte.len()];
+                    page.push_str(&format!(
+                        "{w} im Turm, Zeile {z}: Die Stunden vergingen zäh, und Mara lauschte auf jedes\n"
+                    ));
+                }
+                let w = worte[n % worte.len()];
+                page.push_str(&format!(
+                    "Geräusch, das vom Meer heraufkam, {w} am Ende.\nDanach kam {w}, und der Satz läuft über die Seitengrenze in\n- {n} -\n"
+                ));
+                page
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(!out.contains("Der Leuchtturm"), "{out}");
+        assert!(!out.contains("Kapitel"), "{out}");
+        assert!(!out.contains("- 3 -"), "{out}");
+        assert!(out.contains("vom Meer heraufkam, Nebel am Ende."), "{out}");
+        // Ein Satz über die Seitengrenze bleibt zusammen.
+        assert!(
+            out.contains("läuft über die Seitengrenze in Stürme im Turm, Zeile 1"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn pdf_with_few_pages_keeps_repeated_lines() {
+        let pages: Vec<String> = (1..=3)
+            .map(|n| format!("Einleitung\nText der Seite {n} ist hier.\n"))
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert_eq!(out.matches("Einleitung").count(), 3, "{out}");
+    }
+
+    #[test]
+    fn page_number_shapes() {
+        for yes in ["12", "- 12 -", "Seite 12", "S. 12", "12 / 300", "– 7 –"] {
+            assert!(is_page_number(yes), "{yes}");
+        }
+        for no in ["12 Stufen", "Kapitel 3", "", "2026-11-01 war ein Sonntag"] {
+            assert!(!is_page_number(no), "{no}");
+        }
     }
 }
