@@ -3306,6 +3306,17 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<R
 }
 },
 /**
+ * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
+ */
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
@@ -4090,6 +4101,124 @@ async agentClientSetToolMode(clientId: string, tool: string, mode: GrantMode) : 
  */
 async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
+},
+/**
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf.
+ */
+async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus).
+ */
+async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ruft ein lesendes Werkzeug über das Tor der Agentenbrücke (Recht, Audit). `args` ist ein
+ * JSON-Objekt als Text. Die Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern abgelehnt.
+ */
+async voiceToolCall(name: string, args: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstStatus() : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Schaltet den Dienst ein oder aus. Aus: Der Endpunkt verschwindet, laufende Verbindungen enden.
+ */
+async sprachdienstAktivSetzen(aktiv: boolean) : Promise<Result<SprachdienstStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_aktiv_setzen", { aktiv }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sprachdienstZugaenge() : Promise<Result<SprachZugang[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_zugaenge") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt `hoeren` oder `sprechen` für eine gekoppelte App. Ein Entzug wirkt sofort auch in
+ * laufenden Verbindungen.
+ */
+async sprachdienstRechtSetzen(zugang: string, recht: string, an: boolean) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_recht_setzen", { zugang, recht, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Widerruft eine App: Rechte weg, laufende Verbindungen enden sofort, die Zeile bleibt als Spur.
+ */
+async sprachdienstWiderrufen(zugang: string) : Promise<Result<SprachZugang, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_widerrufen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Entfernt eine App ganz aus der Liste.
+ */
+async sprachdienstEntfernen(zugang: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_entfernen", { zugang }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Offene Kopplungsanfragen (mit Code), neueste zuletzt.
+ */
+async sprachdienstKopplungen() : Promise<Result<SprachKopplung[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplungen") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bestätigt oder lehnt eine Kopplungsanfrage ab. `false` in der Antwort: die Anfrage gab es
+ * nicht mehr (Frist abgelaufen oder die App hat aufgelegt).
+ */
+async sprachdienstKopplungEntscheiden(id: string, bestaetigen: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("sprachdienst_kopplung_entscheiden", { id, bestaetigen }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
@@ -6556,6 +6685,12 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
+ * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
+ * (ADR-0021).
+ */
+voice_call_read_transcripts?: boolean; 
+/**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
  * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -6982,6 +7117,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
  */
 "workflow.run" | 
+/**
+ * Besprechungen auflisten, durchsuchen und das Transkript lesen (Sprachgespraech Stufe 2).
+ * Nur lesend; das Transkript folgt der Freigabe des lokalen MCP-Servers.
+ */
+"meeting.read" | 
 /**
  * In einen Kanal posten (Slack, Teams, Discord).
  */
@@ -9204,6 +9344,35 @@ export type SourceRef = { kind: string; ref: string; title: string | null; url: 
  */
 export type SpeakersChanged = { meeting_id: string }
 /**
+ * Eine Kopplungsanfrage, die auf die Bestätigung wartet.
+ */
+export type SprachKopplung = { id: string; 
+/**
+ * Kennung der App (`client` im Vertrag), neben dem frei gewählten Namen anzuzeigen.
+ */
+client: string; anzeige: string; 
+/**
+ * Sechsstelliger Code, den die anfragende App zeigt; nur ein Vergleich für den Nutzer.
+ */
+code: string; 
+/**
+ * Ablauf der Frist (ms seit 1970, UTC).
+ */
+bis_ms: number }
+/**
+ * Eine gekoppelte App, ohne Fingerabdruck.
+ */
+export type SprachZugang = { zugang: string; client: string; anzeige: string; hoeren: boolean; sprechen: boolean; erstellt_ms: number; zuletzt_ms: number | null; widerrufen_ms: number | null }
+export type SprachdienstStatus = { 
+/**
+ * Vom Nutzer eingeschaltet (Opt-in, Standard aus).
+ */
+aktiv: boolean; laeuft: boolean; 
+/**
+ * Name der Pipe bzw. Pfad des Sockets.
+ */
+endpunkt: string | null; fehler: string | null }
+/**
  * Zustand eines Schrittversuchs (Spalte `workflow_run_steps.state`).
  */
 export type StepState = 
@@ -9914,6 +10083,18 @@ id: string; name: string; tags?: string[];
  * [`super::voices::style_dir`].
  */
 reference?: string | null }
+/**
+ * Ein Werkzeug, wie das Frontend es dem Sprachmodell anbietet.
+ */
+export type VoiceToolInfo = { name: string; title: string; description: string; 
+/**
+ * Schema der Argumente (JSON-Text; specta kennt kein freies JSON).
+ */
+parameters_json: string; 
+/**
+ * Fähigkeit des Katalogs, z. B. `meeting.read`.
+ */
+capability: string }
 /**
  * Warum die wartenden Dateien nicht beginnen.
  */

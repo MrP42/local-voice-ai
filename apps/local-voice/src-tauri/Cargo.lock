@@ -3662,6 +3662,7 @@ dependencies = [
  "url",
  "vad-rs",
  "wai-konto",
+ "wai-voice-dienst",
  "wasapi",
  "webview2-com",
  "whatlang",
@@ -8405,6 +8406,17 @@ dependencies = [
  "getrandom 0.3.4",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "wai-voice-dienst"
+version = "0.1.0"
+dependencies = [
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror 2.0.18",
 ]
 

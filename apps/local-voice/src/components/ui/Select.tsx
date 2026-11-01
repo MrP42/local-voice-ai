@@ -1,9 +1,10 @@
 import React from "react";
-import SelectComponent from "react-select";
+import SelectComponent, { components as selectParts } from "react-select";
 import CreatableSelect from "react-select/creatable";
 import { useDialogPortalTarget } from "./Dialog";
 import type {
   ActionMeta,
+  InputProps,
   Props as ReactSelectProps,
   SingleValue,
   StylesConfig,
@@ -34,6 +35,8 @@ type BaseProps = {
   /** Zugänglicher Name des Eingabefelds (die sichtbare Beschriftung steht
    *  meist daneben, ohne mit dem Feld verbunden zu sein). */
   ariaLabel?: string;
+  /** Kennung des Elements, das das Feld beschreibt (Hinweistext unter dem Feld). */
+  ariaDescribedBy?: string;
   /** Eigene Darstellung eines Eintrags (`menu`: in der offenen Liste,
    *  `value`: im geschlossenen Feld). Standard: nur die Beschriftung. */
   formatOptionLabel?: (
@@ -149,6 +152,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     className = "",
     menuPortal = false,
     ariaLabel,
+    ariaDescribedBy,
     formatOptionLabel,
     isCreatable,
     formatCreateLabel,
@@ -161,6 +165,20 @@ export const Select: React.FC<SelectProps> = React.memo(
       if (existing) return existing;
       return { value, label: value, isDisabled: false };
     }, [value, options]);
+
+    // react-select kennt kein `aria-describedby`: das Eingabefeld bekommt es über eine eigene Teilkomponente.
+    const describedInput = React.useMemo(
+      () =>
+        ariaDescribedBy
+          ? (props: InputProps<SelectOption, false>) => (
+              <selectParts.Input
+                {...props}
+                aria-describedby={ariaDescribedBy}
+              />
+            )
+          : null,
+      [ariaDescribedBy],
+    );
 
     const handleChange = (
       option: SingleValue<SelectOption>,
@@ -177,6 +195,7 @@ export const Select: React.FC<SelectProps> = React.memo(
       onChange: handleChange,
       placeholder,
       "aria-label": ariaLabel,
+      ...(describedInput ? { components: { Input: describedInput } } : {}),
       isDisabled: disabled,
       isLoading,
       onBlur,

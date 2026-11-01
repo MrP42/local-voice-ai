@@ -427,6 +427,7 @@ impl Server {
                     db_path: &self.config.db_path,
                     busy_timeout: self.config.busy_timeout,
                     include_transcript: settings.include_transcript,
+                    transcript_page_chars: tools::TRANSCRIPT_PAGE_CHARS,
                 },
             )
         } else {

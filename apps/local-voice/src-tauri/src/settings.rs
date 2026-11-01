@@ -970,6 +970,11 @@ pub struct AppSettings {
     /// Treffer aus dem Transkript)? Nur wirksam mit `meeting_mcp_enabled`.
     #[serde(default = "default_true")]
     pub meeting_mcp_include_transcript: bool,
+    /// Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
+    /// (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
+    /// (ADR-0021).
+    #[serde(default)]
+    pub voice_call_read_transcripts: bool,
     /// M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
     /// Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
     /// `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -1853,6 +1858,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_reminder_all_events: false,
         meeting_mcp_enabled: false,
         meeting_mcp_include_transcript: true,
+        voice_call_read_transcripts: false,
         calendar_graph_client_id: None,
         calendar_graph_tenant: None,
         meeting_youtube_private: false,
@@ -3372,10 +3378,12 @@ mod tests {
         let d = get_default_settings();
         assert!(!d.meeting_mcp_enabled);
         assert!(d.meeting_mcp_include_transcript);
+        assert!(!d.voice_call_read_transcripts, "Sprachgespräch: Transkripte standardmäßig aus");
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert!(!old.meeting_mcp_enabled, "ältere settings.json: Server bleibt aus");
         assert!(old.meeting_mcp_include_transcript, "nicht false wie beim bool-Typ");
+        assert!(!old.voice_call_read_transcripts, "ältere settings.json: aus");
         let chosen: AppSettings = serde_json::from_value(serde_json::json!({
             "meeting_mcp_enabled": true,
             "meeting_mcp_include_transcript": false,

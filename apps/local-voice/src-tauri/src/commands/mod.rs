@@ -1,4 +1,5 @@
 pub mod agent_bridge; // A7
+pub mod sprachdienst; // ADR-0021 S2
 pub mod audio;
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
 pub mod calendar; // M5-P5b
@@ -9,6 +10,7 @@ pub mod integrations; // A4
 pub mod integrations_m365; // A5
 pub mod llm;
 pub mod usage;
+pub mod voice_tools; // Sprachgespraech Stufe 2
 pub mod workflows; // B7
 pub mod meeting_chat; // M4-P4c
 pub mod meeting_mcp; // M6-P6e

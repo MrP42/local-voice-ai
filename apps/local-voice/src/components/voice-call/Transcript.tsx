@@ -9,13 +9,61 @@ export const Transcript: React.FC<{
   lines: VoiceLine[];
   active: boolean;
   onSuggest: (text: string) => void;
-}> = ({ lines, active, onSuggest }) => {
+  /** Werkzeug, das der Orchestrator gerade aufruft (Name). */
+  toolStatus?: string | null;
+  /** Hinweis des Orchestrators (Code). */
+  notice?: string | null;
+  /** Öffnet die Einstellungen (Reiter Modelle), z. B. aus dem Hinweis zum gesperrten Modell. */
+  onOpenSettings?: () => void;
+}> = ({
+  lines,
+  active,
+  onSuggest,
+  toolStatus = null,
+  notice = null,
+  onOpenSettings,
+}) => {
   const { t, i18n } = useTranslation();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [lines]);
+  }, [lines, toolStatus, notice]);
+
+  // Die Live-Region ist immer da (leer), damit Ansagen zuverlässig ankommen; sie trägt nur die
+  // Werkzeugzeile. Der Hinweis ist ein eigenes Element, ein gesperrtes Modell meldet sich als Alarm.
+  const liveRegion = (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="call-status"
+      className="self-start text-xs text-text/60 italic min-h-[1em]"
+    >
+      {toolStatus
+        ? t([`voiceCall.tool.${toolStatus}`, "voiceCall.tool.generic"], {
+            name: toolStatus,
+          })
+        : null}
+    </div>
+  );
+  const noticeBox = notice ? (
+    <div
+      role={notice === "speaker_blocked" ? "alert" : "note"}
+      data-testid="call-notice"
+      className="self-start max-w-full rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-sm flex flex-wrap items-center gap-2"
+    >
+      <span>{t(`voiceCall.notice.${notice}`)}</span>
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="rounded border border-mid-gray/40 bg-background px-2 py-0.5 text-xs cursor-pointer text-text hover:border-logo-primary"
+        >
+          {t("voiceCall.notice.openSettings")}
+        </button>
+      )}
+    </div>
+  ) : null;
 
   if (lines.length === 0) {
     return (
@@ -41,6 +89,8 @@ export const Transcript: React.FC<{
             </button>
           ))}
         </div>
+        {noticeBox}
+        {liveRegion}
       </div>
     );
   }
@@ -103,6 +153,8 @@ export const Transcript: React.FC<{
             </div>
           );
         })}
+        {noticeBox}
+        {liveRegion}
         <div ref={endRef} />
       </div>
     </div>

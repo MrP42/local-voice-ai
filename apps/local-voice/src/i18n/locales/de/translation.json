@@ -2496,7 +2496,7 @@
         "empty": "Kein Termin in den nächsten 7 Tagen.",
         "start": "Termin aufnehmen",
         "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender",
-        "more": "Weitere Termine heute ({{count}})"
+        "more_one": "Weitere Termine heute ({{count}})"
       }
     },
     "layout": {
@@ -5296,7 +5296,9 @@
       "calendars": "Kalender",
       "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
       "mcp": "MCP und Agenten",
-      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen.",
+      "sprachdienst": "Sprachdienst für andere Apps",
+      "sprachdienstHint": "Lässt gekoppelte WAI-Apps auf diesem Computer hören (Spracherkennung) und sprechen (Sprachausgabe). Standardmäßig aus."
     },
     "status": {
       "off": "Aus",
@@ -5307,6 +5309,58 @@
       "read": "Nur lesen",
       "write": "Nur schreiben",
       "both": "Lesen und schreiben"
+    },
+    "sprachdienst": {
+      "loadError": "Der Sprachdienst konnte nicht geladen werden.",
+      "empty": "Noch keine App gekoppelt. Eine App, die den Sprachdienst nutzen will, fragt hier an; du bestätigst sie mit dem Code.",
+      "switch": {
+        "label": "Sprachdienst einschalten",
+        "description": "Standardmäßig aus. Er läuft nur auf diesem Computer und nur für dich; jede App musst du einmal koppeln."
+      },
+      "status": {
+        "running": "Der Sprachdienst läuft",
+        "stopped": "Der Sprachdienst läuft nicht",
+        "off": "Der Sprachdienst ist aus",
+        "endpoint": "Endpunkt: {{name}}",
+        "reason": "Grund: {{error}}",
+        "safe": "Er ist nur für dich erreichbar (aktueller Benutzer dieses Computers), nicht über das Netzwerk."
+      },
+      "client": {
+        "active": "Gekoppelt",
+        "revoked": "Widerrufen",
+        "created": "Gekoppelt {{time}}",
+        "lastUsed": "Zuletzt genutzt {{time}}",
+        "neverUsed": "Noch nie genutzt",
+        "revokedAt": "Widerrufen {{time}}",
+        "revoke": "Widerrufen",
+        "delete": "Entfernen",
+        "revokeConfirm": "{{name}} widerrufen? Die App kann den Sprachdienst danach nicht mehr nutzen und muss neu gekoppelt werden.",
+        "deleteConfirm": "{{name}} aus der Liste entfernen?",
+        "revokeYes": "Widerrufen",
+        "deleteYes": "Entfernen",
+        "rightsHint": "Das darf diese App:"
+      },
+      "rights": {
+        "hoeren": "Hören (Spracherkennung)",
+        "sprechen": "Sprechen (Sprachausgabe)"
+      },
+      "pairing": {
+        "title": "Diese App koppeln?",
+        "body": "<name>{{name}}</name> möchte den Sprachdienst nutzen. Zeigt die App denselben Code? Koppeln nur, wenn er genau übereinstimmt. Bestätige es auch in der App.",
+        "client": "Kennung:",
+        "warnings": {
+          "duplicateName": "Eine App mit diesem Namen ist schon gekoppelt oder wartet. Prüfe, dass es keine Nachahmung ist.",
+          "duplicateClient": "Eine App mit dieser Kennung ist schon gekoppelt oder wartet."
+        },
+        "codeLabel": "Code",
+        "remaining": "Noch {{seconds}} s",
+        "afterwards": "Nach dem Koppeln legst du fest, was die App darf (Hören, Sprechen).",
+        "confirm": "Koppeln",
+        "reject": "Ablehnen",
+        "more_one": "Noch {{count}} weitere Anfrage wartet",
+        "more_other": "Noch {{count}} weitere Anfragen warten",
+        "expired": "Die Anfrage ist abgelaufen."
+      }
     },
     "agentClients": {
       "intro": "Je Programm (Claude Code, Codex, ein Skript) ein Zugang mit eigenem Schlüssel. Ein Zugang darf nur die Werkzeuge benutzen, die du hier für ihn auf „Fragen“ oder „Erlaubt“ stellst – und nur, soweit die Rechte-Matrix oben („Externer Agent“) es zulässt.",
@@ -5437,6 +5491,18 @@
         "get_run": {
           "title": "Laufprotokoll lesen",
           "description": "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten)."
+        },
+        "meetings_list": {
+          "title": "Besprechungen auflisten",
+          "description": "Listet fertige Besprechungen mit Titel, Datum und Dauer, neueste zuerst (nur lesend)."
+        },
+        "meetings_search": {
+          "title": "Besprechungen durchsuchen",
+          "description": "Volltextsuche über Titel, Notizen und Transkript fertiger Besprechungen (nur lesend; Transkript-Treffer nur mit Freigabe)."
+        },
+        "meeting_transcript": {
+          "title": "Transkript lesen",
+          "description": "Liest das Transkript einer fertigen Besprechung seitenweise (nur lesend, nur mit Transkript-Freigabe)."
         }
       }
     },
@@ -5773,6 +5839,10 @@
       "workflow_run": {
         "title": "Ablauf starten",
         "description": "Einen Ablauf als Trockenlauf oder, wenn er scharf geschaltet ist, echt starten."
+      },
+      "meeting_read": {
+        "title": "Besprechungen lesen",
+        "description": "Besprechungen auflisten, durchsuchen und Transkripte lesen (ändert nichts)."
       },
       "chat_post": {
         "title": "In Kanal posten",
@@ -6171,6 +6241,17 @@
     }
   },
   "voiceCall": {
+    "tool": {
+      "generic": "Nutze das Werkzeug „{{name}}“ …",
+      "meetings_list": "Schaue in Besprechungen nach …",
+      "meetings_search": "Durchsuche die Besprechungen …",
+      "meeting_transcript": "Lese im Transkript nach …"
+    },
+    "notice": {
+      "speaker_blocked": "Mit diesem Antwortmodell ist bei der gewählten Souveränität kein Gespräch möglich: Es würde Daten an einen Cloud-Dienst senden. Ändere das Modell oder die Souveränität.",
+      "denker_blocked": "Das Denker-Modell ist bei dieser Souveränität nicht zulässig und wird nicht genutzt.",
+      "openSettings": "Einstellungen öffnen"
+    },
     "title": "Sprachgespräch",
     "description": "Mit der KI sprechen wie am Telefon: Sie hört zu, antwortet sofort und lässt sich unterbrechen.",
     "begin": "Gespräch beginnen",
@@ -6313,8 +6394,26 @@
       "autoSoon": "Kommt mit Stufe 3: Die Erkennung stellt sich selbst ein, auch über eine kurze Einrichtung durch Vorlesen eines Textes.",
       "answerModel": "Antwortmodell",
       "answerModelHint": "Das aktive Sprachmodell aus der Fußleiste.",
-      "orchestratorTitle": "Schnelle Sprechschicht und Werkzeuge",
-      "orchestratorSoon": "Kommt mit Stufe 2: ein Sprachmodell als Orchestrator, das weitere Modelle und Werkzeuge nutzt."
+      "denker": "Denker-Modell",
+      "denkerHint": "Ein zweites, stärkeres Modell für Fragen, die Wissen oder längeres Nachdenken brauchen. Der Sprecher bleibt schnell und fragt den Denker nur bei Bedarf.",
+      "denkerOff": "Aus",
+      "denkerBlocked": "Bei „nur lokal“ wird dieses Cloud-Modell nicht genutzt. Wähle eine freiere Stufe oder ein lokales Modell.",
+      "sovereignty": "Souveränität",
+      "sovereigntyHint": {
+        "nur_lokal": "Nur lokale Modelle: Cloud-Modelle sprechen nicht mit und bekommen keine Werkzeugdaten.",
+        "eu": "Lokale Modelle und Cloud-Modelle mit Verarbeitung in der EU.",
+        "frei": "Alle freigegebenen Modelle, auch außerhalb der EU."
+      },
+      "sovereigntyLevels": {
+        "nur_lokal": "Nur lokal",
+        "eu": "EU",
+        "frei": "Frei"
+      },
+      "transcripts": "Transkripte im Sprachgespräch lesen",
+      "transcriptsHint": "Standardmäßig aus. Ist es an, darf die KI Transkripte von Besprechungen lesen und in ihnen suchen. Der Inhalt geht dann an das Antwortmodell, bei „nur lokal“ also nur an ein lokales.",
+      "speakerBlocked": "Das Antwortmodell ist bei dieser Souveränität nicht zulässig. Wähle ein lokales Modell (Fußleiste) oder eine freiere Stufe, sonst antwortet die KI nicht.",
+      "tools": "LVA-Werkzeuge nutzen",
+      "toolsHint": "Nur lesend: Besprechungen auflisten, durchsuchen und Transkripte lesen. Die KI ändert nichts, jeder Aufruf steht im Protokoll der Integrationen."
     }
   },
   "introTour": {
