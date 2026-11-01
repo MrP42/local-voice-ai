@@ -44,8 +44,8 @@ impl PlaybackControls {
             .store(value.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
-    /// Tempo entsteht per Resampling und zieht die Tonhöhe mit — der
-    /// zulässige Bereich ist deshalb bewusst eng.
+    /// Tempo entsteht per Zeitstreckung (WSOLA, [`super::dsp::time_stretch`]):
+    /// die Stimme bleibt in Tonhöhe und Klang gleich.
     pub fn set_speed(&self, value: f32) {
         self.speed_bits
             .store(value.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
@@ -158,6 +158,127 @@ fn open_output_stream(device: Option<String>) -> Result<rodio::OutputStream, Str
     stream_builder.open_stream().map_err(|e| e.to_string())
 }
 
+/// Ein WAV als verschachtelte f32-Abtastwerte (Ganzzahl- oder Gleitkomma-PCM).
+fn decode_interleaved(wav: &[u8]) -> Option<PcmSegment> {
+    let reader = hound::WavReader::new(std::io::Cursor::new(wav)).ok()?;
+    let spec = reader.spec();
+    if spec.channels == 0 || spec.sample_rate == 0 {
+        return None;
+    }
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .into_samples::<f32>()
+            .collect::<Result<_, _>>()
+            .ok()?,
+        hound::SampleFormat::Int => {
+            let scale = 1.0 / (1u64 << (spec.bits_per_sample.clamp(1, 32) - 1)) as f32;
+            reader
+                .into_samples::<i32>()
+                .map(|s| s.map(|v| v as f32 * scale))
+                .collect::<Result<_, _>>()
+                .ok()?
+        }
+    };
+    Some(PcmSegment {
+        sample_rate: spec.sample_rate,
+        channels: spec.channels,
+        samples,
+    })
+}
+
+/// Ab Frame `from` zeitgestreckt (leer, wenn nichts mehr übrig ist).
+fn stretched_samples(pcm: &PcmSegment, from: usize, speed: f32) -> Vec<f32> {
+    let ch = pcm.channels as usize;
+    let rest = &pcm.samples[(from * ch).min(pcm.samples.len())..];
+    if rest.is_empty() {
+        return Vec::new();
+    }
+    super::dsp::time_stretch(rest, pcm.channels, pcm.sample_rate, speed)
+}
+
+/// So lange muss ein neues Tempo stehen, bevor der Rest neu gestreckt wird:
+/// ein gezogener Regler soll nicht bei jedem Zwischenwert neu rechnen.
+const SPEED_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Einen Satz mit gleichbleibender Tonhöhe abspielen. Dreht der Nutzer
+/// mitten im Satz am Tempo, wird der noch nicht gehörte Rest neu gestreckt —
+/// erst gerechnet, dann ausgetauscht, damit die Wiedergabe dabei nicht
+/// aussetzt. Die Änderung wirkt sofort, nicht erst beim nächsten Satz.
+fn play_stretched(
+    stream: &rodio::OutputStream,
+    pcm: PcmSegment,
+    gain: f32,
+    controls: &PlaybackControls,
+    cancelled: &AtomicBool,
+) -> Result<(), String> {
+    let sink = rodio::Sink::connect_new(stream.mixer());
+    let frames = pcm.samples.len() / pcm.channels.max(1) as usize;
+    let mut applied_volume = controls.volume() * gain;
+    sink.set_volume(applied_volume);
+    let mut speed = controls.speed();
+    // Ab welchem Frame das laufende Stück gestreckt wurde und seit wann es spielt.
+    let mut from = 0usize;
+    let first = stretched_samples(&pcm, from, speed);
+    if !first.is_empty() {
+        sink.append(rodio::buffer::SamplesBuffer::new(
+            pcm.channels,
+            pcm.sample_rate,
+            first,
+        ));
+    }
+    let mut started = std::time::Instant::now();
+    let mut pending: Option<(f32, std::time::Instant)> = None;
+    while !sink.empty() {
+        if cancelled.load(Ordering::Acquire) {
+            sink.stop();
+            break;
+        }
+        let wanted_volume = controls.volume() * gain;
+        if (wanted_volume - applied_volume).abs() > f32::EPSILON {
+            sink.set_volume(wanted_volume);
+            applied_volume = wanted_volume;
+        }
+        let wanted_speed = controls.speed();
+        if (wanted_speed - speed).abs() <= f32::EPSILON {
+            pending = None;
+        } else if pending.is_none_or(|(p, _)| (p - wanted_speed).abs() > f32::EPSILON) {
+            pending = Some((wanted_speed, std::time::Instant::now()));
+        } else if pending.is_some_and(|(_, since)| since.elapsed() >= SPEED_SETTLE) {
+            pending = None;
+            // Hörstelle beim Rechenstart; was während des Rechnens noch vom
+            // alten Stück lief, wird vorn vom neuen abgeschnitten.
+            let compute_start = std::time::Instant::now();
+            let heard = (compute_start - started).as_secs_f64() * speed as f64;
+            from = (from + (heard * pcm.sample_rate as f64) as usize).min(frames);
+            let mut next = stretched_samples(&pcm, from, wanted_speed);
+            if cancelled.load(Ordering::Acquire) {
+                sink.stop();
+                break;
+            }
+            let spent = compute_start.elapsed().as_secs_f64() * speed as f64;
+            let spent_frames = (spent * pcm.sample_rate as f64) as usize;
+            from = (from + spent_frames).min(frames);
+            let cut = ((spent_frames as f64 / wanted_speed as f64) as usize
+                * pcm.channels as usize)
+                .min(next.len());
+            next.drain(..cut);
+            speed = wanted_speed;
+            sink.clear();
+            if !next.is_empty() {
+                sink.append(rodio::buffer::SamplesBuffer::new(
+                    pcm.channels,
+                    pcm.sample_rate,
+                    next,
+                ));
+            }
+            sink.play();
+            started = std::time::Instant::now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(())
+}
+
 impl Player for RodioPlayer {
     fn play(
         &self,
@@ -168,6 +289,12 @@ impl Player for RodioPlayer {
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let stream = open_output_stream(device)?;
+        // Tempo per Zeitstreckung statt `Sink::set_speed`: das resampelt und
+        // zöge die Stimme hoch oder tief. Nur ein unlesbares WAV läuft noch
+        // über den alten Weg.
+        if let Some(pcm) = decode_interleaved(&wav) {
+            return play_stretched(&stream, pcm, gain, &controls, &cancelled);
+        }
         let sink =
             rodio::play(stream.mixer(), std::io::Cursor::new(wav)).map_err(|e| e.to_string())?;
 
@@ -214,19 +341,14 @@ impl Player for RodioPlayer {
         let stream = open_output_stream(device)?;
         let sink = rodio::Sink::connect_new(stream.mixer());
         let mut applied_volume = controls.volume();
-        let mut applied_speed = controls.speed();
         sink.set_volume(applied_volume);
-        sink.set_speed(applied_speed);
+        // Tempo: jedes Stück wird beim Anhängen zeitgestreckt (gleiche
+        // Tonhöhe); ein Dreh am Regler gilt ab dem nächsten Stück.
         let mut follow_controls = |sink: &rodio::Sink| {
             let volume = controls.volume();
             if (volume - applied_volume).abs() > f32::EPSILON {
                 sink.set_volume(volume);
                 applied_volume = volume;
-            }
-            let speed = controls.speed();
-            if (speed - applied_speed).abs() > f32::EPSILON {
-                sink.set_speed(speed);
-                applied_speed = speed;
             }
         };
         // Annehmen, solange der Sender lebt.
@@ -241,10 +363,16 @@ impl Player for RodioPlayer {
                     if seg.channels == 0 || seg.sample_rate == 0 || seg.samples.is_empty() {
                         continue;
                     }
+                    let samples = super::dsp::time_stretch(
+                        &seg.samples,
+                        seg.channels,
+                        seg.sample_rate,
+                        controls.speed(),
+                    );
                     sink.append(rodio::buffer::SamplesBuffer::new(
                         seg.channels,
                         seg.sample_rate,
-                        seg.samples,
+                        samples,
                     ));
                 }
                 Err(RecvTimeoutError::Timeout) => {}
