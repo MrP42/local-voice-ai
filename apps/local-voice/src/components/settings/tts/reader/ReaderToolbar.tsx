@@ -7,7 +7,6 @@ import {
   FileText,
   Maximize2,
   Minimize2,
-  PanelRightOpen,
   PenLine,
   Sun,
   Type,
@@ -66,8 +65,6 @@ interface ReaderToolbarProps {
   onFullscreen(): void;
   /** ⓘ-Knopf mit den Schreibregeln (in beiden Ansichten). */
   info?: React.ReactNode;
-  /** Rechte Spalte ist ausgeblendet: beschrifteter Knopf zum Einblenden. */
-  onShowColumn?(): void;
 }
 
 const ICON_BTN =
@@ -106,7 +103,6 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
   fullscreen,
   onFullscreen,
   info,
-  onShowColumn,
 }) => {
   const { t } = useTranslation();
   const [menu, setMenu] = useState(false);
@@ -366,18 +362,6 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
         </>
       )}
       {info}
-      {onShowColumn && (
-        <button
-          type="button"
-          className="flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-mid-gray/30 px-2 text-xs text-text/80 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
-          title={t("tts.layout.showColumnHint")}
-          onClick={onShowColumn}
-          data-testid="right-column-show"
-        >
-          <PanelRightOpen width={14} height={14} aria-hidden="true" />
-          {t("tts.layout.showColumn")}
-        </button>
-      )}
     </div>
   );
 };

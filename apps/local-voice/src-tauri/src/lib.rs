@@ -1932,6 +1932,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::llm::llm_set_cli_auto_update,
             commands::llm::llm_model_efforts,
             commands::llm::llm_set_default_effort,
+            commands::llm::llm_set_function_model,
             commands::llm::llm_model_offers_fast,
             commands::llm::llm_set_api_key,
             commands::llm::llm_local_list,

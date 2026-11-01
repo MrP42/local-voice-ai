@@ -1163,6 +1163,31 @@ for (const width of [1440, 1100, 800])
     expect(await lonelyNames(page)).toEqual([]);
   });
 
+// Keine Sprecherstummel (Patrick 01.11. abends): eine reine Pause zeigt weder
+// Strich noch Namen, und jedes Strichstück gehört zu sichtbarem Text.
+const PAUSE_BOOK = Array.from({ length: 30 }, (_, i) => {
+  const who = i % 2 === 0 ? "Patrick" : "Annika";
+  const words = "Das ist ein Satz mit einigen Wörtern, die den Block füllen.";
+  const text = Array.from({ length: 1 + ((i * 5) % 7) }, () => words).join(" ");
+  return i % 4 === 1 ? `<${who}> ${text}\n\n[long pause]` : `<${who}> ${text}`;
+}).join("\n\n");
+
+for (const width of [1100, 1440])
+  test(`Pausen ohne Sprecherstrich, keine Stummel (${width}px)`, async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+    await open(page, PAUSE_BOOK, width);
+    const flow = page.getByTestId("reader-flow");
+    await expect(flow).toContainText("Annika");
+    await expect(flow.locator(".reader-pause")).toHaveCount(8);
+    await expect(flow.locator(".reader-pause .reader-who")).toHaveCount(0);
+    const empty = await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>(".reader-block--bar"))
+        .filter((b) => !b.querySelector("[data-start]"))
+        .map((b) => b.textContent),
+    );
+    expect(empty).toEqual([]);
+  });
+
 // Sekundengenau und wortgenau (Patrick 01.11.): der Kern meldet die Dauer
 // des Satzes, die Ansicht läuft innerhalb des Satzes mit.
 const LONG_SENTENCE =
@@ -1392,11 +1417,12 @@ test("Variante A: rechte Spalte ausblenden, Stimme und Werkzeuge in der Leiste, 
   // Die Leiste bleibt so hoch wie vorher (zwei Zeilen, keine dritte).
   expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(before + 1);
   await expect(page.getByTestId("reader-where")).toBeVisible();
-  // Gemerkt; beschrifteter Knopf blendet wieder ein.
+  // Gemerkt; der Streifen rechts (nur Symbol) blendet wieder ein.
   await page.reload();
   await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
   const show = page.getByTestId("right-column-show");
-  await expect(show).toHaveText("Spalte einblenden");
+  await expect(show).toHaveText("");
+  await expect(show).toHaveAttribute("aria-label", "Rechte Spalte einblenden");
   await show.click();
   await expect(page.getByTestId("tts-right-column")).toBeVisible();
   await expect(page.getByTestId("reader-dock")).toHaveCount(0);
@@ -1466,8 +1492,8 @@ test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) 
   const hide = page.getByRole("button", { name: "Rechte Spalte ausblenden" });
   await expect(hide).toHaveAttribute("title", "Rechte Spalte ausblenden");
   await hide.click();
-  const show = page.getByRole("button", { name: "Spalte einblenden" });
-  await expect(show).toHaveAttribute("title", /wieder rechts anzeigen/);
+  const show = page.getByRole("button", { name: "Rechte Spalte einblenden" });
+  await expect(show).toHaveAttribute("title", "Rechte Spalte einblenden");
   const bar = page.getByRole("region", { name: "Wiedergabe" });
   await expect(
     bar.getByRole("button", { name: "Sprachausgabe einrichten" }),
@@ -1487,3 +1513,123 @@ test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) 
   await tools.click();
   await expect(page.getByRole("dialog", { name: "Stimme und Werkzeuge" })).toBeVisible();
 });
+
+// Rückmeldung Patrick 01.11. abends: Abspielen vorn/mittig, Werkzeuge rechts,
+// Stimme nur als Dropdown-Knopf, Spaltenstreifen links und rechts gleich,
+// kein Untertitel.
+test("Leiste: Abspielen vor den Werkzeugen, Stimme als kompakter Knopf", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page);
+  const play = (await page.getByTestId("reader-play").boundingBox())!;
+  const dock = page.getByTestId("reader-dock");
+  const voice = (await dock.getByTestId("voice-select").boundingBox())!;
+  const tools = (await dock.getByTestId("tts-action-menu").boundingBox())!;
+  expect(play.x).toBeLessThan(voice.x);
+  expect(play.x).toBeLessThan(tools.x);
+  // Nur Symbol + Pfeil, der Name im Tooltip und als zugänglicher Name.
+  expect(voice.width).toBeLessThan(90);
+  await expect(dock.getByTestId("voice-compact")).toHaveAttribute("title", /^Stimme/);
+  // Die Liste öffnet breit und bleibt im Fenster.
+  await dock.locator(".app-select__control").click();
+  const menu = (await page.locator(".app-select__menu").boundingBox())!;
+  expect(menu.width).toBeGreaterThanOrEqual(290);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(1440);
+});
+
+test("Spaltenstreifen links und rechts gleich: nur Symbol, gleich breit, oben", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    window.localStorage.setItem("lva.ui.tts.pagesCollapsed.v3", "1");
+  });
+  await open(page);
+  await expect(page.getByText("Texte und Dokumente anhören und die Ausgabe speichern.")).toHaveCount(0);
+  const left = page.getByTestId("pages-expand");
+  const right = page.getByTestId("right-column-show");
+  await expect(left).toHaveText("");
+  await expect(right).toHaveText("");
+  await expect(left).toHaveAttribute("title", "Seitenliste ausklappen");
+  await expect(right).toHaveAttribute("title", "Rechte Spalte einblenden");
+  const l = (await left.boundingBox())!;
+  const r = (await right.boundingBox())!;
+  expect(l.width).toBe(r.width);
+  expect(Math.abs(l.y - r.y)).toBeLessThan(2);
+  expect((await page.getByTestId("pages-expand-strip").boundingBox())!.width).toBeLessThanOrEqual(24);
+});
+
+test("Wechsel ein-/zweiseitig blättert nicht animiert", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page, BOOK, 1920);
+  const book = page.getByTestId("reader-book");
+  await emit(page, "tts-speak-progress", { position: 43, total: 44 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 43,
+    text: "Das ist der letzte Satz des Buches.",
+  });
+  await expect(book).not.toHaveAttribute("data-page", "0");
+  await page.waitForTimeout(700);
+  await page.getByTestId("reader-flow").evaluate((el) => {
+    const w = window as unknown as { __turned: boolean };
+    w.__turned = false;
+    new MutationObserver(() => {
+      if (el.classList.contains("reader-flow--turning")) w.__turned = true;
+    }).observe(el, { attributes: true, attributeFilter: ["class"] });
+  });
+  for (const id of ["reader-one-page", "reader-two-pages", "reader-one-page"]) {
+    await page.getByTestId(id).click();
+    await page.waitForTimeout(300);
+    await expect(page.locator(".reader-cur").first()).toBeInViewport();
+  }
+  expect(await page.evaluate(() => (window as unknown as { __turned: boolean }).__turned)).toBe(false);
+});
+
+for (const hidden of ["0", "1"])
+  test(`Wiedergabe rechtsbündig, Spalte ${hidden === "1" ? "aus" : "ein"}geblendet`, async ({ page }) => {
+    await page.addInitScript((h) => {
+      window.localStorage.setItem("lva.ui.tts.view", "read");
+      window.localStorage.setItem("lva.ui.tts.rightHidden", h);
+    }, hidden);
+    await open(page);
+    const box = (s: string) => page.locator(s).first().boundingBox().then((b) => b!);
+    const ctrls = await box(".reader-player__ctrls");
+    const media = await box(".reader-player__ctrls > .mediabar");
+    const tools = await box(".reader-player__tools");
+    expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width))).toBeLessThan(2);
+    expect(tools.x - (media.x + media.width)).toBeLessThan(12);
+  });
+
+test("Sprecher allein auf der Zeile: Name steht am folgenden Text", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, "<Anna>\nErste Zeile von Anna.\n\n<Ben> [long pause]\nBen spricht weiter.", 1440);
+  const flow = page.getByTestId("reader-flow");
+  await expect(flow.locator(".reader-pause")).toHaveCount(2);
+  for (const name of ["Anna", "Ben"]) {
+    const who = flow.locator(`.reader-who[data-speaker="${name}"]`);
+    await expect(who).toHaveCount(1);
+    await expect(who).toBeVisible();
+    await expect(who).toHaveCSS("opacity", "1");
+  }
+});
+
+for (const width of [900, 1000, 1150, 1300])
+  test(`Leiste ohne Spalte: kein Überlauf (${width}px)`, async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("lva.ui.tts.view", "read");
+      window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    });
+    await open(page, BOOK, width);
+    const ctrls = page.locator(".reader-player__ctrls");
+    await page.waitForTimeout(300);
+    expect(await ctrls.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    const play = (await page.getByTestId("reader-play").boundingBox())!;
+    const box = (await ctrls.boundingBox())!;
+    expect(play.y + play.height).toBeLessThanOrEqual(box.y + box.height + 1);
+    expect(box.height).toBeLessThan(70);
+  });

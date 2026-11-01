@@ -106,6 +106,14 @@ test.beforeEach(async ({ page }) => {
             return null;
           }
           if (cmd === "llm_set_active_model") { saved.active = args?.id; settings.llm_active_model_id = args?.id; return null; }
+          if (cmd === "llm_set_function_model") {
+            const fm = { ...((settings.function_models as Record<string, unknown>) ?? {}) };
+            if (args?.modelId) fm[String(args.forFunction)] = { model_id: args.modelId, effort: args.effort ?? null };
+            else delete fm[String(args?.forFunction)];
+            settings.function_models = fm;
+            saved.functionModel = [args?.forFunction, args?.modelId, args?.effort];
+            return null;
+          }
           if (cmd === "llm_set_api_key") { saved.apiKey = [args?.connectionId, args?.apiKey]; return null; }
           if (cmd === "llm_upsert_connection") { saved.connection = args?.connection; return null; }
           if (cmd === "tts_list_voices" || cmd === "tts_list_voice_infos" || cmd === "llm_ps" || cmd === "tts_reading_list" || cmd === "pages_list" || cmd === "page_files" || cmd === "tts_list_downloads")
@@ -226,4 +234,32 @@ test("models with a fast mode get a lightning switch", async ({ page }) => {
     .toBe(true);
   // Ohne Angebot (Ollama) kein Schalter.
   await expect(page.locator('[data-fast-toggle^="ollama-1:"]')).toHaveCount(0);
+});
+
+test("each function keeps its own model and effort", async ({ page }) => {
+  await openTab(page);
+  await expect(page.getByText("Modelle je Funktion", { exact: true })).toBeVisible();
+  const notes = page.locator("[data-function-notes]");
+  await expect(notes).toContainText("wird das Standardmodell verwendet");
+  await expect(notes).toContainText("Vor jedem Aufruf wird geprüft");
+  const speaker = page.locator("[data-function-select=voice_speaker]");
+  // Leer = Standardmodell, mit Namen des aktiven Modells.
+  await expect(speaker.locator("option").first()).toHaveText("Standard: GPT-4.1-Mini");
+  await expect(page.locator("[data-function-effort=voice_speaker]")).toHaveCount(0);
+  await speaker.selectOption("openai-1:gpt-4.1-mini");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.functionModel))
+    .toEqual(["voice_speaker", "openai-1:gpt-4.1-mini", null]);
+  const effort = page.locator("[data-function-effort=voice_speaker]");
+  await effort.selectOption("low");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.functionModel))
+    .toEqual(["voice_speaker", "openai-1:gpt-4.1-mini", "low"]);
+  // Die anderen Funktionen bleiben beim Standardmodell.
+  await expect(page.locator("[data-function-select=meeting_protocol]")).toHaveValue("");
+  // Zurück auf Standard entfernt den Eintrag.
+  await speaker.selectOption("");
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { saved: Record<string, unknown> }).saved.functionModel))
+    .toEqual(["voice_speaker", null, null]);
 });

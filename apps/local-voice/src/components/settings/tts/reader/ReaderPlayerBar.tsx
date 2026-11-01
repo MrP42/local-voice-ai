@@ -405,40 +405,6 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             </>
           )}
         </span>
-        {dock &&
-          (dockInline ? (
-            <div ref={dockRef} className="reader-dock" data-testid="reader-dock">
-              {dock(false)}
-            </div>
-          ) : (
-            <div className="relative flex-none" data-reader-popup="dock">
-              <button
-                type="button"
-                ref={dockBtnRef}
-                className="reader-player__pill reader-player__pill--icon"
-                onClick={() => setDockOpen((o) => !o)}
-                aria-haspopup="dialog"
-                aria-expanded={dockOpen}
-                aria-label={t("tts.reader.dockTools")}
-                title={t("tts.reader.dockTools")}
-                data-testid="reader-dock-open"
-              >
-                <SlidersHorizontal width={16} height={16} aria-hidden="true" />
-              </button>
-              {/* Bleibt eingehängt (nur verborgen): laufende Vorgänge der
-                  Werkzeuge (Auto-Tagging, Export) behalten ihren Zustand. */}
-              <div
-                ref={dockPanelRef}
-                role="dialog"
-                aria-label={t("tts.reader.dockTools")}
-                hidden={!dockOpen}
-                className="absolute left-0 bottom-full z-40 mb-1 w-80 max-w-[calc(100vw-2rem)] space-y-2 rounded-lg border border-mid-gray/40 bg-background p-3 shadow-lg"
-                data-testid="reader-dock-panel"
-              >
-                {dock(true)}
-              </div>
-            </div>
-          ))}
         <div className="mediabar">
           <button
             type="button"
@@ -488,264 +454,301 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             <Glyph name="stop" />
           </button>
         </div>
-        <div className="reader-player__more relative" data-reader-popup="more">
-          <button
-            type="button"
-            ref={moreBtnRef}
-            className="reader-player__pill reader-player__pill--icon"
-            onClick={() => setMoreOpen((o) => !o)}
-            aria-haspopup="menu"
-            aria-expanded={moreOpen}
-            aria-label={t("tts.reader.moreOptions")}
-            title={t("tts.reader.moreOptions")}
-            data-testid="reader-more"
-          >
-            {sleepLeft !== null && (
-              <Moon width={14} height={14} aria-hidden="true" />
-            )}
-            <span className="tabular-nums">{speedLabel(speed)}</span>
-            <MoreHorizontal width={16} height={16} aria-hidden="true" />
-          </button>
-          {moreOpen && (
-            <>
-              <div
-                ref={moreMenuRef}
-                role="menu"
-                aria-label={t("tts.reader.moreOptions")}
-                onKeyDown={(e) => {
-                  if (
-                    e.key !== "ArrowDown" &&
-                    e.key !== "ArrowUp" &&
-                    e.key !== "Home" &&
-                    e.key !== "End"
-                  )
-                    return;
-                  e.preventDefault();
-                  const items = Array.from(
-                    e.currentTarget.querySelectorAll<HTMLElement>(
-                      '[role="menuitemradio"], [role="menuitem"]',
-                    ),
-                  );
-                  const i = items.indexOf(
-                    document.activeElement as HTMLElement,
-                  );
-                  const next =
-                    e.key === "Home"
-                      ? 0
-                      : e.key === "End"
-                        ? items.length - 1
-                        : (i +
-                            (e.key === "ArrowDown" ? 1 : -1) +
-                            items.length) %
-                          items.length;
-                  items[next]?.focus();
-                }}
-                className="absolute right-0 bottom-full mb-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+        {/* Abspielen steht vorn und mittig, Werkzeuge rechts (Patrick 01.11.). */}
+        <div className="reader-player__tools">
+          <div className="reader-player__extra">
+            <div className="relative" data-reader-popup="speed">
+              <button
+                type="button"
+                className="reader-player__pill"
+                onClick={() => setSpeedOpen((o) => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={speedOpen}
+                aria-label={t("tts.settings.speed")}
+                title={t("tts.settings.speedDescription")}
               >
-                {(progress || chapter) && (
+                {speedLabel(speed)}
+              </button>
+              {speedOpen && (
+                <>
                   <div
-                    className="mb-1 border-b border-mid-gray/30 px-3 pt-1 pb-1.5 text-xs text-text-muted"
-                    data-testid="reader-more-where"
+                    role="listbox"
+                    aria-label={t("tts.settings.speed")}
+                    className="absolute right-0 bottom-full mb-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
                   >
-                    {chapter && (
-                      <div
-                        className="truncate font-semibold text-text"
-                        title={chapter}
-                      >
-                        {chapter}
-                      </div>
-                    )}
-                    {progress
-                      ? t("tts.reader.sentenceOf", {
-                          position: Math.min(
-                            progress.total,
-                            progress.position + 1,
-                          ),
-                          count: progress.total,
-                        })
-                      : t("tts.reader.pageOf", { page: shownPage, count: pages })}
-                  </div>
-                )}
-                {resumable && onRestart && (
-                  <div
-                    role="group"
-                    aria-labelledby={resumeHeadId}
-                    className="mb-1 border-b border-mid-gray/30 pb-1"
-                  >
-                    <div
-                      id={resumeHeadId}
-                      className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
-                      data-testid="reader-more-resume"
-                    >
-                      {resumeTitle}
-                    </div>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      tabIndex={-1}
-                      onClick={() => {
-                        onRestart();
-                        setMoreOpen(false);
-                        moreBtnRef.current?.focus();
-                      }}
-                      className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
-                      data-testid="reader-more-restart"
-                    >
-                      {t("tts.reader.restart")}
-                    </button>
-                  </div>
-                )}
-                <div role="group" aria-labelledby={speedHeadId}>
-                  <div
-                    id={speedHeadId}
-                    className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
-                  >
-                    {t("tts.settings.speed")}
-                  </div>
-                  <div role="none" className="reader-player__chips">
                     {speeds.map((value) => (
                       <button
-                        key={`s${value}`}
+                        key={value}
                         type="button"
-                        role="menuitemradio"
-                        tabIndex={-1}
-                        aria-checked={speed === value}
+                        role="option"
+                        aria-selected={speed === value}
                         onClick={() => {
                           onSpeed(value);
-                          setMoreOpen(false);
-                          moreBtnRef.current?.focus();
+                          setSpeedOpen(false);
                         }}
-                        className="reader-player__chip tabular-nums"
+                        className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                          speed === value
+                            ? "text-text font-medium"
+                            : "text-text/80"
+                        }`}
                       >
                         {speedLabel(value)}
                       </button>
                     ))}
                   </div>
-                </div>
-                <div role="group" aria-labelledby={sleepHeadId}>
+                </>
+              )}
+            </div>
+            <div className="relative" data-reader-popup="sleep">
+              <button
+                type="button"
+                className="reader-player__pill"
+                onClick={() => setSleepOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={sleepOpen}
+                title={t("tts.reader.sleepTimer")}
+                data-testid="reader-sleep"
+              >
+                <Moon width={14} height={14} aria-hidden="true" />
+                <span>
+                  {sleepLeft !== null
+                    ? t("tts.reader.sleepLeft", { minutes: sleepLeft })
+                    : t("tts.reader.sleepTimer")}
+                </span>
+              </button>
+              {sleepOpen && (
+                <>
                   <div
-                    id={sleepHeadId}
-                    className="mt-1 border-t border-mid-gray/30 px-3 pt-1.5 pb-0.5 text-xs text-text-muted"
+                    role="menu"
+                    aria-label={t("tts.reader.sleepTimer")}
+                    className="absolute right-0 bottom-full mb-1 w-40 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
                   >
-                    {sleepLeft !== null
-                      ? `${t("tts.reader.sleepTimer")} · ${t("tts.reader.sleepLeft", { minutes: sleepLeft })}`
-                      : t("tts.reader.sleepTimer")}
-                  </div>
-                  <div role="none" className="reader-player__chips">
                     {SLEEP_CHOICES.map((minutes) => (
                       <button
-                        key={`t${minutes}`}
+                        key={minutes}
                         type="button"
                         role="menuitemradio"
-                        tabIndex={-1}
                         aria-checked={minutes === sleepChoice}
                         onClick={() => {
                           chooseSleep(minutes);
-                          setMoreOpen(false);
-                          moreBtnRef.current?.focus();
+                          setSleepOpen(false);
                         }}
-                        aria-label={
-                          minutes === 0
-                            ? t("tts.reader.sleepOff")
-                            : t("tts.reader.sleepMinutes", { minutes })
-                        }
-                        className="reader-player__chip"
+                        className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
                       >
                         {minutes === 0
                           ? t("tts.reader.sleepOff")
-                          : t("tts.reader.sleepMinutesShort", { minutes })}
+                          : t("tts.reader.sleepMinutes", { minutes })}
                       </button>
                     ))}
                   </div>
+                </>
+              )}
+            </div>
+          </div>
+          {dock &&
+            (dockInline ? (
+              <div ref={dockRef} className="reader-dock" data-testid="reader-dock">
+                {dock(false)}
+              </div>
+            ) : (
+              <div className="relative flex-none" data-reader-popup="dock">
+                <button
+                  type="button"
+                  ref={dockBtnRef}
+                  className="reader-player__pill reader-player__pill--icon"
+                  onClick={() => setDockOpen((o) => !o)}
+                  aria-haspopup="dialog"
+                  aria-expanded={dockOpen}
+                  aria-label={t("tts.reader.dockTools")}
+                  title={t("tts.reader.dockTools")}
+                  data-testid="reader-dock-open"
+                >
+                  <SlidersHorizontal width={16} height={16} aria-hidden="true" />
+                </button>
+                {/* Bleibt eingehängt (nur verborgen): laufende Vorgänge der
+                    Werkzeuge (Auto-Tagging, Export) behalten ihren Zustand. */}
+                <div
+                  ref={dockPanelRef}
+                  role="dialog"
+                  aria-label={t("tts.reader.dockTools")}
+                  hidden={!dockOpen}
+                  className="absolute right-0 bottom-full z-40 mb-1 w-80 max-w-[calc(100vw-2rem)] space-y-2 rounded-lg border border-mid-gray/40 bg-background p-3 shadow-lg"
+                  data-testid="reader-dock-panel"
+                >
+                  {dock(true)}
                 </div>
               </div>
-            </>
-          )}
-        </div>
-        <div className="reader-player__extra">
-          <div className="relative" data-reader-popup="speed">
+            ))}
+          <div className="reader-player__more relative" data-reader-popup="more">
             <button
               type="button"
-              className="reader-player__pill"
-              onClick={() => setSpeedOpen((o) => !o)}
-              aria-haspopup="listbox"
-              aria-expanded={speedOpen}
-              aria-label={t("tts.settings.speed")}
-              title={t("tts.settings.speedDescription")}
-            >
-              {speedLabel(speed)}
-            </button>
-            {speedOpen && (
-              <>
-                <div
-                  role="listbox"
-                  aria-label={t("tts.settings.speed")}
-                  className="absolute right-0 bottom-full mb-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
-                >
-                  {speeds.map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      role="option"
-                      aria-selected={speed === value}
-                      onClick={() => {
-                        onSpeed(value);
-                        setSpeedOpen(false);
-                      }}
-                      className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                        speed === value
-                          ? "text-text font-medium"
-                          : "text-text/80"
-                      }`}
-                    >
-                      {speedLabel(value)}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="relative" data-reader-popup="sleep">
-            <button
-              type="button"
-              className="reader-player__pill"
-              onClick={() => setSleepOpen((o) => !o)}
+              ref={moreBtnRef}
+              className="reader-player__pill reader-player__pill--icon"
+              onClick={() => setMoreOpen((o) => !o)}
               aria-haspopup="menu"
-              aria-expanded={sleepOpen}
-              title={t("tts.reader.sleepTimer")}
-              data-testid="reader-sleep"
+              aria-expanded={moreOpen}
+              aria-label={t("tts.reader.moreOptions")}
+              title={t("tts.reader.moreOptions")}
+              data-testid="reader-more"
             >
-              <Moon width={14} height={14} aria-hidden="true" />
-              <span>
-                {sleepLeft !== null
-                  ? t("tts.reader.sleepLeft", { minutes: sleepLeft })
-                  : t("tts.reader.sleepTimer")}
-              </span>
+              {sleepLeft !== null && (
+                <Moon width={14} height={14} aria-hidden="true" />
+              )}
+              <span className="tabular-nums">{speedLabel(speed)}</span>
+              <MoreHorizontal width={16} height={16} aria-hidden="true" />
             </button>
-            {sleepOpen && (
+            {moreOpen && (
               <>
                 <div
+                  ref={moreMenuRef}
                   role="menu"
-                  aria-label={t("tts.reader.sleepTimer")}
-                  className="absolute right-0 bottom-full mb-1 w-40 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+                  aria-label={t("tts.reader.moreOptions")}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key !== "ArrowDown" &&
+                      e.key !== "ArrowUp" &&
+                      e.key !== "Home" &&
+                      e.key !== "End"
+                    )
+                      return;
+                    e.preventDefault();
+                    const items = Array.from(
+                      e.currentTarget.querySelectorAll<HTMLElement>(
+                        '[role="menuitemradio"], [role="menuitem"]',
+                      ),
+                    );
+                    const i = items.indexOf(
+                      document.activeElement as HTMLElement,
+                    );
+                    const next =
+                      e.key === "Home"
+                        ? 0
+                        : e.key === "End"
+                          ? items.length - 1
+                          : (i +
+                              (e.key === "ArrowDown" ? 1 : -1) +
+                              items.length) %
+                            items.length;
+                    items[next]?.focus();
+                  }}
+                  className="absolute right-0 bottom-full mb-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
                 >
-                  {SLEEP_CHOICES.map((minutes) => (
-                    <button
-                      key={minutes}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={minutes === sleepChoice}
-                      onClick={() => {
-                        chooseSleep(minutes);
-                        setSleepOpen(false);
-                      }}
-                      className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
+                  {(progress || chapter) && (
+                    <div
+                      className="mb-1 border-b border-mid-gray/30 px-3 pt-1 pb-1.5 text-xs text-text-muted"
+                      data-testid="reader-more-where"
                     >
-                      {minutes === 0
-                        ? t("tts.reader.sleepOff")
-                        : t("tts.reader.sleepMinutes", { minutes })}
-                    </button>
-                  ))}
+                      {chapter && (
+                        <div
+                          className="truncate font-semibold text-text"
+                          title={chapter}
+                        >
+                          {chapter}
+                        </div>
+                      )}
+                      {progress
+                        ? t("tts.reader.sentenceOf", {
+                            position: Math.min(
+                              progress.total,
+                              progress.position + 1,
+                            ),
+                            count: progress.total,
+                          })
+                        : t("tts.reader.pageOf", { page: shownPage, count: pages })}
+                    </div>
+                  )}
+                  {resumable && onRestart && (
+                    <div
+                      role="group"
+                      aria-labelledby={resumeHeadId}
+                      className="mb-1 border-b border-mid-gray/30 pb-1"
+                    >
+                      <div
+                        id={resumeHeadId}
+                        className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
+                        data-testid="reader-more-resume"
+                      >
+                        {resumeTitle}
+                      </div>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        tabIndex={-1}
+                        onClick={() => {
+                          onRestart();
+                          setMoreOpen(false);
+                          moreBtnRef.current?.focus();
+                        }}
+                        className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
+                        data-testid="reader-more-restart"
+                      >
+                        {t("tts.reader.restart")}
+                      </button>
+                    </div>
+                  )}
+                  <div role="group" aria-labelledby={speedHeadId}>
+                    <div
+                      id={speedHeadId}
+                      className="px-3 pt-1 pb-0.5 text-xs text-text-muted"
+                    >
+                      {t("tts.settings.speed")}
+                    </div>
+                    <div role="none" className="reader-player__chips">
+                      {speeds.map((value) => (
+                        <button
+                          key={`s${value}`}
+                          type="button"
+                          role="menuitemradio"
+                          tabIndex={-1}
+                          aria-checked={speed === value}
+                          onClick={() => {
+                            onSpeed(value);
+                            setMoreOpen(false);
+                            moreBtnRef.current?.focus();
+                          }}
+                          className="reader-player__chip tabular-nums"
+                        >
+                          {speedLabel(value)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div role="group" aria-labelledby={sleepHeadId}>
+                    <div
+                      id={sleepHeadId}
+                      className="mt-1 border-t border-mid-gray/30 px-3 pt-1.5 pb-0.5 text-xs text-text-muted"
+                    >
+                      {sleepLeft !== null
+                        ? `${t("tts.reader.sleepTimer")} · ${t("tts.reader.sleepLeft", { minutes: sleepLeft })}`
+                        : t("tts.reader.sleepTimer")}
+                    </div>
+                    <div role="none" className="reader-player__chips">
+                      {SLEEP_CHOICES.map((minutes) => (
+                        <button
+                          key={`t${minutes}`}
+                          type="button"
+                          role="menuitemradio"
+                          tabIndex={-1}
+                          aria-checked={minutes === sleepChoice}
+                          onClick={() => {
+                            chooseSleep(minutes);
+                            setMoreOpen(false);
+                            moreBtnRef.current?.focus();
+                          }}
+                          aria-label={
+                            minutes === 0
+                              ? t("tts.reader.sleepOff")
+                              : t("tts.reader.sleepMinutes", { minutes })
+                          }
+                          className="reader-player__chip"
+                        >
+                          {minutes === 0
+                            ? t("tts.reader.sleepOff")
+                            : t("tts.reader.sleepMinutesShort", { minutes })}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </>
             )}
