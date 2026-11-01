@@ -6436,7 +6436,7 @@
     "history": {
       "toggle": "Gesprächsverlauf",
       "keyNew": "Strg+N",
-      "keySearch": "Strg+Umschalt+K",
+      "keySearch": "Strg+K",
       "mainBadge": "Hauptgespräch",
       "sectionActions": "Schnellaktionen",
       "sectionRecent": "Letzte Gespräche",

@@ -6436,7 +6436,7 @@
     "history": {
       "toggle": "Conversations",
       "keyNew": "Ctrl+N",
-      "keySearch": "Ctrl+Shift+K",
+      "keySearch": "Ctrl+K",
       "mainBadge": "Main conversation",
       "sectionActions": "Quick actions",
       "sectionRecent": "Recent conversations",
