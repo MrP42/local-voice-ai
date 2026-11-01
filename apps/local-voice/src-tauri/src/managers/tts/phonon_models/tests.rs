@@ -306,7 +306,8 @@ fn installierte_pfade_nennen_programm_und_das_deutsche_modell_zuerst() {
         .as_deref()
         .unwrap()
         .ends_with("phonon-31m-en"));
-    // Mit dem deutschen: das deutsche zuerst.
+    assert!(p.phonon.others.is_empty(), "kein weiteres Modell");
+    // Mit dem deutschen: das deutsche zuerst, das englische liest die englischen Stimmen.
     make_model(&dirs, "phonon-40m-de");
     let p = installed_paths(tmp.path());
     assert!(p
@@ -315,6 +316,9 @@ fn installierte_pfade_nennen_programm_und_das_deutsche_modell_zuerst() {
         .as_deref()
         .unwrap()
         .ends_with("phonon-40m-de"));
+    assert_eq!(p.phonon.others.len(), 1, "{:?}", p.phonon.others);
+    assert_eq!(p.phonon.others[0].lang, "en");
+    assert!(p.phonon.others[0].model.ends_with("phonon-31m-en"));
     // Ein unvollstaendiges deutsches Modell zaehlt nicht.
     fs::remove_file(dirs.model_dir("phonon-40m-de").join("config.json")).unwrap();
     let p = installed_paths(tmp.path());
@@ -324,6 +328,24 @@ fn installierte_pfade_nennen_programm_und_das_deutsche_modell_zuerst() {
         .as_deref()
         .unwrap()
         .ends_with("phonon-31m-en"));
+    assert!(p.phonon.others.is_empty());
+}
+
+#[test]
+fn weitere_modelle_je_sprache_nur_einmal_und_nie_die_sprache_des_hauptmodells() {
+    let de = model_entry("phonon-40m-de").unwrap();
+    let en = model_entry("phonon-31m-en").unwrap();
+    let dir = |e: &TtsCatalogEntry| format!("models/{}", e.id);
+    assert!(other_models(&[], dir).is_empty());
+    assert!(other_models(&[&de], dir).is_empty());
+    let o = other_models(&[&de, &en, &en, &de], dir);
+    assert_eq!(
+        o,
+        vec![PhononModelRef {
+            lang: "en".into(),
+            model: "models/phonon-31m-en".into()
+        }]
+    );
 }
 
 #[test]

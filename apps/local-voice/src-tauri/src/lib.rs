@@ -6,6 +6,7 @@ mod appdata_migration;
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
+mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
 mod books;
 mod catalog;
 pub mod cli;
@@ -2394,6 +2395,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::llm_unload,
             commands::tts::llm_warm,
             commands::pages::pages_list,
+            book_ai::book_ai_templates,
+            book_ai::book_ai_template_save,
+            book_ai::book_ai_template_delete,
+            book_ai::book_ai_template_export,
+            book_ai::book_ai_template_import,
+            book_ai::book_ai_summarize,
+            book_ai::book_ai_cancel,
+            book_ai::book_ai_documents,
+            book_ai::book_ai_document_text,
+            book_ai::book_ai_document_update,
+            book_ai::book_ai_document_delete,
             books::books_list,
             books::books_create,
             books::books_update,
