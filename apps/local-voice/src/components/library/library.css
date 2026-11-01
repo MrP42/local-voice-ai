@@ -576,3 +576,53 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Drag & Drop (lva#152) */
+.library--drop {
+  outline: 2px dashed var(--color-logo-primary);
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.library-card--drop .library-card__open {
+  outline: 3px solid var(--color-logo-primary);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+/* Schwebt über dem Inhalt, ohne ihn zu verschieben. */
+.library-drop-hint {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--color-logo-primary);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+  overflow-wrap: anywhere;
+  /* Trefferprüfung beim Ablegen geht durch den Hinweis hindurch. */
+  pointer-events: none;
+}
+.reader-drop {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 72px;
+  border: 2px dashed var(--color-logo-primary);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-logo-primary) 8%, transparent);
+  pointer-events: none;
+}
+.reader-drop > span {
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: var(--color-logo-primary);
+  color: #fff;
+  font-weight: 600;
+}

@@ -95,6 +95,15 @@ test.beforeEach(async ({ page }) => {
     };
     const w = window as unknown as Record<string, unknown>;
     w.__calls = [] as unknown[];
+    const listeners: Record<string, number[]> = {};
+    w.__emit = (event: string, payload: unknown) =>
+      (listeners[event] ?? []).forEach((h) =>
+        (callbacks.get(h) as ((e: unknown) => void) | undefined)?.({
+          event,
+          id: 0,
+          payload,
+        }),
+      );
     w.__books = books;
     // Fortschritt des Readers: Effi zu 40 % gehört.
     window.localStorage.setItem(
@@ -137,7 +146,19 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.23.0";
           if (cmd.includes("permission")) return true;
-          if (cmd === "plugin:event|listen") return 1;
+          if (cmd === "plugin:event|listen") {
+            (listeners[String(args?.event)] ??= []).push(Number(args?.handler));
+            return Number(args?.handler);
+          }
+          if (cmd === "plugin:event|unlisten") {
+            const list = listeners[String(args?.event)] ?? [];
+            listeners[String(args?.event)] = list.filter((h) => h !== Number(args?.eventId));
+            return null;
+          }
+          if (cmd === "pages_create")
+            return { id: "page_new", title: String(args?.title ?? ""), modified_ms: 0, preview: "" };
+          if (cmd === "tts_extract_document")
+            return (w as { __extracted?: string }).__extracted ?? "# Ein Buch\n\nText.";
           if (cmd === "library_list") return list;
           if (cmd === "library_progress_load") return {};
           if (cmd === "library_progress_put") return null;
@@ -413,3 +434,125 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: shot(`bibliothek-miniplayer-${width}.png`) });
   });
 }
+
+// ---------------------------------------------------------------------------
+// Drag & Drop (Patrick 01.11.)
+// ---------------------------------------------------------------------------
+
+const emit = (page: Page, event: string, payload: unknown) =>
+  page.evaluate(
+    ([e, p]) => (window as unknown as { __emit: (e: string, p: unknown) => void }).__emit(e, p),
+    [event, payload] as const,
+  );
+
+const centerOf = async (page: Page, locator: ReturnType<Page["locator"]>) => {
+  const b = (await locator.boundingBox())!;
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+};
+
+const dragTo = async (
+  page: Page,
+  at: { x: number; y: number },
+  paths: string[],
+  release = true,
+) => {
+  await emit(page, "tauri://drag-enter", { paths, position: at });
+  await emit(page, "tauri://drag-over", { position: at });
+  if (release) await emit(page, "tauri://drag-drop", { paths, position: at });
+};
+
+const effiCover = (page: Page) =>
+  page.getByTestId("library-card").filter({ hasText: "Effi Briest" }).locator(".library-card__open");
+
+test("Ablegen auf ein Buch ohne Audio: Hörbuch wird ohne Rückfrage angehängt", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const at = await centerOf(page, effiCover(page));
+  await dragTo(page, at, ["C:/Downloads/track01.mp3"], false);
+  await expect(page.getByTestId("library-drop-hint")).toContainText("zu „Effi Briest“ hinzufügen");
+  await expect(page.locator(".library-card--drop")).toHaveCount(1);
+  await page.screenshot({ path: shot("bibliothek-drop-auf-buch-1440.png") });
+  await emit(page, "tauri://drag-drop", { paths: ["C:/Downloads/track01.mp3"], position: at });
+  await expect
+    .poll(async () => (await calls(page, "library_audio_import")).map((a) => a.id))
+    .toEqual(["book_1"]);
+  await expect(page.getByTestId("library-drop-question")).toHaveCount(0);
+  // Effi hat schon Text: keine Transkription.
+  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+});
+
+test("Ablegen auf ein Buch mit gleicher Fassung: Rückfrage, „Als neues Buch“ legt neu an", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    (window as unknown as { __extracted: string }).__extracted =
+      "# Effi Briest\n\nvon Theodor Fontane\n\nEs war Mittag.";
+  });
+  await dragTo(page, await centerOf(page, effiCover(page)), ["C:/Buecher/effi.epub"]);
+  const question = page.getByTestId("library-drop-question");
+  await expect(question).toContainText("effi.epub");
+  await expect(page.getByTestId("library-drop-attach")).toHaveText("Fassung ersetzen");
+  await page.screenshot({ path: shot("bibliothek-drop-rueckfrage-1440.png") });
+  await page.getByTestId("library-drop-new").click();
+  await expect
+    .poll(async () => (await calls(page, "library_save")).map((a) => (a.book as { id: string }).id))
+    .toContain("");
+  expect(await calls(page, "pages_create")).toHaveLength(1);
+});
+
+test("Ablegen auf freie Fläche: bekanntes Werk → Rückfrage, Anhängen hängt an", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
+  await dragTo(page, { x: free.x + 400, y: free.y }, ["C:/Hoerbuecher/Effi Briest.mp3"]);
+  await expect(page.getByTestId("library-drop-question")).toContainText("Effi Briest");
+  await page.getByTestId("library-drop-attach").click();
+  await expect
+    .poll(async () => (await calls(page, "library_audio_import")).map((a) => a.id))
+    .toEqual(["book_1"]);
+});
+
+test("Ablegen auf freie Fläche: unbekanntes Hörbuch wird sofort neues Buch mit Transkription", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
+  await dragTo(page, free, ["C:/Hoerbuecher/Franz Kafka - Der Prozess.m4b"], false);
+  await expect(page.getByTestId("library-drop-hint")).toContainText("neues Buch");
+  await page.screenshot({ path: shot("bibliothek-drop-frei-390.png") });
+  await emit(page, "tauri://drag-drop", {
+    paths: ["C:/Hoerbuecher/Franz Kafka - Der Prozess.m4b"],
+    position: free,
+  });
+  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(1);
+  expect(await page.getByTestId("library-drop-question").count()).toBe(0);
+  const saves = await calls(page, "library_save");
+  expect((saves[0].book as { id: string; title: string }).id).toBe("");
+  expect((saves[0].book as { title: string }).title).toBe("Der Prozess");
+});
+
+test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.section", "tts"));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const ws = page.locator(".tts-workspace");
+  await expect(ws).toBeVisible();
+  const at = await centerOf(page, ws);
+  await dragTo(page, at, ["C:/Buecher/kafka.epub"], false);
+  await expect(page.getByTestId("reader-drop-hint")).toBeVisible();
+  await page.screenshot({ path: shot("vorlesen-drop-1440.png") });
+  await emit(page, "tauri://drag-drop", { paths: ["C:/Buecher/kafka.epub"], position: at });
+  await expect
+    .poll(async () => (await calls(page, "tts_extract_document")).map((a) => a.path))
+    .toEqual(["C:/Buecher/kafka.epub"]);
+  await dragTo(page, at, ["C:/Hoerbuecher/Franz Kafka - Der Prozess.mp3"]);
+  await expect.poll(async () => (await calls(page, "library_audio_import")).length).toBe(1);
+  await expect(page.getByText("in die Bibliothek aufgenommen")).toBeVisible();
+});
