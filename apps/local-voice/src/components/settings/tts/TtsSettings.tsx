@@ -70,6 +70,11 @@ import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
+import {
+  clearResumePoint,
+  loadResumePoint,
+  saveResumePoint,
+} from "../../../lib/reader/resumePoint";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
@@ -702,6 +707,8 @@ export const TtsSettings = () => {
           );
     locatorRef.current?.reset(charOffset);
     lastLocated.current = null;
+    // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
+    sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
     const canon = canonicalizeTagsAt(script, scriptOffset);
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
@@ -751,6 +758,13 @@ export const TtsSettings = () => {
   };
 
   const speakNow = async () => {
+    // Weiterlesen ab der gemerkten Stelle dieser Seite (lva#148).
+    const resumeOffset = loadResumePoint(resumeKeyRef.current, spokenText);
+    if (resumeOffset !== null) {
+      setFollow(true);
+      await speakFrom(resumeOffset, false);
+      return;
+    }
     setLastError(null);
     setFollow(true);
     setSpeakProgress(null);
@@ -759,6 +773,7 @@ export const TtsSettings = () => {
     sessionTab.current = tab;
     locatorRef.current?.reset(0);
     lastLocated.current = null;
+    sessionResumeKey.current = resumeKeyRef.current;
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
@@ -790,6 +805,7 @@ export const TtsSettings = () => {
     void commands.ttsCancel();
     setSpeakProgress(null);
     setCurrentIndex(null);
+    forgetResumePoint();
   };
 
   const resumeSpeaking = async () => {
@@ -1121,6 +1137,52 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (speakProgress === null && !speaking) setReadRange(null);
   }, [speakProgress, speaking]);
+  // Weiterlesen (lva#148): die gelesene Stelle je Seite und Reiter merken.
+  const resumeKey = `${activePage ?? "-"}:${
+    tab === "translation" ? `translation:${targetLang}` : tab
+  }`;
+  const resumeKeyRef = useRef(resumeKey);
+  resumeKeyRef.current = resumeKey;
+  const sessionResumeKey = useRef<string | null>(null);
+  const [resumeAt, setResumeAt] = useState<number | null>(null);
+  useEffect(() => {
+    setResumeAt(loadResumePoint(resumeKey, spokenText));
+  }, [resumeKey, spokenText]);
+  useEffect(() => {
+    if (!readRange || sessionResumeKey.current !== resumeKeyRef.current) return;
+    saveResumePoint(resumeKeyRef.current, spokenText, readRange.start);
+    setResumeAt(loadResumePoint(resumeKeyRef.current, spokenText));
+    // spokenText bewusst nicht: gespeichert wird beim Satzwechsel.
+  }, [readRange]);
+  const forgetResumePoint = () => {
+    clearResumePoint(resumeKeyRef.current);
+    setResumeAt(null);
+  };
+  // Zu Ende gelesen: beim nächsten Play wieder von vorn.
+  useEffect(() => {
+    if (
+      speakProgress &&
+      speakProgress.total > 0 &&
+      speakProgress.position >= speakProgress.total &&
+      sessionResumeKey.current === resumeKeyRef.current
+    ) {
+      clearResumePoint(resumeKeyRef.current);
+      setResumeAt(null);
+    }
+  }, [speakProgress]);
+  // Beim Öffnen einer Seite die gemerkte Stelle aufschlagen.
+  const revealedResumeFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (viewMode !== "read" || !spokenText) return;
+    if (revealedResumeFor.current === resumeKey) return;
+    revealedResumeFor.current = resumeKey;
+    const at = loadResumePoint(resumeKey, spokenText);
+    if (at === null) return;
+    const id = window.requestAnimationFrame(() =>
+      readerApiRef.current?.revealOffset(at),
+    );
+    return () => window.cancelAnimationFrame(id);
+  }, [resumeKey, spokenText, viewMode]);
   /** Geschätzte Lesedauer bei Tempo 1: ~14 Zeichen je Sekunde. */
   const readEstimate = useMemo(
     () => Math.max(1, toSpokenScript(spokenText).replace(/<[^<>\n]{1,60}>|\[[^\]\n]*\]/g, "").length / 14),
@@ -1953,6 +2015,11 @@ export const TtsSettings = () => {
                   void speakFrom(offset, false);
                 }}
                 onSleep={pauseSpeaking}
+                resumable={resumeAt !== null && !canResume && !speaking}
+                onRestart={() => {
+                  forgetResumePoint();
+                  readerApiRef.current?.goToPage(0);
+                }}
               />
             </div>
           </div>

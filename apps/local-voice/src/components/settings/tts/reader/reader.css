@@ -331,6 +331,9 @@
   flex-wrap: wrap;
 }
 .reader-player__where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 140px;
   min-width: 0;
   font-size: 12.5px;
@@ -392,4 +395,19 @@
   .reader-player__jump input {
     width: 40px;
   }
+}
+
+.reader-player__link {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.reader-player__hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reader-player__link {
+  flex: none;
 }

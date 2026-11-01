@@ -402,3 +402,80 @@ test("Spielerleiste bei 390 px: einzeilig, Tempo und Timer im Überlaufmenü", a
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(menu).toHaveCount(0);
 });
+
+const playFromBar = async (page: Page, name: string) => {
+  await page.getByTestId("reader-player").getByRole("button", { name, exact: true }).click();
+  // Befunde der Skriptprüfung fragen beim Start nach; hier einfach weiter.
+  const proceed = page.getByTestId("script-check-proceed");
+  if (await proceed.isVisible().catch(() => false)) await proceed.click();
+};
+
+test("Weiterlesen: Play setzt an der gemerkten Stelle fort, „Von vorn“ verwirft sie", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-speak-progress", { position: 23, total: 46 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 23,
+    text: "Absatz 20: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20");
+
+  // Neustart der App: die Seite schlägt die Stelle auf, Play heißt „Weiterlesen“.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-where")).toContainText("gemerkten Stelle");
+  await expect(page.getByTestId("reader-book")).not.toHaveAttribute("data-page", "0");
+  await expect(page.getByTestId("reader-flow").getByText("Absatz 20:", { exact: false })).toBeInViewport();
+  await playFromBar(page, "Weiterlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  const text = String(args.text);
+  expect(text.slice(Number(args.charOffset)).startsWith("Absatz 20:")).toBe(true);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(0);
+
+  // „Von vorn“: die Stelle ist vergessen, Play beginnt am Anfang.
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await page.getByTestId("reader-restart").click();
+  await expect(page.getByTestId("reader-where")).toHaveText(/^Seite 1 von/);
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
+});
+
+test("Weiterlesen: zu Ende gelesen beginnt Play wieder vorn", async ({ page }) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 45,
+    text: "Das ist der letzte Satz des Buches.",
+  });
+  await expect(page.locator(".reader-cur")).toHaveCount(1);
+  await emit(page, "tts-speak-progress", { position: 46, total: 46 });
+  await page.reload();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Vorlesen", exact: true })
+    .click();
+  await expect(page.getByTestId("reader-flow")).toBeVisible();
+  await expect(
+    page.getByTestId("reader-player").getByRole("button", { name: "Weiterlesen" }),
+  ).toHaveCount(0);
+});

@@ -29,6 +29,10 @@ interface ReaderPlayerBarProps {
   onSeekFraction(fraction: number): void;
   /** Der Schlaf-Timer ist abgelaufen. */
   onSleep(): void;
+  /** Play setzt an der gemerkten Stelle fort (lva#148). */
+  resumable?: boolean;
+  /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
+  onRestart?(): void;
 }
 
 const formatTime = (seconds: number): string => {
@@ -63,6 +67,8 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onJumpToPage,
   onSeekFraction,
   onSleep,
+  resumable = false,
+  onRestart,
 }) => {
   const { t } = useTranslation();
   const [speedOpen, setSpeedOpen] = useState(false);
@@ -248,12 +254,31 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       </div>
       <div className="reader-player__ctrls">
         <span className="reader-player__where" data-testid="reader-where">
-          {progress
-            ? t("tts.reader.sentenceOf", {
-                position: Math.min(progress.total, progress.position + 1),
-                count: progress.total,
-              })
-            : t("tts.reader.pageOf", { page: shownPage, count: pages })}
+          {progress ? (
+            t("tts.reader.sentenceOf", {
+              position: Math.min(progress.total, progress.position + 1),
+              count: progress.total,
+            })
+          ) : resumable ? (
+            <>
+              <span className="reader-player__hint">{t("tts.reader.resumeHint")}</span>
+              {onRestart && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <button
+                    type="button"
+                    className="reader-player__link"
+                    onClick={onRestart}
+                    data-testid="reader-restart"
+                  >
+                    {t("tts.reader.restart")}
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            t("tts.reader.pageOf", { page: shownPage, count: pages })
+          )}
         </span>
         <div className="mediabar">
           <button
@@ -271,7 +296,14 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             className="mbtn mbtn--primary mbtn--lg"
             onClick={onPlayPause}
             disabled={!speaking && !canPlay}
-            aria-label={speaking ? t("tts.pause") : t("tts.speak")}
+            aria-label={
+              speaking
+                ? t("tts.pause")
+                : resumable
+                  ? t("tts.reader.resume")
+                  : t("tts.speak")
+            }
+            title={resumable && !speaking ? t("tts.reader.resumeHint") : undefined}
             data-testid="reader-play"
           >
             <Glyph name={speaking ? "pause" : "play"} />
