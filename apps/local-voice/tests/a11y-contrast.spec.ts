@@ -42,7 +42,7 @@ const contrastFindings = async (page: Page): Promise<string[]> => {
 };
 
 const goTo = async (page: Page, nav: string) => {
-  // Suite-Shell (ADR-0026): Modelle, Integrationen und Einstellungen liegen im Profilmenü.
+  // Suite-Shell (ADR-0027): Modelle, Integrationen und Einstellungen liegen im Profilmenü.
   if (nav === "Modelle" || nav === "Integrationen" || nav === "Einstellungen") {
     await geheZu(page, nav);
     return;

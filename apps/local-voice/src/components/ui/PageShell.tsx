@@ -15,7 +15,7 @@ const IS_MAC =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad/.test(navigator.platform);
 
-/** Suche des Moduls (ADR-0026 E5): nur gesetzt, wenn das Modul sie anbietet. */
+/** Suche des Moduls (ADR-0027 E5): nur gesetzt, wenn das Modul sie anbietet. */
 export interface PageShellSearch {
   value: string;
   onChange: (value: string) => void;
@@ -27,16 +27,16 @@ interface PageShellProps {
   /** Seitentitel — eine Zeile, dieselbe Groesse auf jeder Seite. */
   title: string;
   /** Ein Satz, was man hier tut: nur als Tooltip am ⓘ neben dem Titel
-      (ADR-0026 E4), keine eigene Zeile. */
+      (ADR-0027 E4), keine eigene Zeile. */
   description?: string;
   /** Rechts im Kopf: Schalter, Statussymbole, ein Knopf. Kein Menue. */
   actions?: React.ReactNode;
-  /** Suchfeld im Modulkopf, Strg+K springt hinein (ADR-0026 E5). Ohne
+  /** Suchfeld im Modulkopf, Strg+K springt hinein (ADR-0027 E5). Ohne
       diese Angabe hat das Modul weder Feld noch Kürzel. */
   search?: PageShellSearch;
   /** Bereich der Kontexthilfe (`src/content/help/<bereich>.<sprache>.md`).
       Gesetzt: Hilfe als Spalte rechts neben dem Inhalt, geöffnet über das
-      Profilmenü ▸ Hilfe oder F1 (ADR-0026 E4: genau ein Hilfe-Einstieg).
+      Profilmenü ▸ Hilfe oder F1 (ADR-0027 E4: genau ein Hilfe-Einstieg).
       Vorlesen bringt seine Hilfe in der eigenen rechten Leiste mit und
       setzt das nicht. */
   help?: string;
@@ -67,7 +67,7 @@ export const PageShell: React.FC<PageShellProps> = ({
   const dock = useHelpDockSlot();
   const searchRef = useRef<HTMLInputElement>(null);
   const hasSearch = !!search;
-  // Strg+K (⌘K) nur in Modulen mit Suche (ADR-0026 E5).
+  // Strg+K (⌘K) nur in Modulen mit Suche (ADR-0027 E5).
   useEffect(() => {
     if (!hasSearch) return;
     const onKey = (event: KeyboardEvent) => {
@@ -102,15 +102,17 @@ export const PageShell: React.FC<PageShellProps> = ({
             relationship="description"
             withArrow
           >
-            <span
+            {/* Ein Knopf, damit Tastatur und Screenreader ihn als Bedien-
+                element finden; der Tooltip hängt die Kurzbeschreibung per
+                aria-describedby an (relationship="description"). */}
+            <button
+              type="button"
               className="page-shell__info"
-              tabIndex={0}
-              role="img"
               aria-label={t("shell.info")}
               data-testid="page-info"
             >
               <Info width={16} height={16} aria-hidden="true" />
-            </span>
+            </button>
           </FluentTooltip>
         )}
       </div>

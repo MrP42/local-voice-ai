@@ -15,6 +15,8 @@ import {
   Play,
   Plug,
   RefreshCw,
+  Activity,
+  Check,
 } from "lucide-react";
 import { commands, type BudgetState, type LlmConnection } from "@/bindings";
 import { Dialog } from "../ui/Dialog";
@@ -33,11 +35,12 @@ import { ProfilHinzufuegenDialog } from "../konto/ProfilHinzufuegenDialog";
 import ModelSelector from "../model-selector";
 import { UPDATE_CHECK_EVENT } from "../update-checker/UpdateChecker";
 import { LlmSelector } from "../footer/LlmSelector";
+import { useDiagnose } from "../footer/diagnose";
 import { useKonto } from "../konto/useKonto";
 import { useKontoLabels } from "../konto/labels";
 
 const ICON = 16;
-/** Taste der Seitenhilfe (ADR-0026 E4); Tastenname, nicht übersetzt. */
+/** Taste der Seitenhilfe (ADR-0027 E4); Tastenname, nicht übersetzt. */
 const HILFE_TASTE = "F1";
 const IS_MAC =
   typeof navigator !== "undefined" &&
@@ -46,6 +49,9 @@ const IS_MAC =
 interface ShellProfilProps {
   currentSection: SidebarSection;
   onNavigate: (section: SidebarSection) => void;
+  /** Aktion ohne Seitenwechsel, die außerhalb der Navigation wirkt
+   * (Seitenhilfe, Update-Suche): schmal schließt der Rahmen die Schublade. */
+  onAktion?: () => void;
 }
 
 type Ebene =
@@ -80,12 +86,13 @@ interface EintraegeProps extends ShellProfilProps {
 }
 
 /**
- * Einträge des Profilmenüs (ADR-0026 E2). Die Komponente lebt nur, solange das
+ * Einträge des Profilmenüs (ADR-0027 E2). Die Komponente lebt nur, solange das
  * Menü offen ist; dadurch startet jedes Öffnen wieder auf der obersten Ebene.
  */
 const Eintraege: React.FC<EintraegeProps> = ({
   currentSection,
   onNavigate,
+  onAktion,
   onUeber,
   onKuerzel,
 }) => {
@@ -112,6 +119,7 @@ const Eintraege: React.FC<EintraegeProps> = ({
         : '[data-profilmenue="zurueck"]';
     document.querySelector<HTMLElement>(`.wai-konto-menue ${ziel}`)?.focus();
   }, [ebene]);
+  const [diagnose, setDiagnose] = useDiagnose();
   const hasPageHelp = useHasPageHelp();
   const startTour = useIntroTourStore((state) => state.start);
   const budgets = useBudgets();
@@ -141,7 +149,10 @@ const Eintraege: React.FC<EintraegeProps> = ({
           text={t("titlebar.helpPage")}
           kuerzel={HILFE_TASTE}
           disabled={!hasPageHelp}
-          onClick={togglePageHelp}
+          onClick={() => {
+            onAktion?.();
+            togglePageHelp();
+          }}
           data-profilmenue="seitenhilfe"
         />
         <ProfilmenueEintrag
@@ -155,11 +166,28 @@ const Eintraege: React.FC<EintraegeProps> = ({
           onClick={startTour}
           data-testid="titlebar-start-tour"
         />
+        <ProfilmenueEintrag
+          symbol={
+            diagnose !== "aus" ? (
+              <Check size={ICON} />
+            ) : (
+              <Activity size={ICON} />
+            )
+          }
+          text={t("shell.diagnoseZeigen")}
+          aria-pressed={diagnose !== "aus"}
+          bleibtOffen
+          onClick={() => setDiagnose(diagnose === "aus" ? "auf" : "aus")}
+          data-profilmenue="diagnose"
+        />
         <ProfilmenueTrenner />
         <ProfilmenueEintrag
           symbol={<RefreshCw size={ICON} />}
           text={t("shell.updates")}
-          onClick={() => window.dispatchEvent(new Event(UPDATE_CHECK_EVENT))}
+          onClick={() => {
+            onAktion?.();
+            window.dispatchEvent(new Event(UPDATE_CHECK_EVENT));
+          }}
         />
         <ProfilmenueEintrag
           symbol={<Info size={ICON} />}
@@ -172,7 +200,7 @@ const Eintraege: React.FC<EintraegeProps> = ({
   }
 
   if (ebene === "modelle") {
-    // Die Modellwahl (Diktat- und Sprachmodell) lebt seit ADR-0026 E7 hier
+    // Die Modellwahl (Diktat- und Sprachmodell) lebt seit ADR-0027 E7 hier
     // statt in der Statusleiste; die Auswahllisten klappen rechts neben dem
     // Menü auf.
     return (
@@ -300,14 +328,17 @@ const Eintraege: React.FC<EintraegeProps> = ({
 };
 
 /**
- * Tastenkürzel der Shell (ADR-0026): F1 schaltet die Hilfe zur Seite, Strg+,
+ * Tastenkürzel der Shell (ADR-0027): F1 schaltet die Hilfe zur Seite, Strg+,
  * (⌘,) öffnet die Einstellungen. Im App-Rahmen eingehängt, damit sie auch bei
  * schmalem Fenster mit geschlossener Navigation wirken.
  */
 export function useShellKuerzel(
   onNavigate: (section: SidebarSection) => void,
+  aktiv = true,
 ): void {
   useEffect(() => {
+    // Während der Einrichtung (Onboarding) keine Shell-Kürzel.
+    if (!aktiv) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "F1" && !event.ctrlKey && !event.altKey) {
         event.preventDefault();
@@ -323,11 +354,11 @@ export function useShellKuerzel(
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onNavigate]);
+  }, [onNavigate, aktiv]);
 }
 
 /**
- * Profilkreis unten in der Navigation mit dem Profilmenü (ADR-0026, Suite-
+ * Profilkreis unten in der Navigation mit dem Profilmenü (ADR-0027, Suite-
  * Standard nach ChatGPT-Vorbild). Einziger Ort für Einstellungen, Modelle,
  * Integrationen, Benachrichtigungen, Kontingent und Hilfe; die Titelleiste
  * trägt keine Werkzeuge mehr. Die Kürzel F1 und Strg+, hängt der App-Rahmen
@@ -336,6 +367,7 @@ export function useShellKuerzel(
 export const ShellProfil: React.FC<ShellProfilProps> = ({
   currentSection,
   onNavigate,
+  onAktion,
 }) => {
   const { t } = useTranslation();
   const { settings } = useSettings();
@@ -376,6 +408,7 @@ export const ShellProfil: React.FC<ShellProfilProps> = ({
           <Eintraege
             currentSection={currentSection}
             onNavigate={onNavigate}
+            onAktion={onAktion}
             onUeber={() => setAboutOpen(true)}
             onKuerzel={() => setShortcutsOpen(true)}
           />

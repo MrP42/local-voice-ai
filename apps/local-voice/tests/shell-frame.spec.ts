@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
-import { geheZu, oeffneModellwahl, oeffneProfilmenue } from "./profilmenue";
+import { diagnoseAn, geheZu, oeffneModellwahl, oeffneProfilmenue } from "./profilmenue";
 
-// Suite-Rahmen nach ADR-0026 (Variante A): schlanke Fussleiste (24 px) mit
+// Suite-Rahmen nach ADR-0027 (Variante A): schlanke Fussleiste (24 px) mit
 // Telefon, Mikrofon als Symbol und Speicher-Saeulen; Titelleiste nur mit
 // Navigation, App und Fensterknoepfen; Profilkreis unten links mit Menue
 // (Kontingent, Benachrichtigungen, Modelle, Integrationen, Einstellungen, Hilfe).
@@ -90,7 +90,7 @@ test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts
   for (const b of await bar.locator("button.lv-status-btn").all())
     expect((await b.boundingBox())!.height).toBe(22);
 
-  // ADR-0026 E7: Modellwahl und Version stehen nicht mehr in der Fussleiste.
+  // ADR-0027 E7: Modellwahl und Version stehen nicht mehr in der Fussleiste.
   await expect(bar.locator("[data-llm-selector]")).toHaveCount(0);
   await expect(bar.locator("[data-model-status]")).toHaveCount(0);
   await expect(bar.locator("[data-testid=footer-version]")).toHaveCount(0);
@@ -100,9 +100,30 @@ test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts
   await expect(mic).toHaveAttribute("aria-label", /Mikrofon: Systemvorgabe/);
   await expect(mic).toHaveText("");
 
-  // Reihenfolge rechts: Mikrofon vor Speicher
+  // Codex 01.11.: rechts nur Mikrofon und Telefon; Speicher/GPU, Fish-Server
+  // und Schild nur als bewusst eingeschaltete Diagnose, einklappbar.
+  await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
+  await expect(bar.locator("[data-compliance-shield]")).toHaveCount(0);
+  await expect(bar.locator("[data-fish-server]")).toHaveCount(0);
+  await expect(bar.getByTestId("statusbar-diagnose")).toHaveCount(0);
   const x = async (sel: string) => (await bar.locator(sel).first().boundingBox())!.x;
-  expect(await x("[data-mic-selector]")).toBeLessThan(await x("[data-resource-meter]"));
+  expect(await x("[data-mic-selector]")).toBeLessThan(await x(".lv-call-group"));
+
+  // Profilmenü ▸ Hilfe ▸ Diagnose: Knopf erscheint, ausgeklappt mit Speicher
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  const schalter = menue.locator('[data-profilmenue="diagnose"]');
+  await schalter.click();
+  await expect(schalter).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  const diagnose = bar.getByTestId("statusbar-diagnose");
+  await expect(diagnose).toHaveAttribute("aria-expanded", "true");
+  await expect(bar.locator("[data-resource-meter]")).toBeVisible();
+  // Einklappen behält nur den Knopf
+  await diagnose.click();
+  await expect(diagnose).toHaveAttribute("aria-expanded", "false");
+  await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
 });
 
 test("Profilmenü ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) => {
@@ -122,6 +143,7 @@ test("Profilmenü ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page })
 
 test("Speicher-Popover: Verteilung, freigeben, Speicherschutz", async ({ page }) => {
   await setup(page, "light");
+  await diagnoseAn(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const meter = page.locator("[data-resource-meter]");
@@ -153,7 +175,7 @@ test("Speicher-Popover: Verteilung, freigeben, Speicherschutz", async ({ page })
   await expect(meter.locator(".lv-meter__limit")).toHaveCount(0);
 });
 
-test("Titelleiste ohne Werkzeuge, Profilmenü unten links (ADR-0026)", async ({ page }) => {
+test("Titelleiste ohne Werkzeuge, Profilmenü unten links (ADR-0027)", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -243,12 +265,18 @@ for (const theme of ["dark", "light"] as const) {
     await setup(page, theme);
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
-    await page.locator("[data-resource-meter]").click();
-    await expect(page.locator("[data-memory-popover]")).toBeVisible();
+    // Standard (Codex 01.11.): Statusleiste nur Mikrofon und Telefon.
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-rahmen.png`, animations: "disabled" });
-    await page.keyboard.press("Escape");
-    // Abnahmebilder ADR-0026: Profilmenü ▸ Modelle und Vorlesen mit Modulkopf
+    // Abnahmebilder ADR-0027: Profilmenü ▸ Modelle und Vorlesen mit Modulkopf
     await oeffneModellwahl(page);
+    // Codex 01.11.: lange Zustände brechen um, Pfeil bleibt im Menü.
+    const flaeche = (await page.locator(".wai-konto-menue__flaeche").boundingBox())!;
+    for (const knopf of await page.getByTestId("profilmenue-modelle").locator("button.lv-status-btn").all()) {
+      const b = (await knopf.boundingBox())!;
+      expect(b.x + b.width).toBeLessThanOrEqual(flaeche.x + flaeche.width);
+      const pfeil = (await knopf.locator("svg").last().boundingBox())!;
+      expect(pfeil.x + pfeil.width).toBeLessThanOrEqual(b.x + b.width);
+    }
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-profilmenue-modelle.png`, animations: "disabled" });
     await page.keyboard.press("Escape");
     await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: "Vorlesen", exact: true }).click();
@@ -276,7 +304,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.locator("#page-title")).toHaveText(label);
       const dock = page.locator(".lv-helpdock");
       if (id === "vorlesen") await page.evaluate(() => localStorage.removeItem("lva.ui.tts.helpOpen"));
-      // ADR-0026 E4: Hilfe nur über F1 bzw. Profilmenü ▸ Hilfe
+      // ADR-0027 E4: Hilfe nur über F1 bzw. Profilmenü ▸ Hilfe
       await page.keyboard.press("F1");
       const panel = dock.locator(".lv-helpdock__panel");
       await expect(panel).toBeVisible();

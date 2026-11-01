@@ -113,18 +113,18 @@ interface SidebarProps {
   narrow: boolean;
   drawerOpen: boolean;
   onDrawerOpenChange: (open: boolean) => void;
-  /** Fuß der Navigation: der Profilkreis mit dem Profilmenü (ADR-0026 E1). */
+  /** Fuß der Navigation: der Profilkreis mit dem Profilmenü (ADR-0027 E1). */
   fuss?: React.ReactNode;
 }
 
 const PRIMARY = ["home", "history", "meetings", "tts", "voice"] as const;
-// Modelle, Integrationen und Einstellungen stehen seit ADR-0026 im Profilmenü
+// Modelle, Integrationen und Einstellungen stehen seit ADR-0027 im Profilmenü
 // (Profilkreis unten links), nicht mehr als Einträge der Navigation.
 
 /**
  * Navigationsbereich nach Fluent 2 (Leitlinie windows-fluent.md §2/§3):
  * Fluent Nav mit Auswahl-Pill, nur die Arbeitsbereiche; unten der Profilkreis
- * (ADR-0026). Ein Tab-Stopp, darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
+ * (ADR-0027). Ein Tab-Stopp, darin Pfeiltasten. Eingeklappt bleibt die Symbolleiste (Hamburger in der
  * Titelleiste); schmal öffnet der Hamburger einen Overlay-Drawer.
  */
 export const Sidebar: React.FC<SidebarProps> = ({

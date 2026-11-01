@@ -65,7 +65,7 @@ test("Windows: Kuerzel mit Namen, Explorer-Kontextmenue sichtbar", async ({
 });
 
 const openShortcutDialog = async (page: Page) => {
-  // ADR-0026: Hilfe liegt im Profilmenü, nicht mehr in der Titelleiste
+  // ADR-0027: Hilfe liegt im Profilmenü, nicht mehr in der Titelleiste
   await oeffneProfilmenue(page);
   const menue = page.locator(".wai-konto-menue");
   await menue.getByRole("button", { name: "Hilfe", exact: true }).click();

@@ -1081,6 +1081,7 @@
       "targetLangHint": "Sprache, in die übersetzt wird"
     },
     "writingRules": {
+      "short": "Schreibregeln",
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
       "pausesOnly": "{{engine}} setzt keine Emotions-Tags um. Nur Pausen stehen in eckigen Klammern, genau dort, wo sie zu hören sein sollen:",
@@ -6780,6 +6781,8 @@
     }
   },
   "shell": {
+    "diagnose": "Diagnose",
+    "diagnoseZeigen": "Diagnose in der Statusleiste",
     "kontingent": "Verbleibendes Kontingent",
     "kontingentFrei": "{{prozent}} % frei",
     "kontingentOhneLimit": "{{betrag}} verbraucht, kein Limit",

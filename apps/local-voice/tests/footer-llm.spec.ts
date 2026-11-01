@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { oeffneModellwahl } from "./profilmenue";
+import { diagnoseAn, oeffneModellwahl } from "./profilmenue";
+
+// Speicher, Fish-Server und Schild stehen nur bei eingeschalteter Diagnose
+// in der Statusleiste (ADR-0027 E7).
+test.beforeEach(async ({ page }) => {
+  await diagnoseAn(page);
+});
 
 // Die Fussleiste mit Sprachmodell-Auswahl und Auslastung: das aktive Modell
 // mit Ampel, Wechsel zwischen freigegebenen Modellen, und RAM/GPU als Zahlen,

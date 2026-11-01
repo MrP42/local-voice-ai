@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { oeffneModellwahl } from "./profilmenue";
+import { diagnoseAn, oeffneModellwahl } from "./profilmenue";
+
+// Speicher, Fish-Server und Schild stehen nur bei eingeschalteter Diagnose
+// in der Statusleiste (ADR-0027 E7).
+test.beforeEach(async ({ page }) => {
+  await diagnoseAn(page);
+});
 
 // Regelwerk und Schild (06.10.2026): Cloud-Modelle tragen Wolke und Flagge,
 // gesperrte Modelle sind in der Auswahl nicht waehlbar, das Schild unten rechts

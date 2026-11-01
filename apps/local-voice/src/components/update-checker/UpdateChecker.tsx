@@ -18,7 +18,7 @@ interface UpdateCheckerProps {
   className?: string;
   /** Laufende Version; ein Klick darauf sucht nach Updates. */
   version: string;
-  /** Statusleiste (ADR-0026 E7): Version nur zeigen, wenn ein Update
+  /** Statusleiste (ADR-0027 E7): Version nur zeigen, wenn ein Update
       bereitsteht oder gerade geprüft/installiert wird; sonst steht sie in
       „Über“. Gesucht wird weiter beim Start und auf Wunsch. */
   nurBeiUpdate?: boolean;

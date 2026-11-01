@@ -22,7 +22,7 @@ type ModelStatus =
 
 interface ModelSelectorProps {
   onError?: (error: string) => void;
-  /** Statusleiste (ADR-0026 E7): nur sichtbar, solange das Modell
+  /** Statusleiste (ADR-0027 E7): nur sichtbar, solange das Modell
       Aufmerksamkeit braucht (lädt, Download, Prüfung, Fehler). Die Wahl
       steht im Profilmenü ▸ Modelle. */
   nurStatus?: boolean;

@@ -153,7 +153,7 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
   await expect(
     nav.getByRole("button", { name: "Start", exact: true }),
   ).toBeVisible();
-  // Modelle und Einstellungen stehen im Profilmenü (ADR-0026), nicht mehr im Drawer.
+  // Modelle und Einstellungen stehen im Profilmenü (ADR-0027), nicht mehr im Drawer.
   await expect(
     nav.getByRole("button", { name: /^Profil:/ }),
   ).toBeVisible();
@@ -260,7 +260,7 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   ).toBeVisible();
   // Keine Klappen mehr unter dem Editor: Stimmen wohnen auf der Modelle-Seite.
   await expect(page.getByText("Stimmen anhören & verwalten")).toHaveCount(0);
-  // Hilfe an Ort und Stelle (seit ADR-0026 kein Knopf im Kopf mehr): schmal ist der
+  // Hilfe an Ort und Stelle (seit ADR-0027 kein Knopf im Kopf mehr): schmal ist der
   // F1-Hörer mit dem Drawer nicht eingehängt, also über Profilmenü ▸ Hilfe.
   await oeffneProfilmenue(page);
   const menue = page.locator(".wai-konto-menue");

@@ -63,7 +63,7 @@ export const HistorySettings: React.FC = () => {
   const { t } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
-  // Suche im Modulkopf (ADR-0026 E5): filtert die geladenen Einträge.
+  // Suche im Modulkopf (ADR-0027 E5): filtert die geladenen Einträge.
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -130,7 +130,9 @@ export const HistorySettings: React.FC = () => {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loading, hasMore, loadPage]);
+    // Nach jeder Seite und bei geänderter Suche neu beobachten: ein noch
+    // sichtbarer Sentinel meldet sich sonst nicht erneut (Suche ohne Treffer).
+  }, [loading, hasMore, loadPage, entries.length, query]);
 
   // Listen for new entries added from the transcription pipeline
   useEffect(() => {
@@ -252,10 +254,20 @@ export const HistorySettings: React.FC = () => {
       </div>
     );
   } else if (shown.length === 0) {
+    // Die Suche filtert die geladenen Seiten; solange es ältere gibt, lädt
+    // der Sentinel weiter, statt „nichts gefunden“ zu behaupten.
+    const weiterSuchen = needle !== "" && hasMore;
     content = (
-      <div className="px-4 py-3 text-center text-text/60">
-        {needle ? t("titlebar.searchNone") : t("settings.history.empty")}
-      </div>
+      <>
+        <div className="px-4 py-3 text-center text-text/60">
+          {weiterSuchen
+            ? t("settings.history.loading")
+            : needle
+              ? t("titlebar.searchNone")
+              : t("settings.history.empty")}
+        </div>
+        {weiterSuchen && <div ref={sentinelRef} className="h-1" />}
+      </>
     );
   } else {
     content = (

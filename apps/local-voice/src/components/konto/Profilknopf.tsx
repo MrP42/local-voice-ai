@@ -1,5 +1,5 @@
 /**
- * Kopie aus @wai/ui konto (wai-sdk PR #991, ADR-0024; Erweiterung #1046, ADR-0026). Nicht vom Original abweichen;
+ * Kopie aus @wai/ui konto (wai-sdk PR #991, ADR-0024; Erweiterung #1046, ADR-0027). Nicht vom Original abweichen;
  * Änderungen dort machen und neu kopieren. Abweichungen hier: `Icon` -> lucide-react (siehe `Icon.tsx`), `cx` -> `cx.ts`.
  */
 import {
@@ -147,9 +147,9 @@ export interface ProfilmenueProps {
   onProfilWechseln?: (id: string) => void;
   onProfilHinzufuegen?: () => void;
   labels?: Partial<KontoLabels>;
-  /** ADR-0026: schlanke Form für den Profilkreis unten links (kleines Bild, Name und Status in einer Zeile). */
+  /** ADR-0027: schlanke Form für den Profilkreis unten links (kleines Bild, Name und Status in einer Zeile). */
   kompakt?: boolean;
-  /** ADR-0026: Einträge der App (Einstellungen, Modelle, Hilfe …) zwischen Person und Profilwechsel. */
+  /** ADR-0027: Einträge der App (Einstellungen, Modelle, Hilfe …) zwischen Person und Profilwechsel. */
   eintraege?: ReactNode;
 }
 
@@ -312,11 +312,11 @@ export interface ProfilknopfProps extends ProfilmenueProps {
   mitName?: boolean;
   className?: string;
   /**
-   * Ort des Knopfs. `"leiste"` (ADR-0026, Suite-Standard): Kreis unten in der App-Leiste, das Menü öffnet
+   * Ort des Knopfs. `"leiste"` (ADR-0027, Suite-Standard): Kreis unten in der App-Leiste, das Menü öffnet
    * rechts daneben nach oben und ist kompakt. `"kopfleiste"` (ADR-0024 E6, abgelöst): oben rechts.
    */
   ort?: "kopfleiste" | "leiste";
-  /** Hinweispunkt am Bild, z. B. ungelesene Benachrichtigungen (ADR-0026 E3). */
+  /** Hinweispunkt am Bild, z. B. ungelesene Benachrichtigungen (ADR-0027 E3). */
   hinweis?: boolean;
 }
 
@@ -356,7 +356,7 @@ export interface ProfilmenueEintragProps extends Omit<
   bleibtOffen?: boolean;
 }
 
-/** Ein Eintrag im Profilmenü (ADR-0026 E2). Schließt das Menü nach dem Klick, außer bei `weiter`. */
+/** Ein Eintrag im Profilmenü (ADR-0027 E2). Schließt das Menü nach dem Klick, außer bei `weiter`. */
 export function ProfilmenueEintrag({
   symbol,
   text,

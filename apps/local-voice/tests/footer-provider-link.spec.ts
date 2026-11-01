@@ -59,7 +59,7 @@ async function setup(page: Page) {
 }
 
 const connectionsVisible = async (page: Page) => {
-  // Das Profilmenü (ADR-0026) bleibt nach dem Sprung offen und macht die Seite für die
+  // Das Profilmenü (ADR-0027) bleibt nach dem Sprung offen und macht die Seite für die
   // Barrierefreiheit unzugänglich (Escape schließt es dort nicht): per Klick daneben schließen.
   if (await page.locator(".wai-konto-menue").isVisible()) await page.mouse.click(800, 20);
   await expect(page.locator(".wai-konto-menue")).toHaveCount(0);

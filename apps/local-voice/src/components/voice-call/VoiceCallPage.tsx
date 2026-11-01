@@ -116,7 +116,7 @@ export const VoiceCallPage: React.FC = () => {
   const keyNew = isMac ? "⌘N" : t("voiceCall.history.keyNew");
   const keySearch = isMac ? "⌘K" : t("voiceCall.history.keySearch");
 
-  // Strg+N: neues Gespräch, Strg+K: Suche (ADR-0026 E5: Strg+K gehört der
+  // Strg+N: neues Gespräch, Strg+K: Suche (ADR-0027 E5: Strg+K gehört der
   // Suche des Moduls; Strg+Umschalt+K bleibt als früheres Kürzel erhalten).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -129,6 +129,9 @@ export const VoiceCallPage: React.FC = () => {
         e.preventDefault();
         void store.getState().newConversation();
       } else if (key === "k") {
+        // Nicht über einem offenen Dialog (Profilmenü, Über, Einstellungen).
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
         e.preventDefault();
         e.stopImmediatePropagation();
         setSearchOpen(true);

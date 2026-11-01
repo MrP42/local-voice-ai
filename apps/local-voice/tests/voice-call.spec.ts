@@ -2705,7 +2705,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(search).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
-    // ADR-0026 E5: Strg+K gehört der Suche des Moduls (keine Titelleisten-Suche mehr).
+    // ADR-0027 E5: Strg+K gehört der Suche des Moduls (keine Titelleisten-Suche mehr).
     await page.keyboard.press("Control+k");
     await expect(search).toBeVisible();
     await page.keyboard.press("Escape");

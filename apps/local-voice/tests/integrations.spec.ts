@@ -83,7 +83,7 @@ test.describe("Seitenleiste", () => {
     page,
   }) => {
     await setup(page);
-    // ADR-0026: keine Navigationseinträge mehr, sondern Einträge des Profilmenüs
+    // ADR-0027: keine Navigationseinträge mehr, sondern Einträge des Profilmenüs
     for (const name of ["Modelle", "Integrationen", "Einstellungen"]) {
       await expect(
         nav(page).getByRole("button", { name, exact: true }),

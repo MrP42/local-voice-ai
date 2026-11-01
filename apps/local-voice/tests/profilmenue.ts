@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-// Suite-Shell (ADR-0026): Einstellungen, Modelle und Integrationen sind keine
+// Suite-Shell (ADR-0027): Einstellungen, Modelle und Integrationen sind keine
 // Einträge der Navigation mehr, sondern stehen im Profilmenü unten links.
 // Diese Helfer ersetzen den früheren Klick auf den Navigationseintrag.
 
@@ -41,4 +41,14 @@ export async function oeffneModellwahl(page: Page): Promise<void> {
     .getByRole("button", { name: "Modelle", exact: true })
     .click();
   await expect(page.getByTestId("profilmenue-modelle")).toBeVisible();
+}
+
+export const DIAGNOSE_AN = "lva.ui.statusbar.diagnose";
+
+/** Schaltet die Diagnose der Statusleiste (Speicher, Fish, Schild) ein. */
+export async function diagnoseAn(page: Page): Promise<void> {
+  await page.addInitScript(
+    (key) => window.localStorage.setItem(key, "auf"),
+    DIAGNOSE_AN,
+  );
 }

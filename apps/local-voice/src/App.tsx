@@ -112,7 +112,7 @@ function App() {
   const navCollapsed = navCollapsedValue === "1";
   const narrow = useIsNarrow();
   // F1 (Seitenhilfe) und Strg+, (Einstellungen), auch bei geschlossener Navigation.
-  useShellKuerzel(setCurrentSection);
+  useShellKuerzel(setCurrentSection, onboardingStep === "done");
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerWasOpen = useRef(false);
@@ -494,7 +494,7 @@ function App() {
         <ModelUpdateGate />
         <IntroTour />
         <KopplungsDialog />
-        {/* Titelleiste 40px (ADR-0026 E3, Variante A): nur Hamburger, App-Symbol
+        {/* Titelleiste 40px (ADR-0027 E3, Variante A): nur Hamburger, App-Symbol
             und Name, freie Ziehfläche, Fensterknöpfe. Seitentitel, Suche und
             Aktionen stehen im Modulkopf (PageShell), Einstellungen und Hilfe
             im Profilmenü unten links. Das Hauptfenster ist rahmenlos, dies ist
@@ -539,6 +539,7 @@ function App() {
                   setCurrentSection(section);
                   setNavDrawerOpen(false);
                 }}
+                onAktion={() => setNavDrawerOpen(false)}
               />
             }
           />

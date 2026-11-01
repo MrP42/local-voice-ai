@@ -1,4 +1,4 @@
-/* Kopie aus @wai/ui (wai-sdk PR #991, ADR-0024; #1046, ADR-0026): Klassen wai-konto-* und wai-profilseite*. Nicht von Hand ändern. */
+/* Kopie aus @wai/ui (wai-sdk PR #991, ADR-0024; #1046, ADR-0027): Klassen wai-konto-* und wai-profilseite*. Nicht von Hand ändern. */
 /* ---------- Konto: Profilknopf, Profilmenü, Profilseite (ADR-0024) ---------- */
 .wai-konto-bild {
   position: relative;
@@ -151,7 +151,7 @@
   color: var(--colorNeutralForeground2, var(--color-text));
 }
 
-/* ADR-0026: Profilkreis unten in der App-Leiste, kompaktes Menü mit Einträgen der App */
+/* ADR-0027: Profilkreis unten in der App-Leiste, kompaktes Menü mit Einträgen der App */
 .wai-konto-knopf[data-ort="leiste"] {
   position: relative;
   padding: 0;

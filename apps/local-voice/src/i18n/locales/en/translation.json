@@ -1081,6 +1081,7 @@
       "targetLangHint": "Language to translate into"
     },
     "writingRules": {
+      "short": "Writing rules",
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
       "pausesOnly": "{{engine}} does not support emotion tags. Only pauses go in square brackets, exactly where they should be heard:",
@@ -6780,6 +6781,8 @@
     }
   },
   "shell": {
+    "diagnose": "Diagnostics",
+    "diagnoseZeigen": "Diagnostics in the status bar",
     "kontingent": "Remaining quota",
     "kontingentFrei": "{{prozent}} % left",
     "kontingentOhneLimit": "{{betrag}} spent, no limit",

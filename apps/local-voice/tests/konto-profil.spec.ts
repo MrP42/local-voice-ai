@@ -238,7 +238,7 @@ test("Profilknopf: lokales Profil, kein Anmelden-Knopf, Mein Profil oeffnet die 
   page,
 }) => {
   await page.goto("/");
-  // ADR-0026: der Profilkreis sitzt unten in der Navigation, nicht in der Titelleiste.
+  // ADR-0027: der Profilkreis sitzt unten in der Navigation, nicht in der Titelleiste.
   const bar = page.getByRole("navigation", { name: "Hauptnavigation" });
   await bar.getByRole("button", { name: "Profil: Lokales Profil" }).click();
   const menu = page.locator(".wai-konto-menue");
@@ -314,7 +314,7 @@ test("Profilmenue springt nicht in die Einstellungen", async ({ page }) => {
   await expect(
     menue.getByRole("button", { name: "Mein Profil" }),
   ).toBeVisible();
-  // ADR-0026: "Einstellungen" ist jetzt ein regulärer Eintrag des Profilmenüs;
+  // ADR-0027: "Einstellungen" ist jetzt ein regulärer Eintrag des Profilmenüs;
   // ein eigener Sprung nach "Konto & Geräte" bleibt ausgeschlossen.
   await expect(
     menue.getByRole("button", { name: /Konto & Geräte/ }),

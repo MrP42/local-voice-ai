@@ -2404,7 +2404,7 @@ export const TtsSettings = () => {
       fill
       actions={
         // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
-        // etwas rueckgaengig zu machen gibt (ADR-0026 E6). Die Hilfe kommt
+        // etwas rueckgaengig zu machen gibt (ADR-0027 E6). Die Hilfe kommt
         // ueber Profilmenue ▸ Hilfe oder F1 (E4), kein eigener Knopf.
         viewMode === "edit" ? (
           <HistoryButtons
@@ -2544,6 +2544,7 @@ export const TtsSettings = () => {
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
+                        text={t("tts.writingRules.short")}
                         testId="reader-info"
                       >
                         <p className="mb-1 font-semibold">

@@ -202,7 +202,7 @@ for (const theme of ["light", "dark"] as const) {
     const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
     for (const [label, id] of PAGES) {
       if (id === "models" || id === "integrations" || id === "settings") {
-        // ADR-0026: nicht mehr in der Navigation, sondern im Profilmenü
+        // ADR-0027: nicht mehr in der Navigation, sondern im Profilmenü
         await geheZu(page, label as "Modelle" | "Integrationen" | "Einstellungen");
       } else {
         await nav.getByRole("button", { name: label, exact: true }).click();
@@ -213,7 +213,7 @@ for (const theme of ["light", "dark"] as const) {
       const bar = page.locator(".lv-titlebar");
       await expect(bar).toBeVisible();
       if (id !== "home") {
-        // Seitentitel steht seit ADR-0026 im Inhalt, nicht mehr in der Titelleiste
+        // Seitentitel steht seit ADR-0027 im Inhalt, nicht mehr in der Titelleiste
         await expect(page.locator("#page-title")).toBeVisible();
       }
       await expect(page.locator(".lv-statusbar")).toBeVisible();
@@ -225,7 +225,7 @@ for (const theme of ["light", "dark"] as const) {
         animations: "disabled",
       });
     }
-    // Der Profilkreis ist der letzte Eintrag des Navigationsbereichs (ADR-0026);
+    // Der Profilkreis ist der letzte Eintrag des Navigationsbereichs (ADR-0027);
     // Modelle, Integrationen und Einstellungen stehen im Profilmenü.
     const labels = await nav
       .getByRole("button")
@@ -286,7 +286,7 @@ for (const width of [390, 360]) {
       ).length;
       return { h: r.height, w: r.width, btns, scrolls };
     });
-    // ADR-0026 E7: ohne Modellwahl und Version bleiben drei Einträge (Mikrofon, Speicher, Gespräch)
+    // ADR-0027 E7: ohne Modellwahl und Version bleiben drei Einträge (Mikrofon, Speicher, Gespräch)
     expect(m.btns.length).toBeGreaterThanOrEqual(3);
     for (const b of m.btns) {
       expect(b.l).toBeGreaterThanOrEqual(0);
@@ -314,7 +314,7 @@ test("Forced Colors: Fokus sichtbar, Navigationsauswahl erkennbar", async ({ pag
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   for (const [label, id] of REFLOW_PAGES) {
     if (label === "Einstellungen") {
-      // ADR-0026: kein Navigationseintrag mehr, die Auswahlmarkierung entfällt dort
+      // ADR-0027: kein Navigationseintrag mehr, die Auswahlmarkierung entfällt dort
       await geheZu(page, "Einstellungen");
       await page.screenshot({
         path: `test-results/fluent/forced-1440-${id}.png`,
@@ -435,7 +435,7 @@ test.describe("Fensterrahmen", () => {
     await expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
     const group = bar.getByRole("group", { name: "Fenster" });
     await expect(group.getByRole("button")).toHaveCount(3);
-    // bündig rechts, 46×40 (Titelleiste seit ADR-0026 40 px hoch)
+    // bündig rechts, 46×40 (Titelleiste seit ADR-0027 40 px hoch)
     const box = await group.getByRole("button", { name: "Schließen" }).boundingBox();
     expect(box).toMatchObject({ width: 46, height: 40, y: 0 });
     expect(box!.x + box!.width).toBe(1440);
