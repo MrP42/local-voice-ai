@@ -20,9 +20,13 @@ const storage = (): Storage | null => {
   }
 };
 
-export function saveResumePoint(key: string, text: string, offset: number): void {
+export function saveResumePoint(
+  key: string,
+  text: string,
+  offset: number,
+): void {
   if (offset <= 0 || offset >= text.length) return;
-  const value: Stored = { offset, anchor: text.slice(offset, offset + ANCHOR) };
+  const value: Stored = { offset, anchor: anchorAt(text, offset) };
   try {
     storage()?.setItem(PREFIX + key, JSON.stringify(value));
   } catch {
@@ -56,14 +60,29 @@ export function loadResumePoint(key: string, text: string): number | null {
   if (typeof stored?.offset !== "number" || typeof stored.anchor !== "string") {
     return null;
   }
-  if (!stored.anchor) return null;
-  if (text.startsWith(stored.anchor, stored.offset)) return stored.offset;
-  // Text davor geändert: den Anker suchen, das nächstgelegene Vorkommen gewinnt.
+  const at = resolveAnchor(text, stored.offset, stored.anchor);
+  return at !== null && at > 0 ? at : null;
+}
+
+/** Textanker ab `offset` (für Lesezeichen und Weiterlesen). */
+export const anchorAt = (text: string, offset: number): string =>
+  text.slice(offset, offset + ANCHOR);
+
+/**
+ * Stelle des Ankers im aktuellen Text: an der alten Position, sonst das
+ * nächstgelegene Vorkommen (Text davor geändert), sonst null.
+ */
+export function resolveAnchor(
+  text: string,
+  offset: number,
+  anchor: string,
+): number | null {
+  if (!anchor) return null;
+  if (text.startsWith(anchor, offset)) return offset;
   let best: number | null = null;
-  for (let i = text.indexOf(stored.anchor); i >= 0; i = text.indexOf(stored.anchor, i + 1)) {
-    if (best === null || Math.abs(i - stored.offset) < Math.abs(best - stored.offset)) {
+  for (let i = text.indexOf(anchor); i >= 0; i = text.indexOf(anchor, i + 1)) {
+    if (best === null || Math.abs(i - offset) < Math.abs(best - offset))
       best = i;
-    }
   }
-  return best !== null && best > 0 ? best : null;
+  return best;
 }

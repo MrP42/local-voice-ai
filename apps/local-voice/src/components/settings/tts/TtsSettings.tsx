@@ -75,6 +75,12 @@ import {
   loadResumePoint,
   saveResumePoint,
 } from "../../../lib/reader/resumePoint";
+import {
+  addBookmark,
+  loadBookmarks,
+  removeBookmark,
+  type Bookmark,
+} from "../../../lib/reader/bookmarks";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
@@ -96,6 +102,7 @@ import {
   type ReaderViewApi,
 } from "./reader/ReaderView";
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderToolbar } from "./reader/ReaderToolbar";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { toSpokenScript } from "@/lib/reader/spokenScript";
@@ -1170,6 +1177,40 @@ export const TtsSettings = () => {
       forgetResumePoint(sessionResumeKey.current);
     }
   }, [speakProgress]);
+  // Seite der gemerkten Stelle; pageInfo löst nach jedem Umbruch neu aus.
+  const resumePage = useMemo(() => {
+    if (resumeAt === null || pageInfo === null) return null;
+    const p = readerApiRef.current?.pageOfOffset(resumeAt);
+    return p === null || p === undefined ? null : p + 1;
+  }, [resumeAt, pageInfo]);
+  // Lesezeichen je Seite und Reiter.
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  useEffect(() => {
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+  }, [resumeKey, spokenText]);
+  const addBookmarkHere = () => {
+    // Beim Vorlesen die gelesene Stelle, sonst der Anfang der sichtbaren Seite.
+    const reading =
+      readRange && sessionResumeKey.current === resumeKey ? readRange.start : null;
+    const shown = pageInfo
+      ? readerApiRef.current?.offsetOfPage(pageInfo.currentPage ?? pageInfo.page)
+      : null;
+    const at = reading ?? shown ?? 0;
+    addBookmark(resumeKey, spokenText, at);
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+    toast.success(t("tts.reader.bookmarkSet"));
+  };
+  const goToBookmark = (b: Bookmark) => {
+    // Aufschlagen und als Weiterlesen-Stelle merken: Play liest ab dort.
+    setFollow(false);
+    readerApiRef.current?.revealOffset(b.offset);
+    saveResumePoint(resumeKey, spokenText, b.offset);
+    setResumeAt(loadResumePoint(resumeKey, spokenText));
+  };
+  const dropBookmark = (b: Bookmark) => {
+    removeBookmark(resumeKey, b.id);
+    setBookmarks(loadBookmarks(resumeKey, spokenText));
+  };
   // Beim Öffnen einer Seite die gemerkte Stelle aufschlagen.
   const revealedResumeFor = useRef<string | null>(null);
   useEffect(() => {
@@ -1841,6 +1882,15 @@ export const TtsSettings = () => {
                     onShowSpeakers={(show) => setSpeakersShown(show ? "1" : "0")}
                     follow={follow}
                     onFollow={setFollow}
+                    bookmarks={
+                      <ReaderBookmarks
+                        bookmarks={bookmarks}
+                        onAdd={addBookmarkHere}
+                        onGo={goToBookmark}
+                        onRemove={dropBookmark}
+                        pageOf={(o) => readerApiRef.current?.pageOfOffset(o) ?? null}
+                      />
+                    }
                   />
                 </div>
               </div>
@@ -2023,6 +2073,7 @@ export const TtsSettings = () => {
                 }}
                 onSleep={pauseSpeaking}
                 resumable={resumeAt !== null && !canResume && !speaking}
+                resumePage={resumePage}
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);

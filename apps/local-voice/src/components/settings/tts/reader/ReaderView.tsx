@@ -39,6 +39,8 @@ export interface ReaderViewApi {
   revealOffset(offset: number): void;
   /** Erste Quelle-Position, die auf dieser Seite sichtbar ist. */
   offsetOfPage(page: number): number | null;
+  /** Seite (0-basiert), auf der dieser Offset steht. */
+  pageOfOffset(offset: number): number | null;
 }
 
 interface ReaderViewProps {
@@ -302,6 +304,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       revealOffset: (offset: number) => {
         const p = pageOfElement(elementAt(offset));
         if (p !== null) setPage(clampPage(p));
+      },
+      pageOfOffset: (offset: number) => {
+        const p = pageOfElement(elementAt(offset));
+        return p === null ? null : clampPage(p);
       },
       offsetOfPage: (p: number) => {
         const flow = flowRef.current;

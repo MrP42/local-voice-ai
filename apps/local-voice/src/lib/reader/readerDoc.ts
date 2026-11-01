@@ -33,7 +33,8 @@ export interface ReaderRun {
   tag?: boolean;
 }
 
-export type ReaderBlockKind = "heading" | "paragraph" | "quote" | "item" | "rule";
+export type ReaderBlockKind =
+  "heading" | "paragraph" | "quote" | "item" | "rule";
 
 export interface ReaderSpeaker {
   name: string;
@@ -107,7 +108,14 @@ export function parseInline(text: string, offset: number): ReaderRun[] {
   let buf = "";
   let bufStart = offset;
   const flush = (at: number) => {
-    if (buf) runs.push({ text: buf, start: bufStart, end: offset + at, bold: bold || undefined, italic: italic || undefined });
+    if (buf)
+      runs.push({
+        text: buf,
+        start: bufStart,
+        end: offset + at,
+        bold: bold || undefined,
+        italic: italic || undefined,
+      });
     buf = "";
   };
   let i = 0;
@@ -118,7 +126,12 @@ export function parseInline(text: string, offset: number): ReaderRun[] {
       const nl = text.indexOf("\n", i + 1);
       if (close > i + 1 && (nl === -1 || close < nl)) {
         flush(i);
-        runs.push({ text: text.slice(i, close + 1), start: offset + i, end: offset + close + 1, tag: true });
+        runs.push({
+          text: text.slice(i, close + 1),
+          start: offset + i,
+          end: offset + close + 1,
+          tag: true,
+        });
         i = close + 1;
         bufStart = offset + i;
         continue;
@@ -172,7 +185,14 @@ export function parseReaderDoc(
     const line = text.slice(lineStart, lineEnd);
 
     if (RULE.test(line)) {
-      blocks.push({ kind: "rule", continues: false, marked: false, runs: [], start: lineStart, end: lineEnd });
+      blocks.push({
+        kind: "rule",
+        continues: false,
+        marked: false,
+        runs: [],
+        start: lineStart,
+        end: lineEnd,
+      });
     } else if (line.trim()) {
       for (const part of splitAtMarkers(line, lineStart, speakers)) {
         let body = part.text;
