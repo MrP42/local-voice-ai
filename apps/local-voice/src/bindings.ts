@@ -7778,6 +7778,10 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+/**
+ * Teiländerung: fehlende oder `null`-Felder bleiben unverändert, ein leerer Text leert
+ * ein optionales Feld.
+ */
 export type KontoAenderung = { anzeigename: string | null; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number | null }
 export type KontoAnmeldungDto = { issuer: string; subject: string; seitMs: number; idpFelder: string[] }
 export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; anmeldung: KontoAnmeldungDto | null }
