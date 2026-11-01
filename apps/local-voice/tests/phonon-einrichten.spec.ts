@@ -81,6 +81,8 @@ interface Opts {
   theme?: "light" | "dark";
   /** Schon eingerichtet (alle Downloads da, freigegeben). */
   installed?: boolean;
+  /** Nur diese Downloads sind da (Anbieter freigegeben), z. B. Programm und Deutsch. */
+  installedIds?: string[];
 }
 
 async function setup(page: Page, opts: Opts = {}) {
@@ -101,15 +103,16 @@ async function setup(page: Page, opts: Opts = {}) {
           callbacks.get(id)?.({ event, id, payload });
       };
       let access = opts.access === true;
-      if (opts.installed) {
+      if (opts.installed || opts.installedIds) {
         for (const d of downloads) {
+          if (opts.installedIds && !opts.installedIds.includes(d.id)) continue;
           d.is_downloaded = true;
           d.is_usable = true;
           d.bundled_voices_present = d.bundled_voices;
         }
       }
       const phonon = providers.find((p) => p.descriptor.id === "phonon");
-      if (opts.installed) {
+      if (opts.installed || opts.installedIds) {
         Object.assign(phonon, {
           enabled: true,
           license_acked: true,
@@ -661,6 +664,30 @@ test("Zugang aus dem System (hf auth): kein „Zugang entfernen“, stattdessen 
   await expect(page.getByTestId("phonon-setup-access-system")).toContainText(
     "hf auth",
   );
+});
+
+test("Deutsch schon da: Englisch ist vorgewählt und wird mit einem Klick nachgeladen", async ({
+  page,
+}) => {
+  await setup(page, { installedIds: ["phonon-runtime", "phonon-40m-de"] });
+  await page.goto("/");
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "Modelle", exact: true })
+    .click();
+  await page.getByTestId("tts-provider-open-phonon").click();
+  const panel = page.getByTestId("phonon-setup");
+  await expect(panel).toHaveAttribute("data-complete", "false");
+  await expect(
+    page.getByTestId("phonon-setup-choose-phonon-31m-en"),
+  ).toBeChecked();
+  // Englisch ist Apache-2.0 und nicht gesperrt: keine Lizenzbestätigung, kein Zugang nötig.
+  await expect(page.getByTestId("phonon-setup-license")).toHaveCount(0);
+  await expect(page.getByTestId("phonon-setup-access")).toHaveCount(0);
+  await page.getByTestId("phonon-setup-start").click();
+  const ids = (await named(page, "tts_download_model")).map(([, a]) => a.id);
+  expect(ids).toEqual(["phonon-31m-en"]);
+  await expect(panel).toHaveAttribute("data-complete", "true");
 });
 
 test("Eingerichtet: Status, eigene Stimmen und Aktionen zeigen denselben Stand", async ({

@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 
 use super::models::{TtsDownloadInfo, TtsDownloadKind};
 use super::providers::contract::LicenseInfo;
+use super::providers::phonon::PhononModelRef;
 use super::providers::policy::{InstalledPaths, InstalledPhonon};
 use crate::catalog::{self, PhononVoiceMeta, Purpose, TtsCatalogEntry};
 use crate::managers::model::download::{
@@ -62,6 +63,8 @@ const ENGINE: &str = "phonon";
 const MAX_EXE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_SMALL_BYTES: u64 = 4 * 1024 * 1024;
 /// Modelle in der Reihenfolge, in der der Adapter sie waehlt: das deutsche, sonst das englische.
+/// Sind beide installiert, ist das deutsche das Hauptmodell und das englische liest die englischen
+/// Stimmen (`InstalledPhonon::others`).
 const MODEL_PREFERENCE: [&str; 2] = ["phonon-40m-de", "phonon-31m-en"];
 
 // ---- Plattform, Pfade --------------------------------------------------------------
@@ -384,13 +387,48 @@ pub(crate) fn installed_paths(app_data: &Path) -> InstalledPaths {
         })
     });
     let models = model_entries();
-    let model = MODEL_PREFERENCE.iter().find_map(|id| {
-        let entry = models.iter().find(|e| e.id == *id)?;
-        model_complete(&dirs, entry).then(|| dirs.model_dir(id).to_string_lossy().into_owned())
-    });
+    let complete: Vec<&TtsCatalogEntry> = MODEL_PREFERENCE
+        .iter()
+        .filter_map(|id| models.iter().find(|e| e.id == *id))
+        .filter(|entry| model_complete(&dirs, entry))
+        .collect();
+    let dir_of = |entry: &TtsCatalogEntry| dirs.model_dir(&entry.id).to_string_lossy().into_owned();
+    let model = complete.first().map(|entry| dir_of(*entry));
     InstalledPaths {
-        phonon: InstalledPhonon { exe_path, model },
+        phonon: InstalledPhonon {
+            exe_path,
+            model,
+            others: other_models(&complete, dir_of),
+        },
     }
+}
+
+/// Die weiteren installierten Modelle neben dem ersten (je Sprache eins, die Sprache des ersten
+/// Modells nicht noch einmal): so liest Phonon mit dem deutschen Modell auch englisch.
+fn other_models(
+    complete: &[&TtsCatalogEntry],
+    dir_of: impl Fn(&TtsCatalogEntry) -> String,
+) -> Vec<PhononModelRef> {
+    let mut seen: Vec<String> = complete
+        .first()
+        .and_then(|e| e.languages.first().cloned())
+        .into_iter()
+        .collect();
+    let mut out = Vec::new();
+    for entry in complete.iter().skip(1) {
+        let Some(lang) = entry.languages.first() else {
+            continue;
+        };
+        if seen.contains(lang) {
+            continue;
+        }
+        seen.push(lang.clone());
+        out.push(PhononModelRef {
+            lang: lang.clone(),
+            model: dir_of(*entry),
+        });
+    }
+    out
 }
 
 /// Kennung und Ordner aller vollstaendig ueber die Modellseite installierten Katalog-Modelle
