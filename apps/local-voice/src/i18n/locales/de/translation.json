@@ -43,6 +43,7 @@
       "progress": "Fortschritt",
       "page": "Seite",
       "jumpToPage": "Zu Seite springen",
+      "chapterList": "Kapitel", "chapterListHint": "Kapitel wählen – springt zur Seite",
       "sentenceOf": "Satz {{position}} von {{count}}",
       "sleepTimer": "Timer",
       "contents": "Inhalt",
@@ -667,6 +668,7 @@
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
+      "filter": { "label": "Stimmen nach Sprache filtern", "auto": "Passend ({{language}})", "all": "Alle" },
       "scriptVoicesHint": "Die Sprecher im Skript lesen ihre Zeilen; Text ohne Sprecher liest die Standardstimme.",
       "singleVoiceHint": "Diese Stimme liest den ganzen Text – die Sprecher im Skript werden übergangen."
     },

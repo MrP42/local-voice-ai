@@ -5,6 +5,7 @@ import { useDialogPortalTarget } from "./Dialog";
 import type {
   ActionMeta,
   InputProps,
+  MenuListProps,
   Props as ReactSelectProps,
   SingleValue,
   StylesConfig,
@@ -46,6 +47,13 @@ type BaseProps = {
     option: SelectOption,
     context: "menu" | "value",
   ) => React.ReactNode;
+  /** Merkt sich die Scrollposition der offenen Liste unter diesem Schlüssel:
+   *  beim nächsten Öffnen steht sie wieder dort (Patrick 01.11., lange
+   *  Stimmenliste). Ohne gemerkte Stelle steht der gewählte Eintrag im Blick. */
+  menuScrollKey?: string;
+  /** Kopf über den Einträgen der offenen Liste (z. B. Filter-Chips). Klicks
+   *  darin schließen die Liste nicht. */
+  menuHeader?: React.ReactNode;
 };
 
 type CreatableProps = {
@@ -59,6 +67,97 @@ type NonCreatableProps = {
 };
 
 export type SelectProps = BaseProps & (CreatableProps | NonCreatableProps);
+
+/** Gemerkte Scrollpositionen je `menuScrollKey`, solange die App läuft. */
+const menuScrollTops = new Map<string, number>();
+
+type MenuExtras = { menuScrollKey?: string; menuHeader?: React.ReactNode };
+
+/** Liste mit gemerkter Scrollposition und optionalem Kopf. */
+const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
+  const { menuScrollKey, menuHeader } = props.selectProps as unknown as MenuExtras;
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const setRef = (el: HTMLDivElement | null) => {
+    ref.current = el;
+    const outer = props.innerRef;
+    if (typeof outer === "function") outer(el);
+    else if (outer) (outer as React.MutableRefObject<HTMLDivElement | null>).current = el;
+  };
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const saved = menuScrollKey ? menuScrollTops.get(menuScrollKey) : undefined;
+    // Zweimal: react-select scrollt nach dem Öffnen selbst zum Fokus-Eintrag.
+    const apply = () => {
+      if (saved !== undefined) {
+        el.scrollTop = saved;
+        return;
+      }
+      const selected = el.querySelector<HTMLElement>(
+        '[aria-selected="true"], .app-select__option--is-selected',
+      );
+      if (selected) {
+        el.scrollTop = Math.max(
+          0,
+          selected.offsetTop - el.clientHeight / 2 + selected.offsetHeight / 2,
+        );
+      }
+    };
+    apply();
+    // Einige Bilder lang wiederholen: react-select positioniert die Liste im
+    // Portal und scrollt danach selbst zum Fokus-Eintrag. Eigenes Scrollen
+    // (Rad, Tasten, Ziehen) beendet das sofort.
+    let frames = 6;
+    let id = 0;
+    const stop = () => {
+      frames = 0;
+    };
+    const tick = () => {
+      if (frames-- <= 0) return;
+      apply();
+      id = window.requestAnimationFrame(tick);
+    };
+    id = window.requestAnimationFrame(tick);
+    el.addEventListener("wheel", stop, { passive: true });
+    el.addEventListener("pointerdown", stop);
+    window.addEventListener("keydown", stop, true);
+    return () => {
+      window.cancelAnimationFrame(id);
+      el.removeEventListener("wheel", stop);
+      el.removeEventListener("pointerdown", stop);
+      window.removeEventListener("keydown", stop, true);
+    };
+    // Nur beim Öffnen (Einhängen der Liste), nicht bei jedem Neuzeichnen.
+  }, []);
+  return (
+    <>
+      {menuHeader && (
+        <div
+          className="app-select__menu-header"
+          // Klicks im Kopf nehmen dem Feld nicht den Fokus (Liste bleibt offen).
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
+          {menuHeader}
+        </div>
+      )}
+      <selectParts.MenuList
+        {...props}
+        innerRef={setRef}
+        innerProps={{
+          ...props.innerProps,
+          onScroll: (e: React.UIEvent<HTMLDivElement>) => {
+            if (menuScrollKey)
+              menuScrollTops.set(menuScrollKey, e.currentTarget.scrollTop);
+          },
+        }}
+      />
+    </>
+  );
+};
 
 // Optik wie Fluent Dropdown/Combobox (Leitlinie §6): Radius 4, neutraler
 // Rand, Unterkante als Akzentlinie, Fokus = 2px Markenlinie unten, Liste als
@@ -161,6 +260,8 @@ export const Select: React.FC<SelectProps> = React.memo(
     isCreatable,
     formatCreateLabel,
     onCreateOption,
+    menuScrollKey,
+    menuHeader,
   }) => {
     const dialogTarget = useDialogPortalTarget();
     const selectValue = React.useMemo(() => {
@@ -199,7 +300,11 @@ export const Select: React.FC<SelectProps> = React.memo(
       onChange: handleChange,
       placeholder,
       "aria-label": ariaLabel,
-      ...(describedInput ? { components: { Input: describedInput } } : {}),
+      components: {
+        ...(describedInput ? { Input: describedInput } : {}),
+        ...(menuScrollKey || menuHeader ? { MenuList: MenuListWithMemory } : {}),
+      },
+      ...({ menuScrollKey, menuHeader } as MenuExtras),
       isDisabled: disabled,
       isLoading,
       onBlur,

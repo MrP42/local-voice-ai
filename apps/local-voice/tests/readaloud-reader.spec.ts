@@ -1455,20 +1455,36 @@ test("Schreibregeln stehen hinter dem ⓘ-Knopf, nicht mehr rechts", async ({ pa
   await expect(panel).toHaveCount(0);
 });
 
-test("Vollbild-Knopf schaltet die Lesespalte in den Vollbildmodus", async ({ page }) => {
+test("Vollbild-Knopf füllt das Fenster, ohne es zu maximieren; F11 für echtes Vollbild", async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
-  await open(page);
+  await open(page, BOOK, 1200);
   const btn = page.getByTestId("reader-fullscreen");
   await expect(btn).toHaveAttribute("aria-label", "Vollbild");
   await btn.click();
+  // Kein Bildschirm-Vollbild: die Lesespalte deckt nur das Fenster ab.
+  expect(await page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+  const frame = page.locator(".reader-frame");
+  await expect(frame).toHaveAttribute("data-fullscreen", "1");
+  const box = (await frame.boundingBox())!;
+  expect(box.x).toBeLessThanOrEqual(1);
+  expect(box.y).toBeLessThanOrEqual(1);
+  expect(box.width).toBeGreaterThanOrEqual(1198);
+  expect(box.height).toBeGreaterThanOrEqual(898);
+  await expect(page.getByTestId("reader-player")).toBeInViewport();
+  await expect(btn).toHaveAttribute("aria-label", "Vollbild beenden");
+  // Escape beendet es.
+  await page.locator("body").press("Escape");
+  await expect(frame).not.toHaveAttribute("data-fullscreen", "1");
+  // F11: echtes Vollbild der Lesespalte, der Knopf beendet es.
+  await page.keyboard.press("F11");
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement?.className ?? ""))
     .toContain("reader-frame");
-  await expect(btn).toHaveAttribute("aria-label", "Vollbild beenden");
   await btn.click();
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement === null))
     .toBe(true);
+  await expect(frame).not.toHaveAttribute("data-fullscreen", "1");
 });
 
 test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ page }) => {
@@ -1680,19 +1696,21 @@ test("Wechsel ein-/zweiseitig blättert nicht animiert", async ({ page }) => {
   expect(await page.evaluate(() => (window as unknown as { __turned: boolean }).__turned)).toBe(false);
 });
 
+// Patrick 01.11. 23:08: Wiedergabe wieder mittig, Werkzeuge rechtsbündig.
 for (const hidden of ["0", "1"])
-  test(`Wiedergabe rechtsbündig, Spalte ${hidden === "1" ? "aus" : "ein"}geblendet`, async ({ page }) => {
+  test(`Wiedergabe mittig, Spalte ${hidden === "1" ? "aus" : "ein"}geblendet`, async ({ page }) => {
     await page.addInitScript((h) => {
       window.localStorage.setItem("lva.ui.tts.view", "read");
       window.localStorage.setItem("lva.ui.tts.rightHidden", h);
     }, hidden);
-    await open(page);
+    await open(page, BOOK, 1920);
     const box = (s: string) => page.locator(s).first().boundingBox().then((b) => b!);
     const ctrls = await box(".reader-player__ctrls");
     const media = await box(".reader-player__ctrls > .mediabar");
     const tools = await box(".reader-player__tools");
     expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width))).toBeLessThan(2);
-    expect(tools.x - (media.x + media.width)).toBeLessThan(12);
+    const mid = (b: { x: number; width: number }) => b.x + b.width / 2;
+    expect(Math.abs(mid(media) - mid(ctrls))).toBeLessThan(3);
   });
 
 test("Sprecher allein auf der Zeile: Name steht am folgenden Text", async ({ page }) => {
@@ -1723,3 +1741,55 @@ for (const width of [900, 1000, 1150, 1300])
     expect(play.y + play.height).toBeLessThanOrEqual(box.y + box.height + 1);
     expect(box.height).toBeLessThan(70);
   });
+
+// Patrick 01.11. 23:08: Kapitel unten links anklickbar, Liste mit Seiten, Sprung.
+const CHAPTERS = [1, 2, 3]
+  .map(
+    (n) =>
+      `# Kapitel ${n}\n\n` +
+      Array.from(
+        { length: 30 },
+        (_, i) =>
+          `Absatz ${i + 1} in Kapitel ${n}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.`,
+      ).join("\n\n"),
+  )
+  .join("\n\n");
+
+test("Kapitel in der Leiste öffnet die Kapitelliste mit Seiten und springt", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, CHAPTERS, 1440);
+  const chapter = page.getByTestId("reader-where").getByTestId("reader-chapter");
+  await expect(chapter).toContainText("Kapitel 1");
+  await expect(chapter).toHaveAttribute("aria-expanded", "false");
+  await chapter.click();
+  const list = page.getByTestId("reader-chapter-list");
+  await expect(list).toBeVisible();
+  const entries = list.getByTestId("reader-chapter-entry");
+  await expect(entries).toHaveCount(3);
+  await expect(entries.nth(0)).toHaveAttribute("aria-current", "location");
+  // Jede Zeile nennt die Seite.
+  await expect(entries.nth(2)).toContainText(/Kapitel 3\s*\d+/);
+  const target = Number((await entries.nth(2).locator(".reader-player__chapters-page").textContent())!.trim());
+  // Fokus auf dem aktuellen Kapitel, Pfeiltasten wandern.
+  await expect(entries.nth(0)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(entries.nth(1)).toBeFocused();
+  await entries.nth(2).click();
+  await expect(list).toHaveCount(0);
+  await expect(chapter).toContainText("Kapitel 3");
+  await expect(page.getByTestId("reader-where")).toContainText(`Seite ${target} von`);
+  // Escape schließt die Liste und gibt den Fokus zurück.
+  await chapter.click();
+  await expect(list).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(list).toHaveCount(0);
+  await expect(chapter).toBeFocused();
+});
+
+test("Stimmenauswahl: kein Hover-Hinweis über der Liste", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  await page.getByTestId("voice-select").hover();
+  await page.waitForTimeout(800);
+  await expect(page.getByRole("tooltip").filter({ hasText: "Sprecher im Skript" })).toHaveCount(0);
+});
