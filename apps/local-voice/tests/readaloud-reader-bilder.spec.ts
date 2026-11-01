@@ -93,6 +93,8 @@ test.beforeEach(async ({ page }) => {
               tab: "original",
             });
           if (cmd === "page_dir") return "C:\\projects\\p1";
+          if (cmd === "tts_list_voice_infos")
+            return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
           if (cmd === "tts_cached_translation") return null;
           if (cmd === "tts_list_downloads") return [];
           if (
@@ -136,8 +138,17 @@ const BOOK = [
   "<Mara> Das ist der letzte Satz des Buches.",
 ].join("\n");
 
+const VOICES = [
+  { id: "v-erz", meta: { display_name: "Erzählerin", color: "amber", language: "de" } },
+  { id: "v-mara", meta: { display_name: "Mara", color: "teal", language: "de" } },
+  { id: "v-tom", meta: { display_name: "Tom", color: "violet", language: "de" } },
+];
+
 const open = async (page: Page, text = BOOK, width = 1440) => {
   await page.setViewportSize({ width, height: 900 });
+  await page.addInitScript((v) => {
+    (window as unknown as { __voices: unknown[] }).__voices = v;
+  }, VOICES);
   await page.addInitScript((t) => {
     (window as unknown as { __pageText: string }).__pageText = t;
     window.localStorage.removeItem("lva.ui.tts.view");
@@ -329,6 +340,30 @@ for (const theme of ["light", "dark"]) {
         await page.waitForTimeout(200);
         await page.screenshot({ path: `${DIR}/inhalt-spieler-menue-${theme}-${width}.png` });
       }
+    });
+  }
+}
+
+// Sprecherfarben, Typografie und „Stimme zuweisen“ in der Fundleiste (lva#159).
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 768, 390]) {
+    test(`bild stimme-zuweisen ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await open(page, BOOK, width === 390 ? 1440 : width);
+      if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("reader-flow").waitFor();
+      await page.getByTestId("tts-action-menu").click();
+      await page.getByTestId("script-check-run").click();
+      await page.getByTestId("script-check").waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${DIR}/stimme-zuweisen-${theme}-${width}.png` });
+      await page.getByTestId("script-assign-voice").click();
+      await page.getByTestId("script-assign-voice-menu").waitFor();
+      await page.screenshot({ path: `${DIR}/stimme-zuweisen-${theme}-${width}-menue.png` });
     });
   }
 }

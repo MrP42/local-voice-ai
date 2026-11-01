@@ -10,6 +10,7 @@ import React, {
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight, LocateFixed } from "lucide-react";
 import type { SpeakerRef } from "@/lib/voices/speakerMarkers";
+import { providerSpeakerColor } from "../speakers/speakerProvider";
 import {
   parseReaderDoc,
   type ReaderBlock,
@@ -65,7 +66,7 @@ interface ReaderViewProps {
 
 /** Mindestbreite des Textes einer Seite, ab der zwei Seiten nebeneinander stehen. */
 const MIN_TWO_PAGE_TEXT = 340;
-const PAGE_PAD = 40;
+const PAGE_PAD = 52;
 const PAGE_PAD_NARROW = 16;
 const NARROW = 560;
 
@@ -436,12 +437,16 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               );
             }
             const speaker = block.speaker;
-            const color = speaker?.ref?.color ?? "var(--color-mid-gray)";
+            // Ohne Stimme trotzdem farbig (stabil je Name), damit man die
+            // Sprecher im Buch auseinanderhält; der Strich ist dann gestrichelt.
+            const color =
+              speaker?.ref?.color ??
+              (speaker ? providerSpeakerColor(speaker.name.toLowerCase()) : "var(--color-mid-gray)");
             const Tag = (block.kind === "quote" ? "blockquote" : block.kind === "item" ? "div" : "p") as "p";
             return (
               <Tag
                 key={key}
-                className={`reader-block reader-${block.kind}${block.continues ? " reader-cont" : ""}`}
+                className={`reader-block reader-${block.kind}${block.continues ? " reader-cont" : ""}${speaker && !speaker.ref ? " reader-block--novoice" : ""}`}
                 style={{ "--speaker-c": color } as React.CSSProperties}
               >
                 {speaker && showSpeakers && (

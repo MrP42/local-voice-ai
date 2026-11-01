@@ -911,6 +911,9 @@
       "importCancel": "Cancel"
     },
     "scriptCheck": {
+      "assignVoice": "Assign voice",
+      "assignVoiceTitle": "Use a voice for “{{name}}” at all {{count}} spots",
+      "assignVoiceNone": "No voice set up yet",
       "spotShort": "{{index}} / {{count}}",
       "firstSpot": "First spot",
       "lastSpot": "Last spot",

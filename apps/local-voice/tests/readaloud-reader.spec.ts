@@ -97,6 +97,8 @@ test.beforeEach(async ({ page }) => {
             return (window as unknown as { __pick?: string }).__pick ?? null;
           if (cmd === "tts_extract_document")
             return (window as unknown as { __extracted?: string }).__extracted ?? "";
+          if (cmd === "tts_list_voice_infos")
+            return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
           if (cmd === "tts_cached_translation") return null;
           if (cmd === "tts_list_downloads") return [];
           if (
@@ -753,4 +755,72 @@ test("Import auf einer Seite mit Text benennt die Seite nicht um", async ({ page
   await expect.poll(async () => (await calls(page, "tts_extract_document")).length).toBe(1);
   await page.waitForTimeout(300);
   expect(await calls(page, "pages_rename")).toHaveLength(0);
+});
+
+test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __voices: unknown[] }).__voices = [
+      { id: "v-erz", meta: { display_name: "Erzählerin", color: "amber", language: "de" } },
+      { id: "v-mara", meta: { display_name: "Mara", color: "teal", language: "de" } },
+    ];
+  });
+  const text = [
+    "<Erzählerin> Der Leuchtturm stand auf der Klippe.",
+    "",
+    "<Mara> Noch zwölf Stufen.",
+    "",
+    "<Bob> Ich habe keine Stimme.",
+    "",
+    "<Bob> Noch einmal Bob.",
+  ].join("\n");
+  await open(page, text);
+  const flow = page.getByTestId("reader-flow");
+  const mara = flow.locator(".reader-block", { hasText: "Noch zwölf Stufen" });
+  const bob = flow.locator(".reader-block", { hasText: "Ich habe keine Stimme" });
+  // Bekannte Stimme: ihre Farbe am Rand. Ohne Stimme: trotzdem farbig, aber gestrichelt.
+  await expect(mara).toHaveAttribute("style", /--speaker-c: #14b8a6/);
+  await expect(mara).not.toHaveClass(/reader-block--novoice/);
+  await expect(bob).toHaveClass(/reader-block--novoice/);
+  await expect(bob).not.toHaveAttribute("style", /mid-gray/);
+  // Die kleinen Namen am Rand erreichen WCAG AA (4,5:1) auf der Buchseite.
+  const ratios = await page.evaluate(() => {
+    const rgb = (css: string) => {
+      const n = css.match(/[\d.]+/g)!.map(Number);
+      return css.startsWith("color(") ? n.slice(0, 3) : n.slice(0, 3).map((v) => v / 255);
+    };
+    const lum = (c: number[]) =>
+      c
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const bg = lum(rgb(getComputedStyle(document.querySelector(".reader-book")!).backgroundColor));
+    return Array.from(document.querySelectorAll(".reader-who")).map((el) => {
+      const fg = lum(rgb(getComputedStyle(el).color));
+      return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+    });
+  });
+  expect(ratios.length).toBeGreaterThan(0);
+  for (const r of ratios) expect(r).toBeGreaterThanOrEqual(4.5);
+
+  await page.getByTestId("tts-action-menu").click();
+  await page.getByTestId("script-check-run").click();
+  await expect(page.getByTestId("script-check")).toContainText("Bob");
+  const assign = page.getByTestId("script-assign-voice");
+  await expect(assign).toBeEnabled();
+  await assign.click();
+  const menu = page.getByTestId("script-assign-voice-menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Erzählerin", "Mara"]);
+  // Pfeiltasten und Escape bedienen das Menü.
+  await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitem", { name: "Mara" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(assign).toBeFocused();
+
+  await assign.click();
+  await menu.getByRole("menuitem", { name: "Mara" }).click();
+  // Alle Stellen von Bob sprechen jetzt mit Maras Stimme.
+  await expect(flow.locator(".reader-block--novoice")).toHaveCount(0);
+  await expect(flow.getByRole("button", { name: /Sprecher Bob/ })).toHaveCount(0);
+  await expect(flow.getByRole("button", { name: /Sprecher Mara/ })).toHaveCount(3);
 });

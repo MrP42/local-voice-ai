@@ -911,6 +911,9 @@
       "importCancel": "Abbrechen"
     },
     "scriptCheck": {
+      "assignVoice": "Stimme zuweisen",
+      "assignVoiceTitle": "Stimme für „{{name}}“ an allen {{count}} Stellen setzen",
+      "assignVoiceNone": "Noch keine Stimme eingerichtet",
       "spotShort": "{{index}} / {{count}}",
       "firstSpot": "Erste Stelle",
       "lastSpot": "Letzte Stelle",

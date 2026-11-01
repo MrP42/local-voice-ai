@@ -37,8 +37,8 @@
 .reader-run {
   position: absolute;
   top: 10px;
-  left: 40px;
-  right: 40px;
+  left: 52px;
+  right: 52px;
   font-size: 11.5px;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -47,13 +47,13 @@
 }
 .reader-flow {
   position: absolute;
-  top: 34px;
-  bottom: 34px;
+  top: 42px;
+  bottom: 40px;
   column-fill: auto;
   transition: transform 0.3s ease;
   font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   font-size: var(--reader-fs, 18px);
-  line-height: 1.62;
+  line-height: 1.72;
   hyphens: auto;
   text-align: justify;
   outline: none;
@@ -76,6 +76,14 @@
   text-align: left;
   break-after: avoid;
 }
+/* Kapitel (# und ##) beginnen wie im gedruckten Buch auf einer neuen Seite.
+   Folgt eine Überschrift direkt auf eine andere („# Teil 1“, „## Kapitel 1“),
+   bleiben beide zusammen, sonst stünde der Teil allein auf einer Seite. */
+.reader-flow > :not(h2, h3) + h2,
+.reader-flow > :not(h2, h3) + h3 {
+  break-before: column;
+  margin-top: 1.2em;
+}
 .reader-h1 {
   font-size: 1.5em;
 }
@@ -96,7 +104,7 @@
 }
 .reader-block {
   position: relative;
-  margin: 0 0 0.7em;
+  margin: 0 0 0.9em;
   padding-left: 96px;
   padding-right: 8px;
   orphans: 2;
@@ -123,6 +131,14 @@
   border-radius: 2px;
   background: var(--speaker-c);
 }
+/* Sprecher ohne eingerichtete Stimme: Farbe bleibt, der Strich ist gestrichelt. */
+.reader-block--novoice > .reader-bar {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--speaker-c) 0 5px,
+    transparent 5px 9px
+  );
+}
 .reader-who {
   position: absolute;
   left: 0;
@@ -132,7 +148,10 @@
   border: 0;
   border-radius: 3px;
   background: transparent;
-  color: var(--speaker-c);
+  /* Kleine Schrift braucht mehr Kontrast als der Strich (WCAG AA 4,5:1):
+     zur Textfarbe hin gemischt, also hell abgedunkelt und dunkel aufgehellt.
+     Der Strich behält die Stimmfarbe. */
+  color: color-mix(in srgb, var(--speaker-c) 50%, var(--color-text));
   font:
     600 12px/1.3 "Segoe UI",
     system-ui,
