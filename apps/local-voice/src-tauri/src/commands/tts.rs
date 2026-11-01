@@ -1264,3 +1264,11 @@ pub fn tts_rename_voice_id(
     log::info!("Stimme '{old_id}' nach '{new_id}' umbenannt");
     Ok(new_id)
 }
+
+/// Bildschirm wach halten (Sonnen-Knopf im Vorlesen) oder freigeben.
+/// `true`, wenn das Betriebssystem die Anzeige jetzt wach hält.
+#[tauri::command]
+#[specta::specta]
+pub fn screen_keep_awake(on: bool) -> Result<bool, String> {
+    crate::keep_awake::set(on)
+}

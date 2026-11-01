@@ -17,6 +17,7 @@ import {
   type ReaderRun,
 } from "@/lib/reader/readerDoc";
 import type { SourceRange } from "@/lib/reader/sentenceLocator";
+import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
 import "./reader.css";
 
 /** Eine markierte Stelle (Befund) im Seitentext. */
@@ -49,9 +50,13 @@ interface ReaderViewProps {
   speakers: SpeakerRef[];
   lang?: string;
   current: SourceRange | null;
+  /** Laufender Satz: daraus die Stelle, die gerade zu hören ist (Wort). */
+  clock?: SentenceClock | null;
   marks?: ReaderMark[];
   twoPages: boolean;
   fontSize: number;
+  /** Leseschrift (book | sans | wide). */
+  fontFamily?: string;
   showSpeakers: boolean;
   /** Seite folgt dem gelesenen Satz. Blättert der Nutzer selbst, endet das. */
   follow: boolean;
@@ -84,19 +89,54 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | null {
   return p ? { node: p.offsetNode, offset: p.offset } : null;
 }
 
-type Piece = { text: string; start: number; cur: boolean; mark?: ReaderMark };
+type Piece = {
+  text: string;
+  start: number;
+  cur: boolean;
+  word: boolean;
+  mark?: ReaderMark;
+};
+
+/** Das Wort, in dem `at` liegt (bis zum nächsten Leerraum). */
+export function wordAt(text: string, at: number, within: SourceRange): SourceRange {
+  let start = Math.max(within.start, Math.min(at, within.end - 1));
+  // Auf Leerraum gelandet: zum nächsten Wort vor.
+  while (start < within.end - 1 && /\s/.test(text[start])) start++;
+  while (start > within.start && !/\s/.test(text[start - 1])) start--;
+  let end = start;
+  while (end < within.end && !/\s/.test(text[end])) end++;
+  return { start, end: Math.max(end, start + 1) };
+}
+
+/** Seitenstand je Text, damit die Ansicht beim Zurückkehren dort steht, wo
+ *  sie war — ohne Umblättern von Seite 1 her. */
+const lastPages = new Map<string, number>();
+const LAST_PAGES_MAX = 50;
+
+/** Kurzer Fingerabdruck des Texts (FNV-1a), damit gleich lange Texte mit
+ *  gleichem Titel (Original/Übersetzung) nicht dieselbe Seite teilen. */
+function textKey(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${text.length}:${(h >>> 0).toString(36)}`;
+}
 
 /** Einen Lauf an den Grenzen von Hervorhebung und Befunden zerteilen. */
 function piecesOf(
   run: ReaderRun,
   current: SourceRange | null,
   marks: ReaderMark[],
+  word: SourceRange | null,
 ): Piece[] {
   const cuts = new Set<number>([run.start, run.end]);
   const inside = (o: number) => o > run.start && o < run.end;
-  if (current) {
-    if (inside(current.start)) cuts.add(current.start);
-    if (inside(current.end)) cuts.add(current.end);
+  for (const r of [current, word]) {
+    if (!r) continue;
+    if (inside(r.start)) cuts.add(r.start);
+    if (inside(r.end)) cuts.add(r.end);
   }
   for (const m of marks) {
     if (m.end <= run.start || m.start >= run.end) continue;
@@ -112,6 +152,7 @@ function piecesOf(
       text: run.text.slice(a - run.start, b - run.start),
       start: a,
       cur: !!current && a >= current.start && b <= current.end,
+      word: !!word && a >= word.start && b <= word.end,
       mark: marks.find((m) => a >= m.start && b <= m.end),
     });
   }
@@ -122,7 +163,8 @@ const Runs: React.FC<{
   block: ReaderBlock;
   current: SourceRange | null;
   marks: ReaderMark[];
-}> = ({ block, current, marks }) => {
+  word: SourceRange | null;
+}> = ({ block, current, marks, word }) => {
   const { t } = useTranslation();
   return (
     <>
@@ -140,10 +182,11 @@ const Runs: React.FC<{
             </span>
           );
         if (run.tag) return null;
-        const pieces = piecesOf(run, current, marks);
+        const pieces = piecesOf(run, current, marks, word);
         const inner = pieces.map((p) => {
           const cls = [
             p.cur ? "reader-cur" : "",
+            p.word ? "reader-word" : "",
             p.mark ? "reader-mark" : "",
             p.mark?.selected ? "reader-mark--sel" : "",
           ]
@@ -155,6 +198,7 @@ const Runs: React.FC<{
               data-start={p.start}
               className={cls || undefined}
               data-cur={p.cur ? "" : undefined}
+              data-word={p.word ? "" : undefined}
               data-mark={p.mark?.selected ? "" : undefined}
             >
               {p.text}
@@ -189,9 +233,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   speakers,
   lang,
   current,
+  clock = null,
   marks = [],
   twoPages,
   fontSize,
+  fontFamily = "book",
   showSpeakers,
   follow,
   onFollowChange,
@@ -213,15 +259,73 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     pages: 1,
     narrow: false,
   });
-  const [page, setPage] = useState(0);
+  const textId = useMemo(() => textKey(text), [text]);
+  const pageKey = `${title ?? ""}:${textId}`;
+  const [page, setPageRaw] = useState(() => lastPages.get(pageKey) ?? 0);
+  // Animiert wird nur echtes Blättern (Knopf, Taste, Wischen, Mitblättern) —
+  // nicht das Wiederherstellen nach einem App-Wechsel oder ein neuer Umbruch
+  // nach einer Einstellung.
+  const [animate, setAnimate] = useState(false);
+  // Nicht animierte Wechsel (Umbruch, Sprung, Wiederherstellen) beenden eine
+  // noch laufende Blätter-Animation, statt in ihr mitzugleiten.
+  const setPage = useCallback((next: React.SetStateAction<number>) => {
+    setAnimate(false);
+    setPageRaw(next);
+  }, []);
+  const turnTo = useCallback((next: React.SetStateAction<number>) => {
+    setPageRaw((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      if (value !== prev) setAnimate(true);
+      return value;
+    });
+  }, []);
+  useEffect(() => {
+    if (!animate) return;
+    const id = window.setTimeout(() => setAnimate(false), 400);
+    return () => window.clearTimeout(id);
+  }, [animate, page]);
+  // Text oder Titel kommen oft erst nach dem ersten Rendern: dann den
+  // gemerkten Stand dieses Texts holen (ohne Animation).
+  const pageKeyRef = useRef(pageKey);
+  const titleRef = useRef(title);
+  useLayoutEffect(() => {
+    if (pageKeyRef.current === pageKey) return;
+    pageKeyRef.current = pageKey;
+    const saved = lastPages.get(pageKey);
+    const otherDoc = titleRef.current !== title;
+    titleRef.current = title;
+    // Gemerkter Stand gewinnt; ein anderes Dokument beginnt vorn, eine
+    // Änderung am selben Text behält die Seite (die Klammer greift danach).
+    if (saved !== undefined) setPage(saved);
+    else if (otherDoc) setPage(0);
+  }, [pageKey, title, setPage]);
+  useEffect(() => {
+    lastPages.delete(pageKeyRef.current);
+    lastPages.set(pageKeyRef.current, page);
+    if (lastPages.size > LAST_PAGES_MAX) {
+      const oldest = lastPages.keys().next().value;
+      if (oldest !== undefined) lastPages.delete(oldest);
+    }
+  }, [page]);
   const step = geo.colW + geo.gap;
+
+  // Die gerade hörbare Stelle: Anteil des Satzes nach Zeit, auf das Wort
+  // gerundet. Ohne Satzdauer (ältere Engine) bleibt es beim Satz.
+  const within = useSentenceClock(current ? clock : null);
+  const word = useMemo(() => {
+    if (!current || !clock || current.end <= current.start) return null;
+    const at = current.start + Math.floor(within * (current.end - current.start));
+    return wordAt(text, at, current);
+  }, [current, clock, within, text]);
 
   const pageOfElement = useCallback(
     (el: Element | null): number | null => {
       const flow = flowRef.current;
       if (!el || !flow || step <= 0) return null;
       // Beide Rechtecke tragen die Verschiebung; die Differenz ist die Lage im Fluss.
-      const x = el.getBoundingClientRect().left - flow.getBoundingClientRect().left;
+      // Erstes Rechteck: ein über die Seiten umbrochenes Wort beginnt dort.
+      const rect = el.getClientRects()[0] ?? el.getBoundingClientRect();
+      const x = rect.left - flow.getBoundingClientRect().left;
       return Math.max(0, Math.min(geo.pages - 1, Math.floor((x + 2) / step)));
     },
     [step, geo.pages],
@@ -272,7 +376,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   useLayoutEffect(() => {
     measure();
-  }, [measure, blocks, fontSize]);
+  }, [measure, blocks, fontSize, fontFamily]);
 
   useEffect(() => {
     const book = bookRef.current;
@@ -291,24 +395,32 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   // Nach neuem Umbruch die gelesene Stelle wieder zeigen.
   useLayoutEffect(() => {
+    // Vor der ersten Messung kennt die Ansicht nur eine Seite — ein
+    // gemerkter Stand fiele sonst auf Seite 1 zurück.
+    if (geo.colW <= 0) return;
     setPage((p) => clampPage(p));
   }, [geo, clampPage]);
 
-  const curEl = () => flowRef.current?.querySelector("[data-cur]") ?? null;
+  // Die hörbare Stelle: das Wort, sonst der Satzanfang.
+  const curEl = () =>
+    flowRef.current?.querySelector("[data-word]") ??
+    flowRef.current?.querySelector("[data-cur]") ??
+    null;
 
-  // Mitblättern: verlässt der gelesene Satz die sichtbaren Seiten, folgt die Ansicht.
+  // Mitblättern wortgenau: umgeblättert wird, wenn das Wort, das gerade zu
+  // hören ist, auf der nächsten Seite steht — auch mitten im Satz.
   useLayoutEffect(() => {
     if (!follow || !current) return;
     const p = pageOfElement(curEl());
     if (p === null) return;
-    if (p < page || p >= page + geo.perView) setPage(clampPage(p));
-  }, [current, follow, geo, pageOfElement, clampPage]);
+    if (p < page || p >= page + geo.perView) turnTo(clampPage(p));
+  }, [current, word, follow, geo, pageOfElement, clampPage]);
 
   // Nach dem Commit messen: im Render stünde noch das DOM der Vorgängerfassung.
   const [currentPage, setCurrentPage] = useState<number | null>(null);
   useLayoutEffect(() => {
     setCurrentPage(current ? pageOfElement(curEl()) : null);
-  }, [current, geo, pageOfElement]);
+  }, [current, word, geo, pageOfElement]);
   useEffect(() => {
     onPageInfo?.({ page, pages: geo.pages, perView: geo.perView, currentPage });
   }, [page, geo.pages, geo.perView, currentPage, onPageInfo]);
@@ -316,7 +428,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   useImperativeHandle(
     apiRef,
     () => ({
-      goToPage: (p: number) => setPage(clampPage(p)),
+      goToPage: (p: number) => turnTo(clampPage(p)),
       revealOffset: (offset: number) => {
         const p = pageOfElement(elementAt(offset));
         if (p !== null) setPage(clampPage(p));
@@ -334,11 +446,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         return null;
       },
     }),
-    [clampPage, pageOfElement, elementAt],
+    [clampPage, pageOfElement, elementAt, turnTo],
   );
 
   const turn = (dir: number) => {
-    setPage((p) => clampPage(p + dir * geo.perView));
+    turnTo((p) => clampPage(p + dir * geo.perView));
     if (current) onFollowChange(false);
   };
 
@@ -397,6 +509,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
         style={{ "--reader-fs": `${fontSize}px` } as React.CSSProperties}
         data-testid="reader-book"
+        data-font={fontFamily}
         data-pages={geo.pages}
         data-per-view={geo.perView}
         data-page={page}
@@ -408,7 +521,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         )}
         <div
           ref={flowRef}
-          className="reader-flow"
+          className={`reader-flow${animate ? " reader-flow--turning" : ""}`}
           lang={lang}
           role="document"
           aria-label={t("tts.reader.label")}
@@ -447,7 +560,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               const Tag = (block.level === 1 ? "h2" : block.level === 2 ? "h3" : "h4") as "h2";
               return (
                 <Tag key={key} className={`reader-h${block.level ?? 1}`}>
-                  <Runs block={block} current={current} marks={marks} />
+                  <Runs block={block} current={current} marks={marks} word={word} />
                 </Tag>
               );
             }
@@ -480,7 +593,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   </>
                 )}
                 {block.kind === "item" && <span className="reader-dot" aria-hidden="true">•</span>}
-                <Runs block={block} current={current} marks={marks} />
+                <Runs block={block} current={current} marks={marks} word={word} />
               </Tag>
             );
           })}
