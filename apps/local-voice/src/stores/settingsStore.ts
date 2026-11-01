@@ -307,6 +307,9 @@ const settingUpdaters: {
     commands.changeMeetingMcpEnabledSetting(value as boolean),
   meeting_mcp_include_transcript: (value) =>
     commands.changeMeetingMcpIncludeTranscriptSetting(value as boolean),
+  // Sprachgespräch Stufe 2
+  voice_call_read_transcripts: (value) =>
+    commands.changeVoiceCallReadTranscriptsSetting(value as boolean),
   // A2 (YouTube)
   meeting_youtube_private: (value) =>
     commands.changeMeetingYoutubePrivateSetting(value as boolean),

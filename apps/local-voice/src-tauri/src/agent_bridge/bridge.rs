@@ -839,7 +839,7 @@ fn denied_error(gate_code: &str, reason: &str) -> BridgeError {
 }
 
 /// Fuehrt den Handler aus: Panik wird zu einem Fehler, zu grosse Antworten werden ersetzt.
-fn run_handler(
+pub(super) fn run_handler(
     handler: &dyn catalog::ToolHandler,
     ctx: &CallContext,
     tool: &str,

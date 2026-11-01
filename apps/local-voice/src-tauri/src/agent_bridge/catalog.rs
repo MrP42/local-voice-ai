@@ -32,7 +32,8 @@ pub struct CatalogEntry {
     pub description: &'static str,
 }
 
-/// Alle Werkzeuge, die ein Zugang freischalten kann (schreibende Werkzeuge der Agentenbruecke).
+/// Alle Werkzeuge, die ein Zugang freischalten kann (lesende und schreibende Werkzeuge der Agentenbruecke;
+/// lesend heisst: die Faehigkeit hat `Access::Read`, die Annotation `readOnlyHint` folgt daraus).
 /// `stop_recording` teilt sich das Recht mit `start_recording` („Aufnahme steuern“): ein Agent,
 /// der Aufnahmen beenden darf, kann Besprechungen stoeren, auch wenn er keine starten darf.
 pub const CATALOG: &[CatalogEntry] = &[
@@ -131,6 +132,24 @@ pub const CATALOG: &[CatalogEntry] = &[
         capability: Capability::WorkflowRead,
         title: "Laufprotokoll lesen",
         description: "Liest das Protokoll eines Laufs: Zustand, Schritte, Fehler (ohne Geheimnisse und ohne Auslöserdaten).",
+    },
+    CatalogEntry {
+        name: "meetings_list",
+        capability: Capability::MeetingRead,
+        title: "Besprechungen auflisten",
+        description: "Listet fertige Besprechungen mit Titel, Datum und Dauer, neueste zuerst (nur lesend).",
+    },
+    CatalogEntry {
+        name: "meetings_search",
+        capability: Capability::MeetingRead,
+        title: "Besprechungen durchsuchen",
+        description: "Volltextsuche über Titel, Notizen und Transkript fertiger Besprechungen (nur lesend; Transkript-Treffer nur mit Freigabe).",
+    },
+    CatalogEntry {
+        name: "meeting_transcript",
+        capability: Capability::MeetingRead,
+        title: "Transkript lesen",
+        description: "Liest das Transkript einer fertigen Besprechung seitenweise (nur lesend, nur mit Transkript-Freigabe).",
     },
     CatalogEntry {
         name: "run_workflow",

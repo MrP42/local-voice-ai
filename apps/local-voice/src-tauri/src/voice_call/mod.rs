@@ -11,6 +11,8 @@
 //! * `voice_call_transcribe`: ein Stück Sprache (16 kHz, mono, PCM16) erkennen.
 //! * `voice_call_chat`: Antwort des aktiven Sprachmodells als Strom, schon
 //!   beim Eintreffen in sprechbare Häppchen zerlegt (`sentences`).
+//! * `turn::voice_call_turn`: ein Durchgang eines Modells als roher Textstrom für den
+//!   Orchestrator (Stufe 2), wahlweise mit einem zweiten Modell (Denker).
 //! * `voice_call_synthesize`: ein Häppchen mit der eingestellten Stimme
 //!   (Standard: Anton) zu WAV.
 //!
@@ -19,6 +21,7 @@
 //! Texte und Audio stehen nie im Log.
 
 pub mod sentences;
+pub mod turn;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -168,14 +171,8 @@ pub async fn voice_call_chat(
     request_id: String,
     messages: Vec<VoiceCallMessage>,
 ) -> Result<String, String> {
-    let settings = crate::settings::get_settings(&app);
-    let (provider, model, api_key) =
-        crate::managers::meetings::llm_call::resolve_provider(&settings)?;
-    let messages: Vec<StreamMessage> = messages
-        .into_iter()
-        .map(|m| StreamMessage::new(&m.role, m.content))
-        .collect();
-
+    // Ein vorgezogener Abbruch wird zuerst eingelöst, damit er auch bei einem Fehler unten
+    // nicht ewig liegen bleibt.
     if EARLY_CANCELS
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -183,6 +180,13 @@ pub async fn voice_call_chat(
     {
         return Ok(String::new());
     }
+    let settings = crate::settings::get_settings(&app);
+    let (provider, model, api_key) =
+        crate::managers::meetings::llm_call::resolve_provider(&settings)?;
+    let messages: Vec<StreamMessage> = messages
+        .into_iter()
+        .map(|m| StreamMessage::new(&m.role, m.content))
+        .collect();
     let cancel = Arc::new(Notify::new());
     CANCELS
         .lock()
@@ -261,9 +265,14 @@ pub async fn voice_call_chat(
             Ok(full)
         }
         Some(Err(e)) => {
+            // Auch ein fehlgeschlagener Aufruf kann schon Token verbraucht haben.
             let _ = app.emit(
                 EVENT,
-                serde_json::json!({"kind": "failed", "request_id": request_id}),
+                serde_json::json!({
+                    "kind": "failed",
+                    "request_id": request_id,
+                    "usage": (!captured.is_empty()).then(|| usage_payload(&captured)),
+                }),
             );
             Err(e)
         }

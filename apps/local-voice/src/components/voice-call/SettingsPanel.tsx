@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Switch } from "@fluentui/react-components";
+import { Radio, RadioGroup, Switch, useId } from "@fluentui/react-components";
 import { X } from "lucide-react";
 import {
   useVoiceCallStore,
@@ -14,18 +14,36 @@ import { VOICE_MANAGE, useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
 import { TEMPO_PRESETS, TEMPOS, tempoOf } from "./tempo";
 import { useActiveLlm, useSttModelName } from "./useVoiceInfo";
+import {
+  SOUVERAENITAET_STUFEN,
+  blockedBy,
+  describeModels,
+  type ModelDescription,
+} from "./orchestration";
+import { useSettings } from "@/hooks/useSettings";
+import { useComplianceStore } from "@/stores/complianceStore";
+import type { LlmConnection, LlmModelConfig } from "@/bindings";
+
+/** Auswahlwert für „kein Denker“ (die Auswahl kennt keinen leeren Wert). */
+const DENKER_OFF = "off";
 
 const TAB_IDS: VoiceSettingsTab[] = ["talk", "voice", "recognition", "models"];
 
 const Field: React.FC<{
   label: string;
   hint?: string;
+  /** Kennung für den Hinweis (damit ein Feld ihn mit `aria-describedby` binden kann). */
+  hintId?: string;
   children: React.ReactNode;
-}> = ({ label, hint, children }) => (
+}> = ({ label, hint, hintId, children }) => (
   <div className="flex flex-col gap-1">
     <span className="text-[13px] font-semibold">{label}</span>
     {children}
-    {hint && <span className="text-xs text-text/60">{hint}</span>}
+    {hint && (
+      <span id={hintId} className="text-xs text-text/60">
+        {hint}
+      </span>
+    )}
   </div>
 );
 
@@ -107,6 +125,26 @@ export const VoicePicker: React.FC<{ className?: string }> = ({
   );
 };
 
+/** Die freigegebenen Modelle mit Herkunft (lokal/EU/andere), für die Wahl des Denkers. */
+function useVoiceModels(): ModelDescription[] {
+  const { getSetting } = useSettings();
+  const byModel = useComplianceStore((s) => s.byModel);
+  const refresh = useComplianceStore((s) => s.refresh);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
+  const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
+  return useMemo(
+    () =>
+      describeModels(
+        { llm_connections: connections, llm_models: models },
+        byModel,
+      ),
+    [connections, models, byModel],
+  );
+}
+
 export const SettingsPanel: React.FC = () => {
   const { t } = useTranslation();
   const config = useVoiceCallStore((s) => s.config);
@@ -118,6 +156,22 @@ export const SettingsPanel: React.FC = () => {
   const llm = useActiveLlm();
   const stt = useSttModelName();
   const ready = useVoiceCallStore((s) => s.ready);
+  const models = useVoiceModels();
+  const { getSetting, updateSetting } = useSettings();
+  const readTranscripts = getSetting("voice_call_read_transcripts") ?? false;
+  const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const speaker = models.find((m) => m.id === activeId);
+  const speakerBlocked =
+    !!speaker && blockedBy(speaker, config.orchestration.souveraenitaet);
+  const denkerHintId = useId("denker-hint");
+  const orch = config.orchestration;
+  const setOrch = (patch: Partial<typeof orch>) =>
+    setConfig((c) => ({
+      ...c,
+      orchestration: { ...c.orchestration, ...patch },
+    }));
+  const denker = models.find((m) => m.id === orch.denkerModelId);
+  const denkerBlocked = !!denker && blockedBy(denker, orch.souveraenitaet);
   const setTurn = (patch: Partial<typeof config.turn>) =>
     setConfig((c) => ({ ...c, turn: { ...c.turn, ...patch } }));
 
@@ -255,9 +309,90 @@ export const SettingsPanel: React.FC = () => {
             >
               <div className="text-sm">{ready?.llm || llm.label || "–"}</div>
             </Field>
-            <Note title={t("voiceCall.settings.orchestratorTitle")}>
-              {t("voiceCall.settings.orchestratorSoon")}
-            </Note>
+            {speakerBlocked && (
+              <div
+                role="alert"
+                className="rounded-lg border border-mid-gray/30 bg-mid-gray/10 px-3 py-2 text-xs"
+              >
+                {t("voiceCall.settings.speakerBlocked")}
+              </div>
+            )}
+            <Field
+              label={t("voiceCall.settings.denker")}
+              hintId={denkerHintId}
+              hint={
+                denkerBlocked
+                  ? t("voiceCall.settings.denkerBlocked")
+                  : t("voiceCall.settings.denkerHint")
+              }
+            >
+              <Select
+                value={orch.denkerModelId || DENKER_OFF}
+                options={[
+                  {
+                    value: DENKER_OFF,
+                    label: t("voiceCall.settings.denkerOff"),
+                  },
+                  ...models.map((m) => ({ value: m.id, label: m.label })),
+                ]}
+                isClearable={false}
+                menuPortal
+                ariaLabel={t("voiceCall.settings.denker")}
+                ariaDescribedBy={denkerHintId}
+                onChange={(value) =>
+                  setOrch({
+                    denkerModelId: !value || value === DENKER_OFF ? "" : value,
+                  })
+                }
+              />
+            </Field>
+            <Field
+              label={t("voiceCall.settings.sovereignty")}
+              hint={t(
+                `voiceCall.settings.sovereigntyHint.${orch.souveraenitaet}`,
+              )}
+            >
+              <RadioGroup
+                layout="horizontal"
+                aria-label={t("voiceCall.settings.sovereignty")}
+                value={orch.souveraenitaet}
+                onChange={(_e, d) => {
+                  const next = SOUVERAENITAET_STUFEN.find((k) => k === d.value);
+                  if (next) setOrch({ souveraenitaet: next });
+                }}
+              >
+                {SOUVERAENITAET_STUFEN.map((k) => (
+                  <Radio
+                    key={k}
+                    value={k}
+                    label={t(`voiceCall.settings.sovereigntyLevels.${k}`)}
+                  />
+                ))}
+              </RadioGroup>
+            </Field>
+            <Field
+              label={t("voiceCall.settings.tools")}
+              hint={t("voiceCall.settings.toolsHint")}
+            >
+              <Switch
+                checked={orch.useTools}
+                onChange={(_e, d) => setOrch({ useTools: d.checked })}
+                aria-label={t("voiceCall.settings.tools")}
+              />
+            </Field>
+            <Field
+              label={t("voiceCall.settings.transcripts")}
+              hint={t("voiceCall.settings.transcriptsHint")}
+            >
+              <Switch
+                checked={readTranscripts}
+                disabled={!orch.useTools}
+                onChange={(_e, d) =>
+                  void updateSetting("voice_call_read_transcripts", d.checked)
+                }
+                aria-label={t("voiceCall.settings.transcripts")}
+              />
+            </Field>
           </>
         )}
       </div>

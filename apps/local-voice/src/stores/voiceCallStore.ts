@@ -13,6 +13,11 @@ import {
 import { SUBSCRIPTION_PROVIDERS } from "@/components/settings/meetings/DocUsageLine";
 import { DEFAULT_TURN_CONFIG } from "@/components/voice-call/turnTaking";
 import {
+  DEFAULT_ORCHESTRATION,
+  SOUVERAENITAET_STUFEN,
+  type CallStatus,
+} from "@/components/voice-call/orchestration";
+import {
   LOCAL_USER_ID,
   MAX_ENTRY_CHARS,
   VOICEBOT_ID,
@@ -63,6 +68,8 @@ export interface CallUsage {
   calls: { subscription: number; local: number; api: number };
   providerId: string | null;
   local: boolean;
+  /** Mindestens ein Aufruf lief nicht lokal (Cloud oder Abo): „lokal“ zeigt die Infozeile dann nicht. */
+  anyCloud: boolean;
 }
 
 const EMPTY_USAGE: CallUsage = {
@@ -73,6 +80,7 @@ const EMPTY_USAGE: CallUsage = {
   calls: { subscription: 0, local: 0, api: 0 },
   providerId: null,
   local: false,
+  anyCloud: false,
 };
 
 /** Mikrofon offen (Anruf läuft oder startet gerade)? */
@@ -99,6 +107,7 @@ function addUsage(usage: CallUsage, u: CallUsageEvent): CallUsage {
     },
     providerId: u.provider_id ?? usage.providerId,
     local: u.local ?? usage.local,
+    anyCloud: usage.anyCloud || u.local !== true,
   };
 }
 
@@ -150,6 +159,22 @@ function entryFromLine(
   };
 }
 
+/** Gespeicherte Orchestrator-Einstellungen mit Vorgaben; Unbekanntes fällt auf die sichere Vorgabe. */
+function normalizeOrchestration(
+  stored: Partial<CallConfig["orchestration"]> | undefined,
+): CallConfig["orchestration"] {
+  const stufe = SOUVERAENITAET_STUFEN.find((s) => s === stored?.souveraenitaet);
+  return {
+    denkerModelId:
+      typeof stored?.denkerModelId === "string" ? stored.denkerModelId : "",
+    souveraenitaet: stufe ?? DEFAULT_ORCHESTRATION.souveraenitaet,
+    useTools:
+      typeof stored?.useTools === "boolean"
+        ? stored.useTools
+        : DEFAULT_ORCHESTRATION.useTools,
+  };
+}
+
 export function loadCallConfig(): CallConfig {
   try {
     const raw = window.localStorage.getItem(VOICE_CALL_CONFIG_KEY);
@@ -158,6 +183,7 @@ export function loadCallConfig(): CallConfig {
     return {
       systemPrompt: parsed.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT,
       turn: { ...DEFAULT_TURN_CONFIG, ...parsed.turn },
+      orchestration: normalizeOrchestration(parsed.orchestration),
     };
   } catch {
     return DEFAULT_CALL_CONFIG;
@@ -179,6 +205,10 @@ interface VoiceCallStore {
   state: CallState;
   ready: CallReady | null;
   error: string | null;
+  /** Werkzeug, das der Orchestrator gerade aufruft (Name), für die Statuszeile. */
+  toolStatus: string | null;
+  /** Hinweis des Orchestrators (z. B. Cloud-Modell bei „nur lokal“ gesperrt). */
+  notice: Extract<CallStatus, { kind: "notice" }>["code"] | null;
   metrics: TurnMetrics[];
   lines: VoiceLine[];
   usage: CallUsage;
@@ -287,6 +317,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
           const attachments = attachmentsNext;
           typedNext = false;
           attachmentsNext = undefined;
+          set({ notice: null, toolStatus: null });
           set((s) => {
             // Verworfene spekulative Vorarbeit (Weitersprechen) ersetzen.
             const kept = [...s.lines];
@@ -372,6 +403,11 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
         onError: (error) => set({ error }),
+        onStatus: (status) => {
+          if (status === null) set({ toolStatus: null });
+          else if (status.kind === "tool") set({ toolStatus: status.tool });
+          else set({ notice: status.code });
+        },
         onUsage: (u: CallUsageEvent) => {
           pendingUsage = mergeUsage(pendingUsage, u);
           set((s) => ({ usage: addUsage(s.usage, u) }));
@@ -519,6 +555,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
       metrics: [],
       usage,
       error: null,
+      toolStatus: null,
+      notice: null,
       ready: get().state === "idle" ? null : get().ready,
     });
   };
@@ -529,6 +567,8 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     state: "idle",
     ready: null,
     error: null,
+    toolStatus: null,
+    notice: null,
     metrics: [],
     lines: [],
     usage: EMPTY_USAGE,

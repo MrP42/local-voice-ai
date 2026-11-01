@@ -10,6 +10,16 @@ import {
   type Capture,
 } from "./audio";
 import { TurnTaker, type TurnConfig, DEFAULT_TURN_CONFIG } from "./turnTaking";
+import {
+  DEFAULT_ORCHESTRATION,
+  OrchestrationSession,
+  type CallStatus,
+  type OrchestrationConfig,
+  type Prepared,
+} from "./orchestration";
+import { COMPLIANCE_CHANGED } from "@/stores/complianceStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import type { ChatSide } from "@/vendor/wai-voice/backend.ts";
 
 export const DEFAULT_SYSTEM_PROMPT = `Du bist ein Gesprächspartner am Telefon. Antworte so, wie man spricht: kurze, natürliche Sätze auf Deutsch, meist ein bis drei Sätze. Keine Listen, keine Aufzählungszeichen, keine Markdown-Zeichen, keine Emojis, keine Links. Zahlen und Abkürzungen so schreiben, wie man sie ausspricht. Stelle bei Unklarheit eine kurze Rückfrage, statt lange zu raten. Fasse dich kurz, der Gesprächspartner kann jederzeit nachfragen oder unterbrechen.`;
 
@@ -19,11 +29,14 @@ export type CallState =
 export interface CallConfig {
   systemPrompt: string;
   turn: TurnConfig;
+  /** Denker, Souveränität und Werkzeuge (Stufe 2). */
+  orchestration: OrchestrationConfig;
 }
 
 export const DEFAULT_CALL_CONFIG: CallConfig = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   turn: DEFAULT_TURN_CONFIG,
+  orchestration: DEFAULT_ORCHESTRATION,
 };
 
 export interface TurnMetrics {
@@ -70,6 +83,8 @@ export interface CallCallbacks {
   onMetrics(m: TurnMetrics): void;
   onError(message: string): void;
   onUsage?(usage: CallUsageEvent): void;
+  /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
+  onStatus?(status: CallStatus | null): void;
 }
 
 interface ChatMessage {
@@ -98,6 +113,8 @@ interface Turn {
   userText: string;
   /** Löst das Warten auf das Ende des Stroms sofort auf (Abbruch). */
   finishStream?: () => void;
+  /** Orchestrator dieses Schritts (nur wenn Denker oder Werkzeuge aktiv sind). */
+  side?: ChatSide;
   spoken: string[];
   lastSpeechWall: number;
   startFrame: number;
@@ -138,15 +155,44 @@ export class VoiceCallEngine {
   private sentenceHandlers = new Map<string, (e: VoiceCallEvent) => void>();
   private muted = false;
   /** Laufende Text-Anfrage (Textmodus ohne Anruf). */
-  private textRun: { id: string; finish: () => void; partial: string } | null =
-    null;
+  private textRun: {
+    id: string;
+    finish: () => void;
+    partial: string;
+    side?: ChatSide;
+  } | null = null;
   /** Zählt Neustarts des Gesprächs: späte Antworten alter Anfragen werden verworfen. */
   private generation = 0;
+
+  /** Orchestrator des Gesprächs (Werkzeuge, Modelle, Souveränität); je Engine einer. */
+  private session: OrchestrationSession;
+  private unwatch: (() => void) | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
     this.cb = cb;
     this.cfg = cfg;
     this.taker = new TurnTaker(cfg.turn);
+    this.session = new OrchestrationSession({
+      subscribe: async (id, handler) => {
+        await this.ensureListener();
+        this.sentenceHandlers.set(id, handler);
+        return () => {
+          this.sentenceHandlers.delete(id);
+        };
+      },
+      onUsage: (u) => this.cb.onUsage?.(u),
+      onStatus: (s) => this.cb.onStatus?.(s),
+    });
+    // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
+    const invalidate = () => this.session.invalidate();
+    window.addEventListener(COMPLIANCE_CHANGED, invalidate);
+    const off = useSettingsStore.subscribe((now, before) => {
+      if (now.settings !== before.settings) invalidate();
+    });
+    this.unwatch = () => {
+      window.removeEventListener(COMPLIANCE_CHANGED, invalidate);
+      off();
+    };
   }
 
   /** Läuft ein Anruf (Mikrofon offen)? Sonst gilt der Textmodus ohne Ton. */
@@ -161,6 +207,7 @@ export class VoiceCallEngine {
   /** Neues Gespräch: der Verlauf, den die KI kennt, beginnt von vorn. */
   resetHistory(): void {
     this.generation++;
+    this.session.invalidate();
     this.cancelText(false);
     this.cancelTurn(false);
     this.history = [];
@@ -183,16 +230,21 @@ export class VoiceCallEngine {
     if (!run) return;
     this.textRun = null;
     this.sentenceHandlers.delete(run.id);
+    void run.side?.cancel?.(run.id);
     void invoke("voice_call_cancel", { requestId: run.id }).catch(
       () => undefined,
     );
     run.finish();
+    this.cb.onStatus?.(null);
     if (keepPartial && run.partial)
       this.cb.onAssistant(run.partial, true, true);
   }
 
   /** Hörer für die Antwortstücke entfernen (Seite wird verlassen). */
   async dispose(): Promise<void> {
+    this.unwatch?.();
+    this.unwatch = null;
+    this.session.dispose();
     const pending = this.listening;
     this.listening = null;
     (await pending)?.();
@@ -208,6 +260,7 @@ export class VoiceCallEngine {
 
   updateConfig(cfg: CallConfig): void {
     this.cfg = cfg;
+    this.session.invalidate();
     this.taker.config = cfg.turn;
   }
 
@@ -249,6 +302,7 @@ export class VoiceCallEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.session.dispose();
     this.cancelText(true);
     this.cancelTurn(true);
     this.capture?.stop();
@@ -463,6 +517,26 @@ export class VoiceCallEngine {
     }
   }
 
+  /**
+   * Orchestrator für diesen Schritt: `side` nur, wenn Denker oder Werkzeuge aktiv sind (sonst der
+   * alte Weg); `blocked`, wenn der Sprecher bei der Souveränität gesperrt ist (kein Gespräch).
+   */
+  private async orchestrate(): Promise<Prepared> {
+    await this.ensureListener();
+    return this.session.prepare({
+      ...this.cfg.orchestration,
+      systemPrompt: this.cfg.systemPrompt,
+    });
+  }
+
+  /** Verlauf plus neue Äußerung, ohne Systemanweisung (die hält der Orchestrator). */
+  private historyFor(text: string): ChatMessage[] {
+    return [
+      ...this.history.slice(-MAX_HISTORY),
+      { role: "user", content: text },
+    ];
+  }
+
   private messagesFor(text: string): ChatMessage[] {
     return [
       { role: "system", content: this.cfg.systemPrompt },
@@ -478,7 +552,11 @@ export class VoiceCallEngine {
     const id = newId();
     let finish!: () => void;
     const streamEnded = new Promise<void>((r) => (finish = r));
-    const run = { id, finish, partial: "" };
+    const run: NonNullable<VoiceCallEngine["textRun"]> = {
+      id,
+      finish,
+      partial: "",
+    };
     this.textRun = run;
     const stale = () => this.textRun !== run || gen !== this.generation;
     const shown = display ?? text;
@@ -486,27 +564,40 @@ export class VoiceCallEngine {
       await this.ensureListener();
       if (stale()) return;
       this.cb.onUser(shown);
-      this.sentenceHandlers.set(id, (e) => {
-        if (stale()) return;
-        if (e.kind === "done") {
-          if (e.usage) this.cb.onUsage?.(e.usage);
-          finish();
-        }
-        if (e.kind === "failed") finish();
-        if (e.kind !== "sentence") return;
-        run.partial += (run.partial ? " " : "") + (e.text ?? "");
+      const onPiece = (piece: string) => {
+        run.partial += (run.partial ? " " : "") + piece;
         this.cb.onAssistant(run.partial, false, false);
-      });
-      const full = await invoke<string>("voice_call_chat", {
-        requestId: id,
-        messages: this.messagesFor(text),
-      });
-      if (stale()) return;
-      await Promise.race([
-        streamEnded,
-        new Promise<void>((r) => setTimeout(r, 3000)),
-      ]);
-      if (stale()) return;
+      };
+      const { side, blocked } = await this.orchestrate();
+      if (stale() || blocked) return;
+      let full = "";
+      if (side) {
+        run.side = side;
+        full = await side.chat(id, this.historyFor(text), (s) => {
+          if (!stale()) onPiece(s);
+        });
+        if (stale()) return;
+      } else {
+        this.sentenceHandlers.set(id, (e) => {
+          if (stale()) return;
+          if (e.kind === "done" || e.kind === "failed") {
+            if (e.usage) this.cb.onUsage?.(e.usage);
+            finish();
+          }
+          if (e.kind !== "sentence") return;
+          onPiece(e.text ?? "");
+        });
+        full = await invoke<string>("voice_call_chat", {
+          requestId: id,
+          messages: this.messagesFor(text),
+        });
+        if (stale()) return;
+        await Promise.race([
+          streamEnded,
+          new Promise<void>((r) => setTimeout(r, 3000)),
+        ]);
+        if (stale()) return;
+      }
       const answer = full.trim() || run.partial;
       if (answer) {
         this.history.push({ role: "user", content: shown });
@@ -517,7 +608,10 @@ export class VoiceCallEngine {
       if (!stale()) this.cb.onError(String(e));
     } finally {
       this.sentenceHandlers.delete(id);
-      if (this.textRun === run) this.textRun = null;
+      if (this.textRun === run) {
+        this.textRun = null;
+        this.cb.onStatus?.(null);
+      }
     }
   }
 
@@ -541,11 +635,7 @@ export class VoiceCallEngine {
     let finishStream!: () => void;
     const streamEnded = new Promise<void>((r) => (finishStream = r));
     turn.finishStream = finishStream;
-    this.sentenceHandlers.set(turn.id, (e) => {
-      if (e.kind === "done" && e.usage) this.cb.onUsage?.(e.usage);
-      if (e.kind === "done" || e.kind === "failed") finishStream();
-      if (e.kind !== "sentence" || dead()) return;
-      const piece = e.text ?? "";
+    const onPiece = (piece: string) => {
       if (!firstSentenceAt) firstSentenceAt = performance.now();
       assistantText += (assistantText ? " " : "") + piece;
       this.cb.onAssistant(assistantText, false, false);
@@ -580,19 +670,42 @@ export class VoiceCallEngine {
         turn.spoken.push(piece);
         await this.player!.enqueue(wav);
       });
-    });
+    };
 
-    await invoke<string>("voice_call_chat", {
-      requestId: turn.id,
-      messages: this.messagesFor(text),
-    });
-    // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
-    if (!dead())
-      await Promise.race([
-        streamEnded,
-        new Promise<void>((r) => setTimeout(r, 3000)),
-      ]);
+    const { side, blocked } = await this.orchestrate();
+    if (dead()) return;
+    if (blocked) {
+      // Kein Gespräch mit einem gesperrten Modell: der Hinweis steht im Gespräch.
+      this.dropTurn(turn);
+      return;
+    }
+    if (side) {
+      // Denker oder Werkzeuge aktiv: der Orchestrator liefert die Sätze (auch die Überbrückung).
+      turn.side = side;
+      await side.chat(turn.id, this.historyFor(text), (s) => {
+        if (!dead()) onPiece(s);
+      });
+    } else {
+      this.sentenceHandlers.set(turn.id, (e) => {
+        if ((e.kind === "done" || e.kind === "failed") && e.usage)
+          this.cb.onUsage?.(e.usage);
+        if (e.kind === "done" || e.kind === "failed") finishStream();
+        if (e.kind !== "sentence" || dead()) return;
+        onPiece(e.text ?? "");
+      });
+      await invoke<string>("voice_call_chat", {
+        requestId: turn.id,
+        messages: this.messagesFor(text),
+      });
+      // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
+      if (!dead())
+        await Promise.race([
+          streamEnded,
+          new Promise<void>((r) => setTimeout(r, 3000)),
+        ]);
+    }
     await chain;
+    this.cb.onStatus?.(null);
     this.sentenceHandlers.delete(turn.id);
     if (dead()) return;
     turn.done = true;
@@ -627,9 +740,11 @@ export class VoiceCallEngine {
     turn.finishStream?.();
     this.turn = null;
     this.sentenceHandlers.delete(turn.id);
+    void turn.side?.cancel?.(turn.id);
     void invoke("voice_call_cancel", { requestId: turn.id }).catch(
       () => undefined,
     );
+    this.cb.onStatus?.(null);
     turn.commit();
     if (interrupted && turn.spoken.length > 0) {
       // Nur das tatsächlich Gesprochene gehört in den Verlauf.

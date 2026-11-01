@@ -3247,6 +3247,17 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<R
 }
 },
 /**
+ * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
+ */
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Bricht eine laufende Antwort ab (Unterbrechen durch den Sprecher).
  */
 async voiceCallCancel(requestId: string) : Promise<boolean> {
@@ -4031,6 +4042,40 @@ async agentClientSetToolMode(clientId: string, tool: string, mode: GrantMode) : 
  */
 async agentBridgeStatus() : Promise<BridgeStatus> {
     return await TAURI_INVOKE("agent_bridge_status");
+},
+/**
+ * Die lesenden Werkzeuge, die das Sprachgespräch jetzt benutzen darf.
+ */
+async voiceToolsList() : Promise<Result<VoiceToolInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tools_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * „Transkripte im Sprachgespräch lesen“ (Standard aus).
+ */
+async changeVoiceCallReadTranscriptsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_voice_call_read_transcripts_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ruft ein lesendes Werkzeug über das Tor der Agentenbrücke (Recht, Audit). `args` ist ein
+ * JSON-Objekt als Text. Die Antwort ist der JSON-Text des Ergebnisses; eine zu lange Antwort wird nie still gekürzt, sondern abgelehnt.
+ */
+async voiceToolCall(name: string, args: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("voice_tool_call", { name, args }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Startet eine Aufnahme mit dem Bezug zu einem Termin: Titel = was der Nutzer
@@ -6497,6 +6542,12 @@ meeting_mcp_enabled?: boolean;
  */
 meeting_mcp_include_transcript?: boolean; 
 /**
+ * Stufe 2 des Sprachgesprächs: darf die Sprach-KI Transkripte von Besprechungen lesen
+ * (`meeting_transcript`, Treffer aus dem Transkript)? Getrennt vom MCP-Server; Standard AUS
+ * (ADR-0021).
+ */
+voice_call_read_transcripts?: boolean; 
+/**
  * M5-P5f (E14): Anwendungs-(Client-)ID der EIGENEN Entra-App fuer die
  * Microsoft-Anmeldung (oeffentlicher Client, Weiterleitungs-URI
  * `http://localhost`). Es gibt keine eingebaute ID: ohne Eintrag ist die
@@ -6923,6 +6974,11 @@ export type Capability = "calendar.read" | "calendar.write" | "mail.send" | "fil
  * Einen Ablauf starten (B8): Trockenlauf oder, bei scharfem Ablauf, ein echter Lauf.
  */
 "workflow.run" | 
+/**
+ * Besprechungen auflisten, durchsuchen und das Transkript lesen (Sprachgespraech Stufe 2).
+ * Nur lesend; das Transkript folgt der Freigabe des lokalen MCP-Servers.
+ */
+"meeting.read" | 
 /**
  * In einen Kanal posten (Slack, Teams, Discord).
  */
@@ -9847,6 +9903,18 @@ id: string; name: string; tags?: string[];
  * [`super::voices::style_dir`].
  */
 reference?: string | null }
+/**
+ * Ein Werkzeug, wie das Frontend es dem Sprachmodell anbietet.
+ */
+export type VoiceToolInfo = { name: string; title: string; description: string; 
+/**
+ * Schema der Argumente (JSON-Text; specta kennt kein freies JSON).
+ */
+parameters_json: string; 
+/**
+ * Fähigkeit des Katalogs, z. B. `meeting.read`.
+ */
+capability: string }
 /**
  * Warum die wartenden Dateien nicht beginnen.
  */

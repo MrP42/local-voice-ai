@@ -2218,6 +2218,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             voice_call::voice_call_start,
             voice_call::voice_call_transcribe,
             voice_call::voice_call_chat,
+            voice_call::turn::voice_call_turn,
             voice_call::voice_call_cancel,
             voice_call::voice_call_synthesize,
             conversations::conversations_list,
@@ -2293,6 +2294,10 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::agent_bridge::agent_client_delete,
             commands::agent_bridge::agent_client_set_tool_mode,
             commands::agent_bridge::agent_bridge_status,
+            // Sprachgespraech Stufe 2: lesende Werkzeuge fuer den Orchestrator
+            commands::voice_tools::voice_tools_list,
+            commands::voice_tools::change_voice_call_read_transcripts_setting,
+            commands::voice_tools::voice_tool_call,
             commands::meetings::meetings_start_from_event,
             meeting_prompt::meeting_prompt_current,
             meeting_prompt::meeting_prompt_ready,
