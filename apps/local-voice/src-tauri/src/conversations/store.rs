@@ -61,7 +61,7 @@ const STATUSES: &[&str] = &["complete", "interrupted", "error"];
 
 static MIGRATIONS: &[M] = &[
     M::up(
-    "CREATE TABLE IF NOT EXISTS conversations (
+        "CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY NOT NULL,
         schema_version TEXT NOT NULL,
         ts TEXT NOT NULL,

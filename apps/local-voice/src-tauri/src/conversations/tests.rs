@@ -497,7 +497,9 @@ fn set_pinned_keeps_updated_at_and_rejects_unknown_ids() {
     let p = s.set_pinned(&c.id, true).unwrap();
     assert!(p.pinned);
     assert_eq!(p.updated_at, c.updated_at);
-    assert!(s.set_pinned("conv_00000000000000000000000000", true).is_err());
+    assert!(s
+        .set_pinned("conv_00000000000000000000000000", true)
+        .is_err());
 }
 
 #[test]
