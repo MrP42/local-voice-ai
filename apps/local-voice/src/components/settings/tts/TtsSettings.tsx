@@ -110,6 +110,9 @@ import {
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
+import { IsbnDialog } from "./reader/IsbnDialog";
+import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
+import type { IsbnBook } from "@/bindings";
 import { ReaderToolbar } from "./reader/ReaderToolbar";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
@@ -1194,6 +1197,13 @@ export const TtsSettings = () => {
   // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
   const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
   const book = useMemo(() => bookInfo(readerBlocks), [readerBlocks]);
+  // Buchdaten per ISBN (lva#149): Vorschlag aus dem Impressum, Abfrage erst
+  // im Dialog auf Knopfdruck, Übernahme erst nach Bestätigung.
+  const [isbnOpen, setIsbnOpen] = useState(false);
+  const isbnGuess = useMemo(
+    () => (isbnOpen ? findIsbn(text) : ""),
+    [isbnOpen, text],
+  );
   // Nach dem Commit messen: im Render stünde noch das DOM des alten Umbruchs.
   const [chapterIndex, setChapterIndex] = useState(-1);
   const [contentsPages, setContentsPages] = useState<(number | null)[]>([]);
@@ -1730,6 +1740,30 @@ export const TtsSettings = () => {
     openModeRef.current?.(result.data);
   };
 
+  /** Bestätigte ISBN-Daten in die Titelei schreiben, Seite umbenennen. */
+  const applyIsbnBook = (found: IsbnBook) => {
+    const previousText = text;
+    const next = applyBookTitle(text, found);
+    if (next === previousText) return;
+    setText(next);
+    const page = activePage;
+    const oldTitle = pages.find((p) => p.id === page)?.title;
+    if (page) {
+      const title = found.title.replace(/\s+/g, " ").trim().slice(0, 120);
+      void commands.pagesRename(page, title).then(() => reloadPages());
+    }
+    toast(t("tts.isbn.applied", { title: found.title }), {
+      action: {
+        label: t("tts.autotag.undo"),
+        onClick: () => {
+          setText(previousText);
+          if (page && oldTitle)
+            void commands.pagesRename(page, oldTitle).then(() => reloadPages());
+        },
+      },
+    });
+  };
+
   /** Artikel hinter einer URL als Originaltext laden. */
   const loadUrl = async () => {
     if (!sourceUrl.trim()) return;
@@ -1872,6 +1906,11 @@ export const TtsSettings = () => {
                 onGo={goToChapter}
                 pages={contentsPages}
                 book={book}
+                onIsbn={
+                  tab === "original" && activePage
+                    ? () => setIsbnOpen(true)
+                    : undefined
+                }
               />
             ) : null
           }
@@ -2605,6 +2644,12 @@ export const TtsSettings = () => {
             initialFrom={replaceSpeaker?.from}
           />
           {voiceMenu.menu}
+          <IsbnDialog
+            open={isbnOpen}
+            onOpenChange={setIsbnOpen}
+            initialIsbn={isbnGuess}
+            onApply={applyIsbnBook}
+          />
           <SpeakerSwapDialog
             open={swapOpen}
             onOpenChange={setSwapOpen}

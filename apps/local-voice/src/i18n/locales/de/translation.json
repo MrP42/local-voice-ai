@@ -84,6 +84,23 @@
       "speakerMenuVoice": "Stimme und Sprechstil für „{{name}}“…",
       "readFromHere": "Ab hier vorlesen"
     },
+    "isbn": {
+      "button": "Buchdaten per ISBN",
+      "buttonHint": "Titel und Autor aus Open Library holen – nur die ISBN geht ins Netz",
+      "title": "Buchdaten per ISBN suchen",
+      "label": "ISBN",
+      "privacy": "Die Suche fragt Open Library (openlibrary.org) und schickt dabei nur die ISBN, keinen Buchtext. Übernommen wird erst, wenn du bestätigst.",
+      "search": "Suchen",
+      "searching": "Suche …",
+      "apply": "Übernehmen",
+      "cancel": "Abbrechen",
+      "none": "Open Library kennt diese ISBN nicht.",
+      "by": "von {{authors}}",
+      "pages": "{{count}} Seiten",
+      "openLibrary": "Bei Open Library ansehen",
+      "check": "Prüfe, ob das deine Ausgabe ist. „Übernehmen“ setzt Titel und Autor in die Titelei und benennt die Seite um.",
+      "applied": "Buchdaten übernommen: {{title}}"
+    },
     "providers": {
       "title": "Sprachausgabe-Anbieter",
       "description": "Weitere Sprachausgaben neben Fish Speech und Piper. Experimentelle Anbieter bleiben aus, bis Sie sie freigeben; was an Lizenz oder Netzzugriff fehlt, steht bei jedem Anbieter.",

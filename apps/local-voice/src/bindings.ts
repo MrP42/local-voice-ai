@@ -5501,6 +5501,17 @@ async ttsExtractUrl(url: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Buchdaten zu einer ISBN abrufen. `Ok(None)`: Open Library kennt sie nicht.
+ */
+async isbnLookup(isbn: string) : Promise<Result<IsbnBook | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("isbn_lookup", { isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoicechangeRecordStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_voicechange_record_start") };
@@ -7969,6 +7980,18 @@ calendar_managed: boolean;
  * Offene Freigaben zu dieser Integration.
  */
 pending_approvals: number }
+/**
+ * Was Open Library zu einer ISBN weiß, so weit es die App braucht.
+ */
+export type IsbnBook = { 
+/**
+ * Normalisierte ISBN (nur Ziffern bzw. `X`).
+ */
+isbn: string; title: string; subtitle: string | null; authors: string[]; publishers: string[]; publish_date: string | null; pages: number | null; 
+/**
+ * Link auf die Open-Library-Seite (zum Nachsehen der Ausgabe).
+ */
+url: string | null }
 /**
  * Was ein Auftrag gerade tut. Die Oberflaeche benennt daran den Fortschritt.
  */
