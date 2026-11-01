@@ -62,10 +62,27 @@ fn build_providers(
     vec![
         Arc::new(fish),
         Arc::new(piper),
-        Arc::new(PhononProvider::new(resolved.phonon.clone())),
+        Arc::new(phonon_provider(resolved)),
         Arc::new(OpenAiSpeechProvider::new(resolved.openai_speech.clone())),
         Arc::new(ollama),
     ]
+}
+
+/// Phonon mit der wirksamen Konfiguration. Stammt das Modell aus der Stufe „installiert“, kommen
+/// die weiteren installierten Modelle anderer Sprachen dazu (das englische neben dem deutschen);
+/// ein selbst eingetragenes Modell bleibt allein.
+fn phonon_provider(resolved: &ResolvedConfigs) -> PhononProvider {
+    let installed = &resolved.installed().phonon;
+    let from_installed = installed
+        .model
+        .as_deref()
+        .is_some_and(|m| m.trim() == resolved.phonon.model.trim());
+    let provider = PhononProvider::new(resolved.phonon.clone());
+    if from_installed {
+        provider.with_siblings(installed.others.clone())
+    } else {
+        provider
+    }
 }
 
 /// Trägt alle Anbieter in `registry` ein (vorhandene werden ersetzt) und

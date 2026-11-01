@@ -6,6 +6,7 @@ mod appdata_migration;
 mod apple_intelligence;
 mod audio_feedback;
 pub mod audio_toolkit;
+mod book_ai; // lva#181: KI-Funktionen im Buch-Reader
 mod books;
 mod catalog;
 pub mod cli;
@@ -20,6 +21,7 @@ mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
+mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod llm_client;
 mod llm_keys;
 mod local_update;
@@ -2394,6 +2396,17 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::llm_unload,
             commands::tts::llm_warm,
             commands::pages::pages_list,
+            book_ai::book_ai_templates,
+            book_ai::book_ai_template_save,
+            book_ai::book_ai_template_delete,
+            book_ai::book_ai_template_export,
+            book_ai::book_ai_template_import,
+            book_ai::book_ai_summarize,
+            book_ai::book_ai_cancel,
+            book_ai::book_ai_documents,
+            book_ai::book_ai_document_text,
+            book_ai::book_ai_document_update,
+            book_ai::book_ai_document_delete,
             books::books_list,
             books::books_create,
             books::books_update,
@@ -2467,6 +2480,18 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             isbn::isbn_lookup,
+            library::library_list,
+            library::library_save,
+            library::library_delete,
+            library::library_find_duplicate,
+            library::library_metadata_search,
+            library::library_description,
+            library::library_cover_fetch,
+            library::library_cover_from_file,
+            library::library_cover_clear,
+            library::library_audio_import,
+            library::library_progress_load,
+            library::library_progress_put,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,

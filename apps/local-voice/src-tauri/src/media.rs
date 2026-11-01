@@ -21,23 +21,104 @@ fn extension_of(path: &Path) -> String {
         .to_lowercase()
 }
 
-/// XML-Textinhalt aus DOCX-Body-XML: Absätze werden Zeilenumbrüche, Tags
-/// fallen weg, die fünf XML-Entities werden aufgelöst.
-pub fn docx_xml_to_text(xml: &str) -> String {
-    let with_breaks = xml
-        .replace("</w:p>", "\n")
-        .replace("<w:tab/>", "\t")
-        .replace("<w:br/>", "\n");
-    let re = regex::Regex::new("<[^>]+>").expect("static regex");
-    let stripped = re.replace_all(&with_breaks, "");
-    stripped
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Überschriftenebene aus der Absatzformatvorlage: „Heading1“, deutsches Word
+/// „berschrift1“ (Überschrift 1), „Title“/„Titel“ = Ebene 1.
+fn docx_heading_level(style: &str) -> Option<usize> {
+    let s = style.to_lowercase();
+    if s == "title" || s == "titel" {
+        return Some(1);
+    }
+    let digits = s
+        .strip_prefix("heading")
+        .or_else(|| s.strip_prefix("berschrift"))
+        .or_else(|| s.strip_prefix("überschrift"))?;
+    digits
         .trim()
-        .to_string()
+        .parse::<usize>()
+        .ok()
+        .filter(|n| (1..=6).contains(n))
+}
+
+/// Ein Lauf ist fett/kursiv, wenn das Element da ist und nicht `w:val="0"`/`"false"` trägt.
+fn docx_flag(props: &str, tag: &str) -> bool {
+    let re = regex::Regex::new(&format!(r#"<w:{tag}(?:\s+w:val="([^"]*)")?\s*/>"#))
+        .expect("static regex");
+    re.captures(props)
+        .is_some_and(|c| !matches!(c.get(1).map(|m| m.as_str()), Some("0" | "false" | "off")))
+}
+
+/// DOCX-Body-XML als Markdown (lva#152): Überschriften (`#`), Aufzählungen
+/// (`- `), fett und kursiv; Absätze durch Leerzeilen getrennt wie beim EPUB.
+pub fn docx_xml_to_markdown(xml: &str) -> String {
+    let para = regex::Regex::new(r"(?s)<w:p[ >].*?</w:p>|<w:p/>").expect("static regex");
+    let style = regex::Regex::new(r#"<w:pStyle\s+w:val="([^"]+)""#).expect("static regex");
+    let run = regex::Regex::new(r"(?s)<w:r[ >].*?</w:r>").expect("static regex");
+    let rpr = regex::Regex::new(r"(?s)<w:rPr>.*?</w:rPr>").expect("static regex");
+    let piece = regex::Regex::new(r"(?s)<w:t(?:\s[^>]*)?>(.*?)</w:t>|<w:tab/>|<w:br/>")
+        .expect("static regex");
+    let mut blocks: Vec<String> = Vec::new();
+    for p in para.find_iter(xml).map(|m| m.as_str()) {
+        let level = style.captures(p).and_then(|c| docx_heading_level(&c[1]));
+        let list = p.contains("<w:numPr>") || p.contains("<w:numPr ");
+        let mut line = String::new();
+        for r in run.find_iter(p).map(|m| m.as_str()) {
+            let props = rpr.find(r).map(|m| m.as_str()).unwrap_or("");
+            let mut text = String::new();
+            for c in piece.captures_iter(r) {
+                match c.get(1) {
+                    Some(t) => text.push_str(&xml_unescape(t.as_str())),
+                    None if c[0].starts_with("<w:tab") => text.push('\t'),
+                    None => text.push('\n'),
+                }
+            }
+            if text.trim().is_empty() || level.is_some() {
+                line.push_str(&text);
+                continue;
+            }
+            // Leerraum außerhalb der Marker, sonst liest Markdown sie nicht.
+            let (lead, rest) = text.split_at(text.len() - text.trim_start().len());
+            let (core, trail) = rest.split_at(rest.trim_end().len());
+            let (b, i) = (docx_flag(props, "b"), docx_flag(props, "i"));
+            let mark = match (b, i) {
+                (true, true) => "***",
+                (true, false) => "**",
+                (false, true) => "*",
+                _ => "",
+            };
+            line.push_str(lead);
+            line.push_str(mark);
+            line.push_str(core);
+            line.push_str(mark);
+            line.push_str(trail);
+        }
+        let line = line.trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        blocks.push(match level {
+            Some(n) => format!("{} {}", "#".repeat(n), line.replace('\n', " ")),
+            None if list => format!("- {line}"),
+            None => line,
+        });
+    }
+    // Aufeinanderfolgende Listenpunkte bilden eine Liste ohne Leerzeilen.
+    let mut out = String::new();
+    for (i, b) in blocks.iter().enumerate() {
+        if i > 0 {
+            let both_list = b.starts_with("- ") && blocks[i - 1].starts_with("- ");
+            out.push_str(if both_list { "\n" } else { "\n\n" });
+        }
+        out.push_str(b);
+    }
+    out
 }
 
 fn extract_docx(path: &Path) -> Result<String, String> {
@@ -50,7 +131,7 @@ fn extract_docx(path: &Path) -> Result<String, String> {
         .map_err(|_| "not a DOCX file (word/document.xml missing)".to_string())?;
     let mut xml = String::new();
     std::io::Read::read_to_string(&mut doc, &mut xml).map_err(|e| e.to_string())?;
-    Ok(docx_xml_to_text(&xml))
+    Ok(docx_xml_to_markdown(&xml))
 }
 
 /// Text aus einem Dokument extrahieren. Der Rückgabetext ist unverändert —
@@ -409,10 +490,27 @@ mod tests {
 
     #[test]
     fn docx_body_xml_becomes_readable_paragraphs() {
-        let xml = r#"<w:document><w:body><w:p><w:r><w:t>Erster Absatz mit &amp; Zeichen.</w:t></w:r></w:p><w:p><w:r><w:t>Zweiter</w:t></w:r><w:r><w:t> Absatz.</w:t></w:r></w:p></w:body></w:document>"#;
+        let xml = r#"<w:document><w:body><w:p><w:r><w:t>Erster Absatz mit &amp; Zeichen.</w:t></w:r></w:p><w:p><w:r><w:t>Zweiter</w:t></w:r><w:r><w:t xml:space="preserve"> Absatz.</w:t></w:r></w:p></w:body></w:document>"#;
         assert_eq!(
-            docx_xml_to_text(xml),
-            "Erster Absatz mit & Zeichen.\nZweiter Absatz."
+            docx_xml_to_markdown(xml),
+            "Erster Absatz mit & Zeichen.\n\nZweiter Absatz."
+        );
+    }
+
+    #[test]
+    fn docx_keeps_headings_lists_and_emphasis() {
+        let xml = concat!(
+            r#"<w:body><w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Das Buch</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:pStyle w:val="berschrift2"/></w:pPr><w:r><w:t>Kapitel 1</w:t></w:r></w:p>"#,
+            r#"<w:p><w:r><w:t xml:space="preserve">Ein </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">fettes </w:t></w:r>"#,
+            r#"<w:r><w:rPr><w:i/></w:rPr><w:t>Wort</w:t></w:r><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>.</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Punkt A</w:t></w:r></w:p>"#,
+            r#"<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>Punkt B</w:t></w:r></w:p>"#,
+            r#"<w:p/><w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Ende</w:t></w:r></w:p></w:body>"#,
+        );
+        assert_eq!(
+            docx_xml_to_markdown(xml),
+            "# Das Buch\n\n## Kapitel 1\n\nEin **fettes** *Wort*.\n\n- Punkt A\n- Punkt B\n\n### Ende"
         );
     }
 
