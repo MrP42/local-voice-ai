@@ -339,9 +339,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   };
 
   const iconButton =
-    "grid place-items-center w-11 h-11 md:w-8 md:h-8 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text";
+    "grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text";
   const rowButton =
-    "min-h-11 md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
+    "min-h-[44px] md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
 
   return (
     <nav
@@ -375,7 +375,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         <button
           type="button"
           onClick={onNew}
-          className="flex items-center gap-2 min-h-11 md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text hover:bg-mid-gray/10"
+          className="flex items-center gap-2 min-h-[44px] md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text hover:bg-mid-gray/10"
         >
           <SquarePen className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span className="truncate">{labels.newConversation}</span>
@@ -384,7 +384,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
-          <p className="m-0 px-2 py-4 text-sm text-text/60">{labels.empty}</p>
+          <p className="m-0 px-2 py-4 text-sm text-text-muted">
+            {labels.empty}
+          </p>
         )}
         {groups.map((group) => {
           const headingId = `${baseId}-${group.id}`;
@@ -397,7 +399,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
             >
               <div
                 id={headingId}
-                className="px-2 pb-1 text-xs font-medium text-text/55"
+                className="px-2 pb-1 text-xs font-medium text-text-muted"
               >
                 {groupTitle[group.id]}
               </div>
@@ -432,7 +434,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               setConfirmId(null);
                               onDelete(item.id);
                             }}
-                            className="min-h-11 md:min-h-8 px-3 rounded-md bg-red-600 text-white cursor-pointer hover:bg-red-700"
+                            className="min-h-[44px] md:min-h-8 px-3 rounded-md bg-red-600 text-white cursor-pointer hover:bg-red-700"
                           >
                             {labels.confirmYes}
                           </button>
@@ -443,7 +445,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               setConfirmId(null);
                               focusRow(item.id);
                             }}
-                            className="min-h-11 md:min-h-8 px-3 rounded-md border border-mid-gray/30 text-text cursor-pointer hover:bg-mid-gray/10"
+                            className="min-h-[44px] md:min-h-8 px-3 rounded-md border border-mid-gray/30 text-text cursor-pointer hover:bg-mid-gray/10"
                           >
                             {labels.confirmNo}
                           </button>
@@ -475,7 +477,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                               finishRename(item, false);
                             }
                           }}
-                          className="flex-1 min-w-0 min-h-11 md:min-h-9 mx-1 px-2 rounded-md border border-logo-primary bg-background text-sm text-text focus:outline-none"
+                          className="flex-1 min-w-0 min-h-[44px] md:min-h-9 mx-1 px-2 rounded-md border border-logo-primary bg-background text-sm text-text focus:outline-none"
                         />
                       ) : (
                         <button
@@ -490,7 +492,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                         >
                           {item.pinned && (
                             <Pin
-                              className="w-3 h-3 shrink-0 text-text/50"
+                              className="w-3 h-3 shrink-0 text-text-muted"
                               aria-hidden="true"
                             />
                           )}
@@ -513,7 +515,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           )}
                           <time
                             dateTime={new Date(item.updatedAt).toISOString()}
-                            className="shrink-0 text-xs text-text/50"
+                            className="shrink-0 text-xs text-text-muted"
                           >
                             {formatWhen(item.updatedAt, current, locale)}
                           </time>
@@ -534,7 +536,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                           aria-label={labels.menu(item.title)}
                           title={labels.menu(item.title)}
                           onClick={(e) => openMenu(item.id, e.currentTarget)}
-                          className={`grid place-items-center w-11 h-11 md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
+                          className={`grid place-items-center w-[44px] h-[44px] md:w-8 md:h-8 shrink-0 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/20 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${
                             menu?.id === item.id ? "md:opacity-100" : ""
                           }`}
                         >
@@ -553,7 +555,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         })}
       </div>
 
-      <label className="flex items-center gap-2 min-h-11 md:min-h-9 px-3 border-t border-mid-gray/20 text-xs text-text/80 cursor-pointer">
+      <label className="flex items-center gap-2 min-h-[44px] md:min-h-9 px-3 border-t border-mid-gray/20 text-xs text-text/80 cursor-pointer">
         <input
           type="checkbox"
           role="switch"
@@ -650,7 +652,7 @@ const MenuButton: React.FC<{
     role="menuitem"
     aria-disabled={disabled ? "true" : undefined}
     onClick={disabled ? undefined : onSelect}
-    className={`flex items-start gap-2 min-h-11 md:min-h-9 px-2 py-1.5 rounded-md text-start text-sm ${
+    className={`flex items-start gap-2 min-h-[44px] md:min-h-9 px-2 py-1.5 rounded-md text-start text-sm ${
       disabled
         ? "cursor-not-allowed opacity-60"
         : `cursor-pointer hover:bg-mid-gray/15 ${danger ? "text-red-500" : "text-text"}`
@@ -659,7 +661,7 @@ const MenuButton: React.FC<{
     <span className="mt-0.5 shrink-0">{icon}</span>
     <span className="flex flex-col">
       <span>{label}</span>
-      {hint && <small className="text-text/60">{hint}</small>}
+      {hint && <small className="text-text-muted">{hint}</small>}
     </span>
   </button>
 );

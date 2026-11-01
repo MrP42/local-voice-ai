@@ -1188,7 +1188,9 @@ test.describe("Sprachgespraech Orchestrator", () => {
       settings: {
         ...LOCAL_SPEAKER,
         llm_active_model_id: "cli:sonnet",
-        function_models: { voice_speaker: { model_id: "loc:gemma", effort: null } },
+        function_models: {
+          voice_speaker: { model_id: "loc:gemma", effort: null },
+        },
       },
       config: orchestration({
         denkerModelId: "cli:sonnet",
@@ -2468,6 +2470,46 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
       page.getByRole("button", { name: "Gesprächsverlauf" }),
     ).toHaveCount(1);
     await expect(page.getByTestId("call-button")).toHaveCount(1);
+  });
+
+  test("Schmal (390 px) haben Kopf- und Composer-Knöpfe mindestens 44×44 px und der Composer bleibt einzeilig", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+    });
+    const page = await ctx.newPage();
+    await install(page, "dark", { settings: TWO_MODELS });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await settled(page);
+    const buttons = [
+      historyToggle(page),
+      page.getByRole("button", { name: "Gesprächsoptionen" }),
+      page.getByRole("button", { name: /Info/ }).first(),
+      page.getByTestId("call-button"),
+      ...(await page.getByRole("toolbar").getByRole("button").all()),
+    ];
+    const rows = new Set<number>();
+    for (const b of buttons) {
+      await expect(b).toBeVisible();
+      const box = await b.boundingBox();
+      const name = (await b.getAttribute("aria-label")) ?? "?";
+      expect(box!.width, `${name} Breite`).toBeGreaterThanOrEqual(43.5);
+      expect(box!.height, `${name} Höhe`).toBeGreaterThanOrEqual(43.5);
+    }
+    for (const b of await page.getByRole("toolbar").getByRole("button").all()) {
+      const box = await b.boundingBox();
+      rows.add(Math.round((box!.y + box!.height / 2) / 4));
+    }
+    expect(rows.size).toBe(1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await ctx.close();
   });
 
   test("Kontextmenü „Gesprächsoptionen“ öffnet die Spalte und den Reiter Wissen", async ({

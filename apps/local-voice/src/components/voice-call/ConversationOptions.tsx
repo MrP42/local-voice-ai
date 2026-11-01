@@ -25,7 +25,7 @@ export const ConversationOptions: React.FC = () => {
           type="button"
           aria-label={t("voiceCall.options.label")}
           title={t("voiceCall.options.label")}
-          className="grid place-items-center w-8 h-8 shrink-0 rounded cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text"
+          className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text"
         >
           <MoreHorizontal className="w-4 h-4" aria-hidden="true" />
         </button>
