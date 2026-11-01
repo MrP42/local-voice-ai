@@ -339,7 +339,7 @@ const GroupCard: React.FC<{
         statt dass Knöpfe rechts abgeschnitten werden. */}
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @[34rem]:flex-nowrap">
         <p
-          className="min-w-0 flex-1 basis-full truncate text-sm text-text @[34rem]:basis-0"
+          className="min-w-0 flex-1 basis-full break-words text-sm text-text @[34rem]:basis-0 @[34rem]:truncate"
           title={`${label} — ${message}`}
         >
           <span className="font-medium">{label}</span>

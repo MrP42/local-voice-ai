@@ -148,7 +148,10 @@
   border: 0;
   border-radius: 3px;
   background: transparent;
-  color: var(--speaker-c);
+  /* Kleine Schrift braucht mehr Kontrast als der Strich (WCAG AA 4,5:1):
+     zur Textfarbe hin gemischt, also hell abgedunkelt und dunkel aufgehellt.
+     Der Strich behält die Stimmfarbe. */
+  color: color-mix(in srgb, var(--speaker-c) 50%, var(--color-text));
   font:
     600 12px/1.3 "Segoe UI",
     system-ui,

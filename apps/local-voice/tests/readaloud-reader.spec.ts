@@ -782,6 +782,24 @@ test("Sprecherfarben und „Stimme zuweisen“ in der Fundleiste", async ({ page
   await expect(mara).not.toHaveClass(/reader-block--novoice/);
   await expect(bob).toHaveClass(/reader-block--novoice/);
   await expect(bob).not.toHaveAttribute("style", /mid-gray/);
+  // Die kleinen Namen am Rand erreichen WCAG AA (4,5:1) auf der Buchseite.
+  const ratios = await page.evaluate(() => {
+    const rgb = (css: string) => {
+      const n = css.match(/[\d.]+/g)!.map(Number);
+      return css.startsWith("color(") ? n.slice(0, 3) : n.slice(0, 3).map((v) => v / 255);
+    };
+    const lum = (c: number[]) =>
+      c
+        .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const bg = lum(rgb(getComputedStyle(document.querySelector(".reader-book")!).backgroundColor));
+    return Array.from(document.querySelectorAll(".reader-who")).map((el) => {
+      const fg = lum(rgb(getComputedStyle(el).color));
+      return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+    });
+  });
+  expect(ratios.length).toBeGreaterThan(0);
+  for (const r of ratios) expect(r).toBeGreaterThanOrEqual(4.5);
 
   await page.getByTestId("tts-action-menu").click();
   await page.getByTestId("script-check-run").click();
