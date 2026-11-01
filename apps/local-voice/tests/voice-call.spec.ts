@@ -1422,13 +1422,23 @@ async function openSeed(page: Page) {
 const editButton = (page: Page) =>
   page.getByRole("button", { name: "Erkannten Text bearbeiten" });
 
+/** Wartet, bis laufende Übergänge fertig sind (z. B. der Reiter-Indikator). */
+async function settled(page: Page) {
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running"),
+  );
+}
+
 /** Gesprächseinstellungen, Reiter Erkennung. */
 async function openRecognition(page: Page) {
   await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
   const panel = page.getByRole("complementary", {
     name: "Gesprächseinstellungen",
   });
-  await panel.getByRole("tab", { name: "Erkennung" }).click();
+  const tab = panel.getByRole("tab", { name: "Erkennung" });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await settled(page);
   return panel;
 }
 
@@ -1994,6 +2004,10 @@ test.describe("Screenshots @screenshots", () => {
       await expect(
         page.getByRole("log").getByText("Ich zahle die Grund Steuer morgen"),
       ).toBeVisible();
+      await settled(page);
+      await editButton(page).first().scrollIntoViewIfNeeded();
+      await expect(editButton(page).first()).toBeVisible();
+      await page.screenshot({ path: `${dir}stift-${name}.png` });
       await editButton(page).click();
       await page
         .getByRole("textbox", { name: "Erkannten Text bearbeiten" })

@@ -257,9 +257,9 @@ export const Transcript: React.FC<{
                         setLost(null);
                         setEditing(line.id);
                       }}
-                      className="grid place-items-center w-6 h-6 -my-1 rounded cursor-pointer text-text/60 hover:bg-mid-gray/15 hover:text-text focus-visible:text-text"
+                      className="grid place-items-center w-7 h-7 -my-1.5 rounded cursor-pointer text-text/80 hover:bg-mid-gray/15 hover:text-logo-primary focus-visible:text-text"
                     >
-                      <Pencil className="w-3 h-3" aria-hidden="true" />
+                      <Pencil className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
                   <span>{time(line.at)}</span>
