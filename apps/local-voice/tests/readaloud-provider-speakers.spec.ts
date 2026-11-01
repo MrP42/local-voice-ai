@@ -761,3 +761,50 @@ test("Sprecher auf allen Seiten ersetzen: Vorschau zählt, Anwenden schreibt Sei
     "<Anton> Zweite Seite.",
   );
 });
+
+test("Sprecher auf allen Seiten ersetzen: „Ersetze“ bietet nur vorkommende Sprecher an", async ({
+  page,
+}) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    twoPages: true,
+    markers: true,
+  });
+  const select = await gotoReadAloud(page);
+  await editorOf(page).fill("<Anton> Eins.\n<Anton> Zwei.");
+  await select.click({ button: "right" });
+  await page.getByTestId("voice-menu-replace").click();
+  const from = page.getByTestId("replace-speaker-from");
+  // Anton steht auf der offenen Seite, Nele auf der zweiten — sonst niemand.
+  await expect(from.locator("option")).toHaveText(["Anton", "Nele"]);
+  await expect(from).toHaveValue(/./);
+  expect(
+    await from.evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.text),
+  ).toBe("Anton");
+  // „durch“ bietet weiter alle Stimmen an.
+  await expect(
+    page.getByTestId("replace-speaker-to").locator("option"),
+  ).toHaveText(["Nele", "Anton"]);
+  await expect(page.getByTestId("replace-speaker-preview")).not.toContainText(
+    "kommt auf keiner Seite vor",
+  );
+});
+
+test("Sprecher auf allen Seiten ersetzen: ein nirgends vorkommender Sprecher fehlt bei „Ersetze“", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", markers: true });
+  const select = await gotoReadAloud(page);
+  await editorOf(page).fill("<Nele> Eins.");
+  await select.click({ button: "right" });
+  await page.getByTestId("voice-menu-replace").click();
+  await expect(
+    page.getByTestId("replace-speaker-from").locator("option"),
+  ).toHaveText(["Nele"]);
+  await expect(
+    page.getByTestId("replace-speaker-to").locator("option"),
+  ).toHaveText(["Nele", "Anton"]);
+  await expect(page.getByTestId("replace-speaker-preview")).toContainText(
+    "1 Marker",
+  );
+});
