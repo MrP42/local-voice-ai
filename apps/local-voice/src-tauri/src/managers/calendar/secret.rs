@@ -15,8 +15,9 @@
 //! - Klartext liegt nur in `Zeroizing`-Puffern; der vom System gelieferte Puffer
 //!   wird vor `LocalFree` ueberschrieben.
 //! - Keine Fehlermeldung enthaelt Klartext oder Adresse.
-//! - Nicht unter Windows: `secret_put` meldet Fehler (macOS-Keychain folgt bei
-//!   Bedarf); es wird nie unverschluesselt gespeichert.
+//! - macOS (lva#134): gleiche Dateien, Umschlag XChaCha20-Poly1305 mit dem
+//!   Zusatzgeheimnis als AAD; der Schluessel liegt im Anmelde-Schluesselbund.
+//! - Linux: `secret_put` meldet Fehler; es wird nie unverschluesselt gespeichert.
 //!
 //! Namensraeume (A1, Register „Integrationen“): `Namespace::Calendar` ist der
 //! bisherige Raum (Datei `<id>.bin`, Zusatzgeheimnis `calendar-secret@1:<id>`)
@@ -440,12 +441,167 @@ mod dpapi {
     }
 }
 
+/// Kann der Tresor auf diesem System Geheimnisse ablegen? Windows (DPAPI) und macOS
+/// (Schlüssel im Schlüsselbund, lva#134). Linux bleibt gesperrt, nie Klartext.
+pub const VAULT_SUPPORTED: bool = cfg!(any(windows, target_os = "macos"));
+
+/// Umschlag für Systeme ohne DPAPI: XChaCha20-Poly1305 mit zufälligem 24-Byte-Nonce, das
+/// Zusatzgeheimnis (Name/Raum) als AAD – eine Datei lässt sich also wie unter DPAPI weder
+/// umbenennen noch in den anderen Raum kopieren. Der 256-Bit-Schlüssel liegt nicht auf der
+/// Platte, sondern im Schlüsselbund (siehe `keychain`).
 #[cfg(not(windows))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod sealed {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    use rand::RngCore;
+    use zeroize::Zeroizing;
+
+    /// Kennung und Version des Umschlags (`LVK1`), damit spätere Formate erkennbar bleiben.
+    const MAGIC: &[u8; 4] = b"LVK1";
+    const NONCE_LEN: usize = 24;
+    pub const KEY_LEN: usize = 32;
+
+    pub fn seal(key: &[u8; KEY_LEN], data: &[u8], aad: &[u8]) -> Result<Vec<u8>, String> {
+        let cipher = XChaCha20Poly1305::new(key.into());
+        let mut nonce = [0u8; NONCE_LEN];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let ct = cipher
+            .encrypt(XNonce::from_slice(&nonce), Payload { msg: data, aad })
+            .map_err(|_| "Verschlüsselung fehlgeschlagen.".to_string())?;
+        let mut out = Vec::with_capacity(MAGIC.len() + NONCE_LEN + ct.len());
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(&ct);
+        Ok(out)
+    }
+
+    pub fn open(key: &[u8; KEY_LEN], blob: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        const BROKEN: &str =
+            "Das Geheimnis lässt sich nicht entschlüsseln (anderer Benutzer oder beschädigt): Zugang neu eingeben.";
+        if blob.len() < MAGIC.len() + NONCE_LEN + 16 || &blob[..MAGIC.len()] != MAGIC {
+            return Err(BROKEN.to_string());
+        }
+        let (nonce, ct) = blob[MAGIC.len()..].split_at(NONCE_LEN);
+        let cipher = XChaCha20Poly1305::new(key.into());
+        cipher
+            .decrypt(XNonce::from_slice(nonce), Payload { msg: ct, aad })
+            .map(Zeroizing::new)
+            .map_err(|_| BROKEN.to_string())
+    }
+
+    pub fn new_key() -> Zeroizing<[u8; KEY_LEN]> {
+        let mut k = Zeroizing::new([0u8; KEY_LEN]);
+        rand::rngs::OsRng.fill_bytes(k.as_mut());
+        k
+    }
+}
+
+/// macOS: der Tresor-Schlüssel als „generisches Passwort“ im Anmelde-Schlüsselbund des
+/// Benutzers (Dienst = Bundle-Kennung, Konto `tresor-v1`). Einmal je Prozess gelesen
+/// bzw. beim ersten Speichern angelegt; ein anderer Benutzer oder ein kopierter
+/// Datenordner hat den Schlüssel nicht und bekommt „beschädigt“, keine Daten.
+#[cfg(target_os = "macos")]
+mod dpapi {
+    use super::sealed::{self, KEY_LEN};
+    use std::sync::Mutex;
+    use zeroize::Zeroizing;
+
+    const SERVICE: &str = "de.wolffappliedai.localvoiceai";
+    const ACCOUNT: &str = "tresor-v1";
+    /// `errSecItemNotFound`
+    const NOT_FOUND: i32 = -25300;
+    /// `errSecDuplicateItem`
+    const DUPLICATE: i32 = -25299;
+
+    static KEY: Mutex<Option<Zeroizing<[u8; KEY_LEN]>>> = Mutex::new(None);
+
+    fn as_key(bytes: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>, String> {
+        let arr: [u8; KEY_LEN] = bytes
+            .try_into()
+            .map_err(|_| "Der Tresor-Schlüssel im Schlüsselbund ist beschädigt.".to_string())?;
+        Ok(Zeroizing::new(arr))
+    }
+
+    fn read() -> Result<Option<Zeroizing<[u8; KEY_LEN]>>, String> {
+        match security_framework::passwords::get_generic_password(SERVICE, ACCOUNT) {
+            Ok(v) => {
+                let v = Zeroizing::new(v);
+                as_key(&v).map(Some)
+            }
+            Err(e) if e.code() == NOT_FOUND => Ok(None),
+            Err(e) => Err(format!(
+                "Der Schlüsselbund verweigert den Zugriff auf den Tresor (Zugriff in der Abfrage erlauben, Code {}).",
+                e.code()
+            )),
+        }
+    }
+
+    /// Schlüssel holen; `create` legt ihn beim ersten Speichern an (nie beim Lesen).
+    fn key(create: bool) -> Result<Option<Zeroizing<[u8; KEY_LEN]>>, String> {
+        let mut slot = KEY.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(k) = slot.as_ref() {
+            return Ok(Some(k.clone()));
+        }
+        // Tests nie gegen den echten Schlüsselbund (keine Abfrage, kein Eintrag): ein
+        // Prozess-Schlüssel genügt, der Umschlag ist derselbe.
+        if cfg!(test) {
+            let k = sealed::new_key();
+            *slot = Some(k.clone());
+            return Ok(Some(k));
+        }
+        if let Some(k) = read()? {
+            *slot = Some(k.clone());
+            return Ok(Some(k));
+        }
+        if !create {
+            return Ok(None);
+        }
+        let fresh = sealed::new_key();
+        // Nur ANLEGEN, nie ersetzen: ein überschriebener Schlüssel machte alle abgelegten
+        // Geheimnisse unlesbar. `set_generic_password` würde aktualisieren.
+        let added = security_framework::os::macos::keychain::SecKeychain::default().and_then(|kc| {
+            kc.add_generic_password(SERVICE, ACCOUNT, fresh.as_ref())
+        });
+        match added {
+            Ok(()) => {}
+            // Ein zweiter Prozess war schneller: dessen Schlüssel gilt.
+            Err(e) if e.code() == DUPLICATE => {
+                let k = read()?.ok_or_else(|| "Der Tresor-Schlüssel ist nicht lesbar.".to_string())?;
+                *slot = Some(k.clone());
+                return Ok(Some(k));
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Der Tresor-Schlüssel lässt sich nicht im Schlüsselbund ablegen (Code {}).",
+                    e.code()
+                ))
+            }
+        }
+        *slot = Some(fresh.clone());
+        Ok(Some(fresh))
+    }
+
+    pub fn protect(data: &[u8], entropy: &[u8]) -> Result<Vec<u8>, String> {
+        let k = key(true)?.ok_or_else(|| "Der Tresor-Schlüssel fehlt.".to_string())?;
+        sealed::seal(&k, data, entropy)
+    }
+
+    pub fn unprotect(blob: &[u8], entropy: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        let k = key(false)?.ok_or_else(|| {
+            "Das Geheimnis lässt sich nicht entschlüsseln (Tresor-Schlüssel fehlt im Schlüsselbund): Zugang neu eingeben."
+                .to_string()
+        })?;
+        sealed::open(&k, blob, entropy)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod dpapi {
     use zeroize::Zeroizing;
 
     const UNSUPPORTED: &str =
-        "Geheimnisse werden nur unter Windows (DPAPI) verschlüsselt gespeichert.";
+        "Geheimnisse werden nur unter Windows (DPAPI) und macOS (Schlüsselbund) verschlüsselt gespeichert.";
 
     pub fn protect(_data: &[u8], _entropy: &[u8]) -> Result<Vec<u8>, String> {
         Err(UNSUPPORTED.to_string())
@@ -460,6 +616,27 @@ mod dpapi {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
+    #[test]
+    fn umschlag_bindet_an_namen_und_schluessel_und_erkennt_schaeden() {
+        let key = super::sealed::new_key();
+        let other = super::sealed::new_key();
+        let blob = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
+        assert!(!blob.windows(6).any(|w| w == b"geheim"), "kein Klartext im Blob");
+        assert_eq!(
+            super::sealed::open(&key, &blob, b"calendar-secret@1:a").unwrap().as_slice(),
+            b"geheim"
+        );
+        assert!(super::sealed::open(&key, &blob, b"calendar-secret@1:b").is_err(), "anderer Name");
+        assert!(super::sealed::open(&other, &blob, b"calendar-secret@1:a").is_err(), "anderer Schlüssel");
+        let mut bad = blob.clone();
+        *bad.last_mut().unwrap() ^= 1;
+        assert!(super::sealed::open(&key, &bad, b"calendar-secret@1:a").is_err(), "verändert");
+        assert!(super::sealed::open(&key, b"LVK1", b"x").is_err(), "zu kurz");
+        let again = super::sealed::seal(&key, b"geheim", b"calendar-secret@1:a").unwrap();
+        assert_ne!(blob, again, "frischer Nonce je Speichern");
+    }
+
     const URL: &str =
         "https://outlook.office365.com/owa/calendar/aaaa-bbbb-cccc/SECRETKEY/reachcalendar.ics";
 
@@ -467,7 +644,7 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn dpapi_roundtrip() {
         let dir = tmp();
@@ -486,7 +663,7 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn overwrite_replaces_atomically_without_leftovers() {
         let dir = tmp();
@@ -513,7 +690,7 @@ mod tests {
             .is_none());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn a_damaged_blob_is_an_error_with_a_clear_message_and_no_panic() {
         let dir = tmp();
@@ -537,7 +714,7 @@ mod tests {
             .contains("beschädigt"));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn a_blob_is_bound_to_its_name() {
         let dir = tmp();
@@ -575,7 +752,7 @@ mod tests {
         assert!(std::fs::read_dir(dir.path()).unwrap().next().is_none());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn a_failed_write_leaves_no_temp_file_and_reports_an_error() {
         let dir = tmp();

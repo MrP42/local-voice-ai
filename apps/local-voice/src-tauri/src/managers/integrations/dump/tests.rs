@@ -85,7 +85,7 @@ fn the_dump_reports_the_state_of_secrets_but_never_their_content() {
         .is_empty());
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 #[test]
 fn a_present_secret_shows_as_present_and_its_content_stays_out() {
     let fx = Fx::new();

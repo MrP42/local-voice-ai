@@ -11,8 +11,9 @@
 //!
 //! ## Ablage
 //!
-//! * **Windows:** im Tresor der App (`int-tts-huggingface-token.bin`), nie in den Einstellungen.
-//! * **macOS/Linux:** bis der Schlüsselbund-Tresor da ist (lva#134), in der Token-Datei von
+//! * **Windows und macOS:** im Tresor der App (`int-tts-huggingface-token.bin`; Windows DPAPI,
+//!   macOS Schlüssel im Schlüsselbund, lva#134), nie in den Einstellungen.
+//! * **Linux:** nur nach ausdrücklicher Zustimmung in der Token-Datei von
 //!   Hugging Face (`$HF_HOME/token`, sonst `~/.cache/huggingface/token`, Rechte 0600) – genau dort,
 //!   wo `hf auth login` ihn ablegt. Eine vorhandene Datei wird nie überschrieben.
 //!
@@ -137,7 +138,7 @@ pub fn save(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<HfAccessStatus, String> {
     let token = normalize(raw)?;
-    if cfg!(windows) {
+    if secret::VAULT_SUPPORTED {
         std::fs::create_dir_all(secrets_dir)
             .map_err(|_| "Der Ordner für Geheimnisse lässt sich nicht anlegen.".to_string())?;
         secret::put_ref_in(secrets_dir, &token_ref(), token.as_bytes())?;
@@ -300,7 +301,7 @@ mod tests {
         assert!(load(Some(tmp.path()), &env).is_some());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn der_eigene_zugang_hat_vorrang_vor_hf_token() {
         let tmp = tempfile::tempdir().unwrap();
@@ -313,7 +314,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn ohne_tresor_landet_der_zugang_in_der_token_datei_mit_0600() {
         use std::os::unix::fs::PermissionsExt;
@@ -329,7 +330,7 @@ mod tests {
         assert_eq!(mode, 0o600);
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn eine_vorhandene_token_datei_wird_nie_ueberschrieben() {
         let tmp = tempfile::tempdir().unwrap();
@@ -341,7 +342,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(hf_home.join("token")).unwrap(), "  \n");
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn ohne_zustimmung_entsteht_keine_klartextdatei() {
         let tmp = tempfile::tempdir().unwrap();

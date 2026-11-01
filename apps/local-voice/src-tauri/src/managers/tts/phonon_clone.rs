@@ -273,7 +273,7 @@ pub fn key_status(dir: &Path) -> KeyStatus {
         SecretStatus::Broken(why) => (false, Some(why)),
     };
     KeyStatus {
-        supported: cfg!(windows),
+        supported: crate::managers::calendar::secret::VAULT_SUPPORTED,
         present,
         problem,
     }

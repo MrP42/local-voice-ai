@@ -29,6 +29,12 @@ echo "Signierschluessel des Updaters:"
 if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then ok "TAURI_SIGNING_PRIVATE_KEY gesetzt (Inhalt wird nicht angezeigt)"
 else nein 'TAURI_SIGNING_PRIVATE_KEY – export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/local-voice.key)"'; fi
 
+echo "Signatur (lva#143):"
+SIGN_NAME="${LVA_SIGNING_NAME:-Local Voice Local Signing}"
+if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then ok "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$SIGN_NAME\""; then ok "$SIGN_NAME"
+else nein "$SIGN_NAME - scripts/macos-signing-setup.sh (oder LVA_ADHOC=1 fuer ad-hoc)"; fi
+
 echo "Stand:"
 VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | head -1 | cut -d'"' -f4)
 TAG="app-v$VERSION"

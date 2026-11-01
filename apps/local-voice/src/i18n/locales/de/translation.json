@@ -45,7 +45,7 @@
         "languageModel": "{{language}} · {{name}}",
         "voices_one": "{{count}} Stimme",
         "voices_other": "{{count}} Stimmen",
-        "gatedNeedsVault": "Auf diesem System erst nach Zustimmung zur Klartext-Ablage des Zugangs verfügbar (Schlüsselbund folgt).",
+        "gatedNeedsVault": "Unter Linux erst nach Zustimmung zur Klartext-Ablage des Zugangs verfügbar.",
         "licenseConsent": "Ich habe die Lizenzen gelesen. Nichtkommerzielle Modelle nutze ich nur nichtkommerziell.",
         "licenseOpen": "Lizenz von „{{name}}“ ansehen",
         "access": {
@@ -268,7 +268,7 @@
         "title": "Eigene Stimmen",
           "summary_one": "{{count}} vorhanden",
           "summary_other": "{{count}} vorhanden",
-          "cloneBlocked": "Klonen ist auf diesem System noch gesperrt: Der Gradium-Schlüssel braucht den Schlüsselbund-Tresor, der mit dem nächsten Update kommt. Stimmdateien lassen sich schon importieren.",
+          "cloneBlocked": "Klonen ist unter Linux gesperrt: Der Gradium-Schlüssel braucht einen sicheren Tresor (Windows, macOS). Stimmdateien lassen sich trotzdem importieren.",
         "intro": "Eigene Stimmen importieren oder mit Gradium aus einer Aufnahme erstellen, auch aus vorhandenen Fish-Stimmen. Sie liegen danach lokal im Phonon-Modell und werden ohne Netz benutzt.",
         "noModel": "Es ist noch kein Phonon-Modell installiert. Neue Stimmen werden gespeichert und stehen bereit, sobald auf der Modellseite ein Modell installiert ist.",
         "empty": "Noch keine eigenen Stimmen.",
@@ -5111,7 +5111,6 @@
   "integrations": {
     "secretStore": {
       "unavailable": {
-        "macos": "Auf macOS derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
         "linux": "Unter Linux derzeit nicht verfügbar: Die sichere Speicherung von Zugangsdaten wird noch nicht unterstützt. Verbindungen mit Passwort, Token oder geheimer Adresse (Microsoft 365, E-Mail-Versand, Kalender, Wissen, Webhooks und Dienste) lassen sich deshalb noch nicht einrichten.",
         "short": "Auf diesem System noch nicht verfügbar (keine sichere Speicherung von Zugangsdaten)."
       }

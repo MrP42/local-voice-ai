@@ -45,7 +45,7 @@
         "languageModel": "{{language}} · {{name}}",
         "voices_one": "{{count}} voice",
         "voices_other": "{{count}} voices",
-        "gatedNeedsVault": "On this system only after agreeing to store the access in plain text (keychain support follows).",
+        "gatedNeedsVault": "On Linux only available after agreeing to store the access in plain text.",
         "licenseConsent": "I have read the licences. I use non-commercial models only non-commercially.",
         "licenseOpen": "View licence of “{{name}}”",
         "access": {
@@ -268,7 +268,7 @@
         "title": "Own voices",
           "summary_one": "{{count}} available",
           "summary_other": "{{count}} available",
-          "cloneBlocked": "Cloning is still locked on this system: the Gradium key needs the keychain vault coming with the next update. Voice files can already be imported.",
+          "cloneBlocked": "Cloning is locked on Linux: the Gradium key needs a secure vault (Windows, macOS). Voice files can still be imported.",
         "intro": "Import your own voices or create them from a recording with Gradium, including from existing Fish voices. They are then stored locally in the Phonon model and used without a network.",
         "noModel": "No Phonon model is installed yet. New voices are saved and become available as soon as a model is installed on the models page.",
         "empty": "No own voices yet.",
@@ -5111,7 +5111,6 @@
   "integrations": {
     "secretStore": {
       "unavailable": {
-        "macos": "Not available on macOS yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
         "linux": "Not available on Linux yet: secure storage of credentials is not supported yet. Connections that need a password, token or secret address (Microsoft 365, email sending, calendars, knowledge, webhooks and services) cannot be set up yet.",
         "short": "Not available on this system yet (no secure credential storage)."
       }
