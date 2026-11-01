@@ -223,8 +223,12 @@ export function parseReaderDoc(
         let bodyStart = part.start;
         let kind: ReaderBlockKind = "paragraph";
         let level: number | undefined;
+        // Führende Leerzeichen (nach `<Name>`) gehören nicht zum Lesetext:
+        // sonst rückt die erste Zeile gegenüber den folgenden ein.
         const lead = body.length - body.trimStart().length;
         const rest = body.slice(lead);
+        bodyStart += lead;
+        body = rest;
         const h = /^(#{1,3})\s+/.exec(rest);
         const q = /^>\s?/.exec(rest);
         const li = /^[-*•]\s+/.exec(rest);
@@ -232,7 +236,7 @@ export function parseReaderDoc(
         if (m) {
           kind = h ? "heading" : q ? "quote" : "item";
           level = h ? h[1].length : undefined;
-          bodyStart += lead + m[0].length;
+          bodyStart += m[0].length;
           body = rest.slice(m[0].length);
         }
         if (part.marker) current = part.marker;

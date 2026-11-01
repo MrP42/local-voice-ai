@@ -31,6 +31,9 @@ type BaseProps = {
    *  Vorlesen-Seite), sonst verdrängt oder verdeckt die Liste dort andere
    *  Inhalte. Standard: aus. */
   menuPortal?: boolean;
+  /** Kompakter Knopf (nur Symbol + Pfeil, Text per `formatOptionLabel`):
+   *  die Liste ist dann breiter als das Feld und rechtsbündig daran. */
+  compactMenuWidth?: number;
   formatCreateLabel?: (input: string) => string;
   /** Zugänglicher Name des Eingabefelds (die sichtbare Beschriftung steht
    *  meist daneben, ohne mit dem Feld verbunden zu sein). */
@@ -151,6 +154,7 @@ export const Select: React.FC<SelectProps> = React.memo(
     onBlur,
     className = "",
     menuPortal = false,
+    compactMenuWidth,
     ariaLabel,
     ariaDescribedBy,
     formatOptionLabel,
@@ -200,7 +204,35 @@ export const Select: React.FC<SelectProps> = React.memo(
       isLoading,
       onBlur,
       isClearable,
-      styles: selectStyles,
+      styles: compactMenuWidth
+        ? {
+            ...selectStyles,
+            menu: (base, state) => ({
+              ...selectStyles.menu!(base, state),
+              minWidth: compactMenuWidth,
+            }),
+            // Rechtsbündig am Knopf: der Knopf steht rechts in der Leiste,
+            // eine linksbündige Liste liefe aus dem Fenster.
+            menuPortal: (base, state) => {
+              const b = selectStyles.menuPortal!(base, state) as {
+                left?: number;
+                width?: number;
+              };
+              const w = Math.max(b.width ?? 0, compactMenuWidth);
+              return {
+                ...b,
+                width: w,
+                left: Math.max(8, (b.left ?? 0) + (b.width ?? 0) - w),
+              };
+            },
+            valueContainer: (base) => ({ ...base, padding: "0 4px 0 8px" }),
+            indicatorSeparator: () => ({ display: "none" }),
+            dropdownIndicator: (base, state) => ({
+              ...selectStyles.dropdownIndicator!(base, state),
+              padding: "6px 6px 6px 0",
+            }),
+          }
+        : selectStyles,
       ...(formatOptionLabel
         ? {
             formatOptionLabel: (

@@ -71,7 +71,22 @@ interface ReaderViewProps {
 
 /** Mindestbreite des Textes einer Seite, ab der zwei Seiten nebeneinander stehen. */
 const MIN_TWO_PAGE_TEXT = 340;
-const PAGE_PAD = 52;
+// Rand außen: knapp breiter als die Blätterpfeile (34 px + 2 px Abstand).
+const PAGE_PAD = 42;
+// Namensspalte: so breit wie der längste Sprechername, nicht fest 96 px
+// (Patrick 01.11.: zu viel Leerraum vor kurzen Namen wie „Patrick“).
+const NAME_GAP = 16;
+const GUTTER_MIN = 56;
+const GUTTER_MAX = 96;
+const nameGutter = (names: string[]): number => {
+  if (!names.length || typeof document === "undefined") return GUTTER_MIN;
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return GUTTER_MAX;
+  ctx.font = '600 12px "Segoe UI", system-ui, sans-serif';
+  const widest = Math.max(...names.map((n) => ctx.measureText(n).width));
+  // + 4 px Innenabstand des Namensknopfs
+  return Math.min(GUTTER_MAX, Math.max(GUTTER_MIN, Math.ceil(widest) + 4 + NAME_GAP));
+};
 const PAGE_PAD_NARROW = 16;
 const NARROW = 560;
 
@@ -249,6 +264,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 }) => {
   const { t } = useTranslation();
   const blocks = useMemo(() => parseReaderDoc(text, speakers), [text, speakers]);
+  const gutterW = useMemo(
+    () =>
+      nameGutter([
+        ...new Set(blocks.flatMap((b) => (b.speaker ? [b.speaker.name] : []))),
+      ]),
+    [blocks],
+  );
   const bookRef = useRef<HTMLDivElement>(null);
   const flowRef = useRef<HTMLDivElement>(null);
   const [geo, setGeo] = useState({
@@ -362,7 +384,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     if (width <= 0) return;
     const narrow = width < NARROW;
     const pad = narrow ? PAGE_PAD_NARROW : PAGE_PAD;
-    const gutter = showSpeakers && !narrow ? 96 : 0;
+    const gutter = showSpeakers && !narrow ? gutterW : 0;
     const gap = pad * 2;
     const twoFit = (width - pad * 2 - gap) / 2 - gutter >= MIN_TWO_PAGE_TEXT;
     const perView = twoPages && !narrow && twoFit ? 2 : 1;
@@ -372,7 +394,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     flow.style.width = `${perView === 2 ? colW * 2 + gap : colW}px`;
     const pages = Math.max(1, Math.round((flow.scrollWidth + gap) / (colW + gap)));
     setGeo({ colW, gap, pad, perView, pages, narrow });
-  }, [twoPages, showSpeakers]);
+  }, [twoPages, showSpeakers, gutterW]);
 
   useLayoutEffect(() => {
     measure();
@@ -409,11 +431,18 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
   // Mitblättern wortgenau: umgeblättert wird, wenn das Wort, das gerade zu
   // hören ist, auf der nächsten Seite steht — auch mitten im Satz.
+  // Ein neuer Umbruch (ein/zwei Seiten, Schrift, Fenstergröße) ist kein
+  // Umblättern: dann springt die Seite ohne Animation (Patrick 01.11.).
+  const geoKeyRef = useRef("");
   useLayoutEffect(() => {
+    const geoKey = `${geo.perView}:${geo.colW}:${geo.pages}`;
+    const relayout = geoKeyRef.current !== geoKey;
+    geoKeyRef.current = geoKey;
     if (!follow || !current) return;
     const p = pageOfElement(curEl());
     if (p === null) return;
-    if (p < page || p >= page + geo.perView) turnTo(clampPage(p));
+    if (p < page || p >= page + geo.perView)
+      (relayout ? setPage : turnTo)(clampPage(p));
   }, [current, word, follow, geo, pageOfElement, clampPage]);
 
   // Nach dem Commit messen: im Render stünde noch das DOM der Vorgängerfassung.
@@ -507,7 +536,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       <div
         ref={bookRef}
         className={`reader-book${geo.perView === 2 ? " reader-book--two" : ""}${showSpeakers ? "" : " reader-book--nospeakers"}${geo.narrow ? " reader-book--narrow" : ""}`}
-        style={{ "--reader-fs": `${fontSize}px` } as React.CSSProperties}
+        style={
+          {
+            "--reader-fs": `${fontSize}px`,
+            "--gutter": `${gutterW}px`,
+          } as React.CSSProperties
+        }
         data-testid="reader-book"
         data-font={fontFamily}
         data-pages={geo.pages}
@@ -564,6 +598,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 </Tag>
               );
             }
+            // Nur Tags (z. B. `[long pause]`): kein Lesetext, also weder Name
+            // noch Strich, nur ein kleiner Abstand (Patrick 01.11.).
+            if (block.runs.every((r) => (r.tag && r.page === undefined) || !r.text.trim()))
+              return <div key={key} className="reader-pause" aria-hidden="true" />;
             const speaker = block.speaker;
             // Ohne Stimme trotzdem farbig (stabil je Name), damit man die
             // Sprecher im Buch auseinanderhält; der Strich ist dann gestrichelt.
@@ -574,26 +612,27 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             return (
               <Tag
                 key={key}
-                className={`reader-block reader-${block.kind}${block.continues ? " reader-cont" : ""}${speaker && !speaker.ref ? " reader-block--novoice" : ""}`}
+                className={`reader-block reader-${block.kind}${block.continues ? " reader-cont" : ""}${speaker && showSpeakers ? " reader-block--bar" : ""}${speaker && !speaker.ref ? " reader-block--novoice" : ""}`}
                 style={{ "--speaker-c": color } as React.CSSProperties}
               >
                 {speaker && showSpeakers && (
-                  <>
-                    <span className="reader-bar" aria-hidden="true" />
-                    <button
-                      type="button"
-                      className="reader-who"
-                      data-speaker={speaker.name}
-                      tabIndex={block.continues ? -1 : 0}
-                      aria-label={t("tts.reader.speakerButton", { name: speaker.name })}
-                      title={speaker.ref ? speaker.name : t("tts.reader.speakerUnknown", { name: speaker.name })}
-                    >
-                      {speaker.name}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="reader-who"
+                    data-speaker={speaker.name}
+                    tabIndex={block.continues ? -1 : 0}
+                    aria-label={t("tts.reader.speakerButton", { name: speaker.name })}
+                    title={speaker.ref ? speaker.name : t("tts.reader.speakerUnknown", { name: speaker.name })}
+                  >
+                    {speaker.name}
+                  </button>
                 )}
-                {block.kind === "item" && <span className="reader-dot" aria-hidden="true">•</span>}
-                <Runs block={block} current={current} marks={marks} word={word} />
+                {/* Der Sprecherstrich hängt an den Zeilen selbst: so steht er
+                  nur neben Text, nie als Stummel am Spaltenende. */}
+                <span className="reader-text">
+                  {block.kind === "item" && <span className="reader-dot" aria-hidden="true">•</span>}
+                  <Runs block={block} current={current} marks={marks} word={word} />
+                </span>
               </Tag>
             );
           })}

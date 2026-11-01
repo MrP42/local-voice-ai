@@ -797,7 +797,7 @@
     },
     "layout": {
       "hideColumn": "Hide right column",
-      "showColumn": "Show column",
+      "showColumn": "Show right column",
       "showColumnHint": "Show voice, tools and files on the right again",
       "sideBySide": "Show controls and files side by side",
       "resizePages": "Resize page list",
