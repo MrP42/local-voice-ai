@@ -29,6 +29,7 @@ import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import Badge from "../../ui/Badge";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 import { ModelBadges } from "../../compliance/ModelBadges";
+import { FunctionModels } from "./FunctionModels";
 import {
   notifyComplianceChanged,
   useComplianceStore,
@@ -254,6 +255,10 @@ export const LlmConnectionsSettings: React.FC = () => {
           grouped={true}
         />
       </SettingsGroup>
+
+      {selectable.length > 0 && (
+        <FunctionModels selectable={selectable} labelFor={labelFor} run={run} />
+      )}
 
       <SettingsGroup
         title={t("settings.llm.connections.title")}

@@ -2309,6 +2309,23 @@
         "placeholder": "Choose a model…",
         "none": "No model released yet — add a connection below and release models."
       },
+      "functions": {
+        "title": "Models per function",
+        "description": "A separate model for individual tasks, saved permanently. “Default model” follows the active model above and the footer.",
+        "default": "Default model ({{model}})",
+        "defaultNone": "Default model",
+        "effort": "Effort for {{name}}",
+        "names": {
+          "voice_speaker": "Voice conversation (speaker)",
+          "meeting_protocol": "Meeting minutes and notes",
+          "dictation_refine": "Dictation refinement"
+        },
+        "hints": {
+          "voice_speaker": "Answers in conversations and the main conversation. A fast or local model keeps response times short; hard questions go to the thinker.",
+          "meeting_protocol": "Writes minutes, project minutes and improves notes.",
+          "dictation_refine": "Refines dictated text after recognition."
+        }
+      },
       "connections": {
         "title": "Connections",
         "empty": "No connection yet. Pick a provider below — local or cloud.",

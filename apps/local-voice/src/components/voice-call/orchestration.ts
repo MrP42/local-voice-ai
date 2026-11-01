@@ -329,6 +329,9 @@ function wireMessages(
 
 let turnCounter = 0;
 
+/** Funktion des Sprechers in `function_models` (wie `FN_VOICE_SPEAKER` in Rust). */
+export const VOICE_SPEAKER = "voice_speaker";
+
 /**
  * Ein Modell als `VoiceModel`: jeder Durchgang ist ein `voice_call_turn` mit eigener Kennung
  * (so bricht der Abbruch genau ihn ab) und ausdrücklicher Modellkennung samt Souveränitätsstufe
@@ -339,6 +342,7 @@ function makeModel(
   info: ModelDescription,
   stufe: Souveraenitaet,
   deps: OrchestrationDeps,
+  forFunction: string | null = null,
 ): VoiceModel {
   return {
     id: info.id,
@@ -373,6 +377,7 @@ function makeModel(
           messages: wireMessages(req.messages),
           modelId: info.id,
           stufe,
+          forFunction,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
@@ -454,9 +459,14 @@ async function loadModels(): Promise<LoadedModels> {
   if (!settings || settings.status !== "ok")
     return { active: null, all: [], knowledge: NO_KNOWLEDGE };
   const all = describeModels(settings.data, assessedById(compliance));
+  // Sprecher: das Modell der Funktion „Sprachgespräch“, sonst das Standardmodell.
+  const speakerId = settings.data.function_models?.[VOICE_SPEAKER]?.model_id;
   const activeId = settings.data.llm_active_model_id ?? null;
   return {
-    active: all.find((m) => m.id === activeId) ?? null,
+    active:
+      all.find((m) => m.id === speakerId) ??
+      all.find((m) => m.id === activeId) ??
+      null,
     all,
     knowledge: knowledgeFrom(settings.data),
   };
@@ -574,7 +584,7 @@ export class OrchestrationSession {
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
     this.side = createOrchestrator({
-      sprecher: makeModel(active, stufe, deps),
+      sprecher: makeModel(active, stufe, deps, VOICE_SPEAKER),
       denker: denker ? makeModel(denker, stufe, deps) : undefined,
       tools: offered,
       bereich: SESSION_BEREICH,

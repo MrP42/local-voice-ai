@@ -1533,6 +1533,8 @@ async fn run_minutes(
     on_progress: ProgressFn<'_>,
     profile: &DocProfile,
 ) -> Result<MeetingDocument, MinutesError> {
+    // Modelle je Funktion: Protokoll und Notizen nutzen ihr eigenes Modell, falls gewaehlt.
+    let settings = &settings.for_function(crate::settings::FN_MEETING_PROTOCOL);
     let started = std::time::Instant::now();
     let meeting = store
         .get_meeting(meeting_id)
