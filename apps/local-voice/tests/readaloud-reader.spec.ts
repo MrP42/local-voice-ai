@@ -113,7 +113,7 @@ test.beforeEach(async ({ page }) => {
                 "",
               tab: "original",
             });
-          if (cmd === "tts_speak_text" && parts)
+          if ((cmd === "tts_speak_text" || cmd === "tts_speak_resume") && parts)
             // Die Sitzung endet erst, wenn der Test es sagt.
             return new Promise((done) => {
               (window as unknown as { __endSpeak: () => void }).__endSpeak = () =>
@@ -1095,4 +1095,32 @@ test("Buchteile: nach einem Stopp bleibt das Vorlesen im Teil", async ({ page })
   await page.waitForTimeout(400);
   expect(await calls(page, "tts_speak_text")).toHaveLength(1);
   await expect(page.getByTestId("reader-flow")).toContainText("Teil eins");
+});
+
+test("Buchteile: Pause und Play lesen trotzdem im nächsten Teil weiter", async ({ page }) => {
+  await startPart(page);
+  await emit(page, "tts-speak-progress", { position: 1, total: 3 });
+  await page.evaluate(() =>
+    (window as unknown as { __endSpeak: () => void }).__endSpeak(),
+  );
+  await playFromBar(page, "Vorlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_resume")).length).toBe(1);
+  await emit(page, "tts-speak-progress", { position: 3, total: 3 });
+  await page.evaluate(() =>
+    (window as unknown as { __endSpeak: () => void }).__endSpeak(),
+  );
+  await expect(page.getByTestId("reader-flow")).toContainText("Teil zwei");
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(2);
+});
+
+test("Buchteile: nach einem Reiterwechsel bleibt das Vorlesen im Teil", async ({ page }) => {
+  await startPart(page);
+  await emit(page, "tts-speak-progress", { position: 2, total: 3 });
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await emit(page, "tts-speak-progress", { position: 3, total: 3 });
+  await page.evaluate(() =>
+    (window as unknown as { __endSpeak: () => void }).__endSpeak(),
+  );
+  await page.waitForTimeout(400);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(1);
 });
