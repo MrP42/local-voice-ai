@@ -5,7 +5,7 @@ import {
   PopoverSurface,
   PopoverTrigger,
 } from "@fluentui/react-components";
-import { ChevronRight, Info } from "lucide-react";
+import { Info } from "lucide-react";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import {
   formatUsd,
@@ -17,8 +17,6 @@ import {
 } from "./useVoiceInfo";
 import { useVoiceChoice } from "../settings/tts/useVoiceChoice";
 import { useServerPhase } from "../settings/meetings/ReadAloudBar";
-import { noKnowledge } from "./orchestration";
-import { useKnowledge } from "./useKnowledge";
 
 const DOT: Record<string, string> = {
   idle: "bg-mid-gray/60",
@@ -56,15 +54,20 @@ function useCostTexts(cost: CallCost) {
   }
 }
 
+interface InfoLineProps {
+  /** Ganz links, vor dem i-Symbol (Verlauf ausklappen, wenn die Spalte eingeklappt ist). */
+  leading?: React.ReactNode;
+  /** Ganz rechts (Kontextmenü „Gesprächsoptionen“). */
+  trailing?: React.ReactNode;
+}
+
 /** Genau eine Zeile: Status, Modell, erster Ton, Token, Kosten; Details hinter dem i. */
-export const InfoLine: React.FC = () => {
+export const InfoLine: React.FC<InfoLineProps> = ({ leading, trailing }) => {
   const { t, i18n } = useTranslation();
   const state = useVoiceCallStore((s) => s.state);
   const ready = useVoiceCallStore((s) => s.ready);
   const metrics = useVoiceCallStore((s) => s.metrics);
   const usage = useVoiceCallStore((s) => s.usage);
-  const openSettings = useVoiceCallStore((s) => s.openSettings);
-  const knowledge = useKnowledge();
   const llm = useActiveLlm();
   const stt = useSttModelName();
   const cost = useCallCost(usage, llm);
@@ -84,7 +87,8 @@ export const InfoLine: React.FC = () => {
   const model = ready?.llm || llm.label;
 
   return (
-    <div className="flex items-center gap-2.5 h-9 px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
+    <div className="flex items-center gap-2.5 h-9 px-2 sm:px-4 border-b border-mid-gray/20 text-xs text-text/70 whitespace-nowrap overflow-hidden">
+      {leading}
       <Popover positioning="below-start" withArrow={false}>
         <PopoverTrigger disableButtonEnhancement>
           <button
@@ -198,11 +202,7 @@ export const InfoLine: React.FC = () => {
       )}
       {costText.chip && (
         <span
-          // Schmal hat der Hinweis „Kein Wissen freigegeben“ Vorrang; die Kosten
-          // stehen weiter in den Details hinter dem i-Symbol.
-          className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] ${
-            noKnowledge(knowledge) ? "max-sm:hidden " : ""
-          }${
+          className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] max-sm:hidden ${
             cost.kind === "usd"
               ? "bg-logo-primary/15 border-transparent text-logo-primary"
               : "bg-mid-gray/10 border-mid-gray/25"
@@ -211,18 +211,8 @@ export const InfoLine: React.FC = () => {
           {costText.chip}
         </span>
       )}
-      {noKnowledge(knowledge) && (
-        <button
-          type="button"
-          data-testid="knowledge-chip"
-          title={t("voiceCall.knowledge.chipTitle")}
-          onClick={() => openSettings("knowledge")}
-          className="shrink-0 inline-flex items-center h-5 ps-1.5 pe-1 rounded-full border border-logo-primary/40 bg-logo-primary/10 text-[11px] cursor-pointer text-logo-primary underline-offset-2 hover:underline hover:border-logo-primary"
-        >
-          {t("voiceCall.knowledge.chip")}
-          <ChevronRight className="w-3 h-3 ms-0.5" aria-hidden="true" />
-        </button>
-      )}
+      <span className="flex-1 min-w-0" />
+      {trailing}
     </div>
   );
 };

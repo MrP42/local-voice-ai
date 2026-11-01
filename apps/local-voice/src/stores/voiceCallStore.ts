@@ -962,7 +962,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     togglePin: async (id) => {
       const current = get().conversations.find((c) => c.id === id);
       try {
-        await invoke("conversation_update", {
+        await invoke("conversation_set_pinned", {
           id,
           pinned: !(current?.pinned ?? false),
         });

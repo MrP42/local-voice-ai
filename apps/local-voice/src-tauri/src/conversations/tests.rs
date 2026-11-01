@@ -463,3 +463,69 @@ fn recent_entries_are_newest_first_and_skip_archived() {
     assert_eq!(hits[0].conversation_id, open.id);
     assert_eq!(s.recent_entries(1).unwrap().len(), 1);
 }
+
+#[test]
+fn pinned_sort_by_pinned_at_newest_pin_first() {
+    let s = store();
+    let a = s.create(Some("a".to_string())).unwrap();
+    tick();
+    let b = s.create(Some("b".to_string())).unwrap();
+    tick();
+    let c = s.create(Some("c".to_string())).unwrap();
+    tick();
+    s.set_pinned(&a.id, true).unwrap();
+    tick();
+    s.set_pinned(&b.id, true).unwrap();
+    let ids: Vec<_> = s.list(false).unwrap().into_iter().map(|x| x.id).collect();
+    assert_eq!(ids, [b.id.clone(), a.id.clone(), c.id.clone()]);
+
+    // Erneutes Anheften behält den Zeitpunkt, Lösen reiht das Gespräch nach Änderung ein.
+    tick();
+    s.set_pinned(&a.id, true).unwrap();
+    let ids: Vec<_> = s.list(false).unwrap().into_iter().map(|x| x.id).collect();
+    assert_eq!(ids[..2], [b.id.clone(), a.id.clone()]);
+    let unpinned = s.set_pinned(&b.id, false).unwrap();
+    assert!(!unpinned.pinned);
+    let ids: Vec<_> = s.list(false).unwrap().into_iter().map(|x| x.id).collect();
+    assert_eq!(ids, [a.id, c.id, b.id]);
+}
+
+#[test]
+fn set_pinned_keeps_updated_at_and_rejects_unknown_ids() {
+    let s = store();
+    let c = s.create(None).unwrap();
+    let p = s.set_pinned(&c.id, true).unwrap();
+    assert!(p.pinned);
+    assert_eq!(p.updated_at, c.updated_at);
+    assert!(s
+        .set_pinned("conv_00000000000000000000000000", true)
+        .is_err());
+}
+
+#[test]
+fn migration_adds_pinned_at_idempotently_and_backfills() {
+    let dir = std::env::temp_dir().join(format!("lva-conv-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("conversations.db");
+    let _ = std::fs::remove_file(&path);
+    let s = ConversationStore::open_upgrading(&path, |conn| {
+        for (id, pinned) in [("conv_old_pinned", 1), ("conv_old_plain", 0)] {
+            conn.execute(
+                "INSERT INTO conversations (id, schema_version, ts, trace_id, title, created_at,
+                    updated_at, kind, scope, participants, context, pinned, archived)
+                 VALUES (?1, '0.1.3', 't', 'tr', 'x', '2026-01-01T00:00:00.000Z',
+                    '2026-01-02T00:00:00.000Z', 'voice', '{}', '[]', '[]', ?2, 0)",
+                rusqlite::params![id, pinned],
+            )
+            .unwrap();
+        }
+    })
+    .unwrap();
+    let rows = s.list(false).unwrap();
+    assert!(rows[0].pinned && rows[0].id == "conv_old_pinned");
+    drop(s);
+    // Zweites Öffnen derselben Datei: keine Doppelmigration, Daten bleiben.
+    let again = ConversationStore::open(&path).unwrap();
+    assert_eq!(again.list(false).unwrap().len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}

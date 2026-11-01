@@ -2254,6 +2254,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             conversations::conversation_get,
             conversations::conversation_create,
             conversations::conversation_update,
+            conversations::conversation_set_pinned,
             conversations::conversation_delete,
             conversations::conversation_append_entry,
             conversations::conversation_update_entry,
