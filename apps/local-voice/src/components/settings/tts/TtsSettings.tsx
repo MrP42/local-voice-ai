@@ -1696,6 +1696,7 @@ export const TtsSettings = () => {
     setLastError(null);
     setLoadingSource(true);
     const wasEmpty = !text.trim();
+    const pageAtStart = activePage;
     const result = await commands.ttsExtractDocument(picked);
     setLoadingSource(false);
     if (result.status === "error") {
@@ -1704,11 +1705,20 @@ export const TtsSettings = () => {
     }
     setTab("original");
     setText(result.data);
-    // Ein Buch auf einer leeren Seite: die Seite heißt wie das Buch (lva#149).
-    const bookTitle = /^#\s+(.+)$/m.exec(result.data)?.[1]?.trim();
-    if (wasEmpty && activePage && bookTitle) {
+    // Ein E-Book auf einer leeren Seite: die Seite heißt wie das Buch
+    // (lva#149). Nur die erste Zeile zählt, und nur, wenn der Nutzer
+    // während des Ladens nicht die Seite gewechselt hat.
+    const firstLine = result.data.trimStart().split("\n", 1)[0] ?? "";
+    const bookTitle = /^#[ \t]+(.+)$/.exec(firstLine)?.[1]?.trim();
+    if (
+      wasEmpty &&
+      /\.epub$/i.test(picked) &&
+      pageAtStart &&
+      activePageRef.current === pageAtStart &&
+      bookTitle
+    ) {
       void commands
-        .pagesRename(activePage, bookTitle.slice(0, 120))
+        .pagesRename(pageAtStart, bookTitle.slice(0, 120))
         .then(() => reloadPages());
     }
     openModeRef.current?.(result.data);

@@ -52,7 +52,11 @@ re!(BODY_RE, r"(?is)<body\b[^>]*>(.*)</body\s*>");
 re!(DC_TITLE_RE, r"(?is)<dc:title\b[^>]*>(.*?)</dc:title\s*>");
 re!(
     DC_CREATOR_RE,
-    r"(?is)<dc:creator\b[^>]*>(.*?)</dc:creator\s*>"
+    r"(?is)<dc:creator\b([^>]*)>(.*?)</dc:creator\s*>"
+);
+re!(
+    ROLE_META_RE,
+    r#"(?is)<meta\b[^>]*\brefines\s*=\s*["']#([^"']+)["'][^>]*\bproperty\s*=\s*["']role["'][^>]*>\s*([^<\s]+)\s*</meta>"#
 );
 re!(
     ENC_ALGO_RE,
@@ -232,13 +236,43 @@ fn with_title_page(opf: &str, text: String) -> String {
     else {
         return text;
     };
-    let head: String = text.chars().take(600).collect::<String>().to_lowercase();
-    if head.contains(&title.to_lowercase()) {
+    // Eigene Titelseite: eine der ersten Zeilen IST der Titel. Ein bloßes
+    // Vorkommen genügt nicht — kurze Titel („1984“) stehen fast überall.
+    let norm = |l: &str| {
+        l.trim_start_matches(['#', '>', ' '])
+            .trim_matches(['*', ' '])
+            .to_lowercase()
+    };
+    let wanted = title.to_lowercase();
+    if text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(3)
+        .any(|l| norm(l) == wanted)
+    {
         return text;
     }
+    // Nur Autorinnen und Autoren, nicht Übersetzung oder Illustration
+    // (EPUB 2: opf:role, EPUB 3: <meta refines property="role">).
+    let other_roles: Vec<String> = ROLE_META_RE
+        .captures_iter(opf)
+        .filter(|c| !c[2].eq_ignore_ascii_case("aut"))
+        .map(|c| c[1].to_string())
+        .collect();
     let authors: Vec<String> = DC_CREATOR_RE
         .captures_iter(opf)
-        .map(|c| metadata_text(&c[1]))
+        .filter(|c| {
+            let attrs = attributes(&format!("<x{}>", &c[1]));
+            let role_ok = attrs
+                .iter()
+                .find(|(k, _)| k.ends_with("role"))
+                .is_none_or(|(_, v)| v.eq_ignore_ascii_case("aut"));
+            let id_ok = attrs
+                .get("id")
+                .is_none_or(|id| !other_roles.iter().any(|o| o == id));
+            role_ok && id_ok
+        })
+        .map(|c| metadata_text(&c[2]))
         .filter(|a| !a.is_empty())
         .collect();
     if authors.is_empty() {
@@ -713,7 +747,8 @@ mod tests {
         let md = epub_to_markdown(&mut a).unwrap();
         assert_eq!(
             md,
-            "# Kapitel 1\n\n\
+            "# Der Leuchtturm\n\n\
+             # Kapitel 1\n\n\
              Der Leuchtturm stand *seit über* hundert Jahren auf der **Klippe**.\n\n\
              Er war ca. 42 Meter hoch & „schön“.\n\n\
              > Ein Zitat.\n\n\
@@ -867,6 +902,22 @@ mod tests {
         assert!(epub_to_markdown(&mut c)
             .unwrap()
             .starts_with("# Erstes Kapitel"));
+        // Ein kurzer Titel, der nur im Text vorkommt, wird trotzdem gesetzt;
+        // Übersetzung und Illustration sind keine Autoren.
+        let mut d = simple_epub(
+            r##"<dc:title>Es</dc:title>
+               <dc:creator id="a1">Anna Autorin</dc:creator>
+               <dc:creator id="t1">Tom Übersetzer</dc:creator>
+               <meta refines="#a1" property="role" scheme="marc:relators">aut</meta>
+               <meta refines="#t1" property="role" scheme="marc:relators">trl</meta>
+               <dc:creator opf:role="ill">Ida Illustratorin</dc:creator>"##,
+            &[],
+        );
+        let md = epub_to_markdown(&mut d).unwrap();
+        assert!(
+            md.starts_with("# Es\n\nvon Anna Autorin\n\n# Erstes Kapitel"),
+            "{md}"
+        );
     }
 
     #[test]
