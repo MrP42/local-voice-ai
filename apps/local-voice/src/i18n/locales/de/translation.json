@@ -1830,6 +1830,10 @@
         "notFound": "Tastenkürzel nicht gefunden",
         "pressKeys": "Tasten drücken...",
         "bindings": {
+          "voice_call": {
+            "name": "Hauptgespräch-Tastenkürzel",
+            "description": "Startet oder beendet das Sprachgespräch im festen Hauptgespräch, auch außerhalb der App. Die Antwort kommt als Sprache, der Text steht im Gesprächsverlauf. Reines Strg+Alt geht nicht, weil AltGr unter Windows Strg+Alt ist."
+          },
           "transcribe": {
             "name": "Transkriptions-Tastenkürzel",
             "description": "Das Tastenkürzel zum Aufnehmen und Transkribieren deiner Stimme."
@@ -2488,6 +2492,14 @@
     }
   },
   "overlay": {
+    "call": {
+      "title": "Hauptgespräch",
+      "listening": "Hört zu",
+      "hearing": "Hört",
+      "thinking": "Denkt nach …",
+      "speaking": "Spricht",
+      "end": "Gespräch beenden"
+    },
     "transcribing": "Transkribiere...",
     "processing": "Verarbeite...",
     "notice": {
@@ -6552,6 +6564,13 @@
     },
     "footer": {
       "label": "Gespräch",
+      "phone": {
+        "start": "Hauptgespräch starten",
+        "startWithKeys": "Hauptgespräch starten ({{keys}})",
+        "end": "Gespräch beenden"
+      },
+      "newMain": "Neues Hauptgespräch beginnen",
+      "shortcutHint": "Hauptgespräch per Tastenkürzel: {{keys}}",
       "title": "Gespräch: Mikrofon, Stimme und Sprachfluss",
       "microphone": "Mikrofon",
       "output": "Ausgabe",

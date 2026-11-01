@@ -807,3 +807,24 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     display: none;
   }
 }
+
+/* Telefon in der Fußleiste (Sprachgespräch): grau ohne, grün mit laufendem Gespräch. */
+.lv-call-group {
+  display: inline-flex;
+  align-items: center;
+}
+.lv-call-btn {
+  color: var(--colorNeutralForeground4);
+}
+.lv-call-btn.is-active {
+  color: var(--colorPaletteGreenForeground1);
+  background: var(--colorPaletteGreenBackground1);
+}
+.lv-call-btn.is-active:hover {
+  color: var(--colorPaletteGreenForeground1);
+  background: var(--colorPaletteGreenBackground2);
+}
+.lv-call-menu-btn {
+  min-width: 16px;
+  padding-inline: 2px;
+}

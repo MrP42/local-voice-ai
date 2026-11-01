@@ -56,6 +56,8 @@ export const DictationTab: React.FC = () => {
         {!isLinux && !pushToTalk && (
           <ShortcutInput shortcutId="cancel" grouped={true} />
         )}
+        {/* Hauptgespräch: Sprachgespräch per Tastenkürzel, auch außerhalb der App. */}
+        <ShortcutInput shortcutId="voice_call" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.app.groups.input")}>

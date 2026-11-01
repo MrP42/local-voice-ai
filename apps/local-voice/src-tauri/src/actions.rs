@@ -1176,6 +1176,78 @@ impl ShortcutAction for SpeakClipboardAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+/// Ereignis an das Hauptfenster: das Tastenkuerzel „Hauptgespraech“ wurde gedrueckt.
+pub const VOICE_CALL_HOTKEY_EVENT: &str = "voice-call-hotkey";
+
+/// Hauptgespraech per Tastenkuerzel: startet oder beendet das Sprachgespraech im
+/// festen Hauptgespraech. Das Gespraech selbst (Mikrofon, Erkennung, Stimme) laeuft
+/// im Hauptfenster, auch wenn es verborgen ist; hier geht nur der Anstoss hin.
+/// Kein Diktat: es wird nichts in ein Feld eingefuegt.
+struct VoiceCallAction;
+
+/// Zeitpunkt (ms seit Epoche) des letzten angenommenen Drucks auf „Hauptgespraech“.
+static VOICE_CALL_LAST_PRESS_MS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Kuerzer hintereinander gilt ein Druck als Tastenwiederholung und wird verworfen;
+/// sonst schaltete gehaltenes Kuerzel das Gespraech an, aus, an …
+const VOICE_CALL_REPEAT_MS: u64 = 600;
+
+/// Rein: ist dieser Druck eine Wiederholung des letzten?
+pub(crate) fn voice_call_is_repeat(last_ms: u64, now_ms: u64) -> bool {
+    last_ms != 0 && now_ms.saturating_sub(last_ms) < VOICE_CALL_REPEAT_MS
+}
+
+/// Rein: Ein Kuerzel mit Strg+Alt kommt unter Windows auch von AltGr (= linke
+/// Strg + rechte Alt). Ist die rechte Alt-Taste gedrueckt, tippt jemand ein
+/// Zeichen (z. B. „@“, „€“) und meint kein Gespraech.
+pub(crate) fn voice_call_is_altgr(shortcut: &str, right_alt_down: bool) -> bool {
+    let parts: Vec<String> = shortcut
+        .split('+')
+        .map(|p| p.trim().to_ascii_lowercase())
+        .collect();
+    let has = |k: &str| {
+        parts
+            .iter()
+            .any(|p| p == k || p.starts_with(&format!("{k}_")))
+    };
+    right_alt_down && has("ctrl") && has("alt")
+}
+
+#[cfg(target_os = "windows")]
+fn right_alt_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_RMENU};
+    (unsafe { GetAsyncKeyState(i32::from(VK_RMENU.0)) } as u16 & 0x8000) != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn right_alt_down() -> bool {
+    false
+}
+
+impl ShortcutAction for VoiceCallAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, shortcut_str: &str) {
+        if voice_call_is_altgr(shortcut_str, right_alt_down()) {
+            debug!("voice_call: AltGr erkannt, kein Gespraech");
+            return;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last_ms = VOICE_CALL_LAST_PRESS_MS.load(std::sync::atomic::Ordering::Acquire);
+        if voice_call_is_repeat(last_ms, now_ms) {
+            return;
+        }
+        VOICE_CALL_LAST_PRESS_MS.store(now_ms, std::sync::atomic::Ordering::Release);
+        if let Err(e) = app.emit_to("main", VOICE_CALL_HOTKEY_EVENT, ()) {
+            warn!("voice_call: Hauptfenster nicht erreichbar: {e}");
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Cancel Action
 struct CancelAction;
 
@@ -1234,6 +1306,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         Arc::new(SpeakClipboardAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
+        "voice_call".to_string(),
+        Arc::new(VoiceCallAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
         "test".to_string(),
         Arc::new(TestAction) as Arc<dyn ShortcutAction>,
     );
@@ -1254,6 +1330,21 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn voice_call_ignores_key_repeat_but_not_a_later_press() {
+        assert!(!super::voice_call_is_repeat(0, 1_000));
+        assert!(super::voice_call_is_repeat(1_000, 1_300));
+        assert!(!super::voice_call_is_repeat(1_000, 1_700));
+    }
+
+    #[test]
+    fn voice_call_ignores_altgr_only_for_ctrl_alt_shortcuts() {
+        assert!(super::voice_call_is_altgr("ctrl+alt+g", true));
+        assert!(super::voice_call_is_altgr("ctrl_left+alt_right+g", true));
+        assert!(!super::voice_call_is_altgr("ctrl+alt+g", false));
+        assert!(!super::voice_call_is_altgr("ctrl+shift+g", true));
+    }
 
     #[test]
     fn blank_transcription_is_detected() {
