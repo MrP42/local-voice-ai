@@ -2,7 +2,10 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { usePersistentState } from "../../../../hooks/usePersistentState";
-import type { ContentsEntry } from "../../../../lib/reader/contents";
+import type {
+  BookInfo,
+  ContentsEntry,
+} from "../../../../lib/reader/contents";
 
 interface ReaderContentsProps {
   entries: ContentsEntry[];
@@ -11,6 +14,8 @@ interface ReaderContentsProps {
   onGo(entry: ContentsEntry): void;
   /** Seite (0-basiert) je Eintrag, nach dem Umbruch gemessen. */
   pages?: (number | null)[];
+  /** Titel und Autor eines importierten Buchs, über dem Verzeichnis. */
+  book?: BookInfo | null;
 }
 
 /**
@@ -22,6 +27,7 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
   current,
   onGo,
   pages,
+  book,
 }) => {
   const { t } = useTranslation();
   // Einklappbar: im schmalen Fenster steht die Leiste über dem Buch.
@@ -39,6 +45,19 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
       aria-label={t("tts.reader.contents")}
       data-testid="reader-contents"
     >
+      {book && (
+        <div className="mb-2 px-2" data-testid="reader-bookinfo">
+          <p
+            className="line-clamp-2 text-sm font-semibold text-text"
+            title={book.title}
+          >
+            {book.title}
+          </p>
+          <p className="truncate text-xs text-text/70" title={book.authors}>
+            {book.authors}
+          </p>
+        </div>
+      )}
       <button
         type="button"
         className="flex w-full cursor-pointer items-center gap-1 rounded pb-1 text-start text-xs font-semibold text-text/60 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"

@@ -849,3 +849,28 @@ test("Seitenmarken aus dem PDF: klein im Text, nicht vorgelesen", async ({ page 
   expect(offset).toBeGreaterThanOrEqual(spoken.indexOf("Noch zwölf"));
   expect(offset).toBeLessThanOrEqual(spoken.length);
 });
+
+test("Buchinfo: Titel und Autor des importierten Buchs über dem Inhalt", async ({ page }) => {
+  const text = [
+    "# Der Leuchtturm",
+    "",
+    "von Ada Beispiel, Bo Muster",
+    "",
+    "## Erstes Kapitel",
+    "",
+    "Der Wind strich um den Turm.",
+  ].join("\n");
+  await open(page, text);
+  const info = page.getByTestId("reader-bookinfo");
+  await expect(info).toContainText("Der Leuchtturm");
+  await expect(info).toContainText("Ada Beispiel, Bo Muster");
+});
+
+test("ohne Autorzeile keine Buchinfo", async ({ page }) => {
+  await open(
+    page,
+    "# Kapitel 1\n\nvon dort aus sah man das Meer.\n\n## Zwei\n\nNoch ein Satz.",
+  );
+  await expect(page.getByTestId("reader-contents")).toBeVisible();
+  await expect(page.getByTestId("reader-bookinfo")).toHaveCount(0);
+});

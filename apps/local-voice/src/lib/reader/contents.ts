@@ -35,3 +35,31 @@ export function chapterAt(contents: ContentsEntry[], offset: number): number {
   }
   return found;
 }
+
+/** Titelei eines importierten Buchs: `# Titel` und darunter `von Autor, …`. */
+export interface BookInfo {
+  title: string;
+  authors: string;
+}
+
+/**
+ * Titel und Autor aus der Titelseite, die der EPUB-Import voranstellt (lva#149).
+ * Nur wenn beides da ist — ein Text, der bloß mit einer Überschrift beginnt,
+ * ist kein Buch mit Titelei.
+ */
+export function bookInfo(blocks: ReaderBlock[]): BookInfo | null {
+  const [head, by] = blocks;
+  if (head?.kind !== "heading" || (head.level ?? 1) !== 1) return null;
+  if (by?.kind !== "paragraph") return null;
+  const text = (b: ReaderBlock) =>
+    b.runs
+      .filter((r) => !r.tag)
+      .map((r) => r.text)
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
+  // Eine Autorzeile, kein Satz: „von dort aus sah man das Meer.“ ist keine.
+  const authors = /^von (\p{Lu}[^.!?…]{0,200})$/u.exec(text(by))?.[1]?.trim();
+  const title = text(head);
+  return title && authors ? { title, authors } : null;
+}
