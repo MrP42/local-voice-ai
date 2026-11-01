@@ -241,7 +241,7 @@ test("each function keeps its own model and effort", async ({ page }) => {
   await expect(page.getByText("Modelle je Funktion", { exact: true })).toBeVisible();
   const speaker = page.locator("[data-function-select=voice_speaker]");
   // Leer = Standardmodell, mit Namen des aktiven Modells.
-  await expect(speaker.locator("option").first()).toHaveText(/Standardmodell \(GPT-4\.1-Mini/);
+  await expect(speaker.locator("option").first()).toHaveText("Standard: GPT-4.1-Mini");
   await expect(page.locator("[data-function-effort=voice_speaker]")).toHaveCount(0);
   await speaker.selectOption("openai-1:gpt-4.1-mini");
   await expect

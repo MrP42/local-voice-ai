@@ -3,6 +3,7 @@ import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import { commands, type FunctionModel, type LlmModelConfig } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
+import { modelLabel } from "@/lib/modelNames";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 
@@ -54,7 +55,9 @@ export const FunctionModels: React.FC<Props> = ({
           selectable={selectable}
           defaultLabel={
             active
-              ? t("settings.llm.functions.default", { model: labelFor(active) })
+              ? t("settings.llm.functions.default", {
+                  model: modelLabel(active.remote_id, active.label),
+                })
               : t("settings.llm.functions.defaultNone")
           }
           labelFor={labelFor}

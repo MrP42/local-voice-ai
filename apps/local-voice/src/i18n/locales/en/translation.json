@@ -2312,7 +2312,7 @@
       "functions": {
         "title": "Models per function",
         "description": "A separate model for individual tasks, saved permanently. “Default model” follows the active model above and the footer.",
-        "default": "Default model ({{model}})",
+        "default": "Default: {{model}}",
         "defaultNone": "Default model",
         "effort": "Effort for {{name}}",
         "names": {
