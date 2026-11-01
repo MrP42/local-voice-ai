@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { oeffneModellwahl } from "./profilmenue";
 
 // Regelwerk und Schild (06.10.2026): Cloud-Modelle tragen Wolke und Flagge,
 // gesperrte Modelle sind in der Auswahl nicht waehlbar, das Schild unten rechts
@@ -210,6 +211,7 @@ test("cloud models carry cloud and flag, blocked ones cannot be chosen", async (
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   const blocked = page.locator('[data-llm-option="claude:sonnet"]');
   await expect(blocked.locator("[data-model-badges]")).toHaveAttribute(
@@ -268,6 +270,7 @@ test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
   test.skip(!dir, "nur fuer Abnahmebilder");
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   await page.locator('[data-llm-option="bedrock:claude"]').waitFor();
   await page.screenshot({

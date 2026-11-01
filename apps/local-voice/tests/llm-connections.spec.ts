@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Die Anbieter-Einrichtung mit echten Eintraegen: eine Verbindung mit einem
 // freigegebenen Modell, eine zweite ohne. Geprueft wird, was der Nutzer
@@ -121,7 +122,7 @@ test.beforeEach(async ({ page }) => {
 
 async function openTab(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).last().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true }).click();
 }
 

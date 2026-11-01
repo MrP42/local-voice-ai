@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Suite-Profil oben rechts (ADR-0024, Paket 1): Profilknopf mit Menue statt des
 // alten Platzhalter-Menues, Ansicht "Mein Profil", Reiter "Konto & Geraete" in den
@@ -237,7 +238,8 @@ test("Profilknopf: lokales Profil, kein Anmelden-Knopf, Mein Profil oeffnet die 
   page,
 }) => {
   await page.goto("/");
-  const bar = page.locator(".lv-titlebar");
+  // ADR-0026: der Profilkreis sitzt unten in der Navigation, nicht in der Titelleiste.
+  const bar = page.getByRole("navigation", { name: "Hauptnavigation" });
   await bar.getByRole("button", { name: "Profil: Lokales Profil" }).click();
   const menu = page.locator(".wai-konto-menue");
   await expect(menu).toContainText("Lokales Profil");
@@ -256,7 +258,7 @@ test("Mein Profil: Anzeigename aendern speichert ueber konto_aendern", async ({
 }) => {
   await page.goto("/");
   await page
-    .locator(".lv-titlebar")
+    .getByRole("navigation", { name: "Hauptnavigation" })
     .getByRole("button", { name: /^Profil:/ })
     .click();
   await page
@@ -279,7 +281,7 @@ test("Mein Profil: Anzeigename aendern speichert ueber konto_aendern", async ({
   });
   await expect(
     page
-      .locator(".lv-titlebar")
+      .getByRole("navigation", { name: "Hauptnavigation" })
       .getByRole("button", { name: "Profil: Anna Beispiel" }),
   ).toBeVisible();
 });
@@ -288,7 +290,7 @@ test("Aenderung einer anderen App (Ereignis konto-geaendert) aktualisiert den Kn
   page,
 }) => {
   await page.goto("/");
-  const bar = page.locator(".lv-titlebar");
+  const bar = page.getByRole("navigation", { name: "Hauptnavigation" });
   await expect(
     bar.getByRole("button", { name: "Profil: Lokales Profil" }),
   ).toBeVisible();
@@ -305,15 +307,17 @@ test("Aenderung einer anderen App (Ereignis konto-geaendert) aktualisiert den Kn
 test("Profilmenue springt nicht in die Einstellungen", async ({ page }) => {
   await page.goto("/");
   await page
-    .locator(".lv-titlebar")
+    .getByRole("navigation", { name: "Hauptnavigation" })
     .getByRole("button", { name: /^Profil:/ })
     .click();
   const menue = page.locator(".wai-konto-menue");
   await expect(
     menue.getByRole("button", { name: "Mein Profil" }),
   ).toBeVisible();
+  // ADR-0026: "Einstellungen" ist jetzt ein regulärer Eintrag des Profilmenüs;
+  // ein eigener Sprung nach "Konto & Geräte" bleibt ausgeschlossen.
   await expect(
-    menue.getByRole("button", { name: /Konto & Geräte|Einstellungen/ }),
+    menue.getByRole("button", { name: /Konto & Geräte/ }),
   ).toHaveCount(0);
 });
 
@@ -321,9 +325,7 @@ test("Reiter: Konto & Geraete zwischen Allgemein und Ueber, Sync-Karte zieht um"
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   const tabs = page.getByRole("tablist").first().getByRole("tab");
   const namen = await tabs.allInnerTexts();
   const i = namen.indexOf("Allgemein");
@@ -347,9 +349,7 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Konto & Geräte" }).click();
   await page.getByTestId("konto-profil-hinzufuegen").click();
   await expect(page.getByTestId("konto-trennung-hinweis")).toHaveText(
@@ -367,7 +367,7 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
 
   // Zurueck zum ersten Profil ueber den Profilknopf.
   await page
-    .locator(".lv-titlebar")
+    .getByRole("navigation", { name: "Hauptnavigation" })
     .getByRole("button", { name: "Profil: Chris" })
     .click();
   await page
@@ -376,7 +376,7 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
     .click();
   await expect(
     page
-      .locator(".lv-titlebar")
+      .getByRole("navigation", { name: "Hauptnavigation" })
       .getByRole("button", { name: "Profil: Lokales Profil" }),
   ).toBeVisible();
   expect(
@@ -421,7 +421,7 @@ test("Profilbilder werden nur nachgeladen, wenn sich das Profil geaendert hat", 
   await page.goto("/");
   await expect(
     page
-      .locator(".lv-titlebar")
+      .getByRole("navigation", { name: "Hauptnavigation" })
       .getByRole("button", { name: "Profil: Lokales Profil" }),
   ).toBeVisible();
   await expect.poll(() => bildLesungen(page)).toBeGreaterThanOrEqual(2);
@@ -461,7 +461,7 @@ test("Mein Profil: Aenderung geht mit der gezeigten Profil-ID an den Kern, Abwei
 }) => {
   await page.goto("/");
   await page
-    .locator(".lv-titlebar")
+    .getByRole("navigation", { name: "Hauptnavigation" })
     .getByRole("button", { name: /^Profil:/ })
     .click();
   await page
@@ -500,7 +500,7 @@ test("Mein Profil: Bild entfernen zeigt bei Fehler eine Meldung", async ({
   });
   await page.goto("/");
   await page
-    .locator(".lv-titlebar")
+    .getByRole("navigation", { name: "Hauptnavigation" })
     .getByRole("button", { name: /^Profil:/ })
     .click();
   await page

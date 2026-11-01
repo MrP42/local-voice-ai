@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Die Modellseite mit einem lokalen Sprachmodell-Bestand: Laufzeit für
 // diesen Rechner installiert, ein Modell geladen, eines nicht. Geprüft wird,
@@ -109,7 +110,7 @@ test.beforeEach(async ({ page }) => {
 
 async function openModels(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await geheZu(page, "Modelle");
   // Seit 06.10.2026 drei Bereiche; Sprachmodelle ist der erste.
   await expect(page.getByRole("tab", { name: "Sprachmodelle" })).toHaveAttribute("aria-selected", "true");
 }
@@ -134,7 +135,7 @@ test("the page is split into three areas and remembers the choice", async ({ pag
   await page.getByRole("tab", { name: "Vorlesen" }).click();
   await expect(page.getByTestId("voice-manager")).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await geheZu(page, "Modelle");
   await expect(page.getByRole("tab", { name: "Vorlesen" })).toHaveAttribute("aria-selected", "true");
 });
 

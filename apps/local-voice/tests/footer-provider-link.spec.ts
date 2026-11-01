@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu, oeffneModellwahl } from "./profilmenue";
 
 // Fussleiste -> Einstellungen: "Anbieter-Einstellungen ..." am Ende der Liste
 // und im Rechtsklick-Menue fuehren in den Reiter KI-Modelle & Anbieter, zu den
@@ -58,6 +59,10 @@ async function setup(page: Page) {
 }
 
 const connectionsVisible = async (page: Page) => {
+  // Das Profilmenü (ADR-0026) bleibt nach dem Sprung offen und macht die Seite für die
+  // Barrierefreiheit unzugänglich (Escape schließt es dort nicht): per Klick daneben schließen.
+  if (await page.locator(".wai-konto-menue").isVisible()) await page.mouse.click(800, 20);
+  await expect(page.locator(".wai-konto-menue")).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "KI-Modelle & Anbieter", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[data-settings-anchor="connections"]')).toBeInViewport();
 };
@@ -65,6 +70,7 @@ const connectionsVisible = async (page: Page) => {
 test("Liste: letzter Eintrag fuehrt zu den Anbieter-Einstellungen", async ({ page }) => {
   await setup(page);
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   await page.locator("[data-llm-provider-settings-link]").click();
   await connectionsVisible(page);
@@ -73,6 +79,7 @@ test("Liste: letzter Eintrag fuehrt zu den Anbieter-Einstellungen", async ({ pag
 test("Rechtsklick auf das Modellfeld: Menue mit Sprung", async ({ page }) => {
   await setup(page);
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click({ button: "right" });
   await expect(page.locator("[data-llm-context-menu]")).toBeVisible();
   await page.locator("[data-llm-provider-settings]").click();
@@ -82,8 +89,9 @@ test("Rechtsklick auf das Modellfeld: Menue mit Sprung", async ({ page }) => {
 test("bei geoeffneten Einstellungen in anderem Reiter wechselt der Sprung den Reiter", async ({ page }) => {
   await setup(page);
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click({ button: "right" });
   await page.locator("[data-llm-provider-settings]").click();
   await connectionsVisible(page);
@@ -92,6 +100,7 @@ test("bei geoeffneten Einstellungen in anderem Reiter wechselt der Sprung den Re
 test("Escape schliesst das Rechtsklick-Menue", async ({ page }) => {
   await setup(page);
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click({ button: "right" });
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-llm-context-menu]")).toHaveCount(0);

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { oeffneModellwahl } from "./profilmenue";
 
 // Die Fussleiste mit Sprachmodell-Auswahl und Auslastung: das aktive Modell
 // mit Ampel, Wechsel zwischen freigegebenen Modellen, und RAM/GPU als Zahlen,
@@ -84,6 +85,7 @@ test.beforeEach(async ({ page }) => {
 test("the footer shows the active language model with a green light when loaded", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   const selector = page.locator("[data-llm-selector]");
   await expect(selector).toContainText("Qwen3 4B");
   await expect(selector.locator("div.rounded-full")).toHaveClass(/bg-green-400/);
@@ -92,6 +94,7 @@ test("the footer shows the active language model with a green light when loaded"
 test("switching in the footer offers only released models of enabled connections", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   const menu = page.getByRole("menu");
   await expect(menu.getByText("gpt-4.1-mini")).toBeVisible();
@@ -108,6 +111,7 @@ test("switching in the footer offers only released models of enabled connections
 test("a model in fast mode carries a lightning bolt in the footer menu", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await expect(page.locator("[data-llm-selector]")).not.toContainText("⚡");
   await page.locator("[data-llm-selector]").click();
   const menu = page.getByRole("menu");
@@ -183,6 +187,7 @@ test("an active Ollama model can be warmed and unloaded from the footer menu", a
   });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   await page.locator('[data-llm-option="ol:qwen3.8:27b"]').click();
   await page.locator("[data-llm-selector]").click();
@@ -219,6 +224,7 @@ test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
   await page.getByRole("button", { name: "Vorlesen", exact: true }).first().click();
   await expect(page.locator("#page-title")).toHaveText("Vorlesen");
   await page.screenshot({ path: `${dir}/vorlesen-kopf-fussleiste.png`, animations: "disabled" });
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   await page.locator('[data-llm-option="ol:qwen3.8:27b"]').click();
   await page.locator("[data-llm-selector]").click();
@@ -229,6 +235,7 @@ test("screenshots for review (only with SCREENS_DIR)", async ({ page }) => {
 test("the footer menu has a search box on top that filters while typing", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   const search = page.locator("[data-llm-search]");
   await expect(search).toBeFocused();
@@ -253,6 +260,7 @@ test("the footer menu has a search box on top that filters while typing", async 
 test("Enter in the search box picks the first match", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
+  await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click();
   await page.locator("[data-llm-search]").fill("mini");
   await page.locator("[data-llm-search]").press("Enter");

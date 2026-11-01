@@ -155,7 +155,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 48px;
+  height: 40px;
   flex-shrink: 0;
   padding-inline: 8px 16px;
   background: var(--colorNeutralBackground3);
@@ -171,31 +171,11 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   font-weight: var(--fontWeightSemibold);
   white-space: nowrap;
 }
-.lv-titlebar__sep {
-  width: 1px;
-  height: 20px;
-  margin-inline: 8px;
-  background: var(--colorNeutralStroke2);
-  flex-shrink: 0;
-}
-.lv-titlebar__slot {
+/* ADR-0026: Titelleiste nur Navigation, App und freie Ziehfläche */
+.lv-titlebar__frei {
   flex: 1;
   min-width: 0;
-}
-.lv-titlebar__slot:empty {
-  display: none;
-}
-.lv-titlebar__fallback {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fontSizeBase400);
-  font-weight: var(--fontWeightSemibold);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lv-titlebar__slot:not(:empty) + .lv-titlebar__fallback {
-  display: none;
+  align-self: stretch;
 }
 /* Fensterknöpfe (rahmenloses Hauptfenster): Windows 11, 46×48, bündig am
    rechten Rand; Schließen-Hover in Systemrot. */
@@ -215,7 +195,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   display: grid;
   place-items: center;
   width: 46px;
-  height: 48px;
+  height: 40px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -244,18 +224,34 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     color: HighlightText;
   }
 }
-/* Seitenkopf in der Titelleiste: Titel links (Subtitle 2, 16/22),
-   Seitenaktionen rechts */
-.lv-titlebar .page-shell__head {
+/* Modulkopf im Inhalt (ADR-0026): Titel mit ⓘ links (Subtitle 2, 16/22),
+   Suche und Aktionen des Moduls rechts; eine Zeile. */
+.page-shell__head {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  min-height: 32px;
 }
-.lv-titlebar .page-shell__head > div:first-child {
+.page-shell__titel {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
+}
+.page-shell__info {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--borderRadiusMedium);
+  color: var(--colorNeutralForeground3);
+}
+.page-shell__info:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2);
 }
 .page-shell__title {
   font-size: var(--fontSizeBase400);
@@ -264,9 +260,6 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.page-shell:not(:has(> .page-shell__head)) > .page-shell__description:first-child {
-  margin-top: 0;
 }
 
 .lv-content {
@@ -296,7 +289,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
 @media (max-width: 767px) {
   .lv-helpdock:not(:empty) {
     position: absolute;
-    inset-block: 48px 24px;
+    inset-block: 40px 24px;
     inset-inline-end: 0;
     z-index: 20;
     box-shadow: var(--shadow16);
@@ -400,8 +393,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   .lv-content {
     border-radius: 0;
   }
-  .lv-titlebar__name,
-  .lv-titlebar__sep {
+  .lv-titlebar__name {
     display: none;
   }
 }
@@ -727,60 +719,91 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   }
 }
 
-/* Titelleiste rechts: Suche, Benachrichtigungen, Hilfe, Einstellungen, Profil */
-.lv-titlebar__tools {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
+/* Suche im Modulkopf (ADR-0026 E5): nur in Modulen, die sie einschalten */
 .lv-search {
-  position: relative;
   width: clamp(140px, 24vw, 320px);
-  margin-inline-end: 8px;
 }
 .lv-search .fui-SearchBox {
   width: 100%;
-}
-.lv-search__list {
-  position: absolute;
-  inset-inline: 0;
-  top: calc(100% + 4px);
-  z-index: 60;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-  background: var(--colorNeutralBackground1);
-  border: 1px solid var(--colorNeutralStroke2);
-  border-radius: var(--borderRadiusMedium);
-  box-shadow: var(--shadow16);
-}
-.lv-search__item,
-.lv-search__none {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--borderRadiusSmall);
-  font-size: var(--fontSizeBase300);
-  cursor: pointer;
-}
-.lv-search__none {
-  cursor: default;
-  color: var(--colorNeutralForeground3);
-}
-.lv-search__item[data-active="true"],
-.lv-search__item:hover {
-  background: var(--colorSubtleBackgroundHover);
 }
 .lv-empty-note {
   margin: 0;
   padding: 4px 8px;
   color: var(--colorNeutralForeground2);
 }
-.lv-titlebar__profile {
-  padding: 0 4px;
-  min-width: 36px;
+/* Profilkreis unten in der Navigation (ADR-0026 E1); Kreismitte auf der
+   Symbolachse der Navigationseinträge (4 + 14 + 10 px). */
+.workspace-nav__fuss {
+  display: flex;
+  padding: 8px 0 0 4px;
+}
+/* Modellwahl im Profilmenü: Zeilen in voller Breite, Auswahllisten rechts
+   neben dem Menü statt darüber (die Fläche schneidet sonst ab). */
+.lv-profilmenue__modelle {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  padding: 2px 4px 4px;
+}
+.lv-profilmenue__modelle > .relative {
+  position: static;
+}
+.lv-profilmenue__modelle .lv-status-btn {
+  width: 100%;
+  height: 34px;
+  justify-content: flex-start;
+  padding-inline: 10px;
+  font-size: var(--fontSizeBase300);
+}
+.lv-profilmenue__modelle .lv-status-label {
+  max-width: none;
+  flex: 1;
+  text-align: start;
+}
+.lv-profilmenue__modelle .absolute.bottom-full {
+  bottom: auto;
+  top: 0;
+  inset-inline-start: calc(100% + 12px);
+  margin: 0;
+}
+.wai-konto-menue__flaeche:has(.lv-profilmenue__modelle) {
+  overflow: visible;
+}
+.lv-profilmenue__leer {
+  margin: 0;
+  padding: 8px 12px 12px;
+  color: var(--colorNeutralForeground3);
+  font-size: var(--fontSizeBase300);
+}
+.lv-profilmenue__kontingent {
+  margin: 0;
+  padding: 4px 12px 12px;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  font-size: var(--fontSizeBase200);
+}
+.lv-profilmenue__kontingentkopf {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lv-profilmenue__kontingentkopf > span:last-child {
+  color: var(--colorNeutralForeground3);
+  white-space: nowrap;
+}
+.lv-profilmenue__balken {
+  display: block;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--colorNeutralStroke2);
+  overflow: hidden;
+}
+.lv-profilmenue__balken > i {
+  display: block;
+  height: 100%;
+  background: var(--colorBrandBackground);
 }
 .lv-shortcuts {
   display: grid;
@@ -799,13 +822,6 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   background: var(--colorNeutralBackground3);
   font-family: inherit;
   font-size: var(--fontSizeBase200);
-}
-/* Schmal: die Werkzeuge weichen den Fensterknöpfen (Navigation und
-   Einstellungen bleiben über den Navigationsbereich erreichbar). */
-@media (max-width: 767px) {
-  .lv-titlebar__tools {
-    display: none;
-  }
 }
 
 /* Telefon in der Fußleiste (Sprachgespräch): grau ohne, grün mit laufendem Gespräch. */

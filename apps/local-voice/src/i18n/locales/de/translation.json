@@ -6706,11 +6706,11 @@
     },
     "tools": {
       "eyebrow": "Werkzeuge",
-      "title": "Modelle, Integrationen, Einstellungen",
+      "title": "Profil und Werkzeuge",
       "models": "Modelle: weitere Sprach- und Stimmmodelle laden.",
       "integrations": "Integrationen: Verbindungen zu anderen Apps.",
       "settings": "Einstellungen: Kürzel, Mikrofon, Sprache, Aussehen.",
-      "statusbar": "Unten in der Statusleiste siehst du jederzeit Modell und Mikrofon."
+      "statusbar": "Unten links im Profilkreis: Modelle, Integrationen, Einstellungen und Hilfe (F1)."
     },
     "end": {
       "eyebrow": "Fertig",
@@ -6726,5 +6726,24 @@
       "tts": "Vorlesen: Texte und Dokumente anhören und als Audiodatei speichern.",
       "voice": "Sprachgespräch: wie ein Telefonat mit der KI – sprechen und die Antwort hören."
     }
+  },
+  "shell": {
+    "kontingent": "Verbleibendes Kontingent",
+    "kontingentFrei": "{{prozent}} % frei",
+    "kontingentOhneLimit": "{{betrag}} verbraucht, kein Limit",
+    "kontingentLeer": "Keine Cloud-Verbindung mit Verbrauch. Lokale Modelle sind unbegrenzt.",
+    "benachrichtigungen": "Benachrichtigungen",
+    "modelle": "Modelle",
+    "integrationen": "Integrationen",
+    "einstellungen": "Einstellungen",
+    "hilfe": "Hilfe",
+    "zurueck": "Zurück",
+    "updates": "Nach Updates suchen",
+    "ueber": "Über Local Voice AI",
+    "info": "Über diese Seite",
+    "modelleVerwalten": "Modelle verwalten",
+    "verlaufSuchen": "Verlauf durchsuchen",
+    "settingsKey": "Strg+,",
+    "suchen": "Suchen"
   }
 }

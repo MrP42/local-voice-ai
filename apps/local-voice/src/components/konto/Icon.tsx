@@ -1,5 +1,6 @@
 import {
   Camera,
+  ChevronRight,
   LogIn,
   LogOut,
   Lock,
@@ -21,6 +22,7 @@ const ICONS = {
   camera: Camera,
   shield: ShieldCheck,
   devices: MonitorSmartphone,
+  chevronRight: ChevronRight,
 } satisfies Record<string, ComponentType<LucideProps>>;
 
 export type IconName = keyof typeof ICONS;

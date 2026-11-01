@@ -32,7 +32,6 @@ import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
-import { IconButton } from "../../ui/IconButton";
 import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
@@ -99,7 +98,6 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
-  HelpCircle,
   PanelRightClose,
   Replace,
   Settings,
@@ -2377,9 +2375,10 @@ export const TtsSettings = () => {
       description={t("workspace.ttsHint")}
       fill
       actions={
-        <>
-          {/* Rueckgaengig / Wiederherstellen wie in Word: oben, nur Pfeile.
-              Die Reiterzeile ist in der schmalen Editorspalte schon voll. */}
+        // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
+        // etwas rueckgaengig zu machen gibt (ADR-0026 E6). Die Hilfe kommt
+        // ueber Profilmenue ▸ Hilfe oder F1 (E4), kein eigener Knopf.
+        viewMode === "edit" ? (
           <HistoryButtons
             past={history.past}
             future={history.future}
@@ -2388,15 +2387,7 @@ export const TtsSettings = () => {
             onRedo={history.redo}
             onJump={history.jump}
           />
-          <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
-          <IconButton
-            onClick={() => {
-              setHelpOpenValue(helpOpen ? "0" : "1");
-            }}
-            label={t("help.open")}
-            icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
-          />
-        </>
+        ) : undefined
       }
     >
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom

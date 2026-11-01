@@ -11,10 +11,17 @@ import { MarkdownContent } from "../whats-new/MarkdownContent";
 import { useSettings } from "../../hooks/useSettings";
 import { commands, type LocalUpdate } from "../../bindings";
 
+/** Wunsch aus dem Profilmenü ▸ Hilfe: jetzt nach Updates suchen. */
+export const UPDATE_CHECK_EVENT = "lv-update-check";
+
 interface UpdateCheckerProps {
   className?: string;
   /** Laufende Version; ein Klick darauf sucht nach Updates. */
   version: string;
+  /** Statusleiste (ADR-0026 E7): Version nur zeigen, wenn ein Update
+      bereitsteht oder gerade geprüft/installiert wird; sonst steht sie in
+      „Über“. Gesucht wird weiter beim Start und auf Wunsch. */
+  nurBeiUpdate?: boolean;
 }
 
 /** Semver-Vergleich der numerischen Teile: > 0 wenn a neuer als b. */
@@ -43,6 +50,7 @@ export const compareVersions = (a: string, b: string): number => {
 const UpdateChecker: React.FC<UpdateCheckerProps> = ({
   className = "",
   version,
+  nurBeiUpdate = false,
 }) => {
   const { t } = useTranslation();
   // Update checking state
@@ -192,6 +200,14 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     checkForUpdates();
   };
 
+  // „Nach Updates suchen“ im Profilmenü wirkt wie ein Klick auf die Version.
+  const versionClickRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    const onWunsch = () => void versionClickRef.current();
+    window.addEventListener(UPDATE_CHECK_EVENT, onWunsch);
+    return () => window.removeEventListener(UPDATE_CHECK_EVENT, onWunsch);
+  }, []);
+
   /** Klick auf die Version: vorhandenes Update zeigen, sonst suchen. */
   const onVersionClick = async () => {
     if (isChecking || isInstalling) return;
@@ -306,7 +322,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
     : updateAvailable && githubVersion
       ? { version: githubVersion, notes: githubNotes }
       : null;
+  versionClickRef.current = onVersionClick;
   const status = getUpdateStatusText();
+  const versionSichtbar =
+    !nurBeiUpdate || !!offered || isChecking || isInstalling;
   const versionTitle = offered
     ? t("footer.updateAvailableTitle", { version: offered.version })
     : t("footer.checkForUpdates");
@@ -396,26 +415,28 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             size="large"
           />
         )}
-        <button
-          type="button"
-          onClick={() => void onVersionClick()}
-          disabled={isChecking || isInstalling}
-          title={versionTitle}
-          aria-label={versionTitle}
-          className={`tabular-nums transition-colors disabled:opacity-50 ${
-            offered
-              ? "text-logo-primary font-medium hover:text-logo-primary/80"
-              : "text-text/60 hover:text-text/80"
-          }`}
-          data-testid="footer-version"
-        >
-          {`v${version}`}
-          {offered && (
-            <span className="ms-1" aria-hidden="true">
-              ↑
-            </span>
-          )}
-        </button>
+        {versionSichtbar && (
+          <button
+            type="button"
+            onClick={() => void onVersionClick()}
+            disabled={isChecking || isInstalling}
+            title={versionTitle}
+            aria-label={versionTitle}
+            className={`tabular-nums transition-colors disabled:opacity-50 ${
+              offered
+                ? "text-logo-primary font-medium hover:text-logo-primary/80"
+                : "text-text/60 hover:text-text/80"
+            }`}
+            data-testid="footer-version"
+          >
+            {`v${version}`}
+            {offered && (
+              <span className="ms-1" aria-hidden="true">
+                ↑
+              </span>
+            )}
+          </button>
+        )}
       </div>
     </>
   );

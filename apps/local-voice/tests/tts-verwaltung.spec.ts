@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Vorlesen unter Modelle (Variante B): Umschalter Stimmen/Anbieter, Filterspalte
 // mit Zaehlern, Karten- und Listenansicht ueber alle Anbieter, Hoerprobe und
@@ -379,10 +380,7 @@ const calls = (page: Page, cmd: string) =>
 
 const openManager = async (page: Page) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await expect(page.getByTestId("voice-manager")).toBeVisible();
   await expect(page.getByTestId("voice-gallery")).toBeVisible();
 };
@@ -534,9 +532,7 @@ test("Einstellungen › Ausgabe verweist auf die Anbieter unter Modelle", async 
     localStorage.setItem("lva.ui.settings.tab", "output"),
   );
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("tts-providers-open-models")).toBeVisible();
   await expect(page.getByTestId("tts-provider-fish")).toHaveCount(0);
   await page.getByTestId("tts-providers-open-models").click();
@@ -618,10 +614,7 @@ test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
       const p = await ctx.newPage();
       await setup(p, { phononReady: true }, theme);
       await p.goto("/");
-      await p
-        .getByRole("navigation")
-        .getByRole("button", { name: "Modelle", exact: true })
-        .click();
+      await geheZu(p, "Modelle");
       await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
       await expect(p.getByTestId("voice-gallery")).toBeVisible();
       const s = (n: string) =>

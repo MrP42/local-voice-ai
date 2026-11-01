@@ -11,6 +11,7 @@ import {
   setQueueMemory,
   setQueueRecording,
 } from "./recLiveMock";
+import { geheZu } from "./profilmenue";
 
 // U7 (Issue #64): Import-Warteschlange gegen die Tauri-Attrappe. Waehrend eine
 // Transkription laeuft, lassen sich weitere Dateien importieren (Symbol, Ablage,
@@ -395,10 +396,7 @@ test("Hydrierung: nach dem Wechsel der Seite und zurueck zeigen die wartenden Da
   page,
 }) => {
   await startWithThree(page);
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("rec-content")).toHaveCount(0);
   await page
     .getByRole("navigation")
@@ -453,10 +451,7 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
   await installTauriMock(fresh, "main");
   await fresh.setViewportSize({ width: 1280, height: 1000 });
   await fresh.goto("/");
-  await fresh
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(fresh, "Einstellungen");
   const title = fresh.getByText("Gleichzeitige Transkriptionen", {
     exact: true,
   });

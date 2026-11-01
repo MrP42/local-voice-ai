@@ -63,6 +63,8 @@ export const HistorySettings: React.FC = () => {
   const { t } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  // Suche im Modulkopf (ADR-0026 E5): filtert die geladenen Einträge.
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -234,6 +236,13 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  const needle = query.trim().toLocaleLowerCase();
+  const shown = needle
+    ? entries.filter((entry) =>
+        entry.transcription_text.toLocaleLowerCase().includes(needle),
+      )
+    : entries;
+
   let content: React.ReactNode;
 
   if (loading) {
@@ -242,10 +251,10 @@ export const HistorySettings: React.FC = () => {
         {t("settings.history.loading")}
       </div>
     );
-  } else if (entries.length === 0) {
+  } else if (shown.length === 0) {
     content = (
       <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.empty")}
+        {needle ? t("titlebar.searchNone") : t("settings.history.empty")}
       </div>
     );
   } else {
@@ -253,7 +262,7 @@ export const HistorySettings: React.FC = () => {
       <>
         <AudioPlayerGroup>
           <div className="divide-y divide-mid-gray/20">
-            {entries.map((entry) => (
+            {shown.map((entry) => (
               <HistoryEntryComponent
                 key={entry.id}
                 entry={entry}
@@ -277,6 +286,11 @@ export const HistorySettings: React.FC = () => {
       title={t("settings.history.title")}
       description={t("workspace.historyHint")}
       help="verlauf"
+      search={{
+        value: query,
+        onChange: setQuery,
+        placeholder: t("shell.verlaufSuchen"),
+      }}
       actions={
         <OpenRecordingsButton
           onClick={openRecordingsFolder}

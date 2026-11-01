@@ -7,6 +7,7 @@ import {
   PIPE,
   type AgentClientsMockOptions,
 } from "./agentClientsMock";
+import { geheZu } from "./profilmenue";
 
 // A7 (Goal Integrationen, #66): die Zugangsliste der Agentenbrücke im Detail der
 // Agent-Integration: Zugang anlegen (Schlüssel genau einmal, mit Kopieren), Liste mit
@@ -29,10 +30,7 @@ const setup = async (page: Page, agents: AgentClientsMockOptions = {}) => {
 };
 
 const openAgentDetail = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(
     page.getByRole("heading", { name: "Integrationen", level: 1 }),
   ).toBeVisible();
@@ -443,10 +441,7 @@ test.describe("Zugänge der Agentenbrücke", () => {
     await installAgentClientsMock(page, { clients: [FRESH] });
     await page.setViewportSize({ width: 1280, height: 1100 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Integrationen", exact: true })
-      .click();
+    await geheZu(page, "Integrationen");
     await page
       .locator(
         '[data-testid="integration-card"][data-integration-id="ordner-1"]',
@@ -466,10 +461,7 @@ test.describe("Zugänge der Agentenbrücke", () => {
     await page.setViewportSize({ width: 390, height: 900 });
     await page.getByRole("button", { name: "Menü öffnen" })
       .click();
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Integrationen", exact: true })
-      .click();
+    await geheZu(page, "Integrationen");
     await page
       .locator(
         '[data-testid="integration-card"][data-integration-id="agent-1"]',

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { installTauriMock } from "./calendarMock";
+import { geheZu, oeffneProfilmenue } from "./profilmenue";
 
 // Mac-Befunde aus dem Sichttest vor 0.23.0: Tastenkuerzel in Mac-Symbolen,
 // kein Windows-Explorer-Schalter auf dem Mac. Windows bleibt unveraendert.
@@ -40,10 +41,7 @@ const openOutput = async (page: Page, os: "macos" | "windows") => {
   }, os);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .first()
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
 };
 
@@ -67,8 +65,11 @@ test("Windows: Kuerzel mit Namen, Explorer-Kontextmenue sichtbar", async ({
 });
 
 const openShortcutDialog = async (page: Page) => {
-  await page.getByRole("button", { name: "Hilfe", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Tastenkürzel" }).click();
+  // ADR-0026: Hilfe liegt im Profilmenü, nicht mehr in der Titelleiste
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await menue.getByRole("button", { name: "Tastenkürzel" }).click();
   return page.getByRole("dialog", { name: "Tastenkürzel" });
 };
 

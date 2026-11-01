@@ -6706,11 +6706,11 @@
     },
     "tools": {
       "eyebrow": "Tools",
-      "title": "Models, integrations, settings",
+      "title": "Profile and tools",
       "models": "Models: download more speech and voice models.",
       "integrations": "Integrations: connections to other apps.",
       "settings": "Settings: shortcuts, microphone, language, appearance.",
-      "statusbar": "The status bar at the bottom always shows model and microphone."
+      "statusbar": "Bottom left in the profile circle: models, integrations, settings and help (F1)."
     },
     "end": {
       "eyebrow": "Done",
@@ -6726,5 +6726,24 @@
       "tts": "Read aloud: listen to texts and documents and save them as audio.",
       "voice": "Voice chat: like a phone call with the AI – speak and hear the answer."
     }
+  },
+  "shell": {
+    "kontingent": "Remaining quota",
+    "kontingentFrei": "{{prozent}} % left",
+    "kontingentOhneLimit": "{{betrag}} spent, no limit",
+    "kontingentLeer": "No cloud connection with usage. Local models are unlimited.",
+    "benachrichtigungen": "Notifications",
+    "modelle": "Models",
+    "integrationen": "Integrations",
+    "einstellungen": "Settings",
+    "hilfe": "Help",
+    "zurueck": "Back",
+    "updates": "Check for updates",
+    "ueber": "About Local Voice AI",
+    "info": "About this page",
+    "modelleVerwalten": "Manage models",
+    "verlaufSuchen": "Search history",
+    "settingsKey": "Ctrl+,",
+    "suchen": "Search"
   }
 }

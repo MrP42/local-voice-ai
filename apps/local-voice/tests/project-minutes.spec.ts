@@ -21,6 +21,7 @@ import {
   shortTitle,
   sourceToCitation,
 } from "../src/lib/projectMinutes";
+import { geheZu } from "./profilmenue";
 
 // G3 (#70, U9): mehrere Aufnahmen eines Projekts per Haekchen waehlen und daraus EIN
 // gemeinsames Protokoll bzw. eine Zusammenfassung erzeugen. Die Regeln des Backends
@@ -349,9 +350,7 @@ test("Fortschritt und Stopp wie bei der Einzelverarbeitung; der Zustand ueberleb
   );
 
   // Seitenwechsel: weg und zurueck. Der Lauf gehoert dem Backend, nicht der Seite.
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await expect(page.getByTestId("rec-content")).toHaveCount(0);
   await goToRecordings(page);
   await expect(projectRow(page, PM_FOLDER)).toBeVisible();

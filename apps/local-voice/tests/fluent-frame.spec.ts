@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Fluent-2-Rahmen (Leitlinie windows-fluent.md §2, §12): Titelleiste mit
 // Seitentitel, Navigationsbereich mit Einstellungen unten, Statusleiste;
@@ -200,15 +201,20 @@ for (const theme of ["light", "dark"] as const) {
     await expect(page.locator("html")).toHaveAttribute("data-scheme", theme);
     const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
     for (const [label, id] of PAGES) {
-      await nav.getByRole("button", { name: label, exact: true }).click();
-      await expect(
-        nav.getByRole("button", { name: label, exact: true }),
-      ).toHaveAttribute("aria-current", "page");
+      if (id === "models" || id === "integrations" || id === "settings") {
+        // ADR-0026: nicht mehr in der Navigation, sondern im Profilmenü
+        await geheZu(page, label as "Modelle" | "Integrationen" | "Einstellungen");
+      } else {
+        await nav.getByRole("button", { name: label, exact: true }).click();
+        await expect(
+          nav.getByRole("button", { name: label, exact: true }),
+        ).toHaveAttribute("aria-current", "page");
+      }
       const bar = page.locator(".lv-titlebar");
       await expect(bar).toBeVisible();
       if (id !== "home") {
-        // Seitentitel in der Kopfleiste
-        await expect(bar.locator("#page-title")).toBeVisible();
+        // Seitentitel steht seit ADR-0026 im Inhalt, nicht mehr in der Titelleiste
+        await expect(page.locator("#page-title")).toBeVisible();
       }
       await expect(page.locator(".lv-statusbar")).toBeVisible();
       expect(
@@ -219,9 +225,12 @@ for (const theme of ["light", "dark"] as const) {
         animations: "disabled",
       });
     }
-    // Einstellungen ist der letzte Eintrag des Navigationsbereichs
-    const names = await nav.getByRole("button").allInnerTexts();
-    expect(names.map((n) => n.trim()).at(-1)).toBe("Einstellungen");
+    // Der Profilkreis ist der letzte Eintrag des Navigationsbereichs (ADR-0026);
+    // Modelle, Integrationen und Einstellungen stehen im Profilmenü.
+    const labels = await nav
+      .getByRole("button")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("aria-label") ?? el.textContent ?? ""));
+    expect(labels.at(-1)).toMatch(/^Profil:/);
   });
 
   test(`schmal mit Navigations-Drawer (${theme}, 390)`, async ({ page }) => {
@@ -277,7 +286,8 @@ for (const width of [390, 360]) {
       ).length;
       return { h: r.height, w: r.width, btns, scrolls };
     });
-    expect(m.btns.length).toBeGreaterThanOrEqual(4);
+    // ADR-0026 E7: ohne Modellwahl und Version bleiben drei Einträge (Mikrofon, Speicher, Gespräch)
+    expect(m.btns.length).toBeGreaterThanOrEqual(3);
     for (const b of m.btns) {
       expect(b.l).toBeGreaterThanOrEqual(0);
       expect(b.r).toBeLessThanOrEqual(width);
@@ -303,6 +313,15 @@ test("Forced Colors: Fokus sichtbar, Navigationsauswahl erkennbar", async ({ pag
   await page.goto("/");
   const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
   for (const [label, id] of REFLOW_PAGES) {
+    if (label === "Einstellungen") {
+      // ADR-0026: kein Navigationseintrag mehr, die Auswahlmarkierung entfällt dort
+      await geheZu(page, "Einstellungen");
+      await page.screenshot({
+        path: `test-results/fluent/forced-1440-${id}.png`,
+        animations: "disabled",
+      });
+      continue;
+    }
     await nav.getByRole("button", { name: label, exact: true }).click();
     // Auswahl: aktiver Eintrag unterscheidet sich vom inaktiven in Rand,
     // Kontur, Fläche oder Markierungsbalken (nicht nur in der Textfarbe).
@@ -364,7 +383,9 @@ for (const [label, id] of REFLOW_PAGES) {
     await setup(page, "light");
     await page.setViewportSize({ width: 320, height: 640 });
     await page.goto("/");
-    if (id !== "home") {
+    if (label === "Einstellungen") {
+      await geheZu(page, "Einstellungen");
+    } else if (id !== "home") {
       await page.getByRole("button", { name: "Menü öffnen" }).click();
       await page
         .getByRole("navigation", { name: "Hauptnavigation" })
@@ -414,9 +435,9 @@ test.describe("Fensterrahmen", () => {
     await expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
     const group = bar.getByRole("group", { name: "Fenster" });
     await expect(group.getByRole("button")).toHaveCount(3);
-    // bündig rechts, 46×48
+    // bündig rechts, 46×40 (Titelleiste seit ADR-0026 40 px hoch)
     const box = await group.getByRole("button", { name: "Schließen" }).boundingBox();
-    expect(box).toMatchObject({ width: 46, height: 48, y: 0 });
+    expect(box).toMatchObject({ width: 46, height: 40, y: 0 });
     expect(box!.x + box!.width).toBe(1440);
     // Produktname genau einmal sichtbar
     await expect(page.getByText("Local Voice AI", { exact: true }).filter({ visible: true })).toHaveCount(1);
@@ -456,7 +477,7 @@ test.describe("Fensterrahmen", () => {
         .getByRole("navigation", { name: "Hauptnavigation" })
         .getByRole("button", { name: "Vorlesen", exact: true })
         .click();
-      await expect(page.locator(".lv-titlebar #page-title")).toBeVisible();
+      await expect(page.locator("#page-title")).toBeVisible();
       await page.locator(".lv-titlebar__app").hover();
       await page.screenshot({
         path: `test-results/fluent-rahmen/${theme}-1440-tts.png`,
@@ -465,7 +486,7 @@ test.describe("Fensterrahmen", () => {
       await page.getByRole("button", { name: "Schließen" }).hover();
       await page.screenshot({
         path: `test-results/fluent-rahmen/${theme}-titelleiste-schliessen-hover.png`,
-        clip: { x: 0, y: 0, width: 1440, height: 48 },
+        clip: { x: 0, y: 0, width: 1440, height: 40 },
         animations: "disabled",
       });
     });
@@ -517,10 +538,7 @@ const changes = (page: Page) =>
   page.evaluate(() => (window as any).__changes as [string, any][]);
 
 async function openAppSettings(page: Page) {
-  await page
-    .getByRole("navigation", { name: "Hauptnavigation" })
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Allgemein", exact: true }).click();
   await expect(page.getByRole("radiogroup", { name: "Design" })).toBeVisible();
   // Abschnitt nach oben holen (Beleg zeigt Design und Akzent ganz)
@@ -707,10 +725,9 @@ test.describe("Erscheinungsbild", () => {
     await setup(page, "light", { lang: "en" });
     await page.setViewportSize({ width: 1440, height: 1100 });
     await page.goto("/");
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: "Settings", exact: true })
-      .click();
+    // Profilkreis auf Englisch ("Profile: …"), daher über den Tour-Anker statt über den Namen
+    await page.locator('[data-tour="nav-profile"] button').first().click();
+    await page.locator(".wai-konto-menue [data-profilmenue=einstellungen]").click();
     await page.getByRole("tab", { name: "General", exact: true }).click();
     await expect(page.getByRole("radiogroup", { name: "Design" })).toBeVisible();
     await page

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Eigene Phonon-Stimmen (Einstellungen > Ausgabe > Sprachausgabe-Anbieter > Phonon):
 // importieren, mit Gradium erstellen (Datei, Mikrofon, vorhandene Fish-Stimme),
@@ -366,10 +367,7 @@ const openPhonon = async (page: Page) => {
     }
   });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
+  await geheZu(page, "Modelle");
   await page.getByTestId("tts-provider-open-phonon").click();
   await expect(page.getByTestId("phonon-own-voices")).toBeVisible();
   // „Eigene Stimmen“ ist im Seitenblatt eingeklappt.

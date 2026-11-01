@@ -7,6 +7,7 @@ import {
   NOW,
   type IntegrationsMockOptions,
 } from "./integrationsMock";
+import { geheZu, oeffneProfilmenue } from "./profilmenue";
 
 // A4 (Goal Integrationen, #66, AK7): die Seite „Integrationen“ zwischen
 // „Modelle“ und „Einstellungen“: Liste, Katalog, Detail mit Richtung und
@@ -33,9 +34,7 @@ const setup = async (
 const nav = (page: Page) => page.getByRole("navigation");
 
 const openIntegrations = async (page: Page) => {
-  await nav(page)
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(
     page.getByRole("heading", { name: "Integrationen", level: 1 }),
   ).toBeVisible();
@@ -80,18 +79,25 @@ const createFolder = async (page: Page, name = "Ablage Berichte") => {
 // ---------------------------------------------------------------------------
 
 test.describe("Seitenleiste", () => {
-  test("Integrationen steht zwischen Modelle und Einstellungen", async ({
+  test("Integrationen steht im Profilmenü zwischen Modelle und Einstellungen", async ({
     page,
   }) => {
     await setup(page);
-    const names = await page
-      .locator(".workspace-nav__utilities button")
-      .allInnerTexts();
-    expect(names.map((n) => n.trim())).toEqual([
-      "Modelle",
-      "Integrationen",
-      "Einstellungen",
-    ]);
+    // ADR-0026: keine Navigationseinträge mehr, sondern Einträge des Profilmenüs
+    for (const name of ["Modelle", "Integrationen", "Einstellungen"]) {
+      await expect(
+        nav(page).getByRole("button", { name, exact: true }),
+      ).toHaveCount(0);
+    }
+    await oeffneProfilmenue(page);
+    const ids = await page
+      .locator(".wai-konto-menue [data-profilmenue]")
+      .evaluateAll((els) => els.map((el) => el.getAttribute("data-profilmenue")));
+    expect(
+      ids.filter((id) =>
+        ["modelle", "integrationen", "einstellungen"].includes(id ?? ""),
+      ),
+    ).toEqual(["modelle", "integrationen", "einstellungen"]);
   });
 
   test("die Seite ist leer, wenn nichts eingerichtet ist, und sagt, wie es weitergeht", async ({
@@ -477,9 +483,7 @@ test.describe("Kalenderquellen", () => {
       grant(page, "calendar.read", "workflow", "allow"),
     ).toHaveAttribute("aria-checked", "true");
     // Die Einstellungen zeigen nur noch den Verweis.
-    await nav(page)
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(page.getByTestId("calendar-source")).toHaveCount(0);
     await expect(page.getByTestId("calendar-settings-link")).toBeVisible();
     // Die Erinnerung bleibt dort.
@@ -491,9 +495,7 @@ test.describe("Kalenderquellen", () => {
     page,
   }) => {
     await setup(page);
-    await nav(page)
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await page.getByTestId("calendar-settings-link").click();
     await expect(
       page.getByRole("heading", { name: "Integrationen", level: 1 }),
@@ -518,9 +520,7 @@ test.describe("MCP", () => {
     page,
   }) => {
     await setup(page);
-    await nav(page)
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await expect(page.getByTestId("mcp-settings-link")).toBeVisible();
     await expect(
       page.getByText("Lokaler MCP-Server (nur lesend)", { exact: true }),
@@ -532,9 +532,7 @@ test.describe("MCP", () => {
     page,
   }) => {
     await setup(page);
-    await nav(page)
-      .getByRole("button", { name: "Einstellungen", exact: true })
-      .click();
+    await geheZu(page, "Einstellungen");
     await page.getByTestId("mcp-settings-link").click();
     const toggle = mcpSwitch(page);
     await expect(toggle).not.toBeChecked();

@@ -1,8 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
+import { geheZu, oeffneModellwahl, oeffneProfilmenue } from "./profilmenue";
 
-// Suite-Rahmen (Variante B): flache Fussleiste (24 px) mit Rollensymbolen,
-// Mikrofon als Symbol, Speicher-Saeulen mit Popover und Speicherschutz,
-// Titelleiste mit Suche, Glocke, Hilfe, Einstellungen und Profil.
+// Suite-Rahmen nach ADR-0026 (Variante A): schlanke Fussleiste (24 px) mit
+// Telefon, Mikrofon als Symbol und Speicher-Saeulen; Titelleiste nur mit
+// Navigation, App und Fensterknoepfen; Profilkreis unten links mit Menue
+// (Kontingent, Benachrichtigungen, Modelle, Integrationen, Einstellungen, Hilfe).
 // Schreibt Abnahmebilder nach LVA_SHOTS (Standard test-results/shell).
 const SHOTS = process.env.LVA_SHOTS ?? "test-results/shell";
 
@@ -78,7 +80,7 @@ async function setup(page: Page, theme: "light" | "dark") {
 const callsOf = (page: Page) =>
   page.evaluate(() => (window as unknown as { __calls: [string, unknown][] }).__calls);
 
-test("Fussleiste: 24 px, Rollen-Tooltips, Mikrofon als Symbol, Reihenfolge rechts", async ({ page }) => {
+test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -88,31 +90,34 @@ test("Fussleiste: 24 px, Rollen-Tooltips, Mikrofon als Symbol, Reihenfolge recht
   for (const b of await bar.locator("button.lv-status-btn").all())
     expect((await b.boundingBox())!.height).toBe(22);
 
-  // Rollen-Tooltips: Rolle fett, Modellname, Zweck
-  await bar.locator("[data-model-status]").hover();
-  const tip = page.getByRole("tooltip");
-  await expect(tip.locator("strong")).toHaveText("Spracherkennung");
-  await expect(tip).toContainText("Wandelt Gesprochenes in Text um");
-  await page.mouse.move(700, 400);
-  await bar.locator("[data-llm-selector]").hover();
-  await expect(page.getByRole("tooltip").locator("strong")).toHaveText("KI-Modell");
-  await expect(page.getByRole("tooltip")).toContainText("Qwen3 4B");
-  await expect(page.getByRole("tooltip")).toContainText("Fasst zusammen, bearbeitet Text nach, beantwortet Fragen");
+  // ADR-0026 E7: Modellwahl und Version stehen nicht mehr in der Fussleiste.
+  await expect(bar.locator("[data-llm-selector]")).toHaveCount(0);
+  await expect(bar.locator("[data-model-status]")).toHaveCount(0);
+  await expect(bar.locator("[data-testid=footer-version]")).toHaveCount(0);
 
   // Mikrofon: nur Symbol und Pfeil, Name im Tooltip
   const mic = bar.locator("[data-mic-selector]");
   await expect(mic).toHaveAttribute("aria-label", /Mikrofon: Systemvorgabe/);
   await expect(mic).toHaveText("");
 
-  // Reihenfolge rechts: Mikrofon, Schild, Speicher, Version
+  // Reihenfolge rechts: Mikrofon vor Speicher
   const x = async (sel: string) => (await bar.locator(sel).first().boundingBox())!.x;
-  const mx = await x("[data-mic-selector]");
-  const rx = await x("[data-resource-meter]");
-  const vx = await x("[data-testid=footer-version]");
-  expect(mx).toBeLessThan(rx);
-  expect(rx).toBeLessThan(vx);
-  // links vor rechts
-  expect(await x("[data-model-status]")).toBeLessThan(mx);
+  expect(await x("[data-mic-selector]")).toBeLessThan(await x("[data-resource-meter]"));
+});
+
+test("Profilmenü ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) => {
+  await setup(page, "light");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await oeffneModellwahl(page);
+  const modelle = page.getByTestId("profilmenue-modelle");
+  await modelle.locator("[data-model-status]").hover();
+  const tip = page.getByRole("tooltip");
+  await expect(tip.locator("strong")).toHaveText("Spracherkennung");
+  await expect(tip).toContainText("Wandelt Gesprochenes in Text um");
+  await modelle.locator("[data-llm-selector]").hover();
+  await expect(page.getByRole("tooltip").locator("strong")).toHaveText("KI-Modell");
+  await expect(page.getByRole("tooltip")).toContainText("Qwen3 4B");
 });
 
 test("Speicher-Popover: Verteilung, freigeben, Speicherschutz", async ({ page }) => {
@@ -148,52 +153,89 @@ test("Speicher-Popover: Verteilung, freigeben, Speicherschutz", async ({ page })
   await expect(meter.locator(".lv-meter__limit")).toHaveCount(0);
 });
 
-test("Titelleiste: ohne WAI, Suche mit Strg+K, Glocke, Hilfe, Einstellungen, Profil", async ({ page }) => {
+test("Titelleiste ohne Werkzeuge, Profilmenü unten links (ADR-0026)", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   const bar = page.locator(".lv-titlebar");
   await expect(bar.locator(".lv-titlebar__name")).toHaveText("Local Voice AI");
   expect(await bar.innerText()).not.toMatch(/WAI/);
+  // E3: keine Suche, Glocke, Hilfe, Zahnrad, Profil, Rückgängig in der Titelleiste
+  await expect(bar.getByRole("searchbox")).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: /Benachrichtigungen|Hilfe|Einstellungen|Profil|Rückgängig/ })).toHaveCount(0);
 
-  // Strg+K (macOS: ⌘K) fokussiert die Suche; Treffer navigiert. Die App
-  // entscheidet nach navigator.platform, der Test folgt derselben Quelle.
-  const isMac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
-  const search = bar.getByPlaceholder(isMac ? "Suchen (⌘K)" : "Suchen (Strg+K)");
-  await page.keyboard.press(isMac ? "Meta+k" : "Control+k");
-  await expect(search).toBeFocused();
-  await search.fill("vorl");
-  await expect(page.getByRole("option", { name: "Vorlesen" })).toBeVisible();
-  await page.keyboard.press("Enter");
-  await expect(page.locator("#page-title")).toHaveText("Vorlesen");
+  // E1: Profilkreis unten in der Navigation
+  const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+  const kreis = nav.getByRole("button", { name: /^Profil:/ });
+  const navBox = (await nav.boundingBox())!;
+  const kreisBox = (await kreis.boundingBox())!;
+  expect(kreisBox.y + kreisBox.height).toBeGreaterThan(navBox.y + navBox.height - 60);
+  // Modelle, Integrationen, Einstellungen sind keine Navigationseinträge mehr
+  for (const name of ["Modelle", "Integrationen", "Einstellungen"])
+    await expect(nav.getByRole("button", { name, exact: true })).toHaveCount(0);
 
-  // Glocke: leeres Popover
-  await bar.getByRole("button", { name: "Benachrichtigungen" }).click();
-  await expect(page.getByText("Keine Benachrichtigungen")).toBeVisible();
-  await page.keyboard.press("Escape");
+  // E2: Menü mit festen Einträgen
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await expect(menue).toContainText("Lokales Profil");
+  for (const name of ["Verbleibendes Kontingent", "Benachrichtigungen", "Modelle", "Integrationen", "Einstellungen", "Hilfe"])
+    await expect(menue.getByRole("button", { name, exact: true })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/light-1440-profilmenue.png`, animations: "disabled" });
 
-  // Einstellungen: Zahnrad, aria-pressed
-  const gear = bar.getByRole("button", { name: "Einstellungen öffnen" });
-  await expect(gear).toHaveAttribute("aria-pressed", "false");
-  await gear.click();
-  await expect(gear).toHaveAttribute("aria-pressed", "true");
-  await expect(page.locator("#page-title")).toHaveText("Einstellungen");
+  // Benachrichtigungen: Unterebene mit Zurück
+  await menue.getByRole("button", { name: "Benachrichtigungen", exact: true }).click();
+  await expect(menue).toContainText("Keine Benachrichtigungen");
+  await menue.getByRole("button", { name: "Zurück", exact: true }).click();
 
-  // Hilfe -> Info
-  await bar.getByRole("button", { name: "Hilfe", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Info über Local Voice AI" }).click();
+  // Hilfe ▸ Über
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await expect(menue.getByRole("button", { name: "Hilfe zu dieser Seite", exact: true })).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/light-1440-profilmenue-hilfe.png`, animations: "disabled" });
+  await menue.getByRole("button", { name: "Über Local Voice AI", exact: true }).click();
   const about = page.getByRole("dialog");
   await expect(about).toContainText("WAI Local Voice AI");
-  await expect(about).toContainText("Teil der WAI Suite · Wolff Applied AI");
   await expect(about).toContainText("Version 0.21.30");
-  await page.screenshot({ path: `${SHOTS}/light-1440-info.png`, animations: "disabled" });
   await page.keyboard.press("Escape");
 
-  // Profil
-  await bar.getByRole("button", { name: /^Profil:/ }).click();
-  const profilmenue = page.locator(".wai-konto-menue");
-  await expect(profilmenue).toContainText("Lokales Profil");
-  await expect(profilmenue.getByRole("button", { name: "Mein Profil" })).toBeVisible();
+  // Einstellungen über das Menü, dann Strg+, von überall
+  await oeffneProfilmenue(page);
+  await page.locator(".wai-konto-menue").getByRole("button", { name: "Einstellungen", exact: true }).click();
+  await expect(page.locator("#page-title")).toHaveText("Einstellungen");
+  await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
+  await expect(page.locator("#page-title")).toHaveText("Verlauf");
+  const isMac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
+  await page.keyboard.press(isMac ? "Meta+," : "Control+,");
+  await expect(page.locator("#page-title")).toHaveText("Einstellungen");
+});
+
+test("Modulkopf: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", async ({ page }) => {
+  await setup(page, "light");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+  const isMac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
+
+  // Verlauf: Suche an, Strg+K springt hinein
+  await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
+  const kopf = page.locator(".page-shell__head");
+  await expect(kopf.locator("#page-title")).toHaveText("Verlauf");
+  await expect(page.locator(".page-shell__description")).toHaveCount(0);
+  await kopf.getByTestId("page-info").hover();
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.keyboard.press(isMac ? "Meta+k" : "Control+k");
+  await expect(kopf.getByRole("searchbox")).toBeFocused();
+  // E4: kein Hilfe-Knopf auf der Seite, F1 öffnet die Seitenhilfe
+  await expect(page.getByRole("button", { name: "Hilfe zu dieser Seite" })).toHaveCount(0);
+  await page.keyboard.press("F1");
+  await expect(page.locator(".lv-helpdock__panel")).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/light-1440-verlauf-suche-hilfe.png`, animations: "disabled" });
+  await page.keyboard.press("F1");
+  await expect(page.locator(".lv-helpdock__panel")).toHaveCount(0);
+
+  // Vorlesen: Suche aus, kein Strg+K-Feld
+  await nav.getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(page.locator("#page-title")).toHaveText("Vorlesen");
+  await expect(page.locator(".page-shell__head").getByRole("searchbox")).toHaveCount(0);
 });
 
 for (const theme of ["dark", "light"] as const) {
@@ -205,6 +247,14 @@ for (const theme of ["dark", "light"] as const) {
     await expect(page.locator("[data-memory-popover]")).toBeVisible();
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-rahmen.png`, animations: "disabled" });
     await page.keyboard.press("Escape");
+    // Abnahmebilder ADR-0026: Profilmenü ▸ Modelle und Vorlesen mit Modulkopf
+    await oeffneModellwahl(page);
+    await page.screenshot({ path: `${SHOTS}/${theme}-1440-profilmenue-modelle.png`, animations: "disabled" });
+    await page.keyboard.press("Escape");
+    await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: "Vorlesen", exact: true }).click();
+    await expect(page.locator("#page-title")).toHaveText("Vorlesen");
+    await page.screenshot({ path: `${SHOTS}/${theme}-1440-vorlesen.png`, animations: "disabled" });
+    await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: "Start", exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: `${SHOTS}/${theme}-390-rahmen.png`, animations: "disabled" });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -221,11 +271,13 @@ for (const theme of ["light", "dark"] as const) {
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
     for (const [label, id] of [["Einstellungen", "einstellungen"], ["Vorlesen", "vorlesen"], ["Aufnahmen", "aufnahmen"]] as const) {
-      await nav.getByRole("button", { name: label, exact: true }).click();
+      if (label === "Einstellungen") await geheZu(page, "Einstellungen");
+      else await nav.getByRole("button", { name: label, exact: true }).click();
       await expect(page.locator("#page-title")).toHaveText(label);
       const dock = page.locator(".lv-helpdock");
       if (id === "vorlesen") await page.evaluate(() => localStorage.removeItem("lva.ui.tts.helpOpen"));
-      await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).first().click();
+      // ADR-0026 E4: Hilfe nur über F1 bzw. Profilmenü ▸ Hilfe
+      await page.keyboard.press("F1");
       const panel = dock.locator(".lv-helpdock__panel");
       await expect(panel).toBeVisible();
       const box = (await panel.boundingBox())!;

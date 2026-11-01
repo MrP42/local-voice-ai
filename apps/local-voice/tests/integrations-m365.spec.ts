@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { calls, installTauriMock } from "./calendarMock";
 import { installIntegrationsMock, NOW } from "./integrationsMock";
 import { GUID, installM365Mock, type M365MockOptions } from "./m365Mock";
+import { geheZu } from "./profilmenue";
 
 // A5 (Goal Integrationen, #66, AK8 m365): das Microsoft-365-Konto in der Seite
 // „Integrationen“: anlegen, Fähigkeiten (Scopes nur für eingeschaltete), Anmelden
@@ -22,10 +23,7 @@ const setup = async (page: Page, m365: M365MockOptions = {}) => {
 };
 
 const openIntegrations = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(
     page.getByRole("heading", { name: "Integrationen", level: 1 }),
   ).toBeVisible();

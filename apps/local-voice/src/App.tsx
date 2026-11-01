@@ -25,13 +25,10 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
-import {
-  HelpDockSlotContext,
-  PageHeaderSlotContext,
-} from "./components/shell/PageHeaderSlot";
+import { HelpDockSlotContext } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
-import { TitlebarTools } from "./components/shell/TitlebarTools";
+import { ShellProfil, useShellKuerzel } from "./components/shell/ShellProfil";
 import { ModelUpdateGate } from "./components/llm/ModelUpdateGate";
 import { IntroTour } from "./components/intro-tour/IntroTour";
 import {
@@ -105,9 +102,8 @@ function App() {
     });
     setOnboardingStep("model");
   }, [firstRunFailed, pickerRequested, isReturningUser]);
-  // Rahmen: Titelleisten-Platz für den Seitenkopf, Navigation ein-/ausklappen
-  // (bleibt über Neustarts), schmal als Overlay-Drawer.
-  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  // Rahmen: Navigation ein-/ausklappen (bleibt über Neustarts), schmal als
+  // Overlay-Drawer.
   const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
@@ -115,6 +111,8 @@ function App() {
   );
   const navCollapsed = navCollapsedValue === "1";
   const narrow = useIsNarrow();
+  // F1 (Seitenhilfe) und Strg+, (Einstellungen), auch bei geschlossener Navigation.
+  useShellKuerzel(setCurrentSection);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const drawerWasOpen = useRef(false);
@@ -496,9 +494,10 @@ function App() {
         <ModelUpdateGate />
         <IntroTour />
         <KopplungsDialog />
-        {/* Titelleiste 48px (Leitlinie §2): Hamburger, App-Symbol und Name,
-            daneben der Seitentitel mit den Aktionen der Seite (PageShell),
-            rechts die Fensterknöpfe. Das Hauptfenster ist rahmenlos, dies ist
+        {/* Titelleiste 40px (ADR-0026 E3, Variante A): nur Hamburger, App-Symbol
+            und Name, freie Ziehfläche, Fensterknöpfe. Seitentitel, Suche und
+            Aktionen stehen im Modulkopf (PageShell), Einstellungen und Hilfe
+            im Profilmenü unten links. Das Hauptfenster ist rahmenlos, dies ist
             die einzige Titelleiste: freie Flächen ziehen das Fenster, ein
             Doppelklick maximiert ("deep" = ganzer Teilbaum, Bedienelemente
             ausgenommen). */}
@@ -522,15 +521,7 @@ function App() {
             <AppMark />
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
-          <span className="lv-titlebar__sep" aria-hidden="true" />
-          <div ref={setHeaderSlot} className="lv-titlebar__slot" />
-          <span className="lv-titlebar__fallback">
-            {t(SECTIONS_CONFIG[currentSection].labelKey)}
-          </span>
-          <TitlebarTools
-            currentSection={currentSection}
-            onNavigate={setCurrentSection}
-          />
+          <span className="lv-titlebar__frei" />
           <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
@@ -541,6 +532,15 @@ function App() {
             narrow={narrow}
             drawerOpen={navDrawerOpen}
             onDrawerOpenChange={setNavDrawerOpen}
+            fuss={
+              <ShellProfil
+                currentSection={currentSection}
+                onNavigate={(section) => {
+                  setCurrentSection(section);
+                  setNavDrawerOpen(false);
+                }}
+              />
+            }
           />
           {/* Inhaltsschicht (heller, Radius 8 oben links), nur sie scrollt */}
           <div className="lv-content flex-1 flex flex-col overflow-hidden min-w-0">
@@ -601,12 +601,10 @@ function App() {
   }
 
   return (
-    <PageHeaderSlotContext.Provider value={headerSlot}>
-      <HelpDockSlotContext.Provider value={helpDock}>
-        {toaster}
-        {content}
-      </HelpDockSlotContext.Provider>
-    </PageHeaderSlotContext.Provider>
+    <HelpDockSlotContext.Provider value={helpDock}>
+      {toaster}
+      {content}
+    </HelpDockSlotContext.Provider>
   );
 }
 

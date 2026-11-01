@@ -8,6 +8,7 @@ import {
   installSprachdienstMock,
   type SprachdienstMockOptions,
 } from "./sprachdienstMock";
+import { geheZu } from "./profilmenue";
 
 // ADR-0021 (S2): der Sprachdienst auf der Seite Integrationen (Opt-in, gekoppelte Apps mit
 // Rechten, Widerruf) und der globale Kopplungsdialog (Code, Frist, Bestätigen/Ablehnen).
@@ -26,10 +27,7 @@ const setup = async (page: Page, options: SprachdienstMockOptions = {}) => {
 };
 
 const openIntegrations = async (page: Page) => {
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await expect(page.getByTestId("sprachdienst")).toBeVisible();
   await page.getByTestId("sprachdienst").scrollIntoViewIfNeeded();
 };

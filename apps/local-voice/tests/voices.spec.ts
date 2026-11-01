@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu } from "./profilmenue";
 
 // Die Stimmenliste mit echten Eintraegen: eine Stimme mit vorhandener
 // Hoerprobe, eine ohne. Der Unterschied ist der Punkt — die eine ist sofort
@@ -222,10 +223,7 @@ async function openVoices(page: import("@playwright/test").Page) {
   await page.goto("/");
   // Stimmen wohnen unter Einstellungen -> Ausgabe (Abschnitt Vorlesen; die
   // Einstellungen sind seit der Themen-Gliederung nach Eingabe/Ausgabe sortiert).
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .last()
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByTestId("voice-library")).toBeVisible();
 }

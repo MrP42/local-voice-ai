@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { geheZu, oeffneProfilmenue } from "./profilmenue";
 
 // Exercise the production React shell with deterministic native responses.
 // Audio capture/inference require separate native tests.
@@ -152,11 +153,9 @@ test("narrow navigation keeps labels and secondary destinations reachable", asyn
   await expect(
     nav.getByRole("button", { name: "Start", exact: true }),
   ).toBeVisible();
+  // Modelle und Einstellungen stehen im Profilmenü (ADR-0026), nicht mehr im Drawer.
   await expect(
-    nav.getByRole("button", { name: "Modelle", exact: true }),
-  ).toBeVisible();
-  await expect(
-    nav.getByRole("button", { name: "Einstellungen", exact: true }),
+    nav.getByRole("button", { name: /^Profil:/ }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(nav).toBeHidden();
@@ -201,10 +200,7 @@ test("settings tabs support keyboard selection without extra tab stops", async (
   page,
 }) => {
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .click();
+  await geheZu(page, "Einstellungen");
   const tabs = page.getByRole("tablist");
   const first = tabs.getByRole("tab").first();
   await first.focus();
@@ -264,8 +260,15 @@ test("read-aloud workspace preserves editor width in a narrow window", async ({
   ).toBeVisible();
   // Keine Klappen mehr unter dem Editor: Stimmen wohnen auf der Modelle-Seite.
   await expect(page.getByText("Stimmen anhören & verwalten")).toHaveCount(0);
-  // Hilfe an Ort und Stelle: der Knopf im Kopf schaltet die rechte Leiste um.
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  // Hilfe an Ort und Stelle (seit ADR-0026 kein Knopf im Kopf mehr): schmal ist der
+  // F1-Hörer mit dem Drawer nicht eingehängt, also über Profilmenü ▸ Hilfe.
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await menue.getByRole("button", { name: "Hilfe", exact: true }).click();
+  await menue.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  // Der Drawer bleibt nach dem Menüklick offen und verdeckt die Seite: schließen.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("navigation", { name: "Hauptnavigation" })).toBeHidden();
   await expect(page.getByTestId("help-panel")).toContainText(
     "Sprecher und Betonung im Text",
   );
@@ -292,7 +295,11 @@ test("all five content pages share one head", async ({ page }) => {
     ["Einstellungen", "settings"],
   ];
   for (const [label, id] of pages) {
-    await page.getByRole("button", { name: label, exact: true }).click();
+    if (label === "Modelle" || label === "Einstellungen") {
+      await geheZu(page, label);
+    } else {
+      await page.getByRole("button", { name: label, exact: true }).click();
+    }
     // Ein Kopf je Seite, immer gleich gebaut: h1 im PageShell.
     const head = page.locator(".page-shell__head h1");
     await expect(head).toHaveCount(1);
@@ -317,7 +324,7 @@ test("all five content pages share one head", async ({ page }) => {
 
 test("account & devices: sign in from the account tab, then sign out", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Konto & Geräte" }).click();
   await expect(page.getByRole("heading", { name: "Konto & Geräte" })).toBeVisible();
   const login = page.getByTestId("sync-login");
@@ -342,8 +349,12 @@ test("every content page opens its context help from the head", async ({ page })
     ["Modelle", "Modelle"],
     ["Einstellungen", "Einstellungen"],
   ] as const) {
-    await page.getByRole("button", { name: label, exact: true }).last().click();
-    await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+    if (label === "Modelle" || label === "Einstellungen") {
+      await geheZu(page, label);
+    } else {
+      await page.getByRole("button", { name: label, exact: true }).last().click();
+    }
+    await page.keyboard.press("F1");
     const panel = page.getByTestId("help-panel");
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("heading", { level: 3, name: heading }).first()).toBeVisible();

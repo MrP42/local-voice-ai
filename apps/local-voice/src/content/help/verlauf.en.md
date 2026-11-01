@@ -8,7 +8,7 @@ Everything you dictated ends up here: text, recording and time.
 - **Listen to the recording** while it still exists. How long recordings are kept is set under Settings, General, Retention.
 - **Transcribe again**, for example with a better model.
 - **Keep**: marked entries survive the retention period.
-- The button at the top right opens the recordings folder in the file manager.
+- The button on the right of the page header opens the recordings folder in the file manager.
 
 ## What lives elsewhere
 
