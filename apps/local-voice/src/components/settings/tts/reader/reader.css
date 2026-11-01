@@ -50,7 +50,6 @@
   top: 42px;
   bottom: 40px;
   column-fill: auto;
-  transition: transform 0.3s ease;
   font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   font-size: var(--reader-fs, 18px);
   line-height: 1.72;
@@ -62,8 +61,12 @@
   outline: 2px solid var(--color-text);
   outline-offset: 4px;
 }
+/* Nur echtes Blättern gleitet (Klasse kommt beim Umblättern, geht danach). */
+.reader-flow--turning {
+  transition: transform 0.3s ease;
+}
 @media (prefers-reduced-motion: reduce) {
-  .reader-flow {
+  .reader-flow--turning {
     transition: none;
   }
 }
@@ -154,11 +157,16 @@
     transparent 5px 9px
   );
 }
+/* Der Name sitzt IN der ersten Zeile (links in den Rand gezogen), nicht
+   absolut am Absatz: so wandert er beim Seitenumbruch mit dem Text auf die
+   nächste Seite, statt allein unten stehen zu bleiben. */
 .reader-who {
-  position: absolute;
-  left: 0;
-  top: 0.2em;
+  position: relative;
+  display: inline-block;
+  vertical-align: top;
+  margin: 0.35em 20px 0 -96px;
   width: 76px;
+  text-indent: 0;
   padding: 1px 2px;
   border: 0;
   border-radius: 3px;
@@ -193,6 +201,12 @@
   background: color-mix(in srgb, var(--color-logo-primary) 38%, transparent);
   border-radius: 3px;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-logo-primary) 38%, transparent);
+}
+/* Kindle-Vorbild: Satz dezent, das gerade gehörte Wort kräftiger. */
+.reader-cur.reader-word,
+.reader-word {
+  background: color-mix(in srgb, var(--color-logo-primary) 62%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-logo-primary) 62%, transparent);
 }
 .reader-mark {
   text-decoration: underline wavy #d13438;
@@ -265,12 +279,18 @@
   --reader-narrow: 1;
 }
 @media all {
+  /* Schmale Spalte: Blocksatz reißt große Wortlücken, auch mit Trennung. */
+  .reader-book--narrow .reader-flow {
+    text-align: left;
+  }
   .reader-book--narrow .reader-block {
     padding-left: 0;
   }
   .reader-book--narrow .reader-who {
     position: static;
     display: block;
+    margin: 0;
+    break-after: avoid;
     width: auto;
     text-align: left;
     padding: 0;
@@ -499,4 +519,73 @@
 }
 .reader-player__sentence {
   flex: none;
+}
+
+/* Leseschriften (lva#148, Kindle-Vorbild): nur Systemschriften, keine
+   nachgeladenen Fonts. „book“ ist die Grundschrift aus .reader-flow. */
+.reader-book[data-font="sans"] .reader-flow,
+.reader-fontsample--sans {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.reader-book[data-font="wide"] .reader-flow,
+.reader-fontsample--wide {
+  font-family: Verdana, "DejaVu Sans", Tahoma, sans-serif;
+}
+.reader-fontsample--book {
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+/* Farbthemen der Leseansicht (Kindle: Weiß, Sepia, Grün, Schwarz). Sie
+   überschreiben nur die Farb-Tokens im Lesebereich, damit Werkzeugleiste,
+   Menüs und Seite gemeinsam umfärben. Kontraste (WCAG, Text/Grund):
+   Weiß 17,2 / 8,9 · Sepia 11,1 / 7,2 · Grün 11,4 / 7,4 · Schwarz 16,8 / 9,1
+   (Fließtext / gedämpfter Text) — alle über AAA 7:1. */
+.reader-frame[data-reader-theme="white"] {
+  --color-background: #ffffff;
+  --color-text: #1b1b1b;
+  --color-text-muted: #4a4a4a;
+}
+.reader-frame[data-reader-theme="sepia"] {
+  --color-background: #f4ecd8;
+  --color-text: #3b2f1e;
+  --color-text-muted: #5c4a33;
+}
+.reader-frame[data-reader-theme="green"] {
+  --color-background: #d5ead2;
+  --color-text: #1f2d1f;
+  --color-text-muted: #334a35;
+}
+.reader-frame[data-reader-theme="black"] {
+  --color-background: #000000;
+  --color-text: #e6e6e6;
+  --color-text-muted: #ababab;
+}
+.reader-frame[data-reader-theme]:not([data-reader-theme="auto"]) {
+  /* Fluent-Steuerelemente (Reiter) lesen eigene Tokens: mitfärben. */
+  --colorNeutralForeground1: var(--color-text);
+  --colorNeutralForeground1Hover: var(--color-text);
+  --colorNeutralForeground1Pressed: var(--color-text);
+  --colorNeutralForeground1Selected: var(--color-text);
+  --colorNeutralForeground2: var(--color-text-muted);
+  --colorNeutralForeground2Hover: var(--color-text);
+  --colorNeutralForeground2Pressed: var(--color-text);
+  --colorNeutralForeground2Selected: var(--color-text);
+  --colorNeutralForeground3: var(--color-text-muted);
+  background: var(--color-background);
+  color: var(--color-text);
+  color-scheme: light;
+}
+.reader-frame[data-reader-theme="black"] {
+  color-scheme: dark;
+}
+.reader-frame[data-reader-theme]:not([data-reader-theme="auto"]) .reader-book {
+  background: var(--color-background);
+}
+
+/* Vollbild (wie im Presenter): die Lesespalte füllt den Bildschirm, ohne
+   Fenster-Rahmen. Ohne Thema gilt der App-Hintergrund. */
+.reader-frame:fullscreen {
+  background: var(--color-background);
+  color: var(--color-text);
+  padding: 12px 24px 16px;
 }

@@ -60,6 +60,7 @@ import {
 import { useEngineCaps } from "./useEngineCaps";
 import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
 import { ReplaceSpeakerDialog } from "./speakers/ReplaceSpeakerDialog";
+import type { SentenceClock } from "./reader/useSentenceClock";
 import { useContextMenu } from "../../ui/ContextMenu";
 import {
   applySwap,
@@ -114,7 +115,14 @@ import { ReaderContents } from "./reader/ReaderContents";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import type { IsbnBook } from "@/bindings";
-import { ReaderToolbar } from "./reader/ReaderToolbar";
+import {
+  READER_FONTS,
+  READER_THEMES,
+  ReaderToolbar,
+} from "./reader/ReaderToolbar";
+import type { ReaderFont, ReaderTheme } from "./reader/ReaderToolbar";
+import { InfoPopover } from "./reader/InfoPopover";
+import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
@@ -362,6 +370,13 @@ export const TtsSettings = () => {
   const [currentSentence, setCurrentSentence] = useState<string | null>(null);
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+  /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
+   *  sekundengenau mit, nicht nur Satz für Satz. */
+  const [sentenceStart, setSentenceStart] = useState<{
+    index: number | null;
+    at: number;
+    ms: number;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [exportProgress, setExportProgress] = useState<{
     position: number;
@@ -469,8 +484,14 @@ export const TtsSettings = () => {
       context: string;
       index?: number;
       text: string;
+      duration_ms?: number;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
+      setSentenceStart({
+        index: typeof e.payload.index === "number" ? e.payload.index : null,
+        at: performance.now(),
+        ms: e.payload.duration_ms ?? 0,
+      });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(
         typeof e.payload.index === "number" ? e.payload.index : null,
@@ -690,6 +711,14 @@ export const TtsSettings = () => {
 
   const phase = status?.phase ?? "stopped";
   const speaking = phase === "speaking";
+  const playbackSpeed = getSetting("tts_speed") ?? 1.0;
+  const sentenceClock = useMemo<SentenceClock | null>(
+    () =>
+      speaking && sentenceStart && sentenceStart.ms > 0
+        ? { ...sentenceStart, speed: playbackSpeed }
+        : null,
+    [speaking, sentenceStart, playbackSpeed],
+  );
   const starting = phase === "starting";
 
   const speak = async () => {
@@ -1127,6 +1156,45 @@ export const TtsSettings = () => {
     "tts.reader.speakers",
     "1",
   );
+  const [fontFamily, setFontFamily] = usePersistentState<ReaderFont>(
+    "tts.reader.family",
+    "book",
+    (v) => READER_FONTS.some((f) => f.value === v),
+  );
+  const [readerTheme, setReaderTheme] = usePersistentState<ReaderTheme>(
+    "tts.reader.theme",
+    "auto",
+    (v) => READER_THEMES.some((th) => th.value === v),
+  );
+  // Sonnen-Knopf: bewusst nicht gemerkt — wach halten gilt nur, solange man
+  // liest, und soll nach einem Neustart nicht still weiterlaufen.
+  const [keepAwake, setKeepAwake] = useState(false);
+  const awakeShift = useKeepAwake(keepAwake);
+  const toggleKeepAwake = (on: boolean) => {
+    setKeepAwake(on);
+    // Im Vollbild ist nur die Lesespalte sichtbar, Meldungen nicht: der
+    // Hinweis kommt beim nächsten Einschalten außerhalb des Vollbilds.
+    if (on && !document.fullscreenElement)
+      toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
+  };
+  const readerFrameRef = useRef<HTMLDivElement | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () =>
+      setFullscreen(
+        document.fullscreenElement !== null &&
+          document.fullscreenElement === readerFrameRef.current,
+      );
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    void readerFrameRef.current?.requestFullscreen().catch(() => undefined);
+  };
   const [follow, setFollow] = useState(true);
   const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
   const readerApiRef = useRef<ReaderViewApi | null>(null);
@@ -2115,7 +2183,17 @@ export const TtsSettings = () => {
             {/* overflow-y-auto: reicht der Platz selbst dann nicht (kleines
               Fenster, Korrekturpanel offen), scrollt die Spalte, statt dass
               der Editor unter seine Mindesthoehe gedrueckt wird. */}
-            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto">
+            <div
+              ref={readerFrameRef}
+              className="reader-frame px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto"
+              data-reader-theme={viewMode === "read" ? readerTheme : undefined}
+              data-fullscreen={fullscreen ? "1" : undefined}
+              style={
+                awakeShift
+                  ? { position: "relative", left: awakeShift, top: awakeShift }
+                  : undefined
+              }
+            >
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
@@ -2133,7 +2211,7 @@ export const TtsSettings = () => {
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
-                <div className="ml-auto pb-1">
+                <div className="ml-auto max-w-full pb-1">
                   <ReaderToolbar
                     mode={viewMode}
                     canRead={spokenText.trim().length > 0}
@@ -2152,6 +2230,57 @@ export const TtsSettings = () => {
                     onShowSpeakers={(show) => setSpeakersShown(show ? "1" : "0")}
                     follow={follow}
                     onFollow={setFollow}
+                    fontFamily={fontFamily}
+                    onFontFamily={setFontFamily}
+                    theme={readerTheme}
+                    onTheme={setReaderTheme}
+                    keepAwake={keepAwake}
+                    onKeepAwake={toggleKeepAwake}
+                    fullscreen={fullscreen}
+                    onFullscreen={toggleFullscreen}
+                    info={
+                      <InfoPopover
+                        label={t("tts.writingRules.title")}
+                        testId="reader-info"
+                      >
+                        <p className="mb-1 font-semibold">
+                          {t("tts.writingRules.title")}
+                        </p>
+                <div className="space-y-1.5 text-sm text-text/80">
+                  <p>{t("tts.dialogHint")}</p>
+                  {pausesOnly ? (
+                    <p>
+                      {t("tts.writingRules.pausesOnly", {
+                        engine: engineCaps.providerLabel ?? "",
+                      })}
+                    </p>
+                  ) : (
+                    <p>{t("tts.writingRules.tagsIntro")}</p>
+                  )}
+                  <ul className="list-disc space-y-0.5 ps-4">
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example1")}
+                        </code>
+                      </li>
+                    )}
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example2")}
+                      </code>
+                    </li>
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example3")}
+                        </code>
+                      </li>
+                    )}
+                  </ul>
+                </div>
+                      </InfoPopover>
+                    }
                     bookmarks={
                       <ReaderBookmarks
                         bookmarks={bookmarks}
@@ -2222,11 +2351,13 @@ export const TtsSettings = () => {
                 <ReaderView
                   text={spokenText}
                   speakers={speakers}
-                  lang={tab === "translation" ? targetLangCode(targetLang) : undefined}
+                  lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
                   current={readRange}
+                  clock={sessionTab.current === tab ? sentenceClock : null}
                   marks={readerMarks}
                   twoPages={twoPagesStored === "1"}
                   fontSize={Number(fontStored)}
+                  fontFamily={fontFamily}
                   showSpeakers={speakersShown === "1"}
                   follow={follow}
                   onFollowChange={setFollow}
@@ -2330,6 +2461,7 @@ export const TtsSettings = () => {
                     : null
                 }
                 estimateSeconds={readEstimate}
+                clock={sessionTab.current === tab ? sentenceClock : null}
                 page={viewMode === "read" ? pageInfo : null}
                 onJumpToPage={(n) => {
                   setFollow(false);
@@ -2669,47 +2801,6 @@ export const TtsSettings = () => {
                 sumAudience={sumAudience}
                 onSumAudienceChange={setSumAudience}
               />
-              {/* Sprecherwechsel und Tags sind Schreibregeln, keine
-              Einstellungen — der aufklappbare Block steht deshalb bei dem
-              Feld, in das man sie tippt. */}
-              <details className="text-xs text-text/60">
-                <summary className="cursor-pointer select-none rounded-lg py-1 text-sm font-medium text-text/60 transition-colors hover:text-text/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text">
-                  {t("tts.writingRules.title")}
-                </summary>
-                <div className="mt-1 space-y-1 ps-4">
-                  <p>{t("tts.dialogHint")}</p>
-                  {pausesOnly ? (
-                    <p>
-                      {t("tts.writingRules.pausesOnly", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })}
-                    </p>
-                  ) : (
-                    <p>{t("tts.writingRules.tagsIntro")}</p>
-                  )}
-                  <ul className="list-disc space-y-0.5 ps-4">
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example1")}
-                        </code>
-                      </li>
-                    )}
-                    <li>
-                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                        {t("tts.writingRules.example2")}
-                      </code>
-                    </li>
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example3")}
-                        </code>
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              </details>
               {speaking && currentSentence && viewMode === "edit" && (
                 <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                   {currentSentence}

@@ -82,7 +82,23 @@
       "speakerMenuTitle": "Absatz sprechen lassen von",
       "speakerMenuReplace": "Sprecher überall ersetzen…",
       "speakerMenuVoice": "Stimme und Sprechstil für „{{name}}“…",
-      "readFromHere": "Ab hier vorlesen"
+      "readFromHere": "Ab hier vorlesen",
+      "keepAwake": "Bildschirm wach halten",
+      "keepAwakeOn": "Bildschirm bleibt wach – zum Ausschalten klicken",
+      "keepAwakeHint": "Der Bildschirm bleibt an, und der Inhalt wandert alle 45 Sekunden um ein Pixel, damit OLED-Monitore nicht abdunkeln. Dimmt Ihr Monitor trotzdem, lässt sich das oft nur im Monitormenü abschalten (z. B. „Bildschirmschutz“, „Logo-Helligkeit“ oder „ASBL“).",
+      "sizeHead": "Schriftgröße",
+      "fontHead": "Schriftart",
+      "themeHead": "Farbe",
+      "fontBook": "Buchschrift",
+      "fontSans": "Serifenlos",
+      "fontWide": "Breite Schrift",
+      "themeAuto": "Wie die App",
+      "themeWhite": "Weiß",
+      "themeSepia": "Sepia",
+      "themeGreen": "Grün",
+      "themeBlack": "Schwarz",
+      "fullscreen": "Vollbild",
+      "fullscreenExit": "Vollbild beenden"
     },
     "parts": {
       "next": "Weiter mit „{{title}}“"

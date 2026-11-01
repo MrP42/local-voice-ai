@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Moon, MoreHorizontal } from "lucide-react";
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
+import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
 
 export const SLEEP_CHOICES = [0, 15, 30, 45, 60] as const;
 
@@ -23,6 +24,8 @@ interface ReaderPlayerBarProps {
   progress: { position: number; total: number } | null;
   /** Geschätzte Gesamtdauer des Texts in Sekunden (bei Tempo 1). */
   estimateSeconds: number;
+  /** Laufender Satz: die Zeit zählt damit sekundengenau weiter. */
+  clock?: SentenceClock | null;
   page: ReaderPageInfo | null;
   onJumpToPage(page: number): void;
   /** Klick auf den Fortschrittsbalken: Anteil 0..1. */
@@ -67,6 +70,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onSpeed,
   progress,
   estimateSeconds,
+  clock = null,
   page,
   onJumpToPage,
   onSeekFraction,
@@ -167,9 +171,15 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     return () => window.clearInterval(id);
   }, [sleepUntil]);
 
+  // Innerhalb des hörbaren Satzes mitlaufen; nach einer Pause beginnt der
+  // Satz wieder vorn, die Anzeige steht dann am Satzanfang.
+  const within = useSentenceClock(
+    clock && progress && clock.index === progress.position ? clock : null,
+    4,
+  );
   const fraction =
     progress && progress.total > 0
-      ? Math.min(1, progress.position / progress.total)
+      ? Math.min(1, (progress.position + within) / progress.total)
       : 0;
   const total = estimateSeconds / Math.max(0.25, speed);
   const elapsed = total * fraction;
