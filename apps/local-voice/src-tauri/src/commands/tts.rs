@@ -548,8 +548,14 @@ pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, Strin
 
 #[tauri::command]
 #[specta::specta]
-pub fn tts_extract_document(path: String) -> Result<String, String> {
-    crate::media::extract_document_text(std::path::Path::new(&path))
+pub async fn tts_extract_document(path: String) -> Result<String, String> {
+    // Ein großes EPUB/PDF braucht Sekunden: nicht auf dem Hauptthread, sonst
+    // friert das Fenster während des Imports ein (lva#149).
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::media::extract_document_text(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| format!("Import abgebrochen: {e}"))?
 }
 
 #[tauri::command]

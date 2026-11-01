@@ -762,9 +762,86 @@ fn flush_speak(buffer: &mut String, parts: &mut Vec<SpeechPart>) {
     buffer.clear();
 }
 
+/// Einen Satz, der laenger als `max_chars` ist, in Stuecke <= `max_chars`
+/// teilen statt ihn abzuschneiden (lva#149). Geschnitten wird bevorzugt nach
+/// Komma, Semikolon, Doppelpunkt oder Gedankenstrich, sonst an einem
+/// Leerzeichen -- nie innerhalb von `[…]` (Pausen-/Stil-Tags). Ohne passende
+/// Stelle wird hart geschnitten. Kurze Saetze kommen unveraendert zurueck.
+pub fn split_oversized(sentence: &str, max_chars: u32) -> Vec<String> {
+    let max = (max_chars as usize).max(20);
+    let mut out = Vec::new();
+    let mut rest = sentence.trim();
+    while rest.chars().count() > max {
+        // Byte-Grenzen der ersten `max` Zeichen.
+        let limit = rest.char_indices().nth(max).map_or(rest.len(), |(i, _)| i);
+        let window = &rest[..limit];
+        let mut depth = 0i32;
+        let mut best_punct: Option<usize> = None;
+        let mut best_space: Option<usize> = None;
+        let min = window.len() / 3;
+        let mut prev: Option<char> = None;
+        for (i, c) in window.char_indices() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth = (depth - 1).max(0),
+                ' ' if depth == 0 && i >= min => {
+                    if matches!(prev, Some(',' | ';' | ':' | '–' | '—')) {
+                        best_punct = Some(i);
+                    }
+                    best_space = Some(i);
+                }
+                _ => {}
+            }
+            prev = Some(c);
+        }
+        let cut = best_punct.or(best_space).unwrap_or(limit);
+        let (head, tail) = rest.split_at(cut);
+        let head = head.trim();
+        if !head.is_empty() {
+            out.push(head.to_string());
+        }
+        rest = tail.trim_start();
+    }
+    if !rest.is_empty() {
+        out.push(rest.to_string());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_sentences_are_split_not_cut() {
+        let long = "„Komm mit, Nummer eins!“ „Wohin denn?“ ".repeat(40);
+        let parts = split_oversized(&long, 200);
+        assert!(parts.len() > 1);
+        assert!(parts.iter().all(|p| p.chars().count() <= 200));
+        let joined: String = parts.join(" ");
+        assert_eq!(
+            joined.split_whitespace().collect::<Vec<_>>(),
+            long.split_whitespace().collect::<Vec<_>>()
+        );
+        // Bevorzugt nach einem Komma.
+        assert!(parts[0].ends_with(','), "{}", parts[0]);
+    }
+
+    #[test]
+    fn oversized_split_keeps_tags_whole_and_short_text_untouched() {
+        assert_eq!(split_oversized("Kurz.", 50), vec!["Kurz.".to_string()]);
+        let text = format!("{} [short pause] {}", "a".repeat(15), "b ".repeat(30));
+        for part in split_oversized(&text, 20) {
+            assert_eq!(
+                part.matches('[').count(),
+                part.matches(']').count(),
+                "{part}"
+            );
+        }
+        let solid = "x".repeat(50);
+        let parts = split_oversized(&solid, 20);
+        assert_eq!(parts.concat(), solid);
+    }
 
     #[test]
     fn sprecher_mit_und_ohne_umlaut_sind_dieselbe_stimme() {

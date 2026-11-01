@@ -2136,10 +2136,10 @@ impl TtsManager {
     ) -> Result<usize, String> {
         use tauri::Emitter;
         // Eine Sitzung liest Satz fuer Satz und laesst sich jederzeit
-        // anhalten; die Grenze `tts_max_chars` gilt deshalb je Satz (in
-        // `fetch_and_play_pipelined`), nicht fuer den ganzen Text -- sonst endete ein
-        // Buch nach 5000 Zeichen (lva#149). `max_chars` bleibt fuer die
-        // Meldung, falls ein Aufrufer doch kuerzt.
+        // anhalten; die Grenze `tts_max_chars` gilt deshalb je Satz (zu lange
+        // Saetze teilt `utterances`), nicht fuer den ganzen Text -- sonst
+        // endete ein Buch nach 5000 Zeichen (lva#149). Die Meldung unten
+        // bleibt fuer den Fall, dass hier wieder eine Grenze eingefuehrt wird.
         let max_chars = u32::MAX;
         let prepared =
             protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
@@ -2308,7 +2308,18 @@ impl TtsManager {
         let single_voice = self.core.fixed_voice.load(Ordering::Acquire);
         let markers_apply =
             speaker_markers_apply(self.core.engine_caps().voice_switching, single_voice);
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Ueberlange "Saetze" (Dialog ohne Satzgrenze, Verse, Listen) in
+        // Stuecke teilen: `fetch_and_play_pipelined` kuerzt je Satz auf
+        // `tts_max_chars` und wuerde den Rest sonst still verwerfen (lva#149).
         split_utterances(text, &self.active_speakers(), markers_apply)
+            .into_iter()
+            .flat_map(|(sentence, voice)| {
+                protocol::split_oversized(&sentence, max_chars)
+                    .into_iter()
+                    .map(move |part| (part, voice.clone()))
+            })
+            .collect()
     }
 
     /// Die gewaehlte Stimme oder Engine hat sich geaendert (die Einstellungen sind
