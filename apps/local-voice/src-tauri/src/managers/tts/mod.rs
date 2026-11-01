@@ -729,7 +729,7 @@ impl TtsCore {
         &self,
         sentences: Vec<Utterance>,
         start_index: usize,
-        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     ) -> Result<usize, String> {
         if sentences.is_empty() {
@@ -1229,7 +1229,7 @@ impl TtsCore {
         sentences: &[Utterance],
         start_index: usize,
         cancelled: Arc<AtomicBool>,
-        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
     ) -> Result<usize, String> {
         let (ready, ready_rx) = tokio::sync::watch::channel(usize::MAX);
@@ -1344,7 +1344,7 @@ impl TtsCore {
         sentences: &[Utterance],
         start_index: usize,
         cancelled: Arc<AtomicBool>,
-        on_playing: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
         ready: tokio::sync::watch::Sender<usize>,
     ) -> Result<usize, String> {
@@ -1486,6 +1486,10 @@ impl TtsCore {
                 continue;
             }
             let last_blob = blobs.len() - 1;
+            // Dauer des ganzen Satzes (samt Pausen) bei normalem Tempo: die
+            // Oberfläche rechnet daraus die Zeit sekundengenau und blättert
+            // an der Stelle um, die gerade zu hören ist.
+            let sentence_ms: u32 = blobs.iter().map(|(b, _)| wav_duration_ms(b)).sum();
             for (blob_index, (bytes, gain)) in blobs.into_iter().enumerate() {
                 total_bytes += bytes.len();
                 // Vorheriges Stueck zu Ende spielen lassen (Reihenfolge!).
@@ -1510,7 +1514,7 @@ impl TtsCore {
                 // Live-Anzeige: dieser Satz beginnt jetzt zu spielen.
                 if blob_index == 0 {
                     if let Some(cb) = on_playing.as_ref() {
-                        cb(offset);
+                        cb(offset, sentence_ms);
                     }
                 }
                 let player = self.player.clone();
@@ -2020,6 +2024,20 @@ fn silence_sample_count(ms: u32, sample_rate: u32, channels: u16) -> usize {
 fn silence_wav(ms: u32, sample_rate: u32) -> Vec<u8> {
     let samples = vec![0.0f32; silence_sample_count(ms, sample_rate, 1)];
     encode_wav_mono(&samples, sample_rate)
+}
+
+/// Callback, sobald ein Satz zu spielen beginnt: Index und Dauer in ms.
+pub type OnPlaying = Arc<dyn Fn(usize, u32) + Send + Sync>;
+
+/// Spieldauer eines WAV-Blobs in ms, ohne ihn zu dekodieren (0, wenn unlesbar).
+fn wav_duration_ms(bytes: &[u8]) -> u32 {
+    hound::WavReader::new(std::io::Cursor::new(bytes))
+        .ok()
+        .map(|r| {
+            let rate = r.spec().sample_rate.max(1) as u64;
+            (u64::from(r.duration()) * 1000 / rate).min(u64::from(u32::MAX)) as u32
+        })
+        .unwrap_or(0)
 }
 
 /// Abtastrate eines WAV-Blobs, ohne ihn zu dekodieren.
@@ -2786,12 +2804,13 @@ impl TtsManager {
         // Live-Anzeige des Satzes, der gerade zu hören ist.
         let now_manager = Arc::clone(self);
         let now_sentences: Vec<String> = sentences.iter().map(|(text, _)| text.clone()).collect();
-        let on_playing: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(move |idx| {
+        let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
             let _ = now_manager.app.emit(
                 "tts-current-sentence",
                 serde_json::json!({
                     "context": "speak",
                     "index": idx as u32,
+                    "duration_ms": duration_ms,
                     "text": now_sentences.get(idx).cloned().unwrap_or_default(),
                 }),
             );
@@ -4507,13 +4526,14 @@ impl TtsManager {
             // Live-Anzeige des gelesenen Satzes.
             let now_manager = Arc::clone(&manager);
             let now_sentences = sentences.clone();
-            let on_playing: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(move |idx| {
+            let on_playing: OnPlaying = Arc::new(move |idx, duration_ms| {
                 use tauri::Emitter;
                 let _ = now_manager.app.emit(
                     "tts-current-sentence",
                     serde_json::json!({
                         "context": "reading",
                         "index": idx as u32,
+                        "duration_ms": duration_ms,
                         "text": now_sentences.get(idx).cloned().unwrap_or_default(),
                     }),
                 );

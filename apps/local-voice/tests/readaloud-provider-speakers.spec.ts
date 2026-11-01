@@ -262,11 +262,11 @@ async function gotoReadAloud(page: Page) {
 
 const editorOf = (page: Page) => page.locator("textarea").first();
 
-/** Der aufklappbare Block "Schreibregeln: Sprecher & Tags" (nicht der Hilfetext rechts). */
-const writingRules = (page: Page) =>
-  page.locator("details", {
-    has: page.locator("summary", { hasText: "Schreibregeln" }),
-  });
+/** Die Schreibregeln hinter dem ⓘ-Knopf der Kopfleiste (aufklappen, Inhalt). */
+const writingRules = async (page: Page) => {
+  await page.getByTestId("reader-info").click();
+  return page.getByTestId("reader-info-panel");
+};
 
 /** Kontextmenü an der Schreibmarke öffnen (Menü schließt bei Scroll: per JS klicken). */
 async function openSpeakerMenu(page: Page) {
@@ -439,11 +439,11 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
   await page.keyboard.press("Escape");
 
   // Die Schreibregeln erklären nur Pausen, keine Emotions-Tags.
-  const rules = writingRules(page);
-  await rules.locator("summary").click();
+  const rules = await writingRules(page);
   await expect(rules).toContainText("Phonon setzt keine Emotions-Tags um");
   await expect(rules).not.toContainText("[whisper]");
   await expect(rules).toContainText("[short pause]");
+  await page.keyboard.press("Escape");
 
   await page.getByTestId("tts-action-menu").click();
   const autotag = page.getByTestId("autotag-open");
@@ -493,10 +493,10 @@ test("Fish bleibt, wie es war: Sprecher sind die aufgenommenen Stimmen, volle Pa
     page.getByRole("menuitem", { name: /Flüsternd/ }).first(),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  const rules = writingRules(page);
-  await rules.locator("summary").click();
+  const rules = await writingRules(page);
   await expect(rules).toContainText("Emotions- und Effekt-Tags stehen");
   await expect(rules).toContainText("[whisper] Komm näher");
+  await page.keyboard.press("Escape");
   await page.getByTestId("tts-action-menu").click();
   await expect(page.getByTestId("autotag-open")).toBeEnabled();
 });

@@ -82,7 +82,23 @@
       "speakerMenuTitle": "Read this paragraph as",
       "speakerMenuReplace": "Replace speaker everywhere…",
       "speakerMenuVoice": "Voice and speaking style for “{{name}}”…",
-      "readFromHere": "Read from here"
+      "readFromHere": "Read from here",
+      "keepAwake": "Keep screen awake",
+      "keepAwakeOn": "Screen stays awake – click to turn off",
+      "keepAwakeHint": "The screen stays on, and the content shifts by one pixel every 45 seconds so OLED monitors do not dim. If your monitor still dims, this can often only be turned off in the monitor menu (e.g. “Screen saver”, “Logo brightness” or “ASBL”).",
+      "sizeHead": "Font size",
+      "fontHead": "Typeface",
+      "themeHead": "Colour",
+      "fontBook": "Book",
+      "fontSans": "Sans serif",
+      "fontWide": "Wide (easy to read)",
+      "themeAuto": "Like the app",
+      "themeWhite": "White",
+      "themeSepia": "Sepia",
+      "themeGreen": "Green",
+      "themeBlack": "Black",
+      "fullscreen": "Full screen",
+      "fullscreenExit": "Exit full screen"
     },
     "parts": {
       "next": "Continuing with “{{title}}”"

@@ -18,6 +18,7 @@ mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
+mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod llm_client;
 mod llm_keys;
@@ -2430,6 +2431,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_prewarm,
             commands::tts::tts_prewarm_cancel,
             commands::tts::tts_prefetch_head,
+            commands::tts::screen_keep_awake,
             commands::tts::tts_server_status,
             commands::tts::tts_list_voices,
             commands::tts::tts_voice_demo,
