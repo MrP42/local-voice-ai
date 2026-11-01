@@ -67,7 +67,6 @@ import {
   type LangVoice,
 } from "@/lib/voices/speakerSwap";
 import { voiceColor } from "@/lib/voices/palette";
-import { TagPalette } from "./tags";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
@@ -85,6 +84,20 @@ import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
+import {
+  ReaderView,
+  type ReaderMark,
+  type ReaderPageInfo,
+  type ReaderViewApi,
+} from "./reader/ReaderView";
+import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
+import { ReaderToolbar } from "./reader/ReaderToolbar";
+import { parseReaderDoc } from "@/lib/reader/readerDoc";
+import { toSpokenScript } from "@/lib/reader/spokenScript";
+import {
+  SentenceLocator,
+  type SourceRange,
+} from "@/lib/reader/sentenceLocator";
 
 /// Abspieltempo der Transportleiste. Bewusst grob gestuft: feiner regelt der
 /// Schieber in den Einstellungen, hier will man im Hoeren einmal schneller
@@ -145,6 +158,8 @@ export const TtsSettings = () => {
    *  auch die Sprecher-Chips abgeglichen werden: bei Fish die aufgenommenen
    *  Stimmen, bei einem Anbieter mit Stimmwechsel (Phonon u. a.) seine Stimmen. */
   const speakers = useSpeakers();
+  /** Ansicht beim Öffnen eines Texts wählen (gesetzt weiter unten, wo die Wahl lebt). */
+  const openModeRef = useRef<((loaded: string) => void) | null>(null);
   /** Was die gewaehlte Engine kann (Sprecher im Skript, Stil-Tags): die Seite
    *  richtet sich nach den Faehigkeiten, nicht nach dem Namen der Engine. */
   const engineCaps = useEngineCaps();
@@ -240,7 +255,6 @@ export const TtsSettings = () => {
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
   const [tidying, setTidying] = useState(false);
-  const [speedOpen, setSpeedOpen] = useState(false);
   const [sumLength, setSumLength] = usePersistentState<string>(
     "tts.summary.length",
     "mittel",
@@ -523,6 +537,9 @@ export const TtsSettings = () => {
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
           setText(state.text ?? "");
+          openModeRef.current?.(
+            state.tab === "summary" ? (state.summary ?? "") : (state.text ?? ""),
+          );
           setAutoTagOptions(state.autoTag ?? null);
           setSummary(state.summary ?? "");
           setSourceUrl(state.sourceUrl ?? "");
@@ -538,6 +555,7 @@ export const TtsSettings = () => {
           );
         } catch {
           setText(result.data);
+          openModeRef.current?.(result.data);
         }
       } else {
         // Einmalige Uebernahme der Werte aus der Zeit vor den Seiten — und
@@ -550,7 +568,9 @@ export const TtsSettings = () => {
           window.localStorage.removeItem(storageKey);
           return value;
         };
-        setText(legacy("tts.text"));
+        const legacyText = legacy("tts.text");
+        setText(legacyText);
+        openModeRef.current?.(legacyText);
         setSummary(legacy("tts.summary"));
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
@@ -664,8 +684,15 @@ export const TtsSettings = () => {
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
-    // Die Engine kennt nur die englische Tag-Form; der Offset wandert mit.
-    const canon = canonicalizeTagsAt(spokenText, charOffset);
+    // Die Engine bekommt den Text ohne Markdown (lva#148); der Offset wandert
+    // mit — ebenso beim Umschreiben der Tags in die englische Form.
+    const script = toSpokenScript(spokenText);
+    const scriptOffset =
+      script === spokenText
+        ? charOffset
+        : toSpokenScript(spokenText.slice(0, charOffset)).length;
+    locatorRef.current?.reset(charOffset);
+    const canon = canonicalizeTagsAt(script, scriptOffset);
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
@@ -704,7 +731,9 @@ export const TtsSettings = () => {
   const startPrewarm = async () => {
     setLastError(null);
     setPrewarm({ done: 0, total: 0 });
-    const result = await commands.ttsPrewarm(canonicalizeTags(spokenText));
+    const result = await commands.ttsPrewarm(
+      canonicalizeTags(toSpokenScript(spokenText)),
+    );
     if (result.status === "error") {
       setPrewarm(null);
       setLastError(result.error);
@@ -713,11 +742,15 @@ export const TtsSettings = () => {
 
   const speakNow = async () => {
     setLastError(null);
+    setFollow(true);
     setSpeakProgress(null);
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
-    const result = await commands.ttsSpeakText(canonicalizeTags(spokenText));
+    locatorRef.current?.reset(0);
+    const result = await commands.ttsSpeakText(
+      canonicalizeTags(toSpokenScript(spokenText)),
+    );
     if (result.status === "error") setLastError(result.error);
   };
 
@@ -837,7 +870,7 @@ export const TtsSettings = () => {
     exportTick.current = { time: performance.now(), position: 0 };
     // Returns at once; the run reports itself through tts-export-progress.
     const result = await commands.ttsSpeakToFile(
-      canonicalizeTags(spokenText),
+      canonicalizeTags(toSpokenScript(spokenText)),
       target,
     );
     if (result.status === "error") {
@@ -985,6 +1018,76 @@ export const TtsSettings = () => {
     },
     [tab],
   );
+  // Buchansicht (lva#148): Lesen ist die Standardansicht, Bearbeiten der
+  // Chip-Editor. Ohne Text gibt es nichts zu lesen — dann gilt Bearbeiten.
+  const [viewModeStored, setViewMode] = usePersistentState<"read" | "edit">(
+    "tts.view",
+    "read",
+    (v) => v === "read" || v === "edit",
+  );
+  // Wirksame Ansicht: beim Öffnen einer Seite (und nach dem Laden eines
+  // Dokuments) gilt die gemerkte Wahl, solange es Text gibt. Tippen schaltet
+  // NIE um — sonst verschwände der Editor beim ersten Buchstaben.
+  const [modeNow, setModeNow] = useState<"read" | "edit">("edit");
+  const viewMode: "read" | "edit" =
+    modeNow === "read" && spokenText.trim().length > 0 ? "read" : "edit";
+  const chooseViewMode = (mode: "read" | "edit") => {
+    setViewMode(mode);
+    setModeNow(mode);
+  };
+  openModeRef.current = (loaded: string) =>
+    setModeNow(viewModeStored === "read" && loaded.trim() ? "read" : "edit");
+  const [twoPagesStored, setTwoPages] = usePersistentState<"1" | "0">(
+    "tts.reader.two",
+    "1",
+  );
+  const [fontStored, setFontSize] = usePersistentState<string>(
+    "tts.reader.font",
+    "18",
+    (v) => /^\d{2}$/.test(v),
+  );
+  const [speakersShown, setSpeakersShown] = usePersistentState<"1" | "0">(
+    "tts.reader.speakers",
+    "1",
+  );
+  const [follow, setFollow] = useState(true);
+  const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
+  const readerApiRef = useRef<ReaderViewApi | null>(null);
+  const [revealed, setRevealed] = useState<SourceRange | null>(null);
+  const readerBlocks = useMemo(
+    () => parseReaderDoc(spokenText, speakers),
+    [spokenText, speakers],
+  );
+  const locatorRef = useRef<SentenceLocator | null>(null);
+  const locator = useMemo(() => new SentenceLocator(readerBlocks), [readerBlocks]);
+  locatorRef.current = locator;
+  const [readRange, setReadRange] = useState<SourceRange | null>(null);
+  const lastReadIndex = useRef<number | null>(null);
+  useEffect(() => {
+    if (!currentSentence || sessionTab.current !== tab) {
+      if (!currentSentence) setReadRange(null);
+      return;
+    }
+    // Ein Sprung zurück: von vorn suchen, sonst träfe die Vorwärtssuche den
+    // nächsten gleichlautenden Satz.
+    if (
+      currentIndex !== null &&
+      lastReadIndex.current !== null &&
+      currentIndex < lastReadIndex.current
+    ) {
+      locator.reset(0);
+    }
+    lastReadIndex.current = currentIndex;
+    setReadRange(locator.locate(currentSentence));
+  }, [currentSentence, currentIndex, locator, tab]);
+  useEffect(() => {
+    if (speakProgress === null && !speaking) setReadRange(null);
+  }, [speakProgress, speaking]);
+  /** Geschätzte Lesedauer bei Tempo 1: ~14 Zeichen je Sekunde. */
+  const readEstimate = useMemo(
+    () => Math.max(1, toSpokenScript(spokenText).replace(/<[^<>\n]{1,60}>|\[[^\]\n]*\]/g, "").length / 14),
+    [spokenText],
+  );
   const historyRef = useRef<{
     syncPresent: (key: string, value: string) => void;
   } | null>(null);
@@ -1108,12 +1211,42 @@ export const TtsSettings = () => {
     [spokenText, speakers, scriptEngine],
   );
 
+  /**
+   * Befunde in der Buchansicht: Sprecher-Marker sind dort unsichtbar (sie
+   * stehen am Rand). Markiert wird deshalb der Text, den der Marker spricht —
+   * der Block, der direkt hinter ihm beginnt.
+   */
+  const readerMarks = useMemo<ReaderMark[]>(() => {
+    if (!scriptCheckOn) return [];
+    const out: ReaderMark[] = [];
+    for (const f of scriptFindings) {
+      if (isHintFinding(f.kind)) continue;
+      const block = readerBlocks.find((b) => b.end > f.start && b.runs.length);
+      const runs = block?.runs.filter((r) => !r.tag) ?? [];
+      if (!runs.length) continue;
+      const start = f.kind === "unknown-speaker" ? runs[0].start : f.start;
+      const end = f.kind === "unknown-speaker" ? runs[runs.length - 1].end : f.end;
+      out.push({
+        start,
+        end,
+        selected:
+          revealed !== null &&
+          revealed.start <= f.end &&
+          revealed.end >= f.start,
+      });
+    }
+    return out;
+  }, [scriptCheckOn, scriptFindings, readerBlocks, revealed]);
+
   const scriptActions = useMemo(
     () => ({
       reveal: (finding: ScriptFinding) => {
         const { target } = freshMatch(finding);
         const at = target ?? finding;
         editorApiRef.current?.revealRange?.(at.start, at.end);
+        setRevealed({ start: at.start, end: at.end });
+        setFollow(false);
+        readerApiRef.current?.revealOffset(at.end);
       },
       replace: (
         finding: ScriptFinding,
@@ -1391,6 +1524,7 @@ export const TtsSettings = () => {
     }
     setTab("original");
     setText(result.data);
+    openModeRef.current?.(result.data);
   };
 
   /** Artikel hinter einer URL als Originaltext laden. */
@@ -1406,6 +1540,7 @@ export const TtsSettings = () => {
     }
     setTab("original");
     setText(result.data);
+    openModeRef.current?.(result.data);
   };
 
   /** Beliebige Datei in den Projektordner der Seite kopieren — Kontext, der
@@ -1566,17 +1701,42 @@ export const TtsSettings = () => {
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
-              <TabList
-                tabs={[
-                  { id: "original", label: t("tts.tabOriginal") },
-                  { id: "translation", label: t("tts.tabTranslation") },
-                  { id: "summary", label: t("tts.tabSummary") },
-                ]}
-                value={tab}
-                onChange={setTab}
-                ariaLabel={t("tts.tabsLabel")}
-                className="border-b border-mid-gray/20"
-              />
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-1 border-b border-mid-gray/20">
+                <TabList
+                  tabs={[
+                    { id: "original", label: t("tts.tabOriginal") },
+                    { id: "translation", label: t("tts.tabTranslation") },
+                    { id: "summary", label: t("tts.tabSummary") },
+                  ]}
+                  value={tab}
+                  onChange={setTab}
+                  ariaLabel={t("tts.tabsLabel")}
+                  className="min-w-0 flex-auto"
+                />
+                {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
+                    nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
+                <div className="ml-auto pb-1">
+                  <ReaderToolbar
+                    mode={viewMode}
+                    canRead={spokenText.trim().length > 0}
+                    onMode={chooseViewMode}
+                    twoPages={twoPagesStored === "1"}
+                    twoPagesTooNarrow={
+                      twoPagesStored === "1" &&
+                      viewMode === "read" &&
+                      pageInfo !== null &&
+                      pageInfo.perView === 1
+                    }
+                    onTwoPages={(two) => setTwoPages(two ? "1" : "0")}
+                    fontSize={fontStored}
+                    onFontSize={setFontSize}
+                    showSpeakers={speakersShown === "1"}
+                    onShowSpeakers={(show) => setSpeakersShown(show ? "1" : "0")}
+                    follow={follow}
+                    onFollow={setFollow}
+                  />
+                </div>
+              </div>
 
               {tab === "translation" && translatedLangs.length > 0 && (
                 <div
@@ -1631,6 +1791,28 @@ export const TtsSettings = () => {
                   />
                 </div>
               )}
+              {viewMode === "read" ? (
+                <ReaderView
+                  text={spokenText}
+                  speakers={speakers}
+                  lang={tab === "translation" ? targetLangCode(targetLang) : undefined}
+                  current={readRange}
+                  marks={readerMarks}
+                  twoPages={twoPagesStored === "1"}
+                  fontSize={Number(fontStored)}
+                  showSpeakers={speakersShown === "1"}
+                  follow={follow}
+                  onFollowChange={setFollow}
+                  onActivate={(offset) => {
+                    setFollow(true);
+                    void speakFrom(offset, false);
+                  }}
+                  onSpeakerMenu={(name) => setReplaceSpeaker({ from: name })}
+                  onPageInfo={setPageInfo}
+                  apiRef={readerApiRef}
+                  title={pages.find((p) => p.id === activePage)?.title}
+                />
+              ) : (
               <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (
                   <TtsChipEditor
@@ -1638,6 +1820,8 @@ export const TtsSettings = () => {
                     onChange={setText}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}
@@ -1658,6 +1842,8 @@ export const TtsSettings = () => {
                     onChange={setTranslation}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
                     placeholder={t("tts.translationPlaceholder")}
                     className="w-full"
                     lang={targetLangCode(targetLang)}
@@ -1677,6 +1863,8 @@ export const TtsSettings = () => {
                     onChange={setSummary}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
+                    pausesOnly={pausesOnly}
+                    engineLabel={engineCaps.providerLabel ?? undefined}
                     placeholder={t("tts.summaryPlaceholder")}
                     className="w-full"
                     findings={editorFindings}
@@ -1691,27 +1879,43 @@ export const TtsSettings = () => {
                   />
                 )}
               </div>
-
-              {/* Ausdruck & Sprechstil direkt unter dem Text: die Palette fuegt
-                an der Cursorposition ein, deshalb gehoert sie zum Feld, nicht
-                in die Bedienspalte (Entscheidung Patrick 14.09. abends). */}
-              <details className="workspace-disclosure workspace-disclosure--scroll">
-                <summary>{t("workspace.voiceStyle")}</summary>
-                <div className="space-y-3 pt-2">
-                  <TagPalette
-                    uiLang={uiLang}
-                    pausesOnly={pausesOnly}
-                    engineLabel={engineCaps.providerLabel ?? undefined}
-                    onInsert={(tagText) =>
-                      editorApiRef.current?.insertAtCursor(tagText)
-                    }
-                    onDragInsert={(x, y, tagText) =>
-                      editorApiRef.current?.insertAtPoint?.(x, y, tagText) ??
-                      false
-                    }
-                  />
-                </div>
-              </details>
+              )}
+              <ReaderPlayerBar
+                speaking={speaking}
+                canPlay={spokenText.trim().length > 0}
+                canSeek={canResume || speaking}
+                onPlayPause={speaking ? pauseSpeaking : () => void speak()}
+                onSeek={(delta) => {
+                  setFollow(true);
+                  seekSentence(delta);
+                }}
+                onStop={stopSpeaking}
+                speed={getSetting("tts_speed") ?? 1.0}
+                speeds={SPEEDS}
+                speedLabel={speedLabel}
+                onSpeed={(value) => void updateSetting("tts_speed", value)}
+                progress={
+                  speakProgress && sessionTab.current === tab
+                    ? {
+                        position: currentIndex ?? speakProgress.position,
+                        total: speakProgress.total,
+                      }
+                    : null
+                }
+                estimateSeconds={readEstimate}
+                page={viewMode === "read" ? pageInfo : null}
+                onJumpToPage={(n) => {
+                  setFollow(false);
+                  readerApiRef.current?.goToPage(n);
+                }}
+                onSeekFraction={(fraction) => {
+                  // Sprung an die Stelle im Text: ab dem Satz dort vorlesen.
+                  const offset = Math.round(fraction * spokenText.length);
+                  setFollow(true);
+                  void speakFrom(offset, false);
+                }}
+                onSleep={pauseSpeaking}
+              />
             </div>
           </div>
           {/* Bedienung rechts vom Text: Transport, Tempo, Stimme, Speichern,
@@ -1758,96 +1962,9 @@ export const TtsSettings = () => {
                 Trenner die Aktionen, die die Wiedergabe nicht fortbewegen.
                 Statt ±15 s stehen hier Saetze: vorgelesener Text ist satzweise
                 aufgebaut, eine Sekundenmarke gibt es darin nicht. */}
-                <div className="mediabar mediabar--start">
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={() => seekSentence(-1)}
-                    disabled={!canResume && !speaking}
-                    aria-label={t("tts.previousSentence")}
-                  >
-                    <Glyph name="prev" />
-                  </button>
-                  <button
-                    type="button"
-                    className="mbtn mbtn--primary mbtn--lg"
-                    onClick={speaking ? pauseSpeaking : speak}
-                    disabled={!speaking && spokenText.trim().length === 0}
-                    aria-label={speaking ? t("tts.pause") : t("tts.speak")}
-                  >
-                    <Glyph name={speaking ? "pause" : "play"} />
-                  </button>
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={() => seekSentence(1)}
-                    disabled={!canResume && !speaking}
-                    aria-label={t("tts.nextSentence")}
-                  >
-                    <Glyph name="next" />
-                  </button>
-                  <span className="mediabar__sep" />
-                  <button
-                    type="button"
-                    className="mbtn"
-                    onClick={stopSpeaking}
-                    aria-label={t("tts.stop")}
-                  >
-                    <Glyph name="stop" />
-                  </button>
-                  <span className="mediabar__sep" />
-                  {/* Tempo als schlanker Wert hinter dem letzten Trenner: immer
-                    sichtbar, ein Klick oeffnet die Stufen. Tempo entsteht per
-                    Resampling und zieht die Tonhoehe mit -- Bereich bewusst eng. */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      className="mbtn mbtn--text"
-                      onClick={() => setSpeedOpen((o) => !o)}
-                      title={t("tts.settings.speedDescription")}
-                      aria-label={t("tts.settings.speed")}
-                      aria-haspopup="listbox"
-                      aria-expanded={speedOpen}
-                    >
-                      {speedLabel(getSetting("tts_speed") ?? 1.0)}
-                    </button>
-                    {speedOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-30"
-                          onClick={() => setSpeedOpen(false)}
-                        />
-                        <div
-                          role="listbox"
-                          aria-label={t("tts.settings.speed")}
-                          className="absolute left-0 top-full mt-1 w-24 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
-                        >
-                          {SPEEDS.map((value) => (
-                            <button
-                              key={value}
-                              type="button"
-                              role="option"
-                              aria-selected={
-                                (getSetting("tts_speed") ?? 1.0) === value
-                              }
-                              onClick={() => {
-                                void updateSetting("tts_speed", value);
-                                setSpeedOpen(false);
-                              }}
-                              className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
-                                (getSetting("tts_speed") ?? 1.0) === value
-                                  ? "text-text font-medium"
-                                  : "text-text/80"
-                              }`}
-                            >
-                              {speedLabel(value)}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
+                {/* Transport, Tempo und Fortschritt stehen in der Spielerleiste
+                  unter dem Text (lva#148, Codex: Fortschritt und Transport
+                  zusammen, getrennt vom Bearbeiten). */}
                 {/* Die Stimme dort, wo man sie wechselt: beim Hoeren. Wechsel
                   wirkt sofort — eine laufende Wiedergabe stellt am aktuellen
                   Satz um. Leerer Wert = Standardstimme (Seed). Verwaltung
@@ -2159,7 +2276,7 @@ export const TtsSettings = () => {
                   </ul>
                 </div>
               </details>
-              {speaking && currentSentence && (
+              {speaking && currentSentence && viewMode === "edit" && (
                 <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                   {currentSentence}
                 </p>

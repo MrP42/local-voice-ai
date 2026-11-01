@@ -371,9 +371,14 @@ test("findings are grouped: one problem with all its spots at a time", async ({
   const card = page.getByTestId("script-finding");
   await expect(card).toHaveCount(1);
   await expect(card).toContainText("Sprecher „Bob“ (2 Stellen)");
-  await expect(card).toContainText("Stelle 1 von 2");
-  await expect(card.getByRole("button", { name: "Z. 2" })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Z. 4" })).toBeVisible();
+  // Kompakte Fundleiste (lva#148): "1 / 2" statt einer Zeilenliste.
+  const position = card.getByTestId("script-finding-position");
+  await expect(position).toHaveText("1 / 2");
+  await expect(position).toHaveAttribute("aria-label", "Stelle 1 von 2");
+  await expect(card.getByRole("button", { name: "Erste Stelle" })).toBeDisabled();
+  await card.getByRole("button", { name: "Letzte Stelle" }).click();
+  await expect(position).toHaveText("2 / 2");
+  await expect(card.getByRole("button", { name: "Nächste Stelle" })).toBeDisabled();
   // Die bekannte Erzaehlerin ist kein Befund; im Text sind alle drei
   // Stellen unterstrichen plus je eine Marke am Rand.
   await expect(panel).not.toContainText("Erzählerin");
@@ -392,7 +397,7 @@ test("clicking a spot jumps to it and selects it", async ({ page }) => {
   await panel.getByRole("button", { name: "Nächste Gruppe" }).click();
   await page
     .getByTestId("script-finding")
-    .getByRole("button", { name: "Z. 3" })
+    .getByTestId("script-finding-position")
     .click();
   await expect(editor).toBeFocused();
   const start = SCRIPT.indexOf("[mysterious]");
@@ -409,6 +414,7 @@ test("replace all swaps every spot of the group and keeps the style", async ({
 }) => {
   const editor = await openEditorWithScript(page);
   const card = page.getByTestId("script-finding");
+  await card.getByTestId("script-finding-more").click();
   await card.getByTestId("script-finding-replacement").click();
   await page.getByText("Leo Lausemaus", { exact: true }).click();
   await card.getByRole("button", { name: "Alle 2 ersetzen" }).click();
@@ -420,6 +426,7 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   // hinterher), gehoert "Nur diese entfernen" zum Tag.
   await expect(card).toContainText("mysterious");
   // Das Tag entfernen (einzige Stelle) — danach ist das Skript sauber.
+  await card.getByTestId("script-finding-more").click();
   await card.getByRole("button", { name: "Nur diese entfernen" }).click();
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
@@ -668,12 +675,6 @@ test("under Fish every bracket tag is valid and known ones are canonicalized", a
     .toEqual([
       "[relaxed] Eins. [relaxed] Zwei. [relaxed] Drei. [flüsternd und müde] Vier.",
     ]);
-  // Die Palette listet alle Tags mit Legende.
-  await page.getByText("Ausdruck & Sprechstil").click();
-  await page.getByRole("tab", { name: "Alle" }).click();
-  await expect(page.getByTestId("tag-legend")).toContainText(
-    "jede Beschreibung",
-  );
 });
 
 test("exporting a page asks for the voice rights before it packs voices", async ({
@@ -828,6 +829,7 @@ test("the replace list offers every tag, searchable, suggestions first", async (
   await pickMenuItem(page, "script-check-run");
   const card = page.getByTestId("script-finding");
   await expect(card).toContainText("„müde“");
+  await card.getByTestId("script-finding-more").click();
   await card.getByTestId("script-finding-replacement").click();
   // Durchsuchbar ueber die ganze Liste, nicht nur Pausen.
   await page.keyboard.type("Flüst");

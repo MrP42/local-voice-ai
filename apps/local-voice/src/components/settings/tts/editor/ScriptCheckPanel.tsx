@@ -3,8 +3,11 @@ import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronFirst,
+  ChevronLast,
   ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
   X,
 } from "lucide-react";
 import { Select, type SelectOption } from "@/components/ui/Select";
@@ -68,10 +71,13 @@ const GroupCard: React.FC<{
   engine: ScriptEngine;
   uiLang: string;
   actions: ScriptCheckActions;
-}> = ({ group, speakers, tags, engine, uiLang, actions }) => {
+  /** Steht am Ende der Zeile (Schließen-Knopf des Panels). */
+  trailing?: React.ReactNode;
+}> = ({ group, speakers, engine, uiLang, actions, trailing }) => {
   const { t } = useTranslation();
   const [choice, setChoice] = useState("");
   const [pos, setPos] = useState(0);
+  const [more, setMore] = useState(false);
   const isSpeaker =
     group.kind === "unknown-speaker" || group.kind === "speaker-name";
   const count = group.findings.length;
@@ -159,131 +165,184 @@ const GroupCard: React.FC<{
         label: tagOptionLabel(tag),
       }));
 
-  return (
-    <div data-testid="script-finding" className="space-y-2 py-2">
-      <p className="text-sm text-text">
-        <span className="font-medium">
-          {isSpeaker
-            ? t("tts.scriptCheck.groupSpeaker", { name: group.name, count })
-            : t("tts.scriptCheck.groupTag", { tag: group.name, count })}
-        </span>
-        <span className="text-text/70"> — {message}</span>
-      </p>
+  const primary = recommended[0];
+  const spotNav = (
+    <div
+      className="flex shrink-0 items-center"
+      role="group"
+      aria-label={t("tts.scriptCheck.spotNav")}
+    >
+      <button
+        type="button"
+        onClick={() => goTo(0)}
+        disabled={pos <= 0}
+        className={NAV_CLASSES}
+        aria-label={t("tts.scriptCheck.firstSpot")}
+        title={t("tts.scriptCheck.firstSpot")}
+      >
+        <ChevronFirst width={14} height={14} />
+      </button>
+      <button
+        type="button"
+        onClick={() => goTo(pos - 1)}
+        disabled={pos <= 0}
+        className={NAV_CLASSES}
+        aria-label={t("tts.scriptCheck.prevSpot")}
+        title={t("tts.scriptCheck.prevSpot")}
+      >
+        <ChevronLeft width={14} height={14} />
+      </button>
+      {/* Die Position ist zugleich der Sprung zur aktuellen Stelle. */}
+      <button
+        type="button"
+        onClick={() => goTo(pos)}
+        className="h-6 min-w-[4.5rem] cursor-pointer rounded-md px-1 text-center text-xs tabular-nums text-text/80 hover:bg-mid-gray/20 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+        data-testid="script-finding-position"
+        aria-label={t("tts.scriptCheck.spot", { index: pos + 1, count })}
+        title={t("tts.scriptCheck.spot", { index: pos + 1, count })}
+      >
+        {t("tts.scriptCheck.spotShort", { index: pos + 1, count })}
+      </button>
+      <button
+        type="button"
+        onClick={() => goTo(pos + 1)}
+        disabled={pos >= count - 1}
+        className={NAV_CLASSES}
+        aria-label={t("tts.scriptCheck.nextSpot")}
+        title={t("tts.scriptCheck.nextSpot")}
+      >
+        <ChevronRight width={14} height={14} />
+      </button>
+      <button
+        type="button"
+        onClick={() => goTo(count - 1)}
+        disabled={pos >= count - 1}
+        className={NAV_CLASSES}
+        aria-label={t("tts.scriptCheck.lastSpot")}
+        title={t("tts.scriptCheck.lastSpot")}
+      >
+        <ChevronLast width={14} height={14} />
+      </button>
+    </div>
+  );
 
-      {/* Stellen: durchklickbar, jede springt in den Text. */}
-      <div className="flex flex-wrap items-center gap-1">
-        <button
-          type="button"
-          onClick={() => goTo(pos - 1)}
-          disabled={pos <= 0}
-          className={NAV_CLASSES}
-          aria-label={t("tts.scriptCheck.prevSpot")}
+  const label = isSpeaker
+    ? t("tts.scriptCheck.groupSpeaker", { name: group.name, count })
+    : t("tts.scriptCheck.groupTag", { tag: group.name, count });
+
+  return (
+    <div data-testid="script-finding" className="min-w-0 flex-1">
+      {/* Eine Zeile: Befund, Stellen blättern, eine Hauptaktion, Rest im
+        Mehr-Menü (lva#148, Codex). Keine Liste aller Zeilen mehr. */}
+      <div className="flex min-w-0 items-center gap-2">
+        <p
+          className="min-w-0 flex-1 truncate text-sm text-text"
+          title={`${label} — ${message}`}
         >
-          <ChevronLeft width={14} height={14} />
-        </button>
-        <span className="text-xs text-text/60">
-          {t("tts.scriptCheck.spot", { index: pos + 1, count })}
-        </span>
-        <button
-          type="button"
-          onClick={() => goTo(pos + 1)}
-          disabled={pos >= count - 1}
-          className={NAV_CLASSES}
-          aria-label={t("tts.scriptCheck.nextSpot")}
-        >
-          <ChevronRight width={14} height={14} />
-        </button>
-        <span className="mx-1 text-text/30">·</span>
-        {group.findings.map((finding, index) => (
+          <span className="font-medium">{label}</span>
+          <span className="text-text/70"> — {message}</span>
+        </p>
+        {spotNav}
+        {primary && (
           <button
-            key={`${finding.start}:${finding.end}`}
             type="button"
-            onClick={() => goTo(index)}
-            title={t("tts.scriptCheck.reveal")}
-            className={`cursor-pointer rounded px-1.5 py-0.5 text-xs hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary ${
-              index === pos
-                ? "bg-red-500/20 text-text"
-                : "text-text/60 hover:text-text"
-            }`}
+            data-testid="script-finding-recommendation"
+            onClick={() => actions.replace(current, primary.apply, true)}
+            className={`${PRIMARY_CLASSES} max-w-[12rem] truncate whitespace-nowrap`}
+            title={`${primary.label} — ${t("tts.scriptCheck.applyAll", { count })}`}
           >
-            {t("tts.scriptCheck.lineShort", { line: finding.line })}
+            {primary.label}
           </button>
-        ))}
+        )}
+        <button
+          type="button"
+          onClick={() => setMore((m) => !m)}
+          aria-expanded={more}
+          aria-label={t("tts.scriptCheck.moreActions")}
+          title={t("tts.scriptCheck.moreActions")}
+          className={NAV_CLASSES}
+          data-testid="script-finding-more"
+        >
+          <MoreHorizontal width={14} height={14} />
+        </button>
+        {trailing}
       </div>
 
-      {/* Empfehlungen: ein Klick, alle Stellen. */}
-      {recommended.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="text-xs text-text/60">
-            {t("tts.scriptCheck.recommended")}
-          </span>
-          {recommended.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              data-testid="script-finding-recommendation"
-              onClick={() => actions.replace(current, item.apply, true)}
-              className={PRIMARY_CLASSES}
-              title={t("tts.scriptCheck.applyAll", { count })}
+      {more && (
+        <div className="mt-1.5 space-y-1.5" data-testid="script-finding-details">
+          {recommended.length > 1 && (
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-xs text-text/60">
+                {t("tts.scriptCheck.recommended")}
+              </span>
+              {recommended.slice(1).map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  data-testid="script-finding-recommendation"
+                  onClick={() => actions.replace(current, item.apply, true)}
+                  className={`${PRIMARY_CLASSES} whitespace-nowrap`}
+                  title={t("tts.scriptCheck.applyAll", { count })}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-1">
+            <div
+              className="w-48"
+              data-testid="script-finding-replacement"
+              title={t("tts.scriptCheck.replaceWith")}
             >
-              {item.label}
+              <Select
+                value={choice === "" ? null : choice}
+                options={options}
+                placeholder={t("tts.scriptCheck.replaceWith")}
+                isClearable={false}
+                onChange={(value) => setChoice(value ?? "")}
+              />
+            </div>
+            <button
+              type="button"
+              disabled={choice === ""}
+              onClick={() => {
+                const r = chosenReplacement();
+                if (r) actions.replace(current, r, true);
+              }}
+              className={`${ACTION_CLASSES} whitespace-nowrap`}
+            >
+              {t("tts.scriptCheck.replaceAll", { count })}
             </button>
-          ))}
+            <button
+              type="button"
+              disabled={choice === ""}
+              onClick={() => {
+                const r = chosenReplacement();
+                if (r) actions.replace(current, r, false);
+              }}
+              className={`${ACTION_CLASSES} whitespace-nowrap`}
+            >
+              {t("tts.scriptCheck.replaceHere")}
+            </button>
+            <span className="mx-1 text-text/30">·</span>
+            <button
+              type="button"
+              onClick={() => actions.replace(current, () => "", true)}
+              className={`${ACTION_CLASSES} whitespace-nowrap`}
+            >
+              {t("tts.scriptCheck.removeAll", { count })}
+            </button>
+            <button
+              type="button"
+              onClick={() => actions.replace(current, () => "", false)}
+              className={`${ACTION_CLASSES} whitespace-nowrap`}
+            >
+              {t("tts.scriptCheck.removeHere")}
+            </button>
+          </div>
         </div>
       )}
-
-      <div className="flex flex-wrap items-center gap-1">
-        <div
-          className="w-48"
-          data-testid="script-finding-replacement"
-          title={t("tts.scriptCheck.replaceWith")}
-        >
-          <Select
-            value={choice === "" ? null : choice}
-            options={options}
-            placeholder={t("tts.scriptCheck.replaceWith")}
-            isClearable={false}
-            onChange={(value) => setChoice(value ?? "")}
-          />
-        </div>
-        <button
-          type="button"
-          disabled={choice === ""}
-          onClick={() => {
-            const r = chosenReplacement();
-            if (r) actions.replace(current, r, true);
-          }}
-          className={ACTION_CLASSES}
-        >
-          {t("tts.scriptCheck.replaceAll", { count })}
-        </button>
-        <button
-          type="button"
-          disabled={choice === ""}
-          onClick={() => {
-            const r = chosenReplacement();
-            if (r) actions.replace(current, r, false);
-          }}
-          className={ACTION_CLASSES}
-        >
-          {t("tts.scriptCheck.replaceHere")}
-        </button>
-        <span className="mx-1 text-text/30">·</span>
-        <button
-          type="button"
-          onClick={() => actions.replace(current, () => "", true)}
-          className={ACTION_CLASSES}
-        >
-          {t("tts.scriptCheck.removeAll", { count })}
-        </button>
-        <button
-          type="button"
-          onClick={() => actions.replace(current, () => "", false)}
-          className={ACTION_CLASSES}
-        >
-          {t("tts.scriptCheck.removeHere")}
-        </button>
-      </div>
     </div>
   );
 };
@@ -335,93 +394,101 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
   const group = groups[Math.min(index, groups.length - 1)];
   const errors = findings.filter((f) => !isHintFinding(f.kind)).length;
   const hints = findings.length - errors;
+  const close = onClose && (
+    <button
+      type="button"
+      onClick={onClose}
+      className={NAV_CLASSES}
+      aria-label={t("common.close")}
+      data-testid="script-check-close"
+    >
+      <X width={14} height={14} />
+    </button>
+  );
+  // Zusammenfassung für Tooltip und Screenreader; sichtbar bleibt nur das Symbol.
+  const summary = [
+    errors > 0
+      ? t("tts.scriptCheck.count", { count: errors })
+      : t("tts.scriptCheck.hintCount", { count: hints }),
+    errors > 0 && hints > 0
+      ? t("tts.scriptCheck.hintCount", { count: hints })
+      : null,
+    groups.length > 1
+      ? t("tts.scriptCheck.groups", { count: groups.length })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <section
       data-testid="script-check"
       aria-label={t("tts.scriptCheck.title")}
       className={
         errors > 0
-          ? "rounded-md border border-red-500/30 bg-red-500/5 px-3 py-1.5"
-          : "rounded-md border border-logo-primary/30 bg-logo-primary/5 px-3 py-1.5"
+          ? "rounded-md border border-red-500/30 bg-red-500/5 px-2 py-1"
+          : "rounded-md border border-logo-primary/30 bg-logo-primary/5 px-2 py-1"
       }
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="flex items-center gap-1.5 text-xs font-medium text-text">
+      <div className="flex min-w-0 items-start gap-2">
+        <p
+          className="flex h-7 shrink-0 items-center gap-1 text-xs font-medium text-text"
+          title={summary}
+        >
           <AlertTriangle
             width={14}
             height={14}
             aria-hidden="true"
             className={errors > 0 ? "text-red-500" : "text-logo-primary"}
           />
-          {errors > 0
-            ? t("tts.scriptCheck.count", { count: errors })
-            : t("tts.scriptCheck.hintCount", { count: hints })}
-          {errors > 0 && hints > 0 && (
-            <span className="text-text/60">
-              {" · "}
-              {t("tts.scriptCheck.hintCount", { count: hints })}
-            </span>
-          )}
-          {groups.length > 1 && (
-            <span className="text-text/60">
-              {" · "}
-              {t("tts.scriptCheck.groups", { count: groups.length })}
-            </span>
-          )}
+          <span className="sr-only">{summary}</span>
         </p>
-        <div className="flex items-center gap-1 text-xs text-text/70">
-          {groups.length > 1 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setIndex((i) => Math.max(0, i - 1))}
-                disabled={index <= 0}
-                className={NAV_CLASSES}
-                aria-label={t("tts.scriptCheck.prevGroup")}
-              >
-                <ChevronLeft width={14} height={14} />
-              </button>
-              <span data-testid="script-check-group-position">
-                {t("tts.scriptCheck.groupPosition", {
-                  index: index + 1,
-                  count: groups.length,
-                })}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setIndex((i) => Math.min(groups.length - 1, i + 1))
-                }
-                disabled={index >= groups.length - 1}
-                className={NAV_CLASSES}
-                aria-label={t("tts.scriptCheck.nextGroup")}
-              >
-                <ChevronRight width={14} height={14} />
-              </button>
-            </>
-          )}
-          {onClose && (
+        {groups.length > 1 && (
+          <div className="flex h-7 shrink-0 items-center text-xs text-text/70">
             <button
               type="button"
-              onClick={onClose}
-              className={`${NAV_CLASSES} ml-1`}
-              aria-label={t("common.close")}
-              data-testid="script-check-close"
+              onClick={() => setIndex((i) => Math.max(0, i - 1))}
+              disabled={index <= 0}
+              className={NAV_CLASSES}
+              aria-label={t("tts.scriptCheck.prevGroup")}
+              title={t("tts.scriptCheck.prevGroup")}
             >
-              <X width={14} height={14} />
+              <ChevronLeft width={14} height={14} />
             </button>
-          )}
-        </div>
+            <span
+              data-testid="script-check-group-position"
+              title={t("tts.scriptCheck.groups", { count: groups.length })}
+              className="tabular-nums"
+            >
+              {t("tts.scriptCheck.groupPosition", {
+                index: index + 1,
+                count: groups.length,
+              })}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setIndex((i) => Math.min(groups.length - 1, i + 1))
+              }
+              disabled={index >= groups.length - 1}
+              className={NAV_CLASSES}
+              aria-label={t("tts.scriptCheck.nextGroup")}
+              title={t("tts.scriptCheck.nextGroup")}
+            >
+              <ChevronRight width={14} height={14} />
+            </button>
+          </div>
+        )}
+        <GroupCard
+          key={group.key}
+          group={group}
+          speakers={speakers}
+          tags={tags}
+          engine={engine}
+          uiLang={uiLang}
+          actions={actions}
+          trailing={close}
+        />
       </div>
-      <GroupCard
-        key={group.key}
-        group={group}
-        speakers={speakers}
-        tags={tags}
-        engine={engine}
-        uiLang={uiLang}
-        actions={actions}
-      />
     </section>
   );
 };
