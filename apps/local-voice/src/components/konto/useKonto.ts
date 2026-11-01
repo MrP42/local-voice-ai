@@ -225,11 +225,8 @@ export function useKonto(): KontoAnsicht {
 
   const anlegen = useCallback(
     async (anzeigename: string) => {
-      const neu = await commands.kontoAnlegen(anzeigename);
-      pruefen(neu);
-      if (neu?.status === "ok" && neu.data) {
-        pruefen(await commands.kontoAktivieren(neu.data.id));
-      }
+      // Anlegen und Aktivieren in einem Schritt (wai-konto, eine Sperre).
+      pruefen(await commands.kontoAnlegen(anzeigename));
       await aktualisiert();
     },
     [aktualisiert],

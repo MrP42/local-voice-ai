@@ -144,6 +144,7 @@ test.beforeEach(async ({ page }) => {
               anmeldung: null,
             };
             w.__konto.profile.push(p);
+            w.__konto.aktiv = p.id;
             return dto(p);
           }
           if (cmd === "konto_aktivieren") {
@@ -360,7 +361,8 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
   await expect(liste.getByRole("listitem")).toHaveCount(2);
   const aufrufe = (await calls(page)).map(([c]) => c);
   expect(aufrufe).toContain("konto_anlegen");
-  expect(aufrufe).toContain("konto_aktivieren");
+  // Anlegen aktiviert selbst (atomar), kein zweiter Aufruf.
+  expect(aufrufe).not.toContain("konto_aktivieren");
   await expect(liste.locator("li[data-aktiv]")).toContainText("Chris");
 
   // Zurueck zum ersten Profil ueber den Profilknopf.
@@ -379,7 +381,7 @@ test("Profil hinzufuegen: Hinweis, anlegen, aktivieren, wechseln", async ({
   ).toBeVisible();
   expect(
     (await calls(page)).filter(([c]) => c === "konto_aktivieren").length,
-  ).toBe(2);
+  ).toBe(1);
 });
 
 const mitBild = (page: Page) =>

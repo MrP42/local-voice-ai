@@ -317,6 +317,7 @@ pub async fn konto_aktivieren(
     Ok(status)
 }
 
+/// Legt ein Profil an und macht es in derselben Sperre zum aktiven Profil.
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_anlegen(
@@ -326,7 +327,7 @@ pub async fn konto_anlegen(
 ) -> Result<KontoProfilDto, String> {
     nur_hauptfenster(&fenster)?;
     let profil = blockierend(&app, move |s| {
-        s.profil_anlegen(ProfilEingabe {
+        s.profil_anlegen_und_aktivieren(ProfilEingabe {
             anzeigename,
             ..ProfilEingabe::default()
         })

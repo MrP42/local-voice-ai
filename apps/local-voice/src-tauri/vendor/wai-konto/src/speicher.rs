@@ -1,8 +1,8 @@
 use crate::beobachter::Beobachter;
 use crate::modell::{Profil, ProfilAenderung, ProfilDatei, ProfilEingabe};
-use crate::{BILD_MAX_BYTES, DATEI_VERSION, FARBEN, KontoFehler, pruefen};
+use crate::{BILD_MAX_BYTES, BILD_MAX_KANTE, DATEI_VERSION, FARBEN, KontoFehler, pruefen};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -119,6 +119,22 @@ impl KontoSpeicher {
         })
     }
 
+    /// Legt ein Profil an und setzt es im selben Schreibvorgang unter derselben Sperre als
+    /// aktiv (erhöht `sitzungsrevision` wie [`Self::aktivieren`]). Scheitert die Anlage,
+    /// bleibt alles unverändert; es gibt keinen Zwischenzustand mit inaktivem neuem Profil.
+    pub fn profil_anlegen_und_aktivieren(
+        &self,
+        eingabe: ProfilEingabe,
+    ) -> Result<Profil, KontoFehler> {
+        self.aendern(|d| {
+            let profil = neues_profil(eingabe, d.profile.len())?;
+            d.profile.push(profil.clone());
+            d.aktiv = profil.id.clone();
+            d.sitzungsrevision += 1;
+            Ok(profil)
+        })
+    }
+
     /// Ändert Felder eines Profils. Felder aus `anmeldung.idpFelder` dürfen sich nicht
     /// ändern (Fehler `Schreibgeschuetzt`); unveränderte Werte desselben Felds sind erlaubt,
     /// damit ein Formular das ganze Profil zurückschicken kann.
@@ -175,51 +191,107 @@ impl KontoSpeicher {
         })
     }
 
-    /// Setzt das Profilbild (nur PNG, höchstens 256 KB).
+    /// Setzt das Profilbild (nur PNG, höchstens 256 KB, Kantenlänge 1 bis
+    /// [`BILD_MAX_KANTE`] px laut IHDR).
+    ///
+    /// Reihenfolge unter der Sperre: (1) Bild in Temp-Datei schreiben, auf Platte bringen und
+    /// atomar an den Zielort umbenennen, (2) erst danach `profile.json` mit `hat_bild = true`
+    /// atomar schreiben. So zeigt `hat_bild = true` in jedem Fehlerfall auf eine vollständige,
+    /// gültige Datei: Scheitert Schritt 1, ist nichts verändert; scheitert Schritt 2, bleibt
+    /// höchstens eine verwaiste Bilddatei ohne Flag (harmlos). Die umgekehrte Reihenfolge
+    /// (Flag zuerst, Umbenennen danach) hätte ein Fenster, in dem das Flag auf eine fehlende
+    /// Datei zeigt. Bei einem Fehler im Schritt 2 wird der Zustand zurückgesetzt: Das vorher
+    /// gelesene alte Bild (im Speicher gehalten, höchstens 256 KB) wird wiederhergestellt,
+    /// ein neues Bild eines zuvor bildlosen Profils wird gelöscht. Nur wenn auch das
+    /// Wiederherstellen scheitert, kann ein anderes gültiges Bild oder eine Waise bleiben.
     pub fn bild_setzen(&self, id: &str, png: &[u8]) -> Result<(), KontoFehler> {
-        if png.len() <= PNG_SIGNATUR.len() || !png.starts_with(&PNG_SIGNATUR) {
-            return Err(KontoFehler::Bild("kein PNG"));
+        bild_pruefen(png)?;
+        let _sperre = self.sperren()?;
+        let mut datei = self.lesen()?;
+        let profil = datei
+            .profile
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
+        let ziel = self.bild_pfad(id)?;
+        let alt = if profil.hat_bild {
+            self.bild_lesen_roh(&ziel)?
+        } else {
+            None
+        };
+        fs::create_dir_all(self.bilder_pfad())?;
+        atomar_schreiben(&ziel, png)?;
+        profil.hat_bild = true;
+        profil.geaendert_ms = jetzt_ms();
+        datei.generation += 1;
+        if let Err(e) = self.schreiben(&datei) {
+            // Zustand wie vorher herstellen: altes Bild zurück oder neues Bild löschen.
+            match alt {
+                Some(bytes) => {
+                    let _ = atomar_schreiben(&ziel, &bytes);
+                }
+                None => {
+                    let _ = fs::remove_file(&ziel);
+                }
+            }
+            return Err(e);
         }
-        if png.len() > BILD_MAX_BYTES {
-            return Err(KontoFehler::Bild("größer als 256 KB"));
-        }
-        self.aendern(|d| {
-            let profil = d
-                .profile
-                .iter_mut()
-                .find(|p| p.id == id)
-                .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
-            fs::create_dir_all(self.bilder_pfad())?;
-            atomar_schreiben(&self.bild_pfad(id)?, png)?;
-            profil.hat_bild = true;
-            profil.geaendert_ms = jetzt_ms();
-            Ok(())
-        })
+        Ok(())
     }
 
+    /// Entfernt das Profilbild. Erst `profile.json` (`hat_bild = false`) schreiben, dann die
+    /// Datei löschen: Scheitert das Löschen, bleibt nur eine verwaiste Datei ohne Flag (kein
+    /// Fehler; [`Self::bild_lesen`] liefert sie nicht aus); das Flag zeigt nie auf eine
+    /// bereits gelöschte Datei.
     pub fn bild_entfernen(&self, id: &str) -> Result<(), KontoFehler> {
-        self.aendern(|d| {
-            let profil = d
-                .profile
-                .iter_mut()
-                .find(|p| p.id == id)
-                .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
-            self.bild_loeschen(id)?;
-            profil.hat_bild = false;
-            profil.geaendert_ms = jetzt_ms();
-            Ok(())
-        })
+        self.aendern_dann(
+            |d| {
+                let profil = d
+                    .profile
+                    .iter_mut()
+                    .find(|p| p.id == id)
+                    .ok_or_else(|| KontoFehler::NichtGefunden(id.into()))?;
+                profil.hat_bild = false;
+                profil.geaendert_ms = jetzt_ms();
+                Ok(())
+            },
+            // Ein gescheitertes Löschen ist kein Fehler: Der Zustand ist schon konsistent.
+            |()| {
+                let _ = self.bild_loeschen(id);
+                Ok(())
+            },
+        )
     }
 
+    /// Liest das Profilbild, höchstens `BILD_MAX_BYTES` + 1 Byte (eine manipulierte Datei im
+    /// geteilten Ordner wird nie vollständig eingelesen). `Ok(None)`: kein Bild, ungültige
+    /// ID, `hat_bild` ist im Profil `false` (eine verwaiste Datei, etwa nach gescheitertem
+    /// Löschen, wird nicht ausgeliefert), die Datei ist zu groß oder kein gültiges PNG (die UI
+    /// zeigt dann die Initialen). Echte E-/A-Fehler bleiben `Err`.
     pub fn bild_lesen(&self, id: &str) -> Result<Option<Vec<u8>>, KontoFehler> {
         let Ok(pfad) = self.bild_pfad(id) else {
             return Ok(None);
         };
-        match fs::read(pfad) {
-            Ok(b) => Ok(Some(b)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e.into()),
+        let hat_bild = self
+            .lesen()?
+            .profile
+            .iter()
+            .any(|p| p.id == id && p.hat_bild);
+        if !hat_bild {
+            return Ok(None);
         }
+        self.bild_lesen_roh(&pfad)
+    }
+
+    /// Liest und prüft die Bilddatei am Pfad, ohne das Flag zu beachten.
+    fn bild_lesen_roh(&self, pfad: &Path) -> Result<Option<Vec<u8>>, KontoFehler> {
+        let datei = match File::open(pfad) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+        let bytes = begrenzt_lesen(datei, BILD_MAX_BYTES)?;
+        Ok(bild_pruefen(&bytes).is_ok().then_some(bytes))
     }
 
     /// Meldet Änderungen anderer (und eigener) Schreiber: prüft jede Sekunde `generation`
@@ -290,11 +362,57 @@ impl KontoSpeicher {
         Ok(ergebnis)
     }
 
+    /// Wie [`Self::aendern`], führt danach aber noch unter derselben Sperre `danach` aus
+    /// (nur nach erfolgreichem Schreiben von `profile.json`).
+    fn aendern_dann<T>(
+        &self,
+        f: impl FnOnce(&mut ProfilDatei) -> Result<T, KontoFehler>,
+        danach: impl FnOnce(&T) -> Result<(), KontoFehler>,
+    ) -> Result<(), KontoFehler> {
+        let _sperre = self.sperren()?;
+        let mut datei = self.lesen()?;
+        let ergebnis = f(&mut datei)?;
+        datei.generation += 1;
+        self.schreiben(&datei)?;
+        danach(&ergebnis)
+    }
+
     fn schreiben(&self, datei: &ProfilDatei) -> Result<(), KontoFehler> {
         let json = serde_json::to_vec_pretty(datei)?;
         atomar_schreiben(&self.datei_pfad(), &json)?;
         Ok(())
     }
+}
+
+/// Liest höchstens `max` + 1 Byte aus `leser`; das eine Byte mehr zeigt „zu groß“ an,
+/// ohne dass eine große Datei ganz eingelesen wird.
+fn begrenzt_lesen(leser: impl Read, max: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    leser.take(max as u64 + 1).read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Prüft ein Profilbild von Hand (ohne Bibliothek): Größe, PNG-Signatur und den IHDR-Chunk
+/// direkt danach (Länge 13, Typ `IHDR`, Breite und Höhe je 1 bis [`BILD_MAX_KANTE`]).
+/// Die Kantengrenze schützt Dekoder vor kleinen, aber riesig entpackenden PNGs
+/// (Dekompressionsbombe); die Pixelzahl ist so auf 1 Mio. begrenzt.
+fn bild_pruefen(png: &[u8]) -> Result<(), KontoFehler> {
+    const IHDR_ENDE: usize = 8 + 4 + 4 + 13 + 4;
+    if png.len() > BILD_MAX_BYTES {
+        return Err(KontoFehler::Bild("größer als 256 KB"));
+    }
+    if !png.starts_with(&PNG_SIGNATUR) {
+        return Err(KontoFehler::Bild("kein PNG"));
+    }
+    if png.len() < IHDR_ENDE || png[8..12] != 13u32.to_be_bytes() || &png[12..16] != b"IHDR" {
+        return Err(KontoFehler::Bild("IHDR fehlt oder ist ungültig"));
+    }
+    let kante = |b: &[u8]| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+    let (breite, hoehe) = (kante(&png[16..20]), kante(&png[20..24]));
+    if !(1..=BILD_MAX_KANTE).contains(&breite) || !(1..=BILD_MAX_KANTE).contains(&hoehe) {
+        return Err(KontoFehler::Bild("Breite/Höhe außerhalb 1 bis 1024 px"));
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -444,4 +562,32 @@ fn anwenden(p: &mut Profil, a: ProfilAenderung) -> Result<(), KontoFehler> {
         p.farbe = f;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::begrenzt_lesen;
+    use std::cell::Cell;
+    use std::io::{self, Read};
+
+    struct Zaehler<'a>(&'a Cell<usize>);
+
+    impl Read for Zaehler<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            buf.fill(1);
+            self.0.set(self.0.get() + buf.len());
+            Ok(buf.len())
+        }
+    }
+
+    #[test]
+    fn begrenzt_lesen_liest_hoechstens_max_plus_eins() {
+        let gelesen = Cell::new(0);
+        let bytes = begrenzt_lesen(Zaehler(&gelesen), 1000).unwrap();
+        assert_eq!(bytes.len(), 1001);
+        // Der Leser wurde nur so weit gezogen, wie der Puffer es verlangte (kein unbegrenztes Lesen).
+        assert!(gelesen.get() < 1001 + 64 * 1024);
+        assert_eq!(begrenzt_lesen(&b"abc"[..], 1000).unwrap(), b"abc");
+        assert_eq!(begrenzt_lesen(&b"abcd"[..], 3).unwrap().len(), 4);
+    }
 }
