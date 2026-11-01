@@ -1,0 +1,238 @@
+/* KI-Dokumente (lva#183, Variante B): Karten wie in der Bibliothek.
+   Keine Animationen bei Layoutwechseln (Patrick). */
+
+.kidocs__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.kidocs__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: color-mix(in srgb, var(--color-text) 75%, transparent);
+  cursor: pointer;
+}
+.kidocs__chip--on {
+  border-color: var(--color-logo-primary);
+  background: color-mix(in srgb, var(--color-logo-primary) 15%, transparent);
+  color: var(--color-text);
+}
+.kidocs__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.kidocs__search {
+  width: 14rem;
+  max-width: 100%;
+}
+
+.kidocs__card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-mid-gray) 6%, transparent);
+}
+.kidocs__card--playing {
+  border-color: var(--color-logo-primary);
+}
+.kidocs__card--running {
+  border-style: dashed;
+}
+.kidocs__open {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: start;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.kidocs__open:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+.kidocs__meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.kidocs__title {
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.kidocs__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kidocs__badge {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--color-logo-primary);
+  color: var(--color-on-accent, #fff);
+  font-weight: 600;
+}
+
+/* Hörfortschritt: voller Balken in Akzentfarbe. Erstellung: gestreift,
+   damit beide auf einen Blick unterscheidbar sind (Codex, Must-fix 2). */
+.kidocs__bar {
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+}
+.kidocs__bar > div {
+  height: 100%;
+  background: var(--color-logo-primary);
+}
+.kidocs__bar--work > div {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-status-blue),
+    var(--color-status-blue) 4px,
+    color-mix(in srgb, var(--color-status-blue) 50%, transparent) 4px,
+    color-mix(in srgb, var(--color-status-blue) 50%, transparent) 8px
+  );
+}
+.kidocs__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kidocs__empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 8px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+/* Kopfzeile eines offenen Dokuments */
+.kidoc-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.kidoc-head .kidocs__meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kidoc-head > button {
+  flex-shrink: 0;
+}
+.kidoc-head__title {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Erstellen-Dialog */
+.kidoc-new__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kidoc-new__group {
+  margin: 10px 0 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.kidoc-new__tpl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: start;
+  cursor: pointer;
+}
+.kidoc-new__tpl:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 10%, transparent);
+}
+.kidoc-new__tpl[aria-pressed="true"] {
+  border-color: var(--color-logo-primary);
+  background: color-mix(in srgb, var(--color-logo-primary) 12%, transparent);
+}
+.kidoc-new__tpl:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+.kidoc-new__desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.kidoc-new__summary {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* Mobil (Codex, Must-fix 4): Bedienziele mindestens 44 × 44 px, eine Spalte,
+   Erstellen-Dialog im Vollbild. */
+@media (max-width: 640px) {
+  .kidocs__grid {
+    grid-template-columns: 1fr;
+  }
+  .kidocs__chip,
+  .kidocs button,
+  .kidoc-head button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .kidoc-head .kidocs__meta {
+    display: none;
+  }
+  .kidocs__tools {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .kidocs__searchbox {
+    flex: 1 1 10rem;
+  }
+  .kidocs__search {
+    width: 100%;
+  }
+  .lv-dialog.lv-dialog.kidoc-new {
+    width: 100vw;
+    max-width: 100vw !important;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+  }
+  .kidoc-new .lv-dialog__body.lv-dialog__body {
+    max-height: calc(100dvh - 40px);
+    height: 100%;
+  }
+}

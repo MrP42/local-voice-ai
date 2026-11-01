@@ -89,7 +89,15 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_list_voices") return voices.map((v) => v.id);
           if (cmd === "pages_list") return [{ id: "p1", title: "Podcast" }];
           if (cmd === "page_dir") return "C:\\projects\\p1";
-          if (cmd === "tts_translate" || cmd === "tts_summarize_text")
+          // KI-Dokumente (lva#183): zwei Vorlagen, Liste aus window.__kidocs.
+          if (cmd === "book_ai_templates")
+            return [
+              { id: "builtin:eine_seite", title: "Eine Seite", category: "ueberblick", description: "Das Buch auf einer Seite.", context: "", sections: [], target_words: 450, form: "Prose", audience: "allgemein", builtin: true },
+              { id: "builtin:lernzettel", title: "Lernzettel", category: "lernen", description: "Zum Wiederholen.", context: "", sections: [], target_words: 600, form: "List", audience: "lernende", builtin: true },
+            ];
+          if (cmd === "book_ai_documents") return (w.__kidocs as unknown[] | undefined) ?? [];
+          if (cmd === "book_ai_document_text") return "Kurz gesagt: alles gut.";
+          if (cmd === "tts_translate" || cmd === "tts_summarize_text" || cmd === "book_ai_summarize")
             return new Promise((resolve, reject) => {
               pending[cmd] = { resolve, reject };
             });
@@ -164,20 +172,63 @@ test("im Reiter Übersetzung gibt es das Menü mit Skript prüfen und Sprecher t
   await expect(page.getByTestId("autotag-open")).toHaveCount(0);
 });
 
-test("im Reiter Zusammenfassung gibt es das Menü und den Fortschritt", async ({ page }) => {
+test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den Fortschritt", async ({ page }) => {
   await open(page);
-  await page.getByRole("tab", { name: "Zusammenfassung" }).click();
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
   await page.getByTestId("tts-action-menu-summary").click();
   await expect(page.getByTestId("script-check-run")).toBeVisible();
   await expect(page.getByTestId("speaker-swap-open")).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("kidocs-empty")).toBeVisible();
+
+  // Neu erstellen: Quelle und Vorlage wählen, Laufzeit nur als Schätzung.
   await page.getByTestId("tts-action-summarize").click();
-  await emit(page, "tts-transform-progress", { kind: "summary", done: 0, total: 3 });
-  await expect(page.getByText("Fasse zusammen … Abschnitt 1 von 3")).toBeVisible();
-  await emit(page, "tts-transform-progress", { kind: "summary", done: 2, total: 3 });
-  await expect(page.getByText("Führe die Abschnitte zusammen …")).toBeVisible();
-  await finish(page, "tts_summarize_text", "Kurz gesagt: alles gut.");
-  await expect(page.locator("textarea").first()).toHaveValue("Kurz gesagt: alles gut.");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Neues KI-Dokument");
+  await expect(page.getByTestId("kidoc-src-book")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("kidoc-src-selection")).toBeDisabled();
+  await page.getByTestId("kidoc-tpl-search").fill("lern");
+  await expect(page.getByTestId("kidoc-tpl-builtin:eine_seite")).toHaveCount(0);
+  await page.getByTestId("kidoc-tpl-search").fill("");
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  await expect(page.getByTestId("kidoc-estimate")).toContainText("Schätzung");
+  await page.getByTestId("kidoc-create").click();
+  await expect(dialog).toHaveCount(0);
+
+  // Erstellung läuft: als eigene Karte mit Schritten, getrennt vom Hörfortschritt.
+  await emit(page, "book-ai-progress", { page_id: "p1", done: 1, total: 3 });
+  await expect(page.getByTestId("kidocs-running")).toContainText("1 von 3 Schritten");
+  const call = (await calls(page)).filter(([c]) => c === "book_ai_summarize").at(-1)!;
+  expect(call[1]).toMatchObject({
+    pageId: "p1",
+    source: { kind: "book" },
+    templateId: "builtin:eine_seite",
+  });
+
+  const doc = {
+    id: "01JAAAAAAAAAAAAAAAAAAAAAAA",
+    title: "Eine Seite – Ganzes Buch",
+    template_id: "builtin:eine_seite",
+    template_title: "Eine Seite",
+    source: { kind: "book" },
+    source_label: "Ganzes Buch",
+    created_ms: 1,
+    modified_ms: 1,
+    words: 4,
+    model: "ollama/x",
+  };
+  await page.evaluate((d) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = [d];
+  }, doc);
+  await finish(page, "book_ai_summarize", doc);
+
+  // Fertig: das Dokument öffnet sich im selben Reader, der Weg zurück ist sichtbar.
+  await expect(page.getByTestId("kidoc-head")).toContainText("Eine Seite – Ganzes Buch");
+  await expect(page.getByText("Kurz gesagt: alles gut.").first()).toBeVisible();
+  await page.getByTestId("kidoc-back").click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("noch nicht gehört");
+  await expect(card).toContainText("Überblick · Ganzes Buch");
 });
 
 test("eine korrigierte Übersetzung wird abgelegt und beim Neuladen nicht überschrieben", async ({ page }) => {

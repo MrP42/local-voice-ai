@@ -198,7 +198,7 @@ pub(crate) fn letterhead_store(app: &AppHandle) -> Result<letterhead::Store, Str
 
 /// Schreibt `markdown` gestaltet (Word, PDF) oder als Text/Markdown nach `path`, mit dem
 /// Briefkopf `letterhead_id` (ohne: der eingestellte). Laeuft auf einem Arbeitsthread.
-fn export_with_letterhead(
+pub(crate) fn export_with_letterhead(
     app: &AppHandle,
     path: String,
     markdown: String,

@@ -209,7 +209,7 @@ test("editor tabs are real tabs with keyboard navigation and standard height", a
     exact: true,
   });
   const summary = page.getByRole("tab", {
-    name: "Zusammenfassung",
+    name: "KI-Dokumente",
     exact: true,
   });
 

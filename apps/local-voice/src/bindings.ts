@@ -5045,6 +5045,31 @@ async bookAiTermHits(pageId: string) : Promise<Result<TermHit[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Text als KI-Dokument übernehmen, z. B. die bisherige Zusammenfassung einer
+ * Seite (aus der Zeit vor den Vorlagen, lva#183).
+ */
+async bookAiDocumentImport(pageId: string, title: string, text: string) : Promise<Result<KiDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_import", { pageId, title, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein KI-Dokument exportieren. Das Format ergibt sich aus der Endung (`md`, `txt`,
+ * `docx`, `pdf`); Word und PDF tragen den eingestellten Briefkopf. Der Titel
+ * steht als Überschrift über dem Text.
+ */
+async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_document_export", { pageId, id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
