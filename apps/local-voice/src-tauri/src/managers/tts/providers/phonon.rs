@@ -1605,7 +1605,12 @@ impl TtsProvider for PhononProvider {
                 license: None,
             };
             let mut voices = vec![make("default", "Standardstimme des Modells")];
-            if let Some(v) = self.cfg.configured_voice() {
+            // Eine konfigurierte Stimme eines weiteren Modells steht unten mit Sprache und Lizenz.
+            if let Some(v) = self
+                .cfg
+                .configured_voice()
+                .filter(|v| self.sibling_for(v).is_none())
+            {
                 voices.push(make(v, v));
             }
             // Offline nur, was im Modellordner liegt.
@@ -3439,6 +3444,28 @@ mod tests {
             .unwrap_err();
         assert!(err.message.contains("en:Zoey"), "{}", err.message);
         assert!(fake.synth_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn eine_konfigurierte_englische_stimme_steht_einmal_mit_sprache_en_in_der_liste() {
+        let de = model_dir(&["Nele"]);
+        let en = model_dir(&["Zoey"]);
+        let fake = fake_ptts(FakeOpts::default());
+        let mut c = cfg(&fake, &de);
+        c.voice = Some("en:Zoey".into());
+        let p = PhononProvider::new(c)
+            .with_ram_gate(|_| Ok(64 * 1024))
+            .with_siblings(vec![PhononModelRef {
+                lang: "en".into(),
+                model: en.path().display().to_string(),
+            }]);
+        let all = p.list_voices(None).await.unwrap();
+        let zoey: Vec<_> = all.iter().filter(|v| v.id == "en:Zoey").collect();
+        assert_eq!(zoey.len(), 1, "{all:?}");
+        assert_eq!(zoey[0].language, "en");
+        let only_en = p.list_voices(Some("en")).await.unwrap();
+        assert!(only_en.iter().any(|v| v.id == "en:Zoey"), "{only_en:?}");
+        assert!(p.health_check().await.available);
     }
 
     #[test]
