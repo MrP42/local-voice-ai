@@ -681,6 +681,9 @@ async kontoStatus() : Promise<Result<KontoStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * `id` ist das Profil, das die Oberfläche bearbeitet; es muss noch das aktive sein.
+ */
 async kontoAendern(id: string, aenderung: KontoAenderung) : Promise<Result<KontoProfilDto, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_aendern", { id, aenderung }) };
@@ -697,6 +700,9 @@ async kontoAktivieren(id: string) : Promise<Result<KontoStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legt ein Profil an und macht es in derselben Sperre zum aktiven Profil.
+ */
 async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_anlegen", { anzeigename }) };
@@ -706,7 +712,8 @@ async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>
 }
 },
 /**
- * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`).
+ * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`). `id` muss
+ * das aktive Profil sein.
  */
 async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>> {
     try {
@@ -716,6 +723,9 @@ async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * `id` muss das aktive Profil sein.
+ */
 async kontoBildEntfernen(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_bild_entfernen", { id }) };
