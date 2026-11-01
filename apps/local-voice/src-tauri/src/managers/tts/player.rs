@@ -186,24 +186,24 @@ fn decode_interleaved(wav: &[u8]) -> Option<PcmSegment> {
     })
 }
 
-/// Ab Frame `from` zeitgestreckt anhängen.
-fn append_stretched(sink: &rodio::Sink, pcm: &PcmSegment, from: usize, speed: f32) {
+/// Ab Frame `from` zeitgestreckt (leer, wenn nichts mehr übrig ist).
+fn stretched_samples(pcm: &PcmSegment, from: usize, speed: f32) -> Vec<f32> {
     let ch = pcm.channels as usize;
     let rest = &pcm.samples[(from * ch).min(pcm.samples.len())..];
     if rest.is_empty() {
-        return;
+        return Vec::new();
     }
-    let stretched = super::dsp::time_stretch(rest, pcm.channels, pcm.sample_rate, speed);
-    sink.append(rodio::buffer::SamplesBuffer::new(
-        pcm.channels,
-        pcm.sample_rate,
-        stretched,
-    ));
+    super::dsp::time_stretch(rest, pcm.channels, pcm.sample_rate, speed)
 }
+
+/// So lange muss ein neues Tempo stehen, bevor der Rest neu gestreckt wird:
+/// ein gezogener Regler soll nicht bei jedem Zwischenwert neu rechnen.
+const SPEED_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Einen Satz mit gleichbleibender Tonhöhe abspielen. Dreht der Nutzer
 /// mitten im Satz am Tempo, wird der noch nicht gehörte Rest neu gestreckt —
-/// die Änderung wirkt sofort, nicht erst beim nächsten Satz.
+/// erst gerechnet, dann ausgetauscht, damit die Wiedergabe dabei nicht
+/// aussetzt. Die Änderung wirkt sofort, nicht erst beim nächsten Satz.
 fn play_stretched(
     stream: &rodio::OutputStream,
     pcm: PcmSegment,
@@ -218,8 +218,16 @@ fn play_stretched(
     let mut speed = controls.speed();
     // Ab welchem Frame das laufende Stück gestreckt wurde und seit wann es spielt.
     let mut from = 0usize;
+    let first = stretched_samples(&pcm, from, speed);
+    if !first.is_empty() {
+        sink.append(rodio::buffer::SamplesBuffer::new(
+            pcm.channels,
+            pcm.sample_rate,
+            first,
+        ));
+    }
     let mut started = std::time::Instant::now();
-    append_stretched(&sink, &pcm, from, speed);
+    let mut pending: Option<(f32, std::time::Instant)> = None;
     while !sink.empty() {
         if cancelled.load(Ordering::Acquire) {
             sink.stop();
@@ -231,12 +239,38 @@ fn play_stretched(
             applied_volume = wanted_volume;
         }
         let wanted_speed = controls.speed();
-        if (wanted_speed - speed).abs() > f32::EPSILON {
-            let heard = started.elapsed().as_secs_f64() * speed as f64 * pcm.sample_rate as f64;
-            from = (from + heard as usize).min(frames);
+        if (wanted_speed - speed).abs() <= f32::EPSILON {
+            pending = None;
+        } else if pending.is_none_or(|(p, _)| (p - wanted_speed).abs() > f32::EPSILON) {
+            pending = Some((wanted_speed, std::time::Instant::now()));
+        } else if pending.is_some_and(|(_, since)| since.elapsed() >= SPEED_SETTLE) {
+            pending = None;
+            // Hörstelle beim Rechenstart; was während des Rechnens noch vom
+            // alten Stück lief, wird vorn vom neuen abgeschnitten.
+            let compute_start = std::time::Instant::now();
+            let heard = (compute_start - started).as_secs_f64() * speed as f64;
+            from = (from + (heard * pcm.sample_rate as f64) as usize).min(frames);
+            let mut next = stretched_samples(&pcm, from, wanted_speed);
+            if cancelled.load(Ordering::Acquire) {
+                sink.stop();
+                break;
+            }
+            let spent = compute_start.elapsed().as_secs_f64() * speed as f64;
+            let spent_frames = (spent * pcm.sample_rate as f64) as usize;
+            from = (from + spent_frames).min(frames);
+            let cut = ((spent_frames as f64 / wanted_speed as f64) as usize
+                * pcm.channels as usize)
+                .min(next.len());
+            next.drain(..cut);
             speed = wanted_speed;
             sink.clear();
-            append_stretched(&sink, &pcm, from, speed);
+            if !next.is_empty() {
+                sink.append(rodio::buffer::SamplesBuffer::new(
+                    pcm.channels,
+                    pcm.sample_rate,
+                    next,
+                ));
+            }
             sink.play();
             started = std::time::Instant::now();
         }
