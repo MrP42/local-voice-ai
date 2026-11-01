@@ -394,3 +394,22 @@ for (const theme of ["light", "dark"]) {
     });
   }
 }
+
+// Buchinfo in der linken Leiste (lva#159).
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild buchinfo ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        (window as unknown as { __theme: string }).__theme = t;
+      }, theme);
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      const text = ["# Der Leuchtturm am Ende der Welt", "", "von Ada Beispiel, Bo Muster", "", PDF_BUCH].join("\n");
+      await open(page, text, 1440);
+      if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("reader-flow").waitFor();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${DIR}/buchinfo-${theme}-${width}.png` });
+    });
+  }
+}

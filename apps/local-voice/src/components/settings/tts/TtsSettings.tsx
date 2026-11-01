@@ -81,7 +81,12 @@ import {
   removeBookmark,
   type Bookmark,
 } from "../../../lib/reader/bookmarks";
-import { buildContents, chapterAt, type ContentsEntry } from "../../../lib/reader/contents";
+import {
+  bookInfo,
+  buildContents,
+  chapterAt,
+  type ContentsEntry,
+} from "../../../lib/reader/contents";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
@@ -1188,6 +1193,7 @@ export const TtsSettings = () => {
   // Inhaltsverzeichnis: Überschriften der offenen Seite; aktuelles Kapitel
   // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
   const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
+  const book = useMemo(() => bookInfo(readerBlocks), [readerBlocks]);
   // Nach dem Commit messen: im Render stünde noch das DOM des alten Umbruchs.
   const [chapterIndex, setChapterIndex] = useState(-1);
   const [contentsPages, setContentsPages] = useState<(number | null)[]>([]);
@@ -1865,6 +1871,7 @@ export const TtsSettings = () => {
                 current={chapterIndex}
                 onGo={goToChapter}
                 pages={contentsPages}
+                book={book}
               />
             ) : null
           }
