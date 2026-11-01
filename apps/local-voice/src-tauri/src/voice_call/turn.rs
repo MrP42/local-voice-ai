@@ -68,14 +68,44 @@ pub fn sovereignty_allows(stufe: &str, cloud: bool, countries: &[String]) -> Res
     }
 }
 
+/// Einstellungen mit dem Sprecher des Gesprächs (Wahl im Chatfeld): Modell und Effort gelten nur
+/// für diesen Aufruf, die globale Wahl bleibt unberührt. Leer oder unbekannt = unverändert.
+pub(super) fn with_speaker(
+    settings: &AppSettings,
+    model_id: Option<&str>,
+    effort: Option<&str>,
+) -> AppSettings {
+    let mut chosen = settings.clone();
+    let id = model_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && chosen.llm_models.iter().any(|m| m.id == *id));
+    let Some(id) = id else {
+        return chosen;
+    };
+    chosen.llm_active_model_id = Some(id.to_string());
+    if let Some(effort) = effort.map(str::trim).filter(|e| !e.is_empty()) {
+        if let Some(model) = chosen.llm_models.iter_mut().find(|m| m.id == id) {
+            model.effort = Some(effort.to_string());
+        }
+    }
+    chosen.sync_legacy_from_llm();
+    chosen
+}
+
 /// Anbieter, Modell und Schlüssel zu einer Modellkennung unter einer Souveränitätsstufe.
 fn resolve(
     settings: &AppSettings,
     model_id: &str,
+    effort: Option<&str>,
     stufe: &str,
 ) -> Result<ResolvedProvider, String> {
     let mut chosen = settings.clone();
     chosen.llm_active_model_id = Some(model_id.to_string());
+    if let Some(effort) = effort.map(str::trim).filter(|e| !e.is_empty()) {
+        if let Some(model) = chosen.llm_models.iter_mut().find(|m| m.id == model_id) {
+            model.effort = Some(effort.to_string());
+        }
+    }
     let assessment = {
         let (connection, _) = chosen
             .active_llm_model()
@@ -96,6 +126,7 @@ pub async fn voice_call_turn(
     messages: Vec<VoiceCallMessage>,
     model_id: String,
     stufe: String,
+    effort: Option<String>,
 ) -> Result<String, String> {
     // Ein vorgezogener Abbruch wird zuerst eingelöst, auch wenn unten etwas scheitert.
     if EARLY_CANCELS
@@ -106,7 +137,7 @@ pub async fn voice_call_turn(
         return Ok(String::new());
     }
     let settings = crate::settings::get_settings(&app);
-    let (provider, model, api_key) = resolve(&settings, &model_id, &stufe)?;
+    let (provider, model, api_key) = resolve(&settings, &model_id, effort.as_deref(), &stufe)?;
     let messages: Vec<StreamMessage> = messages
         .into_iter()
         .map(|m| StreamMessage::new(&m.role, m.content))
@@ -184,8 +215,18 @@ mod tests {
     #[test]
     fn unknown_model_is_refused() {
         let settings = crate::settings::get_default_settings();
-        let err = resolve(&settings, "gibt-es-nicht:modell", "frei").unwrap_err();
+        let err = resolve(&settings, "gibt-es-nicht:modell", None, "frei").unwrap_err();
         assert!(err.contains("nicht verfügbar"));
+    }
+
+    #[test]
+    fn empty_or_unknown_speaker_keeps_the_global_model() {
+        let mut settings = crate::settings::get_default_settings();
+        settings.llm_active_model_id = Some("global".to_string());
+        for id in [None, Some(""), Some("  "), Some("gibt-es-nicht")] {
+            let chosen = with_speaker(&settings, id, Some("high"));
+            assert_eq!(chosen.llm_active_model_id.as_deref(), Some("global"));
+        }
     }
 
     #[test]

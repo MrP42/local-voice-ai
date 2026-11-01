@@ -78,6 +78,17 @@ pub async fn conversation_update(
     run(&app, move |s| s.update(&id, title, pinned, archived)).await
 }
 
+/// Heftet ein Gespräch an oder löst es.
+#[tauri::command]
+#[specta::specta]
+pub async fn conversation_set_pinned(
+    app: AppHandle,
+    id: String,
+    pinned: bool,
+) -> Result<Conversation, String> {
+    run(&app, move |s| s.set_pinned(&id, pinned)).await
+}
+
 /// Löscht die Unterhaltung samt aller Beiträge.
 #[tauri::command]
 #[specta::specta]

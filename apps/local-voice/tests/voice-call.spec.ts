@@ -97,6 +97,7 @@ async function install(
     const convs: Record<string, any>[] = [];
     const entries: Record<string, Record<string, any>[]> = {};
     let seq = 0;
+    let pinSeq = 0;
     const find = (id: string) => {
       const c = convs.find((x) => x.id === id);
       if (!c) throw "Das Gespräch gibt es nicht (mehr).";
@@ -195,6 +196,8 @@ async function install(
               }
               return null;
             }
+            case "voice_call_start":
+              return new Promise(() => {});
             case "voice_call_chat":
               return new Promise((resolve) => {
                 w.__chat = { args, resolve };
@@ -252,6 +255,7 @@ async function install(
                 .sort(
                   (a, b) =>
                     Number(b.pinned) - Number(a.pinned) ||
+                    (b.pinned_at ?? 0) - (a.pinned_at ?? 0) ||
                     (a.updated_at < b.updated_at ? 1 : -1),
                 )
                 .map((c) => {
@@ -293,6 +297,23 @@ async function install(
               if (args.archived != null) c.archived = args.archived;
               return c;
             }
+            case "conversation_set_pinned": {
+              const c = find(args.id);
+              c.pinned = args.pinned;
+              c.pinned_at = args.pinned ? (c.pinned_at ?? ++pinSeq) : null;
+              return c;
+            }
+            case "llm_set_active_model":
+              settings.llm_active_model_id = args.id;
+              return null;
+            case "llm_upsert_model": {
+              settings.llm_models = settings.llm_models.map((m: any) =>
+                m.id === args.model.id ? args.model : m,
+              );
+              return null;
+            }
+            case "llm_model_efforts":
+              return w.__efforts ?? ["low", "medium", "high"];
             case "conversation_delete": {
               const c = find(args.id);
               convs.splice(convs.indexOf(c), 1);
@@ -428,6 +449,24 @@ async function openPage(page: Page) {
   ).toBeVisible();
 }
 
+/** Kontextmenü „Gesprächsoptionen“ rechts in der Infozeile. */
+async function openOptions(page: Page, item: string) {
+  await page.getByRole("button", { name: "Gesprächsoptionen" }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
+}
+/** Rechte Spalte über das Kontextmenü öffnen. */
+const openSettingsPanel = (page: Page) =>
+  openOptions(page, "Gesprächseinstellungen");
+
+/** Suchoverlay über die Lupe in der Verlaufsspalte. */
+async function openSearch(page: Page) {
+  await page.getByRole("button", { name: "Gespräche durchsuchen" }).click();
+  const search = page.getByTestId("history-search");
+  await expect(search).toBeVisible();
+  return search;
+}
+const permissionChip = (page: Page) => page.getByTestId("permission-chip");
+
 const message = (page: Page) =>
   page.getByRole("textbox", { name: "Nachricht" });
 
@@ -438,6 +477,7 @@ const historyItem = (page: Page, title: string) =>
 // Der Schalter im Seitenkopf (nicht der Menüpunkt „Verlauf“ der Seitenleiste).
 const historyToggle = (page: Page) =>
   page.locator("button[aria-controls][aria-label='Gesprächsverlauf']");
+const historyToggleSelector = "button[aria-controls][aria-label='Gesprächsverlauf']";
 const newChat = (page: Page) =>
   page.getByRole("button", { name: "Neues Gespräch", exact: true });
 const emptyTitle = (page: Page) =>
@@ -902,21 +942,19 @@ test.describe("Sprachgespraech", () => {
     expect(await calls(page, "conversation_delete")).toHaveLength(1);
   });
 
-  test("Archivieren blendet aus, Archiv anzeigen holt zurück; Suche filtert", async ({
+  test("Archivieren blendet aus, Archiv anzeigen holt zurück", async ({
     page,
   }) => {
     await openPage(page);
     await exchange(page, "Hallo KI", "Hallo zurück.");
     await newChat(page).click();
     await exchange(page, "Zweite Frage", "Zweite Antwort.");
-    await history(page)
-      .getByRole("searchbox", { name: "Gespräche durchsuchen" })
-      .fill("zweite");
-    await expect(historyItem(page, "Zweite Frage")).toBeVisible();
-    await expect(historyItem(page, "Hallo KI")).toHaveCount(0);
-    await history(page)
-      .getByRole("searchbox", { name: "Gespräche durchsuchen" })
-      .fill("");
+    const search = await openSearch(page);
+    await search.getByRole("combobox").fill("zweite");
+    await expect(search.getByRole("option", { name: "Zweite Frage" })).toBeVisible();
+    await expect(search.getByRole("option", { name: "Hallo KI" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
 
     await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
     await page.getByRole("menuitem", { name: "Archivieren" }).click();
@@ -989,7 +1027,7 @@ test.describe("Sprachgespraech", () => {
     page,
   }) => {
     await openPage(page);
-    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    await openSettingsPanel(page);
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
@@ -1179,7 +1217,7 @@ test.describe("Sprachgespraech Orchestrator", () => {
       "denker_fragen",
     );
 
-    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    await openSettingsPanel(page);
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
@@ -1349,7 +1387,7 @@ test.describe("Sprachgespraech Orchestrator", () => {
       config: orchestration({}),
     });
     await openPage(page);
-    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    await openSettingsPanel(page);
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
@@ -1440,7 +1478,7 @@ async function settled(page: Page) {
 
 /** Gesprächseinstellungen, Reiter Erkennung. */
 async function openRecognition(page: Page) {
-  await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+  await openSettingsPanel(page);
   const panel = page.getByRole("complementary", {
     name: "Gesprächseinstellungen",
   });
@@ -1842,7 +1880,7 @@ async function openKnowledge(page: Page) {
     name: "Gesprächseinstellungen",
   });
   if (!(await panel.isVisible()))
-    await page.getByRole("button", { name: "Gesprächseinstellungen" }).click();
+    await openSettingsPanel(page);
   const tab = panel.getByRole("tab", { name: "Wissen" });
   await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -1928,14 +1966,16 @@ test.describe("Sprachgespraech Wissen: Bereiche für das Modell", () => {
     expect((await knowledgeCalls(page)).at(-1)).toEqual(["calendar"]);
   });
 
-  test("Der Chip „Kein Wissen freigegeben“ öffnet den Reiter Wissen; mit einem Bereich verschwindet er", async ({
+  test("Berechtigungs-Chip zeigt „kein Wissen“; „Alle Einstellungen …“ öffnet den Reiter Wissen", async ({
     page,
   }) => {
     await install(page, "light", { settings: LOCAL_SPEAKER });
     await openPage(page);
-    const chip = page.getByTestId("knowledge-chip");
-    await expect(chip).toHaveText("Kein Wissen freigegeben");
+    const chip = permissionChip(page);
+    await expect(chip).toHaveText("Frei · kein Wissen");
+    await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
     await chip.click();
+    await page.getByRole("menuitem", { name: "Alle Einstellungen …" }).click();
     const panel = page.getByRole("complementary", {
       name: "Gesprächseinstellungen",
     });
@@ -1945,17 +1985,9 @@ test.describe("Sprachgespraech Wissen: Bereiche für das Modell", () => {
       "true",
     );
     await panel.getByRole("switch", { name: "Diktate" }).click();
-    await expect(chip).toHaveCount(0);
+    await expect(chip).toHaveText("Frei · 1 Bereich");
     await panel.getByRole("switch", { name: "Diktate" }).click();
-    await expect(chip).toBeVisible();
-  });
-
-  test("Kein Chip, wenn schon ein Bereich frei ist", async ({ page }) => {
-    await install(page, "light", {
-      settings: { ...LOCAL_SPEAKER, voice_call_knowledge: ["calendar"] },
-    });
-    await openPage(page);
-    await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
+    await expect(chip).toHaveText("Frei · kein Wissen");
   });
 
   test("Mit einem freigegebenen Bereich bietet voice_tools_list Werkzeuge an", async ({
@@ -2137,9 +2169,7 @@ test.describe("Screenshots @screenshots", () => {
       await snap("plus-1440");
       await page.keyboard.press("Escape");
       await page.mouse.click(700, 300);
-      await page
-        .getByRole("button", { name: "Gesprächseinstellungen" })
-        .click();
+      await openSettingsPanel(page);
       await snap("einstellungen-1440");
     });
     await shoot("dark", big, async (_p, snap) => snap("dunkel-1440"));
@@ -2228,9 +2258,7 @@ test.describe("Screenshots @screenshots", () => {
         );
         await page.screenshot({ path: `${dir}werkzeug-statuszeile-1440.png` });
       }
-      await page
-        .getByRole("button", { name: "Gesprächseinstellungen" })
-        .click();
+      await openSettingsPanel(page);
       await page
         .getByRole("complementary", { name: "Gesprächseinstellungen" })
         .getByRole("tab", { name: "Modelle" })
@@ -2263,7 +2291,7 @@ test.describe("Screenshots @screenshots", () => {
       await openPage(page);
       await settled(page);
       // Mit freigegebenem Bereich gibt es keinen Chip; der Reiter zeigt die Schalter.
-      await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
+      await expect(permissionChip(page)).toContainText("2 Bereiche");
       await openKnowledge(page);
       await page.screenshot({ path: `${dir}wissen-reiter-${name}.png` });
       await ctx.close();
@@ -2276,9 +2304,10 @@ test.describe("Screenshots @screenshots", () => {
       await install(empty, "light");
       await openPage(empty);
       await settled(empty);
-      await expect(empty.getByTestId("knowledge-chip")).toBeVisible();
+      await expect(permissionChip(empty)).toBeVisible();
       await empty.screenshot({ path: `${dir}wissen-chip-${name}.png` });
-      await empty.getByTestId("knowledge-chip").click();
+      await permissionChip(empty).click();
+      await empty.getByRole("menuitem", { name: "Alle Einstellungen …" }).click();
       await settled(empty);
       await expect(
         empty
@@ -2342,5 +2371,314 @@ test.describe("Screenshots @screenshots", () => {
       await page.screenshot({ path: `${dir}einrichtung-${name}.png` });
       await ctx.close();
     }
+  });
+});
+
+const TWO_MODELS = {
+  llm_models: [
+    {
+      id: "cli:sonnet",
+      connection_id: "cli",
+      remote_id: "sonnet",
+      label: "Claude Sonnet",
+      enabled: true,
+      tags: [],
+    },
+    {
+      id: "cli:opus",
+      connection_id: "cli",
+      remote_id: "opus",
+      label: "Claude Opus",
+      enabled: true,
+      tags: [],
+    },
+  ],
+};
+
+test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
+  test("Kein Modul-Rad in der Kopfleiste: Einstellungen nur über das Kontextmenü", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await expect(
+      page.getByRole("button", { name: "Gesprächseinstellungen" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Gesprächsverlauf" }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("button", { name: "Gespräch beginnen" }),
+    ).toHaveCount(1);
+  });
+
+  test("Kontextmenü „Gesprächsoptionen“ öffnet die Spalte und den Reiter Wissen", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    const panel = page.getByRole("complementary", {
+      name: "Gesprächseinstellungen",
+    });
+    await expect(panel).toHaveCount(0);
+    await openOptions(page, "Gesprächseinstellungen");
+    await expect(panel).toBeVisible();
+    await panel.getByRole("button", { name: "Einstellungen schließen" }).click();
+    await expect(panel).toHaveCount(0);
+    await openOptions(page, "Wissen");
+    await expect(panel.getByRole("tab", { name: "Wissen" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  test("Kontextmenü: „Neues Gespräch“ legt ein neues Gespräch an", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await openOptions(page, "Neues Gespräch");
+    await expect(emptyTitle(page)).toBeVisible();
+    await expect(historyItem(page, "Hallo KI")).toBeVisible();
+  });
+
+  test("Verlauf-Symbol an der Spalte klappt sie ein; das Symbol in der Infozeile klappt sie aus", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await expect(history(page)).toBeVisible();
+    // Eingeklappt: nichts mehr in der Kopfleiste, das Symbol sitzt links in der Infozeile.
+    await historyToggle(page).click();
+    await expect(history(page)).toHaveCount(0);
+    const info = page.getByRole("button", {
+      name: "Informationen zum Sprachgespräch",
+    });
+    const row = info.locator("xpath=..");
+    await expect(row.locator(historyToggleSelector)).toBeVisible();
+    expect(
+      await page.evaluate(() => localStorage.getItem("voice-call.history-open")),
+    ).toBe("0");
+    await historyToggle(page).click();
+    await expect(history(page)).toBeVisible();
+    await expect(
+      history(page).locator(historyToggleSelector),
+    ).toBeVisible();
+  });
+
+  test("Gesprächsknopf im Chatfeld startet und beendet das Gespräch", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    // Weder in der Kopfleiste noch in der Fußleiste.
+    await expect(
+      page.locator(".workspace-status").getByRole("button", {
+        name: "Gespräch beginnen",
+      }),
+    ).toHaveCount(0);
+    const begin = page.getByRole("button", { name: "Gespräch beginnen" });
+    await expect(begin).toHaveCount(1);
+    await expect(begin).toHaveAttribute("data-testid", "call-button");
+    await begin.click();
+    expect(await calls(page, "voice_call_start")).toHaveLength(1);
+    const end = page.getByRole("button", { name: "Gespräch beenden" });
+    await expect(end).toBeVisible();
+    await end.click();
+    await expect(
+      page.getByRole("button", { name: "Gespräch beginnen" }),
+    ).toBeVisible();
+    // Das Mikrofon bleibt als eigener Knopf daneben.
+    await expect(
+      page.getByRole("button", { name: "Mikrofon stummschalten" }),
+    ).toBeVisible();
+  });
+
+  test("Fußleisten-Menü „Gespräch“ hat keine Start-Aktion", async ({ page }) => {
+    await install(page);
+    await openPage(page);
+    await page
+      .locator(".workspace-status")
+      .getByRole("button", { name: /Gespräch/ })
+      .click();
+    const menu = page.getByRole("menu", { name: "Gespräch" });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByText(/beginnen|beenden/)).toHaveCount(0);
+  });
+
+  test("Berechtigungs-Chip ändert Stufe und Wissensbereiche", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    const chip = permissionChip(page);
+    await expect(chip).toHaveText("Frei · kein Wissen");
+    await chip.click();
+    await page.getByRole("menuitemradio", { name: "Nur lokal" }).click();
+    await expect(chip).toHaveText("Nur lokal · kein Wissen");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            JSON.parse(localStorage.getItem("voice-call.config") ?? "{}")
+              .orchestration?.souveraenitaet,
+        ),
+      )
+      .toBe("nur_lokal");
+    await page.getByRole("menuitemcheckbox", { name: "Besprechungen" }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Termine" }).click();
+    await expect(chip).toHaveText("Nur lokal · 2 Bereiche");
+    expect(
+      await page.evaluate(() => (window as any).__settings.voice_call_knowledge),
+    ).toEqual(["meetings", "calendar"]);
+    // Dieselbe Einstellung wie der Reiter Wissen.
+    await page.keyboard.press("Escape");
+    await openKnowledge(page);
+    const panel = page.getByRole("complementary", {
+      name: "Gesprächseinstellungen",
+    });
+    await expect(panel.getByRole("switch", { name: "Besprechungen" })).toBeChecked();
+    await panel.getByRole("switch", { name: "Besprechungen" }).click();
+    await expect(chip).toHaveText("Nur lokal · 1 Bereich");
+    // Der alte Chip in der Infozeile ist weg.
+    await expect(page.getByTestId("knowledge-chip")).toHaveCount(0);
+  });
+
+  test("Modellauswahl im Chatfeld speichert den Sprecher des Gesprächs, nicht das globale Modell", async ({
+    page,
+  }) => {
+    await install(page, "light", { settings: TWO_MODELS });
+    await openPage(page);
+    const picker = page.getByTestId("model-picker");
+    const speaker = () =>
+      page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("voice-call.config") ?? "{}")
+            .orchestration,
+      );
+    await expect(picker).toContainText("Claude Sonnet 5.5");
+    await expect(picker).toContainText(/mittel/i);
+    await picker.click();
+    await page.getByRole("menuitemradio", { name: "Claude Opus 5.5" }).click();
+    await expect(picker).toContainText("Claude Opus 5.5");
+    await picker.click();
+    await page.getByRole("menuitemradio", { name: "hoch" }).click();
+    await expect(picker).toContainText(/hoch/i);
+    await expect
+      .poll(speaker)
+      .toMatchObject({ speakerModelId: "cli:opus", speakerEffort: "high" });
+    // Das globale Modell bleibt: kein Befehl, die Fußleiste zeigt weiter Sonnet.
+    expect(await calls(page, "llm_set_active_model")).toHaveLength(0);
+    expect(await calls(page, "llm_upsert_model")).toHaveLength(0);
+    await expect(
+      page.locator(".workspace-status").getByText(/Claude Sonnet 5.5/),
+    ).toBeVisible();
+    // Der Sprecher geht mit Modell und Effort in den Aufruf des Modells.
+    await message(page).fill("Hallo");
+    await message(page).press("Enter");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__chat !== null))
+      .toBe(true);
+    const chat = (await calls(page, "voice_call_chat")).at(-1)!;
+    expect(chat.args).toMatchObject({ modelId: "cli:opus", effort: "high" });
+  });
+
+  test("Suche: Lupe öffnet das Overlay, Aktionen, letzte Gespräche, Treffer, Tastatur", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await newChat(page).click();
+    await exchange(page, "Zweite Frage", "Zweite Antwort.");
+    await newChat(page).click();
+    // Das Suchfeld oben in der Spalte gibt es nicht mehr.
+    await expect(history(page).getByRole("searchbox")).toHaveCount(0);
+    const search = await openSearch(page);
+    await expect(
+      search.getByPlaceholder("Gespräche durchsuchen oder Befehl ausführen"),
+    ).toBeFocused();
+    await expect(search.getByRole("group", { name: "Schnellaktionen" })).toBeVisible();
+    await expect(search.getByRole("option", { name: /Neues Gespräch/ })).toBeVisible();
+    await expect(search.getByRole("option", { name: "Gespräch beginnen" })).toBeVisible();
+    await expect(search.getByRole("group", { name: "Letzte Gespräche" })).toBeVisible();
+    // Filter-Tabs.
+    await search.getByRole("tab", { name: "Aktionen" }).click();
+    await expect(search.getByRole("option", { name: "Zweite Frage" })).toHaveCount(0);
+    await search.getByRole("tab", { name: "Gespräche" }).click();
+    await expect(search.getByRole("option", { name: "Zweite Frage" })).toBeVisible();
+    await expect(search.getByRole("option", { name: /Neues Gespräch/ })).toHaveCount(0);
+    await search.getByRole("tab", { name: "Alle" }).click();
+    // Eingabe: Treffer; Pfeil und Enter öffnen das Gespräch.
+    await search.getByRole("combobox").fill("hallo");
+    await expect(search.getByRole("option", { name: "Hallo KI" })).toBeVisible();
+    await expect(search.getByRole("option", { name: "Zweite Frage" })).toHaveCount(0);
+    await search.getByRole("combobox").press("ArrowDown");
+    await search.getByRole("combobox").press("ArrowUp");
+    await search.getByRole("combobox").press("Enter");
+    await expect(search).toHaveCount(0);
+    await expect(page.getByRole("log").getByText("Hallo zurück.")).toBeVisible();
+  });
+
+  test("Suche: Strg+Umschalt+K öffnet sie, Strg+K bleibt der App-Suche; Strg+N legt ein neues Gespräch an", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await page.keyboard.press("Control+Shift+K");
+    const search = page.getByTestId("history-search");
+    await expect(search).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(search).toHaveCount(0);
+    await page.keyboard.press("Control+k");
+    await expect(search).toHaveCount(0);
+    await expect(page.locator("[data-titlebar-search]")).toBeFocused();
+    await message(page).click();
+    await page.keyboard.press("Control+n");
+    await expect(emptyTitle(page)).toBeVisible();
+  });
+
+  test("Suche: „Gespräch beginnen“ aus den Schnellaktionen startet das Gespräch", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    const search = await openSearch(page);
+    await search.getByRole("option", { name: "Gespräch beginnen" }).click();
+    await expect(search).toHaveCount(0);
+    expect(await calls(page, "voice_call_start")).toHaveLength(1);
+  });
+
+  test("Anheften: Eintrag steht oben unter „Angeheftet“, Lösen holt ihn zurück", async ({
+    page,
+  }) => {
+    await install(page);
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await newChat(page).click();
+    await exchange(page, "Zweite Frage", "Zweite Antwort.");
+    const items = history(page).getByRole("listitem");
+    await expect(items.first()).toContainText("Zweite Frage");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Anheften" }).click();
+    await expect
+      .poll(async () => (await calls(page, "conversation_set_pinned")).length)
+      .toBe(1);
+    expect((await calls(page, "conversation_set_pinned"))[0].args).toMatchObject({
+      pinned: true,
+    });
+    const pinned = history(page).getByRole("group", { name: "Angeheftet" });
+    await expect(pinned).toBeVisible();
+    await expect(pinned.getByRole("listitem")).toHaveCount(1);
+    await expect(items.first()).toContainText("Hallo KI");
+    await page.getByRole("button", { name: "Optionen für „Hallo KI“" }).click();
+    await page.getByRole("menuitem", { name: "Lösen" }).click();
+    await expect(history(page).getByRole("group", { name: "Angeheftet" })).toHaveCount(0);
+    await expect(items.first()).toContainText("Zweite Frage");
+    expect((await calls(page, "conversation_set_pinned"))[1].args).toMatchObject({
+      pinned: false,
+    });
   });
 });

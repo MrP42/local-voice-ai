@@ -44,6 +44,13 @@ export const SESSION_BEREICH = "lva";
 export interface OrchestrationConfig {
   /** Kennung des Denker-Modells (`llm_models[].id`); leer = kein Denker. */
   denkerModelId: string;
+  /**
+   * Sprecher des Gesprächs (`llm_models[].id`), gewählt im Chatfeld; gilt für alle Gespräche.
+   * Leer = das globale aktive Modell (Fußleiste).
+   */
+  speakerModelId: string;
+  /** Effort des Sprechers (nur Abo-Modelle); leer = der des Modells bzw. der Standard. */
+  speakerEffort: string;
   souveraenitaet: Souveraenitaet;
   /** Lesende LVA-Werkzeuge nutzen. */
   useTools: boolean;
@@ -51,6 +58,8 @@ export interface OrchestrationConfig {
 
 export const DEFAULT_ORCHESTRATION: OrchestrationConfig = {
   denkerModelId: "",
+  speakerModelId: "",
+  speakerEffort: "",
   souveraenitaet: DEFAULT_SOUVERAENITAET,
   useTools: true,
 };
@@ -339,6 +348,7 @@ function makeModel(
   info: ModelDescription,
   stufe: Souveraenitaet,
   deps: OrchestrationDeps,
+  effort = "",
 ): VoiceModel {
   return {
     id: info.id,
@@ -373,6 +383,7 @@ function makeModel(
           messages: wireMessages(req.messages),
           modelId: info.id,
           stufe,
+          effort: effort || null,
         });
         // Auch nach Abbruch noch kurz auf den Verbrauch warten: er zählt trotzdem.
         await Promise.race([
@@ -538,7 +549,11 @@ export class OrchestrationSession {
   ): Promise<Prepared> {
     const deps = this.deps;
     this.models ??= await loadModels();
-    const { active, all, knowledge } = this.models;
+    const { all, knowledge } = this.models;
+    const active =
+      (cfg.speakerModelId !== ""
+        ? all.find((m) => m.id === cfg.speakerModelId)
+        : undefined) ?? this.models.active;
     const systemPrompt = withKnowledgeHint(cfg.systemPrompt, knowledge);
     if (!active) return { side: null, blocked: false, systemPrompt };
     if (blockedBy(active, cfg.souveraenitaet)) {
@@ -574,7 +589,12 @@ export class OrchestrationSession {
     const names = new Set(offered.map((t) => t.name));
     const stufe = cfg.souveraenitaet;
     this.side = createOrchestrator({
-      sprecher: makeModel(active, stufe, deps),
+      sprecher: makeModel(
+        active,
+        stufe,
+        deps,
+        active.id === cfg.speakerModelId ? cfg.speakerEffort : "",
+      ),
       denker: denker ? makeModel(denker, stufe, deps) : undefined,
       tools: offered,
       bereich: SESSION_BEREICH,

@@ -3307,9 +3307,9 @@ async voiceCallTranscribe(pcm16B64: string) : Promise<Result<string, string>> {
  * fertige Antwort ist der Rückgabewert. Bricht `voice_call_cancel` ab, endet
  * der Aufruf mit `Ok` und leerem Text.
  */
-async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<Result<string, string>> {
+async voiceCallChat(requestId: string, messages: VoiceCallMessage[], modelId: string | null, effort: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_chat", { requestId, messages, modelId, effort }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3318,9 +3318,9 @@ async voiceCallChat(requestId: string, messages: VoiceCallMessage[]) : Promise<R
 /**
  * Ein Durchgang eines Modells als roher Textstrom (Ereignisse `delta`, am Ende `usage`).
  */
-async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string) : Promise<Result<string, string>> {
+async voiceCallTurn(requestId: string, messages: VoiceCallMessage[], modelId: string, stufe: string, effort: string | null) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe }) };
+    return { status: "ok", data: await TAURI_INVOKE("voice_call_turn", { requestId, messages, modelId, stufe, effort }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3383,6 +3383,17 @@ async conversationCreate(title: string | null) : Promise<Result<Conversation, st
 async conversationUpdate(id: string, title: string | null, pinned: boolean | null, archived: boolean | null) : Promise<Result<Conversation, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("conversation_update", { id, title, pinned, archived }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Heftet ein Gespräch an oder löst es.
+ */
+async conversationSetPinned(id: string, pinned: boolean) : Promise<Result<Conversation, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("conversation_set_pinned", { id, pinned }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

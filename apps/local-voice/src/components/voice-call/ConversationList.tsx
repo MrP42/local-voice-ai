@@ -11,6 +11,7 @@ import {
   ArchiveRestore,
   Cloud,
   MoreHorizontal,
+  PanelLeftClose,
   Pencil,
   Pin,
   PinOff,
@@ -40,14 +41,17 @@ export interface ConversationListItem {
 export interface ConversationListLabels {
   navLabel: string;
   newConversation: string;
+  /** Name des Lupenknopfs (öffnet die Suche). */
   search: string;
-  searchPlaceholder: string;
+  /** Tastenkürzel der Suche, im Tooltip der Lupe. */
+  searchKey: string;
+  /** Name und Tooltip des Verlauf-Symbols im Spaltenkopf. */
+  collapse: string;
   groupPinned: string;
   groupToday: string;
   groupWeek: string;
   groupOlder: string;
   empty: string;
-  noResults: string;
   /** Beschriftung des Menüknopfs (und des Menüs) eines Eintrags. */
   menu: (title: string) => string;
   rename: string;
@@ -71,6 +75,12 @@ export interface ConversationListProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** Kennung der Spalte (aria-controls des Verlauf-Symbols). */
+  controlsId: string;
+  /** Spalte einklappen (Symbol im Kopf). */
+  onCollapse: () => void;
+  /** Suche öffnen (Lupe im Kopf). */
+  onSearch: () => void;
   onRename: (id: string, title: string) => void;
   onPin: (id: string, pinned: boolean) => void;
   onArchive: (id: string, archived: boolean) => void;
@@ -159,6 +169,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   activeId,
   onSelect,
   onNew,
+  controlsId,
+  onCollapse,
+  onSearch,
   onRename,
   onPin,
   onArchive,
@@ -169,7 +182,6 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   locale,
   now,
 }) => {
-  const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -183,13 +195,9 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   const baseId = useId();
   const current = now ?? Date.now();
 
-  const visible = useMemo(
-    () => items.filter((i) => matchesQuery(i, query)),
-    [items, query],
-  );
   const groups = useMemo(
-    () => groupConversations(visible, current),
-    [visible, current],
+    () => groupConversations(items, current),
+    [items, current],
   );
   const groupTitle: Record<ConversationGroupId, string> = {
     pinned: labels.groupPinned,
@@ -325,6 +333,8 @@ export const ConversationList: React.FC<ConversationListProps> = ({
     focusRow(id);
   };
 
+  const iconButton =
+    "grid place-items-center w-11 h-11 md:w-8 md:h-8 rounded-md cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text";
   const rowButton =
     "min-h-11 md:min-h-9 rounded-md cursor-pointer text-start transition-colors";
 
@@ -333,35 +343,45 @@ export const ConversationList: React.FC<ConversationListProps> = ({
       aria-label={labels.navLabel}
       className="flex flex-col h-full min-h-0 bg-background"
     >
-      <div className="flex flex-col gap-2 p-2 border-b border-mid-gray/20">
+      <div className="flex flex-col gap-1 p-2 border-b border-mid-gray/20">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            aria-controls={controlsId}
+            aria-expanded="true"
+            aria-pressed="true"
+            aria-label={labels.collapse}
+            title={labels.collapse}
+            onClick={onCollapse}
+            className={iconButton}
+          >
+            <PanelLeftClose className="w-4 h-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label={labels.search}
+            title={`${labels.search} (${labels.searchKey})`}
+            data-testid="history-search-open"
+            onClick={onSearch}
+            className={iconButton}
+          >
+            <Search className="w-4 h-4" aria-hidden="true" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={onNew}
-          className="flex items-center gap-2 min-h-11 md:min-h-9 px-3 rounded-md border border-mid-gray/30 cursor-pointer text-sm text-text hover:border-logo-primary hover:bg-mid-gray/10"
+          className="flex items-center gap-2 min-h-11 md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text hover:bg-mid-gray/10"
         >
           <SquarePen className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span className="truncate">{labels.newConversation}</span>
         </button>
-        <label className="relative block">
-          <span className="sr-only">{labels.search}</span>
-          <Search
-            className="absolute start-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text/50 pointer-events-none"
-            aria-hidden="true"
-          />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={labels.searchPlaceholder}
-            className="w-full min-h-11 md:min-h-9 ps-8 pe-2 rounded-md border border-mid-gray/30 bg-transparent text-sm text-text placeholder:text-text/50 focus:outline-none focus:border-logo-primary"
-          />
-        </label>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
         {groups.length === 0 && (
           <p className="m-0 px-2 py-4 text-sm text-text/60">
-            {query.trim() ? labels.noResults : labels.empty}
+            {labels.empty}
           </p>
         )}
         {groups.map((group) => {

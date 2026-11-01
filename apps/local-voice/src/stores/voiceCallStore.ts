@@ -194,6 +194,10 @@ function normalizeOrchestration(
   return {
     denkerModelId:
       typeof stored?.denkerModelId === "string" ? stored.denkerModelId : "",
+    speakerModelId:
+      typeof stored?.speakerModelId === "string" ? stored.speakerModelId : "",
+    speakerEffort:
+      typeof stored?.speakerEffort === "string" ? stored.speakerEffort : "",
     souveraenitaet: stufe ?? DEFAULT_ORCHESTRATION.souveraenitaet,
     useTools:
       typeof stored?.useTools === "boolean"
@@ -806,7 +810,7 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
     togglePin: async (id) => {
       const current = get().conversations.find((c) => c.id === id);
       try {
-        await invoke("conversation_update", {
+        await invoke("conversation_set_pinned", {
           id,
           pinned: !(current?.pinned ?? false),
         });
