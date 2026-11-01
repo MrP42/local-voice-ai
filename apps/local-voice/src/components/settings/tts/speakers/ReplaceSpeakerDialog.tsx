@@ -8,6 +8,7 @@ import { foldSpeakerName, type SpeakerRef } from "@/lib/voices/speakerMarkers";
 import {
   fieldsOfState,
   replaceSpeakerInFields,
+  speakerUsage,
   type SpeakerFields,
 } from "@/lib/voices/replaceSpeaker";
 import { providerVoiceValue } from "../providers/providerModel";
@@ -70,6 +71,28 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
   const speakersRef = useRef(speakers);
   speakersRef.current = speakers;
 
+  // Ersetzen lässt sich nur, wer vorkommt: offene Seite zuerst, die übrigen
+  // kommen nach dem Laden dazu. Häufigster Sprecher der offenen Seite zuerst.
+  const usage = useMemo(() => {
+    const value = (s: SpeakerRef) => valueOf(providerId, s);
+    const onActive = speakerUsage(active, speakers, value);
+    const all = new Map(onActive);
+    for (const o of others) speakerUsage(o.fields, speakers, value, all);
+    return { onActive, all };
+  }, [active, others, speakers, providerId]);
+  const present = useMemo(
+    () =>
+      speakers
+        .filter((s) => usage.all.has(s.id))
+        .sort(
+          (a, b) =>
+            (usage.onActive.get(b.id) ?? 0) - (usage.onActive.get(a.id) ?? 0),
+        ),
+    [speakers, usage],
+  );
+  const presentRef = useRef(present);
+  presentRef.current = present;
+
   const defaults = (list: SpeakerRef[], from?: string) => {
     const needle = from ? foldSpeakerName(from) : "";
     const match =
@@ -80,26 +103,28 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
           (s.aliases ?? []).some((a) => foldSpeakerName(a) === needle),
       ) ?? list[0];
     setFromId(match?.id ?? "");
-    setToId(list.find((s) => s.id !== match?.id)?.id ?? "");
+    setToId(
+      speakersRef.current.find((s) => s.id !== match?.id)?.id ?? "",
+    );
   };
   // Beim Oeffnen vorbelegen -- nicht bei jeder neuen Sprecherliste (Stimmen-
   // ereignisse), das wuerde die Wahl und das "Fertig" zuruecksetzen.
   useEffect(() => {
     if (!open) return;
     setDone(null);
-    defaults(speakersRef.current, initialFrom);
+    defaults(presentRef.current, initialFrom);
   }, [open, initialFrom]);
-  // Verschwindet eine gewaehlte Stimme aus der Liste (oder kommt sie erst jetzt),
-  // neu vorbelegen.
+  // Verschwindet eine gewaehlte Stimme aus der Liste (oder kommt sie erst
+  // jetzt, etwa nach dem Laden der übrigen Seiten), neu vorbelegen.
   useEffect(() => {
-    if (!open) return;
+    if (!open || done) return;
     if (
-      !speakers.some((s) => s.id === fromId) ||
+      !present.some((s) => s.id === fromId) ||
       !speakers.some((s) => s.id === toId)
     ) {
-      defaults(speakers, initialFrom);
+      defaults(present, initialFrom);
     }
-  }, [speakers]);
+  }, [present, speakers]);
 
   useEffect(() => {
     if (!open) return;
@@ -218,11 +243,12 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
     setDone({ markers, pages: pagesChanged, failed });
   };
 
-  const options = speakers.map((s) => (
-    <option key={s.id} value={s.id}>
-      {s.displayName}
-    </option>
-  ));
+  const optionsOf = (list: SpeakerRef[]) =>
+    list.map((s) => (
+      <option key={s.id} value={s.id}>
+        {s.displayName}
+      </option>
+    ));
 
   return (
     <Dialog
@@ -262,7 +288,7 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
             className="flex-1"
             data-testid="replace-speaker-from"
           >
-            {options}
+            {optionsOf(present)}
           </FluentSelect>
         </label>
         <label className="flex items-center gap-3">
@@ -273,7 +299,7 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
             className="flex-1"
             data-testid="replace-speaker-to"
           >
-            {options}
+            {optionsOf(speakers)}
           </FluentSelect>
         </label>
         <p
@@ -292,7 +318,9 @@ export const ReplaceSpeakerDialog: React.FC<Props> = ({
                     markers: plan.markers,
                     pages: plan.pages,
                   })
-              : t("tts.replaceSpeaker.pick")}
+              : loaded && present.length === 0
+                ? t("tts.replaceSpeaker.noneAtAll")
+                : t("tts.replaceSpeaker.pick")}
         </p>
       </div>
     </Dialog>

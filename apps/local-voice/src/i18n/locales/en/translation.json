@@ -466,6 +466,7 @@
       "to": "with",
       "pick": "Pick two different speakers.",
       "none": "This voice does not occur on any page.",
+      "noneAtAll": "No speaker appears on any page.",
       "preview": "{{markers}} markers and remembered voices on {{pages}} page(s) will change.",
       "done": "Done: {{markers}} markers replaced on {{pages}} page(s).",
       "doneFailed": "Done, but {{failed}} page(s) could not be saved. Replaced: {{markers}} markers on {{pages}} page(s).",

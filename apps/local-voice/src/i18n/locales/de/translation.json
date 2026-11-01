@@ -466,6 +466,7 @@
       "to": "durch",
       "pick": "Wähle zwei verschiedene Sprecher.",
       "none": "Diese Stimme kommt auf keiner Seite vor.",
+      "noneAtAll": "Auf keiner Seite kommt ein Sprecher vor.",
       "preview": "{{markers}} Marker und gemerkte Stimmen auf {{pages}} Seite(n) werden geändert.",
       "done": "Fertig: {{markers}} Marker auf {{pages}} Seite(n) ersetzt.",
       "doneFailed": "Fertig, aber {{failed}} Seite(n) ließen sich nicht speichern. Ersetzt: {{markers}} Marker auf {{pages}} Seite(n).",
