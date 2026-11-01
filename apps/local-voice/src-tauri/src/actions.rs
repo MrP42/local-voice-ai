@@ -1176,6 +1176,25 @@ impl ShortcutAction for SpeakClipboardAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+/// Ereignis an das Hauptfenster: das Tastenkuerzel „Hauptgespraech“ wurde gedrueckt.
+pub const VOICE_CALL_HOTKEY_EVENT: &str = "voice-call-hotkey";
+
+/// Hauptgespraech per Tastenkuerzel: startet oder beendet das Sprachgespraech im
+/// festen Hauptgespraech. Das Gespraech selbst (Mikrofon, Erkennung, Stimme) laeuft
+/// im Hauptfenster, auch wenn es verborgen ist; hier geht nur der Anstoss hin.
+/// Kein Diktat: es wird nichts in ein Feld eingefuegt.
+struct VoiceCallAction;
+
+impl ShortcutAction for VoiceCallAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if let Err(e) = app.emit_to("main", VOICE_CALL_HOTKEY_EVENT, ()) {
+            warn!("voice_call: Hauptfenster nicht erreichbar: {e}");
+        }
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Cancel Action
 struct CancelAction;
 
@@ -1232,6 +1251,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "speak_clipboard".to_string(),
         Arc::new(SpeakClipboardAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "voice_call".to_string(),
+        Arc::new(VoiceCallAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

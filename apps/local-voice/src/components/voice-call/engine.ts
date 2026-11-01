@@ -157,6 +157,8 @@ export class VoiceCallEngine {
   private utt: Utterance | null = null;
   private turn: Turn | null = null;
   private history: ChatMessage[] = [];
+  /** Höchstzahl Nachrichten, die an die KI gehen (Hauptgespräch: kleiner). */
+  private historyLimit = MAX_HISTORY;
   private sentenceHandlers = new Map<string, (e: VoiceCallEvent) => void>();
   private muted = false;
   /** Laufende Text-Anfrage (Textmodus ohne Anruf). */
@@ -239,7 +241,20 @@ export class VoiceCallEngine {
     }[],
   ): void {
     this.resetHistory();
-    this.history = messages.slice(-MAX_HISTORY);
+    this.history = messages.slice(-this.historyLimit);
+  }
+
+  /**
+   * Wie viele Nachrichten die KI vom Verlauf sieht; `undefined` = Vorgabe. Der Textverlauf
+   * bleibt davon unberührt, nur der Kontext (und damit die Token je Antwort) wird kleiner.
+   */
+  setHistoryLimit(limit?: number): void {
+    this.historyLimit = Math.max(
+      2,
+      Math.min(MAX_HISTORY, limit ?? MAX_HISTORY),
+    );
+    if (this.history.length > this.historyLimit * 2)
+      this.history = this.history.slice(-this.historyLimit * 2);
   }
 
   /**
@@ -563,7 +578,7 @@ export class VoiceCallEngine {
   /** Der Verlauf ohne die Kennungen: sie gehen nicht an das Modell. */
   private plainHistory(): ChatMessage[] {
     return this.history
-      .slice(-MAX_HISTORY)
+      .slice(-this.historyLimit)
       .map(({ role, content }) => ({ role, content }));
   }
 

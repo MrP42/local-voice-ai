@@ -1676,6 +1676,16 @@ const SPEAK_CLIPBOARD_DEFAULT: &str = "ctrl+shift+space";
 #[cfg(not(target_os = "macos"))]
 const SPEAK_CLIPBOARD_DEFAULT: &str = SPEAK_CLIPBOARD_LEGACY;
 
+/// Standard fuer „Hauptgespraech“ (Sprachgespraech per Tastenkuerzel, auch
+/// ausserhalb der App). Reines Strg+Alt geht nicht: unter Windows ist AltGr =
+/// Strg+Alt, jedes „@“ oder „€“ wuerde das Gespraech starten. G wie Gespraech;
+/// AltGr+G erzeugt im deutschen Layout kein Zeichen. Auf dem Mac ist ⌃⌥ die
+/// VoiceOver-Taste, darum ⌃⇧G.
+#[cfg(target_os = "macos")]
+pub(crate) const VOICE_CALL_DEFAULT: &str = "ctrl+shift+g";
+#[cfg(not(target_os = "macos"))]
+pub(crate) const VOICE_CALL_DEFAULT: &str = "ctrl+alt+g";
+
 pub fn get_default_settings() -> AppSettings {
     #[cfg(target_os = "windows")]
     let default_shortcut = "ctrl+space";
@@ -1735,6 +1745,18 @@ pub fn get_default_settings() -> AppSettings {
             description: "Reads the current clipboard text aloud.".to_string(),
             default_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
             current_binding: SPEAK_CLIPBOARD_DEFAULT.to_string(),
+        },
+    );
+
+    bindings.insert(
+        "voice_call".to_string(),
+        ShortcutBinding {
+            id: "voice_call".to_string(),
+            name: "Main conversation".to_string(),
+            description: "Starts or ends the spoken main conversation, also outside the app."
+                .to_string(),
+            default_binding: VOICE_CALL_DEFAULT.to_string(),
+            current_binding: VOICE_CALL_DEFAULT.to_string(),
         },
     );
 

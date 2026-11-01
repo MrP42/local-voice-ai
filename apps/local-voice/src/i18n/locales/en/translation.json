@@ -1460,6 +1460,10 @@
         "notFound": "Shortcut not found",
         "pressKeys": "Press keys...",
         "bindings": {
+          "voice_call": {
+            "name": "Main conversation shortcut",
+            "description": "Starts or ends the spoken main conversation, also outside the app. The answer is spoken; the text is kept in the conversation history. Plain Ctrl+Alt is not possible because AltGr is Ctrl+Alt on Windows."
+          },
           "transcribe": {
             "name": "Transcribe Shortcut",
             "description": "The keyboard shortcut to record and transcribe your voice."
@@ -2491,6 +2495,14 @@
     }
   },
   "overlay": {
+    "call": {
+      "title": "Main conversation",
+      "listening": "Listening",
+      "hearing": "Hearing",
+      "thinking": "Thinking …",
+      "speaking": "Speaking",
+      "end": "End conversation"
+    },
     "transcribing": "Transcribing...",
     "processing": "Processing...",
     "notice": {
@@ -6552,6 +6564,12 @@
     },
     "footer": {
       "label": "Conversation",
+      "phone": {
+        "start": "Start main conversation",
+        "startWithKeys": "Start main conversation ({{keys}})",
+        "end": "End conversation"
+      },
+      "newMain": "Start a new main conversation",
       "title": "Conversation: microphone, voice and flow",
       "microphone": "Microphone",
       "output": "Output",

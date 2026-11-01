@@ -3344,6 +3344,14 @@ async voiceCallSynthesize(text: string) : Promise<Result<string, string>> {
 }
 },
 /**
+ * Status des Sprachgespraechs im Overlay, wie beim Diktat: Hoert zu, Hoert,
+ * Denkt nach, Spricht. `None` blendet es aus (nur, wenn es ein Gespraech zeigt).
+ * Das Hauptfenster ruft das auf, auch wenn es verborgen ist.
+ */
+async voiceCallOverlay(state: string | null) : Promise<void> {
+    await TAURI_INVOKE("voice_call_overlay", { state });
+},
+/**
  * Zusammenfassungen der Gespräche: Angeheftete zuerst, dann nach letzter
  * Änderung absteigend. Archivierte nur mit `include_archived`.
  */

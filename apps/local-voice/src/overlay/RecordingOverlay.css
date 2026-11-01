@@ -400,3 +400,46 @@
   font-weight: 600;
   color: var(--s-accent);
 }
+
+/* ---- Sprachgespräch (Hauptgespräch per Tastenkürzel) ----
+   Telefon links statt des Punkts; Grün wie „Anruf aktiv“ in der Fußleiste. */
+.scall {
+  --s-call: #16a34a;
+}
+.scall-phone {
+  width: 13px;
+  height: 13px;
+  color: var(--s-call);
+  flex: none;
+}
+.scall.call-hearing .scall-phone,
+.scall.call-speaking .scall-phone {
+  animation: scall-ring 1.2s ease-in-out infinite;
+}
+@keyframes scall-ring {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+}
+.scall .swork-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.scall-spin {
+  width: 10px;
+  height: 10px;
+}
+.scall-speaking {
+  color: var(--s-call);
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scall-phone {
+    animation: none !important;
+  }
+}

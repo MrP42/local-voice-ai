@@ -44,6 +44,7 @@ import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
+import { installMainCallBridge } from "./components/voice-call/mainCall";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { pasteNoticeKeys } from "@/lib/utils/pasteNotice";
 import {
@@ -240,6 +241,9 @@ function App() {
     window.addEventListener("lv-navigate", handler);
     return () => window.removeEventListener("lv-navigate", handler);
   }, [setCurrentSection]);
+
+  // Hauptgespräch per Tastenkürzel: läuft im Hauptfenster, auch wenn es verborgen ist.
+  useEffect(() => installMainCallBridge(), []);
 
   // "Vorbereiten" im Hinweisfenster (M5-P5e): das Hauptfenster kommt nach vorn
   // (Backend), hier wechselt es zu den Aufnahmen. Den Brief oeffnet dort die

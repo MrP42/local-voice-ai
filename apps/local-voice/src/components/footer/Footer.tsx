@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import ModelSelector from "../model-selector";
 import { MicSelector } from "./MicSelector";
 import { CallMenu } from "./CallMenu";
+import { CallButton } from "./CallButton";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import { LlmSelector } from "./LlmSelector";
 import { ResourceMeter } from "./ResourceMeter";
@@ -13,7 +14,8 @@ import { FishServerButton } from "./FishServerButton";
 
 const Footer: React.FC = () => {
   const [version, setVersion] = useState("");
-  const callActive = useVoiceCallStore((s) => s.active);
+  const callPage = useVoiceCallStore((s) => s.active);
+  const callRunning = useVoiceCallStore((s) => s.state !== "idle");
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -39,12 +41,17 @@ const Footer: React.FC = () => {
           <LlmSelector />
         </div>
 
-        {/* Rechts: Mikrofon, Anrufmenü, Fish-Server, Schild, Speicher,
+        {/* Rechts: Mikrofon, Telefon (Gespräch), Fish-Server, Schild, Speicher,
             Trenner, Version. */}
         <div className="flex items-center gap-0.5 shrink-0">
           <MicSelector />
-          {/* Anrufmenü direkt hinter dem Mikrofon, solange ein Anruf läuft. */}
-          {callActive && <CallMenu />}
+          {/* Telefon direkt hinter dem Mikrofon: grau ohne, grün mit laufendem
+              Gespräch; startet das Hauptgespräch wie das Tastenkürzel. Der Pfeil
+              mit den Gesprächseinstellungen nur, solange es etwas einzustellen gibt. */}
+          <span className="lv-call-group">
+            <CallButton />
+            {(callPage || callRunning) && <CallMenu />}
+          </span>
           {/* Fish-Speech-Server (Vorlesen). */}
           <FishServerButton />
           {/* Schild: sicher und regelkonform? Immer sichtbar, auch schmal. */}
