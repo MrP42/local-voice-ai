@@ -37,8 +37,8 @@
 .reader-run {
   position: absolute;
   top: 10px;
-  left: 52px;
-  right: 52px;
+  left: 42px;
+  right: 42px;
   font-size: 11.5px;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -108,7 +108,7 @@
 .reader-block {
   position: relative;
   margin: 0 0 0.9em;
-  padding-left: 96px;
+  padding-left: var(--gutter, 96px);
   padding-right: 8px;
   orphans: 2;
   widows: 2;
@@ -140,22 +140,35 @@
 .reader-item .reader-dot {
   margin-right: 0.5em;
 }
-.reader-bar {
-  position: absolute;
-  left: 84px;
-  top: 0.25em;
-  bottom: 0.25em;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--speaker-c);
+/* Sprecherstrich an den Zeilen statt am Block: jede Zeile malt ihr Stück
+   (box-decoration-break: clone), links in die Lücke vor dem Text gezogen.
+   Ein Strich am Block lief am Spaltenumbruch über den Text hinaus bis ans
+   Spaltenende bzw. zerfiel in Stummel ohne Text (Patrick 01.11.). Die
+   Polsterung oben/unten füllt die Zeilenhöhe, damit der Strich durchläuft. */
+.reader-block--bar {
+  --bar-gap: 9px;
+}
+.reader-block--bar > .reader-text {
+  margin-left: calc(-1 * var(--bar-gap));
+  padding: 0.28em 0 0.28em var(--bar-gap);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: linear-gradient(var(--speaker-c), var(--speaker-c)) 0 0 / 3px
+    100% no-repeat;
 }
 /* Sprecher ohne eingerichtete Stimme: Farbe bleibt, der Strich ist gestrichelt. */
-.reader-block--novoice > .reader-bar {
+.reader-block--bar.reader-block--novoice > .reader-text {
   background: repeating-linear-gradient(
-    to bottom,
-    var(--speaker-c) 0 5px,
-    transparent 5px 9px
-  );
+      to bottom,
+      var(--speaker-c) 0 5px,
+      transparent 5px 9px
+    )
+    0 0 / 3px 100% no-repeat;
+}
+/* Pause ohne Lesetext: nur Abstand, kein Strich, kein Name. */
+.reader-pause {
+  height: 0.5em;
+  margin: 0;
 }
 /* Der Name sitzt IN der ersten Zeile (links in den Rand gezogen), nicht
    absolut am Absatz: so wandert er beim Seitenumbruch mit dem Text auf die
@@ -164,8 +177,8 @@
   position: relative;
   display: inline-block;
   vertical-align: top;
-  margin: 0.35em 20px 0 -96px;
-  width: 76px;
+  margin: 0.35em 16px 0 calc(-1 * var(--gutter, 96px));
+  width: calc(var(--gutter, 96px) - 16px);
   text-indent: 0;
   padding: 1px 2px;
   border: 0;
@@ -298,8 +311,9 @@
   .reader-book--narrow .reader-cont .reader-who {
     display: none;
   }
-  .reader-book--narrow .reader-bar {
-    left: -8px;
+  .reader-book--narrow .reader-block--bar {
+    --bar-gap: 10px;
+    padding-left: 10px;
   }
   .reader-book--narrow .reader-turn {
     display: none;
@@ -384,11 +398,15 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+.reader-player__ctrls > .mediabar {
+  flex: none;
+  flex-wrap: nowrap;
+}
 .reader-player__where {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 140px;
+  flex: 1 1 0;
   min-width: 0;
   font-size: 12.5px;
   color: var(--color-text-muted);
@@ -396,10 +414,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.reader-player__extra {
-  flex: 1 1 140px;
+/* Wiedergabe + Werkzeuge als ein rechtsbündiger Block, mit und ohne
+   rechte Spalte gleich (Patrick 01.11. 21:18); links die Position. */
+.reader-player__tools {
+  /* Darf schrumpfen: dann misst die Leiste den Überlauf der Werkzeuge
+     (ReaderPlayerBar, dockNeed) und legt sie hinter den Knopf. */
+  flex: 0 1 auto;
+  min-width: 0;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+}
+.reader-player__extra {
+  flex: 0 0 auto;
+  display: flex;
   gap: 6px;
 }
 .reader-player__pill {
@@ -428,6 +457,7 @@
 }
 .reader-player__more {
   display: none;
+  flex-shrink: 0;
 }
 .reader-player__pill--icon {
   padding: 0 8px;
@@ -443,6 +473,9 @@
   }
   .reader-player__more {
     display: block;
+  }
+  .reader-player__tools {
+    flex: 0 0 auto;
   }
   .reader-player__prog {
     gap: 6px;
@@ -601,9 +634,7 @@
   flex: 1 1 0;
   min-width: 90px;
 }
-.reader-player--docked .reader-player__extra {
-  flex: 0 0 auto;
-}
+
 .reader-dock {
   display: flex;
   align-items: center;
@@ -613,9 +644,9 @@
   overflow: hidden;
   max-height: 48px;
 }
+/* Stimme in der Leiste: nur der Dropdown-Knopf (Patrick 01.11.). */
 .reader-dock__voice {
-  flex: 0 0 170px;
-  width: 170px;
+  flex: 0 0 auto;
 }
 /* Hinweise unter der Stimme stehen im Knopf-Fenster und rechts, in der
    einzeiligen Leiste nicht (dort Tooltip). */
