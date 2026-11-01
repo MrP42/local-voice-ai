@@ -28,7 +28,6 @@ import { Profilknopf } from "../konto/Profilknopf";
 import { ProfilHinzufuegenDialog } from "../konto/ProfilHinzufuegenDialog";
 import { useKonto } from "../konto/useKonto";
 import { useKontoLabels } from "../konto/labels";
-import { openSettingsTab } from "../../lib/openSettingsTab";
 import { APP_NAME } from "./frame";
 
 interface TitlebarToolsProps {
@@ -269,7 +268,6 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
         status={konto.status}
         weitereProfile={konto.weitere}
         onMeinProfil={() => onNavigate("profile")}
-        onKontoGeraete={() => openSettingsTab("account")}
         onProfilWechseln={(id) =>
           konto
             .aktivieren(id)

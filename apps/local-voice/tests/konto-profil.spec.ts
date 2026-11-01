@@ -280,21 +280,19 @@ test("Aenderung einer anderen App (Ereignis konto-geaendert) aktualisiert den Kn
   ).toBeVisible();
 });
 
-test("Konto & Geraete im Menue oeffnet den neuen Reiter", async ({ page }) => {
+test("Profilmenue springt nicht in die Einstellungen", async ({ page }) => {
   await page.goto("/");
   await page
     .locator(".lv-titlebar")
     .getByRole("button", { name: /^Profil:/ })
     .click();
-  await page
-    .locator(".wai-konto-menue")
-    .getByRole("button", { name: "Konto & Geräte" })
-    .click();
-  await expect(page.locator("#page-title")).toHaveText("Einstellungen");
+  const menue = page.locator(".wai-konto-menue");
   await expect(
-    page.getByRole("tab", { name: "Konto & Geräte" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByTestId("konto-profilliste")).toBeVisible();
+    menue.getByRole("button", { name: "Mein Profil" }),
+  ).toBeVisible();
+  await expect(
+    menue.getByRole("button", { name: /Konto & Geräte|Einstellungen/ }),
+  ).toHaveCount(0);
 });
 
 test("Reiter: Konto & Geraete zwischen Allgemein und Ueber, Sync-Karte zieht um", async ({
