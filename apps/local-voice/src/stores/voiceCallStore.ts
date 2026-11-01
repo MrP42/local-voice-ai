@@ -439,7 +439,12 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
             return { lines, metrics: [...s.metrics.slice(-19), m] };
           }),
         onError: (error) => set({ error }),
-        conversationId: () => get().conversationId,
+        conversationId: async () => {
+          // Erst fertig speichern lassen: so kennt der Aufruf das laufende Gespräch,
+          // und das Backend kann es ausnehmen (ohne Kennung sperrt es Gesprächswerkzeuge).
+          await persistChain;
+          return get().conversationId;
+        },
         onStatus: (status) => {
           if (status === null) set({ toolStatus: null });
           else if (status.kind === "tool") set({ toolStatus: status.tool });

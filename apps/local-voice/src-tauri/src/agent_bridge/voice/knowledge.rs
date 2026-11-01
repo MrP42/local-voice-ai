@@ -44,6 +44,10 @@ const PAGE_CHARS: usize = 3_000;
 const MAX_SPAN_DAYS: i64 = 62;
 const DEFAULT_SPAN_DAYS: i64 = 7;
 const MAX_ID_CHARS: usize = 64;
+/// Meldung bei einem unbekannten Argumentfeld (ohne dessen Namen, siehe `Args::done`).
+const UNKNOWN_FIELD: &str = "Ein Argumentfeld kennt dieses Werkzeug nicht.";
+/// Meldung, solange das laufende Gespraech noch keine Kennung hat.
+const CONVERSATION_UNKNOWN: &str = "Das laufende Gespräch ist noch nicht gespeichert; die Gesprächswerkzeuge stehen erst danach zur Verfügung. Es wurde nichts gelesen.";
 
 // ---------------------------------------------------------------------------
 // Daten, die die Quelle liefert
@@ -176,6 +180,11 @@ impl Need {
     }
 }
 
+const DAY_MEETINGS: usize = 8;
+const DAY_DICTATIONS: usize = 6;
+const DAY_CONVERSATIONS: usize = 6;
+const DAY_EVENTS: usize = 15;
+
 const DAY_AREAS: &[Area] = &[
     Area::Meetings,
     Area::Dictations,
@@ -271,7 +280,7 @@ pub fn specs() -> Vec<Spec> {
         Spec {
             name: "day_overview",
             title: "Tagesüberblick",
-            description: "Fasst einen Tag zusammen: Besprechungen, Diktate, Gespräche und Termine mit Titel, Zeit und kurzem Auszug, soweit der Nutzer die Bereiche freigegeben hat (nicht_freigegeben nennt die übrigen). Standard heute. Nur lesend.",
+            description: "Fasst einen Tag zusammen: Besprechungen, Diktate, Gespräche und Termine mit Titel, Zeit und kurzem Auszug, soweit der Nutzer die Bereiche freigegeben hat (nicht_freigegeben nennt die übrigen). Jede Liste ist gekürzt; „weitere“ nennt je Liste, wie viele fehlen. Dann nachfragen oder das Spezialwerkzeug nutzen (calendar_events, conversations_list, dictations_recent, Besprechungen suchen). Standard heute. Nur lesend.",
             parameters: object(
                 json!({ "date": date("Tag (YYYY-MM-DD, Ortszeit), Standard heute.") }),
                 &[],
@@ -375,10 +384,8 @@ impl Args {
     fn done(self) -> Result<(), String> {
         match self.map.keys().next() {
             None => Ok(()),
-            Some(key) => Err(format!(
-                "Das Feld „{}“ kennt dieses Werkzeug nicht.",
-                clean_line(key).chars().take(40).collect::<String>()
-            )),
+            // Bewusst ohne den Feldnamen: er stammt aus dem Modelltext und landet im Audit.
+            Some(_) => Err(UNKNOWN_FIELD.to_string()),
         }
     }
 }
@@ -541,6 +548,20 @@ impl Context<'_> {
     fn is_current(&self, id: &str) -> bool {
         self.current_conversation == Some(id)
     }
+
+    /// Ohne Kennung des laufenden Gespraechs ist nicht zu sagen, was ausgenommen werden muss:
+    /// dann (fail closed) laeuft kein Gespraechswerkzeug.
+    fn conversations_open(&self) -> bool {
+        self.current_conversation.is_some_and(valid_id)
+    }
+
+    fn require_conversation(&self) -> Result<(), String> {
+        if self.conversations_open() {
+            Ok(())
+        } else {
+            Err(CONVERSATION_UNKNOWN.to_string())
+        }
+    }
 }
 
 /// Fuehrt ein Wissenswerkzeug aus. Die Freigabe wird hier noch einmal geprueft.
@@ -618,6 +639,7 @@ fn conversations_list(
     ctx: &Context<'_>,
     mut a: Args,
 ) -> Result<Value, String> {
+    ctx.require_conversation()?;
     let limit = a.limit(8, 20)?;
     a.done()?;
     let list: Vec<Value> = source
@@ -635,6 +657,7 @@ fn conversations_search(
     ctx: &Context<'_>,
     mut a: Args,
 ) -> Result<Value, String> {
+    ctx.require_conversation()?;
     let query = a.required("query", MAX_QUERY_CHARS)?;
     let limit = a.limit(8, 20)?;
     a.done()?;
@@ -676,6 +699,7 @@ fn conversation_get(
     ctx: &Context<'_>,
     mut a: Args,
 ) -> Result<Value, String> {
+    ctx.require_conversation()?;
     let id = a.required("id", MAX_ID_CHARS)?;
     a.done()?;
     if !valid_id(&id) {
@@ -704,10 +728,74 @@ fn conversation_get(
                "earlier_entries_omitted": omitted }))
 }
 
+const DAY_MS: i64 = 86_400_000;
+
+/// Der Kalendertag eines Ganztags-Zeitpunkts. Die Quellen speichern ihn verschieden: ICS als
+/// Mitternacht der Standardzone (Ortszeit), Graph als Mitternacht UTC. Ein Wert genau auf
+/// UTC-Mitternacht ist der Graph-Fall (der Tag ist sein UTC-Datum), alles andere zaehlt als
+/// Ortszeit. Nur so landet ein ganztaegiger Termin an keiner Zeitzone am Vor- oder Folgetag.
+fn all_day_date(ms: i64) -> Option<NaiveDate> {
+    if ms.rem_euclid(DAY_MS) == 0 {
+        return DateTime::from_timestamp_millis(ms).map(|d| d.date_naive());
+    }
+    local(ms).map(|d| d.date_naive())
+}
+
+/// Erster und letzter Tag (einschliesslich) eines ganztaegigen Termins; das Ende der Quellen
+/// ist ausschliessend (Mitternacht nach dem letzten Tag).
+fn all_day_span(e: &EventInfo) -> Option<(NaiveDate, NaiveDate)> {
+    let first = all_day_date(e.starts_ms)?;
+    let last = match all_day_date(e.ends_ms) {
+        Some(end) if e.ends_ms > e.starts_ms && end > first => end.pred_opt()?,
+        _ => first,
+    };
+    Some((first, last))
+}
+
+/// Beruehrt der Termin die Tage `from` bis `to` (einschliesslich)? Ganztaegige nach Kalendertag,
+/// alle anderen nach Zeit.
+fn touches(e: &EventInfo, from: NaiveDate, to: NaiveDate, start: i64, end: i64) -> bool {
+    if e.all_day {
+        return all_day_span(e).is_some_and(|(first, last)| first <= to && last >= from);
+    }
+    e.starts_ms < end && (e.ends_ms > start || e.starts_ms >= start)
+}
+
+/// Die Termine der Tage `from` bis `to`. Die Quelle bekommt je einen Tag Spielraum (ein
+/// ganztaegiger Termin liegt je nach Zone neben der Tagesgrenze), gefiltert wird hier.
+fn events_between(
+    source: &dyn KnowledgeSource,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> Result<Vec<EventInfo>, String> {
+    let (start, _) = day_bounds(from)?;
+    let (_, end) = day_bounds(to)?;
+    let mut events: Vec<EventInfo> = source
+        .calendar(start - DAY_MS, end + DAY_MS)?
+        .into_iter()
+        .filter(|e| touches(e, from, to, start, end))
+        .collect();
+    events.sort_by_key(|e| {
+        if e.all_day {
+            all_day_span(e)
+                .and_then(|(first, _)| day_start(first).ok())
+                .unwrap_or(e.starts_ms)
+        } else {
+            e.starts_ms
+        }
+    });
+    Ok(events)
+}
+
 fn event_json(e: &EventInfo) -> Value {
     let mut v = json!({ "title": head(&e.title, 100), "all_day": e.all_day });
     let m = v.as_object_mut().expect("Objekt");
-    if e.all_day {
+    if let (true, Some((first, last))) = (e.all_day, all_day_span(e)) {
+        m.insert("day".to_string(), json!(first.to_string()));
+        if last > first {
+            m.insert("until".to_string(), json!(last.to_string()));
+        }
+    } else if e.all_day {
         m.insert("day".to_string(), json!(fmt_day(e.starts_ms)));
     } else {
         m.insert("from".to_string(), json!(fmt_time(e.starts_ms)));
@@ -746,15 +834,27 @@ fn calendar_events(
             "Der Zeitraum ist zu lang (höchstens {MAX_SPAN_DAYS} Tage)."
         ));
     }
-    let (start, _) = day_bounds(from)?;
-    let (_, end) = day_bounds(to)?;
-    let events = source.calendar(start, end)?;
+    let events = events_between(source, from, to)?;
     let list: Vec<Value> = events.iter().take(50).map(event_json).collect();
     Ok(
         json!({ "from": from.to_string(), "to": to.to_string(), "events": list,
                "returned": list.len(), "total": events.len(),
                "note": "Stand des lokalen Kalender-Caches, kein Abruf im Netz." }),
     )
+}
+
+/// Kappt eine Liste auf `max` Eintraege; was fehlt, steht unter `more[name]`.
+fn capped(
+    name: &str,
+    items: impl Iterator<Item = Value>,
+    max: usize,
+    more: &mut Map<String, Value>,
+) -> Value {
+    let all: Vec<Value> = items.collect();
+    if all.len() > max {
+        more.insert(name.to_string(), json!(all.len() - max));
+    }
+    Value::Array(all.into_iter().take(max).collect())
 }
 
 fn day_overview(
@@ -769,44 +869,60 @@ fn day_overview(
     a.done()?;
     let (start, end) = day_bounds(date)?;
     let mut out = Map::new();
+    let mut more = Map::new();
     out.insert("date".to_string(), json!(date.to_string()));
     if ctx.areas.has(Area::Meetings) {
-        let list: Vec<Value> = source
-            .meetings(start, end, 8)?
-            .iter()
-            .map(|m| {
+        let all = source.meetings(start, end, DAY_MEETINGS + 1)?;
+        let list = capped(
+            "meetings",
+            all.iter().map(|m| {
                 json!({ "id": m.id, "title": head(&m.title, 100), "time": fmt_time(m.started_ms),
-                        "minutes": m.minutes })
-            })
-            .collect();
-        out.insert("meetings".to_string(), Value::Array(list));
+                    "minutes": m.minutes })
+            }),
+            DAY_MEETINGS,
+            &mut more,
+        );
+        out.insert("meetings".to_string(), list);
     }
     if ctx.areas.has(Area::Dictations) {
-        let list: Vec<Value> = source
-            .dictations(Some(start), Some(end), 6)?
-            .iter()
-            .map(|d| dictation_json(d, BRIEF_CHARS, 0))
-            .collect();
-        out.insert("dictations".to_string(), Value::Array(list));
+        let all = source.dictations(Some(start), Some(end), DAY_DICTATIONS + 1)?;
+        let list = capped(
+            "dictations",
+            all.iter().map(|d| dictation_json(d, BRIEF_CHARS, 0)),
+            DAY_DICTATIONS,
+            &mut more,
+        );
+        out.insert("dictations".to_string(), list);
     }
     if ctx.areas.has(Area::Conversations) {
-        let list: Vec<Value> = source
-            .conversations()?
-            .iter()
-            .filter(|c| !ctx.is_current(&c.id) && c.updated_ms >= start && c.updated_ms < end)
-            .take(6)
-            .map(conversation_row)
-            .collect();
-        out.insert("conversations".to_string(), Value::Array(list));
+        if ctx.conversations_open() {
+            let all = source.conversations()?;
+            let list = capped(
+                "conversations",
+                all.iter()
+                    .filter(|c| {
+                        !ctx.is_current(&c.id) && c.updated_ms >= start && c.updated_ms < end
+                    })
+                    .map(conversation_row),
+                DAY_CONVERSATIONS,
+                &mut more,
+            );
+            out.insert("conversations".to_string(), list);
+        } else {
+            out.insert("conversations".to_string(), json!([]));
+            out.insert(
+                "conversations_hinweis".to_string(),
+                json!(CONVERSATION_UNKNOWN),
+            );
+        }
     }
     if ctx.areas.has(Area::Calendar) {
-        let list: Vec<Value> = source
-            .calendar(start, end)?
-            .iter()
-            .take(15)
-            .map(event_json)
-            .collect();
-        out.insert("events".to_string(), Value::Array(list));
+        let all = events_between(source, date, date)?;
+        let list = capped("events", all.iter().map(event_json), DAY_EVENTS, &mut more);
+        out.insert("events".to_string(), list);
+    }
+    if !more.is_empty() {
+        out.insert("weitere".to_string(), Value::Object(more));
     }
     let hidden: Vec<&str> = DAY_AREAS
         .iter()

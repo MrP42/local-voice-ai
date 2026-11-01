@@ -86,8 +86,8 @@ export interface CallCallbacks {
   onUsage?(usage: CallUsageEvent): void;
   /** Werkzeug läuft / Hinweis des Orchestrators; `null` löscht die Werkzeugzeile. */
   onStatus?(status: CallStatus | null): void;
-  /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag. */
-  conversationId?(): string | null;
+  /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
+  conversationId?(): string | null | Promise<string | null>;
 }
 
 interface ChatMessage {
@@ -187,7 +187,7 @@ export class VoiceCallEngine {
       },
       onUsage: (u) => this.cb.onUsage?.(u),
       onStatus: (s) => this.cb.onStatus?.(s),
-      conversationId: () => this.cb.conversationId?.() ?? null,
+      conversationId: async () => (await this.cb.conversationId?.()) ?? null,
     });
     // Ändern sich Modelle, Verbindungen, Regelwerk oder Einstellungen, liest der nächste Schritt neu.
     const invalidate = () => this.session.invalidate();

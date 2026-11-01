@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use super::knowledge::{
+    ConversationInfo, ConversationView, Dictation, EntryInfo, EventInfo, MeetingInfo, PageInfo,
+};
 use super::*;
 use crate::agent_bridge::catalog::{ToolHandler, ToolSpec};
 use crate::managers::integrations::approvals;
@@ -12,9 +15,6 @@ use crate::managers::integrations::audit::{self, AuditFilter};
 use crate::managers::integrations::model::{GrantMode, IntegrationPatch};
 use crate::managers::integrations::store;
 use crate::managers::integrations::test_support::Fx;
-use super::knowledge::{
-    ConversationInfo, ConversationView, Dictation, EntryInfo, EventInfo, MeetingInfo, PageInfo,
-};
 
 const NOW: i64 = 1_790_000_000_000;
 const READING: [&str; 3] = ["meetings_list", "meetings_search", "meeting_transcript"];
@@ -86,7 +86,12 @@ impl ToolHandler for Fake {
 struct Source;
 
 impl knowledge::KnowledgeSource for Source {
-    fn dictations(&self, _: Option<i64>, _: Option<i64>, _: usize) -> Result<Vec<Dictation>, String> {
+    fn dictations(
+        &self,
+        _: Option<i64>,
+        _: Option<i64>,
+        _: usize,
+    ) -> Result<Vec<Dictation>, String> {
         Ok(vec![Dictation {
             id: 1,
             at_ms: NOW,
@@ -131,7 +136,10 @@ fn all_areas() -> Areas {
 }
 
 fn areas_of(keys: &[&str], transcripts: bool) -> Areas {
-    Areas::from_settings(&keys.iter().map(|k| k.to_string()).collect::<Vec<_>>(), transcripts)
+    Areas::from_settings(
+        &keys.iter().map(|k| k.to_string()).collect::<Vec<_>>(),
+        transcripts,
+    )
 }
 
 struct Rig {
@@ -229,7 +237,10 @@ fn read_only_follows_the_catalog_annotation() {
 #[test]
 fn knowledge_tools_are_not_in_the_bridge_catalog() {
     for name in KNOWLEDGE {
-        assert!(catalog::find(name).is_none(), "{name} gehört nicht in den Katalog");
+        assert!(
+            catalog::find(name).is_none(),
+            "{name} gehört nicht in den Katalog"
+        );
         assert!(knowledge::find(name).is_some(), "{name}");
     }
     assert_eq!(knowledge::specs().len(), KNOWLEDGE.len());
@@ -315,13 +326,23 @@ fn nothing_is_offered_by_default() {
     r.opts = VoiceOptions::default();
     assert!(r.opts.areas.is_empty());
     assert!(r.list().is_empty());
-    for name in READING.iter().chain(READING_OTHER.iter()).chain(KNOWLEDGE.iter()) {
+    for name in READING
+        .iter()
+        .chain(READING_OTHER.iter())
+        .chain(KNOWLEDGE.iter())
+    {
         let err = r.call(name, "{}").unwrap_err();
         assert!(err.contains("nicht freigegeben"), "{name}: {err}");
-        assert!(err.contains("Gesprächseinstellungen → Wissen"), "{name}: {err}");
+        assert!(
+            err.contains("Gesprächseinstellungen → Wissen"),
+            "{name}: {err}"
+        );
     }
     assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0);
-    assert!(r.audit().is_empty(), "ein abgelehnter Aufruf schreibt kein Werkzeug-Audit");
+    assert!(
+        r.audit().is_empty(),
+        "ein abgelehnter Aufruf schreibt kein Werkzeug-Audit"
+    );
 }
 
 #[test]
@@ -330,27 +351,44 @@ fn the_list_follows_the_areas() {
     let listed = |r: &Rig| r.list();
     // Alles frei.
     let all = listed(&r);
-    assert_eq!(all.len(), READING.len() + READING_OTHER.len() + KNOWLEDGE.len());
+    assert_eq!(
+        all.len(),
+        READING.len() + READING_OTHER.len() + KNOWLEDGE.len()
+    );
     // Nur Besprechungen: die zwei Besprechungswerkzeuge und der Tagesüberblick.
     r.opts.areas = areas_of(&["meetings"], false);
-    assert_eq!(listed(&r), vec!["meetings_list", "meetings_search", "day_overview"]);
+    assert_eq!(
+        listed(&r),
+        vec!["meetings_list", "meetings_search", "day_overview"]
+    );
     // Mit Transkripten kommt `meeting_transcript` hinzu.
     r.opts.areas = areas_of(&["meetings"], true);
     assert!(listed(&r).contains(&"meeting_transcript".to_string()));
     // Der Unterschalter allein öffnet nichts.
     r.opts.areas = areas_of(&["dictations"], true);
     assert!(!listed(&r).contains(&"meeting_transcript".to_string()));
-    assert_eq!(listed(&r), vec!["dictations_recent", "dictations_search", "day_overview"]);
+    assert_eq!(
+        listed(&r),
+        vec!["dictations_recent", "dictations_search", "day_overview"]
+    );
     r.opts.areas = areas_of(&["conversations"], false);
     assert_eq!(
         listed(&r),
-        vec!["conversations_list", "conversations_search", "conversation_get", "day_overview"]
+        vec![
+            "conversations_list",
+            "conversations_search",
+            "conversation_get",
+            "day_overview"
+        ]
     );
     r.opts.areas = areas_of(&["calendar"], false);
     assert_eq!(listed(&r), vec!["calendar_events", "day_overview"]);
     // „Vorlesen“: die lesenden Anbieter-Werkzeuge und die Seiten, kein Tagesüberblick.
     r.opts.areas = areas_of(&["tts"], false);
-    assert_eq!(listed(&r), vec!["tts_providers_list", "tts_pages_list", "tts_page_text"]);
+    assert_eq!(
+        listed(&r),
+        vec!["tts_providers_list", "tts_pages_list", "tts_page_text"]
+    );
 }
 
 #[test]
@@ -359,7 +397,11 @@ fn every_listed_tool_carries_a_parsable_schema_and_a_capability() {
     for t in list(&r.registry, r.opts) {
         let schema: Value = serde_json::from_str(&t.parameters_json).unwrap();
         assert_eq!(schema["type"], "object", "{}", t.name);
-        assert!(!t.description.is_empty() && !t.title.is_empty(), "{}", t.name);
+        assert!(
+            !t.description.is_empty() && !t.title.is_empty(),
+            "{}",
+            t.name
+        );
         assert!(t.capability.contains('.'), "{}: {}", t.name, t.capability);
     }
 }
@@ -369,7 +411,10 @@ fn a_tool_outside_its_area_runs_nothing() {
     let mut r = rig();
     r.opts.areas = areas_of(&["dictations"], false);
     let err = r.call("meetings_list", "{}").unwrap_err();
-    assert!(err.contains("Besprechungen") && err.contains("nicht freigegeben"), "{err}");
+    assert!(
+        err.contains("Besprechungen") && err.contains("nicht freigegeben"),
+        "{err}"
+    );
     let err = r.call("calendar_events", "{}").unwrap_err();
     assert!(err.contains("Termine"), "{err}");
     assert!(r.call("dictations_recent", "{}").is_ok());
@@ -398,7 +443,9 @@ fn the_agent_rights_do_not_decide_for_the_call() {
     store::update(&r.fx.conn(), &id, &patch, NOW).unwrap();
     assert!(!r.list().is_empty());
     assert!(r.call("meetings_list", "{}").is_ok());
-    assert!(approvals::list_pending(&r.fx.conn(), NOW).unwrap().is_empty());
+    assert!(approvals::list_pending(&r.fx.conn(), NOW)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -496,7 +543,10 @@ fn every_call_is_audited_without_content() {
 fn knowledge_calls_go_through_the_gate_with_audit_and_without_content() {
     let r = rig();
     let out = r.call("dictations_recent", r#"{"limit":3}"#).unwrap();
-    assert!(out.contains("GEHEIMES-DIKTAT"), "das Ergebnis geht an das Modell");
+    assert!(
+        out.contains("GEHEIMES-DIKTAT"),
+        "das Ergebnis geht an das Modell"
+    );
     r.call("calendar_events", "{}").unwrap();
     let rows = r.audit();
     let capability_of = |target: &str| {
@@ -518,16 +568,25 @@ fn knowledge_calls_go_through_the_gate_with_audit_and_without_content() {
         let all = format!("{:?}", a);
         assert!(!all.contains("GEHEIM") && !all.contains("limit"), "{all}");
     }
-    assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0, "kein Katalog-Handler beteiligt");
+    assert_eq!(
+        r.fake.calls.load(Ordering::SeqCst),
+        0,
+        "kein Katalog-Handler beteiligt"
+    );
 }
 
 #[test]
 fn the_running_conversation_is_hidden_from_the_conversation_tools() {
     let mut r = rig();
     let out = r.call("conversations_list", "{}").unwrap();
-    assert!(out.contains("conv_alt") && !out.contains("conv_laufend"), "{out}");
+    assert!(
+        out.contains("conv_alt") && !out.contains("conv_laufend"),
+        "{out}"
+    );
+    // Ohne Kennung (Gespraech noch nicht gespeichert) laeuft das Werkzeug nicht: fail closed.
     r.conversation = None;
-    assert!(r.call("conversations_list", "{}").unwrap().contains("conv_laufend"));
+    let err = r.call("conversations_list", "{}").unwrap_err();
+    assert!(err.contains("noch nicht gespeichert"), "{err}");
 }
 
 #[test]
@@ -543,7 +602,11 @@ fn a_failing_audit_blocks_the_call() {
         let err = r.call(name, "{}").unwrap_err();
         assert!(err.contains("Datenbank"), "{name}: {err}");
     }
-    assert_eq!(r.fake.calls.load(Ordering::SeqCst), 0, "ohne Audit keine Aktion");
+    assert_eq!(
+        r.fake.calls.load(Ordering::SeqCst),
+        0,
+        "ohne Audit keine Aktion"
+    );
 }
 
 #[test]

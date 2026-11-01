@@ -101,8 +101,8 @@ export interface OrchestrationDeps {
   ): Promise<() => void>;
   onUsage(usage: TurnUsage): void;
   onStatus(status: CallStatus | null): void;
-  /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag. */
-  conversationId?(): string | null;
+  /** Das laufende Gespräch (es bleibt den Gesprächswerkzeugen verborgen); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
+  conversationId?(): string | null | Promise<string | null>;
 }
 
 export interface Prepared {
@@ -588,7 +588,8 @@ export class OrchestrationSession {
       run: async (tool, args, signal) => {
         if (!signal?.aborted) deps.onStatus({ kind: "tool", tool: tool.name });
         try {
-          return await runTool(tool, args, deps.conversationId?.() ?? null);
+          const id = (await deps.conversationId?.()) ?? null;
+          return await runTool(tool, args, id);
         } finally {
           deps.onStatus(null);
         }

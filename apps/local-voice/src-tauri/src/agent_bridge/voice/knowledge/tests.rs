@@ -397,13 +397,165 @@ fn the_running_conversation_is_never_shown() {
     )
     .unwrap_err();
     assert!(err.contains("laufende Gespräch"), "{err}");
-    // Ohne laufendes Gespräch (neu, noch nicht gespeichert) ist nichts ausgenommen.
-    let c = Context {
-        current_conversation: None,
+}
+
+fn without_id(id: Option<&'static str>) -> Context<'static> {
+    Context {
+        current_conversation: id,
         ..ctx(everything())
+    }
+}
+
+#[test]
+fn without_the_running_conversation_id_no_conversation_tool_runs() {
+    // Fail closed: ohne Kennung (vor dem Anlegen, leer, ungueltig) laeuft kein Gespraechswerkzeug.
+    for id in [None, Some(""), Some("../x")] {
+        let c = without_id(id);
+        for (tool, args) in [
+            ("conversations_list", json!({})),
+            ("conversations_search", json!({"query": "haushalt"})),
+            ("conversation_get", json!({"id": "conv_alt"})),
+        ] {
+            let err = run(&fake(), &c, tool, &args).unwrap_err();
+            assert!(
+                err.contains("noch nicht gespeichert"),
+                "{tool} {id:?}: {err}"
+            );
+        }
+        let day = run(&fake(), &c, "day_overview", &json!({})).unwrap();
+        assert_eq!(day["conversations"], json!([]));
+        assert!(day["conversations_hinweis"].is_string());
+        assert!(day["events"].is_array(), "andere Bereiche laufen weiter");
+    }
+    let known = run(
+        &fake(),
+        &without_id(Some("conv_aktuell")),
+        "conversations_list",
+        &json!({}),
+    );
+    assert!(known.is_ok());
+}
+
+#[test]
+fn unknown_argument_fields_are_reported_without_their_name() {
+    let err = go(everything(), "calendar_events", json!({"GEHEIMER_NAME": 1})).unwrap_err();
+    assert!(!err.contains("GEHEIMER"), "{err}");
+    let err = go(
+        everything(),
+        "dictations_recent",
+        json!({"zzz": 1, "limit": 2}),
+    )
+    .unwrap_err();
+    assert!(!err.contains("zzz"), "{err}");
+}
+
+fn all_day(title: &str, start_ms: i64, end_ms: i64) -> EventInfo {
+    EventInfo {
+        title: title.to_string(),
+        starts_ms: start_ms,
+        ends_ms: end_ms,
+        all_day: true,
+        location: None,
+    }
+}
+
+/// UTC-Mitternacht des Tages (so speichert Graph ganztaegige Termine).
+fn utc_midnight(y: i32, m: u32, d: u32) -> i64 {
+    chrono::Utc
+        .with_ymd_and_hms(y, m, d, 0, 0, 0)
+        .unwrap()
+        .timestamp_millis()
+}
+
+fn titles_of(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn with_events(events: Vec<EventInfo>) -> Fake {
+    let mut f = fake();
+    f.events = events;
+    f
+}
+
+#[test]
+fn all_day_events_stay_on_their_own_day_whatever_the_source_stores() {
+    // ICS: Mitternacht Ortszeit; Graph: Mitternacht UTC. Beide sind der 2.11.
+    let f = with_events(vec![
+        all_day("ICS-Tag", at(2026, 11, 2, 0, 0), at(2026, 11, 3, 0, 0)),
+        all_day(
+            "Graph-Tag",
+            utc_midnight(2026, 11, 2),
+            utc_midnight(2026, 11, 3),
+        ),
+    ]);
+    let day = |d: &str| {
+        let v = run(
+            &f,
+            &ctx(everything()),
+            "day_overview",
+            &json!({ "date": d }),
+        )
+        .unwrap();
+        titles_of(&v["events"])
     };
-    let v = run(&fake(), &c, "conversations_list", &json!({})).unwrap();
-    assert_eq!(v["returned"], 3);
+    assert!(day("2026-11-01").is_empty(), "nicht am Vortag");
+    assert!(day("2026-11-03").is_empty(), "nicht am Folgetag");
+    assert_eq!(day("2026-11-02"), ["ICS-Tag", "Graph-Tag"]);
+    let range = |from: &str, to: &str| {
+        let v = run(
+            &f,
+            &ctx(everything()),
+            "calendar_events",
+            &json!({ "from": from, "to": to }),
+        )
+        .unwrap();
+        (titles_of(&v["events"]), v)
+    };
+    assert!(range("2026-11-01", "2026-11-01").0.is_empty());
+    assert!(range("2026-11-03", "2026-11-04").0.is_empty());
+    let (hit, v) = range("2026-11-02", "2026-11-02");
+    assert_eq!(hit.len(), 2);
+    assert_eq!(v["events"][0]["day"], "2026-11-02");
+    assert!(v["events"][0].get("until").is_none());
+}
+
+#[test]
+fn a_multi_day_all_day_event_covers_each_of_its_days() {
+    let f = with_events(vec![
+        all_day("Klausur", at(2026, 11, 3, 0, 0), at(2026, 11, 6, 0, 0)),
+        all_day(
+            "Dienstreise",
+            utc_midnight(2026, 11, 3),
+            utc_midnight(2026, 11, 6),
+        ),
+    ]);
+    let on = |d: &str| {
+        let v = run(
+            &f,
+            &ctx(everything()),
+            "day_overview",
+            &json!({ "date": d }),
+        )
+        .unwrap();
+        titles_of(&v["events"]).len()
+    };
+    assert_eq!(on("2026-11-02"), 0);
+    assert_eq!(on("2026-11-03"), 2);
+    assert_eq!(on("2026-11-05"), 2, "letzter Tag einschliesslich");
+    assert_eq!(on("2026-11-06"), 0, "das Ende ist ausschliessend");
+    let v = run(
+        &f,
+        &ctx(everything()),
+        "calendar_events",
+        &json!({"from": "2026-11-01", "to": "2026-11-10"}),
+    )
+    .unwrap();
+    assert_eq!(v["events"][0]["day"], "2026-11-03");
+    assert_eq!(v["events"][0]["until"], "2026-11-05");
 }
 
 #[test]
@@ -453,12 +605,12 @@ fn calendar_defaults_to_the_next_seven_days_and_reads_only_the_cache() {
         .collect();
     assert_eq!(
         titles,
-        vec!["Teamrunde", "Feiertag"],
-        "Reihenfolge der Quelle"
+        vec!["Feiertag", "Teamrunde"],
+        "zeitlich sortiert, Ganztägiges zuerst"
     );
-    assert_eq!(one["events"][0]["location"], "Raum 2");
-    assert_eq!(one["events"][1]["day"], "2026-11-01");
-    assert!(one["events"][1].get("from").is_none());
+    assert_eq!(one["events"][1]["location"], "Raum 2");
+    assert_eq!(one["events"][0]["day"], "2026-11-01");
+    assert!(one["events"][0].get("from").is_none());
     let tomorrow = go(
         everything(),
         "calendar_events",
@@ -547,6 +699,12 @@ fn the_day_overview_stays_small() {
         "{}",
         v.to_string().chars().count()
     );
+    assert_eq!(v["events"].as_array().unwrap().len(), DAY_EVENTS);
+    assert_eq!(v["weitere"]["events"], 40 - DAY_EVENTS);
+    assert_eq!(v["weitere"]["dictations"], 1, "40 vorhanden, 7 abgefragt");
+    assert!(v["weitere"].get("meetings").is_none());
+    let small = go(everything(), "day_overview", json!({})).unwrap();
+    assert!(small.get("weitere").is_none(), "nichts gekappt: kein Feld");
 }
 
 #[test]
