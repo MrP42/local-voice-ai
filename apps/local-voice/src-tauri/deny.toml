@@ -47,6 +47,12 @@ exceptions = [
     { allow = ["LGPL-3.0"], crate = "mp3lame-sys" },
 ]
 
+# wai-voice-dienst (Vertrag des Sprachdienstes, ADR-0021) ist eine eigene, nicht veroeffentlichte
+# Crate des WAI SDK (`publish = false`, LicenseRef-WAI-Proprietary) und liegt als Pfad-Abhaengigkeit
+# unter vendor/. Private Crates werden nicht gegen die Allow-Liste geprueft.
+[licenses.private]
+ignore = true
+
 [advisories]
 version = 2
 yanked = "warn"

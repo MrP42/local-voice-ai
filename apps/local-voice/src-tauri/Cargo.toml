@@ -98,6 +98,8 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# ADR-0021 S2: Vertrag des Sprachdienstes, vendort aus dem WAI SDK (scripts/vendor-wai-voice-dienst.py)
+wai-voice-dienst = { path = "vendor/wai-voice-dienst" }
 # Geraete-Sync (Ende-zu-Ende verschluesselt): Schluessel aus dem Passwort,
 # Objekte einzeln versiegelt. RustCrypto, MIT/Apache-2.0.
 chacha20poly1305 = "0.10"

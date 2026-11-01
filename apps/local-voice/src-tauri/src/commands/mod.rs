@@ -1,4 +1,5 @@
 pub mod agent_bridge; // A7
+pub mod sprachdienst; // ADR-0021 S2
 pub mod audio;
 pub mod big_stack; // Hotfix 0.21.1: lange Auftraege auf eigenem Thread mit grossem Stack
 pub mod calendar; // M5-P5b

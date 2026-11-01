@@ -2540,7 +2540,7 @@
         "empty": "Kein Termin in den nächsten 7 Tagen.",
         "start": "Termin aufnehmen",
         "startHint": "Aufnahme zu diesem Termin starten; Titel und Teilnehmende kommen aus dem Kalender",
-        "more": "Weitere Termine heute ({{count}})"
+        "more_one": "Weitere Termine heute ({{count}})"
       }
     },
     "layout": {
@@ -5269,7 +5269,9 @@
       "calendars": "Kalender",
       "calendarsHint": "Kalenderquellen liefern Termine für Titelvorschläge, Erinnerungen und „Als Nächstes“.",
       "mcp": "MCP und Agenten",
-      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen."
+      "mcpHint": "Lässt KI-Clients auf diesem Rechner deine Besprechungen lesen. Schreibende Zugänge mit Rechten je Werkzeug folgen.",
+      "sprachdienst": "Sprachdienst für andere Apps",
+      "sprachdienstHint": "Lässt gekoppelte WAI-Apps auf diesem Computer hören (Spracherkennung) und sprechen (Sprachausgabe). Standardmäßig aus."
     },
     "status": {
       "off": "Aus",
@@ -5280,6 +5282,58 @@
       "read": "Nur lesen",
       "write": "Nur schreiben",
       "both": "Lesen und schreiben"
+    },
+    "sprachdienst": {
+      "loadError": "Der Sprachdienst konnte nicht geladen werden.",
+      "empty": "Noch keine App gekoppelt. Eine App, die den Sprachdienst nutzen will, fragt hier an; du bestätigst sie mit dem Code.",
+      "switch": {
+        "label": "Sprachdienst einschalten",
+        "description": "Standardmäßig aus. Er läuft nur auf diesem Computer und nur für dich; jede App musst du einmal koppeln."
+      },
+      "status": {
+        "running": "Der Sprachdienst läuft",
+        "stopped": "Der Sprachdienst läuft nicht",
+        "off": "Der Sprachdienst ist aus",
+        "endpoint": "Endpunkt: {{name}}",
+        "reason": "Grund: {{error}}",
+        "safe": "Er ist nur für dich erreichbar (aktueller Benutzer dieses Computers), nicht über das Netzwerk."
+      },
+      "client": {
+        "active": "Gekoppelt",
+        "revoked": "Widerrufen",
+        "created": "Gekoppelt {{time}}",
+        "lastUsed": "Zuletzt genutzt {{time}}",
+        "neverUsed": "Noch nie genutzt",
+        "revokedAt": "Widerrufen {{time}}",
+        "revoke": "Widerrufen",
+        "delete": "Entfernen",
+        "revokeConfirm": "{{name}} widerrufen? Die App kann den Sprachdienst danach nicht mehr nutzen und muss neu gekoppelt werden.",
+        "deleteConfirm": "{{name}} aus der Liste entfernen?",
+        "revokeYes": "Widerrufen",
+        "deleteYes": "Entfernen",
+        "rightsHint": "Das darf diese App:"
+      },
+      "rights": {
+        "hoeren": "Hören (Spracherkennung)",
+        "sprechen": "Sprechen (Sprachausgabe)"
+      },
+      "pairing": {
+        "title": "Diese App koppeln?",
+        "body": "<name>{{name}}</name> möchte den Sprachdienst nutzen. Zeigt die App denselben Code? Koppeln nur, wenn er genau übereinstimmt. Bestätige es auch in der App.",
+        "client": "Kennung:",
+        "warnings": {
+          "duplicateName": "Eine App mit diesem Namen ist schon gekoppelt oder wartet. Prüfe, dass es keine Nachahmung ist.",
+          "duplicateClient": "Eine App mit dieser Kennung ist schon gekoppelt oder wartet."
+        },
+        "codeLabel": "Code",
+        "remaining": "Noch {{seconds}} s",
+        "afterwards": "Nach dem Koppeln legst du fest, was die App darf (Hören, Sprechen).",
+        "confirm": "Koppeln",
+        "reject": "Ablehnen",
+        "more_one": "Noch {{count}} weitere Anfrage wartet",
+        "more_other": "Noch {{count}} weitere Anfragen warten",
+        "expired": "Die Anfrage ist abgelaufen."
+      }
     },
     "agentClients": {
       "intro": "Je Programm (Claude Code, Codex, ein Skript) ein Zugang mit eigenem Schlüssel. Ein Zugang darf nur die Werkzeuge benutzen, die du hier für ihn auf „Fragen“ oder „Erlaubt“ stellst – und nur, soweit die Rechte-Matrix oben („Externer Agent“) es zulässt.",

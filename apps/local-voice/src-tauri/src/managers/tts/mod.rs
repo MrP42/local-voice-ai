@@ -738,6 +738,35 @@ impl TtsCore {
         voice: Option<&str>,
         cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_inner(port, seed, text, voice, cancel, true)
+            .await
+    }
+
+    /// Wie [`Self::fetch_wav_cancellable`], aber OHNE Cache: weder aus dem Speicher- noch aus dem
+    /// Plattencache gelesen, und nichts davon geschrieben. Für den Sprachdienst (ADR-0021): was
+    /// eine fremde App sprechen lässt, darf weder Treffer für das eigene Vorlesen sein noch als
+    /// Datei in `tts_cache` liegen bleiben.
+    async fn fetch_wav_uncached(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+    ) -> Result<Vec<u8>, String> {
+        self.fetch_wav_inner(port, seed, text, voice, cancel, false)
+            .await
+    }
+
+    async fn fetch_wav_inner(
+        &self,
+        port: u16,
+        seed: i64,
+        text: &str,
+        voice: Option<&str>,
+        cancel: Option<&Arc<AtomicBool>>,
+        use_cache: bool,
+    ) -> Result<Vec<u8>, String> {
         // Laeuft gerade ein Stimmwechsel, erst danach Stimme und Engine lesen:
         // sonst entstuende ein Satz mit der neuen Engine, die noch nicht bereit
         // ist, oder mit einer halb uebernommenen Stimme.
@@ -770,6 +799,11 @@ impl TtsCore {
         // synthetisiert ist, braucht keine Engine — egal welche.
         let engine_tag = engine.cache_tag(voice.as_deref());
         let cache_key = WavCache::key(&engine_tag, text, seed, voice.as_deref());
+        if !use_cache {
+            return self
+                .engine_synthesize(&engine, port, seed, text, voice.as_deref(), cancel)
+                .await;
+        }
         if let Some(cached) = self.wav_cache.lock().unwrap().get(cache_key) {
             return Ok(cached);
         }
@@ -3198,6 +3232,62 @@ impl TtsManager {
             .await?;
         *self.core.last_used.lock().unwrap() = Instant::now();
         Ok(wav)
+    }
+
+    /// Einen Text satzweise zu WAV-Stücken im Speicher (Sprachdienst, ADR-0021): dieselbe
+    /// Zerlegung, Aufbereitung und derselbe Engine-Weg wie der Datei-Export, aber ohne Datei,
+    /// ohne Wiedergabe und **ohne Cache** (kein Lesen, kein Schreiben von Speicher- und
+    /// Plattencache). `voice` überschreibt die Stimme, sonst gilt die eingestellte. `cancel`
+    /// wird vor und zwischen den Teilschritten geprüft (Abbruch, Widerruf, Verbindungsende).
+    pub async fn synthesize_wavs(
+        &self,
+        raw: &str,
+        voice: Option<&str>,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let abgebrochen = || cancel.load(Ordering::Acquire);
+        if abgebrochen() {
+            return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+        }
+        let max_chars = *self.core.max_chars.lock().unwrap();
+        let utterances = self.utterances(raw.trim()).await;
+        if utterances.is_empty() {
+            return Err("empty text".to_string());
+        }
+        self.refresh_from_settings();
+        self.ensure_engine_ready().await?;
+        if abgebrochen() {
+            return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+        }
+        self.bind_seed_voice().await;
+        let port = *self.core.port.lock().unwrap();
+        let seed = *self.core.seed.lock().unwrap();
+        let strength = *self.core.enhance.lock().unwrap();
+        let mut out = Vec::new();
+        for (sentence, own_voice) in &utterances {
+            let Some(part) = protocol::prepare_text(sentence, max_chars) else {
+                continue;
+            };
+            for piece in protocol::split_pauses(&part.text) {
+                let protocol::SpeechPart::Speak(text) = piece else {
+                    continue;
+                };
+                if abgebrochen() {
+                    return Err(providers::pipeline::CANCELLED_MESSAGE.to_string());
+                }
+                let chosen = voice.or(own_voice.as_deref());
+                let bytes = self
+                    .core
+                    .fetch_wav_uncached(port, seed, &text, chosen, Some(cancel))
+                    .await?;
+                out.push(prepare_sentence_audio(bytes, strength));
+            }
+        }
+        *self.core.last_used.lock().unwrap() = Instant::now();
+        if out.is_empty() {
+            return Err("empty text".to_string());
+        }
+        Ok(out)
     }
 
     /// Der Piper-Zweig des Datei-Exports: ein Lauf durch die Engine-Naht
@@ -6560,6 +6650,45 @@ mod tests {
         // Zweiter Abruf: aus dem Cache, keine zweite Synthese.
         stage.core.fetch_wav(1, 42, shown, None).await.unwrap();
         assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Sprachdienst (ADR-0021): `fetch_wav_uncached` liest keinen Cache und schreibt keinen
+    /// (weder Speicher noch Platte); ein vorhandener Eintrag bleibt unberuehrt.
+    #[tokio::test]
+    async fn fetch_wav_uncached_beruehrt_den_cache_nicht() {
+        let stage = stage("A");
+        let dir = tempfile::tempdir().unwrap();
+        *stage.core.cache_dir.lock().unwrap() = Some(dir.path().to_path_buf());
+        let text = "Hallo Welt, das ist ein ganz gewöhnlicher Satz.";
+        let key = WavCache::key("mock/A", text, 42, Some("A"));
+
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert!(stage.core.wav_cache.lock().unwrap().get(key).is_none());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        // Zweimal sprechen heisst zweimal synthetisieren: kein Treffer aus dem Cache.
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), 2);
+
+        // Ein Eintrag des normalen Vorlesens wird weder gelesen noch veraendert.
+        stage.core.fetch_wav(1, 42, text, None).await.unwrap();
+        let files = std::fs::read_dir(dir.path()).unwrap().count();
+        let calls = stage.engine.calls.load(Ordering::SeqCst);
+        stage
+            .core
+            .fetch_wav_uncached(1, 42, text, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stage.engine.calls.load(Ordering::SeqCst), calls + 1);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), files);
     }
 
     /// Texte ohne Abkuerzung behalten ihren Schluessel und ihren Wortlaut.
