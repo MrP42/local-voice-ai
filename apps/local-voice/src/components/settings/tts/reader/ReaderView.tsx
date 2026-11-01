@@ -587,7 +587,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           }}
           data-testid="reader-flow"
         >
-          {blocks.map((block) => {
+          {blocks.map((block, i) => {
             const key = `${block.start}:${block.kind}`;
             if (block.kind === "rule") return <hr key={key} />;
             if (block.kind === "heading") {
@@ -603,6 +603,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             if (block.runs.every((r) => (r.tag && r.page === undefined) || !r.text.trim()))
               return <div key={key} className="reader-pause" aria-hidden="true" />;
             const speaker = block.speaker;
+            // Folgt der Block auf eine Pause, die den Sprecher erst setzt
+            // (`<Anna>` allein auf der Zeile), zeigt er den Namen selbst.
+            const prev = blocks[i - 1];
+            const cont =
+              block.continues &&
+              !(prev?.marked && prev.runs.every((r) => (r.tag && r.page === undefined) || !r.text.trim()));
             // Ohne Stimme trotzdem farbig (stabil je Name), damit man die
             // Sprecher im Buch auseinanderhält; der Strich ist dann gestrichelt.
             const color =
@@ -612,7 +618,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             return (
               <Tag
                 key={key}
-                className={`reader-block reader-${block.kind}${block.continues ? " reader-cont" : ""}${speaker && showSpeakers ? " reader-block--bar" : ""}${speaker && !speaker.ref ? " reader-block--novoice" : ""}`}
+                className={`reader-block reader-${block.kind}${cont ? " reader-cont" : ""}${speaker && showSpeakers ? " reader-block--bar" : ""}${speaker && !speaker.ref ? " reader-block--novoice" : ""}`}
                 style={{ "--speaker-c": color } as React.CSSProperties}
               >
                 {speaker && showSpeakers && (
@@ -620,7 +626,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                     type="button"
                     className="reader-who"
                     data-speaker={speaker.name}
-                    tabIndex={block.continues ? -1 : 0}
+                    tabIndex={cont ? -1 : 0}
                     aria-label={t("tts.reader.speakerButton", { name: speaker.name })}
                     title={speaker.ref ? speaker.name : t("tts.reader.speakerUnknown", { name: speaker.name })}
                   >

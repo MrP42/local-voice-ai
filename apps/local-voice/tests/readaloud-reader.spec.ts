@@ -1604,3 +1604,32 @@ for (const hidden of ["0", "1"])
     expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width))).toBeLessThan(2);
     expect(tools.x - (media.x + media.width)).toBeLessThan(12);
   });
+
+test("Sprecher allein auf der Zeile: Name steht am folgenden Text", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, "<Anna>\nErste Zeile von Anna.\n\n<Ben> [long pause]\nBen spricht weiter.", 1440);
+  const flow = page.getByTestId("reader-flow");
+  await expect(flow.locator(".reader-pause")).toHaveCount(2);
+  for (const name of ["Anna", "Ben"]) {
+    const who = flow.locator(`.reader-who[data-speaker="${name}"]`);
+    await expect(who).toHaveCount(1);
+    await expect(who).toBeVisible();
+    await expect(who).toHaveCSS("opacity", "1");
+  }
+});
+
+for (const width of [900, 1000, 1150, 1300])
+  test(`Leiste ohne Spalte: kein Überlauf (${width}px)`, async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem("lva.ui.tts.view", "read");
+      window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+    });
+    await open(page, BOOK, width);
+    const ctrls = page.locator(".reader-player__ctrls");
+    await page.waitForTimeout(300);
+    expect(await ctrls.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+    const play = (await page.getByTestId("reader-play").boundingBox())!;
+    const box = (await ctrls.boundingBox())!;
+    expect(play.y + play.height).toBeLessThanOrEqual(box.y + box.height + 1);
+    expect(box.height).toBeLessThan(70);
+  });
