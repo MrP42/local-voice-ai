@@ -5,7 +5,7 @@ import {
   PopoverSurface,
   PopoverTrigger,
 } from "@fluentui/react-components";
-import { Info } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import {
   formatUsd,
@@ -217,9 +217,10 @@ export const InfoLine: React.FC = () => {
           data-testid="knowledge-chip"
           title={t("voiceCall.knowledge.chipTitle")}
           onClick={() => openSettings("knowledge")}
-          className="shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border border-mid-gray/25 bg-mid-gray/10 text-[11px] cursor-pointer text-logo-primary hover:border-logo-primary"
+          className="shrink-0 inline-flex items-center h-5 ps-1.5 pe-1 rounded-full border border-logo-primary/40 bg-logo-primary/10 text-[11px] cursor-pointer text-logo-primary underline-offset-2 hover:underline hover:border-logo-primary"
         >
           {t("voiceCall.knowledge.chip")}
+          <ChevronRight className="w-3 h-3 ms-0.5" aria-hidden="true" />
         </button>
       )}
     </div>
