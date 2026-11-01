@@ -60,6 +60,7 @@ import {
 import { useEngineCaps } from "./useEngineCaps";
 import { SpeakerSwapDialog } from "./speakers/SpeakerSwapDialog";
 import { ReplaceSpeakerDialog } from "./speakers/ReplaceSpeakerDialog";
+import type { SentenceClock } from "./reader/useSentenceClock";
 import { useContextMenu } from "../../ui/ContextMenu";
 import {
   applySwap,
@@ -97,7 +98,13 @@ import {
 } from "../../../lib/constants/languages";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
-import { HelpCircle, Replace, Settings } from "lucide-react";
+import {
+  HelpCircle,
+  PanelRightClose,
+  Replace,
+  Settings,
+  TriangleAlert,
+} from "lucide-react";
 import { useVoiceChoice } from "./useVoiceChoice";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
@@ -114,7 +121,14 @@ import { ReaderContents } from "./reader/ReaderContents";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import type { IsbnBook } from "@/bindings";
-import { ReaderToolbar } from "./reader/ReaderToolbar";
+import {
+  READER_FONTS,
+  READER_THEMES,
+  ReaderToolbar,
+} from "./reader/ReaderToolbar";
+import type { ReaderFont, ReaderTheme } from "./reader/ReaderToolbar";
+import { InfoPopover } from "./reader/InfoPopover";
+import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
 import {
@@ -266,7 +280,17 @@ export const TtsSettings = () => {
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
   // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
-  const ws = useWorkspaceLayout(pagesCollapsed === "1", filesCollapsed === "1");
+  // Rechte Spalte ganz ausblenden (Variante A, Codex 01.11.).
+  const [rightHiddenStored, setRightHidden] = usePersistentState<"1" | "0">(
+    "tts.rightHidden",
+    "0",
+  );
+  const rightHidden = rightHiddenStored === "1";
+  const ws = useWorkspaceLayout(
+    pagesCollapsed === "1",
+    filesCollapsed === "1",
+    rightHidden,
+  );
   /** Erst nach dem Laden einer Seite darf gespeichert werden — sonst
    *  ueberschriebe der leere Anfangszustand den echten. */
   const pageLoaded = useRef(false);
@@ -362,6 +386,13 @@ export const TtsSettings = () => {
   const [currentSentence, setCurrentSentence] = useState<string | null>(null);
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+  /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
+   *  sekundengenau mit, nicht nur Satz für Satz. */
+  const [sentenceStart, setSentenceStart] = useState<{
+    index: number | null;
+    at: number;
+    ms: number;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [exportProgress, setExportProgress] = useState<{
     position: number;
@@ -469,8 +500,14 @@ export const TtsSettings = () => {
       context: string;
       index?: number;
       text: string;
+      duration_ms?: number;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
+      setSentenceStart({
+        index: typeof e.payload.index === "number" ? e.payload.index : null,
+        at: performance.now(),
+        ms: e.payload.duration_ms ?? 0,
+      });
       setCurrentSentence(e.payload.text);
       setCurrentIndex(
         typeof e.payload.index === "number" ? e.payload.index : null,
@@ -690,6 +727,14 @@ export const TtsSettings = () => {
 
   const phase = status?.phase ?? "stopped";
   const speaking = phase === "speaking";
+  const playbackSpeed = getSetting("tts_speed") ?? 1.0;
+  const sentenceClock = useMemo<SentenceClock | null>(
+    () =>
+      speaking && sentenceStart && sentenceStart.ms > 0
+        ? { ...sentenceStart, speed: playbackSpeed }
+        : null,
+    [speaking, sentenceStart, playbackSpeed],
+  );
   const starting = phase === "starting";
 
   const speak = async () => {
@@ -1127,6 +1172,45 @@ export const TtsSettings = () => {
     "tts.reader.speakers",
     "1",
   );
+  const [fontFamily, setFontFamily] = usePersistentState<ReaderFont>(
+    "tts.reader.family",
+    "book",
+    (v) => READER_FONTS.some((f) => f.value === v),
+  );
+  const [readerTheme, setReaderTheme] = usePersistentState<ReaderTheme>(
+    "tts.reader.theme",
+    "auto",
+    (v) => READER_THEMES.some((th) => th.value === v),
+  );
+  // Sonnen-Knopf: bewusst nicht gemerkt — wach halten gilt nur, solange man
+  // liest, und soll nach einem Neustart nicht still weiterlaufen.
+  const [keepAwake, setKeepAwake] = useState(false);
+  const awakeShift = useKeepAwake(keepAwake);
+  const toggleKeepAwake = (on: boolean) => {
+    setKeepAwake(on);
+    // Im Vollbild ist nur die Lesespalte sichtbar, Meldungen nicht: der
+    // Hinweis kommt beim nächsten Einschalten außerhalb des Vollbilds.
+    if (on && !document.fullscreenElement)
+      toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
+  };
+  const readerFrameRef = useRef<HTMLDivElement | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () =>
+      setFullscreen(
+        document.fullscreenElement !== null &&
+          document.fullscreenElement === readerFrameRef.current,
+      );
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    void readerFrameRef.current?.requestFullscreen().catch(() => undefined);
+  };
   const [follow, setFollow] = useState(true);
   const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
   const readerApiRef = useRef<ReaderViewApi | null>(null);
@@ -2019,6 +2103,274 @@ export const TtsSettings = () => {
   const showVramHint =
     starting && (startingSeconds >= 120 || status?.message === "vram");
 
+  // Stimme und Werkzeuge: rechts in der Spalte oder, ist sie ausgeblendet,
+  // in der Spielerleiste (Variante A, Codex 01.11.). Gerendert wird jeweils
+  // nur an einer Stelle.
+  const voicePicker = (
+      <TooltipTrigger
+        className="block w-full"
+        tooltipId="voice-mode-tip"
+        width={300}
+        content={
+          <div className="text-xs">
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </div>
+        }
+      >
+        <div
+          className="w-full"
+          role="group"
+          aria-label={t("tts.voices.title")}
+          aria-describedby="voice-mode-hint"
+          data-testid="voice-select"
+          onContextMenu={(event) =>
+            voiceMenu.open(event, [
+              {
+                id: "replace",
+                label: t("tts.replaceSpeaker.voiceMenu"),
+                icon: Replace,
+                testId: "voice-menu-replace",
+                disabled: speakers.length < 2,
+                onSelect: () => setReplaceSpeaker({}),
+              },
+              {
+                id: "manage",
+                label: t("tts.voices.manage"),
+                icon: Settings,
+                testId: "voice-menu-manage",
+                onSelect: () => {
+                  window.localStorage.setItem(
+                    "lva.ui.settings.tab",
+                    "output",
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent("lv-navigate", {
+                      detail: { section: "settings" },
+                    }),
+                  );
+                },
+              },
+            ])
+          }
+        >
+          {/* Kennwert statt leerem Text fuer die Standardstimme:
+            "" gilt der Select-Komponente als "nichts gewaehlt" und
+            zeigte den Platzhalter "Select…" statt des Namens.
+            Piper-Stimmen stehen in derselben Liste (Wert
+            "piper:<id>"): wer eine waehlt, schaltet damit die
+            Engine um — die Engine-Einstellung im Reiter Vorlesen
+            bleibt als zweiter Weg bestehen. */}
+          <Select
+            menuPortal
+            value={voiceValue}
+            options={voiceOptions}
+            formatOptionLabel={(option, context) => {
+              const sample =
+                context === "menu"
+                  ? sampleOf(option.value)
+                  : undefined;
+              const target =
+                context === "menu" && !sample
+                  ? tryOf(option.value)
+                  : undefined;
+              if (!sample && !target) return option.label;
+              return (
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate">
+                    {option.label}
+                  </span>
+                  {sample ? (
+                    <SamplePlayButton
+                      inline
+                      path={sample.path}
+                      name={sample.name}
+                      testId={`voice-sample-${option.value}`}
+                    />
+                  ) : (
+                    target && (
+                      <VoiceTryButton
+                        target={target}
+                        name={option.label}
+                        testId={`voice-sample-${option.value}`}
+                      />
+                    )
+                  )}
+                </span>
+              );
+            }}
+            onChange={(value) => {
+              if (!value) return;
+              if (value === "@manage") {
+                window.localStorage.setItem(
+                  "lva.ui.settings.tab",
+                  "output",
+                );
+                window.dispatchEvent(
+                  new CustomEvent("lv-navigate", {
+                    detail: { section: "settings" },
+                  }),
+                );
+                return;
+              }
+              applyVoiceValue(value);
+              setTabVoices((current) => ({
+                ...current,
+                [voiceKey]: value,
+              }));
+            }}
+            isClearable={false}
+          />
+          {providerEngineId && (
+            <div
+              role="status"
+              data-testid="voice-provider-hint"
+              className="mt-1 text-xs text-text/70"
+            >
+              <p>
+                {t("tts.providers.dropdown.hint", {
+                  name: providerLabel ?? providerEngineId,
+                })}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="voice-provider-open"
+                onClick={() =>
+                  openVoiceManager("providers")
+                }
+              >
+                {t("tts.providers.dropdown.open")}
+              </Button>
+            </div>
+          )}
+          {selectedVoiceNotSetUp && (
+            <div
+              role="status"
+              data-testid="voice-setup-hint"
+              className="mt-1 text-xs text-amber-700 dark:text-amber-400"
+            >
+              <p>
+                {noVoiceSetUp
+                  ? t("tts.voices.noEngineHint")
+                  : t("tts.voices.notSetUpHint")}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="voice-setup-button"
+                onClick={() => openModelsArea("voices")}
+              >
+                {t("tts.voices.setUp")}
+              </Button>
+            </div>
+          )}
+          {piperReaderVoice && (
+            <p
+              className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
+              data-testid="piper-reader-hint"
+            >
+              <span>
+                {t("tts.voices.autoLanguageReads", {
+                  name: piperVoiceLabel(piperReaderVoice),
+                })}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void updateSetting("tts_piper_auto_language", false)
+                }
+                data-testid="piper-auto-language-off"
+              >
+                {t("tts.voices.autoLanguageOff")}
+              </Button>
+            </p>
+          )}
+          <p
+            id="voice-mode-hint"
+            className="sr-only"
+            data-testid="voice-mode-hint"
+          >
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </p>
+        </div>
+      </TooltipTrigger>
+  );
+  const readAloudActions = (compact: boolean) => (
+      <ReadAloudActions
+        compact={compact}
+        tab={tab}
+        hasText={text.trim().length > 0}
+        hasSpokenText={spokenText.trim().length > 0}
+        onLoadDocument={() => void loadDocument()}
+        onLoadUrl={() => setUrlDialogOpen(true)}
+        onAddProjectFile={() => void addFileToProject()}
+        dictating={dictating}
+        onToggleDictation={toggleDictation}
+        saving={saving}
+        onSave={saveSpokenAudio}
+        exportProgress={exportProgress}
+        exportEta={exportEta}
+        formatEta={formatEta}
+        onCancelExport={cancelExport}
+        prewarm={prewarm}
+        onPrewarm={() => void startPrewarm()}
+        onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
+        sentenceCounter={sentenceCounter}
+        onOpenWorkshop={() => setWorkshopOpen(true)}
+        tidying={tidying}
+        onTidy={() => void tidyText()}
+        errorCount={errorCount}
+        onCheckScript={runScriptCheck}
+        autoTagBlockedReason={
+          pausesOnly
+            ? t("tts.autotag.noStyleTags", {
+                engine: engineCaps.providerLabel ?? "",
+              })
+            : undefined
+        }
+        autoTag={{
+          text,
+          suggestions: tagSuggestions,
+          sourceText: tagSuggestionsSourceText,
+          onSuggestionsChange: changeTagSuggestions,
+          onApplyText: applyAutoTagText,
+          options:
+            autoTagOptions ??
+            (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
+            defaultAutoTagOptions(),
+          onOptionsChange: setAutoTagOptions,
+          uiLang,
+        }}
+        targetLang={targetLang}
+        onTargetLangChange={(value) =>
+          void updateSetting("tts_translate_lang", value)
+        }
+        translating={translating}
+        onTranslate={translateText}
+        summarizing={summarizing}
+        onSummarize={summarize}
+        transformProgress={transformProgress}
+        onCancelTransform={(kind) =>
+          void commands.ttsTransformCancel(kind)
+        }
+        onSwapSpeakers={() => void openSpeakerSwap()}
+        sumLength={sumLength}
+        onSumLengthChange={setSumLength}
+        sumDetail={sumDetail}
+        onSumDetailChange={setSumDetail}
+        sumAudience={sumAudience}
+        onSumAudienceChange={setSumAudience}
+      />
+  );
+
   return (
     <PageShell
       title={t("tts.title")}
@@ -2115,7 +2467,17 @@ export const TtsSettings = () => {
             {/* overflow-y-auto: reicht der Platz selbst dann nicht (kleines
               Fenster, Korrekturpanel offen), scrollt die Spalte, statt dass
               der Editor unter seine Mindesthoehe gedrueckt wird. */}
-            <div className="px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto">
+            <div
+              ref={readerFrameRef}
+              className="reader-frame px-4 pb-3 flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto"
+              data-reader-theme={viewMode === "read" ? readerTheme : undefined}
+              data-fullscreen={fullscreen ? "1" : undefined}
+              style={
+                awakeShift
+                  ? { position: "relative", left: awakeShift, top: awakeShift }
+                  : undefined
+              }
+            >
               {/* Zwei Reiter, ein Feld. Das Original wird nie ueberschrieben —
               die Uebersetzung liegt daneben, nicht darin. Wer zurueckschaltet,
               findet seinen Text unveraendert vor. */}
@@ -2133,7 +2495,7 @@ export const TtsSettings = () => {
                 />
                 {/* Eigene Breite (flex-auto statt flex-1): reicht der Platz
                     nicht, bricht die Leiste um, statt über den Reitern zu liegen. */}
-                <div className="ml-auto pb-1">
+                <div className="ml-auto max-w-full pb-1">
                   <ReaderToolbar
                     mode={viewMode}
                     canRead={spokenText.trim().length > 0}
@@ -2152,6 +2514,58 @@ export const TtsSettings = () => {
                     onShowSpeakers={(show) => setSpeakersShown(show ? "1" : "0")}
                     follow={follow}
                     onFollow={setFollow}
+                    fontFamily={fontFamily}
+                    onFontFamily={setFontFamily}
+                    theme={readerTheme}
+                    onTheme={setReaderTheme}
+                    keepAwake={keepAwake}
+                    onKeepAwake={toggleKeepAwake}
+                    fullscreen={fullscreen}
+                    onFullscreen={toggleFullscreen}
+                    onShowColumn={rightHidden ? () => setRightHidden("0") : undefined}
+                    info={
+                      <InfoPopover
+                        label={t("tts.writingRules.title")}
+                        testId="reader-info"
+                      >
+                        <p className="mb-1 font-semibold">
+                          {t("tts.writingRules.title")}
+                        </p>
+                <div className="space-y-1.5 text-sm text-text/80">
+                  <p>{t("tts.dialogHint")}</p>
+                  {pausesOnly ? (
+                    <p>
+                      {t("tts.writingRules.pausesOnly", {
+                        engine: engineCaps.providerLabel ?? "",
+                      })}
+                    </p>
+                  ) : (
+                    <p>{t("tts.writingRules.tagsIntro")}</p>
+                  )}
+                  <ul className="list-disc space-y-0.5 ps-4">
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example1")}
+                        </code>
+                      </li>
+                    )}
+                    <li>
+                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                        {t("tts.writingRules.example2")}
+                      </code>
+                    </li>
+                    {!pausesOnly && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.example3")}
+                        </code>
+                      </li>
+                    )}
+                  </ul>
+                </div>
+                      </InfoPopover>
+                    }
                     bookmarks={
                       <ReaderBookmarks
                         bookmarks={bookmarks}
@@ -2222,11 +2636,13 @@ export const TtsSettings = () => {
                 <ReaderView
                   text={spokenText}
                   speakers={speakers}
-                  lang={tab === "translation" ? targetLangCode(targetLang) : undefined}
+                  lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
                   current={readRange}
+                  clock={sessionTab.current === tab ? sentenceClock : null}
                   marks={readerMarks}
                   twoPages={twoPagesStored === "1"}
                   fontSize={Number(fontStored)}
+                  fontFamily={fontFamily}
                   showSpeakers={speakersShown === "1"}
                   follow={follow}
                   onFollowChange={setFollow}
@@ -2330,6 +2746,7 @@ export const TtsSettings = () => {
                     : null
                 }
                 estimateSeconds={readEstimate}
+                clock={sessionTab.current === tab ? sentenceClock : null}
                 page={viewMode === "read" ? pageInfo : null}
                 onJumpToPage={(n) => {
                   setFollow(false);
@@ -2345,6 +2762,45 @@ export const TtsSettings = () => {
                 resumable={resumeAt !== null && !canResume && !speaking}
                 resumePage={resumePage}
                 chapter={contents[chapterIndex]?.title ?? null}
+                dock={
+                  rightHidden
+                    ? (inPopover) => (
+                        <>
+                          <div
+                            className={
+                              inPopover ? "w-full" : "reader-dock__voice"
+                            }
+                          >
+                            {voicePicker}
+                          </div>
+                          {/* In der Zeile sind die Hinweise unter der Stimme
+                            verborgen: fehlt eine eingerichtete Stimme, steht
+                            der Weg dorthin als Warnknopf daneben. */}
+                          {!inPopover && selectedVoiceNotSetUp && (
+                            <button
+                              type="button"
+                              className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-amber-700 hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary dark:text-amber-400"
+                              aria-label={t("tts.voices.setUp")}
+                              title={
+                                noVoiceSetUp
+                                  ? t("tts.voices.noEngineHint")
+                                  : t("tts.voices.notSetUpHint")
+                              }
+                              onClick={() => openModelsArea("voices")}
+                              data-testid="reader-dock-voice-setup"
+                            >
+                              <TriangleAlert
+                                width={16}
+                                height={16}
+                                aria-hidden="true"
+                              />
+                            </button>
+                          )}
+                          {readAloudActions(!inPopover)}
+                        </>
+                      )
+                    : undefined
+                }
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
                   readerApiRef.current?.goToPage(0);
@@ -2359,6 +2815,8 @@ export const TtsSettings = () => {
             (Griff davor, Breite ws.right); nebeneinander loest sich der
             Rahmen auf (display: contents) und die beiden stehen wie frueher
             als Geschwister neben dem Editor, der Griff sitzt vor den Dateien. */}
+          {!rightHidden && (
+            <>
           {ws.stacked && (
             <ResizeHandle
               testId="resize-right"
@@ -2387,7 +2845,7 @@ export const TtsSettings = () => {
               }`}
               aria-label={t("tts.controls")}
             >
-              <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex gap-1 items-start">
                 {/* Transport per design system: round glyph buttons, exactly one
                 primary. Reading aloud is playback, so it gets the same family
                 as every audio player in the app — not text buttons. */}
@@ -2409,307 +2867,21 @@ export const TtsSettings = () => {
                   Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
-                <TooltipTrigger
-                  className="block w-full"
-                  tooltipId="voice-mode-tip"
-                  width={300}
-                  content={
-                    <div className="text-xs">
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </div>
-                  }
+                <div className="min-w-0 flex-1">{voicePicker}</div>
+                {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
+                  ziehen dann in die Spielerleiste unter dem Text. */}
+                <button
+                  type="button"
+                  className="flex h-9 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-text/70 hover:bg-mid-gray/15 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+                  aria-label={t("tts.layout.hideColumn")}
+                  title={t("tts.layout.hideColumn")}
+                  onClick={() => setRightHidden("1")}
+                  data-testid="right-column-hide"
                 >
-                  <div
-                    className="w-full"
-                    role="group"
-                    aria-label={t("tts.voices.title")}
-                    aria-describedby="voice-mode-hint"
-                    data-testid="voice-select"
-                    onContextMenu={(event) =>
-                      voiceMenu.open(event, [
-                        {
-                          id: "replace",
-                          label: t("tts.replaceSpeaker.voiceMenu"),
-                          icon: Replace,
-                          testId: "voice-menu-replace",
-                          disabled: speakers.length < 2,
-                          onSelect: () => setReplaceSpeaker({}),
-                        },
-                        {
-                          id: "manage",
-                          label: t("tts.voices.manage"),
-                          icon: Settings,
-                          testId: "voice-menu-manage",
-                          onSelect: () => {
-                            window.localStorage.setItem(
-                              "lva.ui.settings.tab",
-                              "output",
-                            );
-                            window.dispatchEvent(
-                              new CustomEvent("lv-navigate", {
-                                detail: { section: "settings" },
-                              }),
-                            );
-                          },
-                        },
-                      ])
-                    }
-                  >
-                    {/* Kennwert statt leerem Text fuer die Standardstimme:
-                      "" gilt der Select-Komponente als "nichts gewaehlt" und
-                      zeigte den Platzhalter "Select…" statt des Namens.
-                      Piper-Stimmen stehen in derselben Liste (Wert
-                      "piper:<id>"): wer eine waehlt, schaltet damit die
-                      Engine um — die Engine-Einstellung im Reiter Vorlesen
-                      bleibt als zweiter Weg bestehen. */}
-                    <Select
-                      menuPortal
-                      value={voiceValue}
-                      options={voiceOptions}
-                      formatOptionLabel={(option, context) => {
-                        const sample =
-                          context === "menu"
-                            ? sampleOf(option.value)
-                            : undefined;
-                        const target =
-                          context === "menu" && !sample
-                            ? tryOf(option.value)
-                            : undefined;
-                        if (!sample && !target) return option.label;
-                        return (
-                          <span className="flex items-center gap-2">
-                            <span className="min-w-0 flex-1 truncate">
-                              {option.label}
-                            </span>
-                            {sample ? (
-                              <SamplePlayButton
-                                inline
-                                path={sample.path}
-                                name={sample.name}
-                                testId={`voice-sample-${option.value}`}
-                              />
-                            ) : (
-                              target && (
-                                <VoiceTryButton
-                                  target={target}
-                                  name={option.label}
-                                  testId={`voice-sample-${option.value}`}
-                                />
-                              )
-                            )}
-                          </span>
-                        );
-                      }}
-                      onChange={(value) => {
-                        if (!value) return;
-                        if (value === "@manage") {
-                          window.localStorage.setItem(
-                            "lva.ui.settings.tab",
-                            "output",
-                          );
-                          window.dispatchEvent(
-                            new CustomEvent("lv-navigate", {
-                              detail: { section: "settings" },
-                            }),
-                          );
-                          return;
-                        }
-                        applyVoiceValue(value);
-                        setTabVoices((current) => ({
-                          ...current,
-                          [voiceKey]: value,
-                        }));
-                      }}
-                      isClearable={false}
-                    />
-                    {providerEngineId && (
-                      <div
-                        role="status"
-                        data-testid="voice-provider-hint"
-                        className="mt-1 text-xs text-text/70"
-                      >
-                        <p>
-                          {t("tts.providers.dropdown.hint", {
-                            name: providerLabel ?? providerEngineId,
-                          })}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-provider-open"
-                          onClick={() =>
-                            openVoiceManager("providers")
-                          }
-                        >
-                          {t("tts.providers.dropdown.open")}
-                        </Button>
-                      </div>
-                    )}
-                    {selectedVoiceNotSetUp && (
-                      <div
-                        role="status"
-                        data-testid="voice-setup-hint"
-                        className="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                      >
-                        <p>
-                          {noVoiceSetUp
-                            ? t("tts.voices.noEngineHint")
-                            : t("tts.voices.notSetUpHint")}
-                        </p>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          data-testid="voice-setup-button"
-                          onClick={() => openModelsArea("voices")}
-                        >
-                          {t("tts.voices.setUp")}
-                        </Button>
-                      </div>
-                    )}
-                    {piperReaderVoice && (
-                      <p
-                        className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text/70"
-                        data-testid="piper-reader-hint"
-                      >
-                        <span>
-                          {t("tts.voices.autoLanguageReads", {
-                            name: piperVoiceLabel(piperReaderVoice),
-                          })}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            void updateSetting("tts_piper_auto_language", false)
-                          }
-                          data-testid="piper-auto-language-off"
-                        >
-                          {t("tts.voices.autoLanguageOff")}
-                        </Button>
-                      </p>
-                    )}
-                    <p
-                      id="voice-mode-hint"
-                      className="sr-only"
-                      data-testid="voice-mode-hint"
-                    >
-                      {scriptMode
-                        ? t("tts.voices.scriptVoicesHint")
-                        : t("tts.voices.singleVoiceHint")}
-                    </p>
-                  </div>
-                </TooltipTrigger>
+                  <PanelRightClose width={16} height={16} aria-hidden="true" />
+                </button>
               </div>
-              <ReadAloudActions
-                tab={tab}
-                hasText={text.trim().length > 0}
-                hasSpokenText={spokenText.trim().length > 0}
-                onLoadDocument={() => void loadDocument()}
-                onLoadUrl={() => setUrlDialogOpen(true)}
-                onAddProjectFile={() => void addFileToProject()}
-                dictating={dictating}
-                onToggleDictation={toggleDictation}
-                saving={saving}
-                onSave={saveSpokenAudio}
-                exportProgress={exportProgress}
-                exportEta={exportEta}
-                formatEta={formatEta}
-                onCancelExport={cancelExport}
-                prewarm={prewarm}
-                onPrewarm={() => void startPrewarm()}
-                onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
-                sentenceCounter={sentenceCounter}
-                onOpenWorkshop={() => setWorkshopOpen(true)}
-                tidying={tidying}
-                onTidy={() => void tidyText()}
-                errorCount={errorCount}
-                onCheckScript={runScriptCheck}
-                autoTagBlockedReason={
-                  pausesOnly
-                    ? t("tts.autotag.noStyleTags", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })
-                    : undefined
-                }
-                autoTag={{
-                  text,
-                  suggestions: tagSuggestions,
-                  sourceText: tagSuggestionsSourceText,
-                  onSuggestionsChange: changeTagSuggestions,
-                  onApplyText: applyAutoTagText,
-                  options:
-                    autoTagOptions ??
-                    (getSetting("tts_autotag_last") as AutoTagOptions | null) ??
-                    defaultAutoTagOptions(),
-                  onOptionsChange: setAutoTagOptions,
-                  uiLang,
-                }}
-                targetLang={targetLang}
-                onTargetLangChange={(value) =>
-                  void updateSetting("tts_translate_lang", value)
-                }
-                translating={translating}
-                onTranslate={translateText}
-                summarizing={summarizing}
-                onSummarize={summarize}
-                transformProgress={transformProgress}
-                onCancelTransform={(kind) =>
-                  void commands.ttsTransformCancel(kind)
-                }
-                onSwapSpeakers={() => void openSpeakerSwap()}
-                sumLength={sumLength}
-                onSumLengthChange={setSumLength}
-                sumDetail={sumDetail}
-                onSumDetailChange={setSumDetail}
-                sumAudience={sumAudience}
-                onSumAudienceChange={setSumAudience}
-              />
-              {/* Sprecherwechsel und Tags sind Schreibregeln, keine
-              Einstellungen — der aufklappbare Block steht deshalb bei dem
-              Feld, in das man sie tippt. */}
-              <details className="text-xs text-text/60">
-                <summary className="cursor-pointer select-none rounded-lg py-1 text-sm font-medium text-text/60 transition-colors hover:text-text/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-text">
-                  {t("tts.writingRules.title")}
-                </summary>
-                <div className="mt-1 space-y-1 ps-4">
-                  <p>{t("tts.dialogHint")}</p>
-                  {pausesOnly ? (
-                    <p>
-                      {t("tts.writingRules.pausesOnly", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })}
-                    </p>
-                  ) : (
-                    <p>{t("tts.writingRules.tagsIntro")}</p>
-                  )}
-                  <ul className="list-disc space-y-0.5 ps-4">
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example1")}
-                        </code>
-                      </li>
-                    )}
-                    <li>
-                      <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                        {t("tts.writingRules.example2")}
-                      </code>
-                    </li>
-                    {!pausesOnly && (
-                      <li>
-                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
-                          {t("tts.writingRules.example3")}
-                        </code>
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              </details>
+              {readAloudActions(false)}
               {speaking && currentSentence && viewMode === "edit" && (
                 <p className="text-sm italic text-text/70 border-s-2 border-logo-primary ps-2">
                   {currentSentence}
@@ -2728,7 +2900,9 @@ export const TtsSettings = () => {
                 onChange={ws.right.set}
               />
             )}
-            {helpOpen && <TtsHelpDock onClose={() => setHelpOpenValue("0")} />}
+            {helpOpen && !rightHidden && (
+              <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+            )}
             <FilesSidebar
               pageId={activePage}
               collapsed={filesCollapsed === "1"}
@@ -2748,6 +2922,13 @@ export const TtsSettings = () => {
               }}
             />
           </div>
+            </>
+          )}
+
+          {/* Hilfe bleibt auch bei ausgeblendeter Spalte erreichbar. */}
+          {helpOpen && rightHidden && (
+            <TtsHelpDock onClose={() => setHelpOpenValue("0")} />
+          )}
 
           <Dialog
             open={checkDialog !== null}

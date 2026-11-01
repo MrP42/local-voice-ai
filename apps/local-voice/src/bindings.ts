@@ -5275,6 +5275,18 @@ async ttsPrefetchHead(text: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Bildschirm wach halten (Sonnen-Knopf im Vorlesen) oder freigeben.
+ * `true`, wenn das Betriebssystem die Anzeige jetzt wach hält.
+ */
+async screenKeepAwake(on: boolean) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("screen_keep_awake", { on }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsServerStatus() : Promise<Result<TtsStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_server_status") };

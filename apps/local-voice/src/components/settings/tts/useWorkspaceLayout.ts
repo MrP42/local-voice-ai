@@ -50,6 +50,8 @@ function usePersistentWidth(
 export function useWorkspaceLayout(
   pagesCollapsed: boolean,
   filesCollapsed: boolean,
+  /** Ganze rechte Spalte ausgeblendet: sie nimmt keinen Platz. */
+  rightHidden = false,
 ) {
   const [layout, setLayout] = usePersistentState<RightLayout>(
     "tts.rightLayout",
@@ -86,8 +88,8 @@ export function useWorkspaceLayout(
   // Platz neben Seitenliste und Editor, ohne die Editor-Mindestbreite
   // anzutasten. Zwischenräume: Seiten|Editor, Editor|rechts und
   // (nebeneinander) Bedienung|Dateien.
-  const gaps = stacked ? 2 * GAP : 3 * GAP;
-  const fixedRight = stacked ? 0 : CONTROLS_SIDE;
+  const gaps = rightHidden ? GAP : stacked ? 2 * GAP : 3 * GAP;
+  const fixedRight = stacked || rightHidden ? 0 : CONTROLS_SIDE;
   const room = available - EDITOR_MIN - gaps - fixedRight;
 
   // Erst die rechte Spalte gegen den Wunsch der Seitenliste, dann die
@@ -103,7 +105,9 @@ export function useWorkspaceLayout(
     rightLimit.min,
     Math.min(rightLimit.max, room - pagesWish),
   );
-  const rightWidth = rightCollapsed
+  const rightWidth = rightHidden
+    ? 0
+    : rightCollapsed
     ? COLLAPSED
     : clamp(rightWanted, rightLimit.min, rightMax);
   const pagesMax = Math.max(

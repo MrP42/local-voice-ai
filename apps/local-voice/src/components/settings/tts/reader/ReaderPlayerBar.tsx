@@ -1,8 +1,9 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Moon, MoreHorizontal } from "lucide-react";
+import { Moon, MoreHorizontal, SlidersHorizontal } from "lucide-react";
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
+import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
 
 export const SLEEP_CHOICES = [0, 15, 30, 45, 60] as const;
 
@@ -23,6 +24,8 @@ interface ReaderPlayerBarProps {
   progress: { position: number; total: number } | null;
   /** Geschätzte Gesamtdauer des Texts in Sekunden (bei Tempo 1). */
   estimateSeconds: number;
+  /** Laufender Satz: die Zeit zählt damit sekundengenau weiter. */
+  clock?: SentenceClock | null;
   page: ReaderPageInfo | null;
   onJumpToPage(page: number): void;
   /** Klick auf den Fortschrittsbalken: Anteil 0..1. */
@@ -37,7 +40,16 @@ interface ReaderPlayerBarProps {
   resumePage?: number | null;
   /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
   onRestart?(): void;
+  /**
+   * Rechte Spalte ausgeblendet (Variante A): Stimme und Werkzeuge stehen in
+   * der Transportzeile. Ist die Leiste zu schmal, liegen sie hinter einem
+   * Knopf (`inPopover`), damit die Leiste nie eine dritte Zeile bekommt.
+   */
+  dock?: (inPopover: boolean) => React.ReactNode;
 }
+
+/** Ab dieser Leistenbreite stehen Stimme und Werkzeuge in der Zeile. */
+const DOCK_INLINE_MIN = 880;
 
 const formatTime = (seconds: number): string => {
   const s = Math.max(0, Math.round(seconds));
@@ -67,6 +79,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   onSpeed,
   progress,
   estimateSeconds,
+  clock = null,
   page,
   onJumpToPage,
   onSeekFraction,
@@ -75,11 +88,20 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   resumePage = null,
   chapter = null,
   onRestart,
+  dock,
 }) => {
   const { t } = useTranslation();
   const [speedOpen, setSpeedOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [dockOpen, setDockOpen] = useState(false);
+  const [barWidth, setBarWidth] = useState(Number.POSITIVE_INFINITY);
+  // Gelernter Platzbedarf der Werkzeuge in der Zeile: läuft die Ablage über,
+  // wandern sie hinter den Knopf, bis die Leiste mindestens so breit ist.
+  const [dockNeed, setDockNeed] = useState(DOCK_INLINE_MIN);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const dockBtnRef = useRef<HTMLButtonElement>(null);
+  const dockPanelRef = useRef<HTMLDivElement>(null);
   const [sleepUntil, setSleepUntil] = useState<number | null>(null);
   /** Gewählte Timer-Dauer in Minuten (0 = aus) — für aria-checked. */
   const [sleepChoice, setSleepChoice] = useState(0);
@@ -101,23 +123,35 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
 
   // Escape schließt die offenen Auswahlen (Tempo, Schlaf-Timer).
   useEffect(() => {
-    if (!speedOpen && !sleepOpen && !moreOpen) return;
+    if (!speedOpen && !sleepOpen && !moreOpen && !dockOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
       if (moreOpen) moreBtnRef.current?.focus();
+      if (dockOpen) dockBtnRef.current?.focus();
       setSpeedOpen(false);
       setSleepOpen(false);
       setMoreOpen(false);
+      setDockOpen(false);
     };
     // Klick daneben schließt. Kein fixed-Hintergrund: die Leiste ist ein
     // Größen-Container (Container-Query) und damit Bezugsrahmen für fixed.
     const onDown = (e: PointerEvent) => {
       const target = e.target as Element | null;
       if (target?.closest?.("[data-reader-popup]")) return;
+      // Menüs aus der Werkzeug-Ablage (Stimmenliste, Aktionsmenüs) liegen
+      // als Portal außerhalb der Leiste: ein Klick dort schließt sie nicht.
+      if (
+        !rootRef.current?.contains(target) &&
+        target?.closest?.(
+          '[role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [id^="react-select"], [class*="__menu"]',
+        )
+      )
+        return;
       setSpeedOpen(false);
       setSleepOpen(false);
       setMoreOpen(false);
+      setDockOpen(false);
     };
     // Wechselt die Breite die Bedienform, schließt die nun verborgene Auswahl.
     const ro = new ResizeObserver(() => {
@@ -129,6 +163,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           if (el.offsetParent !== null) return;
           const kind = el.dataset.readerPopup;
           if (kind === "more") setMoreOpen(false);
+          else if (kind === "dock") setDockOpen(false);
           else if (kind === "speed") setSpeedOpen(false);
           else if (kind === "sleep") setSleepOpen(false);
         });
@@ -141,7 +176,37 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       document.removeEventListener("pointerdown", onDown, true);
       ro.disconnect();
     };
-  }, [speedOpen, sleepOpen, moreOpen]);
+  }, [speedOpen, sleepOpen, moreOpen, dockOpen]);
+
+  // Breite der Leiste: entscheidet, ob die Werkzeuge in der Zeile stehen.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !dock) return;
+    const measure = () => setBarWidth(root.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    return () => ro.disconnect();
+  }, [dock]);
+  const dockInline = barWidth >= dockNeed;
+  useLayoutEffect(() => {
+    const el = dockRef.current;
+    if (!dockInline || !el) return;
+    const over = el.scrollWidth - el.clientWidth;
+    if (over > 1) setDockNeed(barWidth + over + 16);
+  });
+  // Geöffnetes Fenster: Fokus hinein (erstes Bedienelement).
+  useEffect(() => {
+    if (!dockOpen) return;
+    dockPanelRef.current
+      ?.querySelector<HTMLElement>(
+        'input, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      ?.focus();
+  }, [dockOpen]);
+  useEffect(() => {
+    if (dockInline || !dock) setDockOpen(false);
+  }, [dockInline, dock]);
 
   // Geöffnetes Überlaufmenü: Fokus auf den gewählten Eintrag.
   useEffect(() => {
@@ -167,9 +232,15 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     return () => window.clearInterval(id);
   }, [sleepUntil]);
 
+  // Innerhalb des hörbaren Satzes mitlaufen; nach einer Pause beginnt der
+  // Satz wieder vorn, die Anzeige steht dann am Satzanfang.
+  const within = useSentenceClock(
+    clock && progress && clock.index === progress.position ? clock : null,
+    4,
+  );
   const fraction =
     progress && progress.total > 0
-      ? Math.min(1, progress.position / progress.total)
+      ? Math.min(1, (progress.position + within) / progress.total)
       : 0;
   const total = estimateSeconds / Math.max(0.25, speed);
   const elapsed = total * fraction;
@@ -199,7 +270,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   return (
     <div
       ref={rootRef}
-      className="reader-player"
+      className={`reader-player${dock ? " reader-player--docked" : ""}`}
       role="region"
       aria-label={t("tts.reader.player")}
       data-testid="reader-player"
@@ -273,7 +344,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           className={`reader-player__where${
             !progress && resumable
               ? " reader-player__where--resume"
-              : progress && chapter
+              : chapter
                 ? " reader-player__where--chapter"
                 : ""
           }`}
@@ -317,9 +388,57 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
               )}
             </>
           ) : (
-            t("tts.reader.pageOf", { page: shownPage, count: pages })
+            // Auch ohne laufende Sitzung: Kapitel über der Seitenangabe.
+            <>
+              {chapter && (
+                <span
+                  className="reader-player__chapter"
+                  title={chapter}
+                  data-testid="reader-chapter"
+                >
+                  {chapter}
+                </span>
+              )}
+              <span className="reader-player__sentence">
+                {t("tts.reader.pageOf", { page: shownPage, count: pages })}
+              </span>
+            </>
           )}
         </span>
+        {dock &&
+          (dockInline ? (
+            <div ref={dockRef} className="reader-dock" data-testid="reader-dock">
+              {dock(false)}
+            </div>
+          ) : (
+            <div className="relative flex-none" data-reader-popup="dock">
+              <button
+                type="button"
+                ref={dockBtnRef}
+                className="reader-player__pill reader-player__pill--icon"
+                onClick={() => setDockOpen((o) => !o)}
+                aria-haspopup="dialog"
+                aria-expanded={dockOpen}
+                aria-label={t("tts.reader.dockTools")}
+                title={t("tts.reader.dockTools")}
+                data-testid="reader-dock-open"
+              >
+                <SlidersHorizontal width={16} height={16} aria-hidden="true" />
+              </button>
+              {/* Bleibt eingehängt (nur verborgen): laufende Vorgänge der
+                  Werkzeuge (Auto-Tagging, Export) behalten ihren Zustand. */}
+              <div
+                ref={dockPanelRef}
+                role="dialog"
+                aria-label={t("tts.reader.dockTools")}
+                hidden={!dockOpen}
+                className="absolute left-0 bottom-full z-40 mb-1 w-80 max-w-[calc(100vw-2rem)] space-y-2 rounded-lg border border-mid-gray/40 bg-background p-3 shadow-lg"
+                data-testid="reader-dock-panel"
+              >
+                {dock(true)}
+              </div>
+            </div>
+          ))}
         <div className="mediabar">
           <button
             type="button"
@@ -423,7 +542,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                 }}
                 className="absolute right-0 bottom-full mb-1 w-64 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
               >
-                {progress && (
+                {(progress || chapter) && (
                   <div
                     className="mb-1 border-b border-mid-gray/30 px-3 pt-1 pb-1.5 text-xs text-text-muted"
                     data-testid="reader-more-where"
@@ -436,10 +555,15 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                         {chapter}
                       </div>
                     )}
-                    {t("tts.reader.sentenceOf", {
-                      position: Math.min(progress.total, progress.position + 1),
-                      count: progress.total,
-                    })}
+                    {progress
+                      ? t("tts.reader.sentenceOf", {
+                          position: Math.min(
+                            progress.total,
+                            progress.position + 1,
+                          ),
+                          count: progress.total,
+                        })
+                      : t("tts.reader.pageOf", { page: shownPage, count: pages })}
                   </div>
                 )}
                 {resumable && onRestart && (

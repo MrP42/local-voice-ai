@@ -494,7 +494,7 @@ test("Weiterlesen: Play setzt an der gemerkten Stelle fort, „Von vorn“ verwi
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.getByTestId("reader-restart").click();
-  await expect(page.getByTestId("reader-where")).toHaveText(/^Seite 1 von/);
+  await expect(page.getByTestId("reader-where")).toHaveText(/^(Kapitel 1)?Seite 1 von/);
   await playFromBar(page, "Vorlesen");
   await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
 });
@@ -1123,4 +1123,367 @@ test("Buchteile: nach einem Reiterwechsel bleibt das Vorlesen im Teil", async ({
   );
   await page.waitForTimeout(400);
   expect(await calls(page, "tts_speak_text")).toHaveLength(1);
+});
+
+// Seitenumbruch (Patrick 01.11.): der Sprechername steht nie allein unten.
+const SPEAKER_BOOK = Array.from({ length: 40 }, (_, i) => {
+  const who = i % 3 === 0 ? "Patrick" : i % 3 === 1 ? "Annika" : "Erzählerin";
+  const words = "Das ist ein Satz mit einigen Wörtern, die den Block füllen.";
+  return `<${who}> ${Array.from({ length: 1 + ((i * 7) % 6) }, () => words).join(" ")}`;
+}).join("\n\n");
+
+const lonelyNames = (page: Page) =>
+  page.evaluate(() => {
+    const flow = document.querySelector<HTMLElement>("[data-testid=reader-flow]")!;
+    const step = parseFloat(flow.style.columnWidth) + parseFloat(flow.style.columnGap);
+    const left = flow.getBoundingClientRect().left;
+    const pageOf = (r: DOMRect) => Math.floor((r.left - left + 2) / step);
+    const bad: string[] = [];
+    for (const block of flow.querySelectorAll<HTMLElement>(".reader-block")) {
+      const who = block.querySelector<HTMLElement>(".reader-who");
+      const first = block.querySelector<HTMLElement>("[data-start]");
+      if (!who || !first || block.classList.contains("reader-cont")) continue;
+      const range = document.createRange();
+      range.setStart(first.firstChild!, 0);
+      range.setEnd(first.firstChild!, 1);
+      const textPage = pageOf(range.getClientRects()[0]);
+      if (pageOf(who.getBoundingClientRect()) !== textPage)
+        bad.push(`${who.textContent}@${pageOf(who.getBoundingClientRect())}/${textPage}`);
+      const bar = block.querySelector<HTMLElement>(".reader-bar");
+      void bar;
+    }
+    return bad;
+  });
+
+for (const width of [1440, 1100, 800])
+  test(`Seitenumbruch: kein Sprechername allein am Seitenende (${width}px)`, async ({ page }) => {
+    await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+    await open(page, SPEAKER_BOOK, width);
+    await expect(page.getByTestId("reader-flow")).toContainText("Annika");
+    expect(await lonelyNames(page)).toEqual([]);
+  });
+
+// Sekundengenau und wortgenau (Patrick 01.11.): der Kern meldet die Dauer
+// des Satzes, die Ansicht läuft innerhalb des Satzes mit.
+const LONG_SENTENCE =
+  "# Ein langer Satz\n\n" +
+  Array.from({ length: 140 }, (_, i) => `Wort${i}`).join(" ") +
+  " Ende.";
+
+test("Wort und Zeit laufen innerhalb des Satzes mit", async ({ page }) => {
+  await page.clock.install();
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, LONG_SENTENCE, 800);
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 1, total: 2 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 1,
+    text: LONG_SENTENCE.split("\n\n")[1],
+    duration_ms: 60_000,
+  });
+  await expect(page.locator(".reader-word")).toHaveText("Wort0");
+  const elapsed0 = await page.getByTestId("reader-elapsed").textContent();
+  await page.clock.runFor(30_000);
+  // Halb durch: ein Wort aus der Mitte, und die Zeit ist weitergelaufen.
+  const mid = Number((await page.locator(".reader-word").textContent())?.slice(4));
+  expect(mid).toBeGreaterThan(55);
+  expect(mid).toBeLessThan(85);
+  await expect(page.getByTestId("reader-elapsed")).not.toHaveText(elapsed0 ?? "");
+});
+
+test("Umblättern wortgenau: mitten im Satz, sobald das gehörte Wort auf der nächsten Seite steht", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, LONG_SENTENCE, 800);
+  const book = page.getByTestId("reader-book");
+  expect(Number(await book.getAttribute("data-pages"))).toBeGreaterThan(1);
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 1, total: 2 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 1,
+    text: LONG_SENTENCE.split("\n\n")[1],
+    duration_ms: 120_000,
+  });
+  await expect(book).toHaveAttribute("data-page", "0");
+  // Bis das Wort die Seite verlässt, bleibt die Seite stehen …
+  let turned = -1;
+  for (let s = 0; s < 120 && turned < 0; s += 2) {
+    await page.clock.runFor(2_000);
+    if ((await book.getAttribute("data-page")) !== "0") turned = s;
+  }
+  expect(turned).toBeGreaterThan(0);
+  // … und das gehörte Wort steht dann auf der sichtbaren Seite.
+  const visible = await page.evaluate(() => {
+    const word = document.querySelector(".reader-word")!.getBoundingClientRect();
+    const b = document.querySelector("[data-testid=reader-book]")!.getBoundingClientRect();
+    return word.left >= b.left && word.right <= b.right;
+  });
+  expect(visible).toBe(true);
+});
+
+test("Blättern animiert nur beim Umblättern, nicht beim Öffnen", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, LONG_SENTENCE, 800);
+  const flow = page.getByTestId("reader-flow");
+  await expect(flow).not.toHaveClass(/reader-flow--turning/);
+  await flow.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "1");
+  await expect(flow).toHaveClass(/reader-flow--turning/);
+  await expect(flow).not.toHaveClass(/reader-flow--turning/);
+});
+
+test("nach dem Wechsel in einen anderen App-Bereich steht dieselbe Seite, ohne Umblättern", async ({
+  page,
+}) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, LONG_SENTENCE, 800);
+  const flow = page.getByTestId("reader-flow");
+  await flow.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "1");
+  await page.getByRole("navigation").getByRole("button", { name: "Aufnahmen", exact: true }).click();
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-page", "1");
+  await expect(page.getByTestId("reader-flow")).not.toHaveClass(/reader-flow--turning/);
+});
+
+const contrast = (fg: string, bg: string) => {
+  const lum = (c: string) => {
+    const [r, g, b] = (c.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map((v) => {
+      const x = Number(v) / 255;
+      return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+};
+
+test("Farbthemen wie beim Kindle: Kontrast mindestens 7:1, gemerkt", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  for (const theme of ["white", "sepia", "green", "black"]) {
+    await page.getByTestId("reader-display").click();
+    await page.getByTestId(`reader-theme-${theme}`).click();
+    await page.keyboard.press("Escape");
+    const colors = await page.evaluate(() => {
+      const book = document.querySelector("[data-testid=reader-book]")!;
+      const run = document.querySelector(".reader-run");
+      const s = getComputedStyle(book);
+      return {
+        fg: s.color,
+        bg: s.backgroundColor,
+        muted: run ? getComputedStyle(run).color : s.color,
+      };
+    });
+    expect(contrast(colors.fg, colors.bg), theme).toBeGreaterThanOrEqual(7);
+    expect(contrast(colors.muted, colors.bg), theme).toBeGreaterThanOrEqual(7);
+  }
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(page.locator(".reader-frame")).toHaveAttribute("data-reader-theme", "black");
+});
+
+test("Schriftart im T-Menü wechselt die Buchschrift", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const fontOf = () =>
+    page.evaluate(
+      () => getComputedStyle(document.querySelector("[data-testid=reader-flow]")!).fontFamily,
+    );
+  expect(await fontOf()).toContain("Georgia");
+  await page.getByTestId("reader-display").click();
+  await page.getByTestId("reader-font-wide").click();
+  await expect(page.getByTestId("reader-book")).toHaveAttribute("data-font", "wide");
+  expect(await fontOf()).toContain("Verdana");
+  await expect(page.getByTestId("reader-font-wide")).toHaveAttribute("aria-checked", "true");
+});
+
+test("Sonnen-Knopf hält den Bildschirm wach, gibt ihn frei und verschiebt gegen OLED-Dimmen", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const sun = page.getByTestId("reader-keep-awake");
+  await sun.click();
+  await expect(sun).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText(/ASBL/)).toBeVisible();
+  await expect.poll(() => calls(page, "screen_keep_awake")).toEqual([{ on: true }]);
+  const frame = page.locator(".reader-frame");
+  await page.clock.runFor(46_000);
+  await expect(frame).toHaveAttribute("style", /left: 1px/);
+  await page.clock.runFor(45_000);
+  await expect(frame).not.toHaveAttribute("style", /left: 1px/);
+  await sun.click();
+  await expect(sun).toHaveAttribute("aria-pressed", "false");
+  await expect
+    .poll(() => calls(page, "screen_keep_awake"))
+    .toEqual([{ on: true }, { on: false }]);
+  // Auch im Bearbeiten erreichbar.
+  await page.getByTestId("reader-mode-edit").click();
+  await expect(page.getByTestId("reader-keep-awake")).toBeVisible();
+});
+
+test("Schreibregeln stehen hinter dem ⓘ-Knopf, nicht mehr rechts", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("summary", { hasText: "Schreibregeln" })).toHaveCount(0);
+  await page.getByTestId("reader-info").click();
+  const panel = page.getByTestId("reader-info-panel");
+  await expect(panel).toContainText("Schreibregeln: Sprecher & Tags");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+});
+
+test("Vollbild-Knopf schaltet die Lesespalte in den Vollbildmodus", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const btn = page.getByTestId("reader-fullscreen");
+  await expect(btn).toHaveAttribute("aria-label", "Vollbild");
+  await btn.click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement?.className ?? ""))
+    .toContain("reader-frame");
+  await expect(btn).toHaveAttribute("aria-label", "Vollbild beenden");
+  await btn.click();
+  await expect
+    .poll(() => page.evaluate(() => document.fullscreenElement === null))
+    .toBe(true);
+});
+
+test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page, BOOK, 1440);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("reader-display").click();
+  const menu = page.getByTestId("reader-display-menu");
+  const box = (await menu.boundingBox())!;
+  const frame = (await page.locator(".reader-frame").boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(Math.min(844, frame.y + frame.height));
+  // Der letzte Eintrag ist per Scrollen erreichbar und klickbar.
+  const last = menu.getByRole("menuitemcheckbox", { name: "Automatisch mitblättern" });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
+});
+
+test("Variante A: rechte Spalte ausblenden, Stimme und Werkzeuge in der Leiste, Leiste nicht höher", async ({
+  page,
+}) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const bar = page.getByTestId("reader-player");
+  const before = (await bar.boundingBox())!.height;
+  await page.getByTestId("right-column-hide").click();
+  await expect(page.getByTestId("tts-right-column")).toHaveCount(0);
+  const dock = page.getByTestId("reader-dock");
+  await expect(dock.getByTestId("voice-select")).toBeVisible();
+  await expect(dock.getByTestId("tts-action-menu")).toBeVisible();
+  await expect(dock.getByTestId("tts-action-add")).toBeVisible();
+  // Ohne eingerichtete Stimme: Warnknopf statt verborgenem Hinweistext.
+  await expect(dock.getByTestId("reader-dock-voice-setup")).toHaveAttribute(
+    "aria-label",
+    "Sprachausgabe einrichten",
+  );
+  // Die Leiste bleibt so hoch wie vorher (zwei Zeilen, keine dritte).
+  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(before + 1);
+  await expect(page.getByTestId("reader-where")).toBeVisible();
+  // Gemerkt; beschrifteter Knopf blendet wieder ein.
+  await page.reload();
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  const show = page.getByTestId("right-column-show");
+  await expect(show).toHaveText("Spalte einblenden");
+  await show.click();
+  await expect(page.getByTestId("tts-right-column")).toBeVisible();
+  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
+});
+
+test("Variante A schmal: Werkzeuge hinter einem Knopf, Leiste einzeilig in der Transportzeile", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page, BOOK, 1000);
+  const bar = page.getByTestId("reader-player");
+  await expect(page.getByTestId("reader-dock")).toHaveCount(0);
+  const btn = page.getByTestId("reader-dock-open");
+  await expect(btn).toHaveAttribute("aria-label", "Stimme und Werkzeuge");
+  // Transportzeile: Werkzeugknopf, Play und Tempo auf einer Höhe.
+  const y = async (id: string) => {
+    const b = (await page.getByTestId(id).boundingBox())!;
+    return b.y + b.height / 2;
+  };
+  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
+  const height = (await bar.boundingBox())!.height;
+  await btn.click();
+  const panel = page.getByTestId("reader-dock-panel");
+  await expect(panel.getByTestId("voice-select")).toBeVisible();
+  await expect(panel.getByTestId("tts-action-menu")).toBeVisible();
+  expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(height + 1);
+  // Fokus im Fenster; Escape schließt und gibt ihn an den Knopf zurück.
+  await expect(panel.locator(":focus")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(btn).toBeFocused();
+  // Bei 390 px bleibt der Knopf neben Play, Kapitel/Satz im Überlaufmenü.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByTestId("reader-dock-open")).toBeVisible();
+  expect(Math.abs((await y("reader-dock-open")) - (await y("reader-play")))).toBeLessThan(4);
+});
+
+test("Variante A: Kapitel und Satz in der Leiste, bei 390 px im Überlaufmenü", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await open(page);
+  const where = page.getByTestId("reader-where");
+  // Ohne Sitzung: Kapitel über der Seitenangabe.
+  await expect(where.getByTestId("reader-chapter")).toHaveText("Kapitel 1");
+  await expect(where).toContainText("Seite 1 von");
+  // Mit Sitzung: Kapitel und Satz.
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 1, total: 6 });
+  await expect(where).toContainText("Kapitel 1");
+  await expect(where).toContainText("Satz 2 von 6");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(where).toBeHidden();
+  await page.getByRole("button", { name: "Weitere Optionen" }).click();
+  const head = page.getByTestId("reader-more-where");
+  await expect(head).toContainText("Kapitel 1");
+  await expect(head).toContainText("Satz 2 von 6");
+});
+
+test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  await open(page);
+  const hide = page.getByRole("button", { name: "Rechte Spalte ausblenden" });
+  await expect(hide).toHaveAttribute("title", "Rechte Spalte ausblenden");
+  await hide.click();
+  const show = page.getByRole("button", { name: "Spalte einblenden" });
+  await expect(show).toHaveAttribute("title", /wieder rechts anzeigen/);
+  const bar = page.getByRole("region", { name: "Wiedergabe" });
+  await expect(
+    bar.getByRole("button", { name: "Sprachausgabe einrichten" }),
+  ).toHaveAttribute("title", /.+/);
+  for (const name of ["Hinzufügen", "Diktieren", "Als Audio speichern…", "Änderungen vorab erzeugen", "Weitere Aktionen"]) {
+    const btn = bar.getByRole("button", { name, exact: true });
+    await expect(btn, name).toBeVisible();
+    // Tooltip beim Fokus (IconAction / ActionMenu).
+    await btn.focus();
+    await expect(page.getByRole("tooltip").filter({ hasText: name }).first(), name).toBeVisible();
+    await btn.blur();
+  }
+  // Schmal: der Werkzeugknopf ist benannt und hat einen Tooltip.
+  await page.setViewportSize({ width: 1000, height: 900 });
+  const tools = bar.getByRole("button", { name: "Stimme und Werkzeuge" });
+  await expect(tools).toHaveAttribute("title", "Stimme und Werkzeuge");
+  await tools.click();
+  await expect(page.getByRole("dialog", { name: "Stimme und Werkzeuge" })).toBeVisible();
 });

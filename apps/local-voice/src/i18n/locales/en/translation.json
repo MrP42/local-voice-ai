@@ -27,6 +27,7 @@
   },
   "tts": {
     "reader": {
+      "dockTools": "Voice and tools",
       "originalPage": "Page {{page}} in the original",
       "label": "Book pages",
       "roleBook": "book",
@@ -82,7 +83,23 @@
       "speakerMenuTitle": "Read this paragraph as",
       "speakerMenuReplace": "Replace speaker everywhere…",
       "speakerMenuVoice": "Voice and speaking style for “{{name}}”…",
-      "readFromHere": "Read from here"
+      "readFromHere": "Read from here",
+      "keepAwake": "Keep screen awake",
+      "keepAwakeOn": "Screen stays awake – click to turn off",
+      "keepAwakeHint": "The screen stays on, and the content shifts by one pixel every 45 seconds so OLED monitors do not dim. If your monitor still dims, this can often only be turned off in the monitor menu (e.g. “Screen saver”, “Logo brightness” or “ASBL”).",
+      "sizeHead": "Font size",
+      "fontHead": "Typeface",
+      "themeHead": "Colour",
+      "fontBook": "Book",
+      "fontSans": "Sans serif",
+      "fontWide": "Wide",
+      "themeAuto": "Like the app",
+      "themeWhite": "White",
+      "themeSepia": "Sepia",
+      "themeGreen": "Green",
+      "themeBlack": "Black",
+      "fullscreen": "Full screen",
+      "fullscreenExit": "Exit full screen"
     },
     "parts": {
       "next": "Continuing with “{{title}}”"
@@ -779,6 +796,9 @@
       "defaultVoice": "Default voice"
     },
     "layout": {
+      "hideColumn": "Hide right column",
+      "showColumn": "Show column",
+      "showColumnHint": "Show voice, tools and files on the right again",
       "sideBySide": "Show controls and files side by side",
       "resizePages": "Resize page list",
       "resizeRight": "Resize right column",
