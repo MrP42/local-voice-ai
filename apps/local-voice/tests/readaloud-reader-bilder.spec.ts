@@ -174,14 +174,16 @@ const calls = (page: Page, cmd: string) =>
 //   SCREENS_DIR=D:/bilder npx playwright test tests/readaloud-reader-bilder.spec.ts
 const DIR = process.env.SCREENS_DIR ?? "";
 for (const theme of ["light", "dark"]) {
-  for (const width of [1440, 390]) {
+  for (const width of [2560, 1440, 390]) {
     test(`bild ${theme} ${width}`, async ({ page }) => {
       test.skip(!DIR, "nur mit SCREENS_DIR");
       await page.addInitScript((t) => {
         (window as unknown as { __theme: string }).__theme = t;
       }, theme);
       await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
-      await open(page, BOOK, 1440);
+      await open(page, BOOK, width === 2560 ? 2560 : 1440);
+      if (width === 2560)
+        await page.getByTestId("reader-book").and(page.locator('[data-per-view="2"]')).waitFor();
       if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
       await page.getByTestId("reader-flow").waitFor();
       await page.getByTestId("tts-action-menu").click();
@@ -190,6 +192,11 @@ for (const theme of ["light", "dark"]) {
       await emit(page, "tts-speak-progress", { position: 2, total: 46 });
       await emit(page, "tts-current-sentence", { context: "speak", index: 2, text: "Er war ca. 42 Meter hoch." });
       await page.waitForTimeout(600);
+      if (width === 390) {
+        await page.getByTestId("reader-player").screenshot({
+          path: `${DIR}/reader-${theme}-390-spieler.png`,
+        });
+      }
       await page.screenshot({ path: `${DIR}/reader-${theme}-${width}.png`, fullPage: false });
     });
   }

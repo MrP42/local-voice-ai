@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Moon } from "lucide-react";
+import { Moon, MoreHorizontal } from "lucide-react";
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
 
@@ -67,6 +67,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const { t } = useTranslation();
   const [speedOpen, setSpeedOpen] = useState(false);
   const [sleepOpen, setSleepOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [sleepUntil, setSleepUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [jump, setJump] = useState("");
@@ -75,16 +76,17 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
 
   // Escape schließt die offenen Auswahlen (Tempo, Schlaf-Timer).
   useEffect(() => {
-    if (!speedOpen && !sleepOpen) return;
+    if (!speedOpen && !sleepOpen && !moreOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
       setSpeedOpen(false);
       setSleepOpen(false);
+      setMoreOpen(false);
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [speedOpen, sleepOpen]);
+  }, [speedOpen, sleepOpen, moreOpen]);
 
   useEffect(() => {
     if (sleepUntil === null) return;
@@ -165,7 +167,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         </div>
         <span data-testid="reader-remaining">−{formatTime(total - elapsed)}</span>
         <label className="reader-player__jump">
-          <span>{t("tts.reader.page")}</span>
+          <span className="reader-player__jump-label">{t("tts.reader.page")}</span>
           <input
             inputMode="numeric"
             value={jump}
@@ -231,6 +233,79 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           >
             <Glyph name="stop" />
           </button>
+        </div>
+        <div className="reader-player__more relative">
+          <button
+            type="button"
+            className="reader-player__pill reader-player__pill--icon"
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            aria-label={t("tts.reader.moreOptions")}
+            title={t("tts.reader.moreOptions")}
+            data-testid="reader-more"
+          >
+            {sleepLeft !== null && <Moon width={14} height={14} aria-hidden="true" />}
+            <span className="tabular-nums">{speedLabel(speed)}</span>
+            <MoreHorizontal width={16} height={16} aria-hidden="true" />
+          </button>
+          {moreOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
+              <div
+                role="menu"
+                aria-label={t("tts.reader.moreOptions")}
+                className="absolute right-0 bottom-full mb-1 w-48 rounded-lg border border-mid-gray/40 bg-background shadow-lg z-40 py-1"
+              >
+                <div className="px-3 pt-1 pb-0.5 text-xs text-text-muted" role="presentation">
+                  {t("tts.settings.speed")}
+                </div>
+                {speeds.map((value) => (
+                  <button
+                    key={`s${value}`}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={speed === value}
+                    onClick={() => {
+                      onSpeed(value);
+                      setMoreOpen(false);
+                    }}
+                    className={`w-full px-3 py-1.5 text-sm text-start cursor-pointer tabular-nums hover:bg-mid-gray/15 ${
+                      speed === value ? "text-text font-medium" : "text-text/80"
+                    }`}
+                  >
+                    {speedLabel(value)}
+                  </button>
+                ))}
+                <div
+                  className="mt-1 border-t border-mid-gray/30 px-3 pt-1.5 pb-0.5 text-xs text-text-muted"
+                  role="presentation"
+                >
+                  {sleepLeft !== null
+                    ? `${t("tts.reader.sleepTimer")} · ${t("tts.reader.sleepLeft", { minutes: sleepLeft })}`
+                    : t("tts.reader.sleepTimer")}
+                </div>
+                {SLEEP_CHOICES.map((minutes) => (
+                  <button
+                    key={`t${minutes}`}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={minutes === 0 ? sleepUntil === null : false}
+                    onClick={() => {
+                      setSleepUntil(minutes === 0 ? null : Date.now() + minutes * 60000);
+                      setNow(Date.now());
+                      setMoreOpen(false);
+                    }}
+                    className="w-full px-3 py-1.5 text-sm text-start cursor-pointer hover:bg-mid-gray/15"
+                  >
+                    {minutes === 0
+                      ? t("tts.reader.sleepOff")
+                      : t("tts.reader.sleepMinutes", { minutes })}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
         <div className="reader-player__extra">
           <div className="relative">

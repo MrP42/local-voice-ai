@@ -43,6 +43,7 @@
       "jumpToPage": "Go to page",
       "sentenceOf": "Sentence {{position}} of {{count}}",
       "sleepTimer": "Timer",
+      "moreOptions": "More options: speed and timer",
       "sleepLeft": "{{minutes}} min left",
       "sleepOff": "Off",
       "sleepMinutes": "{{minutes}} minutes",
