@@ -108,7 +108,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { VOICE_MANAGE, useVoiceChoice } from "./useVoiceChoice";
-import { detectLanguage } from "@/lib/reader/language";
+import { detectLanguage, isKnownLanguage } from "@/lib/reader/language";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
@@ -599,6 +599,7 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!activePage) return;
     pageLoaded.current = false;
+    setLangCheckedFor(null);
     void commands.pageStateLoad(activePage).then((result) => {
       if (result.status !== "ok") return;
       if (result.data) {
@@ -1135,6 +1136,13 @@ export const TtsSettings = () => {
       pendingApply.current = null;
       if (pending.page !== (activePage ?? null)) return;
       target = pending.key;
+    } else if (
+      tabVoices[target] !== undefined &&
+      tabVoices[target] !== voiceValue
+    ) {
+      // Ein Wechsel von außen (Einstellungen, Wiedergabeleiste der
+      // Aufnahmen): gilt als Handwahl, die Buchsprache stellt sie nicht um.
+      markVoiceChosen(target);
     }
     setTabVoices((current) =>
       current[target] === voiceValue
@@ -1148,10 +1156,25 @@ export const TtsSettings = () => {
   // Buchsprache (Patrick 01.11.): beim Import und bei jeder größeren
   // Änderung aus dem Originaltext erkannt und im Arbeitsstand der Seite
   // gespeichert; steht die Seite in der Bibliothek, auch im Buch.
-  const langSource = useDebouncedValue(text, 800);
+  // Text samt Seite und Ladezähler: nach einem Seitenwechsel gehört der
+  // entprellte Text noch kurz zur alten Seite und wird dann übergangen.
+  const langInput = useMemo(
+    () => ({ text, page: activePage, tick: pageLoadTick }),
+    [text, activePage, pageLoadTick],
+  );
+  const langSource = useDebouncedValue(langInput, 800);
+  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
+      Buchsprache Stimmen um. */
+  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
   useEffect(() => {
-    if (!pageLoaded.current) return;
-    const found = detectLanguage(langSource);
+    if (
+      !pageLoaded.current ||
+      langSource.page !== activePage ||
+      langSource.tick !== pageLoadTick
+    )
+      return;
+    const found = detectLanguage(langSource.text);
+    setLangCheckedFor(activePage ?? null);
     if (!found || found === pageLang) return;
     setPageLang(found);
     const page = activePage;
@@ -1161,9 +1184,9 @@ export const TtsSettings = () => {
       .then((r) => {
         if (r.status !== "ok") return;
         const book = r.data.find((b) => b.text?.page_id === page);
-        if (!book || book.language === found) return;
-        // Eine Sprache aus Open Library oder von Hand bleibt stehen.
-        if (book.language && book.metadata_source) return;
+        // Nur ergänzen: eine vorhandene Sprache (Open Library, von Hand)
+        // bleibt stehen.
+        if (!book || book.language) return;
         void commands.librarySave({ ...book, language: found });
       })
       .catch(() => undefined);
@@ -1185,10 +1208,13 @@ export const TtsSettings = () => {
   const autoVoiceFor = useRef<string | null>(null);
   useEffect(() => {
     if (!pageLoaded.current || !contentLang || voicesChosen[voiceKey]) return;
+    if (langCheckedFor !== (activePage ?? null)) return;
     const current = tabVoices[voiceKey] ?? voiceValue;
     if (!current || current === VOICE_MANAGE) return;
     const lang = voiceLanguageOf(current);
-    if (lang === null || lang === contentLang) return;
+    // Nur zwischen Sprachen, die die Erkennung kennt: eine niederländische
+    // Stimme bleibt, auch wenn der Text für Englisch gehalten würde.
+    if (lang === null || lang === contentLang || !isKnownLanguage(lang)) return;
     const better = bestVoiceFor(contentLang, current);
     if (!better || better === current) return;
     const marker = `${activePage ?? ""}|${voiceKey}|${contentLang}|${current}`;
@@ -1205,6 +1231,7 @@ export const TtsSettings = () => {
     bestVoiceFor,
     activePage,
     pageLoadTick,
+    langCheckedFor,
   ]);
   // Sprachfilter der Stimmenauswahl: „Passend“ zeigt die Stimmen der
   // Textsprache und die, die jede Sprache sprechen; die gewählte bleibt immer.
@@ -1368,11 +1395,14 @@ export const TtsSettings = () => {
   const [screenFull, setScreenFull] = useState(false);
   const fullscreen = readerFill || screenFull;
   useEffect(() => {
-    const onChange = () =>
-      setScreenFull(
+    const onChange = () => {
+      const on =
         document.fullscreenElement !== null &&
-          document.fullscreenElement === readerFrameRef.current,
-      );
+        document.fullscreenElement === readerFrameRef.current;
+      setScreenFull(on);
+      // Echtes Vollbild beendet (F11, Escape des Systems): ganz zurück.
+      if (!on) setReaderFill(false);
+    };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
@@ -2381,7 +2411,7 @@ export const TtsSettings = () => {
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
             options={shownVoiceOptions}
-            menuScrollKey={`tts-voice:${voiceLangFilter}`}
+            menuScrollKey={`tts-voice:${voiceLangFilter}:${contentLang ?? ""}`}
             menuHeader={voiceFilterChips}
             formatOptionLabel={(option, context) => {
               if (compact && context === "value")

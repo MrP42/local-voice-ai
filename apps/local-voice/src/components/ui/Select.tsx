@@ -107,13 +107,16 @@ const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
     // Einige Bilder lang wiederholen: react-select positioniert die Liste im
     // Portal und scrollt danach selbst zum Fokus-Eintrag. Eigenes Scrollen
     // (Rad, Tasten, Ziehen) beendet das sofort.
-    let frames = 6;
+    // Zeitfenster statt Bildzahl: auf einem ausgelasteten Rechner kommen die
+    // Bilder langsamer, react-select scrollt aber trotzdem erst danach.
+    const until = performance.now() + 400;
     let id = 0;
+    let stopped = false;
     const stop = () => {
-      frames = 0;
+      stopped = true;
     };
     const tick = () => {
-      if (frames-- <= 0) return;
+      if (stopped || performance.now() > until) return;
       apply();
       id = window.requestAnimationFrame(tick);
     };

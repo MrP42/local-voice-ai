@@ -11,6 +11,10 @@ const LISTS: Record<string, readonly string[]> = {
   fr: "le la les et est un une des du que qui dans pour pas sur avec ce il elle nous vous sont mais plus au".split(" "),
   es: "el la los las y es un una que de del en por para con no se su al como más pero son está muy".split(" "),
   it: "il lo la gli le e è un una che di del della per con non si sono come più ma anche nel alla".split(" "),
+  // Mitbewerber, damit Niederländisch und Portugiesisch nicht als Englisch
+  // oder Spanisch durchgehen.
+  nl: "de het een en van ik je dat niet is op te zijn met voor hij er maar ook als bij nog wat dan wel".split(" "),
+  pt: "o os as um uma que de do da dos das em no na por para com não se seu sua mais mas são está também ao".split(" "),
 };
 
 const SETS = Object.fromEntries(
@@ -40,9 +44,11 @@ export function detectLanguage(text: string): string | null {
     // Seitenmarken und Sprecher-Präfixe sind keine Sprache.
     .replace(/\{\{S\. [^}]*\}\}/g, " ")
     .replace(/<[^>\n]{1,40}>/g, " ");
-  const scores: Record<string, number> = { de: 0, en: 0, fr: 0, es: 0, it: 0 };
+  const scores: Record<string, number> = Object.fromEntries(
+    Object.keys(LISTS).map((k) => [k, 0]),
+  );
   let words = 0;
-  for (const raw of sample.toLowerCase().split(/[^\p{L}\p{N}'ß]+/u)) {
+  for (const raw of sample.toLowerCase().split(/[^\p{L}\p{N}ß]+/u)) {
     if (!raw) continue;
     words += 1;
     for (const code in SETS) if (SETS[code].has(raw)) scores[code] += 2;
@@ -50,6 +56,7 @@ export function detectLanguage(text: string): string | null {
   for (const c of sample) {
     if ("äöüÄÖÜß".includes(c)) scores.de += 1;
     else if ("ñ¿¡".includes(c)) scores.es += 2;
+    else if ("ãõ".includes(c)) scores.pt += 2;
   }
   if (words < MIN_WORDS) return null;
   const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
@@ -67,3 +74,6 @@ export function primaryLanguage(code: string | null | undefined): string | null 
   if (!p || p === "und" || p === "mul") return null;
   return p;
 }
+
+/** Sprachen, die `detectLanguage` unterscheiden kann. */
+export const isKnownLanguage = (code: string): boolean => code in LISTS;
