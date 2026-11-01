@@ -198,7 +198,11 @@ export const InfoLine: React.FC = () => {
       )}
       {costText.chip && (
         <span
+          // Schmal hat der Hinweis „Kein Wissen freigegeben“ Vorrang; die Kosten
+          // stehen weiter in den Details hinter dem i-Symbol.
           className={`shrink-0 inline-flex items-center h-5 px-1.5 rounded-full border text-[11px] ${
+            noKnowledge(knowledge) ? "max-sm:hidden " : ""
+          }${
             cost.kind === "usd"
               ? "bg-logo-primary/15 border-transparent text-logo-primary"
               : "bg-mid-gray/10 border-mid-gray/25"
