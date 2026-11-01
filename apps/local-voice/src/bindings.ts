@@ -673,6 +673,65 @@ async syncTouch() : Promise<void> {
 async syncDefaultDeviceName() : Promise<string> {
     return await TAURI_INVOKE("sync_default_device_name");
 },
+async kontoStatus() : Promise<Result<KontoStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoAendern(id: string, aenderung: KontoAenderung) : Promise<Result<KontoProfilDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_aendern", { id, aenderung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoAktivieren(id: string) : Promise<Result<KontoStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_aktivieren", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_anlegen", { anzeigename }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`).
+ */
+async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_setzen", { id, bytes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoBildEntfernen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_entfernen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("konto_bild_lesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
  */
@@ -7719,6 +7778,10 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  * WAI Presenter (Etappe 4): Austauschordner fuer Besprechungspakete (`presenter.rs`).
  */
 "presenter"
+export type KontoAenderung = { anzeigename: string | null; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number | null }
+export type KontoAnmeldungDto = { issuer: string; subject: string; seitMs: number; idpFelder: string[] }
+export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; anmeldung: KontoAnmeldungDto | null }
+export type KontoStatus = { aktiv: KontoProfilDto; weitere: KontoProfilDto[]; sitzungsrevision: number }
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**
  * Was der Chip im Kopf der Besprechung braucht.

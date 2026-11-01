@@ -190,8 +190,10 @@ test("Titelleiste: ohne WAI, Suche mit Strg+K, Glocke, Hilfe, Einstellungen, Pro
   await page.keyboard.press("Escape");
 
   // Profil
-  await bar.getByRole("button", { name: "Profil" }).click();
-  await expect(page.getByText("Lokales Profil")).toBeVisible();
+  await bar.getByRole("button", { name: /^Profil:/ }).click();
+  const profilmenue = page.locator(".wai-konto-menue");
+  await expect(profilmenue).toContainText("Lokales Profil");
+  await expect(profilmenue.getByRole("button", { name: "Mein Profil" })).toBeVisible();
 });
 
 for (const theme of ["dark", "light"] as const) {

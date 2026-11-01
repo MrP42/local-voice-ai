@@ -105,6 +105,8 @@ argon2 = "0.5"
 hkdf = "0.12"
 zeroize = "1"
 base64 = "0.22"
+# ADR-0024: gemeinsamer Kontospeicher der Suite (vendort aus wai-sdk, siehe vendor/wai-konto/VENDOR.toml)
+wai-konto = { path = "vendor/wai-konto" }
 rand = "0.8"
 url = "2"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);

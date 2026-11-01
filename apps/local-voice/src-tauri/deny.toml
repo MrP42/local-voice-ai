@@ -45,6 +45,8 @@ allow = [
 exceptions = [
     { allow = ["LGPL-3.0"], crate = "mp3lame-encoder" },
     { allow = ["LGPL-3.0"], crate = "mp3lame-sys" },
+    # Eigener Code aus wai-sdk (ADR-0024), vendort, nicht veroeffentlicht.
+    { allow = ["LicenseRef-WAI-Proprietary"], crate = "wai-konto" },
 ]
 
 [advisories]

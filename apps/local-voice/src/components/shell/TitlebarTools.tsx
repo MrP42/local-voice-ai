@@ -2,11 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import {
-  Avatar,
   Button as FluentButton,
   Menu,
   MenuDivider,
-  MenuGroupHeader,
   MenuItem,
   MenuList,
   MenuPopover,
@@ -18,13 +16,18 @@ import {
   ToggleButton,
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
-import { Bell, HelpCircle, Settings, User } from "lucide-react";
+import { Bell, HelpCircle, Settings } from "lucide-react";
 import { Dialog } from "../ui/Dialog";
 import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { useSettings } from "../../hooks/useSettings";
 import { togglePageHelp, useHasPageHelp } from "../help/pageHelp";
 import { useIntroTourStore } from "@/stores/introTourStore";
 import { SECTIONS_CONFIG, type SidebarSection } from "../Sidebar";
+import { Profilknopf } from "../konto/Profilknopf";
+import { ProfilHinzufuegenDialog } from "../konto/ProfilHinzufuegenDialog";
+import { useKonto } from "../konto/useKonto";
+import { useKontoLabels } from "../konto/labels";
+import { openSettingsTab } from "../../lib/openSettingsTab";
 import { APP_NAME } from "./frame";
 
 interface TitlebarToolsProps {
@@ -61,6 +64,9 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
   useEffect(() => () => window.clearTimeout(blurTimer.current), []);
   const searchKey = IS_MAC ? "⌘K" : t("titlebar.searchKey");
   const { settings } = useSettings();
+  const konto = useKonto();
+  const kontoLabels = useKontoLabels();
+  const [profilDialog, setProfilDialog] = useState(false);
 
   // Strg+K (macOS: Cmd+K) springt ins Suchfeld, von überall in der App.
   useEffect(() => {
@@ -255,34 +261,24 @@ export const TitlebarTools: React.FC<TitlebarToolsProps> = ({
         />
       </FluentTooltip>
 
-      <Menu>
-        <FluentTooltip content={t("titlebar.profile")} relationship="label">
-          <MenuTrigger disableButtonEnhancement>
-            <FluentButton
-              appearance="subtle"
-              className="lv-titlebar__profile"
-              aria-label={t("titlebar.profile")}
-              data-titlebar-profile
-              icon={
-                <Avatar
-                  size={28}
-                  color="brand"
-                  aria-hidden="true"
-                  icon={<User size={16} aria-hidden="true" />}
-                />
-              }
-            />
-          </MenuTrigger>
-        </FluentTooltip>
-        <MenuPopover>
-          <MenuList>
-            <MenuGroupHeader>{t("titlebar.localProfile")}</MenuGroupHeader>
-            <MenuItem onClick={() => onNavigate("settings")}>
-              {t("sidebar.settings")}
-            </MenuItem>
-          </MenuList>
-        </MenuPopover>
-      </Menu>
+      {/* ADR-0024: Suite-Profil wie in Outlook. Paket 1 kennt nur das lokale
+          Profil, deshalb ohne onAnmelden/onAbmelden (kein Anmelden-Knopf). */}
+      <Profilknopf
+        profil={konto.aktiv}
+        status={konto.status}
+        weitereProfile={konto.weitere}
+        onMeinProfil={() => onNavigate("profile")}
+        onKontoGeraete={() => openSettingsTab("account")}
+        onProfilWechseln={(id) => void konto.aktivieren(id)}
+        onProfilHinzufuegen={() => setProfilDialog(true)}
+        labels={kontoLabels}
+        className="lv-titlebar__profile"
+      />
+      <ProfilHinzufuegenDialog
+        open={profilDialog}
+        onOpenChange={setProfilDialog}
+        onAnlegen={konto.anlegen}
+      />
 
       <Dialog
         open={aboutOpen}

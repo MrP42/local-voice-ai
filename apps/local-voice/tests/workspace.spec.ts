@@ -315,11 +315,11 @@ test("all five content pages share one head", async ({ page }) => {
   expect(c.y).toBeGreaterThanOrEqual(e.y + e.height - 1);
 });
 
-test("account & devices: sign in from the general tab, then sign out", async ({ page }) => {
+test("account & devices: sign in from the account tab, then sign out", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Einstellungen", exact: true }).click();
-  await page.getByRole("tab", { name: "Allgemein" }).click();
-  await expect(page.getByText("Konto & Geräte")).toBeVisible();
+  await page.getByRole("tab", { name: "Konto & Geräte" }).click();
+  await expect(page.getByRole("heading", { name: "Konto & Geräte" })).toBeVisible();
   const login = page.getByTestId("sync-login");
   await expect(login).toBeVisible();
   await expect(login.getByLabel("Gerätename")).toHaveValue("Test-PC");

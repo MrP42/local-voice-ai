@@ -19,6 +19,7 @@ import {
   Users,
   Volume2,
   House,
+  UserRound,
   X,
 } from "lucide-react";
 import {
@@ -31,6 +32,7 @@ import {
 import { APP_NAME } from "./shell/frame";
 import { IntegrationsPage } from "./integrations/IntegrationsPage";
 import { VoiceCallPage } from "./voice-call/VoiceCallPage";
+import { KontoProfilSeite } from "./konto/KontoProfilSeite";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
 
@@ -90,6 +92,13 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.settings",
     icon: Cog,
     component: AppSettings,
+  },
+  // ADR-0024: „Mein Profil“ öffnet über das Profilmenü oben rechts; die Seitenleiste
+  // listet sie bewusst nicht (PRIMARY/UTILITIES nennen ihre Einträge einzeln).
+  profile: {
+    labelKey: "konto.meinProfil",
+    icon: UserRound,
+    component: KontoProfilSeite,
   },
 } as const satisfies Record<string, SectionConfig>;
 

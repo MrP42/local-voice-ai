@@ -12,7 +12,7 @@ import { relativeTime } from "./tts/WorkspaceSidebars";
 
 /**
  * Konto & Geräte: Anmelden am Hub, Stand des Abgleichs, Abmelden. Sitzt im
- * Reiter „Allgemein" — kein eigener Menüpunkt für eine Einstellung. Der
+ * Reiter „Konto & Geräte" (seit ADR-0024, vorher „Allgemein"). Der
  * Schlüssel entsteht aus dem Passwort auf diesem Gerät; der Server sieht
  * nur Chiffrate (Spec 2026-09-14, Abschnitt 3).
  */
