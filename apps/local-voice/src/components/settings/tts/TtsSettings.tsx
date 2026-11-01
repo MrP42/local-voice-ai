@@ -1543,12 +1543,12 @@ export const TtsSettings = () => {
     setDictating(true);
   };
 
-  /** Dokument als Originaltext laden (txt/md/pdf/docx). */
+  /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
   const loadDocument = async () => {
     const picked = await open({
       multiple: false,
       filters: [
-        { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx"] },
+        { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
       ],
     });
     if (typeof picked !== "string") return;

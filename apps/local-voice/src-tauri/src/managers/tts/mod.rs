@@ -2135,7 +2135,12 @@ impl TtsManager {
         sentence_index: usize,
     ) -> Result<usize, String> {
         use tauri::Emitter;
-        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Eine Sitzung liest Satz fuer Satz und laesst sich jederzeit
+        // anhalten; die Grenze `tts_max_chars` gilt deshalb je Satz (in
+        // `fetch_and_play_pipelined`), nicht fuer den ganzen Text -- sonst endete ein
+        // Buch nach 5000 Zeichen (lva#149). `max_chars` bleibt fuer die
+        // Meldung, falls ein Aufrufer doch kuerzt.
+        let max_chars = u32::MAX;
         let prepared =
             protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
         // Eine Kuerzung muss man sehen. Bisher fiel sie nur einer Funktion
@@ -2169,9 +2174,10 @@ impl TtsManager {
         char_offset: usize,
         only_one: bool,
     ) -> Result<usize, String> {
-        let max_chars = *self.core.max_chars.lock().unwrap();
+        // Ganzer Text wie in `speak_text_at`: die Grenze gilt je Satz, sonst
+        // waere ein Klick hinter Zeichen 5000 nicht erreichbar (lva#149).
         let prepared =
-            protocol::prepare_text(raw, max_chars).ok_or_else(|| "empty text".to_string())?;
+            protocol::prepare_text(raw, u32::MAX).ok_or_else(|| "empty text".to_string())?;
         // prepare_text trimmt vorn: den Offset entsprechend verschieben.
         let leading = raw.len() - raw.trim_start().len();
         let leading_chars = raw[..leading].chars().count();
