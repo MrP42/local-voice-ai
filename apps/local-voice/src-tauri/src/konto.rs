@@ -195,8 +195,17 @@ fn status_aus(datei: ProfilDatei) -> Result<KontoStatus, String> {
     })
 }
 
+/// Meldung, wenn das gezeigte Profil nicht mehr das aktive ist (eine andere Suite-App
+/// hat gewechselt). Die Prüfung macht wai-konto unter derselben Dateisperre wie das
+/// Schreiben (`*_wenn_aktiv`).
+const NICHT_AKTIV: &str =
+    "Das aktive Profil hat sich geändert. Die Änderung wurde nicht übernommen.";
+
 fn fehler(e: KontoFehler) -> String {
-    e.to_string()
+    match e {
+        KontoFehler::NichtAktiv(_) => NICHT_AKTIV.to_string(),
+        e => e.to_string(),
+    }
 }
 
 /// Nur das Hauptfenster darf das Suite-Profil lesen und ändern. Die Fähigkeiten der
@@ -212,16 +221,6 @@ fn fenster_erlaubt(label: &str) -> Result<(), String> {
 
 fn nur_hauptfenster(fenster: &WebviewWindow) -> Result<(), String> {
     fenster_erlaubt(fenster.label())
-}
-
-/// Das Profil `id` muss das zum Aufrufzeitpunkt aktive sein; sonst landet die Änderung
-/// nicht im Profil, das die Oberfläche gezeigt hat.
-fn pruefe_aktiv(aktiv: &str, id: &str) -> Result<(), String> {
-    if aktiv == id {
-        Ok(())
-    } else {
-        Err("Das aktive Profil hat sich geändert. Die Änderung wurde nicht übernommen.".to_string())
-    }
 }
 
 impl KontoState {
@@ -292,8 +291,8 @@ pub async fn konto_aendern(
 ) -> Result<KontoProfilDto, String> {
     nur_hauptfenster(&fenster)?;
     let profil = blockierend(&app, move |s| {
-        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
-        s.profil_aendern(&id, aenderung.into()).map_err(fehler)
+        s.profil_aendern_wenn_aktiv(&id, aenderung.into())
+            .map_err(fehler)
     })
     .await?;
     melden(&app);
@@ -364,8 +363,7 @@ pub async fn konto_bild_setzen(
     let png = bild_dekodieren(&bytes)?;
     drop(bytes);
     blockierend(&app, move |s| {
-        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
-        s.bild_setzen(&id, &png).map_err(fehler)
+        s.bild_setzen_wenn_aktiv(&id, &png).map_err(fehler)
     })
     .await?;
     melden(&app);
@@ -382,8 +380,7 @@ pub async fn konto_bild_entfernen(
 ) -> Result<(), String> {
     nur_hauptfenster(&fenster)?;
     blockierend(&app, move |s| {
-        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
-        s.bild_entfernen(&id).map_err(fehler)
+        s.bild_entfernen_wenn_aktiv(&id).map_err(fehler)
     })
     .await?;
     melden(&app);
@@ -460,11 +457,8 @@ mod tests {
     }
 
     #[test]
-    fn aktive_id_wird_geprueft() {
-        assert!(pruefe_aktiv("p1", "p1").is_ok());
-        assert!(pruefe_aktiv("p2", "p1")
-            .unwrap_err()
-            .contains("aktive Profil"));
+    fn nicht_aktiv_wird_verstaendlich_gemeldet() {
+        assert_eq!(fehler(KontoFehler::NichtAktiv("p1".into())), NICHT_AKTIV);
     }
 
     #[test]

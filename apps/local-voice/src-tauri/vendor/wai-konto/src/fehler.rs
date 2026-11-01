@@ -27,6 +27,9 @@ pub enum KontoFehler {
     Schreibgeschuetzt(String),
     #[error("Profil '{0}' nicht gefunden")]
     NichtGefunden(String),
+    /// Das Profil ist zum Zeitpunkt der Sperre nicht das aktive Profil (`*_wenn_aktiv`).
+    #[error("Profil '{0}' ist nicht (mehr) das aktive Profil")]
+    NichtAktiv(String),
     #[error("Profil nicht entfernbar: {0}")]
     NichtEntfernbar(&'static str),
     #[error("Ungültiges Profilbild: {0}")]
