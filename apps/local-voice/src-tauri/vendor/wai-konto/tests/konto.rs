@@ -1,13 +1,23 @@
 use std::sync::mpsc;
 use std::time::Duration;
 use wai_konto::{
-    Anmeldung, BILD_MAX_BYTES, KontoFehler, KontoSpeicher, ProfilAenderung, ProfilEingabe,
+    Anmeldung, BILD_MAX_BYTES, BILD_MAX_KANTE, KontoFehler, KontoSpeicher, ProfilAenderung,
+    ProfilEingabe,
 };
 
-fn png(n: usize) -> Vec<u8> {
+fn png_mit(breite: u32, hoehe: u32, n: usize) -> Vec<u8> {
     let mut v = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    v.resize(n, 7);
+    v.extend_from_slice(&13u32.to_be_bytes());
+    v.extend_from_slice(b"IHDR");
+    v.extend_from_slice(&breite.to_be_bytes());
+    v.extend_from_slice(&hoehe.to_be_bytes());
+    v.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]);
+    v.resize(n.max(v.len()), 7);
     v
+}
+
+fn png(n: usize) -> Vec<u8> {
+    png_mit(16, 16, n)
 }
 
 fn speicher() -> (tempfile::TempDir, KontoSpeicher) {
@@ -159,7 +169,7 @@ fn bild_grenzen() {
         Err(KontoFehler::Bild(_))
     ));
     assert!(matches!(
-        s.bild_setzen(&id, &png(8)),
+        s.bild_setzen(&id, &png(8)[..8]),
         Err(KontoFehler::Bild(_))
     ));
     assert!(matches!(
@@ -288,4 +298,167 @@ fn version_wird_vor_dem_rest_geprueft() {
     )
     .unwrap();
     assert!(matches!(s.lesen(), Err(KontoFehler::Version(2))));
+}
+
+#[test]
+fn ihdr_wird_geprueft() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    let fehler = |b: Vec<u8>| matches!(s.bild_setzen(&id, &b), Err(KontoFehler::Bild(_)));
+    assert!(fehler(png_mit(0, 16, 40)));
+    assert!(fehler(png_mit(16, 0, 40)));
+    assert!(fehler(png_mit(BILD_MAX_KANTE + 1, 16, 40)));
+    assert!(fehler(png_mit(16, BILD_MAX_KANTE + 1, 40)));
+    assert!(fehler(png_mit(u32::MAX, u32::MAX, 40)));
+    let mut falsche_laenge = png_mit(16, 16, 40);
+    falsche_laenge[11] = 12;
+    assert!(fehler(falsche_laenge));
+    let mut falscher_typ = png_mit(16, 16, 40);
+    falscher_typ[12..16].copy_from_slice(b"IDAT");
+    assert!(fehler(falscher_typ));
+    assert!(fehler(png_mit(16, 16, 40)[..32].to_vec()));
+    assert!(!s.aktiv().unwrap().hat_bild);
+    s.bild_setzen(&id, &png_mit(1, 1, 40)).unwrap();
+    s.bild_setzen(&id, &png_mit(BILD_MAX_KANTE, BILD_MAX_KANTE, 40))
+        .unwrap();
+}
+
+#[test]
+fn bild_lesen_begrenzt_und_prueft() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    let pfad = s.wurzel().join("bilder").join(format!("{id}.png"));
+    std::fs::write(&pfad, png(BILD_MAX_BYTES + 50_000)).unwrap();
+    assert_eq!(s.bild_lesen(&id).unwrap(), None);
+    std::fs::write(&pfad, png_mit(0, 5, 100)).unwrap();
+    assert_eq!(s.bild_lesen(&id).unwrap(), None);
+    std::fs::write(&pfad, b"kein png").unwrap();
+    assert_eq!(s.bild_lesen(&id).unwrap(), None);
+    std::fs::write(&pfad, png(BILD_MAX_BYTES)).unwrap();
+    assert_eq!(s.bild_lesen(&id).unwrap().unwrap().len(), BILD_MAX_BYTES);
+}
+
+/// Blockiert das Schreiben von `profile.json`: Die Temp-Datei des atomaren Schreibens ist
+/// ein Ordner, `File::create` scheitert.
+fn profil_schreiben_blockieren(s: &KontoSpeicher) -> std::path::PathBuf {
+    let sperre = s
+        .wurzel()
+        .join(format!(".profile.json.{}.tmp", std::process::id()));
+    std::fs::create_dir(&sperre).unwrap();
+    sperre
+}
+
+fn bild_dateien(s: &KontoSpeicher) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(s.wurzel().join("bilder")) else {
+        return vec![];
+    };
+    let mut namen: Vec<String> = rd
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    namen.sort();
+    namen
+}
+
+#[test]
+fn bild_setzen_scheitert_ohne_flag_und_ohne_rest() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    let sperre = profil_schreiben_blockieren(&s);
+    assert!(s.bild_setzen(&id, &png(100)).is_err());
+    std::fs::remove_dir(&sperre).unwrap();
+    assert!(!s.aktiv().unwrap().hat_bild);
+    assert!(bild_dateien(&s).is_empty());
+}
+
+#[test]
+fn bild_ersetzen_scheitert_mit_gueltigem_bild() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    let sperre = profil_schreiben_blockieren(&s);
+    assert!(s.bild_setzen(&id, &png(200)).is_err());
+    std::fs::remove_dir(&sperre).unwrap();
+    assert!(s.aktiv().unwrap().hat_bild);
+    let bild = s
+        .bild_lesen(&id)
+        .unwrap()
+        .expect("Bild muss lesbar bleiben");
+    assert_eq!(bild, png(100));
+    assert_eq!(bild_dateien(&s).len(), 1);
+}
+
+#[test]
+fn bild_entfernen_scheitert_ohne_verlust_des_flags() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    let sperre = profil_schreiben_blockieren(&s);
+    assert!(s.bild_entfernen(&id).is_err());
+    std::fs::remove_dir(&sperre).unwrap();
+    assert!(s.aktiv().unwrap().hat_bild);
+    assert!(s.bild_lesen(&id).unwrap().is_some());
+    s.bild_entfernen(&id).unwrap();
+    assert!(bild_dateien(&s).is_empty());
+}
+
+#[test]
+fn bild_entfernen_toleriert_fehlende_datei() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    std::fs::remove_file(s.wurzel().join("bilder").join(format!("{id}.png"))).unwrap();
+    s.bild_entfernen(&id).unwrap();
+    assert!(!s.aktiv().unwrap().hat_bild);
+}
+
+#[test]
+fn anlegen_und_aktivieren_atomar() {
+    let (_t, s) = speicher();
+    let alt = s.aktiv().unwrap().id;
+    let d0 = s.lesen().unwrap();
+    let neu = s.profil_anlegen_und_aktivieren(eingabe("Neu")).unwrap();
+    let d1 = s.lesen().unwrap();
+    assert_eq!(d1.aktiv, neu.id);
+    assert_ne!(neu.id, alt);
+    assert_eq!(d1.profile.len(), 2);
+    assert_eq!(d1.generation, d0.generation + 1);
+    assert_eq!(d1.sitzungsrevision, d0.sitzungsrevision + 1);
+    // Ungültige Eingabe: nichts ändert sich.
+    assert!(s.profil_anlegen_und_aktivieren(eingabe("  ")).is_err());
+    let d2 = s.lesen().unwrap();
+    assert_eq!(d2.aktiv, neu.id);
+    assert_eq!(d2.generation, d1.generation);
+    assert_eq!(d2.profile.len(), 2);
+    // `profil_anlegen` bleibt ohne Aktivierung.
+    let dritt = s.profil_anlegen(eingabe("Dritt")).unwrap();
+    assert_ne!(s.lesen().unwrap().aktiv, dritt.id);
+}
+
+#[test]
+fn bild_entfernen_mit_haengender_datei_ist_kein_fehler() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    // Löschen unmöglich: an der Stelle der Datei liegt ein nichtleerer Ordner.
+    let pfad = s.wurzel().join("bilder").join(format!("{id}.png"));
+    std::fs::remove_file(&pfad).unwrap();
+    std::fs::create_dir(&pfad).unwrap();
+    std::fs::write(pfad.join("x"), b"x").unwrap();
+    s.bild_entfernen(&id).unwrap();
+    assert!(!s.aktiv().unwrap().hat_bild);
+    assert_eq!(s.bild_lesen(&id).unwrap(), None);
+}
+
+#[test]
+fn verwaiste_datei_ohne_flag_wird_nicht_ausgeliefert() {
+    let (_t, s) = speicher();
+    let id = s.aktiv().unwrap().id;
+    s.bild_setzen(&id, &png(100)).unwrap();
+    let kopie = s.wurzel().join("kopie.png");
+    std::fs::copy(s.wurzel().join("bilder").join(format!("{id}.png")), &kopie).unwrap();
+    s.bild_entfernen(&id).unwrap();
+    std::fs::copy(&kopie, s.wurzel().join("bilder").join(format!("{id}.png"))).unwrap();
+    assert_eq!(s.bild_lesen(&id).unwrap(), None);
+    assert_eq!(bild_dateien(&s).len(), 1);
 }

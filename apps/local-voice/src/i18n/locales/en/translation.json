@@ -4413,6 +4413,7 @@
     "bildZuGross": "The picture is larger than 256 KB.",
     "bildTyp": "Please choose a PNG image.",
     "bildFehler": "The picture could not be saved.",
+    "bildEntfernenFehler": "The picture could not be removed.",
     "kontaktdaten": "Contact details",
     "speichern": "Save",
     "gespeichert": "Saved.",

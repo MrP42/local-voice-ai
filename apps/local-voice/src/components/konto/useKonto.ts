@@ -94,12 +94,13 @@ export interface KontoAnsicht {
   status: Anmeldestatus;
   /** Der Kontospeicher wurde erreicht (sonst gilt das leere Ersatzprofil). */
   verfuegbar: boolean;
-  aendern: (aenderung: ProfilAenderung) => Promise<void>;
+  /** Ändert das Profil `id`; der Kern verlangt, dass es noch das aktive ist. */
+  aendern: (id: string, aenderung: ProfilAenderung) => Promise<void>;
   aktivieren: (id: string) => Promise<void>;
   /** Legt ein Profil an und macht es zum aktiven. */
   anlegen: (anzeigename: string) => Promise<void>;
-  bildSetzen: (datei: Blob) => Promise<void>;
-  bildEntfernen: () => Promise<void>;
+  bildSetzen: (id: string, datei: Blob) => Promise<void>;
+  bildEntfernen: (id: string) => Promise<void>;
 }
 
 /**
@@ -110,8 +111,9 @@ export function useKonto(): KontoAnsicht {
   const [aktiv, setAktiv] = useState<KontoProfil>(ERSATZ_PROFIL);
   const [weitere, setWeitere] = useState<KontoProfil[]>([]);
   const [verfuegbar, setVerfuegbar] = useState(false);
-  // Gleiches Bild nicht erneut als neuen Blob ausgeben (kein Flackern bei jedem Ereignis).
-  const bilder = useRef(new Map<string, { b64: string; blob?: Blob }>());
+  // Bild je Profil-ID samt Stand (`geaendertMs`): unverändert heißt weder erneut übertragen
+  // noch neuer Blob (kein Flackern bei Ereignis und Fenster-Fokus).
+  const bilder = useRef(new Map<string, { stand: number; blob: Blob }>());
   const lauf = useRef(0);
 
   const laden = useCallback(async () => {
@@ -131,18 +133,24 @@ export function useKonto(): KontoAnsicht {
             bilder.current.delete(dto.id);
             return zuProfil(dto);
           }
+          // Das Bild wird nur geholt, wenn sich das Profil seit dem letzten Laden
+          // geändert hat (`geaendertMs` steigt auch bei Bild setzen/entfernen).
+          const stand = dto.geaendertMs;
+          const alt = bilder.current.get(dto.id);
+          if (alt && alt.stand === stand) return zuProfil(dto, alt.blob);
           const res = await commands.kontoBildLesen(dto.id);
           const b64 = res?.status === "ok" ? res.data : null;
           if (!b64) return zuProfil(dto);
-          const alt = bilder.current.get(dto.id);
-          const blob = alt?.b64 === b64 ? alt.blob : pngBlob(b64);
-          bilder.current.set(dto.id, { b64, blob });
+          const blob = pngBlob(b64);
+          if (blob) bilder.current.set(dto.id, { stand, blob });
           return zuProfil(dto, blob);
         }),
       );
       if (mein !== lauf.current) return;
+      // Entfernte Profile verlassen den Cache; mit dem Blob endet auch die Blob-URL
+      // (die `ProfilBild` je Blob anlegt und beim Aufräumen widerruft).
       const ids = new Set(alle.map((dto) => dto.id));
-      for (const id of bilder.current.keys())
+      for (const id of [...bilder.current.keys()])
         if (!ids.has(id)) bilder.current.delete(id);
       setAktiv(profile[0]);
       setWeitere(profile.slice(1));
@@ -185,12 +193,26 @@ export function useKonto(): KontoAnsicht {
     if (res?.status === "error") throw new Error(String(res.error));
   };
 
-  const aendern = useCallback(
-    async (aenderung: ProfilAenderung) => {
-      pruefen(await commands.kontoAendern(aktiv.id, alsAenderung(aenderung)));
-      await aktualisiert();
+  // Bei einer Ablehnung (z. B. anderes Profil aktiv geworden) den Stand neu lesen.
+  const mitNachladen = useCallback(
+    async (aktion: () => Promise<void>) => {
+      try {
+        await aktion();
+      } catch (err) {
+        void laden();
+        throw err;
+      }
     },
-    [aktiv.id, aktualisiert],
+    [laden],
+  );
+
+  const aendern = useCallback(
+    (id: string, aenderung: ProfilAenderung) =>
+      mitNachladen(async () => {
+        pruefen(await commands.kontoAendern(id, alsAenderung(aenderung)));
+        await aktualisiert();
+      }),
+    [mitNachladen, aktualisiert],
   );
 
   const aktivieren = useCallback(
@@ -203,30 +225,30 @@ export function useKonto(): KontoAnsicht {
 
   const anlegen = useCallback(
     async (anzeigename: string) => {
-      const neu = await commands.kontoAnlegen(anzeigename);
-      pruefen(neu);
-      if (neu?.status === "ok" && neu.data) {
-        pruefen(await commands.kontoAktivieren(neu.data.id));
-      }
+      // Anlegen und Aktivieren in einem Schritt (wai-konto, eine Sperre).
+      pruefen(await commands.kontoAnlegen(anzeigename));
       await aktualisiert();
     },
     [aktualisiert],
   );
 
   const bildSetzen = useCallback(
-    async (datei: Blob) => {
-      pruefen(
-        await commands.kontoBildSetzen(aktiv.id, await dateiZuBase64(datei)),
-      );
-      await aktualisiert();
-    },
-    [aktiv.id, aktualisiert],
+    (id: string, datei: Blob) =>
+      mitNachladen(async () => {
+        pruefen(await commands.kontoBildSetzen(id, await dateiZuBase64(datei)));
+        await aktualisiert();
+      }),
+    [mitNachladen, aktualisiert],
   );
 
-  const bildEntfernen = useCallback(async () => {
-    pruefen(await commands.kontoBildEntfernen(aktiv.id));
-    await aktualisiert();
-  }, [aktiv.id, aktualisiert]);
+  const bildEntfernen = useCallback(
+    (id: string) =>
+      mitNachladen(async () => {
+        pruefen(await commands.kontoBildEntfernen(id));
+        await aktualisiert();
+      }),
+    [mitNachladen, aktualisiert],
+  );
 
   return {
     aktiv,

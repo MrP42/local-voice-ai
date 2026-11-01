@@ -36,15 +36,12 @@ fn iso_dates_are_parsed_strictly_and_validated_against_the_meeting_date() {
     assert_eq!(validate(day(2026, 10, 1), reference), Ok(day(2026, 10, 1)));
     assert_eq!(validate(day(2026, 9, 30), reference), Err(DateIssue::Past));
     assert_eq!(validate(day(2028, 10, 1), reference), Ok(day(2028, 10, 1)));
-    assert_eq!(validate(day(2028, 10, 2), reference), Err(DateIssue::TooFar));
     assert_eq!(
-        validate_iso("2026-09-01", reference),
-        Err(DateIssue::Past)
+        validate(day(2028, 10, 2), reference),
+        Err(DateIssue::TooFar)
     );
-    assert_eq!(
-        validate_iso("2026-10-15", reference),
-        Ok(day(2026, 10, 15))
-    );
+    assert_eq!(validate_iso("2026-09-01", reference), Err(DateIssue::Past));
+    assert_eq!(validate_iso("2026-10-15", reference), Ok(day(2026, 10, 15)));
     assert_eq!(
         validate_iso("2026-02-30", reference),
         Err(DateIssue::NotACalendarDate)
@@ -85,7 +82,10 @@ fn weekdays_with_a_week_qualifier_use_the_calendar_week() {
             ("Freitag in der nächsten Woche", Some(day(2026, 10, 9))),
             ("nächste Woche Dienstag", Some(day(2026, 10, 6))),
             ("übernächste Woche Mittwoch", Some(day(2026, 10, 14))),
-            ("bis spätestens Freitag nächster Woche um 14 Uhr", Some(day(2026, 10, 9))),
+            (
+                "bis spätestens Freitag nächster Woche um 14 Uhr",
+                Some(day(2026, 10, 9)),
+            ),
             // Diese Woche, aber schon vorbei: das Datum kommt zurueck, die Pruefung verwirft es.
             ("Montag dieser Woche", Some(day(2026, 9, 28))),
             // Ohne Tag ist "naechste Woche" nicht eindeutig.
@@ -190,7 +190,10 @@ fn absolute_dates_in_every_spoken_and_written_form() {
             ("31.2.2026", None),
             // Zwei verschiedene Daten sind keine Frist.
             ("am 3. November oder am 5. November", None),
-            ("am 3. November, spätestens am 3.11.", Some(day(2026, 11, 3))),
+            (
+                "am 3. November, spätestens am 3.11.",
+                Some(day(2026, 11, 3)),
+            ),
         ],
     );
 }
@@ -236,7 +239,10 @@ fn the_help_table_gives_the_model_computed_dates() {
     let table = help_table(thu());
     assert!(table.contains("heute = Donnerstag, 2026-10-01"), "{table}");
     assert!(table.contains("morgen = Freitag, 2026-10-02"), "{table}");
-    assert!(table.contains("übermorgen = Samstag, 2026-10-03"), "{table}");
+    assert!(
+        table.contains("übermorgen = Samstag, 2026-10-03"),
+        "{table}"
+    );
     assert!(table.contains("Montag 2026-10-05"), "{table}");
     assert!(table.contains("in zwei Wochen = 2026-10-15"), "{table}");
     assert!(table.contains("Ende des Monats = 2026-10-31"), "{table}");

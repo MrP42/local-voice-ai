@@ -31,5 +31,9 @@ pub use speicher::{KontoSpeicher, standard_wurzel};
 pub const DATEI_VERSION: u32 = 1;
 /// Höchstgröße des Profilbilds in Bytes.
 pub const BILD_MAX_BYTES: usize = 256 * 1024;
+/// Größte zulässige Kantenlänge (Breite und Höhe) des Profilbilds in Pixeln. Ein Avatar braucht
+/// keine höhere Auflösung; die Grenze hält den Speicherbedarf beim Dekodieren (höchstens 1 Mio.
+/// Pixel, rund 4 MiB als RGBA) klein, auch wenn ein PNG sehr stark komprimiert ist.
+pub const BILD_MAX_KANTE: u32 = 1024;
 /// Anzahl der Initialenfarben (Index 0 bis 15).
 pub const FARBEN: u8 = 16;

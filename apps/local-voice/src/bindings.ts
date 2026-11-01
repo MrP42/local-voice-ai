@@ -681,6 +681,9 @@ async kontoStatus() : Promise<Result<KontoStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * `id` ist das Profil, das die Oberfläche bearbeitet; es muss noch das aktive sein.
+ */
 async kontoAendern(id: string, aenderung: KontoAenderung) : Promise<Result<KontoProfilDto, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_aendern", { id, aenderung }) };
@@ -697,6 +700,9 @@ async kontoAktivieren(id: string) : Promise<Result<KontoStatus, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Legt ein Profil an und macht es in derselben Sperre zum aktiven Profil.
+ */
 async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_anlegen", { anzeigename }) };
@@ -706,7 +712,8 @@ async kontoAnlegen(anzeigename: string) : Promise<Result<KontoProfilDto, string>
 }
 },
 /**
- * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`).
+ * Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`). `id` muss
+ * das aktive Profil sein.
  */
 async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>> {
     try {
@@ -716,6 +723,9 @@ async kontoBildSetzen(id: string, bytes: string) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * `id` muss das aktive Profil sein.
+ */
 async kontoBildEntfernen(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("konto_bild_entfernen", { id }) };
@@ -8061,7 +8071,12 @@ export type Kind = "youtube" | "ics" | "graph" | "m365" | "smtp" | "folder" | "o
  */
 export type KontoAenderung = { anzeigename: string | null; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number | null }
 export type KontoAnmeldungDto = { issuer: string; subject: string; seitMs: number; idpFelder: string[] }
-export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; anmeldung: KontoAnmeldungDto | null }
+export type KontoProfilDto = { id: string; anzeigename: string; vorname: string | null; nachname: string | null; email: string | null; telefon: string | null; mobil: string | null; position: string | null; abteilung: string | null; organisation: string | null; standort: string | null; farbe: number; hatBild: boolean; gesperrt: boolean; 
+/**
+ * Zeitpunkt der letzten Änderung des Profils (auch von Bild setzen/entfernen); das
+ * Frontend lädt das Bild nur nach, wenn sich dieser Wert ändert.
+ */
+geaendertMs: number; anmeldung: KontoAnmeldungDto | null }
 export type KontoStatus = { aktiv: KontoProfilDto; weitere: KontoProfilDto[]; sitzungsrevision: number }
 export type LLMPrompt = { id: string; name: string; prompt: string }
 /**

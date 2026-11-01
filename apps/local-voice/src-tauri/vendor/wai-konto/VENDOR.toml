@@ -1,4 +1,4 @@
 # Nicht von Hand ändern: Kopie aus wai-sdk, Änderungen dort machen und neu vendoren.
 quelle = "https://github.com/MrP42/wai-sdk"
 pfad = "crates/wai-konto"
-commit = "922f72e0b7a1b2a7a9d2e68b248ae2b1eb984a6b"
+commit = "5becb5c5d38d13d696c5d4ab270d5206f49e6618"

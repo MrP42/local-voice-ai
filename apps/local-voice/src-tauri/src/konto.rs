@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use wai_konto::{
     Beobachter, KontoFehler, KontoSpeicher, Profil, ProfilAenderung, ProfilDatei, ProfilEingabe,
 };
@@ -18,11 +18,53 @@ use wai_konto::{
 /// andere Apps der Suite).
 pub const EVENT_GEAENDERT: &str = "konto-geaendert";
 
-/// Verwalteter Zustand. Ohne Speicher (Datenordner nicht ermittelbar) bleibt die App
-/// benutzbar; die Befehle melden dann einen Fehler.
+/// Ein Slot, der erst beim Gebrauch gefüllt wird (lazy, idempotent). Scheitert das
+/// Öffnen oder Beobachten, bleibt der Slot leer und der nächste Befehl versucht es
+/// erneut – genau einmal je Befehl, ohne Schleife.
+struct Slot<S, B> {
+    speicher: Option<S>,
+    beobachter: Option<B>,
+}
+
+impl<S, B> Default for Slot<S, B> {
+    fn default() -> Self {
+        Self {
+            speicher: None,
+            beobachter: None,
+        }
+    }
+}
+
+impl<S: Clone, B> Slot<S, B> {
+    /// Liefert den Speicher; holt Öffnen und Beobachten nach, soweit sie fehlen. Ein
+    /// Beobachtungsfehler macht den Speicher nicht unbenutzbar.
+    fn sicherstellen(
+        &mut self,
+        oeffnen: impl FnOnce() -> Result<S, String>,
+        beobachten: impl FnOnce(&S) -> Result<B, String>,
+    ) -> Result<S, String> {
+        if self.speicher.is_none() {
+            self.speicher = Some(oeffnen()?);
+        }
+        let speicher = self.speicher.clone().ok_or_else(speicher_fehlt)?;
+        if self.beobachter.is_none() {
+            self.beobachter = beobachten(&speicher).ok();
+        }
+        Ok(speicher)
+    }
+}
+
+fn speicher_fehlt() -> String {
+    "Der Kontospeicher ist nicht verfügbar.".to_string()
+}
+
+/// Verwalteter Zustand. Der Mutex wird nur kurz und nie über ein `await` gehalten;
+/// alle Dateizugriffe laufen in `spawn_blocking`. Ohne Speicher (Datenordner nicht
+/// ermittelbar) bleibt die App benutzbar; die Befehle melden dann einen Fehler und
+/// versuchen es beim nächsten Aufruf erneut.
+#[derive(Default)]
 pub struct KontoState {
-    speicher: Option<KontoSpeicher>,
-    _beobachter: Mutex<Option<Beobachter>>,
+    slot: Mutex<Slot<KontoSpeicher, Beobachter>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
@@ -51,6 +93,9 @@ pub struct KontoProfilDto {
     pub farbe: u8,
     pub hat_bild: bool,
     pub gesperrt: bool,
+    /// Zeitpunkt der letzten Änderung des Profils (auch von Bild setzen/entfernen); das
+    /// Frontend lädt das Bild nur nach, wenn sich dieser Wert ändert.
+    pub geaendert_ms: u64,
     pub anmeldung: Option<KontoAnmeldungDto>,
 }
 
@@ -97,6 +142,7 @@ impl From<Profil> for KontoProfilDto {
             farbe: p.farbe,
             hat_bild: p.hat_bild,
             gesperrt: p.gesperrt,
+            geaendert_ms: p.geaendert_ms,
             anmeldung: p.anmeldung.map(|a| KontoAnmeldungDto {
                 issuer: a.issuer,
                 subject: a.subject,
@@ -153,64 +199,103 @@ fn fehler(e: KontoFehler) -> String {
     e.to_string()
 }
 
-impl KontoState {
-    fn speicher(&self) -> Result<&KontoSpeicher, String> {
-        self.speicher
-            .as_ref()
-            .ok_or_else(|| "Der Kontospeicher ist nicht verfügbar.".to_string())
+/// Nur das Hauptfenster darf das Suite-Profil lesen und ändern. Die Fähigkeiten der
+/// Fenster `recording_overlay` und `meeting_prompt` sind dieselben wie die des
+/// Hauptfensters; ohne diese Prüfung könnte Code in einem davon Profile ändern.
+fn fenster_erlaubt(label: &str) -> Result<(), String> {
+    if label == "main" {
+        Ok(())
+    } else {
+        Err("Das Suite-Profil lässt sich nur im Hauptfenster ändern.".to_string())
     }
 }
 
-/// Öffnet den Kontospeicher, hält ihn als verwalteten Zustand und meldet Änderungen
-/// (auch anderer Apps) als Ereignis `konto-geaendert`.
+fn nur_hauptfenster(fenster: &WebviewWindow) -> Result<(), String> {
+    fenster_erlaubt(fenster.label())
+}
+
+/// Das Profil `id` muss das zum Aufrufzeitpunkt aktive sein; sonst landet die Änderung
+/// nicht im Profil, das die Oberfläche gezeigt hat.
+fn pruefe_aktiv(aktiv: &str, id: &str) -> Result<(), String> {
+    if aktiv == id {
+        Ok(())
+    } else {
+        Err("Das aktive Profil hat sich geändert. Die Änderung wurde nicht übernommen.".to_string())
+    }
+}
+
+impl KontoState {
+    /// Blockierend (Dateisperre, Retry-Schlaf): nur aus `spawn_blocking` aufrufen.
+    fn speicher(&self, app: &AppHandle) -> Result<KontoSpeicher, String> {
+        let mut slot = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        slot.sicherstellen(
+            || {
+                KontoSpeicher::oeffnen_standard().map_err(|e| {
+                    log::error!("Kontospeicher nicht verfügbar: {e}");
+                    speicher_fehlt()
+                })
+            },
+            |s| {
+                let handle = app.clone();
+                s.beobachten(move |_| {
+                    let _ = handle.emit(EVENT_GEAENDERT, ());
+                })
+                .map_err(|e| {
+                    log::warn!("Kontobeobachtung nicht gestartet: {e}");
+                    e.to_string()
+                })
+            },
+        )
+    }
+}
+
+/// Legt den Zustand an. Der Speicher wird erst beim ersten Befehl geöffnet (und bei
+/// Misserfolg beim nächsten erneut); der Start blockiert nicht auf Dateizugriffe.
 pub fn init(app: &AppHandle) {
-    let speicher = match KontoSpeicher::oeffnen_standard() {
-        Ok(s) => Some(s),
-        Err(e) => {
-            log::error!("Kontospeicher nicht verfügbar: {e}");
-            None
-        }
-    };
-    let beobachter = speicher.as_ref().and_then(|s| {
-        let handle = app.clone();
-        match s.beobachten(move |_| {
-            let _ = handle.emit(EVENT_GEAENDERT, ());
-        }) {
-            Ok(b) => Some(b),
-            Err(e) => {
-                log::warn!("Kontobeobachtung nicht gestartet: {e}");
-                None
-            }
-        }
-    });
-    app.manage(KontoState {
-        speicher,
-        _beobachter: Mutex::new(beobachter),
-    });
+    app.manage(KontoState::default());
 }
 
 fn melden(app: &AppHandle) {
     let _ = app.emit(EVENT_GEAENDERT, ());
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn konto_status(state: State<'_, KontoState>) -> Result<KontoStatus, String> {
-    status_aus(state.speicher()?.lesen().map_err(fehler)?)
+/// Führt `arbeit` mit dem Speicher auf einem Blocking-Thread aus.
+async fn blockierend<T, F>(app: &AppHandle, arbeit: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&KontoSpeicher) -> Result<T, String> + Send + 'static,
+{
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let speicher = app.state::<KontoState>().speicher(&app)?;
+        arbeit(&speicher)
+    })
+    .await
+    .map_err(|_| "Der Kontozugriff wurde abgebrochen.".to_string())?
 }
 
 #[tauri::command]
 #[specta::specta]
+pub async fn konto_status(fenster: WebviewWindow, app: AppHandle) -> Result<KontoStatus, String> {
+    nur_hauptfenster(&fenster)?;
+    blockierend(&app, |s| status_aus(s.lesen().map_err(fehler)?)).await
+}
+
+/// `id` ist das Profil, das die Oberfläche bearbeitet; es muss noch das aktive sein.
+#[tauri::command]
+#[specta::specta]
 pub async fn konto_aendern(
+    fenster: WebviewWindow,
     app: AppHandle,
-    state: State<'_, KontoState>,
     id: String,
     aenderung: KontoAenderung,
 ) -> Result<KontoProfilDto, String> {
-    let profil = state
-        .speicher()?
-        .profil_aendern(&id, aenderung.into())
-        .map_err(fehler)?;
+    nur_hauptfenster(&fenster)?;
+    let profil = blockierend(&app, move |s| {
+        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
+        s.profil_aendern(&id, aenderung.into()).map_err(fehler)
+    })
+    .await?;
     melden(&app);
     Ok(profil.into())
 }
@@ -218,63 +303,89 @@ pub async fn konto_aendern(
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_aktivieren(
+    fenster: WebviewWindow,
     app: AppHandle,
-    state: State<'_, KontoState>,
     id: String,
 ) -> Result<KontoStatus, String> {
-    let speicher = state.speicher()?;
-    speicher.aktivieren(&id).map_err(fehler)?;
+    nur_hauptfenster(&fenster)?;
+    let status = blockierend(&app, move |s| {
+        s.aktivieren(&id).map_err(fehler)?;
+        status_aus(s.lesen().map_err(fehler)?)
+    })
+    .await?;
     melden(&app);
-    status_aus(speicher.lesen().map_err(fehler)?)
+    Ok(status)
 }
 
+/// Legt ein Profil an und macht es in derselben Sperre zum aktiven Profil.
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_anlegen(
+    fenster: WebviewWindow,
     app: AppHandle,
-    state: State<'_, KontoState>,
     anzeigename: String,
 ) -> Result<KontoProfilDto, String> {
-    let profil = state
-        .speicher()?
-        .profil_anlegen(ProfilEingabe {
+    nur_hauptfenster(&fenster)?;
+    let profil = blockierend(&app, move |s| {
+        s.profil_anlegen_und_aktivieren(ProfilEingabe {
             anzeigename,
             ..ProfilEingabe::default()
         })
-        .map_err(fehler)?;
+        .map_err(fehler)
+    })
+    .await?;
     melden(&app);
     Ok(profil.into())
 }
 
-/// Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`).
+/// Maximale Länge des Base64-Textes: 256 KB Bild sind höchstens ~342 KB Base64.
+const BILD_BASE64_MAX: usize = 256 * 1024 / 3 * 4 + 8;
+
+fn bild_dekodieren(bytes: &str) -> Result<Vec<u8>, String> {
+    // Vor dem Dekodieren begrenzen.
+    if bytes.len() > BILD_BASE64_MAX {
+        return Err("Das Profilbild ist größer als 256 KB.".to_string());
+    }
+    B64.decode(bytes.trim())
+        .map_err(|_| "Das Profilbild ist nicht lesbar.".to_string())
+}
+
+/// Bild als Base64 (PNG, höchstens 256 KB; die Prüfung macht `wai-konto`). `id` muss
+/// das aktive Profil sein.
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_bild_setzen(
+    fenster: WebviewWindow,
     app: AppHandle,
-    state: State<'_, KontoState>,
     id: String,
     bytes: String,
 ) -> Result<(), String> {
-    // Vor dem Dekodieren begrenzen: 256 KB Bild sind höchstens ~342 KB Base64.
-    if bytes.len() > 256 * 1024 / 3 * 4 + 8 {
-        return Err("Das Profilbild ist größer als 256 KB.".to_string());
-    }
-    let png = B64
-        .decode(bytes.trim())
-        .map_err(|_| "Das Profilbild ist nicht lesbar.".to_string())?;
-    state.speicher()?.bild_setzen(&id, &png).map_err(fehler)?;
+    nur_hauptfenster(&fenster)?;
+    let png = bild_dekodieren(&bytes)?;
+    drop(bytes);
+    blockierend(&app, move |s| {
+        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
+        s.bild_setzen(&id, &png).map_err(fehler)
+    })
+    .await?;
     melden(&app);
     Ok(())
 }
 
+/// `id` muss das aktive Profil sein.
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_bild_entfernen(
+    fenster: WebviewWindow,
     app: AppHandle,
-    state: State<'_, KontoState>,
     id: String,
 ) -> Result<(), String> {
-    state.speicher()?.bild_entfernen(&id).map_err(fehler)?;
+    nur_hauptfenster(&fenster)?;
+    blockierend(&app, move |s| {
+        pruefe_aktiv(&s.lesen().map_err(fehler)?.aktiv, &id)?;
+        s.bild_entfernen(&id).map_err(fehler)
+    })
+    .await?;
     melden(&app);
     Ok(())
 }
@@ -282,9 +393,89 @@ pub async fn konto_bild_entfernen(
 #[tauri::command]
 #[specta::specta]
 pub async fn konto_bild_lesen(
-    state: State<'_, KontoState>,
+    fenster: WebviewWindow,
+    app: AppHandle,
     id: String,
 ) -> Result<Option<String>, String> {
-    let bild = state.speicher()?.bild_lesen(&id).map_err(fehler)?;
+    nur_hauptfenster(&fenster)?;
+    let bild = blockierend(&app, move |s| s.bild_lesen(&id).map_err(fehler)).await?;
     Ok(bild.map(|b| B64.encode(b)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn slot_versucht_oeffnen_erneut_nach_fehler() {
+        let mut slot: Slot<u8, u8> = Slot::default();
+        let n = Cell::new(0);
+        assert!(slot
+            .sicherstellen(
+                || {
+                    n.set(n.get() + 1);
+                    Err("x".into())
+                },
+                |_| Ok(1)
+            )
+            .is_err());
+        assert!(slot.speicher.is_none());
+        assert_eq!(
+            slot.sicherstellen(
+                || {
+                    n.set(n.get() + 1);
+                    Ok(7)
+                },
+                |_| Ok(1)
+            ),
+            Ok(7)
+        );
+        assert_eq!(n.get(), 2);
+        // Idempotent: kein erneutes Oeffnen, kein erneutes Beobachten.
+        assert_eq!(
+            slot.sicherstellen(|| panic!("nicht erneut"), |_| panic!("nicht erneut")),
+            Ok(7)
+        );
+    }
+
+    #[test]
+    fn beobachtungsfehler_blockiert_nicht_und_wird_nachgeholt() {
+        let mut slot: Slot<u8, u8> = Slot::default();
+        assert_eq!(slot.sicherstellen(|| Ok(7), |_| Err("b".into())), Ok(7));
+        assert!(slot.beobachter.is_none());
+        assert_eq!(
+            slot.sicherstellen(|| panic!("nicht erneut"), |_| Ok(3)),
+            Ok(7)
+        );
+        assert_eq!(slot.beobachter, Some(3));
+    }
+
+    #[test]
+    fn nur_hauptfenster() {
+        assert!(fenster_erlaubt("main").is_ok());
+        assert!(fenster_erlaubt("recording_overlay").is_err());
+        assert!(fenster_erlaubt("meeting_prompt").is_err());
+        assert!(fenster_erlaubt("").is_err());
+    }
+
+    #[test]
+    fn aktive_id_wird_geprueft() {
+        assert!(pruefe_aktiv("p1", "p1").is_ok());
+        assert!(pruefe_aktiv("p2", "p1")
+            .unwrap_err()
+            .contains("aktive Profil"));
+    }
+
+    #[test]
+    fn bild_dekodieren_grenzen() {
+        assert_eq!(
+            bild_dekodieren(&B64.encode([1u8, 2, 3])).unwrap(),
+            vec![1, 2, 3]
+        );
+        assert!(bild_dekodieren("!!!").is_err());
+        assert!(bild_dekodieren(&"A".repeat(BILD_BASE64_MAX + 1))
+            .unwrap_err()
+            .contains("256 KB"));
+    }
 }
