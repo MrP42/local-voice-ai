@@ -4,21 +4,16 @@
  * Quell-Offset samt einem kurzen Textanker; ändert sich der Text davor,
  * findet der Anker die Stelle wieder, statt mitten in ein Wort zu springen.
  */
-const PREFIX = "lva.ui.tts.resume.";
+import { getLocal, recordPosition, setLocal } from "../library/progress";
+
+/** Unter `lva.ui.` – und dauerhaft im Kern gespiegelt (lva#152). */
+const PREFIX = "tts.resume.";
 const ANCHOR = 40;
 
 interface Stored {
   offset: number;
   anchor: string;
 }
-
-const storage = (): Storage | null => {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-};
 
 export function saveResumePoint(
   key: string,
@@ -27,29 +22,23 @@ export function saveResumePoint(
 ): void {
   if (offset <= 0 || offset >= text.length) return;
   const value: Stored = { offset, anchor: anchorAt(text, offset) };
-  try {
-    storage()?.setItem(PREFIX + key, JSON.stringify(value));
-  } catch {
-    /* voller Speicher: Weiterlesen ist eine Bequemlichkeit */
-  }
+  setLocal(PREFIX + key, JSON.stringify(value));
+  // Fortschritt der Bibliothek: was gehört wurde, bleibt gehört (lva#152).
+  recordPosition(`text:${key}`, {
+    to: offset,
+    length: text.length,
+    anchor: value.anchor,
+  });
 }
 
 export function clearResumePoint(key: string): void {
-  try {
-    storage()?.removeItem(PREFIX + key);
-  } catch {
-    /* ignorieren */
-  }
+  // Nur die Stelle zum Weiterlesen; der Fortschritt (gehört, fertig) bleibt.
+  setLocal(PREFIX + key, null);
 }
 
 /** Offset der gemerkten Stelle im aktuellen Text, oder null. */
 export function loadResumePoint(key: string, text: string): number | null {
-  let raw: string | null = null;
-  try {
-    raw = storage()?.getItem(PREFIX + key) ?? null;
-  } catch {
-    return null;
-  }
+  const raw = getLocal(PREFIX + key);
   if (!raw) return null;
   let stored: Stored;
   try {

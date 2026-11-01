@@ -818,7 +818,7 @@
     },
     "add": {
       "title": "Hinzufügen — Dokument, Webseite oder Datei fürs Projekt",
-      "document": "Dokument laden (TXT, MD, PDF, DOCX, EPUB)",
+      "document": "Buch oder Dokument laden (EPUB, PDF, DOCX, TXT, MD)",
       "url": "Webseite laden (URL) …",
       "projectFile": "Datei zu den Projekt-Dateien kopieren",
       "urlDialogTitle": "Webseite als Text laden",

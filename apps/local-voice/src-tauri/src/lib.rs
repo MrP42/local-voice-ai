@@ -19,6 +19,7 @@ mod helpers;
 mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
+mod library; // lva#152: Bibliothek für Bücher und Hörbücher
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod llm_client;
 mod llm_keys;
@@ -2466,6 +2467,18 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             isbn::isbn_lookup,
+            library::library_list,
+            library::library_save,
+            library::library_delete,
+            library::library_find_duplicate,
+            library::library_metadata_search,
+            library::library_description,
+            library::library_cover_fetch,
+            library::library_cover_from_file,
+            library::library_cover_clear,
+            library::library_audio_import,
+            library::library_progress_load,
+            library::library_progress_put,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,

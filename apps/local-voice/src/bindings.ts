@@ -5571,6 +5571,138 @@ async isbnLookup(isbn: string) : Promise<Result<IsbnBook | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async libraryList() : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Anlegen (leere Kennung) oder ändern. Gibt das gespeicherte Buch zurück.
+ */
+async librarySave(book: LibraryBook) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_save", { book }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Buch aus der Bibliothek entfernen, samt Cover und importiertem Hörbuch.
+ * Die Vorlesen-Seite der Textfassung bleibt (sie löscht die Oberfläche auf
+ * Wunsch selbst), ebenso der Fortschritt bis zum nächsten Aufräumen.
+ */
+async libraryDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
+ */
+async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_find_duplicate", { title, authors, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ausgaben bei Open Library suchen: per ISBN oder per Titel und Autor.
+ */
+async libraryMetadataSearch(title: string, author: string, isbn: string | null) : Promise<Result<MetadataCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_metadata_search", { title, author, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Klappentext eines Werks (`/works/OL…W`).
+ */
+async libraryDescription(workKey: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_description", { workKey }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus Open Library laden (per Cover-Kennung oder ISBN) und ablegen.
+ */
+async libraryCoverFetch(id: string, coverId: number | null, isbn: string | null) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_fetch", { id, coverId, isbn }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover aus einer Bilddatei oder dem Coverbild einer EPUB übernehmen.
+ */
+async libraryCoverFromFile(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_file", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenes Cover entfernen: die Oberfläche zeichnet wieder das generierte.
+ */
+async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
+ * Kopie macht das Buch unabhängig davon, ob die Quelldatei liegen bleibt.
+ */
+async libraryAudioImport(id: string, path: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_audio_import", { id, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gesamter gespeicherter Fortschritt (Schlüssel → JSON-Text).
+ */
+async libraryProgressLoad() : Promise<Result<Partial<{ [key in string]: string }>, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_load") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fortschritt sichern: Einträge einpflegen und die Datei atomar ersetzen.
+ */
+async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_progress_put", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoicechangeRecordStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_voicechange_record_start") };
@@ -7019,6 +7151,15 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+export type AudioVersion = { 
+/**
+ * Dateiname unter `<id>/audio/`.
+ */
+file: string; duration_ms: number | null; narrator: string | null; 
+/**
+ * Laufende Transkription (Import-Warteschlange), bis der Text übernommen ist.
+ */
+transcript_job: string | null }
 /**
  * Ein Eintrag des Audit-Logs.
  */
@@ -8227,6 +8368,28 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+export type LibraryBook = { 
+/**
+ * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
+ */
+id: string; title: string; subtitle: string | null; authors: string[]; language: string | null; isbn: string | null; publisher: string | null; publish_date: string | null; pages: number | null; description: string | null; 
+/**
+ * Woher die Metadaten stammen: `openlibrary`, `epub`, `manual`.
+ */
+metadata_source: string | null; 
+/**
+ * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+ */
+cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
+ * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
+ */
+cover_path: string | null; 
+/**
+ * Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs.
+ */
+audio_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -8663,6 +8826,18 @@ export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: n
 from_metadata: boolean }
 export type MemoryFile = { kind: string; text: string }
 export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
+/**
+ * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
+ */
+export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
+/**
+ * Open-Library-Cover-Kennung (`cover_i`).
+ */
+cover_id: number | null; 
+/**
+ * Werk-Schlüssel (`/works/OL…W`) für den Klappentext.
+ */
+work_key: string | null }
 /**
  * Was geaendert werden soll. `None` = unveraendert; eine leere Beschreibung
  * loescht sie; `participant_ids` und `folder_ids` ersetzen die Menge.
@@ -9134,6 +9309,11 @@ export type PostProcessProvider = { id: string; label: string; base_url: string;
  * Phase im Ereignis [`TtsProviderPreview`].
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
+export type ProgressEntry = { key: string; 
+/**
+ * `None` löscht den Eintrag.
+ */
+value: string | null }
 /**
  * Eine Aufnahme der Auswahl in der Liste der Oberflaeche.
  */
@@ -9905,6 +10085,20 @@ code: string;
  * Klartext zum Fehler (geschwaerzt), soweit der Code allein nicht reicht.
  */
 detail: string | null }
+export type TextVersion = { 
+/**
+ * Vorlesen-Seite mit dem Text. Sie bleibt die Quelle, damit Leseposition,
+ * Lesezeichen und Seitenmarken erhalten bleiben.
+ */
+page_id: string; 
+/**
+ * `document` (EPUB, PDF, DOCX, TXT, MD) oder `transcript` (aus dem Hörbuch).
+ */
+origin: string; 
+/**
+ * Dateiname der Quelle, nur zur Anzeige.
+ */
+source_name: string | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
