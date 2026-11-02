@@ -475,6 +475,12 @@
       "summaryStarting": "Summarizing …",
       "summaryBlock": "Summarizing … part {{done}} of {{total}}",
       "summaryCombine": "Combining the parts …",
+      "translateChapter": "Chapter {{chapter}} of {{chapters}} · section {{section}} of {{total}} · {{percent}}%",
+      "translateSection": "Section {{section}} of {{total}} · {{percent}}%",
+      "waiting": "Waiting for translation …",
+      "resume": "Resume",
+      "partialCancelled": "Translation cancelled. The part so far is kept.",
+      "partialError": "Translation interrupted: {{message}} The part so far is kept.",
       "cancel": "Cancel",
       "cancelled": "Cancelled."
     },

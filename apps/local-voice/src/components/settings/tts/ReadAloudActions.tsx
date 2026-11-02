@@ -26,6 +26,11 @@ import { Select } from "../../ui/Select";
 import { TTS_TARGET_LANGS } from "../../../lib/constants/languages";
 import { AutoTagBar, type AutoTagBarProps } from "./tags/AutoTagBar";
 import { counterWidthCh } from "./sentenceCounter";
+import {
+  progressParts,
+  progressRatio,
+  type TransformProgress,
+} from "../../../lib/reader/translationStream";
 
 export type TtsTab = "original" | "translation" | "summary";
 
@@ -90,11 +95,13 @@ export interface ReadAloudActionsProps {
   /** Öffnet „Neues KI-Dokument“. */
   onSummarize: () => void;
   /** Fortschritt von Übersetzung/Zusammenfassung (Block x von y). */
-  transformProgress: {
-    kind: "translation" | "summary";
-    done: number;
-    total: number;
-  } | null;
+  transformProgress: TransformProgress | null;
+  /** Übersetzung angehalten (Fehler/Abbruch), Teilergebnis steht. */
+  translatePartial?: { kind: "error" | "cancelled"; message: string } | null;
+  /** Die Wiedergabe wartet auf neuen Text der laufenden Übersetzung. */
+  waitingForTranslation?: boolean;
+  /** „Fortsetzen“ nach Fehler/Abbruch. */
+  onResumeTranslate?: () => void;
   onCancelTransform: (kind: "translation" | "summary") => void;
   /** Sprecher der Übersetzung gegen Stimmen der Zielsprache tauschen. */
   onSwapSpeakers: () => void;
@@ -107,9 +114,17 @@ const ProgressLine: React.FC<{
   cancelLabel: string;
   onCancel: () => void;
   tabular?: boolean;
-}> = ({ ratio, text, cancelLabel, onCancel, tabular }) => (
-  <div className="flex items-center gap-2">
-    <div className="h-1.5 w-32 shrink-0 overflow-hidden rounded-full bg-mid-gray/20">
+  /** Zweite, gekürzte Angabe (z. B. Kapiteltitel). */
+  detail?: string;
+}> = ({ ratio, text, cancelLabel, onCancel, tabular, detail }) => (
+  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+    <div
+      className="h-1.5 w-full shrink-0 overflow-hidden rounded-full bg-mid-gray/20 sm:w-32"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(ratio * 100)}
+    >
       <div
         className="h-full bg-logo-primary transition-[width] duration-200"
         style={{ width: `${ratio * 100}%` }}
@@ -120,9 +135,14 @@ const ProgressLine: React.FC<{
     >
       {text}
     </span>
+    {detail ? (
+      <span className="min-w-0 max-w-full truncate text-xs text-text/50">
+        {detail}
+      </span>
+    ) : null}
     <button
       type="button"
-      className="mbtn mbtn--sm"
+      className="mbtn mbtn--sm min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
       onClick={onCancel}
       aria-label={cancelLabel}
     >
@@ -273,6 +293,12 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     props.transformProgress && props.transformProgress.kind === tab
       ? props.transformProgress
       : null;
+  const translateLine = (p: TransformProgress) => {
+    const parts = progressParts(p);
+    return parts.chapter !== null
+      ? t("tts.transform.translateChapter", { ...parts })
+      : t("tts.transform.translateSection", { ...parts });
+  };
   const transformBusy =
     // KI-Dokumente zeigen ihren Fortschritt auf der Karte (lva#183).
     tab === "translation" && props.translating;
@@ -429,18 +455,17 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       {transformBusy && (
         <ProgressLine
           tabular
-          ratio={running && running.total > 0 ? running.done / running.total : 0}
+          ratio={running ? progressRatio(running) : 0}
           text={
             // Eine einzige Anfrage (Cloud, API, Abo) hat keine Bloecke zu zaehlen.
-            !running || running.total <= 1
+            props.waitingForTranslation
+              ? t("tts.transform.waiting")
+              : !running || running.total <= 1
               ? tab === "translation"
                 ? t("tts.transform.translateStarting")
                 : t("tts.transform.summaryStarting")
               : tab === "translation"
-                ? t("tts.transform.translateBlock", {
-                    done: Math.min(running.done + 1, running.total),
-                    total: running.total,
-                  })
+                ? translateLine(running)
                 : running.done >= running.total - 1 && running.total > 1
                   ? t("tts.transform.summaryCombine")
                   : t("tts.transform.summaryBlock", {
@@ -448,11 +473,39 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
                       total: running.total,
                     })
           }
+          detail={
+            tab === "translation" && running
+              ? progressParts(running).title
+              : undefined
+          }
           cancelLabel={t("tts.transform.cancel")}
           onCancel={() =>
             props.onCancelTransform(tab === "translation" ? "translation" : "summary")
           }
         />
+      )}
+      {tab === "translation" && !props.translating && props.translatePartial && (
+        <div
+          role="status"
+          data-testid="tts-translate-partial"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text/70"
+        >
+          <span className="min-w-0 flex-1 basis-48">
+            {props.translatePartial.kind === "cancelled"
+              ? t("tts.transform.partialCancelled")
+              : t("tts.transform.partialError", {
+                  message: props.translatePartial.message,
+                })}
+          </span>
+          <button
+            type="button"
+            className="mbtn mbtn--sm min-h-[44px] sm:min-h-0"
+            data-testid="tts-translate-resume"
+            onClick={props.onResumeTranslate}
+          >
+            {t("tts.transform.resume")}
+          </button>
+        </div>
       )}
 
       {saving && (

@@ -17,8 +17,12 @@ pub fn translation_prompt(target_lang: &str, text: &str) -> String {
          Preserve the layout of the original exactly: the same line breaks, \
          the same blank lines between paragraphs, one output paragraph for \
          one input paragraph. Never merge paragraphs into a single block of \
-         text. Tokens like ⟦0⟧ stand for speaker names and sound tags: copy \
-         every such token unchanged, exactly once, at the matching place.\n\n{text}"
+         text. Keep the Markdown formatting unchanged: lines starting with \
+         #, ## or ### stay headings (translate the heading text, keep the \
+         hash marks), and **bold**, *italic*, lists (- item) and quotes \
+         (> text) keep their markup. Tokens like ⟦0⟧ stand for speaker names, \
+         sound tags and page marks: copy every such token unchanged, exactly \
+         once, at the matching place.\n\n{text}"
     )
 }
 
@@ -112,26 +116,33 @@ pub async fn translate_on(
         }
     }
 
-    let outcome = match crate::llm_client::send_chat_completion(
+    let outcome = match crate::llm_client::send_chat_completion_checked(
         crate::managers::usage::Purpose::Translation,
         &provider,
         api_key,
         &model,
         prompt,
+        None,
+        None,
         reasoning_effort,
         reasoning,
     )
     .await
     {
-        Ok(Some(content)) => {
-            let trimmed = content.trim().to_string();
-            if trimmed.is_empty() {
-                Err("Übersetzung kam leer zurück".into())
-            } else {
-                Ok(trimmed)
+        // Abgeschnittene Antwort (Ausgabegrenze erreicht): nie als fertige
+        // Übersetzung durchgehen lassen, der Aufrufer teilt den Text.
+        Ok(reply) if reply.truncated => Err(TRUNCATED.to_string()),
+        Ok(reply) => match reply.content {
+            Some(content) => {
+                let trimmed = content.trim().to_string();
+                if trimmed.is_empty() {
+                    Err("Übersetzung kam leer zurück".into())
+                } else {
+                    Ok(trimmed)
+                }
             }
-        }
-        Ok(None) => Err("Übersetzungsantwort ohne Inhalt".into()),
+            None => Err("Übersetzungsantwort ohne Inhalt".into()),
+        },
         Err(e) => Err(format!("Übersetzung fehlgeschlagen: {e}")),
     };
     // Ein lokales Ollama-Modell sofort wieder entladen — der Speicher gehört
@@ -149,11 +160,18 @@ pub async fn translate_on(
 /// Zeilen, nie mitten in einer Sprecherzeile getrennt. Kleine Modelle verlieren
 /// bei langen Texten den Faden, ausserdem laufen sie ohne Mengenbegrenzung.
 pub const BLOCK_CHARS_LOCAL: usize = 2500;
-/// Bei Cloud-, API- und Abo-Modellen (Kontext ab 200 000 Token) geht der Text in
-/// EINER Anfrage: viele kleine kosten Zeit und Kontingent (Anfragen je Minute und
-/// Stunde) und bringen nichts. Die Grenze ist nur ein Sicherheitsnetz fuer sehr
-/// lange Texte (die Antwort ist so lang wie der Text).
-pub const BLOCK_CHARS_CLOUD: usize = 100_000;
+/// Bei Cloud-, API- und Abo-Modellen (Kontext ab 200 000 Token) gehen größere
+/// Abschnitte in einer Anfrage: etwa vier bis fünf Buchseiten. Riesenblöcke
+/// (die Antwort ist so lang wie der Text) laufen in Ausgabegrenzen und
+/// Zeitüberschreitungen; kleinere Abschnitte lassen sich außerdem fortsetzen,
+/// wiederholen und parallel übersetzen.
+pub const BLOCK_CHARS_CLOUD: usize = 12_000;
+
+/// Fehlercode, wenn das Modell die Antwort abgeschnitten hat.
+pub const TRUNCATED: &str = "truncated";
+
+/// Wie viele Abschnitte bei Cloud-/Abo-Modellen gleichzeitig laufen.
+pub const PARALLEL_CLOUD: usize = 3;
 
 /// Laeuft das aktive Sprachmodell auf diesem Rechner (App-Modell, Ollama, vLLM,
 /// jede Adresse auf localhost)? Alles andere ist ein Cloud-, API- oder Abo-Modell.
@@ -233,6 +251,16 @@ pub fn split_blocks(text: &str, max: usize) -> Vec<String> {
     blocks
 }
 
+/// Länge (in Bytes) einer Seitenmarke `{{S. n}}` am Anfang von `text`.
+fn page_mark_len(text: &str) -> Option<usize> {
+    let rest = text.strip_prefix("{{S. ")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if !(1..=7).contains(&digits) || !rest[digits..].starts_with("}}") {
+        return None;
+    }
+    Some("{{S. ".len() + digits + 2)
+}
+
 /// Sprechermarken `<Name>`/`<Name:Stil>` und Tags `[…]` (1–60 Zeichen, ohne
 /// Zeilenumbruch) — dieselbe Regel wie die Sprechererkennung beim Vorlesen.
 fn marker_spans(text: &str) -> Vec<(usize, usize)> {
@@ -241,6 +269,15 @@ fn marker_spans(text: &str) -> Vec<(usize, usize)> {
     let mut i = 0;
     while i < bytes.len() {
         let (start, c) = bytes[i];
+        if c == '{' {
+            // Seitenmarke `{{S. 12}}`.
+            if let Some(len) = page_mark_len(&text[start..]) {
+                spans.push((start, start + len));
+                // Die Marke besteht nur aus ASCII: Byte-Länge = Zeichenzahl.
+                i += len;
+                continue;
+            }
+        }
         let close = match c {
             '<' => '>',
             '[' => ']',
@@ -364,50 +401,448 @@ where
     Ok(out)
 }
 
-/// Ganzer Text, blockweise, mit Fortschritt (`done`, `total`) und Abbruch.
+// ---- Kapitelweise, fortsetzbare, streamende Übersetzung ----------------------
+
+/// Höchstens so oft wird ein abgeschnittener Abschnitt halbiert.
+const MAX_SPLITS: u8 = 2;
+
+/// Ab dieser Eingabelänge (Zeichen) prüft die Plausibilitätsprobe die Antwort.
+const PLAUSIBLE_MIN_INPUT: usize = 400;
+
+/// Eine Antwort unter diesem Anteil der Eingabelänge gilt als abgeschnitten.
+const PLAUSIBLE_MIN_RATIO: f64 = 0.4;
+
+/// Ein Kapitel des Ausgangstexts: Titel der Überschriftszeile (ohne `#`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chapter {
+    pub title: Option<String>,
+}
+
+/// Ein Abschnitt: Teil eines Kapitels, in einer Anfrage übersetzt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// 0-basierter Kapitelindex.
+    pub chapter: usize,
+    pub text: String,
+}
+
+/// Überschriftszeile `#`, `##` oder `###` gefolgt von einem Leerzeichen:
+/// der Titel, sonst `None`.
+fn heading_title(line: &str) -> Option<&str> {
+    let hashes = line.bytes().take_while(|&b| b == b'#').count();
+    if !(1..=3).contains(&hashes) || line.as_bytes().get(hashes) != Some(&b' ') {
+        return None;
+    }
+    Some(line[hashes..].trim())
+}
+
+/// Text in Kapitel (an Markdown-Überschriften) und diese in Abschnitte bis etwa
+/// `max` Zeichen zerlegen. Alle Abschnitte mit `"\n"` verbunden ergeben genau
+/// den Ausgangstext. Text vor der ersten Überschrift bildet ein Kapitel ohne
+/// Titel.
+pub fn split_sections(text: &str, max: usize) -> (Vec<Chapter>, Vec<Section>) {
+    let mut chapters: Vec<Chapter> = Vec::new();
+    let mut bodies: Vec<Vec<&str>> = Vec::new();
+    for line in text.split('\n') {
+        if let Some(title) = heading_title(line) {
+            chapters.push(Chapter {
+                title: Some(title.to_string()),
+            });
+            bodies.push(vec![line]);
+        } else if let Some(body) = bodies.last_mut() {
+            body.push(line);
+        } else {
+            chapters.push(Chapter { title: None });
+            bodies.push(vec![line]);
+        }
+    }
+    let sections = bodies
+        .iter()
+        .enumerate()
+        .flat_map(|(chapter, lines)| {
+            split_blocks(&lines.join("\n"), max)
+                .into_iter()
+                .map(move |text| Section { chapter, text })
+        })
+        .collect();
+    (chapters, sections)
+}
+
+/// Ablage fertiger Abschnitte (fortsetzbare Übersetzung).
+pub trait SectionCache: Send + Sync {
+    fn get(&self, section: &str) -> Option<String>;
+    fn put(&self, section: &str, translated: &str);
+}
+
+/// Kein Zwischenspeicher.
+pub struct NoCache;
+
+impl SectionCache for NoCache {
+    fn get(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn put(&self, _: &str, _: &str) {}
+}
+
+/// Abschnitts-Cache auf Platte: eine Datei je Abschnitt, benannt nach dem
+/// Streuwert aus Abschnittstext und Zielsprache.
+pub struct DiskSectionCache {
+    dir: Option<std::path::PathBuf>,
+    target_lang: String,
+}
+
+impl DiskSectionCache {
+    pub fn new(dir: Option<std::path::PathBuf>, target_lang: &str) -> Self {
+        Self {
+            dir,
+            target_lang: target_lang.to_string(),
+        }
+    }
+
+    fn path(&self, section: &str) -> Option<std::path::PathBuf> {
+        use sha2::{Digest, Sha256};
+        let dir = self.dir.as_ref()?;
+        let mut h = Sha256::new();
+        // Fassung: ändert sich Prompt oder Maskierung grundlegend, hochzählen.
+        h.update(b"v3-abschnitte\0");
+        h.update(self.target_lang.as_bytes());
+        h.update(b"\0");
+        h.update(section.as_bytes());
+        let digest = h.finalize();
+        let name: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
+        Some(dir.join(format!("{name}.txt")))
+    }
+}
+
+impl SectionCache for DiskSectionCache {
+    fn get(&self, section: &str) -> Option<String> {
+        std::fs::read_to_string(self.path(section)?)
+            .ok()
+            .filter(|s| !s.is_empty())
+    }
+
+    fn put(&self, section: &str, translated: &str) {
+        let Some(path) = self.path(section) else {
+            return;
+        };
+        if let Some(dir) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                log::warn!("Abschnitts-Cache nicht verfuegbar: {e}");
+                return;
+            }
+        }
+        // Erst in eine Nebendatei, dann umbenennen: ein Abbruch mitten im
+        // Schreiben hinterlässt keinen halben Abschnitt.
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, translated).is_ok() {
+            if let Err(e) = std::fs::rename(&tmp, &path) {
+                log::warn!("Abschnitt nicht abgelegt: {e}");
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
+    }
+}
+
+/// Start der Übersetzung.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartInfo {
+    pub total: usize,
+    pub chapters: usize,
+    pub total_chars: usize,
+}
+
+/// Ein fertiger Abschnitt, in Index-Reihenfolge gemeldet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChunkInfo {
+    pub index: usize,
+    pub total: usize,
+    pub chapter: usize,
+    pub chapters: usize,
+    pub chapter_title: Option<String>,
+    pub text: String,
+    pub cached: bool,
+}
+
+/// Fortschritt (Abschnitte und Zeichen des Originals).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressInfo {
+    pub done: usize,
+    pub total: usize,
+    pub chapter: usize,
+    pub chapters: usize,
+    pub chapter_title: Option<String>,
+    pub done_chars: usize,
+    pub total_chars: usize,
+}
+
+/// Beobachter der Übersetzung — in der App sendet er Tauri-Ereignisse, im Test
+/// sammelt er sie.
+pub trait TranslateObserver: Send + Sync {
+    fn started(&self, _info: &StartInfo) {}
+    fn chunk(&self, _info: &ChunkInfo) {}
+    fn progress(&self, _info: &ProgressInfo) {}
+}
+
+/// Ohne Beobachter.
+pub struct NoObserver;
+
+impl TranslateObserver for NoObserver {}
+
+/// Antwort deutlich kürzer als die Eingabe? Sprachen mit Schriftzeichen (CJK)
+/// sind von Natur aus kürzer — dort greift die Probe nicht.
+fn looks_cut_off(input: &str, output: &str) -> bool {
+    let in_len = input.chars().count();
+    if in_len <= PLAUSIBLE_MIN_INPUT {
+        return false;
+    }
+    let out_len = output.chars().count();
+    let wide = output
+        .chars()
+        .filter(|&c| matches!(c as u32, 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF))
+        .count();
+    if wide * 10 > out_len * 3 {
+        return false;
+    }
+    (out_len as f64) < in_len as f64 * PLAUSIBLE_MIN_RATIO
+}
+
+/// Zeilenweise in zwei etwa gleich große Hälften teilen; mit `"\n"` verbunden
+/// ergeben sie wieder das Original. `None`, wenn nur eine Zeile da ist.
+fn split_in_halves(text: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.len() < 2 {
+        return None;
+    }
+    let half = text.chars().count() / 2;
+    let mut size = 0usize;
+    let mut cut = lines.len() - 1;
+    for (i, line) in lines.iter().enumerate() {
+        size += line.chars().count() + 1;
+        if size >= half {
+            cut = (i + 1).min(lines.len() - 1);
+            break;
+        }
+    }
+    Some((lines[..cut].join("\n"), lines[cut..].join("\n")))
+}
+
+/// Einen Abschnitt übersetzen. Kommt die Antwort abgeschnitten zurück, wird er
+/// (höchstens [`MAX_SPLITS`]-mal) halbiert und jede Hälfte einzeln übersetzt.
+async fn translate_section<F, Fut>(section: &str, call: &F) -> Result<String, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    use std::collections::VecDeque;
+    let mut pending: VecDeque<(String, u8)> = VecDeque::from([(section.to_string(), 0)]);
+    let mut done: Vec<String> = Vec::new();
+    while let Some((piece, depth)) = pending.pop_front() {
+        let can_split = depth < MAX_SPLITS && split_in_halves(&piece).is_some();
+        let result = translate_block(&piece, |chunk| call(chunk)).await;
+        let cut_off = match &result {
+            Err(e) if e == TRUNCATED => true,
+            Ok(out) if looks_cut_off(&piece, out) => {
+                if !can_split {
+                    // Letzte Stufe: eine knappe Übersetzung ist möglich (viel
+                    // Aufzählung, kurze Zielsprache) — nicht deshalb scheitern.
+                    log::warn!("Übersetzung ungewöhnlich kurz, übernehme sie trotzdem");
+                }
+                can_split
+            }
+            _ => false,
+        };
+        if !cut_off {
+            done.push(result?);
+            continue;
+        }
+        let Some((left, right)) = split_in_halves(&piece).filter(|_| can_split) else {
+            return Err(TRUNCATED.to_string());
+        };
+        log::warn!("Übersetzung abgeschnitten, teile den Abschnitt in zwei Hälften");
+        pending.push_front((right, depth + 1));
+        pending.push_front((left, depth + 1));
+    }
+    Ok(done.join("\n"))
+}
+
+/// Ergebnis eines Abschnitts: Text und ob er aus dem Cache kam.
+async fn section_outcome<F, Fut>(
+    section: &Section,
+    cache: &dyn SectionCache,
+    cancel: &std::sync::atomic::AtomicBool,
+    call: &F,
+) -> Result<(String, bool), String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    use std::sync::atomic::Ordering;
+    if section.text.trim().is_empty() {
+        return Ok((section.text.clone(), true));
+    }
+    if let Some(hit) = cache.get(&section.text) {
+        return Ok((hit, true));
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Err(CANCELLED.to_string());
+    }
+    let translated = translate_section(&section.text, call).await?;
+    // Sofort ablegen — auch wenn ein früherer Abschnitt noch läuft oder
+    // später ein Fehler kommt, geht dieser nicht mehr verloren.
+    cache.put(&section.text, &translated);
+    Ok((translated, false))
+}
+
+/// Ganzer Text, kapitel- und abschnittsweise: fertige Abschnitte kommen aus dem
+/// Cache, bis zu `parallel` laufen gleichzeitig, Ereignisse und Ergebnis folgen
+/// der Reihenfolge des Textes. `call` ist ein einzelner Modellaufruf (mit
+/// Wiederholung bei vorübergehenden Fehlern).
+pub async fn translate_document<F, Fut>(
+    text: &str,
+    block_chars: usize,
+    parallel: usize,
+    cache: &dyn SectionCache,
+    observer: &dyn TranslateObserver,
+    cancel: &std::sync::atomic::AtomicBool,
+    call: F,
+) -> Result<String, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    use futures_util::StreamExt;
+    let (chapters, sections) = split_sections(text, block_chars);
+    let total = sections.len();
+    let total_chars: usize = sections.iter().map(|s| s.text.chars().count()).sum();
+    observer.started(&StartInfo {
+        total,
+        chapters: chapters.len(),
+        total_chars,
+    });
+    let title_of = |chapter: usize| chapters.get(chapter).and_then(|c| c.title.clone());
+    observer.progress(&ProgressInfo {
+        done: 0,
+        total,
+        chapter: 0,
+        chapters: chapters.len(),
+        chapter_title: title_of(0),
+        done_chars: 0,
+        total_chars,
+    });
+
+    let call = &call;
+    let mut stream = futures_util::stream::iter(
+        sections
+            .iter()
+            .map(|section| async move { section_outcome(section, cache, cancel, call).await }),
+    )
+    .buffered(parallel.max(1));
+
+    let mut out: Vec<String> = Vec::with_capacity(total);
+    let mut done_chars = 0usize;
+    let mut first_in_chapter: Vec<usize> = vec![0; chapters.len()];
+    let mut seen_chapter: Vec<usize> = vec![0; chapters.len()];
+    for s in &sections {
+        first_in_chapter[s.chapter] += 1;
+    }
+    while let Some(outcome) = stream.next().await {
+        let index = out.len();
+        let section = &sections[index];
+        let (translated, cached) = match outcome {
+            Ok(done) => done,
+            Err(e) if e == CANCELLED => return Err(e),
+            Err(e) => {
+                let nr = seen_chapter[section.chapter] + 1;
+                let of = first_in_chapter[section.chapter];
+                return Err(format!(
+                    "Übersetzung bei Kapitel {}, Abschnitt {nr} von {of} abgebrochen: {e}",
+                    section.chapter + 1
+                ));
+            }
+        };
+        seen_chapter[section.chapter] += 1;
+        done_chars += section.text.chars().count();
+        observer.chunk(&ChunkInfo {
+            index,
+            total,
+            chapter: section.chapter,
+            chapters: chapters.len(),
+            chapter_title: title_of(section.chapter),
+            text: translated.clone(),
+            cached,
+        });
+        out.push(translated);
+        observer.progress(&ProgressInfo {
+            done: index + 1,
+            total,
+            chapter: section.chapter,
+            chapters: chapters.len(),
+            chapter_title: title_of(section.chapter),
+            done_chars,
+            total_chars,
+        });
+    }
+    Ok(out.join("\n"))
+}
+
+/// Ausgelastetes Modell oder Mengenbegrenzung: zweimal mit Pause neu.
+async fn translate_with_retry(
+    settings: &AppSettings,
+    chunk: String,
+    target_lang: &str,
+    cpu_only: bool,
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    let mut attempt = 0;
+    loop {
+        match translate_on(settings, &chunk, target_lang, cpu_only).await {
+            Err(e) if attempt < 2 && is_transient_error(&e) => {
+                log::warn!("Übersetzung: vorübergehender Fehler ({e}), neuer Versuch");
+                let pause = if attempt == 0 { 3 } else { 8 };
+                for _ in 0..pause * 4 {
+                    if TRANSLATE_CANCEL.load(Ordering::SeqCst) {
+                        return Err(CANCELLED.to_string());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                }
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Wie viele Abschnitte gleichzeitig laufen: Cloud/Abo mehrere, lokal einer.
+pub fn translation_parallelism(settings: &AppSettings) -> usize {
+    if active_model_is_local(settings) {
+        1
+    } else {
+        PARALLEL_CLOUD
+    }
+}
+
+/// Ganzer Text über den aktiven Provider: kapitelweise, mit Abschnitts-Cache,
+/// Beobachter und Abbruch (`TRANSLATE_CANCEL`).
 pub async fn translate_blocks(
     settings: &AppSettings,
     text: &str,
     target_lang: &str,
     cpu_only: bool,
-    progress: &(dyn Fn(usize, usize) + Send + Sync),
+    cache: &dyn SectionCache,
+    observer: &dyn TranslateObserver,
 ) -> Result<String, String> {
     use std::sync::atomic::Ordering;
     TRANSLATE_CANCEL.store(false, Ordering::SeqCst);
-    let blocks = split_blocks(text, translation_block_chars(settings));
-    let total = blocks.len();
-    progress(0, total);
-    let mut out = Vec::with_capacity(total);
-    for (i, block) in blocks.iter().enumerate() {
-        if TRANSLATE_CANCEL.load(Ordering::SeqCst) {
-            return Err(CANCELLED.to_string());
-        }
-        out.push(
-            translate_block(block, |chunk| async move {
-                // Ausgelastetes Modell oder Mengenbegrenzung: zweimal mit Pause neu.
-                let mut attempt = 0;
-                loop {
-                    match translate_on(settings, &chunk, target_lang, cpu_only).await {
-                        Err(e) if attempt < 2 && is_transient_error(&e) => {
-                            log::warn!("Übersetzung: vorübergehender Fehler ({e}), neuer Versuch");
-                            let pause = if attempt == 0 { 3 } else { 8 };
-                            for _ in 0..pause * 4 {
-                                if TRANSLATE_CANCEL.load(Ordering::SeqCst) {
-                                    return Err(CANCELLED.to_string());
-                                }
-                                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                            }
-                            attempt += 1;
-                        }
-                        other => return other,
-                    }
-                }
-            })
-            .await?,
-        );
-        progress(i + 1, total);
-    }
-    Ok(out.join("\n"))
+    translate_document(
+        text,
+        translation_block_chars(settings),
+        translation_parallelism(settings),
+        cache,
+        observer,
+        &TRANSLATE_CANCEL,
+        |chunk| translate_with_retry(settings, chunk, target_lang, cpu_only),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -551,6 +986,394 @@ mod block_tests {
         .unwrap();
         assert_eq!(out, "<Erzählerin> Good day. <Erzähler> Hello.");
         assert_eq!(calls.borrow().len(), 4, "2 Versuche + 2 Stücke");
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    #[derive(Default)]
+    struct Recorder {
+        started: Mutex<Vec<StartInfo>>,
+        chunks: Mutex<Vec<ChunkInfo>>,
+        progress: Mutex<Vec<ProgressInfo>>,
+    }
+
+    impl TranslateObserver for Recorder {
+        fn started(&self, info: &StartInfo) {
+            self.started.lock().unwrap().push(info.clone());
+        }
+        fn chunk(&self, info: &ChunkInfo) {
+            self.chunks.lock().unwrap().push(info.clone());
+        }
+        fn progress(&self, info: &ProgressInfo) {
+            self.progress.lock().unwrap().push(info.clone());
+        }
+    }
+
+    #[derive(Default)]
+    struct MemCache(Mutex<HashMap<String, String>>);
+
+    impl SectionCache for MemCache {
+        fn get(&self, section: &str) -> Option<String> {
+            self.0.lock().unwrap().get(section).cloned()
+        }
+        fn put(&self, section: &str, translated: &str) {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(section.to_string(), translated.to_string());
+        }
+    }
+
+    /// Drei Kapitel plus Vorspann, jedes mit mehreren Zeilen.
+    fn book() -> String {
+        let mut t = String::from("Vorwort ohne Überschrift.\n");
+        for c in 1..=3 {
+            t.push_str(&format!("\n## Kapitel {c}\n\n"));
+            for z in 0..6 {
+                t.push_str(&format!(
+                    "Zeile {z} in Kapitel {c}. {{{{S. {}}}}} Ende der Zeile.\n\n",
+                    c * 10 + z
+                ));
+            }
+        }
+        t.trim_end().to_string()
+    }
+
+    fn upper(s: String) -> std::future::Ready<Result<String, String>> {
+        std::future::ready(Ok(s.to_uppercase()))
+    }
+
+    #[test]
+    fn sections_rejoin_to_the_original_and_follow_the_chapters() {
+        let text = book();
+        for max in [60, 200, 1_000, 100_000] {
+            let (chapters, sections) = split_sections(&text, max);
+            let joined: Vec<&str> = sections.iter().map(|s| s.text.as_str()).collect();
+            assert_eq!(joined.join("\n"), text, "max {max}");
+            assert_eq!(chapters.len(), 4, "Vorspann + 3 Kapitel");
+            assert_eq!(chapters[0].title, None);
+            assert_eq!(chapters[2].title.as_deref(), Some("Kapitel 2"));
+            // Kapitelindizes wachsen und jeder Abschnitt liegt im richtigen Kapitel.
+            assert!(sections.windows(2).all(|w| w[0].chapter <= w[1].chapter));
+            if max >= 1_000 {
+                assert_eq!(sections.len(), 4);
+            }
+        }
+        let (_, sections) = split_sections(&text, 200);
+        let third = sections.iter().find(|s| s.chapter == 3).unwrap();
+        assert!(third.text.contains("Kapitel 3"));
+    }
+
+    #[test]
+    fn headings_start_chapters_only_for_one_to_three_hashes() {
+        let (chapters, sections) =
+            split_sections("# Eins\ntext\n#### Vier\n#Kein\n### Drei\nx", 10_000);
+        assert_eq!(
+            chapters
+                .iter()
+                .map(|c| c.title.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("Eins"), Some("Drei")]
+        );
+        assert_eq!(sections.len(), 2);
+        let (c, s) = split_sections("", 100);
+        assert_eq!((c.len(), s.len()), (1, 1));
+    }
+
+    #[test]
+    fn page_marks_and_headings_survive_masking() {
+        let text = "## Kapitel 3: Der Sturm\n\nEr kam {{S. 41}} spät. {{S. 42}} Dann ging er.";
+        let (masked, tokens) = mask_markers(text);
+        assert_eq!(tokens, ["{{S. 41}}", "{{S. 42}}"]);
+        assert_eq!(
+            masked,
+            "## Kapitel 3: Der Sturm\n\nEr kam ⟦0⟧ spät. ⟦1⟧ Dann ging er."
+        );
+        let back = unmask_markers(
+            "## Chapter 3: The Storm\n\nHe came ⟦0⟧ late. ⟦1⟧ Then he left.",
+            &tokens,
+        );
+        assert_eq!(
+            back.as_deref(),
+            Some("## Chapter 3: The Storm\n\nHe came {{S. 41}} late. {{S. 42}} Then he left.")
+        );
+        // Kein Treffer ohne Zahl oder mit fremdem Inhalt.
+        assert!(mask_markers("{{S. }} {{S. x}} {{andere}} {a}").1.is_empty());
+        let out = block_on(translate_block(text, |s: String| async move {
+            Ok(s.replace("Er kam", "He came").replace("spät", "late"))
+        }))
+        .unwrap();
+        assert!(
+            out.contains("{{S. 41}}")
+                && out.contains("{{S. 42}}")
+                && out.starts_with("## Kapitel 3")
+        );
+    }
+
+    #[test]
+    fn the_prompt_asks_to_keep_markdown_and_page_marks() {
+        let p = translation_prompt("English", "x");
+        assert!(p.contains("stay headings"));
+        assert!(p.contains("page marks"));
+    }
+
+    #[test]
+    fn events_and_result_keep_the_order_even_when_sections_run_in_parallel() {
+        let text = book();
+        let rec = Recorder::default();
+        let cancel = AtomicBool::new(false);
+        let calls = AtomicUsize::new(0);
+        // Frühe Abschnitte brauchen länger als späte.
+        let out = block_on(translate_document(
+            &text,
+            150,
+            3,
+            &NoCache,
+            &rec,
+            &cancel,
+            |s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    let wait = 20usize.saturating_sub(s.len() % 17);
+                    for _ in 0..wait {
+                        tokio::task::yield_now().await;
+                    }
+                    Ok(s.to_uppercase())
+                }
+            },
+        ))
+        .unwrap();
+        assert_eq!(out, text.to_uppercase());
+        let chunks = rec.chunks.lock().unwrap();
+        let start = rec.started.lock().unwrap();
+        assert_eq!(start.len(), 1);
+        assert_eq!(start[0].total, chunks.len());
+        assert_eq!(start[0].chapters, 4);
+        assert_eq!(
+            start[0].total_chars,
+            text.chars().count() - (chunks.len() - 1)
+        );
+        assert!(chunks.len() > 8);
+        assert!(chunks
+            .iter()
+            .enumerate()
+            .all(|(i, c)| c.index == i && c.total == chunks.len()));
+        assert!(chunks.iter().all(|c| !c.cached));
+        let joined: Vec<&str> = chunks.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(joined.join("\n"), out);
+        assert_eq!(chunks[0].chapter_title, None);
+        assert_eq!(chunks.last().unwrap().chapter, 3);
+        assert_eq!(
+            chunks.last().unwrap().chapter_title.as_deref(),
+            Some("Kapitel 3")
+        );
+        let progress = rec.progress.lock().unwrap();
+        assert_eq!(progress.len(), chunks.len() + 1);
+        let last = progress.last().unwrap();
+        assert_eq!((last.done, last.total), (chunks.len(), chunks.len()));
+        assert_eq!(last.done_chars, last.total_chars);
+        assert!(progress
+            .windows(2)
+            .all(|w| w[0].done_chars <= w[1].done_chars));
+    }
+
+    #[test]
+    fn a_failure_reports_chapter_and_section_and_the_next_run_resumes() {
+        let text = book();
+        let cache = MemCache::default();
+        let cancel = AtomicBool::new(false);
+        let rec = Recorder::default();
+        // Das Modell scheitert an Kapitel 2 (Index 2 = zweites Kapitel).
+        let first = block_on(translate_document(
+            &text,
+            150,
+            1,
+            &cache,
+            &rec,
+            &cancel,
+            |s: String| async move {
+                if s.contains("Kapitel 2") && s.contains("Zeile 2") {
+                    Err("kaputt".to_string())
+                } else {
+                    Ok(s.to_uppercase())
+                }
+            },
+        ));
+        let err = first.unwrap_err();
+        assert!(
+            err.starts_with("Übersetzung bei Kapitel 3, Abschnitt "),
+            "{err}"
+        );
+        assert!(err.ends_with("abgebrochen: kaputt"), "{err}");
+        let done_first = rec.chunks.lock().unwrap().len();
+        assert!(done_first > 0);
+
+        // Zweiter Lauf: bereits fertige Abschnitte kommen aus dem Cache.
+        let rec2 = Recorder::default();
+        let calls = AtomicUsize::new(0);
+        let out = block_on(translate_document(
+            &text,
+            150,
+            1,
+            &cache,
+            &rec2,
+            &cancel,
+            |s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                upper(s)
+            },
+        ))
+        .unwrap();
+        assert_eq!(out, text.to_uppercase());
+        let chunks = rec2.chunks.lock().unwrap();
+        assert!(chunks[..done_first].iter().all(|c| c.cached));
+        assert!(chunks[done_first..].iter().all(|c| !c.cached));
+        assert_eq!(calls.load(Ordering::SeqCst), chunks.len() - done_first);
+    }
+
+    #[test]
+    fn a_truncated_section_is_halved_and_translated_in_parts() {
+        // Ein Kapitel aus 12 Zeilen; das "Modell" schneidet alles über 300 Zeichen ab.
+        let body: Vec<String> = (0..12)
+            .map(|i| format!("Zeile {i}: {}", "wort ".repeat(12)))
+            .collect();
+        let text = format!("## Eins\n{}", body.join("\n"));
+        assert!(text.chars().count() > 600);
+        let calls = AtomicUsize::new(0);
+        let out = block_on(translate_document(
+            &text,
+            100_000,
+            1,
+            &NoCache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            |s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if s.chars().count() > 450 {
+                        Err(TRUNCATED.to_string())
+                    } else {
+                        Ok(s.to_uppercase())
+                    }
+                }
+            },
+        ))
+        .unwrap();
+        assert_eq!(out, text.to_uppercase());
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "ganz + zwei Hälften");
+    }
+
+    #[test]
+    fn a_section_that_stays_truncated_fails_after_two_splits() {
+        let text = (0..40)
+            .map(|i| format!("Zeile {i} mit etwas Text"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let calls = AtomicUsize::new(0);
+        let err = block_on(translate_document(
+            &text,
+            100_000,
+            1,
+            &NoCache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            |_s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Err::<String, String>(TRUNCATED.to_string()))
+            },
+        ))
+        .unwrap_err();
+        assert!(
+            err.contains("Kapitel 1") && err.ends_with("abgebrochen: truncated"),
+            "{err}"
+        );
+        // 1 + 2 + 4 Aufrufe: der erste Fehler pro Ast der letzten Stufe stoppt.
+        assert!(calls.load(Ordering::SeqCst) <= 7);
+    }
+
+    #[test]
+    fn a_suspiciously_short_answer_counts_as_truncated() {
+        let lines: Vec<String> = (0..10)
+            .map(|i| format!("Zeile {i}: {}", "wort ".repeat(14)))
+            .collect();
+        let text = lines.join("\n");
+        let calls = AtomicUsize::new(0);
+        let out = block_on(translate_document(
+            &text,
+            100_000,
+            1,
+            &NoCache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            |s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    // Lange Eingaben: nur der Anfang kommt zurück (10 %).
+                    if s.chars().count() > 450 {
+                        Ok(s.chars().take(s.chars().count() / 10).collect())
+                    } else {
+                        Ok(s.to_uppercase())
+                    }
+                }
+            },
+        ))
+        .unwrap();
+        assert_eq!(out, text.to_uppercase());
+        assert!(calls.load(Ordering::SeqCst) >= 3);
+        // Kurze Eingaben und CJK-Antworten lösen die Probe nicht aus.
+        assert!(!looks_cut_off("kurz", ""));
+        assert!(!looks_cut_off(&"wort ".repeat(200), &"字".repeat(200)));
+        assert!(looks_cut_off(&"wort ".repeat(200), "wort wort"));
+    }
+
+    #[test]
+    fn cancel_stops_between_sections() {
+        let text = book();
+        let cancel = AtomicBool::new(false);
+        let calls = AtomicUsize::new(0);
+        let err = block_on(translate_document(
+            &text,
+            150,
+            1,
+            &NoCache,
+            &NoObserver,
+            &cancel,
+            |s: String| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+                upper(s)
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(err, CANCELLED);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_disk_cache_is_keyed_by_text_and_language() {
+        let dir = tempfile::tempdir().unwrap();
+        let de = DiskSectionCache::new(Some(dir.path().join("chunks")), "German");
+        let en = DiskSectionCache::new(Some(dir.path().join("chunks")), "English");
+        assert_eq!(de.get("Hallo"), None);
+        de.put("Hallo", "Hello");
+        assert_eq!(de.get("Hallo").as_deref(), Some("Hello"));
+        assert_eq!(en.get("Hallo"), None);
+        assert_eq!(de.get("Hallo."), None);
+        assert_eq!(DiskSectionCache::new(None, "German").get("Hallo"), None);
     }
 }
 

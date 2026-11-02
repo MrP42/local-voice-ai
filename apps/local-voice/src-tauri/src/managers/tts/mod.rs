@@ -2164,6 +2164,60 @@ const VOICECHANGE_BINDING: &str = "voicechange_input";
 /// Binding-Id des Diktats fuer das Vorlesefeld.
 const DICTATE_BINDING: &str = "dictate_input";
 
+/// Sendet die Ereignisse der Übersetzung an die Oberfläche:
+/// `tts-translate-start`, `tts-translate-chunk` (je fertigem Abschnitt, in
+/// Index-Reihenfolge) und `tts-transform-progress`.
+struct TranslateEmitter {
+    app: tauri::AppHandle,
+}
+
+impl crate::translator::TranslateObserver for TranslateEmitter {
+    fn started(&self, info: &crate::translator::StartInfo) {
+        use tauri::Emitter;
+        let _ = self.app.emit(
+            "tts-translate-start",
+            serde_json::json!({
+                "total": info.total,
+                "chapters": info.chapters,
+                "totalChars": info.total_chars,
+            }),
+        );
+    }
+
+    fn chunk(&self, info: &crate::translator::ChunkInfo) {
+        use tauri::Emitter;
+        let _ = self.app.emit(
+            "tts-translate-chunk",
+            serde_json::json!({
+                "index": info.index,
+                "total": info.total,
+                "chapter": info.chapter,
+                "chapters": info.chapters,
+                "chapterTitle": info.chapter_title,
+                "text": info.text,
+                "cached": info.cached,
+            }),
+        );
+    }
+
+    fn progress(&self, info: &crate::translator::ProgressInfo) {
+        use tauri::Emitter;
+        let _ = self.app.emit(
+            "tts-transform-progress",
+            serde_json::json!({
+                "kind": "translation",
+                "done": info.done,
+                "total": info.total,
+                "chapter": info.chapter,
+                "chapters": info.chapters,
+                "chapterTitle": info.chapter_title,
+                "doneChars": info.done_chars,
+                "totalChars": info.total_chars,
+            }),
+        );
+    }
+}
+
 impl TtsManager {
     pub fn new(app: &tauri::AppHandle) -> Arc<Self> {
         use tauri::Emitter;
@@ -3267,31 +3321,48 @@ impl TtsManager {
         if trimmed.is_empty() {
             return Err("kein Text zum Übersetzen".to_string());
         }
+        use tauri::Emitter;
+        let observer = TranslateEmitter {
+            app: self.app.clone(),
+        };
         if let Some(hit) = self.cached_translation(trimmed, target_lang) {
+            // Der Ganztext-Cache trifft: die Oberfläche bekommt trotzdem den
+            // Ablauf start + ein Abschnitt mit dem ganzen Text.
+            use crate::translator::TranslateObserver;
+            observer.started(&crate::translator::StartInfo {
+                total: 1,
+                chapters: 1,
+                total_chars: trimmed.chars().count(),
+            });
+            observer.chunk(&crate::translator::ChunkInfo {
+                index: 0,
+                total: 1,
+                chapter: 0,
+                chapters: 1,
+                chapter_title: None,
+                text: hit.clone(),
+                cached: true,
+            });
             return Ok(hit);
         }
         let settings = crate::settings::get_settings(&self.app);
         let gpu_busy = self.gpu_busy();
         // Die Sprachmodell-Anzeige lebt von diesen beiden Ereignissen: Gelb,
         // solange uebersetzt wird, danach zurueck (oder Orange bei Fehler).
-        use tauri::Emitter;
         let _ = self
             .app
             .emit("llm-activity", serde_json::json!({ "busy": true }));
-        // Blockweise mit Fortschritt; Sprechermarken und Tags bleiben stehen.
-        let app = self.app.clone();
-        let progress = move |done: usize, total: usize| {
-            let _ = app.emit(
-                "tts-transform-progress",
-                serde_json::json!({ "kind": "translation", "done": done, "total": total }),
-            );
-        };
+        // Kapitelweise mit Fortschritt; Sprechermarken, Tags und Seitenmarken
+        // bleiben stehen. Fertige Abschnitte liegen auf Platte: nach einem
+        // Fehler oder Abbruch setzt der nächste Aufruf dort fort.
+        let cache = crate::translator::DiskSectionCache::new(self.chunk_cache_dir(), target_lang);
         let outcome = crate::translator::translate_blocks(
             &settings,
             trimmed,
             target_lang,
             gpu_busy,
-            &progress,
+            &cache,
+            &observer,
         )
         .await;
         let _ = self.app.emit(
@@ -3337,6 +3408,15 @@ impl TtsManager {
         if let Err(e) = std::fs::write(&path, translation) {
             log::warn!("could not cache translation: {e}");
         }
+    }
+
+    /// Ordner der fertigen Übersetzungsabschnitte (`translations/chunks`).
+    fn chunk_cache_dir(&self) -> Option<std::path::PathBuf> {
+        use tauri::Manager;
+        let base = crate::portable::data_dir()
+            .cloned()
+            .or_else(|| self.app.path().app_local_data_dir().ok())?;
+        Some(base.join("translations").join("chunks"))
     }
 
     /// Ablageort einer Übersetzung. Der Dateiname ist der Streuwert aus Text
