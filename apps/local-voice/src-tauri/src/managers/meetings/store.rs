@@ -122,6 +122,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // A7 (Agentenbruecke: Zugaenge, Werkzeugrechte, Freigabe-Zuordnung), Index 12: hinter B1. Nur
     // CREATE. Der SQL-Text steht in `agent_bridge/schema.rs`.
     M::up(crate::agent_bridge::schema::AGENT_BRIDGE_MIGRATION),
+    // ADR-0026 PR-7 (Besprechungsordner <-> Suite-Projekt), Index 13: hinter A7. Nur ADD COLUMN
+    // (nullable) und ein Index. Der SQL-Text steht in `projekt.rs`.
+    M::up(super::projekt::PROJEKT_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -3842,6 +3845,51 @@ mod tests {
         assert_eq!(journal_mode(&Connection::open(&path).unwrap()), "wal");
     }
 
+    /// ADR-0026 PR-7, Migration Index 13: eine Altdatenbank mit Zeilen in jeder Tabelle bekommt die Spalte
+    /// `meeting_folders.projekt_id` samt Index, ohne eine Zeile zu verlieren; Ordner bleiben ohne Verweis,
+    /// ein Verweis laesst sich setzen und loesen, und ein zweites Oeffnen aendert nichts.
+    #[test]
+    fn migration_13_adds_projekt_id_to_an_old_database_without_losing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        create_legacy_db(&path);
+        let cols: Vec<(String, Vec<String>)> = {
+            let conn = Connection::open(&path).unwrap();
+            LEGACY_TABLES
+                .iter()
+                .map(|t| (t.to_string(), table_columns(&conn, t)))
+                .collect()
+        };
+        let before = dump_all(&Connection::open(&path).unwrap(), &cols);
+
+        let s = MeetingStore::open_at(&path).unwrap();
+        let conn = s.get_connection().unwrap();
+        assert_eq!(dump_all(&conn, &cols), before, "Altzeilen unveraendert");
+        let spalten = table_columns(&conn, "meeting_folders");
+        assert!(spalten.iter().any(|c| c == "projekt_id"), "{spalten:?}");
+        let index: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_meeting_folders_projekt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+        drop(conn);
+
+        let f = s.folder_save(None, "Altordner", None).unwrap().id;
+        assert_eq!(s.ordner_verweise().unwrap()[0].projekt_id, None);
+        s.ordner_projekt_setzen(&f, Some("prj_01HZZZZZZZZZZZZZZZZZZZZZZZ"))
+            .unwrap();
+        drop(s);
+        let s = MeetingStore::open_at(&path).unwrap();
+        assert_eq!(
+            s.ordner_verweise().unwrap()[0].projekt_id.as_deref(),
+            Some("prj_01HZZZZZZZZZZZZZZZZZZZZZZZ"),
+            "erneutes Oeffnen aendert nichts"
+        );
+    }
+
     /// G8, Abbruch mitten im Schreiben: eine Transaktion, die nicht abgeschlossen
     /// wird (Absturz, Fehler), hinterlaesst nichts; Festgeschriebenes ueberlebt das
     /// Schliessen und Wiederoeffnen.
@@ -5567,7 +5615,8 @@ mod tests {
                 "parent_id",
                 "created_at",
                 "updated_at",
-                "deleted_at"
+                "deleted_at",
+                "projekt_id"
             ]
         );
         assert_eq!(

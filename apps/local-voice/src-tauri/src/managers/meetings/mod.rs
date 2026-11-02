@@ -27,6 +27,7 @@ pub mod minutes;
 pub mod notes;
 pub mod pdf; // M6-P6b
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
+pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
 pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;

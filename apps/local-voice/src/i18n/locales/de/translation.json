@@ -7160,5 +7160,248 @@
       "possible": "Nicht gestartet",
       "none": "Nicht nötig"
     }
+  },
+  "projekte": {
+    "menu": {
+      "suiteProjekt": "Suite-Projekt …"
+    },
+    "fehler": {
+      "unbekannt": "Die Recherche ist fehlgeschlagen."
+    },
+    "freigabe": {
+      "title": "Ausgewählte Suchanfragen an externe Suchmaschinen senden?",
+      "externalNote": "Nur markierte Anfragen werden gesendet.",
+      "queries": "Suchanfragen",
+      "send": "Ausgewählte senden",
+      "projectOnly": "Nur im Projekt suchen",
+      "cancel": "Abbrechen",
+      "none": "Keine Anfrage ausgewählt: Es wird nichts gesendet.",
+      "fertig": "Die Recherche ist fertig und liegt im Projektordner.",
+      "nichtsGesendet": "Es wurde nichts gesendet.",
+      "wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
+      "context": "Kontext: {{label}}.",
+      "abgelaufen": "Die Freigabe ist abgelaufen. Es wurde nichts gesendet.",
+      "ladenFehler": "Offene Freigaben konnten nicht gelesen werden.",
+      "kontextFrage": "Recherche „{{frage}}“ ({{klasse}})",
+      "restzeit_one": "noch 1 Minute",
+      "restzeit_other": "noch {{count}} Minuten",
+      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig"
+    },
+    "karte": {
+      "titel": "Recherche",
+      "kennzeichen": "KI-erstellte Recherche · Kontext {{klasse}}",
+      "schliessen": "Schließen",
+      "keineAntwort": "Es wurde keine belastbare Aussage mit Quellen gefunden.",
+      "ohneQuelle": "ohne Quelle",
+      "abgelegt": "Abgelegt im Projektordner „{{projekt}}“."
+    },
+    "chat": {
+      "recherche": "Recherche",
+      "hinweis": "Frage per Web-Recherche (Modus Schnell) im Suite-Projekt dieses Ordners beantworten",
+      "keinProjekt": "Für die Recherche muss der Besprechungsordner mit einem Suite-Projekt verknüpft sein, das das Web freigibt.",
+      "projektWaehlen": "In welchem Projekt?",
+      "wartet": "Die Suchanfragen warten auf Ihre Freigabe."
+    },
+    "sprache": {
+      "menu": "Web-Recherche im Projekt …",
+      "hinweis": "Schnelle Recherche mit Quellen, danach vorlesbar",
+      "titel": "Web-Recherche im Projekt",
+      "projekt": "Suite-Projekt",
+      "frage": "Frage",
+      "los": "Recherchieren",
+      "keinProjekt": "Es gibt kein Suite-Projekt mit Web-Freigabe. Verknüpfen Sie einen Besprechungsordner mit einem Suite-Projekt und geben Sie dort das Web frei."
+    },
+    "seite": {
+      "titel": "Suite-Projekt",
+      "ordner": "Besprechungsordner „{{name}}“",
+      "hinweis": "Das Suite-Projekt bündelt Besprechungen, Bücher und Recherchen dieses Ordners.",
+      "abgleichen": "Abgleichen",
+      "loesen": "Verknüpfung lösen",
+      "schliessen": "Schließen",
+      "abbrechen": "Abbrechen",
+      "nichtVerknuepft": "Dieser Ordner ist noch mit keinem Suite-Projekt verknüpft. Mit einer Verknüpfung erscheinen seine Besprechungen im Projektordner, und die Web-Recherche wird möglich.",
+      "vorhanden": "Vorhandenes Suite-Projekt",
+      "waehlen": "Projekt wählen",
+      "verknuepfen": "Verknüpfen",
+      "neuerTitel": "Oder neues Suite-Projekt anlegen",
+      "klasse": "Datenklasse",
+      "anlegen": "Anlegen und verknüpfen",
+      "webLabel": "Web-Recherche freigeben",
+      "webHinweis": "Ohne Freigabe geht nichts ins Web. Jede Änderung wird protokolliert.",
+      "buchWaehlen": "Buch wählen",
+      "buchHinzu": "Buch hinzufügen",
+      "loeschen": "Suite-Projekt löschen",
+      "loeschenTitel": "Suite-Projekt löschen?",
+      "loeschenText": "„{{name}}“ wird mit allen Einträgen und Recherchen gelöscht. Besprechungen und Bücher bleiben erhalten.",
+      "adresse": "Adresse des Suchdienstes",
+      "adresseSpeichern": "Speichern",
+      "verknuepft_one": "Verknüpft. 1 Besprechung zugeordnet.",
+      "verknuepft_other": "Verknüpft. {{count}} Besprechungen zugeordnet.",
+      "uebersprungen_one": "1 Besprechung liegt über der Datenklasse des Projekts und wurde nicht zugeordnet.",
+      "uebersprungen_other": "{{count}} Besprechungen liegen über der Datenklasse des Projekts und wurden nicht zugeordnet.",
+      "geloescht_one": "Gelöscht. 1 Recherche entfernt.",
+      "geloescht_other": "Gelöscht. {{count}} Recherchen entfernt.",
+      "rechercheLoeschen": "Recherche löschen",
+      "rechercheGeloescht": "Recherche gelöscht."
+    },
+    "klassen": {
+      "PUBLIC": "öffentlich",
+      "INTERNAL": "intern",
+      "PERSONAL": "personenbezogen",
+      "SPECIAL": "besondere Kategorie",
+      "RESTRICTED": "eingeschränkt"
+    },
+    "ordner": {
+      "entryCountOne": "1 Eintrag",
+      "entryCountMany": "{{n}} Einträge",
+      "readingProgress": "Vorlesefortschritt {{p}} %",
+      "projects": "Projekte",
+      "newProject": "Neues Projekt",
+      "switchProject": "Projekt wechseln",
+      "archived": "archiviert",
+      "webReleased": "Web freigegeben",
+      "specialCategory": "besondere Kategorie",
+      "startResearch": "Recherche starten",
+      "chatInProject": "Chat im Projekt",
+      "details": "Details",
+      "closeDetails": "Details schließen",
+      "detailsTitle": "Eintrag",
+      "filterLabel": "Nach Art filtern",
+      "all": "Alle",
+      "search": "Im Projekt suchen",
+      "entries": "Einträge",
+      "noEntries": "In diesem Projekt liegen noch keine Einträge.",
+      "noHits": "Keine Einträge zu dieser Auswahl.",
+      "unavailable": "Nicht verfügbar",
+      "unavailableReason": "Kein Leserecht in der Herkunftsapp",
+      "pickEntry": "Wählen Sie einen Eintrag, um Herkunft und Fortschritt zu sehen.",
+      "fieldTitle": "Titel",
+      "fieldOrigin": "Herkunft",
+      "fieldClass": "Datenklasse",
+      "fieldReading": "Vorlesen",
+      "fieldCopies": "Kopien außerhalb",
+      "noCopies": "Keine",
+      "noReading": "Noch nicht vorgelesen",
+      "open": "Öffnen",
+      "readAloud": "Vorlesen",
+      "exportEntry": "Exportieren",
+      "reassign": "Zuordnung ändern",
+      "copyTargets": {
+        "export": "Export",
+        "presenter": "Presenter",
+        "exchange_folder": "Austauschordner"
+      },
+      "groups": {
+        "meetings": "Besprechungen",
+        "conversations": "Unterhaltungen",
+        "books": "Bücher",
+        "research": "Recherchen",
+        "notes": "Notizen",
+        "talks": "Vorträge",
+        "documents": "Dokumente",
+        "plans": "Pläne"
+      },
+      "kinds": {
+        "meeting": "Besprechung",
+        "transcript": "Transkript",
+        "conversation": "Unterhaltung",
+        "book": "Buch",
+        "book_document": "Buchdokument",
+        "note": "Notiz",
+        "research": "Recherche",
+        "document": "Dokument",
+        "plan": "Plan",
+        "talk": "Vortrag"
+      },
+      "apps": {
+        "corporate-llm": "Corporate LLM",
+        "lva": "Local Voice AI",
+        "presenter": "Presenter",
+        "planner": "Planner",
+        "team-chat": "Team-Chat"
+      }
+    },
+    "recherche": {
+      "inProject": "im Projekt „{{title}}“",
+      "effort": "ca. {{seconds}} s · bis {{maxSources}} Quellen · {{model}}",
+      "contradictionRefs": "(Quellen {{list}})",
+      "sources": "Quellen · {{n}}",
+      "footnote": "Quelle {{n}}",
+      "highlighted": "Quelle {{n}} hervorgehoben: {{title}}",
+      "question": "Frage",
+      "mode": "Modus",
+      "modes": {
+        "quick": "Schnell",
+        "thorough": "Gründlich",
+        "deep": "Tief"
+      },
+      "scope": "Quellen",
+      "scopes": {
+        "web": "Web",
+        "project": "Projekt",
+        "both": "Beides"
+      },
+      "webLocked": "Das Web ist für dieses Projekt nicht freigegeben.",
+      "submit": "Recherchieren",
+      "busy": "Recherche läuft",
+      "answer": "Antwort",
+      "noSource": "ohne Quelle",
+      "weakProof": "nur schwacher Beleg",
+      "weakNote": "schwacher Beleg",
+      "contradiction": "Widerspruch",
+      "aiLabel": "KI-erstellt",
+      "actions": {
+        "read-aloud": "Vorlesen",
+        "report": "Als Bericht (Vorlage)",
+        "export": "Exportieren",
+        "presenter": "An Presenter"
+      },
+      "followUp": "Weiterfragen",
+      "onlyHere": "Nur in diesen Quellen weiterfragen",
+      "sourceTypes": {
+        "official": "amtlich",
+        "scholarly": "wissenschaftlich",
+        "press": "Presse",
+        "forum": "Forum",
+        "unknown": "Quelle unbekannt"
+      },
+      "steps": "Ablauf",
+      "noResult": "Noch keine Recherche. Stellen Sie eine Frage."
+    },
+    "code": {
+      "freigabe_wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
+      "nichts_gesendet": "Es wurde nichts gesendet.",
+      "freigabe_nicht_angewendet": "Die Freigabe wurde nicht angewendet.",
+      "nicht_eingerichtet": "Die Recherche ist nicht eingerichtet: Es ist kein Suchdienst hinterlegt. Die Adresse eines selbst betriebenen SearXNG-Dienstes trägt die Betreiberin oder der Betreiber in den Einstellungen unter Recherche ein.",
+      "web_gesperrt": "Das Web ist für dieses Suite-Projekt nicht freigegeben. Die Recherche wurde nicht ausgeführt.",
+      "nicht_gefunden": "Das Suite-Projekt wurde nicht gefunden. Die Recherche wurde nicht ausgeführt.",
+      "nicht_erlaubt": "Das Suite-Projekt ist archiviert. Die Recherche wurde nicht ausgeführt.",
+      "argumente_ungueltig": "Die Frage fehlt oder ist zu lang.",
+      "recherche_fehlgeschlagen": "Die Recherche ist fehlgeschlagen.",
+      "speichern_fehlgeschlagen": "Das Recherche-Dokument konnte nicht gespeichert werden.",
+      "projekt_passt_nicht": "Das Suite-Projekt gehört nicht zu dieser Besprechung. Die Recherche wurde nicht ausgeführt.",
+      "kein_modell": "Es ist kein Sprachmodell eingestellt."
+    },
+    "fehlercode": {
+      "recherche.not_found": "Keine offene Freigabe mit dieser Kennung (abgelaufen, entschieden oder die App wurde neu gestartet).",
+      "recherche.forbidden": "Die Suchadresse darf nur die Administration ändern.",
+      "recherche.invalid": "Die Auswahl passt nicht zu den angezeigten Suchanfragen. Es wurde nichts gesendet.",
+      "recherche.unavailable": "Die Recherche ist nicht eingerichtet.",
+      "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
+      "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
+      "projekte.not_found": "Nicht gefunden."
+    },
+    "ergebnis": {
+      "modus": "Schnell",
+      "quellen_one": "1 Quelle",
+      "quellen_other": "{{count}} Quellen",
+      "geprueft": "geprüft",
+      "budget": "Budget erreicht",
+      "abgebrochen": "abgebrochen",
+      "abgerufen": "abgerufen {{zeit}}"
+    },
+    "vorlesen": {
+      "nurLokal": "Bei personenbezogenen Inhalten nur mit lokaler Sprachausgabe."
+    }
   }
 }

@@ -1,0 +1,147 @@
+{
+  "viewport": "390x844",
+  "grenzePx": 44,
+  "gruppen": {
+    "[data-testid=\"sessions-open\"],[data-testid=\"rec-strip\"] button,[data-testid=\"rec-lower\"] [role=\"tab\"],[data-testid=\"rec-lower-toggle\"],[data-testid=\"suite-projekt\"] button:not(.wai-recherche__fn)": [
+      {
+        "name": "Projekte öffnen",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "name": "Aufnahme starten",
+        "w": 265,
+        "h": 44
+      },
+      {
+        "name": "Datei importieren",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "name": "Link einfügen",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "name": "Abgleichen",
+        "w": 112,
+        "h": 44
+      },
+      {
+        "name": "Verknüpfung lösen",
+        "w": 155,
+        "h": 44
+      },
+      {
+        "name": "Schließen",
+        "w": 44,
+        "h": 44
+      },
+      {
+        "name": "Buch hinzufügen",
+        "w": 136,
+        "h": 44
+      },
+      {
+        "name": "Suite-Projekt löschen",
+        "w": 169,
+        "h": 44
+      },
+      {
+        "name": "Recherche starten",
+        "w": 150,
+        "h": 44
+      },
+      {
+        "name": "Details",
+        "w": 72,
+        "h": 44
+      },
+      {
+        "name": "Alle 2",
+        "w": 63,
+        "h": 44
+      },
+      {
+        "name": "Besprechungen 1",
+        "w": 140,
+        "h": 44
+      },
+      {
+        "name": "Bücher 1",
+        "w": 83,
+        "h": 44
+      },
+      {
+        "name": "Kundentermin Stadtwerke Kaiserslautern –",
+        "w": 341,
+        "h": 45
+      },
+      {
+        "name": "Leitfaden NetzentgelteLocal Voice AI30.1",
+        "w": 341,
+        "h": 45
+      },
+      {
+        "name": "Recherchieren",
+        "w": 124,
+        "h": 44
+      },
+      {
+        "name": "Notizen, KI-Notizen und Fragen",
+        "w": 368,
+        "h": 44
+      },
+      {
+        "name": "Notizen",
+        "w": 68,
+        "h": 44
+      },
+      {
+        "name": "KI-Notizen",
+        "w": 86,
+        "h": 44
+      },
+      {
+        "name": "Fragen",
+        "w": 62,
+        "h": 44
+      }
+    ],
+    "[role=\"alertdialog\"] button, [role=\"alertdialog\"] .wai-freigabe__liste label": [
+      {
+        "name": "„Netzentgelte Lastgangmessung Berechnung",
+        "w": 340,
+        "h": 44
+      },
+      {
+        "name": "„Netzentgelte Lastgangmessung Stadtwerke",
+        "w": 340,
+        "h": 44
+      },
+      {
+        "name": "Ausgewählte senden",
+        "w": 340,
+        "h": 44
+      },
+      {
+        "name": "Abbrechen",
+        "w": 340,
+        "h": 44
+      }
+    ]
+  },
+  "checkboxZeilen": [
+    {
+      "name": "„Netzentgelte Lastgangmessung Berechnung",
+      "w": 340,
+      "h": 44
+    },
+    {
+      "name": "„Netzentgelte Lastgangmessung Stadtwerke",
+      "w": 340,
+      "h": 44
+    }
+  ]
+}

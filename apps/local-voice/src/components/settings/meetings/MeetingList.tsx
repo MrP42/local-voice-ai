@@ -150,6 +150,8 @@ interface MeetingListProps {
   onOpenProjectMinutes?: (id: string) => void;
   /** Die Ansicht des laufenden Laufs eines Projekts oeffnen. */
   onOpenProjectRun?: (folderId: string) => void;
+  /** ADR-0026 PR-7: das Suite-Projekt dieses Besprechungsordners oeffnen. */
+  onOpenSuiteProject?: (folderId: string) => void;
   /** Was die Arbeitsflaeche gerade als Projekt-Protokoll zeigt. */
   activeProjectMinutes?: OpenProjectMinutes | null;
 }
@@ -176,6 +178,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   onNewMeeting,
   onStartProjectMinutes,
   onOpenProjectMinutes,
+  onOpenSuiteProject,
   onOpenProjectRun,
   activeProjectMinutes = null,
 }) => {
@@ -1184,6 +1187,14 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                         projects.select(projectMenuTarget.id);
                       }
                     },
+                  },
+                ]
+              : []),
+            ...(onOpenSuiteProject
+              ? [
+                  {
+                    label: t("projekte.menu.suiteProjekt"),
+                    onSelect: () => onOpenSuiteProject(projectMenuTarget.id),
                   },
                 ]
               : []),

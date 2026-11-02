@@ -37,6 +37,7 @@ import {
 } from "./components/intro-tour/firstRunSetup";
 import { useIntroTourStore } from "./stores/introTourStore";
 import { KopplungsDialog } from "./components/integrations/KopplungsDialog";
+import { FreigabeWaechter } from "./components/projekte/FreigabeWaechter";
 import { useSettings } from "./hooks/useSettings";
 import { usePersistentState } from "./hooks/usePersistentState";
 import { useSettingsStore } from "./stores/settingsStore";
@@ -501,6 +502,7 @@ function App() {
         <ModelUpdateGate />
         <IntroTour />
         <KopplungsDialog />
+        <FreigabeWaechter />
         {/* Titelleiste 40px (ADR-0027 E3, Variante A): nur Hamburger, App-Symbol
             und Name, freie Ziehfläche, Fensterknöpfe. Seitentitel, Suche und
             Aktionen stehen im Modulkopf (PageShell), Einstellungen und Hilfe

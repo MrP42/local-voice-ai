@@ -35,6 +35,7 @@ mod paste_guard;
 mod paste_session;
 pub mod portable;
 mod process_guard;
+mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
@@ -354,6 +355,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     sync::start(app_handle.clone());
     // ADR-0024: gemeinsamer Kontospeicher der Suite (nur lokales Profil).
     konto::init(app_handle);
+    // ADR-0026 PR-7: Suite-Projekte und Recherche (Dateien oeffnen beim ersten Gebrauch).
+    app_handle.manage(projekte::zustand::ProjekteZustand::neu(app_handle.clone()));
+    projekte::zustand::pflege_starten(app_handle);
     app_handle.manage(tray::CurrentTrayIconState::new());
 
     // Entwuerfe des Stimmen-Baukastens aelter als 30 Tage entfernen:
@@ -1976,6 +1980,27 @@ fn specta_builder() -> Builder<tauri::Wry> {
             konto::konto_bild_setzen,
             konto::konto_bild_entfernen,
             konto::konto_bild_lesen,
+            projekte::befehle::projekte_liste,
+            projekte::befehle::projekt_anlegen,
+            projekte::befehle::projekt_web_freigabe,
+            projekte::befehle::projekt_loeschen,
+            projekte::befehle::projekt_eintraege,
+            projekte::befehle::projekt_ordner_verknuepfen,
+            projekte::befehle::projekt_ordner_loesen,
+            projekte::befehle::projekt_abgleichen,
+            projekte::befehle::projekt_buch_zuordnen,
+            projekte::befehle::projekt_buch_entfernen,
+            projekte::befehle::projekt_besprechung_zuordnen,
+            projekte::befehle::projekt_besprechung_entfernen,
+            projekte::befehle::projekte_der_besprechung,
+            projekte::befehle::recherche_status,
+            projekte::befehle::recherche_adresse_setzen,
+            projekte::befehle::recherche_starten,
+            projekte::befehle::recherche_freigaben,
+            projekte::befehle::recherche_freigabe_entscheiden,
+            projekte::befehle::recherche_liste,
+            projekte::befehle::recherche_lesen,
+            projekte::befehle::recherche_loeschen,
             sync::sync_hub_status,
             shortcut::change_tts_engine_setting,
             shortcut::change_tts_piper_voice_setting,

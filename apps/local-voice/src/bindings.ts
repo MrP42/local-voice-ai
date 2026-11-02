@@ -755,6 +755,185 @@ async kontoBildLesen(id: string) : Promise<Result<string | null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async projekteListe() : Promise<Result<SuiteProjekt[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekte_liste") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektAnlegen(titel: string, dataClass: string, specialCategory: boolean) : Promise<Result<SuiteProjekt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_anlegen", { titel, dataClass, specialCategory }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektWebFreigabe(id: string, an: boolean) : Promise<Result<SuiteProjekt, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_web_freigabe", { id, an }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektLoeschen(id: string) : Promise<Result<LoeschErgebnis, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektEintraege(suiteId: string) : Promise<Result<EintragSicht[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_eintraege", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektOrdnerVerknuepfen(ordnerId: string, suiteId: string) : Promise<Result<SyncBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ordner_verknuepfen", { ordnerId, suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektOrdnerLoesen(ordnerId: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_ordner_loesen", { ordnerId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektAbgleichen(suiteId: string) : Promise<Result<SyncBericht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_abgleichen", { suiteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBuchZuordnen(suiteId: string, buchId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_buch_zuordnen", { suiteId, buchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBuchEntfernen(suiteId: string, buchId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_buch_entfernen", { suiteId, buchId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBesprechungZuordnen(suiteId: string, meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_besprechung_zuordnen", { suiteId, meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async projektBesprechungEntfernen(suiteId: string, meetingId: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekt_besprechung_entfernen", { suiteId, meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Suite-Projekte, die fuer eine Besprechung in Frage kommen (Projekte ihrer Ordner).
+ */
+async projekteDerBesprechung(meetingId: string) : Promise<Result<SuiteProjekt[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("projekte_der_besprechung", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheStatus() : Promise<Result<RechercheStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Setzt oder entfernt die Adresse des Suchdienstes (nur Administration, streng geprueft).
+ */
+async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_adresse_setzen", { adresse }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Chat-Werkzeug "recherche" (Modus Schnell). Der Kontext einer Besprechung ist mindestens
+ * `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
+ * (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
+ */
+async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null) : Promise<Result<LaufAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheFreigaben() : Promise<Result<FreigabeInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_freigaben") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheFreigabeEntscheiden(id: string, auswahl: string[], aktion: FreigabeAktion) : Promise<Result<LaufAntwort, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_freigabe_entscheiden", { id, auswahl, aktion }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheListe(suiteProjekt: string | null) : Promise<Result<RechercheKurz[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_liste", { suiteProjekt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheLesen(id: string) : Promise<Result<RechercheSicht, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_lesen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async rechercheLoeschen(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recherche_loeschen", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Geräteliste und Zähler vom Hub (für die Konto-Gruppe).
  */
@@ -6730,6 +6909,7 @@ export type AgentClient = { id: string; label: string;
  */
 integration_id: string; created_at: number; last_used_at: number | null; revoked_at: number | null }
 export type AgentClientView = { client: AgentClient; tools: ToolView[] }
+export type AntwortSicht = { text: string; citations: number[]; unsupported: boolean }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -8090,6 +8270,18 @@ output_language: string | null }
  * Ereignis eines Dokumentlaufs; `doc_type` ist der Schluessel des Katalogs.
  */
 export type DocumentEvent = { kind: "progress"; meeting_id: string; doc_type: string; phase: MinutesPhase; done: number; total: number } | { kind: "done"; meeting_id: string; doc_type: string; document_id: string } | { kind: "failed"; meeting_id: string; doc_type: string; code: string }
+/**
+ * Eintrag des Projektordners. Ohne Leserecht fehlen `title` und `subtitle` (`available` = false).
+ */
+export type EintragSicht = { id: string; kind: string; title: string | null; subtitle: string | null; originApp: string | null; dataClass: string | null; available: boolean; assignedAt: string | null; 
+/**
+ * `person` oder `automation`.
+ */
+assignedBy: string | null; 
+/**
+ * Verweis auf die Herkunft (`wai://lva/...`), nur bei lesbaren Eintraegen.
+ */
+link: string | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
@@ -8245,7 +8437,11 @@ export type FlaggedSentence = { segment_index: number;
  * `numbers`, `names`, `sentences`, `empty`, `length`, `not_translated`.
  */
 reasons: string[] }
-export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number }
+export type Folder = { id: string; name: string; color: string | null; sort: number; meeting_count: number; created_at: number; updated_at: number; 
+/**
+ * ADR-0026 PR-7: Suite-Projekt, auf das dieser Ordner zeigt (`None` = nicht verknuepft).
+ */
+projekt_id: string | null }
 /**
  * Zaehler der Projekte-Spalte neben den Ordnern: alle lebenden Besprechungen
  * und die ohne lebenden Ordner ("Ohne Projekt").
@@ -8267,6 +8463,29 @@ export type FollowupMode =
  * Als .eml-Datei speichern (`path`).
  */
 "eml"
+export type FreigabeAktion = 
+/**
+ * Die ausgewaehlten Anfragen senden.
+ */
+"senden" | 
+/**
+ * "Nur im Projekt suchen": nichts senden (ein Projektindex folgt mit PR-9).
+ */
+"nur_projekt" | "abbrechen"
+/**
+ * Angehaltene Recherche, die auf die Freigabe der Suchanfragen wartet.
+ */
+export type FreigabeInfo = { id: string; question: string; dataClass: string; 
+/**
+ * Frist des Halts in Sekunden (Rest ab jetzt).
+ */
+expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[] }
+export type FreigabeZeile = { id: string; text: string; 
+/**
+ * Datenklasse (`PERSONAL` ...) der Anfrage, wenn sie eine Freigabe verlangt; die Oberflaeche
+ * bildet daraus den Hinweis in ihrer Sprache.
+ */
+hintClass: string | null }
 /**
  * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
  * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
@@ -8590,6 +8809,23 @@ model_id: string | null; model_name: string | null; model_covers: boolean | null
  * Bessere Wahl, wenn das Modell die Sprache nicht abdeckt.
  */
 suggestion: ModelSuggestion | null }
+export type LaufAntwort = { 
+/**
+ * `fertig`, `freigabe` (wartet auf Entscheidung), `abgelehnt` oder `fehler`.
+ */
+status: string; rechercheId: string | null; 
+/**
+ * Deutscher Text (Rueckfall und Log-Zwecke).
+ */
+message: string | null; 
+/**
+ * Stabiler Code von `message` (z. B. `web_gesperrt`); die Oberflaeche uebersetzt ihn.
+ */
+code: string | null; 
+/**
+ * Bei `fehler` einer Freigabe: der Halt besteht weiter und kann abgebrochen werden.
+ */
+haltBleibt: boolean }
 /**
  * Ein gelerntes Paar, wie es die Oberfläche sieht.
  */
@@ -8769,6 +9005,10 @@ notes: string | null }
  * Lief das Modell auf diesem Rechner oder bei einem entfernten Anbieter?
  */
 export type Locality = "local" | "remote"
+/**
+ * Was beim Loeschen eines Suite-Projekts mitging.
+ */
+export type LoeschErgebnis = { eintraegeEntfernt: number; ordnerGeloest: number; recherchenGeloescht: number; externeKopien: number }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * Logo eines Profils: Datei im Profilordner (`logo-<ulid>.png|jpg`, aeltere
@@ -9783,6 +10023,11 @@ voice_switching: boolean; voice: VoiceDescriptor }
  * Hörprobe einer Stimme; `wav_path` fehlt, solange sie noch entsteht.
  */
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
+export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
+/**
+ * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
+ */
+sourceType: string }
 /**
  * Stand der Warteschlange. Reihenfolge = Reihenfolge der Abarbeitung; die
  * Position einer wartenden Datei ist ihr Platz in `waiting` (ab 1).
@@ -9821,6 +10066,43 @@ key: string; title: string;
  * Nächster zu spielender Satz (0-basiert) = Anzahl fertig gehörter Sätze.
  */
 position: number; total: number; finished: boolean; playing: boolean }
+/**
+ * Kurzsicht eines gespeicherten Recherche-Dokuments.
+ */
+export type RechercheKurz = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; sourceCount: number }
+/**
+ * Recherche-Dokument fuer die Oberflaeche. Nur Modus Schnell; die uebrigen Felder des Schemas
+ * (Vertrauensstufe, Pruefsummen, Kennungen) bleiben im Speicher.
+ */
+export type RechercheSicht = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; webApproved: boolean; 
+/**
+ * `budget` oder `cancelled`, wenn der Lauf vorzeitig endete.
+ */
+stoppedReason: string | null; model: string; answer: AntwortSicht[]; sources: QuelleSicht[]; contradictions: WiderspruchSicht[]; followUps: string[]; queries: string[]; 
+/**
+ * Text fuer das Vorlesen ueber die vorhandene Sprachausgabe.
+ */
+readAloud: string }
+/**
+ * Zustand der Recherche fuer die Oberflaeche.
+ */
+export type RechercheStatus = { available: boolean; 
+/**
+ * Verstaendlicher Grund, wenn nicht verfuegbar (deutscher Text, Rueckfall).
+ */
+reason: string | null; 
+/**
+ * Stabiler Code des Grundes (`nicht_eingerichtet`); die Oberflaeche uebersetzt ihn.
+ */
+reasonCode: string | null; 
+/**
+ * Eingestellte Suchadresse (Betreiberangabe, keine Zugangsdaten).
+ */
+searxngUrl: string | null; 
+/**
+ * Darf die anfragende Person die Suchadresse aendern (nur Administration).
+ */
+canConfigure: boolean }
 /**
  * Aufruf eines Recipes: ID (`builtin:<key>` oder eigene) und Werte der
  * Variablen nach Name. Werte fuer `folder` sind Ordner-IDs, fuer `meeting`
@@ -10223,6 +10505,14 @@ auto: boolean;
  * Die Spur, die ohne Nachfrage genommen wird.
  */
 recommended: boolean }
+/**
+ * Suite-Projekt in der Sicht der Oberflaeche.
+ */
+export type SuiteProjekt = { id: string; title: string; goal: string | null; dataClass: string; specialCategory: boolean; archived: boolean; 
+/**
+ * Web ist fuer dieses Projekt freigegeben (Opt-in, protokolliert).
+ */
+webResearchEnabled: boolean; entryCount: number; revision: string }
 export type SummaryOptions = { 
 /**
  * "kurz" (~150 Wörter) | "mittel" (~400) | "lang" (~900)
@@ -10249,6 +10539,26 @@ export type SummarySource =
  * (UTF-16-Offsets, Ende exklusiv).
  */
 { kind: "range"; start: number; end: number }
+/**
+ * Ergebnis des Abgleichs eines Ordners mit seinem Suite-Projekt.
+ */
+export type SyncBericht = { 
+/**
+ * Neu zugeordnete Besprechungen.
+ */
+zugeordnet: number; 
+/**
+ * Bereits zugeordnete Besprechungen.
+ */
+bereits: number; 
+/**
+ * Nicht zugeordnet, weil ihre Datenklasse ueber der des Suite-Projekts liegt.
+ */
+uebersprungen: number; 
+/**
+ * Eintraege, die den Ordner verlassen haben oder deren Herkunft nicht mehr existiert.
+ */
+entfernt: number }
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.
@@ -10881,6 +11191,7 @@ export type WaitReason =
  * Eine Live-Aufnahme laeuft und hat Vorrang.
  */
 "recording"
+export type WiderspruchSicht = { statement: string; sourceIndices: number[] }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 /**
  * Ein Treffer der Suche (alles fremder Text, bereinigt).

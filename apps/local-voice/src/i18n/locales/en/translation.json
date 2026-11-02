@@ -7160,5 +7160,248 @@
       "possible": "Not started",
       "none": "Not needed"
     }
+  },
+  "projekte": {
+    "menu": {
+      "suiteProjekt": "Suite project …"
+    },
+    "fehler": {
+      "unbekannt": "The research failed."
+    },
+    "freigabe": {
+      "fertig": "The research is done and is in the project folder.",
+      "nichtsGesendet": "Nothing was sent.",
+      "wartet": "The search queries are waiting for your approval.",
+      "title": "Send the selected search queries to external search engines?",
+      "externalNote": "Only the checked queries are sent.",
+      "queries": "Search queries",
+      "send": "Send selected",
+      "projectOnly": "Search in project only",
+      "cancel": "Cancel",
+      "none": "No query selected: nothing will be sent.",
+      "context": "Context: {{label}}.",
+      "abgelaufen": "The approval expired. Nothing was sent.",
+      "ladenFehler": "Open approvals could not be read.",
+      "kontextFrage": "Research “{{frage}}” ({{klasse}})",
+      "restzeit_one": "1 minute left",
+      "restzeit_other": "{{count}} minutes left",
+      "anfrageHinweis": "Context {{klasse}}: approval needed"
+    },
+    "karte": {
+      "titel": "Research",
+      "kennzeichen": "AI-generated research · context {{klasse}}",
+      "schliessen": "Close",
+      "keineAntwort": "No reliable statement with sources was found.",
+      "ohneQuelle": "no source",
+      "abgelegt": "Saved in project folder “{{projekt}}”."
+    },
+    "chat": {
+      "recherche": "Research",
+      "hinweis": "Answer the question by web research (quick mode) in this folder’s suite project",
+      "keinProjekt": "For research, the meeting folder must be linked to a suite project that allows the web.",
+      "projektWaehlen": "In which project?",
+      "wartet": "The search queries are waiting for your approval."
+    },
+    "sprache": {
+      "menu": "Web research in project …",
+      "hinweis": "Quick research with sources, then read aloud",
+      "titel": "Web research in project",
+      "projekt": "Suite project",
+      "frage": "Question",
+      "los": "Research",
+      "keinProjekt": "There is no suite project with web access. Link a meeting folder to a suite project and allow the web there."
+    },
+    "seite": {
+      "titel": "Suite project",
+      "ordner": "Meeting folder “{{name}}”",
+      "hinweis": "The suite project bundles this folder’s meetings, books and research.",
+      "abgleichen": "Sync",
+      "loesen": "Unlink",
+      "schliessen": "Close",
+      "abbrechen": "Cancel",
+      "nichtVerknuepft": "This folder is not linked to a suite project yet. Once linked, its meetings appear in the project folder and web research becomes possible.",
+      "vorhanden": "Existing suite project",
+      "waehlen": "Choose project",
+      "verknuepfen": "Link",
+      "neuerTitel": "Or create a new suite project",
+      "klasse": "Data class",
+      "anlegen": "Create and link",
+      "webLabel": "Allow web research",
+      "webHinweis": "Without approval nothing goes to the web. Every change is logged.",
+      "buchWaehlen": "Choose book",
+      "buchHinzu": "Add book",
+      "loeschen": "Delete suite project",
+      "loeschenTitel": "Delete suite project?",
+      "loeschenText": "“{{name}}” is deleted with all its entries and research. Meetings and books are kept.",
+      "adresse": "Search service address",
+      "adresseSpeichern": "Save",
+      "verknuepft_one": "Linked. 1 meeting assigned.",
+      "verknuepft_other": "Linked. {{count}} meetings assigned.",
+      "uebersprungen_one": "1 meeting is above the project’s data class and was not assigned.",
+      "uebersprungen_other": "{{count}} meetings are above the project’s data class and were not assigned.",
+      "geloescht_one": "Deleted. 1 research document removed.",
+      "geloescht_other": "Deleted. {{count}} research documents removed.",
+      "rechercheLoeschen": "Delete research",
+      "rechercheGeloescht": "Research deleted."
+    },
+    "klassen": {
+      "PUBLIC": "public",
+      "INTERNAL": "internal",
+      "PERSONAL": "personal data",
+      "SPECIAL": "special category",
+      "RESTRICTED": "restricted"
+    },
+    "ordner": {
+      "projects": "Projects",
+      "newProject": "New project",
+      "switchProject": "Switch project",
+      "entryCountOne": "1 entry",
+      "entryCountMany": "{{n}} entries",
+      "archived": "archived",
+      "webReleased": "Web allowed",
+      "specialCategory": "special category",
+      "startResearch": "Start research",
+      "chatInProject": "Chat in project",
+      "details": "Details",
+      "closeDetails": "Close details",
+      "detailsTitle": "Entry",
+      "filterLabel": "Filter by type",
+      "all": "All",
+      "search": "Search in project",
+      "entries": "Entries",
+      "noEntries": "There are no entries in this project yet.",
+      "noHits": "No entries for this selection.",
+      "unavailable": "Not available",
+      "unavailableReason": "No read access in the source app",
+      "pickEntry": "Choose an entry to see its origin and progress.",
+      "fieldTitle": "Title",
+      "fieldOrigin": "Origin",
+      "fieldClass": "Data class",
+      "fieldReading": "Read aloud",
+      "fieldCopies": "Copies outside",
+      "readingProgress": "Reading progress {{p}} %",
+      "noCopies": "None",
+      "noReading": "Not read aloud yet",
+      "open": "Open",
+      "readAloud": "Read aloud",
+      "exportEntry": "Export",
+      "reassign": "Change assignment",
+      "copyTargets": {
+        "export": "Export",
+        "presenter": "Presenter",
+        "exchange_folder": "Exchange folder"
+      },
+      "groups": {
+        "meetings": "Meetings",
+        "conversations": "Conversations",
+        "books": "Books",
+        "research": "Research",
+        "notes": "Notes",
+        "talks": "Talks",
+        "documents": "Documents",
+        "plans": "Plans"
+      },
+      "kinds": {
+        "meeting": "Meeting",
+        "transcript": "Transcript",
+        "conversation": "Conversation",
+        "book": "Book",
+        "book_document": "Book document",
+        "note": "Note",
+        "research": "Research",
+        "document": "Document",
+        "plan": "Plan",
+        "talk": "Talk"
+      },
+      "apps": {
+        "corporate-llm": "Corporate LLM",
+        "lva": "Local Voice AI",
+        "presenter": "Presenter",
+        "planner": "Planner",
+        "team-chat": "Team chat"
+      }
+    },
+    "recherche": {
+      "question": "Question",
+      "inProject": "in project “{{title}}”",
+      "mode": "Mode",
+      "scope": "Sources",
+      "webLocked": "The web is not allowed for this project.",
+      "effort": "approx. {{seconds}} s · up to {{maxSources}} sources · {{model}}",
+      "submit": "Research",
+      "busy": "Research running",
+      "answer": "Answer",
+      "noSource": "no source",
+      "weakProof": "weak evidence only",
+      "weakNote": "weak evidence",
+      "contradiction": "Contradiction",
+      "contradictionRefs": "(sources {{list}})",
+      "aiLabel": "AI-generated",
+      "followUp": "Ask a follow-up",
+      "onlyHere": "Follow up in these sources only",
+      "sources": "Sources · {{n}}",
+      "footnote": "Source {{n}}",
+      "highlighted": "Source {{n}} highlighted: {{title}}",
+      "steps": "Steps",
+      "noResult": "No research yet. Ask a question.",
+      "modes": {
+        "quick": "Quick",
+        "thorough": "Thorough",
+        "deep": "Deep"
+      },
+      "scopes": {
+        "web": "Web",
+        "project": "Project",
+        "both": "Both"
+      },
+      "actions": {
+        "read-aloud": "Read aloud",
+        "report": "As report (template)",
+        "export": "Export",
+        "presenter": "To Presenter"
+      },
+      "sourceTypes": {
+        "official": "official",
+        "scholarly": "scholarly",
+        "press": "press",
+        "forum": "forum",
+        "unknown": "source unknown"
+      }
+    },
+    "code": {
+      "freigabe_wartet": "The search queries are waiting for your approval.",
+      "nichts_gesendet": "Nothing was sent.",
+      "freigabe_nicht_angewendet": "The approval was not applied.",
+      "nicht_eingerichtet": "Research is not set up: no search service is configured. The operator enters the address of a self-hosted SearXNG service under Settings > Research.",
+      "web_gesperrt": "The web is not allowed for this suite project. The research was not run.",
+      "nicht_gefunden": "The suite project was not found. The research was not run.",
+      "nicht_erlaubt": "The suite project is archived. The research was not run.",
+      "argumente_ungueltig": "The question is missing or too long.",
+      "recherche_fehlgeschlagen": "The research failed.",
+      "speichern_fehlgeschlagen": "The research document could not be saved.",
+      "projekt_passt_nicht": "The suite project does not belong to this meeting. The research was not run.",
+      "kein_modell": "No language model is set."
+    },
+    "fehlercode": {
+      "recherche.not_found": "No open approval with this ID (expired, decided, or the app was restarted).",
+      "recherche.forbidden": "Only the administration may change the search address.",
+      "recherche.invalid": "The selection does not match the displayed search queries. Nothing was sent.",
+      "recherche.unavailable": "Research is not set up.",
+      "recherche.storage": "The research could not be saved.",
+      "projekte.storage": "The project directory could not be read or written.",
+      "projekte.not_found": "Not found."
+    },
+    "ergebnis": {
+      "modus": "Quick",
+      "quellen_one": "1 source",
+      "quellen_other": "{{count}} sources",
+      "geprueft": "checked",
+      "budget": "budget reached",
+      "abgebrochen": "cancelled",
+      "abgerufen": "retrieved {{zeit}}"
+    },
+    "vorlesen": {
+      "nurLokal": "Personal content is read aloud with local speech output only."
+    }
   }
 }

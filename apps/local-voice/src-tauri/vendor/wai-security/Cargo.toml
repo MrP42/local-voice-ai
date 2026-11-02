@@ -1,0 +1,21 @@
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-security, Commit 56533672647b). Nicht von Hand ändern.
+[package]
+name = "wai-security"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-WAI-Proprietary"
+publish = false
+description = "SDK-07: Principal/Tenant, Policy, Egress-Gate, Freigaben, SecretStore, Redaktion"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+keyring = "4"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+zeroize = "1"
+getrandom = "0.3"
+regex = "1"

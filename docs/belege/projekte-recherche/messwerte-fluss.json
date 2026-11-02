@@ -1,0 +1,15 @@
+{
+  "viewport": "390x844",
+  "scrollcontainerUmErgebnis": [
+    "DIV[rec-flow]"
+  ],
+  "anzahlScrollcontainer": 1,
+  "flussFensterHoehePx": 699,
+  "letzteQuelle": {
+    "text": "Netzentgelte Strom - Bundesnetzagentur",
+    "yPx": 761,
+    "hoehePx": 20,
+    "imSichtbarenBereich": true
+  },
+  "reiterblockUnterSeite": true
+}

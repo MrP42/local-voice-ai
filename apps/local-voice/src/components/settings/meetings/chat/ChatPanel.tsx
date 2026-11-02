@@ -54,6 +54,7 @@ import {
 } from "./RecipeMenu";
 import { RecipeManagerDialog } from "./RecipeManagerDialog";
 import { ScopeChips } from "./ScopeChips";
+import { useChatRecherche } from "../../../projekte/ChatRecherche";
 
 /** Wo der Chat steht: Besprechung (Detail), laufende Aufnahme, viele. */
 export type ChatMode = "meeting" | "live" | "global";
@@ -517,6 +518,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const scopeLabel = t(`meetings.chat.scope.${mode}`);
   const busy = pending !== null;
+  const clearInput = useCallback(() => setInput(""), []);
+  const chatRecherche = useChatRecherche(
+    scope.kind === "meeting" ? scope.meeting_id : null,
+    input,
+    clearInput,
+    setNotice,
+  );
   const stageText = pending
     ? pending.round >= 2 && pending.stage !== "answering"
       ? t("meetings.chat.stage.retry")
@@ -712,6 +720,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </p>
       )}
 
+      {chatRecherche.unten}
+
       <RecipeBar
         items={fitting}
         disabled={busy}
@@ -762,6 +772,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             onKeyDown={onKeyDown}
             className="min-h-[2.5rem] flex-1 resize-none rounded-md border border-mid-gray/40 bg-mid-gray/10 px-2 py-1.5 text-sm focus:border-logo-primary focus:outline-none"
           />
+          {chatRecherche.knopf}
           {busy ? (
             <Button size="sm" variant="secondary" onClick={cancel}>
               <Square width={12} height={12} aria-hidden="true" />

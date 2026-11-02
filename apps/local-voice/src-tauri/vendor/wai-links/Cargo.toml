@@ -1,0 +1,15 @@
+# Erzeugt von scripts/vendor-wai-suite.py aus https://github.com/MrP42/wai-sdk (crates/wai-links, Commit 56533672647b). Nicht von Hand ändern.
+[package]
+name = "wai-links"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "LicenseRef-WAI-Proprietary"
+publish = false
+description = "WAI Deep-Links (ADR-0018): strenges Schema wai://<app>/<art>/<id> fuer Spruenge zwischen Apps, nur Kennungen"
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]

@@ -109,6 +109,17 @@ zeroize = "1"
 base64 = "0.22"
 # ADR-0024: gemeinsamer Kontospeicher der Suite (vendort aus wai-sdk, siehe vendor/wai-konto/VENDOR.toml)
 wai-konto = { path = "vendor/wai-konto" }
+# ADR-0026 PR-7 (Epic wai-sdk#1047): Suite-Projekte und Recherche, vendort aus wai-sdk
+# (scripts/vendor-wai-suite.py, siehe vendor/*/VENDOR.toml)
+wai-links = { path = "vendor/wai-links" }
+wai-security = { path = "vendor/wai-security" }
+wai-storage = { path = "vendor/wai-storage" }
+wai-providers = { path = "vendor/wai-providers" }
+wai-projekte = { path = "vendor/wai-projekte" }
+wai-recherche = { path = "vendor/wai-recherche" }
+async-trait = "0.1"
+# TLS-Anbieter fuer wai-recherche (reqwest 0.13 ohne eingebauten Anbieter): ring statt aws-lc
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rand = "0.8"
 url = "2"
 # Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);

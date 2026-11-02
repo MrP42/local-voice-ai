@@ -685,18 +685,32 @@ test("Zeilen und Kontextmenue anderer Seiten bleiben unveraendert, wenn nichts a
 // Barrierefreiheit (axe, inkl. color-contrast)
 // ---------------------------------------------------------------------------
 
-const axeSevere = async (page: Page) =>
-  (
-    await new AxeBuilder({ page })
-      // Fluent-Fokuswächter (Leitlinie §12.4)
-      .exclude("[data-tabster-dummy]")
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
-      .analyze()
-  ).violations
-    .filter((v) => v.impact === "critical" || v.impact === "serious")
-    .map(
-      (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
-    );
+const axeSevere = async (page: Page) => {
+  // Fluent-Knoepfe blenden Farben beim Wechsel aktiv/deaktiviert ueber (~100 ms). Auf langsamen
+  // Rechnern misst axe sonst eine Zwischenfarbe (z. B. "pm-none" direkt nach "Alle").
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (a) =>
+          a.playState !== "running" ||
+          a.effect?.getTiming().iterations === Infinity,
+      ),
+  );
+  return (
+    (
+      await new AxeBuilder({ page })
+        // Fluent-Fokuswächter (Leitlinie §12.4)
+        .exclude("[data-tabster-dummy]")
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"])
+        .analyze()
+    ).violations
+      .filter((v) => v.impact === "critical" || v.impact === "serious")
+      .map(
+        (v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`,
+      )
+  );
+};
 
 test("axe: Auswahl mit ausgegrauten Zeilen, Dialog, laufender Lauf und Ergebnis ohne schwere Befunde", async ({
   page,
