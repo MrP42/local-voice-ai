@@ -15,6 +15,9 @@ import { sentenceAfterProgress } from "./sentenceCounter";
 export type SessionTab = "original" | "translation" | "summary" | "term";
 
 export interface ReaderSession {
+  /** Gehört die Wiedergabe im Kern gerade der Vorlesen-Seite? Liest jemand
+   *  anderes (Aufnahmen), schreibt diese Sitzung nichts mit. */
+  active: boolean;
   /** Reiter, zu dem die Sitzung gehört. */
   tab: SessionTab;
   /** KI-Dokument der Sitzung (nur beim Reiter „summary“). */
@@ -37,6 +40,7 @@ export interface ReaderSession {
 }
 
 export const readerSession: ReaderSession = {
+  active: false,
   tab: "original",
   docId: null,
   resumeKey: null,
@@ -58,6 +62,20 @@ export const sessionRef = <K extends keyof ReaderSession>(key: K) => ({
   },
 });
 
+/**
+ * Die Wiedergabe gehört nicht mehr der Vorlesen-Seite (Stopp, eine
+ * Begriffserklärung oder eine andere Stelle der App liest): alles vergessen,
+ * damit die Seite beim nächsten Öffnen nichts Fremdes markiert oder fortsetzt.
+ */
+export const endReaderSession = () => {
+  readerSession.active = false;
+  readerSession.progress = null;
+  readerSession.sentence = null;
+  readerSession.index = null;
+  readerSession.sentenceStart = null;
+  readerSession.rangeStart = null;
+};
+
 let listening = false;
 /**
  * Fortschritt und Satz einmal und dauerhaft mitschreiben — auch, solange die
@@ -69,6 +87,7 @@ export const ensureReaderSessionListeners = () => {
   void listen<{ position: number; total: number }>(
     "tts-speak-progress",
     (e) => {
+      if (!readerSession.active) return;
       readerSession.progress = e.payload;
       const index = readerSession.index;
       readerSession.index =
@@ -84,7 +103,7 @@ export const ensureReaderSessionListeners = () => {
     text: string;
     duration_ms?: number;
   }>("tts-current-sentence", (e) => {
-    if (e.payload.context !== "speak") return;
+    if (e.payload.context !== "speak" || !readerSession.active) return;
     const index = typeof e.payload.index === "number" ? e.payload.index : null;
     readerSession.sentenceStart = {
       index,

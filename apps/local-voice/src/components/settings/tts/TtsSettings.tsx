@@ -117,6 +117,7 @@ import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import {
+  endReaderSession,
   ensureReaderSessionListeners,
   readerSession,
   sessionRef,
@@ -596,16 +597,16 @@ export const TtsSettings = () => {
   const [speakProgress, setSpeakProgress] = useState<{
     position: number;
     total: number;
-  } | null>(() => readerSession.progress);
+  } | null>(() => (readerSession.active ? readerSession.progress : null));
   /** Fortschritt ohne Render-Verzug — der Listener setzt ihn sofort. */
   const speakProgressRef = useRef(speakProgress);
   speakProgressRef.current = speakProgress;
   const [currentSentence, setCurrentSentence] = useState<string | null>(
-    () => readerSession.sentence,
+    () => (readerSession.active ? readerSession.sentence : null),
   );
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
   const [currentIndex, setCurrentIndex] = useState<number | null>(
-    () => readerSession.index,
+    () => (readerSession.active ? readerSession.index : null),
   );
   /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
    *  sekundengenau mit, nicht nur Satz für Satz. */
@@ -613,10 +614,11 @@ export const TtsSettings = () => {
     index: number | null;
     at: number;
     ms: number;
-  } | null>(() => readerSession.sentenceStart);
+  } | null>(() => (readerSession.active ? readerSession.sentenceStart : null));
   // Die Seite ist die Quelle, solange sie offen ist; ausgehängt schreibt
   // readerSession.ts die Ereignisse selbst mit.
   useEffect(() => {
+    if (!readerSession.active) return;
     readerSession.progress = speakProgress;
     readerSession.sentence = currentSentence;
     readerSession.index = currentIndex;
@@ -890,10 +892,23 @@ export const TtsSettings = () => {
               : {},
           );
           setPageLang(typeof state.lang === "string" ? state.lang : null);
+          // Läuft auf dieser Seite noch eine Sitzung (zurück aus einem anderen
+          // App-Bereich), öffnet die Fassung, die gelesen wird.
+          const reading =
+            readerSession.active &&
+            readerSession.lastPage === activePage &&
+            readerSession.progress !== null &&
+            (readerSession.tab === "translation" ||
+              readerSession.tab === "summary")
+              ? readerSession.tab
+              : null;
+          if (reading === "summary" && readerSession.docId)
+            setOpenDocId(readerSession.docId);
           setTab(
-            state.tab === "translation" || state.tab === "summary"
-              ? state.tab
-              : "original",
+            reading ??
+              (state.tab === "translation" || state.tab === "summary"
+                ? state.tab
+                : "original"),
           );
         } catch {
           setText(result.data);
@@ -1072,6 +1087,7 @@ export const TtsSettings = () => {
           );
     locatorRef.current?.reset(charOffset);
     lastLocated.current = null;
+    readerSession.active = true;
     readerSession.rangeStart = charOffset;
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
@@ -1186,6 +1202,7 @@ export const TtsSettings = () => {
     sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
     locatorRef.current?.reset(0);
     lastLocated.current = null;
+    readerSession.active = true;
     readerSession.rangeStart = null;
     sessionResumeKey.current = resumeKeyRef.current;
     const session = startPartSession();
@@ -1233,7 +1250,7 @@ export const TtsSettings = () => {
     void commands.ttsCancel();
     partSession.current = null;
     lastSessionPage.current = null;
-    readerSession.rangeStart = null;
+    endReaderSession();
     autoplayPage.current = null;
     setSpeakProgress(null);
     setCurrentIndex(null);
@@ -2518,7 +2535,7 @@ export const TtsSettings = () => {
     sessionDocId.current = null;
     sessionResumeKey.current = null;
     lastLocated.current = null;
-    readerSession.rangeStart = null;
+    endReaderSession();
     partSession.current = null;
     setTermSession(true);
     const script = spokenExplanation(term, {

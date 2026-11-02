@@ -1940,3 +1940,59 @@ test("Reiterwechsel beim Vorlesen: die gelesene Fassung behält ihre Hervorhebun
   await expect.poll(async () => (await calls(page, "tts_speak_resume")).length).toBe(1);
   expect(await calls(page, "tts_speak_text_from")).toHaveLength(1);
 });
+
+test("Bereichswechsel beim Vorlesen der Übersetzung: zurück im Übersetzungsreiter, markiert", async ({
+  page,
+}) => {
+  await page.addInitScript((t) => {
+    (window as unknown as { __translation: string }).__translation = t;
+  }, TRANSLATED);
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  const flow = page.getByTestId("reader-flow");
+  await flow.getByText("Paragraph 3:", { exact: false }).click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-speak-progress", { position: 4, total: 32 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 4,
+    text: "Paragraph 3: The hours dragged on while Mara listened to the sea.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Paragraph 3:");
+  await goTo(page, "Aufnahmen");
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 5,
+    text: "Paragraph 4: The hours dragged on while Mara listened to the sea.",
+  });
+  await goTo(page, "Vorlesen");
+  await expect(page.getByRole("tab", { name: "Übersetzung" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator(".reader-cur").first()).toContainText("Paragraph 4:");
+});
+
+test("Stopp, dann Bereichswechsel: nach der Rückkehr nichts markiert, Play beginnt neu", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await emit(page, "tts-speak-progress", { position: 23, total: 46 });
+  await emit(page, "tts-current-sentence", { context: "speak", index: 23, text: absatz(20) });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20:");
+  await page.getByTestId("reader-player").getByRole("button", { name: "Stopp" }).click();
+  await goTo(page, "Aufnahmen");
+  // Eine fremde Wiedergabe (z. B. die Aufnahmen) schreibt nichts in die Sitzung.
+  await emit(page, "tts-speak-progress", { position: 3, total: 9 });
+  await emit(page, "tts-current-sentence", { context: "speak", index: 3, text: absatz(30) });
+  await goTo(page, "Vorlesen");
+  await expect(page.getByTestId("reader-flow")).toBeVisible();
+  await expect(page.locator(".reader-cur")).toHaveCount(0);
+  await page.getByTestId("reader-play").click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
+  expect(await calls(page, "tts_speak_resume")).toHaveLength(0);
+});
