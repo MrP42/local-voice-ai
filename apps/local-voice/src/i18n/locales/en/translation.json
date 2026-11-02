@@ -534,10 +534,7 @@
       "continue": "Continue reading",
       "readHere": "Read from here",
       "more": "Learn more",
-      "toNotes": "Add to notes",
-      "toNotesSoon": "“Add to notes” comes with book notes.",
-      "page": "Page {{page}}",
-      "fromBook": "In the book",
+      "fromBook": "From the book, summarised",
       "fromBookNone": "The book does not explain this term.",
       "general": "General model knowledge (not verified)",
       "generalSpoken": "General model knowledge, not verified",
@@ -551,7 +548,11 @@
         "duckduckgo": "DuckDuckGo",
         "custom": "Custom address",
         "customLabel": "Custom search address",
-        "customHint": "Address with https:// and the placeholder {q} for the term, optionally {lang} for the language."
+        "customHint": "Address with https:// and the placeholder {q} for the term, optionally {lang} for the language.",
+        "errEmpty": "Please enter an address.",
+        "errHttps": "The address must start with https://.",
+        "errQ": "The placeholder {q} for the term is missing.",
+        "errHost": "{q} must not be in the server name, only in the path or after the question mark."
       },
       "kind": {
         "fachbegriff": "Technical term",
@@ -559,7 +560,9 @@
         "ort": "Place",
         "ereignis": "Event",
         "konzept": "Concept"
-      }
+      },
+      "bookPage": "Book page {{page}}",
+      "fromBookNote": "Summarised by the AI from the book text, not a verbatim quote."
     },
     "kiDocs": {
       "tab": "AI documents",

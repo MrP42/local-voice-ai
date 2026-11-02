@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   BookOpenText,
   ExternalLink,
-  NotebookPen,
+  ChevronDown,
   Play,
   Volume2,
   VolumeX,
@@ -69,11 +69,20 @@ export function TermDialog({
   if (!term) return null;
   const where = [
     term.chapter.trim(),
-    page !== null ? t("tts.terms.page", { page }) : "",
+    page !== null ? t("tts.terms.bookPage", { page }) : "",
   ]
     .filter(Boolean)
     .join(" · ");
   const customBad = preset === "custom" && !validSearchUrl(customUrl);
+  const customError = !customBad
+    ? ""
+    : !customUrl.trim()
+      ? t("tts.terms.search.errEmpty")
+      : !customUrl.trim().startsWith("https://")
+        ? t("tts.terms.search.errHttps")
+        : !customUrl.includes("{q}")
+          ? t("tts.terms.search.errQ")
+          : t("tts.terms.search.errHost");
   return (
     <Dialog
       open={open}
@@ -102,16 +111,6 @@ export function TermDialog({
           >
             {t("tts.terms.more")}
           </Button>
-          <Button
-            variant="secondary"
-            icon={<NotebookPen className="h-4 w-4" aria-hidden="true" />}
-            disabled
-            title={t("tts.terms.toNotesSoon")}
-            aria-describedby="term-notes-soon"
-            data-testid="term-notes"
-          >
-            {t("tts.terms.toNotes")}
-          </Button>
         </>
       }
     >
@@ -130,6 +129,9 @@ export function TermDialog({
           <p className="text-sm" data-testid="term-from-book">
             {term.from_book.trim() || t("tts.terms.fromBookNone")}
           </p>
+          {term.from_book.trim() && (
+            <p className="term-dialog__note">{t("tts.terms.fromBookNote")}</p>
+          )}
         </section>
         {term.general.trim() && (
           <section
@@ -171,54 +173,74 @@ export function TermDialog({
             {t("tts.terms.autoRead")}
           </label>
         </div>
-        <p id="term-notes-soon" className="term-dialog__note">
-          {t("tts.terms.toNotesSoon")}
-        </p>
-        <details
-          className="term-dialog__search"
-          open={searchOpen}
-          onToggle={(e) => setSearchOpen((e.target as HTMLDetailsElement).open)}
-        >
-          <summary data-testid="term-search-toggle">
-            {t("tts.terms.searchSettings")}
-          </summary>
-          <div
-            role="radiogroup"
-            aria-label={t("tts.terms.searchSettings")}
-            className="mt-2 flex flex-col gap-1"
+        <div className="term-dialog__search">
+          <button
+            type="button"
+            className="term-dialog__toggle"
+            aria-expanded={searchOpen}
+            aria-controls="term-search-panel"
+            onClick={() => setSearchOpen((o) => !o)}
+            data-testid="term-search-toggle"
           >
-            {(Object.keys(SEARCH_PRESETS) as SearchPreset[])
-              .concat("custom")
-              .map((p) => (
-                <label key={p} className="term-dialog__check">
-                  <input
-                    type="radio"
-                    name="term-search"
-                    checked={preset === p}
-                    onChange={() => onPreset(p)}
-                    data-testid={`term-search-${p}`}
+            <ChevronDown
+              className={`h-4 w-4 ${searchOpen ? "" : "-rotate-90"}`}
+              aria-hidden="true"
+            />
+            {t("tts.terms.searchSettings")}
+            <span className="term-dialog__current">
+              {t(`tts.terms.search.${preset}`)}
+            </span>
+          </button>
+          {searchOpen && (
+            <div
+              id="term-search-panel"
+              role="radiogroup"
+              aria-label={t("tts.terms.searchSettings")}
+              className="mt-1 flex flex-col gap-1 ps-6"
+            >
+              {(Object.keys(SEARCH_PRESETS) as SearchPreset[])
+                .concat("custom")
+                .map((p) => (
+                  <label key={p} className="term-dialog__check">
+                    <input
+                      type="radio"
+                      name="term-search"
+                      checked={preset === p}
+                      onChange={() => onPreset(p)}
+                      data-testid={`term-search-${p}`}
+                    />
+                    {t(`tts.terms.search.${p}`)}
+                  </label>
+                ))}
+              {preset === "custom" && (
+                <>
+                  <Input
+                    value={customUrl}
+                    onChange={(e) => onCustomUrl(e.target.value)}
+                    placeholder="https://example.org/suche?q={q}"
+                    aria-label={t("tts.terms.search.customLabel")}
+                    aria-invalid={customBad}
+                    aria-describedby="term-search-hint term-search-error"
+                    data-testid="term-search-url"
                   />
-                  {t(`tts.terms.search.${p}`)}
-                </label>
-              ))}
-            {preset === "custom" && (
-              <>
-                <Input
-                  value={customUrl}
-                  onChange={(e) => onCustomUrl(e.target.value)}
-                  placeholder="https://example.org/suche?q={q}"
-                  aria-label={t("tts.terms.search.customLabel")}
-                  aria-invalid={customBad}
-                  aria-describedby="term-search-hint"
-                  data-testid="term-search-url"
-                />
-                <p id="term-search-hint" className="term-dialog__note">
-                  {t("tts.terms.search.customHint")}
-                </p>
-              </>
-            )}
-          </div>
-        </details>
+                  <p id="term-search-hint" className="term-dialog__note">
+                    {t("tts.terms.search.customHint")}
+                  </p>
+                  {customError && (
+                    <p
+                      id="term-search-error"
+                      role="alert"
+                      className="term-dialog__error"
+                      data-testid="term-search-error"
+                    >
+                      {customError}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </Dialog>
   );

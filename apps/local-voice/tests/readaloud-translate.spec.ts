@@ -343,7 +343,9 @@ test("zurück zu allen KI-Dokumenten behält Filter und Scrollstand", async ({ p
   const before = await list.evaluate((el) => el.scrollTop);
   expect(before).toBeGreaterThan(0);
 
-  await page.getByTestId(`kidocs-card-${manyKiDocs[6].id}`).locator("button").first().click();
+  // Ohne Playwrights Hineinscrollen klicken: das verschöbe die Liste vor dem
+  // Öffnen, und die Liste merkte sich zu Recht diesen neuen Stand.
+  await page.getByTestId(`kidocs-card-${manyKiDocs[6].id}`).locator("button").first().dispatchEvent("click");
   await expect(page.getByTestId("kidoc-head")).toContainText("Dokument 7");
   await page.getByTestId("kidoc-back").click();
 
@@ -410,7 +412,8 @@ test("Begriffe sind gepunktet unterstrichen, das Erklärfenster pausiert, liest 
   await expect(page.getByTestId("term-from-book")).toHaveText("Ein Gruß im Buch.");
   await expect(page.getByTestId("term-general")).toHaveText("Gängige Begrüßung im Deutschen.");
   await expect(dialog).toContainText("nicht geprüft");
-  await expect(dialog).toContainText("Seite 12");
+  await expect(dialog).toContainText("Buchseite 12");
+  await expect(dialog).toContainText("Aus dem Buch, zusammengefasst");
   await expect(page.getByTestId("term-continue")).toBeFocused();
   let log = await calls(page);
   expect(log.some(([c]) => c === "tts_cancel")).toBe(true);
@@ -423,7 +426,20 @@ test("Begriffe sind gepunktet unterstrichen, das Erklärfenster pausiert, liest 
   log = await calls(page);
   const opened = log.filter(([c]) => c === "plugin:opener|open_url").at(-1)!;
   expect(JSON.stringify(opened[1])).toContain("https://de.wikipedia.org/w/index.php?search=Hallo");
-  await expect(page.getByTestId("term-notes")).toBeDisabled();
+  // „In Notizen“ kommt erst mit B5 (Codex: bis dahin ausblenden).
+  await expect(page.getByTestId("term-notes")).toHaveCount(0);
+
+  // Eigene Suchadresse: aufklappbar, mit konkreter Fehlermeldung.
+  await page.getByTestId("term-search-toggle").click();
+  await expect(page.getByTestId("term-search-toggle")).toHaveAttribute("aria-expanded", "true");
+  await page.getByTestId("term-search-custom").check();
+  await expect(page.getByTestId("term-search-error")).toHaveText("Bitte eine Adresse eingeben.");
+  await expect(page.getByTestId("term-more")).toBeDisabled();
+  await page.getByTestId("term-search-url").fill("https://{q}.example.org/");
+  await expect(page.getByTestId("term-search-error")).toContainText("Servernamen");
+  await page.getByTestId("term-search-url").fill("https://example.org/suche?q={q}");
+  await expect(page.getByTestId("term-search-error")).toHaveCount(0);
+  await page.getByTestId("term-search-wikipedia").check();
 
   // Weiterlesen: an der unterbrochenen Stelle.
   await expect(page.getByTestId("term-continue")).toHaveText("Weiterlesen");
@@ -507,5 +523,34 @@ test("Erstellen-Dialog zeigt alle 20 Vorlagen; mobil sind alle Ziele mindestens 
     const box = await targets.nth(i).boundingBox();
     if (!box) continue;
     expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+  }
+});
+
+test("Erklärfenster und Lese-Werkzeugleiste: mobil alle Ziele mindestens 44 × 44 px", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const toolbar = page.getByTestId("reader-toolbar").locator("button:visible");
+  const nt = await toolbar.count();
+  expect(nt).toBeGreaterThan(4);
+  for (let i = 0; i < nt; i++) {
+    const box = await toolbar.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Leiste ${i}`).toBeGreaterThanOrEqual(44);
+    expect(box.width, `Leiste ${i}`).toBeGreaterThanOrEqual(44);
+  }
+  await page.locator(".reader-term[role=button]").first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await page.getByTestId("term-search-toggle").click();
+  const targets = dialog.locator("button:visible, label:visible, input[type=text]:visible");
+  const n = await targets.count();
+  expect(n).toBeGreaterThan(6);
+  for (let i = 0; i < n; i++) {
+    const box = await targets.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+    expect(box.width, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
   }
 });

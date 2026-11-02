@@ -778,3 +778,12 @@
 .reader-dock [data-testid="piper-reader-hint"] {
   display: none;
 }
+
+/* Mobil: Symbolschalter der Werkzeugleiste mindestens 44 × 44 px
+   (Codex, lva#185 Must-fix 1). */
+@media (max-width: 640px) {
+  [data-testid="reader-toolbar"] button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

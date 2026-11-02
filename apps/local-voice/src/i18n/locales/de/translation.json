@@ -534,10 +534,7 @@
       "continue": "Weiterlesen",
       "readHere": "Hier vorlesen",
       "more": "Mehr erfahren",
-      "toNotes": "In Notizen",
-      "toNotesSoon": "„In Notizen“ kommt mit den Buchnotizen.",
-      "page": "Seite {{page}}",
-      "fromBook": "Im Buch",
+      "fromBook": "Aus dem Buch, zusammengefasst",
       "fromBookNone": "Das Buch erklärt diesen Begriff nicht.",
       "general": "Allgemeines Modellwissen (nicht geprüft)",
       "generalSpoken": "Allgemeines Modellwissen, nicht geprüft",
@@ -551,7 +548,11 @@
         "duckduckgo": "DuckDuckGo",
         "custom": "Eigene Adresse",
         "customLabel": "Eigene Suchadresse",
-        "customHint": "Adresse mit https:// und dem Platzhalter {q} für den Begriff, optional {lang} für die Sprache."
+        "customHint": "Adresse mit https:// und dem Platzhalter {q} für den Begriff, optional {lang} für die Sprache.",
+        "errEmpty": "Bitte eine Adresse eingeben.",
+        "errHttps": "Die Adresse muss mit https:// beginnen.",
+        "errQ": "Der Platzhalter {q} für den Begriff fehlt.",
+        "errHost": "{q} darf nicht im Servernamen stehen, nur im Pfad oder nach dem Fragezeichen."
       },
       "kind": {
         "fachbegriff": "Fachbegriff",
@@ -559,7 +560,9 @@
         "ort": "Ort",
         "ereignis": "Ereignis",
         "konzept": "Konzept"
-      }
+      },
+      "bookPage": "Buchseite {{page}}",
+      "fromBookNote": "Von der KI aus dem Buchtext zusammengefasst, kein wörtliches Zitat."
     },
     "kiDocs": {
       "tab": "KI-Dokumente",
