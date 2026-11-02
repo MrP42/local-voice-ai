@@ -57,7 +57,6 @@ import {
   projectMinutesJobKey,
   sourceToCitation,
 } from "@/lib/projectMinutes";
-import { FreigabeWaechter } from "../../projekte/FreigabeWaechter";
 import { SuiteProjektSeite } from "../../projekte/SuiteProjektSeite";
 import {
   ProjectMinutesRun,
@@ -775,7 +774,6 @@ export const MeetingsSettings: React.FC = () => {
         }
       />
       {importer.dialog}
-      <FreigabeWaechter />
       <DragGhost drag={drag.drag} />
       <YoutubeLinkHost onCreated={select} target={emptyTarget} />
       {selected && (

@@ -87,6 +87,11 @@ export const SuiteProjektSeite: React.FC<Props> = ({
   const [loeschen, setLoeschen] = useState(false);
   const [adresse, setAdresse] = useState("");
   const rechercheRef = useRef<HTMLDivElement>(null);
+  const ergebnisRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (ergebnis) ergebnisRef.current?.scrollIntoView({ block: "nearest" });
+  }, [ergebnis]);
 
   const suite = projekte.find((p) => p.id === ordner.projektId) ?? null;
 
@@ -268,8 +273,8 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
     >
       <header className="flex flex-wrap items-center gap-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold">
+        <div className="min-w-[12rem] flex-1">
+          <h2 className="break-words text-sm font-semibold">
             {t("projekte.seite.ordner", { name: ordner.name })}
           </h2>
           <p className="text-xs text-text/60">{t("projekte.seite.hinweis")}</p>
@@ -464,20 +469,22 @@ export const SuiteProjektSeite: React.FC<Props> = ({
                 {meldung}
               </p>
             )}
-            <RechercheAnsicht
-              projectTitle={suite.title}
-              headingLevel={3}
-              modes={["quick"]}
-              scopes={["web"]}
-              actions={[]}
-              onlyHereOption={false}
-              webEnabled={suite.webResearchEnabled}
-              busy={busy}
-              result={ergebnis}
-              labels={rechercheLabels}
-              onSubmit={(q) => void frageStellen(q.question)}
-              onFollowUp={(f) => void frageStellen(f)}
-            />
+            <div ref={ergebnisRef}>
+              <RechercheAnsicht
+                projectTitle={suite.title}
+                headingLevel={3}
+                modes={["quick"]}
+                scopes={["web"]}
+                actions={[]}
+                onlyHereOption={false}
+                webEnabled={suite.webResearchEnabled}
+                busy={busy}
+                result={ergebnis}
+                labels={rechercheLabels}
+                onSubmit={(q) => void frageStellen(q.question)}
+                onFollowUp={(f) => void frageStellen(f)}
+              />
+            </div>
             {rechercheId && (
               <div className="flex items-center gap-2 text-xs">
                 <ReadAloudButton

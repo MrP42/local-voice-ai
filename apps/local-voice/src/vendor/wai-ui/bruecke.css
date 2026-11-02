@@ -23,3 +23,9 @@
   --color-warning: var(--colorStatusWarningForeground1);
   --color-success: var(--colorStatusSuccessForeground1);
 }
+
+/* Im Besprechungsprojekt steht unter dem Projektordner noch der Bereich Recherche: keine feste
+   Mindesthöhe, die Seite scrollt als Ganzes (keine zweite Scrollleiste im Projektordner). */
+.wai-projekt__raster {
+  min-block-size: 0;
+}
