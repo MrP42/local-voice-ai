@@ -629,6 +629,25 @@
       "heard": "Heard."
     },
     "kiDocs": {
+      "tokens": {
+        "estimating": "Estimating token usage …",
+        "estimate": "Estimate: approx. {{total}} tokens",
+        "split": "{{input}} input, {{output}} output",
+        "detail_one": "{{input}} input tokens, {{output}} output tokens, {{count}} model call",
+        "detail_other": "{{input}} input tokens, {{output}} output tokens, {{count}} model calls",
+        "local": "local, no cost",
+        "noPrice": "cost unknown (no price set)",
+        "cached_one": "{{count}} step already cached",
+        "cached_other": "{{count}} steps already cached",
+        "measured": "Estimated with the loaded model's tokenizer; the answer length is an assumption.",
+        "average": "Estimated with an average (about 3.6 characters per token); ±25 % depending on the model.",
+        "actual": "{{total}} tokens used",
+        "short": "{{total}} tokens",
+        "vsEstimate": "(estimate {{planned}})",
+        "plannedDetail": "Estimate: {{detail}}",
+        "notReported": "Provider reports no tokens",
+        "cardHint": "Tokens actually used to create it"
+      },
       "tab": "AI documents",
       "sheets": {
         "label": "Book areas",

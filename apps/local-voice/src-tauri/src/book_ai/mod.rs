@@ -16,6 +16,7 @@ pub mod source;
 pub mod store;
 pub mod templates;
 pub mod terms;
+pub mod tokens;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -168,6 +169,99 @@ impl Drop for RunGuard {
     }
 }
 
+/// Alles, was ein Lauf und seine Prognose aus Seite, Auswahl, Vorlage und
+/// Einstellungen brauchen.
+struct Job {
+    template: BookTemplate,
+    selected: String,
+    sections: Vec<source::Section>,
+    settings: crate::settings::AppSettings,
+    model_key: String,
+    language: String,
+    limit: usize,
+}
+
+impl Job {
+    fn prepare(
+        app: &AppHandle,
+        dir: &std::path::Path,
+        source: &SummarySource,
+        template_id: &str,
+    ) -> Result<Self, String> {
+        let template = all_templates(app)?
+            .into_iter()
+            .find(|t| t.id == template_id)
+            .ok_or("book_ai:template_missing")?;
+        let selected = source::select(&page_text(dir)?, source)?;
+        let sections = source::sections(&selected);
+        let settings = crate::settings::get_settings(app);
+        let provider = settings
+            .active_post_process_provider()
+            .map(|p| p.id.clone())
+            .unwrap_or_default();
+        let model = settings
+            .active_post_process_provider()
+            .and_then(|p| settings.post_process_models.get(&p.id).cloned())
+            .unwrap_or_default();
+        let language = crate::summarizer::language_clause(&selected);
+        let limit = crate::summarizer::chunk_chars(&settings);
+        Ok(Self {
+            template,
+            selected,
+            sections,
+            settings,
+            model_key: format!("{provider}/{model}"),
+            language,
+            limit,
+        })
+    }
+
+    fn input(&self) -> engine::RunInput<'_> {
+        engine::RunInput {
+            sections: &self.sections,
+            template: &self.template,
+            limit: self.limit,
+            model_key: &self.model_key,
+            language: &self.language,
+        }
+    }
+
+    /// Trockenfahrt des Ablaufs (siehe `tokens`).
+    async fn estimate(&self, dir: &std::path::Path) -> Result<tokens::BookAiEstimate, String> {
+        let cache = engine::DigestCache::read_only(Some(store::cache_dir(dir)));
+        let kurzbuch_run = self.template.id == kurzbuch::TEMPLATE_ID;
+        let (calls, pin, pout) = tokens::dry_run(self.input(), &cache, kurzbuch_run).await?;
+        let (cpt, measured) = tokens::chars_per_token(&self.settings, &self.selected).await;
+        // Ein Schritt aus dem Cache verursacht keinen Aufruf.
+        let (all, _, _) = tokens::dry_run(
+            self.input(),
+            &engine::DigestCache::read_only(None),
+            kurzbuch_run,
+        )
+        .await?;
+        Ok(tokens::BookAiEstimate {
+            figures: tokens::figures_from_dry_run(calls, pin, pout, cpt, &self.settings),
+            local: tokens::active_is_local(&self.settings),
+            measured,
+            cached_steps: all.saturating_sub(calls),
+        })
+    }
+}
+
+/// Prognose des Token-Bedarfs, bevor ein KI-Dokument erstellt wird.
+#[tauri::command]
+#[specta::specta]
+pub async fn book_ai_estimate(
+    app: AppHandle,
+    page_id: String,
+    source: SummarySource,
+    template_id: String,
+) -> Result<tokens::BookAiEstimate, String> {
+    let dir = page_path(&app, &page_id)?;
+    let job = Job::prepare(&app, &dir, &source, &template_id)?;
+    job.estimate(&dir).await
+}
+
 /// Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
 #[tauri::command]
 #[specta::specta]
@@ -185,24 +279,8 @@ pub async fn book_ai_summarize(
     CANCEL.store(false, Ordering::SeqCst);
 
     let dir = page_path(&app, &page_id)?;
-    let template = all_templates(&app)?
-        .into_iter()
-        .find(|t| t.id == template_id)
-        .ok_or("book_ai:template_missing")?;
-    let selected = source::select(&page_text(&dir)?, &source)?;
-    let sections = source::sections(&selected);
-
-    let settings = crate::settings::get_settings(&app);
-    let provider = settings
-        .active_post_process_provider()
-        .map(|p| p.id.clone())
-        .unwrap_or_default();
-    let model = settings
-        .active_post_process_provider()
-        .and_then(|p| settings.post_process_models.get(&p.id).cloned())
-        .unwrap_or_default();
-    let model_key = format!("{provider}/{model}");
-    let language = crate::summarizer::language_clause(&selected);
+    let job = Job::prepare(&app, &dir, &source, &template_id)?;
+    let settings = &job.settings;
 
     let emitter = app.clone();
     let pid = page_id.clone();
@@ -217,27 +295,38 @@ pub async fn book_ai_summarize(
             },
         );
     };
-    let input = engine::RunInput {
-        sections: &sections,
-        template: &template,
-        limit: crate::summarizer::chunk_chars(&settings),
-        model_key: &model_key,
-        language: &language,
-    };
+    // Prognose mit demselben Stand wie der Lauf, damit sie neben dem Ist steht.
+    let estimate = job.estimate(&dir).await.ok().map(|e| e.figures);
     let cache = engine::DigestCache {
         dir: Some(store::cache_dir(&dir)),
+        read_only: false,
     };
     let ask = |prompt| {
         let settings = settings.clone();
         async move { crate::summarizer::ask_llm(&settings, prompt).await }
     };
     // Das Kurzbuch (lva#205) hat einen eigenen Ablauf mit Gliederung und
-    // Schritten je Kernaussage.
-    let text = if template.id == kurzbuch::TEMPLATE_ID {
-        kurzbuch::run(input, &cache, ask, &progress, &CANCEL).await?
-    } else {
-        engine::run(input, &cache, ask, &progress, &CANCEL).await?
-    };
+    // Schritten je Kernaussage. Der Lauf steht in einem Erfassungsbereich:
+    // die Token, die die Anbieter melden, werden am Dokument abgelegt.
+    let (text, calls) = crate::managers::usage::with_capture(async {
+        let text = if job.template.id == kurzbuch::TEMPLATE_ID {
+            kurzbuch::run(job.input(), &cache, ask, &progress, &CANCEL).await
+        } else {
+            engine::run(job.input(), &cache, ask, &progress, &CANCEL).await
+        };
+        (text, crate::managers::usage::captured_calls().0)
+    })
+    .await;
+    let text = text?;
+    let actual = tokens::figures_from_calls(&calls, settings);
+    log::info!(
+        "book_ai: {} Aufrufe, {} Token (Prognose {})",
+        actual.calls,
+        actual.total(),
+        estimate.map(|e| e.total()).unwrap_or_default()
+    );
+    let template = &job.template;
+    let model_key = job.model_key.clone();
 
     // Die Seite wurde während des Laufs gelöscht: keinen Geisterordner anlegen.
     if !dir.join("state.json").exists() {
@@ -263,6 +352,11 @@ pub async fn book_ai_summarize(
             modified_ms: now,
             words: 0,
             model: model_key,
+            usage: Some(tokens::KiUsage {
+                estimate,
+                actual: Some(actual),
+                local: tokens::active_is_local(settings),
+            }),
         },
         text.trim(),
     )
@@ -514,6 +608,7 @@ pub fn book_ai_document_import(
             modified_ms: now,
             words: 0,
             model: String::new(),
+            usage: None,
         },
         text.trim(),
     )
