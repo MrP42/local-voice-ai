@@ -137,6 +137,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
     async (id: string) => {
       try {
         const d = auspacken(await commands.rechercheLesen(id));
+        setMeldung(null);
         setRechercheId(d.id);
         setErgebnis(rechercheErgebnis(d, t));
         setErgebnisKlasse(d.dataClass);
