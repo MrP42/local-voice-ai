@@ -79,6 +79,29 @@ pub struct AudioTrack {
     pub duration_ms: Option<f64>,
     /// Laufende Transkription dieses Teils (Import-Warteschlange).
     pub transcript_job: Option<String>,
+    /// Lange Einzeldatei in Abschnitten (lva#208): ein Auftrag je Zeitabschnitt.
+    /// Nicht leer: ersetzt `transcript_job`. Leer: wie bisher ein Auftrag je Teil.
+    #[serde(default)]
+    pub transcript_jobs: Vec<TranscriptPart>,
+}
+
+/// Ein Zeitabschnitt eines Teils mit eigenem Transkriptions-Auftrag (lva#208).
+/// Der Auftrag liest nur `start_ms` bis `end_ms` der Datei; seine Segmentzeiten
+/// sind relativ zu `start_ms`. Die Abschnitte überlappen an den Rändern, damit
+/// kein Wort zerschnitten wird; beim Zusammenführen gehört jedes Segment dem
+/// Abschnitt, in dessen Bereich `from_ms`…`to_ms` seine Mitte liegt.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
+pub struct TranscriptPart {
+    /// Hilfs-Besprechung der Import-Warteschlange.
+    pub job: String,
+    /// Beginn des dekodierten Bereichs in der Datei (ms); Versatz der Segmente.
+    pub start_ms: f64,
+    /// Ende des dekodierten Bereichs (ms); `None` = bis zum Dateiende.
+    pub end_ms: Option<f64>,
+    /// Ab hier gehören die Segmente diesem Abschnitt (ms in der Datei).
+    pub from_ms: f64,
+    /// Bis hier (ausschließlich); `None` beim letzten Abschnitt.
+    pub to_ms: Option<f64>,
 }
 
 /// Stützpunkt der Zeitachse: ab dieser Zeichenstelle des Textes ist das
@@ -106,6 +129,7 @@ pub fn tracks_of(audio: &AudioVersion) -> Vec<AudioTrack> {
             .unwrap_or_default(),
         duration_ms: audio.duration_ms,
         transcript_job: audio.transcript_job.clone(),
+        transcript_jobs: Vec::new(),
     }]
 }
 
@@ -1386,6 +1410,7 @@ fn merge_audio_in(
                 },
                 duration_ms: track.duration_ms,
                 transcript_job: track.transcript_job,
+                transcript_jobs: track.transcript_jobs,
             });
         }
     }
@@ -1781,6 +1806,41 @@ mod tests {
     }
 
     #[test]
+    fn a_track_without_section_jobs_still_reads_and_sections_round_trip() {
+        // Altbestand (lva#204) kennt `transcript_jobs` nicht.
+        let old: AudioTrack = serde_json::from_str(
+            r#"{"file":"teil_001.mp3","title":"T","duration_ms":null,"transcript_job":"m1"}"#,
+        )
+        .unwrap();
+        assert!(old.transcript_jobs.is_empty());
+        let sectioned = AudioTrack {
+            file: "teil_001.mp3".into(),
+            transcript_jobs: vec![
+                TranscriptPart {
+                    job: "a".into(),
+                    start_ms: 0.0,
+                    end_ms: Some(1_202_000.0),
+                    from_ms: 0.0,
+                    to_ms: Some(1_200_000.0),
+                },
+                TranscriptPart {
+                    job: "b".into(),
+                    start_ms: 1_198_000.0,
+                    end_ms: None,
+                    from_ms: 1_200_000.0,
+                    to_ms: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&sectioned).unwrap();
+        assert_eq!(
+            serde_json::from_str::<AudioTrack>(&json).unwrap(),
+            sectioned
+        );
+    }
+
+    #[test]
     fn audio_names_are_checked_for_every_track() {
         let mut audio = legacy("teil_001.mp3", None, None);
         audio.tracks = vec![
@@ -2046,12 +2106,14 @@ mod tests {
                     title: "Track 03".into(),
                     duration_ms: Some(30.0),
                     transcript_job: Some("m3".into()),
+                    ..Default::default()
                 },
                 AudioTrack {
                     file: "teil_002.m4a".into(),
                     title: "Track 04".into(),
                     duration_ms: None,
                     transcript_job: None,
+                    ..Default::default()
                 },
             ],
             ..Default::default()

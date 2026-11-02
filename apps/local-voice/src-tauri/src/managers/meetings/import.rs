@@ -215,6 +215,7 @@ async fn import_audio_file(
             &tm,
             &blocking_meeting_id,
             &path,
+            None,
             job.handle(),
         )
     })
@@ -278,13 +279,16 @@ enum ImportEnd {
 /// The blocking body: decode, copy the WAV, transcribe in chunks, finish with
 /// `ready` or `failed` (or, when the user stopped, `cancelled`) — always one
 /// of them, plus the matching event. U7: `pub(super)`, die Warteschlange
-/// (`queue.rs`) ruft sie fuer jede wartende Datei.
+/// (`queue.rs`) ruft sie fuer jede wartende Datei. lva#208: mit `range` (ms)
+/// wird nur dieser Abschnitt dekodiert und transkribiert; `import.wav` und alle
+/// Segmentzeiten beginnen dann bei 0 am Anfang des Abschnitts.
 pub(super) fn run_import(
     app: &tauri::AppHandle,
     store: &Arc<MeetingStore>,
     tm: &Arc<TranscriptionManager>,
     meeting_id: &str,
     path: &Path,
+    range: Option<(u64, Option<u64>)>,
     job: &Arc<JobHandle>,
 ) -> Result<(), String> {
     let import_started = std::time::Instant::now();
@@ -299,7 +303,7 @@ pub(super) fn run_import(
         tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
         // P8a: ein Stopp beendet ffmpeg (ueber sein Handle, nie ueber den Namen).
         let (wav_path, _tmp_guard) =
-            match media::ensure_wav_cancellable(path, 16_000, &job.stop_flag()) {
+            match media::ensure_wav_range_cancellable(path, 16_000, range, &job.stop_flag()) {
                 Ok(decoded) => decoded,
                 Err(e) if e == media::DECODE_CANCELLED => return Ok(ImportEnd::Stopped),
                 Err(e) => return Err(e),

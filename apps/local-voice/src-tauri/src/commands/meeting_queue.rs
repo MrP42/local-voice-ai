@@ -78,11 +78,12 @@ pub async fn meetings_update_metadata(
     Ok(meeting)
 }
 
-/// Einstellung `meeting_import_parallel`: 1, 2 oder 3 gleichzeitige
+/// Einstellung `meeting_import_parallel`: 1 bis 4 gleichzeitige
 /// Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
 /// ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
 /// nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
-/// reichen, sonst wartet die Datei.
+/// reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
+/// unabhängig davon bis zu vier gleichzeitig.
 #[tauri::command]
 #[specta::specta]
 pub fn change_meeting_import_parallel_setting(app: AppHandle, value: u32) -> Result<(), String> {

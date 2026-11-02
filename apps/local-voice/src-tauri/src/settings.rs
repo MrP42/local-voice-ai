@@ -947,10 +947,10 @@ pub struct AppSettings {
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
     /// U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
-    /// werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+    /// werden: 1 (Standard) bis 4. Mehr als eine nur, solange Arbeitsspeicher
     /// (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
     /// sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
-    /// settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+    /// settings.json) gilt 1; Werte ausserhalb 1 bis 4 zaehlen als der naechste
     /// gueltige.
     #[serde(default = "default_meeting_import_parallel")]
     pub meeting_import_parallel: u32,

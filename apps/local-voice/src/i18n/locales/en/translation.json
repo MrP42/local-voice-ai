@@ -3468,10 +3468,11 @@
       "finalAuto": "Automatic (recommended)",
       "finalOff": "Off – keep the live transcript",
       "parallelTitle": "Simultaneous transcriptions",
-      "parallelDescription": "How many files are transcribed at the same time. More than one only while memory (and graphics memory) suffice for each additional one – each loads the model again. Otherwise the next file waits (“waiting for memory”). A running recording always takes priority: the queue pauses then.",
+      "parallelDescription": "How many files are transcribed at the same time. More than one only while memory (and graphics memory) suffice for each additional one – each loads the model again. Otherwise the next file waits (“waiting for memory”). A running recording always takes priority: the queue pauses then. Parts of audiobooks (library) run up to four at a time regardless of this setting – likewise only while memory suffices.",
       "parallel1": "1 (default)",
       "parallel2": "2",
-      "parallel3": "3"
+      "parallel3": "3",
+      "parallel4": "4"
     },
     "header": {
       "renameName": "Rename",
@@ -7097,6 +7098,8 @@
     },
     "job": {
       "parts": "Transcription {{done}} of {{total}}",
+      "partsParallel": "Transcription {{done}} of {{total}} · {{running}} in parallel",
+      "partsFailed": "Transcription {{done}} of {{total}} · {{failed}} failed",
       "queued": "Transcription queued",
       "processing": "Transcribing",
       "transcribing": "Transcribing",

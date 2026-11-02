@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AudioVersion, LibraryBook } from "@/bindings";
 import { guessFromFileName, tracksOf } from "./names.ts";
+import { jobsOfTrack } from "./sections.ts";
 import {
   audioProgressKey,
   loadProgress,
@@ -11,9 +12,7 @@ import {
 
 /** Aufträge der Teile, die noch auf ihr Transkript warten, in Teilreihenfolge. */
 export function pendingJobs(book: LibraryBook): string[] {
-  return tracksOf(book.audio)
-    .map((t) => t.transcript_job)
-    .filter((id): id is string => !!id);
+  return tracksOf(book.audio).flatMap((t) => jobsOfTrack(t).map((p) => p.job));
 }
 
 /** Gesamtdauer in ms, wenn jeder Teil eine Dauer hat, sonst `null`. */

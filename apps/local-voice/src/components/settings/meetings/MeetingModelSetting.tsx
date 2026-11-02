@@ -16,7 +16,7 @@ import { useModelStore } from "../../../stores/modelStore";
  * (`meeting_final_model`: `auto` | `off` | model id, see final_pass.rs).
  *
  * U7: third field — how many imports transcribe at the same time
- * (`meeting_import_parallel`: 1, 2 or 3). More than one only while memory
+ * (`meeting_import_parallel`: 1 to 4). More than one only while memory
  * allows; otherwise the next file waits ("wartet auf Arbeitsspeicher").
  */
 export const MeetingModelSetting: React.FC = () => {
@@ -31,7 +31,7 @@ export const MeetingModelSetting: React.FC = () => {
   const value = getSetting("meeting_model") ?? "";
   const finalValue = getSetting("meeting_final_model") || "auto";
   const parallelValue = String(getSetting("meeting_import_parallel") ?? 1);
-  const parallelOptions = [1, 2, 3].map((n) => ({
+  const parallelOptions = [1, 2, 3, 4].map((n) => ({
     value: String(n),
     label: t(`meetings.model.parallel${n}`),
   }));
