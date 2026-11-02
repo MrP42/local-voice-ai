@@ -7053,12 +7053,16 @@
       "narrated": "Vertont"
     },
     "job": {
+      "parts": "Transkription {{done}} von {{total}}",
       "queued": "Transkription wartet",
       "processing": "Wird transkribiert",
       "transcribing": "Wird transkribiert",
       "ready": "Transkript wird übernommen",
       "failed": "Transkription fehlgeschlagen",
-      "missing": "Transkription nicht gefunden"
+      "missing": "Transkription nicht gefunden",
+      "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
+      "emptyTranscript": "Das Transkript ist leer.",
+      "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
     "by": "von {{authors}}",
@@ -7127,6 +7131,9 @@
     "pause": "Pause",
     "seek": "Stelle im Hörbuch",
     "drop": {
+      "files": "{{count}} Dateien: {{name}}",
+      "append": "Als weitere Teile anhängen",
+      "appendHint": "„Als weitere Teile anhängen“ setzt die Dateien hinter die vorhandenen Teile von „{{title}}“; nichts geht verloren.",
       "replaceText": "Textfassung ersetzen",
       "replaceAudio": "Hörbuch ersetzen",
       "replaceHintText": "„{{title}}“ hat schon eine Textfassung. Beim Ersetzen zeigt das Buch nur noch den neuen Text, der Lesefortschritt beginnt von vorn. Der bisherige Text bleibt als Seite im Vorlesen erhalten.",
@@ -7195,7 +7202,42 @@
       "running": "Läuft",
       "possible": "Nicht gestartet",
       "none": "Nicht nötig"
-    }
+    },
+    "parts": {
+      "label": "Teil {{n}} von {{total}}",
+      "list": "Teile"
+    },
+    "follow": {
+      "on": "Text mitlesen",
+      "off": "Mitlesen beenden",
+      "region": "Mitlesen: {{title}}",
+      "approx": "Stelle ungefähr",
+      "current": "Zur aktuellen Stelle",
+      "close": "Mitlesen schließen"
+    },
+    "merge": {
+      "bar": "{{count}} Einträge gehören wohl zu einem Hörbuch: {{title}}",
+      "action": "Zusammenführen",
+      "dismiss": "Hinweis ausblenden",
+      "title": "Zu einem Hörbuch zusammenführen: {{title}}",
+      "summary": "{{count}} Einträge werden zu einem Hörbuch „{{title}}“ mit {{count}} Teilen.",
+      "intoExisting": "Die Teile kommen in den vorhandenen Eintrag „{{title}}“.",
+      "replaces": "„{{title}}“ hat schon ein Hörbuch ({{count}} Dateien). Es wird dabei ersetzt, seine Hörposition beginnt von vorn.",
+      "orderHint": "Reihenfolge der Teile:",
+      "keepHint": "Die einzelnen Einträge verschwinden, ihre Hördateien bleiben als Teile erhalten. Offene Transkriptionen laufen weiter.",
+      "confirm": "Zusammenführen",
+      "working": "Wird zusammengeführt …",
+      "done": "„{{title}}“: {{count}} Einträge zusammengeführt."
+    },
+    "drm": "„{{name}}“ ist mit Audible-DRM geschützt und kann nicht importiert werden. Verwende eine DRM-freie Fassung (MP3, M4B).",
+    "addedParts": "„{{title}}“ mit {{count}} Teilen hinzugefügt.",
+    "attachedParts": "{{count}} Teile an „{{title}}“ angehängt.",
+    "addRest": "{{count}} weitere Dateien werden danach aufgenommen",
+    "listenFollow": "Hören und mitlesen",
+    "listenFollowTitle": "„{{title}}“ hören und mitlesen",
+    "transcribeMissing": "Fehlende Teile transkribieren",
+    "importedParts": "Importiertes Hörbuch in {{count}} Teilen",
+    "appendAudio": "Weitere Teile anhängen"
   },
   "projekte": {
     "menu": {

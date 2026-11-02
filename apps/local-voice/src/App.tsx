@@ -451,8 +451,11 @@ function App() {
         unstyled: true,
         classNames: {
           toast:
-            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
+            "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm max-w-[calc(100vw-32px)] break-words",
           title: "font-medium",
+          // Fehler gut lesbar: volle Textfarbe, roter Rand links, umbrechen statt abschneiden.
+          error:
+            "border-l-4 border-l-[var(--colorStatusDangerForeground1,#b10e1c)] text-[var(--colorNeutralForeground1,inherit)] items-start",
           description: "text-mid-gray",
           // Aktion als erkennbarer Knopf, nicht als blasser Text.
           actionButton:

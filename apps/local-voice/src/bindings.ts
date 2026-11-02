@@ -6036,6 +6036,34 @@ async libraryAudioImport(id: string, path: string) : Promise<Result<LibraryBook,
 }
 },
 /**
+ * Mehrere Dateien als Teile **einer** Audiofassung importieren, in der
+ * gegebenen Reihenfolge (`teil_001.<ext>` …). `append` hängt hinter die
+ * vorhandenen Teile, sonst ersetzen die neuen alle alten.
+ */
+async libraryAudioImportTracks(id: string, paths: string[], append: boolean) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_audio_import_tracks", { id, paths, append }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bücher mit je einem Teil zu **einem** Hörbuch zusammenführen: die Teile der
+ * Quellen wandern in der gegebenen Reihenfolge hinter die des Ziels, samt
+ * Dauer und Transkriptions-Auftrag. Die Quellbücher verschwinden. Mit
+ * `replace` ersetzen sie das vorhandene Hörbuch des Ziels (dessen Dateien
+ * gehen erst nach erfolgreichem Schreiben weg, Fehler rollen alles zurück).
+ */
+async libraryMergeAudio(targetId: string, sourceIds: string[], replace: boolean) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_merge_audio", { targetId, sourceIds, replace }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gesamter gespeicherter Fortschritt (Schlüssel → JSON-Text).
  */
 async libraryProgressLoad() : Promise<Result<Partial<{ [key in string]: string }>, string>> {
@@ -7506,15 +7534,42 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Ein Teil (Datei) eines Hörbuchs.
+ */
+export type AudioTrack = { 
+/**
+ * Dateiname unter `<id>/audio/` (`teil_001.mp3`, …).
+ */
+file: string; 
+/**
+ * Anzeigename, beim Import der Dateiname ohne Endung.
+ */
+title: string; duration_ms: number | null; 
+/**
+ * Laufende Transkription dieses Teils (Import-Warteschlange).
+ */
+transcript_job: string | null }
 export type AudioVersion = { 
 /**
- * Dateiname unter `<id>/audio/`.
+ * Dateiname unter `<id>/audio/`. Bei mehreren Teilen der erste Teil.
  */
 file: string; duration_ms: number | null; narrator: string | null; 
 /**
- * Laufende Transkription (Import-Warteschlange), bis der Text übernommen ist.
+ * Laufende Transkription (Import-Warteschlange), bis der Text übernommen
+ * ist. Gilt für Altbestand mit einer Datei; mehrteilige Hörbücher führen
+ * den Auftrag je Teil in [`AudioTrack::transcript_job`].
  */
-transcript_job: string | null }
+transcript_job: string | null; 
+/**
+ * Teile eines mehrteiligen Hörbuchs in Hörreihenfolge. Leer bedeutet:
+ * ein Teil, nämlich `file` ([`tracks_of`]).
+ */
+tracks?: AudioTrack[]; 
+/**
+ * Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
+ */
+sync?: SyncPoint[] }
 /**
  * Ein Eintrag des Audit-Logs.
  */
@@ -8862,9 +8917,15 @@ cover_source: string; text: TextVersion | null; audio: AudioVersion | null; adde
  */
 cover_path: string | null; 
 /**
- * Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs.
+ * Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs (erster Teil).
  */
-audio_path: string | null }
+audio_path: string | null; 
+/**
+ * Nur zur Anzeige: absolute Pfade aller Teile in Hörreihenfolge. Ein
+ * fehlender Teil steht als leerer Text an seiner Stelle; ist keiner da,
+ * ist die Liste leer.
+ */
+audio_paths?: string[] }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -10559,6 +10620,11 @@ uebersprungen: number;
  * Eintraege, die den Ordner verlassen haben oder deren Herkunft nicht mehr existiert.
  */
 entfernt: number }
+/**
+ * Stützpunkt der Zeitachse: ab dieser Zeichenstelle des Textes ist das
+ * Hörbuch bei `ms` (Millisekunden ab Beginn des ersten Teils).
+ */
+export type SyncPoint = { chars: number; ms: number }
 export type SyncStatus = { connected: boolean; user_email: string | null; device_name: string | null; hub_url: string | null; running: boolean; last_success_ms: number | null; last_error: string | null; 
 /**
  * Objekte, die lokal geändert und noch nicht bestätigt sind.

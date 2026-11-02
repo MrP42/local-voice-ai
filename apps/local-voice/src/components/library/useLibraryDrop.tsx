@@ -5,9 +5,12 @@ import type { LibraryBook } from "@/bindings";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 import { BookCover } from "./BookCover";
-import { extensionOf, kindOfFile } from "@/lib/library/books";
+import { extensionOf, fileNameOf, kindOfFile } from "@/lib/library/books";
+import { groupAudioFiles, type AudioGroup } from "@/lib/library/audioGroups";
 import {
+  addAudioGroup,
   addToLibrary,
+  drmMessage,
   findWork,
   freshBook,
   hasKind,
@@ -22,7 +25,7 @@ import {
 } from "@/lib/library/progress";
 import { useFileDrop } from "./useFileDrop";
 
-type Choice = "attach" | "new" | "cancel";
+type Choice = "attach" | "append" | "new" | "cancel";
 
 /** Fortschritt der Fassung, die ein Ersetzen verwerfen würde (0–100). */
 function progressOf(book: LibraryBook, kind: PreparedFile["kind"]): number {
@@ -34,7 +37,11 @@ function progressOf(book: LibraryBook, kind: PreparedFile["kind"]): number {
 }
 
 interface Question {
-  file: PreparedFile;
+  /** Anzeigename: Dateiname oder „36 Dateien“. */
+  name: string;
+  kind: PreparedFile["kind"];
+  /** Zahl der abgelegten Dateien dieser Frage. */
+  count: number;
   book: LibraryBook;
   /** Das Buch hat diese Fassung schon: Anhängen ersetzt sie. */
   replaces: boolean;
@@ -47,8 +54,10 @@ interface Question {
  * Drag & Drop in der Bibliothek (lva#152, Patrick 01.11.):
  * - auf freie Fläche: neues Buch (vorhandenes Werk → Rückfrage),
  * - auf ein Buch: passende Fassung anhängen; hat es die Fassung schon,
- *   Rückfrage „ersetzen oder als neues Buch“.
- * Mehrere Dateien werden nacheinander aufgenommen.
+ *   Rückfrage „ersetzen, als weitere Teile anhängen oder als neues Buch“.
+ * Audiodateien werden nach Ordner und Titelstamm gruppiert (lva#204): eine
+ * CD-Box mit 36 Dateien ist **ein** Buch. Auf ein Buch abgelegt werden alle
+ * Audiodateien Teile seiner Audiofassung. Textdateien nacheinander.
  */
 export function useLibraryDrop(
   books: LibraryBook[] | null,
@@ -82,11 +91,7 @@ export function useLibraryDrop(
   const take = useCallback(
     async (path: string, targetId: string | null, asNew = false) => {
       if (gone.current) return;
-      if (!kindOfFile(path)) {
-        toast.error(t("library.unsupported", { ext: extensionOf(path) }));
-        return;
-      }
-      setWorking(path.split(/[\\/]/).pop() ?? path);
+      setWorking(fileNameOf(path));
       try {
         const file = await prepareFile(path);
         // Ziel frisch lesen: eine eben angehängte Fassung muss zählen.
@@ -97,7 +102,9 @@ export function useLibraryDrop(
           if (!hasKind(target, file.kind)) attachTo = target;
           else {
             const choice = await ask({
-              file,
+              name: file.name,
+              kind: file.kind,
+              count: 1,
               book: target,
               replaces: true,
               dropped: true,
@@ -109,7 +116,9 @@ export function useLibraryDrop(
           const work = await findWork(file.title, file.authors);
           if (work) {
             const choice = await ask({
-              file,
+              name: file.name,
+              kind: file.kind,
+              count: 1,
               book: work,
               replaces: hasKind(work, file.kind),
               dropped: false,
@@ -137,22 +146,106 @@ export function useLibraryDrop(
     [onChanged, t],
   );
 
+  /** Eine Gruppe Audiodateien als ein Hörbuch aufnehmen. */
+  const takeAudio = useCallback(
+    async (group: AudioGroup, targetId: string | null) => {
+      if (gone.current) return;
+      setWorking(
+        group.paths.length > 1
+          ? t("library.drop.files", { count: group.paths.length, name: group.title })
+          : fileNameOf(group.paths[0]),
+      );
+      try {
+        const target = targetId ? await freshBook(targetId) : null;
+        const work = target
+          ? null
+          : await findWork(group.title, group.authors);
+        const book = target ?? work;
+        let attachTo: LibraryBook | null = null;
+        let append = false;
+        if (book) {
+          if (target && !target.audio) attachTo = target;
+          else {
+            const choice = await ask({
+              name:
+                group.paths.length > 1
+                  ? t("library.drop.files", { count: group.paths.length, name: group.title })
+                  : fileNameOf(group.paths[0]),
+              kind: "audio",
+              count: group.paths.length,
+              book,
+              replaces: !!book.audio,
+              dropped: !!target,
+            });
+            if (choice === "cancel") return;
+            if (choice !== "new") {
+              attachTo = book;
+              append = choice === "append";
+            }
+          }
+        }
+        const { book: saved, attached } = await addAudioGroup(group, {
+          attachTo,
+          append,
+          onWarning: (m) => toast.error(m),
+        });
+        toast(
+          group.paths.length > 1
+            ? t(attached ? "library.attachedParts" : "library.addedParts", {
+                title: saved.title,
+                count: group.paths.length,
+              })
+            : attached
+              ? t("library.attached", { title: saved.title })
+              : t("library.added", { title: saved.title }),
+        );
+        if (!gone.current) await onChanged();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!gone.current) setWorking(null);
+      }
+    },
+    [onChanged, t],
+  );
+
   const queue = useRef(Promise.resolve());
-  const drop = useFileDrop("[data-library-drop]", (paths, targetId) => {
-    // Mehrere Dateien auf ein Buch: nur die erste je Art gilt diesem Buch,
-    // weitere gleicher Art werden eigene Bücher (keine Ersetzen-Rückfrage
-    // für das eben angehängte Buch).
-    const used = new Set<string>();
+  const handlePaths = (paths: string[], targetId: string | null) => {
+    const texts: string[] = [];
+    const audios: string[] = [];
     for (const path of paths) {
-      const kind = kindOfFile(path) ?? "";
-      const extra = !!targetId && used.has(kind);
-      const target = targetId && !extra ? targetId : null;
-      if (target) used.add(kind);
-      queue.current = queue.current
-        .then(() => take(path, target, extra))
-        .catch(() => {});
+      const kind = kindOfFile(path);
+      if (kind === "text") texts.push(path);
+      else if (kind === "audio") audios.push(path);
+      else if (kind === "drm") toast.error(drmMessage(fileNameOf(path)));
+      else toast.error(t("library.unsupported", { ext: extensionOf(path) }));
     }
-  });
+    // Mehrere Texte auf ein Buch: nur der erste gilt diesem Buch, weitere
+    // werden eigene Bücher (keine Ersetzen-Rückfrage für das eben angehängte).
+    texts.forEach((path, i) => {
+      const target = targetId && i === 0 ? targetId : null;
+      queue.current = queue.current
+        .then(() => take(path, target, !!targetId && i > 0))
+        .catch(() => {});
+    });
+    if (!audios.length) return;
+    if (targetId) {
+      // Auf ein Buch: alle Audiodateien sind Teile seiner Audiofassung.
+      const group: AudioGroup = {
+        ...groupAudioFiles(audios)[0],
+        paths: groupAudioFiles(audios).flatMap((g) => g.paths),
+      };
+      queue.current = queue.current
+        .then(() => takeAudio(group, targetId))
+        .catch(() => {});
+      return;
+    }
+    for (const group of groupAudioFiles(audios))
+      queue.current = queue.current
+        .then(() => takeAudio(group, null))
+        .catch(() => {});
+  };
+  const drop = useFileDrop("[data-library-drop]", handlePaths);
 
   const answer = (choice: Choice) => {
     pending.current = null;
@@ -161,10 +254,10 @@ export function useLibraryDrop(
   };
 
   const kindLabel = question
-    ? t(question.file.kind === "audio" ? "library.drop.kindAudio" : "library.drop.kindText")
+    ? t(question.kind === "audio" ? "library.drop.kindAudio" : "library.drop.kindText")
     : "";
-  const isAudio = question?.file.kind === "audio";
-  const progress = question?.replaces ? progressOf(question.book, question.file.kind) : 0;
+  const isAudio = question?.kind === "audio";
+  const progress = question?.replaces ? progressOf(question.book, question.kind) : 0;
   const dialog = (
     <Dialog
       open={question !== null}
@@ -181,8 +274,10 @@ export function useLibraryDrop(
             {t("library.drop.asNew")}
           </Button>
           <Button onClick={() => answer("cancel")}>{t("library.cancel")}</Button>
+          {/* Ersetzen löscht das vorhandene Hörbuch: zurückhaltend, nicht primär.
+              Primär ist das Anhängen, das nichts zerstört. */}
           <Button
-            variant="primary"
+            variant={isAudio && question?.replaces ? "secondary" : "primary"}
             onClick={() => answer("attach")}
             data-testid="library-drop-attach"
           >
@@ -190,6 +285,15 @@ export function useLibraryDrop(
               ? t(isAudio ? "library.drop.replaceAudio" : "library.drop.replaceText")
               : t("library.drop.attach")}
           </Button>
+          {isAudio && question?.replaces && (
+            <Button
+              variant="primary"
+              onClick={() => answer("append")}
+              data-testid="library-drop-append"
+            >
+              {t("library.drop.append")}
+            </Button>
+          )}
         </>
       }
     >
@@ -197,7 +301,7 @@ export function useLibraryDrop(
         <div className="library-add__merge" data-testid="library-drop-question">
           <BookCover book={question.book} size="xs" />
           <div className="library-drop-question__text">
-            <strong style={{ overflowWrap: "anywhere" }}>{question.file.name}</strong>
+            <strong style={{ overflowWrap: "anywhere" }}>{question.name}</strong>
             {question.replaces ? (
               <>
                 <p data-testid="library-drop-consequence">
@@ -208,6 +312,11 @@ export function useLibraryDrop(
                     { title: question.book.title },
                   )}
                 </p>
+                {isAudio && (
+                  <p className="library-meta" data-testid="library-drop-append-hint">
+                    {t("library.drop.appendHint", { title: question.book.title })}
+                  </p>
+                )}
                 {progress > 0 && (
                   <p data-testid="library-drop-progress">
                     <strong>
@@ -238,5 +347,8 @@ export function useLibraryDrop(
     </Dialog>
   );
 
-  return { drop, working, dialog };
+  /** Dateien wie auf eine freie Fläche abgelegt aufnehmen (Dialog „Hinzufügen“). */
+  const importPaths = (paths: string[]) => handlePaths(paths, null);
+
+  return { drop, working, dialog, importPaths };
 }

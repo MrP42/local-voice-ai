@@ -1,13 +1,9 @@
 import React, { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { extensionOf, kindOfFile } from "@/lib/library/books";
-import {
-  addToLibrary,
-  findWork,
-  hasKind,
-  prepareFile,
-} from "@/lib/library/importFile";
+import { extensionOf, fileNameOf, kindOfFile } from "@/lib/library/books";
+import { groupAudioFiles, type AudioGroup } from "@/lib/library/audioGroups";
+import { addAudioGroup, drmMessage, findWork } from "@/lib/library/importFile";
 import { useFileDrop } from "./useFileDrop";
 import "./library.css";
 
@@ -29,23 +25,22 @@ export const ReaderDrop: React.FC<{
   const queue = useRef(Promise.resolve());
 
   const take = async (path: string) => {
-    const kind = kindOfFile(path);
-    if (!kind) {
-      toast.error(t("library.unsupported", { ext: extensionOf(path) }));
-      return;
-    }
     try {
-      if (kind === "text") {
-        await onDocument(path);
-        return;
-      }
-      const file = await prepareFile(path);
-      const work = await findWork(file.title, file.authors);
-      const { book } = await addToLibrary(file, {
+      await onDocument(path);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  /** Eine Gruppe Audiodateien (z. B. eine CD-Box) als ein Hörbuch aufnehmen. */
+  const takeAudio = async (group: AudioGroup) => {
+    try {
+      const work = await findWork(group.title, group.authors);
+      const { book } = await addAudioGroup(group, {
         // Ohne Rückfrage nur anhängen, wenn Titel UND Autor passen
         // („Track 01“ allein darf an kein fremdes Buch geraten).
         attachTo:
-          work && file.authors.length > 0 && !hasKind(work, "audio") ? work : null,
+          work && group.authors.length > 0 && !work.audio ? work : null,
         onWarning: (m) => toast.error(m),
       });
       toast(t("library.drop.readerAudio", { title: book.title }), {
@@ -57,8 +52,17 @@ export const ReaderDrop: React.FC<{
   };
 
   const drop = useFileDrop(".tts-workspace", (paths) => {
-    for (const path of paths)
-      queue.current = queue.current.then(() => take(path)).catch(() => {});
+    const audio: string[] = [];
+    for (const path of paths) {
+      const kind = kindOfFile(path);
+      if (kind === "text")
+        queue.current = queue.current.then(() => take(path)).catch(() => {});
+      else if (kind === "audio") audio.push(path);
+      else if (kind === "drm") toast.error(drmMessage(fileNameOf(path)));
+      else toast.error(t("library.unsupported", { ext: extensionOf(path) }));
+    }
+    for (const group of groupAudioFiles(audio))
+      queue.current = queue.current.then(() => takeAudio(group)).catch(() => {});
   });
 
   if (!drop.over) return null;

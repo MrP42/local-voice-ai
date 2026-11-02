@@ -2521,6 +2521,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_cover_from_file,
             library::library_cover_clear,
             library::library_audio_import,
+            library::library_audio_import_tracks,
+            library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
             commands::tts::tts_voicechange_record_start,
