@@ -171,7 +171,9 @@ mod tests {
         );
         s.ordner_projekt_setzen(&f, None).unwrap();
         assert_eq!(s.ordner_verweise().unwrap()[0].projekt_id, None);
-        let err = s.ordner_projekt_setzen("gibt-es-nicht", Some("prj_x")).unwrap_err();
+        let err = s
+            .ordner_projekt_setzen("gibt-es-nicht", Some("prj_x"))
+            .unwrap_err();
         assert_eq!(err.to_string(), "folder_not_found");
         let err = s.ordner_projekt_setzen(&f, Some("prj x/..")).unwrap_err();
         assert_eq!(err.to_string(), "projekt_invalid");
@@ -197,7 +199,8 @@ mod tests {
         let a = ordner(&s, "A");
         let b = ordner(&s, "B");
         s.set_meeting_folders(&m1, &[a.clone(), b.clone()]).unwrap();
-        s.set_meeting_folders(&m2, std::slice::from_ref(&b)).unwrap();
+        s.set_meeting_folders(&m2, std::slice::from_ref(&b))
+            .unwrap();
         s.ordner_projekt_setzen(&a, Some("prj_a")).unwrap();
         s.ordner_projekt_setzen(&b, Some("prj_b")).unwrap();
         assert_eq!(s.besprechungen_im_ordner(&a).unwrap(), vec![m1.clone()]);
@@ -219,7 +222,8 @@ mod tests {
         let m1 = ready_meeting(&s, "Eins", 1_750_000_000).id;
         let a = ordner(&s, "A");
         let b = ordner(&s, "B");
-        s.set_meeting_folders(&m1, std::slice::from_ref(&a)).unwrap();
+        s.set_meeting_folders(&m1, std::slice::from_ref(&a))
+            .unwrap();
         s.ordner_projekt_setzen(&a, Some("prj_a")).unwrap();
         s.ordner_projekt_setzen(&b, Some("prj_b")).unwrap();
         assert_eq!(s.besprechungen_kurz().unwrap().len(), 1);
@@ -227,7 +231,12 @@ mod tests {
         let liste = s.ordner_verweise().unwrap();
         assert_eq!(liste.iter().find(|o| o.id == a).unwrap().projekt_id, None);
         assert_eq!(
-            liste.iter().find(|o| o.id == b).unwrap().projekt_id.as_deref(),
+            liste
+                .iter()
+                .find(|o| o.id == b)
+                .unwrap()
+                .projekt_id
+                .as_deref(),
             Some("prj_b")
         );
     }

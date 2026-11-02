@@ -9,7 +9,7 @@ use super::audit::RegisterAudit;
 use super::dienst::ProjektDienst;
 use super::quellen::{Inhalt, ProdQuellen};
 use super::recherche::{ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, SearxngWeb};
-use super::{Res, lokaler_principal};
+use super::{lokaler_principal, Res};
 use crate::managers::meetings::store::MeetingStore;
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,10 +71,15 @@ impl ProjekteZustand {
         let rstore = RechercheStore::open(ordner.join("recherche.db"))
             .await
             .map_err(|e| e.message)?;
-        let projekte = ProjektDienst::open(ordner.join("projekte.db"), quellen, rstore.clone(), lokaler_principal())
-            .await
-            .map_err(|e| e.message)?
-            .with_audit(audit.clone());
+        let projekte = ProjektDienst::open(
+            ordner.join("projekte.db"),
+            quellen,
+            rstore.clone(),
+            lokaler_principal(),
+        )
+        .await
+        .map_err(|e| e.message)?
+        .with_audit(audit.clone());
         let projekte = Arc::new(projekte);
         let recherche = RechercheDienst::open(
             rstore,
@@ -121,7 +126,10 @@ async fn pflege(d: &Dienste) {
         log::warn!("projekte: Aufbewahrung fehlgeschlagen ({})", e.code);
     }
     if let Err(e) = d.projekte.verwaiste_recherchen_raeumen().await {
-        log::warn!("projekte: Aufraeumen verwaister Dokumente fehlgeschlagen ({})", e.code);
+        log::warn!(
+            "projekte: Aufraeumen verwaister Dokumente fehlgeschlagen ({})",
+            e.code
+        );
     }
 }
 
@@ -143,27 +151,31 @@ impl ModellQuelle for AppModelle {
             .as_ref()
             .map(|(_, m, _)| m.clone())
             .unwrap_or_else(|_| "kein-modell".into());
-        Arc::new(RueckrufModell::neu(&name, lokal, move |anweisung, eingabe| {
-            let aufgeloest = aufgeloest.clone();
-            Box::pin(async move {
-                let (provider, modell, schluessel) = aufgeloest?;
-                let antwort = crate::llm_client::send_chat_completion_checked(
-                    crate::managers::usage::Purpose::Chat,
-                    &provider,
-                    schluessel,
-                    &modell,
-                    eingabe,
-                    Some(anweisung),
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
-                antwort
-                    .content
-                    .ok_or_else(|| "Antwort ohne Inhalt".to_string())
-            })
-        }))
+        Arc::new(RueckrufModell::neu(
+            &name,
+            lokal,
+            move |anweisung, eingabe| {
+                let aufgeloest = aufgeloest.clone();
+                Box::pin(async move {
+                    let (provider, modell, schluessel) = aufgeloest?;
+                    let antwort = crate::llm_client::send_chat_completion_checked(
+                        crate::managers::usage::Purpose::Chat,
+                        &provider,
+                        schluessel,
+                        &modell,
+                        eingabe,
+                        Some(anweisung),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await?;
+                    antwort
+                        .content
+                        .ok_or_else(|| "Antwort ohne Inhalt".to_string())
+                })
+            },
+        ))
     }
 }
 

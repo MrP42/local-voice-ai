@@ -32,7 +32,11 @@ pub trait LvaQuellen: Send + Sync {
     /// Kennungen der lebenden Besprechungen eines Ordners.
     fn besprechungen_im_ordner(&self, ordner_id: &str) -> Result<Vec<String>, String>;
     /// Setzt oder loest den Verweis des Ordners auf sein Suite-Projekt.
-    fn ordner_projekt_setzen(&self, ordner_id: &str, projekt_id: Option<&str>) -> Result<(), String>;
+    fn ordner_projekt_setzen(
+        &self,
+        ordner_id: &str,
+        projekt_id: Option<&str>,
+    ) -> Result<(), String>;
     /// Loest den Verweis aller Ordner auf dieses Suite-Projekt; liefert deren Zahl.
     fn ordner_projekt_loesen_alle(&self, projekt_id: &str) -> Result<u32, String>;
     /// Suite-Projekte, auf die die Ordner einer Besprechung zeigen.
@@ -93,20 +97,30 @@ impl LvaQuellen for ProdQuellen {
     }
 
     fn besprechungen_im_ordner(&self, ordner_id: &str) -> Result<Vec<String>, String> {
-        self.meetings.besprechungen_im_ordner(ordner_id).map_err(text)
+        self.meetings
+            .besprechungen_im_ordner(ordner_id)
+            .map_err(text)
     }
 
-    fn ordner_projekt_setzen(&self, ordner_id: &str, projekt_id: Option<&str>) -> Result<(), String> {
+    fn ordner_projekt_setzen(
+        &self,
+        ordner_id: &str,
+        projekt_id: Option<&str>,
+    ) -> Result<(), String> {
         self.meetings
             .ordner_projekt_setzen(ordner_id, projekt_id)
             .map_err(text)
     }
 
     fn ordner_projekt_loesen_alle(&self, projekt_id: &str) -> Result<u32, String> {
-        self.meetings.ordner_projekt_loesen_alle(projekt_id).map_err(text)
+        self.meetings
+            .ordner_projekt_loesen_alle(projekt_id)
+            .map_err(text)
     }
 
     fn projekte_der_besprechung(&self, meeting_id: &str) -> Result<Vec<String>, String> {
-        self.meetings.projekte_der_besprechung(meeting_id).map_err(text)
+        self.meetings
+            .projekte_der_besprechung(meeting_id)
+            .map_err(text)
     }
 }

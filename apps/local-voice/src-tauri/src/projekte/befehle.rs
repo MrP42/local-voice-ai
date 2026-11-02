@@ -3,11 +3,11 @@
 //! Mandant und Person kommen aus der lokalen Sitzung (`lokaler_principal`), nie aus den Argumenten.
 //! Fehlertexte enthalten weder Frage noch Anfragen noch Quellen.
 
-use super::dienst::{EintragSicht, LoeschErgebnis, SuiteProjekt, SyncBericht, klasse_aus_text};
+use super::dienst::{klasse_aus_text, EintragSicht, LoeschErgebnis, SuiteProjekt, SyncBericht};
 use super::recherche::{
     FreigabeAktion, FreigabeInfo, LaufAntwort, RechercheKurz, RechercheSicht, RechercheStatus,
 };
-use super::zustand::{ProjekteZustand, modell_bereit};
+use super::zustand::{modell_bereit, ProjekteZustand};
 use tauri::{AppHandle, State};
 use wai_recherche::Datenklasse;
 
@@ -85,7 +85,11 @@ pub async fn projekt_ordner_loesen(
     z: State<'_, ProjekteZustand>,
     ordner_id: String,
 ) -> Antwort<u32> {
-    Ok(z.dienste().await?.projekte.ordner_loesen(&ordner_id).await?)
+    Ok(z.dienste()
+        .await?
+        .projekte
+        .ordner_loesen(&ordner_id)
+        .await?)
 }
 
 #[tauri::command]
@@ -263,10 +267,7 @@ pub async fn recherche_liste(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn recherche_lesen(
-    z: State<'_, ProjekteZustand>,
-    id: String,
-) -> Antwort<RechercheSicht> {
+pub async fn recherche_lesen(z: State<'_, ProjekteZustand>, id: String) -> Antwort<RechercheSicht> {
     Ok(z.dienste().await?.recherche.sicht(&id).await?)
 }
 

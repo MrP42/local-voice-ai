@@ -36,7 +36,7 @@ mod tests;
 
 use std::fmt;
 use wai_security::{
-    ActorId, ClientClaims, DataClass, Principal, Role, ServerSession, TenantId, resolve_principal,
+    resolve_principal, ActorId, ClientClaims, DataClass, Principal, Role, ServerSession, TenantId,
 };
 
 /// Fehler mit stabilem Code (Tests, Oberflaeche) und verstaendlichem Text. Der Text enthaelt nie

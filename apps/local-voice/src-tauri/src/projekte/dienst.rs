@@ -21,8 +21,8 @@
 
 use super::audit::{AuditEreignis, AuditSenke};
 use super::herkunft::{
-    KLASSE_BESPRECHUNG, KLASSE_BUCH, LINK_APP, LvaHerkunft, besprechung_link, buch_link, id_gueltig,
-    recherche_link, suite_id_gueltig,
+    besprechung_link, buch_link, id_gueltig, recherche_link, suite_id_gueltig, LvaHerkunft,
+    KLASSE_BESPRECHUNG, KLASSE_BUCH, LINK_APP,
 };
 use super::quellen::LvaQuellen;
 use super::recherche::RechercheStore;
@@ -400,7 +400,11 @@ impl ProjektDienst {
             .into_iter()
             .filter(|o| o.projekt_id.as_deref() == Some(suite_id))
         {
-            for id in self.quellen.besprechungen_im_ordner(&o.id).map_err(quelle)? {
+            for id in self
+                .quellen
+                .besprechungen_im_ordner(&o.id)
+                .map_err(quelle)?
+            {
                 if let Some(t) = titel.get(&id) {
                     soll.insert(besprechung_link(&id), t.clone());
                 }
@@ -451,7 +455,9 @@ impl ProjektDienst {
         // Besprechungen, die den Ordner verlassen haben: nur automatisch zugeordnete Eintraege gehen.
         for (ref_, (eintrag, durch)) in &ist {
             if !soll.contains_key(ref_) && *durch == ZugeordnetDurch::Automation {
-                self.verz.eintrag_entfernen(&self.principal, eintrag).await?;
+                self.verz
+                    .eintrag_entfernen(&self.principal, eintrag)
+                    .await?;
                 b.entfernt += 1;
             }
         }
@@ -477,7 +483,12 @@ impl ProjektDienst {
             .map_err(quelle)?;
         self.protokoll("ordner_geloest", &suite, "ok", "geloest");
         // Existiert das Suite-Projekt nicht mehr, ist die Verknuepfung trotzdem geloest.
-        if self.verz.projekt_lesen(&self.principal, &suite).await.is_err() {
+        if self
+            .verz
+            .projekt_lesen(&self.principal, &suite)
+            .await
+            .is_err()
+        {
             return Ok(0);
         }
         let entfernt = self.sync_ohne_sperre(&suite).await?.entfernt;

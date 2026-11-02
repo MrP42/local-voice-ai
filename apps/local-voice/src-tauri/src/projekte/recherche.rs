@@ -23,8 +23,8 @@
 //!   Regeln der App (Compliance, Budget) gelten im Aufruf zusaetzlich.
 
 use super::audit::{AuditEreignis, AuditSenke};
-use super::dienst::{ProjektDienst, klasse_text};
-use super::herkunft::{LvaHerkunft, recherche_link};
+use super::dienst::{klasse_text, ProjektDienst};
+use super::herkunft::{recherche_link, LvaHerkunft};
 use super::{Fehler, Res};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -36,9 +36,9 @@ use std::time::{Duration, Instant};
 use wai_projekte::{Klasse, ZugeordnetDurch};
 use wai_providers::util::{new_id, new_trace_id, now_rfc3339};
 use wai_recherche::{
-    Anfrage, Budget, Datenklasse, FreigabeToken, Kontextstueck, Modell, Quellentyp, Recherche,
-    RechercheFehler, RechercheKontext, Recherchedokument, SchnellOptionen, SearxngAnbieter,
-    SichererAbruf, Status, Suchanbieter, recherchiere_schnell, recherchiere_schnell_fortsetzen,
+    recherchiere_schnell, recherchiere_schnell_fortsetzen, Anfrage, Budget, Datenklasse,
+    FreigabeToken, Kontextstueck, Modell, Quellentyp, Recherche, RechercheFehler, RechercheKontext,
+    Recherchedokument, SchnellOptionen, SearxngAnbieter, SichererAbruf, Status, Suchanbieter,
 };
 use wai_security::{Principal, Role};
 use wai_storage::sqlx::{self, Row};
@@ -168,7 +168,8 @@ impl RechercheStore {
                 .fetch_optional(self.pool())
                 .await
                 .map_err(db)?;
-        doc.map(|d| serde_json::from_str(&d).map_err(db)).transpose()
+        doc.map(|d| serde_json::from_str(&d).map_err(db))
+            .transpose()
     }
 
     /// Dokumente eines Suite-Projekts, neueste zuerst.
@@ -214,13 +215,15 @@ impl RechercheStore {
             .await
             .map_err(db)?;
         let n = match sql {
-            SqlLoeschen::Eins(id) => sqlx::query("DELETE FROM recherchen WHERE id = ? AND tenant = ?")
-                .bind(id)
-                .bind(&p.tenant().0)
-                .execute(&mut *conn)
-                .await
-                .map_err(db)?
-                .rows_affected(),
+            SqlLoeschen::Eins(id) => {
+                sqlx::query("DELETE FROM recherchen WHERE id = ? AND tenant = ?")
+                    .bind(id)
+                    .bind(&p.tenant().0)
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(db)?
+                    .rows_affected()
+            }
             SqlLoeschen::Projekt(suite) => {
                 sqlx::query("DELETE FROM recherchen WHERE tenant = ? AND suite_projekt = ?")
                     .bind(&p.tenant().0)
@@ -688,7 +691,11 @@ impl RechercheDienst {
 
     /// Setzt oder entfernt die Suchadresse. Nur die Administration (Betreiberrolle) darf das; die Adresse
     /// wird streng geprueft (`pruefe_adresse`).
-    pub async fn konfigurieren(&self, p: &Principal, adresse: Option<&str>) -> Res<RechercheStatus> {
+    pub async fn konfigurieren(
+        &self,
+        p: &Principal,
+        adresse: Option<&str>,
+    ) -> Res<RechercheStatus> {
         if !ist_admin(p) {
             self.protokoll("konfiguration", "searxng", "abgelehnt", "abgelehnt", 0);
             return Err(fehler(
@@ -758,7 +765,9 @@ impl RechercheDienst {
                 "Die Frage fehlt oder ist zu lang.",
             ));
         }
-        let (klasse, besonders) = match self.projektregeln(p.suite_projekt.as_deref(), p.klasse).await
+        let (klasse, besonders) = match self
+            .projektregeln(p.suite_projekt.as_deref(), p.klasse)
+            .await
         {
             Ok(r) => r,
             Err(a) => {
@@ -848,7 +857,10 @@ impl RechercheDienst {
                 "Das Web ist für das Suite-Projekt nicht freigegeben. Die Person kann es in den Projekteinstellungen freigeben; die Recherche wurde nicht ausgeführt.",
             ));
         }
-        Ok((klasse.max(daten_von_klasse(pr.data_class)), pr.special_category))
+        Ok((
+            klasse.max(daten_von_klasse(pr.data_class)),
+            pr.special_category,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -927,12 +939,15 @@ impl RechercheDienst {
                             "Das Suite-Projekt wurde während der Recherche gelöscht oder archiviert. Das Ergebnis wurde nicht gespeichert.",
                         ));
                     }
-                    self.store.speichern(&self.principal, d).await.map_err(|_| {
-                        abbruch(
-                            "speichern_fehlgeschlagen",
-                            "Das Recherche-Dokument konnte nicht gespeichert werden.",
-                        )
-                    })?;
+                    self.store
+                        .speichern(&self.principal, d)
+                        .await
+                        .map_err(|_| {
+                            abbruch(
+                                "speichern_fehlgeschlagen",
+                                "Das Recherche-Dokument konnte nicht gespeichert werden.",
+                            )
+                        })?;
                 }
                 self.protokoll("lauf", &d.id, "abgeschlossen", &Self::zaehlercode(d), ms);
                 // Ergebnisse landen automatisch im Projekt, aus dem sie entstanden sind (ADR-0026
@@ -940,7 +955,13 @@ impl RechercheDienst {
                 let abgelegt = match &d.project_id {
                     Some(pid) => self
                         .projekte
-                        .recherche_zuordnen(pid, &d.id, &d.question, klasse_von(d.data_class), durch)
+                        .recherche_zuordnen(
+                            pid,
+                            &d.id,
+                            &d.question,
+                            klasse_von(d.data_class),
+                            durch,
+                        )
                         .await
                         .is_ok(),
                     None => false,
@@ -1205,7 +1226,15 @@ impl RechercheDienst {
         )
         .await;
         match self
-            .auswerten(r, &frage, kontext, &model_id, suite, start, ZugeordnetDurch::Person)
+            .auswerten(
+                r,
+                &frage,
+                kontext,
+                &model_id,
+                suite,
+                start,
+                ZugeordnetDurch::Person,
+            )
             .await
         {
             Ok(LaufErgebnis::Fertig { recherche, .. }) => Ok(LaufAntwort {
@@ -1253,7 +1282,6 @@ impl RechercheDienst {
         self.projekte.abgleichen().await?;
         Ok(())
     }
-
 }
 
 fn budget() -> Budget {

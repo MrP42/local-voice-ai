@@ -6,10 +6,10 @@ use super::audit::{AuditEreignis, AuditSenke};
 use super::dienst::ProjektDienst;
 use super::quellen::{Inhalt, ProdQuellen};
 use super::recherche::{
-    AufrufFut, FreigabeAktion, ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, Webzugang,
-    modell_erlaubt, pruefe_adresse,
+    modell_erlaubt, pruefe_adresse, AufrufFut, FreigabeAktion, ModellQuelle, RechercheDienst,
+    RechercheStore, RueckrufModell, Webzugang,
 };
-use super::{Fehler, lokaler_principal};
+use super::{lokaler_principal, Fehler};
 use crate::managers::meetings::search::index::tests::{ready_meeting, tmp_store};
 use crate::managers::meetings::store::MeetingStore;
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use wai_recherche::{
     SichererAbruf, Suchanbieter, Suchanfrage, Treffer,
 };
 use wai_security::{
-    ActorId, ClientClaims, DataClass, Principal, Role, ServerSession, TenantId, resolve_principal,
+    resolve_principal, ActorId, ClientClaims, DataClass, Principal, Role, ServerSession, TenantId,
 };
 
 const FRAGE: &str = "Bis wann ist die kommunale Waermeplanung verpflichtend?";
@@ -221,17 +221,11 @@ async fn env_mit(konfiguriert: bool, modelle: Arc<dyn ModellQuelle>) -> Env {
     let zeit = Arc::new(Mutex::new(Duration::ZERO));
     let uhr_zeit = zeit.clone();
     let dienst = Arc::new(
-        RechercheDienst::open(
-            rstore.clone(),
-            projekte.clone(),
-            modelle,
-            web,
-            p.clone(),
-        )
-        .await
-        .unwrap()
-        .with_audit(audit.clone())
-        .with_uhr(Arc::new(move || start + *uhr_zeit.lock().unwrap())),
+        RechercheDienst::open(rstore.clone(), projekte.clone(), modelle, web, p.clone())
+            .await
+            .unwrap()
+            .with_audit(audit.clone())
+            .with_uhr(Arc::new(move || start + *uhr_zeit.lock().unwrap())),
     );
     if konfiguriert {
         dienst.konfigurieren(&p, Some(ADRESSE)).await.unwrap();
@@ -259,7 +253,9 @@ async fn verknuepft(e: &Env, web: bool) -> (String, String, String) {
 async fn verknuepft_klasse(e: &Env, web: bool, klasse: Klasse) -> (String, String, String) {
     let m = ready_meeting(&e.store, "Waermewende Auftakt", 1_750_000_000).id;
     let ordner = e.store.folder_save(None, "Waermewende", None).unwrap().id;
-    e.store.set_meeting_folders(&m, std::slice::from_ref(&ordner)).unwrap();
+    e.store
+        .set_meeting_folders(&m, std::slice::from_ref(&ordner))
+        .unwrap();
     let suite = e
         .projekte
         .anlegen("Waermewende", klasse, false)
@@ -303,7 +299,11 @@ async fn verknuepfen_ordnet_zu_und_loesen_nimmt_nur_die_eintraege_weg() {
         Some(suite.as_str())
     );
     // Erneutes Verknuepfen ist idempotent.
-    let b = e.projekte.ordner_verknuepfen(&ordner, &suite).await.unwrap();
+    let b = e
+        .projekte
+        .ordner_verknuepfen(&ordner, &suite)
+        .await
+        .unwrap();
     assert_eq!((b.zugeordnet, b.bereits), (0, 1));
 
     let entfernt = e.projekte.ordner_loesen(&ordner).await.unwrap();
@@ -394,12 +394,7 @@ async fn buecher_werden_als_verweis_zugeordnet_und_entfernt() {
         Some("wai://lva/buch/book_1730000000000")
     );
     // Unbekanntes Buch scheitert.
-    assert!(
-        e.projekte
-            .buch_zuordnen(&suite.id, "book_9")
-            .await
-            .is_err()
-    );
+    assert!(e.projekte.buch_zuordnen(&suite.id, "book_9").await.is_err());
     // Buch loeschen: der Eintrag verschwindet beim Abgleich.
     e.buecher.lock().unwrap().clear();
     assert_eq!(e.projekte.abgleichen().await.unwrap(), 1);
@@ -426,11 +421,9 @@ async fn loeschkaskade_recherche_und_suite_projekt() {
     // Die Recherche liegt als Eintrag im Projektordner (Meeting plus Recherche).
     let liste = e.projekte.eintraege(&suite).await.unwrap();
     assert_eq!(liste.len(), 2);
-    assert!(
-        liste
-            .iter()
-            .any(|x| x.link.as_deref() == Some(format!("wai://lva/recherche/{id}").as_str()))
-    );
+    assert!(liste
+        .iter()
+        .any(|x| x.link.as_deref() == Some(format!("wai://lva/recherche/{id}").as_str())));
 
     // Recherche loeschen: der Eintrag verschwindet.
     e.dienst.loeschen(&id).await.unwrap();
@@ -448,14 +441,13 @@ async fn loeschkaskade_recherche_und_suite_projekt() {
     assert!(e.projekte.projekte().await.unwrap().is_empty());
     // Es bleibt hoechstens die Meldung des Projekts selbst fuer andere Apps; Verweise der eigenen App
     // sind bestaetigt.
-    assert!(
-        e.projekte
-            .offene_meldungen()
-            .await
-            .unwrap()
-            .iter()
-            .all(|(_, r)| r.as_deref().is_none_or(|r| !r.starts_with("wai://lva/")))
-    );
+    assert!(e
+        .projekte
+        .offene_meldungen()
+        .await
+        .unwrap()
+        .iter()
+        .all(|(_, r)| r.as_deref().is_none_or(|r| !r.starts_with("wai://lva/"))));
     assert_eq!(e.store.besprechungen_kurz().unwrap().len(), 1);
 }
 
@@ -486,7 +478,10 @@ async fn aufbewahrung_des_projekts_gilt_auch_fuer_recherchen() {
         .unwrap()
         .as_millis() as i64
         - 2 * 86_400_000;
-    e.rstore.anlagezeit_setzen(&id, vor_zwei_tagen).await.unwrap();
+    e.rstore
+        .anlagezeit_setzen(&id, vor_zwei_tagen)
+        .await
+        .unwrap();
     assert_eq!(e.projekte.aufbewahrung_recherchen().await.unwrap(), 1);
     assert!(e.dienst.lesen(&id).await.is_err());
     assert_eq!(e.projekte.eintraege(&suite).await.unwrap().len(), 1);
@@ -503,7 +498,10 @@ async fn freigeben_und_laufen(e: &Env, suite: &str) -> String {
         .await;
     assert_eq!(a.status, "freigabe", "{a:?}");
     let offen = e.dienst.freigaben();
-    let h = offen.iter().find(|h| Some(&h.id) == a.recherche_id.as_ref()).unwrap();
+    let h = offen
+        .iter()
+        .find(|h| Some(&h.id) == a.recherche_id.as_ref())
+        .unwrap();
     let alle: Vec<String> = h.queries.iter().map(|q| q.id.clone()).collect();
     let f = e
         .dienst
@@ -550,7 +548,12 @@ async fn web_ist_ohne_verknuepftes_projekt_mit_freigabe_gesperrt() {
     // Unbekanntes Projekt.
     let a = e
         .dienst
-        .starten(FRAGE, "m1", Datenklasse::Personal, Some("prj_unbekannt".into()))
+        .starten(
+            FRAGE,
+            "m1",
+            Datenklasse::Personal,
+            Some("prj_unbekannt".into()),
+        )
         .await;
     assert_eq!(a.status, "fehler");
     assert!(e.suche.anfragen.lock().unwrap().is_empty());
@@ -584,7 +587,10 @@ async fn ab_personal_haelt_der_lauf_an_und_die_teilauswahl_sendet_nur_diese_anfr
     assert!(offen[0].queries.len() >= 2);
     assert_eq!(offen[0].data_class, "PERSONAL");
     assert!(offen[0].expires_in_secs > 0);
-    assert!(offen[0].queries.iter().all(|q| q.hint_class.as_deref() == Some("PERSONAL")));
+    assert!(offen[0]
+        .queries
+        .iter()
+        .all(|q| q.hint_class.as_deref() == Some("PERSONAL")));
 
     let id = offen[0].id.clone();
     let erste = offen[0].queries[0].id.clone();
@@ -604,7 +610,11 @@ async fn ab_personal_haelt_der_lauf_an_und_die_teilauswahl_sendet_nur_diese_anfr
         .unwrap_err();
     assert_eq!(nochmal.code, "recherche.not_found");
     // Das Ergebnis liegt im Projekt und nennt Quellen.
-    let d = e.dienst.sicht(&antwort.recherche_id.unwrap()).await.unwrap();
+    let d = e
+        .dienst
+        .sicht(&antwort.recherche_id.unwrap())
+        .await
+        .unwrap();
     assert_eq!(d.project_id.as_deref(), Some(suite.as_str()));
     assert!(!d.sources.is_empty());
     assert!(d.read_aloud.contains("Quelle"), "{}", d.read_aloud);
@@ -800,21 +810,25 @@ async fn fremde_recherchen_sind_fuer_andere_mandanten_unsichtbar() {
 /// Ein Modell, das nur `antworten` kennt: Planung, Antwort und Satzpruefung entscheidet der Text der
 /// Anweisung (wie ein echter Sprachdienst, der nichts von `satz_gestuetzt` weiss).
 fn rueckruf(lokal: bool, unterstuetzt: bool) -> RueckrufModell {
-    RueckrufModell::neu("rueckruf-test", lokal, move |anweisung: String, _eingabe: String| -> AufrufFut {
-        Box::pin(async move {
-            Ok(if anweisung.starts_with("Du planst") {
-                r#"{"queries":["waermeplanung frist","waermeplanung gemeinden"]}"#.to_string()
-            } else if anweisung.starts_with("Pruefe") {
-                format!(r#"{{"supported":{unterstuetzt}}}"#)
-            } else {
-                serde_json::json!({
+    RueckrufModell::neu(
+        "rueckruf-test",
+        lokal,
+        move |anweisung: String, _eingabe: String| -> AufrufFut {
+            Box::pin(async move {
+                Ok(if anweisung.starts_with("Du planst") {
+                    r#"{"queries":["waermeplanung frist","waermeplanung gemeinden"]}"#.to_string()
+                } else if anweisung.starts_with("Pruefe") {
+                    format!(r#"{{"supported":{unterstuetzt}}}"#)
+                } else {
+                    serde_json::json!({
                     "sentences": [{"text": "Die kommunale Waermeplanung ist bis 2028 verpflichtend.", "citations": [1]}],
                     "follow_ups": ["Wer ist betroffen?", "Gibt es Foerdermittel?", "Was passiert bei Verzug?"]
                 })
                 .to_string()
+                })
             })
-        })
-    })
+        },
+    )
 }
 
 struct RueckrufModelle {
@@ -850,15 +864,35 @@ async fn cloud_modell_bei_personal_wird_abgelehnt_auch_fuer_die_satzpruefung() {
     assert!(modell_erlaubt(false, Datenklasse::Internal));
     assert!(!modell_erlaubt(false, Datenklasse::Personal));
     let cloud = rueckruf(false, true);
-    assert!(cloud.antworten("a", "e", Datenklasse::Personal).await.is_err());
-    assert!(cloud.satz_gestuetzt("s", "a", Datenklasse::Personal).await.is_err());
-    assert!(cloud.satz_gestuetzt("s", "a", Datenklasse::Internal).await.unwrap().is_some());
-    assert!(rueckruf(true, true).antworten("a", "e", Datenklasse::Restricted).await.is_ok());
+    assert!(cloud
+        .antworten("a", "e", Datenklasse::Personal)
+        .await
+        .is_err());
+    assert!(cloud
+        .satz_gestuetzt("s", "a", Datenklasse::Personal)
+        .await
+        .is_err());
+    assert!(cloud
+        .satz_gestuetzt("s", "a", Datenklasse::Internal)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(rueckruf(true, true)
+        .antworten("a", "e", Datenklasse::Restricted)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
 async fn produktionspfad_mit_rueckruf_modell_liefert_gestuetzte_saetze() {
-    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: true, unterstuetzt: true })).await;
+    let e = env_mit(
+        true,
+        Arc::new(RueckrufModelle {
+            lokal: true,
+            unterstuetzt: true,
+        }),
+    )
+    .await;
     let (_o, _m, suite) = verknuepft(&e, true).await;
     let id = freigeben_und_laufen(&e, &suite).await;
     let d = e.dienst.sicht(&id).await.unwrap();
@@ -868,16 +902,36 @@ async fn produktionspfad_mit_rueckruf_modell_liefert_gestuetzte_saetze() {
     assert_eq!(d.model, "rueckruf-test");
 
     // Verneint die Pruefung, gilt der Satz als "ohne Quelle" (nicht als gestuetzt).
-    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: true, unterstuetzt: false })).await;
+    let e = env_mit(
+        true,
+        Arc::new(RueckrufModelle {
+            lokal: true,
+            unterstuetzt: false,
+        }),
+    )
+    .await;
     let (_o, _m, suite) = verknuepft(&e, true).await;
     let id = freigeben_und_laufen(&e, &suite).await;
     let d = e.dienst.sicht(&id).await.unwrap();
-    assert!(d.answer.iter().all(|a| a.unsupported || a.citations.is_empty()), "{:?}", d.answer);
+    assert!(
+        d.answer
+            .iter()
+            .all(|a| a.unsupported || a.citations.is_empty()),
+        "{:?}",
+        d.answer
+    );
 }
 
 #[tokio::test]
 async fn cloud_modell_bei_personal_scheitert_im_lauf_ohne_suche() {
-    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: false, unterstuetzt: true })).await;
+    let e = env_mit(
+        true,
+        Arc::new(RueckrufModelle {
+            lokal: false,
+            unterstuetzt: true,
+        }),
+    )
+    .await;
     let (_o, _m, suite) = verknuepft(&e, true).await;
     let a = e
         .dienst
@@ -896,18 +950,34 @@ async fn start_prueft_serverseitig_dass_das_projekt_zur_besprechung_gehoert() {
     let (_o, m, suite) = verknuepft(&e, true).await;
     // Zweite Besprechung in keinem Projekt, zweites Projekt mit Web.
     let fremd = ready_meeting(&e.store, "Fremde Besprechung", 1_750_000_100).id;
-    let andere = e.projekte.anlegen("Anderes", Klasse::Personal, false).await.unwrap();
+    let andere = e
+        .projekte
+        .anlegen("Anderes", Klasse::Personal, false)
+        .await
+        .unwrap();
     e.projekte.web_freigabe(&andere.id, true).await.unwrap();
 
     let ok = e
         .dienst
-        .starten_fuer(Some(&m), FRAGE, "m", Datenklasse::Personal, Some(suite.clone()))
+        .starten_fuer(
+            Some(&m),
+            FRAGE,
+            "m",
+            Datenklasse::Personal,
+            Some(suite.clone()),
+        )
         .await;
     assert_eq!(ok.status, "freigabe", "{ok:?}");
     for (besprechung, projekt) in [(&fremd, &suite), (&m, &andere.id)] {
         let a = e
             .dienst
-            .starten_fuer(Some(besprechung), FRAGE, "m", Datenklasse::Personal, Some(projekt.clone()))
+            .starten_fuer(
+                Some(besprechung),
+                FRAGE,
+                "m",
+                Datenklasse::Personal,
+                Some(projekt.clone()),
+            )
             .await;
         assert_eq!(a.status, "fehler");
         assert_eq!(a.code.as_deref(), Some("projekt_passt_nicht"));
