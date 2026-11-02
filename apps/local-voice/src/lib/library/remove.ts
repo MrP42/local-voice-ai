@@ -38,6 +38,9 @@ export async function finalizeRemoval(
   scope: RemoveScope,
 ): Promise<void> {
   const r = await commands.libraryPurge(books.map((b) => b.id));
+  // Bleibt das Buch im Papierkorb, bleibt auch sein Text.
+  if (r.status !== "ok") throw new Error(r.error);
+  forgetPending(books);
   for (const book of books) {
     for (const job of pendingJobs(book)) await commands.meetingsDelete(job);
     removeProgress(audioProgressKey(book.id));
@@ -47,10 +50,61 @@ export async function finalizeRemoval(
     }
   }
   await flushProgress();
-  if (r.status !== "ok") throw new Error(r.error);
 }
 
-/** Altlasten im Papierkorb (Absturz im Rückgängig-Fenster) wegräumen. */
+/**
+ * Offene Entfernungen merken: endet die App im Rückgängig-Fenster, holt der
+ * nächste Start das endgültige Löschen nach (samt Text bei „alles“).
+ */
+const PENDING_KEY = "lva.ui.library.pendingRemovals";
+interface Pending {
+  books: LibraryBook[];
+  scope: RemoveScope;
+  /** Zeitpunkt des Entfernens (ms). */
+  at: number;
+}
+function readPending(): Pending[] {
+  try {
+    const raw = window.localStorage.getItem(PENDING_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? (list as Pending[]) : [];
+  } catch {
+    return [];
+  }
+}
+function writePending(list: Pending[]) {
+  try {
+    if (list.length)
+      window.localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+    else window.localStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* ohne Speicher räumt der Kern den Papierkorb nach sieben Tagen */
+  }
+}
+export function rememberPending(books: LibraryBook[], scope: RemoveScope) {
+  writePending([...readPending(), { books, scope, at: Date.now() }]);
+}
+export function forgetPending(books: LibraryBook[]) {
+  const ids = new Set(books.map((b) => b.id));
+  writePending(
+    readPending().filter((p) => !p.books.some((b) => ids.has(b.id))),
+  );
+}
+
+/**
+ * Beim Öffnen: liegengebliebene Entfernungen abschließen, dann Altlasten im
+ * Papierkorb (älter als sieben Tage) wegräumen.
+ */
 export async function purgeStaleTrash(): Promise<void> {
+  // Nur, was außerhalb des Rückgängig-Fensters liegt: ein Bereichswechsel
+  // hängt die Seite neu ein, der Hinweis mit „Rückgängig“ steht dann noch.
+  const due = readPending().filter((p) => Date.now() - (p.at ?? 0) > UNDO_MS + 2000);
+  for (const p of due) {
+    try {
+      await finalizeRemoval(p.books, p.scope);
+    } catch {
+      forgetPending(p.books);
+    }
+  }
   await commands.libraryPurge(null);
 }

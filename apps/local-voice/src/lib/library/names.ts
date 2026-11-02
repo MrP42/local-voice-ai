@@ -47,8 +47,8 @@ export function cleanTitle(title: string): string {
   for (let round = 0; round < 4; round++) {
     const before = s;
     for (const re of NOISE) s = s.replace(re, "");
-    s = s.replace(/[\s,;:–—-]+$/u, "").trim();
     if (s === before) break;
+    s = s.replace(/[\s,;:–—-]+$/u, "").trim();
   }
   // Nur Rauschen? Dann lieber den alten Titel behalten.
   return s || title.trim();

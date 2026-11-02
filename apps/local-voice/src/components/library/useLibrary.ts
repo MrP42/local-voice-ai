@@ -265,7 +265,13 @@ export function useLibrary() {
         }
         // Unmittelbar vor dem Schreiben noch einmal frisch lesen: hat sich
         // inzwischen etwas geändert (Text, Teile, Aufträge), wird verworfen.
-        const latest = (await freshBook(bookId)) ?? book;
+        // Inzwischen entfernt (Papierkorb): nichts schreiben.
+        const fresh = await freshBook(bookId);
+        if (!fresh) {
+          done = true;
+          throw new Superseded();
+        }
+        const latest = fresh;
         const latestTracks = tracksOf(latest.audio);
         const unchanged =
           !!latest.audio &&

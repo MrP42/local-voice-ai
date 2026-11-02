@@ -12,10 +12,19 @@ import { analyzeName } from "../../src/lib/library/audioGroups.ts";
 test("ASIN, ISBN und Format-Rauschen fallen weg (Patricks Bibliothek)", () => {
   const cases: [string, string][] = [
     ["Genesis B0DD7W1VFS LC 128 44100 Stereo", "Genesis"],
-    ["The Technological Re B0DB6CNCKK LC 128 44100 Stereo", "The Technological Re"],
-    ["Der einfache Weg zum B0D37Y6QKC LC 128 44100 Stereo", "Der einfache Weg zum"],
+    [
+      "The Technological Re B0DB6CNCKK LC 128 44100 Stereo",
+      "The Technological Re",
+    ],
+    [
+      "Der einfache Weg zum B0D37Y6QKC LC 128 44100 Stereo",
+      "Der einfache Weg zum",
+    ],
     ["Alles Idioten! 3732455823 LC 128 44100 Stereo", "Alles Idioten!"],
-    ["Wie man Freunde gewi B017XEVWR0 LC 128 44100 Stereo", "Wie man Freunde gewi"],
+    [
+      "Wie man Freunde gewi B017XEVWR0 LC 128 44100 Stereo",
+      "Wie man Freunde gewi",
+    ],
     ["Effi Briest (128 kbps)", "Effi Briest"],
     ["Effi Briest [B0DD7W1VFS]", "Effi Briest"],
     ["Effi Briest 978-3-16-148410-0", "Effi Briest"],

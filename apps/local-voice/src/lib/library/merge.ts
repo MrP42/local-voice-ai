@@ -109,8 +109,7 @@ const listeningOrder = (books: LibraryBook[]) =>
 
 /**
  * Von Hand gewählte Einträge zusammenführen (Mehrfachauswahl): Ziel ist das
- * Buch mit Buchtext, sonst eines mit echten Metadaten (Cover, Autor), sonst
- * das erste in Hörreihenfolge. Alle anderen brauchen ein Hörbuch; sie werden
+ * Buch mit Buchtext, sonst das erste in Hörreihenfolge. Alle anderen brauchen ein Hörbuch; sie werden
  * dessen Teile. Wirft {@link ImportError} mit einer verständlichen Meldung.
  */
 export function planManual(books: LibraryBook[]): {
@@ -129,10 +128,9 @@ export function planManual(books: LibraryBook[]): {
   assertIdle(books);
   const ordered = listeningOrder(books);
   const doc = documents[0] ?? null;
-  const target =
-    doc ??
-    ordered.find((b) => b.cover_source !== "generated" && b.authors.length) ??
-    ordered[0];
+  // Ohne Buchtext ist der erste Teil das Ziel (Hörreihenfolge = Zeitachse);
+  // Reihenfolge lässt sich in der Rückfrage noch ändern.
+  const target = doc ?? ordered.find((b) => b.audio) ?? ordered[0];
   const silent = books.find((b) => b !== target && !b.audio);
   if (silent)
     throw new ImportError(

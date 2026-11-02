@@ -976,6 +976,7 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     if book.title.is_empty() {
         return Err("Ein Buch braucht einen Titel.".into());
     }
+    let created = book.id.is_empty();
     if book.id.is_empty() {
         book.id = fresh_id(&root);
         if book.added_ms <= 0.0 {
@@ -983,6 +984,11 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
         }
     }
     let dir = book_dir(&root, &book.id)?;
+    // Ein bekanntes Buch, dessen Ordner fehlt (Papierkorb, gelöscht), entsteht
+    // nicht als leerer Geist neu: sonst scheitert „Rückgängig“.
+    if !dir.join("buch.json").is_file() && !created {
+        return Err("Das Buch ist nicht mehr in der Bibliothek.".into());
+    }
     if let Some(audio) = &book.audio {
         validate_audio_names(audio)?;
     }
@@ -1103,10 +1109,19 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
             };
             let now = now_ms();
             for entry in entries.flatten() {
+                // Ohne Stempel zählt die Änderungszeit des Ordners (das
+                // Verschieben setzt sie), nie „uralt“.
                 let stamp = std::fs::read_to_string(entry.path().join(TRASH_STAMP))
                     .ok()
                     .and_then(|s| s.trim().parse::<f64>().ok())
-                    .unwrap_or(0.0);
+                    .or_else(|| {
+                        std::fs::metadata(entry.path())
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as f64)
+                    })
+                    .unwrap_or(now);
                 if now - stamp > TRASH_KEEP_MS {
                     let _ = std::fs::remove_dir_all(entry.path());
                 }
@@ -2347,9 +2362,19 @@ mod tests {
     #[test]
     fn merge_takes_transcript_sources_but_never_documents() {
         let root = scratch("merge-transcript");
-        audio_book(&root, "book_1", "Teil 1", legacy("hoerbuch.mp3", None, Some(5.0)));
+        audio_book(
+            &root,
+            "book_1",
+            "Teil 1",
+            legacy("hoerbuch.mp3", None, Some(5.0)),
+        );
         touch(&root.join("book_1/audio/hoerbuch.mp3"), "1");
-        let mut two = audio_book(&root, "book_2", "Teil 2", legacy("hoerbuch.mp3", None, None));
+        let mut two = audio_book(
+            &root,
+            "book_2",
+            "Teil 2",
+            legacy("hoerbuch.mp3", None, None),
+        );
         two.text = Some(TextVersion {
             page_id: "p2".into(),
             origin: "transcript".into(),

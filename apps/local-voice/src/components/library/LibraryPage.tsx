@@ -57,7 +57,9 @@ import {
 } from "@/lib/library/merge";
 import {
   finalizeRemoval,
+  forgetPending,
   purgeStaleTrash,
+  rememberPending,
   restoreBooks,
   trashBooks,
   UNDO_MS,
@@ -213,6 +215,7 @@ export const LibraryPage: React.FC = () => {
     setSelected([]);
   };
   const selectedBooks = (books ?? []).filter((b) => selected.includes(b.id));
+  // Nur Sichtbares bleibt ausgewählt (Suche oder Filter geändert).
   const noisy = useMemo(
     () => (books ?? []).filter((b) => hasTitleNoise(b.title)),
     [books],
@@ -289,6 +292,7 @@ export const LibraryPage: React.FC = () => {
       await reload();
       return;
     }
+    rememberPending(list, scope);
     endSelection();
     await reload();
     const key = list.map((b) => b.id).join(",");
@@ -313,6 +317,7 @@ export const LibraryPage: React.FC = () => {
           onClick: () => {
             undone = true;
             pendingRemovals.current.delete(key);
+            forgetPending(list);
             void restoreBooks(list)
               .then(() => toast(t("library.remove.restored")))
               .catch((e) =>
@@ -327,13 +332,13 @@ export const LibraryPage: React.FC = () => {
   const doClean = async () => {
     setCleanBusy(true);
     try {
-      for (const book of cleaning) {
-        const r = await commands.librarySave({
-          ...book,
-          title: cleanTitle(book.title),
-        });
-        if (r.status !== "ok") throw new Error(r.error);
-      }
+      // Frisch lesen und nur den Titel ändern: eine inzwischen fertige
+      // Transkription bleibt erhalten.
+      for (const book of cleaning)
+        await save(book.id, (fresh) => ({
+          ...fresh,
+          title: cleanTitle(fresh.title),
+        }));
       toast(t("library.clean.done", { count: cleaning.length }));
       setCleaning([]);
       endSelection();
@@ -392,6 +397,14 @@ export const LibraryPage: React.FC = () => {
     views.filter((v) => matchesFilter(v, filter) && matchesSearch(v, query)),
     sort,
   );
+  const shownKey = shown.map((v) => v.book.id).join(",");
+  useEffect(() => {
+    const visible = new Set(shownKey.split(","));
+    setSelected((s) => {
+      const next = s.filter((id) => visible.has(id));
+      return next.length === s.length ? s : next;
+    });
+  }, [shownKey]);
   const continueViews = sortViews(views.filter(isStarted), "recent").slice(
     0,
     3,
