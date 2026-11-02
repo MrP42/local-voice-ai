@@ -9936,31 +9936,6 @@ export type PostProcessProvider = { id: string; label: string; base_url: string;
  * Phase im Ereignis [`TtsProviderPreview`].
  */
 export type PreviewPhase = "started" | "first_audio" | "done" | "cancelled" | "error"
-/**
- * Stand des Korrekturlesens einer Textfassung.
- */
-export type ProofreadInfo = { 
-/**
- * Anbieter und Modell (`anbieter/modell`), nur zur Anzeige.
- */
-model: string; 
-/**
- * Zeitpunkt (Unix-ms).
- */
-at_ms: number; 
-/**
- * Absätze, die korrigiert wurden.
- */
-changed: number; 
-/**
- * Absätze, die die Prüfung im Original gelassen hat.
- */
-rejected: number }
-/**
- * Ergebnis des Korrekturlesens. Die Oberfläche schreibt den Text in die Seite
- * und merkt sich die Zähler an der Textfassung.
- */
-export type ProofreadResult = { text: string; changed: number; rejected: number; blocks: number; cached: number; model: string; at_ms: number }
 export type ProgressEntry = { key: string; 
 /**
  * `None` löscht den Eintrag.
@@ -10063,6 +10038,31 @@ title: string | null;
  * von einem Ablauf; `name` ist der Name seines Zugangs.
  */
 agent?: boolean }
+/**
+ * Stand des Korrekturlesens einer Textfassung.
+ */
+export type ProofreadInfo = { 
+/**
+ * Anbieter und Modell (`anbieter/modell`), nur zur Anzeige.
+ */
+model: string; 
+/**
+ * Zeitpunkt (Unix-ms).
+ */
+at_ms: number; 
+/**
+ * Absätze, die korrigiert wurden.
+ */
+changed: number; 
+/**
+ * Absätze, die die Prüfung im Original gelassen hat.
+ */
+rejected: number }
+/**
+ * Ergebnis des Korrekturlesens. Die Oberfläche schreibt den Text in die Seite
+ * und merkt sich die Zähler an der Textfassung.
+ */
+export type ProofreadResult = { text: string; changed: number; rejected: number; blocks: number; cached: number; model: string; at_ms: number }
 /**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */
