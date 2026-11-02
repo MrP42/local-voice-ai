@@ -634,6 +634,11 @@
     min-height: 44px;
     min-width: 44px;
   }
+  .library-add-button.lv-btn,
+  .library-bar__search input,
+  .library-bar__search > * {
+    min-height: 44px;
+  }
   .library-sort .app-select__control {
     min-height: 44px;
   }

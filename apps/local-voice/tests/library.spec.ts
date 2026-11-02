@@ -489,6 +489,7 @@ test("Ablegen auf ein Buch ohne Audio: Hörbuch wird ohne Rückfrage angehängt"
   await expect(
     page.getByTestId("library-card").filter({ hasText: "Effi Briest" }),
   ).toContainText("Hörbuch");
+  await page.waitForTimeout(500);
   await page.screenshot({ path: shot("bibliothek-drop-angehaengt-1440.png") });
 });
 
@@ -571,7 +572,18 @@ test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async
   await dragTo(page, at, ["C:/Hoerbuecher/Franz Kafka - Der Prozess.mp3"]);
   await expect.poll(async () => (await calls(page, "library_audio_import")).length).toBe(1);
   await expect(page.getByText("in die Bibliothek aufgenommen")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Zur Bibliothek" })).toBeVisible();
+  const action = page.getByRole("button", { name: "Zur Bibliothek" });
+  await expect(action).toBeVisible();
+  // Toast samt Aktion vollständig über der Statusleiste.
+  const status = (await page.locator(".workspace-status").boundingBox())!;
+  await expect
+    .poll(async () => {
+      const toast = (await page.locator("[data-sonner-toast]").first().boundingBox())!;
+      return toast.y + toast.height <= status.y;
+    })
+    .toBe(true);
+  expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(28);
+  await page.waitForTimeout(500);
   await page.screenshot({ path: shot("vorlesen-drop-hoerbuch-toast-1440.png") });
 });
 
@@ -581,6 +593,8 @@ test("390 px: Filter-Chips, Sortierung und Menüknöpfe haben Trefferflächen �
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   const targets = [
+    page.getByTestId("library-add"),
+    page.locator(".library-bar__search input"),
     ...(await page.locator(".library-chip").all()),
     page.locator(".library-sort .app-select__control"),
     ...(await page.locator(".library-card .library-touch button").all()),

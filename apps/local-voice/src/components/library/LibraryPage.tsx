@@ -311,6 +311,7 @@ export const LibraryPage: React.FC = () => {
           variant="primary"
           icon={<Plus size={16} aria-hidden="true" />}
           onClick={() => setAdding(true)}
+          className="library-add-button"
           data-testid="library-add"
         >
           {t("library.add")}
