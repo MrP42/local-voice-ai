@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { hashText } from "../src/lib/library/proofread";
 
 // Korrekturlesen des Hörbuch-Transkripts (lva#208 B): Auto-Start nach der
@@ -939,6 +940,7 @@ test("Touch-Ziele bei 390 px: Knöpfe in Feld und Dialogen mindestens 44 × 44",
   await page.goto("/");
   const detail = await openVersions(page);
   const panel = detail.getByTestId("proofread-panel");
+  const measured: string[] = [];
   const big = async (
     locator: import("@playwright/test").Locator,
     what: string,
@@ -947,10 +949,15 @@ test("Touch-Ziele bei 390 px: Knöpfe in Feld und Dialogen mindestens 44 × 44",
     expect(count, `${what}: keine Knöpfe gefunden`).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
       const box = await locator.nth(i).boundingBox();
-      const name = (await locator.nth(i).textContent())?.trim() || "(Symbol)";
+      const name =
+        (await locator.nth(i).textContent())?.trim() ||
+        `Symbol „${await locator.nth(i).getAttribute("aria-label")}“`;
       expect(box, `${what} „${name}“ ohne Fläche`).not.toBeNull();
       expect(box!.width, `${what} „${name}“ Breite`).toBeGreaterThanOrEqual(44);
       expect(box!.height, `${what} „${name}“ Höhe`).toBeGreaterThanOrEqual(44);
+      measured.push(
+        `| ${what} | ${name} | ${Math.round(box!.width)} | ${Math.round(box!.height)} |`,
+      );
     }
   };
   await panel.scrollIntoViewIfNeeded();
@@ -987,6 +994,42 @@ test("Touch-Ziele bei 390 px: Knöpfe in Feld und Dialogen mindestens 44 × 44",
     page.getByRole("dialog").last().getByRole("button"),
     "Wiederherstellen",
   );
+  // Beleg für die Abnahme: gemessene Flächen als Text neben den Bildern.
+  writeFileSync(
+    shot("touchziele-390.md"),
+    [
+      "# Touch-Ziele Korrekturlesen bei 390 px (Playwright boundingBox)",
+      "",
+      "Erzeugt vom Test „Touch-Ziele bei 390 px“ in tests/library-proofread.spec.ts. Mindestmaß 44 × 44 px.",
+      "",
+      "| Bereich | Knopf | Breite px | Höhe px |",
+      "|---|---|---|---|",
+      ...measured,
+      "",
+    ].join("\n"),
+  );
+});
+
+test("Ergebnis ohne Korrekturbedarf: Absätze ohne Änderung werden eigens genannt", async ({
+  page,
+}) => {
+  const { books, pages } = corrected(FIXED_TEXT, {
+    ...INFO,
+    changed: 2,
+    rejected: 0,
+    unchanged: 5,
+  });
+  await setup(page, books, pages);
+  await seedMaterial(page);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/");
+  const detail = await openVersions(page);
+  const panel = detail.getByTestId("proofread-panel");
+  await expect(panel.getByTestId("proofread-unchanged")).toBeVisible();
+  await panel.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: shot("lektorat-ohne-korrekturbedarf-1440-hell.png"),
+  });
 });
 
 test("Datenschutz: lokaler Auto-Start gilt nie als Einwilligung für einen Anbieter im Netz", async ({
