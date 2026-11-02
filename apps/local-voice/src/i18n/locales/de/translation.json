@@ -1044,6 +1044,7 @@
         "dynamics": "Dynamik",
         "effects": "Effekte",
         "pauses": "Pausen",
+        "pace": "Tempo",
         "special": "Spezial"
       },
       "customPlaceholder": "Eigenes Tag…",
@@ -1291,6 +1292,7 @@
       "pausesOnly": "{{engine}} setzt keine Emotions-Tags um. Nur Pausen stehen in eckigen Klammern, genau dort, wo sie zu hören sein sollen:",
       "example1": "[whisper] Komm näher …",
       "example2": "Er öffnete die Tür. [short pause] Nichts.",
+      "examplePace": "[slower] Dann wurde es ganz still im Haus.",
       "example3": "[laughing] Das darf doch nicht wahr sein!"
     },
     "serverStartTitle": "Fish-Speech-Server starten?",

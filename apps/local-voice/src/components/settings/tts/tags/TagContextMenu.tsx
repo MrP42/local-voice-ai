@@ -24,7 +24,9 @@ import {
   TAG_REGISTRY,
   localizedLabel,
   searchTags,
+  worksWithoutStyleTags,
 } from "@/lib/tags/registry";
+import { useEngineCaps } from "../useEngineCaps";
 import type { TagDef } from "@/lib/tags/types";
 
 interface TagContextMenuProps {
@@ -111,7 +113,9 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
   const uiLang = i18n.language?.split("-")[0] ?? "en";
   const { getSetting } = useSettings();
   const favoriteIds = getSetting("tts_tag_favorites") ?? [];
-  const allowed = (tag: TagDef) => !pausesOnly || tag.category === "pauses";
+  const { paceTags } = useEngineCaps();
+  const allowed = (tag: TagDef) =>
+    !pausesOnly || worksWithoutStyleTags(tag, paceTags);
   const favorites = useMemo(
     () =>
       TAG_REGISTRY.filter(
@@ -119,7 +123,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
       ),
     // Der Settings-Hook liefert je Render ein frisches Array — der Inhalt
     // zählt, nicht die Identität.
-    [favoriteIds.join("|"), pausesOnly],
+    [favoriteIds.join("|"), pausesOnly, paceTags],
   );
 
   const [subOpen, setSubOpen] = useState(false);
@@ -131,7 +135,7 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
             .filter(allowed)
             .slice(0, MAX_MENU_RESULTS)
         : [],
-    [query, uiLang, pausesOnly],
+    [query, uiLang, pausesOnly, paceTags],
   );
 
   const menuRef = useRef<HTMLDivElement>(null);
@@ -360,7 +364,10 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                     </>
                   )}
                   {TAG_CATEGORIES.filter(
-                    (category) => !pausesOnly || category.id === "pauses",
+                    (category) =>
+                      !pausesOnly ||
+                      category.id === "pauses" ||
+                      (paceTags && category.id === "pace"),
                   ).map((category) => (
                     <React.Fragment key={category.id}>
                       <p className="px-2 pt-1 pb-0.5 text-xs font-semibold text-text/40">

@@ -95,6 +95,8 @@ pub fn engine_setting_for(provider_id: &str) -> String {
 #[derive(Clone, Copy, Debug)]
 pub struct EngineCaps {
     pub style_tags: bool,
+    /// Tempo-Tags (`[slower]`/`[faster]`) bleiben im Sprechtext, auch ohne `style_tags`.
+    pub pace_tags: bool,
     pub cloning: bool,
     pub voice_switching: bool,
     /// Heute überall false; vorbereitet für Engines, die Häppchen liefern.
@@ -107,6 +109,8 @@ pub struct EngineCaps {
 /// versteht Stil-Tags, encodiert Exporte direkt — und belegt dafür die GPU.
 pub const FISH_CAPS: EngineCaps = EngineCaps {
     style_tags: true,
+    // Fish bekommt jedes Tag ohnehin als Text (Freitext-Anweisung).
+    pace_tags: false,
     cloning: true,
     voice_switching: true,
     streaming: false,

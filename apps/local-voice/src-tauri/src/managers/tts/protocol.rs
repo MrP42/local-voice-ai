@@ -57,6 +57,65 @@ pub fn strip_tag_spans(text: &str) -> String {
     tidy_spaces(&out)
 }
 
+/// Wie [`strip_tag_spans`], lässt aber Tempo-Tags ([`pace_delta`]) stehen —
+/// für Engines mit `pace_tags` (Phonon), deren Adapter sie selbst auswertet.
+pub fn strip_tag_spans_keep_pace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for span in tag_spans(text) {
+        if pace_delta(&text[span.start + 1..span.end - 1]).is_some() {
+            continue;
+        }
+        out.push_str(&text[last..span.start]);
+        last = span.end;
+    }
+    out.push_str(&text[last..]);
+    tidy_spaces(&out)
+}
+
+/// Größter Betrag der Tempo-Änderung. `docs/cli.md` (ptts v0.4.2): „Small
+/// values work best; large ones make speech less reliable.“
+pub const PACE_DELTA_MAX: f32 = 0.2;
+
+/// Schritt eines Tempo-Tags. Positiv = langsamer (`duration_delta` > 0 dehnt).
+const PACE_STEP: f32 = 0.12;
+
+/// Tempo-Änderung eines Tags, oder `None` für jedes andere Tag. Englische
+/// Namen (wie die Registry sie einfügt) und deutsche Aliase, getrimmt und
+/// case-insensitiv.
+pub fn pace_delta(inner: &str) -> Option<f32> {
+    match inner.trim().to_lowercase().as_str() {
+        "slower" | "slowly" | "langsamer" | "langsam" => Some(PACE_STEP),
+        "faster" | "quickly" | "schneller" | "schnell" => Some(-PACE_STEP),
+        _ => None,
+    }
+}
+
+/// Entfernt die Tempo-Tags eines Satzes und liefert ihre Summe, gedeckelt auf
+/// ±[`PACE_DELTA_MAX`]. `None`, wenn der Satz keines trägt oder sie sich
+/// aufheben — dann bleibt der Aufruf exakt wie bisher.
+pub fn take_pace(text: &str) -> (String, Option<f32>) {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut sum = 0.0f32;
+    let mut found = false;
+    for span in tag_spans(text) {
+        if let Some(d) = pace_delta(&text[span.start + 1..span.end - 1]) {
+            sum += d;
+            found = true;
+            out.push_str(&text[last..span.start]);
+            last = span.end;
+        }
+    }
+    if !found {
+        return (text.to_string(), None);
+    }
+    out.push_str(&text[last..]);
+    let delta = sum.clamp(-PACE_DELTA_MAX, PACE_DELTA_MAX);
+    let delta = (delta * 100.0).round() / 100.0;
+    (tidy_spaces(&out), (delta != 0.0).then_some(delta))
+}
+
 /// Entfernt alle `<Name>`/`<Name:Stil>`-Kandidaten — für Engines ohne
 /// Stimmwechsel (Piper): dort kann kein Marker schalten, also darf auch
 /// keiner gesprochen werden, bekannt oder nicht.
@@ -747,6 +806,11 @@ fn pause_millis(inner: &str) -> Option<u32> {
     }
 }
 
+/// Ist der Klammerinhalt ein Pausen-Tag (die App fügt Stille ein)?
+pub fn is_pause_tag(inner: &str) -> bool {
+    pause_millis(inner).is_some()
+}
+
 /// Zerlegt Vorlesetext an Pausen-Tags in Sprech- und Stille-Abschnitte.
 ///
 /// Eine Pause ist Stille definierter Länge — dafür braucht es kein
@@ -1265,6 +1329,31 @@ patrick: Hi.",
                 SpeechPart::Speak("Und weiter.".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn tempo_tags_werden_zu_duration_delta() {
+        assert_eq!(pace_delta("slower"), Some(PACE_STEP));
+        assert_eq!(pace_delta(" Schneller "), Some(-PACE_STEP));
+        assert_eq!(pace_delta("pause"), None);
+        assert_eq!(
+            take_pace("[slower] Es war still im Haus."),
+            ("Es war still im Haus.".to_string(), Some(0.12))
+        );
+        assert_eq!(take_pace("Ohne Tag."), ("Ohne Tag.".to_string(), None));
+        // Gedeckelt: drei Schritte langsamer ergeben höchstens 0,2.
+        assert_eq!(take_pace("[slower][slower][slower] Ja.").1, Some(PACE_DELTA_MAX));
+        // Aufgehoben: kein `--condition`.
+        assert_eq!(take_pace("[slower] Ja [faster].").1, None);
+    }
+
+    #[test]
+    fn phonon_behaelt_nur_tempo_tags() {
+        assert_eq!(
+            strip_tag_spans_keep_pace("[sad] [slower] Es regnete [whisper] leise."),
+            "[slower] Es regnete leise."
+        );
+        assert_eq!(strip_tag_spans("[slower] Ja."), "Ja.");
     }
 
     #[test]

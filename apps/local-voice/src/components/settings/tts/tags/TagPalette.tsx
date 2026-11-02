@@ -23,7 +23,9 @@ import {
   searchTags,
   tagClass,
   tagInsertFor,
+  worksWithoutStyleTags,
 } from "@/lib/tags/registry";
+import { useEngineCaps } from "../useEngineCaps";
 import { useTagLanguage } from "./tagLanguage";
 import type { TagCategoryId, TagDef } from "@/lib/tags/types";
 import { TagChip } from "./TagChip";
@@ -201,6 +203,7 @@ export const TagPalette: React.FC<{
   /** Name der Engine fuer den Hinweis bei `pausesOnly`. */
   engineLabel?: string;
 }> = ({ onInsert, onDragInsert, uiLang, pausesOnly = false, engineLabel }) => {
+  const { paceTags } = useEngineCaps();
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
 
@@ -336,11 +339,11 @@ export const TagPalette: React.FC<{
   const visibleTags: ChipItem[] = useMemo(() => {
     const trimmedQuery = query.trim();
     if (pausesOnly) {
-      const pauses = TAG_REGISTRY.filter((tag) => tag.category === "pauses");
+      // Pausen wirken immer; Tempo nur bei `pace_tags` (Phonon).
+      const works = (tag: TagDef) => worksWithoutStyleTags(tag, paceTags);
+      const pauses = TAG_REGISTRY.filter(works);
       const found = trimmedQuery
-        ? searchTags(trimmedQuery, uiLang).filter(
-            (tag) => tag.category === "pauses",
-          )
+        ? searchTags(trimmedQuery, uiLang).filter(works)
         : pauses;
       return found.map((tag) => toChipItem(tag, uiLang, tagLang));
     }
@@ -375,7 +378,16 @@ export const TagPalette: React.FC<{
     return TAG_REGISTRY.filter((tag) => tag.category === activeTab).map((tag) =>
       toChipItem(tag, uiLang, tagLang),
     );
-  }, [query, uiLang, tagLang, activeTab, favorites, recent, pausesOnly]);
+  }, [
+    query,
+    uiLang,
+    tagLang,
+    activeTab,
+    favorites,
+    recent,
+    pausesOnly,
+    paceTags,
+  ]);
 
   const emptyMessage = query.trim()
     ? t("tts.tags.emptySearch")

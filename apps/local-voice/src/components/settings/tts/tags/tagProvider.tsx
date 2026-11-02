@@ -8,6 +8,7 @@ import {
   resolveTag,
   searchTags,
   tagClass,
+  worksWithoutStyleTags,
 } from "@/lib/tags/registry";
 import { tagTextFor, useTagLanguage } from "./tagLanguage";
 import { useEngineCaps } from "../useEngineCaps";
@@ -280,6 +281,7 @@ export function useTagProvider(): ChipProvider {
   // sie jedes Tag ausser den Pausen beim Vorlesen weg.
   const caps = useEngineCaps();
   const styleTags = caps.styleTags;
+  const paceTags = caps.paceTags;
   const engine = caps.kind;
   const engineLabel = caps.providerLabel ?? "";
 
@@ -300,7 +302,7 @@ export function useTagProvider(): ChipProvider {
         void klass;
         return {
           label: def
-            ? !styleTags && def.category !== "pauses"
+            ? !styleTags && !worksWithoutStyleTags(def, paceTags)
               ? `${localizedLabel(def, uiLang)} — ${
                   engine === "piper"
                     ? t("tts.tags.piperIgnores", { tag: inner })
@@ -316,6 +318,6 @@ export function useTagProvider(): ChipProvider {
       },
       popover: (m, api) => <TagChipPopover match={m} api={api} />,
     }),
-    [t, uiLang, styleTags, engine, engineLabel],
+    [t, uiLang, styleTags, paceTags, engine, engineLabel],
   );
 }

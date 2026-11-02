@@ -550,8 +550,15 @@ impl TtsCore {
     ///   Sprechermarker bleiben dabei unberuehrt.
     fn spoken_text(engine: &EngineImpl, text: &str) -> String {
         let tagless;
-        let text = if engine.caps().style_tags {
+        let caps = engine.caps();
+        let text = if caps.style_tags {
             text
+        } else if caps.pace_tags {
+            // Phonon: Tempo-Tags bleiben stehen (Adapter macht daraus
+            // `duration_delta`), alle anderen Tags fallen weg. Sie gehen damit
+            // auch in den Cache-Schluessel ein: langsamer gesprochen ist anderes Audio.
+            tagless = protocol::strip_tag_spans_keep_pace(text);
+            tagless.as_str()
         } else {
             tagless = protocol::strip_tag_spans(text);
             tagless.as_str()
@@ -6337,6 +6344,7 @@ mod tests {
         fn caps(&self) -> EngineCaps {
             EngineCaps {
                 style_tags: self.style_tags.load(Ordering::SeqCst),
+                pace_tags: false,
                 cloning: false,
                 voice_switching: self.voice_switching.load(Ordering::SeqCst),
                 streaming: false,

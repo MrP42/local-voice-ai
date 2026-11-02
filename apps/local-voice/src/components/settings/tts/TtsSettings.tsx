@@ -3259,7 +3259,8 @@ export const TtsSettings = () => {
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
-          pausesOnly
+          // Mit Tempo-Tags (Phonon) setzt die KI Pausen und Tempo: das wirkt.
+          pausesOnly && !engineCaps.paceTags
             ? t("tts.autotag.noStyleTags", {
                 engine: engineCaps.providerLabel ?? "",
               })
@@ -3478,6 +3479,13 @@ export const TtsSettings = () => {
                         {t("tts.writingRules.example2")}
                       </code>
                     </li>
+                    {pausesOnly && engineCaps.paceTags && (
+                      <li>
+                        <code className="rounded bg-logo-primary/15 px-1 text-text/70">
+                          {t("tts.writingRules.examplePace")}
+                        </code>
+                      </li>
+                    )}
                     {!pausesOnly && (
                       <li>
                         <code className="rounded bg-logo-primary/15 px-1 text-text/70">
@@ -3562,6 +3570,7 @@ export const TtsSettings = () => {
                     findings={scriptFindings}
                     speakers={speakers}
                     engine={scriptEngine}
+                    paceTags={engineCaps.paceTags}
                     uiLang={uiLang}
                     actions={scriptActions}
                     onClose={() => setPanelOpen(false)}

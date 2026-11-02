@@ -1044,6 +1044,7 @@
         "dynamics": "Dynamics",
         "effects": "Effects",
         "pauses": "Pauses",
+        "pace": "Pace",
         "special": "Special"
       },
       "customPlaceholder": "Custom tag…",
@@ -1291,6 +1292,7 @@
       "pausesOnly": "{{engine}} does not support emotion tags. Only pauses go in square brackets, exactly where they should be heard:",
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",
+      "examplePace": "[slower] Then the house fell completely silent.",
       "example3": "[laughing] You can't be serious!"
     },
     "serverStartTitle": "Start the Fish Speech server?",

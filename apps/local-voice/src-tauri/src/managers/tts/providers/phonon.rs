@@ -85,6 +85,7 @@ use super::contract::{
     SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, UseSubject, VoiceDescriptor,
 };
 use crate::managers::tts::phonon_models;
+use crate::managers::tts::protocol;
 use crate::managers::tts::phonon_voices;
 use crate::process_guard::{self, ProcessGuard};
 
@@ -1310,7 +1311,13 @@ impl PhononProvider {
         }
     }
 
-    fn synth_args(&self, out: &Path, text: &str, voice: Option<&str>) -> Vec<OsString> {
+    fn synth_args(
+        &self,
+        out: &Path,
+        text: &str,
+        voice: Option<&str>,
+        pace: Option<f32>,
+    ) -> Vec<OsString> {
         let mut a: Vec<OsString> = vec![
             "--model".into(),
             self.cfg.model.trim().into(),
@@ -1328,6 +1335,11 @@ impl PhononProvider {
         if let Some(n) = self.cfg.threads {
             a.push("--threads".into());
             a.push(n.to_string().into());
+        }
+        // Tempo-Tag des Satzes (`[slower]`/`[faster]`, siehe `protocol::take_pace`).
+        if let Some(d) = pace {
+            a.push("--condition".into());
+            a.push(format!("duration_delta={d}").into());
         }
         a.push(text.into());
         a.push("-o".into());
@@ -1367,9 +1379,10 @@ impl PhononProvider {
         exe: &Path,
         text: &str,
         voice: Option<&str>,
+        pace: Option<f32>,
     ) -> Result<AudioClip, TtsError> {
         let run = self
-            .run(exe, |out| self.synth_args(out, text, voice))
+            .run(exe, |out| self.synth_args(out, text, voice, pace))
             .await?;
         if !run.status.success() {
             return Err(self.classify_failure(&run));
@@ -1509,6 +1522,8 @@ impl TtsProvider for PhononProvider {
                 .map(String::from)
                 .to_vec(),
                 style_tags: false,
+                // Tempo je Satz über `--condition duration_delta` (docs/cli.md v0.4.2).
+                pace_tags: true,
                 // `--voice` je Aufruf; die Liste ist der Ordner `voices/` des Modells.
                 voice_switching: true,
             },
@@ -1652,7 +1667,9 @@ impl TtsProvider for PhononProvider {
                 return p.synthesize(text, &o, cancel).await;
             }
             let exe = self.check_ready().map_err(|p| p.error)?;
-            let text = prepare_text(text)?;
+            // Tempo-Tags gehen als `duration_delta` an ptts, nie als Text.
+            let (text, pace) = protocol::take_pace(text);
+            let text = prepare_text(&text)?;
             // Ohne Netzfreigabe lädt `ptts` keine Stimme nach: Katalognamen scheitern
             // hier, ohne Prozessstart.
             if let Some(v) = voice.as_deref() {
@@ -1666,7 +1683,7 @@ impl TtsProvider for PhononProvider {
                 cancel,
                 opts.timeout,
                 "Phonon",
-                self.synth_once(&exe, &text, voice.as_deref()),
+                self.synth_once(&exe, &text, voice.as_deref(), pace),
             )
             .await
         })
@@ -1823,6 +1840,27 @@ mod tests {
         assert!(h.hint.as_deref().unwrap().contains("xn-ptts"));
         assert!(h.hint.as_deref().unwrap().contains("Modellseite"));
         contract_suite(Arc::new(p), ContractExpect::unavailable()).await;
+    }
+
+    // ---- Tempo je Satz ------------------------------------------------------
+
+    #[test]
+    fn tempo_tag_wird_zu_duration_delta_und_nie_vorgelesen() {
+        let p = PhononProvider::new(PhononConfig::default());
+        assert!(p.descriptor().caps.pace_tags);
+        let (text, pace) = protocol::take_pace("[slower] Es war einmal.");
+        let args: Vec<String> = p
+            .synth_args(Path::new("out.wav"), &text, None, pace)
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let at = args.iter().position(|a| a == "--condition").expect("--condition fehlt");
+        assert_eq!(args[at + 1], "duration_delta=0.12");
+        assert!(args.contains(&"Es war einmal.".to_string()));
+        assert!(!args.iter().any(|a| a.contains("[slower]")));
+        // Ohne Tag bleibt der Aufruf wie bisher.
+        let plain = p.synth_args(Path::new("out.wav"), "Es war einmal.", None, None);
+        assert!(!plain.iter().any(|a| a == "--condition"));
     }
 
     // ---- Beschreibung und Lizenz --------------------------------------------

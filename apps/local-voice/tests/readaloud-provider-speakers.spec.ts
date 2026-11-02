@@ -20,6 +20,8 @@ type Cfg = {
   twoPages?: boolean;
   /** Seite 2 enthält einen Sprecher-Marker (<Nele>). */
   markers?: boolean;
+  /** Phonon meldet `pace_tags` (Tempo je Satz). Vorgabe: nein (ältere Fassung). */
+  pace?: boolean;
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -109,7 +111,11 @@ async function setup(page: Page, cfg: Cfg) {
           },
         ]
       : [];
-    const caps = (styleTags: boolean, voiceSwitching: boolean) => ({
+    const caps = (
+      styleTags: boolean,
+      voiceSwitching: boolean,
+      paceTags = false,
+    ) => ({
       languages: ["de"],
       streaming: "sentence",
       formats: ["wav"],
@@ -119,6 +125,7 @@ async function setup(page: Page, cfg: Cfg) {
       platforms: ["windows-x64"],
       style_tags: styleTags,
       voice_switching: voiceSwitching,
+      pace_tags: paceTags,
     });
     const entry = (id: string, label: string, c: unknown) => ({
       descriptor: { id, label, tier: "experimental", opt_in: true, caps: c },
@@ -175,7 +182,11 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "tts_providers_list")
             return [
               entry("fish", "Fish Speech", caps(true, true)),
-              entry("phonon", "Phonon", caps(false, switching)),
+              entry(
+                "phonon",
+                "Phonon",
+                caps(false, switching, cfg.pace === true),
+              ),
             ];
           if (cmd === "tts_provider_voice_options") return options;
           // Hoerproben: Standardstimme und Nele fertig, Anton entsteht noch.
@@ -435,7 +446,9 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
   await expect(
     page.getByRole("menuitem", { name: /Pause/ }).first(),
   ).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(
+    0,
+  );
   await page.keyboard.press("Escape");
 
   // Die Schreibregeln erklären nur Pausen, keine Emotions-Tags.
@@ -452,6 +465,34 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
     "title",
     /Phonon setzt keine Stil-Tags um/,
   );
+});
+
+test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", pace: true });
+  await gotoReadAloud(page);
+  await editorOf(page).fill("Ein Satz.");
+  await openTagMenu(page);
+  // Pausen und Tempo sind da, Gefühle weiterhin nicht.
+  await expect(
+    page.getByRole("menuitem", { name: /Pause/ }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /Langsamer/ }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Escape");
+
+  const rules = await writingRules(page);
+  await expect(rules).toContainText("[slower]");
+  await expect(rules).not.toContainText("[whisper]");
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByTestId("autotag-open")).toBeEnabled();
 });
 
 test("Phonon ohne Stimmwechsel: keine Sprecher im Skript", async ({ page }) => {
@@ -779,7 +820,9 @@ test("Sprecher auf allen Seiten ersetzen: „Ersetze“ bietet nur vorkommende S
   await expect(from.locator("option")).toHaveText(["Anton", "Nele"]);
   await expect(from).toHaveValue(/./);
   expect(
-    await from.evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.text),
+    await from.evaluate(
+      (el) => (el as HTMLSelectElement).selectedOptions[0]?.text,
+    ),
   ).toBe("Anton");
   // „durch“ bietet weiter alle Stimmen an.
   await expect(
