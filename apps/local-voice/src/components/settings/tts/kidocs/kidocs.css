@@ -294,3 +294,152 @@
     height: 100%;
   }
 }
+
+/* Kurzbuch (lva#205): Überblick neben dem Lesetext; ist der Bereich schmal
+   (Seiten- und Werkzeugspalte offen, Mobil), steht er begrenzt darüber. */
+.kurzbuch-host {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.kurzbuch {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.kurzbuch > * {
+  min-width: 0;
+}
+.kurzbuch__reader {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+@container (max-width: 44rem) {
+  .kurzbuch {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .kurzbuch__panel {
+    max-height: min(22rem, 45vh);
+  }
+  .kurzbuch__panel .kidocs__meta,
+  .kurzbuch__title {
+    display: none;
+  }
+  .kurzbuch__panel .kurzbuch__toggle {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+  .kurzbuch__panel:not(.kurzbuch__panel--open) .kurzbuch__more {
+    display: none;
+  }
+}
+.kurzbuch__toggle {
+  display: none;
+}
+.kurzbuch__more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kurzbuch__panel > * {
+  flex-shrink: 0;
+}
+.kurzbuch__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 25%, transparent);
+  border-radius: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.kurzbuch__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.kurzbuch__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kurzbuch__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.kurzbuch__main {
+  width: 100%;
+}
+.kurzbuch__about {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.kurzbuch__label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.kurzbuch__who {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.875rem;
+  list-style: disc;
+}
+.kurzbuch__toc {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  border-top: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+}
+.kurzbuch__item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--color-mid-gray) 20%, transparent);
+  font-size: 0.875rem;
+  line-height: 1.3;
+}
+.kurzbuch__item--on {
+  background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-logo-primary);
+}
+.kurzbuch__num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kurzbuch__item--on .kurzbuch__num {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.kurzbuch__done {
+  color: var(--color-success, #107c10);
+}
+.kurzbuch__text {
+  overflow-wrap: anywhere;
+}
+.kurzbuch__text b {
+  font-weight: 600;
+}

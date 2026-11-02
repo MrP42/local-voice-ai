@@ -48,14 +48,14 @@ impl DigestCache {
         h.finalize().iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    fn get(&self, key: &str) -> Option<String> {
+    pub(crate) fn get(&self, key: &str) -> Option<String> {
         let path = self.dir.as_ref()?.join(format!("{key}.md"));
         std::fs::read_to_string(path)
             .ok()
             .filter(|s| !s.trim().is_empty())
     }
 
-    fn put(&self, key: &str, text: &str) {
+    pub(crate) fn put(&self, key: &str, text: &str) {
         let Some(dir) = &self.dir else { return };
         if std::fs::create_dir_all(dir).is_err() {
             return;
@@ -162,8 +162,83 @@ pub fn final_prompt(
         body = join_parts(parts),
     )
 }
+/// Ein Teil der Quelle: Kapitel, Zwischenfassung oder verdichtete Gruppe.
+/// `chapters`: erstes und letztes Kapitel (Index), das der Teil abdeckt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Part {
+    pub label: String,
+    pub text: String,
+    pub chapters: (usize, usize),
+}
 
-fn check(cancel: &AtomicBool) -> Result<(), String> {
+impl Part {
+    fn size(&self) -> usize {
+        self.label.chars().count() + self.text.chars().count()
+    }
+}
+
+/// Zeichen aller Teile samt Bezeichnungen.
+pub fn size(parts: &[Part]) -> usize {
+    parts.iter().map(Part::size).sum()
+}
+
+/// Bezeichnung und Text für die Prompts.
+pub fn pairs(parts: &[Part]) -> Vec<(String, String)> {
+    parts
+        .iter()
+        .map(|p| (p.label.clone(), p.text.clone()))
+        .collect()
+}
+
+/// Die Kapitel als Teile, mit Seitenbereich in der Bezeichnung.
+pub fn chapter_parts(sections: &[Section]) -> Vec<Part> {
+    sections
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Part {
+            label: s.label(i),
+            text: s.text.clone(),
+            chapters: (i, i),
+        })
+        .collect()
+}
+
+/// Fortschritt in Schritten; die Gesamtzahl kann wachsen oder sich nach der
+/// Gliederung auf die tatsächliche Zahl einstellen.
+pub struct Steps<'a> {
+    pub done: usize,
+    pub total: usize,
+    report: &'a (dyn Fn(usize, usize) + Send + Sync),
+}
+
+impl<'a> Steps<'a> {
+    pub fn new(total: usize, report: &'a (dyn Fn(usize, usize) + Send + Sync)) -> Self {
+        report(0, total);
+        Self {
+            done: 0,
+            total,
+            report,
+        }
+    }
+
+    pub fn add(&mut self, n: usize) {
+        self.total += n;
+        (self.report)(self.done, self.total);
+    }
+
+    /// Noch `n` Schritte bis zum Ende.
+    pub fn remaining(&mut self, n: usize) {
+        self.total = self.done + n;
+        (self.report)(self.done, self.total);
+    }
+
+    pub fn step(&mut self) {
+        self.done += 1;
+        (self.report)(self.done, self.total);
+    }
+}
+
+pub(crate) fn check(cancel: &AtomicBool) -> Result<(), String> {
     if cancel.load(Ordering::SeqCst) {
         Err(CANCELLED.into())
     } else {
@@ -172,11 +247,11 @@ fn check(cancel: &AtomicBool) -> Result<(), String> {
 }
 
 /// Teile in Gruppen, die jeweils höchstens `limit` Zeichen haben.
-fn groups(parts: Vec<(String, String)>, limit: usize) -> Vec<Vec<(String, String)>> {
-    let mut out: Vec<Vec<(String, String)>> = Vec::new();
+fn groups(parts: Vec<Part>, limit: usize) -> Vec<Vec<Part>> {
+    let mut out: Vec<Vec<Part>> = Vec::new();
     let mut size = 0;
     for p in parts {
-        let len = p.0.chars().count() + p.1.chars().count();
+        let len = p.size();
         if out.is_empty() || (size + len > limit && !out.last().is_some_and(|g| g.is_empty())) {
             out.push(Vec::new());
             size = 0;
@@ -198,6 +273,146 @@ pub struct RunInput<'a> {
     pub model_key: &'a str,
     /// Sprachhinweis für den Prompt, z. B. " (that is: write in German)".
     pub language: &'a str,
+}
+
+/// Aufträge für Zwischenfassungen: je Kapitel, lange Kapitel blockweise.
+/// (Kapitelindex, Bezeichnung, Text)
+pub fn digest_jobs(chapters: &[Part], limit: usize) -> Vec<(usize, String, String)> {
+    let mut jobs = Vec::new();
+    for (i, part) in chapters.iter().enumerate() {
+        let chunks = crate::summarizer::chunk_text(&part.text, limit);
+        let n = chunks.len();
+        for (k, chunk) in chunks.into_iter().enumerate() {
+            let l = if n > 1 {
+                format!("{}, Abschnitt {}/{n}", part.label, k + 1)
+            } else {
+                part.label.clone()
+            };
+            jobs.push((i, l, chunk));
+        }
+    }
+    jobs
+}
+
+/// Zwischenfassungen erzeugen oder aus dem Cache holen; je Kapitel ein Teil.
+#[allow(clippy::too_many_arguments)]
+pub async fn digest_chapters<F, Fut>(
+    chapters: &[Part],
+    jobs: Vec<(usize, String, String)>,
+    model_key: &str,
+    language: &str,
+    cache: &DigestCache,
+    ask: &F,
+    steps: &mut Steps<'_>,
+    cancel: &AtomicBool,
+) -> Result<Vec<Part>, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
+    let mut digests: Vec<Part> = chapters
+        .iter()
+        .map(|p| Part {
+            text: String::new(),
+            ..p.clone()
+        })
+        .collect();
+    let mut cached = 0usize;
+    for (i, label, chunk) in &jobs {
+        check(cancel)?;
+        let words = digest_words(chunk);
+        let key = DigestCache::key(model_key, label, chunk, words);
+        let digest = match cache.get(&key) {
+            Some(hit) => {
+                cached += 1;
+                hit
+            }
+            None => {
+                let d = ask(digest_prompt(label, chunk, words, language)).await?;
+                check(cancel)?;
+                cache.put(&key, &d);
+                d
+            }
+        };
+        let slot = &mut digests[*i].text;
+        if !slot.is_empty() {
+            slot.push_str("\n\n");
+        }
+        slot.push_str(digest.trim());
+        steps.step();
+    }
+    log::info!(
+        "book_ai: {} Kapitel, {} Bloecke, {} aus dem Cache",
+        chapters.len(),
+        jobs.len(),
+        cached
+    );
+    Ok(digests)
+}
+
+/// Teile in Gruppen verdichten, bis sie zusammen in `limit` passen (oder
+/// nichts mehr zu bündeln ist). Gruppen mit halbem Limit, damit jede Runde
+/// die Zahl der Teile wirklich senkt. Verdichtete Gruppen liegen im Cache:
+/// Ein zweiter Lauf bekommt denselben Text und damit dieselben Folgeschritte.
+#[allow(clippy::too_many_arguments)]
+pub async fn condense<F, Fut>(
+    mut parts: Vec<Part>,
+    limit: usize,
+    model_key: &str,
+    language: &str,
+    cache: &DigestCache,
+    ask: &F,
+    steps: &mut Steps<'_>,
+    cancel: &AtomicBool,
+) -> Result<Vec<Part>, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
+    for _ in 0..MAX_CONDENSE_ROUNDS {
+        if size(&parts) <= limit || parts.len() <= 1 {
+            break;
+        }
+        let gs = groups(parts, limit / 2);
+        if gs.iter().all(|g| g.len() == 1) {
+            // Jede Zwischenfassung ist für sich schon zu groß: nichts zu bündeln.
+            parts = gs.into_iter().flatten().collect();
+            break;
+        }
+        steps.add(gs.len());
+        let mut next = Vec::with_capacity(gs.len());
+        for g in gs {
+            check(cancel)?;
+            let (Some(first), Some(last)) = (g.first(), g.last()) else {
+                continue;
+            };
+            let chapters = (first.chapters.0, last.chapters.1);
+            let part = if g.len() == 1 {
+                first.clone()
+            } else {
+                Part {
+                    label: format!("{} – {}", first.label, last.label),
+                    text: {
+                        let prompt = condense_prompt(&pairs(&g), language);
+                        let key = DigestCache::key(model_key, "condense", &prompt, 0);
+                        match cache.get(&key) {
+                            Some(hit) => hit,
+                            None => {
+                                let out = ask(prompt).await?;
+                                cache.put(&key, &out);
+                                out
+                            }
+                        }
+                    },
+                    chapters,
+                }
+            };
+            next.push(part);
+            steps.step();
+        }
+        parts = next;
+    }
+    Ok(parts)
 }
 
 /// Die Zusammenfassung erzeugen. `progress(done, total)`; der letzte Schritt
@@ -227,128 +442,34 @@ where
     // gehen vom Platz für den Quelltext ab.
     let overhead = final_prompt(template, &[], false, language).chars().count();
     let limit = limit.saturating_sub(overhead).max(MIN_SOURCE_CHARS);
-    let labelled: Vec<(String, String)> = sections
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.label(i), s.text.clone()))
-        .collect();
-    let total_chars: usize = labelled
-        .iter()
-        .map(|(l, t)| l.chars().count() + t.chars().count())
-        .sum();
+    let chapters = chapter_parts(sections);
 
-    if total_chars <= limit {
-        progress(0, 1);
-        let out = ask(final_prompt(template, &labelled, true, language)).await?;
+    if size(&chapters) <= limit {
+        let mut steps = Steps::new(1, progress);
+        let out = ask(final_prompt(template, &pairs(&chapters), true, language)).await?;
         check(cancel)?;
-        progress(1, 1);
+        steps.step();
         return Ok(out);
     }
 
-    // Zwischenfassungen: je Kapitel, lange Kapitel blockweise.
-    let mut jobs: Vec<(usize, String, String)> = Vec::new();
-    for (i, (label, text)) in labelled.iter().enumerate() {
-        let chunks = crate::summarizer::chunk_text(text, limit);
-        let n = chunks.len();
-        for (k, chunk) in chunks.into_iter().enumerate() {
-            let l = if n > 1 {
-                format!("{label}, Abschnitt {}/{n}", k + 1)
-            } else {
-                label.clone()
-            };
-            jobs.push((i, l, chunk));
-        }
-    }
-    let mut total = jobs.len() + 1;
-    let mut done = 0;
-    progress(done, total);
-    let mut digests: Vec<(String, String)> = labelled
-        .iter()
-        .map(|(l, _)| (l.clone(), String::new()))
-        .collect();
-    let mut cached = 0usize;
-    for (i, label, chunk) in &jobs {
-        check(cancel)?;
-        let words = digest_words(chunk);
-        let key = DigestCache::key(model_key, label, chunk, words);
-        let digest = match cache.get(&key) {
-            Some(hit) => {
-                cached += 1;
-                hit
-            }
-            None => {
-                let d = ask(digest_prompt(label, chunk, words, language)).await?;
-                check(cancel)?;
-                cache.put(&key, &d);
-                d
-            }
-        };
-        let slot = &mut digests[*i].1;
-        if !slot.is_empty() {
-            slot.push_str("\n\n");
-        }
-        slot.push_str(digest.trim());
-        done += 1;
-        progress(done, total);
-    }
-    log::info!(
-        "book_ai: {} Kapitel, {} Bloecke, {} aus dem Cache",
-        sections.len(),
-        jobs.len(),
-        cached
-    );
-
-    // Zu lang für den letzten Schritt: in Gruppen verdichten. Gruppen mit
-    // halbem Limit, damit jede Runde die Zahl der Teile wirklich senkt.
-    let mut parts = digests;
-    for _ in 0..MAX_CONDENSE_ROUNDS {
-        let size: usize = parts
-            .iter()
-            .map(|(l, t)| l.chars().count() + t.chars().count())
-            .sum();
-        if size <= limit || parts.len() <= 1 {
-            break;
-        }
-        let gs = groups(parts, limit / 2);
-        if gs.iter().all(|g| g.len() == 1) {
-            // Jede Zwischenfassung ist für sich schon zu groß: nichts zu bündeln.
-            parts = gs.into_iter().flatten().collect();
-            break;
-        }
-        total += gs.len();
-        progress(done, total);
-        let mut next = Vec::with_capacity(gs.len());
-        for g in gs {
-            check(cancel)?;
-            let label = match (g.first(), g.last()) {
-                (Some(a), Some(b)) if g.len() > 1 => format!("{} – {}", a.0, b.0),
-                (Some(a), _) => a.0.clone(),
-                _ => continue,
-            };
-            let text = if g.len() == 1 {
-                g[0].1.clone()
-            } else {
-                ask(condense_prompt(&g, language)).await?
-            };
-            next.push((label, text));
-            done += 1;
-            progress(done, total);
-        }
-        parts = next;
-    }
-
-    let size: usize = parts
-        .iter()
-        .map(|(l, t)| l.chars().count() + t.chars().count())
-        .sum();
-    if size > limit {
+    let jobs = digest_jobs(&chapters, limit);
+    let mut steps = Steps::new(jobs.len() + 1, progress);
+    let digests = digest_chapters(
+        &chapters, jobs, model_key, language, cache, &ask, &mut steps, cancel,
+    )
+    .await?;
+    let parts = condense(
+        digests, limit, model_key, language, cache, &ask, &mut steps, cancel,
+    )
+    .await?;
+    if size(&parts) > limit {
         // Lieber ein klarer Fehler als ein still abgeschnittener Prompt.
         return Err(TOO_LONG.into());
     }
     check(cancel)?;
-    let out = ask(final_prompt(template, &parts, false, language)).await?;
+    let out = ask(final_prompt(template, &pairs(&parts), false, language)).await?;
     check(cancel)?;
-    progress(total, total);
+    steps.step();
     Ok(out)
 }
 

@@ -250,6 +250,22 @@ const BUILTINS: &[Builtin] = &[
         audience: "allgemein",
     },
     Builtin {
+        key: "kurzbuch",
+        title: "Kurzbuch",
+        category: "ueberblick",
+        description: "Kernaussagen zum Lesen und Hören, mit Zielgruppe und Fazit.",
+        context: "Kurzbuch: worum es geht, für wen das Buch ist, die wichtigsten Kernaussagen mit je einem kurzen, vorlesbaren Text und ein Fazit. Jede Kernaussage hat einen Titel der Form „Schlagwort: ganzer Satz“.",
+        sections: &[
+            ("Worum es geht", "Zwei bis drei Sätze zum Inhalt."),
+            ("Für wen", "Drei kurze Punkte."),
+            ("Kernaussagen", "Je Kernaussage etwa 200 Wörter Fließtext."),
+            ("Fazit", "Die zentrale Botschaft."),
+        ],
+        words: 2000,
+        form: TemplateForm::Structured,
+        audience: "allgemein",
+    },
+    Builtin {
         key: "kapitelweise",
         title: "Kapitelweise Zusammenfassung",
         category: "ueberblick",
@@ -466,11 +482,11 @@ mod tests {
     #[test]
     fn there_are_twenty_valid_builtins_with_unique_ids() {
         let all = builtins();
-        assert_eq!(all.len(), 20);
+        assert_eq!(all.len(), 21);
         let mut ids: Vec<_> = all.iter().map(|t| t.id.clone()).collect();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), 20);
+        assert_eq!(ids.len(), 21);
         for t in &all {
             assert!(t.builtin && is_builtin_id(&t.id));
             validate(t).unwrap_or_else(|e| panic!("{}: {e}", t.id));

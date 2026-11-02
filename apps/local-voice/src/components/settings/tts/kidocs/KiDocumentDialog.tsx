@@ -8,6 +8,7 @@ import { Dialog } from "../../../ui/Dialog";
 import { Input } from "../../../ui/Input";
 import { Select } from "../../../ui/Select";
 import { KI_CATEGORIES } from "./kiDocs";
+import { KURZBUCH_TEMPLATE_ID } from "@/lib/kurzbuch/kurzbuch";
 import "./kidocs.css";
 
 type SourceKind = "book" | "chapter" | "selection" | "pick";
@@ -47,14 +48,25 @@ export function chaptersOf(text: string, entries: ContentsEntry[]): Chapter[] {
 const shorten = (s: string, n = 48) =>
   s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s;
 
-/** Schätzung der Laufzeit für ein lokales Modell (16 000 Zeichen je Schritt). */
-export function estimate(chars: number): {
+/**
+ * Schätzung der Laufzeit für ein lokales Modell (16 000 Zeichen je Schritt).
+ * Das Kurzbuch (lva#205) braucht statt des letzten Schritts eine Gliederung,
+ * je Kernaussage einen Schritt und das Fazit.
+ */
+export function estimate(
+  chars: number,
+  kurzbuch = false,
+): {
   steps: number;
   min: number;
   max: number;
 } {
   const parts = Math.max(1, Math.ceil(chars / 16000));
-  const steps = parts + (parts > 1 ? Math.ceil(parts / 8) : 0);
+  let steps = parts + (parts > 1 ? Math.ceil(parts / 8) : 0);
+  if (kurzbuch) {
+    const ideas = Math.min(10, Math.max(3, Math.floor(chars / 6 / 6000)));
+    steps += ideas + 1;
+  }
   return {
     steps,
     min: Math.max(1, Math.round((steps * 10) / 60)),
@@ -167,7 +179,9 @@ export function KiDocumentDialog({
   }, [templates, query]);
 
   const template = templates.find((x) => x.id === templateId) ?? null;
-  const est = source ? estimate(source.chars) : null;
+  const est = source
+    ? estimate(source.chars, template?.id === KURZBUCH_TEMPLATE_ID)
+    : null;
   const canCreate = source !== null && template !== null && source.chars > 0;
 
   const sourceChip = (k: SourceKind, label: string, disabled = false) => (

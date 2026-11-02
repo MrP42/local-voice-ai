@@ -168,6 +168,9 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "tts_extract_document")
             return (w as { __extracted?: string }).__extracted ?? "# Ein Buch\n\nText.";
           if (cmd === "library_list") return list;
+          // Kurzbuch (lva#205): Dokumente und Text aus window.__kidocs / __docText.
+          if (cmd === "book_ai_documents") return (w as { __kidocs?: unknown[] }).__kidocs ?? [];
+          if (cmd === "book_ai_document_text") return (w as { __docText?: string }).__docText ?? "";
           if (cmd === "library_progress_load") return {};
           if (cmd === "library_progress_put") return null;
           if (cmd === "page_files")
@@ -1669,4 +1672,47 @@ test("Fertiges Transkript angehängter Teile ergänzt Text und Zeitachse am Ende
   await expect
     .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
     .toEqual(["m31"]);
+});
+
+// Kurzbuch (lva#205): Karte in der Übersicht des Buchs.
+test("die Produktseite zeigt das Kurzbuch mit Dauer und Anhören",async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__kidocs = [
+      {
+        id: "01KURZBUCH000000000000000001",
+        title: "Kurzbuch – Ganzes Buch",
+        template_id: "builtin:kurzbuch",
+        template_title: "Kurzbuch",
+        source: { kind: "book" },
+        source_label: "Ganzes Buch",
+        created_ms: 1,
+        modified_ms: 1,
+        words: 400,
+        model: "ollama/x",
+      },
+    ];
+    w.__docText = [
+      "## Worum es geht", "", "Eine Ehe und ihre Folgen.", "",
+      "## Für wen", "", "- Leser von Klassikern", "- Schulen", "- Alle", "",
+      "## Pflicht: Die Ehe folgt der Konvention.", "", "Text. ".repeat(150), "",
+      "## Folgen: Ein Brieffund verändert alles.", "", "Text. ".repeat(150), "",
+      "## Fazit", "", "Ende.",
+    ].join("\n");
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await expect(card).toContainText("2 Kernaussagen");
+  await expect(card.getByRole("button", { name: "Anhören" })).toBeVisible();
+  await page.screenshot({ path: "docs/vorschau/buch-ki-b7/05-app-bibliothek.png" });
+});
+
+test("ohne Kurzbuch bietet die Produktseite das Erstellen an", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+  await expect(
+    page.getByRole("region", { name: "Kurzbuch" }).getByRole("button", { name: "Kurzbuch erstellen" }),
+  ).toBeVisible();
 });

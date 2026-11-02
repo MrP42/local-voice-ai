@@ -23,6 +23,7 @@ import { BookCover } from "./BookCover";
 import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
+import { KurzbuchCard } from "./KurzbuchCard";
 import {
   fileNameOf,
   formatDuration,
@@ -315,6 +316,12 @@ export const BookDetail: React.FC<Props> = ({
 
       {tab === "overview" && (
         <div className="library-detail">
+          <KurzbuchCard
+            book={book}
+            transcribing={view.transcription === "running" || job !== undefined}
+            busy={busy !== null}
+            onTranscribe={() => void transcribe()}
+          />
           {book.description ? (
             <p className="library-blurb">{book.description}</p>
           ) : (

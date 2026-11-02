@@ -857,3 +857,32 @@
     max-height: 30vh;
   }
 }
+
+/* Kurzbuch im Buchdetail (lva#205). */
+.library-kurzbuch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+}
+.library-kurzbuch__info {
+  flex: 1 1 16rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.library-kurzbuch h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.library-kurzbuch__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
