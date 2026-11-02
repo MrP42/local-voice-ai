@@ -1,6 +1,11 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Moon, MoreHorizontal, SlidersHorizontal } from "lucide-react";
+import {
+  ChevronUp,
+  Moon,
+  MoreHorizontal,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Glyph } from "../../../ui/AudioPlayer";
 import type { ReaderPageInfo } from "./ReaderView";
 import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
@@ -36,6 +41,12 @@ interface ReaderPlayerBarProps {
   resumable?: boolean;
   /** Titel des aktuellen Kapitels, falls der Text Überschriften hat. */
   chapter?: string | null;
+  /** Alle Kapitel mit Seite (0-basiert, nach dem Umbruch gemessen): ein Klick
+   *  auf das Kapitel öffnet die Liste, ein Eintrag springt hin (Patrick 01.11.). */
+  chapters?: { title: string; level: number; page: number | null }[];
+  /** Index des aktuellen Kapitels in `chapters` (-1: davor). */
+  chapterIndex?: number;
+  onChapter?(index: number): void;
   /** Seite der gemerkten Stelle (1-basiert), wenn bekannt. */
   resumePage?: number | null;
   /** Gemerkte Stelle verwerfen: Play beginnt wieder vorn. */
@@ -87,6 +98,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   resumable = false,
   resumePage = null,
   chapter = null,
+  chapters = [],
+  chapterIndex = -1,
+  onChapter,
   onRestart,
   dock,
 }) => {
@@ -95,11 +109,16 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   const [sleepOpen, setSleepOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [dockOpen, setDockOpen] = useState(false);
+  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const chaptersBtnRef = useRef<HTMLButtonElement>(null);
+  const chaptersListRef = useRef<HTMLDivElement>(null);
+  const chaptersId = useId();
   const [barWidth, setBarWidth] = useState(Number.POSITIVE_INFINITY);
   // Gelernter Platzbedarf der Werkzeuge in der Zeile: läuft die Ablage über,
   // wandern sie hinter den Knopf, bis die Leiste mindestens so breit ist.
   const [dockNeed, setDockNeed] = useState(DOCK_INLINE_MIN);
   const dockRef = useRef<HTMLDivElement>(null);
+  const ctrlsRef = useRef<HTMLDivElement>(null);
   const dockBtnRef = useRef<HTMLButtonElement>(null);
   const dockPanelRef = useRef<HTMLDivElement>(null);
   const [sleepUntil, setSleepUntil] = useState<number | null>(null);
@@ -123,12 +142,15 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
 
   // Escape schließt die offenen Auswahlen (Tempo, Schlaf-Timer).
   useEffect(() => {
-    if (!speedOpen && !sleepOpen && !moreOpen && !dockOpen) return;
+    if (!speedOpen && !sleepOpen && !moreOpen && !dockOpen && !chaptersOpen)
+      return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
       if (moreOpen) moreBtnRef.current?.focus();
       if (dockOpen) dockBtnRef.current?.focus();
+      if (chaptersOpen) chaptersBtnRef.current?.focus();
+      setChaptersOpen(false);
       setSpeedOpen(false);
       setSleepOpen(false);
       setMoreOpen(false);
@@ -148,6 +170,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         )
       )
         return;
+      setChaptersOpen(false);
       setSpeedOpen(false);
       setSleepOpen(false);
       setMoreOpen(false);
@@ -166,6 +189,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           else if (kind === "dock") setDockOpen(false);
           else if (kind === "speed") setSpeedOpen(false);
           else if (kind === "sleep") setSleepOpen(false);
+          else if (kind === "chapters") setChaptersOpen(false);
         });
     });
     if (rootRef.current) ro.observe(rootRef.current);
@@ -176,7 +200,18 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       document.removeEventListener("pointerdown", onDown, true);
       ro.disconnect();
     };
-  }, [speedOpen, sleepOpen, moreOpen, dockOpen]);
+  }, [speedOpen, sleepOpen, moreOpen, dockOpen, chaptersOpen]);
+
+  // Geöffnete Kapitelliste: das aktuelle Kapitel steht im Blick und hat den Fokus.
+  useEffect(() => {
+    if (!chaptersOpen) return;
+    const list = chaptersListRef.current;
+    const active =
+      list?.querySelector<HTMLElement>('[aria-current="location"]') ??
+      list?.querySelector<HTMLElement>("button");
+    active?.scrollIntoView({ block: "center" });
+    active?.focus();
+  }, [chaptersOpen]);
 
   // Breite der Leiste: entscheidet, ob die Werkzeuge in der Zeile stehen.
   useEffect(() => {
@@ -192,7 +227,13 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
   useLayoutEffect(() => {
     const el = dockRef.current;
     if (!dockInline || !el) return;
-    const over = el.scrollWidth - el.clientWidth;
+    // Überlauf der Ablage selbst oder der ganzen Zeile (die Werkzeugspalte
+    // wächst mit ihrem Inhalt, die Wiedergabe rückt dann aus der Mitte).
+    const ctrls = ctrlsRef.current;
+    const over = Math.max(
+      el.scrollWidth - el.clientWidth,
+      ctrls ? ctrls.scrollWidth - ctrls.clientWidth : 0,
+    );
     if (over > 1) setDockNeed(barWidth + over + 16);
   });
   // Geöffnetes Fenster: Fokus hinein (erstes Bedienelement).
@@ -267,6 +308,36 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       ? Math.max(0, Math.ceil((sleepUntil - now) / 60000))
       : null;
 
+  const canListChapters = chapters.length > 0 && !!onChapter;
+  const chapterNode = canListChapters ? (
+    <span className="reader-player__chapter-wrap" data-reader-popup="chapters">
+      <button
+        type="button"
+        ref={chaptersBtnRef}
+        className="reader-player__chapter reader-player__chapter--button"
+        onClick={() => setChaptersOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={chaptersOpen}
+        aria-controls={chaptersOpen ? chaptersId : undefined}
+        title={t("tts.reader.chapterListHint")}
+        data-testid="reader-chapter"
+      >
+        <span className="reader-player__chapter-text">
+          {chapter ?? t("tts.reader.chapterList")}
+        </span>
+        <ChevronUp width={14} height={14} aria-hidden="true" />
+      </button>
+    </span>
+  ) : chapter ? (
+    <span
+      className="reader-player__chapter"
+      title={chapter}
+      data-testid="reader-chapter"
+    >
+      {chapter}
+    </span>
+  ) : null;
+
   return (
     <div
       ref={rootRef}
@@ -339,12 +410,63 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           <span data-testid="reader-page-count">/ {pages}</span>
         </label>
       </div>
-      <div className="reader-player__ctrls">
+      <div ref={ctrlsRef} className="reader-player__ctrls">
+        {chaptersOpen && (
+          <div
+            id={chaptersId}
+            ref={chaptersListRef}
+            role="navigation"
+            aria-label={t("tts.reader.chapterList")}
+            className="reader-player__chapters"
+            data-reader-popup="chapters"
+            data-testid="reader-chapter-list"
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+              e.preventDefault();
+              const items = Array.from(
+                e.currentTarget.querySelectorAll<HTMLElement>("button"),
+              );
+              const i = items.indexOf(document.activeElement as HTMLElement);
+              const next =
+                (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) %
+                items.length;
+              items[next]?.focus();
+            }}
+          >
+            <ol>
+              {chapters.map((c, i) => (
+                <li key={`${i}-${c.title}`}>
+                  <button
+                    type="button"
+                    aria-current={i === chapterIndex ? "location" : undefined}
+                    className="reader-player__chapters-item"
+                    style={{ paddingInlineStart: `${10 + (c.level - 1) * 12}px` }}
+                    onClick={() => {
+                      onChapter?.(i);
+                      setChaptersOpen(false);
+                      chaptersBtnRef.current?.focus();
+                    }}
+                    data-testid="reader-chapter-entry"
+                  >
+                    <span className="reader-player__chapters-title" title={c.title}>
+                      {c.title}
+                    </span>
+                    {c.page !== null && (
+                      <span className="reader-player__chapters-page">
+                        {c.page + 1}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         <span
           className={`reader-player__where${
             !progress && resumable
               ? " reader-player__where--resume"
-              : chapter
+              : chapter || canListChapters
                 ? " reader-player__where--chapter"
                 : ""
           }`}
@@ -352,15 +474,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         >
           {progress ? (
             <>
-              {chapter && (
-                <span
-                  className="reader-player__chapter"
-                  title={chapter}
-                  data-testid="reader-chapter"
-                >
-                  {chapter}
-                </span>
-              )}
+              {chapterNode}
               <span className="reader-player__sentence">
                 {t("tts.reader.sentenceOf", {
                   position: Math.min(progress.total, progress.position + 1),
@@ -390,15 +504,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
           ) : (
             // Auch ohne laufende Sitzung: Kapitel über der Seitenangabe.
             <>
-              {chapter && (
-                <span
-                  className="reader-player__chapter"
-                  title={chapter}
-                  data-testid="reader-chapter"
-                >
-                  {chapter}
-                </span>
-              )}
+              {chapterNode}
               <span className="reader-player__sentence">
                 {t("tts.reader.pageOf", { page: shownPage, count: pages })}
               </span>
@@ -454,7 +560,8 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
             <Glyph name="stop" />
           </button>
         </div>
-        {/* Abspielen steht vorn und mittig, Werkzeuge rechts (Patrick 01.11.). */}
+        {/* Abspielen steht mittig, Position links, Werkzeuge rechts (Patrick
+            01.11. 23:08, ersetzt die rechtsbündige Leiste aus #188). */}
         <div className="reader-player__tools">
           <div className="reader-player__extra">
             <div className="relative" data-reader-popup="speed">

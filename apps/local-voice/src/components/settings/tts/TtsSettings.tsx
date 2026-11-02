@@ -71,7 +71,6 @@ import {
 import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
-import { TooltipTrigger } from "../../ui/TooltipTrigger";
 import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
 import { ReaderDrop } from "@/components/library/ReaderDrop";
 import {
@@ -107,7 +106,8 @@ import {
   Settings,
   TriangleAlert,
 } from "lucide-react";
-import { useVoiceChoice } from "./useVoiceChoice";
+import { VOICE_MANAGE, useVoiceChoice } from "./useVoiceChoice";
+import { detectLanguage, isKnownLanguage } from "@/lib/reader/language";
 import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
@@ -371,6 +371,11 @@ export const TtsSettings = () => {
   // 28.10.2026). Werte wie im Dropdown: "@default", "<fish-id>", "piper:<id>",
   // "provider:<id>:<stimme>". Fehlt ein Eintrag, bleibt die aktuelle Stimme.
   const [tabVoices, setTabVoices] = useState<Record<string, string>>({});
+  /** Reiter, deren Stimme von Hand gewählt wurde: dort stellt die
+      Buchsprache nichts mehr um. */
+  const [voicesChosen, setVoicesChosen] = useState<Record<string, true>>({});
+  /** Sprache des Originaltexts, im Arbeitsstand der Seite gespeichert. */
+  const [pageLang, setPageLang] = useState<string | null>(null);
   /** "Sprecher auf allen Seiten ersetzen": offen, mit optionaler Vorbelegung. */
   const [replaceSpeaker, setReplaceSpeaker] = useState<{
     from?: string;
@@ -629,6 +634,7 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!activePage) return;
     pageLoaded.current = false;
+    setLangCheckedFor(null);
     void commands.pageStateLoad(activePage).then((result) => {
       if (result.status !== "ok") return;
       if (result.data) {
@@ -640,6 +646,8 @@ export const TtsSettings = () => {
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
+            voicesChosen?: Record<string, true>;
+            lang?: string;
             translatedLangs?: string[];
             autoTag?: AutoTagOptions;
           };
@@ -663,6 +671,12 @@ export const TtsSettings = () => {
               ? state.voices
               : {},
           );
+          setVoicesChosen(
+            state.voicesChosen && typeof state.voicesChosen === "object"
+              ? state.voicesChosen
+              : {},
+          );
+          setPageLang(typeof state.lang === "string" ? state.lang : null);
           setTab(
             state.tab === "translation" || state.tab === "summary"
               ? state.tab
@@ -697,6 +711,8 @@ export const TtsSettings = () => {
         setOpenDocId(null);
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
+        setVoicesChosen({});
+        setPageLang(null);
         setTranslatedLangs([]);
         setTab("original");
       }
@@ -726,6 +742,8 @@ export const TtsSettings = () => {
       sourceUrl,
       tab,
       voices: tabVoices,
+      voicesChosen,
+      lang: pageLang ?? undefined,
       translatedLangs,
       autoTag: autoTagOptions ?? undefined,
     });
@@ -754,6 +772,8 @@ export const TtsSettings = () => {
     sourceUrl,
     tab,
     tabVoices,
+    voicesChosen,
+    pageLang,
     translatedLangs,
     autoTagOptions,
   ]);
@@ -1117,6 +1137,8 @@ export const TtsSettings = () => {
     options: voiceOptions,
     sampleOf,
     tryOf,
+    languageOf: voiceLanguageOf,
+    bestVoiceFor,
   } = useVoiceChoice(phase);
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
@@ -1169,6 +1191,13 @@ export const TtsSettings = () => {
       pendingApply.current = null;
       if (pending.page !== (activePage ?? null)) return;
       target = pending.key;
+    } else if (
+      tabVoices[target] !== undefined &&
+      tabVoices[target] !== voiceValue
+    ) {
+      // Ein Wechsel von außen (Einstellungen, Wiedergabeleiste der
+      // Aufnahmen): gilt als Handwahl, die Buchsprache stellt sie nicht um.
+      markVoiceChosen(target);
     }
     setTabVoices((current) =>
       current[target] === voiceValue
@@ -1178,6 +1207,168 @@ export const TtsSettings = () => {
     // voiceKey absichtlich nicht: beim Reiterwechsel ist voiceValue noch die
     // Stimme des alten Reiters.
   }, [voiceValue]);
+
+  // Buchsprache (Patrick 01.11.): beim Import und bei jeder größeren
+  // Änderung aus dem Originaltext erkannt und im Arbeitsstand der Seite
+  // gespeichert; steht die Seite in der Bibliothek, auch im Buch.
+  // Text samt Seite und Ladezähler: nach einem Seitenwechsel gehört der
+  // entprellte Text noch kurz zur alten Seite und wird dann übergangen.
+  const langInput = useMemo(
+    () => ({ text, page: activePage, tick: pageLoadTick }),
+    [text, activePage, pageLoadTick],
+  );
+  const langSource = useDebouncedValue(langInput, 800);
+  /** Seite, für die die Erkennung gelaufen ist: erst dann stellt die
+      Buchsprache Stimmen um. */
+  const [langCheckedFor, setLangCheckedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (
+      !pageLoaded.current ||
+      langSource.page !== activePage ||
+      langSource.tick !== pageLoadTick
+    )
+      return;
+    const found = detectLanguage(langSource.text);
+    setLangCheckedFor(activePage ?? null);
+    if (!found || found === pageLang) return;
+    setPageLang(found);
+    const page = activePage;
+    if (!page) return;
+    void commands
+      .libraryList()
+      .then((r) => {
+        if (r.status !== "ok") return;
+        const book = r.data.find((b) => b.text?.page_id === page);
+        // Nur ergänzen: eine vorhandene Sprache (Open Library, von Hand)
+        // bleibt stehen.
+        if (!book || book.language) return;
+        void commands.librarySave({ ...book, language: found });
+      })
+      .catch(() => undefined);
+    // pageLang absichtlich nicht: nur ein neuer Text löst die Erkennung aus.
+  }, [langSource, activePage, pageLoadTick]);
+  /** Sprache dessen, was der offene Reiter vorliest. */
+  const contentLang = useMemo(() => {
+    if (tab === "translation") return targetLangCode(targetLang);
+    if (tab === "summary") return detectLanguage(summary);
+    return pageLang;
+  }, [tab, targetLang, summary, pageLang]);
+  const markVoiceChosen = (key: string) =>
+    setVoicesChosen((current) =>
+      current[key] ? current : { ...current, [key]: true },
+    );
+  // Passt die Stimme des Reiters nicht zur Sprache und wurde sie nicht von
+  // Hand gewählt, nimmt der Reiter die naheliegende passende Stimme
+  // (englisches Buch -> englische Stimme; Übersetzung -> Zielsprache).
+  const autoVoiceFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pageLoaded.current || !contentLang || voicesChosen[voiceKey]) return;
+    if (langCheckedFor !== (activePage ?? null)) return;
+    const current = tabVoices[voiceKey] ?? voiceValue;
+    if (!current || current === VOICE_MANAGE) return;
+    const lang = voiceLanguageOf(current);
+    // Nur zwischen Sprachen, die die Erkennung kennt: eine niederländische
+    // Stimme bleibt, auch wenn der Text für Englisch gehalten würde.
+    if (lang === null || lang === contentLang || !isKnownLanguage(lang)) return;
+    const better = bestVoiceFor(contentLang, current);
+    if (!better || better === current) return;
+    const marker = `${activePage ?? ""}|${voiceKey}|${contentLang}|${current}`;
+    if (autoVoiceFor.current === marker) return;
+    autoVoiceFor.current = marker;
+    setTabVoices((v) => ({ ...v, [voiceKey]: better }));
+  }, [
+    contentLang,
+    voiceKey,
+    tabVoices,
+    voiceValue,
+    voicesChosen,
+    voiceLanguageOf,
+    bestVoiceFor,
+    activePage,
+    pageLoadTick,
+    langCheckedFor,
+  ]);
+  // Sprachfilter der Stimmenauswahl: „Passend“ zeigt die Stimmen der
+  // Textsprache und die, die jede Sprache sprechen; die gewählte bleibt immer.
+  const [voiceLangFilter, setVoiceLangFilter] = usePersistentState<string>(
+    "tts.voices.langFilter",
+    "auto",
+    (v) => /^(auto|all|[a-z]{2,3})$/.test(v),
+  );
+  const voiceLangs = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of voiceOptions) {
+      const l = voiceLanguageOf(o.value);
+      if (l) set.add(l);
+    }
+    return [...set].sort();
+  }, [voiceOptions, voiceLanguageOf]);
+  const langName = (code: string) => {
+    try {
+      return (
+        new Intl.DisplayNames([i18n.language || "de"], { type: "language" }).of(
+          code,
+        ) ?? code
+      );
+    } catch {
+      return code;
+    }
+  };
+  const filterLang =
+    voiceLangFilter === "auto"
+      ? contentLang
+      : voiceLangFilter === "all"
+        ? null
+        : voiceLangFilter;
+  const shownVoiceOptions = filterLang
+    ? voiceOptions.filter((o) => {
+        if (o.value === voiceValue || o.value === VOICE_MANAGE) return true;
+        const l = voiceLanguageOf(o.value);
+        return l === null || l === filterLang;
+      })
+    : voiceOptions;
+  const voiceFilterChips =
+    voiceLangs.length > 1 || contentLang ? (
+      <div
+        role="group"
+        aria-label={t("tts.voices.filter.label")}
+        className="flex flex-wrap gap-1 border-b border-mid-gray/30 px-1 pt-0.5 pb-1.5"
+        data-testid="voice-lang-filter"
+      >
+        {[
+          ...(contentLang ? ["auto"] : []),
+          "all",
+          // Die Textsprache steckt schon in „Passend“.
+          ...voiceLangs.filter((l) => l !== contentLang),
+        ].map((key) => {
+          const active =
+            key === voiceLangFilter ||
+            (key === "all" && voiceLangFilter === "auto" && !contentLang);
+          return (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setVoiceLangFilter(key)}
+              className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
+                active
+                  ? "border-logo-primary bg-logo-primary/15 font-medium text-text"
+                  : "border-mid-gray/40 text-text/80 hover:bg-mid-gray/15"
+              }`}
+              data-testid={`voice-lang-filter-${key}`}
+            >
+              {key === "auto"
+                ? t("tts.voices.filter.auto", {
+                    language: langName(contentLang ?? ""),
+                  })
+                : key === "all"
+                  ? t("tts.voices.filter.all")
+                  : langName(key)}
+            </button>
+          );
+        })}
+      </div>
+    ) : undefined;
 
   /**
    * Welcher Text gerade im Feld steht — und damit auch, was das Abspielen
@@ -1250,27 +1441,64 @@ export const TtsSettings = () => {
     setKeepAwake(on);
     // Im Vollbild ist nur die Lesespalte sichtbar, Meldungen nicht: der
     // Hinweis kommt beim nächsten Einschalten außerhalb des Vollbilds.
-    if (on && !document.fullscreenElement)
+    if (on && !document.fullscreenElement && !readerFill)
       toast.info(t("tts.reader.keepAwakeHint"), { duration: 8000 });
   };
   const readerFrameRef = useRef<HTMLDivElement | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  // Lese-Vollbild (Patrick 01.11. 23:16): füllt das App-Fenster, so groß es
+  // gerade ist, ohne es zu maximieren. Echtes Bildschirm-Vollbild nur auf
+  // Wunsch mit F11.
+  const [readerFill, setReaderFill] = useState(false);
+  const [screenFull, setScreenFull] = useState(false);
+  const fullscreen = readerFill || screenFull;
   useEffect(() => {
-    const onChange = () =>
-      setFullscreen(
+    const onChange = () => {
+      const on =
         document.fullscreenElement !== null &&
-          document.fullscreenElement === readerFrameRef.current,
-      );
+        document.fullscreenElement === readerFrameRef.current;
+      setScreenFull(on);
+      // Echtes Vollbild beendet (F11, Escape des Systems): ganz zurück.
+      if (!on) setReaderFill(false);
+    };
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
   const toggleFullscreen = () => {
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
+      setReaderFill(false);
       return;
     }
-    void readerFrameRef.current?.requestFullscreen().catch(() => undefined);
+    setReaderFill((on) => !on);
   };
+  useEffect(() => {
+    if (viewMode !== "read") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F11") {
+        e.preventDefault();
+        if (document.fullscreenElement) {
+          void document.exitFullscreen().catch(() => undefined);
+        } else {
+          setReaderFill(true);
+          void readerFrameRef.current
+            ?.requestFullscreen()
+            .catch(() => undefined);
+        }
+        return;
+      }
+      // Escape beendet das Lese-Vollbild im Fenster, wenn nichts anderes
+      // (Menü, Dialog) die Taste schon genommen hat.
+      if (e.key === "Escape" && readerFill && !document.fullscreenElement) {
+        if (e.defaultPrevented) return;
+        setReaderFill(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewMode, readerFill]);
+  useEffect(() => {
+    if (viewMode !== "read") setReaderFill(false);
+  }, [viewMode]);
   const [follow, setFollow] = useState(true);
   const [pageInfo, setPageInfo] = useState<ReaderPageInfo | null>(null);
   const readerApiRef = useRef<ReaderViewApi | null>(null);
@@ -1401,6 +1629,15 @@ export const TtsSettings = () => {
     const at = reading ?? shown;
     setChapterIndex(at === null ? -1 : chapterAt(contents, at));
   }, [contents, readRange, pageInfo, resumeKey]);
+  const playerChapters = useMemo(
+    () =>
+      contents.map((e, i) => ({
+        title: e.title,
+        level: e.level,
+        page: contentsPages[i] ?? null,
+      })),
+    [contents, contentsPages],
+  );
   const goToChapter = (entry: ContentsEntry) => {
     setFollow(false);
     readerApiRef.current?.revealOffset(entry.start);
@@ -2334,19 +2571,10 @@ export const TtsSettings = () => {
   // der Name steht im Tooltip und in der offenen Liste (Patrick 01.11.).
   const voiceLabel =
     voiceOptions.find((option) => option.value === voiceValue)?.label ?? "";
+  // Kein Hover-Hinweis mehr an der Stimmenauswahl (Patrick 01.11.: die Blase
+  // verdeckte beim Scrollen die Liste); der Hinweis bleibt als Beschreibung
+  // des Felds für Screenreader.
   const voicePickerOf = (compact = false) => (
-      <TooltipTrigger
-        className="block w-full"
-        tooltipId="voice-mode-tip"
-        width={300}
-        content={
-          <div className="text-xs">
-            {scriptMode
-              ? t("tts.voices.scriptVoicesHint")
-              : t("tts.voices.singleVoiceHint")}
-          </div>
-        }
-      >
         <div
           className="w-full"
           role="group"
@@ -2392,10 +2620,17 @@ export const TtsSettings = () => {
             bleibt als zweiter Weg bestehen. */}
           <Select
             menuPortal
-            compactMenuWidth={compact ? 300 : undefined}
+            compactMenuWidth={compact ? 340 : undefined}
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
-            options={voiceOptions}
+            options={shownVoiceOptions}
+            menuScrollKey={
+              // „Passend“ hängt an der Textsprache, die anderen Filter nicht.
+              voiceLangFilter === "auto"
+                ? `tts-voice:auto:${contentLang ?? ""}`
+                : `tts-voice:${voiceLangFilter}`
+            }
+            menuHeader={voiceFilterChips}
             formatOptionLabel={(option, context) => {
               if (compact && context === "value")
                 return (
@@ -2405,6 +2640,17 @@ export const TtsSettings = () => {
                     data-testid="voice-compact"
                   >
                     <Mic width={16} height={16} aria-hidden="true" />
+                    {/* Sprache der Stimme als Kürzel am Knopf (Codex zu
+                        #199): englisches Buch, englische Stimme sichtbar. */}
+                    {voiceLanguageOf(option.value) && (
+                      <span
+                        aria-hidden="true"
+                        className="ms-1 text-[11px] font-semibold uppercase tabular-nums"
+                        data-testid="voice-compact-lang"
+                      >
+                        {voiceLanguageOf(option.value)}
+                      </span>
+                    )}
                     <span className="sr-only">{option.label}</span>
                   </span>
                 );
@@ -2419,7 +2665,7 @@ export const TtsSettings = () => {
               if (!sample && !target) return option.label;
               return (
                 <span className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate">
+                  <span className="min-w-0 flex-1 break-words">
                     {option.label}
                   </span>
                   {sample ? (
@@ -2456,6 +2702,7 @@ export const TtsSettings = () => {
                 return;
               }
               applyVoiceValue(value);
+              markVoiceChosen(voiceKey);
               setTabVoices((current) => ({
                 ...current,
                 [voiceKey]: value,
@@ -2542,7 +2789,6 @@ export const TtsSettings = () => {
               : t("tts.voices.singleVoiceHint")}
           </p>
         </div>
-      </TooltipTrigger>
   );
   const readAloudActions = (compact: boolean) => (
       <ReadAloudActions
@@ -2703,7 +2949,9 @@ export const TtsSettings = () => {
               data-fullscreen={fullscreen ? "1" : undefined}
               style={
                 awakeShift
-                  ? { position: "relative", left: awakeShift, top: awakeShift }
+                  ? readerFill
+                    ? { left: awakeShift, top: awakeShift }
+                    : { position: "relative", left: awakeShift, top: awakeShift }
                   : undefined
               }
             >
@@ -3034,6 +3282,12 @@ export const TtsSettings = () => {
                 resumable={resumeAt !== null && !canResume && !speaking}
                 resumePage={resumePage}
                 chapter={contents[chapterIndex]?.title ?? null}
+                chapters={playerChapters}
+                chapterIndex={chapterIndex}
+                onChapter={(i) => {
+                  const entry = contents[i];
+                  if (entry) goToChapter(entry);
+                }}
                 dock={
                   rightHidden
                     ? (inPopover) => (
