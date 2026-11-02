@@ -1839,10 +1839,7 @@ impl MeetingStore {
         // und die Vektoren mit. Ordner behalten sich selbst, nur die Zuordnung
         // faellt weg. Besprechungsgebundene Chats gehen samt Nachrichten; globale
         // Verlaeufe behalten ihren Text (Zitate zeigt die UI dann als "geloescht").
-        tx.execute(
-            "DELETE FROM import_part WHERE meeting_id = ?1",
-            params![id],
-        )?;
+        tx.execute("DELETE FROM import_part WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM meeting_chunks WHERE meeting_id = ?1",
             params![id],
