@@ -24,7 +24,12 @@ import {
   rechercheErgebnis,
   verweisZiel,
 } from "@/lib/projekte";
-import { meldeProjekte, useProjekteMeldung } from "@/lib/projekteBus";
+import {
+  meldeProjekte,
+  useErwartung,
+  useProjekteMeldung,
+  type HaltEnde,
+} from "@/lib/projekteBus";
 import { notifyMeetingsChanged } from "@/lib/meetingsBus";
 import {
   Projektordner,
@@ -40,6 +45,7 @@ import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { ReadAloudButton } from "../settings/meetings/ReadAloudButton";
 import { useOrdnerLabels, useRechercheLabels } from "./labels";
 import { useRechercheStart } from "./useRechercheStart";
+import { useVorlesenGesperrt } from "./vorlesen";
 
 export interface OrdnerRef {
   id: string;
@@ -81,6 +87,8 @@ export const SuiteProjektSeite: React.FC<Props> = ({
   const [rechercheId, setRechercheId] = useState<string | null>(null);
   const [ergebnis, setErgebnis] = useState<RechercheErgebnis | undefined>();
   const [vorlese, setVorlese] = useState("");
+  const [ergebnisKlasse, setErgebnisKlasse] = useState<string | null>(null);
+  const vorlesenGesperrt = useVorlesenGesperrt(ergebnisKlasse);
   const [meldung, setMeldung] = useState<string | null>(null);
   const [buecher, setBuecher] = useState<LibraryBook[]>([]);
   const [buchWahl, setBuchWahl] = useState<string | null>(null);
@@ -109,7 +117,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       }
       setFehler(null);
     } catch (e) {
-      setFehler(fehlerText(e));
+      setFehler(fehlerText(e, t));
     }
   }, [ordner.projektId]);
 
@@ -125,20 +133,33 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       .catch(() => setBuecher([]));
   }, []);
 
-  const zeigeRecherche = useCallback(async (id: string) => {
-    try {
-      const d = auspacken(await commands.rechercheLesen(id));
-      setRechercheId(d.id);
-      setErgebnis(rechercheErgebnis(d));
-      setVorlese(d.readAloud);
-    } catch (e) {
-      setMeldung(fehlerText(e));
-    }
-  }, []);
+  const zeigeRecherche = useCallback(
+    async (id: string) => {
+      try {
+        const d = auspacken(await commands.rechercheLesen(id));
+        setRechercheId(d.id);
+        setErgebnis(rechercheErgebnis(d, t));
+        setErgebnisKlasse(d.dataClass);
+        setVorlese(d.readAloud);
+      } catch (e) {
+        setMeldung(fehlerText(e, t));
+      }
+    },
+    [t],
+  );
 
-  useProjekteMeldung("recherche", (id) => {
-    if (id) void zeigeRecherche(id);
-  });
+  // Nur eine Recherche, auf die diese Seite wartet (Kennung des Halts bzw. des Laufs), erscheint hier.
+  const erwartung = useErwartung(
+    (id) => void zeigeRecherche(id),
+    (_id, wie: HaltEnde) =>
+      setMeldung(
+        wie === "abgelehnt"
+          ? t("projekte.freigabe.nichtsGesendet")
+          : wie === "abgelaufen"
+            ? t("projekte.freigabe.abgelaufen")
+            : t("projekte.fehler.unbekannt"),
+      ),
+  );
 
   const aenderung = useCallback(async () => {
     notifyMeetingsChanged();
@@ -150,7 +171,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       await f();
       setFehler(null);
     } catch (e) {
-      setFehler(fehlerText(e));
+      setFehler(fehlerText(e, t));
     }
   };
 
@@ -215,6 +236,23 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       toast.success(
         t("projekte.seite.geloescht", { count: r.recherchenGeloescht }),
       );
+      setErgebnis(undefined);
+      setRechercheId(null);
+      setVorlese("");
+      setErgebnisKlasse(null);
+      erwartung.leeren();
+      await aenderung();
+    });
+
+  const rechercheLoeschen = () =>
+    tun(async () => {
+      if (!rechercheId) return;
+      auspacken(await commands.rechercheLoeschen(rechercheId));
+      setErgebnis(undefined);
+      setRechercheId(null);
+      setVorlese("");
+      setErgebnisKlasse(null);
+      toast.success(t("projekte.seite.rechercheGeloescht"));
       await aenderung();
     });
 
@@ -231,9 +269,14 @@ export const SuiteProjektSeite: React.FC<Props> = ({
     if (!suite) return;
     setMeldung(null);
     setErgebnis(undefined);
+    erwartung.leeren();
     const r = await start(frage, suite.id);
-    if (r.status === "fehler") setMeldung(r.message ?? null);
-    if (r.status === "freigabe") setMeldung(r.message ?? null);
+    if (r.status === "fertig" && r.rechercheId)
+      void zeigeRecherche(r.rechercheId);
+    else if (r.status === "freigabe" && r.rechercheId) {
+      erwartung.erwarte(r.rechercheId);
+      setMeldung(r.message ?? null);
+    } else setMeldung(r.message ?? null);
   };
 
   const aktion = (a: ProjektAktion, eintragId?: string) => {
@@ -310,7 +353,10 @@ export const SuiteProjektSeite: React.FC<Props> = ({
       </header>
 
       {fehler && (
-        <p role="alert" className="text-xs text-red-500">
+        <p
+          role="alert"
+          className="text-xs text-[var(--colorPaletteRedForeground1)]"
+        >
           {fehler}
         </p>
       )}
@@ -440,7 +486,13 @@ export const SuiteProjektSeite: React.FC<Props> = ({
                 data-testid="recherche-nicht-eingerichtet"
                 className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs"
               >
-                <p>{status.reason}</p>
+                <p>
+                  {status.reasonCode
+                    ? t(`projekte.code.${status.reasonCode}`, {
+                        defaultValue: status.reason ?? "",
+                      })
+                    : status.reason}
+                </p>
                 {status.canConfigure && (
                   <div className="mt-2 flex items-center gap-2">
                     <Input
@@ -469,7 +521,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
                 {meldung}
               </p>
             )}
-            <div ref={ergebnisRef}>
+            <div ref={ergebnisRef} aria-live="polite">
               <RechercheAnsicht
                 projectTitle={suite.title}
                 headingLevel={3}
@@ -491,7 +543,22 @@ export const SuiteProjektSeite: React.FC<Props> = ({
                   speakKey={`recherche:${rechercheId}`}
                   getMarkdown={() => vorlese}
                   testId="suite-readaloud"
+                  disabled={vorlesenGesperrt}
                 />
+                {vorlesenGesperrt && (
+                  <span className="text-text/60">
+                    {t("projekte.vorlesen.nurLokal")}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="danger-ghost"
+                  data-testid="suite-recherche-loeschen"
+                  onClick={() => void rechercheLoeschen()}
+                  icon={<Trash2 width={14} height={14} aria-hidden="true" />}
+                >
+                  {t("projekte.seite.rechercheLoeschen")}
+                </Button>
               </div>
             )}
           </div>

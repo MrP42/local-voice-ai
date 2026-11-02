@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Sparkles } from "lucide-react";
 import { commands, type RechercheSicht } from "@/bindings";
-import { auspacken, fehlerText, hostVon } from "@/lib/projekte";
+import { auspacken, fehlerText, hostVon, klassenName } from "@/lib/projekte";
 import { ReadAloudButton } from "../settings/meetings/ReadAloudButton";
+import { useVorlesenGesperrt } from "./vorlesen";
 
 interface Props {
   /** Kennung des Recherche-Dokuments. */
@@ -26,6 +27,7 @@ export const RechercheKarte: React.FC<Props> = ({
   const { t } = useTranslation();
   const [doc, setDoc] = useState<RechercheSicht | null>(null);
   const [fehler, setFehler] = useState<string | null>(null);
+  const vorlesenGesperrt = useVorlesenGesperrt(doc?.dataClass);
 
   useEffect(() => {
     let weg = false;
@@ -37,16 +39,19 @@ export const RechercheKarte: React.FC<Props> = ({
         if (!weg) setDoc(auspacken(r));
       })
       .catch((e) => {
-        if (!weg) setFehler(fehlerText(e));
+        if (!weg) setFehler(fehlerText(e, t));
       });
     return () => {
       weg = true;
     };
-  }, [id]);
+  }, [id, t]);
 
   if (fehler) {
     return (
-      <p role="alert" className="text-xs text-red-500">
+      <p
+        role="alert"
+        className="text-xs text-[var(--colorPaletteRedForeground1)]"
+      >
         {fehler}
       </p>
     );
@@ -57,6 +62,7 @@ export const RechercheKarte: React.FC<Props> = ({
     <section
       data-testid="recherche-karte"
       aria-label={t("projekte.karte.titel")}
+      aria-live="polite"
       className="space-y-2 rounded-lg border border-mid-gray/30 bg-mid-gray/5 p-2.5 text-sm"
     >
       <header className="flex items-start gap-2">
@@ -68,7 +74,9 @@ export const RechercheKarte: React.FC<Props> = ({
         />
         <div className="min-w-0 flex-1">
           <p className="text-xs text-text/60">
-            {t("projekte.karte.kennzeichen", { klasse: doc.dataClassLabel })}
+            {t("projekte.karte.kennzeichen", {
+              klasse: klassenName(doc.dataClass, t),
+            })}
           </p>
           <p className="break-words font-medium" data-testid="recherche-frage">
             {doc.question}
@@ -126,7 +134,13 @@ export const RechercheKarte: React.FC<Props> = ({
           getMarkdown={() => doc.readAloud}
           testId="recherche-readaloud"
           fileStem={doc.question.slice(0, 40)}
+          disabled={vorlesenGesperrt}
         />
+        {vorlesenGesperrt && (
+          <span data-testid="recherche-vorlesen-gesperrt">
+            {t("projekte.vorlesen.nurLokal")}
+          </span>
+        )}
         {projektName && (
           <span data-testid="recherche-abgelegt">
             {t("projekte.karte.abgelegt", { projekt: projektName })}

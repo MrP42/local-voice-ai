@@ -1,9 +1,9 @@
 import "./styles";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands, type SuiteProjekt } from "@/bindings";
 import { auspacken, fehlerText } from "@/lib/projekte";
-import { useProjekteMeldung } from "@/lib/projekteBus";
+import { useErwartung, type HaltEnde } from "@/lib/projekteBus";
 import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { Input } from "../ui/Input";
@@ -35,7 +35,8 @@ export const SprachRecherche: React.FC<Props> = ({
   const [frage, setFrage] = useState("");
   const [meldung, setMeldung] = useState<string | null>(null);
   const [ergebnis, setErgebnis] = useState<string | null>(null);
-  const [erwartet, setErwartet] = useState(false);
+  const projektId = useId();
+  const frageId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -51,31 +52,39 @@ export const SprachRecherche: React.FC<Props> = ({
         setProjekte(liste);
         setProjekt((cur) => cur ?? liste[0]?.id ?? null);
       })
-      .catch((e) => setMeldung(fehlerText(e)));
+      .catch((e) => setMeldung(fehlerText(e, t)));
     // Nur beim Oeffnen vorbelegen.
   }, [open]);
 
-  useProjekteMeldung("recherche", (id) => {
-    if (id && erwartet) {
+  const erwartung = useErwartung(
+    (id) => {
       setErgebnis(id);
-      setErwartet(false);
       setMeldung(null);
-    }
-  });
+    },
+    (_id, wie: HaltEnde) => {
+      setErgebnis(null);
+      setMeldung(
+        wie === "abgelehnt"
+          ? t("projekte.freigabe.nichtsGesendet")
+          : wie === "abgelaufen"
+            ? t("projekte.freigabe.abgelaufen")
+            : t("projekte.fehler.unbekannt"),
+      );
+    },
+  );
 
   const los = async () => {
     if (!projekt || frage.trim() === "") return;
     setMeldung(null);
     setErgebnis(null);
-    setErwartet(true);
+    erwartung.leeren();
     const r = await start(frage.trim(), projekt);
     if (r.status === "fertig" && r.rechercheId) {
       setErgebnis(r.rechercheId);
-      setErwartet(false);
-    } else if (r.status === "freigabe") {
+    } else if (r.status === "freigabe" && r.rechercheId) {
+      erwartung.erwarte(r.rechercheId);
       setMeldung(t("projekte.chat.wartet"));
     } else {
-      setErwartet(false);
       setMeldung(r.message ?? t("projekte.fehler.unbekannt"));
     }
   };
@@ -112,9 +121,9 @@ export const SprachRecherche: React.FC<Props> = ({
         ) : (
           <>
             <div>
-              <label className="mb-1 block text-xs text-text/60">
+              <span id={projektId} className="mb-1 block text-xs text-text/60">
                 {t("projekte.sprache.projekt")}
-              </label>
+              </span>
               <Select
                 value={projekt}
                 options={projekte.map((p) => ({ value: p.id, label: p.title }))}
@@ -123,19 +132,22 @@ export const SprachRecherche: React.FC<Props> = ({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-text/60">
+              <label
+                htmlFor={frageId}
+                className="mb-1 block text-xs text-text/60"
+              >
                 {t("projekte.sprache.frage")}
               </label>
               <Input
+                id={frageId}
                 value={frage}
-                aria-label={t("projekte.sprache.frage")}
                 onChange={(e) => setFrage(e.target.value)}
               />
             </div>
           </>
         )}
         {meldung && (
-          <p role="status" className="text-xs text-text/70">
+          <p role="status" aria-live="polite" className="text-xs text-text/70">
             {meldung}
           </p>
         )}

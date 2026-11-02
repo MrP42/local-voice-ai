@@ -795,14 +795,6 @@ async projektEintraege(suiteId: string) : Promise<Result<EintragSicht[], string>
     else return { status: "error", error: e  as any };
 }
 },
-async projektEintragEntfernen(eintragId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("projekt_eintrag_entfernen", { eintragId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async projektOrdnerVerknuepfen(ordnerId: string, suiteId: string) : Promise<Result<SyncBericht, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("projekt_ordner_verknuepfen", { ordnerId, suiteId }) };

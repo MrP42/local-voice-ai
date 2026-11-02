@@ -6,9 +6,12 @@ import type { Page } from "@playwright/test";
  * `projekt*` und `recherche*` tut (die Regeln selbst -- Default-Deny, Halt, Freigabe, Audit ohne
  * Inhalte -- pruefen die Rust-Tests in `src-tauri/src/projekte/tests.rs`):
  *
- * - Ordner `f2` ("Geschaeftlich") ist mit dem Suite-Projekt `sp1` (INTERNAL, Web frei) verknuepft,
- *   Ordner `f3` ("Kunde Stadtwerke") mit `sp2` (PERSONAL, Web frei), Ordner `f1` mit `sp3`
- *   (INTERNAL, Web gesperrt), Ordner `f4` mit nichts.
+ * - Ordner `f2` ("Geschaeftlich") ist mit dem gleichnamigen Suite-Projekt `sp1` (INTERNAL, Web frei)
+ *   verknuepft, Ordner `f3` ("Kunde Stadtwerke") mit dem gleichnamigen `sp2` (PERSONAL, Web frei),
+ *   Ordner `f1` ("Privat") mit `sp3` (INTERNAL, Web gesperrt), Ordner `f4` mit nichts. Die Szene der
+ *   Vorschaubilder ist durchgaengig `f3`/`sp2`: Frage, Anfragen und Ergebnis gehoeren zu diesem Projekt.
+ * - Fehler lassen sich einspielen: `__suite.failFreigaben` (Lesen der Halte scheitert),
+ *   `__suite.entscheidenMs` (Entscheidung dauert), `__suite.entscheidenFehler` (Entscheidung scheitert).
  * - `recherche_starten` liefert bei INTERNAL sofort ein Ergebnis, ab PERSONAL einen Halt
  *   (`status: "freigabe"`) mit zwei Suchanfragen; `recherche_freigabe_entscheiden` sendet nur, was
  *   gewaehlt wurde. Ein Projekt ohne Web-Freigabe lehnt mit `fehler` ab.
@@ -23,7 +26,7 @@ export const installProjekteMock = async (page: Page) => {
       projekte: [
         {
           id: "sp1",
-          title: "Netzausbau Stadtwerke",
+          title: "Geschäftlich",
           goal: null,
           dataClass: "INTERNAL",
           specialCategory: false,
@@ -34,7 +37,7 @@ export const installProjekteMock = async (page: Page) => {
         },
         {
           id: "sp2",
-          title: "Personalgespräche",
+          title: "Kunde Stadtwerke",
           goal: null,
           dataClass: "PERSONAL",
           specialCategory: false,
@@ -45,7 +48,7 @@ export const installProjekteMock = async (page: Page) => {
         },
         {
           id: "sp3",
-          title: "Interne Planung",
+          title: "Privat",
           goal: null,
           dataClass: "INTERNAL",
           specialCategory: false,
@@ -57,6 +60,9 @@ export const installProjekteMock = async (page: Page) => {
       ],
       links: { f2: "sp1", f3: "sp2", f1: "sp3" } as Record<string, string>,
       holds: [] as any[],
+      failFreigaben: false,
+      entscheidenMs: 0,
+      entscheidenFehler: null as null | string,
       rechercheDocs: {} as Record<string, any>,
       seq: 0,
     };
@@ -110,9 +116,16 @@ export const installProjekteMock = async (page: Page) => {
                 eintrag(
                   "e4",
                   "meeting",
-                  "Kundentermin Stadtwerke Kaiserslautern",
+                  "Kundentermin Stadtwerke Kaiserslautern – Lastgang",
                   "wai://lva/besprechung/m2",
                   "PERSONAL",
+                ),
+                eintrag(
+                  "e5",
+                  "book",
+                  "Leitfaden Netzentgelte",
+                  "wai://lva/buch/b1",
+                  "PUBLIC",
                 ),
               ]
             : [];
@@ -134,11 +147,6 @@ export const installProjekteMock = async (page: Page) => {
       return { ...p, entryCount: eintraegeVon(id).length };
     };
 
-    const klassenName: Record<string, string> = {
-      PUBLIC: "öffentlich",
-      INTERNAL: "intern",
-      PERSONAL: "personenbezogen",
-    };
     const ergebnis = (id: string, frage: string, projectId: string) => {
       const p = w.__suite.projekte.find((x: any) => x.id === projectId);
       return {
@@ -146,14 +154,13 @@ export const installProjekteMock = async (page: Page) => {
         question: frage,
         createdAt: stamp,
         dataClass: p.dataClass,
-        dataClassLabel: klassenName[p.dataClass],
         projectId,
         webApproved: true,
         stoppedReason: null,
         model: "lokal-schnell",
         answer: [
           {
-            text: "Die Netzentgelte werden von der Bundesnetzagentur festgelegt.",
+            text: "Die Netzentgelte für Lastgangmessung setzen sich aus Arbeits-, Leistungs- und Messpreis zusammen.",
             citations: [1],
             unsupported: false,
           },
@@ -161,21 +168,22 @@ export const installProjekteMock = async (page: Page) => {
         sources: [
           {
             index: 1,
-            title: "Netzentgelte - Bundesnetzagentur",
+            title: "Netzentgelte Strom - Bundesnetzagentur",
             url: "https://www.example.org/netzentgelte",
             retrievedAt: "2026-11-02T08:30:00Z",
-            excerpt: "Die Entgelte für die Netznutzung werden reguliert.",
-            sourceType: "amtlich",
+            excerpt:
+              "Entgelte für die Netznutzung bestehen aus Arbeits-, Leistungs- und Messpreis.",
+            sourceType: "official",
           },
         ],
         contradictions: [],
-        followUps: ["Wie hoch waren die Entgelte 2025?"],
+        followUps: ["Wie hoch war der Leistungspreis 2025?"],
         queries: [frage],
         readAloud: "Die Netzentgelte werden festgelegt.",
       };
     };
-    const speichern = (frage: string, projectId: string) => {
-      const id = `rc${++w.__suite.seq}`;
+    const speichern = (frage: string, projectId: string, id?: string) => {
+      id = id ?? `rc${++w.__suite.seq}`;
       w.__suite.rechercheDocs[id] = ergebnis(id, frage, projectId);
       return id;
     };
@@ -226,6 +234,7 @@ export const installProjekteMock = async (page: Page) => {
           return {
             available: true,
             reason: null,
+            reasonCode: null,
             searxngUrl: "https://suche.example.org",
             canConfigure: true,
           };
@@ -236,7 +245,10 @@ export const installProjekteMock = async (page: Page) => {
             return {
               status: "fehler",
               rechercheId: null,
-              message: "Das Web ist für dieses Projekt nicht freigegeben.",
+              message:
+                "Das Web ist für dieses Suite-Projekt nicht freigegeben.",
+              code: "web_gesperrt",
+              haltBleibt: false,
             };
           }
           if (p.dataClass === "INTERNAL" || p.dataClass === "PUBLIC") {
@@ -244,45 +256,75 @@ export const installProjekteMock = async (page: Page) => {
               status: "fertig",
               rechercheId: speichern(args.frage, p.id),
               message: null,
+              code: null,
+              haltBleibt: false,
             };
           }
           s.holds.push({
             id: `h${++s.seq}`,
             question: args.frage,
             dataClass: p.dataClass,
-            dataClassLabel: klassenName[p.dataClass],
             projectId: p.id,
+            expiresInSecs: 900,
             queries: [
-              { id: "q1", text: args.frage, hint: null },
+              {
+                id: "q1",
+                text: "Netzentgelte Lastgangmessung Berechnung",
+                hintClass: null,
+              },
               {
                 id: "q2",
-                text: `${args.frage} Stadtwerke Kaiserslautern`,
-                hint: "enthält möglicherweise Personenbezug",
+                text: "Netzentgelte Lastgangmessung Stadtwerke Kaiserslautern",
+                hintClass: "PERSONAL",
               },
             ],
           });
-          return { status: "freigabe", rechercheId: null, message: null };
+          return {
+            status: "freigabe",
+            rechercheId: s.holds[s.holds.length - 1].id,
+            message: "Die Suchanfragen warten auf Ihre Freigabe.",
+            code: "freigabe_wartet",
+            haltBleibt: false,
+          };
         }
         case "recherche_freigaben":
+          if (s.failFreigaben) throw new Error("recherche.storage: kaputt");
           w.__calls?.push({ cmd, args });
           // Wie das echte Backend: jede Antwort ist eine neue Kopie (sonst erkennt React keine Aenderung).
           return JSON.parse(JSON.stringify(s.holds));
         case "recherche_freigabe_entscheiden": {
           w.__calls?.push({ cmd, args });
+          if (s.entscheidenMs) {
+            await new Promise((r) => setTimeout(r, s.entscheidenMs));
+          }
+          if (s.entscheidenFehler) throw new Error(s.entscheidenFehler);
           const i = s.holds.findIndex((h: any) => h.id === args.id);
           const hold = s.holds[i];
           s.holds.splice(i, 1);
           if (args.aktion === "abbrechen") {
-            return { status: "abgelehnt", rechercheId: null, message: null };
+            return {
+              status: "abgelehnt",
+              rechercheId: null,
+              message: "Es wurde nichts gesendet.",
+              code: "nichts_gesendet",
+              haltBleibt: false,
+            };
           }
           return {
             status: "fertig",
-            rechercheId: speichern(hold.question, hold.projectId),
+            rechercheId: speichern(hold.question, hold.projectId, hold.id),
             message: null,
+            code: null,
+            haltBleibt: false,
           };
         }
         case "recherche_lesen":
           return s.rechercheDocs[args.id];
+        case "recherche_loeschen": {
+          w.__calls?.push({ cmd, args });
+          delete s.rechercheDocs[args.id];
+          return null;
+        }
         case "recherche_liste":
           return [];
       }

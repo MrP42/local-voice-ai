@@ -3,3 +3,10 @@ quelle = "https://github.com/MrP42/wai-sdk"
 pfad = "packages/ui/src"
 commit = "56533672647b78a01659452e3e19549c299dfb4c"
 dateien = ["components/Button.tsx", "components/Dialog.tsx", "components/Drawer.tsx", "components/StatusChip.tsx", "cx.ts", "dichte/Dichte.tsx", "icons.tsx", "projekt.css", "projekt/Projektordner.tsx", "projekt/RechercheAnsicht.tsx", "projekt/RechercheFreigabe.tsx", "projekt/index.ts", "projekt/typen.ts"]
+
+# Abweichungen vom Original (bewusst, bei erneutem Vendoren wieder anbringen):
+# - components/Dialog.tsx: `useRef<HTMLDivElement | null>(null)` statt `useRef<HTMLDivElement>(null)`
+#   (Typpruefung unter React 18 dieser App).
+# - dichte/Dichte.tsx: gekuerzt auf Dichte-Typ, DichteKontext und useDichte; DichteProvider und
+#   useSyncExternalStore-Teile entfallen, die App stellt die Dichte nicht ueber diesen Provider ein.
+# - bruecke.css: nur in dieser App (Anbindung der WAI-Tokens an die Fluent-Themes).

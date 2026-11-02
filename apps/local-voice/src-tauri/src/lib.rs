@@ -1985,7 +1985,6 @@ fn specta_builder() -> Builder<tauri::Wry> {
             projekte::befehle::projekt_web_freigabe,
             projekte::befehle::projekt_loeschen,
             projekte::befehle::projekt_eintraege,
-            projekte::befehle::projekt_eintrag_entfernen,
             projekte::befehle::projekt_ordner_verknuepfen,
             projekte::befehle::projekt_ordner_loesen,
             projekte::befehle::projekt_abgleichen,

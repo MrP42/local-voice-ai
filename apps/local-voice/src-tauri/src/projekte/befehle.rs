@@ -67,19 +67,6 @@ pub async fn projekt_eintraege(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn projekt_eintrag_entfernen(
-    z: State<'_, ProjekteZustand>,
-    eintrag_id: String,
-) -> Antwort<()> {
-    Ok(z.dienste()
-        .await?
-        .projekte
-        .eintrag_entfernen(&eintrag_id)
-        .await?)
-}
-
-#[tauri::command]
-#[specta::specta]
 pub async fn projekt_ordner_verknuepfen(
     z: State<'_, ProjekteZustand>,
     ordner_id: String,

@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
-import { auspacken, fehlerText } from "@/lib/projekte";
+import { auspacken, fehlerText, laufText } from "@/lib/projekte";
 import { meldeProjekte } from "@/lib/projekteBus";
 
 export interface StartErgebnis {
   /** `fertig`, `freigabe` (der Dialog des Wächters übernimmt), `fehler`. */
   status: "fertig" | "freigabe" | "fehler";
+  /** Kennung des Dokuments (`fertig`) oder des Halts (`freigabe`): beide tragen dieselbe Kennung. */
   rechercheId?: string;
   /** Verständlicher Text bei `fehler` (und der Hinweis bei `freigabe`). */
   message?: string;
@@ -14,37 +15,40 @@ export interface StartErgebnis {
 
 /**
  * Startet eine Recherche (Modus Schnell) in einem Suite-Projekt und meldet das Ergebnis über den
- * Bus: ein Halt an den Freigabe-Wächter, ein fertiges Dokument an die Projektseite.
+ * Bus: ein Halt an den Freigabe-Wächter, ein fertiges Dokument an die Projektseite. `besprechung`
+ * ist die Besprechung, aus der gefragt wird; das Backend prüft, dass das Projekt zu ihr gehört.
  */
 export function useRechercheStart() {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
   const start = useCallback(
-    async (frage: string, suiteProjekt: string): Promise<StartErgebnis> => {
+    async (
+      frage: string,
+      suiteProjekt: string,
+      besprechung: string | null = null,
+    ): Promise<StartErgebnis> => {
       setBusy(true);
       try {
         const a = auspacken(
-          await commands.rechercheStarten(frage, suiteProjekt),
+          await commands.rechercheStarten(frage, suiteProjekt, besprechung),
         );
         if (a.status === "fertig" && a.rechercheId) {
           meldeProjekte("recherche", a.rechercheId);
           meldeProjekte("projekte");
           return { status: "fertig", rechercheId: a.rechercheId };
         }
-        if (a.status === "freigabe") {
+        if (a.status === "freigabe" && a.rechercheId) {
           meldeProjekte("freigabe");
           return {
             status: "freigabe",
-            message: a.message ?? t("projekte.freigabe.wartet"),
+            rechercheId: a.rechercheId,
+            message: t("projekte.freigabe.wartet"),
           };
         }
-        return {
-          status: "fehler",
-          message: a.message ?? t("projekte.fehler.unbekannt"),
-        };
+        return { status: "fehler", message: laufText(a, t) };
       } catch (e) {
-        return { status: "fehler", message: fehlerText(e) };
+        return { status: "fehler", message: fehlerText(e, t) };
       } finally {
         setBusy(false);
       }

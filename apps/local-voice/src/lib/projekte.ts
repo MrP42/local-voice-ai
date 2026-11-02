@@ -36,8 +36,34 @@ export function auspacken<T>(
   throw new Error(r.error);
 }
 
-export const fehlerText = (e: unknown): string =>
+/** Übersetzungsfunktion (i18next `t`), hier nur als Form, damit dieses Modul ohne React läuft. */
+export type T = (key: string, opts?: Record<string, unknown>) => string;
+
+const roherText = (e: unknown): string =>
   e instanceof Error ? e.message : String(e);
+
+/**
+ * Fehlertext einer Antwort. Das Backend liefert `<code>: <deutscher Text>`; mit `t` wird der Code
+ * übersetzt (`projekte.fehlercode.<code>`), sonst steht der deutsche Text da.
+ */
+export function fehlerText(e: unknown, t?: T): string {
+  const roh = roherText(e);
+  const m = /^([a-z_]+\.[a-z_]+): ([\s\S]*)$/.exec(roh);
+  if (!m) return roh;
+  if (!t) return m[2];
+  return t(`projekte.fehlercode.${m[1]}`, { defaultValue: m[2] });
+}
+
+/** Text zu einem Lauf-Ergebnis des Backends (`code` übersetzt, `message` als Rückfall). */
+export const laufText = (
+  a: { code: string | null; message: string | null },
+  t: T,
+): string =>
+  a.code
+    ? t(`projekte.code.${a.code}`, {
+        defaultValue: a.message ?? t("projekte.fehler.unbekannt"),
+      })
+    : (a.message ?? t("projekte.fehler.unbekannt"));
 
 export function projektKurz(p: SuiteProjekt): ProjektKurz {
   return {
@@ -106,13 +132,15 @@ export function verweisZiel(
     : null;
 }
 
-const QUELLENART: Record<string, QuellenArt> = {
-  amtlich: "official",
-  wissenschaftlich: "scholarly",
-  Presse: "press",
-  Forum: "forum",
-  unbekannt: "unknown",
-};
+const QUELLENART: readonly QuellenArt[] = [
+  "official",
+  "scholarly",
+  "press",
+  "forum",
+  "unknown",
+];
+const quellenArt = (code: string): QuellenArt =>
+  QUELLENART.find((a) => a === code) ?? "unknown";
 
 export function hostVon(url: string): string {
   try {
@@ -127,8 +155,14 @@ export function zeitKurz(iso: string): string {
   return m ? m[1] : "";
 }
 
-export function rechercheErgebnis(d: RechercheSicht): RechercheErgebnis {
+export function rechercheErgebnis(d: RechercheSicht, t: T): RechercheErgebnis {
   const quellen = d.sources.length;
+  const stand =
+    d.stoppedReason === "budget"
+      ? t("projekte.ergebnis.budget")
+      : d.stoppedReason === "cancelled"
+        ? t("projekte.ergebnis.abgebrochen")
+        : t("projekte.ergebnis.geprueft");
   return {
     title: d.question,
     answer: d.answer.map((a) => ({
@@ -140,33 +174,57 @@ export function rechercheErgebnis(d: RechercheSicht): RechercheErgebnis {
       index: q.index,
       title: q.title,
       host: hostVon(q.url),
-      sourceType: QUELLENART[q.sourceType] ?? "unknown",
-      retrievedLabel: `abgerufen ${zeitKurz(q.retrievedAt)}`.trim(),
+      sourceType: quellenArt(q.sourceType),
+      retrievedLabel: t("projekte.ergebnis.abgerufen", {
+        zeit: zeitKurz(q.retrievedAt),
+      }).trim(),
       excerpt: q.excerpt,
     })),
     contradictions: d.contradictions,
     followUps: d.followUps,
-    provenance: `Schnell · ${quellen === 1 ? "1 Quelle" : `${quellen} Quellen`} · ${
-      d.stoppedReason === "budget"
-        ? "Budget erreicht"
-        : d.stoppedReason === "cancelled"
-          ? "abgebrochen"
-          : "geprüft"
-    } · ${d.model}`,
+    provenance: [
+      t("projekte.ergebnis.modus"),
+      t("projekte.ergebnis.quellen", { count: quellen }),
+      stand,
+      d.model,
+    ].join(" · "),
   };
 }
 
+/** Name der Datenklasse in der Sprache der Oberfläche (Code `PERSONAL` usw.). */
+export const klassenName = (klasse: string, t: T): string =>
+  t(`projekte.klassen.${alsKlasse(klasse)}`);
+
 /** Angezeigter Kontext des Freigabedialogs: die Frage der Recherche und die Klasse in Worten. */
-export function freigabeKontext(info: FreigabeInfo): string {
-  return `Recherche „${info.question}“ (${info.dataClassLabel})`;
+export function freigabeKontext(info: FreigabeInfo, t: T): string {
+  return t("projekte.freigabe.kontextFrage", {
+    frage: info.question,
+    klasse: klassenName(info.dataClass, t),
+  });
 }
 
-export function freigabeAnfragen(info: FreigabeInfo): FreigabeAnfrage[] {
+/** Restzeit des Halts, ab `geladenAm` (ms) gezählt; `undefined`, wenn sie abgelaufen ist. */
+export function freigabeRestzeit(
+  info: FreigabeInfo,
+  geladenAm: number,
+  jetzt: number,
+  t: T,
+): string | undefined {
+  const rest = info.expiresInSecs - Math.floor((jetzt - geladenAm) / 1000);
+  if (rest <= 0) return undefined;
+  return t("projekte.freigabe.restzeit", { count: Math.ceil(rest / 60) });
+}
+
+export function freigabeAnfragen(info: FreigabeInfo, t: T): FreigabeAnfrage[] {
   return info.queries.map((q) => ({
     id: q.id,
     text: q.text,
-    hint: q.hint ?? undefined,
-    // Ab PERSONAL ist nichts vorab gewaehlt, wenn ein Hinweis dabei steht; die Person entscheidet.
+    hint: q.hintClass
+      ? t("projekte.freigabe.anfrageHinweis", {
+          klasse: klassenName(q.hintClass, t),
+        })
+      : undefined,
+    // Ab PERSONAL ist nichts vorab gewaehlt: die Person entscheidet.
     selected: false,
   }));
 }

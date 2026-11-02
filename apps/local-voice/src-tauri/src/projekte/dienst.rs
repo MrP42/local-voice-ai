@@ -533,16 +533,6 @@ impl ProjektDienst {
             .collect())
     }
 
-    /// Entfernt einen Eintrag aus dem Projektordner (nie die Herkunft).
-    pub async fn eintrag_entfernen(&self, eintrag_id: &str) -> Res<()> {
-        let _g = self.sperre.lock().await;
-        self.verz
-            .eintrag_entfernen(&self.principal, eintrag_id)
-            .await?;
-        self.ausgang_bestaetigen().await?;
-        Ok(())
-    }
-
     async fn verweis_zuordnen(
         &self,
         suite_id: &str,

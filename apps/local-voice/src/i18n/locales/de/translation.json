@@ -7179,7 +7179,13 @@
       "fertig": "Die Recherche ist fertig und liegt im Projektordner.",
       "nichtsGesendet": "Es wurde nichts gesendet.",
       "wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
-      "context": "Kontext: {{label}}."
+      "context": "Kontext: {{label}}.",
+      "abgelaufen": "Die Freigabe ist abgelaufen. Es wurde nichts gesendet.",
+      "ladenFehler": "Offene Freigaben konnten nicht gelesen werden.",
+      "kontextFrage": "Recherche „{{frage}}“ ({{klasse}})",
+      "restzeit_one": "noch 1 Minute",
+      "restzeit_other": "noch {{count}} Minuten",
+      "anfrageHinweis": "Kontext {{klasse}}: Freigabe nötig"
     },
     "karte": {
       "titel": "Recherche",
@@ -7234,7 +7240,9 @@
       "uebersprungen_one": "1 Besprechung liegt über der Datenklasse des Projekts und wurde nicht zugeordnet.",
       "uebersprungen_other": "{{count}} Besprechungen liegen über der Datenklasse des Projekts und wurden nicht zugeordnet.",
       "geloescht_one": "Gelöscht. 1 Recherche entfernt.",
-      "geloescht_other": "Gelöscht. {{count}} Recherchen entfernt."
+      "geloescht_other": "Gelöscht. {{count}} Recherchen entfernt.",
+      "rechercheLoeschen": "Recherche löschen",
+      "rechercheGeloescht": "Recherche gelöscht."
     },
     "klassen": {
       "PUBLIC": "öffentlich",
@@ -7359,6 +7367,41 @@
       },
       "steps": "Ablauf",
       "noResult": "Noch keine Recherche. Stellen Sie eine Frage."
+    },
+    "code": {
+      "freigabe_wartet": "Die Suchanfragen warten auf Ihre Freigabe.",
+      "nichts_gesendet": "Es wurde nichts gesendet.",
+      "freigabe_nicht_angewendet": "Die Freigabe wurde nicht angewendet.",
+      "nicht_eingerichtet": "Die Recherche ist nicht eingerichtet: Es ist kein Suchdienst hinterlegt. Die Adresse eines selbst betriebenen SearXNG-Dienstes trägt die Betreiberin oder der Betreiber in den Einstellungen unter Recherche ein.",
+      "web_gesperrt": "Das Web ist für dieses Suite-Projekt nicht freigegeben. Die Recherche wurde nicht ausgeführt.",
+      "nicht_gefunden": "Das Suite-Projekt wurde nicht gefunden. Die Recherche wurde nicht ausgeführt.",
+      "nicht_erlaubt": "Das Suite-Projekt ist archiviert. Die Recherche wurde nicht ausgeführt.",
+      "argumente_ungueltig": "Die Frage fehlt oder ist zu lang.",
+      "recherche_fehlgeschlagen": "Die Recherche ist fehlgeschlagen.",
+      "speichern_fehlgeschlagen": "Das Recherche-Dokument konnte nicht gespeichert werden.",
+      "projekt_passt_nicht": "Das Suite-Projekt gehört nicht zu dieser Besprechung. Die Recherche wurde nicht ausgeführt.",
+      "kein_modell": "Es ist kein Sprachmodell eingestellt."
+    },
+    "fehlercode": {
+      "recherche.not_found": "Keine offene Freigabe mit dieser Kennung (abgelaufen, entschieden oder die App wurde neu gestartet).",
+      "recherche.forbidden": "Die Suchadresse darf nur die Administration ändern.",
+      "recherche.invalid": "Die Auswahl passt nicht zu den angezeigten Suchanfragen. Es wurde nichts gesendet.",
+      "recherche.unavailable": "Die Recherche ist nicht eingerichtet.",
+      "recherche.storage": "Die Recherche konnte nicht gespeichert werden.",
+      "projekte.storage": "Das Projektverzeichnis konnte nicht gelesen oder geschrieben werden.",
+      "projekte.not_found": "Nicht gefunden."
+    },
+    "ergebnis": {
+      "modus": "Schnell",
+      "quellen_one": "1 Quelle",
+      "quellen_other": "{{count}} Quellen",
+      "geprueft": "geprüft",
+      "budget": "Budget erreicht",
+      "abgebrochen": "abgebrochen",
+      "abgerufen": "abgerufen {{zeit}}"
+    },
+    "vorlesen": {
+      "nurLokal": "Bei personenbezogenen Inhalten nur mit lokaler Sprachausgabe."
     }
   }
 }

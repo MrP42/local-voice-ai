@@ -7179,7 +7179,13 @@
       "projectOnly": "Search in project only",
       "cancel": "Cancel",
       "none": "No query selected: nothing will be sent.",
-      "context": "Context: {{label}}."
+      "context": "Context: {{label}}.",
+      "abgelaufen": "The approval expired. Nothing was sent.",
+      "ladenFehler": "Open approvals could not be read.",
+      "kontextFrage": "Research “{{frage}}” ({{klasse}})",
+      "restzeit_one": "1 minute left",
+      "restzeit_other": "{{count}} minutes left",
+      "anfrageHinweis": "Context {{klasse}}: approval needed"
     },
     "karte": {
       "titel": "Research",
@@ -7234,7 +7240,9 @@
       "uebersprungen_one": "1 meeting is above the project’s data class and was not assigned.",
       "uebersprungen_other": "{{count}} meetings are above the project’s data class and were not assigned.",
       "geloescht_one": "Deleted. 1 research document removed.",
-      "geloescht_other": "Deleted. {{count}} research documents removed."
+      "geloescht_other": "Deleted. {{count}} research documents removed.",
+      "rechercheLoeschen": "Delete research",
+      "rechercheGeloescht": "Research deleted."
     },
     "klassen": {
       "PUBLIC": "public",
@@ -7359,6 +7367,41 @@
         "forum": "forum",
         "unknown": "source unknown"
       }
+    },
+    "code": {
+      "freigabe_wartet": "The search queries are waiting for your approval.",
+      "nichts_gesendet": "Nothing was sent.",
+      "freigabe_nicht_angewendet": "The approval was not applied.",
+      "nicht_eingerichtet": "Research is not set up: no search service is configured. The operator enters the address of a self-hosted SearXNG service under Settings > Research.",
+      "web_gesperrt": "The web is not allowed for this suite project. The research was not run.",
+      "nicht_gefunden": "The suite project was not found. The research was not run.",
+      "nicht_erlaubt": "The suite project is archived. The research was not run.",
+      "argumente_ungueltig": "The question is missing or too long.",
+      "recherche_fehlgeschlagen": "The research failed.",
+      "speichern_fehlgeschlagen": "The research document could not be saved.",
+      "projekt_passt_nicht": "The suite project does not belong to this meeting. The research was not run.",
+      "kein_modell": "No language model is set."
+    },
+    "fehlercode": {
+      "recherche.not_found": "No open approval with this ID (expired, decided, or the app was restarted).",
+      "recherche.forbidden": "Only the administration may change the search address.",
+      "recherche.invalid": "The selection does not match the displayed search queries. Nothing was sent.",
+      "recherche.unavailable": "Research is not set up.",
+      "recherche.storage": "The research could not be saved.",
+      "projekte.storage": "The project directory could not be read or written.",
+      "projekte.not_found": "Not found."
+    },
+    "ergebnis": {
+      "modus": "Quick",
+      "quellen_one": "1 source",
+      "quellen_other": "{{count}} sources",
+      "geprueft": "checked",
+      "budget": "budget reached",
+      "abgebrochen": "cancelled",
+      "abgerufen": "retrieved {{zeit}}"
+    },
+    "vorlesen": {
+      "nurLokal": "Personal content is read aloud with local speech output only."
     }
   }
 }
