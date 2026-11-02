@@ -78,9 +78,16 @@ export function useKiDocuments(pageId: string | null): KiDocumentsState {
   }, []);
 
   useEffect(() => {
-    const un = listen<{ page_id: string; done: number; total: number }>(
+    const un = listen<{
+      page_id: string;
+      kind: string;
+      done: number;
+      total: number;
+    }>(
       "book-ai-progress",
       (e) => {
+        // Begriffsläufe melden über dasselbe Ereignis (lva#185).
+        if (e.payload.kind !== "summary") return;
         if (e.payload.page_id !== runPage.current) return;
         setRun((cur) =>
           cur ? { ...cur, done: e.payload.done, total: e.payload.total } : cur,
