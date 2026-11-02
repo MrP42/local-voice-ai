@@ -894,9 +894,9 @@ async rechercheAdresseSetzen(adresse: string | null) : Promise<Result<RechercheS
  * `PERSONAL`; die Klasse des Projekts hebt sie an. Ab `PERSONAL` haelt der Lauf an
  * (`status` = "freigabe") und wartet auf die Entscheidung in `recherche_freigabe_entscheiden`.
  */
-async rechercheStarten(frage: string, suiteProjekt: string | null) : Promise<Result<LaufAntwort, string>> {
+async rechercheStarten(frage: string, suiteProjekt: string | null, besprechung: string | null) : Promise<Result<LaufAntwort, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt }) };
+    return { status: "ok", data: await TAURI_INVOKE("recherche_starten", { frage, suiteProjekt, besprechung }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8485,10 +8485,15 @@ export type FreigabeAktion =
  */
 export type FreigabeInfo = { id: string; question: string; dataClass: string; 
 /**
- * Anzeigename der Klasse mit Umlauten (kein Audit-Slug).
+ * Frist des Halts in Sekunden (Rest ab jetzt).
  */
-dataClassLabel: string; projectId: string | null; queries: FreigabeZeile[] }
-export type FreigabeZeile = { id: string; text: string; hint: string | null }
+expiresInSecs: number; projectId: string | null; queries: FreigabeZeile[] }
+export type FreigabeZeile = { id: string; text: string; 
+/**
+ * Datenklasse (`PERSONAL` ...) der Anfrage, wenn sie eine Freigabe verlangt; die Oberflaeche
+ * bildet daraus den Hinweis in ihrer Sprache.
+ */
+hintClass: string | null }
 /**
  * Modell einer Funktion (Modelle je Funktion, Vorschlag E1, 01.11.2026). Leere
  * `model_id` = das Standardmodell (`llm_active_model_id`) gilt.
@@ -8816,7 +8821,19 @@ export type LaufAntwort = {
 /**
  * `fertig`, `freigabe` (wartet auf Entscheidung), `abgelehnt` oder `fehler`.
  */
-status: string; rechercheId: string | null; message: string | null }
+status: string; rechercheId: string | null; 
+/**
+ * Deutscher Text (Rueckfall und Log-Zwecke).
+ */
+message: string | null; 
+/**
+ * Stabiler Code von `message` (z. B. `web_gesperrt`); die Oberflaeche uebersetzt ihn.
+ */
+code: string | null; 
+/**
+ * Bei `fehler` einer Freigabe: der Halt besteht weiter und kann abgebrochen werden.
+ */
+haltBleibt: boolean }
 /**
  * Ein gelerntes Paar, wie es die Oberfläche sieht.
  */
@@ -10016,7 +10033,7 @@ voice_switching: boolean; voice: VoiceDescriptor }
 export type ProviderVoiceSample = { voice_id: string; wav_path: string | null }
 export type QuelleSicht = { index: number; title: string; url: string; retrievedAt: string; excerpt: string; 
 /**
- * Anzeigewort: amtlich, wissenschaftlich, Presse, Forum, unbekannt.
+ * Code: official, scholarly, press, forum, unknown (die Oberflaeche uebersetzt).
  */
 sourceType: string }
 /**
@@ -10065,7 +10082,7 @@ export type RechercheKurz = { id: string; question: string; createdAt: string; d
  * Recherche-Dokument fuer die Oberflaeche. Nur Modus Schnell; die uebrigen Felder des Schemas
  * (Vertrauensstufe, Pruefsummen, Kennungen) bleiben im Speicher.
  */
-export type RechercheSicht = { id: string; question: string; createdAt: string; dataClass: string; dataClassLabel: string; projectId: string | null; webApproved: boolean; 
+export type RechercheSicht = { id: string; question: string; createdAt: string; dataClass: string; projectId: string | null; webApproved: boolean; 
 /**
  * `budget` oder `cancelled`, wenn der Lauf vorzeitig endete.
  */
@@ -10079,9 +10096,13 @@ readAloud: string }
  */
 export type RechercheStatus = { available: boolean; 
 /**
- * Verstaendlicher Grund, wenn nicht verfuegbar.
+ * Verstaendlicher Grund, wenn nicht verfuegbar (deutscher Text, Rueckfall).
  */
 reason: string | null; 
+/**
+ * Stabiler Code des Grundes (`nicht_eingerichtet`); die Oberflaeche uebersetzt ihn.
+ */
+reasonCode: string | null; 
 /**
  * Eingestellte Suchadresse (Betreiberangabe, keine Zugangsdaten).
  */

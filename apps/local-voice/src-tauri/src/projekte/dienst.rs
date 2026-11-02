@@ -700,6 +700,12 @@ impl ProjektDienst {
     /// Recherche-Dokumente des Projekts (Datenschutzloeschung).
     pub async fn loeschen(&self, suite_id: &str) -> Res<LoeschErgebnis> {
         let _g = self.sperre.lock().await;
+        // Erst die Dokumente, dann das Projekt: scheitert das Loeschen des Projekts, bleibt kein
+        // verwaistes Dokument zurueck, das niemand mehr erreicht.
+        let recherchen_geloescht = self
+            .recherchen
+            .loeschen_projekt(&self.principal, suite_id)
+            .await? as u32;
         let bericht: LoeschBericht = self
             .verz
             .projekt_loeschen(&self.principal, suite_id)
@@ -708,10 +714,6 @@ impl ProjektDienst {
             .quellen
             .ordner_projekt_loesen_alle(suite_id)
             .map_err(quelle)?;
-        let recherchen_geloescht = self
-            .recherchen
-            .loeschen_projekt(&self.principal, suite_id)
-            .await? as u32;
         self.ausgang_bestaetigen().await?;
         self.protokoll("projekt_geloescht", suite_id, "ok", "geloescht");
         Ok(LoeschErgebnis {
@@ -746,6 +748,36 @@ impl ProjektDienst {
             self.abgleich_ohne_sperre(&h).await?;
         }
         Ok(n)
+    }
+
+    /// Raeumt Recherche-Dokumente weg, deren Suite-Projekt nicht mehr existiert (z. B. nach einem
+    /// Absturz mitten in der Loeschung oder einem Lauf, der ein geloeschtes Projekt traf). Liefert die
+    /// Zahl der entfernten Dokumente.
+    pub async fn verwaiste_recherchen_raeumen(&self) -> Res<u64> {
+        let _g = self.sperre.lock().await;
+        let bekannt: HashSet<String> = self
+            .verz
+            .projekte_auflisten(&self.principal, true)
+            .await?
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        let mut n = 0;
+        for k in self.recherchen.liste(&self.principal, None).await? {
+            let Some(pid) = k.project_id else { continue };
+            if !bekannt.contains(&pid) && self.recherchen.loeschen(&self.principal, &k.id).await? {
+                n += 1;
+            }
+        }
+        if n > 0 {
+            self.protokoll("recherchen_aufgeraeumt", "verwaist", "ok", &format!("n{n}"));
+        }
+        Ok(n)
+    }
+
+    #[cfg(test)]
+    pub fn verz_fuer_test(&self) -> &Projektverzeichnis {
+        &self.verz
     }
 
     /// Bestaetigt Loeschmeldungen fuer Verweise der eigenen App; fremde Meldungen bleiben stehen,

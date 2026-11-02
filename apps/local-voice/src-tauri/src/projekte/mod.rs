@@ -72,9 +72,10 @@ impl fmt::Display for Fehler {
 
 impl std::error::Error for Fehler {}
 
+/// An die Oberflaeche geht `<code>: <text>`; sie uebersetzt den Code und zeigt sonst den Text.
 impl From<Fehler> for String {
     fn from(f: Fehler) -> Self {
-        f.message
+        format!("{}: {}", f.code, f.message)
     }
 }
 
@@ -91,7 +92,9 @@ pub fn tls_anbieter() {
 pub type Res<T> = Result<T, Fehler>;
 
 /// Lokale Einzelplatz-Sitzung: ein Mandant, eine Person, Rolle Admin (die Person ist die einzige
-/// Betreiberin ihrer App). Dieselbe Sitzung wie `local_principal` in Corporate LLM (Profil Solo);
+/// Betreiberin ihrer App). Das ist die Solo-Grenze: Es gibt keine Rollentrennung zwischen Nutzerin und
+/// Administration (siehe docs/KNOWN-LIMITATIONS.md, "Suite-Projekte und Recherche"); mit mehreren
+/// Personen an einer App-Instanz muesste die Sitzung vom Server kommen. Dieselbe Sitzung wie `local_principal` in Corporate LLM (Profil Solo);
 /// die Rollenpruefung der Suchadresse bleibt bestehen und ist mit anderen Rollen getestet.
 pub fn lokaler_principal() -> Principal {
     let session = ServerSession {

@@ -6,7 +6,8 @@ use super::audit::{AuditEreignis, AuditSenke};
 use super::dienst::ProjektDienst;
 use super::quellen::{Inhalt, ProdQuellen};
 use super::recherche::{
-    FreigabeAktion, ModellQuelle, RechercheDienst, RechercheStore, Webzugang, pruefe_adresse,
+    AufrufFut, FreigabeAktion, ModellQuelle, RechercheDienst, RechercheStore, RueckrufModell, Webzugang,
+    modell_erlaubt, pruefe_adresse,
 };
 use super::{Fehler, lokaler_principal};
 use crate::managers::meetings::search::index::tests::{ready_meeting, tmp_store};
@@ -176,6 +177,10 @@ fn person(mandant: &str, rolle: Role) -> Principal {
 }
 
 async fn env(konfiguriert: bool) -> Env {
+    env_mit(konfiguriert, Arc::new(FakeModelle)).await
+}
+
+async fn env_mit(konfiguriert: bool, modelle: Arc<dyn ModellQuelle>) -> Env {
     super::tls_anbieter();
     let dir = tempfile::tempdir().unwrap();
     let (meetings_dir, store) = tmp_store();
@@ -219,7 +224,7 @@ async fn env(konfiguriert: bool) -> Env {
         RechercheDienst::open(
             rstore.clone(),
             projekte.clone(),
-            Arc::new(FakeModelle),
+            modelle,
             web,
             p.clone(),
         )
@@ -577,7 +582,9 @@ async fn ab_personal_haelt_der_lauf_an_und_die_teilauswahl_sendet_nur_diese_anfr
     assert_eq!(offen.len(), 1);
     assert_eq!(offen[0].question, FRAGE);
     assert!(offen[0].queries.len() >= 2);
-    assert_eq!(offen[0].data_class_label, "personenbezogen");
+    assert_eq!(offen[0].data_class, "PERSONAL");
+    assert!(offen[0].expires_in_secs > 0);
+    assert!(offen[0].queries.iter().all(|q| q.hint_class.as_deref() == Some("PERSONAL")));
 
     let id = offen[0].id.clone();
     let erste = offen[0].queries[0].id.clone();
@@ -786,4 +793,146 @@ async fn fremde_recherchen_sind_fuer_andere_mandanten_unsichtbar() {
     assert!(e.rstore.lesen(&fremd, &id).await.unwrap().is_none());
     assert!(!e.rstore.loeschen(&fremd, &id).await.unwrap());
     assert!(e.rstore.lesen(&e.p, &id).await.unwrap().is_some());
+}
+
+// ---------------------------------------------------------------- Modell ueber den Rueckruf (M1)
+
+/// Ein Modell, das nur `antworten` kennt: Planung, Antwort und Satzpruefung entscheidet der Text der
+/// Anweisung (wie ein echter Sprachdienst, der nichts von `satz_gestuetzt` weiss).
+fn rueckruf(lokal: bool, unterstuetzt: bool) -> RueckrufModell {
+    RueckrufModell::neu("rueckruf-test", lokal, move |anweisung: String, _eingabe: String| -> AufrufFut {
+        Box::pin(async move {
+            Ok(if anweisung.starts_with("Du planst") {
+                r#"{"queries":["waermeplanung frist","waermeplanung gemeinden"]}"#.to_string()
+            } else if anweisung.starts_with("Pruefe") {
+                format!(r#"{{"supported":{unterstuetzt}}}"#)
+            } else {
+                serde_json::json!({
+                    "sentences": [{"text": "Die kommunale Waermeplanung ist bis 2028 verpflichtend.", "citations": [1]}],
+                    "follow_ups": ["Wer ist betroffen?", "Gibt es Foerdermittel?", "Was passiert bei Verzug?"]
+                })
+                .to_string()
+            })
+        })
+    })
+}
+
+struct RueckrufModelle {
+    lokal: bool,
+    unterstuetzt: bool,
+}
+impl ModellQuelle for RueckrufModelle {
+    fn modell(&self, _model_id: &str) -> Arc<dyn Modell> {
+        Arc::new(rueckruf(self.lokal, self.unterstuetzt))
+    }
+}
+
+#[tokio::test]
+async fn rueckruf_modell_beurteilt_saetze_ueber_antworten() {
+    let m = rueckruf(true, true);
+    let u = m
+        .satz_gestuetzt("Satz", "Auszug", Datenklasse::Personal)
+        .await
+        .unwrap()
+        .expect("ein Urteil, nicht None");
+    assert!(u.gestuetzt);
+    assert!(u.tokens > 0);
+    let nein = rueckruf(true, false)
+        .satz_gestuetzt("Satz", "Auszug", Datenklasse::Personal)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!nein.gestuetzt);
+}
+
+#[tokio::test]
+async fn cloud_modell_bei_personal_wird_abgelehnt_auch_fuer_die_satzpruefung() {
+    assert!(modell_erlaubt(false, Datenklasse::Internal));
+    assert!(!modell_erlaubt(false, Datenklasse::Personal));
+    let cloud = rueckruf(false, true);
+    assert!(cloud.antworten("a", "e", Datenklasse::Personal).await.is_err());
+    assert!(cloud.satz_gestuetzt("s", "a", Datenklasse::Personal).await.is_err());
+    assert!(cloud.satz_gestuetzt("s", "a", Datenklasse::Internal).await.unwrap().is_some());
+    assert!(rueckruf(true, true).antworten("a", "e", Datenklasse::Restricted).await.is_ok());
+}
+
+#[tokio::test]
+async fn produktionspfad_mit_rueckruf_modell_liefert_gestuetzte_saetze() {
+    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: true, unterstuetzt: true })).await;
+    let (_o, _m, suite) = verknuepft(&e, true).await;
+    let id = freigeben_und_laufen(&e, &suite).await;
+    let d = e.dienst.sicht(&id).await.unwrap();
+    assert!(!d.answer.is_empty());
+    assert!(d.answer.iter().all(|a| !a.unsupported), "{:?}", d.answer);
+    assert!(!d.sources.is_empty());
+    assert_eq!(d.model, "rueckruf-test");
+
+    // Verneint die Pruefung, gilt der Satz als "ohne Quelle" (nicht als gestuetzt).
+    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: true, unterstuetzt: false })).await;
+    let (_o, _m, suite) = verknuepft(&e, true).await;
+    let id = freigeben_und_laufen(&e, &suite).await;
+    let d = e.dienst.sicht(&id).await.unwrap();
+    assert!(d.answer.iter().all(|a| a.unsupported || a.citations.is_empty()), "{:?}", d.answer);
+}
+
+#[tokio::test]
+async fn cloud_modell_bei_personal_scheitert_im_lauf_ohne_suche() {
+    let e = env_mit(true, Arc::new(RueckrufModelle { lokal: false, unterstuetzt: true })).await;
+    let (_o, _m, suite) = verknuepft(&e, true).await;
+    let a = e
+        .dienst
+        .starten(FRAGE, "m1", Datenklasse::Personal, Some(suite))
+        .await;
+    assert_eq!(a.status, "fehler", "{a:?}");
+    assert!(e.suche.anfragen.lock().unwrap().is_empty());
+    assert!(e.dienst.freigaben().is_empty());
+}
+
+// ---------------------------------------------------------------- S3, S4
+
+#[tokio::test]
+async fn start_prueft_serverseitig_dass_das_projekt_zur_besprechung_gehoert() {
+    let e = env(true).await;
+    let (_o, m, suite) = verknuepft(&e, true).await;
+    // Zweite Besprechung in keinem Projekt, zweites Projekt mit Web.
+    let fremd = ready_meeting(&e.store, "Fremde Besprechung", 1_750_000_100).id;
+    let andere = e.projekte.anlegen("Anderes", Klasse::Personal, false).await.unwrap();
+    e.projekte.web_freigabe(&andere.id, true).await.unwrap();
+
+    let ok = e
+        .dienst
+        .starten_fuer(Some(&m), FRAGE, "m", Datenklasse::Personal, Some(suite.clone()))
+        .await;
+    assert_eq!(ok.status, "freigabe", "{ok:?}");
+    for (besprechung, projekt) in [(&fremd, &suite), (&m, &andere.id)] {
+        let a = e
+            .dienst
+            .starten_fuer(Some(besprechung), FRAGE, "m", Datenklasse::Personal, Some(projekt.clone()))
+            .await;
+        assert_eq!(a.status, "fehler");
+        assert_eq!(a.code.as_deref(), Some("projekt_passt_nicht"));
+    }
+    let ohne = e
+        .dienst
+        .starten_fuer(Some(&m), FRAGE, "m", Datenklasse::Personal, None)
+        .await;
+    assert_eq!(ohne.code.as_deref(), Some("projekt_passt_nicht"));
+    assert!(e.suche.anfragen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn verwaiste_recherche_dokumente_werden_aufgeraeumt() {
+    let e = env(true).await;
+    let (_o, _m, suite) = verknuepft(&e, true).await;
+    let id = freigeben_und_laufen(&e, &suite).await;
+    // Das Projekt verschwindet, ohne dass die Kaskade das Dokument erreicht (Absturz mittendrin).
+    e.projekte
+        .verz_fuer_test()
+        .projekt_loeschen(&e.p, &suite)
+        .await
+        .unwrap();
+    assert!(e.dienst.sicht(&id).await.is_ok(), "Dokument ist noch da");
+    assert_eq!(e.projekte.verwaiste_recherchen_raeumen().await.unwrap(), 1);
+    assert!(e.dienst.sicht(&id).await.is_err());
+    assert_eq!(e.projekte.verwaiste_recherchen_raeumen().await.unwrap(), 0);
 }

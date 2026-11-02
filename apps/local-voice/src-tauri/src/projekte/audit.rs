@@ -41,8 +41,15 @@ fn ergebnis(status: &str) -> AuditOutcome {
 
 impl AuditSenke for RegisterAudit {
     fn aufzeichnen(&self, e: AuditEreignis) {
-        let Ok(conn) = self.0.get_connection() else {
-            return;
+        let conn = match self.0.get_connection() {
+            Ok(c) => c,
+            Err(_) => {
+                log::warn!(
+                    "projekte: Audit nicht geschrieben (keine Verbindung), Aktion {}",
+                    e.aktion
+                );
+                return;
+            }
         };
         let eintrag = NewAudit {
             caller: AUFRUFER.into(),
@@ -57,6 +64,11 @@ impl AuditSenke for RegisterAudit {
                 "dauer_ms": e.dauer_ms,
             })),
         };
-        let _ = register::record(&conn, &eintrag);
+        if register::record(&conn, &eintrag).is_err() {
+            log::warn!(
+                "projekte: Audit nicht geschrieben (Schreibfehler), Aktion {}",
+                e.aktion
+            );
+        }
     }
 }

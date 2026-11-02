@@ -217,6 +217,7 @@ pub async fn recherche_starten(
     z: State<'_, ProjekteZustand>,
     frage: String,
     suite_projekt: Option<String>,
+    besprechung: Option<String>,
 ) -> Antwort<LaufAntwort> {
     let d = z.dienste().await?;
     if let Err(e) = modell_bereit(&app) {
@@ -224,10 +225,18 @@ pub async fn recherche_starten(
             status: "fehler".into(),
             recherche_id: None,
             message: Some(e.message),
+            code: Some("kein_modell".into()),
+            halt_bleibt: false,
         });
     }
     Ok(d.recherche
-        .starten(&frage, MODELL, Datenklasse::Personal, suite_projekt)
+        .starten_fuer(
+            besprechung.as_deref(),
+            &frage,
+            MODELL,
+            Datenklasse::Personal,
+            suite_projekt,
+        )
         .await)
 }
 

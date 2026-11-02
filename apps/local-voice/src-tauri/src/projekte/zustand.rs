@@ -120,6 +120,9 @@ async fn pflege(d: &Dienste) {
     if let Err(e) = d.projekte.aufbewahrung_recherchen().await {
         log::warn!("projekte: Aufbewahrung fehlgeschlagen ({})", e.code);
     }
+    if let Err(e) = d.projekte.verwaiste_recherchen_raeumen().await {
+        log::warn!("projekte: Aufraeumen verwaister Dokumente fehlgeschlagen ({})", e.code);
+    }
 }
 
 /// Sprachmodell der Recherche: der in den Einstellungen gewaehlte Anbieter, aufgeloest beim Aufruf.
