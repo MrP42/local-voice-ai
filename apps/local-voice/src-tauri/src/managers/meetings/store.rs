@@ -122,6 +122,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // A7 (Agentenbruecke: Zugaenge, Werkzeugrechte, Freigabe-Zuordnung), Index 12: hinter B1. Nur
     // CREATE. Der SQL-Text steht in `agent_bridge/schema.rs`.
     M::up(crate::agent_bridge::schema::AGENT_BRIDGE_MIGRATION),
+    // ADR-0026 PR-7 (Besprechungsordner <-> Suite-Projekt), Index 13: hinter A7. Nur ADD COLUMN
+    // (nullable) und ein Index. Der SQL-Text steht in `projekt.rs`.
+    M::up(super::projekt::PROJEKT_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -5567,7 +5570,8 @@ mod tests {
                 "parent_id",
                 "created_at",
                 "updated_at",
-                "deleted_at"
+                "deleted_at",
+                "projekt_id"
             ]
         );
         assert_eq!(
