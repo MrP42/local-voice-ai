@@ -17,7 +17,7 @@ npx playwright test tests/projekte-recherche.spec.ts -g "Vorlesen" --reporter=li
 LVA_THEME=dark LVA_SCREENSHOTS=1 npx playwright test tests/projekte-recherche.spec.ts --reporter=list
 ```
 
-Ergebnis des Laufs: 22 von 22 Tests bestanden (`playwright-list.log`).
+Ergebnis des Laufs: 22 von 22 Tests bestanden (`playwright-list.txt`).
 
 ## Dateien
 
@@ -25,6 +25,6 @@ Ergebnis des Laufs: 22 von 22 Tests bestanden (`playwright-list.log`).
 |---|---|
 | `messwerte.md`, `messwerte-fluss.json`, `messwerte-touch.json` | 390 px: Scrollcontainer um das Ergebnis, Fensterhöhe, letzte Quelle erreichbar; boundingBox aller geprüften Touchziele und Checkbox-Zeilen |
 | `axe-390-hell.json`, `axe-390-dunkel.json` | axe-core 4.13.0: Projektseite (alle Regeln) und Ordnerliste (`color-contrast`), Verstöße, Anzahl bestandener Regeln |
-| `tts-sperre.log` | E2E-Ausgabe: PERSONAL mit Remote-TTS gesperrt mit Hinweis (1440 und 390 px), mit lokaler TTS frei; list-Reporter mit Testnamen |
-| `playwright-list.log` | list-Reporter des Gesamtlaufs |
+| `tts-sperre.txt` | E2E-Ausgabe: PERSONAL mit Remote-TTS gesperrt mit Hinweis (1440 und 390 px), mit lokaler TTS frei; list-Reporter mit Testnamen |
+| `playwright-list.txt` | list-Reporter des Gesamtlaufs |
 | `../../vorschau/projekte-recherche/*-dunkel-*.png` | Dunkelbilder (1440 und 390 px) |

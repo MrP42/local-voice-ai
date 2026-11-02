@@ -1,0 +1,11 @@
+
+Running 3 tests using 2 workers
+
+TTS-SPERRE Fall=PERSONAL+Remote-TTS breite=390 knopfGesperrt=true hinweisSichtbar=true
+  ✓  1 [chromium] › tests/projekte-recherche.spec.ts:637:3 › Vorlesen: bei PERSONAL und Remote-TTS gesperrt, mit Hinweis (390 px) (4.6s)
+TTS-SPERRE Fall=PERSONAL+Remote-TTS breite=1440 knopfGesperrt=true hinweisSichtbar=true
+  ✓  2 [chromium] › tests/projekte-recherche.spec.ts:637:3 › Vorlesen: bei PERSONAL und Remote-TTS gesperrt, mit Hinweis (1440 px) (4.7s)
+TTS-SPERRE Fall=PERSONAL+lokale-TTS knopfFrei=true hinweisSichtbar=false
+  ✓  3 [chromium] › tests/projekte-recherche.spec.ts:662:1 › Vorlesen: bei PERSONAL und lokaler TTS freigegeben (3.3s)
+
+  3 passed (19.8s)
