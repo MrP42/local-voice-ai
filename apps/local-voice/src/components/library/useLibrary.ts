@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
+import { autoProofread } from "@/lib/library/proofreadRun";
 import { transcribeTracks } from "@/lib/library/importFile";
 import {
   aggregateStatus,
@@ -295,9 +296,15 @@ export function useLibrary() {
         const multi = !!latest.audio.tracks?.length;
         const saved = await commands.librarySave({
           ...latest,
+          // Wächst der Text, passt das gesicherte Original nicht mehr: Vermerk weg.
           text: appendTo
-            ? latest.text
-            : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
+            ? { ...latest.text!, proofread: null }
+            : {
+                page_id: pageId,
+                origin: "transcript",
+                source_name: latest.audio.file ?? null,
+                proofread: null,
+              },
           audio: {
             ...latest.audio,
             transcript_job: null,
@@ -324,7 +331,10 @@ export function useLibrary() {
         // Hilfsaufnahmen weg.
         for (const e of evaluated) await commands.meetingsDelete(e.job);
         failures.current.delete(bookId);
+        if (appendTo) await commands.libraryProofreadDiscard(bookId);
         await reload();
+        // Frischer Text aus der Spracherkennung: gleich korrekturlesen.
+        void autoProofread(bookId);
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) await commands.pageStateSave(restore.pageId, restore.json);

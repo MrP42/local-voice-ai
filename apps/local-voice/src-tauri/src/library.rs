@@ -30,6 +30,8 @@ fn lock() -> MutexGuard<'static, ()> {
     LIBRARY_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+pub mod proofread; // lva#208 B: Korrekturlesen des Transkripts
+
 const OPEN_LIBRARY_SEARCH: &str = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVERS: &str = "https://covers.openlibrary.org/b";
 const OFFLINE: &str =
@@ -48,6 +50,23 @@ pub struct TextVersion {
     pub origin: String,
     /// Dateiname der Quelle, nur zur Anzeige.
     pub source_name: Option<String>,
+    /// Korrekturgelesen (lva#208 B): `None`, solange der Text unverändert aus
+    /// der Spracherkennung stammt. Das Original liegt unter `lektorat/`.
+    #[serde(default)]
+    pub proofread: Option<ProofreadInfo>,
+}
+
+/// Stand des Korrekturlesens einer Textfassung.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
+pub struct ProofreadInfo {
+    /// Anbieter und Modell (`anbieter/modell`), nur zur Anzeige.
+    pub model: String,
+    /// Zeitpunkt (Unix-ms).
+    pub at_ms: f64,
+    /// Absätze, die korrigiert wurden.
+    pub changed: u32,
+    /// Absätze, die die Prüfung im Original gelassen hat.
+    pub rejected: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
@@ -2006,6 +2025,7 @@ mod tests {
                 page_id: "p".into(),
                 origin: origin.into(),
                 source_name: None,
+                proofread: None,
             });
             b.audio = Some(legacy("hoerbuch.mp3", None, None));
             write_book(&root.join("book_9"), &b).unwrap();

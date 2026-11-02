@@ -886,3 +886,96 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Korrekturlesen des Transkripts (lva#208 B) */
+.library-proofread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--lib-line);
+}
+.library-proofread__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.library-proofread__notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.library-proofread__error {
+  color: var(--color-danger, #c42b1c);
+}
+.library-proofread__auto {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-proofread__auto input {
+  margin-top: 2px;
+}
+/* Der Dialog steht außerhalb von .library: eigene Farben aus den App-Tokens. */
+.library-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.library-diff__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-diff__item {
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.library-diff__no {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-diff__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px 16px;
+}
+.library-diff__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.library-diff__text {
+  margin: 2px 0 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.library-diff__text del,
+.library-diff__text ins {
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.library-diff__text del {
+  background: color-mix(in srgb, #d13438 24%, transparent);
+  text-decoration: line-through;
+}
+.library-diff__text ins {
+  background: color-mix(in srgb, #107c10 26%, transparent);
+}
