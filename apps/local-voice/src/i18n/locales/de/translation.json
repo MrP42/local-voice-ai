@@ -1289,6 +1289,7 @@
       "short": "Schreibregeln",
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
+      "pausesAndPace": "{{engine}} setzt keine Emotions-Tags um. In eckigen Klammern stehen nur Pausen und das Tempo eines Satzes ([slower], [faster] am Satzanfang):",
       "pausesOnly": "{{engine}} setzt keine Emotions-Tags um. Nur Pausen stehen in eckigen Klammern, genau dort, wo sie zu hören sein sollen:",
       "example1": "[whisper] Komm näher …",
       "example2": "Er öffnete die Tür. [short pause] Nichts.",

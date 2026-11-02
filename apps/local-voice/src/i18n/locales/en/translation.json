@@ -1289,6 +1289,7 @@
       "short": "Writing rules",
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
+      "pausesAndPace": "{{engine}} does not support emotion tags. Square brackets hold only pauses and the pace of a sentence ([slower], [faster] at the start of a sentence):",
       "pausesOnly": "{{engine}} does not support emotion tags. Only pauses go in square brackets, exactly where they should be heard:",
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",

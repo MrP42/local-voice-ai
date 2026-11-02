@@ -410,7 +410,7 @@ fn delivery_system_prompt(allowed_tags: &[String], options: &AutoTagOptions) -> 
          rhetorischen Frage, [pause] zwischen Sinnabschnitten, [long pause] oder [break] bei \
          Szenen- und Zeitwechseln.{pace_rule} {density} Regeln: (1) AUSSCHLIESSLICH Tags \
          einfügen — kein Wort, kein Satzzeichen, keinen Zeilenumbruch ändern, nichts löschen. \
-         (2) Höchstens ein Tag pro Satz. (3) Zeilen der Form Name: und Marker in Spitzklammern \
+         (2) Pro Satz höchstens eine Pause und ein Tempo-Tag. (3) Zeilen der Form Name: und Marker in Spitzklammern \
          sind Sprecherwechsel — unverändert lassen. (4) Antworte NUR mit dem Text, ohne \
          Einleitung, ohne Codeblock."
     )

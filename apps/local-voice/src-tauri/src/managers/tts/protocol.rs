@@ -91,27 +91,36 @@ pub fn pace_delta(inner: &str) -> Option<f32> {
     }
 }
 
-/// Entfernt die Tempo-Tags eines Satzes und liefert ihre Summe, gedeckelt auf
-/// ±[`PACE_DELTA_MAX`]. `None`, wenn der Satz keines trägt oder sie sich
-/// aufheben — dann bleibt der Aufruf exakt wie bisher.
+/// Entfernt die Tempo-Tags eines Sprechstücks (ein `ptts`-Aufruf) und liefert
+/// das Tempo, gedeckelt auf ±[`PACE_DELTA_MAX`]. Gleichgerichtete Tags addieren
+/// sich (`[slower][slower]`); widersprechen sie sich — die Satztrennung legt
+/// kurze Sätze zu EINEM Stück zusammen („Gar nichts. [faster] Dann …“) —, gilt
+/// das erste, statt dass sie sich aufheben. `None` ohne Tempo-Tag: der Aufruf
+/// bleibt dann exakt wie bisher.
 pub fn take_pace(text: &str) -> (String, Option<f32>) {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     let mut sum = 0.0f32;
-    let mut found = false;
+    let mut first: Option<f32> = None;
+    let mut mixed = false;
     for span in tag_spans(text) {
         if let Some(d) = pace_delta(&text[span.start + 1..span.end - 1]) {
+            match first {
+                None => first = Some(d),
+                Some(f) if f.signum() != d.signum() => mixed = true,
+                Some(_) => {}
+            }
             sum += d;
-            found = true;
             out.push_str(&text[last..span.start]);
             last = span.end;
         }
     }
-    if !found {
+    let Some(first) = first else {
         return (text.to_string(), None);
-    }
+    };
     out.push_str(&text[last..]);
-    let delta = sum.clamp(-PACE_DELTA_MAX, PACE_DELTA_MAX);
+    let delta = if mixed { first } else { sum };
+    let delta = delta.clamp(-PACE_DELTA_MAX, PACE_DELTA_MAX);
     let delta = (delta * 100.0).round() / 100.0;
     (tidy_spaces(&out), (delta != 0.0).then_some(delta))
 }
@@ -1343,8 +1352,11 @@ patrick: Hi.",
         assert_eq!(take_pace("Ohne Tag."), ("Ohne Tag.".to_string(), None));
         // Gedeckelt: drei Schritte langsamer ergeben höchstens 0,2.
         assert_eq!(take_pace("[slower][slower][slower] Ja.").1, Some(PACE_DELTA_MAX));
-        // Aufgehoben: kein `--condition`.
-        assert_eq!(take_pace("[slower] Ja [faster].").1, None);
+        // Widersprüchlich (zusammengelegte kurze Sätze): das erste gilt.
+        assert_eq!(
+            take_pace("[slower] Gar nichts. [faster] Dann kam er.").1,
+            Some(PACE_STEP)
+        );
     }
 
     #[test]

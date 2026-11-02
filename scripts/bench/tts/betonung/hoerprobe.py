@@ -97,12 +97,14 @@ PASSAGES: list[tuple[str, str, str, str, str]] = [
     ),
 ]
 
-SENTENCE_END = re.compile(r"(?<=[.!?…“])\s+")
 TAG = re.compile(r"\[([^\]\n]+)\]")
+MIN_CHUNK_CHARS = 15  # wie protocol::split_sentences
 
 
 def parts(text: str) -> list[tuple[str, object]]:
-    """Text → Folge aus ("speak", (satz, delta)) und ("silence", ms)."""
+    """Text → Folge aus ("speak", (stück, delta)) und ("silence", ms), wie die App:
+    erst an Pausen-Tags zerlegen (protocol::split_pauses), dann in Sprechstücke
+    (protocol::split_sentences), je Stück ein ptts-Aufruf mit seinem Tempo."""
     out: list[tuple[str, object]] = []
     pos = 0
     for m in TAG.finditer(text):
@@ -119,20 +121,51 @@ def parts(text: str) -> list[tuple[str, object]]:
     return out
 
 
+def visible(s: str) -> int:
+    return len(TAG.sub("", s))
+
+
+def split_sentences(text: str) -> list[str]:
+    """Nachbau von protocol::split_sentences (ohne Abkürzungsliste, die Texte hier
+    enthalten keine): Ende nach . ! ? … mit folgendem Leerraum, nie in einem Tag,
+    Stücke unter 15 sichtbaren Zeichen wandern zum nächsten Satz."""
+    spans = [m.span() for m in TAG.finditer(text)]
+    result, start = [], 0
+    for i, c in enumerate(text):
+        if c not in ".!?…" or any(a <= i < b for a, b in spans):
+            continue
+        if i + 1 < len(text) and not text[i + 1].isspace():
+            continue
+        chunk = text[start : i + 1].strip()
+        if visible(chunk) >= MIN_CHUNK_CHARS:
+            result.append(chunk)
+            start = i + 1
+    tail = text[start:].strip()
+    if tail:
+        result.append(tail)
+    return result
+
+
+def take_pace(s: str) -> tuple[str, float | None]:
+    """Nachbau von protocol::take_pace: gleichgerichtet summieren, widersprüchlich
+    gilt das erste, Deckel ±0,2."""
+    deltas = [PACE[m.group(1).strip().lower()] for m in TAG.finditer(s) if m.group(1).strip().lower() in PACE]
+    clean = re.sub(r"\s+", " ", TAG.sub(lambda m: "" if m.group(1).strip().lower() in PACE else m.group(0), s)).strip()
+    if not deltas:
+        return clean, None
+    mixed = any((d > 0) != (deltas[0] > 0) for d in deltas)
+    d = deltas[0] if mixed else sum(deltas)
+    d = round(max(-PACE_MAX, min(PACE_MAX, d)), 2)
+    return clean, (d or None)
+
+
 def sentences(chunk: str) -> list[tuple[str, float | None]]:
     result = []
-    for s in SENTENCE_END.split(chunk):
-        delta = 0.0
-        found = False
-        for m in TAG.finditer(s):
-            name = m.group(1).strip().lower()
-            if name in PACE:
-                delta += PACE[name]
-                found = True
-        clean = re.sub(r"\s+", " ", TAG.sub("", s)).strip()
+    for s in split_sentences(chunk):
+        clean, d = take_pace(s)
+        clean = re.sub(r"\s+([.,;:!?])", r"\1", TAG.sub("", clean)).strip()
         if clean:
-            d = max(-PACE_MAX, min(PACE_MAX, round(delta, 2))) if found else None
-            result.append((clean, d if d else None))
+            result.append((clean, d))
     return result
 
 

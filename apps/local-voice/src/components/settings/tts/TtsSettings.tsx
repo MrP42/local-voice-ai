@@ -3459,9 +3459,12 @@ export const TtsSettings = () => {
                   <p>{t("tts.dialogHint")}</p>
                   {pausesOnly ? (
                     <p>
-                      {t("tts.writingRules.pausesOnly", {
-                        engine: engineCaps.providerLabel ?? "",
-                      })}
+                      {t(
+                        engineCaps.paceTags
+                          ? "tts.writingRules.pausesAndPace"
+                          : "tts.writingRules.pausesOnly",
+                        { engine: engineCaps.providerLabel ?? "" },
+                      )}
                     </p>
                   ) : (
                     <p>{t("tts.writingRules.tagsIntro")}</p>
