@@ -85,7 +85,10 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "get_selected_model") return "";
           if (cmd === "meetings_is_recording") return false;
           if (cmd === "tts_server_status")
-            return { phase: "stopped", message: null };
+            return {
+              phase: (window as unknown as { __ttsPhase?: string }).__ttsPhase ?? "stopped",
+              message: null,
+            };
           const parts = (
             window as unknown as { __parts?: Record<string, string> }
           ).__parts;
@@ -133,7 +136,8 @@ test.beforeEach(async ({ page }) => {
             if (typeof hit === "string") throw hit;
             return hit ?? null;
           }
-          if (cmd === "tts_cached_translation") return null;
+          if (cmd === "tts_cached_translation")
+            return (window as unknown as { __translation?: string }).__translation ?? null;
           if (cmd === "library_progress_load")
             return (window as unknown as { __remoteProgress?: unknown }).__remoteProgress ?? {};
           if (cmd === "tts_list_downloads") return [];
@@ -1810,4 +1814,129 @@ test("Stimmenauswahl: kein Hover-Hinweis über der Liste", async ({ page }) => {
   await page.getByTestId("voice-select").hover();
   await page.waitForTimeout(800);
   await expect(page.getByRole("tooltip").filter({ hasText: "Sprecher im Skript" })).toHaveCount(0);
+});
+
+// Patrick 02.11.: Wer während des Vorlesens den App-Bereich oder den Reiter
+// wechselt, findet bei der Rückkehr die gelesene Stelle hervorgehoben, und
+// Pause/Play setzt dort fort, wo die Wiedergabe gerade ist.
+const absatz = (n: number) =>
+  `Absatz ${n}: Die Stunden vergingen zäh, und Mara lauschte auf jedes Geräusch, das vom Meer heraufkam.`;
+
+const goTo = async (page: Page, name: string) =>
+  page.getByRole("navigation").getByRole("button", { name, exact: true }).click();
+
+test("Bereichswechsel beim Vorlesen: Hervorhebung bleibt, Pause/Play setzt an der aktuellen Stelle fort", async ({
+  page,
+}) => {
+  await open(page);
+  await page
+    .getByTestId("reader-flow")
+    .getByText("Noch zwölf Stufen", { exact: false })
+    .click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 23, total: 46 });
+  await emit(page, "tts-current-sentence", { context: "speak", index: 23, text: absatz(20) });
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 20:");
+
+  await goTo(page, "Aufnahmen");
+  await page.evaluate(() => {
+    (window as unknown as { __ttsPhase: string }).__ttsPhase = "speaking";
+  });
+  // Während die Vorleseseite nicht offen ist, liest die Engine weiter.
+  await emit(page, "tts-speak-progress", { position: 24, total: 46 });
+  await emit(page, "tts-current-sentence", { context: "speak", index: 24, text: absatz(21) });
+  await goTo(page, "Vorlesen");
+
+  // Ohne neue Meldung: die aktuelle Stelle ist sofort wieder markiert und sichtbar.
+  await expect(page.locator(".reader-cur").first()).toContainText("Absatz 21:");
+  await expect(page.locator(".reader-cur").first()).toBeInViewport();
+  await expect(page.getByTestId("reader-player")).toContainText(/25\s*\/\s*46|25 von 46/);
+  // Der nächste Satz wird ebenfalls markiert.
+  await emit(page, "tts-current-sentence", { context: "speak", index: 25, text: absatz(22) });
+  await expect(page.locator(".reader-cur")).toHaveCount(1);
+  await expect(page.locator(".reader-cur")).toContainText("Absatz 22:");
+
+  // Pause und Play: die Sitzung läuft weiter, kein Neustart an alter Stelle.
+  await page.getByTestId("reader-play").click();
+  await expect.poll(async () => (await calls(page, "tts_cancel")).length).toBe(1);
+  await emit(page, "tts-state-changed", { phase: "ready", message: null });
+  await emit(page, "tts-speak-progress", { position: 25, total: 46 });
+  await page.getByTestId("reader-play").click();
+  await expect.poll(async () => (await calls(page, "tts_speak_resume")).length).toBe(1);
+  expect(await calls(page, "tts_speak_text_from")).toHaveLength(1);
+  expect(await calls(page, "tts_speak_text")).toHaveLength(0);
+  await expect(page.locator(".reader-cur")).toContainText("Absatz 22:");
+
+  // Auch die gemerkte Stelle ist mitgewandert: nach einem Neustart geht es bei Absatz 22 weiter.
+  await page.reload();
+  await goTo(page, "Vorlesen");
+  await playFromBar(page, "Weiterlesen");
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  expect(String(args.text).slice(Number(args.charOffset)).startsWith("Absatz 22:")).toBe(true);
+});
+
+const TRANSLATED = [
+  "# Chapter 1",
+  "",
+  "<Erzählerin> The lighthouse had stood on the cliff for over a hundred years.",
+  "",
+  ...Array.from(
+    { length: 30 },
+    (_, i) => `<Erzählerin> Paragraph ${i + 1}: The hours dragged on while Mara listened to the sea.`,
+  ),
+].join("\n");
+
+test("Reiterwechsel beim Vorlesen: die gelesene Fassung behält ihre Hervorhebung", async ({
+  page,
+}) => {
+  await page.addInitScript((t) => {
+    (window as unknown as { __translation: string }).__translation = t;
+  }, TRANSLATED);
+  await open(page);
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  const flow = page.getByTestId("reader-flow");
+  await expect(flow).toContainText("Paragraph 3:");
+  await flow.getByText("Paragraph 3:", { exact: false }).click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+  await emit(page, "tts-speak-progress", { position: 4, total: 32 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 4,
+    text: "Paragraph 3: The hours dragged on while Mara listened to the sea.",
+  });
+  await expect(page.locator(".reader-cur").first()).toContainText("Paragraph 3:");
+
+  // Im Original wird nichts markiert: gelesen wird die Übersetzung.
+  await page.getByRole("tab", { name: "Original" }).click();
+  await expect(flow).toContainText("Absatz 3:");
+  await expect(page.locator(".reader-cur")).toHaveCount(0);
+  await emit(page, "tts-speak-progress", { position: 5, total: 32 });
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 5,
+    text: "Paragraph 4: The hours dragged on while Mara listened to the sea.",
+  });
+  await expect(page.locator(".reader-cur")).toHaveCount(0);
+
+  // Zurück: die aktuelle Stelle der Übersetzung ist markiert.
+  await page.getByRole("tab", { name: "Übersetzung" }).click();
+  await expect(page.locator(".reader-cur").first()).toContainText("Paragraph 4:");
+  await emit(page, "tts-current-sentence", {
+    context: "speak",
+    index: 6,
+    text: "Paragraph 5: The hours dragged on while Mara listened to the sea.",
+  });
+  await expect(page.locator(".reader-cur")).toHaveCount(1);
+  await expect(page.locator(".reader-cur")).toContainText("Paragraph 5:");
+
+  // Pause und Play setzen die Übersetzung fort.
+  await page.getByTestId("reader-play").click();
+  await emit(page, "tts-state-changed", { phase: "ready", message: null });
+  await emit(page, "tts-speak-progress", { position: 6, total: 32 });
+  await page.getByTestId("reader-play").click();
+  await expect.poll(async () => (await calls(page, "tts_speak_resume")).length).toBe(1);
+  expect(await calls(page, "tts_speak_text_from")).toHaveLength(1);
 });

@@ -117,6 +117,11 @@ import { SamplePlayButton } from "./providers/SamplePlayButton";
 import { VoiceTryButton } from "./providers/VoiceTryButton";
 import { sentenceAfterProgress, shownSentenceNumber } from "./sentenceCounter";
 import {
+  ensureReaderSessionListeners,
+  readerSession,
+  sessionRef,
+} from "./readerSession";
+import {
   ReaderView,
   type ReaderMark,
   type ReaderPageInfo,
@@ -224,6 +229,12 @@ const fetchTranslateJob = async (
  *  haben jeweils ihre eigenen Schritte). */
 const translationHistoryKey = (page: string | null | undefined, lang: string) =>
   `${page ?? "-"}:translation:${lang}`;
+
+// Die Sitzung überdauert das Aushängen der Seite (readerSession.ts).
+const SESSION_TAB = sessionRef("tab");
+const SESSION_DOC_ID = sessionRef("docId");
+const SESSION_RESUME_KEY = sessionRef("resumeKey");
+const SESSION_LAST_PAGE = sessionRef("lastPage");
 
 export const TtsSettings = () => {
   const { t, i18n } = useTranslation();
@@ -343,9 +354,7 @@ export const TtsSettings = () => {
   const [pageLoadTick, setPageLoadTick] = useState(0);
   /** Zu welchem Reiter die laufende Sprechsitzung gehoert. Fortsetzen und
    *  Satzspruenge gelten nur fuer sie — ein anderer Reiter startet neu. */
-  const sessionTab = useRef<"original" | "translation" | "summary" | "term">(
-    "original",
-  );
+  const sessionTab = SESSION_TAB;
   /** Zielsprache der Uebersetzung — dieselbe Einstellung wie in der
    *  Audio-Uebersetzung, damit man sie nicht an zwei Stellen pflegt. */
   const targetLang = getSetting("tts_translate_lang") ?? "English";
@@ -388,7 +397,7 @@ export const TtsSettings = () => {
   /** Nach dem Laden dieses Dokuments sofort vorlesen. */
   const docAutoplay = useRef<string | null>(null);
   /** Dokument der laufenden Sprechsitzung (Abzeichen „Wird vorgelesen“). */
-  const sessionDocId = useRef<string | null>(null);
+  const sessionDocId = SESSION_DOC_ID;
   const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
@@ -582,23 +591,37 @@ export const TtsSettings = () => {
     limit: number;
     total: number;
   } | null>(null);
+  // Anfangswerte aus der Sitzung: nach der Rückkehr aus einem anderen
+  // App-Bereich steht sofort, was gerade gelesen wird.
   const [speakProgress, setSpeakProgress] = useState<{
     position: number;
     total: number;
-  } | null>(null);
+  } | null>(() => readerSession.progress);
   /** Fortschritt ohne Render-Verzug — der Listener setzt ihn sofort. */
   const speakProgressRef = useRef(speakProgress);
   speakProgressRef.current = speakProgress;
-  const [currentSentence, setCurrentSentence] = useState<string | null>(null);
+  const [currentSentence, setCurrentSentence] = useState<string | null>(
+    () => readerSession.sentence,
+  );
   /** Nullbasierter Index des Satzes, der gerade zu hoeren ist (fuer den Zaehler "Satz n/m"). */
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
+  const [currentIndex, setCurrentIndex] = useState<number | null>(
+    () => readerSession.index,
+  );
   /** Start und Dauer des hörbaren Satzes: Zeit und Umblättern laufen damit
    *  sekundengenau mit, nicht nur Satz für Satz. */
   const [sentenceStart, setSentenceStart] = useState<{
     index: number | null;
     at: number;
     ms: number;
-  } | null>(null);
+  } | null>(() => readerSession.sentenceStart);
+  // Die Seite ist die Quelle, solange sie offen ist; ausgehängt schreibt
+  // readerSession.ts die Ereignisse selbst mit.
+  useEffect(() => {
+    readerSession.progress = speakProgress;
+    readerSession.sentence = currentSentence;
+    readerSession.index = currentIndex;
+    readerSession.sentenceStart = sentenceStart;
+  }, [speakProgress, currentSentence, currentIndex, sentenceStart]);
   const [saving, setSaving] = useState(false);
   const [exportProgress, setExportProgress] = useState<{
     position: number;
@@ -615,6 +638,7 @@ export const TtsSettings = () => {
   const startingTimer = useRef<number | null>(null);
 
   useEffect(() => {
+    ensureReaderSessionListeners();
     commands.ttsServerStatus().then((r) => {
       if (r.status === "ok") setStatus(r.data);
     });
@@ -1048,6 +1072,7 @@ export const TtsSettings = () => {
           );
     locatorRef.current?.reset(charOffset);
     lastLocated.current = null;
+    readerSession.rangeStart = charOffset;
     // „Nur diesen Satz“ verschiebt die gemerkte Stelle nicht.
     sessionResumeKey.current = onlyOne ? null : resumeKeyRef.current;
     const canon = canonicalizeTagsAt(script, scriptOffset);
@@ -1161,6 +1186,7 @@ export const TtsSettings = () => {
     sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
     locatorRef.current?.reset(0);
     lastLocated.current = null;
+    readerSession.rangeStart = null;
     sessionResumeKey.current = resumeKeyRef.current;
     const session = startPartSession();
     const token = ++speakToken.current;
@@ -1207,6 +1233,7 @@ export const TtsSettings = () => {
     void commands.ttsCancel();
     partSession.current = null;
     lastSessionPage.current = null;
+    readerSession.rangeStart = null;
     autoplayPage.current = null;
     setSpeakProgress(null);
     setCurrentIndex(null);
@@ -1785,10 +1812,14 @@ export const TtsSettings = () => {
     ) {
       return;
     }
-    if (last && last.locator !== locator) {
+    if (!last) {
+      // Erste Meldung der Sitzung in dieser Ansicht — frisch gestartet oder
+      // eben aus einem anderen App-Bereich zurück: ab der Stelle der Sitzung.
+      locator.reset(readerSession.rangeStart ?? 0);
+    } else if (last.locator !== locator) {
       // Neuer Text oder Sprecher während der Wiedergabe: an der bisherigen
       // Stelle weitersuchen, nicht am Anfang.
-      locator.reset(readRangeRef.current?.start ?? 0);
+      locator.reset(readRangeRef.current?.start ?? readerSession.rangeStart ?? 0);
     } else if (
       last &&
       currentIndex !== null &&
@@ -1804,7 +1835,9 @@ export const TtsSettings = () => {
       index: currentIndex ?? last?.index ?? null,
       locator,
     };
-    setReadRange(locator.locate(currentSentence));
+    const range = locator.locate(currentSentence);
+    if (range) readerSession.rangeStart = range.start;
+    setReadRange(range);
   }, [currentSentence, currentIndex, locator, tab]);
   useEffect(() => {
     if (speakProgress === null && !speaking) setReadRange(null);
@@ -1819,7 +1852,7 @@ export const TtsSettings = () => {
   }`;
   const resumeKeyRef = useRef(resumeKey);
   resumeKeyRef.current = resumeKey;
-  const sessionResumeKey = useRef<string | null>(null);
+  const sessionResumeKey = SESSION_RESUME_KEY;
   const [resumeAt, setResumeAt] = useState<number | null>(null);
   useEffect(() => {
     setResumeAt(loadResumePoint(resumeKey, spokenText));
@@ -1997,7 +2030,7 @@ export const TtsSettings = () => {
   type PartSession = { page: string; prefetched: boolean };
   const partSession = useRef<PartSession | null>(null);
   /** Seite der zuletzt gestarteten Sitzung — Play nach Pause setzt sie fort. */
-  const lastSessionPage = useRef<string | null>(null);
+  const lastSessionPage = SESSION_LAST_PAGE;
   /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
   const autoplayPage = useRef<string | null>(null);
 
@@ -2485,6 +2518,7 @@ export const TtsSettings = () => {
     sessionDocId.current = null;
     sessionResumeKey.current = null;
     lastLocated.current = null;
+    readerSession.rangeStart = null;
     partSession.current = null;
     setTermSession(true);
     const script = spokenExplanation(term, {
@@ -3638,7 +3672,7 @@ export const TtsSettings = () => {
                   text={spokenText}
                   speakers={speakers}
                   lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
-                  current={readRange}
+                  current={sessionHere() ? readRange : null}
                   clock={sessionHere() ? sentenceClock : null}
                   marks={readerMarks}
                   terms={tab === "original" ? bookTerms.marks : undefined}
