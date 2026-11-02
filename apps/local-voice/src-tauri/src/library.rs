@@ -1005,6 +1005,141 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Papierkorb: Entfernen mit Rückgängig
+// ---------------------------------------------------------------------------
+
+const TRASH: &str = ".papierkorb";
+const TRASH_STAMP: &str = ".entfernt";
+/// Was länger im Papierkorb liegt (Absturz im Rückgängig-Fenster), fällt weg.
+const TRASH_KEEP_MS: f64 = 7.0 * 24.0 * 3600.0 * 1000.0;
+
+fn trash_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+    Ok(root.join(TRASH).join(checked_id(id)?))
+}
+
+/// Bücher in den Papierkorb legen (ganzer Ordner, samt Hörbuch und Cover).
+/// Alles oder nichts: scheitert eines, kommen die schon verschobenen zurück.
+fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let locks = book_locks(&refs);
+    let _book_guards: Vec<_> = locks
+        .iter()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+        .collect();
+    let _guard = lock();
+    std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let undo = |moved: &[(PathBuf, PathBuf)]| {
+        for (from, to) in moved.iter().rev() {
+            let _ = std::fs::rename(to, from);
+        }
+    };
+    for id in ids {
+        let dir = book_dir(root, id)?;
+        if !dir.is_dir() {
+            continue;
+        }
+        let to = trash_dir(root, id)?;
+        if to.exists() {
+            let _ = std::fs::remove_dir_all(&to);
+        }
+        if let Err(e) = std::fs::rename(&dir, &to) {
+            undo(&moved);
+            return Err(format!("Entfernen fehlgeschlagen: {e}"));
+        }
+        let _ = std::fs::write(to.join(TRASH_STAMP), format!("{}", now_ms() as i64));
+        moved.push((dir, to));
+    }
+    Ok(())
+}
+
+/// Bücher aus dem Papierkorb zurückholen. Ein Buch, dessen Kennung inzwischen
+/// wieder belegt ist, bleibt im Papierkorb (Fehlermeldung nennt es).
+fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
+    let _guard = lock();
+    let mut restored = Vec::new();
+    let mut blocked = Vec::new();
+    for id in ids {
+        let from = trash_dir(root, id)?;
+        if !from.is_dir() {
+            continue;
+        }
+        let to = book_dir(root, id)?;
+        if to.exists() {
+            blocked.push(id.clone());
+            continue;
+        }
+        std::fs::rename(&from, &to).map_err(|e| format!("Zurückholen fehlgeschlagen: {e}"))?;
+        let _ = std::fs::remove_file(to.join(TRASH_STAMP));
+        if let Some(book) = read_book(&to) {
+            restored.push(book);
+        }
+    }
+    if !blocked.is_empty() {
+        return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
+    }
+    Ok(restored)
+}
+
+/// Endgültig löschen: die genannten Bücher, ohne Angabe alles, was länger
+/// als [`TRASH_KEEP_MS`] im Papierkorb liegt.
+fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
+    let _guard = lock();
+    let trash = root.join(TRASH);
+    match ids {
+        Some(ids) => {
+            for id in ids {
+                let dir = trash_dir(root, id)?;
+                if dir.exists() {
+                    std::fs::remove_dir_all(&dir)
+                        .map_err(|e| format!("could not delete book: {e}"))?;
+                }
+            }
+        }
+        None => {
+            let Ok(entries) = std::fs::read_dir(&trash) else {
+                return Ok(());
+            };
+            let now = now_ms();
+            for entry in entries.flatten() {
+                let stamp = std::fs::read_to_string(entry.path().join(TRASH_STAMP))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                if now - stamp > TRASH_KEEP_MS {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+/// löscht danach mit [`library_purge`] endgültig.
+#[tauri::command]
+#[specta::specta]
+pub fn library_trash(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    let root = library_root(&app)?;
+    trash_in(&root, &ids)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_restore(app: AppHandle, ids: Vec<String>) -> Result<Vec<LibraryBook>, String> {
+    let root = library_root(&app)?;
+    restore_in(&root, &ids)
+}
+
+/// Endgültig löschen (`ids`), ohne Angabe nur Altlasten älter als sieben Tage.
+#[tauri::command]
+#[specta::specta]
+pub fn library_purge(app: AppHandle, ids: Option<Vec<String>>) -> Result<(), String> {
+    let root = library_root(&app)?;
+    purge_in(&root, ids.as_deref())
+}
+
 /// Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
 #[tauri::command]
 #[specta::specta]
@@ -1342,7 +1477,10 @@ fn merge_audio_in(
         if book.audio.is_none() {
             return Err(format!("\u{201e}{}\u{201c} hat kein Hörbuch.", book.title));
         }
-        if book.text.is_some() {
+        // Ein Transkript gehört nur zu diesem Teil; die Oberfläche fügt die
+        // Transkripte vorher zu einem Text zusammen. Ein Dokument (EPUB …)
+        // dagegen ginge verloren: so ein Buch ist das Ziel, nie eine Quelle.
+        if book.text.as_ref().is_some_and(|t| t.origin != "transcript") {
             return Err(format!(
                 "\u{201e}{}\u{201c} hat eine Textfassung und lässt sich nicht einfügen.",
                 book.title
@@ -2174,6 +2312,63 @@ mod tests {
             "Datei fehlt"
         );
         assert!(root.join("book_5").exists(), "Quelle bleibt bei Fehler");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trash_restore_and_purge() {
+        let root = scratch("trash");
+        audio_book(&root, "book_1", "A", legacy("hoerbuch.mp3", None, None));
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "a");
+        audio_book(&root, "book_2", "B", legacy("hoerbuch.mp3", None, None));
+        trash_in(&root, &["book_1".into(), "book_2".into()]).unwrap();
+        assert!(list_books(&root).is_empty(), "Papierkorb zählt nicht mit");
+        assert!(root.join(".papierkorb/book_1/audio/hoerbuch.mp3").is_file());
+
+        let back = restore_in(&root, &["book_1".into()]).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(list_books(&root).len(), 1);
+        assert!(!root.join("book_1/.entfernt").exists());
+
+        // Ohne Angabe bleiben frische Einträge liegen, alte fallen weg.
+        purge_in(&root, None).unwrap();
+        assert!(root.join(".papierkorb/book_2").exists());
+        std::fs::write(root.join(".papierkorb/book_2/.entfernt"), "0").unwrap();
+        purge_in(&root, None).unwrap();
+        assert!(!root.join(".papierkorb/book_2").exists());
+
+        trash_in(&root, &["book_1".into()]).unwrap();
+        purge_in(&root, Some(&["book_1".into()])).unwrap();
+        assert!(!root.join(".papierkorb/book_1").exists());
+        assert!(trash_in(&root, &["../x".into()]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_takes_transcript_sources_but_never_documents() {
+        let root = scratch("merge-transcript");
+        audio_book(&root, "book_1", "Teil 1", legacy("hoerbuch.mp3", None, Some(5.0)));
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "1");
+        let mut two = audio_book(&root, "book_2", "Teil 2", legacy("hoerbuch.mp3", None, None));
+        two.text = Some(TextVersion {
+            page_id: "p2".into(),
+            origin: "transcript".into(),
+            source_name: None,
+        });
+        write_book(&root.join("book_2"), &two).unwrap();
+        touch(&root.join("book_2/audio/hoerbuch.mp3"), "2");
+        let mut doc = audio_book(&root, "book_3", "Buch", legacy("hoerbuch.mp3", None, None));
+        doc.text = Some(TextVersion {
+            page_id: "p3".into(),
+            origin: "document".into(),
+            source_name: None,
+        });
+        write_book(&root.join("book_3"), &doc).unwrap();
+        touch(&root.join("book_3/audio/hoerbuch.mp3"), "3");
+        assert!(merge_audio_in(&root, "book_1", &["book_3".into()], false).is_err());
+        let merged = merge_audio_in(&root, "book_1", &["book_2".into()], false).unwrap();
+        assert_eq!(merged.audio.unwrap().tracks.len(), 2);
+        assert!(!root.join("book_2").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -260,6 +260,22 @@ test.beforeEach(async ({ page }) => {
             w.__books = [...list.filter((x) => x.id !== b.id), withTracks];
             return withTracks;
           }
+          // Papierkorb (Entfernen mit Rückgängig).
+          if (cmd === "library_trash") {
+            const ids = new Set(args?.ids as string[]);
+            const trash = ((w as { __trash?: unknown[] }).__trash ??= []) as Record<string, unknown>[];
+            trash.push(...list.filter((x) => ids.has(String(x.id))));
+            w.__books = list.filter((x) => !ids.has(String(x.id)));
+            return null;
+          }
+          if (cmd === "library_restore") {
+            const ids = new Set(args?.ids as string[]);
+            const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+            const back = trash.filter((x) => ids.has(String(x.id)));
+            (w as { __trash?: unknown[] }).__trash = trash.filter((x) => !ids.has(String(x.id)));
+            w.__books = [...list, ...back];
+            return back;
+          }
           if (cmd === "library_merge_audio") {
             const target = list.find((x) => x.id === args?.targetId) as Record<string, any>;
             const parts = (b: Record<string, any>) =>
@@ -1951,4 +1967,241 @@ test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async (
   await expect
     .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
     .toEqual(["m52"]);
+});
+
+// ---------------------------------------------------------------------------
+// Aufräumen (Patrick 02.11.): Entfernen, Zusammenführen von Hand, Titel
+// ---------------------------------------------------------------------------
+
+const partWithTranscript = (id: string, title: string, ms: number): Extra => ({
+  ...baseBook(id, title, {
+    authors: ["Robert Kiyosaki"],
+    text: { page_id: `page_${id}`, origin: "transcript", source_name: null },
+    audio: {
+      file: "hoerbuch.mp3",
+      duration_ms: ms,
+      narrator: null,
+      transcript_job: null,
+      tracks: [],
+      sync: [{ chars: title.length + 4, ms: 0 }],
+    },
+    audio_path: `C:/lib/${id}/audio/hoerbuch.mp3`,
+  }),
+});
+
+test("Entfernen über ⋮: Rückfrage mit Wahl, Rückgängig holt den Eintrag zurück", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("library-card")).toHaveCount(3);
+  await page.getByTestId("library-more-book_2").click();
+  await page.getByTestId("library-remove-book_2").click();
+  const dialog = page.getByTestId("library-remove-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("dialog")).toContainText("„Der Schimmelreiter“ entfernen?");
+  await expect(page.getByTestId("library-remove-scope-library")).toBeChecked();
+  await expect(dialog).toContainText("Originaldateien");
+  await page.screenshot({ path: shot("entfernen-dialog-1440.png") });
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  expect(await calls(page, "library_trash")).toEqual([{ ids: ["book_2"] }]);
+  await expect(page.getByText("„Der Schimmelreiter“ entfernt.")).toBeVisible();
+  await page.screenshot({ path: shot("entfernen-rueckgaengig-1440.png") });
+  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(page.getByTestId("library-card")).toHaveCount(3);
+  expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_2"] }]);
+  // Nach Rückgängig wird nichts endgültig gelöscht.
+  await page.waitForTimeout(300);
+  // (nur das Aufräumen alter Reste beim Öffnen, ohne Kennungen)
+  expect((await calls(page, "library_purge")).filter((a) => a.ids)).toEqual([]);
+});
+
+test("Alles löschen: nach Ablauf endgültig, samt Text im Vorlesen", async ({ page }) => {
+  await page.clock.install();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-more-book_1").click();
+  await page.getByTestId("library-remove-book_1").click();
+  await page.getByTestId("library-remove-scope-everything").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  await page.clock.runFor(11_000);
+  await expect
+    .poll(async () => await calls(page, "library_purge"))
+    .toContainEqual({ ids: ["book_1"] });
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_1"]);
+});
+
+test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  const boxes = page.getByTestId("library-select");
+  await expect(boxes).toHaveCount(3);
+  await page.getByRole("button", { name: "Alle auswählen" }).click();
+  await expect(page.getByTestId("library-selectbar")).toContainText("3 ausgewählt");
+  await expect(page.getByTestId("library-select-merge")).toBeEnabled();
+  await page.screenshot({ path: shot("auswahl-leiste-1440.png") });
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByRole("dialog")).toContainText("3 Einträge entfernen?");
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(0);
+  expect((await calls(page, "library_trash"))[0].ids).toHaveLength(3);
+});
+
+test("Zusammenführen von Hand: Teile mit Transkript werden ein Text mit Zeitachse", async ({
+  page,
+}) => {
+  const titles = [2, 1].map(
+    (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+  );
+  await addBooks(page, [
+    partWithTranscript("book_t2", titles[0], 60_000),
+    partWithTranscript("book_t1", titles[1], 30_000),
+  ]);
+  await page.addInitScript((titles) => {
+    const w = window as unknown as { __pageText: Record<string, string> };
+    w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+    w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+  }, titles);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  // Der Vorschlag erscheint auch für Teile mit Transkript.
+  await expect(page.getByTestId("library-merge-bar")).toContainText("Rich Dad Poor Dad");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  const order = page.getByTestId("library-merge-item");
+  await expect(order).toHaveCount(2);
+  await expect(order.nth(0)).toContainText("Track 01");
+  await expect(page.getByRole("dialog")).toContainText(
+    "Zu einem Hörbuch zusammenführen: Rich Dad Poor Dad",
+  );
+  await expect(page.getByTestId("library-merge-transcripts")).toContainText(
+    "zu einem Text in dieser Reihenfolge verbunden",
+  );
+  await page.screenshot({ path: shot("zusammenfuehren-hand-1440.png") });
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_t1", sourceIds: ["book_t2"], replace: false }]);
+  // Gemeinsamer Text in der Seite des ersten Teils, Teil 2 mit Versatz 30 s.
+  await expect
+    .poll(async () =>
+      (await calls(page, "page_state_save")).filter((a) => a.id === "page_book_t1").length,
+    )
+    .toBe(1);
+  const saved = (await calls(page, "page_state_save")).find((a) => a.id === "page_book_t1")!;
+  const text = JSON.parse(String(saved.state)).text as string;
+  expect(text).toContain("## Teil 1\n\nAnfang des Buchs.\n\n## Teil 2\n\nZweiter Teil.");
+  const last = (await calls(page, "library_save")).at(-1)!.book as {
+    text: { page_id: string };
+    audio: { sync: { chars: number; ms: number }[] };
+  };
+  expect(last.text.page_id).toBe("page_book_t1");
+  expect(last.audio.sync.map((p) => p.ms)).toEqual([0, 30_000]);
+  expect(last.audio.sync[1].chars).toBe(text.indexOf("Zweiter Teil."));
+  // Die Seite des zweiten Teils ist im gemeinsamen Text aufgegangen.
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_book_t2"]);
+});
+
+test("Titel bereinigen: Hinweis, alt → neu, Speichern ohne ASIN und Format", async ({ page }) => {
+  await addBooks(page, [
+    baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
+    baseBook("book_i", "Alles Idioten! 3732455823 LC 128 44100 Stereo", legacyAudio("book_i")),
+  ]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const bar = page.getByTestId("library-clean-bar");
+  await expect(bar).toContainText("2 Titel enthalten Kennungen");
+  await page.screenshot({ path: shot("titel-hinweis-1440.png") });
+  await bar.getByTestId("library-clean-start").click();
+  await expect(page.getByTestId("library-clean-new")).toHaveText(["Genesis", "Alles Idioten!"]);
+  await page.screenshot({ path: shot("titel-dialog-1440.png") });
+  await page.getByTestId("library-clean-confirm").click();
+  await expect
+    .poll(async () =>
+      (await calls(page, "library_save")).map((a) => (a.book as { title: string }).title),
+    )
+    .toEqual(["Genesis", "Alles Idioten!"]);
+  await expect(page.getByTestId("library-clean-bar")).toHaveCount(0);
+});
+
+test("Text und Hörbuch eines Titels: Zusammenführen hängt das Hörbuch ans Buch", async ({
+  page,
+}) => {
+  await addBooks(page, [
+    baseBook("book_a", "Effi Briest (Hörbuch)", { authors: ["Theodor Fontane"], ...legacyAudio("book_a") }),
+  ]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  await page.locator('[data-drop-book="book_1"] [data-testid="library-select"]').check();
+  await page.locator('[data-drop-book="book_a"] [data-testid="library-select"]').check();
+  await page.getByTestId("library-select-merge").click();
+  await expect(page.getByTestId("library-merge-target")).toContainText("„Effi Briest“");
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_1", sourceIds: ["book_a"], replace: false }]);
+});
+
+test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele ≥ 44 px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  const box = await page.locator(".library-select").first().boundingBox();
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  await page.locator(".library-select input").first().check();
+  await page.screenshot({ path: shot("auswahl-390.png") });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByTestId("library-remove-dialog")).toBeVisible();
+  const opt = await page.locator(".library-remove__option").first().boundingBox();
+  expect(opt!.height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({ path: shot("entfernen-dialog-390.png") });
+});
+
+test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", async ({ page }) => {
+  await addBooks(page, [
+    baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
+    ...[3, 2, 1].map((n) =>
+      partWithTranscript(
+        `book_r${n}`,
+        `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+        60_000,
+      ),
+    ),
+  ]);
+  await page.addInitScript(() => {
+    (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("library-clean-bar")).toBeVisible();
+  await expect(page.getByTestId("library-merge-bar")).toBeVisible();
+  await page.screenshot({ path: shot("hinweise-1440-dunkel.png") });
+  await page.getByTestId("library-select-start").click();
+  for (const n of [1, 2, 3])
+    await page.locator(`[data-drop-book="book_r${n}"] [data-testid="library-select"]`).check();
+  await page.screenshot({ path: shot("auswahl-1440-dunkel.png") });
+  await page.getByTestId("library-select-merge").click();
+  await expect(page.getByTestId("library-merge-item")).toHaveCount(3);
+  await page.screenshot({ path: shot("zusammenfuehren-1440-dunkel.png") });
+  await page.getByRole("dialog").getByRole("button", { name: "Abbrechen" }).last().click();
+  await page.getByTestId("library-select-remove").click();
+  await page.getByTestId("library-remove-scope-everything").check();
+  await page.screenshot({ path: shot("entfernen-dialog-1440-dunkel.png") });
 });

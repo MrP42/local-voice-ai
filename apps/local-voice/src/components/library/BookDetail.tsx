@@ -59,7 +59,8 @@ interface Props {
     id: string,
     update: (fresh: LibraryBook) => LibraryBook,
   ): Promise<LibraryBook | null>;
-  onDeleted(): Promise<void>;
+  /** Entfernen: Rückfrage und Rückgängig liegen bei der Bibliothek. */
+  onRemove(): void;
   onChanged(): Promise<void>;
 }
 
@@ -76,7 +77,7 @@ export const BookDetail: React.FC<Props> = ({
   onListenFollow,
   onToggleFinished,
   onSave,
-  onDeleted,
+  onRemove,
   onChanged,
 }) => {
   const { t } = useTranslation();
@@ -85,7 +86,6 @@ export const BookDetail: React.FC<Props> = ({
   const [draft, setDraft] = useState(book);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
   // Neues Buch: Formular zurücksetzen. Neu geladener Stand desselben Buchs
   // (z. B. Cover fertig) nur übernehmen, solange nichts getippt ist.
   useEffect(() => {
@@ -168,14 +168,6 @@ export const BookDetail: React.FC<Props> = ({
   const missingParts =
     !book.text && tracksOf(book.audio).some((x) => !jobsOfTrack(x).length);
   const canResume = job !== undefined && (missingParts || job.failed > 0);
-
-  const remove = () =>
-    run("delete", async () => {
-      setConfirmDelete(false);
-      const r = await commands.libraryDelete(book.id);
-      if (r.status === "error") throw new Error(r.error);
-      await onDeleted();
-    });
 
   const saveDraft = () =>
     run("save", async () => {
@@ -579,10 +571,11 @@ export const BookDetail: React.FC<Props> = ({
             <Button
               variant="danger-ghost"
               icon={<Trash2 size={16} aria-hidden="true" />}
-              onClick={() => setConfirmDelete(true)}
+              onClick={onRemove}
               disabled={busy !== null}
+              data-testid="library-detail-remove"
             >
-              {t("library.delete")}
+              {t("library.remove.action")}
             </Button>
           </div>
           <section aria-labelledby="lib-refetch">
@@ -614,26 +607,6 @@ export const BookDetail: React.FC<Props> = ({
           </section>
         </div>
       )}
-      <Dialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        title={t("library.deleteTitle", { title: book.title })}
-        closeLabel={t("library.cancel")}
-        footer={
-          <>
-            <Button onClick={() => setConfirmDelete(false)}>{t("library.cancel")}</Button>
-            <Button
-              variant="danger"
-              onClick={() => void remove()}
-              data-testid="library-delete-confirm"
-            >
-              {t("library.delete")}
-            </Button>
-          </>
-        }
-      >
-        <p>{t("library.deleteBody")}</p>
-      </Dialog>
     </div>
   );
 };

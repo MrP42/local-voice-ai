@@ -5996,6 +5996,37 @@ async libraryDelete(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+ * löscht danach mit [`library_purge`] endgültig.
+ */
+async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Endgültig löschen (`ids`), ohne Angabe nur Altlasten älter als sieben Tage.
+ */
+async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_purge", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
  */
 async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {

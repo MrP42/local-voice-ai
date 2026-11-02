@@ -2,6 +2,8 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
 import type { SplitGroup } from "@/lib/library/audioGroups";
 import { partCount, type MergePlan } from "@/lib/library/merge";
@@ -17,7 +19,9 @@ export const MergeDialog: React.FC<{
   busy: boolean;
   onConfirm(): void;
   onCancel(): void;
-}> = ({ group, plan, busy, onConfirm, onCancel }) => {
+  /** Reihenfolge ändern (Teil `from` an Stelle `to`). */
+  onMove?(from: number, to: number): void;
+}> = ({ group, plan, busy, onConfirm, onCancel, onMove }) => {
   const { t } = useTranslation();
   const open = !!group && !!plan;
   const total = group?.books.length ?? 0;
@@ -80,12 +84,45 @@ export const MergeDialog: React.FC<{
             data-testid="library-merge-order"
           >
             {group.books.map((b, i) => (
-              <li key={b.id}>
+              <li key={b.id} data-testid="library-merge-item">
                 <span className="library-parts__no">{i + 1}</span>
-                <span className="library-parts__title">{b.title}</span>
+                <span className="library-parts__title">
+                  {b.title}
+                  {b.text?.origin === "transcript" && (
+                    <small className="library-meta">
+                      {" · "}
+                      {t("library.merge.hasTranscript")}
+                    </small>
+                  )}
+                </span>
+                {onMove && (
+                  <span className="library-touch library-merge__move">
+                    <IconButton
+                      icon={<ArrowUp size={14} aria-hidden="true" />}
+                      label={t("library.merge.up", { title: b.title })}
+                      disabled={busy || i === 0}
+                      onClick={() => onMove(i, i - 1)}
+                    />
+                    <IconButton
+                      icon={<ArrowDown size={14} aria-hidden="true" />}
+                      label={t("library.merge.down", { title: b.title })}
+                      disabled={busy || i === group.books.length - 1}
+                      onClick={() => onMove(i, i + 1)}
+                    />
+                  </span>
+                )}
               </li>
             ))}
           </ol>
+          {plan.transcripts !== "none" && (
+            <p data-testid="library-merge-transcripts">
+              {plan.transcripts === "join"
+                ? t("library.merge.joinTranscripts")
+                : t("library.merge.dropTranscripts", {
+                    title: plan.target.title,
+                  })}
+            </p>
+          )}
           <p className="library-meta">{t("library.merge.keepHint")}</p>
         </div>
       )}
