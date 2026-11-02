@@ -187,6 +187,13 @@ test.beforeEach(async ({ page }) => {
                 duration_ms: (w.__jobDuration as Record<string, number>)[id] ?? null,
               })),
             ];
+          if (cmd === "meetings_get_status") {
+            const id = String(args?.meetingId);
+            if (id === "m1") return "processing";
+            return (w.__jobs as string[]).includes(id)
+              ? ((w.__jobStatus as Record<string, string>)[id] ?? "processing")
+              : null;
+          }
           if (cmd === "meetings_get_segments")
             return (w.__segments as Record<string, unknown[]>)[String(args?.meetingId)] ?? [];
           if (cmd === "plugin:dialog|open")
@@ -206,13 +213,18 @@ test.beforeEach(async ({ page }) => {
             // Wie der Kern: die Audiofassung wird am Buch gespeichert.
             const withAudio = {
               ...b,
-              audio: { file: "hoerbuch.mp3", duration_ms: null, narrator: null, transcript_job: null },
+              audio: {
+                file: "hoerbuch.mp3",
+                duration_ms: (w as { __audioDuration?: number }).__audioDuration ?? null,
+                narrator: null,
+                transcript_job: null,
+              },
               audio_path: "C:/lib/x/audio/hoerbuch.mp3",
             };
             w.__books = [...list.filter((x) => x.id !== b.id), withAudio];
             return withAudio;
           }
-          if (cmd === "meetings_import_file") {
+          if (cmd === "meetings_import_audiobook_part") {
             const id = `m${++jobCounter}`;
             (w.__jobs as string[]).push(id);
             return id;
@@ -421,7 +433,7 @@ test("Hörbuch zu vorhandenem Buch: wird angehängt, kein zweiter Eintrag", asyn
   const saves = await calls(page, "library_save");
   expect(saves.every((a) => (a.book as { id: string }).id === "book_1")).toBe(true);
   // Effi hat schon Text: keine Transkription nötig.
-  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
 });
 
 test("Neues Hörbuch: eigener Eintrag und Transkription in der Warteschlange", async ({
@@ -439,7 +451,7 @@ test("Neues Hörbuch: eigener Eintrag und Transkription in der Warteschlange", a
   await expect(page.getByTestId("library-duplicate")).toHaveCount(0);
   await page.getByTestId("library-add-submit").click();
   await expect
-    .poll(async () => (await calls(page, "meetings_import_file")).length)
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
     .toBe(1);
   const saves = await calls(page, "library_save");
   expect((saves[0].book as { id: string }).id).toBe("");
@@ -569,7 +581,7 @@ test("Ablegen auf ein Buch ohne Audio: Hörbuch wird ohne Rückfrage angehängt"
     .toEqual(["book_1"]);
   await expect(page.getByTestId("library-drop-question")).toHaveCount(0);
   // Effi hat schon Text: keine Transkription.
-  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
   // Ergebnis sichtbar: Hinweis „angehängt“, Karte zeigt jetzt Audio.
   await expect(page.getByText("An „Effi Briest“ angehängt.")).toBeVisible();
   await expect(
@@ -634,7 +646,7 @@ test("Ablegen auf freie Fläche: unbekanntes Hörbuch wird sofort neues Buch mit
     paths: ["C:/Hoerbuecher/Franz Kafka - Der Prozess.m4b"],
     position: free,
   });
-  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(1);
+  await expect.poll(async () => (await calls(page, "meetings_import_audiobook_part")).length).toBe(1);
   expect(await page.getByTestId("library-drop-question").count()).toBe(0);
   const saves = await calls(page, "library_save");
   expect((saves[0].book as { id: string; title: string }).id).toBe("");
@@ -889,7 +901,7 @@ test("Ablegen von 36 Dateien einer CD-Box: ein Buch mit 36 Teilen, ein Auftrag j
   const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
   // Durcheinander abgelegt: die Reihenfolge stellt das Gruppieren her.
   await dragTo(page, { x: free.x + 400, y: free.y }, [...files].reverse());
-  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(36);
+  await expect.poll(async () => (await calls(page, "meetings_import_audiobook_part")).length).toBe(36);
   const imports = await calls(page, "library_audio_import_tracks");
   expect(imports).toHaveLength(1);
   expect(imports[0].paths).toEqual(files);
@@ -944,7 +956,7 @@ test("Ablegen auf ein Buch ohne Audio: alle Dateien werden Teile in Hörreihenfo
     ]);
   await expect(page.getByTestId("library-drop-question")).toHaveCount(0);
   // Effi hat Text: keine Transkription.
-  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  expect(await calls(page, "meetings_import_audiobook_part")).toHaveLength(0);
   await expect(page.getByText("3 Teile an „Effi Briest“ angehängt.")).toBeVisible();
 });
 
@@ -1137,7 +1149,7 @@ test("Dialog „Hinzufügen“ mit Mehrfachauswahl: eine Gruppe wird ein Buch mi
   await expect
     .poll(async () => await calls(page, "library_audio_import_tracks"))
     .toEqual([{ id: "book_new", paths: files, append: false }]);
-  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(4);
+  await expect.poll(async () => (await calls(page, "meetings_import_audiobook_part")).length).toBe(4);
 });
 
 test("Hörleiste mehrteilig: durchgehende Zeit, Teilwahl, ±30 s über Teilgrenzen", async ({
@@ -1595,7 +1607,7 @@ test("Anhängen an ein Buch mit Transkript: nur die neuen Teile werden transkrib
   ]);
   await page.getByTestId("library-drop-append").click();
   await expect
-    .poll(async () => (await calls(page, "meetings_import_file")).map((a) => a.path))
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).map((a) => a.path))
     .toEqual(["C:/lib/book_m/audio/teil_003.mp3"]);
 });
 
@@ -1715,4 +1727,228 @@ test("ohne Kurzbuch bietet die Produktseite das Erstellen an", async ({ page }) 
   await expect(
     page.getByRole("region", { name: "Kurzbuch" }).getByRole("button", { name: "Kurzbuch erstellen" }),
   ).toBeVisible();
+});
+// ---------------------------------------------------------------------------
+// lva#208: lange Einzeldatei in Abschnitten, Zusammenführen, Fortsetzen
+// ---------------------------------------------------------------------------
+
+const MIN = 60_000;
+
+const sectionPart = (
+  job: string,
+  start_ms: number,
+  end_ms: number | null,
+  from_ms: number,
+  to_ms: number | null,
+) => ({ job, start_ms, end_ms, from_ms, to_ms });
+
+const sectioned = (
+  id: string,
+  title: string,
+  parts: ReturnType<typeof sectionPart>[],
+  durationMs = 200_000,
+): Extra =>
+  baseBook(id, title, {
+    authors: ["Franz Kafka"],
+    ...multiAudio(id, [
+      { ...track(1, "Das Schloss", durationMs, null), transcript_jobs: parts } as ReturnType<
+        typeof track
+      >,
+    ]),
+  });
+
+const segmentOf = (i: number, text: string, from: number, to: number) => ({
+  segment_index: i,
+  text,
+  start_ms: from,
+  end_ms: to,
+  channel: 0,
+  speaker_index: null,
+});
+
+test("Lange Einzeldatei: bis zu vier Abschnitte, ein Hörbuch-Auftrag je Bereich", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__pick = "C:/hoerbuecher/Franz Kafka - Das Schloss.m4b";
+    w.__audioDuration = 100 * 60_000;
+  });
+  await page.goto("/");
+  await page.getByTestId("library-add").click();
+  await page.getByTestId("library-add-pick").click();
+  await page.getByTestId("library-add-submit").click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+    .toBe(4);
+  const parts = await calls(page, "meetings_import_audiobook_part");
+  const path = "C:/lib/x/audio/hoerbuch.mp3";
+  expect(parts.every((p) => p.path === path)).toBe(true);
+  // 100 min / 4 = 25 min je Abschnitt, 2 s Überlappung an inneren Grenzen.
+  expect(parts.map((p) => p.startMs)).toEqual([0, 25 * MIN - 12_000, 50 * MIN - 12_000, 75 * MIN - 12_000]);
+  expect(parts.map((p) => p.endMs)).toEqual([
+    25 * MIN + 12_000,
+    50 * MIN + 12_000,
+    75 * MIN + 12_000,
+    null,
+  ]);
+  // Der Kern kennt nur diese Art von Auftrag für Bibliotheks-Teile.
+  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  await expect
+    .poll(async () => {
+      const saves = await calls(page, "library_save");
+      const last = saves[saves.length - 1].book as {
+        audio: { transcript_job: string | null; tracks?: { transcript_jobs?: unknown[] }[] };
+      };
+      return [last.audio.transcript_job, last.audio.tracks?.[0]?.transcript_jobs?.length];
+    })
+    .toEqual([null, 4]);
+  // Das neue Buch öffnet sich; vier Abschnitte laufen gleichzeitig.
+  await expect(page.getByText("Transkription 0 von 4 · 4 parallel")).toBeVisible();
+});
+
+test("Kurze Einzeldatei (30 min): ein Auftrag für die ganze Datei, kein Bereich", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__pick = "C:/hoerbuecher/Franz Kafka - Das Urteil.m4b";
+    w.__audioDuration = 30 * 60_000;
+  });
+  await page.goto("/");
+  await page.getByTestId("library-add").click();
+  await page.getByTestId("library-add-pick").click();
+  await page.getByTestId("library-add-submit").click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+    .toBe(1);
+  const [only] = await calls(page, "meetings_import_audiobook_part");
+  expect(only.startMs).toBeNull();
+  expect(only.endMs).toBeNull();
+});
+
+test("Abschnitte fertig: Text und Zeitachse ohne doppelten Satz an der Naht", async ({ page }) => {
+  await addBooks(page, [
+    sectioned("book_s", "Das Schloss", [
+      sectionPart("m41", 0, 102_000, 0, 100_000),
+      sectionPart("m42", 98_000, 260_000, 100_000, null),
+    ]),
+  ]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m41", "m42");
+    for (const id of ["m41", "m42"]) w.__jobStatus[id] = "ready";
+    const seg = (i: number, text: string, from: number, to: number) => ({
+      segment_index: i,
+      text,
+      start_ms: from,
+      end_ms: to,
+      channel: 0,
+      speaker_index: null,
+    });
+    w.__segments["m41"] = [
+      seg(0, "Erster Satz.", 0, 10_000),
+      seg(1, "Zweiter Satz vor der Grenze.", 90_000, 99_000),
+      seg(2, "Dritter Satz an der Grenze und danach.", 99_000, 102_000),
+    ];
+    // Relativ zu 98 s: der dritte Satz steht in beiden Abschnitten.
+    w.__segments["m42"] = [
+      seg(0, "Dritter Satz an der Grenze und danach.", 1_000, 4_000),
+      seg(1, "Vierter Satz.", 5_000, 15_000),
+    ];
+  });
+  await page.goto("/");
+  await expect.poll(async () => (await calls(page, "page_state_save")).length).toBe(1);
+  const stored = JSON.parse((await calls(page, "page_state_save"))[0].state as string) as {
+    text: string;
+  };
+  const prefix = "# Das Schloss\n\nvon Franz Kafka\n\n";
+  expect(stored.text).toBe(
+    `${prefix}Erster Satz.\n\nZweiter Satz vor der Grenze. Dritter Satz an der Grenze und danach. Vierter Satz.`,
+  );
+  const saves = await calls(page, "library_save");
+  const book = saves[saves.length - 1].book as {
+    text: { origin: string };
+    audio: {
+      sync: { ms: number }[];
+      tracks: { transcript_job: string | null; transcript_jobs: unknown[] }[];
+    };
+  };
+  expect(book.text.origin).toBe("transcript");
+  expect(book.audio.sync.map((p) => p.ms)).toEqual([0, 90_000]);
+  expect(book.audio.tracks[0].transcript_job).toBeNull();
+  expect(book.audio.tracks[0].transcript_jobs).toEqual([]);
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
+    .toEqual(["m41", "m42"]);
+});
+
+test("In Arbeit: Stand „12 von 36“ nennt, wie viele parallel laufen", async ({ page }) => {
+  const ids = Array.from({ length: 36 }, (_, i) => `m${100 + i}`);
+  await addBooks(page, [
+    baseBook("book_big", "Rich Dad Poor Dad", {
+      authors: ["Robert Kiyosaki"],
+      ...multiAudio(
+        "book_big",
+        ids.map((id, i) => track(i + 1, `Track ${i + 1}`, 60_000, id)),
+      ),
+    }),
+  ]);
+  await page.addInitScript((ids) => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push(...ids);
+    ids.forEach((id, i) => {
+      w.__jobStatus[id] = i < 12 ? "ready" : i < 16 ? "processing" : "queued";
+    });
+  }, ids);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const card = page.getByTestId("library-card").filter({ hasText: "Rich Dad Poor Dad" });
+  await expect(card).toContainText("Transkription 12 von 36 · 4 parallel");
+});
+
+test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async ({ page }) => {
+  const parts = [
+    sectionPart("m51", 0, 62_000, 0, 60_000),
+    sectionPart("m52", 58_000, 122_000, 60_000, 120_000),
+    sectionPart("m53", 118_000, 182_000, 120_000, 180_000),
+    sectionPart("m54", 178_000, 300_000, 180_000, null),
+  ];
+  await addBooks(page, [sectioned("book_r", "Das Schloss", parts, 240_000)]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m51", "m52", "m53", "m54");
+    w.__jobStatus["m51"] = "ready";
+    w.__jobStatus["m52"] = "failed";
+    w.__jobStatus["m53"] = "queued";
+    w.__jobStatus["m54"] = "ready";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Das Schloss“: Details öffnen" }).click();
+  const detail = page.getByTestId("library-detail");
+  await detail.getByRole("tab", { name: "Fassungen" }).click();
+  await expect(detail).toContainText("Transkription 2 von 4 · 1 fehlgeschlagen");
+  await detail.getByRole("button", { name: "Fehlende Teile transkribieren" }).click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_audiobook_part")).length)
+    .toBe(1);
+  const [restarted] = await calls(page, "meetings_import_audiobook_part");
+  expect(restarted).toEqual({
+    path: "C:/lib/book_r/audio/teil_001.wav",
+    startMs: 58_000,
+    endMs: 122_000,
+  });
+  await expect
+    .poll(async () => {
+      const saves = await calls(page, "library_save");
+      const last = saves[saves.length - 1]?.book as {
+        audio: { tracks: { transcript_jobs: { job: string }[] }[] };
+      };
+      return last?.audio.tracks[0].transcript_jobs.map((p) => p.job);
+    })
+    .toEqual(["m51", "m2", "m53", "m54"]);
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
+    .toEqual(["m52"]);
 });

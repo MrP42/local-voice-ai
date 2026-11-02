@@ -34,7 +34,13 @@ import {
   type BookView,
 } from "@/lib/library/books";
 import { groupAudioFiles } from "@/lib/library/audioGroups";
-import { drmMessage, importAudioParts, transcribeTracks } from "@/lib/library/importFile";
+import {
+  drmMessage,
+  importAudioParts,
+  resumeTranscription,
+  transcribeTracks,
+} from "@/lib/library/importFile";
+import { jobsOfTrack } from "@/lib/library/sections";
 import { audioProgressKey, removeProgress } from "@/lib/library/progress";
 
 type Tab = "overview" | "versions" | "metadata";
@@ -151,6 +157,17 @@ export const BookDetail: React.FC<Props> = ({
       await transcribeTracks(book.id, (m) => toast.error(m));
       await onChanged();
     });
+
+  /** Nur fehlende oder fehlgeschlagene Teile und Abschnitte neu starten. */
+  const resume = () =>
+    run("transcribe", async () => {
+      await resumeTranscription(book.id, (m) => toast.error(m));
+      await onChanged();
+    });
+
+  const missingParts =
+    !book.text && tracksOf(book.audio).some((x) => !jobsOfTrack(x).length);
+  const canResume = job !== undefined && (missingParts || job.failed > 0);
 
   const remove = () =>
     run("delete", async () => {
@@ -361,6 +378,14 @@ export const BookDetail: React.FC<Props> = ({
                   {t(`library.origin.${book.text.origin}`)}
                   {book.text.source_name ? ` · ${book.text.source_name}` : ""}
                 </span>
+                {job && (
+                  <span className="library-meta">{jobLabel(t, job)}</span>
+                )}
+                {canResume && (
+                  <Button onClick={() => void resume()} disabled={busy !== null}>
+                    {t("library.transcribeMissing")}
+                  </Button>
+                )}
                 <span className="library-meta">
                   {view.audio === "ok" && !book.audio_path
                     ? t("library.generatedAudio")
@@ -373,8 +398,8 @@ export const BookDetail: React.FC<Props> = ({
             ) : job ? (
               <>
                 <span className="library-meta">{jobLabel(t, job)}</span>
-                {tracksOf(book.audio).some((x) => !x.transcript_job) && (
-                  <Button onClick={() => void transcribe()} disabled={busy !== null}>
+                {canResume && (
+                  <Button onClick={() => void resume()} disabled={busy !== null}>
                     {t("library.transcribeMissing")}
                   </Button>
                 )}
