@@ -144,7 +144,7 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
-import type { IsbnBook } from "@/bindings";
+import type { IsbnBook, TranslateJob } from "@/bindings";
 import {
   READER_FONTS,
   READER_THEMES,
@@ -155,6 +155,15 @@ import { InfoPopover } from "./reader/InfoPopover";
 import { useKeepAwake } from "./reader/useKeepAwake";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
 import { stripPageMarks, toSpokenScript } from "@/lib/reader/spokenScript";
+import {
+  addChunk,
+  emptyStream,
+  streamText,
+  warningText,
+  type TransformProgress,
+  type TranslateChunk,
+  type TranslateStreamState,
+} from "@/lib/reader/translationStream";
 import {
   SentenceLocator,
   type SourceRange,
@@ -198,6 +207,18 @@ const formatEta = (seconds: number) => {
 
 /** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
 const TRANSFORM_CANCELLED = "transform_cancelled";
+
+/** Hintergrund-Übersetzung des Backends, nur wenn sie zu diesem Text und dieser Sprache gehört. */
+const fetchTranslateJob = async (
+  text: string,
+  lang: string,
+): Promise<TranslateJob | null> => {
+  try {
+    return (await commands.ttsTranslateJob(text, lang)) ?? null;
+  } catch {
+    return null;
+  }
+};
 
 /** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
  *  haben jeweils ihre eigenen Schritte). */
@@ -413,19 +434,143 @@ export const TtsSettings = () => {
   const [startingSeconds, setStartingSeconds] = useState(0);
   const [lastError, setLastError] = useState<string | null>(null);
   /** Fortschritt von Übersetzung/Zusammenfassung (Backend: Block für Block). */
-  const [transformProgress, setTransformProgress] = useState<{
-    kind: "translation" | "summary";
-    done: number;
-    total: number;
-  } | null>(null);
+  const [transformProgress, setTransformProgress] =
+    useState<TransformProgress | null>(null);
   useEffect(() => {
-    const un = listen<{
-      kind: "translation" | "summary";
-      done: number;
-      total: number;
-    }>("tts-transform-progress", (e) => setTransformProgress(e.payload));
+    let last = 0;
+    const un = listen<TransformProgress>("tts-transform-progress", (e) => {
+      setTransformProgress(e.payload);
+      if (!resyncJob.current || Date.now() - last < 1000) return;
+      last = Date.now();
+      void fetchTranslateJob(textRef.current, targetLangRef.current).then(
+        (job) => {
+          if (!resyncJob.current || !job?.partial) return;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        },
+      );
+    });
     return () => void un.then((off) => off());
   }, []);
+  /** Übersetzung streamt: bisher gemeldete Abschnitte und der Schlüssel (Text+Sprache),
+   *  zu dem sie gehören. Der Puffer lebt in einer Ref, damit Ereignisse ohne Render-Verzug eingehen. */
+  const streamRef = useRef<TranslateStreamState>(emptyStream());
+  const streamKey = useRef("");
+  const textRef = useRef("");
+  const targetLangRef = useRef("");
+  const translatingRef = useRef(false);
+  const translationRef = useRef("");
+  /** Übersetzung gestoppt (Fehler/Abbruch), Teilergebnis steht: „Fortsetzen“ bietet sich an. */
+  const [translatePartial, setTranslatePartial] = useState<{
+    kind: "error" | "cancelled";
+    message: string;
+  } | null>(null);
+  /** Hinweise zu Abschnitten, deren Marken nach dem zweiten Versuch nicht stimmen. */
+  const [translateWarnings, setTranslateWarnings] = useState<string[]>([]);
+  /** Übersetzung läuft im Hintergrund weiter, wir sind erst später dazugekommen:
+   *  der Text wird aus dem Job nachgeführt statt aus Abschnitten aufgebaut. */
+  const resyncJob = useRef(false);
+  /** Die Wiedergabe wartet auf neuen Text der noch laufenden Übersetzung. */
+  const [waitingForTranslation, setWaitingForTranslation] = useState(false);
+  /** Zählt Sprechstarts/Stopps; alte Warteschleifen erkennen daran, dass sie überholt sind. */
+  const speakToken = useRef(0);
+  const speakFromRef = useRef<
+    (charOffset: number, onlyOne: boolean) => Promise<void>
+  >(async () => {});
+  // Beim Schließen enden Warteschleifen der Wiedergabe-während-Übersetzung.
+  useEffect(
+    () => () => {
+      speakToken.current += 1;
+    },
+    [],
+  );
+  useEffect(() => {
+    const matches = () =>
+      streamKey.current !== "" &&
+      streamKey.current === translationKey(textRef.current, targetLangRef.current);
+    const unStart = listen("tts-translate-start", () => {
+      if (!matches()) return;
+      streamRef.current = emptyStream();
+      savedTranslation.current = "";
+      translationFor.current = streamKey.current;
+      setTranslation("");
+      setTab("translation");
+    });
+    const unChunk = listen<TranslateChunk>("tts-translate-chunk", (e) => {
+      if (!matches() || resyncJob.current) return;
+      streamRef.current = addChunk(streamRef.current, e.payload);
+      const next = streamText(streamRef.current);
+      // Nie als „gespeichert“ zurückschreiben: Teilergebnisse gehören nicht in den Zwischenspeicher.
+      savedTranslation.current = next;
+      translationFor.current = streamKey.current;
+      setTranslation(next);
+    });
+    return () => {
+      void unStart.then((off) => off());
+      void unChunk.then((off) => off());
+    };
+  }, []);
+  // Hintergrund-Übersetzung: Ende melden und beim Öffnen einen laufenden Job wieder aufnehmen.
+  useEffect(() => {
+    const un = listen<{
+      ok: boolean;
+      lang?: string;
+      error?: string | null;
+      warnings?: unknown[] | null;
+    }>("tts-translate-done", (e) => {
+      const { ok, error, warnings, lang } = e.payload;
+      const forText = textRef.current;
+      const forLang = targetLangRef.current;
+      const wasStreaming = translatingRef.current || resyncJob.current;
+      // Es gibt nur einen Auftrag: sein Ende löst die Sperre immer, auch wenn
+      // inzwischen eine andere Sprache gezeigt wird (sonst hinge „läuft“ fest).
+      resyncJob.current = false;
+      translatingRef.current = false;
+      setTranslating(false);
+      setTransformProgress(null);
+      if (lang && lang !== forLang) return;
+      setTranslateWarnings((warnings ?? []).map(warningText));
+      if (!wasStreaming) return;
+      if (ok) {
+        void commands.ttsCachedTranslation(forText, forLang).then(async (hit) => {
+          const final =
+            hit ?? (await commands.ttsCachedTranslation(stripPageMarks(forText), forLang));
+          if (!final || textRef.current !== forText) return;
+          translationFor.current = translationKey(forText, forLang);
+          savedTranslation.current = final;
+          addTranslatedLang(forLang);
+          setTranslation(final);
+        });
+      } else if (streamRef.current.contiguous > 0 || translationRef.current) {
+        // Nur wenn ein Teilergebnis steht, bietet sich „Fortsetzen“ an.
+        if (error && error !== TRANSFORM_CANCELLED) {
+          setTranslatePartial({ kind: "error", message: error });
+        } else {
+          setTranslatePartial({ kind: "cancelled", message: "" });
+        }
+      }
+    });
+    return () => void un.then((off) => off());
+  }, []);
+  useEffect(() => {
+    if (!text.trim()) return;
+    let abandoned = false;
+    void fetchTranslateJob(text, targetLang).then((job) => {
+      if (abandoned || !job?.running) return;
+      if (translatingRef.current) return;
+      resyncJob.current = true;
+      translatingRef.current = true;
+      streamKey.current = translationKey(text, targetLang);
+      translationFor.current = streamKey.current;
+      savedTranslation.current = job.partial ?? "";
+      setTranslating(true);
+      setTranslation(job.partial ?? "");
+      setTab("translation");
+    });
+    return () => {
+      abandoned = true;
+    };
+  }, [text, targetLang]);
   /** Piper mit Spracherkennung: die Stimme, die den Text des Reiters WIRKLICH liest. */
   const [piperReader, setPiperReader] = useState<string | null>(null);
   /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
@@ -599,8 +744,34 @@ export const TtsSettings = () => {
       setTranslation(null);
       return;
     }
-    void commands.ttsCachedTranslation(text, targetLang).then((hit) => {
+    setTranslatePartial(null);
+    const lookup = async () => {
+      // Erst mit Seitenmarken, dann ohne: Übersetzungen vor der Marken-Erhaltung
+      // liegen unter dem gestrippten Text im Zwischenspeicher.
+      const hit = await commands.ttsCachedTranslation(text, targetLang);
+      if (hit) return hit;
+      const stripped = stripPageMarks(text);
+      return stripped !== text
+        ? await commands.ttsCachedTranslation(stripped, targetLang)
+        : hit;
+    };
+    void lookup().then((hit) => {
       if (abandoned) return;
+      if (
+        translatingRef.current &&
+        streamKey.current === translationKey(text, targetLang)
+      ) {
+        // Zurück zur laufenden Übersetzung: zwischenzeitlich verpasste Abschnitte
+        // holt der Auftragsstand nach (statt einer Lücke im Puffer).
+        resyncJob.current = true;
+        void fetchTranslateJob(text, targetLang).then((job) => {
+          if (abandoned || !resyncJob.current || !job?.partial) return;
+          translationFor.current = streamKey.current;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        });
+        return;
+      }
       translationFor.current = translationKey(text, targetLang);
       savedTranslation.current = hit;
       // Geladen, nicht bearbeitet: "Rueckgaengig" darf das nicht leeren.
@@ -883,6 +1054,11 @@ export const TtsSettings = () => {
     // „Nur diesen Satz“ liest nie im nächsten Teil weiter.
     if (onlyOne) partSession.current = null;
     const session = onlyOne ? null : startPartSession();
+    const token = ++speakToken.current;
+    const followFrom =
+      !onlyOne && tab === "translation" && translatingRef.current
+        ? spokenText.length
+        : null;
     const result = await commands.ttsSpeakTextFrom(
       canon.text,
       canon.offset,
@@ -891,7 +1067,42 @@ export const TtsSettings = () => {
     if (result.status === "error") {
       endPartSession(session);
       setLastError(result.error);
-    } else continueWithNextPart(session);
+    } else {
+      continueWithNextPart(session);
+      if (followFrom !== null) await followTranslation(followFrom, token);
+    }
+  };
+  speakFromRef.current = speakFrom;
+
+  /**
+   * Wiedergabe während die Übersetzung noch wächst: Hat die Sitzung das Ende des
+   * bis dahin vorhandenen Texts gelesen, wird ab genau dieser Stelle (Länge des
+   * Texts beim Start) mit dem neuen Text weitergelesen — über denselben Weg wie
+   * „Ab hier vorlesen“, also ohne Lücke und ohne Wiederholung. Ist noch nichts
+   * Neues da, wartet die Schleife und die Oberfläche zeigt „Warte auf Übersetzung“.
+   * Stopp, Pause, ein neuer Start oder ein Reiterwechsel beenden die Schleife (Token).
+   */
+  const followTranslation = async (readUntil: number, token: number) => {
+    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+    const alive = () =>
+      speakToken.current === token && sessionTab.current === "translation";
+    const progress = speakProgressRef.current;
+    if (!progress || progress.total === 0 || progress.position < progress.total)
+      return;
+    try {
+      while (alive() && translationRef.current.length <= readUntil) {
+        if (!translatingRef.current) return;
+        setWaitingForTranslation(true);
+        await sleep(300);
+      }
+    } finally {
+      setWaitingForTranslation(false);
+    }
+    if (!alive()) return;
+    // Einen Render abwarten, damit speakFrom den neuen Text sieht.
+    await sleep(60);
+    if (!alive()) return;
+    await speakFromRef.current(readUntil, false);
   };
 
   // Vorab-Erzeugung: geaenderte Saetze in den Cache, ohne Wiedergabe.
@@ -952,13 +1163,19 @@ export const TtsSettings = () => {
     lastLocated.current = null;
     sessionResumeKey.current = resumeKeyRef.current;
     const session = startPartSession();
+    const token = ++speakToken.current;
+    const followFrom =
+      tab === "translation" && translatingRef.current ? spokenText.length : null;
     const result = await commands.ttsSpeakText(
       canonicalizeTags(toSpokenScript(spokenText)),
     );
     if (result.status === "error") {
       endPartSession(session);
       setLastError(result.error);
-    } else continueWithNextPart(session);
+    } else {
+      continueWithNextPart(session);
+      if (followFrom !== null) await followTranslation(followFrom, token);
+    }
   };
 
   /**
@@ -974,6 +1191,8 @@ export const TtsSettings = () => {
    */
   /** Pause: anhalten, Position behalten — Play setzt genau dort fort. */
   const pauseSpeaking = () => {
+    speakToken.current += 1;
+    setWaitingForTranslation(false);
     void commands.ttsCancel();
   };
 
@@ -983,6 +1202,8 @@ export const TtsSettings = () => {
    * decken sie sich, gehoert Stopp weg.
    */
   const stopSpeaking = () => {
+    speakToken.current += 1;
+    setWaitingForTranslation(false);
     void commands.ttsCancel();
     partSession.current = null;
     lastSessionPage.current = null;
@@ -1001,6 +1222,7 @@ export const TtsSettings = () => {
     // Nach einer Pause setzt Play die Sitzung derselben Seite fort — dann
     // gilt auch das Weiterlesen im nächsten Buchteil wieder.
     const session = startPartSession(lastSessionPage.current);
+    speakToken.current += 1;
     const result = await commands.ttsSpeakResume();
     if (result.status === "error") {
       endPartSession(session);
@@ -1404,6 +1626,11 @@ export const TtsSettings = () => {
         : openDocId && docLoadedFor === openDocId
           ? summary
           : "";
+  textRef.current = text;
+  targetLangRef.current = targetLang;
+  translationRef.current = translation ?? "";
+  /** Übersetzung läuft und wird im Reiter gezeigt: der Text ist schreibgeschützt. */
+  const streaming = translating && tab === "translation";
   const setSpokenText = useCallback(
     (next: string) => {
       if (tab === "original") setText(next);
@@ -1424,7 +1651,9 @@ export const TtsSettings = () => {
   // NIE um — sonst verschwände der Editor beim ersten Buchstaben.
   const [modeNow, setModeNow] = useState<"read" | "edit">("edit");
   const viewMode: "read" | "edit" =
-    modeNow === "read" && spokenText.trim().length > 0 ? "read" : "edit";
+    (modeNow === "read" || streaming) && spokenText.trim().length > 0
+      ? "read"
+      : "edit";
   const chooseViewMode = (mode: "read" | "edit") => {
     setViewMode(mode);
     setModeNow(mode);
@@ -2374,22 +2603,55 @@ export const TtsSettings = () => {
   const translateText = async () => {
     if (!text.trim()) return;
     setLastError(null);
+    if (translatingRef.current) return;
+    setTranslatePartial(null);
+    setTranslateWarnings([]);
     setTranslating(true);
+    translatingRef.current = true;
     setTransformProgress(null);
-    const result = await commands.ttsTranslate(stripPageMarks(text), targetLang);
+    const forText = text;
+    const forLang = targetLang;
+    const key = translationKey(forText, forLang);
+    streamKey.current = key;
+    streamRef.current = emptyStream();
+    resyncJob.current = false;
+    // Die Seitenmarken bleiben im Text; das Backend maskiert sie selbst.
+    const result = await commands.ttsTranslate(forText, forLang);
     setTranslating(false);
+    translatingRef.current = false;
+    resyncJob.current = false;
     setTransformProgress(null);
+    // Inzwischen anderer Text oder andere Sprache gewählt: das Ergebnis liegt im
+    // Zwischenspeicher und erscheint beim Zurückschalten, nicht im falschen Feld.
+    const stale =
+      textRef.current !== forText || targetLangRef.current !== forLang;
+    if (stale) {
+      if (streamKey.current === key) streamKey.current = "";
+      if (result.status === "ok") addTranslatedLang(forLang);
+      else if (result.error !== TRANSFORM_CANCELLED) setLastError(result.error);
+      return;
+    }
     if (result.status === "error") {
-      if (result.error === TRANSFORM_CANCELLED) {
-        toast.info(t("tts.transform.cancelled"));
-      } else {
+      const partial = streamRef.current.contiguous > 0;
+      const cancelled = result.error === TRANSFORM_CANCELLED;
+      if (cancelled) toast.info(t("tts.transform.cancelled"));
+      if (partial) {
+        // Das Gestreamte bleibt stehen; „Fortsetzen“ ruft die Übersetzung erneut auf,
+        // fertige Abschnitte kommen aus dem Backend sofort zurück.
+        setTranslatePartial({
+          kind: cancelled ? "cancelled" : "error",
+          message: cancelled ? "" : result.error,
+        });
+        addTranslatedLang(forLang);
+      } else if (!cancelled) {
         setLastError(result.error);
       }
       return;
     }
-    translationFor.current = translationKey(text, targetLang);
+    if (streamKey.current === key) streamKey.current = "";
+    translationFor.current = key;
     savedTranslation.current = result.data;
-    addTranslatedLang(targetLang);
+    addTranslatedLang(forLang);
     setTranslation(result.data);
     setTab("translation");
     // Die Sprecher des Originals stehen noch drin: Stimmen der Zielsprache
@@ -2430,6 +2692,9 @@ export const TtsSettings = () => {
     if (translation === null) return;
     if (translationFor.current !== translationKey(text, targetLang)) return;
     if (translation === savedTranslation.current) return;
+    // Ein Teilergebnis (Fehler/Abbruch) darf nie als fertige Übersetzung
+    // abgelegt werden — auch nicht nach einer Korrektur daran.
+    if (translatePartial) return;
     const forText = text;
     const forLang = targetLang;
     const value = translation;
@@ -2439,7 +2704,7 @@ export const TtsSettings = () => {
       });
     }, 600);
     return () => window.clearTimeout(timer);
-  }, [translation, text, targetLang]);
+  }, [translation, text, targetLang, translatePartial]);
 
   const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
   /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */
@@ -3022,6 +3287,10 @@ export const TtsSettings = () => {
         summarizing={kiDocs.busy}
         onSummarize={summarize}
         transformProgress={transformProgress}
+        translatePartial={translatePartial}
+        translateWarnings={translateWarnings}
+        waitingForTranslation={waitingForTranslation}
+        onResumeTranslate={() => void translateText()}
         onCancelTransform={(kind) =>
           void commands.ttsTransformCancel(kind)
         }
@@ -3419,7 +3688,9 @@ export const TtsSettings = () => {
                 ) : tab === "translation" ? (
                   <TtsChipEditor
                     value={translation ?? ""}
-                    onChange={setTranslation}
+                    onChange={(v) => {
+                      if (!streaming) setTranslation(v);
+                    }}
                     providers={chipProviders}
                     insertApiRef={editorApiRef}
                     pausesOnly={pausesOnly}

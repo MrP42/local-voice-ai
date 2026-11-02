@@ -276,6 +276,20 @@ pub async fn tts_translate(
     tts.translate_text(&text, &target_lang).await
 }
 
+/// Stand des Uebersetzungsauftrags im Hintergrund (laufend oder zuletzt
+/// beendet): Fortschritt, Arbeiter, bisher fertiger Text, Fehler, Warnungen.
+/// Die Oberflaeche holt sich damit den Stand zurueck, wenn sie neu geladen hat.
+#[tauri::command]
+#[specta::specta]
+pub fn tts_translate_job(
+    app: AppHandle,
+    text: String,
+    target_lang: String,
+) -> Option<crate::translator::TranslateJob> {
+    app.state::<Arc<TtsManager>>()
+        .translate_job_for(&text, &target_lang)
+}
+
 /// Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
 /// Damit die Oberflaeche beim Umschalten zwischen Sprachen sofort zeigen
 /// kann, was da ist, ohne eine Uebersetzung anzustossen.
