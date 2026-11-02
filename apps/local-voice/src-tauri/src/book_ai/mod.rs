@@ -296,7 +296,13 @@ pub async fn book_ai_summarize(
         );
     };
     // Prognose mit demselben Stand wie der Lauf, damit sie neben dem Ist steht.
-    let estimate = job.estimate(&dir).await.ok().map(|e| e.figures);
+    let estimate = match job.estimate(&dir).await {
+        Ok(e) => Some(e.figures),
+        Err(code) => {
+            log::warn!("book_ai: keine Token-Prognose ({code})");
+            None
+        }
+    };
     let cache = engine::DigestCache {
         dir: Some(store::cache_dir(&dir)),
         read_only: false,
@@ -355,7 +361,7 @@ pub async fn book_ai_summarize(
             usage: Some(tokens::KiUsage {
                 estimate,
                 actual: Some(actual),
-                local: tokens::active_is_local(settings),
+                local: tokens::calls_local(&calls),
             }),
         },
         text.trim(),

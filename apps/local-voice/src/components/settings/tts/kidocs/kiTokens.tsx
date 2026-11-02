@@ -77,6 +77,8 @@ export function useTokenEstimate(
       return;
     }
     let alive = true;
+    // Keine Zahlen der vorigen Auswahl stehen lassen, während neu gerechnet wird.
+    setEstimate(null);
     setLoading(true);
     const timer = window.setTimeout(() => {
       commands

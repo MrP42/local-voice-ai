@@ -704,7 +704,7 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
   await expect(line).toContainText("Prognose: ca. 48.200 Token");
   await expect(line).toContainText("41.900 Eingabe, 6.320 Ausgabe");
   await expect(line).toContainText("lokal, keine Kosten");
-  await expect(line).toContainText("3 Schritte schon zwischengespeichert");
+  await expect(line).toContainText("ca. 3 Schritte schon zwischengespeichert");
   await expect(line).toHaveAttribute("title", /14 Modellaufrufe/);
   const est = (await calls(page)).filter(([c]) => c === "book_ai_estimate").at(-1)!;
   expect(est[1]).toMatchObject({ pageId: "p1", source: { kind: "book" }, templateId: "builtin:eine_seite" });

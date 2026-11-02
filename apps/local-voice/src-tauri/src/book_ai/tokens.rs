@@ -35,8 +35,8 @@ pub const DEFAULT_CHARS_PER_TOKEN: f64 = 3.6;
 const SAMPLE_CHARS: usize = 6_000;
 /// Rahmen je Aufruf (Chat-Vorlage, Rollen), den der Prompttext nicht enthält.
 const CALL_OVERHEAD_TOKENS: u64 = 12;
-/// Länge eines Platzhalterworts samt Leerzeichen (deutsche Prosa: ~6–7).
-const FILLER_WORD: &str = "wortes ";
+/// Länge eines Platzhalterworts samt Leerzeichen (Prosa: deutsch ~6–7, englisch ~5–6).
+const FILLER_WORD: &str = "worte ";
 /// Antwortlänge, wenn der Prompt keine verlangt.
 const DEFAULT_ANSWER_WORDS: usize = 400;
 
@@ -277,15 +277,22 @@ pub fn figures_from_dry_run(
     }
 }
 
-/// Ist-Werte aus den erfassten Aufrufen eines Laufs.
+/// Liefen alle erfassten Aufrufe auf diesem Rechner?
+pub fn calls_local(calls: &[CapturedCall]) -> bool {
+    !calls.is_empty() && calls.iter().all(|c| c.local)
+}
+
+/// Ist-Werte aus den erfassten Aufrufen eines Laufs. Gescheiterte Aufrufe
+/// sind mit null Token gebucht und zählen nicht als Aufruf.
 pub fn figures_from_calls(calls: &[CapturedCall], settings: &AppSettings) -> TokenFigures {
     let input: u64 = calls.iter().map(|c| c.prompt_tokens).sum();
     let output: u64 = calls.iter().map(|c| c.completion_tokens).sum();
-    let local = !calls.is_empty() && calls.iter().all(|c| c.local);
+    let local = calls_local(calls);
+    let ok = calls.iter().filter(|c| c.ok).count();
     TokenFigures {
         input_tokens: clamp_u32(input),
         output_tokens: clamp_u32(output),
-        calls: calls.len().min(u32::MAX as usize) as u32,
+        calls: ok.min(u32::MAX as usize) as u32,
         cost_micro: cost(input, output, prices(settings), local),
     }
 }
@@ -435,8 +442,10 @@ mod tests {
             ok: true,
             usage_event_id: None,
         };
+        let mut failed = call(0, 0);
+        failed.ok = false;
         let f = figures_from_calls(
-            &[call(100, 20), call(50, 5)],
+            &[call(100, 20), call(50, 5), failed],
             &crate::settings::get_default_settings(),
         );
         assert_eq!((f.input_tokens, f.output_tokens, f.calls), (150, 25, 2));
