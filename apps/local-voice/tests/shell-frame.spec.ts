@@ -246,7 +246,7 @@ test("Titelleiste ohne Werkzeuge, Profilmenü unten links (ADR-0027)", async ({ 
   await expect(page.locator("#page-title")).toHaveText("Einstellungen");
 });
 
-test("Modulkopf: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", async ({ page }) => {
+test("Modulwerkzeuge in der Titelleiste: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -255,8 +255,12 @@ test("Modulkopf: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", as
 
   // Verlauf: Suche an, Strg+K springt hinein
   await nav.getByRole("button", { name: "Verlauf", exact: true }).click();
-  const kopf = page.locator(".page-shell__head");
-  await expect(kopf.locator("#page-title")).toHaveText("Verlauf");
+  // Keine Titelzeile im Modul (Patrick 02.11.): ⓘ und Suche stehen in der
+  // Titelleiste, der Name nur noch unsichtbar als h1 und in der Navigation.
+  const kopf = page.locator(".lv-titlebar .page-shell__head");
+  await expect(kopf).toBeVisible();
+  await expect(page.locator("#page-title")).toHaveText("Verlauf");
+  await expect(page.locator("#page-title")).toHaveClass(/sr-only/);
   await expect(page.locator(".page-shell__description")).toHaveCount(0);
   // Titel-ⓘ: nur die Kurzbeschreibung, als Beschreibung am Knopf verknüpft
   const info = kopf.getByTestId("page-info");
@@ -279,6 +283,23 @@ test("Modulkopf: ⓘ nur Kurzbeschreibung, Suche je Modul, kein Hilfe-Knopf", as
   await nav.getByRole("button", { name: "Vorlesen", exact: true }).click();
   await expect(page.locator("#page-title")).toHaveText("Vorlesen");
   await expect(page.locator(".page-shell__head").getByRole("searchbox")).toHaveCount(0);
+});
+
+test("Keine Titelzeile im Modul: Inhalt beginnt direkt unter der Titelleiste", async ({ page }) => {
+  await setup(page, "light");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+  for (const label of ["Verlauf", "Aufnahmen", "Vorlesen", "Bibliothek", "Sprachgespräch"]) {
+    await nav.getByRole("button", { name: label, exact: true }).click();
+    const titel = page.getByRole("heading", { level: 1, name: label, exact: true });
+    await expect(titel).toHaveCount(1);
+    // Nur für Screenreader: 1 px, ohne eigene Zeile.
+    const box = (await titel.boundingBox())!;
+    expect(box.height).toBeLessThanOrEqual(1);
+    // Im Inhalt steht keine Werkzeugzeile mehr; sie liegt in der Titelleiste.
+    await expect(page.locator(".lv-content .page-shell__head")).toHaveCount(0);
+  }
 });
 
 for (const theme of ["dark", "light"] as const) {

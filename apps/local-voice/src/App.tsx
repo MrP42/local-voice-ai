@@ -25,7 +25,10 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
-import { HelpDockSlotContext } from "./components/shell/PageHeaderSlot";
+import {
+  HelpDockSlotContext,
+  PageHeaderSlotContext,
+} from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
 import { ShellProfil, useShellKuerzel } from "./components/shell/ShellProfil";
@@ -106,6 +109,8 @@ function App() {
   // Rahmen: Navigation ein-/ausklappen (bleibt über Neustarts), schmal als
   // Overlay-Drawer.
   const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
+  // Platz rechts in der Titelleiste für ⓘ, Suche und Aktionen des Moduls.
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
     "0",
@@ -506,10 +511,12 @@ function App() {
         <IntroTour />
         <KopplungsDialog />
         <FreigabeWaechter />
-        {/* Titelleiste 40px (ADR-0027 E3, Variante A): nur Hamburger, App-Symbol
-            und Name, freie Ziehfläche, Fensterknöpfe. Seitentitel, Suche und
-            Aktionen stehen im Modulkopf (PageShell), Einstellungen und Hilfe
-            im Profilmenü unten links. Das Hauptfenster ist rahmenlos, dies ist
+        {/* Titelleiste 40px (ADR-0027 E3): Hamburger, App-Symbol und Name,
+            freie Ziehfläche, rechts ⓘ, Suche und Aktionen des Moduls
+            (PageShell), Fensterknöpfe. Eine Titelzeile im Modul gibt es
+            nicht (Patrick 02.11.): der Modulname steht in der Navigation.
+            Einstellungen und Hilfe im Profilmenü unten links. Das
+            Hauptfenster ist rahmenlos, dies ist
             die einzige Titelleiste: freie Flächen ziehen das Fenster, ein
             Doppelklick maximiert ("deep" = ganzer Teilbaum, Bedienelemente
             ausgenommen). */}
@@ -534,6 +541,7 @@ function App() {
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
           <span className="lv-titlebar__frei" />
+          <div ref={setHeaderSlot} className="lv-titlebar__modul" />
           <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">
@@ -614,10 +622,12 @@ function App() {
   }
 
   return (
-    <HelpDockSlotContext.Provider value={helpDock}>
-      {toaster}
-      {content}
-    </HelpDockSlotContext.Provider>
+    <PageHeaderSlotContext.Provider value={headerSlot}>
+      <HelpDockSlotContext.Provider value={helpDock}>
+        {toaster}
+        {content}
+      </HelpDockSlotContext.Provider>
+    </PageHeaderSlotContext.Provider>
   );
 }
 
