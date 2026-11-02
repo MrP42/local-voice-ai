@@ -3468,10 +3468,11 @@
       "finalAuto": "Automatisch (empfohlen)",
       "finalOff": "Aus – Live-Transkript behalten",
       "parallelTitle": "Gleichzeitige Transkriptionen",
-      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Mehr als eine nur, wenn Arbeitsspeicher (und Grafikspeicher) für jede weitere reichen – jede lädt das Modell noch einmal. Sonst wartet die nächste Datei („wartet auf Arbeitsspeicher“). Eine laufende Aufnahme hat immer Vorrang: dann pausiert die Warteschlange.",
+      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Mehr als eine nur, wenn Arbeitsspeicher (und Grafikspeicher) für jede weitere reichen – jede lädt das Modell noch einmal. Sonst wartet die nächste Datei („wartet auf Arbeitsspeicher“). Eine laufende Aufnahme hat immer Vorrang: dann pausiert die Warteschlange. Teile von Hörbüchern (Bibliothek) laufen unabhängig davon bis zu vier gleichzeitig – ebenfalls nur, solange der Speicher reicht.",
       "parallel1": "1 (Standard)",
       "parallel2": "2",
-      "parallel3": "3"
+      "parallel3": "3",
+      "parallel4": "4"
     },
     "header": {
       "renameName": "Umbenennen",
@@ -7097,6 +7098,8 @@
     },
     "job": {
       "parts": "Transkription {{done}} von {{total}}",
+      "partsParallel": "Transkription {{done}} von {{total}} · {{running}} parallel",
+      "partsFailed": "Transkription {{done}} von {{total}} · {{failed}} fehlgeschlagen",
       "queued": "Transkription wartet",
       "processing": "Wird transkribiert",
       "transcribing": "Wird transkribiert",

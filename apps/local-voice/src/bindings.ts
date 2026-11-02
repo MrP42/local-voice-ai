@@ -2239,6 +2239,22 @@ async meetingsImportFile(path: string, consentConfirmed: boolean, targetMeetingI
 }
 },
 /**
+ * lva#208: stellt einen Hörbuch-Teil in die Import-Warteschlange und kehrt sofort
+ * mit der ID der Hilfs-Besprechung zurück. Mit `start_ms`/`end_ms` wird nur
+ * dieser Abschnitt der Datei transkribiert (Segmentzeiten relativ zum Beginn des
+ * Abschnitts). Hörbuch-Aufträge laufen bis zu vier gleichzeitig. Fehler:
+ * `import_path_invalid`, `range_invalid` (Ende nicht hinter dem Anfang, nur eine
+ * Grenze), `queue_enqueue_failed: …`.
+ */
+async meetingsImportAudiobookPart(path: string, startMs: number | null, endMs: number | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_import_audiobook_part", { path, startMs, endMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
  * die `ImportQueueEvent` aktuell).
  */
@@ -2289,11 +2305,12 @@ async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Re
 }
 },
 /**
- * Einstellung `meeting_import_parallel`: 1, 2 oder 3 gleichzeitige
+ * Einstellung `meeting_import_parallel`: 1 bis 4 gleichzeitige
  * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
  * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
  * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
- * reichen, sonst wartet die Datei.
+ * reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
+ * unabhängig davon bis zu vier gleichzeitig.
  */
 async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, string>> {
     try {
@@ -7345,10 +7362,10 @@ meeting_final_model?: string;
 meeting_diarization?: string; 
 /**
  * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
- * werden: 1 (Standard), 2 oder 3. Mehr als eine nur, solange Arbeitsspeicher
+ * werden: 1 (Standard) bis 4. Mehr als eine nur, solange Arbeitsspeicher
  * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
  * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
- * settings.json) gilt 1; Werte ausserhalb 1 bis 3 zaehlen als der naechste
+ * settings.json) gilt 1; Werte ausserhalb 1 bis 4 zaehlen als der naechste
  * gueltige.
  */
 meeting_import_parallel?: number; 
@@ -7557,7 +7574,12 @@ title: string; duration_ms: number | null;
 /**
  * Laufende Transkription dieses Teils (Import-Warteschlange).
  */
-transcript_job: string | null }
+transcript_job: string | null; 
+/**
+ * Lange Einzeldatei in Abschnitten (lva#208): ein Auftrag je Zeitabschnitt.
+ * Nicht leer: ersetzt `transcript_job`. Leer: wie bisher ein Auftrag je Teil.
+ */
+transcript_jobs?: TranscriptPart[] }
 export type AudioVersion = { 
 /**
  * Dateiname unter `<id>/audio/`. Bei mehreren Teilen der erste Teil.
@@ -10824,6 +10846,34 @@ off_reason: string | null;
  */
 available: boolean }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+/**
+ * Ein Zeitabschnitt eines Teils mit eigenem Transkriptions-Auftrag (lva#208).
+ * Der Auftrag liest nur `start_ms` bis `end_ms` der Datei; seine Segmentzeiten
+ * sind relativ zu `start_ms`. Die Abschnitte überlappen an den Rändern, damit
+ * kein Wort zerschnitten wird; beim Zusammenführen gehört jedes Segment dem
+ * Abschnitt, in dessen Bereich `from_ms`…`to_ms` seine Mitte liegt.
+ */
+export type TranscriptPart = { 
+/**
+ * Hilfs-Besprechung der Import-Warteschlange.
+ */
+job: string; 
+/**
+ * Beginn des dekodierten Bereichs in der Datei (ms); Versatz der Segmente.
+ */
+start_ms: number; 
+/**
+ * Ende des dekodierten Bereichs (ms); `None` = bis zum Dateiende.
+ */
+end_ms: number | null; 
+/**
+ * Ab hier gehören die Segmente diesem Abschnitt (ms in der Datei).
+ */
+from_ms: number; 
+/**
+ * Bis hier (ausschließlich); `None` beim letzten Abschnitt.
+ */
+to_ms: number | null }
 /**
  * Eine Fassung, wie die Oberflaeche sie liest.
  */

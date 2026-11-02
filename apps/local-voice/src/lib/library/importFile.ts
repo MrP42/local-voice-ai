@@ -1,7 +1,13 @@
-import { commands, type LibraryBook, type MetadataCandidate } from "@/bindings";
+import {
+  commands,
+  type AudioTrack,
+  type LibraryBook,
+  type MetadataCandidate,
+} from "@/bindings";
 import i18n from "@/i18n";
 import { patchFrom } from "@/components/library/MetadataPicker";
 import {
+  assetUrl,
   extensionOf,
   fileNameOf,
   guessFromFileName,
@@ -12,6 +18,14 @@ import {
 } from "./books";
 import type { AudioGroup } from "./audioGroups";
 import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
+import { probeDuration } from "./probe";
+import {
+  isSectioned,
+  jobsOfTrack,
+  planSections,
+  RESTART_STATUSES,
+  type TrackJob,
+} from "./sections";
 
 /**
  * Datei in die Bibliothek aufnehmen (lva#152). Gemeinsamer Weg für den
@@ -178,20 +192,10 @@ export async function addToLibrary(
     // Neue Hördatei: alte Aufträge, Transkript und Hörposition passen nicht mehr.
     if (current?.audio) await cleanupReplaced(current);
     if (transcribe && !book.text && book.audio_path && book.audio) {
-      // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
-      const job = await commands.meetingsImportFile(book.audio_path, true, null);
-      if (job.status === "ok") {
-        const withJob = await commands.librarySave({
-          ...book,
-          audio: { ...book.audio, transcript_job: job.data },
-        });
-        if (withJob.status === "ok") book = withJob.data;
-        else {
-          // Ohne Verweis am Buch fände niemand den Auftrag wieder.
-          await commands.meetingsDelete(job.data);
-          onWarning?.(withJob.error);
-        }
-      } else onWarning?.(job.error);
+      // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig. Lange
+      // Dateien laufen in Abschnitten (lva#208).
+      const withJobs = await transcribeTracks(book.id, onWarning);
+      if (withJobs) book = withJobs;
     }
   }
 
@@ -224,10 +228,73 @@ export interface GroupOptions {
   onWarning?(message: string): void;
 }
 
+/** Aufträge, die für einen Teil gestartet wurden. */
+export interface StartedTrack {
+  /** Auftrag für den ganzen Teil (ohne Abschnitte). */
+  job: string | null;
+  /** Aufträge je Zeitabschnitt (lange Einzeldatei, lva#208). */
+  parts: TrackJob[];
+}
+
+/** Dateipfade der Teile; ein Buch mit einer Datei kennt mindestens `audio_path`. */
+const pathsOf = (book: LibraryBook): string[] =>
+  book.audio_paths?.length ? book.audio_paths : book.audio_path ? [book.audio_path] : [];
+
+/** Dauer des Teils in ms: gespeichert, sonst aus der Datei ermittelt. */
+async function durationOfTrack(
+  book: LibraryBook,
+  index: number,
+  path: string,
+): Promise<number | null> {
+  const track = tracksOf(book.audio)[index];
+  const known = track?.duration_ms ?? (index === 0 ? book.audio?.duration_ms : null);
+  if (known != null && known > 0) return known;
+  const url = assetUrl(path);
+  return url ? probeDuration(url) : null;
+}
+
+/**
+ * Auftrag oder Aufträge für eine Datei starten: ein Hörbuch-Auftrag für den
+ * ganzen Teil, bei `sections` (lange Einzeldatei) einer je Zeitabschnitt.
+ * Scheitert einer, werden schon gestartete wieder entfernt.
+ */
+export async function startTrackJobs(
+  path: string,
+  durationMs: number | null,
+  sections = true,
+): Promise<StartedTrack | { error: string }> {
+  const plan = sections ? planSections(durationMs) : [];
+  if (!plan.length) {
+    const r = await commands.meetingsImportAudiobookPart(path, null, null);
+    return r.status === "ok" ? { job: r.data, parts: [] } : { error: r.error };
+  }
+  const parts: TrackJob[] = [];
+  for (const s of plan) {
+    const r = await commands.meetingsImportAudiobookPart(path, s.start_ms, s.end_ms);
+    if (r.status !== "ok") {
+      for (const p of parts) await commands.meetingsDelete(p.job);
+      return { error: r.error };
+    }
+    parts.push({
+      job: r.data,
+      start_ms: s.start_ms,
+      end_ms: s.end_ms,
+      from_ms: s.from_ms,
+      to_ms: s.to_ms,
+    });
+  }
+  return { job: null, parts };
+}
+
+/** Alle Hilfs-Besprechungen, die ein Start angelegt hat. */
+const startedIds = (started: Iterable<StartedTrack>): string[] =>
+  [...started].flatMap((s) => (s.job ? [s.job] : s.parts.map((p) => p.job)));
+
 /**
  * Transkription für jeden Teil ohne Auftrag und ohne Text starten, ein
- * Hilfs-Meeting je Teil (die Warteschlange nimmt nur leere Besprechungen auf).
- * Die Aufträge landen am Teil. Gibt das gespeicherte Buch zurück.
+ * Hilfs-Meeting je Teil (die Warteschlange nimmt nur leere Besprechungen auf);
+ * hat das Hörbuch nur einen langen Teil, einen je Zeitabschnitt. Die Aufträge
+ * landen am Teil. Gibt das gespeicherte Buch zurück.
  */
 export async function transcribeTracks(
   bookId: string,
@@ -241,17 +308,18 @@ export async function transcribeTracks(
   if (book.text && (book.text.origin !== "transcript" || from === undefined))
     return book;
   const tracks = tracksOf(book.audio);
-  const paths = book.audio_paths ?? [];
-  const jobs = new Map<number, string>();
+  const paths = pathsOf(book);
+  const jobs = new Map<number, StartedTrack>();
   for (let i = from ?? 0; i < tracks.length; i++) {
-    if (tracks[i].transcript_job || !paths[i]) continue;
-    // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
-    const r = await commands.meetingsImportFile(paths[i], true, null);
-    if (r.status === "ok") jobs.set(i, r.data);
-    else {
+    if (jobsOfTrack(tracks[i]).length || !paths[i]) continue;
+    // Nur ein einzelner Teil wird geteilt; mehrere Teile laufen schon parallel.
+    const duration = tracks.length === 1 ? await durationOfTrack(book, i, paths[i]) : null;
+    const r = await startTrackJobs(paths[i], duration);
+    if ("error" in r) {
       onWarning?.(r.error);
       break;
     }
+    jobs.set(i, r);
   }
   if (!jobs.size) return book;
   const latest = (await freshBook(bookId)) ?? book;
@@ -259,29 +327,163 @@ export async function transcribeTracks(
   const saved = await commands.librarySave(withJobs);
   if (saved.status === "ok") return saved.data;
   // Ohne Verweis am Buch fände niemand die Aufträge wieder.
-  for (const id of jobs.values()) await commands.meetingsDelete(id);
+  for (const id of startedIds(jobs.values())) await commands.meetingsDelete(id);
   onWarning?.(saved.error);
   return latest;
 }
 
-/** Aufträge (Teilindex → Meeting) in die Teile eintragen. */
-export function applyJobs(book: LibraryBook, jobs: Map<number, string>): LibraryBook {
+/** Aufträge (Teilindex → gestartete Aufträge) in die Teile eintragen. */
+export function applyJobs(
+  book: LibraryBook,
+  jobs: Map<number, StartedTrack>,
+): LibraryBook {
   if (!book.audio) return book;
   const tracks = tracksOf(book.audio);
+  const withJob = (t: AudioTrack, j: StartedTrack): AudioTrack => ({
+    ...t,
+    transcript_job: j.job,
+    transcript_jobs: j.parts,
+  });
   // Altbestand mit einer Datei behält den Einzel-Auftrag an der Fassung.
   if (!book.audio.tracks?.length) {
-    const job = jobs.get(0);
-    return job ? { ...book, audio: { ...book.audio, transcript_job: job } } : book;
+    const j = jobs.get(0);
+    if (!j) return book;
+    if (!j.parts.length)
+      return { ...book, audio: { ...book.audio, transcript_job: j.job } };
+    // Abschnitte brauchen die Teileliste: aus der einen Datei wird ein Teil.
+    return {
+      ...book,
+      audio: { ...book.audio, transcript_job: null, tracks: [withJob(tracks[0], j)] },
+    };
   }
   return {
     ...book,
     audio: {
       ...book.audio,
-      tracks: tracks.map((t, i) =>
-        jobs.has(i) ? { ...t, transcript_job: jobs.get(i)! } : t,
-      ),
+      tracks: tracks.map((t, i) => (jobs.has(i) ? withJob(t, jobs.get(i)!) : t)),
     },
   };
+}
+
+/** Das Buch mit neuen Aufträgen an den Teilen (Altbestand mit einer Datei bleibt es, wenn möglich). */
+function withTracks(book: LibraryBook, tracks: AudioTrack[]): LibraryBook {
+  if (!book.audio) return book;
+  if (book.audio.tracks?.length) return { ...book, audio: { ...book.audio, tracks } };
+  const [only] = tracks;
+  if (!only) return book;
+  if (isSectioned(only))
+    return { ...book, audio: { ...book.audio, transcript_job: null, tracks: [only] } };
+  return { ...book, audio: { ...book.audio, transcript_job: only.transcript_job ?? null } };
+}
+
+/** Status aller Hilfs-Besprechungen (Auftrags-ID → Status). */
+async function jobStatuses(): Promise<Map<string, string>> {
+  const r = await commands.meetingsList(0, 2000);
+  return new Map((r.status === "ok" ? (r.data ?? []) : []).map((m) => [m.id, m.status]));
+}
+
+/**
+ * Fehlende Teile transkribieren (lva#208): nur Aufträge, die fehlgeschlagen,
+ * abgebrochen oder verschwunden sind, und Teile ohne Auftrag starten neu. Was
+ * läuft oder fertig ist, bleibt unberührt; ein Abschnitt wird mit demselben
+ * Bereich neu gestartet. Gibt das gespeicherte Buch zurück.
+ */
+export async function resumeTranscription(
+  bookId: string,
+  onWarning?: (message: string) => void,
+): Promise<LibraryBook | null> {
+  const book = await freshBook(bookId);
+  if (!book?.audio) return book;
+  // Ein fremder Text bleibt; an ein Transkript hängt nur noch Fehlendes.
+  if (book.text && book.text.origin !== "transcript") return book;
+  const statuses = await jobStatuses();
+  const needsRestart = (job: string) => RESTART_STATUSES.has(statuses.get(job) ?? "missing");
+  const tracks = tracksOf(book.audio);
+  const paths = pathsOf(book);
+  const created: string[] = [];
+  const replaced: string[] = [];
+  const next: AudioTrack[] = [];
+  let failed: string | null = null;
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
+    const jobs = jobsOfTrack(track);
+    const path = paths[i];
+    if (failed || !path) {
+      next.push(track);
+      continue;
+    }
+    // Ohne Aufträge: nur ein Hörbuch ohne Text startet hier; mit Transkript
+    // sind solche Teile schon im Text.
+    if (!jobs.length) {
+      if (book.text) {
+        next.push(track);
+        continue;
+      }
+      const duration = tracks.length === 1 ? await durationOfTrack(book, i, path) : null;
+      const r = await startTrackJobs(path, duration);
+      if ("error" in r) {
+        failed = r.error;
+        next.push(track);
+        continue;
+      }
+      created.push(...startedIds([r]));
+      next.push({ ...track, transcript_job: r.job, transcript_jobs: r.parts });
+      continue;
+    }
+    if (!isSectioned(track)) {
+      const job = jobs[0].job;
+      if (!needsRestart(job)) {
+        next.push(track);
+        continue;
+      }
+      const duration = tracks.length === 1 ? await durationOfTrack(book, i, path) : null;
+      const r = await startTrackJobs(path, duration);
+      if ("error" in r) {
+        failed = r.error;
+        next.push(track);
+        continue;
+      }
+      replaced.push(job);
+      created.push(...startedIds([r]));
+      next.push({ ...track, transcript_job: r.job, transcript_jobs: r.parts });
+      continue;
+    }
+    // Abschnitte: jeder fehlende mit demselben Bereich neu.
+    const parts: TrackJob[] = [];
+    for (const part of jobs) {
+      if (failed || !needsRestart(part.job)) {
+        parts.push(part);
+        continue;
+      }
+      const r = await commands.meetingsImportAudiobookPart(
+        path,
+        part.start_ms,
+        part.end_ms ?? null,
+      );
+      if (r.status !== "ok") {
+        failed = r.error;
+        parts.push(part);
+        continue;
+      }
+      replaced.push(part.job);
+      created.push(r.data);
+      parts.push({ ...part, job: r.data });
+    }
+    next.push({ ...track, transcript_jobs: parts });
+  }
+  if (failed) onWarning?.(failed);
+  if (!created.length) return book;
+  const latest = (await freshBook(bookId)) ?? book;
+  const saved = await commands.librarySave(withTracks(latest, next));
+  if (saved.status !== "ok") {
+    // Ohne Verweis am Buch fände niemand die neuen Aufträge wieder.
+    for (const id of created) await commands.meetingsDelete(id);
+    onWarning?.(saved.error);
+    return latest;
+  }
+  // Erst jetzt, wo das Buch auf die neuen Aufträge zeigt, die alten weg.
+  for (const id of replaced) await commands.meetingsDelete(id);
+  return saved.data;
 }
 
 /**

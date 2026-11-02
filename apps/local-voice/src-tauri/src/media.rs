@@ -382,10 +382,37 @@ pub fn decode_media_to_wav_cancellable(
     sample_rate: u32,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
+    decode_media_range_to_wav_cancellable(input, out_wav, sample_rate, None, cancel)
+}
+
+/// Eingabeoptionen fuer einen Zeitbereich (ms): schnelles Suchen VOR `-i`
+/// (bei der Neukodierung samplegenau), dann die Laenge. Leer ohne Bereich.
+pub fn range_input_args(range: Option<(u64, u64)>) -> Vec<String> {
+    let Some((start_ms, end_ms)) = range else {
+        return Vec::new();
+    };
+    let secs = |ms: u64| format!("{}.{:03}", ms / 1_000, ms % 1_000);
+    vec![
+        "-ss".to_string(),
+        secs(start_ms),
+        "-t".to_string(),
+        secs(end_ms.saturating_sub(start_ms)),
+    ]
+}
+
+/// Wie [`decode_media_to_wav_cancellable`], aber nur der Bereich `range`
+/// (Anfang, Ende in ms) der Datei (lva#208, Abschnitte langer Hoerbuecher).
+pub fn decode_media_range_to_wav_cancellable(
+    input: &Path,
+    out_wav: &Path,
+    sample_rate: u32,
+    range: Option<(u64, u64)>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(), String> {
     let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-nostdin", "-y"]);
+    cmd.args(range_input_args(range));
     cmd.args([
-        "-nostdin",
-        "-y",
         "-i",
         &input.to_string_lossy(),
         "-vn",
@@ -452,6 +479,28 @@ pub fn ensure_wav_cancellable(
     Ok((tmp.to_path_buf(), Some(tmp)))
 }
 
+/// Wie [`ensure_wav_cancellable`], aber nur der Bereich `range` (ms) der Datei.
+/// Mit Bereich wird immer dekodiert, auch eine WAV-Datei (sie muss geschnitten
+/// werden); ohne Bereich verhaelt sich die Funktion wie [`ensure_wav_cancellable`].
+pub fn ensure_wav_range_cancellable(
+    input: &Path,
+    sample_rate: u32,
+    range: Option<(u64, u64)>,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(PathBuf, Option<tempfile::TempPath>), String> {
+    if range.is_none() {
+        return ensure_wav_cancellable(input, sample_rate, cancel);
+    }
+    let tmp = tempfile::Builder::new()
+        .prefix("lva-media-")
+        .suffix(".wav")
+        .tempfile()
+        .map_err(|e| e.to_string())?
+        .into_temp_path();
+    decode_media_range_to_wav_cancellable(input, &tmp, sample_rate, range, cancel)?;
+    Ok((tmp.to_path_buf(), Some(tmp)))
+}
+
 /// Eingabedatei als WAV bereitstellen: WAV geht direkt durch, alles andere
 /// wird in eine Tempdatei dekodiert. Rückgabe: (Pfad, Option<Tempdatei zum
 /// Aufräumen durch den Aufrufer über NamedTempFile-Drop>).
@@ -476,6 +525,19 @@ pub fn ensure_wav(
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_range_becomes_seek_and_length_before_the_input() {
+        assert!(range_input_args(None).is_empty());
+        assert_eq!(
+            range_input_args(Some((1_198_000, 2_402_500))),
+            vec!["-ss", "1198.000", "-t", "1204.500"]
+        );
+        assert_eq!(
+            range_input_args(Some((90, 100))),
+            vec!["-ss", "0.090", "-t", "0.010"]
+        );
+    }
 
     #[test]
     fn plain_text_and_markdown_read_directly_with_bom_stripped() {

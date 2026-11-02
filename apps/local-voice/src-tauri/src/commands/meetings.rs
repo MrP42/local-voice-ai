@@ -378,6 +378,33 @@ pub async fn meetings_import_file(
     .map(|meeting| meeting.id)
 }
 
+/// lva#208: stellt einen Hörbuch-Teil in die Import-Warteschlange und kehrt sofort
+/// mit der ID der Hilfs-Besprechung zurück. Mit `start_ms`/`end_ms` wird nur
+/// dieser Abschnitt der Datei transkribiert (Segmentzeiten relativ zum Beginn des
+/// Abschnitts). Hörbuch-Aufträge laufen bis zu vier gleichzeitig. Fehler:
+/// `import_path_invalid`, `range_invalid` (Ende nicht hinter dem Anfang, nur eine
+/// Grenze), `queue_enqueue_failed: …`.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_import_audiobook_part(
+    app: tauri::AppHandle,
+    path: String,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+) -> Result<String, String> {
+    let queue = queue_of(&app)?;
+    let path = PathBuf::from(path);
+    let range = queue::part_range(start_ms, end_ms)?;
+    let source = path
+        .to_str()
+        .ok_or_else(|| "import_path_invalid".to_string())?
+        .to_string();
+    let title = queue::part_title(&path, range);
+    queue
+        .enqueue_part(&title, &source, range)
+        .map(|meeting| meeting.id)
+}
+
 // M6-P6a: Export einer ganzen Besprechung.
 
 /// Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format

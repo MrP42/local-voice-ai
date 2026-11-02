@@ -29,6 +29,21 @@ pub(super) const QUEUE_MIGRATION: &str = "ALTER TABLE meetings ADD COLUMN descri
       state TEXT NOT NULL DEFAULT 'waiting', enqueued_at INTEGER NOT NULL);
     CREATE INDEX idx_import_queue_seq ON import_queue(seq);";
 
+/// Migration lva#208 (nur CREATE): Art und Bereich eines Auftrags. Eine Zeile je
+/// Hörbuch-Teil oder -Abschnitt; Besprechungen haben keine. Die Tabelle überlebt
+/// die Warteschlangenzeile (die beim Ende entfällt), damit "Fortsetzen" den
+/// Bereich nicht verliert. Bereich in ms der Quelldatei; beide `NULL` = ganze Datei.
+pub(super) const QUEUE_PART_MIGRATION: &str = "CREATE TABLE IF NOT EXISTS import_part (
+      meeting_id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+      range_start_ms INTEGER, range_end_ms INTEGER);";
+
+/// Art eines Auftrags der Warteschlange.
+pub const KIND_MEETING: &str = "meeting";
+pub const KIND_AUDIOBOOK: &str = "audiobook";
+
+/// Zeitbereich einer Datei in Millisekunden (Anfang, Ende ausschließlich).
+pub type MsRange = (u64, u64);
+
 /// Status der Besprechung, solange ihre Datei in der Warteschlange steht.
 pub const STATUS_QUEUED: &str = "queued";
 pub const STATE_WAITING: &str = "waiting";
@@ -42,6 +57,14 @@ pub struct QueueRow {
     /// `waiting` oder `running`.
     pub state: String,
     pub enqueued_at: i64,
+    /// [`KIND_MEETING`] oder [`KIND_AUDIOBOOK`] (Hörbuch-Teil, lva#208).
+    pub kind: String,
+}
+
+impl QueueRow {
+    pub fn is_audiobook(&self) -> bool {
+        self.kind == KIND_AUDIOBOOK
+    }
 }
 
 /// Was der Neustart mit der Warteschlange gemacht hat.
@@ -91,6 +114,61 @@ impl MeetingStore {
                 source_path,
                 consent_confirmed_at,
                 now
+            ],
+        )?;
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM import_queue",
+            [],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO import_queue (meeting_id, seq, state, enqueued_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![id, seq, STATE_WAITING, now],
+        )?;
+        tx.commit()?;
+        self.get_meeting(&id)?
+            .ok_or_else(|| anyhow!("meeting_not_found"))
+    }
+
+    /// lva#208: wie `queue_enqueue` für einen Hörbuch-Teil (ganze Datei) oder
+    /// einen Abschnitt davon (`range`). Besprechung, Warteschlangenzeile und
+    /// Art/Bereich in EINER Transaktion.
+    pub fn queue_enqueue_part(
+        &self,
+        title: &str,
+        source_path: &str,
+        consent_confirmed_at: Option<i64>,
+        range: Option<MsRange>,
+    ) -> Result<Meeting> {
+        if range.is_some_and(|(start, end)| end <= start) {
+            return Err(anyhow!("range_invalid"));
+        }
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = Ulid::new().to_string();
+        let now = Utc::now().timestamp();
+        tx.execute(
+            "INSERT INTO meetings (id, title, status, source, source_path, consent_confirmed_at,
+                                   created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'import', ?4, ?5, ?6, ?6)",
+            params![
+                id,
+                title,
+                STATUS_QUEUED,
+                source_path,
+                consent_confirmed_at,
+                now
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO import_part (meeting_id, kind, range_start_ms, range_end_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                KIND_AUDIOBOOK,
+                range.map(|(s, _)| s as i64),
+                range.map(|(_, e)| e as i64)
             ],
         )?;
         let seq: i64 = tx.query_row(
@@ -185,9 +263,10 @@ impl MeetingStore {
     pub fn queue_rows(&self) -> Result<Vec<QueueRow>> {
         let conn = self.get_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT q.meeting_id, q.seq, q.state, q.enqueued_at
+            "SELECT q.meeting_id, q.seq, q.state, q.enqueued_at, COALESCE(p.kind, 'meeting')
              FROM import_queue q
              JOIN meetings m ON m.id = q.meeting_id AND m.deleted_at IS NULL
+             LEFT JOIN import_part p ON p.meeting_id = q.meeting_id
              ORDER BY (q.state = 'running') DESC, q.seq ASC, q.rowid ASC",
         )?;
         let rows = stmt
@@ -197,6 +276,7 @@ impl MeetingStore {
                     seq: row.get(1)?,
                     state: row.get(2)?,
                     enqueued_at: row.get(3)?,
+                    kind: row.get(4)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -214,6 +294,28 @@ impl MeetingStore {
             )
             .optional()?;
         Ok(path.flatten())
+    }
+
+    /// Art und Bereich des Auftrags: Besprechungen sind [`KIND_MEETING`] ohne Bereich.
+    pub fn queue_part(&self, meeting_id: &str) -> Result<(String, Option<MsRange>)> {
+        let conn = self.get_connection()?;
+        let row: Option<(String, Option<i64>, Option<i64>)> = conn
+            .query_row(
+                "SELECT kind, range_start_ms, range_end_ms FROM import_part WHERE meeting_id = ?1",
+                params![meeting_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            None => (KIND_MEETING.to_string(), None),
+            Some((kind, start, end)) => (
+                kind,
+                match (start, end) {
+                    (Some(s), Some(e)) if s >= 0 && e > s => Some((s as u64, e as u64)),
+                    _ => None,
+                },
+            ),
+        })
     }
 
     /// wartend -> laufend (Besprechung `processing`), atomar. `false`, wenn die
@@ -777,5 +879,78 @@ mod tests {
             .unwrap_err();
         assert_eq!(missing.to_string(), "meeting_not_found");
         assert_eq!(order(&s), vec![empty.id], "nur die erste Datei wartet");
+    }
+
+    #[test]
+    fn a_part_keeps_its_kind_and_range_across_the_end_of_its_queue_row() {
+        let (_dir, s) = tmp_store();
+        let plain = enqueue(&s, "besprechung");
+        let whole = s
+            .queue_enqueue_part("teil", "C:/in/teil.mp3", Some(1), None)
+            .unwrap()
+            .id;
+        let section = s
+            .queue_enqueue_part(
+                "abschnitt",
+                "C:/in/buch.mp3",
+                Some(1),
+                Some((1_198_000, 2_402_000)),
+            )
+            .unwrap()
+            .id;
+        let kinds: Vec<(String, String)> = s
+            .queue_rows()
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.meeting_id, r.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (plain.clone(), KIND_MEETING.to_string()),
+                (whole.clone(), KIND_AUDIOBOOK.to_string()),
+                (section.clone(), KIND_AUDIOBOOK.to_string()),
+            ]
+        );
+        assert_eq!(
+            s.queue_part(&plain).unwrap(),
+            (KIND_MEETING.to_string(), None)
+        );
+        assert_eq!(
+            s.queue_part(&whole).unwrap(),
+            (KIND_AUDIOBOOK.to_string(), None)
+        );
+        assert_eq!(
+            s.queue_part(&section).unwrap(),
+            (KIND_AUDIOBOOK.to_string(), Some((1_198_000, 2_402_000)))
+        );
+        // Lauf beendet (Zeile weg), dann "Fortsetzen": Art und Bereich bleiben.
+        assert!(s.queue_mark_running(&section).unwrap());
+        s.queue_finish(&section).unwrap();
+        s.set_status(&section, MeetingStatus::Failed).unwrap();
+        assert!(s.queue_requeue(&section).unwrap());
+        let row = s
+            .queue_rows()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.meeting_id == section)
+            .unwrap();
+        assert!(row.is_audiobook());
+        assert_eq!(
+            s.queue_part(&section).unwrap().1,
+            Some((1_198_000, 2_402_000))
+        );
+    }
+
+    #[test]
+    fn an_empty_or_reversed_range_enqueues_nothing() {
+        let (_dir, s) = tmp_store();
+        for range in [(5, 5), (9, 1)] {
+            let err = s
+                .queue_enqueue_part("x", "C:/in/x.mp3", Some(1), Some(range))
+                .unwrap_err();
+            assert_eq!(err.to_string(), "range_invalid");
+        }
+        assert!(s.queue_rows().unwrap().is_empty());
     }
 }

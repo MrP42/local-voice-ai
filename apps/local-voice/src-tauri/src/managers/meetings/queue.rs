@@ -51,11 +51,19 @@ use tauri_specta::Event;
 
 use super::final_pass::{ram_need_mb, Hardware};
 use super::job::{JobPhase, MeetingJobs};
-use super::queue_store::{CancelWaiting, QueueRow, STATE_RUNNING, STATE_WAITING};
+#[cfg(test)]
+use super::queue_store::KIND_AUDIOBOOK;
+use super::queue_store::{
+    CancelWaiting, MsRange, QueueRow, KIND_MEETING, STATE_RUNNING, STATE_WAITING,
+};
 use super::store::{Meeting, MeetingStore};
 
-/// Mehr als drei gleichzeitige Transkriptionen bietet die Einstellung nicht.
-pub const MAX_PARALLEL: usize = 3;
+/// Mehr als vier gleichzeitige Transkriptionen gibt es nicht.
+pub const MAX_PARALLEL: usize = 4;
+/// Hoerbuch-Teile und -Abschnitte (lva#208) laufen bis zu so vielen gleichzeitig,
+/// auch wenn die Einstellung fuer Besprechungen kleiner ist (Vorgabe 1). Das
+/// Speicher-Tor und der Aufnahme-Vorrang gelten unveraendert.
+pub const BULK_PARALLEL: usize = MAX_PARALLEL;
 /// Reserve im Grafikspeicher ueber die Modellgroesse hinaus (MB).
 pub const VRAM_HEADROOM_MB: u64 = 1_024;
 /// So lange gilt ein Ergebnis des Speicher-Tors (es fragt Geraete ab).
@@ -73,6 +81,17 @@ pub fn more_waiting() -> bool {
 /// Die Einstellung als Anzahl gleichzeitiger Laeufe: 1 bis [`MAX_PARALLEL`].
 pub fn clamp_limit(value: u32) -> usize {
     (value as usize).clamp(1, MAX_PARALLEL)
+}
+
+/// Die Grenze fuer die naechste Datei: Besprechungen behalten die Einstellung,
+/// Hoerbuch-Auftraege duerfen bis [`BULK_PARALLEL`] (mindestens die Einstellung).
+pub fn limit_for(audiobook: bool, setting: usize) -> usize {
+    let setting = setting.clamp(1, MAX_PARALLEL);
+    if audiobook {
+        setting.max(BULK_PARALLEL)
+    } else {
+        setting
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +266,32 @@ pub fn title_from_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Bereich eines Hoerbuch-Abschnitts aus den beiden Grenzen: beide oder keine,
+/// das Ende hinter dem Anfang (`range_invalid`).
+pub fn part_range(start_ms: Option<u64>, end_ms: Option<u64>) -> Result<Option<MsRange>, String> {
+    match (start_ms, end_ms) {
+        (None, None) => Ok(None),
+        (Some(start), Some(end)) if end > start => Ok(Some((start, end))),
+        _ => Err("range_invalid".to_string()),
+    }
+}
+
+/// Titel der Hilfs-Besprechung eines Hoerbuch-Teils: der Dateiname, bei einem
+/// Abschnitt mit dem Beginn ("Name (ab 40:00)").
+pub fn part_title(path: &Path, range: Option<MsRange>) -> String {
+    let base = title_from_path(path);
+    let Some((start_ms, _)) = range else {
+        return base;
+    };
+    let secs = start_ms / 1_000;
+    let (h, m, s) = (secs / 3_600, secs / 60 % 60, secs % 60);
+    if h > 0 {
+        format!("{base} (ab {h}:{m:02}:{s:02})")
+    } else {
+        format!("{base} (ab {m}:{s:02})")
+    }
+}
+
 /// Vor dem Start: ist die Quelldatei noch da? `Some(Fehlercode)`, wenn nicht.
 pub fn source_problem(source: Option<&str>) -> Option<&'static str> {
     match source {
@@ -264,6 +309,10 @@ pub fn source_problem(source: Option<&str>) -> Option<&'static str> {
 pub struct RunRequest {
     pub meeting_id: String,
     pub source_path: String,
+    /// `queue_store::KIND_MEETING` oder `KIND_AUDIOBOOK`.
+    pub kind: String,
+    /// Nur dieser Bereich der Datei (ms), `None` = ganze Datei (lva#208).
+    pub range: Option<MsRange>,
     pub slot: Slot,
     /// Der Lauf meldet, sobald seine eigene Engine geladen ist (oder keine
     /// gebraucht wird): erst dann laedt die Warteschlange die naechste.
@@ -425,6 +474,31 @@ impl ImportQueue {
             .deps
             .store
             .queue_enqueue(title, source_path, consent_confirmed_at)
+            .map_err(|e| format!("queue_enqueue_failed: {e}"))?;
+        self.inner.notify();
+        Ok(meeting)
+    }
+
+    /// lva#208: reiht einen Hoerbuch-Teil (ganze Datei) oder einen Abschnitt davon
+    /// (`range`, ms) ein. Hoerbuch-Auftraege laufen bis zu [`BULK_PARALLEL`]
+    /// gleichzeitig; ihre Segmentzeiten sind relativ zum Bereich.
+    pub fn enqueue_part(
+        &self,
+        title: &str,
+        source_path: &str,
+        range: Option<MsRange>,
+    ) -> Result<Meeting, String> {
+        let meeting = self
+            .inner
+            .deps
+            .store
+            // Ein Hoerbuch, keine Gespraechsaufnahme: keine Einwilligung noetig.
+            .queue_enqueue_part(
+                title,
+                source_path,
+                Some(chrono::Utc::now().timestamp()),
+                range,
+            )
             .map_err(|e| format!("queue_enqueue_failed: {e}"))?;
         self.inner.notify();
         Ok(meeting)
@@ -699,9 +773,10 @@ impl Inner {
                     extra_loading: !st.loading.is_empty(),
                 };
                 // Das Tor fragt nur, wenn die Planung eine eigene Engine braeuchte.
+                let row_limit = limit_for(waiting[next].is_audiobook(), limit);
                 let decision = {
                     let mut gate = || self.extra_gate_open(&mut st);
-                    decide(true, &occ, limit, recording, &mut gate)
+                    decide(true, &occ, row_limit, recording, &mut gate)
                 };
                 match decision {
                     Decision::Idle => break,
@@ -791,9 +866,15 @@ impl Inner {
             self.fail(&meeting_id, code);
             return;
         }
+        let (kind, range) = deps
+            .store
+            .queue_part(&meeting_id)
+            .unwrap_or_else(|_| (KIND_MEETING.to_string(), None));
         let request = RunRequest {
             meeting_id: meeting_id.clone(),
             source_path: source.unwrap_or_default(),
+            kind,
+            range,
             slot,
             engine_ready: EngineReady {
                 inner: Arc::clone(&self),
@@ -919,9 +1000,11 @@ fn run_request(
     let RunRequest {
         meeting_id,
         source_path,
+        range,
         slot,
         engine_ready,
         stop_requested,
+        ..
     } = request;
 
     // Der Auftrag zuerst: waehrend eine eigene Engine laedt (Sekunden), zeigt die
@@ -960,7 +1043,7 @@ fn run_request(
         None
     };
     let path = PathBuf::from(&source_path);
-    let result = super::import::run_import(app, store, tm, &meeting_id, &path, job.handle());
+    let result = super::import::run_import(app, store, tm, &meeting_id, &path, range, job.handle());
     drop(job);
     match result {
         Ok(()) => RunOutcome::Done,
@@ -1240,12 +1323,66 @@ mod tests {
     }
 
     #[test]
-    fn the_limit_is_one_to_three() {
+    fn the_limit_is_one_to_four() {
         assert_eq!(clamp_limit(0), 1);
         assert_eq!(clamp_limit(1), 1);
         assert_eq!(clamp_limit(2), 2);
         assert_eq!(clamp_limit(3), 3);
-        assert_eq!(clamp_limit(99), 3);
+        assert_eq!(clamp_limit(4), 4);
+        assert_eq!(clamp_limit(99), 4);
+    }
+
+    #[test]
+    fn audiobook_parts_get_up_to_four_slots_meetings_keep_their_setting() {
+        for setting in 1..=4 {
+            assert_eq!(
+                limit_for(false, setting),
+                setting,
+                "Besprechung: Einstellung"
+            );
+            assert_eq!(limit_for(true, setting), 4, "Hoerbuch: max(Einstellung, 4)");
+        }
+        assert_eq!(limit_for(false, 0), 1);
+        assert_eq!(limit_for(false, 99), 4);
+        assert_eq!(limit_for(true, 99), 4);
+        // Die Planung selbst: Limit 4 = vier Plaetze (Primary plus drei Extras).
+        assert_eq!(
+            decide_with(occ(true, false, 2), 4, false, true).0,
+            Decision::Start(Slot::Extra)
+        );
+        assert_eq!(
+            decide_with(occ(true, false, 3), 4, false, true).0,
+            Decision::Wait(WaitReason::Slot)
+        );
+    }
+
+    #[test]
+    fn a_part_title_names_the_section_start() {
+        let p = Path::new("C:/b/Buch.mp3");
+        assert_eq!(part_title(p, None), "Buch");
+        assert_eq!(part_title(p, Some((0, 60_000))), "Buch (ab 0:00)");
+        assert_eq!(
+            part_title(p, Some((2_405_000, 3_600_000))),
+            "Buch (ab 40:05)"
+        );
+        assert_eq!(
+            part_title(p, Some((3_723_000, 4_000_000))),
+            "Buch (ab 1:02:03)"
+        );
+    }
+
+    #[test]
+    fn a_range_needs_both_bounds_and_an_end_behind_the_start() {
+        assert_eq!(part_range(None, None), Ok(None));
+        assert_eq!(part_range(Some(0), Some(10)), Ok(Some((0, 10))));
+        for bad in [
+            (Some(5), None),
+            (None, Some(5)),
+            (Some(5), Some(5)),
+            (Some(9), Some(1)),
+        ] {
+            assert_eq!(part_range(bad.0, bad.1), Err("range_invalid".to_string()));
+        }
     }
 
     #[test]
@@ -1298,6 +1435,8 @@ mod tests {
         events: Arc<Mutex<Vec<(String, String)>>>,
         errors: Arc<Mutex<Vec<(String, String)>>>,
         stop_seen: Arc<Mutex<Vec<String>>>,
+        /// Art und Bereich je gestartetem Lauf (lva#208).
+        parts: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>>,
         files: tempfile::TempDir,
     }
 
@@ -1352,8 +1491,10 @@ mod tests {
         let events: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let errors: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
         let stop_seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let parts_outer: Arc<Mutex<HashMap<String, (String, Option<MsRange>)>>> = Arc::default();
 
         let runner: Runner = {
+            let parts = parts_outer.clone();
             let (starts, running_now, peak, release, jobs, store, stop_seen) = (
                 starts.clone(),
                 running_now.clone(),
@@ -1371,6 +1512,10 @@ mod tests {
                     .lock()
                     .unwrap()
                     .insert(request.meeting_id.clone(), Arc::clone(&slot));
+                parts.lock().unwrap().insert(
+                    request.meeting_id.clone(),
+                    (request.kind.clone(), request.range),
+                );
                 starts
                     .lock()
                     .unwrap()
@@ -1470,6 +1615,7 @@ mod tests {
             events,
             errors,
             stop_seen,
+            parts: parts_outer,
             files: tempfile::tempdir().unwrap(),
         }
     }
@@ -1481,6 +1627,16 @@ mod tests {
             std::fs::write(&path, b"RIFF").unwrap();
             self.queue
                 .enqueue(name, path.to_str().unwrap(), Some(1))
+                .unwrap()
+                .id
+        }
+
+        /// Reiht einen Hoerbuch-Teil (lva#208) ein.
+        fn add_part(&self, name: &str, range: Option<MsRange>) -> String {
+            let path = self.files.path().join(format!("{name}.mp3"));
+            std::fs::write(&path, b"ID3").unwrap();
+            self.queue
+                .enqueue_part(name, path.to_str().unwrap(), range)
                 .unwrap()
                 .id
         }
@@ -1694,6 +1850,118 @@ mod tests {
         eventually(|| r.started().len() == 4, "jetzt beginnt der vierte");
         r.finish(&ids[3], Release::Done);
         assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn audiobook_parts_run_four_at_once_with_the_meeting_setting_at_one() {
+        let r = rig(RigOptions {
+            limit: 1,
+            ..RigOptions::default()
+        });
+        let ids: Vec<String> = (0..6)
+            .map(|i| r.add_part(&format!("teil{i}"), None))
+            .collect();
+        eventually(|| r.started().len() == 4, "vier Teile beginnen");
+        settle(&r);
+        assert_eq!(r.started().len(), 4, "der fuenfte und sechste warten");
+        assert_eq!(r.peak.load(Ordering::SeqCst), 4);
+        assert_eq!(r.queue.snapshot().waiting, ids[4..].to_vec());
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Slot));
+        assert_eq!(r.slot_of(&ids[0]), Slot::Primary);
+        for id in &ids[1..4] {
+            assert_eq!(r.slot_of(id), Slot::Extra);
+        }
+        for id in &ids[..4] {
+            r.finish(id, Release::Done);
+        }
+        eventually(|| r.started().len() == 6, "die letzten beiden beginnen");
+        for id in &ids[4..] {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+        assert_eq!(r.peak.load(Ordering::SeqCst), 4, "nie mehr als vier");
+    }
+
+    #[test]
+    fn meetings_keep_their_limit_while_parts_run_and_the_gate_still_applies() {
+        let r = rig(RigOptions {
+            limit: 1,
+            gate: false,
+            ..RigOptions::default()
+        });
+        let a = r.add_part("teil0", None);
+        let b = r.add_part("teil1", None);
+        eventually(|| r.started() == vec![a.clone()], "Teil 0 beginnt");
+        settle(&r);
+        assert_eq!(
+            r.started(),
+            vec![a.clone()],
+            "ohne Speicher keine zweite Engine, auch nicht fuer Teile"
+        );
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Memory));
+        r.gate.store(true, Ordering::SeqCst);
+        eventually(|| r.started().len() == 2, "Tor offen: Teil 1 beginnt");
+        // Eine Besprechung dahinter wartet bei Einstellung 1, solange Teile laufen.
+        let m = r.add("besprechung");
+        settle(&r);
+        assert_eq!(r.started().len(), 2);
+        assert_eq!(r.status(&m), "queued");
+        r.finish(&a, Release::Done);
+        settle(&r);
+        assert_eq!(r.started().len(), 2, "ein Platz frei, aber Grenze 1 gilt");
+        r.finish(&b, Release::Done);
+        eventually(|| r.started().len() == 3, "die Besprechung beginnt");
+        r.finish(&m, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_recording_holds_back_audiobook_parts_too() {
+        let r = rig(RigOptions::default());
+        r.recording.store(true, Ordering::SeqCst);
+        let a = r.add_part("teil0", None);
+        settle(&r);
+        assert!(r.started().is_empty());
+        assert_eq!(r.queue.snapshot().blocked, Some(WaitReason::Recording));
+        r.recording.store(false, Ordering::SeqCst);
+        eventually(|| r.started() == vec![a.clone()], "nach der Aufnahme");
+        r.finish(&a, Release::Done);
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_run_gets_its_kind_and_section_and_a_meeting_gets_neither() {
+        let r = rig(RigOptions {
+            limit: 4,
+            ..RigOptions::default()
+        });
+        let part = r.add_part("buch", Some((1_198_000, 2_402_000)));
+        let whole = r.add_part("ganz", None);
+        let meeting = r.add("besprechung");
+        eventually(|| r.started().len() == 3, "alle drei beginnen");
+        let parts = r.parts.lock().unwrap().clone();
+        assert_eq!(
+            parts[&part],
+            (KIND_AUDIOBOOK.to_string(), Some((1_198_000, 2_402_000)))
+        );
+        assert_eq!(parts[&whole], (KIND_AUDIOBOOK.to_string(), None));
+        assert_eq!(parts[&meeting], (KIND_MEETING.to_string(), None));
+        for id in [&part, &whole, &meeting] {
+            r.finish(id, Release::Done);
+        }
+        assert!(r.queue.wait_idle(IDLE));
+    }
+
+    #[test]
+    fn a_broken_range_is_refused_and_enqueues_nothing() {
+        let r = rig(RigOptions::default());
+        let path = r.files.path().join("x.mp3");
+        std::fs::write(&path, b"ID3").unwrap();
+        let err = r
+            .queue
+            .enqueue_part("x", path.to_str().unwrap(), Some((10, 10)));
+        assert!(err.is_err());
+        assert!(r.store.queue_rows().unwrap().is_empty());
     }
 
     #[test]

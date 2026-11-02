@@ -59,13 +59,23 @@ const SORTS: Sort[] = ["recent", "added", "title", "author"];
 const isSort = (v: string) => (SORTS as string[]).includes(v);
 const isFilter = (v: string) => (FILTERS as string[]).includes(v);
 
-/** Text zum Stand der Transkription: bei mehreren Teilen „3 von 36“. */
+/** Text zum Stand der Transkription: bei mehreren Aufträgen „12 von 36 · 4 parallel“. */
 export function jobLabel(
   t: (key: string, options?: Record<string, unknown>) => string,
   job: TranscriptJob | undefined,
 ): string {
+  if (job && job.total > 1 && job.failed > 0 && job.failed < job.total)
+    return t("library.job.partsFailed", {
+      done: job.done,
+      total: job.total,
+      failed: job.failed,
+    });
   if (job && job.total > 1 && job.status !== "failed")
-    return t("library.job.parts", { done: job.done, total: job.total });
+    return t(job.running > 1 ? "library.job.partsParallel" : "library.job.parts", {
+      done: job.done,
+      total: job.total,
+      running: job.running,
+    });
   return t(`library.job.${job?.status ?? "queued"}`, {
     defaultValue: t("library.job.processing"),
   });

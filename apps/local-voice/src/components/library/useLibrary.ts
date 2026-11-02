@@ -13,6 +13,13 @@ import { toast } from "sonner";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
 import { transcribeTracks } from "@/lib/library/importFile";
+import {
+  isSectioned,
+  jobKey,
+  jobsOfTrack,
+  mergeSections,
+  RESTART_STATUSES,
+} from "@/lib/library/sections";
 
 /** Nach so vielen Fehlversuchen gilt die Übernahme als fehlgeschlagen. */
 const MAX_FAILURES = 3;
@@ -34,9 +41,12 @@ export interface TranscriptJob {
   status: string;
   /** 0…1, wenn bekannt. */
   progress: number | null;
-  /** Teile mit fertigem Transkript und Teile mit Auftrag insgesamt. */
+  /** Aufträge (Teile oder Abschnitte) mit fertigem Transkript und Aufträge insgesamt. */
   done: number;
   total: number;
+  /** Davon gerade in Arbeit (gleichzeitig) und fehlgeschlagen oder verschwunden. */
+  running: number;
+  failed: number;
 }
 
 const READY = new Set(["ready", "done"]);
@@ -146,7 +156,7 @@ export function useLibrary() {
       const start = await freshBook(bookId);
       if (!start?.audio) return;
       const startTracks = tracksOf(start.audio);
-      const withJob = startTracks.filter((t) => t.transcript_job);
+      const withJob = startTracks.filter((t) => jobsOfTrack(t).length);
       if (!withJob.length) return;
       // Anhängen an ein Transkript: der Text wächst, sonst entsteht er neu.
       const appendTo = start.text?.origin === "transcript" ? start.text : null;
@@ -173,8 +183,14 @@ export function useLibrary() {
       try {
         const book = start;
         const tracks = startTracks;
-        const evaluated = withJob.map((t) => ({ file: t.file, job: t.transcript_job! }));
-        const first = tracks.findIndex((t) => t.transcript_job);
+        const evaluated = withJob.flatMap((t) =>
+          jobsOfTrack(t).map((p) => ({ file: t.file, job: p.job })),
+        );
+        /** Datei → ausgewertete Aufträge; ändert sich einer, wird verworfen. */
+        const evaluatedKeys = new Map(withJob.map((t) => [t.file, jobKey(t)] as const));
+        const isEvaluated = (t: (typeof tracks)[number]) =>
+          evaluatedKeys.get(t.file) === jobKey(t);
+        const first = tracks.findIndex((t) => jobsOfTrack(t).length);
         const paths = book.audio_paths ?? [];
         // Dauer je Teil: gespeichert, aus der Datei, aus dem Auftrag; das Ende
         // des letzten Segments ist nur der letzte Rückfall und wird nicht gesichert.
@@ -187,7 +203,7 @@ export function useLibrary() {
             const url = assetUrl(paths[i]);
             ms = url ? await probeDuration(url) : null;
           }
-          if (!(ms && ms > 0) && track.transcript_job)
+          if (!(ms && ms > 0) && !isSectioned(track) && track.transcript_job)
             ms = durations.get(track.transcript_job) ?? null;
           storable.push(ms && ms > 0 ? ms : null);
           lengths.push(ms && ms > 0 ? ms : 0);
@@ -199,12 +215,20 @@ export function useLibrary() {
           throw new Error(i18n.t("library.job.unknownDuration"));
         for (let i = appendTo ? first : 0; i < tracks.length; i++) {
           const track = tracks[i];
-          if (!track.transcript_job) continue;
-          const result = await commands.meetingsGetSegments(track.transcript_job);
-          if (result.status !== "ok") throw new Error(result.error);
+          const trackJobs = jobsOfTrack(track);
+          if (!trackJobs.length) continue;
+          // Abschnitte einer langen Datei: jeder Auftrag liefert seinen Bereich,
+          // zusammengeführt entsteht die Folge der ganzen Datei.
+          const sections = [];
+          for (const part of trackJobs) {
+            const result = await commands.meetingsGetSegments(part.job);
+            if (result.status !== "ok") throw new Error(result.error);
+            sections.push({ part, segments: result.data });
+          }
+          const fileSegments = mergeSections(sections);
           if (!(lengths[i] > 0))
-            lengths[i] = result.data.reduce((m, x) => Math.max(m, x.end_ms), 0);
-          for (const x of result.data)
+            lengths[i] = fileSegments.reduce((m, x) => Math.max(m, x.end_ms), 0);
+          for (const x of fileSegments)
             shifted.push({
               text: x.text,
               start_ms: x.start_ms + offset,
@@ -252,8 +276,8 @@ export function useLibrary() {
         const latestTracks = tracksOf(latest.audio);
         const unchanged =
           !!latest.audio &&
-          evaluated.every((e) =>
-            latestTracks.some((t) => t.file === e.file && t.transcript_job === e.job),
+          [...evaluatedKeys].every(([file, key]) =>
+            latestTracks.some((t) => t.file === file && jobKey(t) === key),
           ) &&
           (appendTo
             ? latest.text?.page_id === appendTo.page_id
@@ -264,9 +288,7 @@ export function useLibrary() {
             // Ein anderer Weg hat inzwischen einen Text angelegt: unsere
             // ausgewerteten Aufträge sind überflüssig.
             const cleared = latestTracks.map((t) =>
-              evaluated.some((e) => e.file === t.file && e.job === t.transcript_job)
-                ? { ...t, transcript_job: null }
-                : t,
+              isEvaluated(t) ? { ...t, transcript_job: null, transcript_jobs: [] } : t,
             );
             const saved = await commands.librarySave({
               ...latest,
@@ -278,8 +300,6 @@ export function useLibrary() {
           throw new Superseded();
         }
         const multi = !!latest.audio.tracks?.length;
-        const isEvaluated = (t: { file: string; transcript_job?: string | null }) =>
-          evaluated.some((e) => e.file === t.file && e.job === t.transcript_job);
         const saved = await commands.librarySave({
           ...latest,
           text: appendTo
@@ -297,7 +317,7 @@ export function useLibrary() {
                   const i = tracks.findIndex((x) => x.file === t.file);
                   const keep = t.duration_ms ?? storable[i] ?? null;
                   return isEvaluated(t)
-                    ? { ...t, transcript_job: null, duration_ms: keep }
+                    ? { ...t, transcript_job: null, transcript_jobs: [], duration_ms: keep }
                     : { ...t, duration_ms: keep };
                 })
               : [],
@@ -366,6 +386,8 @@ export function useLibrary() {
           progress: null,
           done: statuses.filter((s) => READY.has(s)).length,
           total: ids.length,
+          running: statuses.filter((s) => s === "processing" || s === "transcribing").length,
+          failed: statuses.filter((s) => RESTART_STATUSES.has(s)).length,
         };
         if (status === "ready") void finishTranscript(book.id, durations);
       }
