@@ -7,7 +7,7 @@ import { toast } from "sonner";
 async function freshBook(id: string): Promise<LibraryBook | null> {
   const result = await commands.libraryList();
   if (result.status !== "ok") return null;
-  return result.data.find((b) => b.id === id) ?? null;
+  return (result.data ?? []).find((b) => b.id === id) ?? null;
 }
 
 const AUDIO_EXT = /\.(mp3|m4a|m4b|aac|wav|flac|ogg|opus|wma)$/i;
@@ -42,17 +42,19 @@ export function useLibrary() {
       setBooks([]);
       return;
     }
-    setBooks(result.data);
+    // Robust gegen leere Antworten (z. B. Testmocks ohne Bibliothek).
+    const list = result.data ?? [];
+    setBooks(list);
     // Vertonte Dateien im Seitenordner = Audiofassung einer Textfassung.
     const entries = await Promise.all(
-      result.data
+      list
         .filter((b) => b.text)
         .map(async (b) => {
           const files = await commands.pageFiles(b.text!.page_id);
           return [
             b.text!.page_id,
             files.status === "ok" &&
-              files.data.some((f) => AUDIO_EXT.test(f.name)),
+              (files.data ?? []).some((f) => AUDIO_EXT.test(f.name)),
           ] as const;
         }),
     );
@@ -169,7 +171,7 @@ export function useLibrary() {
     const poll = async () => {
       const result = await commands.meetingsList(0, 500);
       if (stop || result.status !== "ok") return;
-      const byId = new Map(result.data.map((m) => [m.id, m]));
+      const byId = new Map((result.data ?? []).map((m) => [m.id, m]));
       const next: Record<string, TranscriptJob> = {};
       for (const book of books ?? []) {
         const id = book.audio?.transcript_job;

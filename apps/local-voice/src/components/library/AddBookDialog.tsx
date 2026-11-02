@@ -8,22 +8,18 @@ import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { BookCover } from "./BookCover";
-import { MetadataPicker, patchFrom } from "./MetadataPicker";
+import { MetadataPicker } from "./MetadataPicker";
 import {
   extensionOf,
-  guessFromFileName,
-  guessFromText,
   kindOfFile,
   LIBRARY_FILE_EXTENSIONS,
 } from "@/lib/library/books";
+import {
+  addToLibrary,
+  prepareFile,
+  type PreparedFile,
+} from "@/lib/library/importFile";
 
-interface Picked {
-  path: string;
-  name: string;
-  kind: "text" | "audio";
-  /** Extrahierter Text (nur Textfassung). */
-  text?: string;
-}
 
 const splitAuthors = (s: string) =>
   s
@@ -43,7 +39,7 @@ export const AddBookDialog: React.FC<{
   onAdded(book: LibraryBook): void | Promise<void>;
 }> = ({ open, onOpenChange, onAdded }) => {
   const { t } = useTranslation();
-  const [picked, setPicked] = useState<Picked | null>(null);
+  const [picked, setPicked] = useState<PreparedFile | null>(null);
   const [title, setTitle] = useState("");
   const [authors, setAuthors] = useState("");
   const [duplicate, setDuplicate] = useState<LibraryBook | null>(null);
@@ -102,28 +98,21 @@ export const AddBookDialog: React.FC<{
       filters: [{ name: t("library.files"), extensions: LIBRARY_FILE_EXTENSIONS }],
     });
     if (typeof path !== "string") return;
-    const kind = kindOfFile(path);
-    if (!kind) {
+    if (!kindOfFile(path)) {
       setError(t("library.unsupported", { ext: extensionOf(path) }));
       return;
     }
-    const name = path.split(/[\\/]/).pop() ?? path;
-    let guess = guessFromFileName(path);
-    let text: string | undefined;
-    if (kind === "text") {
-      setBusy("extract");
-      const r = await commands.ttsExtractDocument(path);
+    setBusy("extract");
+    try {
+      const file = await prepareFile(path);
+      setPicked(file);
+      setTitle(file.title);
+      setAuthors(file.authors.join(", "));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
       setBusy(null);
-      if (r.status === "error") {
-        setError(r.error);
-        return;
-      }
-      text = r.data;
-      guess = guessFromText(text) ?? guess;
     }
-    setPicked({ path, name, kind, text });
-    setTitle(guess.title);
-    setAuthors(guess.authors.join(", "));
   };
 
   const submit = async () => {
@@ -131,107 +120,16 @@ export const AddBookDialog: React.FC<{
     setBusy("save");
     setError(null);
     try {
-      const fail = (r: { status: string; error?: string }) => {
-        if (r.status === "error") throw new Error(r.error);
-      };
-      const description =
-        candidate?.work_key
-          ? await commands
-              .libraryDescription(candidate.work_key)
-              .then((r) => (r.status === "ok" ? r.data : null))
-          : null;
-      const base: LibraryBook =
-        duplicate && attach
-          ? duplicate
-          : {
-              id: "",
-              title: title.trim(),
-              subtitle: null,
-              authors: splitAuthors(authors),
-              language: null,
-              isbn: null,
-              publisher: null,
-              publish_date: null,
-              pages: null,
-              description: null,
-              metadata_source: picked.path.toLowerCase().endsWith(".epub")
-                ? "epub"
-                : "manual",
-              cover_source: "generated",
-              text: null,
-              audio: null,
-              added_ms: 0,
-              finished: false,
-              cover_path: null,
-              audio_path: null,
-            };
-      let book: LibraryBook = candidate
-        ? { ...base, ...patchFrom(candidate, description) }
-        : base;
-
-      if (picked.kind === "text" && picked.text !== undefined) {
-        const created = await commands.pagesCreate(book.title);
-        fail(created);
-        if (created.status !== "ok") return;
-        await commands.pageStateSave(
-          created.data.id,
-          JSON.stringify({
-            text: picked.text,
-            summary: "",
-            sourceUrl: "",
-            tab: "original",
-          }),
-        );
-        book = {
-          ...book,
-          text: { page_id: created.data.id, origin: "document", source_name: picked.name },
-        };
-      }
-      const saved = await commands.librarySave(book);
-      fail(saved);
-      if (saved.status !== "ok") return;
-      book = saved.data;
-
-      if (picked.kind === "audio") {
-        setBusy("copy");
-        const imported = await commands.libraryAudioImport(book.id, picked.path);
-        fail(imported);
-        if (imported.status !== "ok") return;
-        book = imported.data;
-        if (transcribe && !book.text && book.audio_path && book.audio) {
-          // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
-          const job = await commands.meetingsImportFile(book.audio_path, true, null);
-          if (job.status === "ok") {
-            const withJob = await commands.librarySave({
-              ...book,
-              audio: { ...book.audio, transcript_job: job.data },
-            });
-            if (withJob.status === "ok") book = withJob.data;
-            else {
-              // Ohne Verweis am Buch fände niemand den Auftrag wieder.
-              await commands.meetingsDelete(job.data);
-              toast.error(withJob.error);
-            }
-          } else toast.error(job.error);
-        }
-      }
-
-      if (candidate?.cover_id || (candidate?.isbn && book.cover_source === "generated")) {
-        const r = await commands.libraryCoverFetch(
-          book.id,
-          candidate.cover_id ?? null,
-          candidate.isbn ?? null,
-        );
-        if (r.status === "ok") book = r.data;
-      } else if (
-        book.cover_source === "generated" &&
-        picked.path.toLowerCase().endsWith(".epub")
-      ) {
-        const r = await commands.libraryCoverFromFile(book.id, picked.path);
-        if (r.status === "ok") book = r.data;
-      }
+      const { book, attached } = await addToLibrary(picked, {
+        attachTo: duplicate && attach ? duplicate : null,
+        title: title.trim(),
+        authors: splitAuthors(authors),
+        candidate,
+        transcribe,
+        onWarning: (m) => toast.error(m),
+      });
       toast(
-        duplicate && attach
+        attached
           ? t("library.attached", { title: book.title })
           : t("library.added", { title: book.title }),
       );

@@ -11,6 +11,7 @@ import { BookCover } from "./BookCover";
 import { BookDetail } from "./BookDetail";
 import { AddBookDialog } from "./AddBookDialog";
 import { AudioBar } from "./AudioBar";
+import { useLibraryDrop } from "./useLibraryDrop";
 import { useLibrary, type TranscriptJob } from "./useLibrary";
 import {
   formatDuration,
@@ -92,6 +93,7 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
   const { books, pageAudio, jobs, reload, save, tick } = useLibrary();
+  const { drop, working, dialog: dropDialog } = useLibraryDrop(books, reload);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = usePersistentState<Filter>(
     "library.filter",
@@ -219,9 +221,10 @@ export const LibraryPage: React.FC = () => {
 
   const card = (v: BookView) => (
     <article
-      className="library-card"
+      className={`library-card${drop.targetId === v.book.id ? " library-card--drop" : ""}`}
       key={v.book.id}
       data-testid="library-card"
+      data-drop-book={v.book.id}
     >
       <div style={{ position: "relative" }}>
         <button
@@ -308,6 +311,7 @@ export const LibraryPage: React.FC = () => {
           variant="primary"
           icon={<Plus size={16} aria-hidden="true" />}
           onClick={() => setAdding(true)}
+          className="library-add-button"
           data-testid="library-add"
         >
           {t("library.add")}
@@ -315,27 +319,46 @@ export const LibraryPage: React.FC = () => {
       }
     >
       <div
-        className="library"
+        className={`library${drop.over ? " library--drop" : ""}`}
+        data-library-drop=""
         style={
           { "--lib-bar": listening ? "64px" : "0px" } as React.CSSProperties
         }
       >
+        {(drop.over || working) && (
+          <div
+            className="library-drop-hint"
+            role="status"
+            data-testid="library-drop-hint"
+          >
+            {working
+              ? t("library.drop.working", { name: working })
+              : drop.targetId
+                ? t("library.drop.onBook", {
+                    title:
+                      books?.find((b) => b.id === drop.targetId)?.title ?? "",
+                  })
+                : t("library.drop.onFree")}
+          </div>
+        )}
         {open ? (
-          <BookDetail
-            view={open}
-            job={jobOf(open.book)}
-            onBack={() => setOpenId(null)}
-            onPlay={() => play(open)}
-            onListen={() => setListening(open.book)}
-            onToggleFinished={() => void toggleFinished(open)}
-            onSave={save}
-            onDeleted={async () => {
-              setOpenId(null);
-              if (listening?.id === open.book.id) setListening(null);
-              await reload();
-            }}
-            onChanged={reload}
-          />
+          <div data-drop-book={open.book.id} style={{ display: "contents" }}>
+            <BookDetail
+              view={open}
+              job={jobOf(open.book)}
+              onBack={() => setOpenId(null)}
+              onPlay={() => play(open)}
+              onListen={() => setListening(open.book)}
+              onToggleFinished={() => void toggleFinished(open)}
+              onSave={save}
+              onDeleted={async () => {
+                setOpenId(null);
+                if (listening?.id === open.book.id) setListening(null);
+                await reload();
+              }}
+              onChanged={reload}
+            />
+          </div>
         ) : (
           <>
             <div className="library-bar">
@@ -503,6 +526,7 @@ export const LibraryPage: React.FC = () => {
             onClose={() => setListening(null)}
           />
         )}
+        {dropDialog}
         <AddBookDialog
           open={adding}
           onOpenChange={setAdding}

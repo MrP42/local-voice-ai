@@ -442,6 +442,10 @@ function App() {
   const toaster = (
     <Toaster
       theme="system"
+      // Deutlich über der Statusleiste (≈ 26 px), nicht dahinter:
+      // ≥ 44 px Luft dazwischen (Codex-Abnahme lva#200).
+      offset={{ bottom: 72, right: 16 }}
+      mobileOffset={{ bottom: 72 }}
       toastOptions={{
         unstyled: true,
         classNames: {
@@ -449,6 +453,9 @@ function App() {
             "bg-background border border-mid-gray/20 rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 text-sm",
           title: "font-medium",
           description: "text-mid-gray",
+          // Aktion als erkennbarer Knopf, nicht als blasser Text.
+          actionButton:
+            "shrink-0 rounded-md bg-[var(--colorBrandBackground)] text-[var(--colorNeutralForegroundOnBrand)] font-medium px-3 py-1.5 min-h-[32px] hover:bg-[var(--colorBrandBackgroundHover)]",
         },
       }}
     />

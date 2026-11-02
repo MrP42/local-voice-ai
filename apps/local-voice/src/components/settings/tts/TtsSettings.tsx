@@ -73,6 +73,7 @@ import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
 import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
+import { ReaderDrop } from "@/components/library/ReaderDrop";
 import {
   clearResumePoint,
   loadResumePoint,
@@ -1957,13 +1958,16 @@ export const TtsSettings = () => {
   textNowRef.current = text;
 
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
-  const loadDocument = async () => {
-    const picked = await open({
-      multiple: false,
-      filters: [
-        { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
-      ],
-    });
+  const loadDocument = async (dropped?: string) => {
+    // Abgelegt per Drag & Drop (lva#152) oder über den Dateidialog.
+    const picked =
+      dropped ??
+      (await open({
+        multiple: false,
+        filters: [
+          { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
+        ],
+      }));
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
@@ -2421,6 +2425,7 @@ export const TtsSettings = () => {
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
+      <ReaderDrop onDocument={loadDocument} />
       <div
         ref={ws.ref}
         className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch"
