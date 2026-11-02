@@ -17,6 +17,7 @@ import {
   tracksOf,
 } from "./books";
 import type { AudioGroup } from "./audioGroups";
+import { settleBook, withBookLock } from "./bookLock";
 import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
 import { probeDuration } from "./probe";
 import {
@@ -598,10 +599,16 @@ export async function addAudioGroup(
 export async function cleanupReplaced(before: LibraryBook): Promise<void> {
   for (const id of pendingJobs(before)) await commands.meetingsDelete(id);
   removeProgress(audioProgressKey(before.id));
-  if (before.text?.origin === "transcript") {
-    removeProgress(textProgressKey(before.text.page_id));
-    await commands.pagesDelete(before.text.page_id);
-  }
+  // Ein laufendes Korrekturlesen erst beenden, dann unter der Sperre des
+  // Buchs Sicherung (Original, Vorschläge) und Seite entfernen.
+  await settleBook(before.id);
+  await withBookLock(before.id, async () => {
+    await commands.libraryProofreadDiscard(before.id);
+    if (before.text?.origin === "transcript") {
+      removeProgress(textProgressKey(before.text.page_id));
+      await commands.pagesDelete(before.text.page_id);
+    }
+  });
 }
 
 /**

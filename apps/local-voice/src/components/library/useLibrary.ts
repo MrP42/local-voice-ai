@@ -12,6 +12,8 @@ import {
 import { toast } from "sonner";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
+import { autoProofread } from "@/lib/library/proofreadRun";
+import { lockBook, settleBook } from "@/lib/library/bookLock";
 import { transcribeTracks } from "@/lib/library/importFile";
 import {
   aggregateStatus,
@@ -173,7 +175,14 @@ export function useLibrary() {
       let done = false;
       let created: string | null = null;
       let restore: { pageId: string; json: string } | null = null;
+      // Anhängen verändert den Text: ein laufendes Korrekturlesen dieses Buchs
+      // erst beenden, dann das Buch sperren (bis zum Schreiben).
+      let unlock: (() => void) | null = null;
       try {
+        if (appendTo) {
+          await settleBook(bookId);
+          unlock = await lockBook(bookId);
+        }
         const book = start;
         const tracks = startTracks;
         const evaluated = withJob.flatMap((t) =>
@@ -295,9 +304,15 @@ export function useLibrary() {
         const multi = !!latest.audio.tracks?.length;
         const saved = await commands.librarySave({
           ...latest,
+          // Wächst der Text, passt das gesicherte Original nicht mehr: Vermerk weg.
           text: appendTo
-            ? latest.text
-            : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
+            ? { ...latest.text!, proofread: null }
+            : {
+                page_id: pageId,
+                origin: "transcript",
+                source_name: latest.audio.file ?? null,
+                proofread: null,
+              },
           audio: {
             ...latest.audio,
             transcript_job: null,
@@ -324,7 +339,10 @@ export function useLibrary() {
         // Hilfsaufnahmen weg.
         for (const e of evaluated) await commands.meetingsDelete(e.job);
         failures.current.delete(bookId);
+        if (appendTo) await commands.libraryProofreadDiscard(bookId);
         await reload();
+        // Frischer Text aus der Spracherkennung: gleich korrekturlesen.
+        void autoProofread(bookId);
       } catch (e) {
         if (created) await commands.pagesDelete(created);
         if (restore) await commands.pageStateSave(restore.pageId, restore.json);
@@ -340,6 +358,7 @@ export function useLibrary() {
           }
         }
       } finally {
+        unlock?.();
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         if (!done)

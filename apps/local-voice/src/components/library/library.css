@@ -886,3 +886,172 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Korrekturlesen des Transkripts (lva#208 B) */
+.library-proofread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--lib-line);
+}
+.library-proofread__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.library-proofread__notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.library-proofread__error {
+  color: var(--color-danger, #c42b1c);
+}
+.library-proofread__auto {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-proofread__auto input {
+  margin-top: 2px;
+}
+/* Der Dialog steht außerhalb von .library: eigene Farben aus den App-Tokens. */
+.library-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.library-diff__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-diff__item {
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.library-diff__no {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-diff__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px 16px;
+}
+.library-diff__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+.library-diff__text {
+  margin: 2px 0 0;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.library-diff__text del,
+.library-diff__text ins {
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.library-diff__text del {
+  background: color-mix(in srgb, #d13438 24%, transparent);
+  text-decoration: line-through;
+}
+.library-diff__text ins {
+  background: color-mix(in srgb, #107c10 26%, transparent);
+}
+
+/* Korrekturlesen: Warnhinweis, Absatzaktionen, Gruppe der verworfenen Vorschläge */
+.library-proofread__warning {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  border-left: 3px solid #c19c00;
+  background: color-mix(in srgb, #c19c00 14%, transparent);
+  border-radius: 4px;
+}
+.library-diff__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.library-diff__bulk,
+.library-diff__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.library-diff__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.library-diff__badge {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.library-diff__item[data-state="edited"] {
+  border-style: dashed;
+  background: color-mix(in srgb, #c19c00 8%, transparent);
+}
+.library-diff__item[data-state="rejected"] .library-diff__badge,
+.library-diff__item[data-state="open"] .library-diff__badge {
+  color: inherit;
+}
+.library-diff__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+}
+.library-diff__group-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Touch-Ziele mindestens 44 × 44 px: Schmale Fenster und Touch-Geräte.
+   Gilt für das Feld im Buchdetail und für beide Dialoge samt Schließen-X. */
+@media (max-width: 640px), (pointer: coarse) {
+  .library-proofread .lv-btn,
+  .lv-proofread-dialog .lv-btn,
+  .lv-proofread-dialog .fui-DialogTitle__action button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .library-proofread__auto {
+    min-height: 44px;
+    align-items: center;
+  }
+  .library-proofread__auto input {
+    width: 24px;
+    height: 24px;
+    margin-top: 0;
+  }
+}

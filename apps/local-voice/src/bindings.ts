@@ -6123,6 +6123,74 @@ async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Transkript korrekturlesen. `page_text` ist der aktuelle Text der Seite;
+ * `from_original`: es gibt schon eine Korrektur, ausgegangen wird dann vom
+ * gesicherten Original (ein erneuter Lauf baut nicht auf der Korrektur auf).
+ * Das Original liegt als `lektorat/original.md` beim Buch.
+ */
+async libraryProofread(bookId: string, pageText: string, fromOriginal: boolean, requireLocal: boolean) : Promise<Result<ProofreadResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_proofread", { bookId, pageText, fromOriginal, requireLocal }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Laufendes Korrekturlesen abbrechen; fertige Blöcke bleiben im Cache.
+ */
+async libraryProofreadCancel() : Promise<void> {
+    await TAURI_INVOKE("library_proofread_cancel");
+},
+/**
+ * Gesicherter Text vor dem Korrekturlesen (für „Änderungen anzeigen“ und
+ * „Original wiederherstellen“); `None`, wenn es keinen gibt.
+ */
+async libraryProofreadOriginal(bookId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_proofread_original", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Original, korrigierter Text und verworfene Vorschläge für die
+ * Änderungsansicht (Annehmen/Ablehnen je Absatz).
+ */
+async libraryProofreadMaterial(bookId: string) : Promise<Result<ProofreadMaterial, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_proofread_material", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Zeitachse (JSON-Text) vor dem Korrekturlesen beim Original ablegen; die
+ * Oberfläche schreibt sie beim Wiederherstellen unverändert zurück.
+ */
+async libraryProofreadSaveSync(bookId: string, syncJson: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_proofread_save_sync", { bookId, syncJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gesichertes Original und Zwischenstände löschen (nach „Original
+ * wiederherstellen“ und wenn der Text wächst).
+ */
+async libraryProofreadDiscard(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_proofread_discard", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoicechangeRecordStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_voicechange_record_start") };
@@ -9995,6 +10063,61 @@ title: string | null;
  */
 agent?: boolean }
 /**
+ * Stand des Korrekturlesens einer Textfassung.
+ */
+export type ProofreadInfo = { 
+/**
+ * Anbieter und Modell (`anbieter/modell`), nur zur Anzeige.
+ */
+model: string; 
+/**
+ * Zeitpunkt (Unix-ms).
+ */
+at_ms: number; 
+/**
+ * Absätze, die korrigiert wurden.
+ */
+changed: number; 
+/**
+ * Absätze, deren Vorschlag die Schutzprüfung verworfen hat.
+ */
+rejected: number; 
+/**
+ * Absätze ohne Korrekturbedarf.
+ */
+unchanged?: number; 
+/**
+ * Prüfsumme des Seitentextes nach dem Korrekturlesen: weicht sie ab, hat
+ * der Nutzer den Text danach bearbeitet.
+ */
+text_hash?: string | null }
+/**
+ * Was nach dem Korrekturlesen beim Buch liegt: Original, korrigierter Text
+ * des Modells und die verworfenen Vorschläge.
+ */
+export type ProofreadMaterial = { original: string | null; corrected: string | null; proposals: Proposal[]; 
+/**
+ * Zeitachse (JSON) vor dem Korrekturlesen, exakt wie gesichert.
+ */
+original_sync: string | null }
+/**
+ * Ergebnis des Korrekturlesens. Die Oberfläche schreibt den Text in die Seite
+ * und merkt sich die Zähler an der Textfassung.
+ */
+export type ProofreadResult = { text: string; changed: number; rejected: number; 
+/**
+ * Absätze ohne Korrekturbedarf.
+ */
+unchanged: number; blocks: number; cached: number; model: string; at_ms: number }
+/**
+ * Ein verworfener Vorschlag des Modells zu einem Absatz (zur manuellen Prüfung).
+ */
+export type Proposal = { 
+/**
+ * Index des Absatzes (`split("\n\n")`), gleich im Original und im Text.
+ */
+index: number; text: string }
+/**
  * Ein Eintrag, wie die Oberflaeche ihn zeigt.
  */
 export type ProvenanceEntry = { id: string; subject_kind: SubjectKind; subject_id: string; subject_revision: number | null; 
@@ -10816,7 +10939,12 @@ origin: string;
 /**
  * Dateiname der Quelle, nur zur Anzeige.
  */
-source_name: string | null }
+source_name: string | null; 
+/**
+ * Korrekturgelesen (lva#208 B): `None`, solange der Text unverändert aus
+ * der Spracherkennung stammt. Das Original liegt unter `lektorat/`.
+ */
+proofread?: ProofreadInfo | null }
 /**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.

@@ -50,6 +50,30 @@ pub async fn translate_on(
     target_lang: &str,
     cpu_only: bool,
 ) -> Result<String, String> {
+    complete_on(
+        settings,
+        translation_prompt(target_lang, text),
+        None,
+        cpu_only,
+        crate::managers::usage::Purpose::Translation,
+        true,
+    )
+    .await
+}
+
+/// Ein Prompt über den aktiven Post-Process-Provider (Grundlage von
+/// [`translate_on`] und dem Korrekturlesen): Reasoning aus, abgeschnittene
+/// Antworten als [`TRUNCATED`]. `unload`: ein lokales Ollama-Modell danach
+/// wieder entladen (viele kurze Aufrufe hintereinander lassen es geladen).
+/// `system`: Regeln als Systemnachricht, getrennt vom Text.
+pub async fn complete_on(
+    settings: &AppSettings,
+    prompt: String,
+    system: Option<String>,
+    cpu_only: bool,
+    purpose: crate::managers::usage::Purpose,
+    unload: bool,
+) -> Result<String, String> {
     let provider = settings
         .active_post_process_provider()
         .cloned()
@@ -72,7 +96,6 @@ pub async fn translate_on(
         .get(&provider.id)
         .cloned()
         .unwrap_or_default();
-    let prompt = translation_prompt(target_lang, text);
     // Übersetzen ist Umformen, kein Nachdenken: Reasoning aus, wo steuerbar
     // (gleiche Provider-Sonderfälle wie beim Post-Processing).
     let (reasoning_effort, reasoning) = match provider.id.as_str() {
@@ -93,11 +116,14 @@ pub async fn translate_on(
         .flatten();
     if let Some(url) = native {
         match crate::llm_client::send_ollama_native(
-            crate::managers::usage::Purpose::Translation,
+            purpose,
             &provider,
             &url,
             &model,
-            prompt.clone(),
+            match &system {
+                Some(system) => format!("{system}\n\n{prompt}"),
+                None => prompt.clone(),
+            },
             true,
         )
         .await
@@ -117,12 +143,12 @@ pub async fn translate_on(
     }
 
     let outcome = match crate::llm_client::send_chat_completion_checked(
-        crate::managers::usage::Purpose::Translation,
+        purpose,
         &provider,
         api_key,
         &model,
         prompt,
-        None,
+        system,
         None,
         reasoning_effort,
         reasoning,
@@ -150,7 +176,9 @@ pub async fn translate_on(
     // deshalb der Nachschuss; bei entfernten Anbietern läuft er ins Leere
     // (ollama_native_url liefert dort None). Auch nach einem FEHLER: gerade
     // ein abgebrochener Lauf lässt das Modell sonst geladen stehen.
-    crate::llm_client::ollama_unload(&provider.base_url, &model).await;
+    if unload {
+        crate::llm_client::ollama_unload(&provider.base_url, &model).await;
+    }
     outcome
 }
 

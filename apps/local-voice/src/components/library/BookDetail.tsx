@@ -24,6 +24,7 @@ import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
+import { ProofreadPanel } from "./ProofreadPanel";
 import {
   fileNameOf,
   formatDuration,
@@ -339,6 +340,7 @@ export const BookDetail: React.FC<Props> = ({
             busy={busy !== null}
             onTranscribe={() => void transcribe()}
           />
+          <ProofreadPanel book={book} onChanged={onChanged} compact />
           {book.description ? (
             <p className="library-blurb">{book.description}</p>
           ) : (
@@ -394,6 +396,7 @@ export const BookDetail: React.FC<Props> = ({
                 <Button onClick={() => openInReader(book.text!.page_id, false)}>
                   {t("library.openReader")}
                 </Button>
+                <ProofreadPanel book={book} onChanged={onChanged} />
               </>
             ) : job ? (
               <>

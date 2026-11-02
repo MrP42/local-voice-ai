@@ -45,6 +45,7 @@ import {
 } from "@/lib/library/audioGroups";
 import { mergeGroup, planMerge, type MergePlan } from "@/lib/library/merge";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { proofreadLabel, useProofread } from "@/lib/library/proofreadRun";
 import "./library.css";
 
 const FILTERS: Filter[] = [
@@ -262,7 +263,26 @@ export const LibraryPage: React.FC = () => {
     0,
     3,
   );
-  const jobList = Object.values(jobs);
+  const proof = useProofread();
+  /** „In Arbeit“: Transkriptionen und das Korrekturlesen der Transkripte. */
+  const jobList = [
+    ...Object.values(jobs).map((job) => ({
+      bookId: job.bookId,
+      label: jobLabel(t, job),
+    })),
+    ...(proof.current
+      ? [
+          {
+            bookId: proof.current.bookId,
+            label: proofreadLabel(t, proof.current),
+          },
+        ]
+      : []),
+    ...proof.waiting.map((bookId) => ({
+      bookId,
+      label: t("library.proofread.waiting"),
+    })),
+  ];
 
   const jobOf = (book: LibraryBook) => jobs[book.id];
 
@@ -632,13 +652,13 @@ export const LibraryPage: React.FC = () => {
                             {t("library.working")}
                             <small>{t("library.workingHint")}</small>
                           </h2>
-                          {jobList.map((job) => {
+                          {jobList.map((job, n) => {
                             const book = books?.find(
                               (b) => b.id === job.bookId,
                             );
                             if (!book) return null;
                             return (
-                              <div className="library-job" key={job.bookId}>
+                              <div className="library-job" key={`${job.bookId}:${n}`}>
                                 <BookCover book={book} size="xs" />
                                 <div style={{ minWidth: 0 }}>
                                   <div
@@ -648,7 +668,7 @@ export const LibraryPage: React.FC = () => {
                                     {book.title}
                                   </div>
                                   <div className="library-meta">
-                                    {jobLabel(t, job)}
+                                    {job.label}
                                   </div>
                                 </div>
                               </div>
