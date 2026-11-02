@@ -29,3 +29,48 @@
 .wai-projekt__raster {
   min-block-size: 0;
 }
+
+/* Suchplatzhalter: mindestens 4,5:1 (Fluent-Token, folgt Hell und Dunkel). */
+.wai-projekt__suche::placeholder,
+.wai-recherche textarea::placeholder,
+.wai-recherche input::placeholder,
+[data-testid="rec-sessions"] input::placeholder,
+[data-testid="suite-projekt"] input::placeholder,
+[data-testid="suite-projekt"] textarea::placeholder {
+  color: var(--colorNeutralForeground3);
+  opacity: 1;
+}
+
+/* Schmal (Telefon): Touchziele mindestens 44 x 44 px auf den Flächen der Projektseite und im
+   Freigabedialog (Fußnotenzahlen im Fließtext sind ausgenommen, WCAG 2.5.8 inline). Die ganze Zeile einer Anfrage ist Klickfläche (label umschließt das Kästchen). */
+@media (max-width: 619px) {
+  .wai-freigabe__liste label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-block-size: 44px;
+    cursor: pointer;
+  }
+  .wai-freigabe__liste input[type="checkbox"] {
+    flex: none;
+    inline-size: 20px;
+    block-size: 20px;
+    margin: 0;
+  }
+  .wai-dialog__actions button,
+  .wai-modal button {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+  :root[data-suite-schmal] [data-testid="rec-strip"] button,
+  :root[data-suite-schmal] [data-testid="rec-lower"] [role="tab"],
+  :root[data-suite-schmal] [data-testid="sessions-open"],
+  :root[data-suite-schmal] [data-testid="suite-projekt"] button:not(.wai-recherche__fn),
+  :root[data-suite-schmal] [data-testid="suite-projekt"] [role="tab"],
+  :root[data-suite-schmal] [data-testid="suite-projekt"] select,
+  :root[data-suite-schmal] [data-testid="suite-projekt"] input[type="search"],
+  :root[data-suite-schmal] .wai-projekt__chip {
+    min-block-size: 44px;
+    min-inline-size: 44px;
+  }
+}

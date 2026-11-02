@@ -581,6 +581,16 @@ export const MeetingsSettings: React.FC = () => {
     [select, layout.drawer],
   );
 
+  const suiteSchmal = openSuite !== null && layout.mode === "narrow";
+  useEffect(() => {
+    if (!suiteSchmal) return;
+    const wurzel = document.documentElement;
+    wurzel.dataset.suiteSchmal = "1";
+    return () => {
+      delete wurzel.dataset.suiteSchmal;
+    };
+  }, [suiteSchmal]);
+
   const suiteFolder = openSuite
     ? projects.folders.find((f) => f.id === openSuite)
     : undefined;
@@ -592,6 +602,7 @@ export const MeetingsSettings: React.FC = () => {
         name: suiteFolder.name,
         projektId: suiteFolder.projekt_id ?? null,
       }}
+      fluss={layout.mode === "narrow"}
       onClose={() => setOpenSuite(null)}
       onOpenMeeting={(id) =>
         void findMeeting(id).then((meeting) => {
@@ -752,6 +763,7 @@ export const MeetingsSettings: React.FC = () => {
             }}
           />
         }
+        flow={suiteContent !== null && selected === null}
         rightTab={rightTab}
         onRightTab={setRightTab}
         idleNotes={hint(t("meetings.layout.emptyNotes"))}

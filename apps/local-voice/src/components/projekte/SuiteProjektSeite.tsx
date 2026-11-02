@@ -58,6 +58,8 @@ interface Props {
   onClose: () => void;
   /** Eine Besprechung des Projektordners in den Aufnahmen öffnen. */
   onOpenMeeting: (meetingId: string) => void;
+  /** Schmale Ansicht: Seite im normalen Seitenfluss, ohne eigene Scrollleiste. */
+  fluss?: boolean;
 }
 
 const KLASSEN = ["PUBLIC", "INTERNAL", "PERSONAL", "SPECIAL", "RESTRICTED"];
@@ -71,6 +73,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
   ordner,
   onClose,
   onOpenMeeting,
+  fluss = false,
 }) => {
   const { t } = useTranslation();
   const ordnerLabels = useOrdnerLabels();
@@ -314,7 +317,11 @@ export const SuiteProjektSeite: React.FC<Props> = ({
     <section
       data-testid="suite-projekt"
       aria-label={t("projekte.seite.titel")}
-      className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+      className={
+        fluss
+          ? "flex flex-col gap-3 p-3"
+          : "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
+      }
     >
       <header className="flex flex-wrap items-center gap-2">
         <div className="min-w-[12rem] flex-1">
@@ -539,7 +546,7 @@ export const SuiteProjektSeite: React.FC<Props> = ({
               />
             </div>
             {rechercheId && (
-              <div className="flex items-center gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
                 <ReadAloudButton
                   speakKey={`recherche:${rechercheId}`}
                   getMarkdown={() => vorlese}

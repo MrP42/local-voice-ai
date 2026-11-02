@@ -140,6 +140,7 @@ export const SprachRecherche: React.FC<Props> = ({
               </label>
               <Input
                 id={frageId}
+                className="w-full"
                 value={frage}
                 onChange={(e) => setFrage(e.target.value)}
               />

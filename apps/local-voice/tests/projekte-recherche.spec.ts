@@ -19,6 +19,11 @@ const SHOT_DIR = path.resolve(
 /** Bilder nur auf Wunsch (LVA_SCREENSHOTS=1), sonst schreibt jeder Lauf sie neu. */
 const shoot = async (page: Page, name: string) => {
   if (!process.env.LVA_SCREENSHOTS) return;
+  // Die Meldung "Die Recherche ist fertig" soll das Bild nicht verdecken.
+  await page
+    .getByText("Die Recherche ist fertig")
+    .waitFor({ state: "hidden", timeout: 15_000 })
+    .catch(() => {});
   await page.waitForTimeout(300);
   await page.screenshot({
     path: path.join(SHOT_DIR, `${name}-${page.viewportSize()?.width}.png`),
@@ -28,9 +33,15 @@ const shoot = async (page: Page, name: string) => {
 
 const FRAGE = "Wie werden Netzentgelte für die Lastgangmessung berechnet?";
 
-const setup = async (page: Page, width = 1440, height = 900) => {
+const setup = async (
+  page: Page,
+  width = 1440,
+  height = 900,
+  vorher?: (page: Page) => Promise<void>,
+) => {
   await installLiveMock(page);
   await installProjekteMock(page);
+  if (vorher) await vorher(page);
   await openRecordings(page, width, height);
 };
 
@@ -266,37 +277,49 @@ test("Fremde Recherchen erscheinen nicht im falschen Kontext", async ({
   );
 });
 
-test("Chat-Spalte: Projekt wählen, Eingabe bleibt bis zum angenommenen Start", async ({
-  page,
-}) => {
-  await setup(page);
-  // m2 liegt in zwei Ordnern mit je einem Suite-Projekt: die Person wählt das Projekt.
-  await pickMeeting(page, "m2");
-  await page.getByRole("button", { name: "Fragen", exact: true }).click();
-  const panel = page.getByTestId("chat-panel");
-  const knopf = panel.getByTestId("chat-recherche");
-  await expect(knopf).toBeDisabled();
-  const eingabe = panel.locator("textarea");
-  await eingabe.fill(FRAGE);
-  await knopf.click();
-  // Vor der Wahl ist noch nichts gestartet, die Frage bleibt stehen.
-  await expect(eingabe).toHaveValue(FRAGE);
-  await panel.getByRole("button", { name: "Kunde Stadtwerke" }).click();
-  const start = await calls(page, "recherche_starten");
-  expect(start).toHaveLength(1);
-  expect(start[0].args.suiteProjekt).toBe("sp2");
-  expect(start[0].args.besprechung).toBe("m2");
-  const dialog = page.getByRole("alertdialog");
-  await expect(dialog).toContainText(FRAGE);
-  await expect(eingabe).toHaveValue("");
-  // Nach der Freigabe gehört genau dieses Ergebnis in die Chat-Spalte.
-  await dialog.getByRole("checkbox").nth(0).check();
-  await dialog.getByRole("button", { name: "Ausgewählte senden" }).click();
-  await expect(panel.getByTestId("recherche-karte")).toContainText(FRAGE);
-  await expect(panel.getByTestId("recherche-abgelegt")).toContainText(
-    "Kunde Stadtwerke",
-  );
-});
+for (const [breite, hoehe] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  test(`Chat-Spalte: Projekt wählen, Eingabe bleibt bis zum angenommenen Start (${breite} px)`, async ({
+    page,
+  }) => {
+    await setup(page, breite, hoehe);
+    // m2 liegt in zwei Ordnern mit je einem Suite-Projekt: die Person wählt das Projekt.
+    await pickMeeting(page, "m2");
+    await page
+      .getByRole(breite < 620 ? "tab" : "button", {
+        name: "Fragen",
+        exact: true,
+      })
+      .click();
+    const panel = page.getByTestId("chat-panel");
+    const knopf = panel.getByTestId("chat-recherche");
+    await expect(knopf).toBeDisabled();
+    const eingabe = panel.locator("textarea");
+    await eingabe.fill(FRAGE);
+    await knopf.click();
+    // Vor der Wahl ist noch nichts gestartet, die Frage bleibt stehen.
+    await expect(eingabe).toHaveValue(FRAGE);
+    await panel.getByRole("button", { name: "Kunde Stadtwerke" }).click();
+    const start = await calls(page, "recherche_starten");
+    expect(start).toHaveLength(1);
+    expect(start[0].args.suiteProjekt).toBe("sp2");
+    expect(start[0].args.besprechung).toBe("m2");
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText(FRAGE);
+    await expect(eingabe).toHaveValue("");
+    await shoot(page, "chat-recherche-gestartet");
+    // Nach der Freigabe gehört genau dieses Ergebnis in die Chat-Spalte.
+    await dialog.getByRole("checkbox").nth(0).check();
+    await dialog.getByRole("button", { name: "Ausgewählte senden" }).click();
+    await expect(panel.getByTestId("recherche-karte")).toContainText(FRAGE);
+    await expect(panel.getByTestId("recherche-abgelegt")).toContainText(
+      "Kunde Stadtwerke",
+    );
+    await shoot(page, "chat-recherche-ergebnis");
+  });
+}
 
 test("Chat-Spalte: abgebrochener Halt zeigt kein Ergebnis", async ({
   page,
@@ -324,3 +347,268 @@ test("Barrierefreiheit der Projektseite", async ({ page }) => {
     .analyze();
   expect(r.violations.filter((v) => v.impact === "critical")).toEqual([]);
 });
+
+// --- Schmale Ansicht (390 px): Projektseite im Seitenfluss, Touchziele, Kontrast -------------------
+
+const scrollContainerUm = (page: Page, selector: string) =>
+  page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const gefunden: string[] = [];
+    for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      const scrollt = /(auto|scroll)/.test(cs.overflowY);
+      if (scrollt && n.scrollHeight > n.clientHeight + 1)
+        gefunden.push(
+          `${n.tagName}[${n.getAttribute("data-testid") ?? n.className}]`,
+        );
+    }
+    return gefunden;
+  }, selector);
+
+test("390 px: Projektseite im Seitenfluss mit einer Scrollleiste, Reiterblock einklappbar", async ({
+  page,
+}) => {
+  await setup(page, 390, 844);
+  await oeffneSuite(page, "f3");
+  await frageStellen(page, FRAGE);
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByRole("checkbox").nth(0).check();
+  await dialog.getByRole("button", { name: "Ausgewählte senden" }).click();
+  const seite = page.getByTestId("suite-projekt");
+  await expect(seite.getByText("1 Quelle").first()).toBeVisible();
+
+  // Genau ein scrollender Vorfahre um das Ergebnis: der Seitenfluss.
+  const ergebnis = '[data-testid="suite-projekt"] [aria-live="polite"]';
+  const umgebung = await scrollContainerUm(page, ergebnis);
+  expect(umgebung).toHaveLength(1);
+  expect(umgebung[0]).toContain("rec-flow");
+
+  // Das Fenster dieses Flusses ist fast so hoch wie die Seite (kein kurzes Teilfenster).
+  const fluss = page.getByTestId("rec-flow");
+  const h = (await fluss.boundingBox())!.height;
+  expect(h).toBeGreaterThan(500);
+
+  // Weiterfragen und letzte Quelle sind per Scroll erreichbar.
+  const letzte = seite.getByText("Netzentgelte Strom - Bundesnetzagentur");
+  await letzte.scrollIntoViewIfNeeded();
+  const b = (await letzte.boundingBox())!;
+  expect(b.y + b.height).toBeLessThanOrEqual(844);
+  await expect(
+    seite.getByRole("button", {
+      name: "Wie hoch war der Leistungspreis 2025?",
+    }),
+  ).toBeAttached();
+  await expect(page.getByText("Die Recherche ist fertig")).toBeHidden({
+    timeout: 15_000,
+  });
+  await shoot(page, "recherche-ergebnis-fluss");
+
+  // Der Reiterblock steht unter der Seite und lässt sich einklappen.
+  const reiter = page.getByRole("tab", { name: "Notizen", exact: true });
+  const toggle = page.getByTestId("rec-lower-toggle");
+  await toggle.scrollIntoViewIfNeeded();
+  await expect(reiter).toBeVisible();
+  await shoot(page, "recherche-reiterblock");
+  const yReiter = (await reiter.boundingBox())!.y;
+  const yErgebnis = (await seite.boundingBox())!.y;
+  expect(yReiter).toBeGreaterThan(yErgebnis);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(reiter).toBeHidden();
+  await toggle.click();
+  await expect(reiter).toBeVisible();
+});
+
+test("390 px: Touchziele mindestens 44 px (Seite, Aufnahmezeile, Reiter, Dialog)", async ({
+  page,
+}) => {
+  await setup(page, 390, 844);
+  await page.addStyleTag({
+    content:
+      "*,*::before,*::after{transition:none!important;animation:none!important}",
+  });
+  await oeffneSuite(page, "f3");
+  const zuKlein = async (selector: string) =>
+    page.evaluate((sel) => {
+      return [...document.querySelectorAll<HTMLElement>(sel)]
+        .filter((e) => e.offsetParent !== null)
+        .map((e) => {
+          const r = e.getBoundingClientRect();
+          return {
+            name: (e.getAttribute("aria-label") ?? e.textContent ?? e.tagName)
+              .trim()
+              .slice(0, 40),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          };
+        })
+        .filter((x) => x.w > 0 && (x.h < 44 || x.w < 44));
+    }, selector);
+
+  expect(
+    await zuKlein(
+      [
+        '[data-testid="sessions-open"]',
+        '[data-testid="rec-strip"] button',
+        '[data-testid="rec-lower"] [role="tab"]',
+        '[data-testid="rec-lower-toggle"]',
+        '[data-testid="suite-projekt"] button:not(.wai-recherche__fn)',
+      ].join(","),
+    ),
+  ).toEqual([]);
+
+  await frageStellen(page, FRAGE);
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  // Das Einblenden des Dialogs skaliert kurz: erst danach messen.
+  await page.waitForTimeout(800);
+  expect(
+    await zuKlein(
+      '[role="alertdialog"] button, [role="alertdialog"] .wai-freigabe__liste label',
+    ),
+  ).toEqual([]);
+  // Die ganze Zeile (Beschriftung) schaltet das Kästchen.
+  const zeile = dialog.locator("label").first();
+  await zeile.getByText("Netzentgelte Lastgangmessung Berechnung").click();
+  await expect(dialog.getByRole("checkbox").first()).toBeChecked();
+  const box = (await zeile.boundingBox())!;
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  expect(box.width).toBeGreaterThan(250);
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`390 px: Projektseite ohne serious/critical, Suchplatzhalter ≥ 4,5:1 (${theme})`, async ({
+    page,
+  }) => {
+    await setup(page, 390, 844, async (p) => {
+      await p.addInitScript((value) => {
+        (window as any).__settings.theme = value;
+      }, theme);
+    });
+    await oeffneSuite(page, "f3");
+    await page.addStyleTag({
+      content:
+        "*,*::before,*::after{transition:none!important;animation:none!important}",
+    });
+    // Zwei Suchfelder der Seite: "In … suchen" (Liste, in der Schublade) und "Im Projekt suchen".
+    await expect(page.getByPlaceholder("Im Projekt suchen")).toBeVisible();
+    await page.waitForTimeout(300);
+    const r = await new AxeBuilder({ page })
+      .include('[data-testid="suite-projekt"]')
+      .exclude("[data-tabster-dummy]")
+      .analyze();
+    expect(
+      r.violations
+        .filter((v) => v.impact === "critical" || v.impact === "serious")
+        .map(
+          (v) =>
+            `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+        ),
+    ).toEqual([]);
+
+    // Schublade mit der Ordnerliste: Suchplatzhalter dort ebenfalls.
+    await page.getByTestId("sessions-open").click();
+    await expect(page.getByTestId("rec-sessions")).toBeVisible();
+    const s2 = await new AxeBuilder({ page })
+      .include('[data-testid="rec-sessions"]')
+      .exclude("[data-tabster-dummy]")
+      .withRules(["color-contrast"])
+      .analyze();
+    expect(
+      s2.violations
+        .filter((v) => v.impact === "critical" || v.impact === "serious")
+        .map(
+          (v) =>
+            `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`,
+        ),
+    ).toEqual([]);
+  });
+}
+
+// --- Vorlesen: Klassenregel für die Sprachausgabe ------------------------------------------------
+
+const ergebnisMitTts = async (
+  page: Page,
+  einstellungen: Record<string, unknown>,
+) => {
+  await setup(page, 1440, 900, async (p) => {
+    await p.addInitScript((e) => {
+      Object.assign((window as any).__settings, e);
+    }, einstellungen);
+  });
+  await oeffneSuite(page, "f3");
+  await frageStellen(page, FRAGE);
+  const dialog = page.getByRole("alertdialog");
+  await dialog.getByRole("checkbox").nth(0).check();
+  await dialog.getByRole("button", { name: "Ausgewählte senden" }).click();
+  await expect(page.getByTestId("suite-recherche-loeschen")).toBeVisible();
+};
+
+test("Vorlesen: bei PERSONAL und Remote-TTS gesperrt (mit Hinweis)", async ({
+  page,
+}) => {
+  await ergebnisMitTts(page, {
+    tts_engine: "provider:cloud1",
+    tts_providers: { allow_remote: ["cloud1"] },
+  });
+  const knopf = page.getByTestId("suite-readaloud");
+  await expect(knopf).toBeDisabled();
+  await expect(
+    page.getByText("nur mit lokaler Sprachausgabe", { exact: false }),
+  ).toBeVisible();
+  await knopf.scrollIntoViewIfNeeded();
+  await shoot(page, "vorlesen-gesperrt");
+});
+
+test("Vorlesen: bei PERSONAL und lokaler TTS freigegeben", async ({ page }) => {
+  await ergebnisMitTts(page, {
+    tts_engine: "provider:lokal1",
+    tts_providers: { allow_remote: [] },
+  });
+  await expect(page.getByTestId("suite-readaloud")).toBeEnabled();
+  await expect(
+    page.getByText("nur mit lokaler Sprachausgabe", { exact: false }),
+  ).toHaveCount(0);
+});
+
+for (const [breite, hoehe] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  test(`Sprachgespräch: Recherche über das Plus-Menü (${breite} px)`, async ({
+    page,
+  }) => {
+    await setup(page, breite, hoehe);
+    const nav = page.getByRole("button", {
+      name: "Sprachgespräch",
+      exact: true,
+    });
+    if (!(await nav.isVisible()))
+      await page.getByRole("button", { name: /Menü/ }).first().click();
+    await nav.click();
+    await page.getByRole("button", { name: "Hinzufügen" }).click();
+    await page.getByRole("menuitem", { name: /Recherche/ }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("combobox").click();
+    await page.getByRole("option", { name: "Kunde Stadtwerke" }).click();
+    await dialog.getByLabel("Frage").fill(FRAGE);
+    await dialog.getByTestId("sprache-recherche-los").click();
+    const start = await calls(page, "recherche_starten");
+    expect(start).toHaveLength(1);
+    expect(start[0].args.suiteProjekt).toBe("sp2");
+    const freigabe = page.getByRole("alertdialog");
+    await expect(freigabe).toContainText(FRAGE);
+    await shoot(page, "sprache-recherche-gestartet");
+    await freigabe.getByRole("checkbox").nth(0).check();
+    await freigabe.getByRole("button", { name: "Ausgewählte senden" }).click();
+    await expect(freigabe).toBeHidden();
+    await expect(
+      page.getByTestId("sprache-recherche").getByTestId("recherche-karte"),
+    ).toContainText(FRAGE);
+    await expect(
+      page.getByTestId("sprache-recherche").getByTestId("recherche-abgelegt"),
+    ).toContainText("Kunde Stadtwerke");
+    await shoot(page, "sprache-recherche-ergebnis");
+  });
+}
