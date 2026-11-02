@@ -444,9 +444,10 @@ function App() {
   const toaster = (
     <Toaster
       theme="system"
-      // Über der Statusleiste, nicht dahinter (Codex-Abnahme lva#200).
-      offset={{ bottom: 44, right: 16 }}
-      mobileOffset={{ bottom: 44 }}
+      // Deutlich über der Statusleiste (≈ 26 px), nicht dahinter:
+      // ≥ 44 px Luft dazwischen (Codex-Abnahme lva#200).
+      offset={{ bottom: 72, right: 16 }}
+      mobileOffset={{ bottom: 72 }}
       toastOptions={{
         unstyled: true,
         classNames: {

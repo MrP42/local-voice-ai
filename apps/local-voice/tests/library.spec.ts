@@ -576,12 +576,15 @@ test("Vorlesen: Buch ablegen öffnet es, Hörbuch geht in die Bibliothek", async
   await expect(action).toBeVisible();
   // Toast samt Aktion vollständig über der Statusleiste.
   const status = (await page.locator(".workspace-status").boundingBox())!;
+  // Toast-Unterkante mindestens 44 px über der Statusleiste.
   await expect
     .poll(async () => {
       const toast = (await page.locator("[data-sonner-toast]").first().boundingBox())!;
-      return toast.y + toast.height <= status.y;
+      const gap = Math.round(status.y - (toast.y + toast.height));
+      console.log(`Abstand Toast-Unterkante zur Statusleiste: ${gap} px`);
+      return gap;
     })
-    .toBe(true);
+    .toBeGreaterThanOrEqual(44);
   expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(28);
   await page.waitForTimeout(500);
   await page.screenshot({ path: shot("vorlesen-drop-hoerbuch-toast-1440.png") });
@@ -615,6 +618,15 @@ test("390 px: Filter-Chips, Sortierung und Menüknöpfe haben Trefferflächen �
   await expect(page.locator(".app-select__menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await page.screenshot({ path: shot("bibliothek-trefferflaechen-390.png") });
+  // Menüknopf einer Karte sichtbar und geöffnet.
+  const menu = page.locator(".library-card .library-touch button").first();
+  await menu.scrollIntoViewIfNeeded();
+  const mb = (await menu.boundingBox())!;
+  console.log(`Menüknopf 390 px: ${Math.round(mb.width)}×${Math.round(mb.height)} px`);
+  await menu.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: shot("bibliothek-menue-390.png") });
 });
 
 test("Mehrere Dateien auf ein Buch: je Art nur die erste, Fehler halten die Warteschlange nicht an", async ({
