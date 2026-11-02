@@ -5016,6 +5016,14 @@ async ttsTranslate(text: string, targetLang: string) : Promise<Result<string, st
 }
 },
 /**
+ * Stand des Uebersetzungsauftrags im Hintergrund (laufend oder zuletzt
+ * beendet): Fortschritt, Arbeiter, bisher fertiger Text, Fehler, Warnungen.
+ * Die Oberflaeche holt sich damit den Stand zurueck, wenn sie neu geladen hat.
+ */
+async ttsTranslateJob(text: string, targetLang: string) : Promise<TranslateJob | null> {
+    return await TAURI_INVOKE("tts_translate_job", { text, targetLang });
+},
+/**
  * Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
  * Damit die Oberflaeche beim Umschalten zwischen Sprachen sofort zeigen
  * kann, was da ist, ohne eine Uebersetzung anzustossen.
@@ -10778,6 +10786,25 @@ source_language: string | null;
  * G5: bei einer Uebersetzung die Zahl der Saetze, die die Treuepruefung markiert hat.
  */
 flagged: number }
+/**
+ * Der laufende (oder zuletzt beendete) Uebersetzungsauftrag. Er lebt im
+ * Backend: schliesst die Oberflaeche, laeuft er weiter, und sie holt sich den
+ * Stand mit `tts_translate_job` wieder.
+ */
+export type TranslateJob = { lang: string; 
+/**
+ * Schluessel des Originaltexts (wie der Dateiname im Ganztext-Cache).
+ */
+textKey: string; done: number; total: number; chapters: number; workers: WorkerProgress[]; 
+/**
+ * Bisher zusammenhaengend fertiger Text (vom Anfang an lueckenlos).
+ */
+partial: string; error: string | null; running: boolean; 
+/**
+ * Beanstandungen der Schlusspruefung (Kapitel/Abschnitt), die trotz
+ * zweitem Versuch blieben.
+ */
+warnings: string[] }
 export type TranslateOutcome = { transcript: string; translation: string }
 /**
  * Der Pruefbericht einer Uebersetzung (steht in der Fassung, `meta_json`).
@@ -11207,6 +11234,10 @@ source: string; page: number | null; document_id: string | null }
  * channel timeline (basis for M3's word-to-speaker assignment).
  */
 export type WordTime = { text: string; start_ms: number; end_ms: number }
+/**
+ * Fortschritt eines Arbeiters.
+ */
+export type WorkerProgress = { done: number; total: number }
 export type WorkflowActionSpec = { id: string; title: string; effect_text: string; fields: WorkflowFieldSpec[]; 
 /**
  * `pure`, `idempotent` oder `external`.

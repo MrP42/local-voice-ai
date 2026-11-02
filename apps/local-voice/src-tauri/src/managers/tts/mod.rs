@@ -1608,6 +1608,16 @@ pub struct TtsManager {
     /// (`utterances`) ist synchron, die Stimmenliste des Anbieters nicht: sie wird
     /// vorher (`ensure_provider_roster`) gelesen und hier gehalten.
     provider_roster: Mutex<Option<providers::speakers::RosterCache>>,
+    /// Der laufende (oder zuletzt beendete) Übersetzungsauftrag. Er läuft
+    /// im Hintergrund und hängt nicht am Aufrufer.
+    translate_job: Mutex<Option<TranslateJobHandle>>,
+}
+
+/// Ein Übersetzungsauftrag: Stand für die Oberfläche und der Kanal, über den
+/// jeder Wartende das Ende erfährt.
+struct TranslateJobHandle {
+    tracker: Arc<crate::translator::JobTracker>,
+    done: tokio::sync::watch::Receiver<Option<Result<String, String>>>,
 }
 
 struct SpeakSession {
@@ -2166,14 +2176,17 @@ const DICTATE_BINDING: &str = "dictate_input";
 
 /// Sendet die Ereignisse der Übersetzung an die Oberfläche:
 /// `tts-translate-start`, `tts-translate-chunk` (je fertigem Abschnitt, in
-/// Index-Reihenfolge) und `tts-transform-progress`.
+/// Index-Reihenfolge) und `tts-transform-progress` (sofort bei jedem fertigen
+/// Abschnitt) — und hält nebenbei den Auftragszustand aktuell.
 struct TranslateEmitter {
     app: tauri::AppHandle,
+    tracker: Arc<crate::translator::JobTracker>,
 }
 
 impl crate::translator::TranslateObserver for TranslateEmitter {
     fn started(&self, info: &crate::translator::StartInfo) {
         use tauri::Emitter;
+        self.tracker.started(info);
         let _ = self.app.emit(
             "tts-translate-start",
             serde_json::json!({
@@ -2186,6 +2199,7 @@ impl crate::translator::TranslateObserver for TranslateEmitter {
 
     fn chunk(&self, info: &crate::translator::ChunkInfo) {
         use tauri::Emitter;
+        self.tracker.chunk(info);
         let _ = self.app.emit(
             "tts-translate-chunk",
             serde_json::json!({
@@ -2202,6 +2216,12 @@ impl crate::translator::TranslateObserver for TranslateEmitter {
 
     fn progress(&self, info: &crate::translator::ProgressInfo) {
         use tauri::Emitter;
+        self.tracker.progress(info);
+        let workers: Vec<_> = info
+            .workers
+            .iter()
+            .map(|&(done, total)| serde_json::json!({ "done": done, "total": total }))
+            .collect();
         let _ = self.app.emit(
             "tts-transform-progress",
             serde_json::json!({
@@ -2213,9 +2233,101 @@ impl crate::translator::TranslateObserver for TranslateEmitter {
                 "chapterTitle": info.chapter_title,
                 "doneChars": info.done_chars,
                 "totalChars": info.total_chars,
+                "workers": workers,
             }),
         );
     }
+}
+
+/// Basisordner der Übersetzungs-Ablage.
+fn translation_base(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    crate::portable::data_dir()
+        .cloned()
+        .or_else(|| app.path().app_local_data_dir().ok())
+}
+
+/// Schlüssel einer Übersetzung: Streuwert aus Text und Sprache. Ändert sich
+/// das Original, zeigt er woandershin, und die alte Übersetzung wird nie
+/// fälschlich ausgeliefert.
+fn translation_key(text: &str, target_lang: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    target_lang.hash(&mut hasher);
+    // Fassung der Uebersetzung: seit v2 bleiben Sprechermarken und Tags
+    // stehen. Aeltere Eintraege (mit uebersetzten Marken) gelten nicht mehr.
+    "v2-geschuetzte-marken".hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Ganztext-Übersetzung ablegen (am Buch hinterlegt; `tts_cached_translation`
+/// findet sie).
+fn write_translation(app: &tauri::AppHandle, key: &str, translation: &str) {
+    let Some(base) = translation_base(app) else {
+        return;
+    };
+    let dir = base.join("translations");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!("translation cache unavailable: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(dir.join(format!("{key}.txt")), translation) {
+        log::warn!("could not cache translation: {e}");
+    }
+}
+
+/// Der Auftrag selbst — eigene Aufgabe, unabhängig vom aufrufenden Command.
+#[allow(clippy::too_many_arguments)]
+async fn run_translate_job(
+    app: tauri::AppHandle,
+    settings: crate::settings::AppSettings,
+    text: String,
+    target_lang: String,
+    gpu_busy: bool,
+    key: String,
+    tracker: Arc<crate::translator::JobTracker>,
+    done_tx: tokio::sync::watch::Sender<Option<Result<String, String>>>,
+) {
+    use tauri::Emitter;
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let observer = TranslateEmitter {
+        app: app.clone(),
+        tracker: tracker.clone(),
+    };
+    // Fertige Abschnitte liegen auf Platte: nach einem Fehler oder Abbruch
+    // setzt der nächste Aufruf dort fort.
+    let dir = translation_base(&app).map(|b| b.join("translations").join("chunks"));
+    let cache = crate::translator::DiskSectionCache::new(dir, &target_lang);
+    let outcome = crate::translator::translate_blocks(
+        &settings,
+        &text,
+        &target_lang,
+        gpu_busy,
+        &cache,
+        &observer,
+    )
+    .await;
+    tracker.finish(&outcome);
+    if let Ok(done) = &outcome {
+        write_translation(&app, &key, &done.text);
+    }
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({ "busy": false, "error": outcome.as_ref().err().cloned() }),
+    );
+    let warnings = tracker.snapshot().warnings;
+    let _ = app.emit(
+        "tts-translate-done",
+        serde_json::json!({
+            "textKey": key,
+            "lang": target_lang,
+            "ok": outcome.is_ok(),
+            "error": outcome.as_ref().err().cloned(),
+            "warnings": warnings,
+        }),
+    );
+    let _ = done_tx.send(Some(outcome.map(|o| o.text)));
 }
 
 impl TtsManager {
@@ -2257,6 +2369,7 @@ impl TtsManager {
                 provider_host,
                 provider_preview,
                 provider_roster: Mutex::new(None),
+                translate_job: Mutex::new(None),
             }
         });
         manager.refresh_from_settings();
@@ -3321,14 +3434,14 @@ impl TtsManager {
         if trimmed.is_empty() {
             return Err("kein Text zum Übersetzen".to_string());
         }
-        use tauri::Emitter;
-        let observer = TranslateEmitter {
-            app: self.app.clone(),
-        };
         if let Some(hit) = self.cached_translation(trimmed, target_lang) {
             // Der Ganztext-Cache trifft: die Oberfläche bekommt trotzdem den
             // Ablauf start + ein Abschnitt mit dem ganzen Text.
             use crate::translator::TranslateObserver;
+            let observer = TranslateEmitter {
+                app: self.app.clone(),
+                tracker: Arc::new(crate::translator::JobTracker::new(target_lang, "")),
+            };
             observer.started(&crate::translator::StartInfo {
                 total: 1,
                 chapters: 1,
@@ -3345,36 +3458,69 @@ impl TtsManager {
             });
             return Ok(hit);
         }
-        let settings = crate::settings::get_settings(&self.app);
-        let gpu_busy = self.gpu_busy();
-        // Die Sprachmodell-Anzeige lebt von diesen beiden Ereignissen: Gelb,
-        // solange uebersetzt wird, danach zurueck (oder Orange bei Fehler).
-        let _ = self
-            .app
-            .emit("llm-activity", serde_json::json!({ "busy": true }));
-        // Kapitelweise mit Fortschritt; Sprechermarken, Tags und Seitenmarken
-        // bleiben stehen. Fertige Abschnitte liegen auf Platte: nach einem
-        // Fehler oder Abbruch setzt der nächste Aufruf dort fort.
-        let cache = crate::translator::DiskSectionCache::new(self.chunk_cache_dir(), target_lang);
-        let outcome = crate::translator::translate_blocks(
-            &settings,
-            trimmed,
-            target_lang,
-            gpu_busy,
-            &cache,
-            &observer,
-        )
-        .await;
-        let _ = self.app.emit(
-            "llm-activity",
-            serde_json::json!({
-                "busy": false,
-                "error": outcome.as_ref().err().cloned(),
-            }),
-        );
-        let translated = outcome?;
-        self.store_translation(trimmed, target_lang, &translated);
-        Ok(translated)
+        let key = translation_key(trimmed, target_lang);
+        // Läuft schon ein Auftrag für denselben Text und dieselbe Sprache,
+        // hängt sich dieser Aufruf daran an (kein Doppelstart).
+        let mut done_rx = {
+            let mut guard = self.translate_job.lock().unwrap();
+            let running = guard.as_ref().map(|h| h.tracker.snapshot());
+            match running {
+                Some(job) if job.running => {
+                    if job.text_key != key || job.lang != target_lang {
+                        return Err("Es läuft bereits eine Übersetzung für einen anderen Text oder eine andere Sprache.".to_string());
+                    }
+                    guard.as_ref().unwrap().done.clone()
+                }
+                _ => {
+                    let settings = crate::settings::get_settings(&self.app);
+                    let gpu_busy = self.gpu_busy();
+                    let tracker = Arc::new(crate::translator::JobTracker::new(target_lang, &key));
+                    let (tx, rx) = tokio::sync::watch::channel(None);
+                    *guard = Some(TranslateJobHandle {
+                        tracker: tracker.clone(),
+                        done: rx.clone(),
+                    });
+                    tauri::async_runtime::spawn(run_translate_job(
+                        self.app.clone(),
+                        settings,
+                        trimmed.to_string(),
+                        target_lang.to_string(),
+                        gpu_busy,
+                        key,
+                        tracker,
+                        tx,
+                    ));
+                    rx
+                }
+            }
+        };
+        let finished = done_rx
+            .wait_for(|v| v.is_some())
+            .await
+            .map_err(|_| "Übersetzung abgebrochen".to_string())?
+            .clone();
+        finished.unwrap_or_else(|| Err("Übersetzung abgebrochen".to_string()))
+    }
+
+    /// Stand des laufenden oder zuletzt beendeten Übersetzungsauftrags.
+    pub fn translate_job(&self) -> Option<crate::translator::TranslateJob> {
+        self.translate_job
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| h.tracker.snapshot())
+    }
+
+    /// Der Auftrag, aber nur wenn er zu GENAU diesem Text und dieser Sprache
+    /// gehört (Text wie bei `tts_translate`, also mit Seitenmarken).
+    pub fn translate_job_for(
+        &self,
+        text: &str,
+        target_lang: &str,
+    ) -> Option<crate::translator::TranslateJob> {
+        let key = translation_key(text.trim(), target_lang);
+        self.translate_job()
+            .filter(|job| job.text_key == key && job.lang == target_lang)
     }
 
     /// Liegt für diesen Text in dieser Sprache schon eine Übersetzung?
@@ -3396,46 +3542,16 @@ impl TtsManager {
     }
 
     fn store_translation(&self, text: &str, target_lang: &str, translation: &str) {
-        let Some(path) = self.translation_path(text, target_lang) else {
-            return;
-        };
-        if let Some(dir) = path.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                log::warn!("translation cache unavailable: {e}");
-                return;
-            }
-        }
-        if let Err(e) = std::fs::write(&path, translation) {
-            log::warn!("could not cache translation: {e}");
-        }
+        write_translation(&self.app, &translation_key(text, target_lang), translation);
     }
 
-    /// Ordner der fertigen Übersetzungsabschnitte (`translations/chunks`).
-    fn chunk_cache_dir(&self) -> Option<std::path::PathBuf> {
-        use tauri::Manager;
-        let base = crate::portable::data_dir()
-            .cloned()
-            .or_else(|| self.app.path().app_local_data_dir().ok())?;
-        Some(base.join("translations").join("chunks"))
-    }
-
-    /// Ablageort einer Übersetzung. Der Dateiname ist der Streuwert aus Text
-    /// und Sprache — ändert sich das Original, zeigt er woandershin, und die
-    /// alte Übersetzung wird nie fälschlich ausgeliefert.
+    /// Ablageort einer Übersetzung (Dateiname = [`translation_key`]).
     fn translation_path(&self, text: &str, target_lang: &str) -> Option<std::path::PathBuf> {
-        use std::hash::{Hash, Hasher};
-        use tauri::Manager;
-        let base = crate::portable::data_dir()
-            .cloned()
-            .or_else(|| self.app.path().app_local_data_dir().ok())?;
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
-        target_lang.hash(&mut hasher);
-        // Fassung der Uebersetzung: seit v2 bleiben Sprechermarken und Tags
-        // stehen. Aeltere Eintraege (mit uebersetzten Marken) gelten nicht mehr.
-        "v2-geschuetzte-marken".hash(&mut hasher);
-        let key = hasher.finish();
-        Some(base.join("translations").join(format!("{key:016x}.txt")))
+        Some(
+            translation_base(&self.app)?
+                .join("translations")
+                .join(format!("{}.txt", translation_key(text, target_lang))),
+        )
     }
 
     /// Diktat für das Vorlesefeld: Aufnahme starten.

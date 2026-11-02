@@ -831,8 +831,7 @@ fn page_zone(len: usize, i: usize) -> Option<bool> {
 /// Satz und deutlich kürzer als die üblichen Textzeilen.
 fn looks_like_chapter_title(line: &str, typical: usize) -> bool {
     let n = line.chars().count();
-    n >= 2
-        && n <= 60
+    (2..=60).contains(&n)
         && line.split_whitespace().count() <= 9
         && line.chars().next().is_some_and(char::is_uppercase)
         && line.chars().filter(|c| c.is_alphabetic()).count() >= 2
@@ -972,17 +971,17 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
 
     // Pro Seite: die behaltenen Zeilen und der entfernte Lauftitel (oben).
     let mut kept_pages: Vec<Vec<&str>> = Vec::with_capacity(page_lines.len());
-    let mut run_titles: Vec<Option<&str>> = Vec::with_capacity(page_lines.len());
+    let mut run_titles: Vec<Vec<&str>> = Vec::with_capacity(page_lines.len());
     for lines in &page_lines {
         let mut kept = Vec::new();
-        let mut run_title = None;
+        let mut run_title: Vec<&str> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let at_edge = i == 0 || i + 1 == lines.len();
             let zone = page_zone(lines.len(), i);
             let run = zone.is_some_and(|top| running(top, line));
             if run || (at_edge && is_page_number(line)) {
-                if run && zone == Some(true) && run_title.is_none() && !is_page_number(line) {
-                    run_title = Some(*line);
+                if run && zone == Some(true) && !is_page_number(line) {
+                    run_title.push(*line);
                 }
             } else {
                 kept.push(*line);
@@ -1024,26 +1023,31 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
     for t in run_titles.iter().flatten() {
         *title_pages.entry(title_key(t)).or_default() += 1;
     }
-    let titled: Vec<(usize, String)> = run_titles
+    // Pro Seite der erste Randtext, der kein Buchtitel ist (steht auf der
+    // halben Buchlänge oder mehr) und Buchstaben enthält.
+    let usable = |k: &str| {
+        let twice = title_pages.get(k).copied().unwrap_or(0) * 2;
+        k.chars().any(char::is_alphabetic)
+            && (twice < with_text || (twice == with_text && with_text < 10))
+    };
+    let titled: Vec<(usize, String, &str)> = run_titles
         .iter()
         .enumerate()
-        .filter_map(|(p, t)| t.map(|t| (p, title_key(t))))
-        .filter(|(_, k)| k.chars().any(char::is_alphabetic))
-        // Buchtitel: steht auf der halben Buchlänge oder mehr.
-        .filter(|(_, k)| {
-            with_text < 10 || title_pages.get(k).copied().unwrap_or(0) * 2 <= with_text
+        .filter_map(|(p, lines)| {
+            lines
+                .iter()
+                .map(|t| (p, title_key(t), *t))
+                .find(|(_, k, _)| usable(k))
         })
         .collect();
-    for (i, (p, key)) in titled.iter().enumerate() {
+    for (i, (p, key, raw)) in titled.iter().enumerate() {
         let changed = i == 0 || titled[i - 1].1 != *key;
         // Wechsel im Seitentakt (A, B, A, B …) sind keine Kapitel.
         let flips_back = i >= 2 && titled[i - 2].1 == *key;
         // Der neue Titel muss sich halten (mindestens zwei Seiten).
         let persists = titled.get(i + 1).is_some_and(|n| n.1 == *key);
         if changed && !flips_back && persists && headings[*p].is_empty() {
-            if let Some(t) = run_titles[*p] {
-                headings[*p].push(clean_running_title(t));
-            }
+            headings[*p].push(clean_running_title(raw));
         }
     }
 
@@ -1355,12 +1359,15 @@ mod tests {
             .collect();
         let out = pdf_pages_to_text(&pages);
         assert!(!out.contains("Der Leuchtturm"), "{out}");
-        assert!(!out.contains("Kapitel"), "{out}");
+        // Der Kapitel-Lauftitel steht nur noch einmal je Kapitel, als Überschrift.
+        assert_eq!(out.matches("Kapitel").count(), 2, "{out}");
+        assert!(out.contains("## Kapitel 2 · Die Klippe"), "{out}");
         assert!(!out.contains("- 3 -"), "{out}");
         assert!(out.contains("vom Meer heraufkam, Nebel am Ende."), "{out}");
-        // Ein Satz über die Seitengrenze bleibt zusammen.
+        // Ein Satz über die Seitengrenze bleibt zusammen (nicht an einem
+        // Kapitelanfang: dort beginnt ein neuer Absatz unter der Überschrift).
         assert!(
-            out.contains("läuft über die Seitengrenze in {{S. 4}} Stürme im Turm, Zeile 1"),
+            out.contains("läuft über die Seitengrenze in {{S. 3}} Nebel im Turm, Zeile 1"),
             "{out}"
         );
     }
@@ -1485,8 +1492,14 @@ mod tests {
         }
         for z in 0..10 {
             page.push_str(&format!(
-                "Satz {z} auf Seite {p}: Der Wind {} um den Turm, und Mara lauschte lange.\n",
-                ["heulte", "pfiff", "strich", "fuhr"][(p + z) % 4]
+                "Satz {z} auf Seite {p}: Der Wind {} um den Turm {}, und Mara lauschte lange.\n",
+                ["heulte", "pfiff", "strich", "fuhr"][(p + z) % 4],
+                // Jede Zeile einmalig, auch ohne Ziffern verglichen.
+                (p * 10 + z)
+                    .to_string()
+                    .chars()
+                    .map(|d| (b'a' + d as u8 - b'0') as char)
+                    .collect::<String>()
             ));
         }
         page.push_str(&format!("{}\n", p + 1));
@@ -1520,7 +1533,7 @@ mod tests {
         assert_eq!(out.matches("## ").count(), 4, "{out}");
         // Die Seitenmarke steht am Text unter der Überschrift, nicht darin.
         assert!(
-            out.contains("## Kapitel 3: Die Klippe\n\n{{S. 4}} Satz 0"),
+            out.contains("## Kapitel 3: Die Klippe\n\nSatz 0 auf Seite 3: {{S. 4}}"),
             "{out}"
         );
         assert!(!out.contains("## {{S."), "{out}");
@@ -1566,7 +1579,10 @@ mod tests {
         assert!(!out.contains("Leuchtturm"), "{out}");
         assert_eq!(out.matches("## ").count(), 3, "{out}");
         // Erste Überschrift steht vor dem Text der ersten Seite.
-        assert!(out.starts_with("## Die Klippe\n\n{{S. 1}} Satz 0"), "{out}");
+        assert!(
+            out.starts_with("## Die Klippe\n\nSatz 0 auf Seite 0: {{S. 1}}"),
+            "{out}"
+        );
     }
 
     #[test]

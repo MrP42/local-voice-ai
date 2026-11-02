@@ -170,8 +170,9 @@ pub const BLOCK_CHARS_CLOUD: usize = 12_000;
 /// Fehlercode, wenn das Modell die Antwort abgeschnitten hat.
 pub const TRUNCATED: &str = "truncated";
 
-/// Wie viele Abschnitte bei Cloud-/Abo-Modellen gleichzeitig laufen.
-pub const PARALLEL_CLOUD: usize = 3;
+/// Wie viele Arbeiter bei Cloud-/Abo-Modellen gleichzeitig übersetzen: jeder
+/// einen zusammenhängenden Bereich des Buchs, Abschnitt für Abschnitt.
+pub const TRANSLATE_WORKERS_CLOUD: usize = 4;
 
 /// Laeuft das aktive Sprachmodell auf diesem Rechner (App-Modell, Ollama, vLLM,
 /// jede Adresse auf localhost)? Alles andere ist ein Cloud-, API- oder Abo-Modell.
@@ -472,9 +473,12 @@ pub fn split_sections(text: &str, max: usize) -> (Vec<Chapter>, Vec<Section>) {
 pub trait SectionCache: Send + Sync {
     fn get(&self, section: &str) -> Option<String>;
     fn put(&self, section: &str, translated: &str);
+    /// Eintrag verwerfen (die Schlussprüfung hat ihn beanstandet).
+    fn remove(&self, _section: &str) {}
 }
 
 /// Kein Zwischenspeicher.
+#[allow(dead_code)]
 pub struct NoCache;
 
 impl SectionCache for NoCache {
@@ -519,6 +523,12 @@ impl SectionCache for DiskSectionCache {
         std::fs::read_to_string(self.path(section)?)
             .ok()
             .filter(|s| !s.is_empty())
+    }
+
+    fn remove(&self, section: &str) {
+        if let Some(path) = self.path(section) {
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     fn put(&self, section: &str, translated: &str) {
@@ -573,6 +583,8 @@ pub struct ProgressInfo {
     pub chapter_title: Option<String>,
     pub done_chars: usize,
     pub total_chars: usize,
+    /// Je Arbeiter: fertige und alle Abschnitte seines Bereichs.
+    pub workers: Vec<(usize, usize)>,
 }
 
 /// Beobachter der Übersetzung — in der App sendet er Tauri-Ereignisse, im Test
@@ -584,6 +596,7 @@ pub trait TranslateObserver: Send + Sync {
 }
 
 /// Ohne Beobachter.
+#[allow(dead_code)]
 pub struct NoObserver;
 
 impl TranslateObserver for NoObserver {}
@@ -638,7 +651,7 @@ where
     let mut done: Vec<String> = Vec::new();
     while let Some((piece, depth)) = pending.pop_front() {
         let can_split = depth < MAX_SPLITS && split_in_halves(&piece).is_some();
-        let result = translate_block(&piece, |chunk| call(chunk)).await;
+        let result = translate_block(&piece, call).await;
         let cut_off = match &result {
             Err(e) if e == TRUNCATED => true,
             Ok(out) if looks_cut_off(&piece, out) => {
@@ -665,61 +678,218 @@ where
     Ok(done.join("\n"))
 }
 
-/// Ergebnis eines Abschnitts: Text und ob er aus dem Cache kam.
+/// Seitenmarken (`{{S. n}}`, in Reihenfolge) und übrige Sprecher-/Tag-Marken
+/// (sortiert) eines Textes — Grundlage der Schlussprüfung.
+fn marker_signature(text: &str) -> (Vec<String>, Vec<String>) {
+    let mut pages = Vec::new();
+    let mut others = Vec::new();
+    for (s, e) in marker_spans(text) {
+        if text[s..e].starts_with("{{S. ") {
+            pages.push(text[s..e].to_string());
+        } else {
+            others.push(text[s..e].to_string());
+        }
+    }
+    others.sort();
+    (pages, others)
+}
+
+/// Anzahl der Markdown-Überschriftszeilen (`#`–`###`).
+fn heading_lines(text: &str) -> usize {
+    text.split('\n')
+        .filter(|l| heading_title(l).is_some())
+        .count()
+}
+
+/// Schlussprüfung eines übersetzten Abschnitts: gleiche Seitenmarken (Anzahl und
+/// Werte), gleiche Sprecher-/Tag-Marken, gleich viele Überschriftszeilen, nicht
+/// leer, Länge plausibel. `Some(Grund)`, wenn etwas nicht stimmt.
+pub fn verify_section(original: &str, translated: &str) -> Option<String> {
+    if original.trim().is_empty() {
+        return None;
+    }
+    if translated.trim().is_empty() {
+        return Some("Abschnitt ist leer".to_string());
+    }
+    let (pages_a, others_a) = marker_signature(original);
+    let (pages_b, others_b) = marker_signature(translated);
+    if pages_a != pages_b {
+        return Some(format!(
+            "Seitenmarken weichen ab ({} statt {})",
+            pages_b.len(),
+            pages_a.len()
+        ));
+    }
+    if others_a != others_b {
+        return Some("Sprecher-/Tag-Marken weichen ab".to_string());
+    }
+    let (ha, hb) = (heading_lines(original), heading_lines(translated));
+    if ha != hb {
+        return Some(format!("Überschriftszeilen weichen ab ({hb} statt {ha})"));
+    }
+    if looks_cut_off(original, translated) {
+        return Some("Übersetzung auffällig kurz".to_string());
+    }
+    None
+}
+
+/// Fertiger Abschnitt: Text, aus dem Cache?, Warnung (Prüfung zweimal gescheitert).
+struct SectionDone {
+    text: String,
+    cached: bool,
+    warning: Option<String>,
+}
+
+/// Ergebnis eines Abschnitts. Gespeichert wird nur, was die Schlussprüfung
+/// besteht; sonst einmal neu übersetzt, danach mit Warnung übernommen.
 async fn section_outcome<F, Fut>(
     section: &Section,
     cache: &dyn SectionCache,
     cancel: &std::sync::atomic::AtomicBool,
     call: &F,
-) -> Result<(String, bool), String>
+) -> Result<SectionDone, String>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<String, String>>,
 {
     use std::sync::atomic::Ordering;
+    let done = |text: String, cached: bool, warning: Option<String>| SectionDone {
+        text,
+        cached,
+        warning,
+    };
     if section.text.trim().is_empty() {
-        return Ok((section.text.clone(), true));
+        return Ok(done(section.text.clone(), true, None));
     }
     if let Some(hit) = cache.get(&section.text) {
-        return Ok((hit, true));
+        if verify_section(&section.text, &hit).is_none() {
+            return Ok(done(hit, true, None));
+        }
+        cache.remove(&section.text);
     }
-    if cancel.load(Ordering::SeqCst) {
-        return Err(CANCELLED.to_string());
+    let mut last: Option<(String, String)> = None;
+    for _ in 0..2 {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(CANCELLED.to_string());
+        }
+        let translated = translate_section(&section.text, call).await?;
+        match verify_section(&section.text, &translated) {
+            None => {
+                // Sofort ablegen — auch wenn ein anderer Arbeiter noch läuft
+                // oder später ein Fehler kommt, geht dieser nicht verloren.
+                cache.put(&section.text, &translated);
+                return Ok(done(translated, false, None));
+            }
+            Some(problem) => {
+                log::warn!("Übersetzung: Schlussprüfung beanstandet einen Abschnitt ({problem})");
+                last = Some((translated, problem));
+            }
+        }
     }
-    let translated = translate_section(&section.text, call).await?;
-    // Sofort ablegen — auch wenn ein früherer Abschnitt noch läuft oder
-    // später ein Fehler kommt, geht dieser nicht mehr verloren.
-    cache.put(&section.text, &translated);
-    Ok((translated, false))
+    let (translated, problem) = last.expect("zwei Versuche");
+    Ok(done(translated, false, Some(problem)))
+}
+
+/// Die Bereiche der Arbeiter: zusammenhängend, nach Zeichenmenge ausgewogen,
+/// nur an Kapitelgrenzen — bei weniger Kapiteln als Arbeitern an
+/// Abschnittsgrenzen. Höchstens so viele Bereiche wie Abschnitte.
+#[allow(clippy::single_range_in_vec_init)]
+pub fn partition_workers(sections: &[Section], workers: usize) -> Vec<std::ops::Range<usize>> {
+    let len = sections.len();
+    let n = workers.max(1).min(len.max(1));
+    if n == 1 {
+        return vec![0..len];
+    }
+    let mut prefix = vec![0usize; len + 1];
+    for (i, s) in sections.iter().enumerate() {
+        prefix[i + 1] = prefix[i] + s.text.chars().count();
+    }
+    let total = prefix[len];
+    let chapter_cuts: Vec<usize> = (1..len)
+        .filter(|&i| sections[i].chapter != sections[i - 1].chapter)
+        .collect();
+    let cands: Vec<usize> = if chapter_cuts.len() + 1 >= n {
+        chapter_cuts
+    } else {
+        (1..len).collect()
+    };
+    let mut cuts = Vec::with_capacity(n - 1);
+    let mut from = 0usize;
+    for k in 1..n {
+        let target = total * k / n;
+        let last_allowed = cands.len() - (n - k);
+        let best = (from..=last_allowed)
+            .min_by_key(|&j| prefix[cands[j]].abs_diff(target))
+            .unwrap_or(from);
+        cuts.push(cands[best]);
+        from = best + 1;
+    }
+    let mut ranges = Vec::with_capacity(n);
+    let mut start = 0;
+    for c in cuts {
+        ranges.push(start..c);
+        start = c;
+    }
+    ranges.push(start..len);
+    ranges
+}
+
+/// Ergebnis einer Übersetzung: der Text und Warnungen der Schlussprüfung.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub text: String,
+    pub warnings: Vec<String>,
+}
+
+struct Shared {
+    results: Vec<Option<(String, bool)>>,
+    next_emit: usize,
+    done: usize,
+    done_chars: usize,
+    worker_done: Vec<usize>,
+    errors: Vec<(usize, String)>,
+    warnings: Vec<(usize, String)>,
+    out: Vec<String>,
 }
 
 /// Ganzer Text, kapitel- und abschnittsweise: fertige Abschnitte kommen aus dem
-/// Cache, bis zu `parallel` laufen gleichzeitig, Ereignisse und Ergebnis folgen
-/// der Reihenfolge des Textes. `call` ist ein einzelner Modellaufruf (mit
-/// Wiederholung bei vorübergehenden Fehlern).
+/// Cache; `workers` Arbeiter übersetzen je einen zusammenhängenden Bereich,
+/// Abschnitt für Abschnitt. Der Fortschritt kommt sofort bei jedem fertigen
+/// Abschnitt, die Abschnitts-Ereignisse und das Ergebnis folgen der Reihenfolge
+/// des Textes (spätere fertige Abschnitte warten auf die Lücke davor). `call`
+/// ist ein einzelner Modellaufruf (mit Wiederholung bei vorübergehenden Fehlern).
 pub async fn translate_document<F, Fut>(
     text: &str,
     block_chars: usize,
-    parallel: usize,
+    workers: usize,
     cache: &dyn SectionCache,
     observer: &dyn TranslateObserver,
     cancel: &std::sync::atomic::AtomicBool,
     call: F,
-) -> Result<String, String>
+) -> Result<Outcome, String>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<String, String>>,
 {
-    use futures_util::StreamExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
     let (chapters, sections) = split_sections(text, block_chars);
     let total = sections.len();
     let total_chars: usize = sections.iter().map(|s| s.text.chars().count()).sum();
+    let ranges = partition_workers(&sections, workers);
+    let worker_totals: Vec<usize> = ranges.iter().map(|r| r.len()).collect();
+    let title_of = |chapter: usize| chapters.get(chapter).and_then(|c| c.title.clone());
+    let worker_view = |done: &[usize]| -> Vec<(usize, usize)> {
+        done.iter()
+            .copied()
+            .zip(worker_totals.iter().copied())
+            .collect()
+    };
     observer.started(&StartInfo {
         total,
         chapters: chapters.len(),
         total_chars,
     });
-    let title_of = |chapter: usize| chapters.get(chapter).and_then(|c| c.title.clone());
     observer.progress(&ProgressInfo {
         done: 0,
         total,
@@ -728,61 +898,119 @@ where
         chapter_title: title_of(0),
         done_chars: 0,
         total_chars,
+        workers: worker_view(&vec![0; ranges.len()]),
     });
 
+    let shared = Mutex::new(Shared {
+        results: vec![None; total],
+        next_emit: 0,
+        done: 0,
+        done_chars: 0,
+        worker_done: vec![0; ranges.len()],
+        errors: Vec::new(),
+        warnings: Vec::new(),
+        out: Vec::with_capacity(total),
+    });
+    let abort = AtomicBool::new(false);
     let call = &call;
-    let mut stream = futures_util::stream::iter(
-        sections
-            .iter()
-            .map(|section| async move { section_outcome(section, cache, cancel, call).await }),
-    )
-    .buffered(parallel.max(1));
-
-    let mut out: Vec<String> = Vec::with_capacity(total);
-    let mut done_chars = 0usize;
-    let mut first_in_chapter: Vec<usize> = vec![0; chapters.len()];
-    let mut seen_chapter: Vec<usize> = vec![0; chapters.len()];
-    for s in &sections {
-        first_in_chapter[s.chapter] += 1;
-    }
-    while let Some(outcome) = stream.next().await {
-        let index = out.len();
-        let section = &sections[index];
-        let (translated, cached) = match outcome {
-            Ok(done) => done,
-            Err(e) if e == CANCELLED => return Err(e),
-            Err(e) => {
-                let nr = seen_chapter[section.chapter] + 1;
-                let of = first_in_chapter[section.chapter];
-                return Err(format!(
-                    "Übersetzung bei Kapitel {}, Abschnitt {nr} von {of} abgebrochen: {e}",
-                    section.chapter + 1
-                ));
+    let run_worker = |w: usize, range: std::ops::Range<usize>| {
+        let (shared, abort, sections, chapters_len) = (&shared, &abort, &sections, chapters.len());
+        let (title_of, worker_view) = (&title_of, &worker_view);
+        async move {
+            for index in range {
+                if abort.load(Ordering::SeqCst) {
+                    return;
+                }
+                let section = &sections[index];
+                let outcome = section_outcome(section, cache, cancel, call).await;
+                let mut st = shared.lock().unwrap();
+                let done = match outcome {
+                    Ok(done) => done,
+                    Err(e) => {
+                        st.errors.push((index, e));
+                        abort.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                };
+                if let Some(problem) = done.warning {
+                    st.warnings.push((index, problem));
+                }
+                st.results[index] = Some((done.text, done.cached));
+                st.done += 1;
+                st.done_chars += section.text.chars().count();
+                st.worker_done[w] += 1;
+                observer.progress(&ProgressInfo {
+                    done: st.done,
+                    total,
+                    chapter: section.chapter,
+                    chapters: chapters_len,
+                    chapter_title: title_of(section.chapter),
+                    done_chars: st.done_chars,
+                    total_chars,
+                    workers: worker_view(&st.worker_done),
+                });
+                while st.next_emit < total {
+                    let i = st.next_emit;
+                    let Some((text, cached)) = st.results[i].take() else {
+                        break;
+                    };
+                    observer.chunk(&ChunkInfo {
+                        index: i,
+                        total,
+                        chapter: sections[i].chapter,
+                        chapters: chapters_len,
+                        chapter_title: title_of(sections[i].chapter),
+                        text: text.clone(),
+                        cached,
+                    });
+                    st.out.push(text);
+                    st.next_emit += 1;
+                }
             }
-        };
-        seen_chapter[section.chapter] += 1;
-        done_chars += section.text.chars().count();
-        observer.chunk(&ChunkInfo {
-            index,
-            total,
-            chapter: section.chapter,
-            chapters: chapters.len(),
-            chapter_title: title_of(section.chapter),
-            text: translated.clone(),
-            cached,
-        });
-        out.push(translated);
-        observer.progress(&ProgressInfo {
-            done: index + 1,
-            total,
-            chapter: section.chapter,
-            chapters: chapters.len(),
-            chapter_title: title_of(section.chapter),
-            done_chars,
-            total_chars,
-        });
+        }
+    };
+    futures_util::future::join_all(
+        ranges
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(w, range)| run_worker(w, range)),
+    )
+    .await;
+
+    let st = shared.into_inner().unwrap();
+    // Position im Kapitel für Fehler und Warnungen.
+    let place = |index: usize| {
+        let chapter = sections[index].chapter;
+        let nr = sections[..=index]
+            .iter()
+            .filter(|s| s.chapter == chapter)
+            .count();
+        let of = sections.iter().filter(|s| s.chapter == chapter).count();
+        (chapter + 1, nr, of)
+    };
+    if let Some((index, e)) = st.errors.iter().min_by_key(|(i, _)| *i) {
+        if st.errors.iter().any(|(_, e)| e == CANCELLED) {
+            return Err(CANCELLED.to_string());
+        }
+        let (c, nr, of) = place(*index);
+        return Err(format!(
+            "Übersetzung bei Kapitel {c}, Abschnitt {nr} von {of} abgebrochen: {e}"
+        ));
     }
-    Ok(out.join("\n"))
+    let mut warnings = st.warnings;
+    warnings.sort_by_key(|(i, _)| *i);
+    let warnings = warnings
+        .into_iter()
+        .map(|(i, problem)| {
+            let (c, nr, of) = place(i);
+            format!("Kapitel {c}, Abschnitt {nr} von {of}: {problem}")
+        })
+        .collect();
+    Ok(Outcome {
+        text: st.out.join("\n"),
+        warnings,
+    })
 }
 
 /// Ausgelastetes Modell oder Mengenbegrenzung: zweimal mit Pause neu.
@@ -812,12 +1040,12 @@ async fn translate_with_retry(
     }
 }
 
-/// Wie viele Abschnitte gleichzeitig laufen: Cloud/Abo mehrere, lokal einer.
-pub fn translation_parallelism(settings: &AppSettings) -> usize {
+/// Wie viele Arbeiter gleichzeitig übersetzen: Cloud/Abo mehrere, lokal einer.
+pub fn translation_workers(settings: &AppSettings) -> usize {
     if active_model_is_local(settings) {
         1
     } else {
-        PARALLEL_CLOUD
+        TRANSLATE_WORKERS_CLOUD
     }
 }
 
@@ -830,19 +1058,112 @@ pub async fn translate_blocks(
     cpu_only: bool,
     cache: &dyn SectionCache,
     observer: &dyn TranslateObserver,
-) -> Result<String, String> {
+) -> Result<Outcome, String> {
     use std::sync::atomic::Ordering;
     TRANSLATE_CANCEL.store(false, Ordering::SeqCst);
     translate_document(
         text,
         translation_block_chars(settings),
-        translation_parallelism(settings),
+        translation_workers(settings),
         cache,
         observer,
         &TRANSLATE_CANCEL,
         |chunk| translate_with_retry(settings, chunk, target_lang, cpu_only),
     )
     .await
+}
+
+// ---- Auftragszustand für die Oberfläche --------------------------------------
+
+/// Fortschritt eines Arbeiters.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct WorkerProgress {
+    pub done: u32,
+    pub total: u32,
+}
+
+/// Der laufende (oder zuletzt beendete) Übersetzungsauftrag. Er lebt im
+/// Backend: schließt die Oberfläche, läuft er weiter, und sie holt sich den
+/// Stand mit `tts_translate_job` wieder.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateJob {
+    pub lang: String,
+    /// Schlüssel des Originaltexts (wie der Dateiname im Ganztext-Cache).
+    pub text_key: String,
+    pub done: u32,
+    pub total: u32,
+    pub chapters: u32,
+    pub workers: Vec<WorkerProgress>,
+    /// Bisher zusammenhängend fertiger Text (vom Anfang an lückenlos).
+    pub partial: String,
+    pub error: Option<String>,
+    pub running: bool,
+    /// Beanstandungen der Schlussprüfung (Kapitel/Abschnitt), die trotz
+    /// zweitem Versuch blieben.
+    pub warnings: Vec<String>,
+}
+
+/// Hält den [`TranslateJob`] aktuell; als Beobachter an die Übersetzung gehängt.
+pub struct JobTracker {
+    inner: std::sync::Mutex<TranslateJob>,
+}
+
+impl JobTracker {
+    pub fn new(lang: &str, text_key: &str) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(TranslateJob {
+                lang: lang.to_string(),
+                text_key: text_key.to_string(),
+                running: true,
+                ..TranslateJob::default()
+            }),
+        }
+    }
+
+    pub fn snapshot(&self) -> TranslateJob {
+        self.inner.lock().unwrap().clone()
+    }
+
+    /// Auftrag beenden: Fehler oder Warnungen festhalten.
+    pub fn finish(&self, result: &Result<Outcome, String>) {
+        let mut job = self.inner.lock().unwrap();
+        job.running = false;
+        match result {
+            Ok(outcome) => job.warnings = outcome.warnings.clone(),
+            Err(e) => job.error = Some(e.clone()),
+        }
+    }
+}
+
+impl TranslateObserver for JobTracker {
+    fn started(&self, info: &StartInfo) {
+        let mut job = self.inner.lock().unwrap();
+        job.total = info.total as u32;
+        job.chapters = info.chapters as u32;
+    }
+
+    fn chunk(&self, info: &ChunkInfo) {
+        let mut job = self.inner.lock().unwrap();
+        if info.index > 0 {
+            job.partial.push('\n');
+        }
+        job.partial.push_str(&info.text);
+    }
+
+    fn progress(&self, info: &ProgressInfo) {
+        let mut job = self.inner.lock().unwrap();
+        job.done = info.done as u32;
+        job.total = info.total as u32;
+        job.workers = info
+            .workers
+            .iter()
+            .map(|&(done, total)| WorkerProgress {
+                done: done as u32,
+                total: total as u32,
+            })
+            .collect();
+    }
 }
 
 #[cfg(test)]
@@ -1131,7 +1452,7 @@ mod section_tests {
     }
 
     #[test]
-    fn events_and_result_keep_the_order_even_when_sections_run_in_parallel() {
+    fn events_and_result_keep_the_order_even_when_sections_run_on_four_workers() {
         let text = book();
         let rec = Recorder::default();
         let cancel = AtomicBool::new(false);
@@ -1140,7 +1461,7 @@ mod section_tests {
         let out = block_on(translate_document(
             &text,
             150,
-            3,
+            4,
             &NoCache,
             &rec,
             &cancel,
@@ -1155,7 +1476,8 @@ mod section_tests {
                 }
             },
         ))
-        .unwrap();
+        .unwrap()
+        .text;
         assert_eq!(out, text.to_uppercase());
         let chunks = rec.chunks.lock().unwrap();
         let start = rec.started.lock().unwrap();
@@ -1185,6 +1507,12 @@ mod section_tests {
         let last = progress.last().unwrap();
         assert_eq!((last.done, last.total), (chunks.len(), chunks.len()));
         assert_eq!(last.done_chars, last.total_chars);
+        assert_eq!(last.workers.len(), 4);
+        assert!(last.workers.iter().all(|&(d, t)| d == t && t > 0));
+        assert_eq!(
+            last.workers.iter().map(|w| w.1).sum::<usize>(),
+            chunks.len()
+        );
         assert!(progress
             .windows(2)
             .all(|w| w[0].done_chars <= w[1].done_chars));
@@ -1236,7 +1564,8 @@ mod section_tests {
                 upper(s)
             },
         ))
-        .unwrap();
+        .unwrap()
+        .text;
         assert_eq!(out, text.to_uppercase());
         let chunks = rec2.chunks.lock().unwrap();
         assert!(chunks[..done_first].iter().all(|c| c.cached));
@@ -1271,7 +1600,8 @@ mod section_tests {
                 }
             },
         ))
-        .unwrap();
+        .unwrap()
+        .text;
         assert_eq!(out, text.to_uppercase());
         assert_eq!(calls.load(Ordering::SeqCst), 3, "ganz + zwei Hälften");
     }
@@ -1330,7 +1660,8 @@ mod section_tests {
                 }
             },
         ))
-        .unwrap();
+        .unwrap()
+        .text;
         assert_eq!(out, text.to_uppercase());
         assert!(calls.load(Ordering::SeqCst) >= 3);
         // Kurze Eingaben und CJK-Antworten lösen die Probe nicht aus.
@@ -1361,6 +1692,213 @@ mod section_tests {
         .unwrap_err();
         assert_eq!(err, CANCELLED);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    fn sections_of(chapters: &[usize]) -> Vec<Section> {
+        chapters
+            .iter()
+            .map(|&chapter| Section {
+                chapter,
+                text: "x".repeat(100),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn workers_get_contiguous_balanced_ranges_cut_at_chapter_borders() {
+        // Acht Kapitel à zwei Abschnitte, vier Arbeiter: je zwei Kapitel.
+        let secs = sections_of(&[0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7]);
+        let r = partition_workers(&secs, 4);
+        assert_eq!(r, vec![0..4, 4..8, 8..12, 12..16]);
+        // Ungleiche Kapitel: Schnitte nur an Kapitelgrenzen.
+        let secs = sections_of(&[0, 0, 0, 0, 0, 0, 1, 2, 3, 3, 3, 3]);
+        let r = partition_workers(&secs, 4);
+        assert_eq!(r.len(), 4);
+        for w in r.windows(2) {
+            assert_eq!(w[0].end, w[1].start);
+            assert_ne!(secs[w[1].start].chapter, secs[w[1].start - 1].chapter);
+        }
+        assert_eq!((r[0].start, r.last().unwrap().end), (0, 12));
+    }
+
+    #[test]
+    fn with_fewer_chapters_than_workers_it_cuts_at_section_borders() {
+        let secs = sections_of(&[0, 0, 0, 0, 0, 0, 0, 0, 1, 1]);
+        let r = partition_workers(&secs, 4);
+        assert_eq!(r.len(), 4);
+        assert!(r.iter().all(|x| !x.is_empty()));
+        assert_eq!(r.iter().map(|x| x.len()).sum::<usize>(), 10);
+        // Weniger Abschnitte als Arbeiter, lokal ein Arbeiter.
+        assert_eq!(partition_workers(&sections_of(&[0, 0]), 4).len(), 2);
+        assert_eq!(partition_workers(&secs, 1), vec![0..10]);
+        assert_eq!(partition_workers(&[], 4), vec![0..0]);
+    }
+
+    #[test]
+    fn verification_compares_marks_speakers_headings_and_length() {
+        let orig = "## Kapitel 1\n\n<Mara> Hallo [lacht] {{S. 4}} Welt. {{S. 5}} Ende.";
+        let ok = "## Chapter 1\n\n<Mara> Hello [lacht] {{S. 4}} world. {{S. 5}} End.";
+        assert_eq!(verify_section(orig, ok), None);
+        let p = verify_section(orig, &ok.replace("{{S. 5}} ", "")).unwrap();
+        assert!(p.contains("Seitenmarken"), "{p}");
+        let p = verify_section(orig, &ok.replace("{{S. 5}}", "{{S. 6}}")).unwrap();
+        assert!(p.contains("Seitenmarken"), "{p}");
+        let p = verify_section(orig, &ok.replace("<Mara>", "<Mary>")).unwrap();
+        assert!(p.contains("Sprecher"), "{p}");
+        let p = verify_section(orig, &ok.replace("## ", "")).unwrap();
+        assert!(p.contains("Überschrift"), "{p}");
+        assert!(verify_section(orig, "  ").unwrap().contains("leer"));
+        assert_eq!(verify_section("", ""), None);
+        let long = "wort ".repeat(200);
+        assert!(verify_section(&long, "wort").unwrap().contains("kurz"));
+    }
+
+    #[test]
+    fn a_failed_check_translates_the_section_again_and_then_only_warns() {
+        let text = "## Eins\n\nHallo {{S. 1}} Welt.\n## Zwei\n\nNoch ein Absatz.";
+        // Das Modell verliert beim ersten Versuch die Überschriftszeichen.
+        let first_try = AtomicUsize::new(0);
+        let cache = MemCache::default();
+        let out = block_on(translate_document(
+            text,
+            30,
+            1,
+            &cache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            |s: String| {
+                let n = first_try.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok(if n == 0 {
+                    s.to_uppercase().replace("## ", "")
+                } else {
+                    s.to_uppercase()
+                }))
+            },
+        ))
+        .unwrap();
+        assert_eq!(out.text, text.to_uppercase());
+        assert!(out.warnings.is_empty());
+        assert_eq!(cache.0.lock().unwrap().len(), 2);
+
+        // Dauerhaft beanstandet: Ergebnis kommt trotzdem, mit Warnung, nicht im Cache.
+        let cache = MemCache::default();
+        let calls = AtomicUsize::new(0);
+        let out = block_on(translate_document(
+            text,
+            30,
+            1,
+            &cache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            |s: String| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(Ok(s.replace("## ", "").replace("Hallo", "Hi")))
+            },
+        ))
+        .unwrap();
+        assert!(!out.text.is_empty());
+        assert_eq!(out.warnings.len(), 2, "{:?}", out.warnings);
+        assert!(out.warnings[0].starts_with("Kapitel 1, Abschnitt 1 von 1: "));
+        assert!(out.warnings[1].starts_with("Kapitel 2, Abschnitt 1 von 1: "));
+        assert!(cache.0.lock().unwrap().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 4, "je Abschnitt zweimal");
+    }
+
+    #[test]
+    fn a_bad_cache_entry_is_discarded_and_retranslated() {
+        let text = "## Eins\n\nHallo {{S. 1}} Welt.";
+        let cache = MemCache::default();
+        cache.put(text, "kaputt ohne alles");
+        let out = block_on(translate_document(
+            text,
+            1000,
+            1,
+            &cache,
+            &NoObserver,
+            &AtomicBool::new(false),
+            upper,
+        ))
+        .unwrap();
+        assert_eq!(out.text, text.to_uppercase());
+        assert_eq!(
+            cache.get(text).as_deref(),
+            Some(text.to_uppercase().as_str())
+        );
+    }
+
+    #[test]
+    fn progress_is_immediate_while_chunks_wait_for_the_gap() {
+        // Zwei Arbeiter; der erste hängt lange an Abschnitt 0, der zweite ist schnell fertig.
+        let text = "## A\n\nerster\n## B\n\nzweiter\n## C\n\ndritter\n## D\n\nvierter";
+        let rec = Recorder::default();
+        let out = block_on(translate_document(
+            text,
+            1000,
+            2,
+            &NoCache,
+            &rec,
+            &AtomicBool::new(false),
+            |s: String| async move {
+                if s.contains("erster") {
+                    for _ in 0..50 {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                Ok(s.to_uppercase())
+            },
+        ))
+        .unwrap();
+        assert_eq!(out.text, text.to_uppercase());
+        let chunks = rec.chunks.lock().unwrap();
+        assert!(chunks.iter().enumerate().all(|(i, c)| c.index == i));
+        let progress = rec.progress.lock().unwrap();
+        // Fortschritt zählt auch Abschnitte hinter der Lücke: irgendwann steht
+        // done auf 2 (Arbeiter 2 fertig), bevor der erste Abschnitt gemeldet ist.
+        assert!(progress
+            .iter()
+            .any(|p| p.done == 2 && p.workers[1].0 == 2 && p.workers[0].0 == 0));
+        assert_eq!(chunks.len(), 4);
+    }
+
+    #[test]
+    fn the_job_tracker_follows_the_run() {
+        let tracker = JobTracker::new("German", "abc");
+        assert!(tracker.snapshot().running);
+        let text = "## A\n\neins\n## B\n\nzwei";
+        let res = block_on(translate_document(
+            text,
+            1000,
+            2,
+            &NoCache,
+            &tracker,
+            &AtomicBool::new(false),
+            upper,
+        ));
+        tracker.finish(&res);
+        let job = tracker.snapshot();
+        assert!(!job.running && job.error.is_none());
+        assert_eq!((job.done, job.total, job.chapters), (2, 2, 2));
+        assert_eq!(job.partial, text.to_uppercase());
+        assert_eq!(job.workers.len(), 2);
+        assert_eq!(
+            (job.lang.as_str(), job.text_key.as_str()),
+            ("German", "abc")
+        );
+
+        let failing = JobTracker::new("German", "abc");
+        let res = block_on(translate_document(
+            text,
+            1000,
+            1,
+            &NoCache,
+            &failing,
+            &AtomicBool::new(false),
+            |_s: String| std::future::ready(Err::<String, String>("kaputt".into())),
+        ));
+        failing.finish(&res);
+        let job = failing.snapshot();
+        assert!(!job.running);
+        assert!(job.error.unwrap().contains("Kapitel 1"));
     }
 
     #[test]

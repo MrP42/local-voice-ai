@@ -2415,6 +2415,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_cancel,
             commands::tts::tts_server_kill,
             commands::tts::tts_translate,
+            commands::tts::tts_translate_job,
             commands::tts::tts_cached_translation,
             commands::tts::tts_save_seed_voice,
             commands::tts::llm_ps,

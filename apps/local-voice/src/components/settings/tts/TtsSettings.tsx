@@ -137,7 +137,7 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
-import type { IsbnBook } from "@/bindings";
+import type { IsbnBook, TranslateJob } from "@/bindings";
 import {
   READER_FONTS,
   READER_THEMES,
@@ -201,21 +201,13 @@ const formatEta = (seconds: number) => {
 /** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
 const TRANSFORM_CANCELLED = "transform_cancelled";
 
-/** Hintergrund-Übersetzung des Backends (`commands.ttsTranslateJob`). */
-interface TranslateJob {
-  lang: string;
-  running: boolean;
-  partial?: string | null;
-  done?: number;
-  total?: number;
-}
-const fetchTranslateJob = async (): Promise<TranslateJob | null> => {
-  const call = (
-    commands as { ttsTranslateJob?: () => Promise<TranslateJob | null> }
-  ).ttsTranslateJob;
-  if (!call) return null;
+/** Hintergrund-Übersetzung des Backends, nur wenn sie zu diesem Text und dieser Sprache gehört. */
+const fetchTranslateJob = async (
+  text: string,
+  lang: string,
+): Promise<TranslateJob | null> => {
   try {
-    return (await call()) ?? null;
+    return (await commands.ttsTranslateJob(text, lang)) ?? null;
   } catch {
     return null;
   }
@@ -443,11 +435,13 @@ export const TtsSettings = () => {
       setTransformProgress(e.payload);
       if (!resyncJob.current || Date.now() - last < 1000) return;
       last = Date.now();
-      void fetchTranslateJob().then((job) => {
-        if (!resyncJob.current || !job?.partial) return;
-        savedTranslation.current = job.partial;
-        setTranslation(job.partial);
-      });
+      void fetchTranslateJob(textRef.current, targetLangRef.current).then(
+        (job) => {
+          if (!resyncJob.current || !job?.partial) return;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        },
+      );
     });
     return () => void un.then((off) => off());
   }, []);
@@ -542,8 +536,8 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!text.trim()) return;
     let abandoned = false;
-    void fetchTranslateJob().then((job) => {
-      if (abandoned || !job?.running || job.lang !== targetLang) return;
+    void fetchTranslateJob(text, targetLang).then((job) => {
+      if (abandoned || !job?.running) return;
       if (translatingRef.current) return;
       resyncJob.current = true;
       translatingRef.current = true;
