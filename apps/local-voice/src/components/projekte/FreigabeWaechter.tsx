@@ -62,8 +62,9 @@ export const FreigabeWaechter: React.FC = () => {
       setGeladenAm(Date.now());
       setOffen(liste);
     } catch (e) {
-      // Alter Stand bleibt; einmal melden, nicht bei jedem Takt.
-      if (!ladeFehlerGemeldet.current) {
+      // Alter Stand bleibt; einmal melden, nicht bei jedem Takt. Ohne offenen
+      // Halt gibt es nichts zu verpassen: dann still bleiben (z. B. beim Start).
+      if (!ladeFehlerGemeldet.current && vorher.current.size > 0) {
         ladeFehlerGemeldet.current = true;
         toast.error(t("projekte.freigabe.ladenFehler"), {
           description: fehlerText(e, t),
