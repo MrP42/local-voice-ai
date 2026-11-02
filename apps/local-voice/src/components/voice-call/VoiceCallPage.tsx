@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   AudioLines,
   Cloud,
+  Globe,
   Paperclip,
   PanelLeftOpen,
   SquarePen,
@@ -36,6 +37,7 @@ import { ModelPicker } from "./ModelPicker";
 import { PermissionChip } from "./PermissionChip";
 import { SettingsPanel } from "./SettingsPanel";
 import { Transcript } from "./Transcript";
+import { SprachRecherche } from "../projekte/SprachRecherche";
 
 /** Mehr Text als das gehört nicht in eine Nachricht an die KI. */
 const MAX_FILE_CHARS = 20_000;
@@ -102,6 +104,7 @@ export const VoiceCallPage: React.FC = () => {
   const historyOpen = narrow ? overlayOpen : wideOpen;
   const historyId = useId();
   const [draft, setDraft] = useState("");
+  const [rechercheOffen, setRechercheOffen] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const attachId = useRef(0);
@@ -368,6 +371,13 @@ export const VoiceCallPage: React.FC = () => {
         onSelect: () => void attachFile(),
       },
       {
+        id: "recherche",
+        label: t("projekte.sprache.menu"),
+        icon: <Globe className="w-4 h-4" aria-hidden="true" />,
+        hint: t("projekte.sprache.hinweis"),
+        onSelect: () => setRechercheOffen(true),
+      },
+      {
         id: "corporate",
         label: t("voiceCall.composer.fromCorporate"),
         icon: <Cloud className="w-4 h-4" aria-hidden="true" />,
@@ -528,6 +538,11 @@ export const VoiceCallPage: React.FC = () => {
         </div>
         {settingsOpen && <SettingsPanel />}
       </div>
+      <SprachRecherche
+        open={rechercheOffen}
+        onOpenChange={setRechercheOffen}
+        frage={draft}
+      />
       <ConversationSearch
         open={searchOpen}
         onOpenChange={setSearchOpen}

@@ -1,0 +1,25 @@
+/* Brücke (von Hand, nicht Teil der Kopie aus @wai/ui): die Platzhalter-Variablen der kopierten Regeln
+   (projekt.css) zeigen auf die Fluent-Tokens dieser App (FluentRoot) bzw. deren Abstandsskala. Die Regeln
+   gelten für Bausteine im Dokument und für Dialoge im Portal (eigene Klassen am Dialogkörper). */
+.wai-projekt,
+.wai-recherche,
+.wai-freigabe,
+.wai-btn,
+.wai-badge,
+.wai-chip,
+.wai-dialog,
+.wai-modal,
+.wai-drawer {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --color-text: var(--colorNeutralForeground1);
+  --color-text-muted: var(--colorNeutralForeground2);
+  --color-border: var(--colorNeutralStroke2);
+  --color-surface: var(--colorNeutralBackground1);
+  --color-surface-2: var(--colorNeutralBackground2);
+  --color-accent: var(--colorBrandForeground1);
+  --color-warning: var(--colorStatusWarningForeground1);
+  --color-success: var(--colorStatusSuccessForeground1);
+}
