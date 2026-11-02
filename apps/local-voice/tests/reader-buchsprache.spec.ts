@@ -314,6 +314,36 @@ test("englisches Buch: Sprache erkannt und gespeichert, englische Standardstimme
   await expect
     .poll(async () => (await saved(page))?.voices?.original)
     .toBe("provider:phonon:en:default");
+  // Eindeutig sichtbar (Codex zu #199): Name mit Sprache, ungekürzt.
+  await expect(page.getByTestId("voice-select")).toContainText(
+    "Phonon · Standardstimme · Englisch",
+  );
+  await page.getByTestId("voice-select").locator(".app-select__control").click();
+  const chosen = page.locator(".app-select__option--is-selected");
+  await expect(chosen).toContainText("Phonon · Standardstimme · Englisch");
+  const label = chosen.locator("span.break-words").first();
+  if (await label.count())
+    expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+});
+
+test("kompakter Stimmenknopf in der Leiste zeigt die Sprache der Stimme", async ({ page }) => {
+  await setup(page, {
+    engine: "provider:phonon",
+    state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
+  });
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  const dock = page.getByTestId("reader-dock");
+  await expect(dock.getByTestId("voice-compact-lang")).toHaveText("en");
+  await expect(dock.getByTestId("voice-compact")).toHaveAttribute(
+    "title",
+    "Stimmen: Phonon · Standardstimme · Englisch",
+  );
 });
 
 test("von Hand gewählte Stimme bleibt, auch wenn sie nicht zur Buchsprache passt", async ({ page }) => {
@@ -365,11 +395,20 @@ test("Stimmenauswahl öffnet wieder an der zuletzt gescrollten Stelle", async ({
   await select.locator(".app-select__control").click();
   await page.getByTestId("voice-lang-filter-all").click();
   const list = page.locator(".app-select__menu-list");
-  await list.evaluate((el) => {
-    el.scrollTop = 400;
-    el.dispatchEvent(new Event("scroll"));
-  });
-  const top = await list.evaluate((el) => el.scrollTop);
+  // Wie mit der Maus: Rad über der Liste.
+  await list.hover();
+  await page.mouse.wheel(0, 400);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(100);
+  // Rad-Scrollen kann weich nachlaufen: erst den ruhigen Endstand nehmen.
+  let top = -1;
+  await expect
+    .poll(async () => {
+      const now = await list.evaluate((el) => el.scrollTop);
+      const settled = now === top;
+      top = now;
+      return settled;
+    })
+    .toBe(true);
   expect(top).toBeGreaterThan(100);
   await page.keyboard.press("Escape");
   await expect(list).toHaveCount(0);

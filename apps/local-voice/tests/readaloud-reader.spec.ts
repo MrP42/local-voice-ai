@@ -1456,26 +1456,43 @@ test("Schreibregeln stehen hinter dem ⓘ-Knopf, nicht mehr rechts", async ({ pa
 });
 
 test("Vollbild-Knopf füllt das Fenster, ohne es zu maximieren; F11 für echtes Vollbild", async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+  // Wie in der App: rahmenloses Fenster mit eigenen Fensterknöpfen.
+  await page.addInitScript(() => {
+    window.localStorage.setItem("lva.ui.tts.view", "read");
+    (window as unknown as { isTauri: boolean }).isTauri = true;
+  });
   await open(page, BOOK, 1200);
+  const windowCalls = () =>
+    page.evaluate(() =>
+      ((window as unknown as { __calls: [string, unknown][] }).__calls ?? [])
+        .map(([c]) => c)
+        .filter((c) => /plugin:window\|(maximize|toggle_maximize|set_fullscreen|set_simple_fullscreen|set_size)/.test(c)),
+    );
+  const controls = page.getByRole("group", { name: "Fenster", exact: true });
+  await expect(controls).toBeVisible();
   const btn = page.getByTestId("reader-fullscreen");
   await expect(btn).toHaveAttribute("aria-label", "Vollbild");
   await btn.click();
-  // Kein Bildschirm-Vollbild: die Lesespalte deckt nur das Fenster ab.
+  // Kein Bildschirm-Vollbild, kein Maximieren: die Lesespalte deckt das
+  // Fenster unter der Titelleiste ab, die Fensterknöpfe bleiben bedienbar.
   expect(await page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+  expect(await windowCalls()).toEqual([]);
   const frame = page.locator(".reader-frame");
   await expect(frame).toHaveAttribute("data-fullscreen", "1");
   const box = (await frame.boundingBox())!;
   expect(box.x).toBeLessThanOrEqual(1);
-  expect(box.y).toBeLessThanOrEqual(1);
+  expect(Math.abs(box.y - 48)).toBeLessThanOrEqual(1);
   expect(box.width).toBeGreaterThanOrEqual(1198);
-  expect(box.height).toBeGreaterThanOrEqual(898);
+  expect(box.y + box.height).toBeGreaterThanOrEqual(899);
+  await expect(controls).toBeVisible();
+  await expect(page.getByRole("button", { name: "Maximieren" })).toBeVisible();
   await expect(page.getByTestId("reader-player")).toBeInViewport();
   await expect(btn).toHaveAttribute("aria-label", "Vollbild beenden");
   // Escape beendet es.
   await page.locator("body").press("Escape");
   await expect(frame).not.toHaveAttribute("data-fullscreen", "1");
-  // F11: echtes Vollbild der Lesespalte, der Knopf beendet es.
+  // F11: echtes Vollbild der Lesespalte (Fullscreen-API des WebViews), der
+  // Knopf beendet es; auch dabei wird das Fenster nicht maximiert.
   await page.keyboard.press("F11");
   await expect
     .poll(() => page.evaluate(() => document.fullscreenElement?.className ?? ""))
@@ -1485,6 +1502,7 @@ test("Vollbild-Knopf füllt das Fenster, ohne es zu maximieren; F11 für echtes 
     .poll(() => page.evaluate(() => document.fullscreenElement === null))
     .toBe(true);
   await expect(frame).not.toHaveAttribute("data-fullscreen", "1");
+  expect(await windowCalls()).toEqual([]);
 });
 
 test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ page }) => {

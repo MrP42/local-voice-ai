@@ -668,6 +668,7 @@
       "manage": "Manage voices …",
       "umlautSuggestion": "Display name with umlauts: use “{{name}}”",
       "scriptVoices": "Script with speakers",
+      "modelDefault": "Default voice",
       "filter": { "label": "Filter voices by language", "auto": "Matching ({{language}})", "all": "All" },
       "scriptVoicesHint": "The speakers in the script read their lines; text without a speaker uses the default voice.",
       "singleVoiceHint": "This voice reads the whole text – the speakers in the script are skipped."

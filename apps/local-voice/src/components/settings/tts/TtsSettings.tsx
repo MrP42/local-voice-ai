@@ -2407,7 +2407,7 @@ export const TtsSettings = () => {
             bleibt als zweiter Weg bestehen. */}
           <Select
             menuPortal
-            compactMenuWidth={compact ? 300 : undefined}
+            compactMenuWidth={compact ? 340 : undefined}
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
             options={shownVoiceOptions}
@@ -2422,6 +2422,17 @@ export const TtsSettings = () => {
                     data-testid="voice-compact"
                   >
                     <Mic width={16} height={16} aria-hidden="true" />
+                    {/* Sprache der Stimme als Kürzel am Knopf (Codex zu
+                        #199): englisches Buch, englische Stimme sichtbar. */}
+                    {voiceLanguageOf(option.value) && (
+                      <span
+                        aria-hidden="true"
+                        className="ms-1 text-[11px] font-semibold uppercase tabular-nums"
+                        data-testid="voice-compact-lang"
+                      >
+                        {voiceLanguageOf(option.value)}
+                      </span>
+                    )}
                     <span className="sr-only">{option.label}</span>
                   </span>
                 );
@@ -2436,7 +2447,7 @@ export const TtsSettings = () => {
               if (!sample && !target) return option.label;
               return (
                 <span className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate">
+                  <span className="min-w-0 flex-1 break-words">
                     {option.label}
                   </span>
                   {sample ? (

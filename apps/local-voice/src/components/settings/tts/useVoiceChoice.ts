@@ -271,9 +271,37 @@ export function useVoiceChoice(phase: string) {
 
   /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch.
      Bei einem Anbieter mit Stimmwechsel ist die Standardstimme der Eintrag "Skript mit Sprechern". */
+  // Spricht ein Anbieter mehrere Sprachen (Phonon Deutsch + Englisch), steht
+  // die Sprache am Namen (Codex zu #199: „englische Standardstimme eindeutig“).
+  const languageName = (code: string) => {
+    try {
+      return (
+        new Intl.DisplayNames([uiLang], { type: "language" }).of(code) ?? code
+      );
+    } catch {
+      return code;
+    }
+  };
+  const providerLangs = new Map<string, Set<string>>();
+  for (const option of providerVoices) {
+    const l = primaryLanguage(option.voice.language);
+    if (!l) continue;
+    const set = providerLangs.get(option.provider_id) ?? new Set<string>();
+    set.add(l);
+    providerLangs.set(option.provider_id, set);
+  }
   const providerVoiceItems: SelectOption[] = sortVoicesByLabel(
     providerVoices.map((option) => {
-      const name = shortVoiceName(option.voice.label);
+      const lang = primaryLanguage(option.voice.language);
+      const multi = (providerLangs.get(option.provider_id)?.size ?? 0) > 1;
+      const modelDefault = option.voice.id.endsWith(
+        `:${PROVIDER_DEFAULT_VOICE}`,
+      );
+      const base = modelDefault
+        ? t("tts.voices.modelDefault")
+        : shortVoiceName(option.voice.label);
+      const name =
+        multi && lang ? `${base} · ${languageName(lang)}` : base;
       const script =
         option.voice_switching === true &&
         option.voice.id === PROVIDER_DEFAULT_VOICE;

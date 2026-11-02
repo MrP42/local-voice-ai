@@ -727,7 +727,9 @@
    App-Fenster in seiner jetzigen Größe ab, ohne es zu maximieren. */
 .reader-frame[data-fullscreen="1"]:not(:fullscreen) {
   position: fixed;
-  inset: 0;
+  /* Unter der Titelleiste (48 px, .lv-titlebar): Fensterknöpfe und
+     Ziehfläche bleiben, das Fenster lässt sich verschieben und schließen. */
+  inset: 48px 0 0 0;
   z-index: 50;
   background: var(--color-background);
   color: var(--color-text);

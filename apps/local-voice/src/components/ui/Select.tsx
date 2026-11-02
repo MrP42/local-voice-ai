@@ -109,7 +109,7 @@ const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
     // (Rad, Tasten, Ziehen) beendet das sofort.
     // Zeitfenster statt Bildzahl: auf einem ausgelasteten Rechner kommen die
     // Bilder langsamer, react-select scrollt aber trotzdem erst danach.
-    const until = performance.now() + 400;
+    const until = performance.now() + 800;
     let id = 0;
     let stopped = false;
     const stop = () => {

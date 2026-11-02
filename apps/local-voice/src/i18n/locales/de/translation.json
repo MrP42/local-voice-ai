@@ -668,6 +668,7 @@
       "manage": "Stimmen verwalten …",
       "umlautSuggestion": "Anzeigename mit Umlauten: „{{name}}“ übernehmen",
       "scriptVoices": "Skript mit Sprechern",
+      "modelDefault": "Standardstimme",
       "filter": { "label": "Stimmen nach Sprache filtern", "auto": "Passend ({{language}})", "all": "Alle" },
       "scriptVoicesHint": "Die Sprecher im Skript lesen ihre Zeilen; Text ohne Sprecher liest die Standardstimme.",
       "singleVoiceHint": "Diese Stimme liest den ganzen Text – die Sprecher im Skript werden übergangen."
