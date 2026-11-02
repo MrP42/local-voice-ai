@@ -1777,9 +1777,16 @@ test("die Produktseite zeigt Kurzbücher je Sprache und bietet weitere an", asyn
   await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/04-bibliothek-1440.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await card.scrollIntoViewIfNeeded();
-  for (const chip of await langs.getByRole("button").all()) {
-    const box = await chip.boundingBox();
+  // Mobil alle Ziele der Karte mindestens 44 × 44 px (Codex).
+  const targets = [
+    ...(await card.getByRole("button").all()),
+    card.locator(".app-select__control"),
+  ];
+  expect(targets.length).toBeGreaterThan(5);
+  for (const target of targets) {
+    const box = await target.boundingBox();
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
   }
   await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/05-bibliothek-390.png" });
 });

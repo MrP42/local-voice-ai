@@ -116,7 +116,9 @@ export function KurzbuchCard({
 
   if (!page && !book.audio_path) return null;
   const fraction = found && page ? listenedFraction(page, found.doc.id) : 0;
-  const langOf = (d: KiDocument) => kiLangLabel(d.language) || "?";
+  // Ältere Kurzbücher (vor lva#217) haben keine Sprachangabe.
+  const langOf = (d: KiDocument) =>
+    kiLangLabel(d.language) || t("tts.kiDocs.lang.source");
 
   const create = () => {
     if (!page) return;

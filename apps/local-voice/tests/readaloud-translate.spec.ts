@@ -73,7 +73,9 @@ test.beforeEach(async ({ page }) => {
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {
           (w.__calls as unknown[]).push([cmd, args]);
-          if (cmd === "get_app_settings" || cmd === "get_default_settings") return JSON.parse(JSON.stringify(settings));
+          if (cmd === "get_app_settings" || cmd === "get_default_settings")
+            // window.__theme: dunkle Belegbilder (lva#217).
+            return JSON.parse(JSON.stringify({ ...settings, ...(w.__theme ? { theme: w.__theme } : {}) }));
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.14";
           if (cmd.includes("permission")) return true;
@@ -732,6 +734,10 @@ test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", a
   await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
 
   // Die Wahl gilt als Vorbelegung für das nächste Mal.
+  // Fertigmeldung abwarten, damit sie im Belegbild nichts verdeckt (Codex).
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
+    timeout: 15_000,
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId("tts-action-summarize").click();
   await expect(page.getByTestId("kidoc-lang")).toContainText("English");
@@ -788,3 +794,76 @@ test("ein englisches Kurzbuch wird erkannt und zeigt seine Sprache (lva#217)", a
     path: "docs/vorschau/kurzbuch-sprache/03-kurzbuch-englisch-1440.png",
   });
 });
+
+// lva#217 (Codex): lange Titel brechen in Leiste und Überlaufmenü um, hell
+// und dunkel, statt mit „…“ zu enden.
+const LONG_TITLE =
+  "Obstacles and action: Fear, cynicism, laziness, bad habits and arrogance hold people back, and a strong reason helps";
+const KURZBUCH_LONG = KURZBUCH_EN.replace(
+  "Relapse: One missed day is not failure.",
+  LONG_TITLE,
+);
+
+for (const theme of ["light", "dark"] as const) {
+  test(`ein langer Kernaussagen-Titel bricht in der Wiedergabe um (${theme}, lva#217)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const doc = {
+      ...kiDoc(1, "builtin:kurzbuch"),
+      title: "Kurzbuch – Ganzes Buch",
+      template_title: "Kurzbuch",
+      language: "en",
+    };
+    await page.addInitScript(
+      ([docs, text, theme]) => {
+        const w = window as unknown as Record<string, unknown>;
+        w.__kidocs = docs;
+        w.__docText = text;
+        w.__theme = theme;
+      },
+      [[doc], KURZBUCH_LONG, theme] as const,
+    );
+    await open(page);
+    await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+    await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+    await page
+      .getByRole("group", { name: "Ansicht" })
+      .getByRole("button", { name: "Lesen" })
+      .click();
+    const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+    await expect(panel).toContainText(LONG_TITLE.split(": ")[1]);
+    await panel.getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" }).click();
+    await expect
+      .poll(async () => (await calls(page)).some(([c]) => c.startsWith("tts_speak")))
+      .toBe(true);
+    await emit(page, "tts-speak-progress", { position: 9, total: 30 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 9,
+      text: "What to do after a bad day? Keep going.",
+    });
+    const chapter = page.getByTestId("reader-chapter");
+    await expect(chapter).toHaveText(LONG_TITLE);
+    // Vollständig sichtbar: kein Abschneiden in der Leiste.
+    const cut = await chapter
+      .locator(".reader-player__chapter-text")
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cut).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/06-wiedergabe-langer-titel-1920-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("reader-more").click();
+    const where = page.getByTestId("reader-more-where");
+    await expect(where).toContainText(LONG_TITLE);
+    const cutMenu = await where
+      .locator("div")
+      .first()
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cutMenu).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/07-wiedergabe-langer-titel-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+  });
+}

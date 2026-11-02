@@ -747,7 +747,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                     >
                       {chapter && (
                         <div
-                          className="truncate font-semibold text-text"
+                          className="font-semibold text-text [overflow-wrap:anywhere]"
                           title={chapter}
                         >
                           {chapter}

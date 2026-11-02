@@ -1506,7 +1506,7 @@ export const TtsSettings = () => {
   /** Sprache dessen, was der offene Reiter vorliest. */
   const contentLang = useMemo(() => {
     if (tab === "translation") return targetLangCode(targetLang);
-    if (tab === "summary") return docLang;
+    if (tab === "summary") return docLang ?? detectLanguage(summary);
     return pageLang;
   }, [tab, targetLang, docLang, pageLang]);
   const markVoiceChosen = (key: string) =>
