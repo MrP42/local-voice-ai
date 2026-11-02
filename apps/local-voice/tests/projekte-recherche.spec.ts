@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { installLiveMock } from "./recLiveMock";
 import { installProjekteMock } from "./projekteMock";
@@ -17,6 +18,18 @@ const SHOT_DIR = path.resolve(
   "../../docs/vorschau/projekte-recherche",
 );
 /** Bilder nur auf Wunsch (LVA_SCREENSHOTS=1), sonst schreibt jeder Lauf sie neu. */
+const DUNKEL = process.env.LVA_THEME === "dark";
+/** Messwerte als Beleg (LVA_BELEGE=<Ordner>): maschinell aus dem Lauf, nicht von Hand. */
+const beleg = (name: string, daten: unknown) => {
+  const dir = process.env.LVA_BELEGE;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, name),
+    JSON.stringify(daten, null, 2) + "\n",
+    "utf-8",
+  );
+};
 const shoot = async (page: Page, name: string) => {
   if (!process.env.LVA_SCREENSHOTS) return;
   // Die Meldung "Die Recherche ist fertig" soll das Bild nicht verdecken.
@@ -26,7 +39,10 @@ const shoot = async (page: Page, name: string) => {
     .catch(() => {});
   await page.waitForTimeout(300);
   await page.screenshot({
-    path: path.join(SHOT_DIR, `${name}-${page.viewportSize()?.width}.png`),
+    path: path.join(
+      SHOT_DIR,
+      `${name}${DUNKEL ? "-dunkel" : ""}-${page.viewportSize()?.width}.png`,
+    ),
     animations: "disabled",
   });
 };
@@ -41,6 +57,10 @@ const setup = async (
 ) => {
   await installLiveMock(page);
   await installProjekteMock(page);
+  if (DUNKEL)
+    await page.addInitScript(() => {
+      (window as any).__settings.theme = "dark";
+    });
   if (vorher) await vorher(page);
   await openRecordings(page, width, height);
 };
@@ -393,6 +413,19 @@ test("390 px: Projektseite im Seitenfluss mit einer Scrollleiste, Reiterblock ei
   await letzte.scrollIntoViewIfNeeded();
   const b = (await letzte.boundingBox())!;
   expect(b.y + b.height).toBeLessThanOrEqual(844);
+  beleg("messwerte-fluss.json", {
+    viewport: "390x844",
+    scrollcontainerUmErgebnis: umgebung,
+    anzahlScrollcontainer: umgebung.length,
+    flussFensterHoehePx: Math.round(h),
+    letzteQuelle: {
+      text: "Netzentgelte Strom - Bundesnetzagentur",
+      yPx: Math.round(b.y),
+      hoehePx: Math.round(b.height),
+      imSichtbarenBereich: b.y + b.height <= 844,
+    },
+    reiterblockUnterSeite: true,
+  });
   await expect(
     seite.getByRole("button", {
       name: "Wie hoch war der Leistungspreis 2025?",
@@ -428,7 +461,13 @@ test("390 px: Touchziele mindestens 44 px (Seite, Aufnahmezeile, Reiter, Dialog)
       "*,*::before,*::after{transition:none!important;animation:none!important}",
   });
   await oeffneSuite(page, "f3");
-  const zuKlein = async (selector: string) =>
+  const gemessen: Record<string, unknown[]> = {};
+  const zuKlein = async (selector: string, gruppe = selector) => {
+    const alle = await messen(selector);
+    gemessen[gruppe] = alle;
+    return alle.filter((x) => x.w > 0 && (x.h < 44 || x.w < 44));
+  };
+  const messen = async (selector: string) =>
     page.evaluate((sel) => {
       return [...document.querySelectorAll<HTMLElement>(sel)]
         .filter((e) => e.offsetParent !== null)
@@ -442,7 +481,7 @@ test("390 px: Touchziele mindestens 44 px (Seite, Aufnahmezeile, Reiter, Dialog)
             h: Math.round(r.height),
           };
         })
-        .filter((x) => x.w > 0 && (x.h < 44 || x.w < 44));
+        .filter((x) => x.w > 0);
     }, selector);
 
   expect(
@@ -472,6 +511,14 @@ test("390 px: Touchziele mindestens 44 px (Seite, Aufnahmezeile, Reiter, Dialog)
   await zeile.getByText("Netzentgelte Lastgangmessung Berechnung").click();
   await expect(dialog.getByRole("checkbox").first()).toBeChecked();
   const box = (await zeile.boundingBox())!;
+  beleg("messwerte-touch.json", {
+    viewport: "390x844",
+    grenzePx: 44,
+    gruppen: gemessen,
+    checkboxZeilen: await messen(
+      '[role="alertdialog"] .wai-freigabe__liste label',
+    ),
+  });
   expect(box.height).toBeGreaterThanOrEqual(44);
   expect(box.width).toBeGreaterThan(250);
 });
@@ -497,6 +544,24 @@ for (const theme of ["light", "dark"] as const) {
       .include('[data-testid="suite-projekt"]')
       .exclude("[data-tabster-dummy]")
       .analyze();
+    const zusammen = (a: typeof r) => ({
+      violations: a.violations,
+      passesAnzahl: a.passes.length,
+      incompleteAnzahl: a.incomplete.length,
+      regelnGeprueft: a.passes
+        .map((x) => x.id)
+        .concat(a.violations.map((x) => x.id))
+        .sort(),
+      regelsatz: a.testEngine,
+    });
+    beleg(`axe-390-${theme === "light" ? "hell" : "dunkel"}.json`, {
+      viewport: "390x844",
+      theme,
+      projektseite: {
+        bereich: '[data-testid="suite-projekt"]',
+        ...zusammen(r),
+      },
+    });
     expect(
       r.violations
         .filter((v) => v.impact === "critical" || v.impact === "serious")
@@ -514,6 +579,25 @@ for (const theme of ["light", "dark"] as const) {
       .exclude("[data-tabster-dummy]")
       .withRules(["color-contrast"])
       .analyze();
+    {
+      const dir = process.env.LVA_BELEGE;
+      const datei = path.join(
+        dir ?? "",
+        `axe-390-${theme === "light" ? "hell" : "dunkel"}.json`,
+      );
+      if (dir) {
+        const alt = JSON.parse(fs.readFileSync(datei, "utf-8"));
+        alt.ordnerliste = {
+          bereich: '[data-testid="rec-sessions"]',
+          regeln: ["color-contrast"],
+          violations: s2.violations,
+          passesAnzahl: s2.passes.length,
+          incompleteAnzahl: s2.incomplete.length,
+          regelsatz: s2.testEngine,
+        };
+        beleg(`axe-390-${theme === "light" ? "hell" : "dunkel"}.json`, alt);
+      }
+    }
     expect(
       s2.violations
         .filter((v) => v.impact === "critical" || v.impact === "serious")
@@ -530,8 +614,10 @@ for (const theme of ["light", "dark"] as const) {
 const ergebnisMitTts = async (
   page: Page,
   einstellungen: Record<string, unknown>,
+  breite = 1440,
+  hoehe = 900,
 ) => {
-  await setup(page, 1440, 900, async (p) => {
+  await setup(page, breite, hoehe, async (p) => {
     await p.addInitScript((e) => {
       Object.assign((window as any).__settings, e);
     }, einstellungen);
@@ -544,21 +630,34 @@ const ergebnisMitTts = async (
   await expect(page.getByTestId("suite-recherche-loeschen")).toBeVisible();
 };
 
-test("Vorlesen: bei PERSONAL und Remote-TTS gesperrt (mit Hinweis)", async ({
-  page,
-}) => {
-  await ergebnisMitTts(page, {
-    tts_engine: "provider:cloud1",
-    tts_providers: { allow_remote: ["cloud1"] },
+for (const [breite, hoehe] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  test(`Vorlesen: bei PERSONAL und Remote-TTS gesperrt, mit Hinweis (${breite} px)`, async ({
+    page,
+  }) => {
+    await ergebnisMitTts(
+      page,
+      {
+        tts_engine: "provider:cloud1",
+        tts_providers: { allow_remote: ["cloud1"] },
+      },
+      breite,
+      hoehe,
+    );
+    const knopf = page.getByTestId("suite-readaloud");
+    await expect(knopf).toBeDisabled();
+    console.log(
+      `TTS-SPERRE Fall=PERSONAL+Remote-TTS breite=${breite} knopfGesperrt=${await knopf.isDisabled()} hinweisSichtbar=${await page.getByText("nur mit lokaler Sprachausgabe").isVisible()}`,
+    );
+    await expect(
+      page.getByText("nur mit lokaler Sprachausgabe", { exact: false }),
+    ).toBeVisible();
+    await knopf.scrollIntoViewIfNeeded();
+    await shoot(page, "vorlesen-gesperrt");
   });
-  const knopf = page.getByTestId("suite-readaloud");
-  await expect(knopf).toBeDisabled();
-  await expect(
-    page.getByText("nur mit lokaler Sprachausgabe", { exact: false }),
-  ).toBeVisible();
-  await knopf.scrollIntoViewIfNeeded();
-  await shoot(page, "vorlesen-gesperrt");
-});
+}
 
 test("Vorlesen: bei PERSONAL und lokaler TTS freigegeben", async ({ page }) => {
   await ergebnisMitTts(page, {
@@ -566,6 +665,9 @@ test("Vorlesen: bei PERSONAL und lokaler TTS freigegeben", async ({ page }) => {
     tts_providers: { allow_remote: [] },
   });
   await expect(page.getByTestId("suite-readaloud")).toBeEnabled();
+  console.log(
+    `TTS-SPERRE Fall=PERSONAL+lokale-TTS knopfFrei=${await page.getByTestId("suite-readaloud").isEnabled()} hinweisSichtbar=${await page.getByText("nur mit lokaler Sprachausgabe").isVisible()}`,
+  );
   await expect(
     page.getByText("nur mit lokaler Sprachausgabe", { exact: false }),
   ).toHaveCount(0);

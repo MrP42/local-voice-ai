@@ -1,0 +1,56 @@
+{
+  "viewport": "390x844",
+  "theme": "light",
+  "projektseite": {
+    "bereich": "[data-testid=\"suite-projekt\"]",
+    "violations": [],
+    "passesAnzahl": 27,
+    "incompleteAnzahl": 1,
+    "regelnGeprueft": [
+      "aria-allowed-attr",
+      "aria-allowed-role",
+      "aria-conditional-attr",
+      "aria-deprecated-role",
+      "aria-hidden-focus",
+      "aria-prohibited-attr",
+      "aria-required-attr",
+      "aria-roles",
+      "aria-valid-attr",
+      "aria-valid-attr-value",
+      "autocomplete-valid",
+      "avoid-inline-spacing",
+      "button-name",
+      "color-contrast",
+      "duplicate-id-aria",
+      "empty-heading",
+      "form-field-multiple-labels",
+      "heading-order",
+      "label",
+      "label-title-only",
+      "landmark-no-duplicate-banner",
+      "landmark-unique",
+      "list",
+      "listitem",
+      "nested-interactive",
+      "role-img-alt",
+      "tabindex"
+    ],
+    "regelsatz": {
+      "name": "axe-core",
+      "version": "4.13.0"
+    }
+  },
+  "ordnerliste": {
+    "bereich": "[data-testid=\"rec-sessions\"]",
+    "regeln": [
+      "color-contrast"
+    ],
+    "violations": [],
+    "passesAnzahl": 1,
+    "incompleteAnzahl": 0,
+    "regelsatz": {
+      "name": "axe-core",
+      "version": "4.13.0"
+    }
+  }
+}
