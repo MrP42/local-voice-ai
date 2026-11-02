@@ -469,6 +469,12 @@
       }
     },
     "langTabs": "Übersetzte Sprachen",
+    "translationModel": {
+      "label": "Modell",
+      "hint": "Sprachmodell, das übersetzt. Klick wählt ein anderes.",
+      "none": "kein Modell gewählt",
+      "settings": "Modelle verwalten …"
+    },
     "transform": {
       "translateStarting": "Übersetze …",
       "translateBlock": "Übersetze … Block {{done}} von {{total}}",

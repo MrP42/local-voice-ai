@@ -469,6 +469,12 @@
       }
     },
     "langTabs": "Translated languages",
+    "translationModel": {
+      "label": "Model",
+      "hint": "Language model used for translation. Click to choose another.",
+      "none": "no model selected",
+      "settings": "Manage models …"
+    },
     "transform": {
       "translateStarting": "Translating …",
       "translateBlock": "Translating … block {{done}} of {{total}}",

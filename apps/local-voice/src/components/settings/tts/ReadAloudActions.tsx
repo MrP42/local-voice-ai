@@ -25,6 +25,7 @@ import { Glyph } from "../../ui/AudioPlayer";
 import { Select } from "../../ui/Select";
 import { TTS_TARGET_LANGS } from "../../../lib/constants/languages";
 import { AutoTagBar, type AutoTagBarProps } from "./tags/AutoTagBar";
+import { TranslationModelChip } from "./TranslationModelChip";
 import { counterWidthCh } from "./sentenceCounter";
 import {
   progressParts,
@@ -452,6 +453,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
         )}
       </div>
 
+      {tab === "translation" && <TranslationModelChip />}
       {transformBusy && (
         <ProgressLine
           tabular
@@ -490,7 +492,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           data-testid="tts-translate-partial"
           className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text/70"
         >
-          <span className="min-w-0 flex-1 basis-48">
+          <span className="min-w-0 basis-full">
             {props.translatePartial.kind === "cancelled"
               ? t("tts.transform.partialCancelled")
               : t("tts.transform.partialError", {
@@ -499,7 +501,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           </span>
           <button
             type="button"
-            className="mbtn mbtn--sm min-h-[44px] sm:min-h-0"
+            className="mbtn mbtn--sm min-h-[44px] shrink-0 sm:min-h-0"
             data-testid="tts-translate-resume"
             onClick={props.onResumeTranslate}
           >

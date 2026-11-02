@@ -48,6 +48,21 @@ re!(
     SPEAKER_LINE_RE,
     r"^(?:<[^<>]{1,40}>|[A-ZÄÖÜ][\w .'-]{0,30}:\s)"
 );
+// Kapitelanfang im PDF: „Kapitel 3“, „Chapter IV“, „Teil 2“, „Part II“ allein auf der Zeile …
+re!(
+    CHAPTER_HEAD_RE,
+    r"(?i)^(?:kapitel|chapter|teil|part|buch|book)\s+(?:\d{1,3}|(?-i:[IVXLCDM]{1,8}))\.?$"
+);
+// … oder mit Titel in derselben Zeile: „Kapitel 3: Die Klippe“.
+re!(
+    CHAPTER_HEAD_TITLE_RE,
+    r"(?i)^((?:kapitel|chapter|teil|part)\s+(?:\d{1,3}|(?-i:[IVXLCDM]{1,8})))\s*[:\u{2013}\u{2014}\u{B7}-]\s*(\S.{0,50})$"
+);
+// … oder ein bekannter Abschnittsname.
+re!(
+    SPECIAL_HEAD_RE,
+    r"(?i)^(?:prolog|epilog|vorwort|nachwort|einleitung|prologue|epilogue|preface|foreword|afterword|introduction)$"
+);
 re!(BODY_RE, r"(?is)<body\b[^>]*>(.*)</body\s*>");
 re!(DC_TITLE_RE, r"(?is)<dc:title\b[^>]*>(.*?)</dc:title\s*>");
 re!(
@@ -812,6 +827,64 @@ fn page_zone(len: usize, i: usize) -> Option<bool> {
     }
 }
 
+/// Kandidat für eine Titelzeile unter „Kapitel 3“: kurz, groß beginnend, kein
+/// Satz und deutlich kürzer als die üblichen Textzeilen.
+fn looks_like_chapter_title(line: &str, typical: usize) -> bool {
+    let n = line.chars().count();
+    n >= 2
+        && n <= 60
+        && line.split_whitespace().count() <= 9
+        && line.chars().next().is_some_and(char::is_uppercase)
+        && line.chars().filter(|c| c.is_alphabetic()).count() >= 2
+        && !line.ends_with(['.', ',', ';', ':', '-', '–'])
+        && !is_page_number(line)
+        && !CHAPTER_HEAD_RE.is_match(line)
+        && !SPECIAL_HEAD_RE.is_match(line)
+        && (typical == 0 || n * 10 < typical * 7)
+}
+
+/// Kapitelüberschriften ganz oben auf einer Seite (`Kapitel 3`, `Prolog` …,
+/// ggf. mit Titel in der nächsten kurzen Zeile). Liefert die Überschriften
+/// (ohne `## `) und wie viele Zeilen sie verbraucht haben. Nur vom
+/// Seitenanfang aus: eine Fundstelle mitten im Text ist meist ein Verweis.
+fn page_chapter_headings(kept: &[&str], typical: usize) -> (Vec<String>, usize) {
+    let norm = |l: &str| l.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut headings = Vec::new();
+    let mut at = 0;
+    while at < kept.len() && headings.len() < 2 {
+        let line = norm(kept[at]);
+        if let Some(c) = CHAPTER_HEAD_TITLE_RE.captures(&line) {
+            let title = c[2].trim();
+            if looks_like_chapter_title(title, 0) {
+                headings.push(format!("{}: {title}", c[1].trim_end_matches(['.', ' '])));
+                at += 1;
+                continue;
+            }
+        }
+        let is_head = CHAPTER_HEAD_RE.is_match(&line) || SPECIAL_HEAD_RE.is_match(&line);
+        if !is_head {
+            break;
+        }
+        at += 1;
+        let head = line.trim_end_matches('.').to_string();
+        match kept.get(at).map(|l| norm(l)) {
+            Some(title) if looks_like_chapter_title(&title, typical) => {
+                headings.push(format!("{head}: {title}"));
+                at += 1;
+            }
+            _ => headings.push(head),
+        }
+    }
+    (headings, at)
+}
+
+/// Lauftitel für die Überschrift: Seitenzahlen und Trennzeichen am Rand weg.
+fn clean_running_title(line: &str) -> String {
+    let t = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    t.trim_matches(|c: char| c.is_ascii_digit() || c.is_whitespace() || "|·•–—-/".contains(c))
+        .to_string()
+}
+
 /// PDF-Seiten (je Seite der Text) zu einem Text zusammenführen und dabei
 /// Kopf- und Fußzeilen entfernen sowie Seitenzahlen am Seitenrand:
 ///
@@ -823,6 +896,14 @@ fn page_zone(len: usize, i: usize) -> Option<bool> {
 ///   höchstens einer Seite Abstand — „Kapitel 5 · Die Klippe“ über die Seiten des
 ///   Kapitels. Wortgleich, damit „Abschnitt 1“, „Abschnitt 2“ … bleiben;
 /// - Seitenzahl: nur die erste oder letzte Zeile einer Seite.
+///
+/// Kapitel werden als `## Titel`-Zeilen ausgegeben, damit die Kapitelliste der
+/// Buchansicht etwas findet: (a) `Kapitel 3`, `Teil 2`, `Prolog` … ganz oben auf
+/// der Seite (mit Titelzeile darunter zu „Kapitel 3: Titel“); (b) wo sich der
+/// entfernte Lauftitel ändert und (a) nichts fand, dieser Lauftitel. Lieber
+/// keine Überschrift als eine falsche: ein Lauftitel, der auf der halben
+/// Buchlänge steht (Buchtitel), wechselnde Titel im Seitentakt (links Buch,
+/// rechts Kapitel) und einmalige Titel ergeben keine.
 ///
 /// Danach [`reflow_plain_text`]. Die Seiten hängen mit einem einfachen Umbruch
 /// aneinander — wie bisher bei `extract_text`, das auch keine Seitengrenze
@@ -889,22 +970,99 @@ pub fn pdf_pages_to_text(pages: &[String]) -> String {
         .max_by_key(|&(o, n)| (n, -o.abs()))
         .map_or(1, |(o, _)| o);
 
+    // Pro Seite: die behaltenen Zeilen und der entfernte Lauftitel (oben).
+    let mut kept_pages: Vec<Vec<&str>> = Vec::with_capacity(page_lines.len());
+    let mut run_titles: Vec<Option<&str>> = Vec::with_capacity(page_lines.len());
+    for lines in &page_lines {
+        let mut kept = Vec::new();
+        let mut run_title = None;
+        for (i, line) in lines.iter().enumerate() {
+            let at_edge = i == 0 || i + 1 == lines.len();
+            let zone = page_zone(lines.len(), i);
+            let run = zone.is_some_and(|top| running(top, line));
+            if run || (at_edge && is_page_number(line)) {
+                if run && zone == Some(true) && run_title.is_none() && !is_page_number(line) {
+                    run_title = Some(*line);
+                }
+            } else {
+                kept.push(*line);
+            }
+        }
+        kept_pages.push(kept);
+        run_titles.push(run_title);
+    }
+
+    // Übliche Textzeilenlänge (wie in `reflow_lines`) für die Titelprobe.
+    let mut lengths: Vec<usize> = kept_pages
+        .iter()
+        .flatten()
+        .map(|l| {
+            l.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .count()
+        })
+        .filter(|&n| n > 20)
+        .collect();
+    lengths.sort_unstable();
+    let typical = lengths.get(lengths.len() * 3 / 4).copied().unwrap_or(0);
+
+    // (a) Kapitelüberschriften am Seitenanfang.
+    let mut headings: Vec<Vec<String>> = Vec::with_capacity(kept_pages.len());
+    let mut skip: Vec<usize> = Vec::with_capacity(kept_pages.len());
+    for kept in &kept_pages {
+        let (h, used) = page_chapter_headings(kept, typical);
+        headings.push(h);
+        skip.push(used);
+    }
+
+    // (b) Wechselnde Lauftitel, wo (a) nichts fand. Verglichen wird der Titel
+    // ohne Seitenzahl am Rand („12 Die Klippe“ = „Die Klippe“).
+    let title_key = |t: &str| clean_running_title(t).to_lowercase();
+    let mut title_pages: HashMap<String, usize> = HashMap::new();
+    for t in run_titles.iter().flatten() {
+        *title_pages.entry(title_key(t)).or_default() += 1;
+    }
+    let titled: Vec<(usize, String)> = run_titles
+        .iter()
+        .enumerate()
+        .filter_map(|(p, t)| t.map(|t| (p, title_key(t))))
+        .filter(|(_, k)| k.chars().any(char::is_alphabetic))
+        // Buchtitel: steht auf der halben Buchlänge oder mehr.
+        .filter(|(_, k)| {
+            with_text < 10 || title_pages.get(k).copied().unwrap_or(0) * 2 <= with_text
+        })
+        .collect();
+    for (i, (p, key)) in titled.iter().enumerate() {
+        let changed = i == 0 || titled[i - 1].1 != *key;
+        // Wechsel im Seitentakt (A, B, A, B …) sind keine Kapitel.
+        let flips_back = i >= 2 && titled[i - 2].1 == *key;
+        // Der neue Titel muss sich halten (mindestens zwei Seiten).
+        let persists = titled.get(i + 1).is_some_and(|n| n.1 == *key);
+        if changed && !flips_back && persists && headings[*p].is_empty() {
+            if let Some(t) = run_titles[*p] {
+                headings[*p].push(clean_running_title(t));
+            }
+        }
+    }
+
     let mut out: Vec<(String, Option<u32>)> = Vec::new();
-    for (p, lines) in page_lines.iter().enumerate() {
+    for (p, kept) in kept_pages.iter().enumerate() {
         // Ohne zweite Seite keine Marken: ein Einseiter braucht keine Seitenzahl.
         let mut mark = (pages.len() > 1)
             .then(|| u32::try_from(p as i64 + offset).ok())
             .flatten()
             .filter(|&n| n > 0);
-        for (i, line) in lines.iter().enumerate() {
-            let at_edge = i == 0 || i + 1 == lines.len();
-            let drop = match page_zone(lines.len(), i) {
-                Some(top) => running(top, line),
-                None => false,
-            } || (at_edge && is_page_number(line));
-            if !drop {
-                out.push((line.to_string(), mark.take()));
-            }
+        // Überschriften als eigene Absätze; die Seitenmarke gehört an die
+        // erste Textzeile danach, sonst stünde sie mitten in der Überschrift.
+        for h in &headings[p] {
+            out.push((String::new(), None));
+            out.push((format!("## {h}"), None));
+            out.push((String::new(), None));
+        }
+        for line in &kept[skip[p]..] {
+            out.push((line.to_string(), mark.take()));
         }
     }
     reflow_lines(out)
@@ -1278,7 +1436,10 @@ mod tests {
             })
             .collect();
         let out = pdf_pages_to_text(&pages);
-        assert!(!out.contains("Die Klippe"), "{out}");
+        // Der Lauftitel steht nicht mehr über jeder Seite, sondern einmal je
+        // Kapitel als Überschrift.
+        assert_eq!(out.matches("Die Klippe").count(), 6, "{out}");
+        assert!(out.contains("## Kapitel 3 · Die Klippe"), "{out}");
         assert!(out.contains("Satz 0 auf Seite 7"), "{out}");
     }
     #[test]
@@ -1311,6 +1472,118 @@ mod tests {
         assert!(out.contains("Stunde {{S. 2}} der Wahrheit"), "{out}");
         assert!(!out.contains("{{S. 0}}"), "{out}");
         assert!(out.starts_with(line), "{out}");
+    }
+
+    /// Eine Buchseite mit Fließtext; `head` steht als eigene Zeilen oben.
+    fn book_page(p: usize, head: &[&str], top: Option<&str>) -> String {
+        let mut page = String::new();
+        if let Some(t) = top {
+            page.push_str(&format!("{t}\n"));
+        }
+        for h in head {
+            page.push_str(&format!("{h}\n"));
+        }
+        for z in 0..10 {
+            page.push_str(&format!(
+                "Satz {z} auf Seite {p}: Der Wind {} um den Turm, und Mara lauschte lange.\n",
+                ["heulte", "pfiff", "strich", "fuhr"][(p + z) % 4]
+            ));
+        }
+        page.push_str(&format!("{}\n", p + 1));
+        page
+    }
+
+    #[test]
+    fn pdf_chapter_lines_at_page_top_become_headings() {
+        let heads: [(usize, &[&str]); 4] = [
+            (0, &["Prolog"]),
+            (3, &["Kapitel 3", "Die Klippe"]),
+            (6, &["Teil II"]),
+            (9, &["Chapter 4: The Storm"]),
+        ];
+        let pages: Vec<String> = (0..12)
+            .map(|p| {
+                let head = heads.iter().find(|h| h.0 == p).map_or(&[][..], |h| h.1);
+                let mut page = book_page(p, head, None);
+                if p == 5 {
+                    // Verweis mitten im Text: keine Überschrift.
+                    page = page.replace("Satz 4 auf", "Kapitel 3\nSatz 4 auf");
+                }
+                page
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(out.starts_with("## Prolog\n\n"), "{out}");
+        assert!(out.contains("\n\n## Kapitel 3: Die Klippe\n\n"), "{out}");
+        assert!(out.contains("\n\n## Teil II\n\n"), "{out}");
+        assert!(out.contains("\n\n## Chapter 4: The Storm\n\n"), "{out}");
+        assert_eq!(out.matches("## ").count(), 4, "{out}");
+        // Die Seitenmarke steht am Text unter der Überschrift, nicht darin.
+        assert!(
+            out.contains("## Kapitel 3: Die Klippe\n\n{{S. 4}} Satz 0"),
+            "{out}"
+        );
+        assert!(!out.contains("## {{S."), "{out}");
+    }
+
+    #[test]
+    fn pdf_a_short_sentence_below_a_chapter_line_is_no_title() {
+        // Zweite Zeile ist ein Satz mit Punkt: nur „Kapitel 2“ wird Überschrift.
+        let pages: Vec<String> = (0..4)
+            .map(|p| {
+                let head: &[&str] = if p == 2 {
+                    &["Kapitel 2", "Es regnete."]
+                } else {
+                    &[]
+                };
+                book_page(p, head, None)
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(out.contains("## Kapitel 2\n\n"), "{out}");
+        assert!(!out.contains("Kapitel 2:"), "{out}");
+    }
+
+    #[test]
+    fn pdf_changing_running_titles_become_headings_without_a_chapter_line() {
+        // 24 Seiten, drei Kapitel à 8 Seiten mit eigenem Lauftitel, dazu der
+        // Buchtitel auf jeder zweiten Seite (steht auf der halben Länge: kein Kapitel).
+        let titles = ["Die Klippe", "Der Sturm", "Die Rückkehr"];
+        let pages: Vec<String> = (0..24)
+            .map(|p| {
+                let top = if p % 2 == 0 {
+                    titles[p / 8].to_string()
+                } else {
+                    "Der Leuchtturm".to_string()
+                };
+                book_page(p, &[], Some(&top))
+            })
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        for t in titles {
+            assert_eq!(out.matches(&format!("## {t}")).count(), 1, "{t}: {out}");
+        }
+        assert!(!out.contains("Leuchtturm"), "{out}");
+        assert_eq!(out.matches("## ").count(), 3, "{out}");
+        // Erste Überschrift steht vor dem Text der ersten Seite.
+        assert!(out.starts_with("## Die Klippe\n\n{{S. 1}} Satz 0"), "{out}");
+    }
+
+    #[test]
+    fn pdf_alternating_running_titles_make_no_headings() {
+        // Links Kapitel A, rechts Kapitel B im Seitentakt: ein Wechsel pro Seite
+        // ist kein Kapitelwechsel.
+        let pages: Vec<String> = (0..12)
+            .map(|p| book_page(p, &[], Some(if p % 2 == 0 { "Mara" } else { "Wind" })))
+            .collect();
+        let out = pdf_pages_to_text(&pages);
+        assert!(!out.contains("## "), "{out}");
+    }
+
+    #[test]
+    fn pdf_without_chapter_hints_has_no_headings() {
+        let pages: Vec<String> = (0..6).map(|p| book_page(p, &[], None)).collect();
+        assert!(!pdf_pages_to_text(&pages).contains("## "));
     }
 
     #[test]
