@@ -65,8 +65,15 @@ pub struct ProofreadInfo {
     pub at_ms: f64,
     /// Absätze, die korrigiert wurden.
     pub changed: u32,
-    /// Absätze, die die Prüfung im Original gelassen hat.
+    /// Absätze, deren Vorschlag die Schutzprüfung verworfen hat.
     pub rejected: u32,
+    /// Absätze ohne Korrekturbedarf.
+    #[serde(default)]
+    pub unchanged: u32,
+    /// Prüfsumme des Seitentextes nach dem Korrekturlesen: weicht sie ab, hat
+    /// der Nutzer den Text danach bearbeitet.
+    #[serde(default)]
+    pub text_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]

@@ -2531,6 +2531,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::proofread::library_proofread,
             library::proofread::library_proofread_cancel,
             library::proofread::library_proofread_original,
+            library::proofread::library_proofread_material,
+            library::proofread::library_proofread_save_sync,
             library::proofread::library_proofread_discard,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,

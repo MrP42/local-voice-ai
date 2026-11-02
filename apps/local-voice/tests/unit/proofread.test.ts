@@ -2,13 +2,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  acceptEdits,
+  buildReview,
+  hashText,
+  isLocalEndpoint,
+  isLoopbackUrl,
   leadingParagraphs,
   paragraphChanges,
   paragraphSpans,
+  rejectEdits,
   remapOffset,
   remapSync,
+  replaceParagraphs,
   wordDiff,
 } from "../../src/lib/library/proofread.ts";
+import { lockBook, withBookLock } from "../../src/lib/library/bookLock.ts";
 import { textWithSync } from "../../src/lib/library/transcript.ts";
 
 const PARAS = [
@@ -122,4 +130,123 @@ test("Titel- und Autorzeile zählen nicht zu den Absätzen der Anzeige", () => {
   assert.equal(leadingParagraphs("# Buch\n\nvon A. Autor\n\nText"), 2);
   assert.equal(leadingParagraphs("# Buch\n\nText"), 1);
   assert.equal(leadingParagraphs("Text\n\nmehr"), 0);
+});
+
+const O = "# T\n\nalt eins\n\nalt zwei\n\nalt drei";
+const C = "# T\n\nNeu eins.\n\nNeu zwei.\n\nalt drei";
+
+test("Prüfsumme: gleicher Text gleich, jede Änderung anders", () => {
+  assert.equal(hashText(C), hashText(C));
+  assert.notEqual(hashText(C), hashText(O));
+  assert.notEqual(hashText("ab"), hashText("ba"));
+  assert.notEqual(hashText(""), hashText(" "));
+});
+
+test("Ersetzen je Absatz: nur wo der Absatz noch der Erwartung entspricht", () => {
+  const r = replaceParagraphs(C, [
+    { index: 1, expect: "Neu eins.", next: "alt eins" },
+    { index: 2, expect: "Eigene Fassung.", next: "alt zwei" },
+    { index: 9, expect: "x", next: "y" },
+  ]);
+  assert.equal(r.text, "# T\n\nalt eins\n\nNeu zwei.\n\nalt drei");
+  assert.deepEqual(r.applied, [1]);
+  assert.deepEqual(r.skipped, [2, 9]);
+});
+
+test("Änderungsansicht: Zustand je Absatz, Alle ablehnen/annehmen rühren Eigenes nicht an", () => {
+  const edited = "# T\n\nNeu eins.\n\nMeine zwei.\n\nalt drei";
+  const review = buildReview(O, C, [], edited);
+  assert.ok(review);
+  assert.deepEqual(
+    review.items.map((i) => [i.index, i.state]),
+    [
+      [1, "corrected"],
+      [2, "edited"],
+    ],
+  );
+  assert.equal(review.edited, 1);
+  const rejected = replaceParagraphs(edited, rejectEdits(review));
+  assert.equal(rejected.text, "# T\n\nalt eins\n\nMeine zwei.\n\nalt drei");
+  const again = buildReview(O, C, [], rejected.text);
+  assert.ok(again);
+  assert.equal(again.items[0].state, "rejected");
+  assert.equal(
+    replaceParagraphs(rejected.text, acceptEdits(again)).text,
+    edited,
+  );
+  // Absätze zusammengelegt: keine Ansicht.
+  assert.equal(buildReview(O, C, [], "# T\n\nein Absatz"), null);
+});
+
+test("Verworfene Vorschläge: offen, übernommen, bearbeitet", () => {
+  const proposal = { index: 3, text: "Alt drei, anders." };
+  const open = buildReview(O, C, [proposal], C);
+  assert.equal(open?.proposals[0].state, "open");
+  const adopted = buildReview(
+    O,
+    C,
+    [proposal],
+    C.replace("alt drei", proposal.text),
+  );
+  assert.equal(adopted?.proposals[0].state, "adopted");
+  assert.equal(adopted?.edited, 0);
+  const mine = buildReview(O, C, [proposal], C.replace("alt drei", "Eigenes."));
+  assert.equal(mine?.proposals[0].state, "edited");
+  assert.equal(mine?.edited, 1);
+});
+
+test("Lokal nur nach der Adresse: Schleife ja, LAN und Kennung nein", () => {
+  for (const url of [
+    "http://localhost:11434/v1",
+    "http://127.0.0.1:8000",
+    "https://127.5.6.7/x",
+    "http://[::1]:1234/v1",
+  ])
+    assert.equal(isLoopbackUrl(url), true, url);
+  for (const url of [
+    "http://192.168.1.20:11434/v1",
+    "http://10.0.0.5/v1",
+    "https://api.openai.com/v1",
+    "http://localhost.evil.example/v1",
+    "http://127.0.0.1.evil.example/v1",
+    "http://127.0.0.999/v1",
+    "http://0.0.0.0:80",
+    "",
+  ])
+    assert.equal(isLoopbackUrl(url), false, url);
+  // „ollama“ im LAN ist nicht lokal; die Kennung allein entscheidet nichts.
+  assert.equal(
+    isLocalEndpoint({ id: "ollama", base_url: "http://192.168.1.20:11434/v1" }),
+    false,
+  );
+  assert.equal(
+    isLocalEndpoint({ id: "custom", base_url: "http://localhost:1234/v1" }),
+    true,
+  );
+  assert.equal(isLocalEndpoint({ id: "local", base_url: "" }), true);
+});
+
+test("Sperre je Buch: Aufträge laufen nacheinander, andere Bücher gleichzeitig", async () => {
+  const order: string[] = [];
+  const slow = withBookLock("a", async () => {
+    order.push("a1 start");
+    await new Promise((r) => setTimeout(r, 30));
+    order.push("a1 ende");
+  });
+  const next = withBookLock("a", async () => {
+    order.push("a2");
+  });
+  const other = withBookLock("b", async () => {
+    order.push("b");
+  });
+  await Promise.all([slow, next, other]);
+  assert.deepEqual(order, ["a1 start", "b", "a1 ende", "a2"]);
+  // Fehler geben die Sperre frei.
+  await assert.rejects(
+    withBookLock("a", async () => {
+      throw new Error("x");
+    }),
+  );
+  const release = await lockBook("a");
+  release();
 });

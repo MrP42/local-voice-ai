@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
 import { autoProofread } from "@/lib/library/proofreadRun";
+import { lockBook, settleBook } from "@/lib/library/bookLock";
 import { transcribeTracks } from "@/lib/library/importFile";
 import {
   aggregateStatus,
@@ -174,7 +175,14 @@ export function useLibrary() {
       let done = false;
       let created: string | null = null;
       let restore: { pageId: string; json: string } | null = null;
+      // Anhängen verändert den Text: ein laufendes Korrekturlesen dieses Buchs
+      // erst beenden, dann das Buch sperren (bis zum Schreiben).
+      let unlock: (() => void) | null = null;
       try {
+        if (appendTo) {
+          await settleBook(bookId);
+          unlock = await lockBook(bookId);
+        }
         const book = start;
         const tracks = startTracks;
         const evaluated = withJob.flatMap((t) =>
@@ -350,6 +358,7 @@ export function useLibrary() {
           }
         }
       } finally {
+        unlock?.();
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         if (!done)

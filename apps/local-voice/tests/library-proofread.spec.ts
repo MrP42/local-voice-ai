@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
+import { hashText } from "../src/lib/library/proofread";
 
 // Korrekturlesen des Hörbuch-Transkripts (lva#208 B): Auto-Start nach der
 // Transkription, Knopf, Stand, Ergebnis, Änderungen, Original wiederherstellen,
@@ -85,6 +86,13 @@ type Opts = {
   auto?: boolean;
   hold?: boolean;
   theme?: string;
+  proposal?: unknown;
+};
+
+/** Verworfener Vorschlag zum dritten Textabsatz (Index 4 mit Titelei). */
+const PROPOSAL = {
+  index: 4,
+  text: "Es schneite tagelang und nächtelang.",
 };
 
 const setup = async (
@@ -135,6 +143,22 @@ const setup = async (
       w.__books = books;
       w.__pages = pages;
       w.__original = null;
+      w.__corrected = null;
+      w.__proposals = [] as unknown[];
+      w.__origSync = null;
+      w.__created = 0;
+      w.__running = [] as string[];
+      w.__setCloud = () => {
+        settings.post_process_providers = [
+          {
+            id: "openai",
+            label: "OpenAI",
+            base_url: "https://api.openai.com/v1",
+          },
+        ];
+        settings.post_process_provider_id = "openai";
+        settings.post_process_models = { openai: "gpt-x" };
+      };
       w.__jobs = [] as string[];
       w.__segments = {} as Record<string, unknown[]>;
       w.__emit = (event: string, payload: unknown) =>
@@ -215,7 +239,7 @@ const setup = async (
             if (cmd === "library_progress_put") return null;
             if (cmd === "pages_create")
               return {
-                id: "page_new",
+                id: `page_new${++w.__created}`,
                 title: String(args?.title ?? ""),
                 modified_ms: 0,
                 preview: "",
@@ -233,7 +257,9 @@ const setup = async (
               return (w.__jobs as string[]).map((id) => ({
                 id,
                 title: "x",
-                status: "ready",
+                status: (w.__running as string[]).includes(id)
+                  ? "running"
+                  : "ready",
                 duration_ms: 30_000,
               }));
             if (cmd === "meetings_get_segments")
@@ -253,10 +279,13 @@ const setup = async (
                 total: 8,
               });
               await gate;
+              w.__corrected = fix(base);
+              w.__proposals = [opts.proposal];
               return {
                 text: fix(base),
                 changed: 3,
                 rejected: 1,
+                unchanged: 0,
                 blocks: 8,
                 cached: 0,
                 model: "ollama/qwen3:8b",
@@ -264,8 +293,22 @@ const setup = async (
               };
             }
             if (cmd === "library_proofread_original") return w.__original;
+            if (cmd === "library_proofread_material")
+              return {
+                original: w.__original,
+                corrected: w.__corrected,
+                proposals: w.__proposals,
+                original_sync: w.__origSync,
+              };
+            if (cmd === "library_proofread_save_sync") {
+              w.__origSync = String(args?.syncJson);
+              return null;
+            }
             if (cmd === "library_proofread_discard") {
               w.__original = null;
+              w.__corrected = null;
+              w.__proposals = [];
+              w.__origSync = null;
               return null;
             }
             if (cmd === "library_proofread_cancel") return null;
@@ -294,7 +337,14 @@ const setup = async (
         },
       });
     },
-    { books, pages, opts, rawText: RAW_TEXT, rawParas: RAW, fixedParas: FIXED },
+    {
+      books,
+      pages,
+      opts: { ...opts, proposal: PROPOSAL },
+      rawText: RAW_TEXT,
+      rawParas: RAW,
+      fixedParas: FIXED,
+    },
   );
 };
 
@@ -357,11 +407,18 @@ test("Knopf: Stand mit Abschnitten, Ergebnis mit Prüfung, Text und Zeitachse um
     (window as unknown as { __release(): void }).__release(),
   );
   await expect(panel.getByTestId("proofread-result")).toContainText(
-    "3 Absätze korrigiert, 1 unverändert gelassen (Prüfung)",
+    "3 Absätze korrigiert",
+  );
+  await expect(panel.getByTestId("proofread-rejected")).toHaveText(
+    "1 Korrekturvorschlag verworfen (Schutzprüfung: Inhalt hätte sich geändert) – zur manuellen Prüfung",
   );
   await expect(panel.getByTestId("proofread-start")).toHaveText(
     "Erneut korrekturlesen",
   );
+  // Die Zeitachse des Originals liegt beim Original (für „wiederherstellen“).
+  const savedSync = await calls(page, "library_proofread_save_sync");
+  expect(savedSync).toHaveLength(1);
+  expect(JSON.parse(savedSync[0].syncJson)).toEqual(SYNC);
 
   const proof = await calls(page, "library_proofread");
   expect(proof).toHaveLength(1);
@@ -369,6 +426,7 @@ test("Knopf: Stand mit Abschnitten, Ergebnis mit Prüfung, Text und Zeitachse um
     bookId: "book_p",
     pageText: RAW_TEXT,
     fromOriginal: false,
+    requireLocal: false,
   });
   const saves = await calls(page, "page_state_save");
   expect(JSON.parse(saves[saves.length - 1].state).text).toBe(FIXED_TEXT);
@@ -380,7 +438,9 @@ test("Knopf: Stand mit Abschnitten, Ergebnis mit Prüfung, Text und Zeitachse um
   expect(book.text.proofread).toMatchObject({
     changed: 3,
     rejected: 1,
+    unchanged: 0,
     model: "ollama/qwen3:8b",
+    text_hash: hashText(FIXED_TEXT),
   });
   // Mitlesen bleibt auf demselben Absatz: jeder Stützpunkt steht am Absatzanfang des neuen Textes.
   const starts = startsOf(FIXED_TEXT).slice(2);
@@ -400,47 +460,85 @@ test("Knopf: Stand mit Abschnitten, Ergebnis mit Prüfung, Text und Zeitachse um
   await page.screenshot({ path: shot("lektorat-ergebnis-1440-hell.png") });
 });
 
+const INFO = {
+  model: "ollama/qwen3:8b",
+  at_ms: Date.UTC(2026, 10, 2, 12, 30),
+  changed: 3,
+  rejected: 1,
+  unchanged: 0,
+  text_hash: hashText(FIXED_TEXT),
+};
+/** Zeitachse des Originals, bewusst nicht an Absatzanfängen (Umrechnen ergäbe sie nicht). */
+const ORIG_SYNC = SYNC.map((p) => ({ chars: p.chars + 3, ms: p.ms }));
+
+/** Buch nach dem Korrekturlesen; `text` ist der aktuelle Text der Seite. */
+const corrected = (text = FIXED_TEXT, info: Record<string, unknown> = INFO) =>
+  setupCorrected(text, info);
+
+const setupCorrected = (text: string, info: Record<string, unknown>) => ({
+  books: [
+    transcriptBook({
+      text: {
+        page_id: "page_p",
+        origin: "transcript",
+        source_name: null,
+        proofread: info,
+      },
+      audio: {
+        ...transcriptBook().audio,
+        sync: startsOf(FIXED_TEXT)
+          .slice(2)
+          .map((chars, i) => ({ chars, ms: i * 5000 })),
+      },
+    }),
+  ],
+  pages: { page_p: stateOf(text) },
+});
+
+const seedMaterial = (page: Page) =>
+  page.addInitScript(
+    ({ raw, fixed, proposal, sync }) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__original = raw;
+      w.__corrected = fixed;
+      w.__proposals = [proposal];
+      w.__origSync = JSON.stringify(sync);
+    },
+    { raw: RAW_TEXT, fixed: FIXED_TEXT, proposal: PROPOSAL, sync: ORIG_SYNC },
+  );
+
+const lastText = async (page: Page) => {
+  const saves = await calls(page, "page_state_save");
+  return JSON.parse(saves[saves.length - 1].state).text as string;
+};
+
+/** Texte der Seite mit Absatz `i` auf `value`. */
+const withParagraph = (text: string, i: number, value: string) =>
+  text
+    .split("\n\n")
+    .map((x, n) => (n === i ? value : x))
+    .join("\n\n");
+
 test("Änderungen anzeigen: Absatz alt/neu mit markierten Wörtern; Original wiederherstellen", async ({
   page,
 }) => {
-  await setup(
-    page,
-    [
-      transcriptBook({
-        text: {
-          page_id: "page_p",
-          origin: "transcript",
-          source_name: null,
-          proofread: {
-            model: "ollama/qwen3:8b",
-            at_ms: Date.UTC(2026, 10, 2, 12, 30),
-            changed: 3,
-            rejected: 1,
-          },
-        },
-        audio: {
-          ...transcriptBook().audio,
-          sync: startsOf(FIXED_TEXT)
-            .slice(2)
-            .map((chars, i) => ({ chars, ms: i * 5000 })),
-        },
-      }),
-    ],
-    { page_p: stateOf(FIXED_TEXT) },
-  );
-  await page.addInitScript((raw) => {
-    (window as unknown as Record<string, unknown>).__original = raw;
-  }, RAW_TEXT);
+  const { books, pages } = corrected();
+  await setup(page, books, pages);
+  await seedMaterial(page);
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto("/");
   const detail = await openVersions(page);
   const panel = detail.getByTestId("proofread-panel");
   await expect(panel.getByTestId("proofread-result")).toContainText(
-    "3 Absätze korrigiert, 1 unverändert gelassen (Prüfung)",
+    "3 Absätze korrigiert",
   );
+  await expect(panel.getByTestId("proofread-edited-notice")).toHaveCount(0);
   await panel.getByTestId("proofread-show-diff").click();
   const diff = page.getByTestId("proofread-diff");
   await expect(diff.getByTestId("proofread-diff-item")).toHaveCount(3);
+  await expect(diff.getByTestId("proofread-diff-note")).toHaveText(
+    "Die Korrekturen sind bereits im Text. Abgelehnte Absätze werden auf das Original zurückgesetzt.",
+  );
   // Titel- und Autorzeile zählen nicht: das Transkript beginnt bei Absatz 1.
   await expect(diff.getByTestId("proofread-diff-item").first()).toContainText(
     "Absatz 1",
@@ -459,17 +557,15 @@ test("Änderungen anzeigen: Absatz alt/neu mit markierten Wörtern; Original wie
   await panel.getByTestId("proofread-restore").click();
   await page.getByTestId("proofread-restore-confirm").click();
   await expect(panel.getByTestId("proofread-result")).toHaveCount(0);
-  const saves = await calls(page, "page_state_save");
-  expect(JSON.parse(saves[saves.length - 1].state).text).toBe(RAW_TEXT);
-  const books = await calls(page, "library_save");
-  const book = books[books.length - 1].book as {
+  expect(await lastText(page)).toBe(RAW_TEXT);
+  const books2 = await calls(page, "library_save");
+  const book = books2[books2.length - 1].book as {
     text: { proofread: unknown };
     audio: { sync: { chars: number }[] };
   };
   expect(book.text.proofread).toBeNull();
-  expect(book.audio.sync.map((p) => p.chars)).toEqual(
-    startsOf(RAW_TEXT).slice(2),
-  );
+  // Die Zeitachse von damals kommt genau so zurück, nicht nur umgerechnet.
+  expect(book.audio.sync).toEqual(ORIG_SYNC);
   expect(await calls(page, "library_proofread_discard")).toHaveLength(1);
   // Erneut korrekturlesen geht vom Text der Seite aus (keine Korrektur mehr gesichert).
   await panel.getByTestId("proofread-start").click();
@@ -479,26 +575,146 @@ test("Änderungen anzeigen: Absatz alt/neu mit markierten Wörtern; Original wie
   expect((await calls(page, "library_proofread"))[0].fromOriginal).toBe(false);
 });
 
+test("Annehmen/Ablehnen je Absatz und für alle; abgelehnt = Original genau dieses Absatzes", async ({
+  page,
+}) => {
+  const { books, pages } = corrected();
+  await setup(page, books, pages);
+  await seedMaterial(page);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/");
+  const detail = await openVersions(page);
+  await detail.getByTestId("proofread-show-diff").click();
+  const diff = page.getByTestId("proofread-diff");
+  const items = diff.getByTestId("proofread-diff-item");
+  await expect(items).toHaveCount(3);
+  await expect(items.first().getByTestId("proofread-item-state")).toHaveText(
+    "Korrigiert",
+  );
+  // Einen Absatz annehmen: nur die Markierung.
+  await items.first().getByTestId("proofread-accept").click();
+  await expect(items.first().getByTestId("proofread-item-state")).toHaveText(
+    "Angenommen",
+  );
+  // Einen Absatz ablehnen: genau dieser Absatz geht auf das Original zurück.
+  await items.nth(1).getByTestId("proofread-reject").click();
+  await expect(items.nth(1).getByTestId("proofread-item-state")).toHaveText(
+    "Abgelehnt (Original)",
+  );
+  expect(await lastText(page)).toBe(withParagraph(FIXED_TEXT, 3, RAW[1]));
+  await page.screenshot({ path: shot("lektorat-annehmen-1440-hell.png") });
+  // Alle ablehnen: der ganze Text ist wieder das Original.
+  await diff.getByTestId("proofread-reject-all").click();
+  await expect(diff.getByTestId("proofread-reject-all")).toBeDisabled();
+  expect(await lastText(page)).toBe(RAW_TEXT);
+  // Alle annehmen: die Korrekturen sind wieder da.
+  await diff.getByTestId("proofread-accept-all").click();
+  await expect(diff.getByTestId("proofread-accept-all")).toBeDisabled();
+  expect(await lastText(page)).toBe(FIXED_TEXT);
+  // Der Vermerk am Buch trägt immer die Prüfsumme des geschriebenen Textes.
+  const saved = await calls(page, "library_save");
+  const last = saved[saved.length - 1].book as {
+    text: { proofread: { text_hash: string } };
+  };
+  expect(last.text.proofread.text_hash).toBe(hashText(FIXED_TEXT));
+});
+
+test("von Hand bearbeiteter Absatz: Warnung, gesperrt, bleibt bei Ablehnen und Wiederherstellen", async ({
+  page,
+}) => {
+  const mine = "Dann kam der Winter mit sehr viel Schnee.";
+  const text = withParagraph(FIXED_TEXT, 3, mine);
+  const { books, pages } = corrected(text);
+  await setup(page, books, pages);
+  await seedMaterial(page);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/");
+  const detail = await openVersions(page);
+  const panel = detail.getByTestId("proofread-panel");
+  await expect(panel.getByTestId("proofread-edited-notice")).toContainText(
+    "Der Text wurde nach dem Korrekturlesen bearbeitet",
+  );
+  await panel.getByTestId("proofread-show-diff").click();
+  const diff = page.getByTestId("proofread-diff");
+  await expect(diff.getByTestId("proofread-edited-warning")).toContainText(
+    "1 Absatz wurde von Hand bearbeitet",
+  );
+  const locked = diff
+    .getByTestId("proofread-diff-item")
+    .filter({ has: page.getByTestId("proofread-item-locked") });
+  await expect(locked).toHaveCount(1);
+  await expect(locked.getByRole("button")).toHaveCount(0);
+  await expect(locked.getByTestId("proofread-item-state")).toHaveText(
+    "Von Hand bearbeitet · gesperrt",
+  );
+  await page.screenshot({ path: shot("lektorat-bearbeitet-1440-hell.png") });
+  // Alle ablehnen setzt nur die unveränderten Absätze zurück.
+  await diff.getByTestId("proofread-reject-all").click();
+  await expect(diff.getByTestId("proofread-reject-all")).toBeDisabled();
+  expect(await lastText(page)).toBe(withParagraph(RAW_TEXT, 3, mine));
+  await page.keyboard.press("Escape");
+  // Alle annehmen setzt die Korrekturen wieder ein, nicht über die eigene Änderung.
+  await panel.getByTestId("proofread-show-diff").click();
+  await diff.getByTestId("proofread-accept-all").click();
+  await expect(diff.getByTestId("proofread-accept-all")).toBeDisabled();
+  expect(await lastText(page)).toBe(text);
+  await page.keyboard.press("Escape");
+  // Wiederherstellen: der eigene Absatz bleibt, Vermerk und Sicherung auch.
+  await panel.getByTestId("proofread-restore").click();
+  await page.getByTestId("proofread-restore-confirm").click();
+  await expect
+    .poll(
+      async () => (await lastText(page)) === withParagraph(RAW_TEXT, 3, mine),
+    )
+    .toBe(true);
+  await expect(panel.getByTestId("proofread-result")).toBeVisible();
+  expect(await calls(page, "library_proofread_discard")).toHaveLength(0);
+  // Erneut korrekturlesen überschreibt den eigenen Absatz ebenfalls nicht.
+  await panel.getByTestId("proofread-start").click();
+  await expect
+    .poll(async () => (await calls(page, "library_proofread")).length)
+    .toBe(1);
+  await expect
+    .poll(async () => (await lastText(page)).includes(mine))
+    .toBe(true);
+  expect(await lastText(page)).toBe(text);
+});
+
+test("verworfene Vorschläge: eigene Gruppe, Übernahme erst nach Bestätigung", async ({
+  page,
+}) => {
+  const { books, pages } = corrected();
+  await setup(page, books, pages);
+  await seedMaterial(page);
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/");
+  const detail = await openVersions(page);
+  await detail.getByTestId("proofread-show-diff").click();
+  const group = page.getByTestId("proofread-proposals");
+  await expect(group).toContainText("Verworfene Vorschläge");
+  await expect(group.getByTestId("proofread-proposal-item")).toHaveCount(1);
+  await expect(group).toContainText("Es schneite tagelang und nächtelang.");
+  await page.screenshot({ path: shot("lektorat-vorschlaege-1440-hell.png") });
+  await group.getByTestId("proofread-adopt").click();
+  // Erst die Bestätigung schreibt etwas.
+  await expect(page.getByTestId("proofread-adopt-confirm")).toBeVisible();
+  expect(await calls(page, "page_state_save")).toHaveLength(0);
+  await page.getByTestId("proofread-adopt-confirm").click();
+  await expect(group.getByTestId("proofread-adopt-revert")).toBeVisible();
+  expect(await lastText(page)).toBe(
+    withParagraph(FIXED_TEXT, 4, PROPOSAL.text),
+  );
+  await group.getByTestId("proofread-adopt-revert").click();
+  await expect(group.getByTestId("proofread-adopt")).toBeVisible();
+  expect(await lastText(page)).toBe(FIXED_TEXT);
+});
+
 test("erneutes Korrekturlesen geht vom gesicherten Original aus", async ({
   page,
 }) => {
-  await setup(
-    page,
-    [
-      transcriptBook({
-        text: {
-          page_id: "page_p",
-          origin: "transcript",
-          source_name: null,
-          proofread: { model: "m", at_ms: 1, changed: 3, rejected: 1 },
-        },
-      }),
-    ],
-    { page_p: stateOf(FIXED_TEXT) },
-  );
-  await page.addInitScript((raw) => {
-    (window as unknown as Record<string, unknown>).__original = raw;
-  }, RAW_TEXT);
+  const { books, pages } = corrected();
+  await setup(page, books, pages);
+  await seedMaterial(page);
   await page.goto("/");
   const detail = await openVersions(page);
   await detail.getByTestId("proofread-start").click();
@@ -540,6 +756,25 @@ const untranscribed = () =>
     },
   });
 
+const second = () => ({
+  ...untranscribed(),
+  id: "book_q",
+  title: "Zweites Buch",
+  audio: {
+    ...untranscribed().audio,
+    tracks: [
+      {
+        file: "teil_001.wav",
+        title: "Teil 1",
+        duration_ms: 30_000,
+        transcript_job: "m22",
+      },
+    ],
+  },
+  audio_path: "C:/lib/book_q/audio/teil_001.wav",
+  audio_paths: ["C:/lib/book_q/audio/teil_001.wav"],
+});
+
 test("Auto-Start: nach der Transkription liest der Kern den neuen Text Korrektur", async ({
   page,
 }) => {
@@ -555,6 +790,8 @@ test("Auto-Start: nach der Transkription liest der Kern den neuen Text Korrektur
     .toBe(1);
   const proof = (await calls(page, "library_proofread"))[0];
   expect(proof.fromOriginal).toBe(false);
+  // Automatischer Start: der Kern prüft selbst, dass der Anbieter lokal ist.
+  expect(proof.requireLocal).toBe(true);
   // Ausgangstext: Titelei und die vier Absätze der Transkription.
   expect(proof.pageText).toBe(RAW_TEXT);
   await expect
@@ -655,29 +892,9 @@ for (const [theme, width, label] of [
   ["dark", 390, "390-dunkel"],
 ] as const) {
   test(`Abnahmebilder ${label}`, async ({ page }) => {
-    await setup(
-      page,
-      [
-        transcriptBook({
-          text: {
-            page_id: "page_p",
-            origin: "transcript",
-            source_name: null,
-            proofread: {
-              model: "ollama/qwen3:8b",
-              at_ms: Date.UTC(2026, 10, 2, 12, 30),
-              changed: 3,
-              rejected: 1,
-            },
-          },
-        }),
-      ],
-      { page_p: stateOf(FIXED_TEXT) },
-      { theme, hold: true },
-    );
-    await page.addInitScript((raw) => {
-      (window as unknown as Record<string, unknown>).__original = raw;
-    }, RAW_TEXT);
+    const { books, pages } = corrected();
+    await setup(page, books, pages, { theme, hold: true });
+    await seedMaterial(page);
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1100 });
     await page.goto("/");
     const detail = await openVersions(page);
@@ -710,7 +927,112 @@ for (const [theme, width, label] of [
   });
 }
 
-test("Cloud-Anbieter: kein Auto-Start, Hinweis „Der Text wird an OpenAI gesendet“, Start nur per Klick", async ({
+test("Touch-Ziele bei 390 px: Knöpfe in Feld und Dialogen mindestens 44 × 44", async ({
+  page,
+}) => {
+  const { books, pages } = corrected(
+    withParagraph(FIXED_TEXT, 5, "Am Ende war alles sehr weiß."),
+  );
+  await setup(page, books, pages, { hold: true });
+  await seedMaterial(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const detail = await openVersions(page);
+  const panel = detail.getByTestId("proofread-panel");
+  const big = async (
+    locator: import("@playwright/test").Locator,
+    what: string,
+  ) => {
+    const count = await locator.count();
+    expect(count, `${what}: keine Knöpfe gefunden`).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      const box = await locator.nth(i).boundingBox();
+      const name = (await locator.nth(i).textContent())?.trim() || "(Symbol)";
+      expect(box, `${what} „${name}“ ohne Fläche`).not.toBeNull();
+      expect(box!.width, `${what} „${name}“ Breite`).toBeGreaterThanOrEqual(44);
+      expect(box!.height, `${what} „${name}“ Höhe`).toBeGreaterThanOrEqual(44);
+    }
+  };
+  await panel.scrollIntoViewIfNeeded();
+  await big(panel.getByRole("button"), "Feld");
+  // Während des Laufs: Abbrechen.
+  await panel.getByTestId("proofread-start").click();
+  await expect(panel.getByTestId("proofread-cancel")).toBeVisible();
+  await big(panel.getByTestId("proofread-cancel"), "Abbrechen");
+  await page.evaluate(() =>
+    (window as unknown as { __release(): void }).__release(),
+  );
+  await expect(panel.getByTestId("proofread-start")).toHaveText(
+    "Erneut korrekturlesen",
+  );
+  await big(panel.getByTestId("proofread-start"), "Erneut korrekturlesen");
+  // Änderungsansicht: alle Knöpfe, auch das Schließen-X.
+  await panel.getByTestId("proofread-show-diff").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByTestId("proofread-diff-item").first()).toBeVisible();
+  await big(dialog.getByRole("button"), "Änderungsansicht");
+  await expect(dialog.getByRole("button", { name: "Schließen" })).toBeVisible();
+  await page.screenshot({ path: shot("lektorat-annehmen-390-hell.png") });
+  // Vorschlag übernehmen: Bestätigungsdialog.
+  await dialog.getByTestId("proofread-adopt").click();
+  await big(
+    page.getByRole("dialog").last().getByRole("button"),
+    "Vorschlag übernehmen",
+  );
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  // Wiederherstellen-Dialog.
+  await panel.getByTestId("proofread-restore").click();
+  await big(
+    page.getByRole("dialog").last().getByRole("button"),
+    "Wiederherstellen",
+  );
+});
+
+test("Datenschutz: lokaler Auto-Start gilt nie als Einwilligung für einen Anbieter im Netz", async ({
+  page,
+}) => {
+  await setup(page, [untranscribed(), second()], {}, { auto: true });
+  await page.addInitScript((segs) => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m21", "m22");
+    w.__running.push("m22");
+    w.__segments["m21"] = segs;
+    w.__segments["m22"] = segs;
+  }, segments());
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto("/");
+  // Lokal: das erste Buch wird automatisch korrekturgelesen.
+  await expect
+    .poll(async () => (await calls(page, "library_proofread")).length)
+    .toBe(1);
+  expect((await calls(page, "library_proofread"))[0].requireLocal).toBe(true);
+  // Anbieter auf Cloud umstellen, dann wird das zweite Transkript fertig.
+  await page.evaluate(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__setCloud();
+    w.__running = [];
+  });
+  await expect
+    .poll(async () => (await calls(page, "page_state_save")).length, {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(1);
+  await page.waitForTimeout(1000);
+  expect(await calls(page, "library_proofread")).toHaveLength(1);
+  await page
+    .getByRole("button", { name: "„Zweites Buch“: Details öffnen" })
+    .click();
+  const detail = page.getByTestId("library-detail");
+  await detail.getByRole("tab", { name: "Fassungen" }).click();
+  await expect(detail.getByTestId("proofread-cloud-notice")).toHaveText(
+    "Der Buchtext verlässt dieses Gerät und wird an OpenAI gesendet.",
+  );
+  await expect(detail.getByTestId("proofread-auto-skipped")).toBeVisible();
+  await page.screenshot({ path: shot("lektorat-cloud-hinweis-1440-hell.png") });
+});
+
+test("Cloud-Anbieter: kein Auto-Start, Hinweis „Der Buchtext verlässt dieses Gerät …“, Start nur per Klick", async ({
   page,
 }) => {
   await setup(page, [untranscribed()], {}, { cloud: true, auto: true });
@@ -728,7 +1050,9 @@ test("Cloud-Anbieter: kein Auto-Start, Hinweis „Der Text wird an OpenAI gesend
   expect(await calls(page, "library_proofread")).toHaveLength(0);
   const detail = await openVersions(page);
   const notice = detail.getByTestId("proofread-cloud-notice");
-  await expect(notice).toHaveText("Der Text wird an OpenAI gesendet.");
+  await expect(notice).toHaveText(
+    "Der Buchtext verlässt dieses Gerät und wird an OpenAI gesendet.",
+  );
   await notice.scrollIntoViewIfNeeded();
   await page.screenshot({ path: shot("lektorat-cloud-hinweis-1440-hell.png") });
   await detail.getByTestId("proofread-start").click();

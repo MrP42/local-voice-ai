@@ -53,6 +53,7 @@ pub async fn translate_on(
     complete_on(
         settings,
         translation_prompt(target_lang, text),
+        None,
         cpu_only,
         crate::managers::usage::Purpose::Translation,
         true,
@@ -64,9 +65,11 @@ pub async fn translate_on(
 /// [`translate_on`] und dem Korrekturlesen): Reasoning aus, abgeschnittene
 /// Antworten als [`TRUNCATED`]. `unload`: ein lokales Ollama-Modell danach
 /// wieder entladen (viele kurze Aufrufe hintereinander lassen es geladen).
+/// `system`: Regeln als Systemnachricht, getrennt vom Text.
 pub async fn complete_on(
     settings: &AppSettings,
     prompt: String,
+    system: Option<String>,
     cpu_only: bool,
     purpose: crate::managers::usage::Purpose,
     unload: bool,
@@ -117,7 +120,10 @@ pub async fn complete_on(
             &provider,
             &url,
             &model,
-            prompt.clone(),
+            match &system {
+                Some(system) => format!("{system}\n\n{prompt}"),
+                None => prompt.clone(),
+            },
             true,
         )
         .await
@@ -142,7 +148,7 @@ pub async fn complete_on(
         api_key,
         &model,
         prompt,
-        None,
+        system,
         None,
         reasoning_effort,
         reasoning,
