@@ -3480,16 +3480,23 @@ impl TtsManager {
                         tracker: tracker.clone(),
                         done: rx.clone(),
                     });
-                    tauri::async_runtime::spawn(run_translate_job(
+                    let job = tauri::async_runtime::spawn(run_translate_job(
                         self.app.clone(),
                         settings,
                         trimmed.to_string(),
                         target_lang.to_string(),
                         gpu_busy,
                         key,
-                        tracker,
+                        tracker.clone(),
                         tx,
                     ));
+                    // Stirbt der Auftrag durch eine Panik, bliebe er sonst für
+                    // immer „laufend“ und blockierte jede weitere Übersetzung.
+                    tauri::async_runtime::spawn(async move {
+                        if job.await.is_err() {
+                            tracker.finish(&Err("Übersetzung unerwartet beendet".to_string()));
+                        }
+                    });
                     rx
                 }
             }

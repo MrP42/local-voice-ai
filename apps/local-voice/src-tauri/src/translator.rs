@@ -543,7 +543,11 @@ impl SectionCache for DiskSectionCache {
         }
         // Erst in eine Nebendatei, dann umbenennen: ein Abbruch mitten im
         // Schreiben hinterlässt keinen halben Abschnitt.
-        let tmp = path.with_extension("tmp");
+        // Der Name ist je Schreibvorgang einmalig: zwei Arbeiter mit gleichem
+        // Abschnittstext stören sich nicht.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path.with_extension(format!("{}-{seq}.tmp", std::process::id()));
         if std::fs::write(&tmp, translated).is_ok() {
             if let Err(e) = std::fs::rename(&tmp, &path) {
                 log::warn!("Abschnitt nicht abgelegt: {e}");

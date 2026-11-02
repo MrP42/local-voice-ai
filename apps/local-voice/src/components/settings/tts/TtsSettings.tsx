@@ -470,6 +470,13 @@ export const TtsSettings = () => {
   const speakFromRef = useRef<
     (charOffset: number, onlyOne: boolean) => Promise<void>
   >(async () => {});
+  // Beim Schließen enden Warteschleifen der Wiedergabe-während-Übersetzung.
+  useEffect(
+    () => () => {
+      speakToken.current += 1;
+    },
+    [],
+  );
   useEffect(() => {
     const matches = () =>
       streamKey.current !== "" &&
@@ -505,14 +512,16 @@ export const TtsSettings = () => {
       warnings?: unknown[] | null;
     }>("tts-translate-done", (e) => {
       const { ok, error, warnings, lang } = e.payload;
-      if (lang && lang !== targetLangRef.current) return;
       const forText = textRef.current;
       const forLang = targetLangRef.current;
       const wasStreaming = translatingRef.current || resyncJob.current;
+      // Es gibt nur einen Auftrag: sein Ende löst die Sperre immer, auch wenn
+      // inzwischen eine andere Sprache gezeigt wird (sonst hinge „läuft“ fest).
       resyncJob.current = false;
       translatingRef.current = false;
       setTranslating(false);
       setTransformProgress(null);
+      if (lang && lang !== forLang) return;
       setTranslateWarnings((warnings ?? []).map(warningText));
       if (!wasStreaming) return;
       if (ok) {
@@ -525,10 +534,13 @@ export const TtsSettings = () => {
           addTranslatedLang(forLang);
           setTranslation(final);
         });
-      } else if (error && error !== TRANSFORM_CANCELLED) {
-        setTranslatePartial({ kind: "error", message: error });
-      } else {
-        setTranslatePartial({ kind: "cancelled", message: "" });
+      } else if (streamRef.current.contiguous > 0 || translationRef.current) {
+        // Nur wenn ein Teilergebnis steht, bietet sich „Fortsetzen“ an.
+        if (error && error !== TRANSFORM_CANCELLED) {
+          setTranslatePartial({ kind: "error", message: error });
+        } else {
+          setTranslatePartial({ kind: "cancelled", message: "" });
+        }
       }
     });
     return () => void un.then((off) => off());
@@ -738,8 +750,21 @@ export const TtsSettings = () => {
     };
     void lookup().then((hit) => {
       if (abandoned) return;
-      if (translatingRef.current && streamKey.current === translationKey(text, targetLang))
+      if (
+        translatingRef.current &&
+        streamKey.current === translationKey(text, targetLang)
+      ) {
+        // Zurück zur laufenden Übersetzung: zwischenzeitlich verpasste Abschnitte
+        // holt der Auftragsstand nach (statt einer Lücke im Puffer).
+        resyncJob.current = true;
+        void fetchTranslateJob(text, targetLang).then((job) => {
+          if (abandoned || !resyncJob.current || !job?.partial) return;
+          translationFor.current = streamKey.current;
+          savedTranslation.current = job.partial;
+          setTranslation(job.partial);
+        });
         return;
+      }
       translationFor.current = translationKey(text, targetLang);
       savedTranslation.current = hit;
       // Geladen, nicht bearbeitet: "Rueckgaengig" darf das nicht leeren.
@@ -2547,11 +2572,23 @@ export const TtsSettings = () => {
     const key = translationKey(forText, forLang);
     streamKey.current = key;
     streamRef.current = emptyStream();
+    resyncJob.current = false;
     // Die Seitenmarken bleiben im Text; das Backend maskiert sie selbst.
     const result = await commands.ttsTranslate(forText, forLang);
     setTranslating(false);
     translatingRef.current = false;
+    resyncJob.current = false;
     setTransformProgress(null);
+    // Inzwischen anderer Text oder andere Sprache gewählt: das Ergebnis liegt im
+    // Zwischenspeicher und erscheint beim Zurückschalten, nicht im falschen Feld.
+    const stale =
+      textRef.current !== forText || targetLangRef.current !== forLang;
+    if (stale) {
+      if (streamKey.current === key) streamKey.current = "";
+      if (result.status === "ok") addTranslatedLang(forLang);
+      else if (result.error !== TRANSFORM_CANCELLED) setLastError(result.error);
+      return;
+    }
     if (result.status === "error") {
       const partial = streamRef.current.contiguous > 0;
       const cancelled = result.error === TRANSFORM_CANCELLED;
@@ -2613,6 +2650,9 @@ export const TtsSettings = () => {
     if (translation === null) return;
     if (translationFor.current !== translationKey(text, targetLang)) return;
     if (translation === savedTranslation.current) return;
+    // Ein Teilergebnis (Fehler/Abbruch) darf nie als fertige Übersetzung
+    // abgelegt werden — auch nicht nach einer Korrektur daran.
+    if (translatePartial) return;
     const forText = text;
     const forLang = targetLang;
     const value = translation;
@@ -2622,7 +2662,7 @@ export const TtsSettings = () => {
       });
     }, 600);
     return () => window.clearTimeout(timer);
-  }, [translation, text, targetLang]);
+  }, [translation, text, targetLang, translatePartial]);
 
   const swapKey = `lva.ui.speakerSwap.${activePage ?? ""}.${targetLang}`;
   /** Fenster "Sprecher tauschen" mit Vorbelegung (gemerkt je Seite und Sprache). */

@@ -15,7 +15,11 @@ test.beforeEach(async ({ page }) => {
     const settings = {
       onboarding_completed: true,
       app_language: "de",
-      theme: (window as unknown as { __theme?: string }).__theme ?? "light",
+      // Erst beim Abruf lesen: die Init-Skripte laufen in Registrierungsreihenfolge,
+      // __theme wird erst von start() gesetzt (nach diesem Skript).
+      get theme() {
+        return (window as unknown as { __theme?: string }).__theme ?? "light";
+      },
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
