@@ -53,6 +53,8 @@ interface ReaderToolbarProps {
   onFollow(follow: boolean): void;
   /** Lesezeichen-Knopf (nur in der Leseansicht). */
   bookmarks?: React.ReactNode;
+  /** Begriffe-Menü (lva#185, nur im Originaltext). */
+  terms?: React.ReactNode;
   fontFamily: ReaderFont;
   onFontFamily(font: ReaderFont): void;
   theme: ReaderTheme;
@@ -94,6 +96,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
   follow,
   onFollow,
   bookmarks,
+  terms,
   fontFamily,
   onFontFamily,
   theme,
@@ -211,6 +214,7 @@ export const ReaderToolbar: React.FC<ReaderToolbarProps> = ({
             </button>
           </div>
           {bookmarks}
+          {terms}
           {awake}
           <div className="relative">
             <button

@@ -126,6 +126,15 @@ import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
 import { BookSheets } from "./kidocs/BookSheets";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
 import { kiErrorText, type KiFilter } from "./kidocs/kiDocs";
+import { useBookTerms, type TermMark } from "./terms/useBookTerms";
+import { TermsMenu } from "./terms/TermsMenu";
+import { TermDialog } from "./terms/TermDialog";
+import {
+  searchUrl,
+  spokenExplanation,
+  type SearchPreset,
+} from "./terms/termSearch";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import type { IsbnBook } from "@/bindings";
@@ -306,7 +315,9 @@ export const TtsSettings = () => {
   const [pageLoadTick, setPageLoadTick] = useState(0);
   /** Zu welchem Reiter die laufende Sprechsitzung gehoert. Fortsetzen und
    *  Satzspruenge gelten nur fuer sie — ein anderer Reiter startet neu. */
-  const sessionTab = useRef<"original" | "translation" | "summary">("original");
+  const sessionTab = useRef<"original" | "translation" | "summary" | "term">(
+    "original",
+  );
   /** Zielsprache der Uebersetzung — dieselbe Einstellung wie in der
    *  Audio-Uebersetzung, damit man sie nicht an zwei Stellen pflegt. */
   const targetLang = getSetting("tts_translate_lang") ?? "English";
@@ -971,7 +982,10 @@ export const TtsSettings = () => {
     autoplayPage.current = null;
     setSpeakProgress(null);
     setCurrentIndex(null);
-    // Stopp gilt der Sitzung, nicht der gerade offenen Seite.
+    // Stopp gilt der Sitzung, nicht der gerade offenen Seite. Eine
+    // Begriffserklärung (lva#185) hat keine gemerkte Stelle: die des Buchs
+    // bleibt stehen.
+    if (sessionTab.current === "term") return;
     forgetResumePoint(sessionResumeKey.current ?? resumeKeyRef.current);
   };
 
@@ -2144,6 +2158,127 @@ export const TtsSettings = () => {
     return out;
   }, [scriptCheckOn, scriptFindings, readerBlocks, revealed]);
 
+  // Begriffe (lva#185): nur im Originaltext und in der Leseansicht.
+  const [termsShown, setTermsShown] = usePersistentState<"1" | "0">(
+    "tts.terms.highlight",
+    "1",
+  );
+  const [termAutoRead, setTermAutoRead] = usePersistentState<"1" | "0">(
+    "tts.terms.autoRead",
+    "1",
+  );
+  const [termPreset, setTermPreset] = usePersistentState<SearchPreset>(
+    "tts.terms.search",
+    "wikipedia",
+    (v) => v === "wikipedia" || v === "duckduckgo" || v === "custom",
+  );
+  const [termCustomUrl, setTermCustomUrl] = usePersistentState<string>(
+    "tts.terms.searchUrl",
+    "",
+  );
+  const bookTerms = useBookTerms(
+    activePage || null,
+    text,
+    tab === "original" && viewMode === "read" && termsShown === "1",
+  );
+  /** Offenes Erklärfenster: Fundstelle und die Stelle, an der das Vorlesen
+   *  unterbrochen wurde (null, wenn nichts lief). */
+  const [termOpen, setTermOpen] = useState<{
+    mark: TermMark;
+    resumeAt: number | null;
+  } | null>(null);
+  /** Läuft gerade die Erklärsitzung? State statt nur der Ref, damit der
+   *  Dialog nicht zwischen Abbruch und Start der Erklärung flackert. */
+  const [termSession, setTermSession] = useState(false);
+  const termSpeaking = termSession && (speaking || starting);
+  /** Erklärsitzung beenden: nie von `speaking` abhängig (siehe pauseSpeaking). */
+  const stopExplanation = async () => {
+    if (sessionTab.current !== "term") return;
+    await commands.ttsCancel();
+    setTermSession(false);
+    setSpeakProgress(null);
+    setCurrentIndex(null);
+    setReadRange(null);
+  };
+  const speakExplanation = async (mark: TermMark) => {
+    const term = bookTerms.byId.get(mark.termId);
+    if (!term) return;
+    setLastError(null);
+    setSpeakProgress(null);
+    setCurrentIndex(null);
+    setCurrentSentence(null);
+    setReadRange(null);
+    // Eine eigene Sitzung: sie verschiebt weder die gemerkte Stelle noch
+    // die Hervorhebung im Buch und liest nie im nächsten Teil weiter.
+    sessionTab.current = "term";
+    sessionDocId.current = null;
+    sessionResumeKey.current = null;
+    lastLocated.current = null;
+    partSession.current = null;
+    setTermSession(true);
+    const script = spokenExplanation(term, {
+      fromBook: t("tts.terms.fromBook"),
+      general: t("tts.terms.generalSpoken"),
+      none: t("tts.terms.fromBookNone"),
+    });
+    const result = await commands.ttsSpeakText(
+      canonicalizeTags(toSpokenScript(script)),
+    );
+    if (result.status === "error") setLastError(result.error);
+  };
+  const openTerm = async (mark: TermMark) => {
+    if (!bookTerms.byId.has(mark.termId)) return;
+    // Auch während des Anlaufs (Modell lädt): sonst liefe das Buch unter
+    // dem Fenster los.
+    const busy = speaking || starting;
+    const reading = busy && sessionHere();
+    const resumeAt = reading
+      ? (readRangeRef.current?.start ??
+        loadResumePoint(resumeKeyRef.current, spokenText) ??
+        mark.start)
+      : null;
+    setTermOpen({ mark, resumeAt });
+    if (busy) {
+      partSession.current = null;
+      // Erst abbrechen, dann die Erklärung starten: sonst träfe der Abbruch
+      // womöglich die neue Sitzung.
+      await commands.ttsCancel();
+    }
+    if (termAutoRead === "1") await speakExplanation(mark);
+  };
+  const closeTerm = () => {
+    void stopExplanation();
+    setTermSession(false);
+    setTermOpen(null);
+  };
+  const continueAfterTerm = async () => {
+    if (!termOpen) return;
+    const at = termOpen.resumeAt ?? termOpen.mark.start;
+    setTermOpen(null);
+    setFollow(true);
+    if (sessionTab.current === "term") await commands.ttsCancel();
+    setTermSession(false);
+    await speakFrom(at, false);
+  };
+  // Seite gewechselt oder Begriff verschwunden (neuer Lauf, Ladefehler):
+  // Fenster schließen und die Erklärung anhalten, nie unsichtbar weiterlesen.
+  useEffect(() => {
+    if (termOpen && !bookTerms.byId.has(termOpen.mark.termId)) closeTerm();
+  }, [bookTerms.byId]);
+  useEffect(() => {
+    if (termOpen) closeTerm();
+  }, [activePage]);
+  const extractTerms = async () => {
+    const result = await bookTerms.extract();
+    if ("error" in result) {
+      toast.error(kiErrorText(result.error, t));
+      return;
+    }
+    if (result.failed > 0)
+      toast.warning(t("tts.terms.extractedPartly", { failed: result.failed }));
+    else toast.success(t("tts.terms.extracted"));
+  };
+
   const scriptActions = useMemo(
     () => ({
       reveal: (finding: ScriptFinding) => {
@@ -3043,6 +3178,19 @@ export const TtsSettings = () => {
                 </div>
                       </InfoPopover>
                     }
+                    terms={
+                      tab === "original" ? (
+                        <TermsMenu
+                          highlight={termsShown === "1"}
+                          onHighlight={(on) => setTermsShown(on ? "1" : "0")}
+                          count={bookTerms.terms.filter((x) => !x.hidden).length}
+                          run={bookTerms.run}
+                          busy={kiDocs.run !== null}
+                          onExtract={() => void extractTerms()}
+                          onCancel={bookTerms.cancel}
+                        />
+                      ) : undefined
+                    }
                     bookmarks={
                       <ReaderBookmarks
                         bookmarks={bookmarks}
@@ -3160,6 +3308,8 @@ export const TtsSettings = () => {
                   current={readRange}
                   clock={sessionHere() ? sentenceClock : null}
                   marks={readerMarks}
+                  terms={tab === "original" ? bookTerms.marks : undefined}
+                  onTerm={(mark) => void openTerm(mark)}
                   twoPages={twoPagesStored === "1"}
                   fontSize={Number(fontStored)}
                   fontFamily={fontFamily}
@@ -3537,6 +3687,30 @@ export const TtsSettings = () => {
             }
             selection={kiSelection}
             onCreate={createKiDocument}
+          />
+          <TermDialog
+            term={termOpen ? (bookTerms.byId.get(termOpen.mark.termId) ?? null) : null}
+            page={termOpen?.mark.page ?? null}
+            open={termOpen !== null}
+            onOpenChange={(o) => !o && closeTerm()}
+            autoRead={termAutoRead === "1"}
+            onAutoRead={(on) => setTermAutoRead(on ? "1" : "0")}
+            speaking={termSpeaking}
+            onSpeak={() => termOpen && void speakExplanation(termOpen.mark)}
+            onStopSpeaking={() => void stopExplanation()}
+            onContinue={() => void continueAfterTerm()}
+            canContinue={termOpen?.resumeAt != null}
+            onMore={() => {
+              const term = termOpen && bookTerms.byId.get(termOpen.mark.termId);
+              if (!term) return;
+              openUrl(
+                searchUrl(termPreset, termCustomUrl, term.term, uiLang),
+              ).catch(() => toast.error(t("tts.terms.openFailed")));
+            }}
+            preset={termPreset}
+            onPreset={setTermPreset}
+            customUrl={termCustomUrl}
+            onCustomUrl={setTermCustomUrl}
           />
           <IsbnDialog
             open={isbnOpen}
