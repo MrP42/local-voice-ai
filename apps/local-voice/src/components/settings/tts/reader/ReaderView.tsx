@@ -233,7 +233,7 @@ const Runs: React.FC<{
                     role: "button",
                     tabIndex: 0,
                     "aria-haspopup": "dialog" as const,
-                    "aria-description": t("tts.terms.markHint"),
+                    "aria-label": t("tts.terms.markLabel", { term: p.term.label }),
                   }
                 : {})}
             >

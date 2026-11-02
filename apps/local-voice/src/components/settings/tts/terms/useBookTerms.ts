@@ -8,9 +8,12 @@ export interface TermMark {
   end: number;
   termId: string;
   page: number | null;
+  /** Der ganze Begriff im Text (für Hilfstechnik, auch wenn er geteilt ist). */
+  label: string;
 }
 
 export interface TermsRunState {
+  page: string;
   done: number;
   total: number;
 }
@@ -47,7 +50,13 @@ export function verifiedMarks(
     const found = norm(text.slice(h.start, h.end));
     const names = [term.term, ...term.variants].map(norm);
     if (!names.includes(found)) continue;
-    out.push({ start: h.start, end: h.end, termId: h.term_id, page: h.page });
+    out.push({
+      start: h.start,
+      end: h.end,
+      termId: h.term_id,
+      page: h.page,
+      label: text.slice(h.start, h.end),
+    });
   }
   return out;
 }
@@ -68,6 +77,8 @@ export function useBookTerms(
   );
   const [run, setRun] = useState<TermsRunState | null>(null);
   const runPage = useRef<string | null>(null);
+  /** Nur die letzte Suche zählt: ältere Antworten können später eintreffen. */
+  const hitsReq = useRef(0);
   const pageRef = useRef(pageId);
   pageRef.current = pageId;
 
@@ -89,8 +100,9 @@ export function useBookTerms(
   useEffect(() => {
     if (!pageId || !enabled || terms.length === 0) return;
     const handle = window.setTimeout(() => {
+      const req = ++hitsReq.current;
       void commands.bookAiTermHits(pageId).then((r) => {
-        if (pageRef.current !== pageId) return;
+        if (req !== hitsReq.current || pageRef.current !== pageId) return;
         setHits({
           page: pageId,
           hits: r.status === "ok" && Array.isArray(r.data) ? r.data : [],
@@ -109,7 +121,8 @@ export function useBookTerms(
     }>("book-ai-progress", (e) => {
       if (e.payload.kind !== "terms" || e.payload.page_id !== runPage.current)
         return;
-      setRun({ done: e.payload.done, total: e.payload.total });
+      const page = runPage.current;
+      if (page) setRun({ page, done: e.payload.done, total: e.payload.total });
     });
     return () => void un.then((off) => off());
   }, []);
@@ -128,7 +141,7 @@ export function useBookTerms(
     if (!page) return { error: "page_missing" };
     if (runPage.current) return { error: "book_ai:busy" };
     runPage.current = page;
-    setRun({ done: 0, total: 0 });
+    setRun({ page, done: 0, total: 0 });
     try {
       const r = await commands.bookAiTermsExtract(page);
       if (r.status === "error") return { error: r.error };
@@ -142,5 +155,7 @@ export function useBookTerms(
 
   const cancel = useCallback(() => void commands.bookAiCancel(), []);
 
-  return { terms, marks, run, extract, cancel, byId };
+  // Ein Lauf gehört zu seiner Seite; auf einer anderen Seite nicht anzeigen.
+  const shownRun = run && run.page === pageId ? run : null;
+  return { terms, marks, run: shownRun, extract, cancel, byId };
 }
