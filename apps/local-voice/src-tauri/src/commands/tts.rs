@@ -286,7 +286,8 @@ pub fn tts_translate_job(
     text: String,
     target_lang: String,
 ) -> Option<crate::translator::TranslateJob> {
-    app.state::<Arc<TtsManager>>().translate_job_for(&text, &target_lang)
+    app.state::<Arc<TtsManager>>()
+        .translate_job_for(&text, &target_lang)
 }
 
 /// Liegt fuer diesen Text in dieser Sprache schon eine Uebersetzung bereit?
