@@ -4,8 +4,10 @@ UI-Vorschau zur Abnahme, noch kein App-Code. iPhone 390 × 844 pt, gerendert mit
 mit Statusleiste, Dynamic Island und Home-Indikator. Farben aus der App-Palette (`VoicePalette`):
 hell Ink-Akzent, dunkel Signalgelb-Akzent.
 
-Varianten je Bild: `hell`, `dunkel`, `gross` (Dynamic Type etwa 135 %, ohne Umbau des Layouts),
-`touch` (alle Bedienelemente rot gestrichelt umrandet, jedes mindestens 44 × 44 pt).
+Varianten je Bild: `hell`, `dunkel` (Statusleiste und Home-Indikator weiß), `gross` (Dynamic Type etwa 135 %),
+`gross-ende` bzw. `ende` (bis zum Ende gescrollt: letzter Inhalt frei über Mini-Player, Tab-Leiste bzw.
+Bedienleiste und Home-Indikator), `touch` (alle antippbaren Elemente rot gestrichelt umrandet, auch die
+Absätze in Mitlesen und Vorlesen; jedes mindestens 44 × 44 pt).
 
 | Bild | Inhalt |
 | --- | --- |
