@@ -2411,6 +2411,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::book_ai_terms,
             book_ai::book_ai_term_save,
             book_ai::book_ai_term_hits,
+            book_ai::book_ai_document_import,
+            book_ai::book_ai_document_export,
             books::books_list,
             books::books_create,
             books::books_update,

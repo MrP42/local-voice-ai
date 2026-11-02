@@ -475,3 +475,74 @@ pub async fn book_ai_term_hits(
     .await
     .map_err(|_| "book_ai:terms_failed".to_string())?
 }
+
+/// Text als KI-Dokument übernehmen, z. B. die bisherige Zusammenfassung einer
+/// Seite (aus der Zeit vor den Vorlagen, lva#183).
+#[tauri::command]
+#[specta::specta]
+pub fn book_ai_document_import(
+    app: AppHandle,
+    page_id: String,
+    title: String,
+    text: String,
+) -> Result<KiDocument, String> {
+    let dir = page_path(&app, &page_id)?;
+    if text.trim().is_empty() {
+        return Err("book_ai:empty_source".into());
+    }
+    if let Some(existing) = store::find_import(&dir, text.trim())? {
+        return Ok(existing);
+    }
+    let now = now_ms();
+    store::create(
+        &dir,
+        KiDocument {
+            id: String::new(),
+            title: if title.trim().is_empty() {
+                "Zusammenfassung".into()
+            } else {
+                title
+            },
+            template_id: "import".into(),
+            template_title: "Zusammenfassung".into(),
+            source: SummarySource::Book,
+            source_label: "Buch".into(),
+            created_ms: now,
+            modified_ms: now,
+            words: 0,
+            model: String::new(),
+        },
+        text.trim(),
+    )
+}
+
+/// Ein KI-Dokument exportieren. Das Format ergibt sich aus der Endung (`md`, `txt`,
+/// `docx`, `pdf`); Word und PDF tragen den eingestellten Briefkopf. Der Titel
+/// steht als Überschrift über dem Text.
+#[tauri::command]
+#[specta::specta]
+pub async fn book_ai_document_export(
+    app: AppHandle,
+    page_id: String,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    let dir = page_path(&app, &page_id)?;
+    let doc = store::list(&dir)?
+        .into_iter()
+        .find(|d| d.id == id)
+        .ok_or("book_ai:document_missing")?;
+    let text = store::read_text(&dir, &id)?;
+    // Beginnt der Text schon mit einer Hauptüberschrift, keine zweite davor.
+    let body = text.trim();
+    let markdown = if body.starts_with("# ") {
+        format!("{body}\n")
+    } else {
+        format!("# {}\n\n{body}\n", doc.title.trim())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::commands::meeting_documents::export_with_letterhead(&app, path, markdown, None)
+    })
+    .await
+    .map_err(|_| "book_ai:export_failed".to_string())?
+}
