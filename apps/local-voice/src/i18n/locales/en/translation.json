@@ -565,6 +565,8 @@
       "fromBookNote": "Summarised by the AI from the book text, not a verbatim quote."
     },
     "kurzbuch": {
+      "more": "Show key ideas and details",
+      "less": "Show less",
       "kind": "Book in brief",
       "overview": "Book in brief overview",
       "ideas_one": "{{count}} key idea",
@@ -666,7 +668,8 @@
         "empty": "The source contains no text.",
         "cancelled": "Creation cancelled.",
         "generic": "That did not work ({{code}}).",
-        "outlineUnreadable": "The model did not return a usable outline. Please try again or choose another model."
+        "outlineUnreadable": "The model did not return a usable outline. Please try again or choose another model.",
+        "emptyAnswer": "The model returned no text for a key idea. Please try again; finished parts are kept."
       }
     },
     "summaryPlaceholder": "No summary yet — pick length, detail and audience below and press “Summarize”. The text stays editable.",

@@ -565,6 +565,8 @@
       "fromBookNote": "Von der KI aus dem Buchtext zusammengefasst, kein wörtliches Zitat."
     },
     "kurzbuch": {
+      "more": "Kernaussagen und Details zeigen",
+      "less": "Weniger zeigen",
       "kind": "Kurzbuch",
       "overview": "Überblick des Kurzbuchs",
       "ideas_one": "{{count}} Kernaussage",
@@ -666,7 +668,8 @@
         "empty": "Die Quelle enthält keinen Text.",
         "cancelled": "Erstellung abgebrochen.",
         "generic": "Das hat nicht geklappt ({{code}}).",
-        "outlineUnreadable": "Das Modell hat keine brauchbare Gliederung geliefert. Bitte noch einmal versuchen oder ein anderes Modell wählen."
+        "outlineUnreadable": "Das Modell hat keine brauchbare Gliederung geliefert. Bitte noch einmal versuchen oder ein anderes Modell wählen.",
+        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten."
       }
     },
     "summaryPlaceholder": "Noch keine Zusammenfassung — unten Umfang, Detailgrad und Zielgruppe wählen und auf „Zusammenfassen“ klicken. Der Text bleibt änderbar.",

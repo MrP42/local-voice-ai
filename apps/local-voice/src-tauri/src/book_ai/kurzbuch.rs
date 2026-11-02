@@ -34,6 +34,8 @@ pub const HEAD_AUDIENCE: &str = "Für wen";
 pub const HEAD_CONCLUSION: &str = "Fazit";
 /// Gliederung auch nach zwei Versuchen nicht lesbar.
 pub const OUTLINE_UNREADABLE: &str = "book_ai:outline_unreadable";
+/// Das Modell hat für eine Kernaussage zweimal keinen Text geliefert.
+pub const EMPTY_ANSWER: &str = "book_ai:empty_answer";
 
 /// Ändern sich die Prompts, gelten die alten Cache-Einträge nicht mehr.
 const VERSION: &str = "kurzbuch-v1";
@@ -140,8 +142,16 @@ pub fn outline_prompt(parts: &[Part], suggested: usize, full_text: bool, languag
 
 fn one_line(s: &str) -> String {
     let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let s = s.trim_start_matches(['#', '*', '-', ' ']).trim();
-    let s = s.trim_matches('*').trim();
+    // Nur Markdown-Marker (mit Leerzeichen danach) und Fettdruck entfernen,
+    // nicht etwa das Minus von „-5 Grad“.
+    let s = s.trim_start_matches('#').trim_start();
+    let s = s
+        .strip_prefix("- ")
+        .or_else(|| s.strip_prefix("* "))
+        .unwrap_or(s)
+        .trim();
+    let s = s.strip_prefix("**").unwrap_or(s);
+    let s = s.strip_suffix("**").unwrap_or(s).trim();
     if s.chars().count() <= MAX_TITLE_CHARS {
         return s.to_string();
     }
@@ -282,8 +292,13 @@ pub fn conclusion_prompt(about: &str, ideas: &[(String, String)], language: &str
 /// Modelltext ohne Überschriftenzeilen, damit die Gliederung des Kurzbuchs
 /// eindeutig bleibt.
 pub fn clean_body(text: &str) -> String {
+    let heading = |l: &str| {
+        let l = l.trim_start();
+        let hashes = l.chars().take_while(|c| *c == '#').count();
+        (1..=6).contains(&hashes) && l[hashes..].starts_with([' ', '\t'])
+    };
     text.lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
+        .filter(|l| !heading(l))
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
@@ -374,7 +389,17 @@ where
         )
         .await?
     };
-    let overview = condense(detail.clone(), limit, language, &ask, &mut steps, cancel).await?;
+    let overview = condense(
+        detail.clone(),
+        limit,
+        model_key,
+        language,
+        cache,
+        &ask,
+        &mut steps,
+        cancel,
+    )
+    .await?;
     if size(&overview) > limit {
         return Err(TOO_LONG.into());
     }
@@ -416,7 +441,18 @@ where
             language,
         );
         let ikey = key(&[model_key, "idea", &prompt]);
-        let body = clean_body(&cached(cache, &ikey, &ask, prompt).await?);
+        // Leere Antwort (nur Überschriften): einmal ohne Cache neu fragen,
+        // dann klarer Fehler statt einer leeren Kernaussage.
+        let mut body = clean_body(&cached(cache, &ikey, &ask, prompt.clone()).await?);
+        if body.is_empty() {
+            check(cancel)?;
+            let again = ask(prompt).await?;
+            body = clean_body(&again);
+            if body.is_empty() {
+                return Err(EMPTY_ANSWER.into());
+            }
+            cache.put(&ikey, &again);
+        }
         check(cancel)?;
         bodies.push(body);
         steps.step();
@@ -503,6 +539,9 @@ mod tests {
         assert!(md.contains("## Rückfall: Nie zweimal.\n\nDrei."));
         assert!(md.ends_with("## Fazit\n\nEnde.\n"));
         assert_eq!(clean_body("# Titel\nText\n## Zwischen\nmehr"), "Text\nmehr");
+        assert_eq!(clean_body("#1 der Liste"), "#1 der Liste");
+        assert_eq!(one_line("- -5 Grad: Kälte hilft."), "-5 Grad: Kälte hilft.");
+        assert_eq!(one_line("## **Anfang: Klein.**"), "Anfang: Klein.");
     }
 
     fn fake(

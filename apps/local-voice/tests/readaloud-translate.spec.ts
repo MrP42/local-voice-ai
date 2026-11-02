@@ -620,12 +620,20 @@ test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernauss
   await page.screenshot({
     path: "docs/vorschau/buch-ki-b7/03-app-kurzbuch.png",
   });
-  // Schmaler Bereich (Seiten- und Werkzeugspalte offen): Überblick darüber.
+  // Schmaler Bereich (Seiten- und Werkzeugspalte offen): Überblick darüber,
+  // zugeklappt, damit der Lesetext Platz behält.
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(panel).toBeVisible();
+  const toggle = panel.getByRole("button", {
+    name: "Kernaussagen und Details zeigen",
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(panel.getByRole("list", { name: "Kernaussagen" })).toBeHidden();
   await page.screenshot({
     path: "docs/vorschau/buch-ki-b7/04-app-kurzbuch-schmal.png",
   });
+  await toggle.click();
+  await expect(panel.getByRole("list", { name: "Kernaussagen" })).toBeVisible();
   const before = (await calls(page)).length;
   await panel
     .getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" })

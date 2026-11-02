@@ -325,8 +325,27 @@
     grid-template-rows: auto minmax(0, 1fr);
   }
   .kurzbuch__panel {
-    max-height: min(16rem, 35vh);
+    max-height: min(22rem, 45vh);
   }
+  .kurzbuch__panel .kidocs__meta,
+  .kurzbuch__title {
+    display: none;
+  }
+  .kurzbuch__panel .kurzbuch__toggle {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+  .kurzbuch__panel:not(.kurzbuch__panel--open) .kurzbuch__more {
+    display: none;
+  }
+}
+.kurzbuch__toggle {
+  display: none;
+}
+.kurzbuch__more {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .kurzbuch__panel > * {
   flex-shrink: 0;

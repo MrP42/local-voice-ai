@@ -352,11 +352,15 @@ where
 
 /// Teile in Gruppen verdichten, bis sie zusammen in `limit` passen (oder
 /// nichts mehr zu bündeln ist). Gruppen mit halbem Limit, damit jede Runde
-/// die Zahl der Teile wirklich senkt.
+/// die Zahl der Teile wirklich senkt. Verdichtete Gruppen liegen im Cache:
+/// Ein zweiter Lauf bekommt denselben Text und damit dieselben Folgeschritte.
+#[allow(clippy::too_many_arguments)]
 pub async fn condense<F, Fut>(
     mut parts: Vec<Part>,
     limit: usize,
+    model_key: &str,
     language: &str,
+    cache: &DigestCache,
     ask: &F,
     steps: &mut Steps<'_>,
     cancel: &AtomicBool,
@@ -388,7 +392,18 @@ where
             } else {
                 Part {
                     label: format!("{} – {}", first.label, last.label),
-                    text: ask(condense_prompt(&pairs(&g), language)).await?,
+                    text: {
+                        let prompt = condense_prompt(&pairs(&g), language);
+                        let key = DigestCache::key(model_key, "condense", &prompt, 0);
+                        match cache.get(&key) {
+                            Some(hit) => hit,
+                            None => {
+                                let out = ask(prompt).await?;
+                                cache.put(&key, &out);
+                                out
+                            }
+                        }
+                    },
                     chapters,
                 }
             };
@@ -443,7 +458,10 @@ where
         &chapters, jobs, model_key, language, cache, &ask, &mut steps, cancel,
     )
     .await?;
-    let parts = condense(digests, limit, language, &ask, &mut steps, cancel).await?;
+    let parts = condense(
+        digests, limit, model_key, language, cache, &ask, &mut steps, cancel,
+    )
+    .await?;
     if size(&parts) > limit {
         // Lieber ein klarer Fehler als ein still abgeschnittener Prompt.
         return Err(TOO_LONG.into());
