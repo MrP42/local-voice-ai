@@ -240,16 +240,22 @@ const chunk = (index: number, text: string) => ({
   cached: false,
 });
 
-const start = async (page: Page, width: number, theme: string) => {
+const start = async (
+  page: Page,
+  width: number,
+  theme: string,
+  docked = false,
+) => {
   await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light" });
   await page.setViewportSize({ width, height: 900 });
   await page.addInitScript(
-    ([t, th]) => {
+    ([t, th, d]) => {
       (window as unknown as { __pageText: string }).__pageText = t;
       (window as unknown as { __theme: string }).__theme = th;
       window.localStorage.removeItem("lva.ui.tts.view");
+      if (d) window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
     },
-    [BOOK, theme] as const,
+    [BOOK, theme, docked] as const,
   );
   await page.goto("/");
   if (width < 600)
@@ -330,8 +336,15 @@ for (const theme of ["light", "dark"]) {
       const modelBtn = page
         .getByTestId("tts-translation-model")
         .getByRole("button", { name: /^Modell wählen/ });
-      await expect(modelBtn).toContainText(
+      // Kurz beschriftet (Patrick 02.11.), voller Name im Namen und Tooltip.
+      await expect(modelBtn).toHaveText("Sonnet 5.5");
+      await expect(modelBtn).toHaveAttribute(
+        "aria-label",
         "Modell wählen: Claude (Abo) · Claude Sonnet 5.5",
+      );
+      await expect(modelBtn).toHaveAttribute(
+        "title",
+        /Modell wählen: Claude \(Abo\) · Claude Sonnet 5\.5/,
       );
       await expect(modelBtn).toHaveAttribute("aria-haspopup", "listbox");
       await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
@@ -363,7 +376,7 @@ for (const theme of ["light", "dark"]) {
         /Wie das Licht zurückkam und was die Wärterin darüber dachte/,
       );
       await expect(block).toContainText(
-        "Parallele Worker (je ein Kapitelbereich)",
+        "Parallele Worker (je ein Textbereich)",
       );
       const rows = block.getByTestId("tts-worker-row");
       await expect(rows).toHaveCount(4);
@@ -477,3 +490,61 @@ test("Abbruch zeigt eigenen Block mit Fortsetzen (light, 390)", async ({
   });
   await page.screenshot({ path: `${SHOTS}/abbruch-light-390.png` });
 });
+
+// Patrick 02.11.: In der Spielerleiste (rechte Spalte aus) öffnet die
+// Modellwahl nach oben, und der Fortschritt steht als Fenster ÜBER der Leiste
+// statt rechts daneben — ohne Zeit/Seite zu verdecken und ohne die
+// Leseansicht seitlich zu verschieben.
+const LEISTE = "docs/vorschau/uebersetzung-leiste";
+for (const theme of ["light", "dark"]) {
+  test(`Leiste: Modellwahl nach oben, Fortschritt über der Leiste (${theme}, 1440)`, async ({
+    page,
+  }) => {
+    await start(page, 1440, theme, true);
+    const player = page.getByTestId("reader-player");
+    const dock = page.getByTestId("reader-dock");
+    await expect(dock).toBeVisible();
+
+    // Fortschritt: über der Leiste, ganz sichtbar, nicht in der Zeile.
+    const overlay = page.getByTestId("tts-translate-overlay");
+    await expect(overlay).toBeVisible();
+    await expect(dock.getByTestId("tts-translate-progress")).toHaveCount(0);
+    await expect(overlay.getByTestId("tts-worker-row")).toHaveCount(4);
+    await expect(overlay).toBeInViewport({ ratio: 1 });
+    const pb = (await player.boundingBox())!;
+    const ob = (await overlay.boundingBox())!;
+    expect(ob.y + ob.height).toBeLessThanOrEqual(pb.y + 0.5);
+    expect(ob.x + ob.width).toBeLessThanOrEqual(pb.x + pb.width + 0.5);
+    // Kein waagrechtes Überlaufen: Leseansicht bleibt an ihrem Platz.
+    const overflow = await page.evaluate(() => {
+      const els = Array.from(document.querySelectorAll<HTMLElement>("*"));
+      return els
+        .filter(
+          (e) =>
+            e.scrollWidth > e.clientWidth + 1 &&
+            ["auto", "scroll"].includes(getComputedStyle(e).overflowX),
+        )
+        .map((e) => e.className || e.tagName);
+    });
+    expect(overflow).toEqual([]);
+    await page.screenshot({ path: `${LEISTE}/fortschritt-${theme}-1440.png` });
+
+    // Modellwahl: Kurzname, Liste öffnet nach oben und ist ganz sichtbar.
+    const modelBtn = page
+      .getByTestId("tts-translation-model")
+      .getByRole("button", { name: /^Modell wählen/ });
+    await expect(modelBtn).toHaveText("Sonnet 5.5");
+    expect((await modelBtn.boundingBox())!.width).toBeLessThan(160);
+    await modelBtn.click();
+    const list = page.getByRole("listbox", { name: "Modell wählen:" });
+    await expect(list).toHaveAttribute("data-placement", "above");
+    await expect(list).toBeInViewport({ ratio: 1 });
+    const lb = (await list.boundingBox())!;
+    expect(lb.y + lb.height).toBeLessThanOrEqual(
+      (await modelBtn.boundingBox())!.y + 0.5,
+    );
+    await expect(list.getByRole("option")).toHaveCount(2);
+    await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1440.png` });
+    await list.getByRole("option", { name: /Opus 5\.5/ }).click();
+  });
+}

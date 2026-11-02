@@ -499,7 +499,7 @@
       "sizeNote": "Prozent nach Textmenge; ein Abschnitt umfasst etwa {{chars}} Zeichen.",
       "sizeNoteGeneric": "Prozent nach Textmenge, nicht nach Abschnitten.",
       "currentChapter": "Aktuelles Kapitel:",
-      "workersTitle": "Parallele Worker (je ein Kapitelbereich)",
+      "workersTitle": "Parallele Worker (je ein Textbereich)",
       "worker": "Worker {{n}}",
       "workerValue": "{{done}} von {{total}} Abschnitten",
       "workerAria": "Worker {{n}}: {{done}} von {{total}} Abschnitten",

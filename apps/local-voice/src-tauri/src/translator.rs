@@ -794,9 +794,18 @@ where
     Ok(done(translated, false, Some(problem)))
 }
 
-/// Die Bereiche der Arbeiter: zusammenhängend, nach Zeichenmenge ausgewogen,
-/// nur an Kapitelgrenzen — bei weniger Kapiteln als Arbeitern an
-/// Abschnittsgrenzen. Höchstens so viele Bereiche wie Abschnitte.
+/// Wie weit (Anteil eines Arbeiter-Anteils) ein Schnitt an einer
+/// Kapitelgrenze vom ausgewogenen Ziel abweichen darf, bevor stattdessen an
+/// einer Abschnittsgrenze im Kapitel geschnitten wird.
+const CHAPTER_CUT_TOLERANCE: f64 = 0.15;
+
+/// Die Bereiche der Arbeiter: zusammenhängend und nach Zeichenmenge
+/// ausgewogen. Kapitelgrenzen sind bevorzugte Schnittpunkte, aber nur, wenn
+/// sie nahe am Ziel liegen; sonst wird ein großes Kapitel an einer
+/// Abschnittsgrenze (Absatzgrenze) geteilt. Früher galten nur Kapitelgrenzen —
+/// ein Buch mit einem riesigen Kapitel gab dann einem Arbeiter fast alles
+/// (Patrick 02.11.: 4/18/1/5 Abschnitte). Höchstens so viele Bereiche wie
+/// Abschnitte, keiner leer.
 #[allow(clippy::single_range_in_vec_init)]
 pub fn partition_workers(sections: &[Section], workers: usize) -> Vec<std::ops::Range<usize>> {
     let len = sections.len();
@@ -809,24 +818,28 @@ pub fn partition_workers(sections: &[Section], workers: usize) -> Vec<std::ops::
         prefix[i + 1] = prefix[i] + s.text.chars().count();
     }
     let total = prefix[len];
-    let chapter_cuts: Vec<usize> = (1..len)
-        .filter(|&i| sections[i].chapter != sections[i - 1].chapter)
-        .collect();
-    let cands: Vec<usize> = if chapter_cuts.len() + 1 >= n {
-        chapter_cuts
-    } else {
-        (1..len).collect()
-    };
+    let share = total as f64 / n as f64;
+    let is_chapter_cut = |c: usize| sections[c].chapter != sections[c - 1].chapter;
     let mut cuts = Vec::with_capacity(n - 1);
-    let mut from = 0usize;
+    // Schnitt c teilt vor Abschnitt c; erlaubt 1..len, streng steigend, und es
+    // müssen noch genug Abschnitte für die übrigen Arbeiter bleiben.
+    let mut from = 1usize;
     for k in 1..n {
         let target = total * k / n;
-        let last_allowed = cands.len() - (n - k);
+        let last_allowed = len - (n - k);
+        let dist = |c: usize| prefix[c].abs_diff(target);
         let best = (from..=last_allowed)
-            .min_by_key(|&j| prefix[cands[j]].abs_diff(target))
+            .min_by_key(|&c| dist(c))
             .unwrap_or(from);
-        cuts.push(cands[best]);
-        from = best + 1;
+        let chapter = (from..=last_allowed)
+            .filter(|&c| is_chapter_cut(c))
+            .min_by_key(|&c| dist(c));
+        let cut = match chapter {
+            Some(c) if (dist(c) as f64) <= share * CHAPTER_CUT_TOLERANCE => c,
+            _ => best,
+        };
+        cuts.push(cut);
+        from = cut + 1;
     }
     let mut ranges = Vec::with_capacity(n);
     let mut start = 0;
@@ -1714,15 +1727,37 @@ mod section_tests {
         let secs = sections_of(&[0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7]);
         let r = partition_workers(&secs, 4);
         assert_eq!(r, vec![0..4, 4..8, 8..12, 12..16]);
-        // Ungleiche Kapitel: Schnitte nur an Kapitelgrenzen.
-        let secs = sections_of(&[0, 0, 0, 0, 0, 0, 1, 2, 3, 3, 3, 3]);
+        // Kapitelgrenze knapp neben dem Ziel wird bevorzugt.
+        // Ziel 10 Abschnitte je Arbeiter, Kapitelgrenze bei 9 (Abstand 1 ≤ 15 %).
+        let mut chapters = vec![0; 9];
+        chapters.extend(vec![1; 31]);
+        let r = partition_workers(&sections_of(&chapters), 4);
+        assert_eq!(r, vec![0..9, 9..20, 20..30, 30..40]);
+        // Liegt die Kapitelgrenze weit daneben, wird im Kapitel geschnitten.
+        let mut chapters = vec![0; 3];
+        chapters.extend(vec![1; 17]);
+        let r = partition_workers(&sections_of(&chapters), 4);
+        assert_eq!(r, vec![0..5, 5..10, 10..15, 15..20]);
+    }
+
+    #[test]
+    fn a_huge_chapter_is_split_so_the_work_stays_balanced() {
+        // Wie „Der Alchimist“ (Patrick 02.11.): Vorspann, ein riesiges Kapitel
+        // „Teil Eins“, kleine Kapitel danach. Früher 4/18/1/5 Abschnitte.
+        let mut chapters = vec![0, 0, 1, 1];
+        chapters.extend(vec![2; 18]);
+        chapters.extend([3, 4, 4, 4, 4, 5]);
+        let secs = sections_of(&chapters);
         let r = partition_workers(&secs, 4);
         assert_eq!(r.len(), 4);
+        assert_eq!((r[0].start, r.last().unwrap().end), (0, 28));
         for w in r.windows(2) {
             assert_eq!(w[0].end, w[1].start);
-            assert_ne!(secs[w[1].start].chapter, secs[w[1].start - 1].chapter);
         }
-        assert_eq!((r[0].start, r.last().unwrap().end), (0, 12));
+        let lens: Vec<usize> = r.iter().map(|x| x.len()).collect();
+        // Ziel 7 je Arbeiter; die Kapitelgrenze bei 22 liegt nur einen
+        // Abschnitt neben dem Ziel 21 und wird deshalb genommen.
+        assert_eq!(lens, vec![7, 7, 8, 6], "ausgewogen: {lens:?}");
     }
 
     #[test]
