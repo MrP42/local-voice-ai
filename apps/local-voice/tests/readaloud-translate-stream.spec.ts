@@ -308,6 +308,10 @@ const expectReachable = async (loc: Locator, minHeight = 0) => {
 const expectTouch = async (loc: Locator) => {
   await loc.scrollIntoViewIfNeeded();
   const box = (await loc.boundingBox())!;
+  // Beleg für die Abnahme: Maß jedes geprüften Touchziels im Testprotokoll.
+  console.log(
+    `TOUCH ${String(loc)} ${box.width.toFixed(1)}x${box.height.toFixed(1)}`,
+  );
   expect(box.height).toBeGreaterThanOrEqual(43.5);
   expect(box.width).toBeGreaterThanOrEqual(43.5);
 };
@@ -325,11 +329,18 @@ for (const theme of ["light", "dark"]) {
       // Modellwahl: klarer Auswahlbutton mit Präfix.
       const modelBtn = page
         .getByTestId("tts-translation-model")
-        .getByRole("button");
+        .getByRole("button", { name: /^Modell wählen/ });
       await expect(modelBtn).toContainText(
         "Modell wählen: Claude (Abo) · Claude Sonnet 5.5",
       );
       await expect(modelBtn).toHaveAttribute("aria-haspopup", "listbox");
+      await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
+      await modelBtn.click();
+      await expect(modelBtn).toHaveAttribute("aria-expanded", "true");
+      console.log(
+        `ARIA Modellknopf haspopup=${await modelBtn.getAttribute("aria-haspopup")} expanded(offen)=${await modelBtn.getAttribute("aria-expanded")}`,
+      );
+      await page.keyboard.press("Escape");
       await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
 
       // Fortschrittsblock.
