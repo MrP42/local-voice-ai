@@ -124,6 +124,7 @@ import { ReaderContents } from "./reader/ReaderContents";
 import { useKiDocuments } from "./kidocs/useKiDocuments";
 import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
 import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
+import { BookSheets } from "./kidocs/BookSheets";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
 import { kiErrorText, type KiFilter } from "./kidocs/kiDocs";
 import { IsbnDialog } from "./reader/IsbnDialog";
@@ -2863,6 +2864,22 @@ export const TtsSettings = () => {
                   />
                 </div>
               )}
+              <BookSheets
+                renderContents={(close) =>
+                  viewMode === "read" && contents.length > 0 ? (
+                    <ReaderContents
+                      entries={contents}
+                      current={chapterIndex}
+                      onGo={(entry) => {
+                        close();
+                        goToChapter(entry);
+                      }}
+                      pages={contentsPages}
+                      book={book}
+                    />
+                  ) : null
+                }
+              />
               {tab === "summary" && activePage && openDoc && (
                 <KiDocumentHeader
                   pageId={activePage}

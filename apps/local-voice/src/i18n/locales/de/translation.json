@@ -516,6 +516,16 @@
     "tabSummary": "KI-Dokumente",
     "kiDocs": {
       "tab": "KI-Dokumente",
+      "sheets": {
+        "label": "Buchbereiche",
+        "contents": "Inhalt",
+        "notes": "Notizen",
+        "chat": "Chat",
+        "close": "Schließen",
+        "noContents": "Dieser Text hat keine Überschriften.",
+        "notesSoon": "Hier sammelst du bald markierte Begriffe und eigene Notizen zum Buch; daraus entsteht auf Wunsch eine Lernunterlage.",
+        "chatSoon": "Hier fragst du bald zum Buch und zu deinen Dokumenten; Antworten nennen ihre Fundstellen."
+      },
       "new": "Neu erstellen",
       "newHint": "KI-Dokument aus dem Buch erstellen: Zusammenfassung, Lernzettel, Analyse und mehr nach Vorlage.",
       "newTitle": "Neues KI-Dokument",

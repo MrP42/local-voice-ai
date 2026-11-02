@@ -81,6 +81,8 @@
   font-variant-numeric: tabular-nums;
 }
 .kidocs__badge {
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 0 8px;
   border-radius: 999px;
   background: var(--color-logo-primary);
@@ -199,6 +201,11 @@
   color: var(--color-text-muted);
 }
 
+/* Inhalt, Notizen, Chat: Leiste nur im schmalen Fenster (siehe unten). */
+.book-sheets {
+  display: none;
+}
+
 /* Mobil (Codex, Must-fix 4): Bedienziele mindestens 44 × 44 px, eine Spalte,
    Erstellen-Dialog im Vollbild. */
 @media (max-width: 640px) {
@@ -213,6 +220,57 @@
   }
   .kidoc-head .kidocs__meta {
     display: none;
+  }
+  /* Titel in eigener Zeile: Rückweg, Abzeichen und Export bleiben oben. */
+  .kidoc-head {
+    flex-wrap: wrap;
+  }
+  .kidoc-head__title {
+    order: 5;
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  .kidoc-head .kidocs__badge {
+    margin-left: auto;
+  }
+  /* Alle Bedienziele im Dialog und in der Kopfzeile mindestens 44 px. */
+  .kidoc-new button,
+  .kidoc-new input,
+  .kidoc-new .app-select__control,
+  .kidoc-sheet button {
+    min-height: 44px;
+  }
+  .kidoc-new .lv-dialog__actions button {
+    flex: 1 1 100%;
+  }
+  .book-sheets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .book-sheets__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px;
+    border: 1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    cursor: pointer;
+  }
+  /* Blatt von unten statt Fenster in der Mitte. Keine Animation. */
+  .lv-dialog.lv-dialog.kidoc-sheet {
+    position: fixed;
+    inset: auto 0 0 0 !important;
+    margin: 0 !important;
+    width: 100vw;
+    max-width: 100vw !important;
+    max-height: 75dvh;
+    border-radius: 12px 12px 0 0;
+  }
+  .kidoc-sheet .lv-dialog__body.lv-dialog__body {
+    max-height: calc(75dvh - 40px);
   }
   .kidocs__tools {
     flex-wrap: wrap;

@@ -300,3 +300,62 @@ test("eine aus dem Speicher geladene Übersetzung lässt sich nicht wegundo-n", 
   await editor.press("Control+z");
   await expect(editor).toHaveValue("Hello there.");
 });
+
+const kiDoc = (n: number, tpl: string) => ({
+  id: `01JKIDOC${String(n).padStart(18, "0")}`,
+  title: `Dokument ${n}`,
+  template_id: tpl,
+  template_title: tpl.endsWith("lernzettel") ? "Lernzettel" : "Eine Seite",
+  source: { kind: "book" },
+  source_label: "Ganzes Buch",
+  created_ms: 100 - n,
+  modified_ms: 1,
+  words: 10,
+  model: "ollama/x",
+});
+const manyKiDocs = Array.from({ length: 14 }, (_, i) =>
+  kiDoc(i + 1, i % 2 ? "builtin:eine_seite" : "builtin:lernzettel"),
+);
+
+test("zurück zu allen KI-Dokumenten behält Filter und Scrollstand", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 640 });
+  await page.addInitScript((docs) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = docs;
+  }, manyKiDocs);
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("kidocs-filter-lernen").click();
+  await expect(page.getByTestId("kidocs-filter-lernen")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-testid^="kidocs-card-"]')).toHaveCount(7);
+  const list = page.getByTestId("kidocs-list");
+  await list.evaluate((el) => {
+    el.scrollTop = 180;
+    el.dispatchEvent(new Event("scroll"));
+  });
+  const before = await list.evaluate((el) => el.scrollTop);
+  expect(before).toBeGreaterThan(0);
+
+  await page.getByTestId(`kidocs-card-${manyKiDocs[6].id}`).locator("button").first().click();
+  await expect(page.getByTestId("kidoc-head")).toContainText("Dokument 7");
+  await page.getByTestId("kidoc-back").click();
+
+  await expect(page.getByTestId("kidocs-filter-lernen")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-testid^="kidocs-card-"]')).toHaveCount(7);
+  await expect.poll(() => page.getByTestId("kidocs-list").evaluate((el) => el.scrollTop)).toBe(before);
+});
+
+test("das vorgelesene KI-Dokument ist in Kopfzeile und Liste gekennzeichnet", async ({ page }) => {
+  await page.addInitScript((docs) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = docs;
+  }, manyKiDocs.slice(0, 2));
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const id = manyKiDocs[0].id;
+  await page.getByTestId(`kidocs-play-${id}`).click();
+  await expect(page.getByTestId("kidoc-head")).toContainText("Dokument 1");
+  await emit(page, "tts-state-changed", { phase: "speaking", owns_server: false, message: null, server_up: true });
+  await expect(page.getByTestId("kidoc-playing")).toHaveText("Wird vorgelesen");
+  await page.getByTestId("kidoc-back").click();
+  await expect(page.getByTestId(`kidocs-card-${id}`).getByTestId("kidocs-playing")).toBeVisible();
+  await expect(page.getByTestId(`kidocs-card-${manyKiDocs[1].id}`).getByTestId("kidocs-playing")).toHaveCount(0);
+});

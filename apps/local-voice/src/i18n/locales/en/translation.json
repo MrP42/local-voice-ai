@@ -516,6 +516,16 @@
     "tabSummary": "AI documents",
     "kiDocs": {
       "tab": "AI documents",
+      "sheets": {
+        "label": "Book areas",
+        "contents": "Contents",
+        "notes": "Notes",
+        "chat": "Chat",
+        "close": "Close",
+        "noContents": "This text has no headings.",
+        "notesSoon": "Soon you will collect marked terms and your own notes on the book here; on request they become a study document.",
+        "chatSoon": "Soon you will ask about the book and your documents here; answers cite where they come from."
+      },
       "new": "Create new",
       "newHint": "Create an AI document from the book: summary, study notes, analysis and more from a template.",
       "newTitle": "New AI document",
