@@ -605,6 +605,23 @@ pub async fn tts_text_assist(
     crate::summarizer::assist(&settings, &task, &lines, &progress).await
 }
 
+/// Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
+/// Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
+/// Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
+/// `summarizer::check_speech_version` lehnt Inhaltsänderungen ab.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_speech_text(app: AppHandle, text: String) -> Result<String, String> {
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
+    let _ = app.emit("llm-activity", serde_json::json!({ "busy": true }));
+    let outcome = crate::summarizer::speech_version(&settings, &text).await;
+    let _ = app.emit(
+        "llm-activity",
+        serde_json::json!({ "busy": false, "error": outcome.as_ref().err().cloned() }),
+    );
+    outcome
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_extract_document(path: String) -> Result<String, String> {

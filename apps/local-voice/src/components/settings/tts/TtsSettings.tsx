@@ -405,6 +405,7 @@ export const TtsSettings = () => {
   const sessionDocId = SESSION_DOC_ID;
   const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
+  const [speeching, setSpeeching] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -3068,6 +3069,32 @@ export const TtsSettings = () => {
   };
 
   /**
+   * Sprechfassung: die KI setzt Satzzeichen, teilt Schachtelsätze und schreibt
+   * Zahlen aus, damit eine Stimme ohne Betonungs-Steuerung (Phonon, Piper)
+   * richtig betont. Wie „Text aufbereiten“: ersetzt den Text, mit Rückgängig.
+   */
+  const speechText = async () => {
+    if (!text.trim() || speeching || tidying) return;
+    setLastError(null);
+    setSpeeching(true);
+    const previousText = text;
+    const result = await commands.ttsSpeechText(stripPageMarks(text));
+    setSpeeching(false);
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.speechDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
    * Zusammenfassen — immer das ORIGINAL, nie die Uebersetzung. Das Ergebnis
    * liegt im dritten Reiter; das Original bleibt unangetastet, abspielen
    * kann man beides.
@@ -3346,6 +3373,8 @@ export const TtsSettings = () => {
         onOpenWorkshop={() => setWorkshopOpen(true)}
         tidying={tidying}
         onTidy={() => void tidyText()}
+        speeching={speeching}
+        onSpeech={() => void speechText()}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={

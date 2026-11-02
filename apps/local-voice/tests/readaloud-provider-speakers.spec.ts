@@ -234,6 +234,8 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "tts_translate")
             return "<Nele> Good day.\n<Anton> Hello everyone.";
           if (cmd === "tts_cached_translation") return null;
+          if (cmd === "tts_speech_text")
+            return "Die Strecke ist zwölfeinhalb Kilometer lang.";
           if (cmd === "tts_list_downloads") return [];
           if (
             cmd === "llm_ps" ||
@@ -498,6 +500,26 @@ test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async (
 
   await page.getByTestId("tts-action-menu").click();
   await expect(page.getByTestId("autotag-open")).toBeEnabled();
+});
+
+test("Sprechfassung ersetzt den Text, Rückgängig holt das Original", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon" });
+  await gotoReadAloud(page);
+  const editor = editorOf(page);
+  await editor.fill("Die Strecke ist 12,5 km lang.");
+  await pickMenuItem(page, "speech-run");
+  await expect(editor).toHaveValue(
+    "Die Strecke ist zwölfeinhalb Kilometer lang.",
+  );
+  const sent = (await calls(page, "tts_speech_text")) as [
+    string,
+    { text: string },
+  ][];
+  expect(sent.at(-1)?.[1].text).toBe("Die Strecke ist 12,5 km lang.");
+  await page.locator("button[data-action]", { hasText: "Rückgängig" }).click();
+  await expect(editor).toHaveValue("Die Strecke ist 12,5 km lang.");
 });
 
 test("Phonon ohne Stimmwechsel: keine Sprecher im Skript", async ({ page }) => {

@@ -1426,6 +1426,10 @@
     "tidying": "Bereite auf …",
     "tidyDone": "Text aufbereitet.",
     "tidyUndo": "Rückgängig",
+    "speech": "Sprechfassung erstellen",
+    "speechHint": "Die KI setzt Satzzeichen, teilt lange Sätze und schreibt Zahlen aus, damit die Stimme richtig betont – nichts wird gekürzt",
+    "speeching": "Erstelle Sprechfassung …",
+    "speechDone": "Sprechfassung übernommen.",
     "controls": "Wiedergabe und Stimme",
     "translateShort": "Übersetzen",
     "replaceAll": {

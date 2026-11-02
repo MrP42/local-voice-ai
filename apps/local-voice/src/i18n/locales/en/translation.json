@@ -1426,6 +1426,10 @@
     "tidying": "Cleaning up …",
     "tidyDone": "Text cleaned up.",
     "tidyUndo": "Undo",
+    "speech": "Create speaking version",
+    "speechHint": "The AI sharpens punctuation, splits long sentences and writes out numbers so the voice stresses the right words – nothing is cut",
+    "speeching": "Creating speaking version …",
+    "speechDone": "Speaking version applied.",
     "controls": "Playback and voice",
     "translateShort": "Translate",
     "replaceAll": {
