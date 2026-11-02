@@ -59,7 +59,56 @@ final class PhoneLibrary: ObservableObject {
         return audio.allTracks.map { dir(book).appendingPathComponent("audio").appendingPathComponent($0.file) }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
-    func hasAudio(_ book: LibraryBook) -> Bool { !(book.audio?.allTracks.isEmpty ?? true) && !audioURLs(book).isEmpty }
+    func hasAudio(_ book: LibraryBook) -> Bool {
+        guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
+        return audioURLs(book).count == tracks.count
+    }
+
+    // MARK: Sync-Metadaten je Buch (`<id>/sync.json`): Dateiverweise im Konto, Stand.
+
+    struct SyncMeta: Codable { var files = BookFiles(); var updated: Double = 0 }
+
+    func meta(_ book: LibraryBook) -> SyncMeta {
+        guard let data = try? Data(contentsOf: dir(book).appendingPathComponent("sync.json")),
+              let m = try? JSONDecoder().decode(SyncMeta.self, from: data) else { return SyncMeta(updated: book.addedMs) }
+        return m
+    }
+
+    func setMeta(_ book: LibraryBook, _ meta: SyncMeta) {
+        try? FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
+        try? JSONEncoder().encode(meta).write(to: dir(book).appendingPathComponent("sync.json"), options: .atomic)
+    }
+
+    /// Eigene Änderung am Buch: Stand für den Abgleich erhöhen.
+    func touch(_ book: LibraryBook) {
+        var m = meta(book); m.updated = Self.nowMs(); setMeta(book, m)
+    }
+
+    /// Hörbuch liegt im Konto, aber (noch) nicht auf dem iPhone.
+    func audioInAccount(_ book: LibraryBook) -> Bool { !meta(book).files.audio.isEmpty && !hasAudio(book) }
+
+    /// Buch aus dem Abgleich übernehmen (ohne eigenen Stand zu erhöhen).
+    func storeRemote(_ book: LibraryBook, meta: SyncMeta) throws {
+        try write(book)
+        setMeta(book, meta)
+    }
+
+    func removeRemote(id: String) {
+        guard let book = books.first(where: { $0.id == id }) else { return }
+        try? FileManager.default.removeItem(at: dir(book))
+        for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
+        writeProgress()
+        reload()
+    }
+
+    /// Fortschritt aus dem Abgleich: mit dem eigenen Stand zusammenführen.
+    func mergeRemote(_ key: String, _ remote: ProgressRecord) {
+        let merged = record(key).map { LibraryProgress.merge($0, remote) } ?? remote
+        put(key, merged)
+    }
+
+    /// Alle Fortschrittsschlüssel ohne `progress.`-Präfix.
+    var progressKeys: [String] { progress.keys.filter { $0.hasPrefix("progress.") }.map { String($0.dropFirst("progress.".count)) } }
 
     /// Schlüssel in `fortschritt.json` wie am Desktop (`progress.<schlüssel>`, progress.ts).
     static func storageKey(_ key: String) -> String { "progress." + key }
@@ -85,6 +134,7 @@ final class PhoneLibrary: ObservableObject {
     func setFinished(_ book: LibraryBook, _ finished: Bool) {
         var copy = book; copy.finished = finished
         try? write(copy)
+        touch(copy)
         if !finished {
             for key in [textKey(book), audioKey(book)] {
                 guard var rec = record(key), rec.finished == true else { continue }
@@ -202,6 +252,7 @@ final class PhoneLibrary: ObservableObject {
         book.text = LibraryTextVersion(pageId: "ios_\(book.id)", origin: "document", sourceName: url.lastPathComponent)
         try write(book)
         try extracted.text.write(to: textURL(book), atomically: true, encoding: .utf8)
+        var m = meta(book); m.files.text = nil; m.updated = Self.nowMs(); setMeta(book, m)
     }
 
     private func importAudio(_ urls: [URL]) async throws {
@@ -240,6 +291,7 @@ final class PhoneLibrary: ObservableObject {
         if replaced { progress[Self.storageKey(audioKey(book))] = nil; scheduleSave() }
         if tracks.count == 1 { book.audio?.durationMs = tracks[0].durationMs }
         try write(book)
+        var m = meta(book); m.files.audio = []; m.updated = Self.nowMs(); setMeta(book, m)
     }
 
     private func match(title: String) -> LibraryBook? {

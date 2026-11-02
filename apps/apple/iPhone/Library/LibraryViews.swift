@@ -67,8 +67,18 @@ struct LibraryTab: View {
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
-                guard let book = library.books.first else { return }
-                if args.contains("--library-listen") { playback.openAudiobook(book, autoplay: true); playback.presented = true }
+                if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count, LibrarySync.shared.account == nil {
+                    await LibrarySync.shared.login(email: "test@example.com", password: "geheim", url: args[i + 1], deviceName: "Simulator")
+                }
+                if args.contains("--sync-test") { await LibrarySync.shared.run() }
+                guard var book = library.books.first else { return }
+                if args.contains("--library-listen") {
+                    if !library.hasAudio(book) {
+                        guard await LibrarySync.shared.downloadAudio(book), let fresh = library.books.first(where: { $0.id == book.id }) else { return }
+                        book = fresh
+                    }
+                    playback.openAudiobook(book, autoplay: true); playback.presented = true
+                }
                 if args.contains("--library-read") { playback.openReadAloud(book, autoplay: true); playback.presented = true }
             }
             #endif
@@ -84,6 +94,8 @@ struct LibraryShelf: View {
     @State private var query = ""
     @State private var filter = ShelfFilter.all
     @State private var importing = false
+    @State private var showSync = false
+    @ObservedObject var sync = LibrarySync.shared
 
     private func textFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.textKey(b))) }
     private func audioFraction(_ b: LibraryBook) -> Double { LibraryProgress.fraction(library.record(library.audioKey(b))) }
@@ -176,11 +188,18 @@ struct LibraryShelf: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Buch oder Hörbuch hinzufügen", systemImage: "plus") { importing = true }.accessibilityIdentifier("libraryAdd")
             }
+            ToolbarItem(placement: .topBarLeading) {
+                Button { showSync = true } label: {
+                    Image(systemName: sync.account == nil ? "icloud.slash" : (sync.error != nil ? "exclamationmark.icloud" : "checkmark.icloud"))
+                }.accessibilityLabel("Konto und Sync: \(sync.status)")
+            }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: PhoneLibrary.importTypes, allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { Task { await library.importFiles(urls) } }
+            if case .success(let urls) = result { Task { await library.importFiles(urls); await sync.run() } }
         }
-        .refreshable { library.reload() }
+        .refreshable { await sync.run(); library.reload() }
+        .task { await sync.run() }
+        .sheet(isPresented: $showSync) { LibrarySyncSheet() }
     }
 }
 
@@ -189,15 +208,16 @@ struct ShelfItem: View {
     @ObservedObject var library = PhoneLibrary.shared
     var body: some View {
         let audio = library.hasAudio(book), text = library.hasText(book)
-        let rec = audio ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
+        let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
             LibraryCover(title: book.title).aspectRatio(2/3, contentMode: .fit)
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
-            Text(audio ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
+            Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                        : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                 .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-            Text(audio || text ? "Auf dem iPhone" : "Im Konto, nicht geladen")
-                .font(.caption.weight(.semibold)).foregroundStyle(audio || text ? Color.green : VoicePalette.secondaryText)
+            let inAccount = library.audioInAccount(book)
+            Text(inAccount ? (text ? "Hörbuch im Konto" : "Im Konto, nicht geladen") : (audio || text ? "Auf dem iPhone" : "Im Konto, nicht geladen"))
+                .font(.caption.weight(.semibold)).foregroundStyle(!inAccount && (audio || text) ? Color.green : VoicePalette.secondaryText)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(book.title), \(book.authors.joined(separator: ", "))")
@@ -210,6 +230,7 @@ struct LibraryBookDetail: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDelete = false
+    @ObservedObject var sync = LibrarySync.shared
 
     var body: some View {
         if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
@@ -217,7 +238,7 @@ struct LibraryBookDetail: View {
     }
 
     @ViewBuilder private func content(_ book: LibraryBook) -> some View {
-        let hasText = library.hasText(book), hasAudio = library.hasAudio(book)
+        let hasText = library.hasText(book), hasAudio = library.hasAudio(book), inAccount = library.audioInAccount(book)
         let audioRec = library.record(library.audioKey(book)), textRec = library.record(library.textKey(book))
         let tracks = book.audio?.allTracks ?? []
         let total = book.audio?.totalDurationMs ?? 0
@@ -239,12 +260,36 @@ struct LibraryBookDetail: View {
                             Label("Text vorlesen", systemImage: "book").frame(maxWidth: .infinity, minHeight: 44)
                         }.buttonStyle(.bordered).accessibilityIdentifier("readAloud")
                     }
-                    if hasAudio {
-                        Button { playback.openAudiobook(book); playback.presented = playback.book != nil } label: {
+                    if hasAudio || inAccount {
+                        Button {
+                            Task {
+                                if !library.hasAudio(book) { guard await sync.downloadAudio(book) else { return } }
+                                guard let fresh = library.books.first(where: { $0.id == book.id }) else { return }
+                                playback.openAudiobook(fresh); playback.presented = playback.book != nil
+                            }
+                        } label: {
                             Label("Hörbuch hören", systemImage: "headphones").frame(maxWidth: .infinity, minHeight: 44)
-                        }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).accessibilityIdentifier("listen")
+                        }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand)
+                            .disabled(sync.downloads[book.id] != nil).accessibilityIdentifier("listen")
                     }
                 }.font(.headline)
+
+                if inAccount {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let f = sync.downloads[book.id] {
+                            Text("Hörbuch lädt … \(LibraryFormat.percent(f))").font(.subheadline.weight(.semibold))
+                            ProgressView(value: f).tint(VoicePalette.accent)
+                            Text(sync.wifiOnly ? "Nur im WLAN" : "Über WLAN oder Mobilfunk").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                        } else {
+                            Text("Hörbuch im Konto · \(ByteCountFormatter.string(fromByteCount: Int64(library.meta(book).files.audioBytes), countStyle: .file))")
+                                .font(.subheadline.weight(.semibold))
+                            Text(sync.wifiOnly && sync.expensiveNetwork ? "Wartet auf WLAN („Nur im WLAN laden“ ist an)." : "Wird beim ersten Hören geladen und ist danach offline verfügbar.")
+                                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                            Button("Jetzt laden") { Task { _ = await sync.downloadAudio(book) } }.frame(minHeight: 44)
+                        }
+                        if let e = sync.error { Text(e).font(.caption).foregroundStyle(.red) }
+                    }.voiceCard()
+                }
 
                 if hasAudio || hasText {
                     VStack(alignment: .leading, spacing: 12) {
@@ -296,9 +341,14 @@ struct LibraryBookDetail: View {
         .confirmationDialog("„\(book.title)“ vom iPhone entfernen?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Entfernen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                library.delete(book); dismiss()
+                if sync.account != nil && !library.meta(book).files.audio.isEmpty { sync.removeDownloads(book) }
+                else { library.delete(book); dismiss() }
             }
-        } message: { Text("Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.") }
+        } message: {
+            Text(sync.account != nil && !library.meta(book).files.audio.isEmpty
+                 ? "Das Hörbuch wird vom iPhone gelöscht. Es bleibt im Konto und auf dem PC, der Fortschritt bleibt erhalten."
+                 : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
+        }
     }
 
     private func progressRow(_ title: String, value: Double, detail: String, when: Double?) -> some View {
@@ -569,6 +619,53 @@ private struct VoiceList: View {
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
+        }
+    }
+}
+
+
+struct LibrarySyncSheet: View {
+    @ObservedObject var sync = LibrarySync.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var password = ""
+    @State private var url = LibrarySync.defaultHub
+    @State private var device = "iPhone"
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let acc = sync.account {
+                    Section {
+                        LabeledContent("Konto", value: acc.email)
+                        LabeledContent("Stand", value: sync.status)
+                        if let last = sync.lastSync { LabeledContent("Zuletzt", value: last.formatted(date: .omitted, time: .shortened)) }
+                        if let e = sync.error { Text(e).foregroundStyle(.red).font(.footnote) }
+                        Button("Jetzt abgleichen") { Task { await sync.run() } }.disabled(sync.running)
+                    } footer: { Text("Bibliothek und Fortschritt werden mit der Desktop-App abgeglichen, Ende-zu-Ende verschlüsselt. Der Server sieht nur Chiffrat.") }
+                    Section {
+                        Toggle("Hörbücher nur im WLAN laden", isOn: $sync.wifiOnly)
+                    }
+                    Section { Button("Abmelden", role: .destructive) { Task { await sync.logout() } } }
+                } else {
+                    Section {
+                        TextField("E-Mail", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never)
+                        SecureField("Passwort", text: $password).textContentType(.password)
+                        TextField("Gerätename", text: $device)
+                    } footer: { Text("Dasselbe Konto wie in der Desktop-App unter Einstellungen › Konto & Geräte. Das Passwort verlässt das iPhone nicht; daraus wird nur hier der Schlüssel berechnet.") }
+                    Section("Server") { TextField("Server", text: $url).keyboardType(.URL).textInputAutocapitalization(.never) }
+                    Section {
+                        Button {
+                            Task { await sync.login(email: email, password: password, url: url, deviceName: device); if sync.account != nil { password = "" } }
+                        } label: { HStack { Text("Anmelden"); if sync.running { Spacer(); ProgressView() } } }
+                        .disabled(sync.running || email.isEmpty || password.isEmpty)
+                        if sync.running { Text(sync.status).font(.footnote).foregroundStyle(.secondary) }
+                        if let e = sync.error { Text(e).foregroundStyle(.red).font(.footnote) }
+                    }
+                }
+            }
+            .navigationTitle("Konto & Sync").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         }
     }
