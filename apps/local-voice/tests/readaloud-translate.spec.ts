@@ -702,7 +702,7 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
   await page.getByTestId("tts-action-summarize").click();
   await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
   const line = page.getByTestId("kidoc-token-estimate");
-  await expect(line).toContainText("Prognose: ca. 48.200 Token");
+  await expect(line).toContainText("Geschätzter Bedarf: ca. 48.200 Tokens");
   await expect(line).toContainText("41.900 Eingabe, 6.320 Ausgabe");
   await expect(line).toContainText("lokal, keine Kosten");
   await expect(line).toContainText("ca. 3 Schritte schon zwischengespeichert");
@@ -751,10 +751,10 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
   await finish(page, "book_ai_summarize", doc);
 
   const used = page.getByTestId("kidoc-token-usage");
-  await expect(used).toContainText("51.200 Token verbraucht");
+  await expect(used).toContainText("Tatsächlicher Verbrauch: 51.200 Tokens");
   await expect(used).toContainText("Schätzung vorher 48.200 (+6 % gegenüber Schätzung)");
   await expect(used).toContainText("ca. 0,238 USD (Preis für claude-sonnet-5-5)");
-  await expect(used).toHaveAttribute("title", /Prognose: 41.900 Token Eingabe/);
+  await expect(used).toHaveAttribute("title", /Geschätzter Bedarf: 41.900 Tokens Eingabe/);
   // Den Fertig-Hinweis abwarten, damit er im Bild nichts überdeckt.
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 });
   const head = page.getByTestId("kidoc-head");
@@ -769,7 +769,7 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
     });
   }
   await page.getByTestId("kidoc-back").click();
-  await expect(page.getByTestId(`kidocs-card-${doc.id}`)).toContainText("612 Wörter · 51.200 Token · noch nicht gehört");
+  await expect(page.getByTestId(`kidocs-card-${doc.id}`)).toContainText("612 Wörter · 51.200 Tokens · noch nicht gehört");
   const card = page.getByTestId(`kidocs-card-${doc.id}`);
   await card.scrollIntoViewIfNeeded();
   if (wide) await page.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
