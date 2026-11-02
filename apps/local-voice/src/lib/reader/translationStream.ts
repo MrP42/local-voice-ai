@@ -54,6 +54,29 @@ export interface TransformProgress {
   chapterTitle?: string | null;
   doneChars?: number | null;
   totalChars?: number | null;
+  /** Fortschritt je Bereich (parallele Worker). */
+  workers?: { done: number; total: number }[] | null;
+}
+
+/** Anteil je Worker 0..1 (leere Liste, wenn das Backend keine meldet). */
+export const workerRatios = (p: TransformProgress): number[] =>
+  (p.workers ?? []).map((w) =>
+    w.total > 0 ? Math.min(1, Math.max(0, w.done / w.total)) : 0,
+  );
+
+/** Warnung (Abschnitt, dessen Marken nach dem zweiten Versuch nicht stimmen) als Zeile. */
+export function warningText(w: unknown): string {
+  if (typeof w === "string") return w;
+  if (!w || typeof w !== "object") return String(w);
+  const o = w as Record<string, unknown>;
+  const where = [
+    typeof o.chapter === "number" ? `Kapitel ${o.chapter + 1}` : null,
+    typeof o.section === "number" ? `Abschnitt ${o.section + 1}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const msg = String(o.message ?? o.text ?? "");
+  return [where, msg].filter(Boolean).join(": ");
 }
 
 /** Anteil 0..1: bevorzugt nach Zeichen, sonst nach Abschnitten. */

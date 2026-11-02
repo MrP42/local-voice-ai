@@ -8,6 +8,8 @@ import {
   progressPercent,
   progressRatio,
   shortTitle,
+  warningText,
+  workerRatios,
   streamText,
 } from "../../src/lib/reader/translationStream.ts";
 
@@ -76,4 +78,23 @@ test("Titel wird gekürzt", () => {
   assert.equal(shortTitle(null), "");
   assert.equal(shortTitle("  Kurz  "), "Kurz");
   assert.equal(shortTitle("x".repeat(60), 10).length, 10);
+});
+
+test("Worker-Anteile und Warnungstexte", () => {
+  const p = {
+    kind: "translation" as const,
+    done: 1,
+    total: 4,
+    workers: [
+      { done: 1, total: 2 },
+      { done: 0, total: 0 },
+    ],
+  };
+  assert.deepEqual(workerRatios(p), [0.5, 0]);
+  assert.deepEqual(workerRatios({ ...p, workers: null }), []);
+  assert.equal(warningText("x"), "x");
+  assert.equal(
+    warningText({ chapter: 2, section: 4, message: "Seitenmarke fehlt" }),
+    "Kapitel 3, Abschnitt 5: Seitenmarke fehlt",
+  );
 });

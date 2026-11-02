@@ -152,6 +152,7 @@ import {
   addChunk,
   emptyStream,
   streamText,
+  warningText,
   type TransformProgress,
   type TranslateChunk,
   type TranslateStreamState,
@@ -199,6 +200,26 @@ const formatEta = (seconds: number) => {
 
 /** Fehlercode des Backends, wenn der Nutzer abgebrochen hat. */
 const TRANSFORM_CANCELLED = "transform_cancelled";
+
+/** Hintergrund-Übersetzung des Backends (`commands.ttsTranslateJob`). */
+interface TranslateJob {
+  lang: string;
+  running: boolean;
+  partial?: string | null;
+  done?: number;
+  total?: number;
+}
+const fetchTranslateJob = async (): Promise<TranslateJob | null> => {
+  const call = (
+    commands as { ttsTranslateJob?: () => Promise<TranslateJob | null> }
+  ).ttsTranslateJob;
+  if (!call) return null;
+  try {
+    return (await call()) ?? null;
+  } catch {
+    return null;
+  }
+};
 
 /** Verlauf der Uebersetzung: je Seite UND Sprache (Englisch und Franzoesisch
  *  haben jeweils ihre eigenen Schritte). */
@@ -417,9 +438,17 @@ export const TtsSettings = () => {
   const [transformProgress, setTransformProgress] =
     useState<TransformProgress | null>(null);
   useEffect(() => {
-    const un = listen<TransformProgress>("tts-transform-progress", (e) =>
-      setTransformProgress(e.payload),
-    );
+    let last = 0;
+    const un = listen<TransformProgress>("tts-transform-progress", (e) => {
+      setTransformProgress(e.payload);
+      if (!resyncJob.current || Date.now() - last < 1000) return;
+      last = Date.now();
+      void fetchTranslateJob().then((job) => {
+        if (!resyncJob.current || !job?.partial) return;
+        savedTranslation.current = job.partial;
+        setTranslation(job.partial);
+      });
+    });
     return () => void un.then((off) => off());
   }, []);
   /** Übersetzung streamt: bisher gemeldete Abschnitte und der Schlüssel (Text+Sprache),
@@ -435,6 +464,11 @@ export const TtsSettings = () => {
     kind: "error" | "cancelled";
     message: string;
   } | null>(null);
+  /** Hinweise zu Abschnitten, deren Marken nach dem zweiten Versuch nicht stimmen. */
+  const [translateWarnings, setTranslateWarnings] = useState<string[]>([]);
+  /** Übersetzung läuft im Hintergrund weiter, wir sind erst später dazugekommen:
+   *  der Text wird aus dem Job nachgeführt statt aus Abschnitten aufgebaut. */
+  const resyncJob = useRef(false);
   /** Die Wiedergabe wartet auf neuen Text der noch laufenden Übersetzung. */
   const [waitingForTranslation, setWaitingForTranslation] = useState(false);
   /** Zählt Sprechstarts/Stopps; alte Warteschleifen erkennen daran, dass sie überholt sind. */
@@ -455,7 +489,7 @@ export const TtsSettings = () => {
       setTab("translation");
     });
     const unChunk = listen<TranslateChunk>("tts-translate-chunk", (e) => {
-      if (!matches()) return;
+      if (!matches() || resyncJob.current) return;
       streamRef.current = addChunk(streamRef.current, e.payload);
       const next = streamText(streamRef.current);
       // Nie als „gespeichert“ zurückschreiben: Teilergebnisse gehören nicht in den Zwischenspeicher.
@@ -468,6 +502,62 @@ export const TtsSettings = () => {
       void unChunk.then((off) => off());
     };
   }, []);
+  // Hintergrund-Übersetzung: Ende melden und beim Öffnen einen laufenden Job wieder aufnehmen.
+  useEffect(() => {
+    const un = listen<{
+      ok: boolean;
+      lang?: string;
+      error?: string | null;
+      warnings?: unknown[] | null;
+    }>("tts-translate-done", (e) => {
+      const { ok, error, warnings, lang } = e.payload;
+      if (lang && lang !== targetLangRef.current) return;
+      const forText = textRef.current;
+      const forLang = targetLangRef.current;
+      const wasStreaming = translatingRef.current || resyncJob.current;
+      resyncJob.current = false;
+      translatingRef.current = false;
+      setTranslating(false);
+      setTransformProgress(null);
+      setTranslateWarnings((warnings ?? []).map(warningText));
+      if (!wasStreaming) return;
+      if (ok) {
+        void commands.ttsCachedTranslation(forText, forLang).then(async (hit) => {
+          const final =
+            hit ?? (await commands.ttsCachedTranslation(stripPageMarks(forText), forLang));
+          if (!final || textRef.current !== forText) return;
+          translationFor.current = translationKey(forText, forLang);
+          savedTranslation.current = final;
+          addTranslatedLang(forLang);
+          setTranslation(final);
+        });
+      } else if (error && error !== TRANSFORM_CANCELLED) {
+        setTranslatePartial({ kind: "error", message: error });
+      } else {
+        setTranslatePartial({ kind: "cancelled", message: "" });
+      }
+    });
+    return () => void un.then((off) => off());
+  }, []);
+  useEffect(() => {
+    if (!text.trim()) return;
+    let abandoned = false;
+    void fetchTranslateJob().then((job) => {
+      if (abandoned || !job?.running || job.lang !== targetLang) return;
+      if (translatingRef.current) return;
+      resyncJob.current = true;
+      translatingRef.current = true;
+      streamKey.current = translationKey(text, targetLang);
+      translationFor.current = streamKey.current;
+      savedTranslation.current = job.partial ?? "";
+      setTranslating(true);
+      setTranslation(job.partial ?? "");
+      setTab("translation");
+    });
+    return () => {
+      abandoned = true;
+    };
+  }, [text, targetLang]);
   /** Piper mit Spracherkennung: die Stimme, die den Text des Reiters WIRKLICH liest. */
   const [piperReader, setPiperReader] = useState<string | null>(null);
   /** Sprecher tauschen: Stimmen mit Sprache, Fenster, Vorbelegung. */
@@ -2452,7 +2542,9 @@ export const TtsSettings = () => {
   const translateText = async () => {
     if (!text.trim()) return;
     setLastError(null);
+    if (translatingRef.current) return;
     setTranslatePartial(null);
+    setTranslateWarnings([]);
     setTranslating(true);
     translatingRef.current = true;
     setTransformProgress(null);
@@ -3120,6 +3212,7 @@ export const TtsSettings = () => {
         onSummarize={summarize}
         transformProgress={transformProgress}
         translatePartial={translatePartial}
+        translateWarnings={translateWarnings}
         waitingForTranslation={waitingForTranslation}
         onResumeTranslate={() => void translateText()}
         onCancelTransform={(kind) =>

@@ -484,6 +484,7 @@
       "translateChapter": "Kapitel {{chapter}} von {{chapters}} · Abschnitt {{section}} von {{total}} · {{percent}} %",
       "translateSection": "Abschnitt {{section}} von {{total}} · {{percent}} %",
       "waiting": "Warte auf Übersetzung …",
+      "warnings": "{{count}} Abschnitt(e) mit abweichenden Marken oder Seitenzahlen – bitte prüfen",
       "resume": "Fortsetzen",
       "partialCancelled": "Übersetzung abgebrochen. Der bisherige Teil bleibt erhalten.",
       "partialError": "Übersetzung unterbrochen: {{message}} Der bisherige Teil bleibt erhalten.",

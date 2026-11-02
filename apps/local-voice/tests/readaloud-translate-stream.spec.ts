@@ -206,6 +206,7 @@ const chunk = (index: number, text: string) => ({
 });
 
 const start = async (page: Page, width: number, theme: string) => {
+  await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light" });
   await page.setViewportSize({ width, height: 900 });
   await page.addInitScript(
     ([t, th]) => {
@@ -236,6 +237,12 @@ const start = async (page: Page, width: number, theme: string) => {
     chapterTitle: "Wie das Licht zurückkam und was die Wärterin darüber dachte",
     doneChars: 26100,
     totalChars: 90000,
+    workers: [
+      { done: 5, total: 10 },
+      { done: 4, total: 10 },
+      { done: 2, total: 11 },
+      { done: 1, total: 10 },
+    ],
   });
 };
 
@@ -254,6 +261,7 @@ for (const theme of ["light", "dark"]) {
       await expect(
         page.getByText("Kapitel 3 von 18 · Abschnitt 13 von 41 · 29 %"),
       ).toBeVisible();
+      await expect(page.getByTestId("tts-worker-bars").locator("> div")).toHaveCount(4);
       await page.screenshot({ path: `${SHOTS}/laeuft-${theme}-${width}.png` });
 
       const args = await page.evaluate(

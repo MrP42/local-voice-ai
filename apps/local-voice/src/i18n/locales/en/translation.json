@@ -484,6 +484,7 @@
       "translateChapter": "Chapter {{chapter}} of {{chapters}} · section {{section}} of {{total}} · {{percent}}%",
       "translateSection": "Section {{section}} of {{total}} · {{percent}}%",
       "waiting": "Waiting for translation …",
+      "warnings": "{{count}} section(s) with differing markers or page numbers – please check",
       "resume": "Resume",
       "partialCancelled": "Translation cancelled. The part so far is kept.",
       "partialError": "Translation interrupted: {{message}} The part so far is kept.",

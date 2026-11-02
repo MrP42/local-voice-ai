@@ -30,6 +30,7 @@ import { counterWidthCh } from "./sentenceCounter";
 import {
   progressParts,
   progressRatio,
+  workerRatios,
   type TransformProgress,
 } from "../../../lib/reader/translationStream";
 
@@ -101,6 +102,8 @@ export interface ReadAloudActionsProps {
   translatePartial?: { kind: "error" | "cancelled"; message: string } | null;
   /** Die Wiedergabe wartet auf neuen Text der laufenden Übersetzung. */
   waitingForTranslation?: boolean;
+  /** Hinweise zu Abschnitten, deren Marken nicht stimmen. */
+  translateWarnings?: string[];
   /** „Fortsetzen“ nach Fehler/Abbruch. */
   onResumeTranslate?: () => void;
   onCancelTransform: (kind: "translation" | "summary") => void;
@@ -117,7 +120,10 @@ const ProgressLine: React.FC<{
   tabular?: boolean;
   /** Zweite, gekürzte Angabe (z. B. Kapiteltitel). */
   detail?: string;
-}> = ({ ratio, text, cancelLabel, onCancel, tabular, detail }) => (
+  /** Teilbalken je Bereich (parallele Worker), 0..1. */
+  workers?: number[];
+}> = ({ ratio, text, cancelLabel, onCancel, tabular, detail, workers }) => (
+  <div className="flex flex-col gap-1">
   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
     <div
       className="h-1.5 w-full shrink-0 overflow-hidden rounded-full bg-mid-gray/20 sm:w-32"
@@ -149,6 +155,26 @@ const ProgressLine: React.FC<{
     >
       <Glyph name="stop" />
     </button>
+  </div>
+  {workers && workers.length > 0 ? (
+    <div
+      className="flex gap-1"
+      data-testid="tts-worker-bars"
+      aria-hidden="true"
+    >
+      {workers.map((w, i) => (
+        <div
+          key={i}
+          className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-mid-gray/20"
+        >
+          <div
+            className="h-full bg-logo-primary/70 transition-[width] duration-200"
+            style={{ width: `${w * 100}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  ) : null}
   </div>
 );
 
@@ -475,6 +501,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
                       total: running.total,
                     })
           }
+          workers={tab === "translation" && running ? workerRatios(running) : undefined}
           detail={
             tab === "translation" && running
               ? progressParts(running).title
@@ -486,6 +513,25 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           }
         />
       )}
+      {tab === "translation" &&
+        !props.translating &&
+        (props.translateWarnings?.length ?? 0) > 0 && (
+          <details
+            className="text-xs text-text/70"
+            data-testid="tts-translate-warnings"
+          >
+            <summary className="min-h-[44px] cursor-pointer py-3 sm:min-h-0 sm:py-0">
+              {t("tts.transform.warnings", {
+                count: props.translateWarnings!.length,
+              })}
+            </summary>
+            <ul className="list-disc ps-5">
+              {props.translateWarnings!.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </details>
+        )}
       {tab === "translation" && !props.translating && props.translatePartial && (
         <div
           role="status"

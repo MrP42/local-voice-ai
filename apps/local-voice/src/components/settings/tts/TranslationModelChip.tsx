@@ -54,7 +54,11 @@ export const TranslationModelChip: React.FC = () => {
   };
 
   return (
-    <div ref={ref} className="relative min-w-0" data-testid="tts-translation-model">
+    <div
+      ref={ref}
+      className="relative min-w-0"
+      data-testid="tts-translation-model"
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
