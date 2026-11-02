@@ -52,12 +52,61 @@ pub struct TextVersion {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
 pub struct AudioVersion {
-    /// Dateiname unter `<id>/audio/`.
+    /// Dateiname unter `<id>/audio/`. Bei mehreren Teilen der erste Teil.
     pub file: String,
     pub duration_ms: Option<f64>,
     pub narrator: Option<String>,
-    /// Laufende Transkription (Import-Warteschlange), bis der Text übernommen ist.
+    /// Laufende Transkription (Import-Warteschlange), bis der Text übernommen
+    /// ist. Gilt für Altbestand mit einer Datei; mehrteilige Hörbücher führen
+    /// den Auftrag je Teil in [`AudioTrack::transcript_job`].
     pub transcript_job: Option<String>,
+    /// Teile eines mehrteiligen Hörbuchs in Hörreihenfolge. Leer bedeutet:
+    /// ein Teil, nämlich `file` ([`tracks_of`]).
+    #[serde(default)]
+    pub tracks: Vec<AudioTrack>,
+    /// Zeitachse Text ↔ Audio aus dem Transkript (Absatzbeginn → Gesamt-ms).
+    #[serde(default)]
+    pub sync: Vec<SyncPoint>,
+}
+
+/// Ein Teil (Datei) eines Hörbuchs.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
+pub struct AudioTrack {
+    /// Dateiname unter `<id>/audio/` (`teil_001.mp3`, …).
+    pub file: String,
+    /// Anzeigename, beim Import der Dateiname ohne Endung.
+    pub title: String,
+    pub duration_ms: Option<f64>,
+    /// Laufende Transkription dieses Teils (Import-Warteschlange).
+    pub transcript_job: Option<String>,
+}
+
+/// Stützpunkt der Zeitachse: ab dieser Zeichenstelle des Textes ist das
+/// Hörbuch bei `ms` (Millisekunden ab Beginn des ersten Teils).
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
+pub struct SyncPoint {
+    pub chars: u32,
+    pub ms: f64,
+}
+
+/// Die Teile einer Audiofassung. Altbestand ohne `tracks` hat genau einen
+/// Teil: die Datei `file` mit Dauer und Auftrag der Fassung.
+pub fn tracks_of(audio: &AudioVersion) -> Vec<AudioTrack> {
+    if !audio.tracks.is_empty() {
+        return audio.tracks.clone();
+    }
+    if audio.file.is_empty() {
+        return Vec::new();
+    }
+    vec![AudioTrack {
+        file: audio.file.clone(),
+        title: Path::new(&audio.file)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        duration_ms: audio.duration_ms,
+        transcript_job: audio.transcript_job.clone(),
+    }]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Default, PartialEq)]
@@ -84,8 +133,13 @@ pub struct LibraryBook {
     /// Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
     /// samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
     pub cover_path: Option<String>,
-    /// Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs.
+    /// Nur zur Anzeige: absoluter Pfad des importierten Hörbuchs (erster Teil).
     pub audio_path: Option<String>,
+    /// Nur zur Anzeige: absolute Pfade aller Teile in Hörreihenfolge. Ein
+    /// fehlender Teil steht als leerer Text an seiner Stelle; ist keiner da,
+    /// ist die Liste leer.
+    #[serde(default)]
+    pub audio_paths: Vec<String>,
 }
 
 fn generated() -> String {
@@ -190,8 +244,23 @@ fn read_book(dir: &Path) -> Option<LibraryBook> {
         book.cover_source = generated();
     }
     if let Some(audio) = &book.audio {
-        let path = dir.join("audio").join(&audio.file);
-        book.audio_path = path.is_file().then(|| path.to_string_lossy().into_owned());
+        let paths: Vec<String> = tracks_of(audio)
+            .iter()
+            .map(|t| {
+                let path = dir.join("audio").join(&t.file);
+                if path.is_file() {
+                    path.to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                }
+            })
+            .collect();
+        book.audio_path = paths.iter().find(|p| !p.is_empty()).cloned();
+        book.audio_paths = if book.audio_path.is_some() {
+            paths
+        } else {
+            Vec::new()
+        };
     }
     Some(book)
 }
@@ -201,6 +270,7 @@ fn write_book(dir: &Path, book: &LibraryBook) -> Result<(), String> {
     let mut stored = book.clone();
     stored.cover_path = None;
     stored.audio_path = None;
+    stored.audio_paths = Vec::new();
     let json = serde_json::to_vec_pretty(&stored).map_err(|e| e.to_string())?;
     write_atomic(&dir.join("buch.json"), &json)
 }
@@ -217,6 +287,174 @@ fn list_books(root: &Path) -> Vec<LibraryBook> {
         .collect();
     books.sort_by(|a, b| b.added_ms.total_cmp(&a.added_ms));
     books
+}
+
+/// Nur ein Dateiname im eigenen audio-Ordner, kein Pfad.
+fn plain_name(name: &str) -> bool {
+    let plain = Path::new(name)
+        .file_name()
+        .is_some_and(|n| n == std::ffi::OsStr::new(name));
+    plain && !name.contains(['/', '\\', ':']) && !name.starts_with('.')
+}
+
+/// Prüft die Datei der Fassung und jeden Teil wie bisher `file`.
+fn validate_audio_names(audio: &AudioVersion) -> Result<(), String> {
+    if !plain_name(&audio.file) {
+        return Err("Ungültiger Dateiname der Audiofassung.".into());
+    }
+    if audio.tracks.iter().any(|t| !plain_name(&t.file)) {
+        return Err("Ungültiger Dateiname eines Hörbuch-Teils.".into());
+    }
+    Ok(())
+}
+
+/// Hörbuch-Formate, die der Import kopiert und die Hörleiste abspielen kann.
+const AUDIO_EXTENSIONS: [&str; 9] = [
+    "mp3", "m4b", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma",
+];
+/// Audible-Formate: DRM-geschützt, wird nicht umgangen.
+const DRM_EXTENSIONS: [&str; 3] = ["aax", "aa", "aaxc"];
+
+/// Endung einer Hördatei (klein). Audible-Dateien werden mit klarer Meldung
+/// abgewiesen; der Kern entschlüsselt oder umgeht kein DRM.
+fn audio_ext(source: &Path) -> Result<String, String> {
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .unwrap_or_default();
+    if DRM_EXTENSIONS.contains(&ext.as_str()) {
+        let name = source
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        return Err(format!(
+            "\u{201e}{name}\u{201c} ist mit Audible-DRM geschützt und kann nicht importiert werden. Verwende eine DRM-freie Fassung (MP3, M4B)."
+        ));
+    }
+    if !AUDIO_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!(
+            "Kein Hörbuch-Format: .{ext} (unterstützt: {}).",
+            AUDIO_EXTENSIONS.join(", ")
+        ));
+    }
+    Ok(ext)
+}
+
+/// Nummer im Dateinamen `teil_007.mp3` → 7.
+fn part_number(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("teil_")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+fn part_name(number: u32, ext: &str) -> String {
+    format!("teil_{number:03}.{ext}")
+}
+
+/// Nächste freie Teilnummer: nach der größten Nummer, die Teile oder Dateien
+/// im Ordner schon tragen.
+fn next_part_number(audio_dir: &Path, tracks: &[AudioTrack]) -> u32 {
+    let on_disk = std::fs::read_dir(audio_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| part_number(&e.file_name().to_string_lossy()));
+    tracks
+        .iter()
+        .filter_map(|t| part_number(&t.file))
+        .chain(on_disk)
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+fn stem_of(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Gehört die Datei zu einer Audiofassung (`hoerbuch.*`, `teil_*`)?
+fn is_audio_part(path: &Path) -> bool {
+    path.is_file()
+        && path.file_name().is_some_and(|n| {
+            let n = n.to_string_lossy();
+            n.starts_with("teil_") || n.starts_with("hoerbuch.")
+        })
+}
+
+/// Kopiert die Quellen der Reihe nach als `teil_NNN.<ext>` in `audio_dir`.
+/// Alles geht erst in einen Zwischenordner (jede Datei als `.part`, dann
+/// umbenannt); erst wenn alle Kopien da sind, werden bei `append == false` die
+/// alten Teile entfernt und die neuen an ihren Platz gelegt. Ein Fehler lässt
+/// den bisherigen Bestand unberührt.
+fn import_tracks_into(
+    audio_dir: &Path,
+    sources: &[PathBuf],
+    append: bool,
+    existing: &[AudioTrack],
+) -> Result<Vec<AudioTrack>, String> {
+    std::fs::create_dir_all(audio_dir).map_err(|e| e.to_string())?;
+    let start = if append {
+        next_part_number(audio_dir, existing)
+    } else {
+        1
+    };
+    let stage = audio_dir.join(format!(".neu-{}", now_ms() as i64));
+    std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
+    let result = (|| -> Result<Vec<AudioTrack>, String> {
+        let mut tracks = Vec::with_capacity(sources.len());
+        for (i, source) in sources.iter().enumerate() {
+            let ext = audio_ext(source)?;
+            let file = part_name(start + i as u32, &ext);
+            let tmp = stage.join(format!("{file}.part"));
+            std::fs::copy(source, &tmp)
+                .map_err(|e| format!("Kopieren fehlgeschlagen ({}): {e}", stem_of(source)))?;
+            std::fs::rename(&tmp, stage.join(&file)).map_err(|e| e.to_string())?;
+            tracks.push(AudioTrack {
+                file,
+                title: stem_of(source),
+                ..Default::default()
+            });
+        }
+        if !append {
+            for entry in std::fs::read_dir(audio_dir).into_iter().flatten().flatten() {
+                if is_audio_part(&entry.path()) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        for track in &tracks {
+            std::fs::rename(stage.join(&track.file), audio_dir.join(&track.file))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(tracks)
+    })();
+    let _ = std::fs::remove_dir_all(&stage);
+    result
+}
+
+/// Audiofassung nach einem Import: bei `append` kommen die neuen Teile hinter
+/// die vorhandenen (Altbestand mit einer Datei wird dabei Teil 1), sonst
+/// ersetzen sie alles.
+fn with_tracks(previous: Option<AudioVersion>, new: Vec<AudioTrack>, append: bool) -> AudioVersion {
+    let previous = previous.unwrap_or_default();
+    let mut tracks = if append {
+        tracks_of(&previous)
+    } else {
+        Vec::new()
+    };
+    tracks.extend(new);
+    AudioVersion {
+        file: tracks.first().map(|t| t.file.clone()).unwrap_or_default(),
+        duration_ms: None,
+        narrator: previous.narrator,
+        transcript_job: None,
+        // Angehängte Teile ändern die Zeitachse der vorderen nicht.
+        sync: if append { previous.sync } else { Vec::new() },
+        tracks,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -603,13 +841,7 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     }
     let dir = book_dir(&root, &book.id)?;
     if let Some(audio) = &book.audio {
-        // Nur ein Dateiname im eigenen audio-Ordner, kein Pfad.
-        let plain = Path::new(&audio.file)
-            .file_name()
-            .is_some_and(|n| n == std::ffi::OsStr::new(&audio.file));
-        if !plain || audio.file.contains(['/', '\\', ':']) || audio.file.starts_with('.') {
-            return Err("Ungültiger Dateiname der Audiofassung.".into());
-        }
+        validate_audio_names(audio)?;
     }
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch nach dem Speichern unlesbar.".into())
@@ -818,20 +1050,7 @@ pub async fn library_audio_import(
     path: String,
 ) -> Result<LibraryBook, String> {
     let source = PathBuf::from(&path);
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_lowercase)
-        .unwrap_or_default();
-    const AUDIO: [&str; 9] = [
-        "mp3", "m4b", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma",
-    ];
-    if !AUDIO.contains(&ext.as_str()) {
-        return Err(format!(
-            "Kein Hörbuch-Format: .{ext} (unterstützt: {}).",
-            AUDIO.join(", ")
-        ));
-    }
+    let ext = audio_ext(&source)?;
     let root = library_root(&app)?;
     let dir = book_dir(&root, &id)?;
     if read_book(&dir).is_none() {
@@ -880,14 +1099,198 @@ pub async fn library_audio_import(
         return Err("Buch nicht gefunden.".into());
     };
     let previous = book.audio.take().unwrap_or_default();
+    // Eine einzelne Datei ersetzt alle Teile; die Zeitachse passt nicht mehr.
     book.audio = Some(AudioVersion {
         file,
-        duration_ms: None,
         narrator: previous.narrator,
-        transcript_job: None,
+        ..Default::default()
     });
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Mehrere Dateien als Teile **einer** Audiofassung importieren, in der
+/// gegebenen Reihenfolge (`teil_001.<ext>` …). `append` hängt hinter die
+/// vorhandenen Teile, sonst ersetzen die neuen alle alten.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_audio_import_tracks(
+    app: AppHandle,
+    id: String,
+    paths: Vec<String>,
+    append: bool,
+) -> Result<LibraryBook, String> {
+    if paths.is_empty() {
+        return Err("Keine Dateien zum Importieren.".into());
+    }
+    let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    for source in &sources {
+        audio_ext(source)?;
+    }
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let existing = read_book(&dir)
+        .ok_or("Buch nicht gefunden.")?
+        .audio
+        .map(|a| tracks_of(&a))
+        .unwrap_or_default();
+    let audio_dir = dir.join("audio");
+    let tracks = tauri::async_runtime::spawn_blocking(move || {
+        import_tracks_into(&audio_dir, &sources, append, &existing)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let _guard = lock();
+    let Some(mut book) = read_book(&dir) else {
+        if !dir.join("buch.json").exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        return Err("Buch nicht gefunden.".into());
+    };
+    book.audio = Some(with_tracks(book.audio.take(), tracks, append));
+    write_book(&dir, &book)?;
+    read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Bücher mit je einem Teil zu **einem** Hörbuch zusammenführen: die Teile der
+/// Quellen wandern in der gegebenen Reihenfolge hinter die des Ziels, samt
+/// Dauer und Transkriptions-Auftrag. Die Quellbücher verschwinden.
+#[tauri::command]
+#[specta::specta]
+pub fn library_merge_audio(
+    app: AppHandle,
+    target_id: String,
+    source_ids: Vec<String>,
+) -> Result<LibraryBook, String> {
+    let _guard = lock();
+    let root = library_root(&app)?;
+    merge_audio_in(&root, &target_id, &source_ids)
+}
+
+/// Verschiebt eine Datei; über Laufwerksgrenzen kopieren und löschen.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to).map_err(|e| format!("Verschieben fehlgeschlagen: {e}"))?;
+    let _ = std::fs::remove_file(from);
+    Ok(())
+}
+
+fn merge_audio_in(
+    root: &Path,
+    target_id: &str,
+    source_ids: &[String],
+) -> Result<LibraryBook, String> {
+    let target_dir = book_dir(root, target_id)?;
+    let mut target = read_book(&target_dir).ok_or("Zielbuch nicht gefunden.")?;
+    if source_ids.is_empty() {
+        return Err("Keine Quellbücher zum Zusammenführen.".into());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut sources = Vec::with_capacity(source_ids.len());
+    for id in source_ids {
+        let dir = book_dir(root, id)?;
+        if id == target_id || !seen.insert(id.clone()) {
+            return Err(format!("Buch doppelt oder gleich dem Ziel: {id}"));
+        }
+        let book = read_book(&dir).ok_or_else(|| format!("Quellbuch nicht gefunden: {id}"))?;
+        if book.audio.is_none() {
+            return Err(format!("\u{201e}{}\u{201c} hat kein Hörbuch.", book.title));
+        }
+        if book.text.is_some() {
+            return Err(format!(
+                "\u{201e}{}\u{201c} hat eine Textfassung und lässt sich nicht einfügen.",
+                book.title
+            ));
+        }
+        sources.push((dir, book));
+    }
+
+    let target_audio = target.audio.take();
+    let target_audio_dir = target_dir.join("audio");
+    std::fs::create_dir_all(&target_audio_dir).map_err(|e| e.to_string())?;
+    if target_audio.is_none() {
+        // Ohne Audiofassung ist alles, was dort liegt, Rest einer früheren.
+        for entry in std::fs::read_dir(&target_audio_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if is_audio_part(&entry.path()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let mut tracks = target_audio.as_ref().map(tracks_of).unwrap_or_default();
+    let mut number = next_part_number(&target_audio_dir, &tracks);
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut added: Vec<AudioTrack> = Vec::new();
+    let rollback = |moved: &[(PathBuf, PathBuf)]| {
+        for (from, to) in moved.iter().rev() {
+            let _ = move_file(to, from);
+        }
+    };
+    for (dir, book) in &sources {
+        let audio = book.audio.as_ref().expect("oben geprüft");
+        for track in tracks_of(audio) {
+            let from = dir.join("audio").join(&track.file);
+            if !from.is_file() {
+                rollback(&moved);
+                return Err(format!(
+                    "Die Datei \u{201e}{}\u{201c} von \u{201e}{}\u{201c} fehlt.",
+                    track.file, book.title
+                ));
+            }
+            let ext = Path::new(&track.file)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mp3")
+                .to_lowercase();
+            let file = part_name(number, &ext);
+            number += 1;
+            let to = target_audio_dir.join(&file);
+            if let Err(e) = move_file(&from, &to) {
+                rollback(&moved);
+                return Err(e);
+            }
+            moved.push((from, to));
+            added.push(AudioTrack {
+                file,
+                // Altbestand kennt den Dateinamen nicht mehr: der Buchtitel
+                // (aus dem Dateinamen entstanden) ist der Teiltitel.
+                title: if audio.tracks.is_empty() {
+                    book.title.clone()
+                } else {
+                    track.title
+                },
+                duration_ms: track.duration_ms,
+                transcript_job: track.transcript_job,
+            });
+        }
+    }
+    tracks.extend(added);
+    let previous = target_audio.unwrap_or_default();
+    target.audio = Some(AudioVersion {
+        file: tracks.first().map(|t| t.file.clone()).unwrap_or_default(),
+        duration_ms: None,
+        narrator: previous.narrator.or_else(|| {
+            sources
+                .iter()
+                .find_map(|(_, b)| b.audio.as_ref().and_then(|a| a.narrator.clone()))
+        }),
+        transcript_job: None,
+        sync: previous.sync,
+        tracks,
+    });
+    if let Err(e) = write_book(&target_dir, &target) {
+        rollback(&moved);
+        return Err(e);
+    }
+    for (dir, _) in &sources {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    read_book(&target_dir).ok_or_else(|| "Buch unlesbar.".into())
 }
 
 /// Gesamter gespeicherter Fortschritt (Schlüssel → JSON-Text).
@@ -1156,5 +1559,293 @@ mod tests {
         assert_eq!(percent_decode("a%20b"), "a b");
         assert_eq!(percent_decode("x%é.jpg"), "x%é.jpg");
         assert_eq!(percent_decode("Cover%C3%A4.png"), "Coverä.png");
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("lv-lib-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path, content: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn audio_book(root: &Path, id: &str, title: &str, audio: AudioVersion) -> LibraryBook {
+        let mut b = book(title, &["Robert Kiyosaki"], None);
+        b.id = id.into();
+        b.audio = Some(audio);
+        write_book(&root.join(id), &b).unwrap();
+        b
+    }
+
+    fn legacy(file: &str, job: Option<&str>, ms: Option<f64>) -> AudioVersion {
+        AudioVersion {
+            file: file.into(),
+            duration_ms: ms,
+            transcript_job: job.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn legacy_audio_is_one_track() {
+        let old =
+            r#"{"file":"hoerbuch.m4b","duration_ms":1000.0,"narrator":null,"transcript_job":"m7"}"#;
+        let audio: AudioVersion = serde_json::from_str(old).unwrap();
+        assert!(audio.tracks.is_empty() && audio.sync.is_empty());
+        let tracks = tracks_of(&audio);
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].file, "hoerbuch.m4b");
+        assert_eq!(tracks[0].title, "hoerbuch");
+        assert_eq!(tracks[0].duration_ms, Some(1000.0));
+        assert_eq!(tracks[0].transcript_job.as_deref(), Some("m7"));
+        assert!(tracks_of(&AudioVersion::default()).is_empty());
+        let multi = AudioVersion {
+            file: "teil_001.mp3".into(),
+            tracks: vec![AudioTrack {
+                file: "teil_001.mp3".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(tracks_of(&multi), multi.tracks);
+    }
+
+    #[test]
+    fn old_book_json_without_new_fields_still_reads() {
+        let root = scratch("compat");
+        let dir = root.join("book_9");
+        touch(
+            &dir.join("buch.json"),
+            r#"{"id":"book_9","title":"Alt","subtitle":null,"authors":[],"language":null,"isbn":null,"publisher":null,"publish_date":null,"pages":null,"description":null,"metadata_source":null,"cover_source":"generated","text":null,"audio":{"file":"hoerbuch.mp3","duration_ms":null,"narrator":null,"transcript_job":null},"added_ms":1.0,"finished":false,"cover_path":null,"audio_path":null}"#,
+        );
+        touch(&dir.join("audio/hoerbuch.mp3"), "x");
+        let b = read_book(&dir).unwrap();
+        assert_eq!(b.audio_paths.len(), 1);
+        assert_eq!(
+            b.audio_path.as_deref(),
+            b.audio_paths.first().map(String::as_str)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn audio_names_are_checked_for_every_track() {
+        let mut audio = legacy("teil_001.mp3", None, None);
+        audio.tracks = vec![
+            AudioTrack {
+                file: "teil_001.mp3".into(),
+                ..Default::default()
+            },
+            AudioTrack {
+                file: "../x.mp3".into(),
+                ..Default::default()
+            },
+        ];
+        assert!(validate_audio_names(&audio).is_err());
+        audio.tracks[1].file = "C:evil.mp3".into();
+        assert!(validate_audio_names(&audio).is_err());
+        audio.tracks[1].file = ".versteckt".into();
+        assert!(validate_audio_names(&audio).is_err());
+        audio.tracks[1].file = "teil_002.mp3".into();
+        assert!(validate_audio_names(&audio).is_ok());
+        assert!(validate_audio_names(&legacy("a/b.mp3", None, None)).is_err());
+    }
+
+    #[test]
+    fn audible_files_are_refused_with_a_clear_message() {
+        for name in ["Buch.aax", "Buch.AA", "Buch.aaxc"] {
+            let err = audio_ext(Path::new(name)).unwrap_err();
+            assert!(err.contains("Audible-DRM"), "{err}");
+            assert!(err.contains("DRM-freie Fassung (MP3, M4B)"), "{err}");
+            assert!(err.contains(name), "{err}");
+        }
+        assert_eq!(audio_ext(Path::new("a/B.MP3")).unwrap(), "mp3");
+        assert!(audio_ext(Path::new("a.pdf"))
+            .unwrap_err()
+            .contains("Kein Hörbuch-Format"));
+    }
+
+    #[test]
+    fn imports_numbered_parts_replaces_and_appends() {
+        let root = scratch("import");
+        let src = root.join("quelle");
+        for n in ["b - 02", "a - 01", "c - 03"] {
+            touch(&src.join(format!("{n}.mp3")), n);
+        }
+        let audio_dir = root.join("book_1/audio");
+        touch(&audio_dir.join("hoerbuch.m4b"), "alt");
+        let sources = vec![
+            src.join("a - 01.mp3"),
+            src.join("b - 02.mp3"),
+            src.join("c - 03.mp3"),
+        ];
+        let tracks = import_tracks_into(&audio_dir, &sources, false, &[]).unwrap();
+        let files: Vec<_> = tracks.iter().map(|t| t.file.as_str()).collect();
+        assert_eq!(files, ["teil_001.mp3", "teil_002.mp3", "teil_003.mp3"]);
+        assert_eq!(tracks[0].title, "a - 01");
+        assert_eq!(
+            std::fs::read_to_string(audio_dir.join("teil_002.mp3")).unwrap(),
+            "b - 02"
+        );
+        assert!(!audio_dir.join("hoerbuch.m4b").exists(), "alte Datei weg");
+        let leftovers: Vec<_> = std::fs::read_dir(&audio_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+            .collect();
+        assert!(leftovers.is_empty(), "Zwischenordner aufgeräumt");
+
+        let more =
+            import_tracks_into(&audio_dir, &[src.join("a - 01.mp3")], true, &tracks).unwrap();
+        assert_eq!(more[0].file, "teil_004.mp3");
+        assert!(
+            audio_dir.join("teil_001.mp3").is_file(),
+            "Anhängen behält alles"
+        );
+
+        // Ersetzen: ein Fehler (fehlende Quelle) lässt den Bestand unberührt.
+        let bad = import_tracks_into(&audio_dir, &[src.join("gibt-es-nicht.mp3")], false, &[]);
+        assert!(bad.is_err());
+        assert!(audio_dir.join("teil_001.mp3").is_file());
+        assert!(import_tracks_into(&audio_dir, &[src.join("x.aax")], false, &[]).is_err());
+        assert!(audio_dir.join("teil_004.mp3").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn with_tracks_appends_after_a_legacy_file() {
+        let previous = legacy("hoerbuch.mp3", Some("m1"), Some(5.0));
+        let new = vec![AudioTrack {
+            file: "teil_001.mp3".into(),
+            ..Default::default()
+        }];
+        let appended = with_tracks(Some(previous.clone()), new.clone(), true);
+        assert_eq!(appended.tracks.len(), 2);
+        assert_eq!(appended.tracks[0].file, "hoerbuch.mp3");
+        assert_eq!(appended.tracks[0].transcript_job.as_deref(), Some("m1"));
+        assert_eq!(appended.file, "hoerbuch.mp3");
+        let replaced = with_tracks(Some(previous), new, false);
+        assert_eq!(replaced.tracks.len(), 1);
+        assert_eq!(replaced.file, "teil_001.mp3");
+        assert_eq!(replaced.transcript_job, None);
+    }
+
+    #[test]
+    fn merge_moves_parts_in_order_and_removes_sources() {
+        let root = scratch("merge");
+        // Ziel: Buch mit einem Teil; Quellen: Altbestand (hoerbuch.mp3) und ein
+        // Buch mit zwei Teilen und Auftrag.
+        audio_book(
+            &root,
+            "book_1",
+            "Rich Dad",
+            legacy("hoerbuch.mp3", Some("m1"), Some(10.0)),
+        );
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "t1");
+        audio_book(
+            &root,
+            "book_2",
+            "Rich Dad Track 02",
+            legacy("hoerbuch.mp3", Some("m2"), Some(20.0)),
+        );
+        touch(&root.join("book_2/audio/hoerbuch.mp3"), "t2");
+        let multi = AudioVersion {
+            file: "teil_001.mp3".into(),
+            tracks: vec![
+                AudioTrack {
+                    file: "teil_001.mp3".into(),
+                    title: "Track 03".into(),
+                    duration_ms: Some(30.0),
+                    transcript_job: Some("m3".into()),
+                },
+                AudioTrack {
+                    file: "teil_002.m4a".into(),
+                    title: "Track 04".into(),
+                    duration_ms: None,
+                    transcript_job: None,
+                },
+            ],
+            ..Default::default()
+        };
+        audio_book(&root, "book_3", "Rich Dad Track 03", multi);
+        touch(&root.join("book_3/audio/teil_001.mp3"), "t3");
+        touch(&root.join("book_3/audio/teil_002.m4a"), "t4");
+
+        let merged = merge_audio_in(
+            &root,
+            "book_1",
+            &["book_2".to_string(), "book_3".to_string()],
+        )
+        .unwrap();
+        let audio = merged.audio.unwrap();
+        let files: Vec<_> = audio.tracks.iter().map(|t| t.file.as_str()).collect();
+        assert_eq!(
+            files,
+            [
+                "hoerbuch.mp3",
+                "teil_001.mp3",
+                "teil_002.mp3",
+                "teil_003.m4a"
+            ]
+        );
+        assert_eq!(audio.file, "hoerbuch.mp3");
+        let jobs: Vec<_> = audio
+            .tracks
+            .iter()
+            .map(|t| t.transcript_job.as_deref())
+            .collect();
+        assert_eq!(jobs, [Some("m1"), Some("m2"), Some("m3"), None]);
+        let durations: Vec<_> = audio.tracks.iter().map(|t| t.duration_ms).collect();
+        assert_eq!(durations, [Some(10.0), Some(20.0), Some(30.0), None]);
+        assert_eq!(
+            audio.tracks[1].title, "Rich Dad Track 02",
+            "Altbestand: Buchtitel"
+        );
+        assert_eq!(audio.tracks[3].title, "Track 04");
+        assert_eq!(merged.audio_paths.len(), 4);
+        assert!(merged.audio_paths.iter().all(|p| Path::new(p).is_file()));
+        assert_eq!(
+            std::fs::read_to_string(root.join("book_1/audio/teil_003.m4a")).unwrap(),
+            "t4"
+        );
+        assert!(!root.join("book_2").exists() && !root.join("book_3").exists());
+
+        // Fehlerfälle: Ziel als Quelle, doppelt, ohne Audio, fehlende Datei.
+        audio_book(&root, "book_5", "X", legacy("hoerbuch.mp3", None, None));
+        assert!(merge_audio_in(&root, "book_1", &["book_1".into()]).is_err());
+        assert!(merge_audio_in(&root, "book_1", &["book_5".into(), "book_5".into()]).is_err());
+        assert!(merge_audio_in(&root, "book_1", &[]).is_err());
+        assert!(
+            merge_audio_in(&root, "book_1", &["book_5".into()]).is_err(),
+            "Datei fehlt"
+        );
+        assert!(root.join("book_5").exists(), "Quelle bleibt bei Fehler");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_into_a_target_without_audio_clears_stale_files() {
+        let root = scratch("merge-stale");
+        let mut target = book("Ziel", &["A B"], None);
+        target.id = "book_1".into();
+        write_book(&root.join("book_1"), &target).unwrap();
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "alt");
+        audio_book(&root, "book_2", "Q", legacy("hoerbuch.mp3", None, None));
+        touch(&root.join("book_2/audio/hoerbuch.mp3"), "neu");
+        let merged = merge_audio_in(&root, "book_1", &["book_2".into()]).unwrap();
+        let files: Vec<_> = merged
+            .audio
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|t| t.file.clone())
+            .collect();
+        assert_eq!(files, ["teil_001.mp3"]);
+        assert!(!root.join("book_1/audio/hoerbuch.mp3").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

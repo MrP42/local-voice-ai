@@ -7017,6 +7017,7 @@
       "narrated": "Narrated"
     },
     "job": {
+      "parts": "Transcription {{done}} of {{total}}",
       "queued": "Transcription queued",
       "processing": "Transcribing",
       "transcribing": "Transcribing",
@@ -7091,6 +7092,9 @@
     "pause": "Pause",
     "seek": "Position in audiobook",
     "drop": {
+      "files": "{{count}} files: {{name}}",
+      "append": "Add as further parts",
+      "appendHint": "“Add as further parts” puts the files after the existing parts of “{{title}}”; nothing is lost.",
       "replaceText": "Replace text version",
       "replaceAudio": "Replace audiobook",
       "replaceHintText": "“{{title}}” already has a text version. Replacing shows only the new text in this book and reading progress starts over. The previous text stays available as a page in Read Aloud.",
@@ -7159,7 +7163,42 @@
       "running": "Running",
       "possible": "Not started",
       "none": "Not needed"
-    }
+    },
+    "parts": {
+      "label": "Part {{n}} of {{total}}",
+      "list": "Parts"
+    },
+    "follow": {
+      "on": "Read along",
+      "off": "Stop reading along",
+      "region": "Reading along: {{title}}",
+      "approx": "Position approximate",
+      "current": "Go to current position",
+      "close": "Close reading view"
+    },
+    "merge": {
+      "bar": "{{count}} entries probably belong to one audiobook: {{title}}",
+      "action": "Merge",
+      "dismiss": "Hide this notice",
+      "title": "Merge into one audiobook: {{title}}",
+      "summary": "{{count}} entries become one audiobook “{{title}}” with {{count}} parts.",
+      "intoExisting": "The parts go into the existing entry “{{title}}”.",
+      "replaces": "“{{title}}” already has an audiobook ({{count}} files). It is replaced and its listening position starts over.",
+      "orderHint": "Order of the parts:",
+      "keepHint": "The single entries disappear, their audio files stay as parts. Running transcriptions continue.",
+      "confirm": "Merge",
+      "working": "Merging …",
+      "done": "“{{title}}”: {{count}} entries merged."
+    },
+    "drm": "“{{name}}” is protected by Audible DRM and cannot be imported. Use a DRM-free version (MP3, M4B).",
+    "addedParts": "“{{title}}” added with {{count}} parts.",
+    "attachedParts": "{{count}} parts added to “{{title}}”.",
+    "addRest": "{{count}} more files will be added afterwards",
+    "listenFollow": "Listen and read along",
+    "listenFollowTitle": "Listen to “{{title}}” and read along",
+    "transcribeMissing": "Transcribe missing parts",
+    "importedParts": "Imported audiobook in {{count}} parts",
+    "appendAudio": "Add further parts"
   },
   "projekte": {
     "menu": {

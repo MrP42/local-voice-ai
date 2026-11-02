@@ -11,11 +11,15 @@ import { BookCover } from "./BookCover";
 import { MetadataPicker } from "./MetadataPicker";
 import {
   extensionOf,
+  fileNameOf,
   kindOfFile,
   LIBRARY_FILE_EXTENSIONS,
 } from "@/lib/library/books";
+import { groupAudioFiles, type AudioGroup } from "@/lib/library/audioGroups";
 import {
+  addAudioGroup,
   addToLibrary,
+  drmMessage,
   prepareFile,
   type PreparedFile,
 } from "@/lib/library/importFile";
@@ -37,9 +41,15 @@ export const AddBookDialog: React.FC<{
   open: boolean;
   onOpenChange(open: boolean): void;
   onAdded(book: LibraryBook): void | Promise<void>;
-}> = ({ open, onOpenChange, onAdded }) => {
+  /** Weitere gewählte Dateien (andere Bücher), nach dem Hinzufügen aufnehmen. */
+  onImportRest?(paths: string[]): void;
+}> = ({ open, onOpenChange, onAdded, onImportRest }) => {
   const { t } = useTranslation();
   const [picked, setPicked] = useState<PreparedFile | null>(null);
+  /** Mehrere Audiodateien eines Hörbuchs (sonst `null`). */
+  const [group, setGroup] = useState<AudioGroup | null>(null);
+  /** Weitere gewählte Dateien, die zu anderen Büchern gehören. */
+  const [rest, setRest] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [authors, setAuthors] = useState("");
   const [duplicate, setDuplicate] = useState<LibraryBook | null>(null);
@@ -54,6 +64,8 @@ export const AddBookDialog: React.FC<{
   useEffect(() => {
     if (open) return;
     setPicked(null);
+    setGroup(null);
+    setRest([]);
     setTitle("");
     setAuthors("");
     setDuplicate(null);
@@ -93,21 +105,63 @@ export const AddBookDialog: React.FC<{
 
   const pick = async () => {
     setError(null);
-    const path = await openFile({
-      multiple: false,
+    const chosen = await openFile({
+      multiple: true,
       filters: [{ name: t("library.files"), extensions: LIBRARY_FILE_EXTENSIONS }],
     });
-    if (typeof path !== "string") return;
-    if (!kindOfFile(path)) {
-      setError(t("library.unsupported", { ext: extensionOf(path) }));
+    const paths = Array.isArray(chosen) ? chosen : typeof chosen === "string" ? [chosen] : [];
+    if (!paths.length) return;
+    const drm = paths.filter((p) => kindOfFile(p) === "drm");
+    const unsupported = paths.filter((p) => !kindOfFile(p));
+    const usable = paths.filter((p) => ["text", "audio"].includes(kindOfFile(p) ?? ""));
+    if (!usable.length) {
+      setError(
+        drm.length
+          ? drmMessage(fileNameOf(drm[0]))
+          : t("library.unsupported", { ext: extensionOf(unsupported[0]) }),
+      );
       return;
     }
+    // Teilweise unbrauchbare Auswahl: der Rest geht, die Meldung bleibt stehen.
+    if (drm.length) toast.error(drmMessage(fileNameOf(drm[0])));
+    if (unsupported.length)
+      toast.error(t("library.unsupported", { ext: extensionOf(unsupported[0]) }));
+    // Ein Dialog = ein Buch: die erste Datei bzw. Gruppe, der Rest folgt danach.
+    const audio = groupAudioFiles(usable.filter((p) => kindOfFile(p) === "audio"));
+    const items: { paths: string[]; group: AudioGroup | null }[] = [];
+    const seen = new Set<string>();
+    for (const path of usable) {
+      if (seen.has(path)) continue;
+      if (kindOfFile(path) === "text") {
+        seen.add(path);
+        items.push({ paths: [path], group: null });
+        continue;
+      }
+      const g = audio.find((x) => x.paths.includes(path))!;
+      g.paths.forEach((p) => seen.add(p));
+      items.push({ paths: g.paths, group: g });
+    }
+    const [first, ...others] = items;
     setBusy("extract");
     try {
-      const file = await prepareFile(path);
-      setPicked(file);
-      setTitle(file.title);
-      setAuthors(file.authors.join(", "));
+      const file = await prepareFile(first.paths[0]);
+      const g = first.group && first.group.paths.length > 1 ? first.group : null;
+      setGroup(g);
+      setPicked(
+        g
+          ? {
+              ...file,
+              name: t("library.drop.files", { count: g.paths.length, name: g.title }),
+              title: g.title,
+              authors: g.authors,
+            }
+          : first.group
+            ? { ...file, title: first.group.title, authors: first.group.authors }
+            : file,
+      );
+      setRest(others.flatMap((i) => i.paths));
+      setTitle(g ? g.title : first.group ? first.group.title : file.title);
+      setAuthors((g ?? first.group ?? file).authors.join(", "));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -120,21 +174,31 @@ export const AddBookDialog: React.FC<{
     setBusy("save");
     setError(null);
     try {
-      const { book, attached } = await addToLibrary(picked, {
+      const options = {
         attachTo: duplicate && attach ? duplicate : null,
         title: title.trim(),
         authors: splitAuthors(authors),
         candidate,
         transcribe,
-        onWarning: (m) => toast.error(m),
-      });
+        onWarning: (m: string) => toast.error(m),
+      };
+      const { book, attached } = group
+        ? await addAudioGroup(group, options)
+        : await addToLibrary(picked, options);
       toast(
-        attached
-          ? t("library.attached", { title: book.title })
-          : t("library.added", { title: book.title }),
+        group
+          ? t(attached ? "library.attachedParts" : "library.addedParts", {
+              title: book.title,
+              count: group.paths.length,
+            })
+          : attached
+            ? t("library.attached", { title: book.title })
+            : t("library.added", { title: book.title }),
       );
+      const others = rest;
       onOpenChange(false);
       await onAdded(book);
+      if (others.length) onImportRest?.(others);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -181,6 +245,12 @@ export const AddBookDialog: React.FC<{
               <span className="library-meta">
                 {picked.kind === "audio" ? t("library.kindAudio") : t("library.kindText")}
               </span>
+              {rest.length > 0 && (
+                <span className="library-meta" data-testid="library-add-rest">
+                  {" · "}
+                  {t("library.addRest", { count: rest.length })}
+                </span>
+              )}
             </span>
           </span>
         ) : (

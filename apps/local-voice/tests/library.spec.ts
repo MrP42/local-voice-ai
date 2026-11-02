@@ -105,6 +105,14 @@ test.beforeEach(async ({ page }) => {
         }),
       );
     w.__books = books;
+    w.__settings = settings;
+    // Hilfs-Besprechungen der Transkription (lva#204): Kennung → Stand.
+    w.__jobs = [] as string[];
+    w.__jobStatus = {} as Record<string, string>;
+    w.__jobDuration = {} as Record<string, number>;
+    w.__segments = {} as Record<string, unknown[]>;
+    w.__pageText = {} as Record<string, string>;
+    let jobCounter = 1;
     // Fortschritt des Readers: Effi zu 40 % gehört.
     window.localStorage.setItem(
       "lva.ui.progress.text:page_1:original",
@@ -167,7 +175,17 @@ test.beforeEach(async ({ page }) => {
               ? [{ name: "teil-01.mp3", size: 1, modified_ms: 0 }]
               : [];
           if (cmd === "meetings_list")
-            return [{ id: "m1", title: "x", status: "processing" }];
+            return [
+              { id: "m1", title: "x", status: "processing" },
+              ...(w.__jobs as string[]).map((id) => ({
+                id,
+                title: "x",
+                status: (w.__jobStatus as Record<string, string>)[id] ?? "processing",
+                duration_ms: (w.__jobDuration as Record<string, number>)[id] ?? null,
+              })),
+            ];
+          if (cmd === "meetings_get_segments")
+            return (w.__segments as Record<string, unknown[]>)[String(args?.meetingId)] ?? [];
           if (cmd === "plugin:dialog|open")
             return (w as { __pick?: string }).__pick ?? null;
           if (cmd === "library_find_duplicate") {
@@ -191,7 +209,67 @@ test.beforeEach(async ({ page }) => {
             w.__books = [...list.filter((x) => x.id !== b.id), withAudio];
             return withAudio;
           }
-          if (cmd === "meetings_import_file") return "m2";
+          if (cmd === "meetings_import_file") {
+            const id = `m${++jobCounter}`;
+            (w.__jobs as string[]).push(id);
+            return id;
+          }
+          if (cmd === "library_audio_import_tracks") {
+            const b = list.find((x) => x.id === args?.id) as Record<string, any>;
+            const old = b.audio?.tracks?.length
+              ? b.audio.tracks
+              : b.audio
+                ? [{ file: b.audio.file, title: "hoerbuch", duration_ms: null, transcript_job: null }]
+                : [];
+            const base = args?.append ? old : [];
+            const fresh = (args?.paths as string[]).map((p, i) => ({
+              file: `teil_${String(base.length + i + 1).padStart(3, "0")}.mp3`,
+              title: (p.split("/").pop() ?? p).replace(/\.[^.]+$/, ""),
+              duration_ms: null,
+              transcript_job: null,
+            }));
+            const tracks = [...base, ...fresh];
+            const withTracks = {
+              ...b,
+              audio: {
+                file: tracks[0].file,
+                duration_ms: null,
+                narrator: null,
+                transcript_job: null,
+                tracks,
+                sync: [],
+              },
+              audio_paths: tracks.map((t: { file: string }) => `C:/lib/${b.id}/audio/${t.file}`),
+              audio_path: `C:/lib/${b.id}/audio/${tracks[0].file}`,
+            };
+            w.__books = [...list.filter((x) => x.id !== b.id), withTracks];
+            return withTracks;
+          }
+          if (cmd === "library_merge_audio") {
+            const target = list.find((x) => x.id === args?.targetId) as Record<string, any>;
+            const parts = (b: Record<string, any>) =>
+              b.audio?.tracks?.length
+                ? b.audio.tracks
+                : b.audio
+                  ? [{ file: b.audio.file, title: b.title, duration_ms: b.audio.duration_ms, transcript_job: b.audio.transcript_job }]
+                  : [];
+            const sources = (args?.sourceIds as string[]).map(
+              (id) => list.find((x) => x.id === id) as Record<string, any>,
+            );
+            const tracks = [...parts(target), ...sources.flatMap(parts)].map((t, i) => ({
+              ...t,
+              file: `teil_${String(i + 1).padStart(3, "0")}.mp3`,
+            }));
+            const merged = {
+              ...target,
+              audio: { file: tracks[0].file, duration_ms: null, narrator: null, transcript_job: null, tracks, sync: [] },
+              audio_paths: tracks.map((t: { file: string }) => `C:/lib/${target.id}/audio/${t.file}`),
+              audio_path: `C:/lib/${target.id}/audio/${tracks[0].file}`,
+            };
+            const gone = new Set(args?.sourceIds as string[]);
+            w.__books = [...list.filter((x) => x.id !== target.id && !gone.has(String(x.id))), merged];
+            return merged;
+          }
           // Das Vorlesen nach „Lesen“/Play braucht seine Grunddaten.
           if (cmd === "tts_server_status") return { phase: "stopped", message: null };
           if (cmd === "pages_list")
@@ -199,8 +277,13 @@ test.beforeEach(async ({ page }) => {
               { id: "page_1", title: "Effi Briest" },
               { id: "page_3", title: "Die Verwandlung" },
             ];
-          if (cmd === "page_state_load")
-            return JSON.stringify({ text: "# Effi Briest\n\nIn Front des Herrenhauses.", tab: "original" });
+          if (cmd === "page_state_load") {
+            const custom = (w.__pageText as Record<string, string>)[String(args?.id)];
+            return JSON.stringify({
+              text: custom ?? "# Effi Briest\n\nIn Front des Herrenhauses.",
+              tab: "original",
+            });
+          }
           if (cmd === "page_dir") return "C:/projects/page_1";
           if (cmd === "get_custom_sounds") return { start: false, stop: false };
           if (cmd === "meetings_is_recording") return false;
@@ -629,18 +712,815 @@ test("390 px: Filter-Chips, Sortierung und Menüknöpfe haben Trefferflächen �
   await page.screenshot({ path: shot("bibliothek-menue-390.png") });
 });
 
-test("Mehrere Dateien auf ein Buch: je Art nur die erste, Fehler halten die Warteschlange nicht an", async ({
+test("Mehrere Dateien auf ein Buch: alle Audiodateien werden Teile, Fehler halten die Warteschlange nicht an", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await dragTo(page, await centerOf(page, effiCover(page)), [
     "C:/x/kaputt.xyz",
-    "C:/Downloads/teil1.mp3",
     "C:/Downloads/teil2.mp3",
+    "C:/Downloads/teil1.mp3",
   ]);
-  // teil1 hängt an Effi; teil2 geht wie auf freie Fläche (unbekannt → neu).
+  // Beide Hörteile gehören zu Effi (in Hörreihenfolge), kein neues Buch.
   await expect
-    .poll(async () => (await calls(page, "library_audio_import")).map((a) => a.id))
-    .toEqual(["book_1", "book_new"]);
+    .poll(async () => await calls(page, "library_audio_import_tracks"))
+    .toEqual([
+      {
+        id: "book_1",
+        paths: ["C:/Downloads/teil1.mp3", "C:/Downloads/teil2.mp3"],
+        append: false,
+      },
+    ]);
+  expect(await calls(page, "library_audio_import")).toHaveLength(0);
+  await expect(page.getByText(/Dateityp .xyz|\.xyz/).first()).toBeVisible();
+});
+
+
+// ---------------------------------------------------------------------------
+// Mehrteilige Hörbücher, Mitlesen, Zusammenführen, AAX (lva#204)
+// ---------------------------------------------------------------------------
+
+/** Suchleiste setzen: nativer Setter plus input-Ereignis, damit React die Änderung sieht. */
+const seekTo = (page: Page, seconds: number) =>
+  page.getByTestId("library-audiobar-seek").evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    set.call(input, String(v));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, seconds);
+
+const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+
+/** Stilles WAV (8 kHz, 8 Bit, mono) der gewünschten Länge. */
+const wav = (seconds: number): Buffer => {
+  const rate = 8000;
+  const n = rate * seconds;
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0);
+  head.writeUInt32LE(36 + n, 4);
+  head.write("WAVEfmt ", 8);
+  head.writeUInt32LE(16, 16);
+  head.writeUInt16LE(1, 20);
+  head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate, 28);
+  head.writeUInt16LE(1, 32);
+  head.writeUInt16LE(8, 34);
+  head.write("data", 36);
+  head.writeUInt32LE(n, 40);
+  return Buffer.concat([head, Buffer.alloc(n, 0x80)]);
+};
+
+/** Echte Hördateien für die Hörleiste: `/__audio/<datei>` liefert stilles WAV mit Range. */
+const serveAudio = async (page: Page, seconds: Record<string, number>) => {
+  await page.addInitScript(() => {
+    const internals = (
+      window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> }
+    ).__TAURI_INTERNALS__;
+    internals.convertFileSrc = (path: string) => `/__audio/${path.split("/").pop()}`;
+  });
+  await page.route("**/__audio/**", async (route) => {
+    const name = new URL(route.request().url()).pathname.split("/").pop() ?? "";
+    const body = wav(seconds[name] ?? 5);
+    const range = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range ?? "");
+    if (!range) {
+      return route.fulfill({
+        status: 200,
+        contentType: "audio/wav",
+        headers: { "accept-ranges": "bytes" },
+        body,
+      });
+    }
+    const from = Number(range[1]);
+    const to = range[2] ? Number(range[2]) : body.length - 1;
+    return route.fulfill({
+      status: 206,
+      contentType: "audio/wav",
+      headers: {
+        "accept-ranges": "bytes",
+        "content-range": `bytes ${from}-${to}/${body.length}`,
+      },
+      body: body.subarray(from, to + 1),
+    });
+  });
+};
+
+type Extra = Record<string, unknown>;
+const addBooks = (page: Page, extra: Extra[]) =>
+  page.addInitScript((books) => {
+    const w = window as unknown as { __books: unknown[] };
+    w.__books = [...w.__books, ...books];
+  }, extra);
+
+const baseBook = (id: string, title: string, over: Extra = {}): Extra => ({
+  id,
+  title,
+  subtitle: null,
+  authors: [],
+  language: null,
+  isbn: null,
+  publisher: null,
+  publish_date: null,
+  pages: null,
+  description: null,
+  metadata_source: "manual",
+  cover_source: "generated",
+  text: null,
+  audio: null,
+  added_ms: 10,
+  finished: false,
+  cover_path: null,
+  audio_path: null,
+  audio_paths: [],
+  ...over,
+});
+
+const track = (n: number, title: string, ms: number | null, job: string | null = null) => ({
+  file: `teil_${pad(n, 3)}.wav`,
+  title,
+  duration_ms: ms,
+  transcript_job: job,
+});
+
+const multiAudio = (
+  id: string,
+  tracks: ReturnType<typeof track>[],
+  sync: { chars: number; ms: number }[] = [],
+): Extra => ({
+  audio: {
+    file: tracks[0].file,
+    duration_ms: null,
+    narrator: null,
+    transcript_job: null,
+    tracks,
+    sync,
+  },
+  audio_path: `C:/lib/${id}/audio/${tracks[0].file}`,
+  audio_paths: tracks.map((t) => `C:/lib/${id}/audio/${t.file}`),
+});
+
+const legacyAudio = (id: string): Extra => ({
+  audio: { file: "hoerbuch.mp3", duration_ms: null, narrator: null, transcript_job: null },
+  audio_path: `C:/lib/${id}/audio/hoerbuch.mp3`,
+});
+
+const richDadFiles = () => {
+  const files: string[] = [];
+  [11, 12, 13].forEach((count, d) => {
+    for (let t = 1; t <= count; t++)
+      files.push(
+        `C:/Hoerbuecher/Rich Dad/Robert Kiyosaki - Rich Dad Poor Dad Disc ${d + 1} - ${pad(t)} - Track ${pad(t)}.mp3`,
+      );
+  });
+  return files;
+};
+
+test("Ablegen von 36 Dateien einer CD-Box: ein Buch mit 36 Teilen, ein Auftrag je Teil", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const files = richDadFiles();
+  expect(files).toHaveLength(36);
+  const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
+  // Durcheinander abgelegt: die Reihenfolge stellt das Gruppieren her.
+  await dragTo(page, { x: free.x + 400, y: free.y }, [...files].reverse());
+  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(36);
+  const imports = await calls(page, "library_audio_import_tracks");
+  expect(imports).toHaveLength(1);
+  expect(imports[0].paths).toEqual(files);
+  expect(imports[0].append).toBe(false);
+  expect(await calls(page, "library_audio_import")).toHaveLength(0);
+  const saves = await calls(page, "library_save");
+  const created = saves[0].book as { id: string; title: string; authors: string[] };
+  expect(created).toMatchObject({
+    id: "",
+    title: "Rich Dad Poor Dad",
+    authors: ["Robert Kiyosaki"],
+  });
+  // Die Aufträge landen je Teil am Buch.
+  await expect
+    .poll(async () => {
+      const all = await calls(page, "library_save");
+      const last = all[all.length - 1].book as {
+        audio: { tracks: { transcript_job: string | null }[] };
+      };
+      return new Set(last.audio.tracks.map((t) => t.transcript_job)).size;
+    })
+    .toBe(36);
+  // Ein Eintrag, Status „Transkription 0 von 36“.
+  const cards = page.getByTestId("library-card").filter({ hasText: "Rich Dad Poor Dad" });
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toContainText("Transkription 0 von 36");
+  await expect(page.getByTestId("library-merge-bar")).toHaveCount(0);
+});
+
+test("Ablegen auf ein Buch ohne Audio: alle Dateien werden Teile in Hörreihenfolge", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await dragTo(page, await centerOf(page, effiCover(page)), [
+    "C:/Downloads/Effi - Track 10.mp3",
+    "C:/Downloads/Effi - Track 02.mp3",
+    "C:/Downloads/Effi - Track 01.mp3",
+  ]);
+  await expect
+    .poll(async () => await calls(page, "library_audio_import_tracks"))
+    .toEqual([
+      {
+        id: "book_1",
+        paths: [
+          "C:/Downloads/Effi - Track 01.mp3",
+          "C:/Downloads/Effi - Track 02.mp3",
+          "C:/Downloads/Effi - Track 10.mp3",
+        ],
+        append: false,
+      },
+    ]);
+  await expect(page.getByTestId("library-drop-question")).toHaveCount(0);
+  // Effi hat Text: keine Transkription.
+  expect(await calls(page, "meetings_import_file")).toHaveLength(0);
+  await expect(page.getByText("3 Teile an „Effi Briest“ angehängt.")).toBeVisible();
+});
+
+test("Ablegen auf ein Buch mit Audio: Rückfrage mit drei Wahlmöglichkeiten", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const storm = page.getByTestId("library-card").filter({ hasText: "Der Schimmelreiter" });
+  await dragTo(page, await centerOf(page, storm.locator(".library-card__open")), [
+    "C:/Downloads/Schimmelreiter - Teil 2.mp3",
+    "C:/Downloads/Schimmelreiter - Teil 3.mp3",
+  ]);
+  const question = page.getByTestId("library-drop-question");
+  await expect(question).toContainText("2 Dateien");
+  await expect(page.getByTestId("library-drop-attach")).toHaveText("Hörbuch ersetzen");
+  await expect(page.getByTestId("library-drop-append")).toHaveText("Als weitere Teile anhängen");
+  await expect(page.getByTestId("library-drop-new")).toHaveText("Als neues Buch");
+  await page.screenshot({ path: shot("drop-rueckfrage-drei-wahlen-1440.png") });
+  await page.getByTestId("library-drop-append").click();
+  await expect
+    .poll(async () => await calls(page, "library_audio_import_tracks"))
+    .toEqual([
+      {
+        id: "book_2",
+        paths: [
+          "C:/Downloads/Schimmelreiter - Teil 2.mp3",
+          "C:/Downloads/Schimmelreiter - Teil 3.mp3",
+        ],
+        append: true,
+      },
+    ]);
+});
+
+test("Zusammenführen: Hinweisbalken, Rückfrage mit Reihenfolge, ein Buch danach", async ({
+  page,
+}) => {
+  const parts = [3, 1, 2].map((n) =>
+    baseBook(
+      `book_p${n}`,
+      `Robert Kiyosaki - Rich Dad Poor Dad Disc 1 - ${pad(n)} - Track ${pad(n)}`,
+      { added_ms: 100 + n, ...legacyAudio(`book_p${n}`) },
+    ),
+  );
+  await addBooks(page, parts);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const bar = page.getByTestId("library-merge-bar");
+  await expect(bar).toHaveCount(1);
+  await expect(bar).toContainText("3 Einträge gehören wohl zu einem Hörbuch: Rich Dad Poor Dad");
+  await page.screenshot({ path: shot("liste-merge-balken-1440.png") });
+  await bar.getByTestId("library-merge-start").click();
+  const dialog = page.getByTestId("library-merge-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("library-merge-summary")).toContainText(
+    "3 Einträge werden zu einem Hörbuch „Rich Dad Poor Dad“ mit 3 Teilen",
+  );
+  const order = page.getByTestId("library-merge-order").locator("li");
+  await expect(order).toHaveCount(3);
+  await expect(order.nth(0)).toContainText("Track 01");
+  await expect(order.nth(2)).toContainText("Track 03");
+  await expect(page.getByTestId("library-merge-replaces")).toHaveCount(0);
+  await page.screenshot({ path: shot("merge-dialog-1440.png") });
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_p1", sourceIds: ["book_p2", "book_p3"] }]);
+  // Das erste Buch bekommt vorher den Stamm-Titel.
+  const saves = await calls(page, "library_save");
+  expect((saves[0].book as { id: string; title: string }).title).toBe("Rich Dad Poor Dad");
+  expect((saves[0].book as { id: string }).id).toBe("book_p1");
+  const cards = page.getByTestId("library-card").filter({ hasText: "Rich Dad Poor Dad" });
+  await expect(cards).toHaveCount(1);
+  await expect(page.getByTestId("library-merge-bar")).toHaveCount(0);
+  await expect(page.getByText("„Rich Dad Poor Dad“: 3 Einträge zusammengeführt.")).toBeVisible();
+});
+
+test("Zusammenführen in ein vorhandenes Werk: dessen Hörbuch wird ersetzt und im Dialog genannt", async ({
+  page,
+}) => {
+  const parts = [1, 2].map((n) =>
+    baseBook(`book_p${n}`, `Rich Dad Poor Dad - Teil ${n}`, legacyAudio(`book_p${n}`)),
+  );
+  const work = baseBook("book_w", "Rich Dad Poor Dad", {
+    authors: ["Robert Kiyosaki"],
+    ...legacyAudio("book_w"),
+  });
+  await addBooks(page, [...parts, work]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-merge-start").click();
+  await expect(page.getByTestId("library-merge-target")).toContainText("vorhandenen Eintrag");
+  await expect(page.getByTestId("library-merge-replaces")).toContainText(
+    "„Rich Dad Poor Dad“ hat schon ein Hörbuch (1 Dateien). Es wird dabei ersetzt",
+  );
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_w", sourceIds: ["book_p1", "book_p2"] }]);
+  const saves = await calls(page, "library_save");
+  expect((saves[0].book as { id: string }).id).toBe("book_w");
+  expect((saves[0].book as { audio: unknown }).audio).toBeNull();
+});
+
+test("Reihenbände ohne Teil-Angabe lösen keinen Zusammenführen-Hinweis aus", async ({ page }) => {
+  await addBooks(
+    page,
+    [1, 2].map((n) => baseBook(`book_h${n}`, `Harry Potter ${n}`, legacyAudio(`book_h${n}`))),
+  );
+  await page.goto("/");
+  await expect(page.getByTestId("library-card")).toHaveCount(5);
+  await expect(page.getByTestId("library-merge-bar")).toHaveCount(0);
+});
+
+test("AAX: Toast mit DRM-Hinweis beim Ablegen und im Dialog „Hinzufügen“", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
+  await dragTo(page, { x: free.x + 400, y: free.y }, ["C:/Audible/Das Buch.aax"]);
+  await expect(
+    page.getByText(
+      "„Das Buch.aax“ ist mit Audible-DRM geschützt und kann nicht importiert werden. Verwende eine DRM-freie Fassung (MP3, M4B).",
+    ),
+  ).toBeVisible();
+  expect(await calls(page, "library_audio_import")).toHaveLength(0);
+  expect(await calls(page, "library_audio_import_tracks")).toHaveLength(0);
+  await page.screenshot({ path: shot("aax-hinweis-1440.png") });
+  // Dialog: nur eine AAX gewählt → Meldung im Dialog.
+  await page.evaluate(() => {
+    (window as unknown as { __pick: string[] }).__pick = ["C:/Audible/Anderes.aaxc"];
+  });
+  await page.getByTestId("library-add").click();
+  await page.getByTestId("library-add-pick").click();
+  await expect(page.getByRole("alert")).toContainText(
+    "„Anderes.aaxc“ ist mit Audible-DRM geschützt",
+  );
+  await expect(page.getByTestId("library-add-title")).toHaveCount(0);
+});
+
+test("Dialog „Hinzufügen“ mit Mehrfachauswahl: eine Gruppe wird ein Buch mit Teilen", async ({
+  page,
+}) => {
+  const files = richDadFiles().slice(0, 4);
+  await page.addInitScript((picked) => {
+    (window as unknown as { __pick: string[] }).__pick = picked;
+  }, [...files].reverse());
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-add").click();
+  await page.getByTestId("library-add-pick").click();
+  await expect(page.getByTestId("library-add-title")).toHaveValue("Rich Dad Poor Dad");
+  await expect(page.getByTestId("library-add-authors")).toHaveValue("Robert Kiyosaki");
+  await expect(page.locator(".library-add__drop")).toContainText("4 Dateien");
+  await page.getByTestId("library-add-submit").click();
+  await expect
+    .poll(async () => await calls(page, "library_audio_import_tracks"))
+    .toEqual([{ id: "book_new", paths: files, append: false }]);
+  await expect.poll(async () => (await calls(page, "meetings_import_file")).length).toBe(4);
+});
+
+test("Hörleiste mehrteilig: durchgehende Zeit, Teilwahl, ±30 s über Teilgrenzen", async ({
+  page,
+}) => {
+  const tracks = [
+    track(1, "Disc 1 - Track 01", 10_000),
+    track(2, "Disc 1 - Track 02", 20_000),
+    track(3, "Disc 1 - Track 03", 30_000),
+  ];
+  await serveAudio(page, { "teil_001.wav": 10, "teil_002.wav": 20, "teil_003.wav": 30 });
+  await addBooks(page, [
+    baseBook("book_a", "Rich Dad Poor Dad", {
+      authors: ["Robert Kiyosaki"],
+      ...multiAudio("book_a", tracks),
+    }),
+  ]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page
+    .getByTestId("library-card")
+    .filter({ hasText: "Rich Dad Poor Dad" })
+    .getByTestId("library-play")
+    .click();
+  const bar = page.getByTestId("library-audiobar");
+  await expect(bar).toBeVisible();
+  await expect(page.getByTestId("library-audiobar-sub")).toHaveText("Teil 1 von 3");
+  const seek = page.getByTestId("library-audiobar-seek");
+  // Gesamtzeit über alle Teile: 60 s.
+  await expect(seek).toHaveAttribute("max", "60");
+  // Teilwahl: Liste der Teile, Klick springt an den Anfang des Teils.
+  await page.getByTestId("library-audiobar-parts").click();
+  const items = page.getByTestId("library-parts-item");
+  await expect(items).toHaveCount(3);
+  await page.screenshot({ path: shot("hoerleiste-teilwahl-1440.png") });
+  await items.nth(1).click();
+  await expect(page.getByTestId("library-audiobar-sub")).toHaveText("Teil 2 von 3");
+  await expect(seek).toHaveValue(/^(10|11)$/);
+  // +30 s von 10 s: 40 s liegen schon im dritten Teil.
+  await page.getByTestId("library-audiobar-forward").click();
+  await expect(page.getByTestId("library-audiobar-sub")).toHaveText("Teil 3 von 3");
+  await expect(seek).toHaveValue(/^(40|41)$/);
+  // −30 s zurück über die Grenze: 10 s = Anfang des zweiten Teils.
+  await page.getByTestId("library-audiobar-back").click();
+  await expect(page.getByTestId("library-audiobar-sub")).toHaveText("Teil 2 von 3");
+  await expect(seek).toHaveValue(/^(10|11)$/);
+  // Suchleiste über alle Teile.
+  await seekTo(page, 55);
+  await expect(page.getByTestId("library-audiobar-sub")).toHaveText("Teil 3 von 3");
+  await expect(seek).toHaveValue(/^(55|56)$/);
+  // Gesicherte Stelle: Gesamt-ms im Fortschritt `audio:<buch>`.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("lva.ui.progress.audio:book_a");
+        return raw ? Math.round((JSON.parse(raw).offset as number) / 1000) : null;
+      }),
+    )
+    .toBeGreaterThanOrEqual(54);
+  const saved = await page.evaluate(() =>
+    JSON.parse(window.localStorage.getItem("lva.ui.progress.audio:book_a") ?? "{}"),
+  );
+  expect(saved.length).toBe(60_000);
+  expect(saved.unit).toBe("ms");
+});
+
+test("Hörleiste: fehlende Dauern werden ermittelt und am Buch gesichert", async ({ page }) => {
+  await serveAudio(page, { "teil_001.wav": 4, "teil_002.wav": 6 });
+  await addBooks(page, [
+    baseBook("book_d", "Der Prozess", {
+      ...multiAudio("book_d", [track(1, "Eins", null), track(2, "Zwei", null)]),
+    }),
+  ]);
+  await page.goto("/");
+  await page
+    .getByTestId("library-card")
+    .filter({ hasText: "Der Prozess" })
+    .getByTestId("library-play")
+    .click();
+  await expect(page.getByTestId("library-audiobar-seek")).toHaveAttribute("max", "10");
+  await expect
+    .poll(async () => {
+      const saves = await calls(page, "library_save");
+      const withDurations = saves
+        .map((a) => a.book as { audio?: { tracks?: { duration_ms: number | null }[] } })
+        .find((b) => b.audio?.tracks?.every((t) => t.duration_ms));
+      return withDurations?.audio?.tracks?.map((t) => t.duration_ms);
+    })
+    .toEqual([4000, 6000]);
+});
+
+/** Text mit zwölf langen Absätzen und Zeitachse (Absatz k beginnt bei k × 2,5 s). */
+const followText = () => {
+  const paragraphs = Array.from(
+    { length: 12 },
+    (_, k) =>
+      `Absatz ${k + 1}: ${"Der Text läuft hier ein gutes Stück weiter, damit die Lesefläche scrollen muss. ".repeat(3).trim()}`,
+  );
+  const prefix = "# Der Prozess\n\nvon Franz Kafka\n\n";
+  let text = prefix;
+  const sync: { chars: number; ms: number }[] = [];
+  paragraphs.forEach((p, k) => {
+    if (k > 0) text += "\n\n";
+    sync.push({ chars: text.length, ms: k * 2500 });
+    text += p;
+  });
+  return { text, sync, prefix };
+};
+
+const mitlesenBook = (withSync: boolean): Extra => {
+  const { sync } = followText();
+  return baseBook("book_m", "Der Prozess", {
+    authors: ["Franz Kafka"],
+    text: { page_id: "page_m", origin: withSync ? "transcript" : "document", source_name: null },
+    ...multiAudio(
+      "book_m",
+      [track(1, "Teil 1", 10_000), track(2, "Teil 2", 20_000)],
+      withSync ? sync : [],
+    ),
+  });
+};
+
+const mitlesenSetup = async (page: Page, withSync = true) => {
+  const { text } = followText();
+  await serveAudio(page, { "teil_001.wav": 10, "teil_002.wav": 20 });
+  await addBooks(page, [mitlesenBook(withSync)]);
+  await page.addInitScript((t) => {
+    (window as unknown as { __pageText: Record<string, string> }).__pageText["page_m"] = t;
+  }, text);
+};
+
+const openDetail = (page: Page) =>
+  page.getByRole("button", { name: "„Der Prozess“: Details öffnen" }).click();
+
+const openFollow = async (page: Page) => {
+  await openDetail(page);
+  await page.getByTestId("library-detail-listen-follow").click();
+  await expect(page.getByTestId("library-follow")).toBeVisible();
+};
+
+const activeText = (page: Page) => page.locator(".library-follow__p--now").first().innerText();
+
+test("Mitlesen: der gehörte Absatz ist hervorgehoben, Klick springt, gemeinsame Position", async ({
+  page,
+}) => {
+  await mitlesenSetup(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  expect(
+    await page.evaluate(() => window.localStorage.getItem("lva.ui.library.followText")),
+  ).toBe("on");
+  // Ab 1024 px als Bereich über der Leiste (kein Vollbild).
+  const player = page.getByTestId("library-player");
+  expect((await player.boundingBox())!.height).toBeLessThan(700);
+  await expect(page.locator(".library-follow__p--now")).toHaveCount(1);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 1:/);
+  // 17 s liegen im Absatz 7 (Beginn 15 s).
+  const seek = page.getByTestId("library-audiobar-seek");
+  await seekTo(page, 17);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 7:/);
+  await expect(page.locator(".library-follow__p--now")).toBeInViewport();
+  // Klick auf Absatz 3 (Beginn 5 s) springt im Audio dorthin.
+  await page.locator(".library-follow__p", { hasText: /^Absatz 3:/ }).dispatchEvent("click");
+  await expect(seek).toHaveValue(/^(5|6)$/);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 3:/);
+  // Gemeinsame Position: der Textfortschritt steht am Beginn von Absatz 3.
+  const { text, sync } = followText();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const raw = window.localStorage.getItem("lva.ui.progress.text:page_m:original");
+        return raw ? (JSON.parse(raw).offset as number) : null;
+      }),
+    )
+    .toBeGreaterThanOrEqual(sync[2].chars - 2);
+  const offset = await page.evaluate(
+    () =>
+      JSON.parse(window.localStorage.getItem("lva.ui.progress.text:page_m:original") ?? "{}")
+        .offset,
+  );
+  expect(offset).toBeLessThan(sync[3].chars);
+  expect(
+    await page.evaluate(() => window.localStorage.getItem("lva.ui.tts.resume.page_m:original")),
+  ).not.toBeNull();
+  expect(text.length).toBeGreaterThan(sync[11].chars);
+  // Genaue Zeitachse: keine „ungefähr“-Kennzeichnung.
+  await expect(page.getByTestId("library-follow-approx")).toHaveCount(0);
+  await page.screenshot({ path: shot("mitlesen-1440-hell.png") });
+});
+
+test("Mitlesen im dunklen Erscheinungsbild (1440 px)", async ({ page }) => {
+  await mitlesenSetup(page);
+  await page.addInitScript(() => {
+    (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  await seekTo(page, 17);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 7:/);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: shot("mitlesen-1440-dunkel.png") });
+});
+
+test("Mitlesen bei 390 px: Vollbild-Blatt mit bedienbarer Leiste, Trefferflächen ≥ 44 px", async ({
+  page,
+}) => {
+  await mitlesenSetup(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await openFollow(page);
+  await seekTo(page, 17);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 7:/);
+  // Das Blatt füllt das Fenster, die Hörleiste bleibt unten sichtbar.
+  const sheet = (await page.getByTestId("library-player").boundingBox())!;
+  expect(sheet.height).toBeGreaterThan(800);
+  const bar = (await page.getByTestId("library-audiobar").boundingBox())!;
+  expect(bar.y + bar.height).toBeLessThanOrEqual(844 + 1);
+  for (const id of [
+    "library-audiobar-toggle",
+    "library-audiobar-back",
+    "library-audiobar-forward",
+    "library-audiobar-parts",
+    "library-audiobar-follow",
+    "library-audiobar-close",
+    "library-follow-close",
+  ]) {
+    const box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.width, id).toBeGreaterThanOrEqual(44);
+    expect(box.height, id).toBeGreaterThanOrEqual(44);
+  }
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+  // Keine doppelten Scrollleisten: nur die Lesefläche scrollt im Blatt.
+  const scrollers = await page.evaluate(() =>
+    [...document.querySelectorAll(".library-player *")]
+      .filter((el) => {
+        const o = getComputedStyle(el).overflowY;
+        return (o === "auto" || o === "scroll") && el.scrollHeight > el.clientHeight + 1;
+      })
+      .map((el) => el.className),
+  );
+  expect(scrollers).toEqual(["library-follow__text"]);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: shot("mitlesen-390.png") });
+  // Schließen der Lesefläche: zurück zur Leiste.
+  await page.getByTestId("library-follow-close").click();
+  await expect(page.getByTestId("library-follow")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => window.localStorage.getItem("lva.ui.library.followText")),
+  ).toBe("off");
+});
+
+test("Mitlesen: Scrollen des Nutzers pausiert das Mitscrollen, danach „Zur aktuellen Stelle“", async ({
+  page,
+}) => {
+  await mitlesenSetup(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  const seek = page.getByTestId("library-audiobar-seek");
+  // Ohne Eingriff scrollt die Lesefläche zum gehörten Absatz.
+  await seekTo(page, 27);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 11:/);
+  await expect(page.locator(".library-follow__p--now")).toBeInViewport({ ratio: 0.9 });
+  // Der Nutzer scrollt nach oben: das Hören läuft an eine andere Stelle,
+  // die Fläche folgt nicht.
+  const text = page.getByTestId("library-follow-text");
+  await text.evaluate((el) => (el.scrollTop = 0));
+  await text.dispatchEvent("wheel", { deltaY: -200 });
+  await seekTo(page, 5);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 3:/);
+  await page.waitForTimeout(600);
+  expect(await text.evaluate((el) => el.scrollTop)).toBe(0);
+  await expect(page.getByTestId("library-follow-now")).toHaveCount(0);
+  // Nach 5 s erscheint der Weg zurück.
+  await expect(page.getByTestId("library-follow-now")).toBeVisible({ timeout: 8000 });
+  await seekTo(page, 27);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 11:/);
+  expect(await text.evaluate((el) => el.scrollTop)).toBe(0);
+  await page.getByTestId("library-follow-now").dispatchEvent("click");
+  await expect(page.locator(".library-follow__p--now")).toBeInViewport({ ratio: 0.9 });
+  await expect(page.getByTestId("library-follow-now")).toHaveCount(0);
+});
+
+test("Mitlesen ohne Zeitachse (EPUB-Text + Hörbuch): anteilig und als „ungefähr“ gekennzeichnet", async ({
+  page,
+}) => {
+  await mitlesenSetup(page, false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  await expect(page.getByTestId("library-follow-approx")).toBeVisible();
+  const { text } = followText();
+  // Absatz 7 beginnt bei etwa 55 % des Textes → etwa 16–17 s von 30 s.
+  const start = text.indexOf("Absatz 7:");
+  const expected = (start / text.length) * 30;
+  await page.locator(".library-follow__p", { hasText: /^Absatz 7:/ }).dispatchEvent("click");
+  await expect
+    .poll(async () => Math.abs(Number(await page.getByTestId("library-audiobar-seek").inputValue()) - expected))
+    .toBeLessThanOrEqual(1.5);
+});
+
+const progressAtStart = async (page: Page, audioAge: number, textAge: number) => {
+  const { text, sync } = followText();
+  await page.addInitScript(
+    ([length, chars, audioAgeMs, textAgeMs]) => {
+      const now = Date.now();
+      window.localStorage.setItem(
+        "lva.ui.progress.audio:book_m",
+        JSON.stringify({
+          offset: 4000,
+          length: 30000,
+          heard: [],
+          read: [],
+          updated: now - audioAgeMs,
+          unit: "ms",
+        }),
+      );
+      window.localStorage.setItem(
+        "lva.ui.progress.text:page_m:original",
+        JSON.stringify({
+          offset: chars,
+          length,
+          heard: [],
+          read: [],
+          updated: now - textAgeMs,
+          unit: "chars",
+        }),
+      );
+    },
+    [text.length, sync[8].chars, audioAge, textAge] as const,
+  );
+};
+
+test("Start der Hörleiste: ist der Textfortschritt neuer, startet das Audio an der abgebildeten Stelle", async ({
+  page,
+}) => {
+  await mitlesenSetup(page);
+  await progressAtStart(page, 60_000, 0);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openDetail(page);
+  // Ohne Mitlesen starten: die gemeinsame Position gilt trotzdem.
+  await page.getByTestId("library-detail-play").click();
+  await expect(page.getByTestId("library-audiobar")).toBeVisible();
+  // Absatz 9 beginnt bei 20 s.
+  const seek = page.getByTestId("library-audiobar-seek");
+  await expect
+    .poll(async () => Number(await seek.inputValue()))
+    .toBeGreaterThanOrEqual(19);
+  expect(Number(await seek.inputValue())).toBeLessThanOrEqual(21);
+});
+
+test("Start der Hörleiste: ist das Hören neuer, bleibt es bei der Hörstelle", async ({ page }) => {
+  await mitlesenSetup(page);
+  await progressAtStart(page, 0, 60_000);
+  await page.goto("/");
+  await openDetail(page);
+  await page.getByTestId("library-detail-play").click();
+  const seek = page.getByTestId("library-audiobar-seek");
+  await expect
+    .poll(async () => Number(await seek.inputValue()))
+    .toBeGreaterThanOrEqual(3);
+  expect(Number(await seek.inputValue())).toBeLessThanOrEqual(6);
+});
+
+test("Transkription je Teil: sind alle fertig, entstehen Text und Zeitachse mit Versatz, Hilfsaufnahmen verschwinden", async ({
+  page,
+}) => {
+  await addBooks(page, [
+    baseBook("book_t", "Das Schloss", {
+      authors: ["Franz Kafka"],
+      ...multiAudio("book_t", [
+        track(1, "Eins", 10_000, "m21"),
+        track(2, "Zwei", 20_000, "m22"),
+        track(3, "Drei", null, "m23"),
+      ]),
+    }),
+  ]);
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, any>;
+    w.__jobs.push("m21", "m22", "m23");
+    for (const id of ["m21", "m22", "m23"]) w.__jobStatus[id] = "ready";
+    w.__jobDuration["m23"] = 15_000;
+    const seg = (i: number, text: string, from: number, to: number) => ({
+      segment_index: i,
+      text,
+      start_ms: from,
+      end_ms: to,
+      channel: 0,
+      speaker_index: null,
+    });
+    w.__segments["m21"] = [seg(0, "Eins.", 0, 1000), seg(1, "Zwei.", 5000, 6000)];
+    w.__segments["m22"] = [seg(0, "Drei.", 0, 1000)];
+    w.__segments["m23"] = [seg(0, "Vier.", 2000, 3000)];
+  });
+  await page.goto("/");
+  await expect.poll(async () => (await calls(page, "page_state_save")).length).toBe(1);
+  const stored = JSON.parse((await calls(page, "page_state_save"))[0].state as string) as {
+    text: string;
+  };
+  const prefix = "# Das Schloss\n\nvon Franz Kafka\n\n";
+  expect(stored.text).toBe(`${prefix}Eins.\n\nZwei.\n\nDrei.\n\nVier.`);
+  const saves = await calls(page, "library_save");
+  const book = saves[saves.length - 1].book as {
+    text: { origin: string };
+    audio: {
+      sync: { chars: number; ms: number }[];
+      tracks: { transcript_job: string | null; duration_ms: number | null }[];
+    };
+  };
+  expect(book.text.origin).toBe("transcript");
+  // Versatz = Summe der vorigen Teildauern: 0 / 10 s / 30 s (+ 2 s im dritten Teil).
+  expect(book.audio.sync.map((p) => p.ms)).toEqual([0, 5000, 10_000, 32_000]);
+  expect(book.audio.sync[0].chars).toBe(prefix.length);
+  expect(book.audio.tracks.map((t) => t.transcript_job)).toEqual([null, null, null]);
+  // Fehlende Teildauer aus der Hilfsaufnahme übernommen.
+  expect(book.audio.tracks[2].duration_ms).toBe(15_000);
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
+    .toEqual(["m21", "m22", "m23"]);
 });

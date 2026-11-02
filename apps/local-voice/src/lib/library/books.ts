@@ -1,5 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { LibraryBook } from "@/bindings";
+import type { AudioVersion, LibraryBook } from "@/bindings";
+import { guessFromFileName, tracksOf } from "./names.ts";
 import {
   audioProgressKey,
   loadProgress,
@@ -7,6 +8,25 @@ import {
   textProgressKey,
   type ProgressRecord,
 } from "./progress";
+
+/** Aufträge der Teile, die noch auf ihr Transkript warten, in Teilreihenfolge. */
+export function pendingJobs(book: LibraryBook): string[] {
+  return tracksOf(book.audio)
+    .map((t) => t.transcript_job)
+    .filter((id): id is string => !!id);
+}
+
+/** Gesamtdauer in ms, wenn jeder Teil eine Dauer hat, sonst `null`. */
+export function totalDuration(audio: AudioVersion | null | undefined): number | null {
+  const tracks = tracksOf(audio);
+  if (!tracks.length) return null;
+  let sum = 0;
+  for (const t of tracks) {
+    if (t.duration_ms == null || !(t.duration_ms > 0)) return null;
+    sum += t.duration_ms;
+  }
+  return sum;
+}
 
 /** Status einer Fassung: vorhanden, entsteht gerade, fehlt. */
 export type VersionState = "ok" | "busy" | "none";
@@ -67,11 +87,11 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
     progress,
     fraction,
     lastUsed: Math.max(textRec?.updated ?? 0, audioRec?.updated ?? 0),
-    text: book.text ? "ok" : book.audio?.transcript_job ? "busy" : "none",
+    text: book.text ? "ok" : pendingJobs(book).length ? "busy" : "none",
     audio: book.audio_path || pageAudio ? "ok" : "none",
     resumeWith,
     audioSource: book.audio_path ? "audiobook" : pageAudio ? "narrated" : null,
-    transcription: book.audio?.transcript_job
+    transcription: pendingJobs(book).length
       ? "running"
       : book.text?.origin === "transcript"
         ? "done"
@@ -158,45 +178,33 @@ export function assetUrl(path: string | null | undefined): string | null {
 
 const TEXT_EXT = ["epub", "pdf", "docx", "txt", "md"];
 const AUDIO_EXT = ["mp3", "m4b", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma"];
+/** Audible: durch DRM geschützt, wird nicht importiert und nicht umgangen. */
+const DRM_EXT = ["aax", "aa", "aaxc"];
+
+export { guessFromFileName, tracksOf };
+export {
+  textWithSync,
+  transcriptParagraphs,
+  transcriptToText,
+  type TranscriptParagraph,
+  type TranscriptSegment,
+} from "./transcript.ts";
 
 export const extensionOf = (path: string) =>
   path.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase() ?? "";
 
-export function kindOfFile(path: string): "text" | "audio" | null {
+export function kindOfFile(path: string): "text" | "audio" | "drm" | null {
   const ext = extensionOf(path);
   if (TEXT_EXT.includes(ext)) return "text";
   if (AUDIO_EXT.includes(ext)) return "audio";
+  if (DRM_EXT.includes(ext)) return "drm";
   return null;
 }
 
-export const LIBRARY_FILE_EXTENSIONS = [...TEXT_EXT, ...AUDIO_EXT];
+/** Dateiname ohne Ordner, für Meldungen. */
+export const fileNameOf = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-/**
- * Titel und Autor aus einem Dateinamen raten: „Theodor Fontane - Effi
- * Briest.m4b“, „Effi_Briest.epub“. Nur ein Vorschlag, der Dialog zeigt ihn an.
- */
-export function guessFromFileName(path: string): {
-  title: string;
-  authors: string[];
-} {
-  const base = (path.split(/[\\/]/).pop() ?? "")
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const parts = base.split(/\s+[-–]\s+/);
-  if (parts.length === 2) {
-    const [a, b] = parts;
-    // Der kürzere Teil mit zwei bis drei Wörtern ist eher der Autor.
-    const looksLikeName = (s: string) => /^\S+(\s+\S+){1,2}$/.test(s);
-    if (looksLikeName(a) && !looksLikeName(b))
-      return { title: b, authors: [a] };
-    if (looksLikeName(b) && !looksLikeName(a))
-      return { title: a, authors: [b] };
-    return { title: b, authors: [a] };
-  }
-  return { title: base, authors: [] };
-}
+export const LIBRARY_FILE_EXTENSIONS = [...TEXT_EXT, ...AUDIO_EXT];
 
 /**
  * Titel und Autor aus der Titelei, die der EPUB-Import voranstellt
@@ -223,35 +231,6 @@ export function guessFromText(text: string): {
           .filter(Boolean)
       : [],
   };
-}
-
-export interface TranscriptSegment {
-  text: string;
-  start_ms: number;
-  end_ms: number;
-}
-
-/**
- * Transkript zu Lesetext: Segmente zu Absätzen zusammenfassen, neue Absätze
- * bei einer Pause über 1,5 s oder nach etwa 700 Zeichen.
- */
-export function transcriptToText(segments: TranscriptSegment[]): string {
-  const paragraphs: string[] = [];
-  let current = "";
-  let lastEnd = -1;
-  for (const s of [...segments].sort((a, b) => a.start_ms - b.start_ms)) {
-    const text = s.text.replace(/\s+/g, " ").trim();
-    if (!text) continue;
-    const pause = lastEnd >= 0 && s.start_ms - lastEnd > 1500;
-    if (current && (pause || current.length > 700)) {
-      paragraphs.push(current);
-      current = "";
-    }
-    current = current ? `${current} ${text}` : text;
-    lastEnd = s.end_ms;
-  }
-  if (current) paragraphs.push(current);
-  return paragraphs.join("\n\n");
 }
 
 /** „3 h 44 min“ / „23 min“ aus Millisekunden. */

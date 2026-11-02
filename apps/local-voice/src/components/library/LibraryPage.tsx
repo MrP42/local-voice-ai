@@ -1,6 +1,15 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BookOpen, Headphones, MoreVertical, Play, Plus } from "lucide-react";
+import {
+  BookOpen,
+  Headphones,
+  Layers,
+  MoreVertical,
+  Play,
+  Plus,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
 import type { LibraryBook } from "@/bindings";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
@@ -11,6 +20,8 @@ import { BookCover } from "./BookCover";
 import { BookDetail } from "./BookDetail";
 import { AddBookDialog } from "./AddBookDialog";
 import { AudioBar } from "./AudioBar";
+import { MergeDialog } from "./MergeDialog";
+import { IconButton } from "../ui/IconButton";
 import { useLibraryDrop } from "./useLibraryDrop";
 import { useLibrary, type TranscriptJob } from "./useLibrary";
 import {
@@ -27,6 +38,11 @@ import {
   type Sort,
 } from "@/lib/library/books";
 import { setFinished } from "@/lib/library/progress";
+import {
+  splitAudiobookGroups,
+  type SplitGroup,
+} from "@/lib/library/audioGroups";
+import { mergeGroup, planMerge, type MergePlan } from "@/lib/library/merge";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import "./library.css";
 
@@ -42,6 +58,18 @@ const SORTS: Sort[] = ["recent", "added", "title", "author"];
 const isSort = (v: string) => (SORTS as string[]).includes(v);
 const isFilter = (v: string) => (FILTERS as string[]).includes(v);
 
+/** Text zum Stand der Transkription: bei mehreren Teilen „3 von 36“. */
+export function jobLabel(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  job: TranscriptJob | undefined,
+): string {
+  if (job && job.total > 1 && job.status !== "failed")
+    return t("library.job.parts", { done: job.done, total: job.total });
+  return t(`library.job.${job?.status ?? "queued"}`, {
+    defaultValue: t("library.job.processing"),
+  });
+}
+
 export const Formats: React.FC<{ view: BookView; job?: TranscriptJob }> = ({
   view,
   job,
@@ -52,9 +80,7 @@ export const Formats: React.FC<{ view: BookView; job?: TranscriptJob }> = ({
       <span data-state={view.text} title={t(`library.text.${view.text}`)}>
         <BookOpen size={12} aria-hidden="true" />
         {view.text === "busy"
-          ? t(`library.job.${job?.status ?? "queued"}`, {
-              defaultValue: t("library.job.processing"),
-            })
+          ? jobLabel(t, job)
           : t(`library.textShort.${view.text}`)}
       </span>
       <span
@@ -93,7 +119,12 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
   const { books, pageAudio, jobs, reload, save, tick } = useLibrary();
-  const { drop, working, dialog: dropDialog } = useLibraryDrop(books, reload);
+  const {
+    drop,
+    working,
+    dialog: dropDialog,
+    importPaths,
+  } = useLibraryDrop(books, reload);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = usePersistentState<Filter>(
     "library.filter",
@@ -107,7 +138,30 @@ export const LibraryPage: React.FC = () => {
   );
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [listening, setListening] = useState<LibraryBook | null>(null);
+  const [listening, setListening] = useState<{
+    book: LibraryBook;
+    follow: boolean;
+  } | null>(null);
+  /** Höhe der Hörleiste samt Lesefläche: die Seite lässt unten so viel Platz. */
+  const [playerHeight, setPlayerHeight] = useState(0);
+  const [merging, setMerging] = useState<{
+    group: SplitGroup;
+    plan: MergePlan | null;
+    busy: boolean;
+  } | null>(null);
+  const [dismissed, setDismissed] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem("lva.ui.library.mergeDismissed");
+      const list: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(list)
+        ? list.filter((x) => typeof x === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const listen = (book: LibraryBook, follow = false) =>
+    setListening({ book, follow });
 
   const views = useMemo(
     () =>
@@ -117,6 +171,59 @@ export const LibraryPage: React.FC = () => {
     // tick: Fortschritt aus dem localStorage neu lesen.
     [books, pageAudio, tick],
   );
+  const splitGroups = useMemo(
+    () =>
+      splitAudiobookGroups(books ?? []).filter(
+        (g) => !dismissed.includes(g.key),
+      ),
+    [books, dismissed],
+  );
+  const dismissGroup = (key: string) => {
+    const next = [...dismissed, key];
+    setDismissed(next);
+    try {
+      window.localStorage.setItem(
+        "lva.ui.library.mergeDismissed",
+        JSON.stringify(next),
+      );
+    } catch {
+      /* ohne Speicher kommt der Hinweis beim nächsten Start wieder */
+    }
+  };
+  const askMerge = async (group: SplitGroup) => {
+    setMerging({ group, plan: null, busy: false });
+    try {
+      const plan = await planMerge(group);
+      setMerging({ group, plan, busy: false });
+    } catch (e) {
+      setMerging(null);
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const doMerge = async () => {
+    if (!merging?.plan) return;
+    const { group, plan } = merging;
+    setMerging({ ...merging, busy: true });
+    try {
+      const book = await mergeGroup(group, plan);
+      setListening((l) =>
+        l && group.books.some((b) => b.id === l.book.id) ? null : l,
+      );
+      toast(
+        t("library.merge.done", {
+          title: book.title,
+          count: group.books.length,
+        }),
+      );
+      setMerging(null);
+      await reload();
+    } catch (e) {
+      setMerging(null);
+      toast.error(e instanceof Error ? e.message : String(e));
+      await reload();
+    }
+  };
+
   const counts = useMemo(
     () =>
       Object.fromEntries(
@@ -137,8 +244,7 @@ export const LibraryPage: React.FC = () => {
   );
   const jobList = Object.values(jobs);
 
-  const jobOf = (book: LibraryBook) =>
-    book.audio?.transcript_job ? jobs[book.audio.transcript_job] : undefined;
+  const jobOf = (book: LibraryBook) => jobs[book.id];
 
   /**
    * Sofort weiter, nur mit vorhandenem Audio: Hörbuch in der Hörleiste,
@@ -151,12 +257,12 @@ export const LibraryPage: React.FC = () => {
       (v.resumeWith === "audio" ||
         (v.audioSource === "audiobook" && !v.book.text))
     ) {
-      setListening(v.book);
+      listen(v.book);
       return;
     }
     if (v.book.text && v.audioSource === "narrated")
       openInReader(v.book.text.page_id, true);
-    else if (v.book.audio_path) setListening(v.book);
+    else if (v.book.audio_path) listen(v.book);
   };
 
   const toggleFinished = async (v: BookView) => {
@@ -277,13 +383,23 @@ export const LibraryPage: React.FC = () => {
                     },
                   ]
                 : []),
+              ...(v.book.audio_path && v.book.text
+                ? [
+                    {
+                      id: "listen-follow",
+                      label: t("library.listenFollow"),
+                      icon: BookOpen,
+                      onSelect: () => listen(v.book, true),
+                    },
+                  ]
+                : []),
               ...(v.book.audio_path
                 ? [
                     {
                       id: "listen",
                       label: t("library.listen"),
                       icon: Headphones,
-                      onSelect: () => setListening(v.book),
+                      onSelect: () => listen(v.book),
                     },
                   ]
                 : []),
@@ -322,7 +438,9 @@ export const LibraryPage: React.FC = () => {
         className={`library${drop.over ? " library--drop" : ""}`}
         data-library-drop=""
         style={
-          { "--lib-bar": listening ? "64px" : "0px" } as React.CSSProperties
+          {
+            "--lib-bar": `${listening ? playerHeight || 64 : 0}px`,
+          } as React.CSSProperties
         }
       >
         {(drop.over || working) && (
@@ -348,12 +466,13 @@ export const LibraryPage: React.FC = () => {
               job={jobOf(open.book)}
               onBack={() => setOpenId(null)}
               onPlay={() => play(open)}
-              onListen={() => setListening(open.book)}
+              onListen={() => listen(open.book)}
+              onListenFollow={() => listen(open.book, true)}
               onToggleFinished={() => void toggleFinished(open)}
               onSave={save}
               onDeleted={async () => {
                 setOpenId(null);
-                if (listening?.id === open.book.id) setListening(null);
+                if (listening?.book.id === open.book.id) setListening(null);
                 await reload();
               }}
               onChanged={reload}
@@ -458,6 +577,23 @@ export const LibraryPage: React.FC = () => {
                                     {statusLine(v)}
                                   </div>
                                 </div>
+                                {v.book.text && v.book.audio_path && (
+                                  <span className="library-touch">
+                                    <IconButton
+                                      icon={
+                                        <Headphones
+                                          size={16}
+                                          aria-hidden="true"
+                                        />
+                                      }
+                                      label={t("library.listenFollowTitle", {
+                                        title: v.book.title,
+                                      })}
+                                      onClick={() => listen(v.book, true)}
+                                      data-testid="library-continue-follow"
+                                    />
+                                  </span>
+                                )}
                                 {playButton(v)}
                               </div>
                             ))}
@@ -492,9 +628,7 @@ export const LibraryPage: React.FC = () => {
                                     {book.title}
                                   </div>
                                   <div className="library-meta">
-                                    {t(`library.job.${job.status}`, {
-                                      defaultValue: t("library.job.processing"),
-                                    })}
+                                    {jobLabel(t, job)}
                                   </div>
                                 </div>
                               </div>
@@ -504,6 +638,39 @@ export const LibraryPage: React.FC = () => {
                       )}
                     </div>
                   )}
+                {splitGroups.length > 0 && !query && (
+                  <div className="library-merges" data-testid="library-merges">
+                    {splitGroups.map((g) => (
+                      <div
+                        className="library-mergebar"
+                        key={g.key}
+                        role="status"
+                        data-testid="library-merge-bar"
+                      >
+                        <Layers size={18} aria-hidden="true" />
+                        <span className="library-mergebar__text">
+                          {t("library.merge.bar", {
+                            count: g.books.length,
+                            title: g.title,
+                          })}
+                        </span>
+                        <Button
+                          onClick={() => void askMerge(g)}
+                          data-testid="library-merge-start"
+                        >
+                          {t("library.merge.action")}
+                        </Button>
+                        <span className="library-touch">
+                          <IconButton
+                            icon={<X size={16} aria-hidden="true" />}
+                            label={t("library.merge.dismiss")}
+                            onClick={() => dismissGroup(g.key)}
+                          />
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <section aria-labelledby="library-all">
                   <h2 id="library-all" className="library-section__head">
                     {t("library.all")}
@@ -521,15 +688,28 @@ export const LibraryPage: React.FC = () => {
         )}
         {listening && (
           <AudioBar
-            key={listening.id}
-            book={listening}
+            key={`${listening.book.id}:${listening.follow}`}
+            book={
+              books?.find((b) => b.id === listening.book.id) ?? listening.book
+            }
+            startFollow={listening.follow}
+            onSave={save}
+            onHeight={setPlayerHeight}
             onClose={() => setListening(null)}
           />
         )}
+        <MergeDialog
+          group={merging?.group ?? null}
+          plan={merging?.plan ?? null}
+          busy={!!merging?.busy}
+          onConfirm={() => void doMerge()}
+          onCancel={() => setMerging(null)}
+        />
         {dropDialog}
         <AddBookDialog
           open={adding}
           onOpenChange={setAdding}
+          onImportRest={importPaths}
           onAdded={async (book) => {
             await reload();
             setOpenId(book.id);

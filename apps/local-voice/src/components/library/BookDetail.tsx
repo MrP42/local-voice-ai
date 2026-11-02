@@ -20,15 +20,21 @@ import { Textarea } from "../ui/Textarea";
 import { TabList } from "../ui/TabList";
 import { Dialog } from "../ui/Dialog";
 import { BookCover } from "./BookCover";
-import { Formats, ProgressBar } from "./LibraryPage";
+import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import {
+  fileNameOf,
   formatDuration,
   isFinished,
+  kindOfFile,
   openInReader,
+  tracksOf,
   type BookView,
 } from "@/lib/library/books";
+import { groupAudioFiles } from "@/lib/library/audioGroups";
+import { drmMessage, transcribeTracks } from "@/lib/library/importFile";
+import { audioProgressKey, removeProgress } from "@/lib/library/progress";
 
 type Tab = "overview" | "versions" | "metadata";
 
@@ -38,6 +44,8 @@ interface Props {
   onBack(): void;
   onPlay(): void;
   onListen(): void;
+  /** Hören und gleichzeitig den Text mitlesen. */
+  onListenFollow(): void;
   onToggleFinished(): void;
   /** Ändert den frisch gelesenen Stand des Buchs (siehe useLibrary.save). */
   onSave(
@@ -58,6 +66,7 @@ export const BookDetail: React.FC<Props> = ({
   onBack,
   onPlay,
   onListen,
+  onListenFollow,
   onToggleFinished,
   onSave,
   onDeleted,
@@ -109,10 +118,11 @@ export const BookDetail: React.FC<Props> = ({
       await onChanged();
     });
 
-  const addAudio = () =>
+  /** Hörbuch ersetzen oder (append) weitere Teile hinter die vorhandenen setzen. */
+  const addAudio = (append: boolean) =>
     run("audio", async () => {
       const picked = await openFile({
-        multiple: false,
+        multiple: true,
         filters: [
           {
             name: t("library.audioFiles"),
@@ -120,9 +130,21 @@ export const BookDetail: React.FC<Props> = ({
           },
         ],
       });
-      if (typeof picked !== "string") return;
-      const r = await commands.libraryAudioImport(book.id, picked);
+      const all = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (!all.length) return;
+      const drm = all.filter((p) => kindOfFile(p) === "drm");
+      if (drm.length) toast.error(drmMessage(fileNameOf(drm[0])));
+      const audio = all.filter((p) => kindOfFile(p) === "audio");
+      if (!audio.length) return;
+      // Hörreihenfolge: Disc, Track, Name.
+      const paths = groupAudioFiles(audio).flatMap((g) => g.paths);
+      const r =
+        paths.length === 1 && !append
+          ? await commands.libraryAudioImport(book.id, paths[0])
+          : await commands.libraryAudioImportTracks(book.id, paths, append);
       if (r.status === "error") throw new Error(r.error);
+      // Neue Hördatei: die alte Hörposition passt nicht mehr.
+      if (!append && book.audio) removeProgress(audioProgressKey(book.id));
       await onChanged();
     });
 
@@ -130,13 +152,9 @@ export const BookDetail: React.FC<Props> = ({
     run("transcribe", async () => {
       if (!book.audio_path || !book.audio) return;
       // Ein Hörbuch, keine Gesprächsaufnahme: es gibt niemanden, dessen
-      // Einwilligung fehlen könnte.
-      const r = await commands.meetingsImportFile(book.audio_path, true, null);
-      if (r.status === "error") throw new Error(r.error);
-      await onSave(book.id, (fresh) => ({
-        ...fresh,
-        audio: fresh.audio ? { ...fresh.audio, transcript_job: r.data } : fresh.audio,
-      }));
+      // Einwilligung fehlen könnte. Ein Auftrag je Teil.
+      await transcribeTracks(book.id, (m) => toast.error(m));
+      await onChanged();
     });
 
   const remove = () =>
@@ -256,6 +274,16 @@ export const BookDetail: React.FC<Props> = ({
               {!view.audioSource && view.fraction > 0 && !isFinished(view) ? t("library.continueRead") : t("library.read")}
             </Button>
           )}
+          {book.text && book.audio_path && (
+            <Button
+              size="lg"
+              icon={<Headphones size={16} aria-hidden="true" />}
+              onClick={onListenFollow}
+              data-testid="library-detail-listen-follow"
+            >
+              {t("library.listenFollow")}
+            </Button>
+          )}
           {book.audio_path && view.resumeWith !== "audio" && (
             <Button
               size="lg"
@@ -317,9 +345,7 @@ export const BookDetail: React.FC<Props> = ({
             <dt>{t("library.statusTranscription")}</dt>
             <dd>
               {view.transcription === "running" && job
-                ? t(`library.job.${job.status}`, {
-                    defaultValue: t("library.job.processing"),
-                  })
+                ? jobLabel(t, job)
                 : t(`library.transcription.${view.transcription}`)}
             </dd>
           </dl>
@@ -344,11 +370,14 @@ export const BookDetail: React.FC<Props> = ({
                 </Button>
               </>
             ) : job ? (
-              <span className="library-meta">
-                {t(`library.job.${job.status}`, {
-                  defaultValue: t("library.job.processing"),
-                })}
-              </span>
+              <>
+                <span className="library-meta">{jobLabel(t, job)}</span>
+                {tracksOf(book.audio).some((x) => !x.transcript_job) && (
+                  <Button onClick={() => void transcribe()} disabled={busy !== null}>
+                    {t("library.transcribeMissing")}
+                  </Button>
+                )}
+              </>
             ) : book.audio_path ? (
               <>
                 <span className="library-meta">{t("library.transcribeHint")}</span>
@@ -368,8 +397,23 @@ export const BookDetail: React.FC<Props> = ({
             {book.audio_path ? (
               <>
                 <span className="library-meta">
-                  {t("library.importedAudio", { file: book.audio?.file ?? "" })}
+                  {tracksOf(book.audio).length > 1
+                    ? t("library.importedParts", { count: tracksOf(book.audio).length })
+                    : t("library.importedAudio", { file: book.audio?.file ?? "" })}
                 </span>
+                {tracksOf(book.audio).length > 1 && (
+                  <ol className="library-parts-list" data-testid="library-detail-parts">
+                    {tracksOf(book.audio).map((track, i) => (
+                      <li key={track.file}>
+                        <span className="library-parts__no">{i + 1}</span>
+                        <span className="library-parts__title">{track.title || track.file}</span>
+                        <span className="library-meta">
+                          {track.duration_ms ? formatDuration(track.duration_ms) : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
                 <Button onClick={onListen}>{t("library.listen")}</Button>
               </>
             ) : (
@@ -380,11 +424,22 @@ export const BookDetail: React.FC<Props> = ({
             <Button
               variant="ghost"
               icon={<Upload size={16} aria-hidden="true" />}
-              onClick={() => void addAudio()}
+              onClick={() => void addAudio(false)}
               disabled={busy !== null}
             >
               {book.audio_path ? t("library.replaceAudio") : t("library.addAudio")}
             </Button>
+            {book.audio_path && (
+              <Button
+                variant="ghost"
+                icon={<Upload size={16} aria-hidden="true" />}
+                onClick={() => void addAudio(true)}
+                disabled={busy !== null}
+                data-testid="library-detail-append"
+              >
+                {t("library.appendAudio")}
+              </Button>
+            )}
           </section>
         </div>
       )}

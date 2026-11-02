@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
-import { transcriptToText } from "@/lib/library/books";
+import {
+  pendingJobs,
+  textWithSync,
+  tracksOf,
+  transcriptParagraphs,
+  type TranscriptSegment,
+} from "@/lib/library/books";
 import { toast } from "sonner";
 
 async function freshBook(id: string): Promise<LibraryBook | null> {
@@ -18,6 +24,21 @@ export interface TranscriptJob {
   status: string;
   /** 0…1, wenn bekannt. */
   progress: number | null;
+  /** Teile mit fertigem Transkript und Teile mit Auftrag insgesamt. */
+  done: number;
+  total: number;
+}
+
+const READY = new Set(["ready", "done"]);
+
+/** Ein Status für alle Aufträge eines Buchs: schlechtester zuerst. */
+export function aggregateStatus(statuses: string[]): string {
+  if (statuses.some((s) => s === "failed")) return "failed";
+  if (statuses.some((s) => s === "missing")) return "missing";
+  if (statuses.length && statuses.every((s) => READY.has(s))) return "ready";
+  if (statuses.some((s) => s === "processing" || s === "transcribing" || READY.has(s)))
+    return "processing";
+  return statuses[0] ?? "queued";
 }
 
 /**
@@ -97,52 +118,93 @@ export function useLibrary() {
   );
 
   const finishTranscript = useCallback(
-    async (bookId: string, meetingId: string) => {
-      if (finishing.current.has(meetingId)) return;
-      finishing.current.add(meetingId);
+    async (bookId: string, durations: Map<string, number | null>) => {
+      const start = await freshBook(bookId);
+      if (!start?.audio || start.text) return;
+      const jobs = pendingJobs(start);
+      const guard = `${bookId}:${jobs.join(",")}`;
+      if (finishing.current.has(guard)) return;
+      finishing.current.add(guard);
       let done = false;
       let pageId: string | null = null;
       try {
-        const book = await freshBook(bookId);
-        // Schon übernommen oder inzwischen ein anderer Auftrag: nichts tun.
-        if (!book || book.text || book.audio?.transcript_job !== meetingId) {
+        const book = (await freshBook(bookId)) ?? start;
+        const tracks = tracksOf(book.audio);
+        // Erst wenn jeder Teil seinen Auftrag hat und sie alle fertig sind.
+        if (
+          !book.audio ||
+          book.text ||
+          !tracks.length ||
+          tracks.some((t) => !t.transcript_job)
+        ) {
           done = true;
           return;
         }
-        const segments = await commands.meetingsGetSegments(meetingId);
-        if (segments.status !== "ok") throw new Error(segments.error);
-        const text = transcriptToText(segments.data);
-        if (!text.trim()) throw new Error("Das Transkript ist leer.");
+        // Segmente aller Teile, jeder um die Dauer der vorigen Teile versetzt.
+        const shifted: TranscriptSegment[] = [];
+        const lengths: number[] = [];
+        let offset = 0;
+        for (const track of tracks) {
+          const id = track.transcript_job!;
+          const result = await commands.meetingsGetSegments(id);
+          if (result.status !== "ok") throw new Error(result.error);
+          const lastEnd = result.data.reduce((m, x) => Math.max(m, x.end_ms), 0);
+          const length = track.duration_ms ?? durations.get(id) ?? lastEnd;
+          lengths.push(length);
+          for (const x of result.data)
+            shifted.push({
+              text: x.text,
+              start_ms: x.start_ms + offset,
+              end_ms: x.end_ms + offset,
+            });
+          offset += length;
+        }
         const author = book.authors.length ? `\n\nvon ${book.authors.join(", ")}` : "";
+        const { text, sync } = textWithSync(
+          transcriptParagraphs(shifted),
+          `# ${book.title}${author}\n\n`,
+        );
+        if (!sync.length) throw new Error("Das Transkript ist leer.");
         const created = await commands.pagesCreate(book.title);
         if (created.status !== "ok") throw new Error(created.error);
         pageId = created.data.id;
         const stored = await commands.pageStateSave(
           pageId,
-          JSON.stringify({
-            text: `# ${book.title}${author}\n\n${text}`,
-            summary: "",
-            sourceUrl: "",
-            tab: "original",
-          }),
+          JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
         );
         if (stored.status !== "ok") throw new Error(stored.error);
         // Unmittelbar vor dem Schreiben noch einmal frisch lesen.
         const latest = (await freshBook(bookId)) ?? book;
+        if (!latest.audio) throw new Error("Das Hörbuch fehlt.");
+        const multi = !!latest.audio.tracks?.length;
         const saved = await commands.librarySave({
           ...latest,
           text: {
             page_id: pageId,
             origin: "transcript",
-            source_name: latest.audio?.file ?? null,
+            source_name: latest.audio.file ?? null,
           },
-          audio: latest.audio ? { ...latest.audio, transcript_job: null } : null,
+          audio: {
+            ...latest.audio,
+            transcript_job: null,
+            sync,
+            duration_ms: multi
+              ? latest.audio.duration_ms
+              : (latest.audio.duration_ms ?? lengths[0] ?? null),
+            tracks: multi
+              ? (latest.audio.tracks ?? []).map((t, i) => ({
+                  ...t,
+                  transcript_job: null,
+                  duration_ms: t.duration_ms ?? lengths[i] ?? null,
+                }))
+              : [],
+          },
         });
         if (saved.status !== "ok") throw new Error(saved.error);
         pageId = null;
         done = true;
-        // Erst jetzt, wo der Text sicher am Buch hängt, die Hilfsaufnahme weg.
-        await commands.meetingsDelete(meetingId);
+        // Erst jetzt, wo der Text sicher am Buch hängt, die Hilfsaufnahmen weg.
+        for (const track of tracks) await commands.meetingsDelete(track.transcript_job!);
         await reload();
       } catch (e) {
         if (pageId) await commands.pagesDelete(pageId);
@@ -151,7 +213,7 @@ export function useLibrary() {
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
         if (!done)
-          window.setTimeout(() => finishing.current.delete(meetingId), 60_000);
+          window.setTimeout(() => finishing.current.delete(guard), 60_000);
       }
     },
     [reload],
@@ -159,8 +221,7 @@ export function useLibrary() {
 
   // Laufende Transkriptionen beobachten, solange es welche gibt.
   const pendingIds = (books ?? [])
-    .map((b) => b.audio?.transcript_job)
-    .filter((id): id is string => !!id)
+    .flatMap((b) => pendingJobs(b))
     .join(",");
   useEffect(() => {
     if (!pendingIds) {
@@ -169,17 +230,26 @@ export function useLibrary() {
     }
     let stop = false;
     const poll = async () => {
-      const result = await commands.meetingsList(0, 500);
+      const result = await commands.meetingsList(0, 2000);
       if (stop || result.status !== "ok") return;
       const byId = new Map((result.data ?? []).map((m) => [m.id, m]));
+      const durations = new Map(
+        [...byId].map(([id, m]) => [id, m.duration_ms ?? null] as const),
+      );
       const next: Record<string, TranscriptJob> = {};
       for (const book of books ?? []) {
-        const id = book.audio?.transcript_job;
-        if (!id) continue;
-        const meeting = byId.get(id);
-        const status = meeting?.status ?? "missing";
-        next[id] = { bookId: book.id, status, progress: null };
-        if (status === "ready" || status === "done") void finishTranscript(book.id, id);
+        const ids = pendingJobs(book);
+        if (!ids.length) continue;
+        const statuses = ids.map((id) => byId.get(id)?.status ?? "missing");
+        const status = aggregateStatus(statuses);
+        next[book.id] = {
+          bookId: book.id,
+          status,
+          progress: null,
+          done: statuses.filter((s) => READY.has(s)).length,
+          total: ids.length,
+        };
+        if (status === "ready") void finishTranscript(book.id, durations);
       }
       setJobs(next);
     };
