@@ -300,3 +300,35 @@ export function documentTitle(text: string, path: string): string {
   const title = heading || guessFromFileName(path).title;
   return title.replace(/\s+/g, " ").trim().slice(0, 120);
 }
+
+const KIDOC_KEY = "lva.library.kidoc";
+
+/** Auftrag aus der Bibliothek an Vorlesen: KI-Dokument öffnen oder erstellen. */
+export type LibraryKiDocRequest =
+  | { page: string; doc: string; play: boolean }
+  | { page: string; create: "kurzbuch" };
+
+/**
+ * Kurzbuch aus der Bibliothek (lva#205): Vorlesen öffnen und dort das
+ * Dokument zeigen, vorlesen oder erstellen.
+ */
+export function openKiDocInReader(request: LibraryKiDocRequest): void {
+  try {
+    window.sessionStorage.setItem(KIDOC_KEY, JSON.stringify(request));
+  } catch {
+    /* ohne Speicher öffnet Vorlesen nur die Seite */
+  }
+  openInReader(request.page, false);
+}
+
+/** Für Vorlesen: wartender Auftrag aus der Bibliothek (einmalig). */
+export function takeLibraryKiDoc(): LibraryKiDocRequest | null {
+  try {
+    const raw = window.sessionStorage.getItem(KIDOC_KEY);
+    window.sessionStorage.removeItem(KIDOC_KEY);
+    const v = raw ? (JSON.parse(raw) as LibraryKiDocRequest) : null;
+    return v && typeof v.page === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}

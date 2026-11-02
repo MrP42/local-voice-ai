@@ -11,6 +11,7 @@
 //! Fehlermeldungen; nur Codes und Zähler.
 
 pub mod engine;
+pub mod kurzbuch;
 pub mod source;
 pub mod store;
 pub mod templates;
@@ -216,25 +217,27 @@ pub async fn book_ai_summarize(
             },
         );
     };
-    let text = engine::run(
-        engine::RunInput {
-            sections: &sections,
-            template: &template,
-            limit: crate::summarizer::chunk_chars(&settings),
-            model_key: &model_key,
-            language: &language,
-        },
-        &engine::DigestCache {
-            dir: Some(store::cache_dir(&dir)),
-        },
-        |prompt| {
-            let settings = settings.clone();
-            async move { crate::summarizer::ask_llm(&settings, prompt).await }
-        },
-        &progress,
-        &CANCEL,
-    )
-    .await?;
+    let input = engine::RunInput {
+        sections: &sections,
+        template: &template,
+        limit: crate::summarizer::chunk_chars(&settings),
+        model_key: &model_key,
+        language: &language,
+    };
+    let cache = engine::DigestCache {
+        dir: Some(store::cache_dir(&dir)),
+    };
+    let ask = |prompt| {
+        let settings = settings.clone();
+        async move { crate::summarizer::ask_llm(&settings, prompt).await }
+    };
+    // Das Kurzbuch (lva#205) hat einen eigenen Ablauf mit Gliederung und
+    // Schritten je Kernaussage.
+    let text = if template.id == kurzbuch::TEMPLATE_ID {
+        kurzbuch::run(input, &cache, ask, &progress, &CANCEL).await?
+    } else {
+        engine::run(input, &cache, ask, &progress, &CANCEL).await?
+    };
 
     // Die Seite wurde während des Laufs gelöscht: keinen Geisterordner anlegen.
     if !dir.join("state.json").exists() {

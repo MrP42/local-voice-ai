@@ -59,6 +59,8 @@ export function kiErrorText(code: string, t: TFunction): string {
     "book_ai:busy": "tts.kiDocs.errors.busy",
     "book_ai:empty_source": "tts.kiDocs.errors.empty",
     "book_ai:cancelled": "tts.kiDocs.errors.cancelled",
+    "book_ai:outline_unreadable": "tts.kiDocs.errors.outlineUnreadable",
+    "book_ai:empty_answer": "tts.kiDocs.errors.emptyAnswer",
   };
   const key = known[code];
   return key ? t(key) : t("tts.kiDocs.errors.generic", { code });

@@ -71,7 +71,12 @@ import {
 import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
-import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
+import {
+  documentTitle,
+  takeLibraryAutoplay,
+  takeLibraryKiDoc,
+  type LibraryKiDocRequest,
+} from "@/lib/library/books";
 import { ReaderDrop } from "@/components/library/ReaderDrop";
 import {
   clearResumePoint,
@@ -124,6 +129,8 @@ import { useKiDocuments } from "./kidocs/useKiDocuments";
 import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
 import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
 import { BookSheets } from "./kidocs/BookSheets";
+import { KurzbuchPanel } from "./kidocs/KurzbuchPanel";
+import { KURZBUCH_TEMPLATE_ID, parseKurzbuch } from "@/lib/kurzbuch/kurzbuch";
 import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
 import { kiErrorText, type KiFilter } from "./kidocs/kiDocs";
 import { useBookTerms, type TermMark } from "./terms/useBookTerms";
@@ -1841,6 +1848,34 @@ export const TtsSettings = () => {
     if (page && page === activePage) autoplayPage.current = page;
     // Nur beim Öffnen von Vorlesen.
   }, []);
+  // Bibliothek (lva#205): Kurzbuch öffnen, vorlesen oder erstellen, sobald
+  // die Seite geladen ist (zum Erstellen auch die Vorlagen).
+  const libraryKiDoc = useRef<LibraryKiDocRequest | null>(null);
+  useEffect(() => {
+    const req = takeLibraryKiDoc();
+    if (req) libraryKiDoc.current = req;
+    // Nur beim Öffnen von Vorlesen.
+  }, []);
+  useEffect(() => {
+    const req = libraryKiDoc.current;
+    if (!req) return;
+    if (req.page !== activePage) {
+      // Eine andere Seite ist geladen: den Auftrag verwerfen.
+      if (pageLoaded.current) libraryKiDoc.current = null;
+      return;
+    }
+    if (!pageLoaded.current) return;
+    if ("doc" in req) {
+      libraryKiDoc.current = null;
+      if (req.play) docAutoplay.current = req.doc;
+      openKiDocument(req.doc);
+      return;
+    }
+    const template = kiDocs.templates.find((x) => x.id === KURZBUCH_TEMPLATE_ID);
+    if (!template) return;
+    libraryKiDoc.current = null;
+    createKiDocument({ kind: "book" }, t("tts.kiDocs.src.book"), template);
+  }, [pageLoadTick, activePage, kiDocs.templates]);
   // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
   // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
   useEffect(() => {
@@ -2011,6 +2046,13 @@ export const TtsSettings = () => {
   const openDoc = openDocId
     ? (kiDocs.docs.find((d) => d.id === openDocId) ?? null)
     : null;
+  const kurzbuch = useMemo(
+    () =>
+      tab === "summary" && openDoc?.template_id === KURZBUCH_TEMPLATE_ID
+        ? parseKurzbuch(spokenText)
+        : null,
+    [tab, openDoc?.template_id, spokenText],
+  );
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
@@ -3301,6 +3343,28 @@ export const TtsSettings = () => {
                   }}
                 />
               ) : viewMode === "read" ? (
+                // Kurzbuch (lva#205): Überblick neben dem Lesetext. Ohne
+                // Kurzbuch sind alle Hüllen `contents` und ändern nichts.
+                <div className={kurzbuch ? "kurzbuch-host" : "contents"}>
+                <div className={kurzbuch ? "kurzbuch" : "contents"}>
+                {kurzbuch && activePage && openDoc && (
+                  <KurzbuchPanel
+                    kb={kurzbuch}
+                    pageId={activePage}
+                    docId={openDoc.id}
+                    title={pages.find((p) => p.id === activePage)?.title ?? openDoc.title}
+                    current={playingDocId === openDoc.id ? readRange : null}
+                    playing={playingDocId === openDoc.id}
+                    canResume={resumeAt !== null}
+                    onPlayFrom={(offset) => {
+                      setFollow(true);
+                      void speakFrom(offset, false);
+                    }}
+                    onResume={() => void speakNow()}
+                    onStop={stopSpeaking}
+                  />
+                )}
+                <div className={kurzbuch ? "kurzbuch__reader" : "contents"}>
                 <ReaderView
                   text={spokenText}
                   speakers={speakers}
@@ -3325,6 +3389,9 @@ export const TtsSettings = () => {
                   apiRef={readerApiRef}
                   title={pages.find((p) => p.id === activePage)?.title}
                 />
+                </div>
+                </div>
+                </div>
               ) : (
               <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (

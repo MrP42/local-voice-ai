@@ -564,6 +564,27 @@
       "bookPage": "Buchseite {{page}}",
       "fromBookNote": "Von der KI aus dem Buchtext zusammengefasst, kein wörtliches Zitat."
     },
+    "kurzbuch": {
+      "more": "Kernaussagen und Details zeigen",
+      "less": "Weniger zeigen",
+      "kind": "Kurzbuch",
+      "overview": "Überblick des Kurzbuchs",
+      "ideas_one": "{{count}} Kernaussage",
+      "ideas_other": "{{count}} Kernaussagen",
+      "readMin": "{{min}} Min. lesen",
+      "listenMin": "{{min}} Min. hören",
+      "start": "Kurzbuch vorlesen",
+      "resumeAt": "Weiterhören bei Kernaussage {{n}}",
+      "pause": "Anhalten",
+      "play": "Vorlesen",
+      "about": "Worum es geht.",
+      "audience": "Für wen",
+      "list": "Kernaussagen",
+      "ideaN": "Kernaussage {{n}} von {{total}}",
+      "playItem": "{{item}} vorlesen",
+      "pauseItem": "{{item}} anhalten",
+      "heard": "Gehört."
+    },
     "kiDocs": {
       "tab": "KI-Dokumente",
       "sheets": {
@@ -646,7 +667,9 @@
         "busy": "Es wird bereits ein KI-Dokument erstellt.",
         "empty": "Die Quelle enthält keinen Text.",
         "cancelled": "Erstellung abgebrochen.",
-        "generic": "Das hat nicht geklappt ({{code}})."
+        "generic": "Das hat nicht geklappt ({{code}}).",
+        "outlineUnreadable": "Das Modell hat keine brauchbare Gliederung geliefert. Bitte noch einmal versuchen oder ein anderes Modell wählen.",
+        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten."
       }
     },
     "summaryPlaceholder": "Noch keine Zusammenfassung — unten Umfang, Detailgrad und Zielgruppe wählen und auf „Zusammenfassen“ klicken. Der Text bleibt änderbar.",
@@ -6940,6 +6963,19 @@
     "suchen": "Suchen"
   },
   "library": {
+    "kurzbuch": {
+      "title": "Kurzbuch",
+      "meta": "{{ideas}} Kernaussagen · {{read}} Min. lesen · {{listen}} Min. hören",
+      "heard": "zu {{percent}} % gehört",
+      "none": "Die Kernaussagen des Buchs zum Lesen und Hören, erstellt mit deinem Sprachmodell.",
+      "needsText": "Entsteht aus dem Transkript. Erst transkribieren, dann lässt sich das Kurzbuch erstellen.",
+      "transcribing": "Das Hörbuch wird transkribiert; danach lässt sich das Kurzbuch erstellen.",
+      "progress": "Hörfortschritt Kurzbuch {{title}}",
+      "open": "Öffnen",
+      "listen": "Anhören",
+      "resume": "Weiterhören",
+      "create": "Kurzbuch erstellen"
+    },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
     "add": "Hinzufügen",
