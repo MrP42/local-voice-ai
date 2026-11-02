@@ -268,6 +268,7 @@ struct LibraryBookDetail: View {
                     ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
                         Button {
                             playback.openAudiobook(book, autoplay: false)
+                            guard playback.book?.id == book.id else { return }
                             playback.seek(toMs: LibraryTracks.total(TrackPosition(index: i, offsetMs: 0), in: tracks))
                             playback.play(); playback.presented = true
                         } label: {

@@ -71,3 +71,24 @@ final class BookTextTests: XCTestCase {
         XCTAssertEqual(BookText.normalize("OEBPS/text/../img/./a.png"), "OEBPS/img/a.png")
     }
 }
+
+final class BookTextEntityTests: XCTestCase {
+    func testHtmlEntitiesAndUnclosedVoidTagsKeepTheChapter() {
+        let html = "<html><body><h2>K&auml;fer</h2><p>Gro&szlig;e &bdquo;Rede&ldquo;<br>neu &amp; alt &#8211; &copy; &unbekannt;</p></body></html>"
+        XCTAssertEqual(XHTMLText.paragraphs(Data(html.utf8)), "# Käfer\n\nGroße „Rede“ neu & alt – ©")
+    }
+
+    func testFallbackDecodesEntitiesAndKeepsHeadings() {
+        let broken = "<html><body><h1>Titel</h1><p>A &amp; B &#x2014; C<p>Zwei</body>"
+        XCTAssertEqual(XHTMLText.paragraphs(Data(broken.utf8)), "# Titel\n\nA & B — C\n\nZwei")
+    }
+}
+
+final class LibraryHeardTests: XCTestCase {
+    func testMarkHeardCountsLongParagraphAndFinishes() {
+        let rec = ProgressRecord(offset: 0, length: 10_000, updated: 1)
+        let out = LibraryProgress.markHeard(rec, from: 0, to: 9_900)
+        XCTAssertEqual(out.heard, [[0, 9_900]])
+        XCTAssertEqual(out.finished, true)
+    }
+}

@@ -19,6 +19,10 @@ public struct ZipArchive {
     public let entries: [String: Entry]
     /// Schutz gegen Zip-Bomben: keine einzelne Datei über 64 MiB entpackt.
     public static let maxEntrySize = 64 * 1024 * 1024
+    /// Gesamtbudget je Archiv: viele Einträge auf dieselben Daten (Zip-Bombe)
+    /// können zusammen nicht mehr als 256 MiB entpacken.
+    public static let maxTotalSize = 256 * 1024 * 1024
+    private var inflated = 0
 
     public init(data: Data) throws {
         self.data = data
@@ -45,9 +49,10 @@ public struct ZipArchive {
         entries = out
     }
 
-    public func read(_ name: String) throws -> Data {
+    public mutating func read(_ name: String) throws -> Data {
         guard let e = entries[name] else { throw BookTextError.missing(name) }
-        guard e.size <= Self.maxEntrySize else { throw BookTextError.corrupt("zu groß: \(name)") }
+        guard e.size <= Self.maxEntrySize, inflated + e.size <= Self.maxTotalSize else { throw BookTextError.corrupt("zu groß: \(name)") }
+        inflated += e.size
         let bytes = data
         let base = bytes.startIndex
         func u16(_ o: Int) -> Int { Int(bytes[base + o]) | Int(bytes[base + o + 1]) << 8 }
@@ -96,14 +101,15 @@ public enum BookText {
     }
 
     public static func epub(_ data: Data) throws -> ExtractedBook {
-        let zip = try ZipArchive(data: data)
+        var zip = try ZipArchive(data: data)
         let container = try zip.read("META-INF/container.xml")
         guard let opfPath = XMLScan.attributes(in: container, element: "rootfile").first?["full-path"] else { throw BookTextError.missing("OPF") }
         let opf = try zip.read(opfPath)
         let dir = (opfPath as NSString).deletingLastPathComponent
         var manifest: [String: String] = [:]
         for attrs in XMLScan.attributes(in: opf, element: "item") { if let id = attrs["id"], let href = attrs["href"] { manifest[id] = href } }
-        let spine = XMLScan.attributes(in: opf, element: "itemref").compactMap { $0["idref"] }
+        var seen = Set<String>()
+        let spine = XMLScan.attributes(in: opf, element: "itemref").compactMap { $0["idref"] }.filter { seen.insert($0).inserted }
         var parts: [String] = []
         for id in spine {
             guard let href = manifest[id]?.removingPercentEncoding ?? manifest[id] else { continue }
@@ -158,6 +164,42 @@ enum XMLScan {
 /// XHTML eines EPUB-Kapitels → Absätze. Fällt bei kaputtem XML auf eine
 /// Tag-Entfernung zurück, damit ein fehlerhaftes Kapitel das Buch nicht verliert.
 enum XHTMLText {
+    static let named: [String: String] = [
+        "nbsp": "\u{00A0}", "shy": "", "mdash": "—", "ndash": "–", "hellip": "…", "laquo": "«", "raquo": "»", "bdquo": "„",
+        "ldquo": "“", "rdquo": "”", "lsquo": "‘", "rsquo": "’", "sbquo": "‚", "lsaquo": "‹", "rsaquo": "›",
+        "auml": "ä", "ouml": "ö", "uuml": "ü", "Auml": "Ä", "Ouml": "Ö", "Uuml": "Ü", "szlig": "ß",
+        "eacute": "é", "egrave": "è", "ecirc": "ê", "aacute": "á", "agrave": "à", "acirc": "â", "ccedil": "ç",
+        "iacute": "í", "oacute": "ó", "uacute": "ú", "ntilde": "ñ", "Eacute": "É", "oslash": "ø", "aring": "å", "aelig": "æ",
+        "copy": "©", "reg": "®", "trade": "™", "euro": "€", "pound": "£", "deg": "°", "middot": "·", "bull": "•",
+        "times": "×", "divide": "÷", "sect": "§", "para": "¶", "dagger": "†", "prime": "′", "thinsp": "\u{2009}",
+        "ensp": "\u{2002}", "emsp": "\u{2003}", "zwnj": "", "zwj": "", "frac12": "½", "frac14": "¼", "frac34": "¾",
+    ]
+
+    /// Benannte und numerische Entitäten ersetzen. `keepXML` lässt die fünf
+    /// XML-Entitäten (und Zahlen) für den Parser stehen.
+    static func replaceEntities(_ s: String, keepXML: Bool) -> String {
+        guard s.contains("&") else { return s }
+        let re = try! NSRegularExpression(pattern: #"&(#x[0-9A-Fa-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});"#)
+        let ns = s as NSString
+        var out = ""; var last = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let name = ns.substring(with: m.range(at: 1))
+            let whole = ns.substring(with: m.range)
+            if name.hasPrefix("#") {
+                let hex = name.hasPrefix("#x") || name.hasPrefix("#X")
+                let value = UInt32(name.dropFirst(hex ? 2 : 1), radix: hex ? 16 : 10)
+                out += keepXML ? whole : (value.flatMap(Unicode.Scalar.init).map { String($0) } ?? "")
+            } else if ["amp", "lt", "gt", "quot", "apos"].contains(name) {
+                out += keepXML ? whole : ["amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'"][name]!
+            } else {
+                out += named[name] ?? ""
+            }
+            last = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: last)
+    }
+
     static let blocks: Set<String> = ["p", "div", "li", "blockquote", "section", "article", "tr", "dd", "dt", "figcaption", "pre"]
     static let headings: Set<String> = ["h1", "h2", "h3", "h4", "h5", "h6"]
     static let skip: Set<String> = ["script", "style", "head", "title"]
@@ -189,17 +231,18 @@ enum XHTMLText {
     static func paragraphs(_ data: Data) -> String {
         // XHTML kennt benannte HTML-Entitäten nicht; die häufigsten vorher ersetzen.
         var source = String(decoding: data, as: UTF8.self)
-        for (k, v) in ["&nbsp;": "&#160;", "&shy;": "", "&mdash;": "—", "&ndash;": "–", "&hellip;": "…", "&laquo;": "«", "&raquo;": "»",
-                       "&bdquo;": "„", "&ldquo;": "“", "&rdquo;": "”", "&lsquo;": "‘", "&rsquo;": "’", "&sbquo;": "‚"] {
-            source = source.replacingOccurrences(of: k, with: v)
-        }
+        // XHTML kennt nur die fünf XML-Entitäten; HTML-Namen in Zeichen wandeln,
+        // unbekannte entfernen, damit der Parser das Kapitel nicht verwirft.
+        source = replaceEntities(source, keepXML: true)
+        source = source.replacingOccurrences(of: #"(?i)<(br|hr|img|meta|link|input|wbr)\b([^>]*?)\s*/?>"#, with: "<$1$2/>", options: .regularExpression)
         let w = Walker(); let p = XMLParser(data: Data(source.utf8)); p.delegate = w
         if p.parse() { w.flush(); return w.paragraphs.joined(separator: "\n\n") }
         let stripped = source.replacingOccurrences(of: #"(?is)<(script|style|head)[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li)>"#, with: "\n\n", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)<h[1-6][^>]*>"#, with: "\n\n# ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)</(p|div|h[1-6]|li|blockquote|section)>|<(p|div|li|blockquote|section)\b[^>]*>"#, with: "\n\n", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
-        return stripped.components(separatedBy: "\n\n").map {
+        return replaceEntities(stripped, keepXML: false).components(separatedBy: "\n\n").map {
             $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-        }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }.filter { !$0.isEmpty && $0 != "#" }.joined(separator: "\n\n")
     }
 }

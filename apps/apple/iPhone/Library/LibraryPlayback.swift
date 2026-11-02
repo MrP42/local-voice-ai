@@ -40,13 +40,30 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var sleepTimer: Timer?
     private let synth = AVSpeechSynthesizer()
     private var text = ""
-    private var utteranceStart = 0
     private var remoteReady = false
+    /// Gerade gesprochene Äußerung; Rückmeldungen älterer werden verworfen.
+    private var currentUtterance: AVSpeechUtterance?
+    /// Absatz, in dem das Vorlesen pausiert wurde; nach einem Sprung neu sprechen.
+    private var pausedParagraph: Int?
+    /// Erst nach abgeschlossenem Sprung an die gespeicherte Stelle sichern.
+    private var seekSettled = true
+    private var lastTextSave = Date.distantPast
+    private var sessionObservers: [NSObjectProtocol] = []
 
     init(library: PhoneLibrary? = nil) {
         self.library = library ?? .shared
         super.init()
         synth.delegate = self
+        let center = NotificationCenter.default
+        sessionObservers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init) == .began
+            MainActor.assumeIsolated { if began, self?.playing == true { self?.pause() } }
+        })
+        sessionObservers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init)
+            // Kopfhörer abgezogen: anhalten statt über den Lautsprecher weiterzuspielen.
+            MainActor.assumeIsolated { if reason == .oldDeviceUnavailable, self?.playing == true { self?.pause() } }
+        })
     }
 
     var title: String { book?.title ?? "" }
@@ -60,15 +77,20 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func openAudiobook(_ book: LibraryBook, autoplay: Bool = true) {
         if self.book?.id == book.id, mode == .audiobook { if autoplay && !playing { play() }; return }
         stop()
-        let urls = library.audioURLs(book)
-        guard !urls.isEmpty, let audio = book.audio else { error = "Das Hörbuch ist nicht auf dem iPhone."; return }
+        guard let audio = book.audio else { error = "Das Hörbuch ist nicht auf dem iPhone."; return }
+        let all = audio.allTracks
+        let files = all.map { library.dir(book).appendingPathComponent("audio").appendingPathComponent($0.file) }
+        guard !all.isEmpty, files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else {
+            error = "Teile des Hörbuchs fehlen auf dem iPhone. Bitte erneut importieren oder laden."; return
+        }
         self.book = book; mode = .audiobook
-        self.urls = urls; tracks = Array(audio.allTracks.prefix(urls.count))
+        self.urls = files; tracks = all
         totalMs = audio.totalDurationMs ?? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) }
         text = library.text(book) ?? ""
         paragraphs = LibraryText.paragraphs(text)
         let start = library.record(library.audioKey(book))?.offset ?? 0
         lastSavedMs = start
+        lastSaveAt = Date()
         load(position: LibraryTracks.position(of: start, in: tracks))
         if autoplay { play() }
         setupRemote()
@@ -81,7 +103,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let item = AVPlayerItem(url: urls[index])
         if player == nil { player = AVPlayer() }
         player?.replaceCurrentItem(with: item)
-        player?.seek(to: CMTime(seconds: position.offsetMs / 1000, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        seekSettled = position.offsetMs <= 0
+        player?.seek(to: CMTime(seconds: position.offsetMs / 1000, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in self?.seekSettled = true }
+        }
         positionMs = LibraryTracks.total(TrackPosition(index: index, offsetMs: position.offsetMs), in: tracks)
         timeObserver = player?.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
             MainActor.assumeIsolated { self?.tick(t.seconds) }
@@ -92,7 +117,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     private func tick(_ seconds: Double) {
-        guard mode == .audiobook, seconds.isFinite else { return }
+        guard mode == .audiobook, seconds.isFinite, seekSettled else { return }
         positionMs = LibraryTracks.total(TrackPosition(index: trackIndex, offsetMs: seconds * 1000), in: tracks)
         if Date().timeIntervalSince(lastSaveAt) >= 10 { saveAudio() }
         updateNowPlaying()
@@ -113,7 +138,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
         let target = max(0, totalMs > 0 ? min(ms, totalMs) : ms)
         let pos = LibraryTracks.position(of: target, in: tracks)
         if pos.index != trackIndex { load(position: pos) }
-        else { player?.seek(to: CMTime(seconds: pos.offsetMs / 1000, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
+        else {
+            seekSettled = false
+            player?.seek(to: CMTime(seconds: pos.offsetMs / 1000, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor in self?.seekSettled = true }
+            }
+        }
         positionMs = target
         if playing { player?.playImmediately(atRate: rate) }
         saveAudio()
@@ -149,15 +179,17 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     private func speakCurrent() {
         guard paragraphs.indices.contains(paragraphIndex) else { playing = false; return }
+        currentUtterance = nil
         synth.stopSpeaking(at: .immediate)
         activateSession()
         let p = paragraphs[paragraphIndex]
         let u = AVSpeechUtterance(string: p.text)
         u.voice = voiceIdentifier.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? Self.defaultVoice()
         u.rate = AVSpeechUtteranceDefaultSpeechRate * rate
-        utteranceStart = p.start + (p.heading ? 2 : 0)
         wordRange = nil
+        pausedParagraph = nil
         playing = true
+        currentUtterance = u
         synth.speak(u)
         updateNowPlaying()
     }
@@ -166,16 +198,25 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard paragraphs.indices.contains(index) else { return }
         if mode == .audiobook, let map = followMap { seek(toMs: map.ms(atChars: Double(paragraphs[index].start))); return }
         paragraphIndex = index
-        if playing { speakCurrent() } else { saveText(at: paragraphs[index].start) }
+        if playing { speakCurrent() }
+        else {
+            // Pausiert: alte Äußerung verwerfen, damit Weiter am neuen Absatz beginnt.
+            if synth.isPaused { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
+            pausedParagraph = nil
+            wordRange = nil
+            saveText(at: paragraphs[index].start)
+        }
     }
 
     func step(paragraphs delta: Int) { jump(toParagraph: min(max(0, paragraphIndex + delta), paragraphs.count - 1)) }
 
-    private func saveText(at chars: Int) {
+    private func saveText(at chars: Int, heard: Range<Int>? = nil) {
         guard let book else { return }
-        let rec = LibraryProgress.recordPosition(library.record(library.textKey(book)), to: Double(chars), length: Double(text.utf16.count),
+        var rec = LibraryProgress.recordPosition(library.record(library.textKey(book)), to: Double(chars), length: Double(text.utf16.count),
                                                  unit: .chars, mode: .heard, now: PhoneLibrary.nowMs())
+        if let heard { rec = LibraryProgress.markHeard(rec, from: Double(heard.lowerBound), to: Double(heard.upperBound)) }
         library.put(library.textKey(book), rec)
+        lastTextSave = Date()
     }
 
     static func defaultVoice() -> AVSpeechSynthesisVoice? {
@@ -195,7 +236,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         switch mode {
         case .audiobook: player?.playImmediately(atRate: rate); playing = true
         case .readAloud:
-            if synth.isPaused { synth.continueSpeaking(); playing = true } else { speakCurrent() }
+            if synth.isPaused, pausedParagraph == paragraphIndex { synth.continueSpeaking(); playing = true } else { speakCurrent() }
         case nil: return
         }
         updateNowPlaying()
@@ -204,7 +245,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func pause() {
         switch mode {
         case .audiobook: player?.pause(); saveAudio()
-        case .readAloud: synth.pauseSpeaking(at: .word)
+        case .readAloud: synth.pauseSpeaking(at: .word); pausedParagraph = paragraphIndex
         case nil: break
         }
         playing = false
@@ -216,7 +257,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
     func stop() {
         if mode == .audiobook { player?.pause(); saveAudio() }
-        if mode == .readAloud { synth.stopSpeaking(at: .immediate) }
+        if mode == .readAloud { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
         removeObservers()
         player?.replaceCurrentItem(with: nil)
         playing = false; book = nil; mode = nil; wordRange = nil
@@ -290,15 +331,31 @@ final class LibraryPlayback: NSObject, ObservableObject {
 
 extension LibraryPlayback: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.wordRange = range }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard let current = self.currentUtterance, ObjectIdentifier(current) == id else { return }
+            self.wordRange = range
+            // Lange Absätze (ganze PDF-Seiten): Stelle im Absatz alle 10 s sichern.
+            if Date().timeIntervalSince(self.lastTextSave) >= 10, self.paragraphs.indices.contains(self.paragraphIndex) {
+                let p = self.paragraphs[self.paragraphIndex]
+                let offset = (p.heading ? p.end - p.text.utf16.count : p.start) + range.location
+                self.saveText(at: min(offset, p.end))
+            }
+        }
     }
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        let id = ObjectIdentifier(utterance)
         Task { @MainActor in
-            guard self.mode == .readAloud, self.playing else { return }
+            guard let current = self.currentUtterance, ObjectIdentifier(current) == id,
+                  self.mode == .readAloud, self.playing else { return }
             let finished = self.paragraphIndex
-            if self.paragraphs.indices.contains(finished) { self.saveText(at: self.paragraphs[finished].end) }
+            guard self.paragraphs.indices.contains(finished) else { return }
+            let p = self.paragraphs[finished]
+            let next = finished + 1 < self.paragraphs.count ? self.paragraphs[finished + 1].start : p.end
+            // Stand = Beginn des nächsten Absatzes, damit Weiterlesen nicht wiederholt.
+            self.saveText(at: next, heard: p.start..<p.end)
             if finished + 1 < self.paragraphs.count { self.paragraphIndex = finished + 1; self.speakCurrent() }
-            else { self.playing = false; self.wordRange = nil; self.library.flush() }
+            else { self.playing = false; self.wordRange = nil; self.currentUtterance = nil; self.library.flush() }
         }
     }
 }

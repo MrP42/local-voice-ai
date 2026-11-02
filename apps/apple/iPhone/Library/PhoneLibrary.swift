@@ -61,8 +61,11 @@ final class PhoneLibrary: ObservableObject {
     }
     func hasAudio(_ book: LibraryBook) -> Bool { !(book.audio?.allTracks.isEmpty ?? true) && !audioURLs(book).isEmpty }
 
+    /// Schlüssel in `fortschritt.json` wie am Desktop (`progress.<schlüssel>`, progress.ts).
+    static func storageKey(_ key: String) -> String { "progress." + key }
+
     func record(_ key: String) -> ProgressRecord? {
-        guard let raw = progress[key] else { return nil }
+        guard let raw = progress[Self.storageKey(key)] else { return nil }
         return try? JSONDecoder().decode(ProgressRecord.self, from: Data(raw.utf8))
     }
 
@@ -71,16 +74,24 @@ final class PhoneLibrary: ObservableObject {
 
     // MARK: Schreiben
 
+    /// Eigener Stand dieses Geräts: überschreibt wie `saveProgress` am Desktop.
+    /// Zusammengeführt wird nur beim Abgleich mit anderen Geräten (Sync).
     func put(_ key: String, _ rec: ProgressRecord) {
-        let merged = record(key).map { LibraryProgress.merge(rec, $0) } ?? rec
-        guard let data = try? JSONEncoder().encode(merged), let text = String(data: data, encoding: .utf8) else { return }
-        progress[key] = text
+        guard let data = try? JSONEncoder().encode(rec), let text = String(data: data, encoding: .utf8) else { return }
+        progress[Self.storageKey(key)] = text
         scheduleSave()
     }
 
     func setFinished(_ book: LibraryBook, _ finished: Bool) {
         var copy = book; copy.finished = finished
         try? write(copy)
+        if !finished {
+            for key in [textKey(book), audioKey(book)] {
+                guard var rec = record(key), rec.finished == true else { continue }
+                rec.finished = false; rec.updated = Self.nowMs()
+                put(key, rec)
+            }
+        }
         reload()
     }
 
@@ -107,11 +118,13 @@ final class PhoneLibrary: ObservableObject {
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
         try enc.encode(book).write(to: dir(book).appendingPathComponent("buch.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        // Sofort sichtbar, damit ein zweites Format im selben Import das Buch findet.
+        if let i = books.firstIndex(where: { $0.id == book.id }) { books[i] = book } else { books.insert(book, at: 0) }
     }
 
     func delete(_ book: LibraryBook) {
         try? FileManager.default.removeItem(at: dir(book))
-        for key in [textKey(book), audioKey(book)] { progress[key] = nil }
+        for key in [textKey(book), audioKey(book)] { progress[Self.storageKey(key)] = nil }
         writeProgress()
         reload()
     }
@@ -165,8 +178,9 @@ final class PhoneLibrary: ObservableObject {
 
     private func importText(_ url: URL) async throws {
         let ext = url.pathExtension.lowercased()
-        let extracted: ExtractedBook = try access(url) {
-            let data = try Data(contentsOf: url)
+        let data: Data = try access(url) { try Data(contentsOf: url) }
+        // Entpacken und Text gewinnen abseits des Haupt-Threads.
+        let extracted: ExtractedBook = try await Task.detached(priority: .userInitiated) { () throws -> ExtractedBook in
             switch ext {
             case "epub": return try BookText.epub(data)
             case "pdf":
@@ -179,7 +193,7 @@ final class PhoneLibrary: ObservableObject {
                                      text: pages.joined(separator: "\n\n"))
             default: return ExtractedBook(title: nil, authors: [], language: nil, text: try BookText.plain(data))
             }
-        }
+        }.value
         let title = (extracted.title?.isEmpty == false ? extracted.title! : url.deletingPathExtension().lastPathComponent)
         var book = match(title: title) ?? LibraryBook(id: Self.newId(), title: title, authors: extracted.authors,
                                                        coverSource: "generated", addedMs: Self.nowMs())
@@ -193,21 +207,37 @@ final class PhoneLibrary: ObservableObject {
     private func importAudio(_ urls: [URL]) async throws {
         let title = Self.commonTitle(urls)
         var book = match(title: title) ?? LibraryBook(id: Self.newId(), title: title, addedMs: Self.nowMs())
+        try FileManager.default.createDirectory(at: dir(book), withIntermediateDirectories: true)
         let audioDir = dir(book).appendingPathComponent("audio", isDirectory: true)
-        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        // Erst vollständig in einen neuen Ordner kopieren, dann tauschen: ein
+        // Abbruch lässt das bisherige Hörbuch unverändert.
+        let staging = dir(book).appendingPathComponent("audio.neu-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
         var tracks: [LibraryAudioTrack] = []
         for (i, url) in urls.enumerated() {
             let name = String(format: "teil_%03d.%@", i + 1, url.pathExtension.lowercased())
-            let target = audioDir.appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: target)
-            try access(url) { try FileManager.default.copyItem(at: url, to: target) }
+            let target = staging.appendingPathComponent(name)
+            try await Task.detached(priority: .userInitiated) {
+                let ok = url.startAccessingSecurityScopedResource()
+                defer { if ok { url.stopAccessingSecurityScopedResource() } }
+                try FileManager.default.copyItem(at: url, to: target)
+            }.value
             let seconds = try? await AVURLAsset(url: target).load(.duration).seconds
             tracks.append(LibraryAudioTrack(file: name, title: url.deletingPathExtension().lastPathComponent,
                                             durationMs: seconds.flatMap { $0.isFinite ? $0 * 1000 : nil }))
         }
+        // Durations wurden aus der Kopie gelesen; die Namen bleiben beim Tausch gleich.
+        if FileManager.default.fileExists(atPath: audioDir.path) {
+            _ = try FileManager.default.replaceItemAt(audioDir, withItemAt: staging)
+        } else {
+            try FileManager.default.moveItem(at: staging, to: audioDir)
+        }
         let total = tracks.allSatisfy { $0.durationMs != nil } ? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) } : nil
-        book.audio = LibraryAudioVersion(file: tracks.first?.file ?? "", durationMs: total, tracks: tracks.count > 1 ? tracks : [],
-                                         sync: book.audio?.sync ?? [])
+        // Neue Audiodateien: alte Zeitachse und alter Hörstand passen nicht mehr.
+        let replaced = book.audio != nil
+        book.audio = LibraryAudioVersion(file: tracks.first?.file ?? "", durationMs: total, tracks: tracks.count > 1 ? tracks : [], sync: [])
+        if replaced { progress[Self.storageKey(audioKey(book))] = nil; scheduleSave() }
         if tracks.count == 1 { book.audio?.durationMs = tracks[0].durationMs }
         try write(book)
     }
@@ -233,5 +263,6 @@ final class PhoneLibrary: ObservableObject {
     }
 
     static func nowMs() -> Double { (Date().timeIntervalSince1970 * 1000).rounded() }
-    static func newId() -> String { "book_\(Int(nowMs()))" }
+    /// `book_<ms>` wie am Desktop, mit Zufallsanhang gegen Kollisionen im selben Import.
+    static func newId() -> String { "book_\(Int(nowMs()))_\(UUID().uuidString.prefix(6).lowercased())" }
 }

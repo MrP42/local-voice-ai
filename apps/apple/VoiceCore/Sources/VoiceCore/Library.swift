@@ -228,6 +228,15 @@ public enum LibraryProgress {
         return rec
     }
 
+    /// Einen ganzen Bereich als gehört eintragen (z. B. ein fertig vorgelesener
+    /// Absatz, der länger ist als `maxStep`); prüft danach „fertig“.
+    public static func markHeard(_ rec: ProgressRecord, from: Double, to: Double) -> ProgressRecord {
+        var out = rec
+        out.heard = mergeRanges(rec.heard + [[from, to]])
+        if out.length > 0 && covered(out.heard + out.read) >= out.length * 0.98 { out.finished = true }
+        return out
+    }
+
     public enum Mode: Sendable { case heard, read }
 }
 
