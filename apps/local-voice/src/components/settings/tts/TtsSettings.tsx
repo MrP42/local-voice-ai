@@ -1386,7 +1386,20 @@ export const TtsSettings = () => {
 
   // Die Stimme gehoert zum Reiter -- bei der Uebersetzung zur Sprache: Englisch
   // liest Lessac, Franzoesisch eine andere, ohne neu zu waehlen.
-  const voiceKey = tab === "translation" ? `translation:${targetLang}` : tab;
+  // KI-Dokumente (lva#217): die Stimme gehört zur Sprache des offenen
+  // Dokuments, damit ein deutsches und ein englisches Kurzbuch desselben
+  // Buchs je ihre passende Stimme behalten.
+  const docLang = useMemo(() => {
+    if (tab !== "summary" || !openDocId) return null;
+    const stored = kiDocs.docs.find((d) => d.id === openDocId)?.language;
+    return stored || detectLanguage(summary);
+  }, [tab, openDocId, kiDocs.docs, summary]);
+  const voiceKey =
+    tab === "translation"
+      ? `translation:${targetLang}`
+      : tab === "summary" && docLang
+        ? `summary:${docLang}`
+        : tab;
   // Seiten- oder Reiterwechsel (die Seite laedt `tabVoices` und `tab` aus ihrem
   // Zustand): die fuer diese Seite und diesen Reiter gemerkte Stimme wird aktiv.
   // Je (Seite, Reiter, Stimme) genau einmal: ein Neuaufbau von `applyVoiceValue`
@@ -1493,9 +1506,9 @@ export const TtsSettings = () => {
   /** Sprache dessen, was der offene Reiter vorliest. */
   const contentLang = useMemo(() => {
     if (tab === "translation") return targetLangCode(targetLang);
-    if (tab === "summary") return detectLanguage(summary);
+    if (tab === "summary") return docLang;
     return pageLang;
-  }, [tab, targetLang, summary, pageLang]);
+  }, [tab, targetLang, docLang, pageLang]);
   const markVoiceChosen = (key: string) =>
     setVoicesChosen((current) =>
       current[key] ? current : { ...current, [key]: true },
@@ -2103,7 +2116,12 @@ export const TtsSettings = () => {
     const template = kiDocs.templates.find((x) => x.id === KURZBUCH_TEMPLATE_ID);
     if (!template) return;
     libraryKiDoc.current = null;
-    createKiDocument({ kind: "book" }, t("tts.kiDocs.src.book"), template);
+    createKiDocument(
+      { kind: "book" },
+      t("tts.kiDocs.src.book"),
+      template,
+      req.lang ?? "",
+    );
   }, [pageLoadTick, activePage, kiDocs.templates]);
   // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
   // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
@@ -2241,7 +2259,7 @@ export const TtsSettings = () => {
 
   const createKiDocument: React.ComponentProps<
     typeof KiDocumentDialog
-  >["onCreate"] = (source, label, template) => {
+  >["onCreate"] = (source, label, template, targetLang) => {
     setKiDialogOpen(false);
     openKiDocument(null);
     setTab("summary");
@@ -2252,7 +2270,7 @@ export const TtsSettings = () => {
     // zum Text passen.
     void commands
       .pageStateSave(page, pageStateJson())
-      .then(() => kiDocs.create(source, label, template))
+      .then(() => kiDocs.create(source, label, template, targetLang))
       .then((r) => {
       if ("error" in r) {
         if (r.error === "book_ai:cancelled")
@@ -3621,6 +3639,7 @@ export const TtsSettings = () => {
                     kb={kurzbuch}
                     pageId={activePage}
                     docId={openDoc.id}
+                    language={openDoc.language ?? null}
                     title={pages.find((p) => p.id === activePage)?.title ?? openDoc.title}
                     current={playingDocId === openDoc.id ? readRange : null}
                     playing={playingDocId === openDoc.id}

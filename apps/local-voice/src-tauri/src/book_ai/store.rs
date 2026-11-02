@@ -53,6 +53,10 @@ pub struct KiDocument {
     pub words: u32,
     /// Anbieter und Modell, mit dem das Dokument entstand.
     pub model: String,
+    /// Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
+    /// Dokumenten und Importen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -222,6 +226,7 @@ mod tests {
             modified_ms: 1.0,
             words: 0,
             model: "ollama/x".into(),
+            language: None,
         }
     }
 

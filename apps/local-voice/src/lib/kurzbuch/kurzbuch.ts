@@ -8,9 +8,28 @@
  */
 
 export const KURZBUCH_TEMPLATE_ID = "builtin:kurzbuch";
-const HEAD_ABOUT = "worum es geht";
-const HEAD_AUDIENCE = "für wen";
-const HEAD_CONCLUSION = "fazit";
+
+/**
+ * Feste Überschriften je Sprache des Kurzbuchs (lva#217), gleiche Liste wie
+ * `HEADS` in `book_ai/kurzbuch.rs`: worum es geht, für wen, Fazit.
+ */
+export const KURZBUCH_HEADS: Record<string, [string, string, string]> = {
+  de: ["Worum es geht", "Für wen", "Fazit"],
+  en: ["What it is about", "Who it is for", "Conclusion"],
+  fr: ["De quoi il s'agit", "Pour qui", "Conclusion"],
+  es: ["De qué trata", "Para quién", "Conclusión"],
+  it: ["Di cosa parla", "Per chi", "Conclusione"],
+  pt: ["Do que se trata", "Para quem", "Conclusão"],
+  nl: ["Waar het over gaat", "Voor wie", "Conclusie"],
+  pl: ["O czym jest", "Dla kogo", "Podsumowanie"],
+  ja: ["概要", "対象読者", "結論"],
+  zh: ["内容简介", "适合谁读", "结论"],
+};
+const headSet = (i: 0 | 1 | 2) =>
+  new Set(Object.values(KURZBUCH_HEADS).map((h) => h[i].toLowerCase()));
+const HEAD_ABOUT = headSet(0);
+const HEAD_AUDIENCE = headSet(1);
+const HEAD_CONCLUSION = headSet(2);
 /** Lesetempo in Wörtern je Minute. */
 export const READ_WPM = 200;
 /** Vorlesetempo bei normaler Geschwindigkeit. */
@@ -82,13 +101,13 @@ export function parseKurzbuch(text: string): Kurzbuch | null {
     const end = i + 1 < heads.length ? heads[i + 1].start : text.length;
     const body = text.slice(h.bodyStart, end).trim();
     const key = h.title.toLowerCase();
-    if (key === HEAD_ABOUT) about = body.replace(/\s+/g, " ");
-    else if (key === HEAD_AUDIENCE)
+    if (HEAD_ABOUT.has(key)) about = body.replace(/\s+/g, " ");
+    else if (HEAD_AUDIENCE.has(key))
       audience = body
         .split("\n")
         .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
         .filter(Boolean);
-    else if (key === HEAD_CONCLUSION)
+    else if (HEAD_CONCLUSION.has(key))
       conclusion = section(h.title, h.start, end);
     else if (!conclusion) ideas.push(section(h.title, h.start, end));
   });

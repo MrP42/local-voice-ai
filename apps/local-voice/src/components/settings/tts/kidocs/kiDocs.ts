@@ -61,6 +61,7 @@ export function kiErrorText(code: string, t: TFunction): string {
     "book_ai:cancelled": "tts.kiDocs.errors.cancelled",
     "book_ai:outline_unreadable": "tts.kiDocs.errors.outlineUnreadable",
     "book_ai:empty_answer": "tts.kiDocs.errors.emptyAnswer",
+    "book_ai:language_unknown": "tts.kiDocs.errors.languageUnknown",
   };
   const key = known[code];
   return key ? t(key) : t("tts.kiDocs.errors.generic", { code });

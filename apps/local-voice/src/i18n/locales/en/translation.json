@@ -681,6 +681,12 @@
       "deleteTitle": "Delete AI document?",
       "deleteText": "“{{title}}” will be deleted permanently. The book stays unchanged.",
       "legacyTitle": "Summary (imported)",
+      "lang": {
+        "title": "Language",
+        "source": "Same as the book",
+        "hint": "A language other than the book's is possible too, for example a German version of an English book.",
+        "chip": "Language: {{lang}}"
+      },
       "estimateOne": "{{template}}: about {{steps}} steps, approx. {{min}} min. Estimate for a local model; the actual time depends on the model.",
       "estimate": "{{template}}: about {{steps}} steps, approx. {{min}}–{{max}} min. Estimate for a local model; the actual time depends on the model.",
       "src": {
@@ -712,7 +718,8 @@
         "cancelled": "Creation cancelled.",
         "generic": "That did not work ({{code}}).",
         "outlineUnreadable": "The model did not return a usable outline. Please try again or choose another model.",
-        "emptyAnswer": "The model returned no text for a key idea. Please try again; finished parts are kept."
+        "emptyAnswer": "The model returned no text for a key idea. Please try again; finished parts are kept.",
+        "languageUnknown": "This language is not offered for AI documents."
       }
     },
     "summaryPlaceholder": "No summary yet — pick length, detail and audience below and press “Summarize”. The text stays editable.",
@@ -7018,7 +7025,12 @@
       "open": "Open",
       "listen": "Listen",
       "resume": "Continue listening",
-      "create": "Create book in brief"
+      "create": "Create book in brief",
+      "language": "Language of the book in brief",
+      "languages": "Available languages",
+      "showLang": "Show book in brief in {{lang}}",
+      "another": "Another language",
+      "createLang": "Create"
     },
     "title": "Library",
     "description": "Books and audiobooks – one entry per work, as text, audio or both.",

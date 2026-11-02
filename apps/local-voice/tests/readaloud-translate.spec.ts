@@ -211,6 +211,8 @@ test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den For
     pageId: "p1",
     source: { kind: "book" },
     templateId: "builtin:eine_seite",
+    // lva#217: vorbelegt mit der App-Sprache.
+    targetLang: "de",
   });
 
   const doc = {
@@ -677,4 +679,112 @@ test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumenta
   await expect(
     page.getByRole("complementary", { name: "Überblick des Kurzbuchs" }),
   ).toHaveCount(0);
+});
+
+// lva#217: Sprache des Ergebnisses wählbar, z. B. ein deutsches Kurzbuch zu
+// einem englischen Buch; die Sprache steht am Ergebnis.
+const KURZBUCH_EN = [
+  "## What it is about",
+  "",
+  "A book about habits and how they form.",
+  "",
+  "## Who it is for",
+  "",
+  "- People with good intentions",
+  "- Teams",
+  "- Learners",
+  "",
+  "## Small start: A habit begins with two minutes.",
+  "",
+  "How do you start? Small. ".repeat(20),
+  "",
+  "## Relapse: One missed day is not failure.",
+  "",
+  "What to do after a bad day? Keep going. ".repeat(20),
+  "",
+  "## Conclusion",
+  "",
+  "Small steps carry far.",
+].join("\n");
+
+test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  const dialog = page.getByRole("dialog");
+  const lang = dialog.getByRole("combobox", { name: "Sprache" });
+  await expect(page.getByTestId("kidoc-lang")).toContainText("Deutsch");
+  await lang.click();
+  await expect(page.getByRole("option", { name: "Wie das Buch" })).toBeVisible();
+  await page.getByRole("option", { name: "English" }).click();
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/01-dialog-1440.png",
+  });
+  await page.getByTestId("kidoc-create").click();
+  const call = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(call[1]).toMatchObject({ targetLang: "en" });
+  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
+
+  // Die Wahl gilt als Vorbelegung für das nächste Mal.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("tts-action-summarize").click();
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/02-dialog-390.png",
+  });
+  await lang.click();
+  await page.getByRole("option", { name: "Wie das Buch" }).click();
+  await page.getByTestId("kidoc-create").click();
+  const again = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(again[1]).toMatchObject({ targetLang: null });
+});
+
+test("ein englisches Kurzbuch wird erkannt und zeigt seine Sprache (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+    language: "en",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH_EN] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("Ganzes Buch · English");
+  await card.locator("button").first().click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch · Ganzes Buch · English",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(page.getByTestId("kurzbuch-lang")).toHaveText(
+    "Sprache: English",
+  );
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/03-kurzbuch-englisch-1440.png",
+  });
 });

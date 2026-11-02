@@ -177,7 +177,15 @@ pub async fn book_ai_summarize(
     source: SummarySource,
     source_label: String,
     template_id: String,
+    // Zielsprache des Ergebnisses ("de", "en", …; lva#217). Ohne: Sprache des Buchs.
+    target_lang: Option<String>,
 ) -> Result<KiDocument, String> {
+    let target_lang = target_lang.filter(|c| !c.trim().is_empty());
+    if let Some(code) = &target_lang {
+        if engine::target_name(code).is_none() {
+            return Err("book_ai:language_unknown".into());
+        }
+    }
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Err("book_ai:busy".into());
     }
@@ -203,6 +211,12 @@ pub async fn book_ai_summarize(
         .unwrap_or_default();
     let model_key = format!("{provider}/{model}");
     let language = crate::summarizer::language_clause(&selected);
+    let detected = crate::managers::tts::lang::detect_language(&selected);
+    // Zielsprache = Buchsprache: dieselben Prompts wie ohne Wahl, damit der
+    // Cache früherer Läufe weiter gilt.
+    let target = target_lang.as_deref().filter(|t| Some(*t) != detected);
+    let output = engine::output_language(&language, target);
+    let output_code = target.or(detected).unwrap_or_default().to_string();
 
     let emitter = app.clone();
     let pid = page_id.clone();
@@ -223,6 +237,8 @@ pub async fn book_ai_summarize(
         limit: crate::summarizer::chunk_chars(&settings),
         model_key: &model_key,
         language: &language,
+        output: &output,
+        output_code: &output_code,
     };
     let cache = engine::DigestCache {
         dir: Some(store::cache_dir(&dir)),
@@ -263,6 +279,7 @@ pub async fn book_ai_summarize(
             modified_ms: now,
             words: 0,
             model: model_key,
+            language: (!output_code.is_empty()).then_some(output_code),
         },
         text.trim(),
     )
@@ -514,6 +531,7 @@ pub fn book_ai_document_import(
             modified_ms: now,
             words: 0,
             model: String::new(),
+            language: None,
         },
         text.trim(),
     )

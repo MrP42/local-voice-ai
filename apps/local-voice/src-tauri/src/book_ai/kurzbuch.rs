@@ -29,23 +29,47 @@ use super::engine::{
 use super::source::word_count;
 
 pub const TEMPLATE_ID: &str = "builtin:kurzbuch";
-pub const HEAD_ABOUT: &str = "Worum es geht";
-pub const HEAD_AUDIENCE: &str = "Für wen";
-pub const HEAD_CONCLUSION: &str = "Fazit";
+
+/// Feste Überschriften (worum es geht, für wen, Fazit) in der Sprache des
+/// Kurzbuchs (lva#217), damit Überschriften, Text und Stimme zusammenpassen.
+/// Die Oberfläche kennt dieselbe Liste (`src/lib/kurzbuch/kurzbuch.ts`).
+pub const HEADS: &[(&str, [&str; 3])] = &[
+    ("de", ["Worum es geht", "Für wen", "Fazit"]),
+    ("en", ["What it is about", "Who it is for", "Conclusion"]),
+    ("fr", ["De quoi il s'agit", "Pour qui", "Conclusion"]),
+    ("es", ["De qué trata", "Para quién", "Conclusión"]),
+    ("it", ["Di cosa parla", "Per chi", "Conclusione"]),
+    ("pt", ["Do que se trata", "Para quem", "Conclusão"]),
+    ("nl", ["Waar het over gaat", "Voor wie", "Conclusie"]),
+    ("pl", ["O czym jest", "Dla kogo", "Podsumowanie"]),
+    ("ja", ["概要", "対象読者", "結論"]),
+    ("zh", ["内容简介", "适合谁读", "结论"]),
+];
+
+/// Überschriften für einen Sprachcode; unbekannt: Deutsch wie bisher.
+pub fn heads(code: &str) -> [&'static str; 3] {
+    HEADS
+        .iter()
+        .find(|(c, _)| *c == code)
+        .unwrap_or(&HEADS[0])
+        .1
+}
 /// Gliederung auch nach zwei Versuchen nicht lesbar.
 pub const OUTLINE_UNREADABLE: &str = "book_ai:outline_unreadable";
 /// Das Modell hat für eine Kernaussage zweimal keinen Text geliefert.
 pub const EMPTY_ANSWER: &str = "book_ai:empty_answer";
 
 /// Ändern sich die Prompts, gelten die alten Cache-Einträge nicht mehr.
-const VERSION: &str = "kurzbuch-v1";
+const VERSION: &str = "kurzbuch-v2";
 const IDEA_WORDS: u32 = 200;
 const CONCLUSION_WORDS: u32 = 120;
 const MIN_IDEAS: usize = 3;
 const MAX_IDEAS: usize = 12;
 /// Ab dieser Länge (Wörter) hat ein Kurzbuch mindestens sechs Kernaussagen.
 const LONG_BOOK_WORDS: usize = 36_000;
-const MAX_TITLE_CHARS: usize = 160;
+/// Richtwert für die Kernaussage im Titel. Nur im Prompt: Ein Titel wird
+/// nie gekürzt (Patrick 02.11., lva#217), lieber umbrochen.
+const TITLE_WORDS: u32 = 15;
 const MIN_SOURCE_CHARS: usize = 4_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,20 +144,24 @@ fn source_kind(full_text: bool) -> &'static str {
     }
 }
 
-pub fn outline_prompt(parts: &[Part], suggested: usize, full_text: bool, language: &str) -> String {
+/// `output`: Sprachregel aus [`super::engine::output_language`].
+pub fn outline_prompt(parts: &[Part], suggested: usize, full_text: bool, output: &str) -> String {
     format!(
         "You plan a short summary of a book that people read or listen to in about \
          fifteen minutes. The source is the ONLY basis: nothing that is not in it.\n\
          Reply with ONLY one JSON object, no code fence, in this shape:\n\
          {{\"about\": \"two or three sentences: what the book is about\",\n \
          \"audience\": [\"who benefits\", \"who benefits\", \"who benefits\"],\n \
-         \"ideas\": [{{\"title\": \"Keyword: one complete sentence stating the idea\", \
+         \"ideas\": [{{\"title\": \"Keyword: one short complete sentence stating the idea\", \
          \"parts\": [1, 2]}}]}}\n\
-         Rules: exactly three audience entries, each a short phrase. About {suggested} \
+         Rules: exactly three audience entries, each a short phrase. Each idea title \
+         is a keyword of one to four words, a colon and ONE short, complete sentence \
+         of at most {TITLE_WORDS} words; it is shown in full, so never trail off or \
+         use an ellipsis. About {suggested} \
          key ideas (at least {MIN_IDEAS}, at most {MAX_IDEAS}), in the order of the book, \
          each one a distinct insight, argument or turning point. \"parts\" lists the \
-         numbers of the source parts the idea draws on. Write all texts in the SAME \
-         language as the source{language}.\n\n\
+         numbers of the source parts the idea draws on. Write all texts in \
+         {output}.\n\n\
          Source ({kind}):\n\n{body}",
         kind = source_kind(full_text),
         body = numbered(parts),
@@ -151,12 +179,8 @@ fn one_line(s: &str) -> String {
         .unwrap_or(s)
         .trim();
     let s = s.strip_prefix("**").unwrap_or(s);
-    let s = s.strip_suffix("**").unwrap_or(s).trim();
-    if s.chars().count() <= MAX_TITLE_CHARS {
-        return s.to_string();
-    }
-    let cut: String = s.chars().take(MAX_TITLE_CHARS - 1).collect();
-    format!("{}…", cut.trim_end())
+    // Nie kürzen: ein Titel wird vollständig angezeigt und vorgelesen.
+    s.strip_suffix("**").unwrap_or(s).trim().to_string()
 }
 
 fn part_number(v: &serde_json::Value) -> Option<usize> {
@@ -253,15 +277,14 @@ pub fn idea_prompt(
     index: usize,
     total: usize,
     sources: &[Part],
-    language: &str,
+    output: &str,
 ) -> String {
     format!(
         "You write one key idea of a short book summary that is read and listened to. \
          The source is the ONLY basis: do not invent events, quotes, numbers or facts.\n\
          The book in brief: {about}\n\
          Key idea {index} of {total}: {title}\n\
-         Write about {IDEA_WORDS} words of flowing prose in the SAME language as the \
-         source{language}. Open with a question to the reader or a concrete \
+         Write about {IDEA_WORDS} words of flowing prose in {output}. Open with a question to the reader or a concrete \
          observation, then explain the idea, why it holds and one example from the \
          source. It must read well aloud: no headings, no lists, no tables, no title \
          line. Reply with ONLY the text.\n\n\
@@ -274,11 +297,11 @@ pub fn idea_prompt(
     )
 }
 
-pub fn conclusion_prompt(about: &str, ideas: &[(String, String)], language: &str) -> String {
+pub fn conclusion_prompt(about: &str, ideas: &[(String, String)], output: &str) -> String {
     format!(
         "Below are the key ideas of a short book summary, each with its text. Write \
-         the conclusion: about {CONCLUSION_WORDS} words of flowing prose in the SAME \
-         language{language}. Tie the ideas together and name the one central message \
+         the conclusion: about {CONCLUSION_WORDS} words of flowing prose in \
+         {output}. Tie the ideas together and name the one central message \
          of the book. Nothing that is not in the key ideas. No heading, no list. Reply \
          with ONLY the text.\n\nThe book in brief: {about}\n\n{body}",
         body = ideas
@@ -305,13 +328,14 @@ pub fn clean_body(text: &str) -> String {
         .to_string()
 }
 
-/// Das Kurzbuch als Markdown.
-pub fn assemble(outline: &Outline, bodies: &[String], conclusion: &str) -> String {
+/// Das Kurzbuch als Markdown, Überschriften in der Sprache `code`.
+pub fn assemble(outline: &Outline, bodies: &[String], conclusion: &str, code: &str) -> String {
+    let [head_about, head_audience, head_conclusion] = heads(code);
     let mut out = String::new();
     if !outline.about.is_empty() {
-        out.push_str(&format!("## {HEAD_ABOUT}\n\n{}\n\n", outline.about));
+        out.push_str(&format!("## {head_about}\n\n{}\n\n", outline.about));
     }
-    out.push_str(&format!("## {HEAD_AUDIENCE}\n\n"));
+    out.push_str(&format!("## {head_audience}\n\n"));
     for a in &outline.audience {
         out.push_str(&format!("- {a}\n"));
     }
@@ -319,7 +343,7 @@ pub fn assemble(outline: &Outline, bodies: &[String], conclusion: &str) -> Strin
     for (idea, body) in outline.ideas.iter().zip(bodies) {
         out.push_str(&format!("## {}\n\n{}\n\n", idea.title, body));
     }
-    out.push_str(&format!("## {HEAD_CONCLUSION}\n\n{conclusion}\n"));
+    out.push_str(&format!("## {head_conclusion}\n\n{conclusion}\n"));
     out
 }
 
@@ -361,6 +385,8 @@ where
         limit,
         model_key,
         language,
+        output,
+        output_code,
         ..
     } = input;
     if sections.is_empty() {
@@ -369,7 +395,7 @@ where
     let words: usize = sections.iter().map(|s| word_count(&s.text) as usize).sum();
     let suggested = suggested_ideas(words);
     let min = min_ideas(words);
-    let overhead = outline_prompt(&[], suggested, false, language)
+    let overhead = outline_prompt(&[], suggested, false, output)
         .chars()
         .count();
     let limit = limit.saturating_sub(overhead).max(MIN_SOURCE_CHARS);
@@ -405,7 +431,7 @@ where
     }
 
     // Gliederung; bei unlesbarer Antwort ein zweiter Versuch ohne Cache.
-    let prompt = outline_prompt(&overview, suggested, full_text, language);
+    let prompt = outline_prompt(&overview, suggested, full_text, output);
     let outline_key = key(&[model_key, "outline", &prompt]);
     let mut outline = None;
     for attempt in 0..2 {
@@ -432,14 +458,7 @@ where
     for (k, idea) in outline.ideas.iter().enumerate() {
         check(cancel)?;
         let sources = idea_sources(idea, &overview, &detail, limit);
-        let prompt = idea_prompt(
-            &outline.about,
-            &idea.title,
-            k + 1,
-            total,
-            &sources,
-            language,
-        );
+        let prompt = idea_prompt(&outline.about, &idea.title, k + 1, total, &sources, output);
         let ikey = key(&[model_key, "idea", &prompt]);
         // Leere Antwort (nur Überschriften): einmal ohne Cache neu fragen,
         // dann klarer Fehler statt einer leeren Kernaussage.
@@ -466,19 +485,19 @@ where
         .zip(&bodies)
         .map(|(i, b)| (i.title.clone(), b.clone()))
         .collect();
-    let mut prompt = conclusion_prompt(&outline.about, &pairs, language);
+    let mut prompt = conclusion_prompt(&outline.about, &pairs, output);
     if prompt.chars().count() > limit + overhead {
         for p in &mut pairs {
             p.1 = p.1.split("\n\n").next().unwrap_or_default().to_string();
         }
-        prompt = conclusion_prompt(&outline.about, &pairs, language);
+        prompt = conclusion_prompt(&outline.about, &pairs, output);
     }
     check(cancel)?;
     let conclusion = clean_body(&ask(prompt).await?);
     check(cancel)?;
     steps.step();
     log::info!("book_ai: Kurzbuch mit {total} Kernaussagen");
-    Ok(assemble(&outline, &bodies, &conclusion))
+    Ok(assemble(&outline, &bodies, &conclusion, output_code))
 }
 
 #[cfg(test)]
@@ -533,15 +552,23 @@ mod tests {
             &o,
             &["Eins.".into(), "Zwei.".into(), "Drei.".into()],
             "Ende.",
+            "de",
         );
         assert!(md.starts_with("## Worum es geht\n\nEin Buch über Routinen."));
         assert!(md.contains("## Für wen\n\n- Alle\n- Teams\n- Lernende\n"));
         assert!(md.contains("## Rückfall: Nie zweimal.\n\nDrei."));
         assert!(md.ends_with("## Fazit\n\nEnde.\n"));
+        let en = assemble(&o, &["A.".into(), "B.".into(), "C.".into()], "End.", "en");
+        assert!(en.starts_with("## What it is about\n\n"));
+        assert!(en.contains("## Who it is for\n\n- Alle\n"));
+        assert!(en.ends_with("## Conclusion\n\nEnd.\n"));
+        assert_eq!(heads("xx"), heads("de"), "unbekannt: Deutsch");
         assert_eq!(clean_body("# Titel\nText\n## Zwischen\nmehr"), "Text\nmehr");
         assert_eq!(clean_body("#1 der Liste"), "#1 der Liste");
         assert_eq!(one_line("- -5 Grad: Kälte hilft."), "-5 Grad: Kälte hilft.");
         assert_eq!(one_line("## **Anfang: Klein.**"), "Anfang: Klein.");
+        let long = format!("Lang: {}Ende.", "Wort ".repeat(60));
+        assert_eq!(one_line(&long), long, "Titel werden nie gekürzt");
     }
 
     fn fake(
@@ -574,6 +601,8 @@ mod tests {
                 limit: 20_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             fake(&calls),
@@ -612,6 +641,8 @@ mod tests {
                         limit: 9_000,
                         model_key: "m",
                         language: "",
+                        output: "the SAME language as the source",
+                        output_code: "",
                     },
                     &cache,
                     fake(&calls),
@@ -642,6 +673,8 @@ mod tests {
                 limit: 20_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |_| {
@@ -654,6 +687,43 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, OUTLINE_UNREADABLE);
         assert_eq!(*calls.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn a_target_language_reaches_every_writing_step() {
+        use crate::book_ai::engine::output_language;
+        let calls = Mutex::new(Vec::new());
+        let t = builtins()
+            .into_iter()
+            .find(|t| t.id == TEMPLATE_ID)
+            .unwrap();
+        let s = [section("Eins", 100), section("Zwei", 100)];
+        let output = output_language(" (that is: write in English)", Some("de"));
+        let md = block_on(run(
+            RunInput {
+                sections: &s,
+                template: &t,
+                limit: 20_000,
+                model_key: "m",
+                language: " (that is: write in English)",
+                output: &output,
+                output_code: "de",
+            },
+            &DigestCache { dir: None },
+            fake(&calls),
+            &|_, _| {},
+            &AtomicBool::new(false),
+        ))
+        .unwrap();
+        let calls = calls.lock().unwrap();
+        // Gliederung, drei Kernaussagen, Fazit: alle auf Deutsch.
+        assert_eq!(calls.len(), 5);
+        for c in calls.iter() {
+            assert!(c.contains("German, whatever the language of the source"));
+            assert!(!c.contains("SAME language"));
+        }
+        assert!(md.starts_with("## Worum es geht"));
+        assert!(md.ends_with("## Fazit\n\nText.\n"));
     }
 
     #[test]

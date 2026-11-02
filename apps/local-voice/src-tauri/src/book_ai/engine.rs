@@ -123,13 +123,52 @@ fn form_instruction(form: TemplateForm) -> &'static str {
     }
 }
 
+/// Wählbare Zielsprachen der Ergebnisse (lva#217): Code und englischer Name
+/// für den Prompt. Gleiche Liste wie `TTS_TARGET_LANGS` im Frontend.
+pub const TARGET_LANGS: &[(&str, &str)] = &[
+    ("de", "German"),
+    ("en", "English"),
+    ("fr", "French"),
+    ("es", "Spanish"),
+    ("it", "Italian"),
+    ("pt", "Portuguese"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("ja", "Japanese"),
+    ("zh", "Chinese"),
+];
+
+/// Englischer Name einer wählbaren Zielsprache.
+pub fn target_name(code: &str) -> Option<&'static str> {
+    TARGET_LANGS
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, name)| *name)
+}
+
+/// Sprachregel für die Ergebnistexte, eingesetzt als „Write … in {output}“.
+/// Ohne Zielsprache bleibt es bei der Sprache der Quelle (`clause` wie bei
+/// [`RunInput::language`]); mit Zielsprache wird übertragen, auch
+/// Überschriften, während Namen bleiben.
+pub fn output_language(clause: &str, target: Option<&str>) -> String {
+    match target.and_then(target_name) {
+        Some(name) => format!(
+            "{name}, whatever the language of the source: translate the content \
+             and any headings or section titles into {name}, keep names of people, \
+             places and works as they are"
+        ),
+        None => format!("the SAME language as the source{clause}"),
+    }
+}
+
 /// Prompt des letzten Schritts. `full_text`: Die Quelle ist der Buchtext
-/// selbst und keine Zwischenfassung.
+/// selbst und keine Zwischenfassung. `output`: Sprachregel aus
+/// [`output_language`].
 pub fn final_prompt(
     template: &BookTemplate,
     parts: &[(String, String)],
     full_text: bool,
-    language: &str,
+    output: &str,
 ) -> String {
     let mut sections = String::new();
     if !template.sections.is_empty() {
@@ -152,7 +191,7 @@ pub fn final_prompt(
          {audience}\n\
          Target length: about {words} words.\n\
          {form}{sections}\n\
-         Write in the SAME language as the source{language}. Reply with ONLY the \
+         Write in {output}. Reply with ONLY the \
          document, without a title line and without meta commentary.\n\n\
          Source ({source}):\n\n{body}",
         context = template.context.trim(),
@@ -272,7 +311,13 @@ pub struct RunInput<'a> {
     /// Anbieter und Modell: Teil des Cache-Schlüssels.
     pub model_key: &'a str,
     /// Sprachhinweis für den Prompt, z. B. " (that is: write in German)".
+    /// Gilt für die Zwischenfassungen: Sie bleiben in der Sprache der Quelle,
+    /// damit ihr Cache für jede Zielsprache taugt.
     pub language: &'a str,
+    /// Sprachregel der Ergebnistexte, siehe [`output_language`].
+    pub output: &'a str,
+    /// Sprachcode des Ergebnisses ("de", "en", …), leer, wenn unbekannt.
+    pub output_code: &'a str,
 }
 
 /// Aufträge für Zwischenfassungen: je Kapitel, lange Kapitel blockweise.
@@ -434,19 +479,21 @@ where
         limit,
         model_key,
         language,
+        output,
+        ..
     } = input;
     if sections.is_empty() {
         return Err("book_ai:empty_source".into());
     }
     // Das Limit gilt für die ganze Anfrage: Vorlagenrahmen und Prompttext
     // gehen vom Platz für den Quelltext ab.
-    let overhead = final_prompt(template, &[], false, language).chars().count();
+    let overhead = final_prompt(template, &[], false, output).chars().count();
     let limit = limit.saturating_sub(overhead).max(MIN_SOURCE_CHARS);
     let chapters = chapter_parts(sections);
 
     if size(&chapters) <= limit {
         let mut steps = Steps::new(1, progress);
-        let out = ask(final_prompt(template, &pairs(&chapters), true, language)).await?;
+        let out = ask(final_prompt(template, &pairs(&chapters), true, output)).await?;
         check(cancel)?;
         steps.step();
         return Ok(out);
@@ -467,7 +514,7 @@ where
         return Err(TOO_LONG.into());
     }
     check(cancel)?;
-    let out = ask(final_prompt(template, &pairs(&parts), false, language)).await?;
+    let out = ask(final_prompt(template, &pairs(&parts), false, output)).await?;
     check(cancel)?;
     steps.step();
     Ok(out)
@@ -502,7 +549,7 @@ mod tests {
             &t,
             &[("Eins (S. 1–2)".into(), "Text".into())],
             true,
-            " (that is: write in German)",
+            &output_language(" (that is: write in German)", None),
         );
         assert!(p.contains("about 300 words"));
         assert!(p.contains("decision makers"));
@@ -512,6 +559,21 @@ mod tests {
         assert!(p.contains("full text"));
         assert!(p.contains("write in German"));
         assert!(p.ends_with("### Eins (S. 1–2)\nText"));
+    }
+
+    #[test]
+    fn a_target_language_replaces_the_source_language() {
+        assert_eq!(
+            output_language(" (that is: write in English)", None),
+            "the SAME language as the source (that is: write in English)"
+        );
+        let de = output_language(" (that is: write in English)", Some("de"));
+        assert!(de.starts_with("German, whatever the language of the source"));
+        assert!(de.contains("headings"));
+        assert!(!de.contains("English"));
+        // Unbekannter Code: wie ohne Zielsprache.
+        assert!(output_language("", Some("xx")).starts_with("the SAME language"));
+        assert_eq!(target_name("ja"), Some("Japanese"));
     }
 
     #[test]
@@ -526,6 +588,8 @@ mod tests {
                 limit: 10_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |p| {
@@ -557,6 +621,8 @@ mod tests {
                 limit: 2_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |p| {
@@ -592,6 +658,8 @@ mod tests {
                     limit: 1_800,
                     model_key: "m",
                     language: "",
+                    output: "the SAME language as the source",
+                    output_code: "",
                 },
                 &cache,
                 |_| {
@@ -625,6 +693,8 @@ mod tests {
                 limit: 2_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |p| {
@@ -652,6 +722,8 @@ mod tests {
                 limit: 1_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |_| async { Ok("d".to_string()) },
@@ -673,6 +745,8 @@ mod tests {
                 limit: 12_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache { dir: None },
             |_| {

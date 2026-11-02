@@ -31,6 +31,7 @@ import {
   type KiExportFormat,
   type KiFilter,
 } from "./kiDocs";
+import { kiLangLabel } from "./targetLang";
 import "./kidocs.css";
 
 /** Scrollstand der Liste je Seite: bleibt erhalten, während ein Dokument offen ist. */
@@ -248,6 +249,7 @@ export function KiDocumentsPanel({
                 <span className="kidocs__meta">
                   {t(`tts.kiDocs.filter.${categoryOf(doc, templates)}`)} ·{" "}
                   {doc.source_label}
+                  {doc.language ? ` · ${kiLangLabel(doc.language)}` : ""}
                 </span>
                 <span className="kidocs__title">{doc.title}</span>
                 <span className="kidocs__status">

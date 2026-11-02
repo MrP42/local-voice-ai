@@ -681,6 +681,12 @@
       "deleteTitle": "KI-Dokument löschen?",
       "deleteText": "„{{title}}“ wird endgültig gelöscht. Das Buch bleibt unverändert.",
       "legacyTitle": "Zusammenfassung (übernommen)",
+      "lang": {
+        "title": "Sprache",
+        "source": "Wie das Buch",
+        "hint": "Auch eine andere Sprache als die des Buchs ist möglich, etwa eine deutsche Fassung eines englischen Buchs.",
+        "chip": "Sprache: {{lang}}"
+      },
       "estimateOne": "{{template}}: etwa {{steps}} Arbeitsschritte, ca. {{min}} Min. Schätzung für ein lokales Modell; die tatsächliche Dauer hängt vom Modell ab.",
       "estimate": "{{template}}: etwa {{steps}} Arbeitsschritte, ca. {{min}}–{{max}} Min. Schätzung für ein lokales Modell; die tatsächliche Dauer hängt vom Modell ab.",
       "src": {
@@ -712,7 +718,8 @@
         "cancelled": "Erstellung abgebrochen.",
         "generic": "Das hat nicht geklappt ({{code}}).",
         "outlineUnreadable": "Das Modell hat keine brauchbare Gliederung geliefert. Bitte noch einmal versuchen oder ein anderes Modell wählen.",
-        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten."
+        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten.",
+        "languageUnknown": "Diese Sprache wird für KI-Dokumente nicht angeboten."
       }
     },
     "summaryPlaceholder": "Noch keine Zusammenfassung — unten Umfang, Detailgrad und Zielgruppe wählen und auf „Zusammenfassen“ klicken. Der Text bleibt änderbar.",
@@ -7018,7 +7025,12 @@
       "open": "Öffnen",
       "listen": "Anhören",
       "resume": "Weiterhören",
-      "create": "Kurzbuch erstellen"
+      "create": "Kurzbuch erstellen",
+      "language": "Sprache des Kurzbuchs",
+      "languages": "Vorhandene Sprachen",
+      "showLang": "Kurzbuch auf {{lang}} zeigen",
+      "another": "Weitere Sprache",
+      "createLang": "Erstellen"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",

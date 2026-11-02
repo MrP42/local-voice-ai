@@ -12,6 +12,7 @@ import {
   type KurzbuchSection,
 } from "@/lib/kurzbuch/kurzbuch";
 import { loadHeard, saveHeard } from "@/lib/kurzbuch/heard";
+import { kiLangLabel } from "./targetLang";
 
 /**
  * Überblick eines Kurzbuchs (lva#205) neben dem Lesetext: Dauer, worum es
@@ -23,6 +24,7 @@ export function KurzbuchPanel({
   kb,
   pageId,
   docId,
+  language = null,
   title,
   current,
   playing,
@@ -34,6 +36,8 @@ export function KurzbuchPanel({
   kb: Kurzbuch;
   pageId: string;
   docId: string;
+  /** Sprache des Kurzbuchs (lva#217), fehlt bei älteren. */
+  language?: string | null;
   title: string;
   /** Gerade vorgelesener Satz in diesem Dokument. */
   current: { start: number; end: number } | null;
@@ -83,6 +87,11 @@ export function KurzbuchPanel({
         <span className="kurzbuch__chip">
           {t("tts.kurzbuch.listenMin", { min: minutes(kb.words, LISTEN_WPM) })}
         </span>
+        {language && (
+          <span className="kurzbuch__chip" data-testid="kurzbuch-lang">
+            {t("tts.kiDocs.lang.chip", { lang: kiLangLabel(language) })}
+          </span>
+        )}
       </div>
       <Button
         variant="primary"
