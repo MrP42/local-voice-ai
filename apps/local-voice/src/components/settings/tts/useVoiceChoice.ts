@@ -19,6 +19,7 @@ import {
 import { PROVIDER_VOICES_CHANGED } from "./providers/VisibleVoices";
 import { useVoiceSamplesOf } from "./providers/useVoiceSamples";
 import type { VoiceTryTarget } from "./providers/voiceTry";
+import { primaryLanguage } from "@/lib/reader/language";
 
 /** Eintrag der Stimmenauswahl, der keine Stimme ist, sondern ein Sprung zur Verwaltung. */
 export const VOICE_MANAGE = "@manage";
@@ -270,9 +271,37 @@ export function useVoiceChoice(phase: string) {
 
   /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch.
      Bei einem Anbieter mit Stimmwechsel ist die Standardstimme der Eintrag "Skript mit Sprechern". */
+  // Spricht ein Anbieter mehrere Sprachen (Phonon Deutsch + Englisch), steht
+  // die Sprache am Namen (Codex zu #199: „englische Standardstimme eindeutig“).
+  const languageName = (code: string) => {
+    try {
+      return (
+        new Intl.DisplayNames([uiLang], { type: "language" }).of(code) ?? code
+      );
+    } catch {
+      return code;
+    }
+  };
+  const providerLangs = new Map<string, Set<string>>();
+  for (const option of providerVoices) {
+    const l = primaryLanguage(option.voice.language);
+    if (!l) continue;
+    const set = providerLangs.get(option.provider_id) ?? new Set<string>();
+    set.add(l);
+    providerLangs.set(option.provider_id, set);
+  }
   const providerVoiceItems: SelectOption[] = sortVoicesByLabel(
     providerVoices.map((option) => {
-      const name = shortVoiceName(option.voice.label);
+      const lang = primaryLanguage(option.voice.language);
+      const multi = (providerLangs.get(option.provider_id)?.size ?? 0) > 1;
+      const modelDefault = option.voice.id.endsWith(
+        `:${PROVIDER_DEFAULT_VOICE}`,
+      );
+      const base = modelDefault
+        ? t("tts.voices.modelDefault")
+        : shortVoiceName(option.voice.label);
+      const name =
+        multi && lang ? `${base} · ${languageName(lang)}` : base;
       const script =
         option.voice_switching === true &&
         option.voice.id === PROVIDER_DEFAULT_VOICE;
@@ -426,6 +455,66 @@ export function useVoiceChoice(phase: string) {
     [options, voices],
   );
 
+  /** Sprache eines Eintrags (`de`, `en` …) oder `null`, wenn die Stimme jede
+      Sprache spricht oder sie unbekannt ist (Fish, eigene Klone mit `und`). */
+  const languageOf = useCallback(
+    (value: string): string | null => {
+      if (value.startsWith("piper:")) {
+        const id = value.slice("piper:".length);
+        const voice = piperVoices.find((v) => v.id === id);
+        return primaryLanguage(voice?.language ?? id);
+      }
+      const picked = parseProviderVoiceValue(value);
+      if (picked) {
+        const option = providerVoices.find(
+          (o) =>
+            o.provider_id === picked.providerId &&
+            o.voice.id === picked.voice,
+        );
+        return primaryLanguage(option?.voice.language);
+      }
+      return null;
+    },
+    [piperVoices, providerVoices],
+  );
+
+  /** Die naheliegende Stimme fuer eine Sprache (Patrick 01.11.: englisches Buch ->
+      englische Stimme): moeglichst vom selben Anbieter wie die jetzige, als
+      Skript-Eintrag, wenn die jetzige einer ist. `null`: keine passende da. */
+  const bestVoiceFor = useCallback(
+    (lang: string, current: string): string | null => {
+      const fits = options.filter(
+        (o) =>
+          !o.isDisabled &&
+          o.value !== VOICE_MANAGE &&
+          languageOf(o.value) === lang,
+      );
+      if (fits.length === 0) return null;
+      const family = (value: string) => {
+        const picked = parseProviderVoiceValue(value);
+        if (picked) return `provider:${picked.providerId}`;
+        return value.startsWith("piper:") ? "piper" : "fish";
+      };
+      const isDefault = (value: string) => {
+        const picked = parseProviderVoiceValue(value);
+        const voice = picked?.voice ?? "";
+        return (
+          voice === PROVIDER_DEFAULT_VOICE ||
+          voice.endsWith(`:${PROVIDER_DEFAULT_VOICE}`)
+        );
+      };
+      const sameFamily = fits.filter((o) => family(o.value) === family(current));
+      const pool = sameFamily.length > 0 ? sameFamily : fits;
+      const wantDefault = isDefault(current) || current === "@default";
+      return (
+        (wantDefault ? pool.find((o) => isDefault(o.value)) : undefined) ??
+        pool.find((o) => !isDefault(o.value)) ??
+        pool[0]
+      ).value;
+    },
+    [options, languageOf],
+  );
+
   /** Sprung zur Stimmenverwaltung (Eintrag `VOICE_MANAGE`). */
   const openVoiceManagement = useCallback(() => {
     openSettingsTab("output");
@@ -448,5 +537,7 @@ export function useVoiceChoice(phase: string) {
     sampleOf,
     tryOf,
     openVoiceManagement,
+    languageOf,
+    bestVoiceFor,
   };
 }
