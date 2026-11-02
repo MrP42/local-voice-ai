@@ -18,6 +18,7 @@ import {
 } from "@/lib/reader/readerDoc";
 import type { SourceRange } from "@/lib/reader/sentenceLocator";
 import { useSentenceClock, type SentenceClock } from "./useSentenceClock";
+import type { TermMark } from "../terms/useBookTerms";
 import "./reader.css";
 
 /** Eine markierte Stelle (Befund) im Seitentext. */
@@ -53,6 +54,9 @@ interface ReaderViewProps {
   /** Laufender Satz: daraus die Stelle, die gerade zu hören ist (Wort). */
   clock?: SentenceClock | null;
   marks?: ReaderMark[];
+  /** Hervorgehobene Begriffe (lva#185); Klick oder Enter öffnet die Erklärung. */
+  terms?: TermMark[];
+  onTerm?(mark: TermMark): void;
   twoPages: boolean;
   fontSize: number;
   /** Leseschrift (book | sans | wide). */
@@ -110,6 +114,7 @@ type Piece = {
   cur: boolean;
   word: boolean;
   mark?: ReaderMark;
+  term?: TermMark;
 };
 
 /** Das Wort, in dem `at` liegt (bis zum nächsten Leerraum). */
@@ -145,6 +150,7 @@ function piecesOf(
   current: SourceRange | null,
   marks: ReaderMark[],
   word: SourceRange | null,
+  terms: TermMark[] = [],
 ): Piece[] {
   const cuts = new Set<number>([run.start, run.end]);
   const inside = (o: number) => o > run.start && o < run.end;
@@ -153,7 +159,8 @@ function piecesOf(
     if (inside(r.start)) cuts.add(r.start);
     if (inside(r.end)) cuts.add(r.end);
   }
-  for (const m of marks) {
+  const ts = terms.filter((m) => m.end > run.start && m.start < run.end);
+  for (const m of [...marks, ...ts]) {
     if (m.end <= run.start || m.start >= run.end) continue;
     if (inside(m.start)) cuts.add(m.start);
     if (inside(m.end)) cuts.add(m.end);
@@ -169,6 +176,7 @@ function piecesOf(
       cur: !!current && a >= current.start && b <= current.end,
       word: !!word && a >= word.start && b <= word.end,
       mark: marks.find((m) => a >= m.start && b <= m.end),
+      term: ts.find((m) => a >= m.start && b <= m.end),
     });
   }
   return out;
@@ -179,7 +187,8 @@ const Runs: React.FC<{
   current: SourceRange | null;
   marks: ReaderMark[];
   word: SourceRange | null;
-}> = ({ block, current, marks, word }) => {
+  terms: TermMark[];
+}> = ({ block, current, marks, word, terms }) => {
   const { t } = useTranslation();
   return (
     <>
@@ -197,13 +206,14 @@ const Runs: React.FC<{
             </span>
           );
         if (run.tag) return null;
-        const pieces = piecesOf(run, current, marks, word);
+        const pieces = piecesOf(run, current, marks, word, terms);
         const inner = pieces.map((p) => {
           const cls = [
             p.cur ? "reader-cur" : "",
             p.word ? "reader-word" : "",
             p.mark ? "reader-mark" : "",
             p.mark?.selected ? "reader-mark--sel" : "",
+            p.term ? "reader-term" : "",
           ]
             .filter(Boolean)
             .join(" ");
@@ -215,6 +225,17 @@ const Runs: React.FC<{
               data-cur={p.cur ? "" : undefined}
               data-word={p.word ? "" : undefined}
               data-mark={p.mark?.selected ? "" : undefined}
+              data-term={p.term ? p.term.start : undefined}
+              // Ein Begriff, der über mehrere Stücke geht (Satzgrenze), ist
+              // nur einmal ein Tab-Ziel.
+              {...(p.term && p.start === Math.max(p.term.start, run.start)
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    "aria-haspopup": "dialog" as const,
+                    "aria-description": t("tts.terms.markHint"),
+                  }
+                : {})}
             >
               {p.text}
             </span>
@@ -250,6 +271,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   current,
   clock = null,
   marks = [],
+  terms = [],
+  onTerm,
   twoPages,
   fontSize,
   fontFamily = "book",
@@ -483,7 +506,22 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     if (current) onFollowChange(false);
   };
 
+  const termOf = (el: Element | null): TermMark | null => {
+    const host = el?.closest<HTMLElement>("[data-term]");
+    if (!host || !flowRef.current?.contains(host)) return null;
+    const start = Number(host.dataset.term);
+    return terms.find((m) => m.start === start) ?? null;
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      const hit = termOf(e.target as Element);
+      if (hit && onTerm) {
+        onTerm(hit);
+        e.preventDefault();
+        return;
+      }
+    }
     if (e.key === "ArrowRight" || e.key === "PageDown") {
       turn(1);
       e.preventDefault();
@@ -507,6 +545,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     }
     const sel = window.getSelection();
     if (sel && !sel.isCollapsed) return; // Markieren zum Kopieren ist kein Sprung.
+    const hit = termOf(e.target as Element);
+    if (hit && onTerm) {
+      onTerm(hit);
+      return;
+    }
     const caret = caretAt(e.clientX, e.clientY);
     const node = caret?.node ?? null;
     const host = (
@@ -594,7 +637,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               const Tag = (block.level === 1 ? "h2" : block.level === 2 ? "h3" : "h4") as "h2";
               return (
                 <Tag key={key} className={`reader-h${block.level ?? 1}`}>
-                  <Runs block={block} current={current} marks={marks} word={word} />
+                  <Runs block={block} current={current} marks={marks} word={word} terms={terms} />
                 </Tag>
               );
             }
@@ -637,7 +680,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   nur neben Text, nie als Stummel am Spaltenende. */}
                 <span className="reader-text">
                   {block.kind === "item" && <span className="reader-dot" aria-hidden="true">•</span>}
-                  <Runs block={block} current={current} marks={marks} word={word} />
+                  <Runs block={block} current={current} marks={marks} word={word} terms={terms} />
                 </span>
               </Tag>
             );

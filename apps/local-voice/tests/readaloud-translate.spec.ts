@@ -90,6 +90,7 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "pages_list") return [{ id: "p1", title: "Podcast" }];
           if (cmd === "page_dir") return "C:\\projects\\p1";
           // KI-Dokumente (lva#183): zwei Vorlagen, Liste aus window.__kidocs.
+          if (cmd === "book_ai_templates" && w.__templates) return w.__templates;
           if (cmd === "book_ai_templates")
             return [
               { id: "builtin:eine_seite", title: "Eine Seite", category: "ueberblick", description: "Das Buch auf einer Seite.", context: "", sections: [], target_words: 450, form: "Prose", audience: "allgemein", builtin: true },
@@ -97,6 +98,13 @@ test.beforeEach(async ({ page }) => {
             ];
           if (cmd === "book_ai_documents") return (w.__kidocs as unknown[] | undefined) ?? [];
           if (cmd === "book_ai_document_text") return "Kurz gesagt: alles gut.";
+          // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
+          if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
+          if (cmd === "book_ai_term_hits") return (w.__hits as unknown[] | undefined) ?? [];
+          if (cmd === "book_ai_terms_extract")
+            return new Promise((resolve, reject) => {
+              pending[cmd] = { resolve, reject };
+            });
           if (cmd === "tts_translate" || cmd === "tts_summarize_text" || cmd === "book_ai_summarize")
             return new Promise((resolve, reject) => {
               pending[cmd] = { resolve, reject };
@@ -196,7 +204,7 @@ test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den For
   await expect(dialog).toHaveCount(0);
 
   // Erstellung läuft: als eigene Karte mit Schritten, getrennt vom Hörfortschritt.
-  await emit(page, "book-ai-progress", { page_id: "p1", done: 1, total: 3 });
+  await emit(page, "book-ai-progress", { page_id: "p1", kind: "summary", done: 1, total: 3 });
   await expect(page.getByTestId("kidocs-running")).toContainText("1 von 3 Schritten");
   const call = (await calls(page)).filter(([c]) => c === "book_ai_summarize").at(-1)!;
   expect(call[1]).toMatchObject({
@@ -358,4 +366,146 @@ test("das vorgelesene KI-Dokument ist in Kopfzeile und Liste gekennzeichnet", as
   await page.getByTestId("kidoc-back").click();
   await expect(page.getByTestId(`kidocs-card-${id}`).getByTestId("kidocs-playing")).toBeVisible();
   await expect(page.getByTestId(`kidocs-card-${manyKiDocs[1].id}`).getByTestId("kidocs-playing")).toHaveCount(0);
+});
+
+// Begriffe (lva#185): Hervorhebung, Erklärfenster, Erkennungslauf.
+const TERM = {
+  id: "hallo",
+  term: "Hallo",
+  variants: [],
+  kind: "konzept",
+  from_book: "Ein Gruß im Buch.",
+  general: "Gängige Begrüßung im Deutschen.",
+  chapter: "Kapitel 1",
+  user_edited: false,
+  hidden: false,
+};
+const withTerms = async (page: Page, hits: { start: number; end: number }[]) => {
+  await page.addInitScript(
+    ([term, hits]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__terms = [term];
+      w.__hits = (hits as { start: number; end: number }[]).map((h) => ({ term_id: "hallo", page: 12, ...h }));
+    },
+    [TERM, hits] as const,
+  );
+};
+const HALLO = { start: ORIGINAL.indexOf("Hallo"), end: ORIGINAL.indexOf("Hallo") + 5 };
+
+test("Begriffe sind gepunktet unterstrichen, das Erklärfenster pausiert, liest vor und setzt fort", async ({ page }) => {
+  // Eine veraltete Fundstelle (Text passt nicht mehr) wird nicht markiert.
+  await withTerms(page, [HALLO, { start: 0, end: 5 }]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  const mark = page.locator(".reader-term[role=button]");
+  await expect(mark).toHaveCount(1);
+  await expect(mark).toHaveText("Hallo");
+  await expect(mark).toHaveCSS("text-decoration-style", "dotted");
+
+  // Vorlesen läuft: Klick hält an und liest die Erklärung.
+  await emit(page, "tts-state-changed", { phase: "speaking", owns_server: false, message: null, server_up: true });
+  await mark.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Hallo");
+  await expect(page.getByTestId("term-from-book")).toHaveText("Ein Gruß im Buch.");
+  await expect(page.getByTestId("term-general")).toHaveText("Gängige Begrüßung im Deutschen.");
+  await expect(dialog).toContainText("nicht geprüft");
+  await expect(dialog).toContainText("Seite 12");
+  await expect(page.getByTestId("term-continue")).toBeFocused();
+  let log = await calls(page);
+  expect(log.some(([c]) => c === "tts_cancel")).toBe(true);
+  const spoken = log.filter(([c]) => c === "tts_speak_text").at(-1)!;
+  expect(JSON.stringify(spoken[1])).toContain("Allgemeines Modellwissen, nicht geprüft");
+  expect(log.some(([c]) => c === "tts_speak_text_from")).toBe(false);
+
+  // „Mehr erfahren“: Wikipedia in der Sprache der Oberfläche.
+  await page.getByTestId("term-more").click();
+  log = await calls(page);
+  const opened = log.filter(([c]) => c === "plugin:opener|open_url").at(-1)!;
+  expect(JSON.stringify(opened[1])).toContain("https://de.wikipedia.org/w/index.php?search=Hallo");
+  await expect(page.getByTestId("term-notes")).toBeDisabled();
+
+  // Weiterlesen: an der unterbrochenen Stelle.
+  await expect(page.getByTestId("term-continue")).toHaveText("Weiterlesen");
+  await page.getByTestId("term-continue").click();
+  await expect(dialog).toHaveCount(0);
+  log = await calls(page);
+  expect(log.some(([c]) => c === "tts_speak_text_from")).toBe(true);
+});
+
+test("Erklärfenster per Tastatur: Enter öffnet, Escape schließt; Vorlesen abschaltbar", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  const mark = page.locator(".reader-term[role=button]");
+  await expect(mark).toHaveCount(1);
+  await mark.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  // Nichts lief: der Knopf liest ab dem Begriff.
+  await expect(page.getByTestId("term-continue")).toHaveText("Hier vorlesen");
+  await page.getByTestId("term-autoread").uncheck();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const before = (await calls(page)).filter(([c]) => c === "tts_speak_text").length;
+  await mark.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.waitForTimeout(200);
+  const after = (await calls(page)).filter(([c]) => c === "tts_speak_text").length;
+  expect(after).toBe(before);
+});
+
+test("die Hervorhebung lässt sich ausblenden, die Erkennung läuft auf Knopfdruck", async ({ page }) => {
+  await withTerms(page, [HALLO]);
+  await open(page);
+  await page.getByTestId("reader-mode-read").click();
+  await expect(page.locator(".reader-term")).toHaveCount(1);
+  await page.getByTestId("reader-terms").click();
+  await expect(page.getByTestId("reader-terms-status")).toHaveText("1 Begriff in diesem Buch");
+  await page.getByTestId("reader-terms-highlight").click();
+  await expect(page.locator(".reader-term")).toHaveCount(0);
+
+  await page.getByTestId("reader-terms-extract").click();
+  await emit(page, "book-ai-progress", { page_id: "p1", kind: "terms", done: 2, total: 5 });
+  await page.getByTestId("reader-terms").click();
+  await expect(page.getByTestId("reader-terms-status")).toHaveText("Erkenne Begriffe: Kapitel 2 von 5");
+  await page.getByTestId("reader-terms-cancel").click();
+  expect((await calls(page)).some(([c]) => c === "book_ai_cancel")).toBe(true);
+  await finish(page, "book_ai_terms_extract", null, "book_ai:cancelled");
+  await expect(page.getByTestId("reader-terms-running")).toHaveCount(0);
+});
+
+// Codex-Hinweise zu B2: alle 20 Vorlagen im Dialog, mobile Ziele mindestens 44 px.
+test("Erstellen-Dialog zeigt alle 20 Vorlagen; mobil sind alle Ziele mindestens 44 px hoch", async ({ page }) => {
+  const cats = ["ueberblick", "lernen", "analyse", "anwenden"];
+  const templates = Array.from({ length: 20 }, (_, i) => ({
+    id: `builtin:v${i}`,
+    title: `Vorlage ${i + 1}`,
+    category: cats[i % 4],
+    description: "Beschreibung.",
+    context: "",
+    sections: [],
+    target_words: 400,
+    form: "Prose",
+    audience: "allgemein",
+    builtin: true,
+  }));
+  await page.addInitScript((t) => {
+    (window as unknown as { __templates: unknown[] }).__templates = t;
+  }, templates);
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("kidocs-new").click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Neues KI-Dokument");
+  await expect(page.locator("[data-testid^=kidoc-tpl-builtin]")).toHaveCount(20);
+  const targets = dialog.locator("button:visible, input:visible");
+  const n = await targets.count();
+  expect(n).toBeGreaterThan(20);
+  for (let i = 0; i < n; i++) {
+    const box = await targets.nth(i).boundingBox();
+    if (!box) continue;
+    expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
+  }
 });

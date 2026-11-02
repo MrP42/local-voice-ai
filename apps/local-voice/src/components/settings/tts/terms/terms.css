@@ -1,0 +1,105 @@
+/* Begriffe im Buch (lva#185). Keine Animationen bei Layoutwechseln. */
+
+/* Hervorhebung: gepunktete Unterstreichung, nicht nur Farbe (WCAG 1.4.1). */
+.reader-term {
+  cursor: help;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--color-logo-primary) 80%,
+    currentColor
+  );
+  border-radius: 2px;
+}
+.reader-term:hover {
+  background: color-mix(in srgb, var(--color-logo-primary) 14%, transparent);
+}
+.reader-term:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+.terms-menu__status {
+  padding: 4px 12px 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.terms-menu__dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-status-blue);
+  pointer-events: none;
+}
+
+.term-dialog__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.term-dialog__kind {
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--color-mid-gray) 40%, transparent);
+  border-radius: 999px;
+}
+.term-dialog__h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+/* Modellwissen: eigener, gestrichelter Kasten mit Hinweis „nicht geprüft“. */
+.term-dialog__general {
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--color-mid-gray) 55%, transparent);
+  border-radius: 6px;
+}
+.term-dialog__note {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.term-dialog__speak {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.term-dialog__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.term-dialog__search > summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .term-dialog button,
+  .term-dialog input,
+  .term-dialog__check,
+  .term-dialog__search > summary {
+    min-height: 44px;
+  }
+  .term-dialog .lv-dialog__actions button {
+    flex: 1 1 100%;
+  }
+}
