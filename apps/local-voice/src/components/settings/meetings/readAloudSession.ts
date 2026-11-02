@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import i18n from "@/i18n";
 import { commands } from "@/bindings";
 import { sentenceAfterProgress } from "../tts/sentenceCounter";
+import { endReaderSession } from "../tts/readerSession";
 
 /**
  * Die Vorlese-Sitzung der Aufnahmen.
@@ -215,6 +216,8 @@ export const startReading = (
   from?: { position: number; total: number },
 ) => {
   ensureListeners();
+  // Die Wiedergabe gehört jetzt den Aufnahmen, nicht mehr der Vorlesen-Seite.
+  endReaderSession();
   if (session && session.key !== key) remember(session);
   saved.delete(key);
   const token = ++tokenCounter;
