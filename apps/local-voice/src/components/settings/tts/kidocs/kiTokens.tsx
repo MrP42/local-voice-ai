@@ -21,25 +21,33 @@ export function formatTokens(n: number, locale: string): string {
   return rounded.toLocaleString(locale);
 }
 
-/** Kosten in Dollar; unter einem Cent „< 0,01 $“. */
+/** Betrag in US-Dollar ohne Einheit; unter einem Cent „< 0,01“. */
 export function formatCost(micro: number, locale: string): string {
   const usd = micro / 1_000_000;
-  if (usd > 0 && usd < 0.01) return `< ${(0.01).toLocaleString(locale)} $`;
-  return `${usd.toLocaleString(locale, {
+  if (usd > 0 && usd < 0.01) return `< ${(0.01).toLocaleString(locale)}`;
+  return usd.toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: usd < 1 ? 3 : 2,
-  })} $`;
+  });
 }
+
+/** Modellname aus „anbieter/modell“. */
+export const modelName = (key: string): string =>
+  key.includes("/") ? key.slice(key.indexOf("/") + 1) : key;
 
 function costText(
   f: TokenFigures,
   local: boolean,
+  model: string,
   t: TFunction,
   locale: string,
 ): string {
   if (local) return t("tts.kiDocs.tokens.local");
   if (f.cost_micro === null) return t("tts.kiDocs.tokens.noPrice");
-  return formatCost(f.cost_micro, locale);
+  return t("tts.kiDocs.tokens.cost", {
+    cost: formatCost(f.cost_micro, locale),
+    model: model || "?",
+  });
 }
 
 /** Ausführliche Zeile für Tooltip und Screenreader. */
@@ -140,7 +148,7 @@ export function TokenEstimateLine({
             output: formatTokens(f.output_tokens, locale),
           })}
           {" · "}
-          {costText(f, estimate.local, t, locale)}
+          {costText(f, estimate.local, estimate.model, t, locale)}
           {estimate.cached_steps > 0 &&
             ` · ${t("tts.kiDocs.tokens.cached", { count: estimate.cached_steps })}`}
         </span>
@@ -168,8 +176,11 @@ export function usageShort(
  */
 export function TokenUsageLine({
   usage,
+  model,
 }: {
   usage: KiUsage | null | undefined;
+  /** „anbieter/modell“ des Dokuments. */
+  model: string;
 }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
@@ -204,17 +215,21 @@ export function TokenUsageLine({
           })}
       {e && planned > 0 && (
         <span className="kidoc-tokens__sub">
-          {" "}
-          {t("tts.kiDocs.tokens.vsEstimate", {
-            planned: formatTokens(planned, locale),
-          })}
-          {delta !== null &&
-            ` (${delta > 0 ? "+" : delta < 0 ? "−" : "±"}${Math.abs(delta)} %)`}
+          {" · "}
+          {t(
+            delta === null
+              ? "tts.kiDocs.tokens.vsEstimate"
+              : "tts.kiDocs.tokens.vsEstimateDelta",
+            {
+              planned: formatTokens(planned, locale),
+              delta: `${delta !== null && delta > 0 ? "+" : delta !== null && delta < 0 ? "−" : "±"}${Math.abs(delta ?? 0)}`,
+            },
+          )}
         </span>
       )}
       <span className="kidoc-tokens__sub">
         {" · "}
-        {costText(a, usage.local, t, locale)}
+        {costText(a, usage.local, modelName(model), t, locale)}
       </span>
     </p>
   );

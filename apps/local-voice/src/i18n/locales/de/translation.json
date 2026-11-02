@@ -643,7 +643,9 @@
         "average": "Geschätzt mit einem Durchschnittswert (ca. 3,6 Zeichen je Token); je nach Modell ±25 %.",
         "actual": "{{total}} Token verbraucht",
         "short": "{{total}} Token",
-        "vsEstimate": "(Prognose {{planned}})",
+        "vsEstimate": "Schätzung vorher {{planned}}",
+        "cost": "ca. {{cost}} USD (Preis für {{model}})",
+        "vsEstimateDelta": "Schätzung vorher {{planned}} ({{delta}} % gegenüber Schätzung)",
         "plannedDetail": "Prognose: {{detail}}",
         "notReported": "Anbieter meldet keine Token",
         "cardHint": "Tatsächlich verbrauchte Token beim Erstellen"

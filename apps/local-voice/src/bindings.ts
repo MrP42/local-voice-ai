@@ -7741,7 +7741,11 @@ measured: boolean;
 /**
  * Bereits zwischengespeicherte Arbeitsschritte, die nichts mehr kosten.
  */
-cached_steps: number }
+cached_steps: number; 
+/**
+ * Modell, nach dessen Preis gerechnet wurde (ohne Anbieter).
+ */
+model: string }
 export type BookCharacter = { name: string; 
 /**
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).

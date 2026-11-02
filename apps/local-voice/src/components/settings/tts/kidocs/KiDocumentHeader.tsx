@@ -100,7 +100,7 @@ export function KiDocumentHeader({
           ]}
         />
       </div>
-      <TokenUsageLine usage={doc.usage} />
+      <TokenUsageLine usage={doc.usage} model={doc.model} />
       {run && (
         <p className="kidocs__status" aria-live="polite">
           {t("tts.kiDocs.runningElsewhere", {

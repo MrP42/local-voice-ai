@@ -244,6 +244,11 @@ impl Job {
             local: tokens::active_is_local(&self.settings),
             measured,
             cached_steps: all.saturating_sub(calls),
+            model: self
+                .model_key
+                .split_once('/')
+                .map(|(_, m)| m.to_string())
+                .unwrap_or_default(),
         })
     }
 }

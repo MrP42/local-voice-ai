@@ -643,7 +643,9 @@
         "average": "Estimated with an average (about 3.6 characters per token); ±25 % depending on the model.",
         "actual": "{{total}} tokens used",
         "short": "{{total}} tokens",
-        "vsEstimate": "(estimate {{planned}})",
+        "vsEstimate": "estimated before {{planned}}",
+        "cost": "approx. {{cost}} USD (price for {{model}})",
+        "vsEstimateDelta": "estimated before {{planned}} ({{delta}} % vs. estimate)",
         "plannedDetail": "Estimate: {{detail}}",
         "notReported": "Provider reports no tokens",
         "cardHint": "Tokens actually used to create it"

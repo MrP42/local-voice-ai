@@ -76,6 +76,8 @@ pub struct BookAiEstimate {
     pub measured: bool,
     /// Bereits zwischengespeicherte Arbeitsschritte, die nichts mehr kosten.
     pub cached_steps: u32,
+    /// Modell, nach dessen Preis gerechnet wurde (ohne Anbieter).
+    pub model: String,
 }
 
 /// Zielwortzahl aus „about 300 words“ (auch „About“). Erste Fundstelle.

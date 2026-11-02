@@ -105,6 +105,7 @@ test.beforeEach(async ({ page }) => {
                 local: true,
                 measured: false,
                 cached_steps: 3,
+                model: "qwen3-8b",
               }
             );
           if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
@@ -708,6 +709,7 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
   await expect(line).toHaveAttribute("title", /14 Modellaufrufe/);
   const est = (await calls(page)).filter(([c]) => c === "book_ai_estimate").at(-1)!;
   expect(est[1]).toMatchObject({ pageId: "p1", source: { kind: "book" }, templateId: "builtin:eine_seite" });
+  await line.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${shots}/01-dialog-prognose-${suffix}.png` });
 
   // Cloud-Anbieter mit Preis: Kosten statt „lokal“.
@@ -717,10 +719,12 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
       local: false,
       measured: false,
       cached_steps: 0,
+      model: "claude-sonnet-5-5",
     };
   });
   await page.getByTestId("kidoc-tpl-builtin:lernzettel").click();
-  await expect(line).toContainText("0,22 $");
+  await expect(line).toContainText("ca. 0,22 USD (Preis für claude-sonnet-5-5)");
+  await line.scrollIntoViewIfNeeded();
   await page.screenshot({ path: `${shots}/02-dialog-prognose-kosten-${suffix}.png` });
   await page.getByTestId("kidoc-create").click();
 
@@ -734,7 +738,7 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
     created_ms: 1,
     modified_ms: 1,
     words: 612,
-    model: "anthropic/claude",
+    model: "anthropic/claude-sonnet-5-5",
     usage: {
       estimate: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 220_350 },
       actual: { input_tokens: 44_120, output_tokens: 7_045, calls: 14, cost_micro: 238_035 },
@@ -748,13 +752,26 @@ for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Progno
 
   const used = page.getByTestId("kidoc-token-usage");
   await expect(used).toContainText("51.200 Token verbraucht");
-  if (wide) {
-    await expect(used).toContainText("(Prognose 48.200) (+6 %)");
-    await expect(used).toContainText("0,238 $");
-  }
+  await expect(used).toContainText("Schätzung vorher 48.200 (+6 % gegenüber Schätzung)");
+  await expect(used).toContainText("ca. 0,238 USD (Preis für claude-sonnet-5-5)");
   await expect(used).toHaveAttribute("title", /Prognose: 41.900 Token Eingabe/);
-  await page.screenshot({ path: `${shots}/03-dokument-verbrauch-${suffix}.png` });
+  // Den Fertig-Hinweis abwarten, damit er im Bild nichts überdeckt.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 });
+  const head = page.getByTestId("kidoc-head");
+  await head.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/03-dokument-verbrauch-${suffix}.png` });
+  else {
+    // Schmal: genau der Kopf samt Verbrauchszeile, nicht ein angeschnittener Ausschnitt.
+    const box = (await head.boundingBox())!;
+    await page.screenshot({
+      path: `${shots}/03-dokument-verbrauch-${suffix}.png`,
+      clip: { x: 0, y: Math.max(0, box.y - 4), width: 390, height: Math.min(844 - Math.max(0, box.y - 4), box.height + 220) },
+    });
+  }
   await page.getByTestId("kidoc-back").click();
   await expect(page.getByTestId(`kidocs-card-${doc.id}`)).toContainText("612 Wörter · 51.200 Token · noch nicht gehört");
-  await page.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await card.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
+  else await card.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
 });
