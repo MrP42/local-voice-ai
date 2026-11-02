@@ -2152,6 +2152,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meetings::meetings_delete,
             commands::meetings::meetings_import_file,
             commands::meetings::meetings_import_audiobook_part,
+            commands::meetings::meetings_get_status,
             // U7
             commands::meeting_queue::meetings_queue_list,
             commands::meeting_queue::meetings_queue_remove,

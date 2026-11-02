@@ -288,7 +288,7 @@ pub(super) fn run_import(
     tm: &Arc<TranscriptionManager>,
     meeting_id: &str,
     path: &Path,
-    range: Option<(u64, u64)>,
+    range: Option<(u64, Option<u64>)>,
     job: &Arc<JobHandle>,
 ) -> Result<(), String> {
     let import_started = std::time::Instant::now();

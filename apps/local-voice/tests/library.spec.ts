@@ -187,6 +187,13 @@ test.beforeEach(async ({ page }) => {
                 duration_ms: (w.__jobDuration as Record<string, number>)[id] ?? null,
               })),
             ];
+          if (cmd === "meetings_get_status") {
+            const id = String(args?.meetingId);
+            if (id === "m1") return "processing";
+            return (w.__jobs as string[]).includes(id)
+              ? ((w.__jobStatus as Record<string, string>)[id] ?? "processing")
+              : null;
+          }
           if (cmd === "meetings_get_segments")
             return (w.__segments as Record<string, unknown[]>)[String(args?.meetingId)] ?? [];
           if (cmd === "plugin:dialog|open")
@@ -1778,12 +1785,12 @@ test("Lange Einzeldatei: bis zu vier Abschnitte, ein Hörbuch-Auftrag je Bereich
   const path = "C:/lib/x/audio/hoerbuch.mp3";
   expect(parts.every((p) => p.path === path)).toBe(true);
   // 100 min / 4 = 25 min je Abschnitt, 2 s Überlappung an inneren Grenzen.
-  expect(parts.map((p) => p.startMs)).toEqual([0, 25 * MIN - 2000, 50 * MIN - 2000, 75 * MIN - 2000]);
+  expect(parts.map((p) => p.startMs)).toEqual([0, 25 * MIN - 12_000, 50 * MIN - 12_000, 75 * MIN - 12_000]);
   expect(parts.map((p) => p.endMs)).toEqual([
-    25 * MIN + 2000,
-    50 * MIN + 2000,
-    75 * MIN + 2000,
-    100 * MIN + MIN,
+    25 * MIN + 12_000,
+    50 * MIN + 12_000,
+    75 * MIN + 12_000,
+    null,
   ]);
   // Der Kern kennt nur diese Art von Auftrag für Bibliotheks-Teile.
   expect(await calls(page, "meetings_import_file")).toHaveLength(0);
@@ -1913,7 +1920,7 @@ test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async (
     w.__jobs.push("m51", "m52", "m53", "m54");
     w.__jobStatus["m51"] = "ready";
     w.__jobStatus["m52"] = "failed";
-    w.__jobStatus["m53"] = "processing";
+    w.__jobStatus["m53"] = "queued";
     w.__jobStatus["m54"] = "ready";
   });
   await page.setViewportSize({ width: 1440, height: 900 });

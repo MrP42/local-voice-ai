@@ -14,6 +14,7 @@ import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
 import { transcribeTracks } from "@/lib/library/importFile";
 import {
+  aggregateStatus,
   isSectioned,
   jobKey,
   jobsOfTrack,
@@ -51,15 +52,7 @@ export interface TranscriptJob {
 
 const READY = new Set(["ready", "done"]);
 
-/** Ein Status für alle Aufträge eines Buchs: schlechtester zuerst. */
-export function aggregateStatus(statuses: string[]): string {
-  if (statuses.some((s) => s === "failed")) return "failed";
-  if (statuses.some((s) => s === "missing")) return "missing";
-  if (statuses.length && statuses.every((s) => READY.has(s))) return "ready";
-  if (statuses.some((s) => s === "processing" || s === "transcribing" || READY.has(s)))
-    return "processing";
-  return statuses[0] ?? "queued";
-}
+export { aggregateStatus };
 
 /**
  * Bücher, Fortschritt und laufende Transkriptionen der Bibliothek.

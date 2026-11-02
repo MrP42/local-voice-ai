@@ -387,17 +387,19 @@ pub fn decode_media_to_wav_cancellable(
 
 /// Eingabeoptionen fuer einen Zeitbereich (ms): schnelles Suchen VOR `-i`
 /// (bei der Neukodierung samplegenau), dann die Laenge. Leer ohne Bereich.
-pub fn range_input_args(range: Option<(u64, u64)>) -> Vec<String> {
+pub fn range_input_args(range: Option<(u64, Option<u64>)>) -> Vec<String> {
     let Some((start_ms, end_ms)) = range else {
         return Vec::new();
     };
     let secs = |ms: u64| format!("{}.{:03}", ms / 1_000, ms % 1_000);
-    vec![
-        "-ss".to_string(),
-        secs(start_ms),
-        "-t".to_string(),
-        secs(end_ms.saturating_sub(start_ms)),
-    ]
+    let mut args = vec!["-ss".to_string(), secs(start_ms)];
+    // Ohne Ende kein `-t`: ffmpeg liest bis zum Dateiende (eine falsch geschaetzte
+    // Dauer bei VBR darf nichts am Ende abschneiden).
+    if let Some(end_ms) = end_ms {
+        args.push("-t".to_string());
+        args.push(secs(end_ms.saturating_sub(start_ms)));
+    }
+    args
 }
 
 /// Wie [`decode_media_to_wav_cancellable`], aber nur der Bereich `range`
@@ -406,7 +408,7 @@ pub fn decode_media_range_to_wav_cancellable(
     input: &Path,
     out_wav: &Path,
     sample_rate: u32,
-    range: Option<(u64, u64)>,
+    range: Option<(u64, Option<u64>)>,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
     let mut cmd = std::process::Command::new("ffmpeg");
@@ -485,7 +487,7 @@ pub fn ensure_wav_cancellable(
 pub fn ensure_wav_range_cancellable(
     input: &Path,
     sample_rate: u32,
-    range: Option<(u64, u64)>,
+    range: Option<(u64, Option<u64>)>,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(PathBuf, Option<tempfile::TempPath>), String> {
     if range.is_none() {
@@ -530,12 +532,17 @@ mod tests {
     fn a_range_becomes_seek_and_length_before_the_input() {
         assert!(range_input_args(None).is_empty());
         assert_eq!(
-            range_input_args(Some((1_198_000, 2_402_500))),
+            range_input_args(Some((1_198_000, Some(2_402_500)))),
             vec!["-ss", "1198.000", "-t", "1204.500"]
         );
         assert_eq!(
-            range_input_args(Some((90, 100))),
+            range_input_args(Some((90, Some(100)))),
             vec!["-ss", "0.090", "-t", "0.010"]
+        );
+        assert_eq!(
+            range_input_args(Some((1_198_000, None))),
+            vec!["-ss", "1198.000"],
+            "letzter Abschnitt: keine Obergrenze"
         );
     }
 

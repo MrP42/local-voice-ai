@@ -42,7 +42,8 @@ pub const KIND_MEETING: &str = "meeting";
 pub const KIND_AUDIOBOOK: &str = "audiobook";
 
 /// Zeitbereich einer Datei in Millisekunden (Anfang, Ende ausschließlich).
-pub type MsRange = (u64, u64);
+/// Das Ende `None` = bis zum Dateiende (letzter Abschnitt, ohne Obergrenze).
+pub type MsRange = (u64, Option<u64>);
 
 /// Status der Besprechung, solange ihre Datei in der Warteschlange steht.
 pub const STATUS_QUEUED: &str = "queued";
@@ -141,7 +142,7 @@ impl MeetingStore {
         consent_confirmed_at: Option<i64>,
         range: Option<MsRange>,
     ) -> Result<Meeting> {
-        if range.is_some_and(|(start, end)| end <= start) {
+        if range.is_some_and(|(start, end)| end.is_some_and(|end| end <= start)) {
             return Err(anyhow!("range_invalid"));
         }
         let mut conn = self.get_connection()?;
@@ -168,7 +169,7 @@ impl MeetingStore {
                 id,
                 KIND_AUDIOBOOK,
                 range.map(|(s, _)| s as i64),
-                range.map(|(_, e)| e as i64)
+                range.and_then(|(_, e)| e).map(|e| e as i64)
             ],
         )?;
         let seq: i64 = tx.query_row(
@@ -306,16 +307,19 @@ impl MeetingStore {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        Ok(match row {
-            None => (KIND_MEETING.to_string(), None),
-            Some((kind, start, end)) => (
-                kind,
-                match (start, end) {
-                    (Some(s), Some(e)) if s >= 0 && e > s => Some((s as u64, e as u64)),
-                    _ => None,
-                },
-            ),
-        })
+        match row {
+            None => Ok((KIND_MEETING.to_string(), None)),
+            Some((kind, start, end)) => {
+                let range = match (start, end) {
+                    (None, None) => None,
+                    (Some(s), None) if s >= 0 => Some((s as u64, None)),
+                    (Some(s), Some(e)) if s >= 0 && e > s => Some((s as u64, Some(e as u64))),
+                    // Ein beschaedigter Bereich darf nie zur ganzen Datei werden.
+                    _ => return Err(anyhow!("range_invalid")),
+                };
+                Ok((kind, range))
+            }
+        }
     }
 
     /// wartend -> laufend (Besprechung `processing`), atomar. `false`, wenn die
@@ -894,7 +898,7 @@ mod tests {
                 "abschnitt",
                 "C:/in/buch.mp3",
                 Some(1),
-                Some((1_198_000, 2_402_000)),
+                Some((1_198_000, Some(2_402_000))),
             )
             .unwrap()
             .id;
@@ -922,7 +926,10 @@ mod tests {
         );
         assert_eq!(
             s.queue_part(&section).unwrap(),
-            (KIND_AUDIOBOOK.to_string(), Some((1_198_000, 2_402_000)))
+            (
+                KIND_AUDIOBOOK.to_string(),
+                Some((1_198_000, Some(2_402_000)))
+            )
         );
         // Lauf beendet (Zeile weg), dann "Fortsetzen": Art und Bereich bleiben.
         assert!(s.queue_mark_running(&section).unwrap());
@@ -938,19 +945,56 @@ mod tests {
         assert!(row.is_audiobook());
         assert_eq!(
             s.queue_part(&section).unwrap().1,
-            Some((1_198_000, 2_402_000))
+            Some((1_198_000, Some(2_402_000)))
         );
     }
 
     #[test]
     fn an_empty_or_reversed_range_enqueues_nothing() {
         let (_dir, s) = tmp_store();
-        for range in [(5, 5), (9, 1)] {
+        for range in [(5, Some(5)), (9, Some(1))] {
             let err = s
                 .queue_enqueue_part("x", "C:/in/x.mp3", Some(1), Some(range))
                 .unwrap_err();
             assert_eq!(err.to_string(), "range_invalid");
         }
         assert!(s.queue_rows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_open_ended_range_is_kept_and_a_corrupt_one_is_an_error_not_a_meeting() {
+        let (_dir, s) = tmp_store();
+        let last = s
+            .queue_enqueue_part("letzter", "C:/in/b.mp3", Some(1), Some((3_000_000, None)))
+            .unwrap()
+            .id;
+        assert_eq!(
+            s.queue_part(&last).unwrap(),
+            (KIND_AUDIOBOOK.to_string(), Some((3_000_000, None)))
+        );
+        s.get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE import_part SET range_end_ms = 5 WHERE meeting_id = ?1",
+                params![last],
+            )
+            .unwrap();
+        assert!(s.queue_part(&last).is_err());
+    }
+
+    #[test]
+    fn deleting_a_meeting_removes_its_part_row() {
+        let (_dir, s) = tmp_store();
+        let id = s
+            .queue_enqueue_part("x", "C:/in/x.mp3", Some(1), Some((0, Some(10))))
+            .unwrap()
+            .id;
+        s.soft_delete_meeting(&id).unwrap();
+        let n: i64 = s
+            .get_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM import_part", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }

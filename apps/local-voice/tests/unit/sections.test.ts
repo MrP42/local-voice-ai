@@ -2,12 +2,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  aggregateStatus,
   jobKey,
   jobsOfTrack,
   mergeSections,
   planSections,
   SECTION_OVERLAP_MS,
-  type SectionResult,
 } from "../../src/lib/library/sections.ts";
 
 const MIN = 60_000;
@@ -55,10 +55,7 @@ test("die Abschnitte schließen lückenlos an und überlappen an inneren Grenzen
   }
   const last = plan[plan.length - 1];
   assert.equal(last.to_ms, null);
-  assert.ok(
-    last.end_ms >= duration,
-    "das letzte Stück reicht bis zum Dateiende",
-  );
+  assert.equal(last.end_ms, null, "letzter Abschnitt: keine Obergrenze");
 });
 
 const seg = (text: string, start_ms: number, end_ms: number) => ({
@@ -66,147 +63,168 @@ const seg = (text: string, start_ms: number, end_ms: number) => ({
   start_ms,
   end_ms,
 });
+const S = 1000;
+const G = 1000 * S; // Naht bei 1000 s
 
-function sections(): SectionResult[] {
-  // Grenze bei 100 s; Abschnitt B beginnt bei 98 s (Versatz), A endet bei 102 s.
-  return [
-    {
-      part: {
-        job: "a",
-        start_ms: 0,
-        end_ms: 102_000,
-        from_ms: 0,
-        to_ms: 100_000,
-      },
-      segments: [
-        seg("Erster Satz.", 0, 10_000),
-        seg("Zweiter Satz vor der Grenze.", 90_000, 99_000),
-        seg("Dritter Satz an der Grenze und danach.", 99_000, 102_000),
-      ],
-    },
-    {
-      part: {
-        job: "b",
-        start_ms: 98_000,
-        end_ms: 202_000,
-        from_ms: 100_000,
-        to_ms: null,
-      },
-      // relativ zu 98 s: der zweite Satz aus A steht hier nicht, der dritte schon.
-      segments: [
-        seg("Dritter Satz an der Grenze und danach.", 1_000, 4_000),
-        seg("Vierter Satz.", 5_000, 15_000),
-      ],
-    },
-  ];
-}
+/** A zuständig bis G, B ab G; beide dekodieren 12 s über die Naht. */
+const partA = {
+  job: "a",
+  start_ms: 0,
+  end_ms: G + 12 * S,
+  from_ms: 0,
+  to_ms: G,
+};
+const partB = {
+  job: "b",
+  start_ms: G - 12 * S,
+  end_ms: null,
+  from_ms: G,
+  to_ms: null,
+};
 
-test("Segmente werden um den Versatz des Abschnitts verschoben", () => {
-  const merged = mergeSections(sections());
-  const fourth = merged.find((s) => s.text === "Vierter Satz.");
-  assert.deepEqual(fourth, seg("Vierter Satz.", 103_000, 113_000));
+/** Alle Wörter genau einmal und in Reihenfolge? */
+const textOf = (segments: { text: string }[]) =>
+  segments.map((s) => s.text).join(" ");
+
+test("letzter Abschnitt ohne Obergrenze, die anderen mit 12 s Überlappung", () => {
+  const plan = planSections(95 * MIN);
+  assert.equal(SECTION_OVERLAP_MS, 12_000);
+  assert.equal(plan[plan.length - 1].end_ms, null);
+  assert.equal(plan[0].end_ms, (plan[0].to_ms as number) + SECTION_OVERLAP_MS);
 });
 
-test("ein an der Grenze doppelt erkannter Satz kommt nur einmal vor", () => {
-  const merged = mergeSections(sections());
-  assert.deepEqual(
-    merged.map((s) => s.text),
-    [
-      "Erster Satz.",
-      "Zweiter Satz vor der Grenze.",
-      "Dritter Satz an der Grenze und danach.",
-      "Vierter Satz.",
-    ],
+test("Naht, Fall 1: A=[G−6, G+1,5], B=[G−2, G+5] - jedes Wort genau einmal", () => {
+  const merged = mergeSections([
+    {
+      part: partA,
+      segments: [
+        seg("Es war einmal vor langer Zeit", 900 * S, 950 * S),
+        seg(
+          "wir gingen gestern zusammen in den Park und dann sahen wir einen Hund",
+          G - 6 * S,
+          G + 1500,
+        ),
+      ],
+    },
+    {
+      part: partB,
+      // relativ zu G−12 s
+      segments: [
+        seg(
+          "sahen wir einen Hund der laut bellte und rannte weg",
+          10 * S,
+          17 * S,
+        ),
+        seg("Danach war es still.", 18 * S, 20 * S),
+      ],
+    },
+  ]);
+  assert.equal(
+    textOf(merged),
+    "Es war einmal vor langer Zeit wir gingen gestern zusammen in den Park und dann sahen wir einen Hund der laut bellte und rannte weg Danach war es still.",
+  );
+  for (let i = 1; i < merged.length; i++)
+    assert.ok(merged[i].start_ms >= merged[i - 1].start_ms, "Zeiten steigen");
+});
+
+test("Naht, Fall 2: A=[G−1, G+2], B=[G−2, G+0,5] - kein Loch, kein Doppel", () => {
+  const merged = mergeSections([
+    {
+      part: partA,
+      segments: [seg("das ist ein wichtiger Satz heute", G - 1 * S, G + 2 * S)],
+    },
+    {
+      part: partB,
+      segments: [
+        seg("wir haben das ist ein wichtiger", 10 * S, 12500),
+        seg("Satz heute und es geht weiter", 12500, 16 * S),
+      ],
+    },
+  ]);
+  assert.equal(
+    textOf(merged),
+    "das ist ein wichtiger Satz heute und es geht weiter",
   );
 });
 
-test("ein Segment gehört dem Abschnitt, in dessen Bereich seine Mitte liegt", () => {
-  const parts: SectionResult[] = [
-    {
-      part: {
-        job: "a",
-        start_ms: 0,
-        end_ms: 102_000,
-        from_ms: 0,
-        to_ms: 100_000,
-      },
-      segments: [seg("nur im Überlapp von A", 100_500, 101_500)],
-    },
-    {
-      part: {
-        job: "b",
-        start_ms: 98_000,
-        end_ms: 200_000,
-        from_ms: 100_000,
-        to_ms: null,
-      },
-      segments: [seg("nur im Überlapp von B", 0, 1_500)],
-    },
-  ];
-  // A: Mitte 101 s ≥ 100 s -> weg. B: Mitte 98,75 s < 100 s -> weg.
-  assert.deepEqual(mergeSections(parts), []);
-});
-
-test("verschieden geschnittene Segmente derselben Rede: das längere bleibt", () => {
-  // A: Mitte 98,45 s (bleibt in A). B: relativ 1–4 s + 98 s Versatz = 99–102 s,
-  // Mitte 100,5 s (bleibt in B). Beide überlappen zeitlich und sagen dasselbe.
+test("ohne gemeinsame Wörter: Schnitt an der Segmentgrenze von B, ohne Doppel und Loch", () => {
   const merged = mergeSections([
     {
-      part: {
-        job: "a",
-        start_ms: 0,
-        end_ms: 102_000,
-        from_ms: 0,
-        to_ms: 100_000,
-      },
-      segments: [seg("und dann ging er nach Hause", 97_000, 99_900)],
+      part: partA,
+      segments: [
+        seg("erster Teil vor der Naht", G - 8 * S, G - 3 * S),
+        seg("völlig anderer Text bei A", G - 3 * S, G + 4 * S),
+      ],
     },
     {
-      part: {
-        job: "b",
-        start_ms: 98_000,
-        end_ms: 200_000,
-        from_ms: 100_000,
-        to_ms: null,
-      },
-      segments: [seg("Und dann ging er nach Hause.", 1_000, 4_000)],
+      part: partB,
+      segments: [
+        seg("noch ein Satz davor", 6 * S, 9 * S),
+        seg("dies hört B ganz anders", 12 * S + 100, 18 * S),
+        seg("und so weiter", 18 * S, 20 * S),
+      ],
     },
   ]);
-  assert.equal(merged.length, 1);
+  // Naht G = 12 s in B: die nächste B-Grenze liegt bei 12,1 s; A wird dort gekürzt.
+  const text = textOf(merged);
+  assert.ok(text.endsWith("dies hört B ganz anders und so weiter"));
+  assert.ok(!text.includes("noch ein Satz davor"), "vor dem Schnitt kommt A");
+  assert.ok(text.startsWith("erster Teil vor der Naht"));
+  for (let i = 1; i < merged.length; i++)
+    assert.ok(
+      merged[i].start_ms >= merged[i - 1].end_ms - 1,
+      "keine Überlappung",
+    );
 });
 
-test("verschiedene Rede, die sich zeitlich überlappt, bleibt vollständig", () => {
-  const merged = mergeSections([
-    {
-      part: {
-        job: "a",
-        start_ms: 0,
-        end_ms: 102_000,
-        from_ms: 0,
-        to_ms: 100_000,
+test("ein Abschnitt allein bleibt unverändert", () => {
+  const only = [seg("Eins.", 0, 1_000), seg("Zwei.", 2_000, 3_000)];
+  assert.deepEqual(
+    mergeSections([
+      {
+        part: { job: "x", start_ms: 0, end_ms: null, from_ms: 0, to_ms: null },
+        segments: only,
       },
-      segments: [seg("Guten Morgen miteinander", 97_000, 99_900)],
-    },
-    {
-      part: {
-        job: "b",
-        start_ms: 98_000,
-        end_ms: 200_000,
-        from_ms: 100_000,
-        to_ms: null,
-      },
-      segments: [seg("heute geht es um etwas ganz anderes", 2_500, 6_000)],
-    },
-  ]);
-  assert.equal(merged.length, 2);
+    ]),
+    only,
+  );
 });
 
-test("ein Abschnitt ohne Überlappung bleibt unverändert", () => {
-  const only: SectionResult = {
-    part: { job: "x", start_ms: 0, end_ms: null, from_ms: 0, to_ms: null },
-    segments: [seg("Eins.", 0, 1_000), seg("Zwei.", 2_000, 3_000)],
+test("drei Abschnitte: beide Nähte werden einzeln zusammengesetzt", () => {
+  const G2 = 2 * G;
+  const mid = {
+    job: "m",
+    start_ms: G - 12 * S,
+    end_ms: G2 + 12 * S,
+    from_ms: G,
+    to_ms: G2,
   };
-  assert.deepEqual(mergeSections([only]), only.segments);
+  const last = {
+    job: "c",
+    start_ms: G2 - 12 * S,
+    end_ms: null,
+    from_ms: G2,
+    to_ms: null,
+  };
+  const merged = mergeSections([
+    {
+      part: partA,
+      segments: [seg("a1 a2 a3 a4 a5 n1 n2 n3 n4 n5", G - 10 * S, G + 5 * S)],
+    },
+    {
+      part: mid,
+      segments: [
+        seg("n1 n2 n3 n4 n5 b1 b2 b3 b4 b5", 2 * S, 17 * S),
+        // abs G2−6 s … G2+1 s
+        seg("b6 m1 m2 m3 m4 m5", G + 6 * S, G + 13 * S),
+      ],
+    },
+    { part: last, segments: [seg("m1 m2 m3 m4 m5 z1 z2", 8 * S, 16 * S)] },
+  ]);
+  assert.equal(
+    textOf(merged),
+    "a1 a2 a3 a4 a5 n1 n2 n3 n4 n5 b1 b2 b3 b4 b5 b6 m1 m2 m3 m4 m5 z1 z2",
+  );
 });
 
 test("jobsOfTrack: Abschnitte, sonst der Einzel-Auftrag, sonst keiner", () => {
@@ -223,4 +241,23 @@ test("jobsOfTrack: Abschnitte, sonst der Einzel-Auftrag, sonst keiner", () => {
     parts,
   );
   assert.equal(jobKey({ transcript_job: null, transcript_jobs: parts }), "a,b");
+});
+
+test("aggregateStatus: fehlgeschlagen erst, wenn nichts mehr in Arbeit ist", () => {
+  assert.equal(
+    aggregateStatus(["ready", "failed", "processing"]),
+    "processing",
+  );
+  assert.equal(aggregateStatus(["failed", "queued"]), "queued");
+  assert.equal(aggregateStatus(["ready", "failed", "queued"]), "processing");
+  assert.equal(aggregateStatus(["ready", "failed", "ready"]), "failed");
+  assert.equal(
+    aggregateStatus(["ready", "cancelled", "ready"]),
+    "failed",
+    "cancelled wie failed",
+  );
+  assert.equal(aggregateStatus(["ready", "missing"]), "missing");
+  assert.equal(aggregateStatus(["ready", "done"]), "ready");
+  assert.equal(aggregateStatus(["queued", "queued"]), "queued");
+  assert.equal(aggregateStatus([]), "queued");
 });

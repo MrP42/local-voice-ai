@@ -2255,6 +2255,19 @@ async meetingsImportAudiobookPart(path: string, startMs: number | null, endMs: n
 }
 },
 /**
+ * lva#208: Stand einer Besprechung (z. B. Hilfs-Auftrag eines Hörbuch-Teils)
+ * einzeln abgefragt. `Ok(None)` heißt wirklich "nicht gefunden"; ein
+ * Lesefehler ist ein `Err` und darf nie als "fehlt" gelten.
+ */
+async meetingsGetStatus(meetingId: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_get_status", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
  * die `ImportQueueEvent` aktuell).
  */
@@ -10903,21 +10916,21 @@ source_language: string | null;
  */
 flagged: number }
 /**
- * Der laufende (oder zuletzt beendete) Uebersetzungsauftrag. Er lebt im
- * Backend: schliesst die Oberflaeche, laeuft er weiter, und sie holt sich den
+ * Der laufende (oder zuletzt beendete) Übersetzungsauftrag. Er lebt im
+ * Backend: schließt die Oberfläche, läuft er weiter, und sie holt sich den
  * Stand mit `tts_translate_job` wieder.
  */
 export type TranslateJob = { lang: string; 
 /**
- * Schluessel des Originaltexts (wie der Dateiname im Ganztext-Cache).
+ * Schlüssel des Originaltexts (wie der Dateiname im Ganztext-Cache).
  */
 textKey: string; done: number; total: number; chapters: number; workers: WorkerProgress[]; 
 /**
- * Bisher zusammenhaengend fertiger Text (vom Anfang an lueckenlos).
+ * Bisher zusammenhängend fertiger Text (vom Anfang an lückenlos).
  */
 partial: string; error: string | null; running: boolean; 
 /**
- * Beanstandungen der Schlusspruefung (Kapitel/Abschnitt), die trotz
+ * Beanstandungen der Schlussprüfung (Kapitel/Abschnitt), die trotz
  * zweitem Versuch blieben.
  */
 warnings: string[] }

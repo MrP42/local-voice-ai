@@ -405,6 +405,26 @@ pub async fn meetings_import_audiobook_part(
         .map(|meeting| meeting.id)
 }
 
+/// lva#208: Stand einer Besprechung (z. B. Hilfs-Auftrag eines Hörbuch-Teils)
+/// einzeln abgefragt. `Ok(None)` heißt wirklich "nicht gefunden"; ein
+/// Lesefehler ist ein `Err` und darf nie als "fehlt" gelten.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_get_status(
+    app: tauri::AppHandle,
+    meeting_id: String,
+) -> Result<Option<String>, String> {
+    let store = store_of(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        store
+            .get_meeting(&meeting_id)
+            .map(|m| m.map(|m| m.status))
+            .map_err(|e| format!("meetings_get_status_failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("meetings_get_status panicked: {e}"))?
+}
+
 // M6-P6a: Export einer ganzen Besprechung.
 
 /// Schreibt die Besprechung in eine vom Nutzer gewählte Datei; das Format

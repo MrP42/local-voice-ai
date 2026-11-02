@@ -20,17 +20,15 @@ export const SECTION_THRESHOLD_MS = 40 * 60_000;
 export const SECTION_TARGET_MS = 20 * 60_000;
 /** So viele Abschnitte laufen höchstens gleichzeitig (Grenze der Warteschlange). */
 export const MAX_SECTIONS = 4;
-/** Überlappung an jeder inneren Grenze. */
-export const SECTION_OVERLAP_MS = 2_000;
-/** Reserve hinter der erwarteten Dauer: ffmpeg endet ohnehin am Dateiende. */
-const END_MARGIN_MS = 60_000;
+/** Überlappung an jeder inneren Grenze (jeder Bereich reicht so weit über sie hinaus). */
+export const SECTION_OVERLAP_MS = 12_000;
 
 /** Ein zu startender Abschnitt: Bereich der Datei und Zuständigkeit. */
 export interface SectionPlan {
   /** Beginn des dekodierten Bereichs (ms). */
   start_ms: number;
-  /** Ende des dekodierten Bereichs (ms). */
-  end_ms: number;
+  /** Ende des dekodierten Bereichs (ms); `null` beim letzten Abschnitt: bis zum Dateiende, ohne Obergrenze. */
+  end_ms: number | null;
   /** Zuständig ab hier (ms). */
   from_ms: number;
   /** Zuständig bis hier (ausschließlich); `null` beim letzten Abschnitt. */
@@ -58,9 +56,7 @@ export function planSections(
     const last = k === n - 1;
     return {
       start_ms: k === 0 ? 0 : bounds[k] - SECTION_OVERLAP_MS,
-      end_ms: last
-        ? Math.ceil(durationMs) + END_MARGIN_MS
-        : bounds[k + 1] + SECTION_OVERLAP_MS,
+      end_ms: last ? null : bounds[k + 1] + SECTION_OVERLAP_MS,
       from_ms: bounds[k],
       to_ms: last ? null : bounds[k + 1],
     };
@@ -105,33 +101,161 @@ export const isSectioned = (
   track: Pick<AudioTrack, "transcript_jobs">,
 ): boolean => !!track.transcript_jobs?.length;
 
-const wordsOf = (text: string): string[] =>
-  text
-    .toLocaleLowerCase("de")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/)
-    .filter(Boolean);
+/** Ein Wort mit geschätzter Zeit (Segmentzeit anteilig auf die Wörter verteilt). */
+interface Word {
+  text: string;
+  norm: string;
+  /** Geschätzte Zeit in der Datei (ms). */
+  t: number;
+  seg: number;
+}
+
+/** Ein Segment eines Abschnitts mit Zeiten in der Datei und seinen Wörtern. */
+interface Seg {
+  text: string;
+  start_ms: number;
+  end_ms: number;
+  /** Erstes Wort und Zahl der Wörter in der Wortliste des Abschnitts. */
+  first: number;
+  count: number;
+}
+
+interface Prepared {
+  words: Word[];
+  segs: Seg[];
+  part: TrackJob;
+}
+
+const normWord = (w: string): string =>
+  w.toLocaleLowerCase("de").replace(/[^\p{L}\p{N}]/gu, "");
+
+function prepare({ part, segments }: SectionResult): Prepared {
+  const words: Word[] = [];
+  const segs: Seg[] = [];
+  const sorted = [...segments].sort((a, b) => a.start_ms - b.start_ms);
+  for (const s of sorted) {
+    const start = s.start_ms + part.start_ms;
+    const end = s.end_ms + part.start_ms;
+    const tokens = s.text.split(/\s+/).filter(Boolean);
+    const first = words.length;
+    tokens.forEach((text, i) =>
+      words.push({
+        text,
+        norm: normWord(text),
+        t: start + ((i + 0.5) / tokens.length) * (end - start),
+        seg: segs.length,
+      }),
+    );
+    segs.push({
+      text: s.text,
+      start_ms: start,
+      end_ms: end,
+      first,
+      count: tokens.length,
+    });
+  }
+  return { words, segs, part };
+}
+
+/** Wörter in einem Abstand, bis zu dem zwei Erkennungen als dieselbe Stelle gelten. */
+const MAX_SKEW_MS = 8_000;
+/** So viele gleiche Wörter hintereinander braucht eine Übereinstimmung an der Naht. */
+const MIN_RUN = 4;
 
 /**
- * Sagen beide Segmente dasselbe? Das kürzere muss (fast) vollständig im
- * längeren stecken: mindestens 80 % seiner Wörter kommen im längeren vor.
+ * Wo die Abschnitte `a` und `b` an der Naht `seam` (ms) ineinander übergehen:
+ * `a` behält die Wörter vor `cutA`, `b` die ab `cutB`.
+ *
+ * Gesucht wird die längste Folge gleicher Wörter, die in beiden Abschnitten im
+ * Überlappungsfenster vorkommt (der längste Suffix von `a` vor der Naht, der
+ * Präfix von `b` ist, mit etwas Toleranz an den Rändern). Geschnitten wird in
+ * der Mitte dieser Folge: jedes Wort steht genau einmal, nichts fehlt.
+ * Ohne Treffer: Schnitt an der Segmentgrenze von `b`, die der Naht am nächsten
+ * liegt; `a` wird dort anteilig nach Wortzeiten gekürzt.
  */
-function sameSpeech(a: string, b: string): boolean {
-  const [short, long] = [wordsOf(a), wordsOf(b)].sort(
-    (x, y) => x.length - y.length,
+function findSeam(
+  a: Prepared,
+  b: Prepared,
+  seam: number,
+): { cutA: number; cutB: number } {
+  const lo = seam - SECTION_OVERLAP_MS - 1_000;
+  const hi = seam + SECTION_OVERLAP_MS + 1_000;
+  const a0 = Math.max(
+    0,
+    a.words.findIndex((w) => w.t >= lo),
   );
-  if (!short.length) return true;
-  const pool = new Map<string, number>();
-  for (const w of long) pool.set(w, (pool.get(w) ?? 0) + 1);
-  let hit = 0;
-  for (const w of short) {
-    const left = pool.get(w) ?? 0;
-    if (left > 0) {
-      hit++;
-      pool.set(w, left - 1);
+  const aStart = a.words.some((w) => w.t >= lo) ? a0 : a.words.length;
+  let bEnd = b.words.findIndex((w) => w.t > hi);
+  if (bEnd < 0) bEnd = b.words.length;
+  // Längste gemeinsame Folge (dynamische Programmierung, Fenster ~100 Wörter).
+  let best = { len: 0, i: -1, j: -1, dist: Infinity };
+  let prev = new Array<number>(bEnd + 1).fill(0);
+  for (let i = aStart; i < a.words.length; i++) {
+    const cur = new Array<number>(bEnd + 1).fill(0);
+    for (let j = 1; j <= bEnd; j++) {
+      const wa = a.words[i];
+      const wb = b.words[j - 1];
+      if (
+        !wa.norm ||
+        wa.norm !== wb.norm ||
+        Math.abs(wa.t - wb.t) > MAX_SKEW_MS
+      )
+        continue;
+      cur[j] = prev[j - 1] + 1;
+      const len = cur[j];
+      const mid = (wa.t + wb.t) / 2;
+      const dist = Math.abs(mid - seam);
+      if (len > best.len || (len === best.len && dist < best.dist))
+        best = { len, i, j: j - 1, dist };
     }
+    prev = cur;
   }
-  return hit / short.length >= 0.8;
+  if (best.len >= MIN_RUN) {
+    const half = Math.floor(best.len / 2);
+    return {
+      cutA: best.i - best.len + 1 + half,
+      cutB: best.j - best.len + 1 + half,
+    };
+  }
+  // Rückfall: Segmentgrenze von b nahe der Naht.
+  let pick = -1;
+  for (let k = 0; k < b.segs.length; k++) {
+    if (!b.segs[k].count) continue;
+    if (
+      pick < 0 ||
+      Math.abs(b.segs[k].start_ms - seam) <
+        Math.abs(b.segs[pick].start_ms - seam)
+    )
+      pick = k;
+  }
+  if (pick < 0) return { cutA: a.words.length, cutB: b.words.length };
+  const at = b.segs[pick].start_ms;
+  const cutA = a.words.findIndex((w) => w.t >= at);
+  return { cutA: cutA < 0 ? a.words.length : cutA, cutB: b.segs[pick].first };
+}
+
+/** Segmente des Abschnitts, beschränkt auf die Wörter `[from, to)`; Zeiten anteilig. */
+function slice(p: Prepared, from: number, to: number): TranscriptSegment[] {
+  const out: TranscriptSegment[] = [];
+  for (const s of p.segs) {
+    const lo = Math.max(from, s.first);
+    const hi = Math.min(to, s.first + s.count);
+    if (hi <= lo) continue;
+    if (lo === s.first && hi === s.first + s.count) {
+      out.push({ text: s.text, start_ms: s.start_ms, end_ms: s.end_ms });
+      continue;
+    }
+    const len = s.end_ms - s.start_ms;
+    out.push({
+      text: p.words
+        .slice(lo, hi)
+        .map((w) => w.text)
+        .join(" "),
+      start_ms: s.start_ms + ((lo - s.first) / s.count) * len,
+      end_ms: s.start_ms + ((hi - s.first) / s.count) * len,
+    });
+  }
+  return out;
 }
 
 /** Ein Abschnitt mit seinen Segmenten (Zeiten relativ zu `start_ms`). */
@@ -144,42 +268,25 @@ export interface SectionResult {
  * Segmente der Abschnitte eines Teils zu einer Folge zusammenführen, Zeiten
  * relativ zum Beginn der Datei.
  *
- * 1. Jeder Abschnitt verschiebt seine Segmente um `start_ms`.
- * 2. Ein Segment bleibt nur im Abschnitt, in dessen Zuständigkeit
- *    (`from_ms` ≤ Mitte < `to_ms`) seine Mitte liegt. Damit entsteht an einer
- *    Grenze kein Segment doppelt, solange beide Abschnitte es gleich schneiden.
- * 3. Schneiden sie es verschieden, überlappen zwei Segmente derselben Rede
- *    zeitlich: das längere bleibt, das andere fällt weg.
+ * Jeder Abschnitt verschiebt seine Segmente um `start_ms`. An jeder Naht
+ * (Beginn der Zuständigkeit des nächsten Abschnitts) überlappen die beiden
+ * Erkennungen um etwa {@link SECTION_OVERLAP_MS} beidseits; sie werden auf
+ * Wortebene zusammengesetzt ({@link findSeam}), sodass kein Satzteil doppelt
+ * vorkommt oder fehlt, auch wenn beide Erkennungen verschieden schneiden.
  */
 export function mergeSections(sections: SectionResult[]): TranscriptSegment[] {
-  const kept: { segment: TranscriptSegment; section: number }[] = [];
-  sections.forEach(({ part, segments }, section) => {
-    for (const s of segments) {
-      const start = s.start_ms + part.start_ms;
-      const end = s.end_ms + part.start_ms;
-      const mid = (start + end) / 2;
-      if (mid < part.from_ms) continue;
-      if (part.to_ms != null && mid >= part.to_ms) continue;
-      kept.push({ segment: { ...s, start_ms: start, end_ms: end }, section });
-    }
-  });
-  kept.sort((a, b) => a.segment.start_ms - b.segment.start_ms);
-  const out: { segment: TranscriptSegment; section: number }[] = [];
-  for (const item of kept) {
-    const prev = out[out.length - 1];
-    const seam =
-      prev &&
-      prev.section !== item.section &&
-      item.segment.start_ms < prev.segment.end_ms &&
-      sameSpeech(prev.segment.text, item.segment.text);
-    if (!seam) {
-      out.push(item);
-      continue;
-    }
-    if (wordsOf(item.segment.text).length > wordsOf(prev.segment.text).length)
-      out[out.length - 1] = item;
+  const prepared = [...sections]
+    .sort((x, y) => x.part.from_ms - y.part.from_ms)
+    .map(prepare);
+  const keepFrom = prepared.map(() => 0);
+  const keepTo = prepared.map((p) => p.words.length);
+  for (let k = 0; k + 1 < prepared.length; k++) {
+    const seam = prepared[k + 1].part.from_ms;
+    const { cutA, cutB } = findSeam(prepared[k], prepared[k + 1], seam);
+    keepTo[k] = Math.max(cutA, keepFrom[k]);
+    keepFrom[k + 1] = cutB;
   }
-  return out.map((o) => o.segment);
+  return prepared.flatMap((p, k) => slice(p, keepFrom[k], keepTo[k]));
 }
 
 /** Status eines Auftrags, der erneut gestartet werden muss. */
@@ -188,3 +295,25 @@ export const RESTART_STATUSES: ReadonlySet<string> = new Set([
   "cancelled",
   "missing",
 ]);
+
+/** Status, mit dem ein Auftrag fertig ist. */
+const READY_STATUSES: ReadonlySet<string> = new Set(["ready", "done"]);
+
+/**
+ * Ein Status für alle Aufträge eines Buchs. „Fehlgeschlagen“ (oder „fehlt“)
+ * gilt erst, wenn nichts mehr in Arbeit ist: solange andere Abschnitte laufen
+ * oder warten, bleibt es „in Arbeit“, damit die Übernahme nicht zu früh endet
+ * und das Fortsetzen erst anbietet, wenn alles Übrige durch ist.
+ */
+export function aggregateStatus(statuses: string[]): string {
+  const bad = (s: string) => RESTART_STATUSES.has(s);
+  const active = statuses.filter((s) => !bad(s) && !READY_STATUSES.has(s));
+  if (active.length) {
+    const working = active.some((s) => s !== "queued") || statuses.some((s) => READY_STATUSES.has(s));
+    return working ? "processing" : "queued";
+  }
+  if (statuses.some((s) => s === "failed" || s === "cancelled")) return "failed";
+  if (statuses.some((s) => s === "missing")) return "missing";
+  if (statuses.length && statuses.every((s) => READY_STATUSES.has(s))) return "ready";
+  return statuses[0] ?? "queued";
+}

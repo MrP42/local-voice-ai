@@ -376,11 +376,17 @@ function withTracks(book: LibraryBook, tracks: AudioTrack[]): LibraryBook {
   return { ...book, audio: { ...book.audio, transcript_job: only.transcript_job ?? null } };
 }
 
-/** Status aller Hilfs-Besprechungen (Auftrags-ID → Status). */
-async function jobStatuses(): Promise<Map<string, string>> {
-  const r = await commands.meetingsList(0, 2000);
-  return new Map((r.status === "ok" ? (r.data ?? []) : []).map((m) => [m.id, m.status]));
+/**
+ * Stand eines Auftrags, einzeln abgefragt: der Status, `null` bei wirklich
+ * nicht gefunden, `undefined` bei einem Lesefehler (dann wird nichts neu gestartet).
+ */
+async function statusOfJob(job: string): Promise<string | null | undefined> {
+  const r = await commands.meetingsGetStatus(job);
+  return r.status === "ok" ? r.data : undefined;
 }
+
+/** Bücher, für die gerade ein Fortsetzen läuft (kein zweites parallel). */
+const resuming = new Set<string>();
 
 /**
  * Fehlende Teile transkribieren (lva#208): nur Aufträge, die fehlgeschlagen,
@@ -392,12 +398,33 @@ export async function resumeTranscription(
   bookId: string,
   onWarning?: (message: string) => void,
 ): Promise<LibraryBook | null> {
+  if (resuming.has(bookId)) return freshBook(bookId);
+  resuming.add(bookId);
+  try {
+    return await resumeLocked(bookId, onWarning);
+  } finally {
+    resuming.delete(bookId);
+  }
+}
+
+async function resumeLocked(
+  bookId: string,
+  onWarning?: (message: string) => void,
+): Promise<LibraryBook | null> {
   const book = await freshBook(bookId);
   if (!book?.audio) return book;
   // Ein fremder Text bleibt; an ein Transkript hängt nur noch Fehlendes.
   if (book.text && book.text.origin !== "transcript") return book;
-  const statuses = await jobStatuses();
-  const needsRestart = (job: string) => RESTART_STATUSES.has(statuses.get(job) ?? "missing");
+  // Jeder Auftrag einzeln: nur fehlgeschlagen, abgebrochen oder wirklich nicht
+  // gefunden zählt. Was wartet oder läuft, und was sich nicht lesen lässt, bleibt.
+  const ids = pendingJobs(book);
+  const statuses = new Map(
+    await Promise.all(ids.map(async (id) => [id, await statusOfJob(id)] as const)),
+  );
+  const needsRestart = (job: string) => {
+    const status = statuses.get(job);
+    return status === null || (typeof status === "string" && RESTART_STATUSES.has(status));
+  };
   const tracks = tracksOf(book.audio);
   const paths = pathsOf(book);
   const created: string[] = [];
