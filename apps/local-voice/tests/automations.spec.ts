@@ -13,6 +13,7 @@ import {
   wfCalls,
   type AutomationsMockOptions,
 } from "./automationsMock";
+import { geheZu } from "./profilmenue";
 
 // B7 (Goal Workflow-Automation, #67, AK9): die Oberflaeche „Automationen“ als Reiter auf der
 // Seite „Integrationen“ (kein neuer Seitenleisten-Eintrag): Ablauf aus Vorlage anlegen,
@@ -45,10 +46,7 @@ const setup = async (
   // Erst breit navigieren (schmal liegt „Integrationen“ hinter „Mehr“), dann verkleinern.
   await page.setViewportSize({ width: 1280, height: opts.height ?? 1000 });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await page.getByRole("tab", { name: "Automationen" }).click();
   await expect(page.getByTestId("automations-panel")).toBeVisible();
   if (opts.width) {

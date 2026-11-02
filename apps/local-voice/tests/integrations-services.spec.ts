@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { calls, installTauriMock } from "./calendarMock";
 import { installIntegrationsMock, NOW } from "./integrationsMock";
+import { geheZu } from "./profilmenue";
 
 // Welle 1 (Spec 2026-10-06-verbindungen-aktionen): Dienste im Katalog, Dialog je Dienst,
 // Schlüssel/Webhook als Geheimnis, Test ohne Testnachricht, Rechte je Dienst.
@@ -13,10 +14,7 @@ const setup = async (page: Page) => {
   await installIntegrationsMock(page, {});
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
-  await page
-    .getByRole("navigation")
-    .getByRole("button", { name: "Integrationen", exact: true })
-    .click();
+  await geheZu(page, "Integrationen");
   await page.getByTestId("integrations-add").click();
   await expect(page.getByTestId("catalog-services")).toBeVisible();
 };

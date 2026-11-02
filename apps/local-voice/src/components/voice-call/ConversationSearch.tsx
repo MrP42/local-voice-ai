@@ -176,7 +176,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
         <label className="relative block">
           <span className="sr-only">{labels.title}</span>
           <Search
-            className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text/50 pointer-events-none"
+            className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none"
             aria-hidden="true"
           />
           <input
@@ -194,7 +194,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
               setActive(0);
             }}
             placeholder={labels.placeholder}
-            className="w-full min-h-11 ps-9 pe-3 rounded-md border border-mid-gray/30 bg-transparent text-sm text-text placeholder:text-text/50 focus:outline-none focus:border-logo-primary"
+            className="w-full min-h-[44px] ps-9 pe-3 rounded-md border border-mid-gray/30 bg-transparent text-sm text-text placeholder:text-text-muted focus:outline-none focus:border-logo-primary"
           />
         </label>
         <div
@@ -204,7 +204,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
           className="mt-2 max-h-[min(50vh,360px)] overflow-y-auto"
         >
           {flat.length === 0 && (
-            <p className="m-0 px-2 py-4 text-sm text-text/60">
+            <p className="m-0 px-2 py-4 text-sm text-text-muted">
               {labels.noResults}
             </p>
           )}
@@ -215,7 +215,7 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
               aria-label={section.title}
               className="mb-2"
             >
-              <div className="px-2 pb-1 text-xs font-medium text-text/55">
+              <div className="px-2 pb-1 text-xs font-medium text-text-muted">
                 {section.title}
               </div>
               {section.rows.map((row) => {
@@ -230,14 +230,14 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
                       setActive(flat.findIndex((r) => r.key === row.key))
                     }
                     onClick={() => run(row)}
-                    className={`flex items-center gap-2.5 min-h-11 md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text ${
+                    className={`flex items-center gap-2.5 min-h-[44px] md:min-h-9 px-2 rounded-md cursor-pointer text-sm text-text ${
                       on ? "bg-mid-gray/15" : ""
                     }`}
                   >
-                    <span className="shrink-0 text-text/70">{row.icon}</span>
+                    <span className="shrink-0 text-text/85">{row.icon}</span>
                     <span className="flex-1 min-w-0 truncate">{row.label}</span>
                     {row.shortcut && (
-                      <kbd className="shrink-0 text-[11px] text-text/55 font-sans">
+                      <kbd className="shrink-0 text-[11px] text-text-muted font-sans">
                         {row.shortcut}
                       </kbd>
                     )}
@@ -263,10 +263,10 @@ export const ConversationSearch: React.FC<ConversationSearchProps> = ({
                 setActive(0);
                 inputRef.current?.focus();
               }}
-              className={`min-h-9 px-3 rounded-full text-xs cursor-pointer ${
+              className={`min-h-9 max-sm:min-h-[44px] px-3 rounded-full text-xs cursor-pointer ${
                 filter === tab.id
                   ? "bg-mid-gray/20 text-text font-semibold"
-                  : "text-text/70 hover:bg-mid-gray/10"
+                  : "text-text/85 hover:bg-mid-gray/10"
               }`}
             >
               {tab.label}

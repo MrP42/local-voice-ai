@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import AxeBuilder from "@axe-core/playwright";
 
 // Seite „Sprachgespraech“ gegen die Tauri-Attrappe: Infozeile, Text-Chat mit
 // Token/Abo-Hinweis, Fussleisten-Menue „Gespraech“, Plus-Menue, Einstellungen.
@@ -1188,7 +1189,9 @@ test.describe("Sprachgespraech Orchestrator", () => {
       settings: {
         ...LOCAL_SPEAKER,
         llm_active_model_id: "cli:sonnet",
-        function_models: { voice_speaker: { model_id: "loc:gemma", effort: null } },
+        function_models: {
+          voice_speaker: { model_id: "loc:gemma", effort: null },
+        },
       },
       config: orchestration({
         denkerModelId: "cli:sonnet",
@@ -2470,6 +2473,49 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(page.getByTestId("call-button")).toHaveCount(1);
   });
 
+  test("Schmal (390 px) haben Kopf- und Composer-Knöpfe mindestens 44×44 px und der Composer bleibt einzeilig", async ({
+    browser,
+  }) => {
+    const ctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      baseURL: test.info().project.use.baseURL,
+    });
+    const page = await ctx.newPage();
+    await install(page, "dark", { settings: TWO_MODELS });
+    await openPage(page);
+    await exchange(page, "Hallo KI", "Hallo zurück.");
+    await settled(page);
+    const buttons = [
+      historyToggle(page),
+      page.getByRole("button", { name: "Gesprächsoptionen" }),
+      page.getByRole("button", { name: /Info/ }).first(),
+      page.getByTestId("call-button"),
+      ...(await page.getByRole("toolbar").getByRole("button").all()),
+    ];
+    const rows = new Set<number>();
+    for (const b of buttons) {
+      await expect(b).toBeVisible();
+      const box = await b.boundingBox();
+      const name = (await b.getAttribute("aria-label")) ?? "?";
+      expect(box!.width, `${name} Breite`).toBeGreaterThanOrEqual(43.5);
+      expect(box!.height, `${name} Höhe`).toBeGreaterThanOrEqual(43.5);
+      // Vollständig sichtbar, nicht vom überlaufenden Kopf abgeschnitten.
+      expect(box!.x, `${name} links`).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width, `${name} rechts`).toBeLessThanOrEqual(390);
+    }
+    for (const b of await page.getByRole("toolbar").getByRole("button").all()) {
+      const box = await b.boundingBox();
+      rows.add(Math.round((box!.y + box!.height / 2) / 4));
+    }
+    expect(rows.size).toBe(1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await ctx.close();
+  });
+
   test("Kontextmenü „Gesprächsoptionen“ öffnet die Spalte und den Reiter Wissen", async ({
     page,
   }) => {
@@ -2694,7 +2740,7 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     ).toBeVisible();
   });
 
-  test("Suche: Strg+Umschalt+K öffnet sie, Strg+K bleibt der App-Suche; Strg+N legt ein neues Gespräch an", async ({
+  test("Suche: Strg+K und Strg+Umschalt+K öffnen sie; Strg+N legt ein neues Gespräch an", async ({
     page,
   }) => {
     await install(page);
@@ -2705,9 +2751,11 @@ test.describe("Sprachgespraech aufgeräumte Oberfläche", () => {
     await expect(search).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
+    // ADR-0027 E5: Strg+K gehört der Suche des Moduls (keine Titelleisten-Suche mehr).
     await page.keyboard.press("Control+k");
+    await expect(search).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
-    await expect(page.locator("[data-titlebar-search]")).toBeFocused();
     await message(page).click();
     await page.keyboard.press("Control+n");
     await expect(emptyTitle(page)).toBeVisible();
@@ -3007,3 +3055,41 @@ test.describe("Screenshots Oberfläche @screenshots", () => {
     }
   });
 });
+
+// Farbkontrast (WCAG AA) im Sprachgespräch: Liste, Infozeile, Chat und Composer,
+// hell und dunkel, breit und schmal.
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`axe color-contrast Sprachgespräch ${theme} ${width}`, async ({
+      browser,
+    }) => {
+      const ctx = await browser.newContext({
+        viewport: { width, height: 900 },
+        baseURL: test.info().project.use.baseURL,
+      });
+      const page = await ctx.newPage();
+      await install(page, theme, { settings: TWO_MODELS });
+      await openPage(page);
+      await exchange(page, "Hallo KI", "Hallo zurück.");
+      await settled(page);
+      const result = await new AxeBuilder({ page })
+        .exclude("[data-tabster-dummy]")
+        .withRules(["color-contrast"])
+        .analyze();
+      const findings = result.violations.flatMap((v) =>
+        v.nodes.map((n) => {
+          const d = (n.any[0]?.data ?? {}) as {
+            fgColor?: string;
+            bgColor?: string;
+            contrastRatio?: number;
+          };
+          return `${n.target.join(" ")} ${d.fgColor}/${d.bgColor} ${d.contrastRatio}`;
+        }),
+      );
+      // Die Prüfung muss die Seite wirklich erfasst haben.
+      expect(result.passes.some((p) => p.id === "color-contrast")).toBe(true);
+      expect(findings).toEqual([]);
+      await ctx.close();
+    });
+  }
+}

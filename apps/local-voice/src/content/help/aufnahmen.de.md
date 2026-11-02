@@ -37,9 +37,9 @@ Audio- und Videodateien sowie Untertitel (VTT, SRT) importierst du mit dem Symbo
 ## Notizen, KI-Notizen und Protokoll
 
 - **Notizen** sind dein Text und bleiben es. Die **KI-Notizen** entstehen aus deinen Stichpunkten und dem Transkript; jede Aussage hat einen Beleg, ein Klick darauf springt ins Transkript.
-- Das **Protokoll** (Zusammenfassung, Entscheidungen, Aufgaben) schreibt das Sprachmodell aus der Fußleiste. Dafür muss ein Sprachmodell geladen oder ein Anbieter verbunden sein.
+- Das **Protokoll** (Zusammenfassung, Entscheidungen, Aufgaben) schreibt das Sprachmodell aus dem Profilmenü (unten links, Modelle). Dafür muss ein Sprachmodell geladen oder ein Anbieter verbunden sein.
 - Die **Vorlage** legt die Abschnitte fest. Bei „Automatisch“ wählt die App eine passende; im Menü ☰ wählst du sie mit „Vorlage wählen …“, verwaltest sie mit „Vorlagen verwalten …“ oder erzeugst Notizen und Protokoll mit „Neu erzeugen mit Vorlage …“ neu.
-- Die Transkription läuft mit dem Modell aus der Fußleiste, oder mit einem eigenen unter Einstellungen, Diktat, Besprechungen.
+- Die Transkription läuft mit dem Diktatmodell aus dem Profilmenü (unten links, Modelle), oder mit einem eigenen unter Einstellungen, Diktat, Besprechungen.
 
 ## Fortschritt, Pause und Stopp
 

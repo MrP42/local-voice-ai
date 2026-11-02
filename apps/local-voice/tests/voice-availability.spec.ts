@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { geheZu } from "./profilmenue";
 
 // Issue #29 (Paket G2d): Stimmen werden nur angeboten, wenn ihre Laufzeit
 // vollstaendig und startfaehig ist; sonst stehen sie als "nicht eingerichtet"
@@ -234,7 +235,7 @@ test("settings: without Fish only a compact optional entry remains, with Fish th
     models: [],
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByText("Fish Speech (optional, nicht eingerichtet)")).toBeVisible();
   await expect(page.getByTestId("fish-dir-input")).toBeVisible();
@@ -251,7 +252,7 @@ test("settings: with Fish set up the port and server details are shown", async (
     models: [],
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "Einstellungen", exact: true }).first().click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByText("Server-Port")).toBeVisible();
   await expect(page.getByText("Fish Speech (optional, nicht eingerichtet)")).toHaveCount(0);
@@ -282,7 +283,7 @@ async function openModelsArea(page: import("@playwright/test").Page, area: strin
   // Die Anbieterliste liefert die Attrappe nur, wo die Verwaltung sie braucht (sonst bliebe die Vorlesen-Seite wie zuvor).
   if (sheet) await page.addInitScript(() => ((window as unknown as { __withProviders: boolean }).__withProviders = true));
   await page.goto("/");
-  await page.getByRole("button", { name: "Modelle", exact: true }).last().click();
+  await geheZu(page, "Modelle");
   await page.getByRole("tab", { name: area }).click();
   if (sheet) await openProviderSheet(page, sheet);
 }
@@ -409,7 +410,7 @@ test("help hides Fish content when Fish is not set up and shows it when it is", 
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Sprachausgabe einrichten");
   await expect(help).not.toContainText("Zwei Engines");
@@ -425,7 +426,7 @@ test("help shows the Fish sections once Fish is set up", async ({ page }) => {
     models: [],
   });
   await openReadAloud(page);
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   const help = page.getByTestId("help-panel").first();
   await expect(help).toContainText("Zwei Engines");
   await expect(help).not.toContainText("Sprachausgabe einrichten");

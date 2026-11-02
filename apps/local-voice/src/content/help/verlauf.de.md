@@ -8,7 +8,7 @@ Alles, was du diktiert hast, landet hier: Text, Aufnahme und Zeitpunkt.
 - **Aufnahme anhören**, wenn sie noch vorhanden ist. Wie lange Aufnahmen bleiben, legst du unter Einstellungen, Allgemein, Aufbewahrung fest.
 - **Neu transkribieren**, etwa mit einem besseren Modell.
 - **Merken**: markierte Einträge überleben die Aufbewahrungsfrist.
-- Der Knopf oben rechts öffnet den Aufnahmeordner im Dateimanager.
+- Der Knopf rechts im Seitenkopf öffnet den Aufnahmeordner im Dateimanager.
 
 ## Was nicht hier liegt
 

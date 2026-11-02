@@ -114,9 +114,10 @@ export const VoiceCallPage: React.FC = () => {
 
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   const keyNew = isMac ? "⌘N" : t("voiceCall.history.keyNew");
-  const keySearch = isMac ? "⌘⇧K" : t("voiceCall.history.keySearch");
+  const keySearch = isMac ? "⌘K" : t("voiceCall.history.keySearch");
 
-  // Strg+N: neues Gespräch, Strg+Umschalt+K: Suche. Strg+K bleibt der App-Suche der Titelleiste.
+  // Strg+N: neues Gespräch, Strg+K: Suche (ADR-0027 E5: Strg+K gehört der
+  // Suche des Moduls; Strg+Umschalt+K bleibt als früheres Kürzel erhalten).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(isMac ? e.metaKey : e.ctrlKey) || e.altKey) return;
@@ -127,8 +128,10 @@ export const VoiceCallPage: React.FC = () => {
           return;
         e.preventDefault();
         void store.getState().newConversation();
-      } else if (key === "k" && e.shiftKey) {
-        // Vor dem Strg+K-Handler der Titelleiste, der auch mit Umschalt anspringen würde.
+      } else if (key === "k") {
+        // Nicht über einem offenen Dialog (Profilmenü, Über, Einstellungen).
+        if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+          return;
         e.preventDefault();
         e.stopImmediatePropagation();
         setSearchOpen(true);
@@ -433,7 +436,7 @@ export const VoiceCallPage: React.FC = () => {
                   aria-label={t("voiceCall.history.toggle")}
                   title={t("voiceCall.history.toggle")}
                   onClick={toggleHistory}
-                  className="grid place-items-center w-8 h-8 shrink-0 rounded cursor-pointer text-text/70 hover:bg-mid-gray/15 hover:text-text"
+                  className="grid place-items-center w-8 h-8 max-sm:w-[44px] max-sm:h-[44px] shrink-0 rounded cursor-pointer text-text/85 hover:bg-mid-gray/15 hover:text-text"
                 >
                   <PanelLeftOpen className="w-4 h-4" aria-hidden="true" />
                 </button>
@@ -510,7 +513,7 @@ export const VoiceCallPage: React.FC = () => {
             }}
           >
             <span
-              className={`items-center gap-2 px-2 text-xs text-text/70 ${
+              className={`items-center gap-2 px-2 text-xs text-text/85 ${
                 inCall || textBusy ? "inline-flex" : "inline-flex max-sm:hidden"
               }`}
             >

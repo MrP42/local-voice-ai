@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { typesToShow } from "../src/components/settings/meetings/documents/docTypes";
+import { geheZu } from "./profilmenue";
 
 // Dokumenttypen neben dem Protokoll (Entwurf 2026-10-13, Etappe 1): Typleiste im
 // Reiter, "Neues Dokument" mit den zehn Typen, Erzeugen mit eigenem Befehl und
@@ -541,10 +542,7 @@ test("Export: Word/PDF ueber das gespeicherte Dokument mit Briefkopf", async ({
 const openOutput = async (page: Page) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Einstellungen", exact: true })
-    .first()
-    .click();
+  await geheZu(page, "Einstellungen");
   await page.getByRole("tab", { name: "Ausgabe", exact: true }).click();
   await expect(page.getByTestId("documents-settings")).toBeVisible();
 };

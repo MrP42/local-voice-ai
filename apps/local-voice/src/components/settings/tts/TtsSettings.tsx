@@ -33,7 +33,6 @@ import { PageShell } from "../../ui/PageShell";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
-import { IconButton } from "../../ui/IconButton";
 import { Dialog } from "../../ui/Dialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
@@ -73,6 +72,7 @@ import { voiceColor } from "@/lib/voices/palette";
 import { resolveSuggestion } from "./tags/AutoTagBar";
 import { ReadAloudActions } from "./ReadAloudActions";
 import { documentTitle, takeLibraryAutoplay } from "@/lib/library/books";
+import { ReaderDrop } from "@/components/library/ReaderDrop";
 import {
   clearResumePoint,
   loadResumePoint,
@@ -100,7 +100,6 @@ import {
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Glyph } from "../../ui/AudioPlayer";
 import {
-  HelpCircle,
   Mic,
   PanelRightClose,
   Replace,
@@ -2196,13 +2195,16 @@ export const TtsSettings = () => {
   textNowRef.current = text;
 
   /** Dokument als Originaltext laden (txt/md/pdf/docx/epub). */
-  const loadDocument = async () => {
-    const picked = await open({
-      multiple: false,
-      filters: [
-        { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
-      ],
-    });
+  const loadDocument = async (dropped?: string) => {
+    // Abgelegt per Drag & Drop (lva#152) oder über den Dateidialog.
+    const picked =
+      dropped ??
+      (await open({
+        multiple: false,
+        filters: [
+          { name: "Dokumente", extensions: ["txt", "md", "pdf", "docx", "epub"] },
+        ],
+      }));
     if (typeof picked !== "string") return;
     setLastError(null);
     setLoadingSource(true);
@@ -2646,9 +2648,10 @@ export const TtsSettings = () => {
       /* Ohne Untertitel (Patrick 01.11.): der Weg steht in der Hilfe. */
       fill
       actions={
-        <>
-          {/* Rueckgaengig / Wiederherstellen wie in Word: oben, nur Pfeile.
-              Die Reiterzeile ist in der schmalen Editorspalte schon voll. */}
+        // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
+        // etwas rueckgaengig zu machen gibt (ADR-0027 E6). Die Hilfe kommt
+        // ueber Profilmenue ▸ Hilfe oder F1 (E4), kein eigener Knopf.
+        viewMode === "edit" ? (
           <HistoryButtons
             past={history.past}
             future={history.future}
@@ -2657,20 +2660,13 @@ export const TtsSettings = () => {
             onRedo={history.redo}
             onJump={history.jump}
           />
-          <span className="mx-1 h-5 w-px bg-mid-gray/30" aria-hidden="true" />
-          <IconButton
-            onClick={() => {
-              setHelpOpenValue(helpOpen ? "0" : "1");
-            }}
-            label={t("help.open")}
-            icon={<HelpCircle width={20} height={20} aria-hidden="true" />}
-          />
-        </>
+        ) : undefined
       }
     >
       {/* Volle Hoehe: Seiten links, Text in der Mitte, Bedienung rechts vom
         Text, Dateien/Hilfe ganz rechts. Nur die Spalten scrollen, der Kopf
         und der Rahmen stehen (Entscheidung Patrick 14.09. abends). */}
+      <ReaderDrop onDocument={loadDocument} />
       <div
         ref={ws.ref}
         className="tts-workspace tts-workspace--fill w-full flex gap-4 items-stretch"
@@ -2796,6 +2792,7 @@ export const TtsSettings = () => {
                     info={
                       <InfoPopover
                         label={t("tts.writingRules.title")}
+                        text={t("tts.writingRules.short")}
                         testId="reader-info"
                       >
                         <p className="mb-1 font-semibold">

@@ -22,9 +22,25 @@ type ModelStatus =
 
 interface ModelSelectorProps {
   onError?: (error: string) => void;
+  /** Statusleiste (ADR-0027 E7): nur sichtbar, solange das Modell
+      Aufmerksamkeit braucht (lädt, Download, Prüfung, Fehler). Die Wahl
+      steht im Profilmenü ▸ Modelle. */
+  nurStatus?: boolean;
 }
 
-const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
+/** Zustände, in denen die schlanke Statusleiste das Diktatmodell zeigt. */
+const BRAUCHT_AUFMERKSAMKEIT: ReadonlySet<ModelStatus> = new Set([
+  "loading",
+  "downloading",
+  "verifying",
+  "extracting",
+  "error",
+]);
+
+const ModelSelector: React.FC<ModelSelectorProps> = ({
+  onError,
+  nurStatus = false,
+}) => {
   const { t } = useTranslation();
   const {
     models,
@@ -242,12 +258,22 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     return modelStatus;
   };
 
+  const displayStatus = getDisplayStatus();
+  if (nurStatus && !BRAUCHT_AUFMERKSAMKEIT.has(displayStatus)) {
+    return (
+      <DownloadProgressDisplay
+        downloadProgress={downloadProgress}
+        downloadStats={downloadStats}
+      />
+    );
+  }
+
   return (
     <>
       {/* Model Status and Switcher */}
       <div className="relative" ref={dropdownRef}>
         <ModelStatusButton
-          status={getDisplayStatus()}
+          status={displayStatus}
           displayText={getModelDisplayText()}
           isDropdownOpen={showModelDropdown}
           onClick={() => setShowModelDropdown(!showModelDropdown)}

@@ -5002,6 +5002,49 @@ async bookAiDocumentDelete(pageId: string, id: string) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Begriffe des Buchs erkennen (lva#184). Nur neue oder geänderte Kapitel;
+ * jedes Kapitel wird sofort gespeichert, ein Abbruch verliert nichts.
+ */
+async bookAiTermsExtract(pageId: string) : Promise<Result<TermsRun, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_terms_extract", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async bookAiTerms(pageId: string) : Promise<Result<BookTerm[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_terms", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Begriff anlegen, ändern oder ausblenden (`hidden`). Der Eintrag gilt
+ * danach als Nutzerkorrektur und wird von Läufen nicht mehr überschrieben.
+ */
+async bookAiTermSave(pageId: string, term: BookTerm) : Promise<Result<BookTerm, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_term_save", { pageId, term }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fundstellen für die Hervorhebung im aktuellen Seitentext.
+ */
+async bookAiTermHits(pageId: string) : Promise<Result<TermHit[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_term_hits", { pageId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -7405,6 +7448,31 @@ audience: string;
  */
 builtin: boolean }
 export type BookTemplateSection = { title: string; instruction: string }
+export type BookTerm = { 
+/**
+ * Normalisierter Begriff (klein, Leerraum zusammengezogen).
+ */
+id: string; term: string; variants: string[]; kind: TermKind; 
+/**
+ * Was das Buch über den Begriff sagt. Leer, wenn es nichts erklärt.
+ */
+from_book: string; 
+/**
+ * Allgemeines Modellwissen, getrennt gekennzeichnet und nicht geprüft.
+ */
+general: string; 
+/**
+ * Kapitel, in dem der Begriff zuerst gefunden wurde.
+ */
+chapter: string; 
+/**
+ * Vom Nutzer geändert oder angelegt: Läufe überschreiben ihn nicht.
+ */
+user_edited: boolean; 
+/**
+ * Vom Nutzer ausgeblendet: wird nicht hervorgehoben und nicht neu angelegt.
+ */
+hidden: boolean }
 /**
  * Zustand der Bruecke fuer die Oberflaeche.
  */
@@ -10252,6 +10320,31 @@ export type TemplateSection = { id: string; title: string; instruction: string; 
  * abgelegt. `version` ist heute immer 1.
  */
 export type TemplateSpec = { version: number; context: string; sections: TemplateSection[] }
+/**
+ * Fundstelle eines Begriffs im Seitentext (UTF-16-Offsets, Ende exklusiv).
+ */
+export type TermHit = { term_id: string; start: number; end: number; 
+/**
+ * Letzte Seitenmarke vor der Stelle.
+ */
+page: number | null }
+export type TermKind = "fachbegriff" | "person" | "ort" | "ereignis" | "konzept"
+/**
+ * Ergebnis eines Begriffslaufs.
+ */
+export type TermsRun = { 
+/**
+ * Kapitel, die in diesem Lauf bewertet wurden.
+ */
+chapters_done: number; 
+/**
+ * Kapitel, die schon aktuell waren.
+ */
+chapters_skipped: number; 
+/**
+ * Kapitel ohne lesbare Modellantwort; sie kommen im nächsten Lauf wieder.
+ */
+chapters_failed: number; terms: BookTerm[] }
 /**
  * Ergebnis von „Verbindung testen“: Code fuer die Oberflaeche, kein Freitext.
  */

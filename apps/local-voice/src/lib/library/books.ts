@@ -20,8 +20,15 @@ export interface BookView {
   lastUsed: number;
   text: VersionState;
   audio: VersionState;
-  /** Fassung, mit der „Weiterhören“ weitermacht. */
+  /** Fassung, mit der „Weitermachen“ weitermacht. */
   resumeWith: "text" | "audio" | null;
+  /**
+   * Woher das Audio kommt: importiertes Hörbuch, per Sprachausgabe erzeugte
+   * Vertonung der Textfassung oder gar keins (dann gibt es kein Abspielen).
+   */
+  audioSource: "audiobook" | "narrated" | null;
+  /** Stand der Transkription (Hörbuch → Text). */
+  transcription: "done" | "running" | "possible" | "none";
 }
 
 export type Filter =
@@ -63,6 +70,14 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
     text: book.text ? "ok" : book.audio?.transcript_job ? "busy" : "none",
     audio: book.audio_path || pageAudio ? "ok" : "none",
     resumeWith,
+    audioSource: book.audio_path ? "audiobook" : pageAudio ? "narrated" : null,
+    transcription: book.audio?.transcript_job
+      ? "running"
+      : book.text?.origin === "transcript"
+        ? "done"
+        : book.audio_path && !book.text
+          ? "possible"
+          : "none",
   };
 }
 

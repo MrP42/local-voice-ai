@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installTauriMock } from "./calendarMock";
 import { DEMO, installIntegrationsMock, NOW } from "./integrationsMock";
+import { geheZu } from "./profilmenue";
 
 // A4 (#66, AK12 Buendel 2): Bilder der Seite "Integrationen" fuer die Abnahme:
 // Liste, Katalog, Rechte-Matrix, Freigabe, Protokoll (und schmal). Nur mit
@@ -69,7 +70,7 @@ const setup = async (page: Page, width = 1280, height = 900) => {
   await page.goto("/");
   const nav = page.getByRole("navigation");
   if (narrow) await page.getByRole("button", { name: "Menü öffnen" }).click();
-  await nav.getByRole("button", { name: "Integrationen", exact: true }).click();
+  await geheZu(page, "Integrationen");
   await expect(page.getByTestId("integration-card").first()).toBeVisible();
 };
 

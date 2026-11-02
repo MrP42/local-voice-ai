@@ -274,7 +274,7 @@ test("AK4: the open help panel keeps the page free of scrollbars", async ({
   await openRecordings(page, 1366, 768);
   await pickMeeting(page, "m2");
   await expect(page.locator('[data-segment-index="0"]')).toBeVisible();
-  await page.getByRole("button", { name: "Hilfe zu dieser Seite" }).click();
+  await page.keyboard.press("F1");
   await expect(
     page.getByRole("complementary", { name: "Hilfe" }),
   ).toBeVisible();

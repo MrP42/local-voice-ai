@@ -51,7 +51,7 @@ const Field: React.FC<{
     <span className="text-[13px] font-semibold">{label}</span>
     {children}
     {hint && (
-      <span id={hintId} className="text-xs text-text/60">
+      <span id={hintId} className="text-xs text-text-muted">
         {hint}
       </span>
     )}
@@ -164,7 +164,7 @@ const KnowledgeRow: React.FC<{
       label={label}
       aria-describedby={id}
     />
-    <span id={id} className="ps-[52px] -mt-1 text-xs text-text/60">
+    <span id={id} className="ps-[52px] -mt-1 text-xs text-text-muted">
       {hint}
     </span>
   </div>
@@ -360,7 +360,7 @@ export const SettingsPanel: React.FC = () => {
             >
               <VoicePicker />
             </Field>
-            <p className="m-0 text-xs text-text/60">
+            <p className="m-0 text-xs text-text-muted">
               {t("voiceCall.settings.note")}
             </p>
           </>

@@ -14,6 +14,7 @@ pub mod engine;
 pub mod source;
 pub mod store;
 pub mod templates;
+pub mod terms;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +37,8 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct BookAiProgress {
     pub page_id: String,
+    /// "summary" (Zusammenfassung) oder "terms" (Begriffe).
+    pub kind: String,
     pub done: u32,
     pub total: u32,
 }
@@ -207,6 +210,7 @@ pub async fn book_ai_summarize(
             "book-ai-progress",
             BookAiProgress {
                 page_id: pid.clone(),
+                kind: "summary".into(),
                 done: done as u32,
                 total: total as u32,
             },
@@ -302,4 +306,172 @@ pub fn book_ai_document_update(
 #[specta::specta]
 pub fn book_ai_document_delete(app: AppHandle, page_id: String, id: String) -> Result<(), String> {
     store::delete(&page_path(&app, &page_id)?, &id)
+}
+
+// ---------------------------------------------------------------- Begriffe --
+
+/// `begriffe.json` wird vom Lauf und von Nutzerkorrekturen geschrieben.
+static TERMS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn terms_lock() -> std::sync::MutexGuard<'static, ()> {
+    TERMS_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Ergebnis eines Begriffslaufs.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct TermsRun {
+    /// Kapitel, die in diesem Lauf bewertet wurden.
+    pub chapters_done: u32,
+    /// Kapitel, die schon aktuell waren.
+    pub chapters_skipped: u32,
+    /// Kapitel ohne lesbare Modellantwort; sie kommen im nächsten Lauf wieder.
+    pub chapters_failed: u32,
+    pub terms: Vec<terms::BookTerm>,
+}
+
+/// Begriffe des Buchs erkennen (lva#184). Nur neue oder geänderte Kapitel;
+/// jedes Kapitel wird sofort gespeichert, ein Abbruch verliert nichts.
+#[tauri::command]
+#[specta::specta]
+pub async fn book_ai_terms_extract(app: AppHandle, page_id: String) -> Result<TermsRun, String> {
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("book_ai:busy".into());
+    }
+    let _guard = RunGuard;
+    CANCEL.store(false, Ordering::SeqCst);
+
+    let dir = page_path(&app, &page_id)?;
+    let text = page_text(&dir)?;
+    let sections = source::sections(&text);
+    let mut file = terms::load(&dir)?;
+    let todo: Vec<(usize, source::Section)> = terms::pending(&file, &sections)
+        .into_iter()
+        .map(|(i, s)| (i, s.clone()))
+        .collect();
+    let skipped = sections.len() - todo.len();
+    let settings = crate::settings::get_settings(&app);
+    let language = crate::summarizer::language_clause(&text);
+    let limit = crate::summarizer::chunk_chars(&settings);
+
+    let total = todo.len() as u32;
+    let emit = |done: u32| {
+        let _ = app.emit(
+            "book-ai-progress",
+            BookAiProgress {
+                page_id: page_id.clone(),
+                kind: "terms".into(),
+                done,
+                total,
+            },
+        );
+    };
+    emit(0);
+    let mut done = 0u32;
+    let mut failed = 0u32;
+    for (i, section) in &todo {
+        if CANCEL.load(Ordering::SeqCst) {
+            return Err(engine::CANCELLED.into());
+        }
+        let label = section.label(*i);
+        // Bekannte Begriffe: ausgeblendete zuerst, damit sie nicht wiederkommen.
+        let mut known: Vec<&terms::BookTerm> = file.terms.iter().collect();
+        known.sort_by_key(|t| !t.hidden);
+        let known: Vec<String> = known.iter().map(|t| t.term.clone()).take(200).collect();
+        let mut found = Vec::new();
+        let mut readable = true;
+        // Lange Kapitel blockweise; Begriffe zählen je Block.
+        for chunk in
+            crate::summarizer::chunk_text(&section.text, limit.saturating_sub(2_000).max(4_000))
+        {
+            let answer = crate::summarizer::ask_llm(
+                &settings,
+                terms::extract_prompt(&label, &chunk, &language, &known),
+            )
+            .await?;
+            if CANCEL.load(Ordering::SeqCst) {
+                return Err(engine::CANCELLED.into());
+            }
+            match terms::parse_answer(&answer, &label, &chunk) {
+                Some(t) => found.extend(t),
+                None => readable = false,
+            }
+        }
+        done += 1;
+        if !readable {
+            // Nicht als bewertet markieren: der nächste Lauf versucht es erneut.
+            failed += 1;
+            emit(done);
+            continue;
+        }
+        // Frisch laden und unter der Sperre schreiben: Korrekturen, die der
+        // Nutzer während des Laufs gemacht hat, gehen nicht verloren.
+        {
+            let _lock = terms_lock();
+            let mut current = terms::load(&dir)?;
+            terms::drop_chapter(&mut current, &label);
+            terms::merge(&mut current, found);
+            current.chapters.insert(
+                terms::chapter_key(*i, section),
+                terms::chapter_hash(section),
+            );
+            terms::save(&dir, &current)?;
+            file = current;
+        }
+        emit(done);
+    }
+    log::info!(
+        "book_ai: Begriffe aus {} Kapiteln, {} aktuell, {} gesamt",
+        done,
+        skipped,
+        file.terms.len()
+    );
+    Ok(TermsRun {
+        chapters_failed: failed,
+        chapters_done: done - failed,
+        chapters_skipped: skipped as u32,
+        terms: file.terms,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn book_ai_terms(app: AppHandle, page_id: String) -> Result<Vec<terms::BookTerm>, String> {
+    Ok(terms::load(&page_path(&app, &page_id)?)?.terms)
+}
+
+/// Begriff anlegen, ändern oder ausblenden (`hidden`). Der Eintrag gilt
+/// danach als Nutzerkorrektur und wird von Läufen nicht mehr überschrieben.
+#[tauri::command]
+#[specta::specta]
+pub fn book_ai_term_save(
+    app: AppHandle,
+    page_id: String,
+    term: terms::BookTerm,
+) -> Result<terms::BookTerm, String> {
+    let dir = page_path(&app, &page_id)?;
+    let _lock = terms_lock();
+    let mut file = terms::load(&dir)?;
+    let out = terms::apply_user_edit(&mut file, term)?;
+    terms::save(&dir, &file)?;
+    Ok(out)
+}
+
+/// Fundstellen für die Hervorhebung im aktuellen Seitentext.
+#[tauri::command]
+#[specta::specta]
+pub async fn book_ai_term_hits(
+    app: AppHandle,
+    page_id: String,
+) -> Result<Vec<terms::TermHit>, String> {
+    let dir = page_path(&app, &page_id)?;
+    // Ganze Bücher mit vielen Begriffen: nicht auf dem Hauptthread suchen.
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = terms::load(&dir)?;
+        if file.terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        Ok(terms::hits(&page_text(&dir)?, &file.terms))
+    })
+    .await
+    .map_err(|_| "book_ai:terms_failed".to_string())?
 }

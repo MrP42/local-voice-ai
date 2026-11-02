@@ -37,9 +37,9 @@ Import audio and video files as well as subtitles (VTT, SRT) with the **Import f
 ## Notes, AI notes and minutes
 
 - **Notes** are your text and stay yours. The **AI notes** are built from your bullet points and the transcript; every statement has a source, and a click on it jumps to the transcript.
-- The **minutes** (summary, decisions, tasks) are written by the language model from the footer. A language model must be loaded or a provider connected.
+- The **minutes** (summary, decisions, tasks) are written by the language model from the profile menu (bottom left, Models). A language model must be loaded or a provider connected.
 - The **template** defines the sections. With "Automatic" the app picks a suitable one; in the menu ☰ you choose it with "Choose template …", manage templates with "Manage templates …" or regenerate notes and minutes with "Regenerate with template …".
-- Transcription uses the model from the footer, or a dedicated one under Settings, Dictation, Meetings.
+- Transcription uses the dictation model from the profile menu (bottom left, Models), or a dedicated one under Settings, Dictation, Meetings.
 
 ## Progress, pause and stop
 
