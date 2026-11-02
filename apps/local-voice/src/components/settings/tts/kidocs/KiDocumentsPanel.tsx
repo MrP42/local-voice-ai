@@ -17,6 +17,7 @@ import {
   removeProgress,
 } from "@/lib/library/progress";
 import { clearResumePoint } from "@/lib/reader/resumePoint";
+import { removeHeard } from "@/lib/kurzbuch/heard";
 import { ActionMenu } from "../../../ui/ActionMenu";
 import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
@@ -129,6 +130,7 @@ export function KiDocumentsPanel({
     // Mit dem Dokument gehen seine Weiterlese-Stelle und sein Fortschritt.
     clearResumePoint(`${pageId}:doc:${doc.id}`);
     removeProgress(docProgressKey(pageId, doc.id));
+    removeHeard(pageId, doc.id);
     onDeleted(doc.id);
     await state.reload();
   };

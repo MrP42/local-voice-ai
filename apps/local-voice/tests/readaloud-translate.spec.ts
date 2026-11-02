@@ -97,7 +97,7 @@ test.beforeEach(async ({ page }) => {
               { id: "builtin:lernzettel", title: "Lernzettel", category: "lernen", description: "Zum Wiederholen.", context: "", sections: [], target_words: 600, form: "List", audience: "lernende", builtin: true },
             ];
           if (cmd === "book_ai_documents") return (w.__kidocs as unknown[] | undefined) ?? [];
-          if (cmd === "book_ai_document_text") return "Kurz gesagt: alles gut.";
+          if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
           // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
           if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
           if (cmd === "book_ai_term_hits") return (w.__hits as unknown[] | undefined) ?? [];
@@ -553,4 +553,120 @@ test("Erklärfenster und Lese-Werkzeugleiste: mobil alle Ziele mindestens 44 × 
     expect(box.height, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
     expect(box.width, `Ziel ${i}`).toBeGreaterThanOrEqual(44);
   }
+});
+
+// Kurzbuch (lva#205): Überblick neben dem Text, Vorlesen ab einer Kernaussage.
+const KURZBUCH = [
+  "## Worum es geht",
+  "",
+  "Ein Buch über Routinen und wie sie entstehen.",
+  "",
+  "## Für wen",
+  "",
+  "- Menschen mit guten Vorsätzen",
+  "- Teams",
+  "- Lernende",
+  "",
+  "## Kleiner Anfang: Eine Routine beginnt mit zwei Minuten.",
+  "",
+  "Wie fängt man an? Klein. ".repeat(20),
+  "",
+  "## Rückfall: Ein verpasster Tag ist kein Scheitern.",
+  "",
+  "Was tun nach einem schlechten Tag? Weitermachen. ".repeat(20),
+  "",
+  "## Fazit",
+  "",
+  "Kleine Schritte tragen weit.",
+].join("\n");
+
+test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernaussage vor", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page
+    .getByTestId(`kidocs-card-${doc.id}`)
+    .locator("button")
+    .first()
+    .click();
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(panel).toContainText("Für wen");
+  await expect(panel.getByRole("listitem")).toHaveCount(
+    2 + 3 /* Für wen */ + 1 /* Fazit */,
+  );
+  await page.screenshot({
+    path: "docs/vorschau/buch-ki-b7/03-app-kurzbuch.png",
+  });
+  // Schmaler Bereich (Seiten- und Werkzeugspalte offen): Überblick darüber.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(panel).toBeVisible();
+  await page.screenshot({
+    path: "docs/vorschau/buch-ki-b7/04-app-kurzbuch-schmal.png",
+  });
+  const before = (await calls(page)).length;
+  await panel
+    .getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" })
+    .click();
+  await expect
+    .poll(async () =>
+      (await calls(page)).slice(before).some(([c]) => c.startsWith("tts_")),
+    )
+    .toBe(true);
+});
+
+test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumentansicht", async ({
+  page,
+}) => {
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+  };
+  await page.addInitScript(
+    ([docs]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = "Nur noch Fließtext ohne Überschriften.";
+    },
+    [[doc]] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page
+    .getByTestId(`kidocs-card-${doc.id}`)
+    .locator("button")
+    .first()
+    .click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch – Ganzes Buch",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Überblick des Kurzbuchs" }),
+  ).toHaveCount(0);
 });

@@ -564,6 +564,25 @@
       "bookPage": "Book page {{page}}",
       "fromBookNote": "Summarised by the AI from the book text, not a verbatim quote."
     },
+    "kurzbuch": {
+      "kind": "Book in brief",
+      "overview": "Book in brief overview",
+      "ideas_one": "{{count}} key idea",
+      "ideas_other": "{{count}} key ideas",
+      "readMin": "{{min}} min read",
+      "listenMin": "{{min}} min listen",
+      "start": "Read book in brief aloud",
+      "resumeAt": "Continue at key idea {{n}}",
+      "pause": "Pause",
+      "play": "Read aloud",
+      "about": "What it is about.",
+      "audience": "Who it is for",
+      "list": "Key ideas",
+      "ideaN": "Key idea {{n}} of {{total}}",
+      "playItem": "Read {{item}} aloud",
+      "pauseItem": "Pause {{item}}",
+      "heard": "Heard."
+    },
     "kiDocs": {
       "tab": "AI documents",
       "sheets": {
@@ -646,7 +665,8 @@
         "busy": "An AI document is already being created.",
         "empty": "The source contains no text.",
         "cancelled": "Creation cancelled.",
-        "generic": "That did not work ({{code}})."
+        "generic": "That did not work ({{code}}).",
+        "outlineUnreadable": "The model did not return a usable outline. Please try again or choose another model."
       }
     },
     "summaryPlaceholder": "No summary yet — pick length, detail and audience below and press “Summarize”. The text stays editable.",
@@ -6940,6 +6960,19 @@
     "suchen": "Search"
   },
   "library": {
+    "kurzbuch": {
+      "title": "Book in brief",
+      "meta": "{{ideas}} key ideas · {{read}} min read · {{listen}} min listen",
+      "heard": "{{percent}} % heard",
+      "none": "The key ideas of the book to read and listen to, created with your language model.",
+      "needsText": "Created from the transcript. Transcribe first, then the book in brief can be created.",
+      "transcribing": "The audiobook is being transcribed; afterwards the book in brief can be created.",
+      "progress": "Listening progress book in brief {{title}}",
+      "open": "Open",
+      "listen": "Listen",
+      "resume": "Continue listening",
+      "create": "Create book in brief"
+    },
     "title": "Library",
     "description": "Books and audiobooks – one entry per work, as text, audio or both.",
     "add": "Add",
