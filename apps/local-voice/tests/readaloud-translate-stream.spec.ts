@@ -527,7 +527,65 @@ for (const theme of ["light", "dark"]) {
         .map((e) => e.className || e.tagName);
     });
     expect(overflow).toEqual([]);
+    // Buchtitel/Position links überlappt die Wiedergabeknöpfe nicht.
+    const where = (await player.getByTestId("reader-where").boundingBox())!;
+    const prev = (await player
+      .getByRole("button", { name: "Vorheriger Satz" })
+      .boundingBox())!;
+    expect(where.x + where.width).toBeLessThanOrEqual(prev.x + 0.5);
     await page.screenshot({ path: `${LEISTE}/fortschritt-${theme}-1440.png` });
+
+    // Trefferflächen der Leiste (Codex zu lva#213): senkrecht immer 44 px
+    // (Punkte 21,5 px über/unter der Mitte treffen den Knopf). Waagrecht
+    // 44 px, außer ein Nachbarknopf liegt näher — dann reicht die Fläche bis
+    // an den Nachbarn heran, ohne Lücke (Punkt trifft Knopf oder Nachbarn).
+    const hits = await page.evaluate(() => {
+      const ctrls = document.querySelector(".reader-player__ctrls")!;
+      const all = Array.from(
+        ctrls.querySelectorAll<HTMLElement>("button, .app-select__control"),
+      );
+      const targets = all.filter((el) => {
+        const r = el.getBoundingClientRect();
+        // Gesperrte Knöpfe nehmen keine Klicks an; der Kapiteltitel links ist
+        // ein Textlink in der zweizeiligen Positionsangabe.
+        return (
+          r.width > 0 &&
+          r.height > 0 &&
+          !(el as HTMLButtonElement).disabled &&
+          !el.closest(".reader-player__where")
+        );
+      });
+      const owner = (x: number, y: number) => {
+        const hit = document.elementFromPoint(x, y);
+        return all.find((t) => hit && (t === hit || t.contains(hit)));
+      };
+      return targets.map((el) => {
+        const r = el.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        const vertical =
+          owner(cx, cy - 21.5) === el && owner(cx, cy + 21.5) === el;
+        const side = (dx: number) => {
+          const o = owner(cx + dx, cy);
+          return o === el ? "eigen" : o ? "nachbar" : "leer";
+        };
+        const left = side(-21.5);
+        const right = side(21.5);
+        return {
+          name:
+            el.getAttribute("aria-label") ||
+            el.getAttribute("data-testid") ||
+            el.textContent?.trim().slice(0, 20) ||
+            el.className,
+          box: `${r.width.toFixed(1)}x${r.height.toFixed(1)}`,
+          ok: vertical && left !== "leer" && right !== "leer",
+          detail: `senkrecht44=${vertical} links=${left} rechts=${right}`,
+        };
+      });
+    });
+    for (const h of hits) console.log(`TREFFER ${h.name} ${h.box} ${h.detail}`);
+    expect(hits.length).toBeGreaterThan(8);
+    expect(hits.filter((h) => !h.ok)).toEqual([]);
 
     // Modellwahl: Kurzname, Liste öffnet nach oben und ist ganz sichtbar.
     const modelBtn = page
@@ -544,6 +602,12 @@ for (const theme of ["light", "dark"]) {
       (await modelBtn.boundingBox())!.y + 0.5,
     );
     await expect(list.getByRole("option")).toHaveCount(2);
+    // Modelloptionen: mindestens 44 px hoch (Codex zu lva#213).
+    for (const opt of await list.getByRole("button").all()) {
+      const ob = (await opt.boundingBox())!;
+      console.log(`OPTION ${ob.width.toFixed(1)}x${ob.height.toFixed(1)}`);
+      expect(ob.height).toBeGreaterThanOrEqual(43.5);
+    }
     await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1440.png` });
     await list.getByRole("option", { name: /Opus 5\.5/ }).click();
   });

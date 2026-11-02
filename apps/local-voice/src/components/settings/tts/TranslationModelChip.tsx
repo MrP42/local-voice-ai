@@ -119,7 +119,7 @@ export const TranslationModelChip: React.FC<{
               role="option"
               aria-selected={model.id === activeId}
               onClick={() => void choose(model.id)}
-              className="flex min-h-[44px] w-full items-center gap-2 px-3 text-start text-xs hover:bg-mid-gray/10 sm:min-h-[32px]"
+              className="flex min-h-[44px] w-full items-center gap-2 px-3 text-start text-xs hover:bg-mid-gray/10"
             >
               <Check
                 size={12}
@@ -137,7 +137,7 @@ export const TranslationModelChip: React.FC<{
               setOpen(false);
               openSettingsTab("models");
             }}
-            className="flex min-h-[44px] w-full items-center border-t border-mid-gray/20 px-3 text-start text-xs text-text/70 hover:bg-mid-gray/10 sm:min-h-[32px]"
+            className="flex min-h-[44px] w-full items-center border-t border-mid-gray/20 px-3 text-start text-xs text-text/70 hover:bg-mid-gray/10"
           >
             {t("tts.translationModel.settings")}
           </button>

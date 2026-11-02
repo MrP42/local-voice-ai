@@ -754,9 +754,12 @@
   flex: none;
   overflow: visible;
 }
+/* Keine Mindestbreite: in der Rasterspalte (minmax(0, 1fr)) ragte die
+   Positionsangabe sonst über die Wiedergabeknöpfe (Patrick 02.11.); sie kürzt
+   stattdessen mit „…“. */
 .reader-player--docked .reader-player__where {
   flex: 1 1 0;
-  min-width: 90px;
+  min-width: 0;
 }
 
 .reader-dock {
@@ -785,5 +788,54 @@
   [data-testid="reader-toolbar"] button {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/* Trefferflächen der Leiste mindestens 44 × 44 px (Codex zu lva#213).
+   Mit Maus bleibt die Leiste optisch kompakt: eine unsichtbare Fläche um
+   jeden Knopf erweitert das Klickziel; mit Touch (pointer: coarse) sind die
+   Knöpfe auch sichtbar 44 px hoch. */
+.reader-player__ctrls button,
+.reader-player__ctrls .app-select__control {
+  position: relative;
+}
+/* Platz für die Erweiterung am Rand, ohne die Leiste zu verschieben: sonst
+   meldete die Überlaufmessung (ReaderPlayerBar) ein paar Pixel Überlauf und
+   die Werkzeuge wanderten hinter den Knopf. */
+.reader-player__ctrls,
+.reader-player--docked .reader-dock {
+  padding-inline: 6px;
+  margin-inline: -6px;
+}
+/* … und die Leiste selbst lässt dafür seitlich Platz (sonst Überbreite). */
+.reader-player {
+  padding-inline: 8px;
+}
+.reader-player__ctrls button::after,
+.reader-player__ctrls .app-select__control::after {
+  content: "";
+  position: absolute;
+  top: min(0px, calc((100% - 44px) / 2));
+  bottom: min(0px, calc((100% - 44px) / 2));
+  left: min(0px, calc((100% - 44px) / 2));
+  right: min(0px, calc((100% - 44px) / 2));
+}
+@media (pointer: coarse) {
+  .reader-player__ctrls button,
+  .reader-player__ctrls .app-select__control {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Wird die Positionsangabe in der vollen Leiste schmaler als ein paar
+   Buchstaben, verschwindet sie ganz statt als Rest („D…“) über den Knöpfen
+   zu stehen; Kapitel bleiben über das Inhaltsverzeichnis erreichbar. */
+.reader-player--docked .reader-player__where {
+  container: lv-where / inline-size;
+}
+@container lv-where (max-width: 64px) {
+  .reader-player__where > * {
+    display: none;
   }
 }

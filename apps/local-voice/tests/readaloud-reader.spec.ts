@@ -1726,7 +1726,8 @@ for (const hidden of ["0", "1"])
     const ctrls = await box(".reader-player__ctrls");
     const media = await box(".reader-player__ctrls > .mediabar");
     const tools = await box(".reader-player__tools");
-    expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width))).toBeLessThan(2);
+    // Die Zeile hat 6 px Innenrand für die 44-px-Trefferflächen (lva#213).
+    expect(Math.abs(tools.x + tools.width - (ctrls.x + ctrls.width - 6))).toBeLessThan(2);
     const mid = (b: { x: number; width: number }) => b.x + b.width / 2;
     expect(Math.abs(mid(media) - mid(ctrls))).toBeLessThan(3);
   });
