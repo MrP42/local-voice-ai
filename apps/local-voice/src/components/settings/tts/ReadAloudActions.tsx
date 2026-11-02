@@ -27,10 +27,13 @@ import { TTS_TARGET_LANGS } from "../../../lib/constants/languages";
 import { AutoTagBar, type AutoTagBarProps } from "./tags/AutoTagBar";
 import { TranslationModelChip } from "./TranslationModelChip";
 import { counterWidthCh } from "./sentenceCounter";
+import { Button } from "../../ui/Button";
 import {
+  describeTranslateError,
   progressParts,
   progressRatio,
-  workerRatios,
+  sectionChars,
+  workerStatus,
   type TransformProgress,
 } from "../../../lib/reader/translationStream";
 
@@ -118,12 +121,7 @@ const ProgressLine: React.FC<{
   cancelLabel: string;
   onCancel: () => void;
   tabular?: boolean;
-  /** Zweite, gekürzte Angabe (z. B. Kapiteltitel). */
-  detail?: string;
-  /** Teilbalken je Bereich (parallele Worker), 0..1. */
-  workers?: number[];
-}> = ({ ratio, text, cancelLabel, onCancel, tabular, detail, workers }) => (
-  <div className="flex flex-col gap-1">
+}> = ({ ratio, text, cancelLabel, onCancel, tabular }) => (
   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
     <div
       className="h-1.5 w-full shrink-0 overflow-hidden rounded-full bg-mid-gray/20 sm:w-32"
@@ -142,11 +140,6 @@ const ProgressLine: React.FC<{
     >
       {text}
     </span>
-    {detail ? (
-      <span className="min-w-0 max-w-full truncate text-xs text-text/50">
-        {detail}
-      </span>
-    ) : null}
     <button
       type="button"
       className="mbtn mbtn--sm min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
@@ -156,27 +149,240 @@ const ProgressLine: React.FC<{
       <Glyph name="stop" />
     </button>
   </div>
-  {workers && workers.length > 0 ? (
+);
+
+/** Balken mit Textwert; Beschriftung und Wert stehen als Text, nicht nur als Farbe. */
+const Bar: React.FC<{
+  ratio: number;
+  ariaLabel: string;
+  valueText: string;
+  className?: string;
+  thin?: boolean;
+}> = ({ ratio, ariaLabel, valueText, className = "", thin }) => (
+  <div
+    role="progressbar"
+    aria-label={ariaLabel}
+    aria-valuemin={0}
+    aria-valuemax={100}
+    aria-valuenow={Math.round(ratio * 100)}
+    aria-valuetext={valueText}
+    className={`${thin ? "h-1.5" : "h-2"} min-w-0 overflow-hidden rounded-full bg-mid-gray/30 ${className}`.trim()}
+  >
     <div
-      className="flex gap-1"
-      data-testid="tts-worker-bars"
-      aria-hidden="true"
-    >
-      {workers.map((w, i) => (
-        <div
-          key={i}
-          className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-mid-gray/20"
-        >
-          <div
-            className="h-full bg-logo-primary/70 transition-[width] duration-200"
-            style={{ width: `${w * 100}%` }}
-          />
-        </div>
-      ))}
-    </div>
-  ) : null}
+      className="h-full rounded-full bg-logo-primary transition-[width] duration-200"
+      style={{ width: `${Math.min(1, Math.max(0, ratio)) * 100}%` }}
+    />
   </div>
 );
+
+/** Fortschritt der Buchübersetzung: Gesamt, Abschnitte/Kapitel, Worker. */
+const TranslateProgress: React.FC<{
+  progress: TransformProgress | null;
+  waiting: boolean;
+  onCancel: () => void;
+}> = ({ progress, waiting, onCancel }) => {
+  const { t, i18n } = useTranslation();
+  const started = !!progress && progress.total > 1;
+  const ratio = progress ? progressRatio(progress) : 0;
+  const parts = progress ? progressParts(progress) : null;
+  const percent = Math.round(ratio * 100);
+  const chars = progress ? sectionChars(progress) : null;
+  const workers = progress?.workers ?? [];
+  const totalValue = t("tts.transform.totalValue", { percent });
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-lg border border-mid-gray/30 p-3"
+      data-testid="tts-translate-progress"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold">{t("tts.transform.running")}</span>
+        <button
+          type="button"
+          className="mbtn mbtn--sm min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
+          onClick={onCancel}
+          aria-label={t("tts.transform.cancel")}
+          title={t("tts.transform.cancel")}
+        >
+          <Glyph name="stop" />
+        </button>
+      </div>
+      {!started ? (
+        <p className="text-xs text-text/70">
+          {waiting
+            ? t("tts.transform.waiting")
+            : t("tts.transform.translateStarting")}
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="shrink-0 text-xs font-medium">
+              {t("tts.transform.total")}
+            </span>
+            <Bar
+              ratio={ratio}
+              ariaLabel={t("tts.transform.totalAria")}
+              valueText={totalValue}
+              className="min-w-[5rem] flex-1"
+            />
+            <span className="shrink-0 text-xs tabular-nums text-text/80">
+              {totalValue}
+            </span>
+          </div>
+          <p className="text-xs tabular-nums text-text/80">
+            {parts?.chapter != null
+              ? t("tts.transform.sectionsDoneChapter", {
+                  done: Math.min(progress!.done, progress!.total),
+                  total: progress!.total,
+                  chapter: parts.chapter,
+                  chapters: parts.chapters,
+                })
+              : t("tts.transform.sectionsDone", {
+                  done: Math.min(progress!.done, progress!.total),
+                  total: progress!.total,
+                })}
+          </p>
+          <p className="text-[11px] leading-snug text-text/60">
+            {chars
+              ? t("tts.transform.sizeNote", {
+                  chars: chars.toLocaleString(i18n.language),
+                })
+              : t("tts.transform.sizeNoteGeneric")}
+          </p>
+          {parts?.title ? (
+            <p
+              className="line-clamp-2 break-words text-xs text-text/80"
+              title={progress!.chapterTitle ?? parts.title}
+              data-testid="tts-translate-chapter"
+            >
+              <span className="text-text/60">
+                {t("tts.transform.currentChapter")}
+              </span>{" "}
+              {(progress!.chapterTitle ?? parts.title).replace(/\s+/g, " ").trim()}
+            </p>
+          ) : null}
+          {workers.length > 1 ? (
+            <div className="flex flex-col gap-1.5" data-testid="tts-worker-list">
+              <p className="text-xs font-medium">
+                {t("tts.transform.workersTitle")}
+              </p>
+              <ul className="flex flex-col gap-1.5">
+                {workers.map((w, i) => {
+                  const status = workerStatus(w, progress!);
+                  const value = t("tts.transform.workerValue", {
+                    done: w.done,
+                    total: w.total,
+                  });
+                  const statusText = t(
+                    status === "done"
+                      ? "tts.transform.workerDone"
+                      : status === "running"
+                        ? "tts.transform.workerRunning"
+                        : "tts.transform.workerWaiting",
+                  );
+                  return (
+                    <li
+                      key={i}
+                      className="flex flex-col gap-0.5"
+                      data-testid="tts-worker-row"
+                    >
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-2 text-xs tabular-nums">
+                        <span className="font-medium">
+                          {t("tts.transform.worker", { n: i + 1 })}
+                        </span>
+                        <span className="text-text/80">
+                          {value} · {statusText}
+                        </span>
+                      </div>
+                      <Bar
+                        thin
+                        ratio={w.total > 0 ? w.done / w.total : 0}
+                        ariaLabel={t("tts.transform.workerAria", {
+                          n: i + 1,
+                          done: w.done,
+                          total: w.total,
+                        })}
+                        valueText={`${value} · ${statusText}`}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+};
+
+/** Fehler- oder Abbruchzustand der Übersetzung: eigener Block samt „Fortsetzen“. */
+const TranslateInterrupted: React.FC<{
+  partial: { kind: "error" | "cancelled"; message: string };
+  onResume?: () => void;
+}> = ({ partial, onResume }) => {
+  const { t } = useTranslation();
+  const cancelled = partial.kind === "cancelled";
+  const info = cancelled ? null : describeTranslateError(partial.message);
+  const where =
+    info && info.chapter != null
+      ? info.section != null
+        ? info.sections != null
+          ? t("tts.transform.errorWhere", {
+              chapter: info.chapter,
+              section: info.section,
+              sections: info.sections,
+            })
+          : t("tts.transform.errorWhereSection", {
+              chapter: info.chapter,
+              section: info.section,
+            })
+        : t("tts.transform.errorWhereChapter", { chapter: info.chapter })
+      : null;
+  return (
+    <div
+      role="status"
+      data-testid="tts-translate-partial"
+      className="flex w-full flex-col gap-2 rounded-lg border border-mid-gray/40 bg-mid-gray/10 p-3 text-sm"
+    >
+      <p className="font-semibold">
+        {cancelled
+          ? t("tts.transform.cancelledTitle")
+          : t("tts.transform.errorTitle")}
+      </p>
+      {info ? (
+        <div className="flex flex-col gap-1" data-testid="tts-translate-error">
+          <p className="break-words">{t(`tts.transform.cause.${info.kind}`)}</p>
+          {where ? (
+            <p className="text-xs text-text/80" data-testid="tts-translate-where">
+              {where.charAt(0).toUpperCase() + where.slice(1)}
+            </p>
+          ) : null}
+          {info.detail ? (
+            <details className="text-xs text-text/70">
+              <summary className="min-h-[44px] cursor-pointer py-3 sm:min-h-0 sm:py-0">
+                {t("tts.transform.errorDetails")}
+              </summary>
+              <p className="mt-1 break-words rounded bg-mid-gray/15 p-2 font-mono">
+                {partial.message}
+              </p>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="text-xs text-text/80">{t("tts.transform.errorKept")}</p>
+      <Button
+        type="button"
+        variant="primary"
+        size="lg"
+        className="min-h-[44px] max-sm:w-full sm:self-start"
+        data-testid="tts-translate-resume"
+        onClick={onResume}
+      >
+        {t("tts.transform.resume")}
+      </Button>
+    </div>
+  );
+};
 
 /**
  * Die Aktionen der Vorlesen-Bedienspalte als EINE Zeile gleich großer
@@ -320,15 +526,8 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     props.transformProgress && props.transformProgress.kind === tab
       ? props.transformProgress
       : null;
-  const translateLine = (p: TransformProgress) => {
-    const parts = progressParts(p);
-    return parts.chapter !== null
-      ? t("tts.transform.translateChapter", { ...parts })
-      : t("tts.transform.translateSection", { ...parts });
-  };
-  const transformBusy =
-    // KI-Dokumente zeigen ihren Fortschritt auf der Karte (lva#183).
-    tab === "translation" && props.translating;
+  // KI-Dokumente zeigen ihren Fortschritt auf der Karte (lva#183).
+  const transformBusy = tab === "translation" && props.translating;
 
   // Speichern und Vorab-Erzeugen gehören in jedem Reiter dazu.
   const saveButton = (
@@ -363,7 +562,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       }
     >
       <div
-        className="relative flex items-center gap-1.5"
+        className="tts-actions relative flex items-center gap-1.5"
         data-testid="tts-actions"
       >
         {tab === "original" && (
@@ -481,36 +680,10 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
 
       {tab === "translation" && <TranslationModelChip />}
       {transformBusy && (
-        <ProgressLine
-          tabular
-          ratio={running ? progressRatio(running) : 0}
-          text={
-            // Eine einzige Anfrage (Cloud, API, Abo) hat keine Bloecke zu zaehlen.
-            props.waitingForTranslation
-              ? t("tts.transform.waiting")
-              : !running || running.total <= 1
-              ? tab === "translation"
-                ? t("tts.transform.translateStarting")
-                : t("tts.transform.summaryStarting")
-              : tab === "translation"
-                ? translateLine(running)
-                : running.done >= running.total - 1 && running.total > 1
-                  ? t("tts.transform.summaryCombine")
-                  : t("tts.transform.summaryBlock", {
-                      done: Math.min(running.done + 1, running.total),
-                      total: running.total,
-                    })
-          }
-          workers={tab === "translation" && running ? workerRatios(running) : undefined}
-          detail={
-            tab === "translation" && running
-              ? progressParts(running).title
-              : undefined
-          }
-          cancelLabel={t("tts.transform.cancel")}
-          onCancel={() =>
-            props.onCancelTransform(tab === "translation" ? "translation" : "summary")
-          }
+        <TranslateProgress
+          progress={running}
+          waiting={!!props.waitingForTranslation}
+          onCancel={() => props.onCancelTransform("translation")}
         />
       )}
       {tab === "translation" &&
@@ -533,27 +706,10 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
           </details>
         )}
       {tab === "translation" && !props.translating && props.translatePartial && (
-        <div
-          role="status"
-          data-testid="tts-translate-partial"
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text/70"
-        >
-          <span className="min-w-0 basis-full">
-            {props.translatePartial.kind === "cancelled"
-              ? t("tts.transform.partialCancelled")
-              : t("tts.transform.partialError", {
-                  message: props.translatePartial.message,
-                })}
-          </span>
-          <button
-            type="button"
-            className="mbtn mbtn--sm min-h-[44px] shrink-0 sm:min-h-0"
-            data-testid="tts-translate-resume"
-            onClick={props.onResumeTranslate}
-          >
-            {t("tts.transform.resume")}
-          </button>
-        </div>
+        <TranslateInterrupted
+          partial={props.translatePartial}
+          onResume={props.onResumeTranslate}
+        />
       )}
 
       {saving && (

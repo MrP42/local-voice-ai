@@ -3,6 +3,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addChunk,
+  describeTranslateError,
+  sectionChars,
+  workerStatus,
   emptyStream,
   progressParts,
   progressPercent,
@@ -97,4 +100,53 @@ test("Worker-Anteile und Warnungstexte", () => {
     warningText({ chapter: 2, section: 4, message: "Seitenmarke fehlt" }),
     "Kapitel 3, Abschnitt 5: Seitenmarke fehlt",
   );
+});
+
+test("Fehlermeldung: Ursache und Ort werden erkannt", () => {
+  const e = describeTranslateError(
+    "Übersetzung bei Kapitel 3, Abschnitt 2 von 5 abgebrochen: cli_timeout after 300s",
+  );
+  assert.equal(e.kind, "timeout");
+  assert.equal(e.chapter, 3);
+  assert.equal(e.section, 2);
+  assert.equal(e.sections, 5);
+  assert.equal(e.detail, "cli_timeout after 300s");
+});
+
+test("Fehlermeldung: weitere bekannte Ursachen", () => {
+  assert.equal(describeTranslateError("HTTP 429").kind, "rateLimit");
+  assert.equal(describeTranslateError("hit the rate limit").kind, "rateLimit");
+  assert.equal(
+    describeTranslateError("Selected model is at capacity").kind,
+    "capacity",
+  );
+  assert.equal(describeTranslateError("truncated").kind, "truncated");
+  assert.equal(
+    describeTranslateError(
+      "Kapitel 4, Abschnitt 14: Zeitüberschreitung des Modells",
+    ).kind,
+    "timeout",
+  );
+});
+
+test("Fehlermeldung: unbekannt und ohne Ort", () => {
+  const e = describeTranslateError("boom");
+  assert.equal(e.kind, "unknown");
+  assert.equal(e.chapter, null);
+  assert.equal(e.section, null);
+  assert.equal(e.detail, "boom");
+});
+
+test("Abschnittsgröße aus Gesamtzeichen, gerundet", () => {
+  const base = { kind: "translation" as const, done: 0 };
+  assert.equal(sectionChars({ ...base, total: 41, totalChars: 492000 }), 12000);
+  assert.equal(sectionChars({ ...base, total: 41, totalChars: 90000 }), 2200);
+  assert.equal(sectionChars({ ...base, total: 41 }), null);
+});
+
+test("Workerzustand ohne Farbe benennbar", () => {
+  assert.equal(workerStatus({ done: 10, total: 10 }, { done: 5 }), "done");
+  assert.equal(workerStatus({ done: 3, total: 10 }, { done: 5 }), "running");
+  assert.equal(workerStatus({ done: 0, total: 10 }, { done: 0 }), "waiting");
+  assert.equal(workerStatus({ done: 0, total: 0 }, { done: 5 }), "waiting");
 });

@@ -65,14 +65,14 @@ export const TranslationModelChip: React.FC = () => {
         aria-haspopup="listbox"
         aria-expanded={open}
         title={t("tts.translationModel.hint")}
-        className="inline-flex min-h-[44px] max-w-full items-center gap-1.5 rounded-md border border-mid-gray/30 px-2 text-xs text-text/80 hover:bg-mid-gray/10 sm:min-h-[28px]"
+        className="flex min-h-[44px] w-full max-w-full items-center gap-2 rounded-md border border-mid-gray/50 bg-mid-gray/10 px-2.5 py-1 text-start text-sm text-text hover:border-logo-primary hover:bg-mid-gray/20 sm:min-h-[32px]"
       >
-        <Cpu size={13} aria-hidden className="shrink-0 text-text/60" />
-        <span className="shrink-0 text-text/50">
-          {t("tts.translationModel.label")}
+        <Cpu size={14} aria-hidden className="shrink-0" />
+        <span className="min-w-0 flex-1 break-words">
+          <span className="font-normal">{t("tts.translationModel.label")}</span>{" "}
+          <span className="font-semibold">{text}</span>
         </span>
-        <span className="min-w-0 truncate font-medium">{text}</span>
-        <ChevronDown size={12} aria-hidden className="shrink-0" />
+        <ChevronDown size={16} aria-hidden className="shrink-0 text-text" />
       </button>
       {open && (
         <div

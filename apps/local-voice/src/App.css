@@ -606,6 +606,14 @@ html[data-fluent] .lva-logo__accent {
   width: 100%;
   max-height: 50%;
 }
+/* Läuft oder stockt eine Buchübersetzung, braucht die Spalte Platz für den
+   Fortschritts- bzw. Fehlerblock samt „Fortsetzen“ (nicht abschneiden). */
+.tts-controls--stacked:has(
+    [data-testid="tts-translate-progress"],
+    [data-testid="tts-translate-partial"]
+  ) {
+  max-height: 85%;
+}
 .tts-right-column--stacked > .tts-workspace__files {
   width: 100%;
   flex: 1 1 0;
@@ -888,6 +896,38 @@ body.lv-resizing * {
 /* Stimmenverwaltung (Modelle > Vorlesen): Touch-Ziele der Sortierauswahl >= 44 px. */
 @media (max-width: 767px) {
   .voice-sort .app-select__control {
+    min-height: 44px;
+  }
+}
+
+/* Touchziele (WCAG 2.5.8 / Apple HIG): unter dem mobilen Breakpoint mindestens
+   44 x 44 px; Desktop behält seine Dichte. Gilt für die Aktionszeile der
+   Bedienspalte (Sprachwahl, Download, Blitz, Menü) und die Spielerleiste. */
+@media (max-width: 639px) {
+  .tts-actions button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .tts-actions__lang .app-select__control {
+    height: 44px;
+    min-height: 44px;
+  }
+  .reader-player .mbtn {
+    --_mb-size: 44px;
+  }
+  .reader-player .mbtn--lg {
+    --_mb-size: 52px;
+  }
+  .reader-player__pill {
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+  }
+  .reader-player__jump input {
+    height: 44px;
+    width: 52px;
+  }
+  .reader-player__chip {
     min-height: 44px;
   }
 }

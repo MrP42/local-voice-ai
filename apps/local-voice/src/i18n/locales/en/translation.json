@@ -470,7 +470,7 @@
     },
     "langTabs": "Translated languages",
     "translationModel": {
-      "label": "Model",
+      "label": "Choose model:",
       "hint": "Language model used for translation. Click to choose another.",
       "none": "no model selected",
       "settings": "Manage models …"
@@ -489,7 +489,37 @@
       "partialCancelled": "Translation cancelled. The part so far is kept.",
       "partialError": "Translation interrupted: {{message}} The part so far is kept.",
       "cancel": "Cancel",
-      "cancelled": "Cancelled."
+      "cancelled": "Cancelled.",
+      "running": "Translation in progress",
+      "total": "Total",
+      "totalAria": "Overall translation progress",
+      "totalValue": "{{percent}} % of the book text",
+      "sectionsDone": "Section {{done}} of {{total}} done",
+      "sectionsDoneChapter": "Section {{done}} of {{total}} done · chapter {{chapter}} of {{chapters}}",
+      "sizeNote": "Percentage by amount of text; one section is about {{chars}} characters.",
+      "sizeNoteGeneric": "Percentage by amount of text, not by sections.",
+      "currentChapter": "Current chapter:",
+      "workersTitle": "Parallel workers (one chapter range each)",
+      "worker": "Worker {{n}}",
+      "workerValue": "{{done}} of {{total}} sections",
+      "workerAria": "Worker {{n}}: {{done}} of {{total}} sections",
+      "workerDone": "done ✓",
+      "workerRunning": "running",
+      "workerWaiting": "waiting",
+      "errorTitle": "Translation interrupted",
+      "cancelledTitle": "Translation cancelled",
+      "errorWhere": "at chapter {{chapter}}, section {{section}} of {{sections}}",
+      "errorWhereSection": "at chapter {{chapter}}, section {{section}}",
+      "errorWhereChapter": "at chapter {{chapter}}",
+      "errorKept": "The partial result so far is kept.",
+      "errorDetails": "Technical details",
+      "cause": {
+        "timeout": "The model timed out.",
+        "rateLimit": "The model is limiting requests right now.",
+        "capacity": "The model is currently overloaded.",
+        "truncated": "The model's answer was cut off.",
+        "unknown": "The model reported an error."
+      }
     },
     "replaceSpeaker": {
       "title": "Replace speaker on all pages",

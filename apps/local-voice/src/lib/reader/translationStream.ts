@@ -124,3 +124,66 @@ export function progressParts(p: TransformProgress): ProgressParts {
     title: shortTitle(p.chapterTitle),
   };
 }
+
+export type TranslateErrorKind =
+  "timeout" | "rateLimit" | "capacity" | "truncated" | "unknown";
+
+export interface TranslateErrorInfo {
+  kind: TranslateErrorKind;
+  /** Originaltext des Modells/Backends (ohne die Ortsangabe davor). */
+  detail: string;
+  /** 1-basiert, wie die Backend-Meldung sie nennt; null, wenn nicht genannt. */
+  chapter: number | null;
+  section: number | null;
+  sections: number | null;
+}
+
+const ERROR_KINDS: [RegExp, TranslateErrorKind][] = [
+  [/cli_timeout|timeout|timed out|zeitüberschreitung/i, "timeout"],
+  [/429|rate.?limit|too many requests/i, "rateLimit"],
+  [/capacity|overloaded|überlastet/i, "capacity"],
+  [/truncated|abgeschnitten/i, "truncated"],
+];
+
+/**
+ * Backend-Fehlermeldung in kurze Ursache und Ort zerlegen. Bekannte Fehler
+ * (Zeitüberschreitung, Ratenbegrenzung, Auslastung, abgeschnittene Antwort)
+ * bekommen eine Kategorie; die Oberfläche zeigt dazu einen kurzen deutschen
+ * Satz und den Originaltext als Detail. Ort: „Kapitel 3, Abschnitt 2 von 5“.
+ */
+export function describeTranslateError(raw: string): TranslateErrorInfo {
+  const text = (raw ?? "").trim();
+  const num = (m: RegExpMatchArray | null, i: number) =>
+    m && m[i] ? Number(m[i]) : null;
+  const chapter = num(text.match(/Kapitel\s+(\d+)/i), 1);
+  const sec = text.match(/Abschnitt\s+(\d+)(?:\s+von\s+(\d+))?/i);
+  const afterColon = text.match(/(?:abgebrochen|unterbrochen)?:\s*([\s\S]+)$/);
+  const detail = (afterColon ? afterColon[1] : text).trim();
+  const kind =
+    ERROR_KINDS.find(([re]) => re.test(text))?.[1] ?? ("unknown" as const);
+  return {
+    kind,
+    detail,
+    chapter,
+    section: num(sec, 1),
+    sections: num(sec, 2),
+  };
+}
+
+/** Mittlere Zeichenzahl je Abschnitt, auf 100 gerundet; null ohne Angaben. */
+export function sectionChars(p: TransformProgress): number | null {
+  if (!p.totalChars || p.totalChars <= 0 || p.total <= 0) return null;
+  return Math.max(100, Math.round(p.totalChars / p.total / 100) * 100);
+}
+
+export type WorkerStatus = "done" | "running" | "waiting";
+
+/** Zustand eines Workers; ohne Farbe am Text erkennbar („fertig ✓“, „läuft“, „wartet“). */
+export function workerStatus(
+  w: { done: number; total: number },
+  p: Pick<TransformProgress, "done">,
+): WorkerStatus {
+  if (w.total <= 0) return "waiting";
+  if (w.done >= w.total) return "done";
+  return w.done === 0 && p.done === 0 ? "waiting" : "running";
+}

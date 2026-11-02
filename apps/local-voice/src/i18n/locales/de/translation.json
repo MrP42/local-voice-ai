@@ -470,7 +470,7 @@
     },
     "langTabs": "Übersetzte Sprachen",
     "translationModel": {
-      "label": "Modell",
+      "label": "Modell wählen:",
       "hint": "Sprachmodell, das übersetzt. Klick wählt ein anderes.",
       "none": "kein Modell gewählt",
       "settings": "Modelle verwalten …"
@@ -489,7 +489,37 @@
       "partialCancelled": "Übersetzung abgebrochen. Der bisherige Teil bleibt erhalten.",
       "partialError": "Übersetzung unterbrochen: {{message}} Der bisherige Teil bleibt erhalten.",
       "cancel": "Abbrechen",
-      "cancelled": "Abgebrochen."
+      "cancelled": "Abgebrochen.",
+      "running": "Übersetzung läuft",
+      "total": "Gesamt",
+      "totalAria": "Gesamtfortschritt der Übersetzung",
+      "totalValue": "{{percent}} % des Buchtexts",
+      "sectionsDone": "Abschnitt {{done}} von {{total}} fertig",
+      "sectionsDoneChapter": "Abschnitt {{done}} von {{total}} fertig · Kapitel {{chapter}} von {{chapters}}",
+      "sizeNote": "Prozent nach Textmenge; ein Abschnitt umfasst etwa {{chars}} Zeichen.",
+      "sizeNoteGeneric": "Prozent nach Textmenge, nicht nach Abschnitten.",
+      "currentChapter": "Aktuelles Kapitel:",
+      "workersTitle": "Parallele Worker (je ein Kapitelbereich)",
+      "worker": "Worker {{n}}",
+      "workerValue": "{{done}} von {{total}} Abschnitten",
+      "workerAria": "Worker {{n}}: {{done}} von {{total}} Abschnitten",
+      "workerDone": "fertig ✓",
+      "workerRunning": "läuft",
+      "workerWaiting": "wartet",
+      "errorTitle": "Übersetzung unterbrochen",
+      "cancelledTitle": "Übersetzung abgebrochen",
+      "errorWhere": "bei Kapitel {{chapter}}, Abschnitt {{section}} von {{sections}}",
+      "errorWhereSection": "bei Kapitel {{chapter}}, Abschnitt {{section}}",
+      "errorWhereChapter": "bei Kapitel {{chapter}}",
+      "errorKept": "Das bisherige Teilergebnis bleibt erhalten.",
+      "errorDetails": "Technische Details",
+      "cause": {
+        "timeout": "Zeitüberschreitung des Modells.",
+        "rateLimit": "Das Modell begrenzt gerade die Anfragen.",
+        "capacity": "Das Modell ist derzeit überlastet.",
+        "truncated": "Die Antwort des Modells wurde abgeschnitten.",
+        "unknown": "Das Modell hat einen Fehler gemeldet."
+      }
     },
     "replaceSpeaker": {
       "title": "Sprecher auf allen Seiten ersetzen",
