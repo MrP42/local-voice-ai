@@ -274,13 +274,10 @@ export function useLibraryDrop(
             {t("library.drop.asNew")}
           </Button>
           <Button onClick={() => answer("cancel")}>{t("library.cancel")}</Button>
-          {isAudio && question?.replaces && (
-            <Button onClick={() => answer("append")} data-testid="library-drop-append">
-              {t("library.drop.append")}
-            </Button>
-          )}
+          {/* Ersetzen löscht das vorhandene Hörbuch: zurückhaltend, nicht primär.
+              Primär ist das Anhängen, das nichts zerstört. */}
           <Button
-            variant="primary"
+            variant={isAudio && question?.replaces ? "secondary" : "primary"}
             onClick={() => answer("attach")}
             data-testid="library-drop-attach"
           >
@@ -288,6 +285,15 @@ export function useLibraryDrop(
               ? t(isAudio ? "library.drop.replaceAudio" : "library.drop.replaceText")
               : t("library.drop.attach")}
           </Button>
+          {isAudio && question?.replaces && (
+            <Button
+              variant="primary"
+              onClick={() => answer("append")}
+              data-testid="library-drop-append"
+            >
+              {t("library.drop.append")}
+            </Button>
+          )}
         </>
       }
     >

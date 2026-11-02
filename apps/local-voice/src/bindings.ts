@@ -6051,11 +6051,13 @@ async libraryAudioImportTracks(id: string, paths: string[], append: boolean) : P
 /**
  * Bücher mit je einem Teil zu **einem** Hörbuch zusammenführen: die Teile der
  * Quellen wandern in der gegebenen Reihenfolge hinter die des Ziels, samt
- * Dauer und Transkriptions-Auftrag. Die Quellbücher verschwinden.
+ * Dauer und Transkriptions-Auftrag. Die Quellbücher verschwinden. Mit
+ * `replace` ersetzen sie das vorhandene Hörbuch des Ziels (dessen Dateien
+ * gehen erst nach erfolgreichem Schreiben weg, Fehler rollen alles zurück).
  */
-async libraryMergeAudio(targetId: string, sourceIds: string[]) : Promise<Result<LibraryBook, string>> {
+async libraryMergeAudio(targetId: string, sourceIds: string[], replace: boolean) : Promise<Result<LibraryBook, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("library_merge_audio", { targetId, sourceIds }) };
+    return { status: "ok", data: await TAURI_INVOKE("library_merge_audio", { targetId, sourceIds, replace }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

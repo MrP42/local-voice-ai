@@ -7023,7 +7023,10 @@
       "transcribing": "Wird transkribiert",
       "ready": "Transkript wird übernommen",
       "failed": "Transkription fehlgeschlagen",
-      "missing": "Transkription nicht gefunden"
+      "missing": "Transkription nicht gefunden",
+      "missingParts": "Teile ohne Transkriptions-Auftrag: das Hörbuch lässt sich nicht vollständig transkribieren.",
+      "emptyTranscript": "Das Transkript ist leer.",
+      "unknownDuration": "Die Dauer eines früheren Teils ist unbekannt; der Text lässt sich nicht anfügen."
     },
     "back": "Bibliothek",
     "by": "von {{authors}}",

@@ -568,12 +568,26 @@
     flex-wrap: wrap;
     row-gap: 6px;
   }
-  .library-audiobar > div {
-    flex: 1;
+  /* Titel und Teil-Angabe stehen in einer eigenen, vollen Zeile über den
+     Knöpfen; „Teil 2 von 2“ bricht nicht um. */
+  .library-audiobar > div:not(.library-audiobar__keys):not(.book-cover) {
+    flex: 1 1 calc(100% - 52px);
+    max-width: none !important;
+    min-width: 0;
+  }
+  .library-audiobar [data-testid="library-audiobar-sub"] {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .library-audiobar__seek {
     order: 3;
     flex-basis: 100%;
+  }
+  .library-audiobar__keys {
+    order: 4;
+    flex: 1 1 100%;
+    justify-content: space-between;
   }
 }
 .library-audiobar .library-title {

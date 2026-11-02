@@ -36,8 +36,9 @@ import {
   type BookView,
   type Filter,
   type Sort,
+  tracksOf,
 } from "@/lib/library/books";
-import { setFinished } from "@/lib/library/progress";
+import { flushProgress, setFinished } from "@/lib/library/progress";
 import {
   splitAudiobookGroups,
   type SplitGroup,
@@ -204,11 +205,17 @@ export const LibraryPage: React.FC = () => {
     if (!merging?.plan) return;
     const { group, plan } = merging;
     setMerging({ ...merging, busy: true });
+    // Die Hörleiste schließt vorher: sie sichert dabei ihre Stelle, und beim
+    // Verschieben der Dateien spielt nichts mehr aus ihnen.
+    const involved = new Set([plan.target.id, ...group.books.map((b) => b.id)]);
+    if (listening && involved.has(listening.book.id)) {
+      setListening(null);
+      // Zeit zum Abmelden der Leiste (sie sichert beim Schließen ihre Stelle).
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+      await flushProgress();
+    }
     try {
       const book = await mergeGroup(group, plan);
-      setListening((l) =>
-        l && group.books.some((b) => b.id === l.book.id) ? null : l,
-      );
       toast(
         t("library.merge.done", {
           title: book.title,
@@ -224,6 +231,9 @@ export const LibraryPage: React.FC = () => {
     }
   };
 
+  const playing = listening
+    ? (books?.find((b) => b.id === listening.book.id) ?? listening.book)
+    : null;
   const counts = useMemo(
     () =>
       Object.fromEntries(
@@ -688,10 +698,10 @@ export const LibraryPage: React.FC = () => {
         )}
         {listening && (
           <AudioBar
-            key={`${listening.book.id}:${listening.follow}`}
-            book={
-              books?.find((b) => b.id === listening.book.id) ?? listening.book
-            }
+            key={`${listening.book.id}:${listening.follow}:${tracksOf(playing?.audio)
+              .map((t) => t.file)
+              .join("|")}`}
+            book={playing ?? listening.book}
             startFollow={listening.follow}
             onSave={save}
             onHeight={setPlayerHeight}

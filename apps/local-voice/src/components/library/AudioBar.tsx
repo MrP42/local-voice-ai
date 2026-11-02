@@ -35,38 +35,10 @@ import {
 } from "@/lib/library/progress";
 import { saveResumePoint } from "@/lib/reader/resumePoint";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { probeDuration } from "@/lib/library/probe";
 
 /** Wie oft die Stelle beim Hören gesichert wird. */
 const SAVE_EVERY_MS = 2000;
-/** Wie lange das Ermitteln einer fehlenden Dauer höchstens wartet. */
-const PROBE_TIMEOUT_MS = 8000;
-
-/** Dauer einer Hördatei in ms, ohne sie abzuspielen. */
-function probeDuration(url: string): Promise<number | null> {
-  return new Promise((resolve) => {
-    const el = new Audio();
-    let settled = false;
-    const finish = (ms: number | null) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      el.removeAttribute("src");
-      el.load();
-      resolve(ms);
-    };
-    const timer = window.setTimeout(() => finish(null), PROBE_TIMEOUT_MS);
-    el.preload = "metadata";
-    el.onloadedmetadata = () =>
-      finish(
-        Number.isFinite(el.duration) && el.duration > 0
-          ? Math.round(el.duration * 1000)
-          : null,
-      );
-    el.onerror = () => finish(null);
-    el.src = url;
-  });
-}
-
 /** Dauern (Dateiname → ms) in die Audiofassung eintragen. */
 export function withDurations(
   audio: AudioVersion,
@@ -103,11 +75,12 @@ function locate(
   const starts = startsOf(durations);
   let index = 0;
   for (let i = 0; i < durations.length; i++) {
-    if (starts[i] <= ms) index = i;
+    if (starts[i] > ms) break;
+    index = i;
+    // Ein Teil ohne bekannte Dauer: dahinter lässt sich nichts verorten.
+    if (!(durations[i] > 0)) break;
   }
-  const within = Math.max(0, ms - starts[index]);
-  // Letztes Teil nimmt den Rest; ein Teil ohne bekannte Dauer auch.
-  return { index, within };
+  return { index, within: Math.max(0, ms - starts[index]) };
 }
 
 interface Props {
@@ -341,20 +314,33 @@ export const AudioBar: React.FC<Props> = ({
   }, [current]);
 
   /** Zu einer Gesamtzeit (Sekunden) springen, auch in ein anderes Teil. */
-  const seekGlobal = useCallback((seconds: number) => {
-    const el = audio.current;
-    const totalMs = durRef.current.reduce((a, b) => a + b, 0);
-    const ms = Math.max(0, Math.min(seconds * 1000, totalMs || seconds * 1000));
-    const place = locate(durRef.current, ms);
-    if (place.index === currentRef.current && el) {
-      el.currentTime = place.within / 1000;
-      return;
-    }
-    switching.current = true;
-    pendingSeek.current = place.within / 1000;
-    currentRef.current = place.index;
-    setCurrent(place.index);
-  }, []);
+  const seekGlobal = useCallback(
+    (seconds: number, measured = false) => {
+      const el = audio.current;
+      const durs = durRef.current;
+      const known = durs.findIndex((d) => !(d > 0));
+      // Sprung hinter ein Teil ohne bekannte Dauer: erst messen, dann springen.
+      if (known >= 0 && !measured) {
+        const knownMs = durs.slice(0, known).reduce((a, b) => a + b, 0);
+        if (seconds * 1000 > knownMs) {
+          void measureMissing().then(() => seekGlobal(seconds, true));
+          return;
+        }
+      }
+      const totalMs = durs.reduce((a, b) => a + b, 0);
+      const ms = Math.max(0, Math.min(seconds * 1000, totalMs || seconds * 1000));
+      const place = locate(durs, ms);
+      if (place.index === currentRef.current && el) {
+        el.currentTime = place.within / 1000;
+        return;
+      }
+      switching.current = true;
+      pendingSeek.current = place.within / 1000;
+      currentRef.current = place.index;
+      setCurrent(place.index);
+    },
+    [measureMissing],
+  );
 
   const skip = (seconds: number) => seekGlobal(globalMs() / 1000 + seconds);
   const toggle = () => {

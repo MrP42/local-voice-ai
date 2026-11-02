@@ -7023,7 +7023,10 @@
       "transcribing": "Transcribing",
       "ready": "Taking over transcript",
       "failed": "Transcription failed",
-      "missing": "Transcription not found"
+      "missing": "Transcription not found",
+      "missingParts": "Some parts have no transcription job: the audiobook cannot be transcribed completely.",
+      "emptyTranscript": "The transcript is empty.",
+      "unknownDuration": "The duration of an earlier part is unknown; the text cannot be appended."
     },
     "back": "Library",
     "by": "by {{authors}}",

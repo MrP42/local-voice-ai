@@ -958,6 +958,12 @@ test("Ablegen auf ein Buch mit Audio: Rückfrage mit drei Wahlmöglichkeiten", a
   await expect(page.getByTestId("library-drop-attach")).toHaveText("Hörbuch ersetzen");
   await expect(page.getByTestId("library-drop-append")).toHaveText("Als weitere Teile anhängen");
   await expect(page.getByTestId("library-drop-new")).toHaveText("Als neues Buch");
+  // Ersetzen zerstört das vorhandene Hörbuch: nur Anhängen ist primär.
+  await expect(page.getByTestId("library-drop-append")).toHaveAttribute("data-variant", "primary");
+  await expect(page.getByTestId("library-drop-attach")).not.toHaveAttribute(
+    "data-variant",
+    "primary",
+  );
   await page.screenshot({ path: shot("drop-rueckfrage-drei-wahlen-1440.png") });
   await page.getByTestId("library-drop-append").click();
   await expect
@@ -1006,7 +1012,7 @@ test("Zusammenführen: Hinweisbalken, Rückfrage mit Reihenfolge, ein Buch danac
   await page.getByTestId("library-merge-confirm").click();
   await expect
     .poll(async () => await calls(page, "library_merge_audio"))
-    .toEqual([{ targetId: "book_p1", sourceIds: ["book_p2", "book_p3"] }]);
+    .toEqual([{ targetId: "book_p1", sourceIds: ["book_p2", "book_p3"], replace: false }]);
   // Das erste Buch bekommt vorher den Stamm-Titel.
   const saves = await calls(page, "library_save");
   expect((saves[0].book as { id: string; title: string }).title).toBe("Rich Dad Poor Dad");
@@ -1027,6 +1033,7 @@ test("Zusammenführen in ein vorhandenes Werk: dessen Hörbuch wird ersetzt und 
     authors: ["Robert Kiyosaki"],
     ...legacyAudio("book_w"),
   });
+  (work.audio as { transcript_job: string }).transcript_job = "m9";
   await addBooks(page, [...parts, work]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1036,12 +1043,16 @@ test("Zusammenführen in ein vorhandenes Werk: dessen Hörbuch wird ersetzt und 
     "„Rich Dad Poor Dad“ hat schon ein Hörbuch (1 Dateien). Es wird dabei ersetzt",
   );
   await page.getByTestId("library-merge-confirm").click();
+  // Das Ersetzen entscheidet der Kern in einem Schritt (replace), das Ziel wird
+  // vorher nicht angefasst.
   await expect
     .poll(async () => await calls(page, "library_merge_audio"))
-    .toEqual([{ targetId: "book_w", sourceIds: ["book_p1", "book_p2"] }]);
-  const saves = await calls(page, "library_save");
-  expect((saves[0].book as { id: string }).id).toBe("book_w");
-  expect((saves[0].book as { audio: unknown }).audio).toBeNull();
+    .toEqual([{ targetId: "book_w", sourceIds: ["book_p1", "book_p2"], replace: true }]);
+  expect(await calls(page, "library_save")).toHaveLength(0);
+  // Erst nach Erfolg: der laufende Auftrag des alten Hörbuchs wird gelöscht.
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
+    .toEqual(["m9"]);
 });
 
 test("Reihenbände ohne Teil-Angabe lösen keinen Zusammenführen-Hinweis aus", async ({ page }) => {
@@ -1066,6 +1077,32 @@ test("AAX: Toast mit DRM-Hinweis beim Ablegen und im Dialog „Hinzufügen“", 
   ).toBeVisible();
   expect(await calls(page, "library_audio_import")).toHaveLength(0);
   expect(await calls(page, "library_audio_import_tracks")).toHaveLength(0);
+  // Der Toast liegt nach dem Einblenden vollständig im Fenster und ist lesbar.
+  const toast = page.locator("[data-sonner-toast]").first();
+  await expect(toast).toHaveCSS("opacity", "1");
+  await page.waitForTimeout(600);
+  const box = (await toast.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(1440);
+  expect(box.y + box.height).toBeLessThanOrEqual(900);
+  const status = (await page.locator(".workspace-status").boundingBox())!;
+  expect(status.y - (box.y + box.height)).toBeGreaterThanOrEqual(44);
+  const contrast = await toast.evaluate((el) => {
+    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = ([r, g, b]: number[]) => {
+      const f = (v: number) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const cs = getComputedStyle(el);
+    const a = lum(rgb(cs.color));
+    const b = lum(rgb(cs.backgroundColor));
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  });
+  expect(contrast).toBeGreaterThanOrEqual(4.5);
   await page.screenshot({ path: shot("aax-hinweis-1440.png") });
   // Dialog: nur eine AAX gewählt → Meldung im Dialog.
   await page.evaluate(() => {
@@ -1330,6 +1367,12 @@ test("Mitlesen bei 390 px: Vollbild-Blatt mit bedienbarer Leiste, Trefferfläche
     expect(box.width, id).toBeGreaterThanOrEqual(44);
     expect(box.height, id).toBeGreaterThanOrEqual(44);
   }
+  // Titel und Teil-Angabe: eigene Zeile, kaum gekürzt, „Teil 1 von 2“ in einer Zeile.
+  const title = (await page.locator(".library-audiobar .library-title").boundingBox())!;
+  expect(title.width).toBeGreaterThan(200);
+  const sub = (await page.getByTestId("library-audiobar-sub").boundingBox())!;
+  expect(sub.height).toBeLessThanOrEqual(20);
+  expect(sub.width).toBeGreaterThan(60);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
@@ -1523,4 +1566,107 @@ test("Transkription je Teil: sind alle fertig, entstehen Text und Zeitachse mit 
   await expect
     .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId).sort())
     .toEqual(["m21", "m22", "m23"]);
+});
+
+
+const transcriptBook = (jobOnFirst: string | null = null): Extra =>
+  baseBook("book_m", "Der Prozess", {
+    authors: ["Franz Kafka"],
+    text: { page_id: "page_m", origin: "transcript", source_name: null },
+    ...multiAudio(
+      "book_m",
+      [track(1, "Teil 1", 10_000, jobOnFirst), track(2, "Teil 2", 20_000)],
+      followText().sync,
+    ),
+  });
+
+test("Anhängen an ein Buch mit Transkript: nur die neuen Teile werden transkribiert", async ({
+  page,
+}) => {
+  await addBooks(page, [transcriptBook()]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const card = page.getByTestId("library-card").filter({ hasText: "Der Prozess" });
+  await dragTo(page, await centerOf(page, card.locator(".library-card__open")), [
+    "C:/Downloads/Prozess - Teil 3.mp3",
+  ]);
+  await page.getByTestId("library-drop-append").click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_import_file")).map((a) => a.path))
+    .toEqual(["C:/lib/book_m/audio/teil_003.mp3"]);
+});
+
+test("Ersetzen des Hörbuchs löscht Aufträge und die Transkript-Seite des alten Hörbuchs", async ({
+  page,
+}) => {
+  await addBooks(page, [transcriptBook("m7")]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const card = page.getByTestId("library-card").filter({ hasText: "Der Prozess" });
+  await dragTo(page, await centerOf(page, card.locator(".library-card__open")), [
+    "C:/Downloads/Prozess - Teil 1.mp3",
+    "C:/Downloads/Prozess - Teil 2.mp3",
+  ]);
+  await page.getByTestId("library-drop-attach").click();
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
+    .toEqual(["m7"]);
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_m"]);
+});
+
+test("Fertiges Transkript angehängter Teile ergänzt Text und Zeitachse am Ende", async ({
+  page,
+}) => {
+  const { text, sync } = followText();
+  await addBooks(page, [
+    baseBook("book_m", "Der Prozess", {
+      authors: ["Franz Kafka"],
+      text: { page_id: "page_m", origin: "transcript", source_name: null },
+      ...multiAudio(
+        "book_m",
+        [
+          track(1, "Teil 1", 10_000),
+          track(2, "Teil 2", 20_000),
+          track(3, "Teil 3", 15_000, "m31"),
+        ],
+        sync,
+      ),
+    }),
+  ]);
+  await page.addInitScript(
+    ([t]) => {
+      const w = window as unknown as Record<string, any>;
+      w.__pageText["page_m"] = t;
+      w.__jobs.push("m31");
+      w.__jobStatus["m31"] = "ready";
+      w.__segments["m31"] = [
+        { segment_index: 0, text: "Neu.", start_ms: 2000, end_ms: 3000, channel: 0, speaker_index: null },
+      ];
+    },
+    [text],
+  );
+  await page.goto("/");
+  await expect.poll(async () => (await calls(page, "page_state_save")).length).toBe(1);
+  const stored = JSON.parse((await calls(page, "page_state_save"))[0].state as string) as {
+    text: string;
+  };
+  expect(stored.text).toBe(`${text}\n\nNeu.`);
+  const saves = await calls(page, "library_save");
+  const book = saves[saves.length - 1].book as {
+    text: { page_id: string; origin: string };
+    audio: {
+      sync: { chars: number; ms: number }[];
+      tracks: { transcript_job: string | null }[];
+    };
+  };
+  expect(book.text.page_id).toBe("page_m");
+  // Versatz = bisherige Gesamtdauer 30 s, dazu 2 s im neuen Teil.
+  expect(book.audio.sync).toHaveLength(sync.length + 1);
+  expect(book.audio.sync[sync.length]).toEqual({ chars: text.length + 2, ms: 32_000 });
+  expect(book.audio.tracks.map((t) => t.transcript_job)).toEqual([null, null, null]);
+  await expect
+    .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
+    .toEqual(["m31"]);
 });

@@ -1,7 +1,16 @@
 import { commands, type LibraryBook } from "@/bindings";
 import type { SplitGroup } from "./audioGroups";
-import { pendingJobs, tracksOf } from "./books";
-import { audioProgressKey, flushProgress, removeProgress } from "./progress";
+import { assetUrl, pendingJobs, totalDuration, tracksOf } from "./books";
+import {
+  audioProgressKey,
+  flushProgress,
+  loadProgress,
+  recordPosition,
+  removeProgress,
+  textProgressKey,
+} from "./progress";
+import { mergedPosition, type MergeEntry } from "./position";
+import { probeDuration } from "./probe";
 import { findWork, ImportError } from "./importFile";
 
 /**
@@ -49,24 +58,48 @@ export async function planMerge(group: SplitGroup): Promise<MergePlan> {
 /** Teile (Dateien) des Ziels, die ein Zusammenführen ersetzt oder behält. */
 export const partCount = (book: LibraryBook) => tracksOf(book.audio).length;
 
+/** Dauern je Teil: gespeichert, sonst aus der Datei ermittelt (`null` = unbekannt). */
+async function durationsOf(book: LibraryBook): Promise<(number | null)[]> {
+  const tracks = tracksOf(book.audio);
+  const paths = book.audio_paths ?? [];
+  const out: (number | null)[] = [];
+  for (let i = 0; i < tracks.length; i++) {
+    const known = tracks[i].duration_ms;
+    if (known != null && known > 0) {
+      out.push(known);
+      continue;
+    }
+    const url = assetUrl(paths[i]);
+    out.push(url ? await probeDuration(url) : null);
+  }
+  return out;
+}
+
 export async function mergeGroup(
   group: SplitGroup,
   plan: MergePlan,
 ): Promise<LibraryBook> {
   const { target, sources } = plan;
-  if (plan.replacesAudio) {
-    // Altes Hörbuch des Ziels lösen: Verweis weg, offene Aufträge löschen,
-    // Dateien räumt der Kern beim Zusammenführen weg.
-    const cleared = await commands.librarySave({
-      ...target,
-      audio: null,
-      audio_path: null,
-      audio_paths: [],
+  // Alles, was nach einem Erfolg aufzuräumen ist, vorher festhalten.
+  const oldJobs = plan.replacesAudio ? pendingJobs(target) : [];
+  const oldText =
+    plan.replacesAudio && target.text?.origin === "transcript"
+      ? target.text
+      : null;
+  const entries: MergeEntry[] = [];
+  if (!plan.replacesAudio && target.audio)
+    entries.push({
+      durations: await durationsOf(target),
+      progress: loadProgress(audioProgressKey(target.id)),
     });
-    if (cleared.status !== "ok") throw new ImportError(cleared.error);
-    for (const id of pendingJobs(target)) await commands.meetingsDelete(id);
-    removeProgress(audioProgressKey(target.id));
-  } else if (!plan.existing) {
+  for (const source of sources)
+    entries.push({
+      durations: await durationsOf(source),
+      progress: loadProgress(audioProgressKey(source.id)),
+    });
+  const position = mergedPosition(entries);
+
+  if (!plan.existing) {
     // Das erste Buch bekommt den Stamm-Titel (ohne Disc-/Track-Angaben).
     const retitled = await commands.librarySave({
       ...target,
@@ -75,12 +108,32 @@ export async function mergeGroup(
     });
     if (retitled.status !== "ok") throw new ImportError(retitled.error);
   }
+  // Ersetzen entscheidet der Kern atomar: Dateien und buch.json zuerst,
+  // Aufräumen hier erst nach Erfolg.
   const merged = await commands.libraryMergeAudio(
     target.id,
     sources.map((b) => b.id),
+    plan.replacesAudio,
   );
   if (merged.status !== "ok") throw new ImportError(merged.error);
+  for (const id of oldJobs) await commands.meetingsDelete(id);
+  if (oldText) {
+    removeProgress(textProgressKey(oldText.page_id));
+    await commands.pagesDelete(oldText.page_id);
+  }
+  if (plan.replacesAudio) removeProgress(audioProgressKey(target.id));
   for (const source of sources) removeProgress(audioProgressKey(source.id));
+  if (position) {
+    const total = durationsSum(merged.data);
+    recordPosition(audioProgressKey(target.id), {
+      to: position.ms,
+      length: total ?? 0,
+      unit: "ms",
+    });
+  }
   await flushProgress();
   return merged.data;
 }
+
+const durationsSum = (book: LibraryBook): number | null =>
+  totalDuration(book.audio);

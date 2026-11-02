@@ -33,7 +33,7 @@ import {
   type BookView,
 } from "@/lib/library/books";
 import { groupAudioFiles } from "@/lib/library/audioGroups";
-import { drmMessage, transcribeTracks } from "@/lib/library/importFile";
+import { drmMessage, importAudioParts, transcribeTracks } from "@/lib/library/importFile";
 import { audioProgressKey, removeProgress } from "@/lib/library/progress";
 
 type Tab = "overview" | "versions" | "metadata";
@@ -138,13 +138,7 @@ export const BookDetail: React.FC<Props> = ({
       if (!audio.length) return;
       // Hörreihenfolge: Disc, Track, Name.
       const paths = groupAudioFiles(audio).flatMap((g) => g.paths);
-      const r =
-        paths.length === 1 && !append
-          ? await commands.libraryAudioImport(book.id, paths[0])
-          : await commands.libraryAudioImportTracks(book.id, paths, append);
-      if (r.status === "error") throw new Error(r.error);
-      // Neue Hördatei: die alte Hörposition passt nicht mehr.
-      if (!append && book.audio) removeProgress(audioProgressKey(book.id));
+      await importAudioParts(book, paths, append, (m) => toast.error(m));
       await onChanged();
     });
 

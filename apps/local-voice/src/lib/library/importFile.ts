@@ -7,10 +7,11 @@ import {
   guessFromFileName,
   guessFromText,
   kindOfFile,
+  pendingJobs,
   tracksOf,
 } from "./books";
 import type { AudioGroup } from "./audioGroups";
-import { audioProgressKey, removeProgress } from "./progress";
+import { audioProgressKey, removeProgress, textProgressKey } from "./progress";
 
 /**
  * Datei in die Bibliothek aufnehmen (lva#152). Gemeinsamer Weg für den
@@ -174,8 +175,8 @@ export async function addToLibrary(
       throw new ImportError(imported.error);
     }
     book = imported.data;
-    // Neue Hördatei: die alte Hörposition passt nicht mehr (Rückfrage sagt es).
-    if (current?.audio) removeProgress(audioProgressKey(book.id));
+    // Neue Hördatei: alte Aufträge, Transkript und Hörposition passen nicht mehr.
+    if (current?.audio) await cleanupReplaced(current);
     if (transcribe && !book.text && book.audio_path && book.audio) {
       // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
       const job = await commands.meetingsImportFile(book.audio_path, true, null);
@@ -231,13 +232,18 @@ export interface GroupOptions {
 export async function transcribeTracks(
   bookId: string,
   onWarning?: (message: string) => void,
+  /** Nur Teile ab diesem Index (angehängte Teile an ein Transkript). */
+  from?: number,
 ): Promise<LibraryBook | null> {
   const book = await freshBook(bookId);
-  if (!book?.audio || book.text) return book;
+  if (!book?.audio) return book;
+  // Ein fremder Text (EPUB …) bleibt; ein Transkript wächst nur um neue Teile.
+  if (book.text && (book.text.origin !== "transcript" || from === undefined))
+    return book;
   const tracks = tracksOf(book.audio);
   const paths = book.audio_paths ?? [];
   const jobs = new Map<number, string>();
-  for (let i = 0; i < tracks.length; i++) {
+  for (let i = from ?? 0; i < tracks.length; i++) {
     if (tracks[i].transcript_job || !paths[i]) continue;
     // Ein Hörbuch, keine Gesprächsaufnahme: keine Einwilligung nötig.
     const r = await commands.meetingsImportFile(paths[i], true, null);
@@ -329,11 +335,18 @@ export async function addAudioGroup(
     throw new ImportError(imported.error);
   }
   book = imported.data;
-  // Ersetzte Hördatei: die alte Hörposition passt nicht mehr.
-  if (hadAudio && !append) removeProgress(audioProgressKey(book.id));
+  // Ersetztes Hörbuch: alte Aufträge, Transkript und Hörposition passen nicht mehr.
+  if (hadAudio && !append && current) await cleanupReplaced(current);
 
-  if (transcribe && !book.text) {
-    const withJobs = await transcribeTracks(book.id, onWarning);
+  if (transcribe) {
+    const withJobs = await transcribeTracks(
+      book.id,
+      onWarning,
+      // Angehängte Teile an ein Transkript: nur die neuen Teile transkribieren.
+      append && current?.text?.origin === "transcript"
+        ? tracksOf(current.audio).length
+        : undefined,
+    );
     if (withJobs) book = withJobs;
   }
   if (candidate?.cover_id || (candidate?.isbn && book.cover_source === "generated")) {
@@ -345,4 +358,45 @@ export async function addAudioGroup(
     if (r.status === "ok") book = r.data;
   }
   return { book, attached: !!current };
+}
+
+/**
+ * Aufräumen, nachdem das Hörbuch eines Buchs **erfolgreich** ersetzt wurde:
+ * laufende Aufträge der alten Teile löschen, die alte Hörposition entfernen und
+ * einen Transkript-Text samt Seite verwerfen (der Kern hat ihn am Buch schon
+ * gelöst), damit neu transkribiert wird.
+ */
+export async function cleanupReplaced(before: LibraryBook): Promise<void> {
+  for (const id of pendingJobs(before)) await commands.meetingsDelete(id);
+  removeProgress(audioProgressKey(before.id));
+  if (before.text?.origin === "transcript") {
+    removeProgress(textProgressKey(before.text.page_id));
+    await commands.pagesDelete(before.text.page_id);
+  }
+}
+
+/**
+ * Hörbuch eines vorhandenen Buchs ersetzen oder Teile anhängen (Detailansicht).
+ * Ersetzen räumt danach auf ({@link cleanupReplaced}); Anhängen an ein
+ * Transkript startet die Transkription der neuen Teile, deren Text das
+ * Transkript am Ende ergänzt.
+ */
+export async function importAudioParts(
+  book: LibraryBook,
+  paths: string[],
+  append: boolean,
+  onWarning?: (message: string) => void,
+): Promise<LibraryBook> {
+  const before = (await freshBook(book.id)) ?? book;
+  const r =
+    paths.length === 1 && !append
+      ? await commands.libraryAudioImport(book.id, paths[0])
+      : await commands.libraryAudioImportTracks(book.id, paths, append);
+  if (r.status === "error") throw new ImportError(r.error);
+  if (before.audio && !append) await cleanupReplaced(before);
+  if (append && before.text?.origin === "transcript") {
+    const next = await transcribeTracks(book.id, onWarning, tracksOf(before.audio).length);
+    if (next) return next;
+  }
+  return r.data;
 }

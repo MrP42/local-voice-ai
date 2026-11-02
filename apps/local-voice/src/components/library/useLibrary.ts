@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, type LibraryBook } from "@/bindings";
 import { CHANGED_EVENT, HYDRATED_EVENT } from "@/lib/library/progress";
 import {
+  assetUrl,
   pendingJobs,
   textWithSync,
   tracksOf,
@@ -9,6 +10,15 @@ import {
   type TranscriptSegment,
 } from "@/lib/library/books";
 import { toast } from "sonner";
+import i18n from "@/i18n";
+import { probeDuration } from "@/lib/library/probe";
+import { transcribeTracks } from "@/lib/library/importFile";
+
+/** Nach so vielen Fehlversuchen gilt die Übernahme als fehlgeschlagen. */
+const MAX_FAILURES = 3;
+
+/** Zwischenzeitlich geändertes Buch: die Übernahme wird still verworfen. */
+class Superseded extends Error {}
 
 async function freshBook(id: string): Promise<LibraryBook | null> {
   const result = await commands.libraryList();
@@ -117,98 +127,205 @@ export function useLibrary() {
     [reload],
   );
 
+  /** Fehlversuche je Buch; nach {@link MAX_FAILURES} wird nicht mehr versucht. */
+  const failures = useRef(new Map<string, number>());
+  const [gaveUp, setGaveUp] = useState<ReadonlySet<string>>(new Set());
+  const gaveUpRef = useRef(gaveUp);
+  gaveUpRef.current = gaveUp;
+  /** Fehlende Teil-Aufträge wurden für dieses Buch schon einmal nachgestartet. */
+  const restarted = useRef(new Set<string>());
+
+  const giveUp = useCallback((bookId: string, message: string) => {
+    setGaveUp((prev) => new Set(prev).add(bookId));
+    toast.error(message);
+  }, []);
+
   const finishTranscript = useCallback(
     async (bookId: string, durations: Map<string, number | null>) => {
+      if (gaveUpRef.current.has(bookId)) return;
       const start = await freshBook(bookId);
-      if (!start?.audio || start.text) return;
+      if (!start?.audio) return;
+      const startTracks = tracksOf(start.audio);
+      const withJob = startTracks.filter((t) => t.transcript_job);
+      if (!withJob.length) return;
+      // Anhängen an ein Transkript: der Text wächst, sonst entsteht er neu.
+      const appendTo = start.text?.origin === "transcript" ? start.text : null;
+      if (start.text && !appendTo) return;
+      // Fehlt einem Teil der Auftrag (z. B. Abbruch beim Starten), nachstarten
+      // statt ewig zu warten; ein zweites Mal meldet es sich als Fehler.
+      if (!appendTo && withJob.length < startTracks.length) {
+        if (restarted.current.has(bookId)) {
+          giveUp(bookId, i18n.t("library.job.missingParts"));
+          return;
+        }
+        restarted.current.add(bookId);
+        await transcribeTracks(bookId, (m) => toast.error(m));
+        await reload();
+        return;
+      }
       const jobs = pendingJobs(start);
       const guard = `${bookId}:${jobs.join(",")}`;
       if (finishing.current.has(guard)) return;
       finishing.current.add(guard);
       let done = false;
-      let pageId: string | null = null;
+      let created: string | null = null;
+      let restore: { pageId: string; json: string } | null = null;
       try {
-        const book = (await freshBook(bookId)) ?? start;
-        const tracks = tracksOf(book.audio);
-        // Erst wenn jeder Teil seinen Auftrag hat und sie alle fertig sind.
-        if (
-          !book.audio ||
-          book.text ||
-          !tracks.length ||
-          tracks.some((t) => !t.transcript_job)
-        ) {
-          done = true;
-          return;
-        }
-        // Segmente aller Teile, jeder um die Dauer der vorigen Teile versetzt.
-        const shifted: TranscriptSegment[] = [];
+        const book = start;
+        const tracks = startTracks;
+        const evaluated = withJob.map((t) => ({ file: t.file, job: t.transcript_job! }));
+        const first = tracks.findIndex((t) => t.transcript_job);
+        const paths = book.audio_paths ?? [];
+        // Dauer je Teil: gespeichert, aus der Datei, aus dem Auftrag; das Ende
+        // des letzten Segments ist nur der letzte Rückfall und wird nicht gesichert.
         const lengths: number[] = [];
-        let offset = 0;
-        for (const track of tracks) {
-          const id = track.transcript_job!;
-          const result = await commands.meetingsGetSegments(id);
+        const storable: (number | null)[] = [];
+        for (let i = 0; i < tracks.length; i++) {
+          const track = tracks[i];
+          let ms: number | null = track.duration_ms ?? null;
+          if (!(ms && ms > 0)) {
+            const url = assetUrl(paths[i]);
+            ms = url ? await probeDuration(url) : null;
+          }
+          if (!(ms && ms > 0) && track.transcript_job)
+            ms = durations.get(track.transcript_job) ?? null;
+          storable.push(ms && ms > 0 ? ms : null);
+          lengths.push(ms && ms > 0 ? ms : 0);
+        }
+        // Segmente der neuen Teile, jeder um die Dauer der vorigen Teile versetzt.
+        const shifted: TranscriptSegment[] = [];
+        let offset = lengths.slice(0, appendTo ? first : 0).reduce((a, b) => a + b, 0);
+        if (appendTo && lengths.slice(0, first).some((l) => !(l > 0)))
+          throw new Error(i18n.t("library.job.unknownDuration"));
+        for (let i = appendTo ? first : 0; i < tracks.length; i++) {
+          const track = tracks[i];
+          if (!track.transcript_job) continue;
+          const result = await commands.meetingsGetSegments(track.transcript_job);
           if (result.status !== "ok") throw new Error(result.error);
-          const lastEnd = result.data.reduce((m, x) => Math.max(m, x.end_ms), 0);
-          const length = track.duration_ms ?? durations.get(id) ?? lastEnd;
-          lengths.push(length);
+          if (!(lengths[i] > 0))
+            lengths[i] = result.data.reduce((m, x) => Math.max(m, x.end_ms), 0);
           for (const x of result.data)
             shifted.push({
               text: x.text,
               start_ms: x.start_ms + offset,
               end_ms: x.end_ms + offset,
             });
-          offset += length;
+          offset += lengths[i];
         }
-        const author = book.authors.length ? `\n\nvon ${book.authors.join(", ")}` : "";
-        const { text, sync } = textWithSync(
-          transcriptParagraphs(shifted),
-          `# ${book.title}${author}\n\n`,
-        );
-        if (!sync.length) throw new Error("Das Transkript ist leer.");
-        const created = await commands.pagesCreate(book.title);
-        if (created.status !== "ok") throw new Error(created.error);
-        pageId = created.data.id;
-        const stored = await commands.pageStateSave(
-          pageId,
-          JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
-        );
-        if (stored.status !== "ok") throw new Error(stored.error);
-        // Unmittelbar vor dem Schreiben noch einmal frisch lesen.
+        const paragraphs = transcriptParagraphs(shifted);
+        let text: string;
+        let sync: { chars: number; ms: number }[];
+        let pageId: string;
+        if (appendTo) {
+          const loaded = await commands.pageStateLoad(appendTo.page_id);
+          if (loaded.status !== "ok") throw new Error(loaded.error);
+          const state = JSON.parse(loaded.data) as { text?: string };
+          const old = (state.text ?? "").replace(/\s+$/, "");
+          const grown = textWithSync(paragraphs, `${old}\n\n`);
+          text = grown.text;
+          sync = [...(book.audio?.sync ?? []), ...grown.sync];
+          pageId = appendTo.page_id;
+          if (!grown.sync.length) throw new Error(i18n.t("library.job.emptyTranscript"));
+          restore = { pageId, json: loaded.data };
+          const stored = await commands.pageStateSave(
+            pageId,
+            JSON.stringify({ ...state, text }),
+          );
+          if (stored.status !== "ok") throw new Error(stored.error);
+        } else {
+          const author = book.authors.length ? `\n\nvon ${book.authors.join(", ")}` : "";
+          ({ text, sync } = textWithSync(paragraphs, `# ${book.title}${author}\n\n`));
+          if (!sync.length) throw new Error(i18n.t("library.job.emptyTranscript"));
+          const page = await commands.pagesCreate(book.title);
+          if (page.status !== "ok") throw new Error(page.error);
+          pageId = page.data.id;
+          created = pageId;
+          const stored = await commands.pageStateSave(
+            pageId,
+            JSON.stringify({ text, summary: "", sourceUrl: "", tab: "original" }),
+          );
+          if (stored.status !== "ok") throw new Error(stored.error);
+        }
+        // Unmittelbar vor dem Schreiben noch einmal frisch lesen: hat sich
+        // inzwischen etwas geändert (Text, Teile, Aufträge), wird verworfen.
         const latest = (await freshBook(bookId)) ?? book;
-        if (!latest.audio) throw new Error("Das Hörbuch fehlt.");
+        const latestTracks = tracksOf(latest.audio);
+        const unchanged =
+          !!latest.audio &&
+          evaluated.every((e) =>
+            latestTracks.some((t) => t.file === e.file && t.transcript_job === e.job),
+          ) &&
+          (appendTo
+            ? latest.text?.page_id === appendTo.page_id
+            : !latest.text);
+        if (!unchanged || !latest.audio) {
+          done = true;
+          if (!appendTo && latest.text && latest.audio) {
+            // Ein anderer Weg hat inzwischen einen Text angelegt: unsere
+            // ausgewerteten Aufträge sind überflüssig.
+            const cleared = latestTracks.map((t) =>
+              evaluated.some((e) => e.file === t.file && e.job === t.transcript_job)
+                ? { ...t, transcript_job: null }
+                : t,
+            );
+            const saved = await commands.librarySave({
+              ...latest,
+              audio: { ...latest.audio, tracks: latest.audio.tracks?.length ? cleared : [] },
+            });
+            if (saved.status === "ok")
+              for (const e of evaluated) await commands.meetingsDelete(e.job);
+          }
+          throw new Superseded();
+        }
         const multi = !!latest.audio.tracks?.length;
+        const isEvaluated = (t: { file: string; transcript_job?: string | null }) =>
+          evaluated.some((e) => e.file === t.file && e.job === t.transcript_job);
         const saved = await commands.librarySave({
           ...latest,
-          text: {
-            page_id: pageId,
-            origin: "transcript",
-            source_name: latest.audio.file ?? null,
-          },
+          text: appendTo
+            ? latest.text
+            : { page_id: pageId, origin: "transcript", source_name: latest.audio.file ?? null },
           audio: {
             ...latest.audio,
             transcript_job: null,
             sync,
             duration_ms: multi
               ? latest.audio.duration_ms
-              : (latest.audio.duration_ms ?? lengths[0] ?? null),
+              : (latest.audio.duration_ms ?? storable[0] ?? null),
             tracks: multi
-              ? (latest.audio.tracks ?? []).map((t, i) => ({
-                  ...t,
-                  transcript_job: null,
-                  duration_ms: t.duration_ms ?? lengths[i] ?? null,
-                }))
+              ? latestTracks.map((t) => {
+                  const i = tracks.findIndex((x) => x.file === t.file);
+                  const keep = t.duration_ms ?? storable[i] ?? null;
+                  return isEvaluated(t)
+                    ? { ...t, transcript_job: null, duration_ms: keep }
+                    : { ...t, duration_ms: keep };
+                })
               : [],
           },
         });
         if (saved.status !== "ok") throw new Error(saved.error);
-        pageId = null;
+        created = null;
+        restore = null;
         done = true;
-        // Erst jetzt, wo der Text sicher am Buch hängt, die Hilfsaufnahmen weg.
-        for (const track of tracks) await commands.meetingsDelete(track.transcript_job!);
+        // Erst jetzt, wo der Text sicher am Buch hängt, die ausgewerteten
+        // Hilfsaufnahmen weg.
+        for (const e of evaluated) await commands.meetingsDelete(e.job);
+        failures.current.delete(bookId);
         await reload();
       } catch (e) {
-        if (pageId) await commands.pagesDelete(pageId);
-        toast.error(e instanceof Error ? e.message : String(e));
+        if (created) await commands.pagesDelete(created);
+        if (restore) await commands.pageStateSave(restore.pageId, restore.json);
+        if (e instanceof Superseded) {
+          await reload();
+        } else {
+          const n = (failures.current.get(bookId) ?? 0) + 1;
+          failures.current.set(bookId, n);
+          const message = e instanceof Error ? e.message : String(e);
+          if (n >= MAX_FAILURES) {
+            done = true;
+            giveUp(bookId, message);
+          }
+        }
       } finally {
         // Erfolgreich übernommene Jobs bleiben gesperrt; fehlgeschlagene
         // dürfen erst nach einer Pause erneut versucht werden.
@@ -216,7 +333,7 @@ export function useLibrary() {
           window.setTimeout(() => finishing.current.delete(guard), 60_000);
       }
     },
-    [reload],
+    [reload, giveUp],
   );
 
   // Laufende Transkriptionen beobachten, solange es welche gibt.
@@ -229,6 +346,7 @@ export function useLibrary() {
       return;
     }
     let stop = false;
+    let handle = 0;
     const poll = async () => {
       const result = await commands.meetingsList(0, 2000);
       if (stop || result.status !== "ok") return;
@@ -241,7 +359,7 @@ export function useLibrary() {
         const ids = pendingJobs(book);
         if (!ids.length) continue;
         const statuses = ids.map((id) => byId.get(id)?.status ?? "missing");
-        const status = aggregateStatus(statuses);
+        const status = gaveUpRef.current.has(book.id) ? "failed" : aggregateStatus(statuses);
         next[book.id] = {
           bookId: book.id,
           status,
@@ -252,14 +370,20 @@ export function useLibrary() {
         if (status === "ready") void finishTranscript(book.id, durations);
       }
       setJobs(next);
+      // Nichts läuft mehr (alles fehlgeschlagen oder verschwunden): nicht weiter abfragen.
+      const live = Object.values(next);
+      if (live.length && live.every((j) => j.status === "failed" || j.status === "missing")) {
+        stop = true;
+        window.clearInterval(handle);
+      }
     };
     void poll();
-    const handle = window.setInterval(() => void poll(), POLL_MS);
+    handle = window.setInterval(() => void poll(), POLL_MS);
     return () => {
       stop = true;
       window.clearInterval(handle);
     };
-  }, [pendingIds, books, finishTranscript]);
+  }, [pendingIds, books, finishTranscript, gaveUp]);
 
   return { books, pageAudio, jobs, reload, save, tick };
 }
