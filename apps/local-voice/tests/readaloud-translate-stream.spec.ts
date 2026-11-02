@@ -43,11 +43,29 @@ test.beforeEach(async ({ page }) => {
       tts_piper_voice: null,
       tts_script_check: false,
       llm_connections: [
-        { id: "c1", kind: "claude_cli", label: "Claude (Abo)", base_url: "", enabled: true },
+        {
+          id: "c1",
+          kind: "claude_cli",
+          label: "Claude (Abo)",
+          base_url: "",
+          enabled: true,
+        },
       ],
       llm_models: [
-        { id: "m1", connection_id: "c1", remote_id: "sonnet", label: "sonnet", enabled: true },
-        { id: "m2", connection_id: "c1", remote_id: "opus", label: "opus", enabled: true },
+        {
+          id: "m1",
+          connection_id: "c1",
+          remote_id: "sonnet",
+          label: "sonnet",
+          enabled: true,
+        },
+        {
+          id: "m2",
+          connection_id: "c1",
+          remote_id: "opus",
+          label: "opus",
+          enabled: true,
+        },
       ],
       llm_active_model_id: "m1",
     };
@@ -104,7 +122,10 @@ test.beforeEach(async ({ page }) => {
           ).__parts;
           if (cmd === "pages_list")
             return parts
-              ? Object.keys(parts).map((id, i) => ({ id, title: `Teil ${i + 1}` }))
+              ? Object.keys(parts).map((id, i) => ({
+                  id,
+                  title: `Teil ${i + 1}`,
+                }))
               : [{ id: "p1", title: "Die Leuchtturmwärterin" }];
           if (cmd === "books_list")
             return parts
@@ -129,18 +150,27 @@ test.beforeEach(async ({ page }) => {
           if ((cmd === "tts_speak_text" || cmd === "tts_speak_resume") && parts)
             // Die Sitzung endet erst, wenn der Test es sagt.
             return new Promise((done) => {
-              (window as unknown as { __endSpeak: () => void }).__endSpeak = () =>
-                done(null);
+              (window as unknown as { __endSpeak: () => void }).__endSpeak =
+                () => done(null);
             });
           if (cmd === "page_dir") return "C:\\projects\\p1";
           if (cmd === "pages_create")
-            return { id: "p2", title: String(args?.title ?? ""), modified_ms: 0, preview: "" };
+            return {
+              id: "p2",
+              title: String(args?.title ?? ""),
+              modified_ms: 0,
+              preview: "",
+            };
           if (cmd === "plugin:dialog|open")
             return (window as unknown as { __pick?: string }).__pick ?? null;
           if (cmd === "tts_extract_document")
-            return (window as unknown as { __extracted?: string }).__extracted ?? "";
+            return (
+              (window as unknown as { __extracted?: string }).__extracted ?? ""
+            );
           if (cmd === "tts_list_voice_infos")
-            return (window as unknown as { __voices?: unknown[] }).__voices ?? [];
+            return (
+              (window as unknown as { __voices?: unknown[] }).__voices ?? []
+            );
           if (cmd === "isbn_lookup") {
             const hit = (window as unknown as { __isbn?: unknown }).__isbn;
             if (typeof hit === "string") throw hit;
@@ -157,7 +187,10 @@ test.beforeEach(async ({ page }) => {
               x.__failTranslate = (e) => fail(e);
             });
           if (cmd === "library_progress_load")
-            return (window as unknown as { __remoteProgress?: unknown }).__remoteProgress ?? {};
+            return (
+              (window as unknown as { __remoteProgress?: unknown })
+                .__remoteProgress ?? {}
+            );
           if (cmd === "tts_list_downloads") return [];
           if (
             cmd === "llm_ps" ||
@@ -178,8 +211,6 @@ test.beforeEach(async ({ page }) => {
     });
   });
 });
-
-
 
 const emit = (page: Page, name: string, payload: unknown) =>
   page.evaluate(
@@ -221,17 +252,33 @@ const start = async (page: Page, width: number, theme: string) => {
     [BOOK, theme] as const,
   );
   await page.goto("/");
-  if (width < 600) await page.getByRole("button", { name: "Menü öffnen" }).click();
+  if (width < 600)
+    await page.getByRole("button", { name: "Menü öffnen" }).click();
   await page
     .getByRole("navigation")
     .getByRole("button", { name: "Vorlesen", exact: true })
     .click();
   await page.getByRole("tab", { name: /Übersetzung/ }).click();
   await page.getByTestId("tts-action-translate").click();
-  await emit(page, "tts-translate-start", { total: 41, chapters: 18, totalChars: 90000 });
+  await emit(page, "tts-translate-start", {
+    total: 41,
+    chapters: 18,
+    totalChars: 90000,
+  });
   await emit(page, "tts-translate-chunk", chunk(0, "# Chapter 3"));
-  await emit(page, "tts-translate-chunk", chunk(1, "<Narrator> The lighthouse had stood on the cliff for over a hundred years. {{S. 12}}"));
-  await emit(page, "tts-translate-chunk", chunk(2, "<Mara> \u201cTwelve more steps,\u201d she said to no one."));
+  await emit(
+    page,
+    "tts-translate-chunk",
+    chunk(
+      1,
+      "<Narrator> The lighthouse had stood on the cliff for over a hundred years. {{S. 12}}",
+    ),
+  );
+  await emit(
+    page,
+    "tts-translate-chunk",
+    chunk(2, "<Mara> \u201cTwelve more steps,\u201d she said to no one."),
+  );
   await emit(page, "tts-transform-progress", {
     kind: "translation",
     done: 12,
@@ -265,20 +312,25 @@ for (const theme of ["light", "dark"]) {
       await expect(
         page.getByText("Kapitel 3 von 18 · Abschnitt 13 von 41 · 29 %"),
       ).toBeVisible();
-      await expect(page.getByTestId("tts-worker-bars").locator("> div")).toHaveCount(4);
+      await expect(
+        page.getByTestId("tts-worker-bars").locator("> div"),
+      ).toHaveCount(4);
       await page.screenshot({ path: `${SHOTS}/laeuft-${theme}-${width}.png` });
 
-      const args = await page.evaluate(
-        () =>
-          (window as unknown as { __calls: [string, Record<string, unknown>][] })
-            .__calls.filter(([c]) => c === "tts_translate")
-            .map(([, a]) => a),
+      const args = await page.evaluate(() =>
+        (
+          window as unknown as { __calls: [string, Record<string, unknown>][] }
+        ).__calls
+          .filter(([c]) => c === "tts_translate")
+          .map(([, a]) => a),
       );
       // Seitenmarken gehen unverändert ans Backend.
       expect(String(args[0]?.text)).toContain("{{S. 12}}");
 
       await page.evaluate(() =>
-        (window as unknown as { __failTranslate: (e: string) => void }).__failTranslate(
+        (
+          window as unknown as { __failTranslate: (e: string) => void }
+        ).__failTranslate(
           "Kapitel 4, Abschnitt 14: Zeitüberschreitung des Modells",
         ),
       );
