@@ -4,13 +4,12 @@ import {
   BookOpen,
   Download,
   FilePlus2,
-  FileText,
   Languages,
   Link,
   Menu,
   Mic,
   Plus,
-  SlidersHorizontal,
+  Sparkles,
   SpellCheck,
   Tags,
   Upload,
@@ -18,7 +17,7 @@ import {
   WandSparkles,
   Zap,
 } from "lucide-react";
-import { ActionMenu, ActionPopover } from "../../ui/ActionMenu";
+import { ActionMenu } from "../../ui/ActionMenu";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { IconAction } from "../../ui/IconAction";
 import { TooltipTrigger } from "../../ui/TooltipTrigger";
@@ -86,14 +85,10 @@ export interface ReadAloudActionsProps {
   translating: boolean;
   onTranslate: () => void;
 
+  /** Ein KI-Dokument wird erstellt (lva#183); es läuft nur eines. */
   summarizing: boolean;
+  /** Öffnet „Neues KI-Dokument“. */
   onSummarize: () => void;
-  sumLength: string;
-  onSumLengthChange: (value: string) => void;
-  sumDetail: string;
-  onSumDetailChange: (value: string) => void;
-  sumAudience: string;
-  onSumAudienceChange: (value: string) => void;
   /** Fortschritt von Übersetzung/Zusammenfassung (Block x von y). */
   transformProgress: {
     kind: "translation" | "summary";
@@ -279,8 +274,8 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       ? props.transformProgress
       : null;
   const transformBusy =
-    (tab === "translation" && props.translating) ||
-    (tab === "summary" && props.summarizing);
+    // KI-Dokumente zeigen ihren Fortschritt auf der Karte (lva#183).
+    tab === "translation" && props.translating;
 
   // Speichern und Vorab-Erzeugen gehören in jedem Reiter dazu.
   const saveButton = (
@@ -414,88 +409,15 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
         {tab === "summary" && (
           <>
             <IconAction
-              icon={FileText}
+              icon={Sparkles}
               label={
-                props.summarizing ? t("tts.summarizing") : t("tts.summarize")
+                props.summarizing ? t("tts.kiDocs.creating") : t("tts.kiDocs.new")
               }
-              description={t("tts.actions.summarizeHint")}
+              description={t("tts.kiDocs.newHint")}
               testId="tts-action-summarize"
               onClick={props.onSummarize}
               disabled={props.summarizing || !hasText}
             />
-            <ActionPopover
-              trigger={{
-                icon: SlidersHorizontal,
-                label: t("tts.actions.summaryOptions"),
-                description: t("tts.actions.summaryOptionsHint"),
-                testId: "tts-action-summary-options",
-              }}
-              popoverLabel={t("tts.actions.summaryOptions")}
-              popoverTestId="tts-summary-options"
-            >
-              <label className="flex flex-col gap-1 text-sm">
-                {t("tts.summary.length")}
-                <Select
-                  menuPortal
-                  value={props.sumLength}
-                  isClearable={false}
-                  options={[
-                    { value: "kurz", label: t("tts.summary.lengths.short") },
-                    { value: "mittel", label: t("tts.summary.lengths.medium") },
-                    { value: "lang", label: t("tts.summary.lengths.long") },
-                  ]}
-                  onChange={(value) => value && props.onSumLengthChange(value)}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                {t("tts.summary.detail")}
-                <Select
-                  menuPortal
-                  value={props.sumDetail}
-                  isClearable={false}
-                  options={[
-                    {
-                      value: "ueberblick",
-                      label: t("tts.summary.details.overview"),
-                    },
-                    {
-                      value: "ausgewogen",
-                      label: t("tts.summary.details.balanced"),
-                    },
-                    {
-                      value: "detailliert",
-                      label: t("tts.summary.details.deep"),
-                    },
-                  ]}
-                  onChange={(value) => value && props.onSumDetailChange(value)}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                {t("tts.summary.audience")}
-                <Select
-                  menuPortal
-                  value={props.sumAudience}
-                  isClearable={false}
-                  options={[
-                    {
-                      value: "allgemein",
-                      label: t("tts.summary.audiences.general"),
-                    },
-                    {
-                      value: "fachpublikum",
-                      label: t("tts.summary.audiences.expert"),
-                    },
-                    {
-                      value: "management",
-                      label: t("tts.summary.audiences.management"),
-                    },
-                  ]}
-                  onChange={(value) =>
-                    value && props.onSumAudienceChange(value)
-                  }
-                />
-              </label>
-            </ActionPopover>
             <span className="flex-1" />
             {saveButton}
             {prewarmButton}

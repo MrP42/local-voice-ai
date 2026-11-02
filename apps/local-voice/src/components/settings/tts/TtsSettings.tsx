@@ -120,6 +120,12 @@ import {
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
+import { useKiDocuments } from "./kidocs/useKiDocuments";
+import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
+import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
+import { BookSheets } from "./kidocs/BookSheets";
+import { KiDocumentDialog, type KiSelection } from "./kidocs/KiDocumentDialog";
+import { kiErrorText, type KiFilter } from "./kidocs/kiDocs";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
 import type { IsbnBook } from "@/bindings";
@@ -305,22 +311,47 @@ export const TtsSettings = () => {
    *  Audio-Uebersetzung, damit man sie nicht an zwei Stellen pflegt. */
   const targetLang = getSetting("tts_translate_lang") ?? "English";
   /** Dialog: die aktuelle Seed-Stimme unter einem Namen sichern. */
-  /** Zusammenfassung des Originals — dritter Reiter. */
+  /** Text des offenen KI-Dokuments — dritter Reiter (lva#183). */
   const [summary, setSummary] = useState<string>("");
-  const [summarizing, setSummarizing] = useState(false);
+  /** Offenes KI-Dokument der Seite; null zeigt die Liste. */
+  const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const openDocIdRef = useRef(openDocId);
+  openDocIdRef.current = openDocId;
+  /** Zu welcher Seite und welchem Dokument `summary` gehört. Seite und
+   *  Dokument stehen zusammen, damit nie ein Text unter einer fremden Seite
+   *  gesichert wird. */
+  const [docLoaded, setDocLoaded] = useState<{
+    page: string;
+    id: string;
+  } | null>(null);
+  const docLoadedFor =
+    docLoaded && docLoaded.page === activePage ? docLoaded.id : null;
+  /** Zuletzt gesicherter Text des offenen Dokuments. */
+  const docSaved = useRef<string>("");
+  /** Noch nicht gesicherte Änderung (gebündelt, siehe saveOpenDoc). */
+  const pendingDocSave = useRef<{
+    page: string;
+    id: string;
+    value: string;
+  } | null>(null);
+  /** Zusammenfassung aus der Zeit vor den KI-Dokumenten, noch zu übernehmen –
+   *  mit ihrer Seite, damit sie nie bei einer anderen Seite landet. */
+  const [legacySummary, setLegacySummary] = useState<{
+    page: string;
+    text: string;
+  } | null>(null);
+  const [kiFilter, setKiFilter] = usePersistentState<KiFilter>(
+    "tts.kidocs.filter",
+    "all",
+  );
+  const [kiDialogOpen, setKiDialogOpen] = useState(false);
+  const [kiSelection, setKiSelection] = useState<KiSelection | null>(null);
+  /** Nach dem Laden dieses Dokuments sofort vorlesen. */
+  const docAutoplay = useRef<string | null>(null);
+  /** Dokument der laufenden Sprechsitzung (Abzeichen „Wird vorgelesen“). */
+  const sessionDocId = useRef<string | null>(null);
+  const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
-  const [sumLength, setSumLength] = usePersistentState<string>(
-    "tts.summary.length",
-    "mittel",
-  );
-  const [sumDetail, setSumDetail] = usePersistentState<string>(
-    "tts.summary.detail",
-    "ausgewogen",
-  );
-  const [sumAudience, setSumAudience] = usePersistentState<string>(
-    "tts.summary.audience",
-    "allgemein",
-  );
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -329,6 +360,11 @@ export const TtsSettings = () => {
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
   );
+  /** Gehört die laufende Sprechsitzung zum angezeigten Text? Bei den
+   *  KI-Dokumenten zählt neben dem Reiter auch das Dokument (lva#183). */
+  const sessionHere = () =>
+    sessionTab.current === tab &&
+    (tab !== "summary" || sessionDocId.current === openDocIdRef.current);
   // Stimme je Seite UND Reiter, gespeichert mit der Seite (state.json): das
   // Original liest Thorsten, die Uebersetzung Lessac -- und jede Seite behaelt
   // ihre eigene Wahl. Wer die Seite wechselt, bekommt deren Stimme (Patrick
@@ -606,6 +642,7 @@ export const TtsSettings = () => {
           const state = JSON.parse(result.data) as {
             text?: string;
             summary?: string;
+            kiDoc?: string | null;
             sourceUrl?: string;
             tab?: string;
             voices?: Record<string, string>;
@@ -618,11 +655,16 @@ export const TtsSettings = () => {
             Array.isArray(state.translatedLangs) ? state.translatedLangs : [],
           );
           setText(state.text ?? "");
-          openModeRef.current?.(
-            state.tab === "summary" ? (state.summary ?? "") : (state.text ?? ""),
-          );
+          openModeRef.current?.(state.tab === "summary" ? "" : (state.text ?? ""));
           setAutoTagOptions(state.autoTag ?? null);
-          setSummary(state.summary ?? "");
+          setSummary("");
+          setDocLoaded(null);
+          setLegacySummary(
+            state.summary?.trim()
+              ? { page: activePage, text: state.summary }
+              : null,
+          );
+          setOpenDocId(typeof state.kiDoc === "string" ? state.kiDoc : null);
           setSourceUrl(state.sourceUrl ?? "");
           setTabVoices(
             state.voices && typeof state.voices === "object"
@@ -658,7 +700,15 @@ export const TtsSettings = () => {
         const legacyText = legacy("tts.text");
         setText(legacyText);
         openModeRef.current?.(legacyText);
-        setSummary(legacy("tts.summary"));
+        setSummary("");
+        setDocLoaded(null);
+        const legacySummaryText = legacy("tts.summary");
+        setLegacySummary(
+          legacySummaryText.trim()
+            ? { page: activePage, text: legacySummaryText }
+            : null,
+        );
+        setOpenDocId(null);
         setSourceUrl(legacy("tts.summary.url"));
         setTabVoices({});
         setVoicesChosen({});
@@ -682,26 +732,29 @@ export const TtsSettings = () => {
     };
   }, [reloadPages]);
 
+  /** Arbeitsstand der Seite, wie er in state.json steht. */
+  const pageStateJson = () =>
+    JSON.stringify({
+      text,
+      // Bis zur Übernahme als KI-Dokument bleibt der alte Text stehen.
+      summary: legacySummary?.page === activePage ? legacySummary.text : "",
+      kiDoc: openDocId,
+      sourceUrl,
+      tab,
+      voices: tabVoices,
+      voicesChosen,
+      lang: pageLang ?? undefined,
+      translatedLangs,
+      autoTag: autoTagOptions ?? undefined,
+    });
+
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
     const handle = window.setTimeout(() => {
       void commands
-        .pageStateSave(
-          activePage,
-          JSON.stringify({
-            text,
-            summary,
-            sourceUrl,
-            tab,
-            voices: tabVoices,
-            voicesChosen,
-            lang: pageLang ?? undefined,
-            translatedLangs,
-            autoTag: autoTagOptions ?? undefined,
-          }),
-        )
+        .pageStateSave(activePage, pageStateJson())
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
         // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
@@ -714,7 +767,8 @@ export const TtsSettings = () => {
   }, [
     activePage,
     text,
-    summary,
+    legacySummary,
+    openDocId,
     sourceUrl,
     tab,
     tabVoices,
@@ -764,7 +818,7 @@ export const TtsSettings = () => {
     // Pruefung galt nach einer Pause im Original "Fortsetzen moeglich" —
     // und Play auf dem Uebersetzungs-Reiter setzte die alte Sitzung fort,
     // las also das Original, obwohl die Uebersetzung offen war.
-    if (canResume && sessionTab.current === tab) {
+    if (canResume && sessionHere()) {
       await resumeSpeaking();
       return;
     }
@@ -786,6 +840,7 @@ export const TtsSettings = () => {
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
+    sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
     // Die Engine bekommt den Text ohne Markdown (lva#148); der Offset wandert
     // mit — ebenso beim Umschreiben der Tags in die englische Form.
     const script = toSpokenScript(spokenText);
@@ -874,6 +929,7 @@ export const TtsSettings = () => {
     setCurrentIndex(null);
     setTruncated(null);
     sessionTab.current = tab;
+    sessionDocId.current = tab === "summary" ? openDocIdRef.current : null;
     locatorRef.current?.reset(0);
     lastLocated.current = null;
     sessionResumeKey.current = resumeKeyRef.current;
@@ -1038,7 +1094,7 @@ export const TtsSettings = () => {
   const seekSentence = (delta: number) => {
     // Springen bewegt die laufende Sitzung — auf einem anderen Reiter gibt
     // es nichts, worin man springen koennte.
-    if (sessionTab.current !== tab) return;
+    if (!sessionHere()) return;
     void commands.ttsSpeakSeek(delta);
   };
 
@@ -1324,7 +1380,9 @@ export const TtsSettings = () => {
       ? text
       : tab === "translation"
         ? (translation ?? "")
-        : summary;
+        : openDocId && docLoadedFor === openDocId
+          ? summary
+          : "";
   const setSpokenText = useCallback(
     (next: string) => {
       if (tab === "original") setText(next);
@@ -1462,7 +1520,7 @@ export const TtsSettings = () => {
     locator: SentenceLocator;
   } | null>(null);
   useEffect(() => {
-    if (!currentSentence || sessionTab.current !== tab) {
+    if (!currentSentence || !sessionHere()) {
       if (!currentSentence) setReadRange(null);
       return;
     }
@@ -1503,7 +1561,11 @@ export const TtsSettings = () => {
   }, [speakProgress, speaking]);
   // Weiterlesen (lva#148): die gelesene Stelle je Seite und Reiter merken.
   const resumeKey = `${activePage ?? "-"}:${
-    tab === "translation" ? `translation:${targetLang}` : tab
+    tab === "translation"
+      ? `translation:${targetLang}`
+      : tab === "summary" && openDocId
+        ? `doc:${openDocId}`
+        : tab
   }`;
   const resumeKeyRef = useRef(resumeKey);
   resumeKeyRef.current = resumeKey;
@@ -1779,13 +1841,171 @@ export const TtsSettings = () => {
     // speakNow liest den aktuellen Stand; neu laufen soll das nur, wenn der
     // gewechselte Teil fertig geladen ist.
   }, [pageLoadTick, activePage, tab, spokenText]);
+
+  // KI-Dokumente (lva#183) ------------------------------------------------
+  const saveOpenDoc = useCallback(
+    async (page: string, id: string, value: string) => {
+      const r = await commands.bookAiDocumentUpdate(page, id, null, value);
+      if (r.status === "error") toast.error(kiErrorText(r.error, t));
+    },
+    [t],
+  );
+  /** Ausstehende Änderung sofort sichern – unter ihrer eigenen Seite. */
+  const flushDocSave = useCallback(async () => {
+    const pending = pendingDocSave.current;
+    if (!pending) return;
+    pendingDocSave.current = null;
+    if (pending.value === docSaved.current) return;
+    docSaved.current = pending.value;
+    await saveOpenDoc(pending.page, pending.id, pending.value);
+  }, [saveOpenDoc]);
+  // Änderungen von Hand gebündelt sichern.
+  useEffect(() => {
+    if (!docLoaded || docLoaded.page !== activePage) return;
+    if (summary === docSaved.current) return;
+    pendingDocSave.current = { ...docLoaded, value: summary };
+    const handle = window.setTimeout(() => void flushDocSave(), 600);
+    return () => window.clearTimeout(handle);
+  }, [docLoaded, activePage, summary, flushDocSave]);
+  // Seitenwechsel: Ausstehendes sichern, das Dokument der alten Seite schließen.
+  // Beim Verlassen von Vorlesen ebenso.
+  useEffect(() => {
+    void flushDocSave();
+    setDocLoaded(null);
+    setSummary("");
+    setOpenDocId(null);
+    docAutoplay.current = null;
+  }, [activePage, flushDocSave]);
+  useEffect(() => () => void flushDocSave(), [flushDocSave]);
+
+  // Offenes Dokument laden – erst, wenn die Seite geladen ist. Fehlt es
+  // (gelöscht, anderes Gerät), zurück zur Liste.
+  useEffect(() => {
+    const page = activePage;
+    const id = openDocId;
+    if (!page || !id || !pageLoaded.current) return;
+    if (docLoaded && docLoaded.page === page && docLoaded.id === id) return;
+    let alive = true;
+    void commands.bookAiDocumentText(page, id).then((r) => {
+      if (!alive || activePageRef.current !== page) return;
+      if (openDocIdRef.current !== id) return;
+      if (r.status !== "ok") {
+        if (docAutoplay.current === id) docAutoplay.current = null;
+        setOpenDocId(null);
+        return;
+      }
+      docSaved.current = r.data;
+      // Laden ist kein Bearbeitungsschritt (Rückgängig ließe sonst ein leeres
+      // Dokument zurück).
+      historyRef.current?.syncPresent(`${page}:summary:${id}`, r.data);
+      setSummary(r.data);
+      setDocLoaded({ page, id });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [activePage, openDocId, docLoaded, pageLoadTick]);
+
+  const openKiDocument = (id: string | null) => {
+    // Ausstehende Änderung des bisherigen Dokuments nicht verlieren.
+    void flushDocSave();
+    setDocLoaded(null);
+    setSummary("");
+    setOpenDocId(id);
+    if (id) setTab("summary");
+    if (!id) void kiDocs.reload();
+  };
+
+  // Alte Zusammenfassung einmalig als KI-Dokument übernehmen – nur für die
+  // Seite, zu der sie gehört, und erst, wenn diese fertig geladen ist.
+  const migrating = useRef<string | null>(null);
+  useEffect(() => {
+    const legacy = legacySummary;
+    if (!legacy || legacy.page !== activePage || !pageLoaded.current) return;
+    if (migrating.current === legacy.page) return;
+    migrating.current = legacy.page;
+    void commands
+      .bookAiDocumentImport(legacy.page, t("tts.kiDocs.legacyTitle"), legacy.text)
+      .then(async (r) => {
+        migrating.current = null;
+        if (r.status !== "ok") return;
+        if (activePageRef.current === legacy.page) {
+          // Die Sicherung der Seite schreibt danach `summary: ""`.
+          setLegacySummary((cur) => (cur === legacy ? null : cur));
+          void kiDocs.reload();
+          if (tabRef.current === "summary" && !openDocIdRef.current)
+            setOpenDocId(r.data.id);
+          return;
+        }
+        // Inzwischen auf einer anderen Seite: dort den alten Text direkt
+        // austragen. Ein zweiter Import bliebe ohnehin folgenlos (der Kern
+        // erkennt denselben Text wieder).
+        const loaded = await commands.pageStateLoad(legacy.page);
+        if (loaded.status !== "ok" || !loaded.data) return;
+        try {
+          const state = JSON.parse(loaded.data) as Record<string, unknown>;
+          if (state.summary !== legacy.text) return;
+          state.summary = "";
+          await commands.pageStateSave(legacy.page, JSON.stringify(state));
+        } catch {
+          /* roh gespeicherte Seite: hat keine Zusammenfassung */
+        }
+      });
+  }, [activePage, legacySummary, pageLoadTick]);
+
+  // „Hören“ auf einer Karte: Dokument öffnen und vorlesen, sobald es geladen ist.
+  useEffect(() => {
+    if (!docAutoplay.current || docAutoplay.current !== openDocId) return;
+    if (docLoadedFor !== openDocId || tab !== "summary") return;
+    docAutoplay.current = null;
+    if (spokenText.trim()) void speakNow();
+  }, [openDocId, docLoadedFor, tab, spokenText]);
+
+  const createKiDocument: React.ComponentProps<
+    typeof KiDocumentDialog
+  >["onCreate"] = (source, label, template) => {
+    setKiDialogOpen(false);
+    openKiDocument(null);
+    setTab("summary");
+    const page = activePage;
+    if (!page) return;
+    // Der Kern liest den Buchtext aus state.json; die Sicherung dort läuft
+    // gebündelt. Vorher den aktuellen Stand schreiben, damit Bereichsgrenzen
+    // zum Text passen.
+    void commands
+      .pageStateSave(page, pageStateJson())
+      .then(() => kiDocs.create(source, label, template))
+      .then((r) => {
+      if ("error" in r) {
+        if (r.error === "book_ai:cancelled")
+          toast.info(kiErrorText(r.error, t));
+        else toast.error(kiErrorText(r.error, t));
+        return;
+      }
+      toast.success(t("tts.kiDocs.created", { title: r.doc.title }));
+      // Nur öffnen, wenn man noch in der Liste derselben Seite steht.
+      if (
+        activePageRef.current === page &&
+        tabRef.current === "summary" &&
+        !openDocIdRef.current
+      )
+        setOpenDocId(r.doc.id);
+    });
+  };
+  const playingDocId =
+    speaking && sessionTab.current === "summary" ? sessionDocId.current : null;
+  const openDoc = openDocId
+    ? (kiDocs.docs.find((d) => d.id === openDocId) ?? null)
+    : null;
   // Bearbeitungshistorie je Seite und Reiter (Uebersetzung: je Sprache): Rueckgaengig/Wiederherstellen
   // ueber Knoepfe und Strg+Z/Strg+Y -- auch fuer programmatische
   // Aenderungen (Auto-Tagging, Aufbereiten, Ersetzen, Skript-Pruefung).
   const history = useTextHistory(
     tab === "translation"
       ? translationHistoryKey(activePage, targetLang)
-      : `${activePage ?? "-"}:${tab}`,
+      : tab === "summary"
+        ? `${activePage ?? "-"}:summary:${openDocId ?? "-"}`
+        : `${activePage ?? "-"}:${tab}`,
     spokenText,
     setSpokenText,
   );
@@ -2326,28 +2546,19 @@ export const TtsSettings = () => {
    * liegt im dritten Reiter; das Original bleibt unangetastet, abspielen
    * kann man beides.
    */
-  const summarize = async () => {
+  const summarize = () => {
     if (!text.trim()) return;
-    setLastError(null);
-    setSummarizing(true);
-    setTransformProgress(null);
-    const result = await commands.ttsSummarizeText(stripPageMarks(text), {
-      length: sumLength,
-      detail: sumDetail,
-      audience: sumAudience,
-    });
-    setSummarizing(false);
-    setTransformProgress(null);
-    if (result.status === "error") {
-      if (result.error === TRANSFORM_CANCELLED) {
-        toast.info(t("tts.transform.cancelled"));
-      } else {
-        setLastError(result.error);
-      }
-      return;
-    }
-    setSummary(result.data);
-    setTab("summary");
+    // Markierung im Original als Quelle anbieten, wenn sie sich eindeutig
+    // im Text wiederfindet (Reader zeigt den Text ohne Auszeichnungen).
+    const picked = window.getSelection()?.toString().trim() ?? "";
+    const at =
+      tab === "original" && picked.length >= 20 ? text.indexOf(picked) : -1;
+    setKiSelection(
+      at >= 0 && text.indexOf(picked, at + 1) < 0
+        ? { start: at, end: at + picked.length }
+        : null,
+    );
+    setKiDialogOpen(true);
   };
 
   const showVramHint =
@@ -2413,7 +2624,12 @@ export const TtsSettings = () => {
             ariaLabel={compact ? `${t("tts.voices.title")}: ${voiceLabel}` : undefined}
             value={voiceValue}
             options={shownVoiceOptions}
-            menuScrollKey={`tts-voice:${voiceLangFilter}:${contentLang ?? ""}`}
+            menuScrollKey={
+              // „Passend“ hängt an der Textsprache, die anderen Filter nicht.
+              voiceLangFilter === "auto"
+                ? `tts-voice:auto:${contentLang ?? ""}`
+                : `tts-voice:${voiceLangFilter}`
+            }
             menuHeader={voiceFilterChips}
             formatOptionLabel={(option, context) => {
               if (compact && context === "value")
@@ -2626,19 +2842,13 @@ export const TtsSettings = () => {
         }
         translating={translating}
         onTranslate={translateText}
-        summarizing={summarizing}
+        summarizing={kiDocs.busy}
         onSummarize={summarize}
         transformProgress={transformProgress}
         onCancelTransform={(kind) =>
           void commands.ttsTransformCancel(kind)
         }
         onSwapSpeakers={() => void openSpeakerSwap()}
-        sumLength={sumLength}
-        onSumLengthChange={setSumLength}
-        sumDetail={sumDetail}
-        onSumDetailChange={setSumDetail}
-        sumAudience={sumAudience}
-        onSumAudienceChange={setSumAudience}
       />
   );
 
@@ -2899,13 +3109,56 @@ export const TtsSettings = () => {
                   />
                 </div>
               )}
-              {viewMode === "read" ? (
+              <BookSheets
+                renderContents={(close) =>
+                  viewMode === "read" && contents.length > 0 ? (
+                    <ReaderContents
+                      entries={contents}
+                      current={chapterIndex}
+                      onGo={(entry) => {
+                        close();
+                        goToChapter(entry);
+                      }}
+                      pages={contentsPages}
+                      book={book}
+                    />
+                  ) : null
+                }
+              />
+              {tab === "summary" && activePage && openDoc && (
+                <KiDocumentHeader
+                  pageId={activePage}
+                  doc={openDoc}
+                  playing={playingDocId === openDoc.id}
+                  run={kiDocs.run}
+                  onBack={() => openKiDocument(null)}
+                  onBeforeExport={flushDocSave}
+                />
+              )}
+              {tab === "summary" && activePage && !openDocId ? (
+                <KiDocumentsPanel
+                  pageId={activePage}
+                  state={kiDocs}
+                  filter={kiFilter}
+                  onFilter={setKiFilter}
+                  playingDocId={playingDocId}
+                  onOpen={(doc) => openKiDocument(doc.id)}
+                  onPlay={(doc) => {
+                    docAutoplay.current = doc.id;
+                    openKiDocument(doc.id);
+                  }}
+                  onNew={summarize}
+                  onDeleted={(id) => {
+                    if (sessionDocId.current === id) stopSpeaking();
+                  }}
+                />
+              ) : viewMode === "read" ? (
                 <ReaderView
                   text={spokenText}
                   speakers={speakers}
                   lang={tab === "translation" ? targetLangCode(targetLang) : uiLang}
                   current={readRange}
-                  clock={sessionTab.current === tab ? sentenceClock : null}
+                  clock={sessionHere() ? sentenceClock : null}
                   marks={readerMarks}
                   twoPages={twoPagesStored === "1"}
                   fontSize={Number(fontStored)}
@@ -3005,7 +3258,7 @@ export const TtsSettings = () => {
                 speedLabel={speedLabel}
                 onSpeed={(value) => void updateSetting("tts_speed", value)}
                 progress={
-                  speakProgress && sessionTab.current === tab
+                  speakProgress && sessionHere()
                     ? {
                         position: currentIndex ?? speakProgress.position,
                         total: speakProgress.total,
@@ -3013,7 +3266,7 @@ export const TtsSettings = () => {
                     : null
                 }
                 estimateSeconds={readEstimate}
-                clock={sessionTab.current === tab ? sentenceClock : null}
+                clock={sessionHere() ? sentenceClock : null}
                 page={viewMode === "read" ? pageInfo : null}
                 onJumpToPage={(n) => {
                   setFollow(false);
@@ -3272,6 +3525,19 @@ export const TtsSettings = () => {
             initialFrom={replaceSpeaker?.from}
           />
           {voiceMenu.menu}
+          <KiDocumentDialog
+            open={kiDialogOpen}
+            onOpenChange={setKiDialogOpen}
+            text={text}
+            templates={kiDocs.templates}
+            readingAt={
+              kiDialogOpen && activePage
+                ? loadResumePoint(`${activePage}:original`, text)
+                : null
+            }
+            selection={kiSelection}
+            onCreate={createKiDocument}
+          />
           <IsbnDialog
             open={isbnOpen}
             onOpenChange={setIsbnOpen}

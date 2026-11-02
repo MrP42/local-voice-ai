@@ -133,6 +133,18 @@ pub fn create(page_dir: &Path, mut doc: KiDocument, text: &str) -> Result<KiDocu
     Ok(doc)
 }
 
+/// Übernommenes Dokument mit genau diesem Text, falls es schon existiert
+/// (eine abgebrochene Übernahme darf kein zweites anlegen).
+pub fn find_import(page_dir: &Path, text: &str) -> Result<Option<KiDocument>, String> {
+    for doc in list(page_dir)? {
+        if doc.template_id == "import" && read_text(page_dir, &doc.id).ok().as_deref() == Some(text)
+        {
+            return Ok(Some(doc));
+        }
+    }
+    Ok(None)
+}
+
 /// Titel und/oder Text ändern.
 pub fn update(
     page_dir: &Path,
@@ -145,19 +157,27 @@ pub fn update(
     if text.as_ref().is_some_and(|t| t.len() > MAX_TEXT_BYTES) {
         return Err("book_ai:text_too_large".into());
     }
+    let title = match title {
+        Some(t) => {
+            let t = t.trim();
+            if t.is_empty() || t.chars().count() > MAX_TITLE_CHARS {
+                return Err("book_ai:invalid_title".into());
+            }
+            Some(t.to_string())
+        }
+        None => None,
+    };
     let _guard = lock();
     let mut index = load_index(page_dir)?;
+    // Erst prüfen, dann schreiben: ein unbekanntes Dokument hinterlässt keine
+    // verwaiste Datei (z. B. nach dem Löschen auf einem anderen Gerät).
     let doc = index
         .documents
         .iter_mut()
         .find(|d| d.id == id)
         .ok_or("book_ai:document_missing")?;
     if let Some(title) = title {
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
-            return Err("book_ai:invalid_title".into());
-        }
-        doc.title = title.to_string();
+        doc.title = title;
     }
     if let Some(text) = text {
         write_atomic(
@@ -232,6 +252,37 @@ mod tests {
         assert_eq!(list(p).unwrap().len(), 1);
         assert_eq!(read_text(p, &a.id).unwrap_err(), "book_ai:document_missing");
         assert_eq!(delete(p, &a.id).unwrap_err(), "book_ai:document_missing");
+    }
+
+    #[test]
+    fn update_of_unknown_document_leaves_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        create(p, doc(), "x").unwrap();
+        let ghost = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        assert_eq!(
+            update(p, ghost, None, Some("y".into()), 1.0).unwrap_err(),
+            "book_ai:document_missing"
+        );
+        assert!(!docs_dir(p).join(format!("{ghost}.md")).exists());
+        let other = tempfile::tempdir().unwrap();
+        assert!(update(other.path(), ghost, None, Some("y".into()), 1.0).is_err());
+        assert!(
+            !docs_dir(other.path()).exists(),
+            "kein Ordner in fremder Seite"
+        );
+    }
+
+    #[test]
+    fn import_is_found_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        assert!(find_import(p, "alt").unwrap().is_none());
+        let mut d = doc();
+        d.template_id = "import".into();
+        let a = create(p, d, "alt").unwrap();
+        assert_eq!(find_import(p, "alt").unwrap().map(|d| d.id), Some(a.id));
+        assert!(find_import(p, "anders").unwrap().is_none());
     }
 
     #[test]

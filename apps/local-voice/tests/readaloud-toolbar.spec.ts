@@ -168,7 +168,7 @@ test("all action buttons are the same size and show no text", async ({
 test("every lucide symbol appears at most once in the control column", async ({
   page,
 }) => {
-  for (const tab of ["Original", "Übersetzung", "Zusammenfassung"]) {
+  for (const tab of ["Original", "Übersetzung", "KI-Dokumente"]) {
     await openReadAloud(page);
     await page.getByRole("tab", { name: tab, exact: true }).click();
     const classes = await page
@@ -369,22 +369,17 @@ test("translation and summary tabs show their action as a symbol", async ({
   expect(Math.abs(lang!.y - row!.y)).toBeLessThanOrEqual(2);
   expect(Math.abs(lang!.height - row!.height)).toBeLessThanOrEqual(1);
 
-  await page.getByRole("tab", { name: "Zusammenfassung", exact: true }).click();
+  // KI-Dokumente (lva#183): „Neu erstellen“ als Symbol; es öffnet den Dialog
+  // mit Vorlagen statt der früheren Optionen (Umfang, Detailgrad, Zielgruppe).
+  await page.getByRole("tab", { name: "KI-Dokumente", exact: true }).click();
   const summarize = page.getByTestId("tts-action-summarize");
   await expect(summarize).toBeVisible();
   expect(((await summarize.textContent()) ?? "").trim()).toBe("");
-  const options = page.getByTestId("tts-action-summary-options");
-  await expect(options).toHaveAttribute("aria-haspopup", /dialog|true|menu/);
-  await options.click();
-  const popover = page.getByTestId("tts-summary-options");
-  await expect(popover).toBeVisible();
-  await expect(popover.locator(".app-select__control")).toHaveCount(3);
-  await expect(popover).toContainText("Umfang");
-  await expect(popover).toContainText("Detailgrad");
-  await expect(popover).toContainText("Zielgruppe");
+  await expect(page.getByTestId("tts-action-summary-options")).toHaveCount(0);
+  await summarize.click();
+  await expect(page.getByRole("dialog")).toContainText("Neues KI-Dokument");
   await page.keyboard.press("Escape");
-  await expect(popover).toHaveCount(0);
-  await expect(options).toBeFocused();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("the error count shows on the menu button and on the check entry", async ({
@@ -466,21 +461,6 @@ for (const size of [
     await expectFullyUsable(page, '[role="menuitem"]', "Hinzufuegen");
     expect(await controlsScrollTop(page), "Hinzufuegen scrollt").toBe(0);
     await page.keyboard.press("Escape");
-
-    // Optionen-Popover (Zusammenfassung).
-    await page
-      .getByRole("tab", { name: "Zusammenfassung", exact: true })
-      .click();
-    await page.getByTestId("tts-action-summary-options").click();
-    await expect(page.getByTestId("tts-summary-options")).toBeVisible();
-    await expectFullyUsable(
-      page,
-      '[data-testid="tts-summary-options"] .app-select__control',
-      "Optionen",
-    );
-    const panel = await page.getByTestId("tts-summary-options").boundingBox();
-    expect(panel!.y + panel!.height).toBeLessThanOrEqual(size.height);
-    expect(await controlsScrollTop(page), "Optionen scrollt").toBe(0);
   });
 }
 
@@ -591,35 +571,6 @@ for (const size of [
     await langOption.evaluate((el) => (el as HTMLElement).click());
     await expect(page.locator(".app-select__menu")).toHaveCount(0);
     await expect(lang).toContainText(langName);
-
-    // Select im Optionen-Popover: Popover bleibt bis zur Wahl offen.
-    await page
-      .getByRole("tab", { name: "Zusammenfassung", exact: true })
-      .click();
-    await page.getByTestId("tts-action-summary-options").click();
-    const popover = page.getByTestId("tts-summary-options");
-    await expect(popover).toBeVisible();
-    const first = popover.locator(".app-select__control").first();
-    await first.click();
-    await expectFloatingSelectMenu(page, size, "Popover-Select", 3);
-    await expect(popover).toBeVisible();
-    // Escape schliesst zuerst nur die Liste, nicht das Popover dahinter.
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".app-select__menu")).toHaveCount(0);
-    await expect(popover).toBeVisible();
-    await first.click();
-    await expect(page.locator(".app-select__menu")).toBeVisible();
-    const optionBox = await page
-      .locator(".app-select__option", { hasText: "Lang" })
-      .boundingBox();
-    // Echter Mausklick (mousedown zaehlt fuer die Aussenklick-Erkennung).
-    await page.mouse.click(
-      optionBox!.x + optionBox!.width / 2,
-      optionBox!.y + optionBox!.height / 2,
-    );
-    await expect(popover).toBeVisible();
-    await expect(first).toContainText("Lang");
-    await expect(page.locator(".app-select__menu")).toHaveCount(0);
   });
 }
 

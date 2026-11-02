@@ -77,6 +77,12 @@ type MenuExtras = { menuScrollKey?: string; menuHeader?: React.ReactNode };
 const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
   const { menuScrollKey, menuHeader } = props.selectProps as unknown as MenuExtras;
   const ref = React.useRef<HTMLDivElement | null>(null);
+  // Zielstand beim Öffnen; bis der Nutzer selbst scrollt (Rad, Ziehen,
+  // Tasten), setzt jedes fremde Scrollen (react-select scrollt zum
+  // Fokus-Eintrag) die Liste dorthin zurück. Gemerkt wird nur, was der
+  // Nutzer gescrollt hat.
+  const target = React.useRef<number | null>(null);
+  const user = React.useRef(false);
   const setRef = (el: HTMLDivElement | null) => {
     ref.current = el;
     const outer = props.innerRef;
@@ -87,48 +93,32 @@ const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
     const el = ref.current;
     if (!el) return;
     const saved = menuScrollKey ? menuScrollTops.get(menuScrollKey) : undefined;
-    // Zweimal: react-select scrollt nach dem Öffnen selbst zum Fokus-Eintrag.
-    const apply = () => {
-      if (saved !== undefined) {
-        el.scrollTop = saved;
-        return;
-      }
+    if (saved !== undefined) {
+      target.current = saved;
+    } else {
       const selected = el.querySelector<HTMLElement>(
         '[aria-selected="true"], .app-select__option--is-selected',
       );
-      if (selected) {
-        el.scrollTop = Math.max(
-          0,
-          selected.offsetTop - el.clientHeight / 2 + selected.offsetHeight / 2,
-        );
-      }
+      target.current = selected
+        ? Math.max(
+            0,
+            selected.offsetTop - el.clientHeight / 2 + selected.offsetHeight / 2,
+          )
+        : null;
+    }
+    if (target.current !== null) el.scrollTop = target.current;
+    const mine = () => {
+      user.current = true;
     };
-    apply();
-    // Einige Bilder lang wiederholen: react-select positioniert die Liste im
-    // Portal und scrollt danach selbst zum Fokus-Eintrag. Eigenes Scrollen
-    // (Rad, Tasten, Ziehen) beendet das sofort.
-    // Zeitfenster statt Bildzahl: auf einem ausgelasteten Rechner kommen die
-    // Bilder langsamer, react-select scrollt aber trotzdem erst danach.
-    const until = performance.now() + 800;
-    let id = 0;
-    let stopped = false;
-    const stop = () => {
-      stopped = true;
-    };
-    const tick = () => {
-      if (stopped || performance.now() > until) return;
-      apply();
-      id = window.requestAnimationFrame(tick);
-    };
-    id = window.requestAnimationFrame(tick);
-    el.addEventListener("wheel", stop, { passive: true });
-    el.addEventListener("pointerdown", stop);
-    window.addEventListener("keydown", stop, true);
+    el.addEventListener("wheel", mine, { passive: true });
+    el.addEventListener("pointerdown", mine);
+    el.addEventListener("touchmove", mine, { passive: true });
+    window.addEventListener("keydown", mine, true);
     return () => {
-      window.cancelAnimationFrame(id);
-      el.removeEventListener("wheel", stop);
-      el.removeEventListener("pointerdown", stop);
-      window.removeEventListener("keydown", stop, true);
+      el.removeEventListener("wheel", mine);
+      el.removeEventListener("pointerdown", mine);
+      el.removeEventListener("touchmove", mine);
+      window.removeEventListener("keydown", mine, true);
     };
     // Nur beim Öffnen (Einhängen der Liste), nicht bei jedem Neuzeichnen.
   }, []);
@@ -142,6 +132,10 @@ const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
             e.preventDefault();
             e.stopPropagation();
           }}
+          onPointerDown={() => {
+            // Ein Filterwechsel ändert die Liste: ab hier zählt der Nutzer.
+            user.current = true;
+          }}
           onTouchEnd={(e) => e.stopPropagation()}
         >
           {menuHeader}
@@ -153,8 +147,13 @@ const MenuListWithMemory = (props: MenuListProps<SelectOption, false>) => {
         innerProps={{
           ...props.innerProps,
           onScroll: (e: React.UIEvent<HTMLDivElement>) => {
-            if (menuScrollKey)
-              menuScrollTops.set(menuScrollKey, e.currentTarget.scrollTop);
+            const el = e.currentTarget;
+            if (!user.current) {
+              if (target.current !== null && Math.abs(el.scrollTop - target.current) > 1)
+                el.scrollTop = target.current;
+              return;
+            }
+            if (menuScrollKey) menuScrollTops.set(menuScrollKey, el.scrollTop);
           },
         }}
       />

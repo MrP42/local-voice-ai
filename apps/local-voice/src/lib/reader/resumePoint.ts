@@ -4,7 +4,12 @@
  * Quell-Offset samt einem kurzen Textanker; ändert sich der Text davor,
  * findet der Anker die Stelle wieder, statt mitten in ein Wort zu springen.
  */
-import { getLocal, recordPosition, setLocal } from "../library/progress";
+import {
+  docProgressKey,
+  getLocal,
+  recordPosition,
+  setLocal,
+} from "../library/progress";
 
 /** Unter `lva.ui.` – und dauerhaft im Kern gespiegelt (lva#152). */
 const PREFIX = "tts.resume.";
@@ -24,11 +29,21 @@ export function saveResumePoint(
   const value: Stored = { offset, anchor: anchorAt(text, offset) };
   setLocal(PREFIX + key, JSON.stringify(value));
   // Fortschritt der Bibliothek: was gehört wurde, bleibt gehört (lva#152).
-  recordPosition(`text:${key}`, {
+  recordPosition(progressKeyOf(key), {
     to: offset,
     length: text.length,
     anchor: value.anchor,
   });
+}
+
+/**
+ * Fortschrittsschlüssel zu einem Weiterlese-Schlüssel: KI-Dokumente
+ * (`<seite>:doc:<id>`, lva#183) zählen als abgeleitetes Dokument des Buchs,
+ * alles andere als Text der Seite.
+ */
+export function progressKeyOf(key: string): string {
+  const m = /^(.+):doc:([^:]+)$/.exec(key);
+  return m ? docProgressKey(m[1], m[2]) : `text:${key}`;
 }
 
 export function clearResumePoint(key: string): void {
