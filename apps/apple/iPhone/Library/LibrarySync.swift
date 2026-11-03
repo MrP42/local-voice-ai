@@ -515,15 +515,17 @@ final class LibrarySync: ObservableObject {
             let bytes = library.localAudioBytes(book)
             guard bytes > 0 else { return nil }
             let rec = library.record(library.audioKey(book))
-            let removable: Bool
-            switch offloadVerdict(book) {
-            case .allowed, .unconfirmed: removable = true
-            default: removable = false
+            let verdict = offloadVerdict(book)
+            let removable: Bool, localOnly: Bool
+            switch verdict {
+            case .allowed, .unconfirmed: removable = true; localOnly = false
+            case .notInAccount, .notLoggedIn: removable = false; localOnly = true
+            default: removable = false; localOnly = false
             }
             return AudioStorage.Item(id: book.id, title: book.title, bytes: bytes, fraction: LibraryProgress.fraction(rec),
                                      finished: book.finished || rec?.finished == true,
                                      lastUsedMs: rec.map(\.updated).flatMap { $0 > 0 ? $0 : nil },
-                                     partial: !library.hasAudio(book), removable: removable)
+                                     partial: !library.hasAudio(book), removable: removable, localOnly: localOnly)
         })
     }
 

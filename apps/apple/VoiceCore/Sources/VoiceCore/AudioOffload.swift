@@ -162,10 +162,12 @@ public enum AudioStorage {
         public var partial: Bool
         /// Darf (nach Prüfung beim Konto) entfernt werden.
         public var removable: Bool
+        /// Liegt nur auf diesem Gerät (nicht im Konto oder ohne Konto).
+        public var localOnly: Bool
         public init(id: String, title: String, bytes: Int, fraction: Double, finished: Bool,
-                    lastUsedMs: Double?, partial: Bool, removable: Bool) {
+                    lastUsedMs: Double?, partial: Bool, removable: Bool, localOnly: Bool = false) {
             self.id = id; self.title = title; self.bytes = bytes; self.fraction = fraction; self.finished = finished
-            self.lastUsedMs = lastUsedMs; self.partial = partial; self.removable = removable
+            self.lastUsedMs = lastUsedMs; self.partial = partial; self.removable = removable; self.localOnly = localOnly
         }
 
         /// Stand in Worten, z. B. „45 % gehört“.
@@ -198,7 +200,7 @@ public enum AudioStorage {
         default: head = "\(removed) Hörbücher entfernt, \(freedText) frei."
         }
         guard kept > 0 else { return head }
-        return head + (kept == 1 ? " 1 Hörbuch bleibt, weil es noch nicht sicher im Konto liegt."
-                                 : " \(kept) Hörbücher bleiben, weil sie noch nicht sicher im Konto liegen.")
+        return head + (kept == 1 ? " 1 Hörbuch bleibt, weil das Konto es nicht als vollständig bestätigt hat."
+                                 : " \(kept) Hörbücher bleiben, weil das Konto sie nicht als vollständig bestätigt hat.")
     }
 }

@@ -689,7 +689,10 @@ struct LibraryStorageSummary: View {
 
     var body: some View {
         Section {
+            // Nur an EINER Zeile: Modifier an einer Section gelten sonst je Zeile.
             LabeledContent("Hörbücher auf diesem iPhone", value: LibraryBytes.text(AudioStorage.total(items)))
+                .onAppear(perform: refresh)
+                .onChange(of: library.books) { _, _ in refresh() }
             if let free { LabeledContent("Frei auf dem iPhone", value: LibraryBytes.text(free)) }
             NavigationLink {
                 LibraryStorageView()
@@ -699,8 +702,6 @@ struct LibraryStorageSummary: View {
         } header: { Text("Speicher") } footer: {
             Text("Hörbücher liegen nur bei Bedarf auf dem iPhone und zählen nicht zum iCloud-Backup.")
         }
-        .onAppear(perform: refresh)
-        .onChange(of: library.books) { _, _ in refresh() }
     }
 
     private func refresh() { items = sync.storageItems(); free = library.freeBytes() }
@@ -710,6 +711,7 @@ struct LibraryStorageSummary: View {
 struct LibraryStorageView: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var playback = LibraryPlayback.shared
     @State private var items: [AudioStorage.Item] = []
     @State private var free: Int64?
     @State private var working: Set<String> = []
@@ -718,7 +720,8 @@ struct LibraryStorageView: View {
     @State private var notice: String?
 
     var body: some View {
-        let finished = AudioStorage.finishedRemovable(items)
+        // Das gerade laufende Buch nicht nebenbei stoppen.
+        let finished = AudioStorage.finishedRemovable(items).filter { $0.id != playback.book?.id }
         List {
             Section {
                 LabeledContent("Belegt durch Hörbücher", value: LibraryBytes.text(AudioStorage.total(items)))
@@ -741,7 +744,7 @@ struct LibraryStorageView: View {
                     ForEach(items) { item in
                         row(item)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                if item.removable {
+                                if item.removable && !working.contains(item.id) {
                                     Button(role: .destructive) { remove(item) } label: { Label("Entfernen", systemImage: "icloud.and.arrow.down") }
                                 }
                             }
@@ -751,7 +754,8 @@ struct LibraryStorageView: View {
         }
         .navigationTitle("Speicher").navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: refresh)
-        .onChange(of: library.books) { _, _ in refresh() }
+        // Während einer Sammelentfernung nicht je Buch neu messen; am Ende einmal.
+        .onChange(of: library.books) { _, _ in if working.isEmpty { refresh() } }
         .refreshable { refresh() }
         .confirmationDialog("Fertig gehörte Hörbücher entfernen?", isPresented: $confirmFinished, titleVisibility: .visible) {
             Button("\(finished.count) entfernen · \(LibraryBytes.text(AudioStorage.total(finished))) frei", role: .destructive) {
@@ -760,7 +764,7 @@ struct LibraryStorageView: View {
                 Task {
                     let result = await sync.removeDownloads(ids: ids)
                     working.subtract(ids)
-                    notice = AudioStorage.summary(removed: result.removed, freedText: LibraryBytes.text(result.freed), kept: result.kept)
+                    announce(AudioStorage.summary(removed: result.removed, freedText: LibraryBytes.text(result.freed), kept: result.kept))
                     refresh()
                 }
             }
@@ -772,42 +776,57 @@ struct LibraryStorageView: View {
         } message: { verdict in Text(verdict.message) }
     }
 
-    private func row(_ item: AudioStorage.Item) -> some View {
+    @ViewBuilder private func row(_ item: AudioStorage.Item) -> some View {
         let book = library.books.first { $0.id == item.id }
-        return HStack(spacing: 12) {
+        let busy = working.contains(item.id)
+        let content = HStack(spacing: 12) {
             LibraryCover(title: item.title, compact: true, image: book.flatMap { library.coverImage($0) }).frame(width: 40, height: 60)
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title).font(.body.weight(.semibold)).lineLimit(2)
                 Text(detail(item)).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
-                if !item.removable {
-                    Label("Nur auf diesem iPhone", systemImage: "iphone").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                if item.localOnly {
+                    Label("Nur auf diesem iPhone", systemImage: "iphone").font(.caption.weight(.semibold)).foregroundStyle(VoicePalette.text)
                 }
             }
             Spacer(minLength: 8)
-            if working.contains(item.id) { ProgressView() }
+            if busy { ProgressView().accessibilityLabel("Wird entfernt") }
             else { Text(LibraryBytes.text(item.bytes)).font(.subheadline.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText) }
         }
         .frame(minHeight: 60)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityHint(item.removable ? "Zum Entfernen nach links wischen." : "Liegt nur auf diesem iPhone und lässt sich noch nicht entfernen.")
-        .accessibilityAction(named: "Entfernen") { item.removable ? remove(item) : (blocked = book.map { sync.offloadVerdict($0) }) }
+        if item.removable {
+            content  // Entfernen steht als Wischaktion auch im VoiceOver-Rotor.
+        } else {
+            // Nicht entfernbar: Antippen erklärt warum (sonst sähe man es nur mit VoiceOver).
+            content
+                .onTapGesture { if let book { blocked = sync.offloadVerdict(book) } }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Zeigt, warum sich das Hörbuch noch nicht entfernen lässt.")
+        }
     }
 
     private func detail(_ item: AudioStorage.Item) -> String {
         guard let used = item.lastUsedMs else { return item.stand }
-        return "\(item.stand) · zuletzt \(LibraryFormat.when(used))"
+        let recent = Date().timeIntervalSince1970 * 1000 - used < 60_000
+        return "\(item.stand) · \(recent ? "gerade eben" : "zuletzt " + LibraryFormat.when(used))"
     }
 
     private func remove(_ item: AudioStorage.Item) {
-        guard let book = library.books.first(where: { $0.id == item.id }) else { return }
+        guard !working.contains(item.id), let book = library.books.first(where: { $0.id == item.id }) else { return }
         working.insert(item.id)
         Task {
             let result = await sync.removeDownloads(book)
             working.remove(item.id)
-            if result.verdict.allowed { notice = "„\(item.title)“ entfernt, \(LibraryBytes.text(result.freed)) frei." }
+            if result.verdict.allowed { announce("„\(item.title)“ entfernt, \(LibraryBytes.text(result.freed)) frei.") }
             else { blocked = result.verdict }
             refresh()
         }
+    }
+
+    private func announce(_ text: String) {
+        notice = text
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 
     private func refresh() { items = sync.storageItems(); free = library.freeBytes() }

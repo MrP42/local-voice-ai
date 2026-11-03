@@ -108,8 +108,8 @@ final class AudioStorageTests: XCTestCase {
     func testSummary() {
         XCTAssertEqual(AudioStorage.summary(removed: 1, freedText: "1 GB", kept: 0), "1 Hörbuch entfernt, 1 GB frei.")
         XCTAssertEqual(AudioStorage.summary(removed: 3, freedText: "2 GB", kept: 1),
-                       "3 Hörbücher entfernt, 2 GB frei. 1 Hörbuch bleibt, weil es noch nicht sicher im Konto liegt.")
+                       "3 Hörbücher entfernt, 2 GB frei. 1 Hörbuch bleibt, weil das Konto es nicht als vollständig bestätigt hat.")
         XCTAssertEqual(AudioStorage.summary(removed: 0, freedText: "0 KB", kept: 2),
-                       "Nichts entfernt. 2 Hörbücher bleiben, weil sie noch nicht sicher im Konto liegen.")
+                       "Nichts entfernt. 2 Hörbücher bleiben, weil das Konto sie nicht als vollständig bestätigt hat.")
     }
 }
