@@ -37,6 +37,8 @@ import {
 import { saveResumePoint } from "@/lib/reader/resumePoint";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { probeDuration } from "@/lib/library/probe";
+import { mergeSync, spanAt } from "@/lib/library/liveSync";
+import { useLiveSync } from "@/lib/library/useLiveSync";
 
 /** Wie oft die Stelle beim Hören gesichert wird. */
 const SAVE_EVERY_MS = 2000;
@@ -182,12 +184,29 @@ export const AudioBar: React.FC<Props> = ({
 
   const paragraphs = useMemo(() => (text ? splitParagraphs(text) : []), [text]);
   const total = dur.reduce((a, b) => a + b, 0);
+  // Hörbuch-Sync: Text und Hörbuch ohne gemeinsames Transkript (EPUB/PDF zu
+  // einem Hörbuch) werden beim Mitlesen live abgeglichen.
+  const transcriptSync = book.audio?.sync ?? [];
+  const live = useLiveSync({
+    bookId: book.id,
+    enabled: follow && !!text && transcriptSync.length === 0,
+    playing,
+    positionMs: at * 1000,
+    totalMs: total,
+    hintOf: (ms) => mapRef.current.msToChars(ms),
+  });
+  const syncPoints = useMemo(
+    () => mergeSync(book.audio?.sync, live.points),
+    [book.audio?.sync, live.points],
+  );
   const map = useMemo(
-    () => makeFollowMap(book.audio?.sync, text?.length ?? 0, total),
-    [book.audio?.sync, text, total],
+    () => makeFollowMap(syncPoints, text?.length ?? 0, total),
+    [syncPoints, text, total],
   );
   const mapRef = useRef(map);
   mapRef.current = map;
+  /** Stelle nur geschätzt: weder Transkript noch Live-Abgleich deckt sie ab. */
+  const approxNow = transcriptSync.length === 0 && !spanAt(live.covered, at * 1000);
 
   /** Gesamtzeit in ms aus dem Element. */
   const globalMs = useCallback(() => {
@@ -410,7 +429,7 @@ export const AudioBar: React.FC<Props> = ({
           title={book.title}
           paragraphs={paragraphs}
           active={activeParagraph}
-          approx={map.approx}
+          approx={approxNow}
           onPick={(i) => {
             wantPlay.current = true;
             seekGlobal(map.charsToMs(paragraphs[i].start) / 1000);
