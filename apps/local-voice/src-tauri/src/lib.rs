@@ -2547,6 +2547,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_progress_put,
             hoersync_live::audiosync_load,
             hoersync_live::audiosync_window,
+            hoersync_live::audiosync_anchor,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,

@@ -7564,7 +7564,12 @@
       "region": "Mitlesen: {{title}}",
       "approx": "Stelle ungefähr",
       "current": "Zur aktuellen Stelle",
-      "close": "Mitlesen schließen"
+      "close": "Mitlesen schließen",
+      "insert": "Nur im Hörbuch",
+      "searching": "Stelle wird im Hörbuch gesucht …",
+      "correct": "Stelle korrigieren",
+      "correctHint": "Tippe auf den Satz, der gerade zu hören ist.",
+      "lineLabel": "Aktueller Satz: {{text}}. Mitlesen öffnen"
     },
     "merge": {
       "bar": "{{count}} Einträge gehören wohl zu einem Hörbuch: {{title}}",

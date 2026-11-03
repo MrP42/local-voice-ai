@@ -1,0 +1,7 @@
+Element	Breite px	Höhe px (1440 px Fensterbreite)
+library-audiobar-line	930	44
+library-follow-correct	44	44
+library-follow-close	44	44
+library-audiobar-toggle	44	44
+library-audiobar-follow	44	44
+library-audiobar-close	44	44

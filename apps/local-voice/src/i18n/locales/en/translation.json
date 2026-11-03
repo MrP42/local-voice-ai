@@ -7564,7 +7564,12 @@
       "region": "Reading along: {{title}}",
       "approx": "Position approximate",
       "current": "Go to current position",
-      "close": "Close reading view"
+      "close": "Close reading view",
+      "insert": "Only in the audiobook",
+      "searching": "Finding the position in the audiobook …",
+      "correct": "Correct position",
+      "correctHint": "Tap the sentence you are hearing right now.",
+      "lineLabel": "Current sentence: {{text}}. Open reading view"
     },
     "merge": {
       "bar": "{{count}} entries probably belong to one audiobook: {{title}}",

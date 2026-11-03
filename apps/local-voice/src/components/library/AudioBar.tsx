@@ -19,7 +19,7 @@ import {
 import { commands, type AudioVersion, type LibraryBook } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
-import { FollowPane } from "./FollowPane";
+import { FollowPane, textStartOf } from "./FollowPane";
 import { assetUrl, formatDuration, tracksOf } from "@/lib/library/books";
 import {
   makeFollowMap,
@@ -37,7 +37,8 @@ import {
 import { saveResumePoint } from "@/lib/reader/resumePoint";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import { probeDuration } from "@/lib/library/probe";
-import { mergeSync, spanAt } from "@/lib/library/liveSync";
+import { mergeLayers, nearAnchor, spanAt } from "@/lib/library/liveSync";
+import { sentenceAt, sentencesOf, type Span } from "@/lib/library/sentences";
 import { useLiveSync } from "@/lib/library/useLiveSync";
 
 /** Wie oft die Stelle beim Hören gesichert wird. */
@@ -85,6 +86,9 @@ function locate(
   }
   return { index, within: Math.max(0, ms - starts[index]) };
 }
+
+/** So lange darf die Suche nach der Startstelle höchstens dauern. */
+const SEARCH_TIMEOUT_MS = 30_000;
 
 interface Props {
   book: LibraryBook;
@@ -187,17 +191,19 @@ export const AudioBar: React.FC<Props> = ({
   // Hörbuch-Sync: Text und Hörbuch ohne gemeinsames Transkript (EPUB/PDF zu
   // einem Hörbuch) werden beim Mitlesen live abgeglichen.
   const transcriptSync = book.audio?.sync ?? [];
+  // Auch ohne offene Lesefläche: die Satzzeile über der Leiste braucht die Stelle.
   const live = useLiveSync({
     bookId: book.id,
-    enabled: follow && !!text && transcriptSync.length === 0,
+    enabled: !!text && transcriptSync.length === 0,
     playing,
     positionMs: at * 1000,
     totalMs: total,
     hintOf: (ms) => mapRef.current.msToChars(ms),
   });
+  // Vorrang: Hand-Stellen, dann Transkript, dann Live-Abgleich.
   const syncPoints = useMemo(
-    () => mergeSync(book.audio?.sync, live.points),
-    [book.audio?.sync, live.points],
+    () => mergeLayers(live.anchors, book.audio?.sync, live.points),
+    [live.anchors, book.audio?.sync, live.points],
   );
   const map = useMemo(
     () => makeFollowMap(syncPoints, text?.length ?? 0, total),
@@ -206,7 +212,12 @@ export const AudioBar: React.FC<Props> = ({
   const mapRef = useRef(map);
   mapRef.current = map;
   /** Stelle nur geschätzt: weder Transkript noch Live-Abgleich deckt sie ab. */
-  const approxNow = transcriptSync.length === 0 && !spanAt(live.covered, at * 1000);
+  const approxNow =
+    transcriptSync.length === 0 &&
+    !spanAt(live.covered, at * 1000) &&
+    !nearAnchor(live.anchors, at * 1000);
+  /** Startstelle wird im Hörbuch gesucht („Hören und mitlesen“). */
+  const [searching, setSearching] = useState(false);
 
   /** Gesamtzeit in ms aus dem Element. */
   const globalMs = useCallback(() => {
@@ -244,50 +255,78 @@ export const AudioBar: React.FC<Props> = ({
 
   // Startstelle: gesicherte Hörstelle, außer der Text ist klar neuer gelesen.
   // Fehlende Dauern vorher ermitteln, sonst ließe sich die Stelle nicht finden.
+  // Ohne Transkript wird die gelesene Stelle im Hörbuch gesucht (Erkennung),
+  // statt sie nur anteilig zu schätzen.
+  const started = useRef(false);
   useEffect(() => {
-    if (!textReady) return;
+    if (!textReady || !live.loaded || started.current) return;
+    started.current = true;
     let stop = false;
+    let done = false;
+    const abort = { aborted: false };
     void (async () => {
+      // Erst nach dem Effekt-Durchlauf (StrictMode ruft ihn zweimal).
+      await Promise.resolve();
+      if (stop) return;
       const saved = loadProgress(key);
       const textRec = textKey ? loadProgress(textKey) : null;
       let ms = saved && !saved.finished ? saved.offset : 0;
-      if (
-        text &&
-        textRec &&
+      const fromText =
+        !!text &&
+        !!textRec &&
         textRec.offset > 0 &&
         !textRec.finished &&
-        (!saved || textIsNewer(textRec.updated, saved.updated))
-      ) {
-        ms = Math.round(mapRef.current.charsToMs(textRec.offset));
-      }
-      if (ms > 0 && durRef.current.some((d) => d <= 0)) {
+        (!saved || textIsNewer(textRec.updated, saved.updated));
+      // Gesamtdauer zuerst: ohne sie lässt sich Text nicht auf Zeit abbilden.
+      if ((ms > 0 || fromText) && durRef.current.some((d) => d <= 0)) {
         const measured = await measureMissing();
         if (stop) return;
         if (measured) durRef.current = measured;
-        // Mit der Gesamtdauer stimmt auch die Abbildung Text → Hören.
-        if (
-          text &&
-          textRec &&
-          textRec.offset > 0 &&
-          (!saved || textIsNewer(textRec.updated, saved.updated))
-        )
-          ms = Math.round(
-            makeFollowMap(
-              book.audio?.sync,
-              text.length,
-              durRef.current.reduce((a, b) => a + b, 0),
-            ).charsToMs(textRec.offset),
-          );
       }
+      if (fromText && text && textRec) {
+        const totalNow = durRef.current.reduce((a, b) => a + b, 0);
+        const m = makeFollowMap(syncPoints, text.length, totalNow);
+        ms = Math.round(m.charsToMs(textRec.offset));
+        const sure =
+          transcriptSync.length > 0 ||
+          !!spanAt(live.covered, ms) ||
+          nearAnchor(live.anchors, ms);
+        if (!sure && totalNow > 0) {
+          setSearching(true);
+          abort.aborted = false;
+          let timer = 0;
+          const found = await Promise.race([
+            live.find(textRec.offset, ms, {
+              msPerChar: totalNow / Math.max(1, text.length),
+              totalMs: totalNow,
+              abort,
+            }),
+            new Promise<null>((r) => {
+              timer = window.setTimeout(() => r(null), SEARCH_TIMEOUT_MS);
+            }),
+          ]);
+          window.clearTimeout(timer);
+          // Zeitlimit oder Abbruch: die Suche hört nach dem laufenden Fenster auf.
+          abort.aborted = true;
+          setSearching(false);
+          if (stop) return;
+          if (found !== null) ms = Math.round(found);
+        }
+      }
+      if (stop) return;
       const place = locate(durRef.current, ms);
       pendingSeek.current = place.within > 0 ? place.within / 1000 : null;
       currentRef.current = place.index;
-      if (!stop) setCurrent(place.index);
+      done = true;
+      setCurrent(place.index);
     })();
     return () => {
       stop = true;
+      abort.aborted = true;
+      // Abgebrochen, bevor die Stelle feststand: beim nächsten Lauf neu.
+      if (!done) started.current = false;
     };
-  }, [textReady]);
+  }, [textReady, live.loaded]);
 
   /** Dauern aller Teile ermitteln, die noch fehlen; speichert sie am Buch. */
   const measuring = useRef<Promise<number[] | null> | null>(null);
@@ -348,7 +387,10 @@ export const AudioBar: React.FC<Props> = ({
         }
       }
       const totalMs = durs.reduce((a, b) => a + b, 0);
-      const ms = Math.max(0, Math.min(seconds * 1000, totalMs || seconds * 1000));
+      const ms = Math.max(
+        0,
+        Math.min(seconds * 1000, totalMs || seconds * 1000),
+      );
       const place = locate(durs, ms);
       if (place.index === currentRef.current && el) {
         el.currentTime = place.within / 1000;
@@ -410,9 +452,35 @@ export const AudioBar: React.FC<Props> = ({
   }, [onHeight]);
 
   const src = current === null ? null : urls[current];
+  const nowChars = map.msToChars(at * 1000);
   const activeParagraph = paragraphs.length
-    ? paragraphAt(paragraphs, map.msToChars(at * 1000))
+    ? paragraphAt(paragraphs, nowChars)
     : -1;
+
+  /** Sätze je Absatz, erst bei Bedarf zerlegt. */
+  const sentenceCache = useMemo(() => new Map<number, Span[]>(), [paragraphs]);
+  const sentenceOf = useCallback(
+    (chars: number): Span | null => {
+      if (!paragraphs.length) return null;
+      const i = paragraphAt(paragraphs, chars);
+      let list = sentenceCache.get(i);
+      if (!list) {
+        const p = paragraphs[i];
+        list = sentencesOf(p.text, textStartOf(p));
+        sentenceCache.set(i, list);
+      }
+      return sentenceAt(list, chars);
+    },
+    [paragraphs, sentenceCache],
+  );
+  const sentence = activeParagraph >= 0 ? sentenceOf(nowChars) : null;
+  /** Gerade gehörter Einschub (Text nur im Hörbuch). */
+  const insertNow = live.inserts.find(
+    (i) => at * 1000 >= i.start_ms && at * 1000 < i.end_ms,
+  );
+  const lineText =
+    insertNow?.text ??
+    (sentence && text ? text.slice(sentence.start, sentence.end) : "");
 
   if (!urls.length || urls.every((u) => !u)) return null;
   const multi = tracks.length > 1;
@@ -429,13 +497,22 @@ export const AudioBar: React.FC<Props> = ({
           title={book.title}
           paragraphs={paragraphs}
           active={activeParagraph}
+          sentence={sentence}
+          inserts={live.inserts}
           approx={approxNow}
-          onPick={(i) => {
+          searching={searching}
+          sentenceOf={sentenceOf}
+          onPick={(chars) => {
             wantPlay.current = true;
-            seekGlobal(map.charsToMs(paragraphs[i].start) / 1000);
+            seekGlobal(map.charsToMs(chars) / 1000);
             const el = audio.current;
             if (el?.paused) void el.play().catch(() => {});
           }}
+          onAnchor={
+            transcriptSync.length === 0
+              ? (chars) => void live.anchor(chars, globalMs())
+              : undefined
+          }
           onClose={() => setFollowPref("off")}
         />
       )}
@@ -472,6 +549,41 @@ export const AudioBar: React.FC<Props> = ({
             ))}
           </ol>
         </div>
+      )}
+      {!follow && text && (lineText || searching) && (
+        <button
+          type="button"
+          className="library-audiobar__line"
+          onClick={() => setFollowPref("on")}
+          aria-label={t("library.follow.lineLabel", {
+            text: searching ? t("library.follow.searching") : lineText,
+          })}
+          title={searching ? undefined : lineText}
+          data-testid="library-audiobar-line"
+        >
+          {searching ? (
+            <span className="library-meta">
+              {t("library.follow.searching")}
+            </span>
+          ) : (
+            <>
+              {approxNow && (
+                <span
+                  className="library-audiobar__approx"
+                  title={t("library.follow.approx")}
+                  data-testid="library-audiobar-line-approx"
+                >
+                  ≈
+                </span>
+              )}
+              {insertNow ? (
+                <ins className="library-follow__ins">{lineText}</ins>
+              ) : (
+                <span className="library-audiobar__sentence">{lineText}</span>
+              )}
+            </>
+          )}
+        </button>
       )}
       <div
         className="library-audiobar"
