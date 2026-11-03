@@ -53,7 +53,12 @@ struct VoiceApp: App {
             VoiceHome(model: model)
                 .tint(VoicePalette.accent)
                 .foregroundStyle(VoicePalette.text)
-                .onChange(of: phase, initial: true) { _, value in model.scene(active: value == .active) }
+                .onChange(of: phase, initial: true) { _, value in
+                    model.scene(active: value == .active)
+                    #if os(iOS)
+                    LibraryPlayback.shared.scene(active: value == .active)
+                    #endif
+                }
         }
     }
 }
@@ -70,7 +75,8 @@ private struct VoiceHome: View {
     @State private var selectedHistoryNote: Entry?
     @FocusState private var searchFocused: Bool
     #if DEBUG
-    @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2 : 0
+    @State private var tab = ProcessInfo.processInfo.arguments.contains("--meeting-import-probe") ? 2
+        : ProcessInfo.processInfo.arguments.contains("--library-tab") ? 3 : 0
     #else
     @State private var tab = 0
     #endif
@@ -198,6 +204,7 @@ private struct VoiceHome: View {
                 .navigationBarTitleDisplayMode(.inline)
 
             }.tabItem { Label("Verlauf", systemImage: "clock.arrow.circlepath") }.tag(1)
+            LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
         }
         .sheet(isPresented: $showModels) { ModelPanel(model: model) }
         #endif

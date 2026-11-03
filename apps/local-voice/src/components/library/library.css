@@ -1273,6 +1273,14 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+.library-trash__notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--colorBrandBackground, #0f6cbd);
+  background: var(--colorNeutralBackground2, rgba(0, 0, 0, 0.04));
+  border-radius: 4px;
+  font-weight: 600;
+}
 .library-trash__warn {
   margin: 0;
   color: var(--color-status-danger, #c50f1f);
@@ -1282,6 +1290,12 @@
 .library-undo-toast {
   border-left: 4px solid var(--colorBrandBackground, #0f6cbd) !important;
   font-size: 0.95rem;
+  width: min(440px, calc(100vw - 32px));
+  color: var(--colorNeutralForeground1, inherit);
+}
+.library-undo-toast [data-description] {
+  color: var(--colorNeutralForeground1, inherit);
+  margin-top: 2px;
 }
 .library-undo-toast button {
   min-height: 44px !important;

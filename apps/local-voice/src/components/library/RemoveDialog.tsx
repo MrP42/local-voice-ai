@@ -95,7 +95,7 @@ export const RemoveDialog: React.FC<{
             />
             <span>
               <strong>{t("library.remove.trash")}</strong>
-              <small>{t("library.remove.trashHint", { size })}</small>
+              <small>{t("library.remove.trashHint", { count, size })}</small>
             </span>
           </label>
           <label className="library-remove__option library-remove__option--danger">
@@ -108,7 +108,7 @@ export const RemoveDialog: React.FC<{
             />
             <span>
               <strong>{t("library.remove.delete")}</strong>
-              <small>{t("library.remove.deleteHint", { size, texts })}</small>
+              <small>{t("library.remove.deleteHint", { count, size, texts })}</small>
             </span>
           </label>
         </fieldset>
