@@ -62,7 +62,7 @@ Zurückschreiben verloren.
   vollständig umbenennen.
 - **Testvektor** (Desktop und iPhone, mit libsodium bestätigt): Schlüssel 0x00..0x1f, user_id 7,
   Klartext „Hallo Buch“, Nonce 0x40..0x57, Stück 0 → Blob `08d8fe6e…0a7322`, Stück
-  `40414243…4c4d4e4f505152535455565 79c58691c…3c4bbf` (vollständig in `LibrarySyncModelTests`).
+  `404142…5657` (Nonce) + `9c58691c…3c4bbf` (vollständig in `LibrarySyncModelTests`).
 - **Löschen:** „Auf allen Geräten löschen“ sendet einen Grabstein; „Hörbuch vom iPhone
   entfernen“ löscht nur die geladenen Dateien.
 
