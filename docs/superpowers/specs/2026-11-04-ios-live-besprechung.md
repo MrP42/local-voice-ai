@@ -13,7 +13,10 @@ nur in der Paritätsmatrix.
 2. Danach ohne weiteren Tipp automatisch lokal transkribieren und auswerten.
 3. Während einer Besprechung live: Transkript, laufendes Protokoll, KI-Notizen,
    To-dos, aktueller Stand, offene Punkte und Fragen, die man noch ansprechen kann.
-4. Alles offline auf dem Gerät. Keine Cloud, kein Server-STT, kein Fremd-LLM.
+4. Verarbeitung offline auf dem Gerät: kein Server-STT, kein Fremd-LLM. Abgrenzung:
+   Modelle und Apple-Sprachassets werden einmalig heruntergeladen; Sprachmemos
+   der Watch kommen über iCloud aufs iPhone; App-Daten können in Geräte-Backups
+   landen (Ausschluss per `isExcludedFromBackup` als Einstellung).
 5. Bei jedem großen Release (Minor-Sprung, z. B. 0.23.0) ziehen Mac- und iOS-App
    funktional nach (Paritätsmatrix, Abschnitt „Release-Parität“).
 
@@ -81,14 +84,22 @@ dann beginnt sie beim nächsten Öffnen.
 | whisper small (q5_1) | ca. 190 MB | ca. 0,6 GB | knapp (30-s-Stücke) | ordentlich |
 | whisper large-v3-turbo (q5_0) | ca. 550 MB (+ Core-ML-Encoder) | ca. 1,0–1,5 GB | nein, Endlauf | sehr gut |
 
-Entscheidung (Vorschlag):
-- **Live:** SpeechTranscriber per `SpeechAnalyzer` mit `volatileResults`. Belastet
-  das Speicherbudget der App nicht und läuft energiesparend auf der Neural Engine.
+RAM-Werte sind Schätzungen, keine Gerätebudgets; gemessen wird am Gerät
+(Modell, KV-Cache, Core-ML-Encoder, Audiopuffer).
+
+Entscheidung (Codex-Abnahme 03.11. mit Auflagen):
+- **Live:** SpeechTranscriber per `SpeechAnalyzer`. Anzeige darf vorläufige
+  Ergebnisse zeigen, **ausgewertet werden nur finalisierte Segmente**.
   Fallback ohne Asset: whisper base in 15-s-Stücken.
-- **Endlauf nach Ende:** wie Desktop optional whisper large-v3-turbo über das
-  gesamte Original (Ladeknopf, nie stillschweigend). Live-Transkript bleibt als
-  Kopie erhalten, wird nur bei erfolgreichem Endlauf atomar ersetzt (Regel aus
-  `final_pass.rs` übernehmen).
+- **Endlauf nach Ende (optional):** whisper large-v3-turbo über das gesamte
+  Original, fortsetzbar (Abschnitts-Checkpoints wie heute), läuft **nur bei
+  entladenem LLM**. Live-Transkript bleibt als Kopie, wird nur bei erfolgreichem
+  Endlauf atomar ersetzt (Regel aus `final_pass.rs`). **Transkriptversion und
+  Belege werden gemeinsam umgestellt** (Belege auf neue Segmente per Zeitbereich
+  abbilden, sonst als „Beleg aus Live-Fassung“ markieren).
+- Vor Freigabe Vergleichstest Deutsch (WER auf `docs/apple-evidence`-Proben):
+  SpeechTranscriber vs. whisper small vs. large-v3-turbo. Ohne messbaren Vorteil
+  entfällt der Endlauf.
 - Neues Modell nur per expliziter Auswahl laden, SHA-256 gebunden, Lizenz MIT.
 
 ### 3. Lokales LLM für den Live-Stand
@@ -100,25 +111,50 @@ Entscheidung (Vorschlag):
 | Qwen3 4B Instruct Q4_K_M | ca. 2,5 GB | Apache-2.0 | 32k | bestes freies Modell im Budget, nur Geräte mit 8 GB RAM |
 | ~~Qwen 2.5 3B~~ | 1,9 GB | Qwen Research (nicht kommerziell) | – | ausgeschlossen |
 
-Entscheidung (Vorschlag): Foundation Model als Standard, Qwen3 4B als lokale
-Alternative (explizit laden), Qwen 2.5 1.5B als Mindestlösung für ältere Geräte.
+Entscheidung (Codex-Abnahme mit Auflagen): Foundation Model als Standard,
+Qwen3 4B als lokale Alternative (explizit laden), Qwen 2.5 1.5B als
+Mindestlösung. Qwen nur mit festem, SHA-gebundenem Artefakt, Thinking aus,
+KV-Cache begrenzt (Kontext ≤ 8k); 8 GB RAM allein sind keine Freigabe,
+Freigabe erst nach Speicher-/Thermikmessung am Gerät.
 
-**Rollierendes Verfahren statt Gesamtprompt** (passt in 4096 Token):
+**Rollierendes Verfahren statt Gesamtprompt.** Tokenbudget je Takt vollständig
+gerechnet (4096 Token Foundation Model):
+
+| Anteil | Budget |
+|---|---|
+| Instruktionen | 450 |
+| Schema der geführten Ausgabe | 350 |
+| bisheriger Zustand (kompakt) | 900 |
+| neue finalisierte Segmente | 1100 |
+| gezielt abgerufene ältere Belege | 300 |
+| Ausgabe (Delta) | 700 |
+| Reserve | 296 |
+
+Je Takt eine **frische Session** (kein Verlauf), Zustand und Segmente werden
+vorher mit `tokenCount` gemessen und notfalls gekürzt (ältere Themen zuerst).
+Ältere Belege werden nur gezielt nachgeladen (Segmente, auf die offene Einträge
+verweisen).
 - Zustand `LiveStand` (kompakt, höchstens ca. 900 Token): `stand` (3–5 Sätze),
   `themen[]`, `entscheidungen[]`, `todos[]` (Text, wer, bis wann), `offen[]`
   (offene Punkte/Fragen), `vorschlaege[]` (Fragen, die man jetzt ansprechen
-  könnte). Jeder Eintrag hat eine stabile ID und Belegsegmente (`belege: [Int]`).
+  könnte). Jeder Eintrag hat eine stabile ID und Belege `{transkriptVersion,
+  segmentId, start, ende}` (stabile Segment-ID + Audiozeitbereich, damit Belege
+  einen Endlauf mit anderen Segmentgrenzen überleben).
 - Takt: alle 90 s oder ab ca. 250 neuen Wörtern, nie parallel zu sich selbst.
   Eingabe = bisheriger Zustand + neue Segmente (mit Index). Ausgabe = **Delta**
   (`neu`, `aendern`, `erledigt`), kein Neuschreiben.
 - Belegpflicht wie `MeetingMinutes.validateEvidence`: Namen, Termine und To-dos
-  nur mit wörtlichem Beleg in den genannten Segmenten; sonst wird das Delta
-  verworfen und das Ereignis gezählt (keine Halluzination im Protokoll).
-- „Offen“ wird automatisch „erledigt“, wenn ein späteres Segment die Frage
-  beantwortet (vom Modell vorgeschlagen, mit Beleg).
+  nur mit wörtlichem Beleg in den genannten Segmenten; sonst wird der Eintrag
+  verworfen und gezählt. Ein gültiger Beleg beweist **nicht** die richtige
+  Zuordnung; die Ansicht bleibt ein prüfbarer Entwurf mit Sprung zur Belegstelle.
+- `vorschlaege[]` sind als „Vorschlag der KI“ gekennzeichnet. „Offen“ wird nicht
+  automatisch „erledigt“: das Modell schlägt „beantwortet?“ mit Beleg vor, erst
+  ein Tipp bestätigt.
 - Thermik und Akku: bei `ProcessInfo.thermalState >= .serious` oder Stromsparmodus
   Takt auf 5 min, bei `.critical` nur noch Transkript. Anzeige „KI pausiert (Wärme)“.
-- Hintergrund: GPU/Metal ist im Hintergrund nicht nutzbar. Gesperrtes Gerät =
+- Hintergrund ist nicht garantiert: Fortschritt (Segmente, letzter Takt,
+  Zustand) wird nach jedem Schritt dauerhaft gesichert, Wiederanlauf setzt dort
+  fort. GPU/Metal ist im Hintergrund nicht nutzbar. Gesperrtes Gerät =
   Aufnahme und STT laufen weiter (Audio-Hintergrundmodus), LLM-Takt pausiert und
   holt nach Entsperren in einem Lauf auf. Live-Aktivität auf dem Sperrbildschirm
   zeigt Dauer, Aufnahmestatus und Zahl der To-dos.
@@ -132,8 +168,9 @@ Alternative (explizit laden), Qwen 2.5 1.5B als Mindestlösung für ältere Ger�
 | Spracherkennung auf der Uhr | kein SpeechTranscriber, whisper zu groß für RAM/Akku | Uhr nimmt nur auf, iPhone erkennt |
 | Lange Aufnahme | heutiger Pfad: 30 s, 1 MiB | neuer Pfad „Besprechung“: AAC 16 kHz mono 32 kbit/s (ca. 14 MB/h), Stücke à 30 s |
 | Hintergrund | Aufnahme läuft nur mit aktiver Audiositzung weiter (Hintergrundmodus `audio`) | Start im Vordergrund, dann Handgelenk senken erlaubt; Gerätetest nötig |
-| Übertragung | `sendMessageData` nur bei Erreichbarkeit, Grenzen der Paketgröße | jedes Stück per `transferFile` mit Metadaten (Sitzung, Stück-Nr., Hash); Quittung je Stück; Original bleibt auf der Uhr bis zur Quittung |
-| „Live“ von der Uhr | Bluetooth-Latenz, iPhone muss in Reichweite sein | halbes Live: Transkript mit ca. 30–90 s Verzug; ohne iPhone in Reichweite puffert die Uhr und überträgt später |
+| Übertragung | WatchConnectivity überträgt opportunistisch | jedes Stück per `transferFile` mit Metadaten (Sitzung, Sequenznummer, erste/letzte Sample-Position, Hash); lückenlos rotieren (kein Sample zwischen zwei Stücken verloren); iPhone quittiert erst nach dauerhaftem Speichern; Duplikate über (Sitzung, Sequenz, Hash) idempotent; Original bleibt auf der Uhr bis zur Quittung |
+| „Live“ von der Uhr | opportunistische Übertragung, iPhone muss in Reichweite sein | halbes Live mit 30–90 s Verzug; ohne iPhone puffert die Uhr und überträgt später |
+| Freigabe | – | 2-h-Gerätetests: gesperrtes iPhone, Verbindungsabbruch, Audio-Unterbrechung (Anruf, Siri) |
 | Speicher Uhr | wenige GB, mit anderen Apps geteilt | Obergrenze 2 h, Warnung bei < 500 MB frei |
 
 Das iPhone setzt Stücke in Reihenfolge zusammen (Lücken bleiben sichtbar), speist
@@ -142,7 +179,16 @@ sie in denselben Live-Weg ein und schreibt am Ende ein Original in `MeetingArchi
 ### 5. Datenschutz und Einwilligung (DSGVO, § 201 StGB)
 
 Heimliches Aufnehmen des nichtöffentlich gesprochenen Wortes ist strafbar
-(§ 201 StGB); für die Verarbeitung gilt DSGVO bzw. LDSG BW.
+(§ 201 StGB); für die Verarbeitung gilt DSGVO bzw. LDSG BW. Die Bestätigung in
+der App ist eine **Schranke**, sie ersetzt weder die Zustimmung der Beteiligten
+noch einen vollständigen Nachweis nach Art. 7 DSGVO; sie dokumentiert, dass die
+aufnehmende Person die Zustimmung eingeholt hat.
+- Der Hinweis nennt ausdrücklich **Aufnahme, Transkription und KI-Auswertung**,
+  den Zweck, den Verantwortlichen (Einstellung, Vorgabe: aufnehmende Person
+  bzw. Dienststelle), die Löschfrist (Einstellung, Vorgabe 90 Tage) und den
+  Widerruf (Aufnahme stoppen, Dokument löschen).
+- Kommen Personen hinzu: Knopf „Person kommt hinzu“ pausiert die Aufnahme, neue
+  Bestätigung, dann weiter; jede Bestätigung wird mit Zeitpunkt protokolliert.
 - **Vor jeder Aufnahme** (iPhone, Watch, Kurzbefehl) erscheint der Hinweis:
   „Alle Anwesenden müssen der Aufnahme zugestimmt haben.“ mit Bestätigung
   „Alle haben zugestimmt“. Ohne Bestätigung startet keine Aufnahme. Auf der Uhr
@@ -150,8 +196,12 @@ Heimliches Aufnehmen des nichtöffentlich gesprochenen Wortes ist strafbar
   sie überspringen ihn nicht.
 - **Beim Import** (Teilen-Menü): Bestätigung „Die Aufnahme erfolgte mit
   Zustimmung aller Beteiligten“ in der Extension, sonst kein Import.
-- Vermerk `consentConfirmedAt` + Weg (`app`, `watch`, `import`, `kurzbefehl`) am
-  Dokument, wie Desktop (`consent_confirmed_at`). Kein Name, keine Ortung.
+- Nachweis in den Metadaten der Aufnahme: Liste `consent[]` mit Zeitpunkt,
+  Weg (`app`, `watch`, `import`, `kurzbefehl`), Version des Hinweistextes,
+  bestätigter Umfang (Aufnahme/Transkription/KI), Zweck, Verantwortlicher,
+  Löschfrist und Audio-Position (für „Person kommt hinzu“). Ohne gültigen
+  Eintrag kein Start. Entspricht Desktop `consent_confirmed_at`. Kein Name,
+  keine Ortung.
 - Sichtbare Aufnahmeanzeige (iOS-Mikrofonpunkt, Live-Aktivität, Watch-Symbol).
 - Daten bleiben lokal im App-Container mit Dateischutz
   `completeUntilFirstUserAuthentication` (Aufnahme bei gesperrtem Gerät muss
@@ -192,12 +242,18 @@ Reihenfolge: P8, P1, P2 und P9 sofort in der Cloud. P3–P7 brauchen Xcode auf d
 Mac (Intel, derzeit offline) und Gerätetests; sie gehen an den Mac-Thread, sobald
 der Mac wieder erreichbar ist.
 
+## Codex-Abnahme
+
+03.11.2026 (ec8add64): STT, Foundation Model und Einwilligung „mit Änderungen“,
+Watch „tragfähig“. Auflagen sind oben eingearbeitet.
+
 ## Risiken und offene Prüfungen am Gerät
 
 1. SpeechAnalyzer-Strom bei gesperrtem Gerät über 60 min stabil? (Gerätetest)
 2. Watch-Hintergrundaufnahme ≥ 60 min ohne Abbruch; Akkuverbrauch Uhr pro Stunde.
 3. Foundation Model: Deutschqualität der Deltas, Zeit je Takt (Ziel < 15 s),
    Ablehnungen durch Schutzmechanismen bei Besprechungsinhalten.
+   Messung Speicher/Thermik: Modell, KV-Cache, Core-ML-Encoder, Audiopuffer.
 4. Speicher: Qwen3 4B parallel zu laufender Aufnahme; nur mit
    `increased-memory-limit`-Berechtigung und nur auf 8-GB-Geräten anbieten.
 5. Thermik bei 60 min Live auf dem iPhone (Ziel: kein Drosseln unter `.serious`).
