@@ -24,7 +24,7 @@ final class MeetingLibrary: ObservableObject {
     }
     func scene(active: Bool) {
         self.active = active
-        if active { Task { await refresh(); start() } }
+        if active { Task { await recoverLive(); await refresh(); start() } }
         else {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
@@ -53,6 +53,31 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Import nicht abgeschlossen. Bitte eine lesbare Audio-/Videodatei bis 2 Stunden und 2 GB wählen und freien Speicher prüfen."
         }
     }
+    /// In der App aufgenommene Besprechung übernehmen: Original ins Archiv,
+    /// dann Einwilligungsnachweis und Live-Stand anhängen. Erst danach wird der
+    /// Laufend-Ordner entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
+    func importLive(_ url: URL, _ session: LiveMeetingModel.SessionFile) async {
+        guard let archive else { return }
+        do {
+            let duration = try await AVURLAsset(url: url).load(.duration).seconds
+            guard duration.isFinite, duration > 0.5 else {
+                try? FileManager.default.removeItem(at: url.deletingLastPathComponent()); return
+            }
+            let doc = try await archive.importMedia(url, duration: min(duration, 7200))
+            try await archive.attachLive(doc.id, consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
+            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            status = "gespeichert – Verarbeitung folgt"
+            await refresh(); start()
+        } catch {
+            self.error = "Die Aufnahme ist gesichert, konnte aber noch nicht übernommen werden. Sie wird beim nächsten Öffnen erneut übernommen."
+        }
+    }
+
+    /// Nach Absturz oder Beenden während einer Aufnahme: gesicherte Sitzungen übernehmen.
+    func recoverLive() async {
+        for (url, session) in LiveMeetingModel.abandoned() { await importLive(url, session) }
+    }
+
     #if DEBUG
     func importProbe() async {
         let args = ProcessInfo.processInfo.arguments
@@ -159,11 +184,17 @@ struct MeetingLibraryView: View {
     @StateObject private var library = MeetingLibrary()
     @Environment(\.scenePhase) private var phase
     @State private var importer = false
+    @State private var recordLive = false
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 10) {
+                        Button { recordLive = true } label: {
+                            Label("Besprechung aufnehmen", systemImage: "record.circle")
+                                .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+                        }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
+                            .accessibilityIdentifier("recordMeeting")
                         Button { importer = true } label: {
                             Label("Audio oder Video importieren", systemImage: "square.and.arrow.down")
                                 .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
@@ -198,6 +229,7 @@ struct MeetingLibraryView: View {
             }
             .background(VoicePalette.background)
             .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
+            .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls): if let first = urls.first { Task { await library.importMedia(first) } }

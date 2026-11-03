@@ -167,6 +167,9 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var consent: ConsentLog?
     /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
     public var live: LiveState?
+    /// Live-Transkript (Apple SpeechTranscriber), bleibt neben dem Endlauf erhalten.
+    public var liveSegments: [LiveSegment]?
+    public var liveNotes: String?
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
@@ -236,6 +239,15 @@ public actor MeetingArchive {
         try syncDirectory(root)
         return doc
     }
+    /// Nachweis und Live-Ergebnis einer in der App aufgenommenen Besprechung anhängen.
+    public func attachLive(_ id: UUID, consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?) throws {
+        guard consent.canRecord, segments.count <= 20_000 else { throw VoiceError.invalid }
+        var doc = try load(id)
+        doc.consent = consent; doc.live = live; doc.liveSegments = segments
+        doc.liveNotes = notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
+        try save(doc)
+    }
+
     public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment], event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard offset == doc.nextOffset else { throw VoiceError.conflict }
