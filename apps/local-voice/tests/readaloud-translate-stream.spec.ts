@@ -336,7 +336,8 @@ for (const theme of ["light", "dark"]) {
       // Fußleiste als Modell der Funktion „Vorlesen“ (Patrick 02.11.).
       await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
       const modelBtn = page.getByTestId("fuss-modell-read_aloud");
-      await expect(modelBtn).toContainText("Vorlesen: Claude Sonnet 5.5");
+      await expect(modelBtn).toContainText("Claude Sonnet 5.5");
+      await expect(modelBtn).toHaveAttribute("aria-label", /Modell für Vorlesen/);
       await expect(modelBtn).toHaveAttribute("aria-haspopup", "menu");
       await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
 
