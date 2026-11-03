@@ -629,6 +629,27 @@
       "heard": "Gehört."
     },
     "kiDocs": {
+      "tokens": {
+        "estimating": "Token-Bedarf wird geschätzt …",
+        "estimate": "Geschätzter Bedarf: ca. {{total}} Tokens",
+        "split": "{{input}} Eingabe, {{output}} Ausgabe",
+        "detail_one": "{{input}} Tokens Eingabe, {{output}} Tokens Ausgabe, {{count}} Modellaufruf",
+        "detail_other": "{{input}} Tokens Eingabe, {{output}} Tokens Ausgabe, {{count}} Modellaufrufe",
+        "local": "lokal, keine Kosten",
+        "noPrice": "Kosten unbekannt (kein Preis hinterlegt)",
+        "cached_one": "ca. {{count}} Schritt schon zwischengespeichert",
+        "cached_other": "ca. {{count}} Schritte schon zwischengespeichert",
+        "measured": "Geschätzt mit dem Tokenizer des geladenen Modells; die Antwortlänge ist eine Annahme.",
+        "average": "Geschätzt mit einem Durchschnittswert (ca. 3,6 Zeichen je Token); je nach Modell ±25 %.",
+        "actual": "Tatsächlicher Verbrauch: {{total}} Tokens",
+        "short": "{{total}} Tokens",
+        "vsEstimate": "Schätzung vorher {{planned}}",
+        "cost": "ca. {{cost}} USD (Preis für {{model}})",
+        "vsEstimateDelta": "Schätzung vorher {{planned}} ({{delta}} % gegenüber Schätzung)",
+        "plannedDetail": "Geschätzter Bedarf: {{detail}}",
+        "notReported": "Anbieter meldet keine Tokens",
+        "cardHint": "Tatsächlich verbrauchte Tokens beim Erstellen"
+      },
       "tab": "KI-Dokumente",
       "sheets": {
         "label": "Buchbereiche",

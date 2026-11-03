@@ -2431,6 +2431,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::book_ai_template_import,
             book_ai::book_ai_summarize,
             book_ai::book_ai_cancel,
+            book_ai::book_ai_estimate,
             book_ai::book_ai_documents,
             book_ai::book_ai_document_text,
             book_ai::book_ai_document_update,

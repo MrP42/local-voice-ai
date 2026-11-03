@@ -36,9 +36,20 @@ const MAX_CONDENSE_ROUNDS: usize = 4;
 /// Ablage der Zwischenfassungen. `None` schaltet den Cache ab (Tests).
 pub struct DigestCache {
     pub dir: Option<PathBuf>,
+    /// Nur lesen: die Token-Prognose (`tokens::dry_run`) darf ihre
+    /// Platzhaltertexte nie als Zwischenfassung ablegen.
+    pub read_only: bool,
 }
 
 impl DigestCache {
+    /// Cache, der vorhandene Einträge liefert, aber nichts schreibt.
+    pub fn read_only(dir: Option<PathBuf>) -> Self {
+        Self {
+            dir,
+            read_only: true,
+        }
+    }
+
     pub fn key(model: &str, label: &str, text: &str, words: u32) -> String {
         let mut h = Sha256::new();
         for part in [DIGEST_VERSION, model, label, &words.to_string(), text] {
@@ -56,6 +67,9 @@ impl DigestCache {
     }
 
     pub(crate) fn put(&self, key: &str, text: &str) {
+        if self.read_only {
+            return;
+        }
         let Some(dir) = &self.dir else { return };
         if std::fs::create_dir_all(dir).is_err() {
             return;
@@ -527,7 +541,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |p| {
                 calls.lock().unwrap().push(p);
                 async { Ok("Ergebnis".to_string()) }
@@ -558,7 +575,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |p| {
                 calls.lock().unwrap().push(p);
                 async { Ok("kurz".to_string()) }
@@ -581,6 +601,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = DigestCache {
             dir: Some(dir.path().to_path_buf()),
+            read_only: false,
         };
         let s = [section("Eins", 600), section("Zwei", 600)];
         let count = Mutex::new(0usize);
@@ -626,7 +647,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |p| {
                 calls.lock().unwrap().push(p);
                 let d = long_digest.clone();
@@ -653,7 +677,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |_| async { Ok("d".to_string()) },
             &|_, _| {},
             &cancel,
@@ -674,7 +701,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |_| {
                 let d = huge.clone();
                 async move { Ok(d) }
