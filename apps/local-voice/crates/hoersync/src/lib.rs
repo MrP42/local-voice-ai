@@ -21,7 +21,7 @@ use std::collections::HashMap;
 /// Ab so vielen gehörten Wörtern ohne Gegenstück im Buch gilt ein Lauf als Einschub.
 pub const MIN_INSERT_WORDS: usize = 4;
 
-/// Ein Wort des Buchtexts mit seiner Lage (Zeichen, nicht Bytes: wie im Frontend).
+/// Ein Wort des Buchtexts mit seiner Lage in UTF-16-Einheiten (wie JavaScript im Frontend).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BookWord {
     pub norm: String,
@@ -88,11 +88,12 @@ pub fn normalize(word: &str) -> String {
 /// Wörter des Buchs. Markdown-Zeichen und Seitenmarken `{{S. n}}` fallen
 /// durch die Normalisierung bzw. werden übersprungen.
 pub fn book_words(text: &str) -> Vec<BookWord> {
+    let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut start: Option<u32> = None;
     let mut buf = String::new();
+    // Lage in UTF-16-Einheiten: so zählen JavaScript-Strings im Frontend.
     let mut idx: u32 = 0;
-    let mut chars = text.chars().peekable();
     let flush = |buf: &mut String, start: &mut Option<u32>, end: u32, out: &mut Vec<BookWord>| {
         if let Some(s) = start.take() {
             let norm = normalize(buf);
@@ -106,21 +107,23 @@ pub fn book_words(text: &str) -> Vec<BookWord> {
         }
         buf.clear();
     };
-    while let Some(c) = chars.next() {
-        // Seitenmarke {{S. 12}} überspringen: kein Lesetext.
-        if c == '{' && chars.peek() == Some(&'{') {
-            flush(&mut buf, &mut start, idx, &mut out);
-            let mut n = 1;
-            let mut prev = c;
-            for d in chars.by_ref() {
-                n += 1;
-                if prev == '}' && d == '}' {
-                    break;
-                }
-                prev = d;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // Seitenmarke {{S. 12}} überspringen: kein Lesetext. Ohne schließendes
+        // `}}` in Reichweite ist `{{` gewöhnlicher Text.
+        if c == '{' && chars.get(i + 1) == Some(&'{') {
+            let close = (i + 2..chars.len().min(i + PAGE_MARK_MAX))
+                .find(|&k| chars[k] == '}' && chars.get(k + 1) == Some(&'}'));
+            if let Some(k) = close {
+                flush(&mut buf, &mut start, idx, &mut out);
+                idx += chars[i..k + 2]
+                    .iter()
+                    .map(|c| c.len_utf16() as u32)
+                    .sum::<u32>();
+                i = k + 2;
+                continue;
             }
-            idx += n;
-            continue;
         }
         if c.is_whitespace() || c == '—' || c == '–' {
             flush(&mut buf, &mut start, idx, &mut out);
@@ -130,11 +133,15 @@ pub fn book_words(text: &str) -> Vec<BookWord> {
             }
             buf.push(c);
         }
-        idx += 1;
+        idx += c.len_utf16() as u32;
+        i += 1;
     }
     flush(&mut buf, &mut start, idx, &mut out);
     out
 }
+
+/// Längste Seitenmarke `{{S. 12345}}` samt Klammern, in Zeichen.
+const PAGE_MARK_MAX: usize = 32;
 
 /// Segmente in Wörter mit Zeit zerlegen: innerhalb eines Segments nach
 /// Zeichenzahl verteilt (Segmentzeiten sind genau, Wortzeiten geschätzt).
@@ -287,15 +294,19 @@ fn dp_match(
     if n == 0 || m == 0 {
         return Vec::new();
     }
-    // Große Lücken ohne Anker nicht quadratisch abgleichen: dann nur die
-    // ersten Wörter gegeneinander (der nächste Anker folgt bald).
+    // Große Lücken ohne Anker nicht quadratisch abgleichen, sondern entlang
+    // der Diagonale in Stücke teilen (Hören und Buch laufen etwa gleich schnell).
     const MAX_CELLS: usize = 400_000;
-    let (n, m) = if n * m > MAX_CELLS {
-        let s = ((MAX_CELLS as f64).sqrt()) as usize;
-        (n.min(s), m.min(s))
-    } else {
-        (n, m)
-    };
+    if n * m > MAX_CELLS {
+        let k = ((n * m) as f64 / MAX_CELLS as f64).sqrt().ceil() as usize + 1;
+        let mut out = Vec::new();
+        for c in 0..k {
+            let (ha, hb) = (h0 + c * n / k, h0 + (c + 1) * n / k);
+            let (ba, bb) = (b0 + c * m / k, b0 + (c + 1) * m / k);
+            out.extend(dp_match(heard, ha, hb, book, ba, bb));
+        }
+        return out;
+    }
     const GAP: i32 = -1;
     let w = m + 1;
     let mut score = vec![0i32; (n + 1) * w];
@@ -360,7 +371,10 @@ pub fn align(
         return Alignment::default();
     }
     let (from, to) = match hint {
-        Some(h) => (h.saturating_sub(window / 2), (h + window).min(book.len())),
+        Some(h) => (
+            h.saturating_sub(window / 2),
+            h.saturating_add(window).min(book.len()),
+        ),
         None => (0, book.len()),
     };
     let chain = anchors(book, from, to, heard);
@@ -398,7 +412,11 @@ pub fn align(
         (lb + 1 + rest * 2).min(book.len()),
     ));
 
-    let points: Vec<SyncPoint> = pairs
+    // Streng steigend in beiden Achsen: Segmente ohne Dauer oder mit
+    // Überlappung liefern sonst gleiche oder rückläufige Zeiten.
+    let mut timed = pairs.clone();
+    timed.dedup_by(|b, a| heard[b.0].start_ms <= heard[a.0].start_ms);
+    let points: Vec<SyncPoint> = timed
         .iter()
         .map(|&(h, b)| SyncPoint {
             chars: book[b].start,

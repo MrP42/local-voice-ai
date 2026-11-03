@@ -265,3 +265,74 @@ fn ganzes_buch_mit_hunderttausend_woertern_bleibt_schnell() {
     // Großzügig für Debug-Builds auf langsamen Rechnern.
     assert!(took.as_millis() < 3_000, "{took:?}");
 }
+
+#[test]
+fn lange_luecke_ohne_anker_wird_in_stuecken_abgeglichen() {
+    let filler = std::iter::repeat_n("rot blau gelb", 300)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let text = format!("alpha beta gamma {filler} delta epsilon zeta");
+    let book = book_words(&text);
+    let heard = heard_words(&[Segment {
+        text: text.clone(),
+        start_ms: 0.0,
+        end_ms: 400_000.0,
+    }]);
+    let a = align(&book, &heard, Some(0), usize::MAX);
+    assert!(a.inserts.is_empty(), "{} Einschübe", a.inserts.len());
+    assert!(a.coverage > 0.99, "Abdeckung {}", a.coverage);
+}
+
+#[test]
+fn offenes_doppelklammer_ist_gewoehnlicher_text() {
+    let w = book_words("Er sagte {{ und ging weg");
+    let norms: Vec<&str> = w.iter().map(|w| w.norm.as_str()).collect();
+    assert_eq!(norms, ["er", "sagte", "und", "ging", "weg"]);
+}
+
+#[test]
+fn lage_in_utf16_wie_im_frontend() {
+    let text = "Ein 🚢 fährt";
+    let w = book_words(text);
+    // JS: "Ein 🚢 fährt".indexOf("fährt") === 7 (das Emoji zählt doppelt).
+    assert_eq!(w[1].start, 7);
+}
+
+#[test]
+fn segmente_ohne_dauer_ergeben_steigende_zeiten_ohne_falsche_einschuebe() {
+    let text = "eins zwei drei vier fünf sechs sieben acht neun zehn";
+    let book = book_words(text);
+    let heard = heard_words(&[
+        Segment {
+            text: "eins zwei drei vier fünf".into(),
+            start_ms: 1000.0,
+            end_ms: 1000.0,
+        },
+        Segment {
+            text: "sechs sieben acht neun zehn".into(),
+            start_ms: 900.0,
+            end_ms: 3000.0,
+        },
+    ]);
+    let a = align(&book, &heard, Some(0), 100);
+    assert!(
+        a.points
+            .windows(2)
+            .all(|p| p[0].chars < p[1].chars && p[0].ms < p[1].ms),
+        "{:?}",
+        a.points
+    );
+    assert!(a.inserts.is_empty());
+}
+
+#[test]
+fn riesiges_fenster_laeuft_nicht_ueber() {
+    let book = book_words("Der Leuchtturm stand seit über hundert Jahren auf der Klippe.");
+    let heard = heard_words(&[Segment {
+        text: "stand seit über hundert Jahren".into(),
+        start_ms: 0.0,
+        end_ms: 2000.0,
+    }]);
+    let a = align(&book, &heard, Some(2), usize::MAX);
+    assert_eq!(a.points.len(), 5);
+}
