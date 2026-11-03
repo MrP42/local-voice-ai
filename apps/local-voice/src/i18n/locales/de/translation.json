@@ -419,7 +419,9 @@
           "problem": {
             "tooLong": "Höchstens {{max}} Zeichen.",
             "badChars": "Die Zeichen < > : sind nicht erlaubt (der Name steht als <Name> im Skript).",
-            "dash": "Ein Gedankenstrich mit Leerzeichen („ – “) ist nicht erlaubt."
+            "dash": "„ – “ und „ · “ mit Leerzeichen sind nicht erlaubt.",
+            "taken": "Diesen Namen trägt schon eine andere Stimme dieses Anbieters.",
+            "unknown": "Die Stimme wurde nicht gefunden; der Name ist nicht gespeichert."
           }
         },
         "license": "Stimme: Lizenz {{license}}",

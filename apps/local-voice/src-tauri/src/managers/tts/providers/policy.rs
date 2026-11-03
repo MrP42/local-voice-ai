@@ -128,7 +128,8 @@ pub const MAX_VOICE_NAME_CHARS: usize = 60;
 
 /// Bereinigt einen eigenen Anzeigenamen: getrimmt, höchstens [`MAX_VOICE_NAME_CHARS`] Zeichen,
 /// ohne Steuerzeichen und ohne `<`, `>`, `:` (der Name muss als Sprecher-Marker `<Name>` im Text
-/// stehen können) und ohne den Trenner ` – ` (er trennt Name und Beschreibung der Beschriftung).
+/// stehen können) und ohne die Trenner ` – ` und ` · ` (sie trennen Name, Beschreibung und
+/// Zusätze in den Beschriftungen).
 /// `Ok(None)`: leer, also „ursprünglichen Namen verwenden“.
 pub fn clean_voice_name(name: &str) -> Result<Option<String>, String> {
     let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -143,8 +144,8 @@ pub fn clean_voice_name(name: &str) -> Result<Option<String>, String> {
     if name.chars().any(char::is_control) || name.contains(['<', '>', ':']) {
         return Err("Der Name darf keine Zeichen < > : enthalten.".to_string());
     }
-    if name.contains(" – ") {
-        return Err("Der Name darf keinen Gedankenstrich mit Leerzeichen enthalten.".to_string());
+    if name.contains(" – ") || name.contains(" · ") {
+        return Err("Der Name darf „ – “ und „ · “ mit Leerzeichen nicht enthalten.".to_string());
     }
     Ok(Some(name))
 }

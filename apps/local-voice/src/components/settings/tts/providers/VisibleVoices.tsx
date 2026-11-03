@@ -219,6 +219,9 @@ export const VisibleVoices: React.FC<{ entry: TtsProviderEntry }> = ({
                   voiceId: voice.id,
                   name: name.trim() || voice.id,
                   custom: voice.id in names,
+                  taken: named
+                    .filter((v) => v.id !== voice.id)
+                    .flatMap((v) => [v.id, v.label.split(" – ")[0]]),
                 }}
                 testId={`tts-provider-rename-${voice.id}`}
               />

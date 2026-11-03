@@ -419,7 +419,9 @@
           "problem": {
             "tooLong": "At most {{max}} characters.",
             "badChars": "The characters < > : are not allowed (the name is written as <Name> in scripts).",
-            "dash": "A spaced dash (\" – \") is not allowed."
+            "dash": "A spaced \" – \" or \" · \" is not allowed.",
+            "taken": "Another voice of this provider already has this name.",
+            "unknown": "The voice was not found; the name was not saved."
           }
         },
         "license": "Voice: license {{license}}",

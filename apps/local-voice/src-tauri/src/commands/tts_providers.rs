@@ -1275,7 +1275,7 @@ mod tests {
         set(&mut s, "piper", "de_DE-thorsten-medium", Some("Thorsten  (ruhig)")).unwrap();
         assert_eq!(s.voice_names["piper"]["de_DE-thorsten-medium"], "Thorsten (ruhig)");
 
-        for bad in ["<Nele>", "a:b", "Nele – Alt", &"x".repeat(61), "bö\u{7}se"] {
+        for bad in ["<Nele>", "a:b", "Nele – Alt", "Nele · HQ", &"x".repeat(61), "bö\u{7}se"] {
             let e = set(&mut s, "phonon", "Erzaehlerin", Some(bad)).unwrap_err();
             assert_eq!(e.kind, TtsErrorKind::BadRequest, "{bad}");
         }

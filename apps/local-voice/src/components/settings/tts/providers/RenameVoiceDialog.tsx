@@ -24,17 +24,36 @@ export type RenameVoiceTarget = {
   name: string;
   /** Der Name stammt vom Nutzer (nur Anbieter: dann gibt es „Ursprünglicher Name“). */
   custom: boolean;
+  /** Namen und Kennungen der anderen Stimmen desselben Anbieters (Marker müssen eindeutig bleiben). */
+  taken?: string[];
 };
+
+/** Vergleichsform eines Namens wie im Backend (`fold_speaker_name`): klein, Umlaute ausgeschrieben. */
+export function foldVoiceName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/\s+/g, " ");
+}
 
 /** Längster Name (wie ein Sprecher-Marker `<Name>`, siehe `policy::clean_voice_name`). */
 export const MAX_VOICE_NAME = 60;
 
 /** Fehlertext-Schlüssel für einen ungültigen Namen, sonst `null` (Spiegel der Regel im Backend). */
-export function voiceNameProblem(name: string): string | null {
+export function voiceNameProblem(
+  name: string,
+  taken: readonly string[] = [],
+): string | null {
   const clean = name.trim().replace(/\s+/g, " ");
   if ([...clean].length > MAX_VOICE_NAME) return "tooLong";
   if (/[<>:]/.test(clean)) return "badChars";
-  if (clean.includes(" – ")) return "dash";
+  if (clean.includes(" – ") || clean.includes(" · ")) return "dash";
+  if (clean && taken.some((n) => foldVoiceName(n) === foldVoiceName(clean)))
+    return "taken";
   return null;
 }
 
@@ -51,7 +70,7 @@ async function saveName(
   if (target.kind === "fish") {
     const infos = await commands.ttsListVoiceInfos().catch(() => []);
     const info = infos.find((v) => v.id === target.voiceId);
-    if (!info) return null;
+    if (!info) return "unknown";
     const result = await commands.ttsSetVoiceMeta(target.voiceId, {
       ...info.meta,
       display_name: name ?? target.voiceId,
@@ -94,7 +113,7 @@ export const RenameVoiceDialog: React.FC<{
 
   if (!target) return null;
 
-  const problem = voiceNameProblem(value);
+  const problem = voiceNameProblem(value, target.taken);
   const unchanged = value.trim().replace(/\s+/g, " ") === target.name;
 
   const apply = async (name: string | null) => {
@@ -103,7 +122,11 @@ export const RenameVoiceDialog: React.FC<{
     const failed = await saveName(target, name);
     setBusy(false);
     if (failed) {
-      setError(failed);
+      setError(
+        failed === "unknown"
+          ? t("tts.providers.voices.rename.problem.unknown")
+          : failed,
+      );
       return;
     }
     await refreshSettings();

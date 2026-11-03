@@ -305,6 +305,19 @@ export function useVoiceCatalog(
         });
       }
     }
+    // Eindeutige Namen je Anbieter: der Dialog kennt die Namen und Kennungen der anderen Stimmen.
+    for (const item of out) {
+      const rename = item.rename;
+      if (!rename) continue;
+      rename.taken = out
+        .filter(
+          (o) =>
+            o.rename &&
+            o.providerId === item.providerId &&
+            o.rename.voiceId !== rename.voiceId,
+        )
+        .flatMap((o) => [o.rename!.voiceId, o.name]);
+    }
     return out;
   }, [
     entries,

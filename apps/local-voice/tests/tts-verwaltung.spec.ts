@@ -644,6 +644,12 @@ test("Umbenennen: eigener Name einer Anbieter-Stimme, Kennung bleibt, zurück zu
   await page.getByTestId("voice-rename-input").fill("<Nele>");
   await expect(page.getByTestId("voice-rename-error")).toBeVisible();
   await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
+  // Der Name einer anderen Stimme desselben Anbieters (auch mit Umlaut-Schreibweise): gesperrt.
+  await page.getByTestId("voice-rename-input").fill("anna");
+  await expect(page.getByTestId("voice-rename-error")).toContainText(
+    "andere Stimme",
+  );
+  await expect(page.getByTestId("voice-rename-save")).toBeDisabled();
   await page.getByTestId("voice-rename-input").fill("Nelé  Groß");
   await page.getByTestId("voice-rename-input").press("Enter");
   await expect(dialog).toHaveCount(0);
