@@ -16,7 +16,8 @@ export const LOOKAHEAD_MS = 90_000;
 /** Länge eines Fensters (ms). */
 export const WINDOW_MS = 30_000;
 
-const finite = (p: SyncPoint) => Number.isFinite(p.chars) && Number.isFinite(p.ms);
+const finite = (p: SyncPoint) =>
+  Number.isFinite(p.chars) && Number.isFinite(p.ms);
 
 /** Längste in Zeit und Zeichen streng steigende Kette (O(n log n)): ein
  *  Ausreißer kostet nur sich selbst, nicht alle Punkte danach. */
@@ -44,18 +45,11 @@ export function monotoneChain(points: SyncPoint[]): SyncPoint[] {
   return out.reverse();
 }
 
-/** Beide Quellen, streng steigend in Zeichen und Zeit. Transkript-Punkte
- *  haben Vorrang; Live-Punkte zählen nur in den Lücken dazwischen, wo sie in
- *  beiden Achsen zwischen die Nachbarn passen. */
-export function mergeSync(
-  base: SyncPoint[] | null | undefined,
-  live: SyncPoint[],
-): SyncPoint[] {
-  const fixed = monotoneChain(base ?? []);
-  if (!live.length) return fixed;
-  if (!fixed.length) return monotoneChain(live);
-  const fits = (p: SyncPoint) => {
-    // Erster Transkriptpunkt mit ms >= p.ms.
+/** Punkte, die in beiden Achsen zwischen die Nachbarn in `fixed` passen. */
+function fitting(fixed: SyncPoint[], points: SyncPoint[]): SyncPoint[] {
+  if (!fixed.length) return points.filter(finite);
+  return points.filter(finite).filter((p) => {
+    // Erster fester Punkt mit ms >= p.ms.
     let lo = 0;
     let hi = fixed.length;
     while (lo < hi) {
@@ -69,9 +63,36 @@ export function mergeSync(
     return (
       (!before || p.chars > before.chars) && (!after || p.chars < after.chars)
     );
-  };
-  return monotoneChain([...fixed, ...live.filter(finite).filter(fits)]);
+  });
 }
+
+/**
+ * Quellen nach Vorrang zusammenführen, streng steigend in Zeichen und Zeit:
+ * jede spätere Schicht zählt nur in den Lücken der früheren, wo sie in beiden
+ * Achsen zwischen die Nachbarn passt. Reihenfolge: Hand-Stellen, Transkript,
+ * Live-Abgleich.
+ */
+export function mergeLayers(
+  ...layers: (SyncPoint[] | null | undefined)[]
+): SyncPoint[] {
+  let fixed: SyncPoint[] = [];
+  for (const layer of layers) {
+    if (!layer?.length) continue;
+    fixed = monotoneChain([...fixed, ...fitting(fixed, layer)]);
+  }
+  return fixed;
+}
+
+/** Transkript (Vorrang) und Live-Abgleich zusammenführen. */
+export const mergeSync = (
+  base: SyncPoint[] | null | undefined,
+  live: SyncPoint[],
+): SyncPoint[] => mergeLayers(base, live);
+
+/** Hand-Stellen in der Nähe von `ms` (Zeitachse dort verlässlich). */
+export const ANCHOR_TRUST_MS = 120_000;
+export const nearAnchor = (anchors: SyncPoint[], ms: number) =>
+  anchors.some((a) => Math.abs(a.ms - ms) <= ANCHOR_TRUST_MS);
 
 /** Zeitraum, der `ms` enthält, oder null. */
 export function spanAt(spans: LiveSpan[], ms: number): LiveSpan | null {

@@ -1115,6 +1115,76 @@
   box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
   cursor: pointer;
 }
+/* Hörbuch-Sync: der gehörte Satz (Highlight-API, ohne Layoutwechsel). Der
+   Absatz bleibt dezent markiert, der Satz trägt die Farbe. */
+.library-follow__p--now,
+.library-follow__p--now:hover {
+  background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+}
+::highlight(follow-cur) {
+  background-color: color-mix(in srgb, var(--color-logo-primary) 45%, transparent);
+  color: inherit;
+}
+/* Text nur im Hörbuch: an seiner Stelle, in Akzentfarbe, nicht unterstrichen
+   wie ein Link, sondern gepunktet unterlegt. */
+.library-follow__ins {
+  text-decoration: none;
+  color: var(--color-accent-text);
+  font-style: italic;
+  border-bottom: 1px dotted currentColor;
+}
+.library-follow__ins::before,
+.library-follow__ins::after {
+  content: " ";
+}
+.library-follow__hint {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--lib-line);
+  background: color-mix(in srgb, var(--color-accent-text) 10%, transparent);
+  font-size: 0.92rem;
+}
+.library-follow[data-correcting="true"] .library-follow__p {
+  cursor: crosshair;
+}
+/* Satzzeile über der kompakten Hörleiste: eine Zeile, Klick öffnet Mitlesen. */
+.library-audiobar__line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--lib-line);
+  background: var(--color-background);
+  color: inherit;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.library-audiobar__line:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
+}
+/* Der Satz bleibt vollständig lesbar: bis zu drei Zeilen (Codex-Auflage). */
+.library-audiobar__line > :last-child {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.library-audiobar__line .library-follow__ins {
+  border-bottom: 0;
+}
+.library-audiobar__approx {
+  flex: none;
+  opacity: 0.7;
+}
 /* Schmal: Vollbild-Blatt, die Hörleiste bleibt unten bedienbar. */
 @media (max-width: 1023px) {
   .library-player[data-follow="on"] {
