@@ -21,7 +21,11 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     @Published private(set) var done: [String: Int] = [:]
 
     private let library: PhoneLibrary
-    private var inFlight: [String: Set<AudioDownload.ChunkKey>] = [:]
+    /// Laufende Aufträge je Buch: Auftragsnummer → Stück. Rückmeldungen von
+    /// Aufträgen, die hier nicht (mehr) stehen, ändern nichts an der Buchführung.
+    private var inFlight: [String: [Int: AudioDownload.ChunkKey]] = [:]
+    /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
+    private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
     private var backgroundCompletion: (() -> Void)?
@@ -74,7 +78,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         let refs = library.meta(book).files.audio
         guard !refs.isEmpty, !library.hasAudio(book) else { return }
         let previous = jobs[book.id]
-        if previous?.phase == .running, allowCellular == nil { pump(book.id); return }
+        if previous?.phase == .running, allowCellular == nil { assemble(book.id); return }
         let parts = refs.enumerated().map { i, ref in
             AudioDownload.Part(blob: ref.blob, size: ref.size, chunks: ref.chunks, file: LibrarySync.audioFileName(ref.file, index: i))
         }
@@ -97,11 +101,13 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         jobs[book.id] = job
         persist()
         refreshDone(book.id)
+        // Mit anderer Netzregel neu einreihen: laufende Aufträge vorher abbrechen.
+        let ruleChanged = previous?.allowCellular != job.allowCellular
+        let id = book.id
         Task {
             await restoration?.value
-            // Mit anderer Netzregel neu einreihen: laufende Aufträge vorher abbrechen.
-            if previous?.allowCellular != job.allowCellular { await cancelTasks(book.id) }
-            assemble(book.id)
+            if ruleChanged { cancelTasks(id) }
+            assemble(id)
         }
     }
 
@@ -109,7 +115,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard jobs[id]?.phase == .running else { return }
         jobs[id]?.phase = .paused; jobs[id]?.message = nil
         persist(); resolve(id, false)
-        Task { await cancelTasks(id) }
+        cancelTasks(id)
     }
 
     /// Für dieses Buch auch über Mobilfunk laden.
@@ -120,13 +126,40 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard jobs[id] != nil || inFlight[id] != nil else { return }
         jobs[id] = nil; done[id] = nil
         persist(); resolve(id, false)
-        Task { await cancelTasks(id) }
+        cancelTasks(id)
         if let book = library.books.first(where: { $0.id == id }) {
             try? FileManager.default.removeItem(at: library.audioDir(book).appendingPathComponent(AudioDownload.stagingFolder))
         }
     }
 
+    /// „Nur im WLAN“ wurde umgestellt: laufende Aufträge mit der neuen Regel neu einreihen.
+    func networkRuleChanged() {
+        for (id, job) in jobs where job.phase == .running && !job.allowCellular {
+            cancelTasks(id)
+            pump(id)
+        }
+    }
+
     // MARK: Ablauf
+
+    /// Teile, deren `.part` schon vollständig ist (App beendet zwischen letztem
+    /// Stück und Umbenennen), fertigstellen.
+    private func finalizeParts(_ job: AudioDownload.Job) {
+        let dir = audioDir(job.bookId)
+        for part in job.parts {
+            let target = dir.appendingPathComponent(part.file), partial = target.appendingPathExtension("part")
+            guard LibrarySync.fileSize(target) != part.size, LibrarySync.fileSize(partial) == part.size else { continue }
+            _ = try? FileManager.default.removeItem(at: target)
+            if (try? FileManager.default.moveItem(at: partial, to: target)) != nil { LibrarySync.shared.markConfirmed(part.blob) }
+        }
+    }
+
+    /// Schon angehängt (oder Teil fertig): ein solches Stück wird nicht mehr gebraucht.
+    private func alreadyAppended(_ key: AudioDownload.ChunkKey, _ job: AudioDownload.Job, _ states: [AudioDownload.PartState]) -> Bool {
+        guard key.part < job.parts.count, key.part < states.count else { return true }
+        guard let next = AudioDownload.nextChunk(job.parts[key.part], states[key.part], chunkPlainBytes: LibrarySyncFormat.chunkPlainBytes) else { return true }
+        return key.index < next
+    }
 
     private func states(_ job: AudioDownload.Job) -> [AudioDownload.PartState] {
         let dir = audioDir(job.bookId)
@@ -148,9 +181,16 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard let job = jobs[id], job.phase == .running else { return }
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
         guard let acc = LibrarySync.shared.account else { fail(id, "Nicht angemeldet. Bitte unter „Konto & Sync“ anmelden."); return }
+        finalizeParts(job)
         let current = states(job)
         if AudioDownload.isComplete(job, states: current) { finish(id); return }
-        let keys = AudioDownload.missingChunks(job, states: current, staged: staged(id), inFlight: inFlight[id] ?? [],
+        // Überholte Stücke (doppelt geladen, Abbruch nach dem Anhängen) belegen sonst das Fenster.
+        var waiting = staged(id)
+        for key in waiting where alreadyAppended(key, job, current) {
+            try? FileManager.default.removeItem(at: stagingDir(id).appendingPathComponent(AudioDownload.stagedName(key)))
+            waiting.remove(key)
+        }
+        let keys = AudioDownload.missingChunks(job, states: current, staged: waiting, inFlight: Set((inFlight[id] ?? [:]).values),
                                                chunkPlainBytes: LibrarySyncFormat.chunkPlainBytes)
         let cellular = job.allowCellular || !LibrarySync.shared.wifiOnly
         for key in keys {
@@ -165,7 +205,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
             request.setValue("Bearer \(acc.token)", forHTTPHeaderField: "Authorization")
             let task = session.downloadTask(with: request)
             task.taskDescription = AudioDownload.taskDescription(bookId: id, key)
-            inFlight[id, default: []].insert(key)
+            inFlight[id, default: [:]][task.taskIdentifier] = key
             task.resume()
         }
     }
@@ -175,11 +215,16 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard !assembling.contains(id), let job = jobs[id], job.phase == .running else { return }
         guard let acc = LibrarySync.shared.account else { fail(id, "Nicht angemeldet. Bitte unter „Konto & Sync“ anmelden."); return }
         assembling.insert(id)
-        let lease = UIApplication.shared.beginBackgroundTask(withName: "Hörbuch zusammensetzen")
+        finalizeParts(job)
+        let lease = Lease()
+        lease.id = UIApplication.shared.beginBackgroundTask(withName: "Hörbuch zusammensetzen") {
+            // Zeit abgelaufen: Stand ist auf der Platte, es geht beim nächsten Wecken weiter.
+            MainActor.assumeIsolated { lease.end() }  // wird auf dem Hauptthread gerufen
+        }
         Task {
             defer {
                 assembling.remove(id)
-                if lease != .invalid { UIApplication.shared.endBackgroundTask(lease) }
+                lease.end()
                 finishBackgroundEventsIfPossible()
             }
             let key = [UInt8](acc.key), userId = acc.userId, chunk = LibrarySyncFormat.chunkPlainBytes
@@ -210,7 +255,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
                     }
                 } catch {
                     try? FileManager.default.removeItem(at: file)
-                    fail(id, "Ein Stück kam beschädigt an (\(error.localizedDescription)). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
+                    fail(id, "Ein Stück kam beschädigt an. Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
                     return
                 }
                 refreshDone(id)
@@ -264,9 +309,14 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         for w in list { w.resume(returning: ok) }
     }
 
-    private func cancelTasks(_ id: String) async {
-        for task in await session.allTasks where AudioDownload.parseTask(task.taskDescription)?.bookId == id { task.cancel() }
-        inFlight[id] = []
+    /// Laufende Aufträge des Buchs abbrechen. Die Buchführung wird sofort geleert;
+    /// späte Rückmeldungen dieser Aufträge fallen danach ins Leere.
+    private func cancelTasks(_ id: String) {
+        let ids = Set((inFlight[id] ?? [:]).keys)
+        inFlight[id] = nil
+        session.getAllTasks { tasks in
+            for task in tasks where ids.contains(task.taskIdentifier) { task.cancel() }
+        }
     }
 
     private func refreshDone(_ id: String) {
@@ -277,10 +327,14 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Nach einem Neustart: laufende Aufträge wieder zuordnen, liegengebliebene Stücke anhängen.
     private func restore() async {
         let tasks = await session.allTasks
-        for task in tasks {
+        for task in tasks where task.state == .running || task.state == .suspended {
             guard let parsed = AudioDownload.parseTask(task.taskDescription) else { task.cancel(); continue }
             let id = parsed.bookId, key = parsed.key
-            if jobs[id]?.phase == .running { inFlight[id, default: []].insert(key) } else { task.cancel() }
+            guard let job = jobs[id], job.phase == .running else { task.cancel(); continue }
+            // Inzwischen angekommen oder angehängt: nicht als laufend zählen.
+            let arrived = FileManager.default.fileExists(atPath: stagingDir(id).appendingPathComponent(AudioDownload.stagedName(key)).path)
+            if arrived || alreadyAppended(key, job, states(job)) { continue }
+            inFlight[id, default: [:]][task.taskIdentifier] = key
         }
         for (id, job) in jobs where job.phase == .running { assemble(id) }
     }
@@ -312,23 +366,26 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0
-        let description = downloadTask.taskDescription
+        let description = downloadTask.taskDescription, taskID = downloadTask.taskIdentifier
         // Die Datei verschwindet, sobald diese Methode zurückkehrt: synchron verschieben.
-        MainActor.assumeIsolated { self.received(description, status: status, file: location) }
+        MainActor.assumeIsolated { self.received(description, taskID: taskID, status: status, file: location) }
     }
 
-    private func received(_ description: String?, status: Int, file: URL) {
+    private func received(_ description: String?, taskID: Int, status: Int, file: URL) {
         guard let parsed = AudioDownload.parseTask(description) else { return }
         let id = parsed.bookId, key = parsed.key
-        inFlight[id]?.remove(key)
-        guard jobs[id]?.phase == .running else { return }
+        inFlight[id]?[taskID] = nil
+        guard let job = jobs[id], job.phase == .running else { return }
         // Buch inzwischen gelöscht (auch von einem anderen Gerät): Ordner nicht neu anlegen.
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
+        if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
         guard status == 200 else {
-            fail(id, status == 401 ? "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."
-                                   : "Der Server antwortet mit Fehler \(status). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
+            retry(id, key, "Der Server antwortet mit Fehler \(status). Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
             return
         }
+        retries[AudioDownload.taskDescription(bookId: id, key)] = nil
+        // Doppelt geladen (z. B. nach einem Neustart): schon angehängt, nicht noch einmal ablegen.
+        guard !alreadyAppended(key, job, states(job)) else { assemble(id); return }
         let target = stagingDir(id).appendingPathComponent(AudioDownload.stagedName(key))
         do {
             try FileManager.default.createDirectory(at: stagingDir(id), withIntermediateDirectories: true)
@@ -342,19 +399,41 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let description = task.taskDescription
+        let description = task.taskDescription, taskID = task.taskIdentifier
         let cancelled = (error as? URLError)?.code == .cancelled
         let failed = error != nil
         MainActor.assumeIsolated {
             guard failed, let parsed = AudioDownload.parseTask(description) else { return }
             let id = parsed.bookId, key = parsed.key
-            inFlight[id]?.remove(key)
-            guard !cancelled, jobs[id]?.phase == .running else { return }
-            fail(id, "Der Server ist gerade nicht erreichbar. Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
+            // Nur Aufträge, die noch in der Buchführung stehen (nicht abgebrochene alte).
+            guard inFlight[id]?.removeValue(forKey: taskID) != nil, !cancelled, jobs[id]?.phase == .running else { return }
+            retry(id, key, "Der Server ist gerade nicht erreichbar. Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
+        }
+    }
+
+    /// Ein Stück bis zu dreimal neu anfordern (2, 4, 8 s), dann gilt das Laden als fehlgeschlagen.
+    private func retry(_ id: String, _ key: AudioDownload.ChunkKey, _ message: String) {
+        let name = AudioDownload.taskDescription(bookId: id, key)
+        let attempt = (retries[name] ?? 0) + 1
+        guard attempt <= 3 else { retries[name] = nil; fail(id, message); return }
+        retries[name] = attempt
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(1 << attempt) * 1_000_000_000)
+            pump(id)
         }
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         MainActor.assumeIsolated { self.eventsFinished = true; self.finishBackgroundEventsIfPossible() }
+    }
+}
+
+/// Hintergrundzeit für das Zusammensetzen; genau einmal beenden.
+@MainActor
+private final class Lease {
+    var id: UIBackgroundTaskIdentifier = .invalid
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id); id = .invalid
     }
 }

@@ -48,7 +48,10 @@ final class LibrarySync: ObservableObject {
         }
     }
     @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "library.wifiOnly") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(wifiOnly, forKey: "library.wifiOnly") }
+        didSet {
+            UserDefaults.standard.set(wifiOnly, forKey: "library.wifiOnly")
+            if wifiOnly != oldValue { AudioDownloads.shared.networkRuleChanged() }
+        }
     }
     @Published private(set) var expensiveNetwork = false
 
@@ -410,6 +413,8 @@ final class LibrarySync: ObservableObject {
         guard !library.meta(book).files.audio.isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
         let downloads = AudioDownloads.shared
         downloads.start(book)
+        // Hält „Nur im WLAN“ das Laden an, nicht stundenlang warten: der Zustand steht auf der Buchseite.
+        if downloads.waitsForWifi(book.id) { error = SyncError.offlineRule.localizedDescription; return false }
         return await downloads.waitUntilDone(book.id)
     }
 
