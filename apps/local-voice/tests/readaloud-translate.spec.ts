@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { titleId } from "../src/lib/kurzbuch/kurzbuch";
 
 // Vorlesen: Übersetzung und Zusammenfassung zeigen Fortschritt und lassen sich
 // abbrechen, haben ein Menü (Skript prüfen …), und die Sprecher der Übersetzung
@@ -643,6 +644,114 @@ test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernauss
       (await calls(page)).slice(before).some(([c]) => c.startsWith("tts_")),
     )
     .toBe(true);
+});
+
+// Rahmen bleibt stehen (Patrick 02.11.): Gehörte Kernaussagen tragen ein
+// unsichtbares „Gehört.“ (sr-only, absolut). Tief unten in der Liste ragte es
+// aus dem Scrollbereich und machte das Dokument scrollbar – eine zweite
+// Scrollleiste ganz rechts schob Titelleiste und Navigation mit; mit
+// „Wach halten“ wanderte derselbe Überhang in die Lesespalte. Nur die
+// Inhaltsbereiche dürfen scrollen.
+const KURZBUCH_LANG = [
+  "## Worum es geht",
+  "",
+  "Ein Buch über Geld und Vermögen. ".repeat(6),
+  "",
+  "## Für wen",
+  "",
+  "- Angestellte",
+  "- Selbständige",
+  "",
+  ...Array.from({ length: 12 }, (_, i) => [
+    `## Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    "",
+    "Ein Absatz, der vorgelesen wird und die Seite füllt. ".repeat(12),
+    "",
+  ]).flat(),
+  "## Fazit",
+  "",
+  "Kleine Schritte tragen weit.",
+].join("\n");
+
+const shellStill = async (page: Page, label: string) => {
+  const m = await page.evaluate(() => {
+    const doc = document.scrollingElement as HTMLElement;
+    const frame = document.querySelector<HTMLElement>(".reader-frame");
+    const fill = document.querySelector<HTMLElement>(".workspace-main--fill");
+    return {
+      docOver: doc.scrollHeight - doc.clientHeight,
+      docTop: doc.scrollTop,
+      titlebarTop: document.querySelector(".lv-titlebar")!.getBoundingClientRect().top,
+      // Breit füllt die Lesespalte ihren Bereich und scrollt nicht als Ganzes;
+      // schmal (≤ 1100 px) scrollt der Hauptbereich, die Spalte wächst mit.
+      frameOver:
+        frame && fill && getComputedStyle(fill).overflowY === "hidden"
+          ? frame.scrollHeight - frame.clientHeight
+          : 0,
+      frameTop: frame?.scrollTop ?? 0,
+    };
+  });
+  expect(m.docOver, `${label}: Dokument ragt über das Fenster`).toBeLessThanOrEqual(0);
+  expect(m.docTop, `${label}: Dokument gescrollt`).toBe(0);
+  expect(m.titlebarTop, `${label}: Titelleiste verschoben`).toBe(0);
+  expect(m.frameOver, `${label}: Lesespalte scrollbar`).toBeLessThanOrEqual(1);
+  expect(m.frameTop, `${label}: Lesespalte gescrollt`).toBe(0);
+};
+
+test("Kurzbuch mit gehörten Kernaussagen: Dokument und Rahmen scrollen nie (1440 und 390 px)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+  };
+  const heard = Array.from({ length: 12 }, (_, i) =>
+    titleId(
+      `Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    ),
+  );
+  await page.addInitScript(
+    ([docs, text, key, heard]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      window.localStorage.setItem(
+        key as string,
+        JSON.stringify({ heard, updated: Date.now() }),
+      );
+    },
+    [[doc], KURZBUCH_LANG, `lva.ui.progress.kurzbuch:p1:${doc.id}`, heard] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".kurzbuch__text .sr-only")).toHaveCount(12);
+  await shellStill(page, "1440");
+  // „Wach halten“ verschiebt die Lesespalte; der Rahmen bleibt trotzdem stehen.
+  await page.getByTestId("reader-keep-awake").click();
+  await shellStill(page, "1440 wach");
+  // Fokus und scrollIntoView ganz unten in der Liste dürfen nur die Liste bewegen.
+  const toggle = panel.getByRole("button", { name: "Kernaussagen und Details zeigen" });
+  if (await toggle.isVisible()) await toggle.click();
+  await panel.getByRole("button", { name: "Kernaussage 12 von 12 vorlesen" }).focus();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "1440 Fokus unten");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toBeVisible();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "390");
 });
 
 test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumentansicht", async ({
