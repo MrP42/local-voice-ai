@@ -1351,7 +1351,10 @@ patrick: Hi.",
         );
         assert_eq!(take_pace("Ohne Tag."), ("Ohne Tag.".to_string(), None));
         // Gedeckelt: drei Schritte langsamer ergeben höchstens 0,2.
-        assert_eq!(take_pace("[slower][slower][slower] Ja.").1, Some(PACE_DELTA_MAX));
+        assert_eq!(
+            take_pace("[slower][slower][slower] Ja.").1,
+            Some(PACE_DELTA_MAX)
+        );
         // Widersprüchlich (zusammengelegte kurze Sätze): das erste gilt.
         assert_eq!(
             take_pace("[slower] Gar nichts. [faster] Dann kam er.").1,

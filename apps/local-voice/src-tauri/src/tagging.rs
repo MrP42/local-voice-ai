@@ -384,7 +384,9 @@ fn delivery_only(allowed_tags: &[String]) -> bool {
 /// (die Prüfung lehnt es ohnehin ab).
 fn delivery_system_prompt(allowed_tags: &[String], options: &AutoTagOptions) -> String {
     let tags_list = allowed_tags.join(", ");
-    let has_pace = allowed_tags.iter().any(|t| protocol::pace_delta(t).is_some());
+    let has_pace = allowed_tags
+        .iter()
+        .any(|t| protocol::pace_delta(t).is_some());
     let pace_rule = if has_pace {
         " [slower] steht am SATZANFANG vor wichtigen, ernsten, traurigen oder spannenden \
          Sätzen und Pointen; [faster] am Satzanfang vor Einschüben, Aufzählungen und \
@@ -698,9 +700,16 @@ mod tests {
 
     #[test]
     fn ohne_stil_tags_kommt_der_vortrags_prompt() {
-        let allowed: Vec<String> = ["short pause", "pause", "long pause", "break", "slower", "faster"]
-            .map(String::from)
-            .to_vec();
+        let allowed: Vec<String> = [
+            "short pause",
+            "pause",
+            "long pause",
+            "break",
+            "slower",
+            "faster",
+        ]
+        .map(String::from)
+        .to_vec();
         let p = auto_tag_system_prompt(&allowed, &AutoTagOptions::default());
         assert!(p.contains("KEINE Emotions-Tags"));
         assert!(p.contains("[slower] steht am SATZANFANG"));
@@ -710,7 +719,9 @@ mod tests {
         assert!(!auto_tag_system_prompt(&pausen, &AutoTagOptions::default()).contains("[slower]"));
         // Sobald ein Stil-Tag erlaubt ist, gilt der bisherige Regie-Prompt.
         let mit_stil: Vec<String> = ["pause", "whisper"].map(String::from).to_vec();
-        assert!(auto_tag_system_prompt(&mit_stil, &AutoTagOptions::default()).contains("Regisseur"));
+        assert!(
+            auto_tag_system_prompt(&mit_stil, &AutoTagOptions::default()).contains("Regisseur")
+        );
     }
 
     #[test]

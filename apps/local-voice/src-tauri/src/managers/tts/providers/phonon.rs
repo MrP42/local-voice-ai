@@ -85,8 +85,8 @@ use super::contract::{
     SynthesisOptions, TtsError, TtsErrorKind, TtsProvider, UseSubject, VoiceDescriptor,
 };
 use crate::managers::tts::phonon_models;
-use crate::managers::tts::protocol;
 use crate::managers::tts::phonon_voices;
+use crate::managers::tts::protocol;
 use crate::process_guard::{self, ProcessGuard};
 
 pub const PHONON_ID: &str = "phonon";
@@ -1854,7 +1854,10 @@ mod tests {
             .into_iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        let at = args.iter().position(|a| a == "--condition").expect("--condition fehlt");
+        let at = args
+            .iter()
+            .position(|a| a == "--condition")
+            .expect("--condition fehlt");
         assert_eq!(args[at + 1], "duration_delta=0.12");
         assert!(args.contains(&"Es war einmal.".to_string()));
         assert!(!args.iter().any(|a| a.contains("[slower]")));
