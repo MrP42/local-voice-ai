@@ -644,6 +644,7 @@
     "inputPlaceholder": "Type or paste text to read aloud…",
     "tabsLabel": "Text version",
     "tabOriginal": "Original",
+    "currentBook": "Open book: {{title}}",
     "tabTranslation": "Translation",
     "tabSummary": "AI documents",
     "terms": {

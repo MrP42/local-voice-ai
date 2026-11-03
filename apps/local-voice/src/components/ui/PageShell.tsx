@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useHelpDockSlot, usePageHeaderSlot } from "../shell/PageHeaderSlot";
+import {
+  useHelpDockSlot,
+  usePageHeaderSlot,
+  useTitleContextSlot,
+} from "../shell/PageHeaderSlot";
+import { useSectionActive } from "../shell/KeepAlive";
 import { useTranslation } from "react-i18next";
 import { Info, X } from "lucide-react";
 import { HelpPanel } from "../help/HelpPanel";
@@ -66,6 +71,9 @@ interface PageShellProps {
       Spalten. Listen und Einstellungen lassen das aus und
       scrollen als Ganzes. */
   fill?: boolean;
+  /** Gegenstand des Moduls (z. B. das geöffnete Buch): steht in der Mitte
+      der Titelleiste, ohne Platz (Tests ohne Rahmen) über dem Inhalt. */
+  context?: { label: string; text: string; detail?: string };
   children: React.ReactNode;
 }
 
@@ -82,6 +90,7 @@ export const PageShell: React.FC<PageShellProps> = ({
   search,
   help,
   fill = false,
+  context,
   children,
 }) => {
   const { t } = useTranslation();
@@ -89,11 +98,14 @@ export const PageShell: React.FC<PageShellProps> = ({
   const dock = useHelpDockSlot();
   const headerSlot = usePageHeaderSlot();
   const slot = useTitlebarTools() ? headerSlot : null;
+  const kontextSlot = useTitleContextSlot();
   const searchRef = useRef<HTMLInputElement>(null);
   const hasSearch = !!search;
+  // Erhaltene, aber verdeckte Module (KeepAlive) hören auf keine Taste.
+  const active = useSectionActive();
   // Strg+K (⌘K) nur in Modulen mit Suche (ADR-0027 E5).
   useEffect(() => {
-    if (!hasSearch) return;
+    if (!hasSearch || !active) return;
     const onKey = (event: KeyboardEvent) => {
       if (
         (IS_MAC ? event.metaKey : event.ctrlKey) &&
@@ -107,18 +119,23 @@ export const PageShell: React.FC<PageShellProps> = ({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hasSearch]);
+  }, [hasSearch, active]);
   // Profilmenü ▸ Hilfe und F1 schalten die Seitenhilfe über diese Anmeldung.
   useEffect(
     () =>
-      help ? registerPageHelp(() => setHelpOpen((open) => !open)) : undefined,
-    [help],
+      help && active
+        ? registerPageHelp(() => setHelpOpen((open) => !open))
+        : undefined,
+    [help, active],
   );
   // Keine Titelzeile im Modul (Patrick 02.11.): Der Name steht in der
   // Navigation links. Für Screenreader und Sprunglisten bleibt er als
   // unsichtbare Überschrift; ⓘ, Suche und Aktionen wandern in die Titelleiste.
   const heading = (
-    <h1 id="page-title" className="page-shell__title sr-only">
+    <h1
+      id={active ? "page-title" : undefined}
+      className="page-shell__title sr-only"
+    >
       {title}
     </h1>
   );
@@ -187,6 +204,12 @@ export const PageShell: React.FC<PageShellProps> = ({
       aria-labelledby="page-title"
     >
       {heading}
+      {context &&
+        (kontextSlot ? (
+          createPortal(<PageContext {...context} />, kontextSlot)
+        ) : (
+          <PageContext {...context} />
+        ))}
       {tools && (slot ? createPortal(tools, slot) : tools)}
       {help && helpOpen && !dock ? (
         <div
@@ -212,3 +235,21 @@ export const PageShell: React.FC<PageShellProps> = ({
     </section>
   );
 };
+
+/** Gegenstand in der Titelleiste: Name kräftig, Zusatz (Ansicht) leiser. */
+const PageContext: React.FC<{
+  label: string;
+  text: string;
+  detail?: string;
+}> = ({ label, text, detail }) => (
+  <span
+    className="page-shell__context"
+    role="status"
+    aria-label={label}
+    title={detail ? `${text} · ${detail}` : text}
+    data-testid="page-context"
+  >
+    <span className="page-shell__context-text">{text}</span>
+    {detail && <span className="page-shell__context-detail">{detail}</span>}
+  </span>
+);

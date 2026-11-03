@@ -25,9 +25,11 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 import { Menu } from "lucide-react";
+import { KeepAlive } from "./components/shell/KeepAlive";
 import {
   HelpDockSlotContext,
   PageHeaderSlotContext,
+  TitleContextSlotContext,
 } from "./components/shell/PageHeaderSlot";
 import { APP_NAME, AppMark, useIsNarrow } from "./components/shell/frame";
 import { WindowControls } from "./components/shell/WindowControls";
@@ -55,6 +57,9 @@ import {
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
+/** Module, die beim Bereichswechsel erhalten bleiben (siehe `KeepAlive`). */
+const KEEP_ALIVE: readonly SidebarSection[] = ["tts", "library"];
+
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
     SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.settings.component;
@@ -71,6 +76,15 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     usePersistentState<SidebarSection>("section", "home", isSidebarSection);
+  // Einmal besuchte erhaltene Module (KeepAlive) bleiben eingehängt.
+  const [visited, setVisited] = useState<SidebarSection[]>([]);
+  useEffect(() => {
+    if (
+      KEEP_ALIVE.includes(currentSection) &&
+      !visited.includes(currentSection)
+    )
+      setVisited((v) => [...v, currentSection]);
+  }, [currentSection, visited]);
   const { settings, updateSetting } = useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
@@ -111,6 +125,7 @@ function App() {
   const [helpDock, setHelpDock] = useState<HTMLElement | null>(null);
   // Platz rechts in der Titelleiste für ⓘ, Suche und Aktionen des Moduls.
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [kontextSlot, setKontextSlot] = useState<HTMLElement | null>(null);
   const [navCollapsedValue, setNavCollapsedValue] = usePersistentState<string>(
     "sidebar.collapsed",
     "0",
@@ -540,7 +555,9 @@ function App() {
             <AppMark />
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
-          <span className="lv-titlebar__frei" />
+          <span className="lv-titlebar__frei">
+            <span ref={setKontextSlot} className="lv-titlebar__kontext" />
+          </span>
           <div
             ref={setHeaderSlot}
             className="lv-titlebar__modul"
@@ -607,9 +624,18 @@ function App() {
                 <AccessibilityPermissions />
                 {currentSection === "home" ? (
                   <WorkspaceHome onNavigate={setCurrentSection} />
-                ) : (
+                ) : KEEP_ALIVE.includes(currentSection) ? null : (
                   renderSettingsContent(currentSection)
                 )}
+                {/* Vorlesen und Bibliothek bleiben nach dem ersten Besuch
+                    erhalten: Hin- und Herwechseln ohne Neuladen (Patrick 03.11.). */}
+                {KEEP_ALIVE.filter(
+                  (s) => s === currentSection || visited.includes(s),
+                ).map((s) => (
+                  <KeepAlive key={s} name={s} active={currentSection === s}>
+                    {renderSettingsContent(s)}
+                  </KeepAlive>
+                ))}
               </div>
             </main>
           </div>
@@ -627,10 +653,12 @@ function App() {
 
   return (
     <PageHeaderSlotContext.Provider value={headerSlot}>
-      <HelpDockSlotContext.Provider value={helpDock}>
-        {toaster}
-        {content}
-      </HelpDockSlotContext.Provider>
+      <TitleContextSlotContext.Provider value={kontextSlot}>
+        <HelpDockSlotContext.Provider value={helpDock}>
+          {toaster}
+          {content}
+        </HelpDockSlotContext.Provider>
+      </TitleContextSlotContext.Provider>
     </PageHeaderSlotContext.Provider>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSectionActive } from "../shell/KeepAlive";
 import {
   BookOpen,
   CheckSquare,
@@ -161,6 +162,14 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
   const { books, pageAudio, jobs, reload, save, tick } = useLibrary();
+  // Erhalten beim Bereichswechsel (KeepAlive): beim Zurückkommen still
+  // auffrischen (Fortschritt, neue Kurzbücher), ohne die Seite zu leeren.
+  const sectionActive = useSectionActive();
+  const wasActive = useRef(sectionActive);
+  useEffect(() => {
+    if (sectionActive && !wasActive.current) void reload();
+    wasActive.current = sectionActive;
+  }, [sectionActive, reload]);
   const {
     drop,
     working,
@@ -731,15 +740,14 @@ export const LibraryPage: React.FC = () => {
       title={t("library.title")}
       description={t("library.description")}
       actions={
-        <Button
-          variant="primary"
-          icon={<Plus size={16} aria-hidden="true" />}
+        // Dezent (Patrick 03.11.): nur das Plus, Name als Tooltip.
+        <IconButton
+          icon={<Plus size={20} aria-hidden="true" />}
+          label={t("library.add")}
           onClick={() => setAdding(true)}
           className="library-add-button"
           data-testid="library-add"
-        >
-          {t("library.add")}
-        </Button>
+        />
       }
     >
       <div
@@ -880,50 +888,49 @@ export const LibraryPage: React.FC = () => {
                           </h2>
                           <div className="library-continue">
                             {continueViews.map((v) => (
-                              <div className="library-ccard" key={v.book.id}>
-                                <BookCover book={v.book} size="xs" />
-                                <div style={{ minWidth: 0 }}>
+                              // Ganze Karte öffnet die Produktseite wie unter
+                              // „Alle Titel“ (Patrick 03.11.); der Titel ist der
+                              // Knopf und deckt die Karte ab, Abspielen liegt darüber.
+                              <article
+                                className="library-ccard"
+                                key={v.book.id}
+                                data-testid="library-continue-card"
+                              >
+                                <BookCover
+                                  book={v.book}
+                                  size="xs"
+                                  className="library-ccard__cover"
+                                />
+                                <div className="library-ccard__body">
                                   <button
                                     type="button"
                                     className="library-ccard__title"
                                     onClick={() => setOpenId(v.book.id)}
+                                    data-testid="library-continue-open"
                                   >
                                     {v.book.title}
                                   </button>
-                                  <div className="library-meta">
-                                    {v.book.authors.join(", ")}
-                                  </div>
-                                  <div style={{ margin: "6px 0 4px" }}>
-                                    <ProgressBar
-                                      fraction={v.fraction}
-                                      label={t("library.progressLabel", {
-                                        title: v.book.title,
-                                      })}
-                                    />
-                                  </div>
-                                  <div className="library-meta">
-                                    {statusLine(v)}
+                                  {(v.book.authors ?? []).length > 0 && (
+                                    <div className="library-ccard__author">
+                                      {(v.book.authors ?? []).join(", ")}
+                                    </div>
+                                  )}
+                                  <div className="library-ccard__foot">
+                                    <div className="library-ccard__progress">
+                                      <ProgressBar
+                                        fraction={v.fraction}
+                                        label={t("library.progressLabel", {
+                                          title: v.book.title,
+                                        })}
+                                      />
+                                      <span className="library-ccard__status">
+                                        {statusLine(v)}
+                                      </span>
+                                    </div>
+                                    {playButton(v, "library-ccard__play")}
                                   </div>
                                 </div>
-                                {v.book.text && v.book.audio_path && (
-                                  <span className="library-touch">
-                                    <IconButton
-                                      icon={
-                                        <Headphones
-                                          size={16}
-                                          aria-hidden="true"
-                                        />
-                                      }
-                                      label={t("library.listenFollowTitle", {
-                                        title: v.book.title,
-                                      })}
-                                      onClick={() => listen(v.book, true)}
-                                      data-testid="library-continue-follow"
-                                    />
-                                  </span>
-                                )}
-                                {playButton(v)}
-                              </div>
+                              </article>
                             ))}
                           </div>
                         </section>

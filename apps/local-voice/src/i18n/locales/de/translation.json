@@ -644,6 +644,7 @@
     "inputPlaceholder": "Text zum Vorlesen eingeben oder einfügen…",
     "tabsLabel": "Textfassung",
     "tabOriginal": "Original",
+    "currentBook": "Geöffnetes Buch: {{title}}",
     "tabTranslation": "Übersetzung",
     "tabSummary": "KI-Dokumente",
     "terms": {
