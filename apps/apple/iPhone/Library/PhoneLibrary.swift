@@ -23,6 +23,18 @@ final class PhoneLibrary: ObservableObject {
         try? FileManager.default.createDirectory(at: self.root, withIntermediateDirectories: true,
                                                  attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         reload()
+        // Nachrüstung: ältere Stände legten Hörbücher ins iCloud-Backup.
+        for book in books { Self.excludeFromBackup(audioDir(book)) }
+    }
+
+    /// Hörbücher gehören nicht ins iCloud-Backup: sie liegen im Konto oder
+    /// stammen vom Nutzer und machen das Backup sonst mehrere GB groß.
+    /// Gilt für den Ordner und alles darin.
+    static func excludeFromBackup(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        var target = url
+        try? target.setResourceValues(values)
     }
 
     // MARK: Lesen
@@ -61,6 +73,18 @@ final class PhoneLibrary: ObservableObject {
         return audio.allTracks.map { dir(book).appendingPathComponent("audio").appendingPathComponent($0.file) }
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
+    func audioDir(_ book: LibraryBook) -> URL { dir(book).appendingPathComponent(AudioOffload.audioFolder, isDirectory: true) }
+
+    /// Je Teil in Hörreihenfolge die Größe der Datei auf dem iPhone, `nil` wenn sie fehlt.
+    func localAudioSizes(_ book: LibraryBook) -> [Int?] {
+        (book.audio?.allTracks ?? []).map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }
+    }
+
+    /// Belegter Platz durch das Hörbuch auf dem iPhone (mit unfertigen Downloads).
+    func localAudioBytes(_ book: LibraryBook) -> Int {
+        AudioOffload.audioItems(in: dir(book)).reduce(0) { $0 + AudioOffload.bytes(at: $1) }
+    }
+
     func hasAudio(_ book: LibraryBook) -> Bool {
         guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
         return audioURLs(book).count == tracks.count
@@ -286,6 +310,7 @@ final class PhoneLibrary: ObservableObject {
         } else {
             try FileManager.default.moveItem(at: staging, to: audioDir)
         }
+        Self.excludeFromBackup(audioDir)
         // Angaben aus den Dateien (M4B/M4A-Atome, ID3): Titel, Personen, Cover, Kapitel.
         var fileInfos: [AudiobookFileInfo] = []
         var artwork: Data?

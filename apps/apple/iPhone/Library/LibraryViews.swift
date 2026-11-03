@@ -248,6 +248,9 @@ struct LibraryBookDetail: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDelete = false
     @State private var confirmRemoveAudio = false
+    /// Warum das Hörbuch (noch) nicht vom iPhone darf.
+    @State private var offloadBlocked: AudioOffload.Verdict?
+    @State private var removingAudio = false
     @ObservedObject var sync = LibrarySync.shared
 
     var body: some View {
@@ -352,10 +355,16 @@ struct LibraryBookDetail: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
                     Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
+                    if library.localAudioBytes(book) > 0 {
+                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") {
+                            let verdict = sync.offloadVerdict(book)
+                            switch verdict {
+                            case .allowed, .unconfirmed: confirmRemoveAudio = true  // wird beim Bestätigen frisch geprüft
+                            default: offloadBlocked = verdict
+                            }
+                        }.disabled(removingAudio)
+                    }
                     if sync.isSynced(book) {
-                        if library.hasAudio(book) && !library.meta(book).files.audio.isEmpty {
-                            Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { confirmRemoveAudio = true }
-                        }
                         Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
                     } else {
                         Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
@@ -364,11 +373,23 @@ struct LibraryBookDetail: View {
             }
         }
         .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
-            Button("Entfernen", role: .destructive) {
-                if playback.book?.id == book.id { playback.stop() }
-                sync.removeDownloads(book)
+            Button("\(ByteCountFormatter.string(fromByteCount: Int64(library.localAudioBytes(book)), countStyle: .file)) freigeben", role: .destructive) {
+                removingAudio = true
+                Task {
+                    // Prüft vorher beim Konto, ob alle Teile vollständig dort liegen.
+                    let result = await sync.removeDownloads(book)
+                    removingAudio = false
+                    if !result.verdict.allowed { offloadBlocked = result.verdict }
+                }
             }
-        } message: { Text("Es bleibt im Konto und auf dem PC und wird beim nächsten Hören wieder geladen. Der Fortschritt bleibt erhalten.") }
+        } message: { Text("Es bleibt im Konto und auf dem PC und wird beim nächsten Hören wieder geladen. Text und Fortschritt bleiben erhalten.") }
+        .alert("Hörbuch bleibt auf dem iPhone", isPresented: Binding(get: { offloadBlocked != nil }, set: { if !$0 { offloadBlocked = nil } }),
+               presenting: offloadBlocked) { verdict in
+            if verdict.syncHelps && sync.account != nil {
+                Button("Jetzt abgleichen") { Task { await sync.run() } }
+            }
+            Button("OK", role: .cancel) {}
+        } message: { verdict in Text(verdict.message) }
         .confirmationDialog(sync.isSynced(book) ? "„\(book.title)“ auf allen Geräten löschen?" : "„\(book.title)“ vom iPhone entfernen?",
                             isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Löschen", role: .destructive) {
