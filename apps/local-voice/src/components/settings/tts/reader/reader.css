@@ -754,9 +754,12 @@
   flex: none;
   overflow: visible;
 }
+/* Keine Mindestbreite: in der Rasterspalte (minmax(0, 1fr)) ragte die
+   Positionsangabe sonst über die Wiedergabeknöpfe (Patrick 02.11.); sie kürzt
+   stattdessen mit „…“. */
 .reader-player--docked .reader-player__where {
   flex: 1 1 0;
-  min-width: 90px;
+  min-width: 0;
 }
 
 .reader-dock {
@@ -785,5 +788,32 @@
   [data-testid="reader-toolbar"] button {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/* Bedienflächen der Leiste sichtbar mindestens 44 × 44 px (Codex zu
+   lva#213, zweite Runde: eine unsichtbare Trefferfläche zählt nicht). Die
+   Symbole bleiben gleich groß, nur die Fläche drumherum wächst. */
+.reader-player__ctrls button,
+.reader-player__ctrls .app-select__control {
+  min-height: 44px;
+  min-width: 44px;
+}
+/* Der Kapiteltitel links ist ein Textlink in der zweizeiligen
+   Positionsangabe, kein Knopf der Leiste. */
+.reader-player__ctrls .reader-player__where button {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Wird die Positionsangabe in der vollen Leiste schmaler als ein paar
+   Buchstaben, verschwindet sie ganz statt als Rest („D…“) über den Knöpfen
+   zu stehen; Kapitel bleiben über das Inhaltsverzeichnis erreichbar. */
+.reader-player--docked .reader-player__where {
+  container: lv-where / inline-size;
+}
+@container lv-where (max-width: 64px) {
+  .reader-player__where > * {
+    display: none;
   }
 }

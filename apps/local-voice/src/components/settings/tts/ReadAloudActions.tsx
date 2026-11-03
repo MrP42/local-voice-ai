@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
@@ -194,7 +195,9 @@ const TranslateProgress: React.FC<{
       data-testid="tts-translate-progress"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold">{t("tts.transform.running")}</span>
+        <span className="text-sm font-semibold">
+          {t("tts.transform.running")}
+        </span>
         <button
           type="button"
           className="mbtn mbtn--sm min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
@@ -256,11 +259,16 @@ const TranslateProgress: React.FC<{
               <span className="text-text/60">
                 {t("tts.transform.currentChapter")}
               </span>{" "}
-              {(progress!.chapterTitle ?? parts.title).replace(/\s+/g, " ").trim()}
+              {(progress!.chapterTitle ?? parts.title)
+                .replace(/\s+/g, " ")
+                .trim()}
             </p>
           ) : null}
           {workers.length > 1 ? (
-            <div className="flex flex-col gap-1.5" data-testid="tts-worker-list">
+            <div
+              className="flex flex-col gap-1.5"
+              data-testid="tts-worker-list"
+            >
               <p className="text-xs font-medium">
                 {t("tts.transform.workersTitle")}
               </p>
@@ -352,7 +360,10 @@ const TranslateInterrupted: React.FC<{
         <div className="flex flex-col gap-1" data-testid="tts-translate-error">
           <p className="break-words">{t(`tts.transform.cause.${info.kind}`)}</p>
           {where ? (
-            <p className="text-xs text-text/80" data-testid="tts-translate-where">
+            <p
+              className="text-xs text-text/80"
+              data-testid="tts-translate-where"
+            >
               {where.charAt(0).toUpperCase() + where.slice(1)}
             </p>
           ) : null}
@@ -407,6 +418,21 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     errorCount,
   } = props;
   const [autoTagOpen, setAutoTagOpen] = useState(false);
+  // In der Spielerleiste (compact) stehen Fortschritt, Warnungen und
+  // Fortsetzen nicht in der einzeiligen Zeile (sie sprengten die Breite und
+  // schoben die Leseansicht nach links), sondern als Fenster ÜBER der ganzen
+  // Leiste, rechtsbündig (Patrick 02.11.).
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [player, setPlayer] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    setPlayer(
+      props.compact
+        ? (rootRef.current?.closest<HTMLElement>(
+            '[data-testid="reader-player"]',
+          ) ?? null)
+        : null,
+    );
+  }, [props.compact]);
   const [autoTagLoading, setAutoTagLoading] = useState(false);
   // Die Leiste hängt nur am Original-Reiter; mit ihr verschwindet auch ihr
   // Ladezustand, und der Menüeintrag darf nicht auf "läuft" hängen bleiben.
@@ -492,7 +518,9 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
   // Text DIESES Reiters wirkt. Aufbereiten und Auto-Tagging arbeiten am
   // Original und bleiben dort.
   const otherTabItems: ActionMenuItem[] = [
-    ...menuItems.filter((item) => item.id === "workshop" || item.id === "script-check"),
+    ...menuItems.filter(
+      (item) => item.id === "workshop" || item.id === "script-check",
+    ),
     ...(tab === "translation"
       ? [
           {
@@ -552,8 +580,54 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     />
   );
 
+  /** Übersetzung: Fortschritt, Warnungen, Unterbrechung. */
+  const showWarnings =
+    tab === "translation" &&
+    !props.translating &&
+    (props.translateWarnings?.length ?? 0) > 0;
+  const showPartial =
+    tab === "translation" && !props.translating && !!props.translatePartial;
+  const translateNotes: React.ReactElement[] = [];
+  if (transformBusy)
+    translateNotes.push(
+      <TranslateProgress
+        key="progress"
+        progress={running}
+        waiting={!!props.waitingForTranslation}
+        onCancel={() => props.onCancelTransform("translation")}
+      />,
+    );
+  if (showWarnings)
+    translateNotes.push(
+      <details
+        key="warnings"
+        className={`text-xs text-text/70 ${props.compact ? "px-3 py-1" : ""}`.trim()}
+        data-testid="tts-translate-warnings"
+      >
+        <summary className="min-h-[44px] cursor-pointer py-3 sm:min-h-0 sm:py-0">
+          {t("tts.transform.warnings", {
+            count: props.translateWarnings!.length,
+          })}
+        </summary>
+        <ul className="list-disc ps-5">
+          {props.translateWarnings!.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      </details>,
+    );
+  if (showPartial)
+    translateNotes.push(
+      <TranslateInterrupted
+        key="partial"
+        partial={props.translatePartial!}
+        onResume={props.onResumeTranslate}
+      />,
+    );
+
   return (
     <div
+      ref={rootRef}
       className={
         props.compact
           ? "flex min-w-0 items-center gap-2"
@@ -662,7 +736,9 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
             <IconAction
               icon={Sparkles}
               label={
-                props.summarizing ? t("tts.kiDocs.creating") : t("tts.kiDocs.new")
+                props.summarizing
+                  ? t("tts.kiDocs.creating")
+                  : t("tts.kiDocs.new")
               }
               description={t("tts.kiDocs.newHint")}
               testId="tts-action-summarize"
@@ -677,39 +753,20 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
         )}
       </div>
 
-      {transformBusy && (
-        <TranslateProgress
-          progress={running}
-          waiting={!!props.waitingForTranslation}
-          onCancel={() => props.onCancelTransform("translation")}
-        />
-      )}
-      {tab === "translation" &&
-        !props.translating &&
-        (props.translateWarnings?.length ?? 0) > 0 && (
-          <details
-            className="text-xs text-text/70"
-            data-testid="tts-translate-warnings"
-          >
-            <summary className="min-h-[44px] cursor-pointer py-3 sm:min-h-0 sm:py-0">
-              {t("tts.transform.warnings", {
-                count: props.translateWarnings!.length,
-              })}
-            </summary>
-            <ul className="list-disc ps-5">
-              {props.translateWarnings!.map((w, i) => (
-                <li key={i}>{w}</li>
-              ))}
-            </ul>
-          </details>
-        )}
-      {tab === "translation" && !props.translating && props.translatePartial && (
-        <TranslateInterrupted
-          partial={props.translatePartial}
-          onResume={props.onResumeTranslate}
-        />
-      )}
-
+      {props.compact
+        ? translateNotes.length > 0 &&
+          (player
+            ? createPortal(
+                <div
+                  className="absolute bottom-full end-0 z-30 mb-2 flex max-h-[min(70vh,32rem)] w-[24rem] max-w-[calc(100%-1rem)] flex-col gap-2 overflow-auto rounded-lg bg-background shadow-lg"
+                  data-testid="tts-translate-overlay"
+                >
+                  {translateNotes}
+                </div>,
+                player,
+              )
+            : null)
+        : translateNotes}
       {saving && (
         <ProgressLine
           tabular

@@ -240,16 +240,22 @@ const chunk = (index: number, text: string) => ({
   cached: false,
 });
 
-const start = async (page: Page, width: number, theme: string) => {
+const start = async (
+  page: Page,
+  width: number,
+  theme: string,
+  docked = false,
+) => {
   await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light" });
   await page.setViewportSize({ width, height: 900 });
   await page.addInitScript(
-    ([t, th]) => {
+    ([t, th, d]) => {
       (window as unknown as { __pageText: string }).__pageText = t;
       (window as unknown as { __theme: string }).__theme = th;
       window.localStorage.removeItem("lva.ui.tts.view");
+      if (d) window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
     },
-    [BOOK, theme] as const,
+    [BOOK, theme, docked] as const,
   );
   await page.goto("/");
   if (width < 600)
@@ -354,7 +360,7 @@ for (const theme of ["light", "dark"]) {
         /Wie das Licht zurückkam und was die Wärterin darüber dachte/,
       );
       await expect(block).toContainText(
-        "Parallele Worker (je ein Kapitelbereich)",
+        "Parallele Worker (je ein Textbereich)",
       );
       const rows = block.getByTestId("tts-worker-row");
       await expect(rows).toHaveCount(4);
@@ -467,3 +473,108 @@ test("Abbruch zeigt eigenen Block mit Fortsetzen (light, 390)", async ({
   });
   await page.screenshot({ path: `${SHOTS}/abbruch-light-390.png` });
 });
+
+// Patrick 02.11.: In der Spielerleiste (rechte Spalte aus) öffnet die
+// Modellwahl nach oben, und der Fortschritt steht als Fenster ÜBER der Leiste
+// statt rechts daneben — ohne Zeit/Seite zu verdecken und ohne die
+// Leseansicht seitlich zu verschieben.
+const LEISTE = "docs/vorschau/uebersetzung-leiste";
+for (const theme of ["light", "dark"]) {
+  test(`Leiste: Modellwahl nach oben, Fortschritt über der Leiste (${theme}, 1920)`, async ({
+    page,
+  }) => {
+    await start(page, 1920, theme, true);
+    const player = page.getByTestId("reader-player");
+    const dock = page.getByTestId("reader-dock");
+    await expect(dock).toBeVisible();
+
+    // Fortschritt: über der Leiste, ganz sichtbar, nicht in der Zeile.
+    const overlay = page.getByTestId("tts-translate-overlay");
+    await expect(overlay).toBeVisible();
+    await expect(dock.getByTestId("tts-translate-progress")).toHaveCount(0);
+    await expect(overlay.getByTestId("tts-worker-row")).toHaveCount(4);
+    await expect(overlay).toBeInViewport({ ratio: 1 });
+    const pb = (await player.boundingBox())!;
+    const ob = (await overlay.boundingBox())!;
+    expect(ob.y + ob.height).toBeLessThanOrEqual(pb.y + 0.5);
+    expect(ob.x + ob.width).toBeLessThanOrEqual(pb.x + pb.width + 0.5);
+    // Kein waagrechtes Überlaufen: Leseansicht bleibt an ihrem Platz.
+    const overflow = await page.evaluate(() => {
+      const els = Array.from(document.querySelectorAll<HTMLElement>("*"));
+      return els
+        .filter(
+          (e) =>
+            e.scrollWidth > e.clientWidth + 1 &&
+            ["auto", "scroll"].includes(getComputedStyle(e).overflowX),
+        )
+        .map((e) => e.className || e.tagName);
+    });
+    expect(overflow).toEqual([]);
+    // Buchtitel/Position links überlappt die Wiedergabeknöpfe nicht.
+    const where = (await player.getByTestId("reader-where").boundingBox())!;
+    const prev = (await player
+      .getByRole("button", { name: "Vorheriger Satz" })
+      .boundingBox())!;
+    expect(where.x + where.width).toBeLessThanOrEqual(prev.x + 0.5);
+    await page.screenshot({ path: `${LEISTE}/fortschritt-${theme}-1920.png` });
+
+    // Bedienflächen der Leiste sichtbar ≥ 44 × 44 px (Codex zu lva#213).
+    const sizes = await page.evaluate(() =>
+      Array.from(
+        document
+          .querySelector(".reader-player__ctrls")!
+          .querySelectorAll<HTMLElement>("button, .app-select__control"),
+      )
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return (
+            r.width > 0 && r.height > 0 && !el.closest(".reader-player__where")
+          );
+        })
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            name:
+              el.getAttribute("aria-label") ||
+              el.getAttribute("data-testid") ||
+              el.textContent?.trim().slice(0, 20) ||
+              el.className,
+            w: Math.round(r.width * 10) / 10,
+            h: Math.round(r.height * 10) / 10,
+          };
+        }),
+    );
+    for (const z of sizes) console.log(`GROESSE ${z.name} ${z.w}x${z.h}`);
+    expect(sizes.length).toBeGreaterThan(8);
+    expect(sizes.filter((z) => z.w < 43.5 || z.h < 43.5)).toEqual([]);
+
+    // Modellwahl (lva#229): nicht mehr in der Leiste, sondern links unten in
+    // der Fußleiste; die Liste öffnet nach oben und ist ganz sichtbar.
+    await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
+    const modelBtn = page.getByTestId("fuss-modell-read_aloud");
+    await modelBtn.click();
+    const list = page.getByTestId("fuss-modell-menue-read_aloud");
+    await expect(list).toBeInViewport({ ratio: 1 });
+    // Restzeit und Seitenfeld bleiben frei.
+    await expect(player.getByTestId("reader-elapsed")).toBeVisible();
+    for (const el of [
+      player.getByTestId("reader-elapsed"),
+      player.locator(".reader-player__prog input").first(),
+    ]) {
+      const b = (await el.boundingBox())!;
+      const hit = await page.evaluate(
+        ([x, y]) =>
+          !!document.elementFromPoint(x, y)?.closest('[role="menu"]'),
+        [b.x + b.width / 2, b.y + b.height / 2],
+      );
+      expect(hit).toBe(false);
+    }
+    // Modelloptionen: mindestens 44 px hoch (Codex zu lva#213).
+    for (const opt of await list.getByRole("menuitemradio").all()) {
+      const ob = (await opt.boundingBox())!;
+      expect(ob.height).toBeGreaterThanOrEqual(43.5);
+    }
+    await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1920.png` });
+    await list.getByRole("menuitemradio", { name: /Opus 5\.5/ }).click();
+  });
+}
