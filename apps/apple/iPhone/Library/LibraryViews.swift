@@ -718,6 +718,8 @@ struct LibraryStorageView: View {
     @State private var confirmFinished = false
     @State private var blocked: AudioOffload.Verdict?
     @State private var notice: String?
+    /// Zum Entfernen gewählt (per Wischen); Rückfrage nennt das Buch.
+    @State private var pending: AudioStorage.Item?
 
     var body: some View {
         // Das gerade laufende Buch nicht nebenbei stoppen.
@@ -743,9 +745,10 @@ struct LibraryStorageView: View {
                 Section("Geladene Hörbücher") {
                     ForEach(items) { item in
                         row(item)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if item.removable && !working.contains(item.id) {
-                                    Button(role: .destructive) { remove(item) } label: { Label("Entfernen", systemImage: "icloud.and.arrow.down") }
+                                    // Rückfrage mit Titel: beim Wischen rutscht die Zeile aus dem Bild.
+                                    Button(role: .destructive) { pending = item } label: { Label("Entfernen", systemImage: "icloud.and.arrow.down") }
                                 }
                             }
                     }
@@ -769,6 +772,11 @@ struct LibraryStorageView: View {
                 }
             }
         } message: { Text("Sie bleiben im Konto und lassen sich jederzeit wieder laden.") }
+        .confirmationDialog(pending.map { "„\($0.title)“ vom iPhone entfernen?" } ?? "",
+                            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+                            titleVisibility: .visible, presenting: pending) { item in
+            Button("\(LibraryBytes.text(item.bytes)) freigeben", role: .destructive) { remove(item) }
+        } message: { item in Text("\(item.stand). Es bleibt im Konto und wird beim nächsten Hören wieder geladen.") }
         .alert("Hörbuch bleibt auf dem iPhone", isPresented: Binding(get: { blocked != nil }, set: { if !$0 { blocked = nil } }),
                presenting: blocked) { verdict in
             if verdict.syncHelps && sync.account != nil { Button("Jetzt abgleichen") { Task { await sync.run(); refresh() } } }

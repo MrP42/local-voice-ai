@@ -18,7 +18,7 @@ body.single .phone{width:100vw;height:auto;min-height:100vh;border-radius:0;bord
 body.single .cap{display:none}
 .status{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;font-weight:600;font-size:14px}
 .nav{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:600}
-.nav a{color:var(--blue);font-weight:400;text-decoration:none;min-height:44px;display:flex;align-items:center}
+.nav a{color:var(--blue);font-weight:400;text-decoration:none;min-height:44px;min-width:44px;justify-content:flex-end;display:flex;align-items:center}
 .scroll{flex:1;overflow:hidden;padding:0 16px 24px}
 .hdr{font-size:13px;color:var(--sec);text-transform:uppercase;margin:22px 16px 6px;letter-spacing:.02em}
 .ftr{font-size:13px;color:var(--sec);margin:6px 16px 0}
@@ -38,7 +38,7 @@ body.single .cap{display:none}
 .d{font-size:13px;color:var(--sec)}
 .badge{font-size:12px;font-weight:600;color:var(--text);margin-top:2px}
 .size{font-size:14px;color:var(--sec);font-variant-numeric:tabular-nums;white-space:nowrap}
-.swiped{transform:translateX(-96px);background:var(--card)}
+.swiped{margin-right:96px;background:var(--card)}
 .swipe-wrap{position:relative;overflow:hidden;border-top:1px solid var(--sep)}
 .swipe-wrap .cell{border-top:0}
 .swipe-act{position:absolute;right:0;top:0;bottom:0;width:96px;background:var(--red);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;font-weight:600}
@@ -103,7 +103,7 @@ body.single .cap{display:none}
     <div class="hdr">Geladene Hörbücher</div>
     <div class="group">
       <div class="cell"><div class="cover c3">Der Zauber&shy;berg</div><div class="meta"><div class="t">Der Zauberberg</div><div class="d">45 % gehört · zuletzt vor 2 Stunden</div></div><span class="size">1,12 GB</span></div>
-      <div class="swipe-wrap"><div class="swipe-act">☁︎<br>Entfernen</div><div class="cell swiped"><div class="cover c1">Effi Briest</div><div class="meta"><div class="t">Effi Briest</div><div class="d">Fertig gehört · zuletzt vor 6 Tagen</div></div><span class="size">684 MB</span></div></div>
+      <div class="swipe-wrap"><div class="swipe-act" data-tap="Wischaktion Entfernen">☁︎<br>Entfernen</div><div class="cell swiped"><div class="cover c1">Effi Briest</div><div class="meta"><div class="t">Effi Briest</div><div class="d">Fertig gehört · zuletzt vor 6 Tagen</div></div><span class="size">684 MB</span></div></div>
       <div class="cell"><div class="cover c5">Eigene Aufnahme</div><div class="meta"><div class="t">Vortrag Verwaltung digital</div><div class="d">Noch nicht gehört</div><div class="badge">▯ Nur auf diesem iPhone</div></div><span class="size">512 MB</span></div>
       <div class="cell"><div class="cover c2">Die Ver&shy;wandlung</div><div class="meta"><div class="t">Die Verwandlung</div><div class="d">Fertig gehört · zuletzt vor 3 Wochen</div></div><span class="size">318 MB</span></div>
       <div class="cell"><div class="cover c4">Kurz&shy;geschichten</div><div class="meta"><div class="t">Kurzgeschichten</div><div class="d">Download unvollständig</div></div><span class="size">226 MB</span></div>
@@ -130,6 +130,26 @@ body.single .cap{display:none}
     <div class="box cancel"><div class="opt" style="border:0;font-weight:600">Abbrechen</div></div>
   </div></div>
 </div><div class="cap">Rückfrage mit frei werdendem Platz</div></div>
+
+<!-- 6: Rückfrage nach dem Wischen -->
+<div id="s6"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="hdr">Geladene Hörbücher</div>
+    <div class="group">
+      <div class="cell"><div class="cover c3">Der Zauber&shy;berg</div><div class="meta"><div class="t">Der Zauberberg</div><div class="d">45 % gehört · zuletzt vor 2 Stunden</div></div><span class="size">1,12 GB</span></div>
+      <div class="cell"><div class="cover c1">Effi Briest</div><div class="meta"><div class="t">Effi Briest</div><div class="d">Fertig gehört · zuletzt vor 6 Tagen</div></div><span class="size">684 MB</span></div>
+    </div>
+  </div>
+  <div class="overlay"><div class="sheet">
+    <div class="box">
+      <div class="q"><b>„Effi Briest“ vom iPhone entfernen?</b>Fertig gehört. Es bleibt im Konto und wird beim nächsten Hören wieder geladen.</div>
+      <div class="opt red">684 MB freigeben</div>
+    </div>
+    <div class="box cancel"><div class="opt" style="border:0;font-weight:600">Abbrechen</div></div>
+  </div></div>
+</div><div class="cap">Nach dem Wischen: Rückfrage nennt Titel, Stand und Größe</div></div>
 
 <!-- 4: Ergebnis + Hinweis bei eigenem Import -->
 <div id="s4"><div class="phone">
