@@ -74,7 +74,9 @@ test.beforeEach(async ({ page }) => {
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {
           (w.__calls as unknown[]).push([cmd, args]);
-          if (cmd === "get_app_settings" || cmd === "get_default_settings") return JSON.parse(JSON.stringify(settings));
+          if (cmd === "get_app_settings" || cmd === "get_default_settings")
+            // window.__theme: dunkle Belegbilder (lva#217).
+            return JSON.parse(JSON.stringify({ ...settings, ...(w.__theme ? { theme: w.__theme } : {}) }));
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.14";
           if (cmd.includes("permission")) return true;
@@ -224,6 +226,8 @@ test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den For
     pageId: "p1",
     source: { kind: "book" },
     templateId: "builtin:eine_seite",
+    // lva#217: vorbelegt mit der App-Sprache.
+    targetLang: "de",
   });
 
   const doc = {
@@ -873,6 +877,228 @@ test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumenta
   ).toHaveCount(0);
 });
 
+// lva#217: Sprache des Ergebnisses wählbar, z. B. ein deutsches Kurzbuch zu
+// einem englischen Buch; die Sprache steht am Ergebnis.
+const KURZBUCH_EN = [
+  "## What it is about",
+  "",
+  "A book about habits and how they form.",
+  "",
+  "## Who it is for",
+  "",
+  "- People with good intentions",
+  "- Teams",
+  "- Learners",
+  "",
+  "## Small start: A habit begins with two minutes.",
+  "",
+  "How do you start? Small. ".repeat(20),
+  "",
+  "## Relapse: One missed day is not failure.",
+  "",
+  "What to do after a bad day? Keep going. ".repeat(20),
+  "",
+  "## Conclusion",
+  "",
+  "Small steps carry far.",
+].join("\n");
+
+test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  const dialog = page.getByRole("dialog");
+  const lang = dialog.getByRole("combobox", { name: "Sprache" });
+  await expect(page.getByTestId("kidoc-lang")).toContainText("Deutsch");
+  await lang.click();
+  await expect(page.getByRole("option", { name: "Wie das Buch" })).toBeVisible();
+  await page.getByRole("option", { name: "English" }).click();
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/01-dialog-1440.png",
+  });
+  await page.getByTestId("kidoc-create").click();
+  const call = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(call[1]).toMatchObject({ targetLang: "en" });
+  // Fertigmeldung bei 390 px (Codex): Belegbild mit sichtbarer Meldung.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("ist fertig");
+  // Einblendung abwarten, damit das Belegbild die fertige Meldung zeigt.
+  await page.waitForTimeout(600);
+  // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
+  // sichtbar, Rechtecke ueberlappen nicht.
+  const createBtn = page.getByTestId("tts-action-summarize");
+  await createBtn.scrollIntoViewIfNeeded();
+  await expect(createBtn).toBeVisible();
+  await expect(toast).toBeVisible();
+  const b = (await createBtn.boundingBox())!;
+  const m = (await toast.boundingBox())!;
+  expect(b.y + b.height <= m.y || m.y + m.height <= b.y || b.x + b.width <= m.x || m.x + m.width <= b.x).toBe(true);
+  expect(b.y + b.height).toBeLessThanOrEqual(844);
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
+  });
+
+  // Die Wahl gilt als Vorbelegung für das nächste Mal. Der Dialog räumt
+  // alte Meldungen ab, damit sie seine Knöpfe nicht verdecken (Codex).
+  await page.getByTestId("tts-action-summarize").click();
+  await expect(toast).toHaveCount(0);
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/02-dialog-390.png",
+  });
+  await lang.click();
+  await page.getByRole("option", { name: "Wie das Buch" }).click();
+  await page.getByTestId("kidoc-create").click();
+  const again = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(again[1]).toMatchObject({ targetLang: null });
+});
+
+test("ein englisches Kurzbuch wird erkannt und zeigt seine Sprache (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+    language: "en",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH_EN] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("Ganzes Buch · English");
+  await card.locator("button").first().click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch · Ganzes Buch · English",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(page.getByTestId("kurzbuch-lang")).toHaveText(
+    "Sprache: English",
+  );
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/03-kurzbuch-englisch-1440.png",
+  });
+});
+
+// lva#217 (Codex): lange Titel brechen in Leiste und Überlaufmenü um, hell
+// und dunkel, statt mit „…“ zu enden.
+const LONG_TITLE =
+  "Obstacles and action: Fear, cynicism, laziness, bad habits and arrogance hold people back, and a strong reason helps";
+const KURZBUCH_LONG = KURZBUCH_EN.replace(
+  "Relapse: One missed day is not failure.",
+  LONG_TITLE,
+);
+
+for (const theme of ["light", "dark"] as const) {
+  test(`ein langer Kernaussagen-Titel bricht in der Wiedergabe um (${theme}, lva#217)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const doc = {
+      ...kiDoc(1, "builtin:kurzbuch"),
+      title: "Kurzbuch – Ganzes Buch",
+      template_title: "Kurzbuch",
+      language: "en",
+    };
+    await page.addInitScript(
+      ([docs, text, theme]) => {
+        const w = window as unknown as Record<string, unknown>;
+        w.__kidocs = docs;
+        w.__docText = text;
+        w.__theme = theme;
+      },
+      [[doc], KURZBUCH_LONG, theme] as const,
+    );
+    await open(page);
+    await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+    await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+    await page
+      .getByRole("group", { name: "Ansicht" })
+      .getByRole("button", { name: "Lesen" })
+      .click();
+    const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+    await expect(panel).toContainText(LONG_TITLE.split(": ")[1]);
+    await panel.getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" }).click();
+    await expect
+      .poll(async () => (await calls(page)).some(([c]) => c.startsWith("tts_speak")))
+      .toBe(true);
+    await emit(page, "tts-speak-progress", { position: 9, total: 30 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 9,
+      text: "What to do after a bad day? Keep going.",
+    });
+    const chapter = page.getByTestId("reader-chapter");
+    await expect(chapter).toHaveText(LONG_TITLE);
+    // Vollständig sichtbar: kein Abschneiden in der Leiste.
+    const cut = await chapter
+      .locator(".reader-player__chapter-text")
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cut).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/06-wiedergabe-langer-titel-1920-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Lesebereich ohne Menü (Codex): Überschrift und Text vollständig in
+    // der Seite; Nachbarseiten liegen außerhalb des sichtbaren Rahmens.
+    const book = page.getByTestId("reader-book");
+    // Nach dem Umbruch auf 390 px paginiert der Reader neu: abwarten.
+    const clipped = () => book.evaluate((root) => {
+      const frame = root.getBoundingClientRect();
+      const out: string[] = [];
+      for (const el of root.querySelectorAll("h1, h2, h3, p")) {
+        for (const r of el.getClientRects()) {
+          const visible = r.right > frame.left && r.left < frame.right;
+          const inside = r.left >= frame.left - 1 && r.right <= frame.right + 1;
+          if (visible && !inside) out.push((el.textContent ?? "").slice(0, 40));
+        }
+      }
+      return out;
+    });
+    await expect.poll(clipped, { message: "angeschnittene Zeilen" }).toEqual([]);
+    await book.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/09-lesebereich-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.getByTestId("reader-more").click();
+    const where = page.getByTestId("reader-more-where");
+    await expect(where).toContainText(LONG_TITLE);
+    const cutMenu = await where
+      .locator("div")
+      .first()
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cutMenu).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/07-wiedergabe-langer-titel-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+  });
+}
 for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Prognose und danach den Verbrauch (${width} px)`, async ({ page }) => {
   const shots = "docs/vorschau/token-anzeige";
   const wide = width >= 1000;

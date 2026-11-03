@@ -30,6 +30,8 @@ export interface KiDocumentsState {
     source: SummarySource,
     sourceLabel: string,
     template: BookTemplate,
+    /** Sprache des Ergebnisses, "" = wie das Buch (lva#217). */
+    targetLang?: string,
   ) => Promise<{ doc: KiDocument } | { error: string }>;
   cancel: () => void;
 }
@@ -98,7 +100,7 @@ export function useKiDocuments(pageId: string | null): KiDocumentsState {
   }, []);
 
   const create = useCallback<KiDocumentsState["create"]>(
-    async (source, sourceLabel, template) => {
+    async (source, sourceLabel, template, targetLang = "") => {
       const page = pageRef.current;
       if (!page) return { error: "page_missing" };
       if (running.current) return { error: "book_ai:busy" };
@@ -118,6 +120,7 @@ export function useKiDocuments(pageId: string | null): KiDocumentsState {
           source,
           sourceLabel,
           template.id,
+          targetLang || null,
         );
       } catch (e) {
         result = { status: "error", error: String(e) };

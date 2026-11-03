@@ -178,6 +178,9 @@ struct Job {
     settings: crate::settings::AppSettings,
     model_key: String,
     language: String,
+    /// Sprachregel der Ergebnisse und deren Sprachcode (lva#217).
+    output: String,
+    output_code: String,
     limit: usize,
 }
 
@@ -187,6 +190,7 @@ impl Job {
         dir: &std::path::Path,
         source: &SummarySource,
         template_id: &str,
+        target_lang: Option<&str>,
     ) -> Result<Self, String> {
         let template = all_templates(app)?
             .into_iter()
@@ -205,6 +209,12 @@ impl Job {
             .and_then(|p| settings.post_process_models.get(&p.id).cloned())
             .unwrap_or_default();
         let language = crate::summarizer::language_clause(&selected);
+        let detected = crate::managers::tts::lang::detect_language(&selected);
+        // Zielsprache = Buchsprache: dieselben Prompts wie ohne Wahl, damit der
+        // Cache früherer Läufe weiter gilt.
+        let target = target_lang.filter(|t| Some(*t) != detected);
+        let output = engine::output_language(&language, target);
+        let output_code = target.or(detected).unwrap_or_default().to_string();
         let limit = crate::summarizer::chunk_chars(&settings);
         Ok(Self {
             template,
@@ -213,6 +223,8 @@ impl Job {
             settings,
             model_key: format!("{provider}/{model}"),
             language,
+            output,
+            output_code,
             limit,
         })
     }
@@ -224,6 +236,8 @@ impl Job {
             limit: self.limit,
             model_key: &self.model_key,
             language: &self.language,
+            output: &self.output,
+            output_code: &self.output_code,
         }
     }
 
@@ -264,7 +278,7 @@ pub async fn book_ai_estimate(
     template_id: String,
 ) -> Result<tokens::BookAiEstimate, String> {
     let dir = page_path(&app, &page_id)?;
-    let job = Job::prepare(&app, &dir, &source, &template_id)?;
+    let job = Job::prepare(&app, &dir, &source, &template_id, None)?;
     job.estimate(&dir).await
 }
 
@@ -277,7 +291,15 @@ pub async fn book_ai_summarize(
     source: SummarySource,
     source_label: String,
     template_id: String,
+    // Zielsprache des Ergebnisses ("de", "en", …; lva#217). Ohne: Sprache des Buchs.
+    target_lang: Option<String>,
 ) -> Result<KiDocument, String> {
+    let target_lang = target_lang.filter(|c| !c.trim().is_empty());
+    if let Some(code) = &target_lang {
+        if engine::target_name(code).is_none() {
+            return Err("book_ai:language_unknown".into());
+        }
+    }
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Err("book_ai:busy".into());
     }
@@ -285,7 +307,7 @@ pub async fn book_ai_summarize(
     CANCEL.store(false, Ordering::SeqCst);
 
     let dir = page_path(&app, &page_id)?;
-    let job = Job::prepare(&app, &dir, &source, &template_id)?;
+    let job = Job::prepare(&app, &dir, &source, &template_id, target_lang.as_deref())?;
     let settings = &job.settings;
 
     let emitter = app.clone();
@@ -369,6 +391,7 @@ pub async fn book_ai_summarize(
                 actual: Some(actual),
                 local: tokens::calls_local(&calls),
             }),
+            language: (!job.output_code.is_empty()).then(|| job.output_code.clone()),
         },
         text.trim(),
     )
@@ -621,6 +644,7 @@ pub fn book_ai_document_import(
             words: 0,
             model: String::new(),
             usage: None,
+            language: None,
         },
         text.trim(),
     )

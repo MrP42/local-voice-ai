@@ -1724,9 +1724,72 @@ test("die Produktseite zeigt das Kurzbuch mit Dauer und Anhören",async ({ page 
 test("ohne Kurzbuch bietet die Produktseite das Erstellen an", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
-  await expect(
-    page.getByRole("region", { name: "Kurzbuch" }).getByRole("button", { name: "Kurzbuch erstellen" }),
-  ).toBeVisible();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await expect(card.getByRole("button", { name: "Kurzbuch erstellen" })).toBeVisible();
+  // lva#217: Sprache vorher wählbar, vorbelegt mit der App-Sprache.
+  await expect(card.getByRole("combobox", { name: "Sprache des Kurzbuchs" })).toBeVisible();
+  await expect(card).toContainText("Deutsch");
+});
+
+// lva#217: Kurzbücher in mehreren Sprachen je Buch.
+test("die Produktseite zeigt Kurzbücher je Sprache und bietet weitere an", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    const base = {
+      template_id: "builtin:kurzbuch",
+      template_title: "Kurzbuch",
+      source: { kind: "book" },
+      source_label: "Ganzes Buch",
+      created_ms: 1,
+      words: 400,
+      model: "ollama/x",
+    };
+    w.__kidocs = [
+      { ...base, id: "01KURZBUCHEN", title: "Kurzbuch – Ganzes Buch", modified_ms: 2, language: "en" },
+      { ...base, id: "01KURZBUCHDE", title: "Kurzbuch – Ganzes Buch", modified_ms: 1, language: "de" },
+    ];
+    w.__docText = [
+      "## Worum es geht", "", "Eine Ehe und ihre Folgen.", "",
+      "## Für wen", "", "- Leser von Klassikern", "- Schulen", "- Alle", "",
+      "## Pflicht: Die Ehe folgt der Konvention.", "", "Text. ".repeat(150), "",
+      "## Folgen: Ein Brieffund verändert alles.", "", "Text. ".repeat(150), "",
+      "## Fazit", "", "Ende.",
+    ].join("\n");
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  const langs = card.getByRole("group", { name: "Vorhandene Sprachen" });
+  // Bevorzugt: die App-Sprache, auch wenn das englische neuer ist.
+  await expect(langs.getByRole("button", { name: "Kurzbuch auf Deutsch zeigen" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(card.getByRole("heading", { name: /Kurzbuch/ })).toContainText("Deutsch");
+  await langs.getByRole("button", { name: "Kurzbuch auf English zeigen" }).click();
+  await expect(card.getByRole("heading", { name: /Kurzbuch/ })).toContainText("English");
+  await card.getByRole("button", { name: "Weitere Sprache" }).click();
+  await expect(card.getByRole("combobox", { name: "Sprache des Kurzbuchs" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Erstellen", exact: true })).toBeVisible();
+  // Vorbelegt mit einer Sprache, die es noch nicht gibt.
+  await expect(card.locator(".library-kurzbuch__lang-select")).toContainText("Français");
+  await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/04-bibliothek-1440.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await card.scrollIntoViewIfNeeded();
+  // Mobil alle Ziele der Karte mindestens 44 × 44 px (Codex).
+  const targets = [
+    ...(await card.getByRole("button").all()),
+    card.locator(".app-select__control"),
+  ];
+  expect(targets.length).toBeGreaterThan(5);
+  for (const target of targets) {
+    const box = await target.boundingBox();
+    const name = await target.evaluate((e) => (e.textContent ?? "").trim().slice(0, 30));
+    expect(box?.height ?? 0, `Höhe von „${name}“`).toBeGreaterThanOrEqual(44);
+    expect(box?.width ?? 0, `Breite von „${name}“`).toBeGreaterThanOrEqual(44);
+  }
+  await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/05-bibliothek-390.png" });
 });
 // ---------------------------------------------------------------------------
 // lva#208: lange Einzeldatei in Abschnitten, Zusammenführen, Fortsetzen

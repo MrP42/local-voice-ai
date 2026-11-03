@@ -296,7 +296,8 @@ const KIDOC_KEY = "lva.library.kidoc";
 /** Auftrag aus der Bibliothek an Vorlesen: KI-Dokument öffnen oder erstellen. */
 export type LibraryKiDocRequest =
   | { page: string; doc: string; play: boolean }
-  | { page: string; create: "kurzbuch" };
+  /** `lang`: Sprache des Kurzbuchs, "" oder fehlend = wie das Buch (lva#217). */
+  | { page: string; create: "kurzbuch"; lang?: string };
 
 /**
  * Kurzbuch aus der Bibliothek (lva#205): Vorlesen öffnen und dort das

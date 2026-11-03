@@ -944,3 +944,73 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* Sprachen des Kurzbuchs (lva#217). */
+.library-kurzbuch h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.library-kurzbuch__badge {
+  padding: 0 6px;
+  border: 1px solid var(--lib-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.library-kurzbuch__langs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.library-kurzbuch__chip {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--lib-line);
+  border-radius: 999px;
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.library-kurzbuch__chip[aria-pressed="true"] {
+  border-color: var(--color-logo-primary);
+  background: color-mix(in srgb, var(--color-logo-primary) 12%, transparent);
+  font-weight: 600;
+}
+.library-kurzbuch__chip:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+.library-kurzbuch__lang {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex-basis: 100%;
+  justify-content: flex-end;
+}
+.library-kurzbuch__actions .library-kurzbuch__lang {
+  flex-basis: auto;
+}
+.library-kurzbuch__lang-select {
+  min-width: 11rem;
+}
+/* Mobil: alle Bedienziele der Karte mindestens 44 × 44 px (Codex). Mit
+   Reserve gesetzt, damit Rundung bei Windows-Skalierung nicht darunter fällt. */
+@media (max-width: 640px) {
+  .library-kurzbuch__chip,
+  .library-kurzbuch button {
+    box-sizing: border-box;
+    min-height: 48px;
+    min-width: 48px;
+  }
+  .library-kurzbuch .app-select__control {
+    box-sizing: border-box;
+    min-height: 48px;
+  }
+  .library-kurzbuch__lang {
+    justify-content: flex-start;
+  }
+}

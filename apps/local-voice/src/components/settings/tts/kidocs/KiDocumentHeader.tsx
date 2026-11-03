@@ -13,6 +13,7 @@ import { Button } from "../../../ui/Button";
 import type { KiRun } from "./useKiDocuments";
 import { exportKiDocument, kiErrorText, type KiExportFormat } from "./kiDocs";
 import { TokenUsageLine } from "./kiTokens";
+import { kiLangLabel } from "./targetLang";
 import "./kidocs.css";
 
 /**
@@ -68,6 +69,7 @@ export function KiDocumentHeader({
         )}
         <span className="kidocs__meta">
           {doc.template_title} · {doc.source_label}
+          {doc.language ? ` · ${kiLangLabel(doc.language)}` : ""}
         </span>
         <ActionMenu
           trigger={{

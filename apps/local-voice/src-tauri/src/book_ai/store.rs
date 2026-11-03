@@ -57,6 +57,10 @@ pub struct KiDocument {
     /// älteren und übernommenen Dokumenten).
     #[serde(default)]
     pub usage: Option<super::tokens::KiUsage>,
+    /// Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
+    /// Dokumenten und Importen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -227,6 +231,7 @@ mod tests {
             words: 0,
             model: "ollama/x".into(),
             usage: None,
+            language: None,
         }
     }
 

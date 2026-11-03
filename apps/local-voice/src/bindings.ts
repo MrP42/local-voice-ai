@@ -5173,9 +5173,9 @@ async bookAiTemplateImport(path: string) : Promise<Result<BookTemplate, string>>
 /**
  * Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
  */
-async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string) : Promise<Result<KiDocument, string>> {
+async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string, targetLang: string | null) : Promise<Result<KiDocument, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId }) };
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId, targetLang }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8895,7 +8895,12 @@ model: string;
  * Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
  * älteren und übernommenen Dokumenten).
  */
-usage?: KiUsage | null }
+usage?: KiUsage | null; 
+/**
+ * Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
+ * Dokumenten und Importen.
+ */
+language?: string | null }
 /**
  * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
  */
