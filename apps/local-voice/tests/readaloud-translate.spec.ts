@@ -674,6 +674,11 @@ const KURZBUCH_LANG = [
 ].join("\n");
 
 const shellStill = async (page: Page, label: string) => {
+  // Abnahmebilder nur auf Wunsch (LVA_SHOTS=Ordner).
+  if (process.env.LVA_SHOTS)
+    await page.screenshot({
+      path: `${process.env.LVA_SHOTS}/${label.replace(/\s+/g, "-")}.png`,
+    });
   const m = await page.evaluate(() => {
     const doc = document.scrollingElement as HTMLElement;
     const frame = document.querySelector<HTMLElement>(".reader-frame");
