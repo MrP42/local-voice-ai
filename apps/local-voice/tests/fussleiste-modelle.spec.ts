@@ -489,3 +489,65 @@ test.describe("Abnahmebilder gleiche Modellanzeige", () => {
         }
       });
 });
+
+// Codex zu lva#241: Touchziele ≥ 44 px, gemessen per boundingBox, als Beleg
+// in docs/vorschau/fussleiste-modell-gleich/touchziele.txt.
+test.describe("Touchziele gleiche Modellanzeige", () => {
+  test.use({ hasTouch: true });
+  test("Knopf und Menü ≥ 44 px bei 390 und 1440 px", async ({ page }) => {
+    const zeilen: string[] = [
+      "Touchziele Fußleiste Modell (Playwright boundingBox, Chromium, pointer: coarse)",
+      "Breite | Modul | Ziel | B×H",
+    ];
+    const zuKlein: string[] = [];
+    const miss = async (
+      breite: number,
+      modul: string,
+      ziel: string,
+      el: import("@playwright/test").Locator,
+    ) => {
+      const b = (await el.boundingBox())!;
+      zeilen.push(
+        `${breite} | ${modul} | ${ziel} | ${Math.round(b.width)}×${Math.round(b.height)}`,
+      );
+      if (b.width < 43.5 || b.height < 43.5)
+        zuKlein.push(`${breite} ${modul} ${ziel}`);
+    };
+    for (const breite of [390, 1440]) {
+      await open(page, breite, "light");
+      const knopf = page.getByTestId("fuss-modell-read_aloud");
+      await knopf.scrollIntoViewIfNeeded();
+      await miss(breite, "Vorlesen", "Modellknopf", knopf);
+      await knopf.click();
+      const menue = page.getByTestId("fuss-modell-menue-read_aloud");
+      await miss(
+        breite,
+        "Vorlesen",
+        "Suchfeld",
+        menue.locator("[data-llm-search]"),
+      );
+      for (const item of await menue.locator('[role^="menuitem"]').all())
+        await miss(
+          breite,
+          "Vorlesen",
+          `Menü: ${((await item.innerText()).split("\n")[0] ?? "").trim()}`,
+          item,
+        );
+      await page.keyboard.press("Escape");
+      for (const name of ["Bibliothek", "Aufnahmen"]) {
+        await zu(page, breite, name);
+        const k = bar(page)
+          .getByTestId("fuss-modelle")
+          .locator("[data-llm-selector], [data-testid^='fuss-modell-']")
+          .first();
+        await k.scrollIntoViewIfNeeded();
+        await miss(breite, name, "Modellknopf", k);
+      }
+    }
+    zeilen.push(`Ergebnis: ${zuKlein.length} Ziele unter 44 px`);
+    const fs = await import("node:fs");
+    fs.mkdirSync(GLEICH, { recursive: true });
+    fs.writeFileSync(`${GLEICH}/touchziele.txt`, zeilen.join("\n") + "\n");
+    expect(zuKlein).toEqual([]);
+  });
+});

@@ -654,7 +654,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
                 autoFocus
                 placeholder={t("llmSelector.search")}
                 aria-label={t("llmSelector.search")}
-                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm [@media(pointer:coarse)]:min-h-[44px]"
                 data-llm-search
               />
             </div>
