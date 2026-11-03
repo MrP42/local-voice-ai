@@ -2091,22 +2091,29 @@ test("Papierkorb: Liste, Wiederherstellen und einzeln endgültig löschen", asyn
   const dialog = page.getByTestId("library-trash-dialog");
   await expect(page.getByRole("dialog")).toContainText("Papierkorb: 2 Einträge");
   await expect(page.getByTestId("library-trash-item")).toHaveCount(2);
+  // Offener Papierkorb: kein Hinweis unten rechts darüber.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   await page.screenshot({ path: shot("papierkorb-1440.png") });
   await page.getByTestId("library-trash-item").filter({ hasText: "Effi Briest" })
     .getByTestId("library-trash-restore").click();
   await expect(page.getByTestId("library-card")).toHaveCount(2);
   expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_1"] }]);
   await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  // Ergebnis steht im Dialog, nicht als Hinweis darüber.
+  await expect(page.getByTestId("library-trash-notice")).toHaveText("„Effi Briest“ wiederhergestellt.");
   await page.getByTestId("library-trash-delete").click();
   await expect(dialog).toContainText("lässt sich nicht rückgängig machen");
   await page.mouse.move(0, 0);
   await page.waitForTimeout(400);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   await page.screenshot({ path: shot("papierkorb-loeschen-1440.png") });
   await page.getByTestId("library-trash-delete-confirm").click();
   await expect
     .poll(async () => await calls(page, "library_purge"))
     .toContainEqual({ ids: ["book_2"] });
   await expect(page.getByTestId("library-trash-none")).toBeVisible();
+  await expect(page.getByTestId("library-trash-notice")).toHaveText("„Der Schimmelreiter“ endgültig gelöscht.");
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });
 
 test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async ({ page }) => {
@@ -2279,6 +2286,7 @@ test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele
   await page.getByTestId("library-remove-confirm").click();
   await page.getByTestId("library-trash-open").click();
   await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   belege.push(
     ...(await measure("Papierkorb-Schließen", ".lv-dialog.library-dialog-touch .fui-DialogTitle__action button", true)),
     ...(await measure("Papierkorb-Aktion", ".library-trash__actions button")),
@@ -2323,5 +2331,6 @@ test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", asyn
   await page.getByTestId("library-remove-confirm").click();
   await page.getByTestId("library-trash-open").click();
   await expect(page.getByTestId("library-trash-item")).toHaveCount(3);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
   await page.screenshot({ path: shot("papierkorb-1440-dunkel.png") });
 });

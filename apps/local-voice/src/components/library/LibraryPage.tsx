@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
@@ -208,6 +208,16 @@ export const LibraryPage: React.FC = () => {
   /** Papierkorb: dauerhaft erreichbar, 30 Tage wiederherstellbar. */
   const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [trashOpen, setTrashOpen] = useState(false);
+  /** Meldung im offenen Papierkorb statt eines Hinweises darüber (lva#221). */
+  const [trashNotice, setTrashNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const trashOpenRef = useRef(false);
+  trashOpenRef.current = trashOpen;
+  /** Hinweis unten rechts, solange der Papierkorb zu ist; sonst Meldung im Dialog. */
+  const notify = (text: string, error = false) => {
+    if (trashOpenRef.current) setTrashNotice({ text, error });
+    else if (error) toast.error(text);
+    else toast(text);
+  };
   const [trashBusy, setTrashBusy] = useState(false);
   const refreshTrash = async () => setTrash(await listTrash());
   useEffect(() => {
@@ -328,14 +338,14 @@ export const LibraryPage: React.FC = () => {
     setTrashBusy(true);
     try {
       await restoreBooks(list);
-      toast(
+      notify(
         t("library.remove.restored", {
           count: list.length,
           title: list[0]?.title ?? "",
         }),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      notify(e instanceof Error ? e.message : String(e), true);
     } finally {
       setTrashBusy(false);
       await Promise.all([reload(), refreshTrash()]);
@@ -345,14 +355,14 @@ export const LibraryPage: React.FC = () => {
     setTrashBusy(true);
     try {
       await purgeBooks(list);
-      toast(
+      notify(
         t("library.remove.deleted", {
           count: list.length,
           title: list[0]?.title ?? "",
         }),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
+      notify(e instanceof Error ? e.message : String(e), true);
     } finally {
       setTrashBusy(false);
       await refreshTrash();
@@ -745,6 +755,7 @@ export const LibraryPage: React.FC = () => {
                   onClick={() => {
                     // Der Papierkorb ersetzt den Rückgängig-Hinweis; keine Überlagerung.
                     toast.dismiss();
+                    setTrashNotice(null);
                     setTrashOpen(true);
                   }}
                   data-testid="library-trash-open"
@@ -1052,9 +1063,13 @@ export const LibraryPage: React.FC = () => {
           open={trashOpen}
           entries={trash}
           busy={trashBusy}
+          notice={trashNotice}
           onRestore={(list) => void restoreFromTrash(list.map((e) => e.book))}
           onPurge={(list) => void purgeFromTrash(list.map((e) => e.book))}
-          onClose={() => setTrashOpen(false)}
+          onClose={() => {
+            setTrashOpen(false);
+            setTrashNotice(null);
+          }}
         />
         <CleanTitlesDialog
           books={cleaning}

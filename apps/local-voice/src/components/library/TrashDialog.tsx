@@ -16,10 +16,12 @@ export const TrashDialog: React.FC<{
   open: boolean;
   entries: TrashEntry[];
   busy: boolean;
+  /** Ergebnis der letzten Aktion, im Dialog statt als Hinweis darüber. */
+  notice?: { text: string; error?: boolean } | null;
   onRestore(entries: TrashEntry[]): void;
   onPurge(entries: TrashEntry[]): void;
   onClose(): void;
-}> = ({ open, entries, busy, onRestore, onPurge, onClose }) => {
+}> = ({ open, entries, busy, notice, onRestore, onPurge, onClose }) => {
   const { t, i18n } = useTranslation();
   /** Kennung des Eintrags, dessen Löschen bestätigt wird; `*` = alle. */
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -89,6 +91,17 @@ export const TrashDialog: React.FC<{
           {t("library.trash.hint", {
             size: formatBytes(total, i18n.language),
           })}
+        </p>
+        <p
+          className={
+            notice?.error ? "library-trash__warn" : "library-trash__notice"
+          }
+          role="status"
+          aria-live="polite"
+          data-testid="library-trash-notice"
+          hidden={!notice}
+        >
+          {notice?.text}
         </p>
         {confirm === "*" && (
           <p className="library-trash__warn" role="alert">
