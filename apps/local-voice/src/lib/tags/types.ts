@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 
 /**
- * Die sieben Schubladen der Tag-Palette. Reihenfolge ist auch die
+ * Die acht Schubladen der Tag-Palette. Reihenfolge ist auch die
  * Reiterreihenfolge in der UI (nach Favoriten und Zuletzt) — Emotionen
  * zuerst, weil sie den Großteil der Registry ausmachen und am häufigsten
  * gebraucht werden, Spezial zuletzt als Sammelbecken fürs Ungewöhnliche.
@@ -13,6 +13,7 @@ export type TagCategoryId =
   | "dynamics"
   | "effects"
   | "pauses"
+  | "pace"
   | "special";
 
 /**

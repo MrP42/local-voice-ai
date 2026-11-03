@@ -8,7 +8,13 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { commands, type AutoTagOptions } from "@/bindings";
 import { AutoTagDialog } from "./AutoTagDialog";
-import { TAG_REGISTRY, resolveTag, tagInsertFor } from "@/lib/tags/registry";
+import {
+  TAG_REGISTRY,
+  resolveTag,
+  tagInsertFor,
+  worksWithoutStyleTags,
+} from "@/lib/tags/registry";
+import { useEngineCaps } from "../useEngineCaps";
 import { useTagLanguage } from "./tagLanguage";
 import type { ChipEditorSuggestion } from "../editor/TtsChipEditor";
 
@@ -202,6 +208,7 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
   hideTrigger = false,
   onLoadingChange,
 }) => {
+  const engineCaps = useEngineCaps();
   const { t } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
   const tagLang = useTagLanguage();
@@ -272,7 +279,15 @@ export const AutoTagBar: React.FC<AutoTagBarProps> = ({
     setLoading(true);
     setProgress(null);
     const textAtStart = text;
-    const allowedTags = TAG_REGISTRY.map((tag) => tag.insert);
+    // Ohne Stil-Tags (Phonon) nur, was wirkt: Pausen und bei `pace_tags` Tempo.
+    // Das Backend schreibt dann den Vortrags-Prompt für Satzbetonung statt Emotionen.
+    const allowedTags = (
+      engineCaps.styleTags
+        ? TAG_REGISTRY
+        : TAG_REGISTRY.filter((tag) =>
+            worksWithoutStyleTags(tag, engineCaps.paceTags),
+          )
+    ).map((tag) => tag.insert);
 
     // Abschnittsweise Vorschlaege: das Backend meldet je fertigem Abschnitt
     // ein Event mit dessen Insertions — die erscheinen SOFORT als Vorschlaege

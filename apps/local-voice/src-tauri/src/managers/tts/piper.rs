@@ -31,6 +31,7 @@ use super::protocol;
 /// Stil-Tags — dafür CPU-only und in unter einer Sekunde beim ersten Ton.
 pub const PIPER_CAPS: EngineCaps = EngineCaps {
     style_tags: false,
+    pace_tags: false,
     cloning: false,
     voice_switching: false,
     streaming: false,

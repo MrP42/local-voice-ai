@@ -209,7 +209,7 @@ export const PagesSidebar: React.FC<{
         <span className="text-xs font-semibold text-text/60">
           {t("tts.pages.title")}
         </span>
-        <div className="flex items-center">
+        <div className="lv-touch-icons flex items-center">
           <IconButton
             onClick={create}
             label={t("tts.pages.create")}
@@ -603,7 +603,7 @@ export const FilesSidebar: React.FC<{
         <span className="text-xs font-semibold text-text/60">
           {t("tts.files.title")}
         </span>
-        <div className="flex items-center">
+        <div className="lv-touch-icons flex items-center">
           {(
             <>
               <IconButton

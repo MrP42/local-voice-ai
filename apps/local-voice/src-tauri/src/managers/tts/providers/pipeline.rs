@@ -102,6 +102,7 @@ pub fn next_request_id(prefix: &str) -> String {
 pub fn engine_caps(desc: &ProviderDescriptor) -> EngineCaps {
     EngineCaps {
         style_tags: desc.caps.style_tags,
+        pace_tags: desc.caps.pace_tags,
         cloning: desc.caps.cloning,
         voice_switching: desc.caps.voice_switching,
         streaming: desc.caps.streaming == StreamingMode::Chunk,
@@ -113,6 +114,7 @@ pub fn engine_caps(desc: &ProviderDescriptor) -> EngineCaps {
 /// Engine-Fähigkeiten, solange der Anbieter unbekannt ist: nichts versprechen.
 const UNKNOWN_CAPS: EngineCaps = EngineCaps {
     style_tags: false,
+    pace_tags: false,
     cloning: false,
     voice_switching: false,
     streaming: false,

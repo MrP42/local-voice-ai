@@ -10115,7 +10115,13 @@ platforms: string[]; style_tags: boolean;
  * Skript (`<Name>`): die Satz-Pipeline wählt je Satz die Stimme seines Sprechers.
  * Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
  */
-voice_switching?: boolean }
+voice_switching?: boolean; 
+/**
+ * Setzt Tempo-Tags (`[slower]`, `[faster]`) je Satz um, auch ohne `style_tags`.
+ * Phonon: `--condition duration_delta` (siehe [`crate::managers::tts::protocol::take_pace`]).
+ * Ohne diese Fähigkeit fallen die Tags wie andere Stil-Tags weg.
+ */
+pace_tags?: boolean }
 /**
  * Statische Beschreibung eines Anbieters.
  */

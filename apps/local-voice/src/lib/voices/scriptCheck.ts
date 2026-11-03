@@ -20,7 +20,11 @@
  * dieselben wie in den Chip-Providern: `scanMarkerCandidates` und
  * `scanTagMatches` -- was dort kein Fund ist, ist hier kein Befund.
  */
-import { TAG_REGISTRY, resolveTag } from "@/lib/tags/registry";
+import {
+  TAG_REGISTRY,
+  resolveTag,
+  worksWithoutStyleTags,
+} from "@/lib/tags/registry";
 import { similarTags } from "@/lib/tags/similarity";
 import type { TagDef } from "@/lib/tags/types";
 import { scanTagMatches } from "@/components/settings/tts/tags/tagProvider";
@@ -61,10 +65,12 @@ export interface ScriptFinding {
 export type ScriptEngine = "fish" | "piper" | "provider";
 
 /** Tags, die die Engine wirklich versteht (oder die App selbst umsetzt). */
-export function knownTagsFor(engine: ScriptEngine): TagDef[] {
+export function knownTagsFor(engine: ScriptEngine, paceTags = false): TagDef[] {
   return engine === "fish"
     ? TAG_REGISTRY
-    : TAG_REGISTRY.filter((tag) => tag.category === "pauses");
+    : TAG_REGISTRY.filter((tag) =>
+        worksWithoutStyleTags(tag, engine === "provider" && paceTags),
+      );
 }
 
 /**

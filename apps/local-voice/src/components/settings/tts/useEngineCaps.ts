@@ -26,6 +26,8 @@ export interface EngineCaps {
   voiceSwitching: boolean;
   /** Setzt Stil-Tags `[...]` um (sonst nur Pausen). */
   styleTags: boolean;
+  /** Setzt Tempo-Tags `[slower]`/`[faster]` um, auch ohne Stil-Tags (Phonon). */
+  paceTags: boolean;
   /** Fuer die Skript-Pruefung (`checkScript`). */
   scriptEngine: ScriptEngine;
 }
@@ -53,6 +55,7 @@ export function useEngineCaps(): EngineCaps {
       providerLabel: info?.label ?? providerId,
       voiceSwitching: info?.voiceSwitching ?? false,
       styleTags,
+      paceTags: info?.paceTags ?? false,
       scriptEngine: styleTags ? "fish" : "provider",
     };
   }
@@ -63,6 +66,7 @@ export function useEngineCaps(): EngineCaps {
       providerLabel: null,
       voiceSwitching: false,
       styleTags: false,
+      paceTags: false,
       scriptEngine: "piper",
     };
   }
@@ -72,6 +76,8 @@ export function useEngineCaps(): EngineCaps {
     providerLabel: null,
     voiceSwitching: true,
     styleTags: true,
+    // Fish bekommt Tempo-Tags als freie Beschreibung (Stil-Tags).
+    paceTags: false,
     scriptEngine: "fish",
   };
 }

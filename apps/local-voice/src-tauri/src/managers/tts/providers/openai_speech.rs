@@ -1125,6 +1125,7 @@ impl TtsProvider for OpenAiSpeechProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: false,
+                pace_tags: false,
                 // `opts.voice` gilt je Anfrage (`voice_for`); die Liste kommt vom Server.
                 voice_switching: true,
             },

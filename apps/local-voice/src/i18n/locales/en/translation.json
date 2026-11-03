@@ -1160,6 +1160,7 @@
         "dynamics": "Dynamics",
         "effects": "Effects",
         "pauses": "Pauses",
+        "pace": "Pace",
         "special": "Special"
       },
       "customPlaceholder": "Custom tag…",
@@ -1178,7 +1179,9 @@
       "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works.",
       "piperIgnores": "“{{tag}}” — Piper does not support tags and leaves it out (only pauses work).",
       "engineIgnores": "“{{tag}}” — {{engine}} does not support style tags and leaves it out (only pauses work).",
-      "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work."
+      "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work.",
+      "legendPausesAndPace": "{{engine}} does not support style tags. Pauses and pace marks are supported.",
+      "engineIgnoresPace": "“{{tag}}” — {{engine}} does not support style tags and leaves it out (only pauses and pace work)."
     },
     "speakers": {
       "menuChange": "Change speaker “{{name}}”",
@@ -1404,9 +1407,11 @@
       "short": "Writing rules",
       "title": "Writing rules: speakers & tags",
       "tagsIntro": "Emotion and effect tags go in square brackets exactly where they should be heard:",
+      "pausesAndPace": "{{engine}} does not support emotion tags. Square brackets hold only pauses and the pace of a sentence ([slower], [faster] at the start of a sentence):",
       "pausesOnly": "{{engine}} does not support emotion tags. Only pauses go in square brackets, exactly where they should be heard:",
       "example1": "[whisper] Come closer…",
       "example2": "He opened the door. [short pause] Nothing.",
+      "examplePace": "[slower] Then the house fell completely silent.",
       "example3": "[laughing] You can't be serious!"
     },
     "serverStartTitle": "Start the Fish Speech server?",

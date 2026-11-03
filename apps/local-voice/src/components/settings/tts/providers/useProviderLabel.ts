@@ -12,6 +12,8 @@ export interface ProviderInfo {
   voiceSwitching: boolean;
   /** Versteht Stil-Tags `[...]` (`style_tags`); sonst wirken nur Pausen. */
   styleTags: boolean;
+  /** Setzt Tempo-Tags `[slower]`/`[faster]` je Satz um (`pace_tags`, Phonon). */
+  paceTags: boolean;
 }
 
 type ProviderList = Awaited<ReturnType<typeof commands.ttsProvidersList>>;
@@ -49,6 +51,7 @@ export function useProviderInfo(id: string | null): ProviderInfo | null {
             label: found.descriptor.label,
             voiceSwitching: found.descriptor.caps.voice_switching === true,
             styleTags: found.descriptor.caps.style_tags === true,
+            paceTags: found.descriptor.caps.pace_tags === true,
           });
         }
       })

@@ -10,7 +10,7 @@
 //! der Tauri-Command (`commands::tts::tts_auto_tag`), nicht dieses Modul.
 
 use crate::llm_client;
-use crate::managers::tts::protocol::tag_spans;
+use crate::managers::tts::protocol::{self, tag_spans};
 use crate::settings::{AppSettings, PostProcessProvider};
 
 // ---------------------------------------------------------------------------
@@ -369,12 +369,64 @@ pub fn split_chunks(text: &str, max_chars: usize) -> Vec<Chunk<'_>> {
 // System-Prompt
 // ---------------------------------------------------------------------------
 
+/// Erlaubt die Oberfläche nur Pausen und Tempo? So ruft sie für eine Stimme ohne
+/// Stil-Tags (Phonon): Emotions-Tags fielen beim Vorlesen weg.
+fn delivery_only(allowed_tags: &[String]) -> bool {
+    !allowed_tags.is_empty()
+        && allowed_tags
+            .iter()
+            .all(|t| protocol::is_pause_tag(t) || protocol::pace_delta(t).is_some())
+}
+
+/// Vortrags-Prompt für Stimmen ohne Stil-Tags: Betonung entsteht dort aus
+/// Satzmelodie, Pausen und Tempo. Gleiche Nur-Einfüge-Regel wie
+/// [`auto_tag_system_prompt`]; Satzzeichen ändern ist hier ausdrücklich verboten
+/// (die Prüfung lehnt es ohnehin ab).
+fn delivery_system_prompt(allowed_tags: &[String], options: &AutoTagOptions) -> String {
+    let tags_list = allowed_tags.join(", ");
+    let has_pace = allowed_tags
+        .iter()
+        .any(|t| protocol::pace_delta(t).is_some());
+    let pace_rule = if has_pace {
+        " [slower] steht am SATZANFANG vor wichtigen, ernsten, traurigen oder spannenden \
+         Sätzen und Pointen; [faster] am Satzanfang vor Einschüben, Aufzählungen und \
+         hektischen Szenen. Höchstens jeder vierte Satz bekommt ein Tempo-Tag."
+    } else {
+        ""
+    };
+    let density = match options.coverage.as_str() {
+        "sparse" => "Sehr sparsam: nur Absatz- und Szenenwechsel und die stärksten Momente.",
+        "rich" => "Großzügiger: auch Sinnabschnitte innerhalb von Absätzen.",
+        _ => "Ausgewogen: weniger ist mehr.",
+    };
+    let style = options.style_hint.trim();
+    let style_line = if style.is_empty() {
+        String::new()
+    } else {
+        format!(" Gewünschter Stil: {style}.")
+    };
+    format!(
+        "Du bist Sprechregisseur für eine Vorlesestimme, die KEINE Emotions-Tags versteht. \
+         Betonung entsteht nur durch Pausen und Tempo. Erlaubte Tags, AUSSCHLIESSLICH diese: \
+         {tags_list}.{style_line} Pausen: [short pause] vor einer Pointe oder nach einer \
+         rhetorischen Frage, [pause] zwischen Sinnabschnitten, [long pause] oder [break] bei \
+         Szenen- und Zeitwechseln.{pace_rule} {density} Regeln: (1) AUSSCHLIESSLICH Tags \
+         einfügen — kein Wort, kein Satzzeichen, keinen Zeilenumbruch ändern, nichts löschen. \
+         (2) Pro Satz höchstens eine Pause und ein Tempo-Tag. (3) Zeilen der Form Name: und Marker in Spitzklammern \
+         sind Sprecherwechsel — unverändert lassen. (4) Antworte NUR mit dem Text, ohne \
+         Einleitung, ohne Codeblock."
+    )
+}
+
 /// System-Prompt: „Regisseur für Sprachsynthese", Nur-Einfüge-Regel VORAB in
 /// Worten — `validate_tag_only_edit` prüft sie danach hart nach, der Prompt
 /// ist die erste (nicht die einzige) Verteidigungslinie. Deutsch/Englisch
 /// gemischt, damit sowohl deutsch- als auch englisch-trainierte Modelle die
 /// Regeln zuverlässig befolgen.
 pub fn auto_tag_system_prompt(allowed_tags: &[String], options: &AutoTagOptions) -> String {
+    if delivery_only(allowed_tags) {
+        return delivery_system_prompt(allowed_tags, options);
+    }
     // Bevorzugte Tags stehen vorn und werden als "nur diese" formuliert;
     // ohne Auswahl gilt die ganze erlaubte Liste.
     let preferred: Vec<&String> = options
@@ -645,6 +697,32 @@ mod tests {
     use tokio::net::TcpListener;
 
     // ---- validate_tag_only_edit: akzeptiert reine Tag-Einfügungen --------
+
+    #[test]
+    fn ohne_stil_tags_kommt_der_vortrags_prompt() {
+        let allowed: Vec<String> = [
+            "short pause",
+            "pause",
+            "long pause",
+            "break",
+            "slower",
+            "faster",
+        ]
+        .map(String::from)
+        .to_vec();
+        let p = auto_tag_system_prompt(&allowed, &AutoTagOptions::default());
+        assert!(p.contains("KEINE Emotions-Tags"));
+        assert!(p.contains("[slower] steht am SATZANFANG"));
+        assert!(p.contains("AUSSCHLIESSLICH Tags"));
+        // Nur Pausen: keine Tempo-Regel.
+        let pausen: Vec<String> = ["pause", "short pause"].map(String::from).to_vec();
+        assert!(!auto_tag_system_prompt(&pausen, &AutoTagOptions::default()).contains("[slower]"));
+        // Sobald ein Stil-Tag erlaubt ist, gilt der bisherige Regie-Prompt.
+        let mit_stil: Vec<String> = ["pause", "whisper"].map(String::from).to_vec();
+        assert!(
+            auto_tag_system_prompt(&mit_stil, &AutoTagOptions::default()).contains("Regisseur")
+        );
+    }
 
     #[test]
     fn prompt_reflects_preferred_tags_coverage_and_style() {

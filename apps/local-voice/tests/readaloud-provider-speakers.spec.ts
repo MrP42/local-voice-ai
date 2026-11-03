@@ -20,6 +20,10 @@ type Cfg = {
   twoPages?: boolean;
   /** Seite 2 enthält einen Sprecher-Marker (<Nele>). */
   markers?: boolean;
+  /** Phonon meldet `pace_tags` (Tempo je Satz). Vorgabe: nein (ältere Fassung). */
+  pace?: boolean;
+  /** Farbschema (Vorgabe: hell). */
+  theme?: "light" | "dark";
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -36,7 +40,7 @@ async function setup(page: Page, cfg: Cfg) {
     const settings: Record<string, unknown> = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      theme: cfg.theme ?? "light",
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -109,7 +113,11 @@ async function setup(page: Page, cfg: Cfg) {
           },
         ]
       : [];
-    const caps = (styleTags: boolean, voiceSwitching: boolean) => ({
+    const caps = (
+      styleTags: boolean,
+      voiceSwitching: boolean,
+      paceTags = false,
+    ) => ({
       languages: ["de"],
       streaming: "sentence",
       formats: ["wav"],
@@ -119,6 +127,7 @@ async function setup(page: Page, cfg: Cfg) {
       platforms: ["windows-x64"],
       style_tags: styleTags,
       voice_switching: voiceSwitching,
+      pace_tags: paceTags,
     });
     const entry = (id: string, label: string, c: unknown) => ({
       descriptor: { id, label, tier: "experimental", opt_in: true, caps: c },
@@ -175,7 +184,11 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "tts_providers_list")
             return [
               entry("fish", "Fish Speech", caps(true, true)),
-              entry("phonon", "Phonon", caps(false, switching)),
+              entry(
+                "phonon",
+                "Phonon",
+                caps(false, switching, cfg.pace === true),
+              ),
             ];
           if (cmd === "tts_provider_voice_options") return options;
           // Hoerproben: Standardstimme und Nele fertig, Anton entsteht noch.
@@ -435,14 +448,16 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
   await expect(
     page.getByRole("menuitem", { name: /Pause/ }).first(),
   ).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(
+    0,
+  );
   await page.keyboard.press("Escape");
 
   // Die Schreibregeln erklären nur Pausen, keine Emotions-Tags.
   const rules = await writingRules(page);
   await expect(rules).toContainText("Phonon setzt keine Emotions-Tags um");
   await expect(rules).not.toContainText("[whisper]");
-  await expect(rules).toContainText("[short pause]");
+  await expect(rules).toContainText("[Kurze Pause]");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("tts-action-menu").click();
@@ -452,6 +467,37 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
     "title",
     /Phonon setzt keine Stil-Tags um/,
   );
+});
+
+test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", pace: true });
+  await gotoReadAloud(page);
+  await editorOf(page).fill("Ein Satz.");
+  await openTagMenu(page);
+  await expect(page.getByTestId("tag-menu-pauses-only")).toContainText(
+    "Unterstützt werden Pausen und Tempoangaben",
+  );
+  // Pausen und Tempo sind da, Gefühle weiterhin nicht.
+  await expect(
+    page.getByRole("menuitem", { name: /Pause/ }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /Langsamer/ }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Flüsternd/ })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Escape");
+
+  const rules = await writingRules(page);
+  await expect(rules).toContainText("[Langsamer]");
+  await expect(rules).not.toContainText("[whisper]");
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByTestId("autotag-open")).toBeEnabled();
 });
 
 test("Phonon ohne Stimmwechsel: keine Sprecher im Skript", async ({ page }) => {
@@ -526,6 +572,93 @@ test("Bild: Vorlesen mit Phonon-Sprechern (nur mit SCREENS_DIR)", async ({
     .evaluate((el) => (el as HTMLButtonElement).click());
   await expect(page.getByRole("menuitem", { name: /Nele/ })).toBeVisible();
   await page.screenshot({ path: `${dir}/phonon-sprecher-menue.png` });
+});
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Bild: Tempo-Tags bei Phonon ${width} ${theme} (nur mit SCREENS_DIR)`, async ({
+      page,
+    }) => {
+      const dir = process.env.SCREENS_DIR;
+      test.skip(!dir, "nur mit SCREENS_DIR");
+      await setup(page, { engine: "provider:phonon", pace: true, theme });
+      // Erst bei voller Breite zum Vorlesen (unter 640 px liegt die Navigation im Menü).
+      await gotoReadAloud(page);
+      await page.setViewportSize({ width, height: width > 600 ? 900 : 844 });
+      const editor = editorOf(page);
+      await editor.fill(
+        "[Langsamer] Er öffnete langsam die Tür. [Pause] Dahinter war nichts. [Kurze Pause] Gar nichts.\n[Schneller] Dann hörte er ein Geräusch.",
+      );
+      await page.waitForTimeout(400);
+      const name = (n: string) => `${dir}/${n}-${width}-${theme}.png`;
+      await page.screenshot({ path: name("1-text") });
+      // Echter Rechtsklick, damit das Menü am Mauszeiger steht (nicht außerhalb des Bilds).
+      await editor.click({ button: "right", position: { x: 60, y: 200 } });
+      await page.getByRole("menuitem", { name: "Tag einfügen" }).click();
+      const slower = page.getByRole("menuitem", { name: /Langsamer/ }).first();
+      await expect(slower).toBeVisible();
+      await expect
+        .poll(async () => (await slower.boundingBox())?.x ?? -1)
+        .toBeGreaterThanOrEqual(0);
+      // In der schmalen Ansicht scrollt die Tagliste; Tempo soll im Bild sein.
+      await page
+        .getByRole("menuitem", { name: /Schneller/ })
+        .first()
+        .scrollIntoViewIfNeeded();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: name("2-tag-menue") });
+      await page.keyboard.press("Escape");
+      await writingRules(page);
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: name("3-schreibregeln") });
+      await page.keyboard.press("Escape");
+      await page.getByTestId("tts-action-menu").click();
+      await expect(page.getByTestId("autotag-open")).toBeEnabled();
+      await page.screenshot({ path: name("4-menue-auto-tagging") });
+    });
+  }
+}
+
+test("Touchziele bei 390 px: Menüzeilen und Leistenknöpfe sind mindestens 44 px hoch", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", pace: true });
+  await gotoReadAloud(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const editor = editorOf(page);
+  await editor.fill("Ein Satz. Noch ein Satz.");
+  const tooSmall = async (items: import("@playwright/test").Locator) => {
+    const small: string[] = [];
+    for (const item of await items.all()) {
+      if (!(await item.isVisible())) continue;
+      const box = await item.boundingBox();
+      if (box && (box.height < 44 || box.width < 44))
+        small.push(
+          `${(await item.getAttribute("aria-label")) ?? (await item.innerText())}: ${box.width}x${box.height}`,
+        );
+    }
+    return small;
+  };
+
+  await editor.click({ button: "right", position: { x: 60, y: 200 } });
+  await page.getByRole("menuitem", { name: "Tag einfügen" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: /Langsamer/ }).first(),
+  ).toBeVisible();
+  const tagItems = page.getByRole("menuitem").filter({ visible: true });
+  expect(await tagItems.count()).toBeGreaterThan(5);
+  expect(await tooSmall(tagItems)).toEqual([]);
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByTestId("autotag-open")).toBeVisible();
+  expect(await tooSmall(page.getByRole("menuitem"))).toEqual([]);
+  await page.keyboard.press("Escape");
+
+  // Symbolknöpfe in den Köpfen von „Seiten“ und „Dateien“.
+  const heads = page.locator(".lv-touch-icons button:visible");
+  expect(await heads.count()).toBeGreaterThanOrEqual(3);
+  expect(await tooSmall(heads)).toEqual([]);
 });
 
 test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu waehlen", async ({
@@ -779,7 +912,9 @@ test("Sprecher auf allen Seiten ersetzen: „Ersetze“ bietet nur vorkommende S
   await expect(from.locator("option")).toHaveText(["Anton", "Nele"]);
   await expect(from).toHaveValue(/./);
   expect(
-    await from.evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.text),
+    await from.evaluate(
+      (el) => (el as HTMLSelectElement).selectedOptions[0]?.text,
+    ),
   ).toBe("Anton");
   // „durch“ bietet weiter alle Stimmen an.
   await expect(

@@ -49,6 +49,8 @@ interface ScriptCheckPanelProps {
   findings: ScriptFinding[];
   speakers: SpeakerRef[];
   engine: ScriptEngine;
+  /** Engine setzt Tempo-Tags um (Phonon), siehe `knownTagsFor`. */
+  paceTags?: boolean;
   uiLang: string;
   actions: ScriptCheckActions;
   onClose?: () => void;
@@ -471,12 +473,13 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
   findings,
   speakers,
   engine,
+  paceTags = false,
   uiLang,
   actions,
   onClose,
 }) => {
   const { t } = useTranslation();
-  const tags = knownTagsFor(engine);
+  const tags = knownTagsFor(engine, paceTags);
   const groups = groupFindings(findings);
   const [index, setIndex] = useState(0);
   useEffect(() => {
