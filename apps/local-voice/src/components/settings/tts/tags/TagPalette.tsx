@@ -482,7 +482,12 @@ export const TagPalette: React.FC<{
             data-pauses-only={pausesOnly || undefined}
           >
             {pausesOnly
-              ? t("tts.tags.legendPausesOnly", { engine: engineLabel ?? "" })
+              ? t(
+                  paceTags
+                    ? "tts.tags.legendPausesAndPace"
+                    : "tts.tags.legendPausesOnly",
+                  { engine: engineLabel ?? "" },
+                )
               : t("tts.tags.legend", {
                   documented: TAG_REGISTRY.filter(
                     (tag) => tagClass(tag) === "documented",

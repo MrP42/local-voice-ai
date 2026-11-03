@@ -1063,7 +1063,9 @@
       "extended": "{{tag}} — extended tag, not in the official Fish Audio list; usually works.",
       "piperIgnores": "“{{tag}}” — Piper does not support tags and leaves it out (only pauses work).",
       "engineIgnores": "“{{tag}}” — {{engine}} does not support style tags and leaves it out (only pauses work).",
-      "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work."
+      "legendPausesOnly": "{{engine}} does not support style tags. Only pauses are offered here – the app creates them itself, so they always work.",
+      "legendPausesAndPace": "{{engine}} does not support style tags. Only pauses and the pace of a sentence are offered here – both always work.",
+      "engineIgnoresPace": "“{{tag}}” — {{engine}} does not support style tags and leaves it out (only pauses and pace work)."
     },
     "speakers": {
       "menuChange": "Change speaker “{{name}}”",

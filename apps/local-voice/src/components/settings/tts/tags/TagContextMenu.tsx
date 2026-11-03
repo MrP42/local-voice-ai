@@ -315,7 +315,12 @@ export const TagContextMenu: React.FC<TagContextMenuProps> = ({
                 className="px-2 pb-1 text-xs text-text/60"
                 data-testid="tag-menu-pauses-only"
               >
-                {t("tts.tags.legendPausesOnly", { engine: engineLabel ?? "" })}
+                {t(
+                  paceTags
+                    ? "tts.tags.legendPausesAndPace"
+                    : "tts.tags.legendPausesOnly",
+                  { engine: engineLabel ?? "" },
+                )}
               </p>
             )}
             <Input

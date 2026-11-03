@@ -306,10 +306,15 @@ export function useTagProvider(): ChipProvider {
               ? `${localizedLabel(def, uiLang)} — ${
                   engine === "piper"
                     ? t("tts.tags.piperIgnores", { tag: inner })
-                    : t("tts.tags.engineIgnores", {
-                        tag: inner,
-                        engine: engineLabel,
-                      })
+                    : t(
+                        paceTags
+                          ? "tts.tags.engineIgnoresPace"
+                          : "tts.tags.engineIgnores",
+                        {
+                          tag: inner,
+                          engine: engineLabel,
+                        },
+                      )
                 }`
               : localizedLabel(def, uiLang)
             : t("tts.tags.freeText", { tag: inner }),

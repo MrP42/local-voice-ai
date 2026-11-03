@@ -22,6 +22,8 @@ type Cfg = {
   markers?: boolean;
   /** Phonon meldet `pace_tags` (Tempo je Satz). Vorgabe: nein (ältere Fassung). */
   pace?: boolean;
+  /** Farbschema (Vorgabe: hell). */
+  theme?: "light" | "dark";
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -38,7 +40,7 @@ async function setup(page: Page, cfg: Cfg) {
     const settings: Record<string, unknown> = {
       onboarding_completed: true,
       app_language: "de",
-      theme: "light",
+      theme: cfg.theme ?? "light",
       show_whats_new_on_update: false,
       debug_mode: false,
       selected_model: "",
@@ -474,6 +476,9 @@ test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async (
   await gotoReadAloud(page);
   await editorOf(page).fill("Ein Satz.");
   await openTagMenu(page);
+  await expect(page.getByTestId("tag-menu-pauses-only")).toContainText(
+    "nur Pausen und das Tempo",
+  );
   // Pausen und Tempo sind da, Gefühle weiterhin nicht.
   await expect(
     page.getByRole("menuitem", { name: /Pause/ }).first(),
@@ -568,6 +573,46 @@ test("Bild: Vorlesen mit Phonon-Sprechern (nur mit SCREENS_DIR)", async ({
   await expect(page.getByRole("menuitem", { name: /Nele/ })).toBeVisible();
   await page.screenshot({ path: `${dir}/phonon-sprecher-menue.png` });
 });
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Bild: Tempo-Tags bei Phonon ${width} ${theme} (nur mit SCREENS_DIR)`, async ({
+      page,
+    }) => {
+      const dir = process.env.SCREENS_DIR;
+      test.skip(!dir, "nur mit SCREENS_DIR");
+      await setup(page, { engine: "provider:phonon", pace: true, theme });
+      // Erst bei voller Breite zum Vorlesen (unter 640 px liegt die Navigation im Menü).
+      await gotoReadAloud(page);
+      await page.setViewportSize({ width, height: width > 600 ? 900 : 844 });
+      const editor = editorOf(page);
+      await editor.fill(
+        "Er öffnete langsam die Tür. [pause] [slower] Dahinter war nichts. [short pause] Gar nichts. [long pause] [faster] Dann hörte er ein Geräusch.",
+      );
+      await page.waitForTimeout(400);
+      const name = (n: string) => `${dir}/${n}-${width}-${theme}.png`;
+      await page.screenshot({ path: name("1-text") });
+      // Echter Rechtsklick, damit das Menü am Mauszeiger steht (nicht außerhalb des Bilds).
+      await editor.click({ button: "right", position: { x: 60, y: 200 } });
+      await page.getByRole("menuitem", { name: "Tag einfügen" }).click();
+      const slower = page.getByRole("menuitem", { name: /Langsamer/ }).first();
+      await expect(slower).toBeVisible();
+      await expect
+        .poll(async () => (await slower.boundingBox())?.x ?? -1)
+        .toBeGreaterThanOrEqual(0);
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: name("2-tag-menue") });
+      await page.keyboard.press("Escape");
+      await writingRules(page);
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: name("3-schreibregeln") });
+      await page.keyboard.press("Escape");
+      await page.getByTestId("tts-action-menu").click();
+      await expect(page.getByTestId("autotag-open")).toBeEnabled();
+      await page.screenshot({ path: name("4-menue-auto-tagging") });
+    });
+  }
+}
 
 test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu waehlen", async ({
   page,

@@ -1063,7 +1063,9 @@
       "extended": "{{tag}} — erweitertes Tag, nicht in der offiziellen Fish-Audio-Liste; wirkt meist.",
       "piperIgnores": "„{{tag}}“ — Piper setzt keine Tags um und lässt es weg (nur Pausen wirken).",
       "engineIgnores": "„{{tag}}“ — {{engine}} setzt keine Stil-Tags um und lässt es weg (nur Pausen wirken).",
-      "legendPausesOnly": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen – die erzeugt die App selbst, sie wirken immer."
+      "legendPausesOnly": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen – die erzeugt die App selbst, sie wirken immer.",
+      "legendPausesAndPace": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen und das Tempo eines Satzes – beides wirkt immer.",
+      "engineIgnoresPace": "„{{tag}}“ — {{engine}} setzt keine Stil-Tags um und lässt es weg (nur Pausen und Tempo wirken)."
     },
     "speakers": {
       "menuChange": "Sprecher „{{name}}“ ändern",
