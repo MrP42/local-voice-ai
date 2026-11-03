@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import type { BookTemplate, SummarySource } from "@/bindings";
 import { buildContents, type ContentsEntry } from "@/lib/reader/contents";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
@@ -137,6 +138,9 @@ export function KiDocumentDialog({
     setPicked(Math.max(0, currentChapter));
     setQuery("");
     setLang(defaultKiLang(i18n.language));
+    // Alte Meldungen (z. B. „erstellt“) würden mobil die Knöpfe unten
+    // verdecken (Codex lva#217).
+    toast.dismiss();
     // Nur beim Öffnen vorbelegen, nicht bei jeder Änderung der Auswahl.
   }, [open]);
 

@@ -731,15 +731,22 @@ test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", a
     .filter(([c]) => c === "book_ai_summarize")
     .at(-1)!;
   expect(call[1]).toMatchObject({ targetLang: "en" });
-  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
-
-  // Die Wahl gilt als Vorbelegung für das nächste Mal.
-  // Fertigmeldung abwarten, damit sie im Belegbild nichts verdeckt (Codex).
-  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, {
-    timeout: 15_000,
-  });
+  // Fertigmeldung bei 390 px (Codex): Belegbild mit sichtbarer Meldung.
   await page.setViewportSize({ width: 390, height: 844 });
+  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("ist fertig");
+  // Einblendung abwarten, damit das Belegbild die fertige Meldung zeigt.
+  await page.waitForTimeout(600);
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
+  });
+
+  // Die Wahl gilt als Vorbelegung für das nächste Mal. Der Dialog räumt
+  // alte Meldungen ab, damit sie seine Knöpfe nicht verdecken (Codex).
   await page.getByTestId("tts-action-summarize").click();
+  await expect(toast).toHaveCount(0);
   await expect(page.getByTestId("kidoc-lang")).toContainText("English");
   await page.screenshot({
     path: "docs/vorschau/kurzbuch-sprache/02-dialog-390.png",
@@ -854,6 +861,26 @@ for (const theme of ["light", "dark"] as const) {
       path: `docs/vorschau/kurzbuch-sprache/06-wiedergabe-langer-titel-1920-${theme === "dark" ? "dunkel" : "hell"}.png`,
     });
     await page.setViewportSize({ width: 390, height: 844 });
+    // Lesebereich ohne Menü (Codex): Überschrift und Text vollständig in
+    // der Seite; Nachbarseiten liegen außerhalb des sichtbaren Rahmens.
+    const book = page.getByTestId("reader-book");
+    const clipped = await book.evaluate((root) => {
+      const frame = root.getBoundingClientRect();
+      const out: string[] = [];
+      for (const el of root.querySelectorAll("h1, h2, h3, p")) {
+        for (const r of el.getClientRects()) {
+          const visible = r.right > frame.left && r.left < frame.right;
+          const inside = r.left >= frame.left - 1 && r.right <= frame.right + 1;
+          if (visible && !inside) out.push((el.textContent ?? "").slice(0, 40));
+        }
+      }
+      return out;
+    });
+    expect(clipped, "angeschnittene Zeilen").toEqual([]);
+    await book.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/09-lesebereich-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
     await page.getByTestId("reader-more").click();
     const where = page.getByTestId("reader-more-where");
     await expect(where).toContainText(LONG_TITLE);
