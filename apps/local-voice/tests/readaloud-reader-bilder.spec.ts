@@ -5,6 +5,11 @@ import { test, expect, type Page } from "@playwright/test";
 // Befundleiste. Die Klappe "Ausdruck & Sprechstil" unter dem Text gibt es nicht mehr
 // (Patrick 01.11.: der Ausdruck kommt über das Kontextmenü).
 test.beforeEach(async ({ page }) => {
+  // Diese Tests prüfen die Satz-/Wortlogik an den Spans (.reader-cur); den
+  // Weg über die Highlight-API prüft "Hervorhebung ohne Umbruchwechsel".
+  await page.addInitScript(() => {
+    (window as unknown as { __lvaReaderSpans?: boolean }).__lvaReaderSpans = true;
+  });
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -225,6 +230,37 @@ for (const theme of ["light", "dark"]) {
         });
       }
       await page.screenshot({ path: `${DIR}/reader-${theme}-${width}.png`, fullPage: false });
+    });
+  }
+}
+
+// Hervorhebung über die Highlight-API (Patrick 03.11.: Umbruch ruckelte):
+// Satz und Wort ohne eigene Spans, mitten im Satz.
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`bild hervorhebung ${theme} ${width}`, async ({ page }) => {
+      test.skip(!DIR, "nur mit SCREENS_DIR");
+      await page.addInitScript((t) => {
+        const w = window as unknown as { __theme: string; __lvaReaderSpans: boolean };
+        w.__theme = t;
+        w.__lvaReaderSpans = false;
+      }, theme);
+      await page.clock.install();
+      await page.emulateMedia({ colorScheme: theme as "light" | "dark" });
+      await open(page, BOOK, 1440);
+      if (width === 390) await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByTestId("reader-flow").waitFor();
+      await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+      await emit(page, "tts-speak-progress", { position: 1, total: 46 });
+      await emit(page, "tts-current-sentence", {
+        context: "speak",
+        index: 1,
+        text: "Der Leuchtturm stand seit über hundert Jahren auf der Klippe.",
+        duration_ms: 8000,
+      });
+      await page.clock.runFor(3000);
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: `${DIR}/hervorhebung-${theme}-${width}.png` });
     });
   }
 }
