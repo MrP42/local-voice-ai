@@ -751,6 +751,34 @@ body.lv-resizing * {
 .workspace-main {
   overflow-y: auto;
 }
+
+/* Rahmen bleibt stehen (Patrick 02.11.): nur Inhaltsbereiche scrollen, nie
+   das Dokument. Absolut gesetzte Elemente ohne positionierten Vorfahren
+   (Tailwind `sr-only`, z. B. "gehoert" in der Kurzbuch-Liste) sitzen an ihrer
+   statischen Stelle tief in einer Scrollliste, entkommen deren Beschnitt und
+   verlaengerten das Dokument: eine zweite Scrollleiste ganz rechts, die
+   Titelleiste und Navigation mitschob. Sobald "Wach halten" die Lesespalte
+   alle 45 s per `position: relative` verschob, landete derselbe Ueberhang in
+   der Lesespalte (Leiste zwischen Text und rechter Spalte).
+   1. Das Dokument scrollt nie.
+   2. Jeder Scrollbereich der Schale ist Haltblock fuer absolute Kinder.
+   3. `sr-only` haengt oben am Haltblock statt an der statischen Stelle. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+.lv-content,
+.workspace-main,
+.workspace-nav,
+.reader-frame {
+  position: relative;
+}
+.sr-only {
+  top: 0;
+  inset-inline-start: 0;
+}
 .workspace-main--fill {
   overflow: hidden;
 }
