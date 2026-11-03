@@ -637,6 +637,40 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         await expect(
           page.getByTestId("minutes-section-edit").first(),
         ).toBeVisible();
+        // Beschriftung auch schmal sichtbar, auf Hoehe von "Zusammenfassung".
+        const summaryPen = page.getByRole("button", {
+          name: "Abschnitt „Zusammenfassung“ bearbeiten",
+        });
+        if (width === 390)
+          // Schmal ist die Flaeche nur wenige Zeilen hoch: bis zur
+          // Zusammenfassung scrollen, damit Ueberschrift und Knopf im Bild sind.
+          await page
+            .getByTestId("minutes-doc")
+            .getByRole("heading", { name: "Zusammenfassung" })
+            .evaluate((el) => {
+              // Unter die klebende Werkzeugzeile, nicht dahinter.
+              const bar = document.querySelector(".minutes-toolbar")!;
+              let sc = el.parentElement;
+              while (sc && sc.scrollHeight <= sc.clientHeight + 1)
+                sc = sc.parentElement;
+              if (!sc) return;
+              sc.scrollTop +=
+                el.getBoundingClientRect().top -
+                bar.getBoundingClientRect().bottom -
+                16;
+            });
+        await expect(
+          summaryPen.getByText("Abschnitt bearbeiten"),
+        ).toBeVisible();
+        const sh = (await page
+          .getByTestId("minutes-doc")
+          .getByRole("heading", { name: "Zusammenfassung" })
+          .boundingBox())!;
+        const sp = (await summaryPen.boundingBox())!;
+        expect(
+          Math.abs(sh.y + sh.height / 2 - (sp.y + sp.height / 2)),
+        ).toBeLessThan(6);
+        if (width === 390) expect(sp.height).toBeGreaterThanOrEqual(44);
         await page.screenshot({ path: name("1-stift") });
 
         await page

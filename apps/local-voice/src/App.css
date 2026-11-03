@@ -609,9 +609,9 @@ html[data-fluent] .lva-logo__accent {
 /* Läuft oder stockt eine Buchübersetzung, braucht die Spalte Platz für den
    Fortschritts- bzw. Fehlerblock samt „Fortsetzen“ (nicht abschneiden). */
 .tts-controls--stacked:has(
-    [data-testid="tts-translate-progress"],
-    [data-testid="tts-translate-partial"]
-  ) {
+  [data-testid="tts-translate-progress"],
+  [data-testid="tts-translate-partial"]
+) {
   max-height: 85%;
 }
 .tts-right-column--stacked > .tts-workspace__files {
@@ -968,7 +968,8 @@ body,
 .minutes-preview [data-edit-hover] {
   border-radius: 4px;
   background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
 }
 
 /* Protokoll bearbeiten (Besprechungen): Touchziele >= 44 px unter dem mobilen
@@ -986,17 +987,14 @@ body,
     width: 44px;
     height: 44px;
   }
+  /* Die Beschriftung bleibt auch schmal sichtbar (Codex-Abnahme). */
   .minutes-preview .minutes-section-pen {
-    width: 44px;
+    min-width: 44px;
     height: 44px;
-    justify-content: center;
-    padding: 0;
-  }
-  .minutes-preview .minutes-section-pen__text {
-    display: none;
+    padding-inline: 0.625rem;
   }
   .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
-    padding-inline-end: 3rem;
+    padding-inline-end: 10.5rem;
   }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */

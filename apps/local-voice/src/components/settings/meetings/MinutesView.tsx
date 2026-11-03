@@ -363,13 +363,17 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     }
     const measure = () => {
       const base = wrapper.getBoundingClientRect().top;
+      // Höhe des Abschnittsknopfs (schmal 44 px Touchziel, sonst h-8).
+      const penHeight = window.matchMedia("(max-width: 639px)").matches
+        ? 44
+        : 32;
       const all = Array.from(
         preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS),
       ).map((el) => {
         const rect = el.getBoundingClientRect();
         return {
           el,
-          top: rect.top - base + (rect.height - 32) / 2,
+          top: rect.top - base + (rect.height - penHeight) / 2,
           title: el.textContent?.trim() ?? "",
         };
       });
@@ -377,7 +381,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
       // Abschnitt), überdecken sich die Knöpfe: dann gilt der Knopf des
       // folgenden, genaueren Abschnitts.
       setSections(
-        all.filter((s, i) => !all[i + 1] || all[i + 1].top - s.top >= 40),
+        all.filter(
+          (s, i) => !all[i + 1] || all[i + 1].top - s.top >= penHeight + 4,
+        ),
       );
     };
     measure();
