@@ -8955,6 +8955,11 @@ metadata_source: string | null;
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
 /**
+ * Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+ * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+ */
+favorite?: boolean; 
+/**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
  */

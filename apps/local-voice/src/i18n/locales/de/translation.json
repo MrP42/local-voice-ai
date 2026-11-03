@@ -7033,6 +7033,7 @@
       "author": "Autor"
     },
     "filter": {
+      "favorites": "Favoriten",
       "all": "Alle",
       "notStarted": "Nicht begonnen",
       "inProgress": "Läuft",
@@ -7063,6 +7064,12 @@
     "read": "Lesen",
     "listen": "Hören",
     "listenOriginal": "Hörbuch hören",
+    "favorite": {
+      "toggle": "Favorit: „{{title}}“",
+      "on": "Favorit – steht oben",
+      "off": "Als Favorit nach oben holen",
+      "failed": "Favorit nicht gespeichert: {{error}}"
+    },
     "markFinished": "Als fertig markieren",
     "markUnfinished": "Als nicht fertig markieren",
     "progressLabel": "Fortschritt von „{{title}}“",
