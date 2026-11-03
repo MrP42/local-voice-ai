@@ -206,6 +206,12 @@ test.beforeEach(async ({ page }) => {
             );
           if (cmd === "tts_list_downloads") return [];
           if (
+            cmd === "library_list" ||
+            cmd === "library_trash_list" ||
+            cmd === "library_sizes"
+          )
+            return [];
+          if (
             cmd === "llm_ps" ||
             cmd === "tts_reading_list" ||
             cmd === "tts_list_voices" ||
@@ -264,9 +270,12 @@ test("Vorlesen: Stimme und Modell stehen links in der Fußleiste, nicht in der S
   await expect(fuss).toHaveAttribute("data-modul", "tts");
   await expect(fuss.getByTestId("voice-select")).toHaveCount(1);
   await expect(page.getByTestId("voice-select")).toHaveCount(1);
-  await expect(fuss.getByTestId("fuss-modell-read_aloud")).toContainText(
-    "Vorlesen:",
-  );
+  // Gleiche Darstellung wie in der Bibliothek (Patrick 03.11.): nur der
+  // Modellname, die Funktion steht in Tooltip und Vorlesetext.
+  const chip = fuss.getByTestId("fuss-modell-read_aloud");
+  await expect(chip).toContainText("Claude Sonnet 5.5");
+  await expect(chip).not.toContainText("Vorlesen:");
+  await expect(chip).toHaveAttribute("aria-label", /Modell für Vorlesen/);
   // Übersetzen: keine eigene Modellwahl mehr mitten in der Seite.
   await page.getByRole("tab", { name: /Übersetzung/ }).click();
   await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
@@ -339,7 +348,12 @@ test.describe("Touch", () => {
     for (const b of await bar(page).locator("button").all()) {
       if (!(await b.isVisible())) continue;
       const box = (await b.boundingBox())!;
-      expect(box.height, (await b.getAttribute("aria-label")) ?? (await b.getAttribute("class")) ?? "").toBeGreaterThanOrEqual(43.5);
+      expect(
+        box.height,
+        (await b.getAttribute("aria-label")) ??
+          (await b.getAttribute("class")) ??
+          "",
+      ).toBeGreaterThanOrEqual(43.5);
     }
     await page.screenshot({
       path: `${SHOTS}/vorlesen-touch-light-1024.png`,
@@ -361,10 +375,179 @@ for (const theme of ["light", "dark"]) {
       animations: "disabled",
     });
     await page.keyboard.press("Escape");
-    await page.getByTestId("fuss-stimme").locator(".app-select__control").click();
+    await page
+      .getByTestId("fuss-stimme")
+      .locator(".app-select__control")
+      .click();
     await page.screenshot({
       path: `${SHOTS}/stimme-${theme}-1440.png`,
       animations: "disabled",
     });
   });
 }
+
+// Patrick 03.11.: Das Modell steht in Vorlesen und Aufnahmen genauso in
+// der Fußleiste wie in der Bibliothek: Funkel-Symbol mit Ampel, Modellname,
+// Abzeichen, Pfeil. Verglichen wird der Aufbau des Knopfs ohne Text.
+const GLEICH = "docs/vorschau/fussleiste-modell-gleich";
+const aufbau = (page: Page) =>
+  bar(page)
+    .getByTestId("fuss-modelle")
+    .locator("[data-llm-selector], [data-testid^='fuss-modell-']")
+    .first()
+    .evaluate((b) => {
+      const walk = (n: Element): string =>
+        `${n.tagName}.${(n.getAttribute("class") ?? "")
+          .split(/\s+/)
+          .filter((c) => c && !/^bg-(green|yellow|red)-|animate-pulse/.test(c))
+          .sort()
+          .join(".")}(${Array.from(n.children).map(walk).join(",")})`;
+      return walk(b);
+    });
+
+const zu = async (page: Page, width: number, name: string) => {
+  if (width < 600)
+    await page.getByRole("button", { name: "Menü öffnen" }).click();
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name, exact: true })
+    .click();
+  await expect(page.locator("#page-title")).toHaveText(name);
+};
+
+test("Modellmenü: Pfeiltasten wandern, Escape schließt und gibt den Fokus zurück", async ({
+  page,
+}) => {
+  await open(page, 1440, "light");
+  const knopf = page.getByTestId("fuss-modell-read_aloud");
+  await knopf.click();
+  const menue = page.getByTestId("fuss-modell-menue-read_aloud");
+  await expect(menue).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await expect(menue.locator('[data-function-option=""]')).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menue.locator('[data-function-option="m1"]')).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menue).toHaveCount(0);
+  await expect(knopf).toBeFocused();
+});
+
+test("Bibliothek, Vorlesen und Aufnahmen zeigen das Modell gleich", async ({
+  page,
+}) => {
+  await open(page, 1440, "light");
+  const vorlesen = await aufbau(page);
+  await zu(page, 1440, "Bibliothek");
+  const bibliothek = await aufbau(page);
+  await zu(page, 1440, "Aufnahmen");
+  const aufnahmen = await aufbau(page);
+  expect(vorlesen).toBe(bibliothek);
+  expect(aufnahmen).toBe(bibliothek);
+});
+
+test.describe("Abnahmebilder gleiche Modellanzeige", () => {
+  // Schärfere Bilder für die Abnahme (die Fußleiste ist nur 24 px hoch).
+  test.use({ deviceScaleFactor: 2 });
+  for (const theme of ["light", "dark"])
+    for (const width of [390, 1440])
+      test(`Abnahmebilder gleiche Modellanzeige (${theme}, ${width})`, async ({
+        page,
+      }) => {
+        await open(page, width, theme);
+        // Die schmale Fußleiste rollt seitlich; das Modell muss zu sehen sein.
+        await bar(page)
+          .getByTestId("fuss-modell-read_aloud")
+          .scrollIntoViewIfNeeded();
+        const leiste = bar(page);
+        await leiste.screenshot({
+          path: `${GLEICH}/vorlesen-${theme}-${width}.png`,
+          animations: "disabled",
+        });
+        if (width >= 600)
+          await page.screenshot({
+            path: `${GLEICH}/vorlesen-seite-${theme}-${width}.png`,
+            animations: "disabled",
+          });
+        await page.getByTestId("fuss-modell-read_aloud").click();
+        await expect(
+          page.getByTestId("fuss-modell-menue-read_aloud"),
+        ).toBeInViewport({ ratio: 0.98 });
+        await page.screenshot({
+          path: `${GLEICH}/vorlesen-menue-${theme}-${width}.png`,
+          animations: "disabled",
+        });
+        await page.keyboard.press("Escape");
+        for (const [name, datei] of [
+          ["Bibliothek", "bibliothek"],
+          ["Aufnahmen", "aufnahmen"],
+        ] as const) {
+          await zu(page, width, name);
+          await leiste.screenshot({
+            path: `${GLEICH}/${datei}-${theme}-${width}.png`,
+            animations: "disabled",
+          });
+        }
+      });
+});
+
+// Codex zu lva#241: Touchziele ≥ 44 px, gemessen per boundingBox, als Beleg
+// in docs/vorschau/fussleiste-modell-gleich/touchziele.txt.
+test.describe("Touchziele gleiche Modellanzeige", () => {
+  test.use({ hasTouch: true });
+  test("Knopf und Menü ≥ 44 px bei 390 und 1440 px", async ({ page }) => {
+    const zeilen: string[] = [
+      "Touchziele Fußleiste Modell (Playwright boundingBox, Chromium, pointer: coarse)",
+      "Breite | Modul | Ziel | B×H",
+    ];
+    const zuKlein: string[] = [];
+    const miss = async (
+      breite: number,
+      modul: string,
+      ziel: string,
+      el: import("@playwright/test").Locator,
+    ) => {
+      const b = (await el.boundingBox())!;
+      zeilen.push(
+        `${breite} | ${modul} | ${ziel} | ${Math.round(b.width)}×${Math.round(b.height)}`,
+      );
+      if (b.width < 43.5 || b.height < 43.5)
+        zuKlein.push(`${breite} ${modul} ${ziel}`);
+    };
+    for (const breite of [390, 1440]) {
+      await open(page, breite, "light");
+      const knopf = page.getByTestId("fuss-modell-read_aloud");
+      await knopf.scrollIntoViewIfNeeded();
+      await miss(breite, "Vorlesen", "Modellknopf", knopf);
+      await knopf.click();
+      const menue = page.getByTestId("fuss-modell-menue-read_aloud");
+      await miss(
+        breite,
+        "Vorlesen",
+        "Suchfeld",
+        menue.locator("[data-llm-search]"),
+      );
+      for (const item of await menue.locator('[role^="menuitem"]').all())
+        await miss(
+          breite,
+          "Vorlesen",
+          `Menü: ${((await item.innerText()).split("\n")[0] ?? "").trim()}`,
+          item,
+        );
+      await page.keyboard.press("Escape");
+      for (const name of ["Bibliothek", "Aufnahmen"]) {
+        await zu(page, breite, name);
+        const k = bar(page)
+          .getByTestId("fuss-modelle")
+          .locator("[data-llm-selector], [data-testid^='fuss-modell-']")
+          .first();
+        await k.scrollIntoViewIfNeeded();
+        await miss(breite, name, "Modellknopf", k);
+      }
+    }
+    zeilen.push(`Ergebnis: ${zuKlein.length} Ziele unter 44 px`);
+    const fs = await import("node:fs");
+    fs.mkdirSync(GLEICH, { recursive: true });
+    fs.writeFileSync(`${GLEICH}/touchziele.txt`, zeilen.join("\n") + "\n");
+    expect(zuKlein).toEqual([]);
+  });
+});
