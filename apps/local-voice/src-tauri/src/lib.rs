@@ -18,6 +18,7 @@ mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
+mod hoersync_live; // Hörbuch-Sync Stufe 2: Live-Abgleich
 mod input;
 mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
@@ -2518,6 +2519,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
             commands::tts::tts_text_assist,
+            commands::tts::tts_speech_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             isbn::isbn_lookup,
@@ -2543,6 +2545,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_merge_audio,
             library::library_progress_load,
             library::library_progress_put,
+            hoersync_live::audiosync_load,
+            hoersync_live::audiosync_window,
             commands::tts::tts_voicechange_record_start,
             commands::tts::tts_voicechange_record_stop,
             commands::tts::tts_voicechange_file,

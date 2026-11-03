@@ -112,6 +112,8 @@ wai-konto = { path = "vendor/wai-konto" }
 # ADR-0026 PR-7 (Epic wai-sdk#1047): Suite-Projekte und Recherche, vendort aus wai-sdk
 # (scripts/vendor-wai-suite.py, siehe vendor/*/VENDOR.toml)
 wai-links = { path = "vendor/wai-links" }
+# Hörbuch-Sync: Abgleich Hörbuch ↔ Buchtext (eigenes Crate, ohne Abhängigkeiten).
+hoersync = { path = "../crates/hoersync" }
 wai-security = { path = "vendor/wai-security" }
 wai-storage = { path = "vendor/wai-storage" }
 wai-providers = { path = "vendor/wai-providers" }

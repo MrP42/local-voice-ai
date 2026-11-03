@@ -18,6 +18,7 @@ import {
   Users,
   WandSparkles,
   Zap,
+  AudioLines,
 } from "lucide-react";
 import { ActionMenu } from "../../ui/ActionMenu";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
@@ -82,6 +83,9 @@ export interface ReadAloudActionsProps {
   onExport?: () => void;
   tidying: boolean;
   onTidy: () => void;
+  /** Sprechfassung läuft (KI setzt Satzzeichen, Satzbau, Zahlen fürs Vorlesen). */
+  speeching: boolean;
+  onSpeech: () => void;
   errorCount: number;
   onCheckScript: () => void;
   /** Warum Auto-Tagging gerade nichts bringt (Engine ohne Stil-Tags, z. B. Phonon);
@@ -418,6 +422,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
     prewarm,
     sentenceCounter,
     tidying,
+    speeching,
     errorCount,
   } = props;
   const [autoTagOpen, setAutoTagOpen] = useState(false);
@@ -492,9 +497,19 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       icon: WandSparkles,
       iconClassName: tidying ? "animate-pulse" : undefined,
       onSelect: props.onTidy,
-      disabled: tidying || !hasText,
+      disabled: tidying || speeching || !hasText,
       testId: "tidy-run",
       title: tidying ? t("tts.tidying") : t("tts.tidyHint"),
+    },
+    {
+      id: "speech",
+      label: speeching ? t("tts.speeching") : t("tts.speech"),
+      icon: AudioLines,
+      iconClassName: speeching ? "animate-pulse" : undefined,
+      onSelect: props.onSpeech,
+      disabled: speeching || tidying || !hasText,
+      testId: "speech-run",
+      title: speeching ? t("tts.speeching") : t("tts.speechHint"),
     },
     {
       // Skript prüfen: jederzeit, nicht erst beim Vorlesen — auch bei

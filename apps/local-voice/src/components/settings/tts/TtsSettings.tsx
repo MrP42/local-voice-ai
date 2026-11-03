@@ -36,6 +36,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
+import { SpeechConfirmDialog } from "./SpeechConfirmDialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
@@ -101,6 +102,7 @@ import {
 } from "../../../lib/reader/contents";
 import { usePersistentState } from "../../../hooks/usePersistentState";
 import { registerPageHelp } from "../../help/pageHelp";
+import { useSectionActive } from "../../shell/KeepAlive";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import {
   TTS_TARGET_LANGS,
@@ -187,6 +189,15 @@ import {
 /// Regler aus den Einstellungen entfallen ist: dieselbe Einstellung an zwei
 /// Orten war eine Dublette, aber der langsamste Wert soll bleiben.
 const SPEEDS = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+/** Von der Bibliothek gesetzte Vorlesen-Seite (`openInReader`). */
+const storedActivePage = (): string | null => {
+  try {
+    return window.localStorage.getItem("lva.ui.tts.activePage");
+  } catch {
+    return null;
+  }
+};
+
 const speedLabel = (value: number) =>
   `${value.toFixed(2).replace(".", ",")}\u00d7`;
 
@@ -309,6 +320,18 @@ export const TtsSettings = () => {
     "tts.activePage",
     "",
   );
+  // Vorlesen bleibt beim Bereichswechsel erhalten (KeepAlive, Patrick 03.11.).
+  // Öffnet die Bibliothek ein anderes Buch, steht es nur im Speicher: beim
+  // Sichtbarwerden übernehmen.
+  const sectionActive = useSectionActive();
+  const sectionActiveRef = useRef(sectionActive);
+  sectionActiveRef.current = sectionActive;
+  useEffect(() => {
+    if (!sectionActive) return;
+    const stored = storedActivePage();
+    if (stored && stored !== activePage) setActivePage(stored);
+    // Nur beim Sichtbarwerden.
+  }, [sectionActive]);
   // Beide Seitenspalten starten offen. Eingeklappt zeigten sie nur ein
   // 18-Pixel-Symbol, und wer sie nie aufklappte, hielt sie fuer Reiter ohne
   // Funktion — obwohl darin die Arbeitsblaetter und die erzeugten Aufnahmen
@@ -335,10 +358,12 @@ export const TtsSettings = () => {
   // Das Hilfe-Menü der Titelleiste schaltet dieselbe Hilfe.
   useEffect(
     () =>
-      registerPageHelp(() =>
-        setHelpOpenValue(helpOpenValue === "1" ? "0" : "1"),
-      ),
-    [helpOpenValue, setHelpOpenValue],
+      sectionActive
+        ? registerPageHelp(() =>
+            setHelpOpenValue(helpOpenValue === "1" ? "0" : "1"),
+          )
+        : undefined,
+    [helpOpenValue, setHelpOpenValue, sectionActive],
   );
   // Anordnung rechts vom Editor (gestapelt oder nebeneinander) und die
   // per Ziehgriff verstellbaren Breiten; alles bleibt ueber Neustarts.
@@ -406,6 +431,8 @@ export const TtsSettings = () => {
   const sessionDocId = SESSION_DOC_ID;
   const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
+  const [speeching, setSpeeching] = useState(false);
+  const [speechConfirmOpen, setSpeechConfirmOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -769,6 +796,9 @@ export const TtsSettings = () => {
     const unProgress = listen<{ position: number; total: number }>(
       "tts-speak-progress",
       (e) => {
+        // Verdeckt (KeepAlive) und nicht unsere Wiedergabe (Aufnahmen liest):
+        // nichts mitschreiben, sonst stünde nach der Rückkehr Fremdes markiert.
+        if (!sectionActiveRef.current && !readerSession.active) return;
         // Sofort, nicht erst beim Rendern: das Ende der Sitzung kann vor dem
         // Render des letzten Fortschritts ankommen (Buchteile, lva#150).
         speakProgressRef.current = e.payload;
@@ -789,6 +819,7 @@ export const TtsSettings = () => {
       duration_ms?: number;
     }>("tts-current-sentence", (e) => {
       if (e.payload.context !== "speak") return;
+      if (!sectionActiveRef.current && !readerSession.active) return;
       setSentenceStart({
         index: typeof e.payload.index === "number" ? e.payload.index : null,
         at: performance.now(),
@@ -1030,13 +1061,19 @@ export const TtsSettings = () => {
       autoTag: autoTagOptions ?? undefined,
     });
 
+  /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
+  const savePending = useRef(false);
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
+    savePending.current = true;
     const handle = window.setTimeout(() => {
       void commands
         .pageStateSave(activePage, pageStateJson())
+        .finally(() => {
+          savePending.current = false;
+        })
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
         // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
@@ -1838,7 +1875,7 @@ export const TtsSettings = () => {
     setReaderFill((on) => !on);
   };
   useEffect(() => {
-    if (viewMode !== "read") return;
+    if (viewMode !== "read" || !sectionActive) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "F11") {
         e.preventDefault();
@@ -1861,7 +1898,7 @@ export const TtsSettings = () => {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [viewMode, readerFill]);
+  }, [viewMode, readerFill, sectionActive]);
   useEffect(() => {
     if (viewMode !== "read") setReaderFill(false);
   }, [viewMode]);
@@ -2122,6 +2159,9 @@ export const TtsSettings = () => {
   const lastSessionPage = SESSION_LAST_PAGE;
   /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
   const autoplayPage = useRef<string | null>(null);
+  /** Der Autostart kam aus der Bibliothek („Weiterhören“), nicht vom
+   *  Weiterlesen im nächsten Buchteil. */
+  const libraryAutoplay = useRef(false);
 
   const startPartSession = (
     page: string | null = activePageRef.current,
@@ -2195,24 +2235,31 @@ export const TtsSettings = () => {
   }, [activePage]);
   // Bibliothek (lva#152): „Weiterhören“ öffnet die Seite und liest sofort.
   useEffect(() => {
+    if (!sectionActive) return;
     const page = takeLibraryAutoplay();
-    if (page && page === activePage) autoplayPage.current = page;
-    // Nur beim Öffnen von Vorlesen.
-  }, []);
+    if (page && page === storedActivePage()) {
+      autoplayPage.current = page;
+      libraryAutoplay.current = true;
+    }
+    // Nur beim Öffnen (Sichtbarwerden) von Vorlesen.
+  }, [sectionActive]);
   // Bibliothek (lva#205): Kurzbuch öffnen, vorlesen oder erstellen, sobald
   // die Seite geladen ist (zum Erstellen auch die Vorlagen).
   const libraryKiDoc = useRef<LibraryKiDocRequest | null>(null);
   useEffect(() => {
+    if (!sectionActive) return;
     const req = takeLibraryKiDoc();
     if (req) libraryKiDoc.current = req;
-    // Nur beim Öffnen von Vorlesen.
-  }, []);
+    // Nur beim Öffnen (Sichtbarwerden) von Vorlesen.
+  }, [sectionActive]);
   useEffect(() => {
     const req = libraryKiDoc.current;
     if (!req) return;
     if (req.page !== activePage) {
-      // Eine andere Seite ist geladen: den Auftrag verwerfen.
-      if (pageLoaded.current) libraryKiDoc.current = null;
+      // Eine andere Seite ist geladen: den Auftrag verwerfen – außer die
+      // Bibliothek hat die Zielseite gerade erst gesetzt (KeepAlive).
+      if (pageLoaded.current && req.page !== storedActivePage())
+        libraryKiDoc.current = null;
       return;
     }
     if (!pageLoaded.current) return;
@@ -2231,21 +2278,33 @@ export const TtsSettings = () => {
       template,
       req.lang ?? "",
     );
-  }, [pageLoadTick, activePage, kiDocs.templates]);
+  }, [pageLoadTick, activePage, kiDocs.templates, sectionActive]);
   // Der nächste Teil ist geladen: vorlesen. `pageLoadTick` zählt jedes
   // fertige Laden mit — sonst liefe das bei gleichem Text nie an.
   useEffect(() => {
     if (!autoplayPage.current || autoplayPage.current !== activePage) return;
     if (!pageLoaded.current) return;
+    // „Weiterhören“ aus der Bibliothek meint das Buch selbst: steht die Seite
+    // (erhalten, KeepAlive) auf Übersetzung oder KI-Dokument, erst zurück
+    // zum Original; der Effekt läuft mit dem neuen Reiter erneut.
+    if (libraryAutoplay.current && tab !== "original") {
+      setTab("original");
+      return;
+    }
     autoplayPage.current = null;
+    libraryAutoplay.current = false;
+    // Liest Vorlesen diese Seite schon (im Hintergrund weiter), nicht neu
+    // starten.
+    if (speaking) return;
     // Nur im Originaltext und nur, wenn es etwas zu lesen gibt: eine
     // Übersetzung oder Zusammenfassung des nächsten Teils liest niemand
     // ungefragt vor.
     if (tab !== "original" || !spokenText.trim()) return;
     void speakNow();
     // speakNow liest den aktuellen Stand; neu laufen soll das nur, wenn der
-    // gewechselte Teil fertig geladen ist.
-  }, [pageLoadTick, activePage, tab, spokenText]);
+    // gewechselte Teil fertig geladen ist – oder Vorlesen wieder sichtbar
+    // wird (dieselbe, schon geladene Seite aus der Bibliothek).
+  }, [pageLoadTick, activePage, tab, spokenText, sectionActive]);
 
   // KI-Dokumente (lva#183) ------------------------------------------------
   const saveOpenDoc = useCallback(
@@ -2282,6 +2341,38 @@ export const TtsSettings = () => {
     docAutoplay.current = null;
   }, [activePage, flushDocSave]);
   useEffect(() => () => void flushDocSave(), [flushDocSave]);
+
+  // KeepAlive (Patrick 03.11.): Früher lud das Neu-Einhängen alles frisch.
+  // Verdeckt: KI-Dokument sofort sichern. Wieder sichtbar: Seitenliste still
+  // auffrischen und den Text übernehmen, falls die Bibliothek ihn inzwischen
+  // geändert hat (Zusammenführen, Bereinigen, Transkript) – ohne Leeren,
+  // ohne Aufblinken; eine eigene, noch nicht gesicherte Änderung hat Vorrang.
+  // `textRef` (oben) trägt den aktuellen Text.
+  const wasVisible = useRef(sectionActive);
+  useEffect(() => {
+    const was = wasVisible.current;
+    wasVisible.current = sectionActive;
+    if (!sectionActive) {
+      if (was) void flushDocSave();
+      return;
+    }
+    if (was) return;
+    void reloadPages();
+    const page = activePage;
+    if (!page || !pageLoaded.current || storedActivePage() !== page) return;
+    void commands.pageStateLoad(page).then((result) => {
+      if (result.status !== "ok" || !result.data) return;
+      if (savePending.current || storedActivePage() !== page) return;
+      try {
+        const state = JSON.parse(result.data) as { text?: unknown };
+        if (typeof state.text === "string" && state.text !== textRef.current)
+          setText(state.text);
+      } catch {
+        /* alter Klartext-Stand: unverändert lassen */
+      }
+    });
+    // Nur beim Wechsel der Sichtbarkeit.
+  }, [sectionActive]);
 
   // Offenes Dokument laden – erst, wenn die Seite geladen ist. Fehlt es
   // (gelöscht, anderes Gerät), zurück zur Liste.
@@ -2406,6 +2497,7 @@ export const TtsSettings = () => {
   const openDoc = openDocId
     ? (kiDocs.docs.find((d) => d.id === openDocId) ?? null)
     : null;
+  const activePageTitle = pages.find((p) => p.id === activePage)?.title ?? "";
   const kurzbuch = useMemo(
     () =>
       tab === "summary" && openDoc?.template_id === KURZBUCH_TEMPLATE_ID
@@ -3095,7 +3187,7 @@ export const TtsSettings = () => {
    * alte Text bleibt hinter "Rueckgaengig" im Toast.
    */
   const tidyText = async () => {
-    if (!text.trim() || tidying) return;
+    if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
     const previousText = text;
@@ -3108,6 +3200,44 @@ export const TtsSettings = () => {
     setTab("original");
     setText(result.data);
     toast(t("tts.tidyDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
+   * Sprechfassung: die KI setzt Satzzeichen, teilt Schachtelsätze und schreibt
+   * Zahlen aus, damit eine Stimme ohne Betonungs-Steuerung (Phonon, Piper)
+   * richtig betont. Wie „Text aufbereiten“: ersetzt den Text, mit Rückgängig.
+   */
+  const speechText = async () => {
+    if (!text.trim() || speeching || tidying) return;
+    setLastError(null);
+    setSpeeching(true);
+    const previousText = text;
+    let result: Awaited<ReturnType<typeof commands.ttsSpeechText>>;
+    try {
+      result = await commands.ttsSpeechText(stripPageMarks(text));
+    } catch (e) {
+      setLastError(String(e));
+      return;
+    } finally {
+      setSpeeching(false);
+    }
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.speechDone"), {
       action: {
         label: t("tts.tidyUndo"),
         onClick: () => setText(previousText),
@@ -3395,6 +3525,8 @@ export const TtsSettings = () => {
         onExport={() => void openExport()}
         tidying={tidying}
         onTidy={() => void tidyText()}
+        speeching={speeching}
+        onSpeech={() => setSpeechConfirmOpen(true)}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
@@ -3443,6 +3575,21 @@ export const TtsSettings = () => {
       title={t("tts.title")}
       /* Ohne Untertitel (Patrick 01.11.): der Weg steht in der Hilfe. */
       fill
+      // Welches Buch ist offen? Mitte der Titelleiste (Patrick 03.11.).
+      context={
+        activePageTitle
+          ? {
+              label: t("tts.currentBook", { title: activePageTitle }),
+              text: activePageTitle,
+              detail:
+                tab === "summary"
+                  ? openDoc?.title
+                  : tab === "translation"
+                    ? t("tts.tabTranslation")
+                    : undefined,
+            }
+          : undefined
+      }
       actions={
         // Rueckgaengig / Wiederherstellen nur im Modus „Bearbeiten“, wo es
         // etwas rueckgaengig zu machen gibt (ADR-0027 E6). Die Hilfe kommt
@@ -4258,6 +4405,11 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <SpeechConfirmDialog
+            open={speechConfirmOpen}
+            onOpenChange={setSpeechConfirmOpen}
+            onStart={() => void speechText()}
           />
           <Dialog
             open={urlDialogOpen}

@@ -1,0 +1,19 @@
+Touchziele Fußleiste Modell (Playwright boundingBox, Chromium, pointer: coarse)
+Breite | Modul | Ziel | B×H
+390 | Vorlesen | Modellknopf | 44×44
+390 | Vorlesen | Suchfeld | 246×44
+390 | Vorlesen | Menü: Standard: Claude Sonnet 5.5 | 268×44
+390 | Vorlesen | Menü: Claude Sonnet 5.5 | 268×49
+390 | Vorlesen | Menü: Claude Opus 5.5 | 268×49
+390 | Vorlesen | Menü: Anbieter-Einstellungen … | 268×44
+390 | Bibliothek | Modellknopf | 44×44
+390 | Aufnahmen | Modellknopf | 44×44
+1440 | Vorlesen | Modellknopf | 190×44
+1440 | Vorlesen | Suchfeld | 246×44
+1440 | Vorlesen | Menü: Standard: Claude Sonnet 5.5 | 268×44
+1440 | Vorlesen | Menü: Claude Sonnet 5.5 | 268×49
+1440 | Vorlesen | Menü: Claude Opus 5.5 | 268×49
+1440 | Vorlesen | Menü: Anbieter-Einstellungen … | 268×44
+1440 | Bibliothek | Modellknopf | 190×44
+1440 | Aufnahmen | Modellknopf | 190×44
+Ergebnis: 0 Ziele unter 44 px
