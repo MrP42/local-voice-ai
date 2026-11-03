@@ -6237,6 +6237,32 @@ async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
+ */
+async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_load", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Fenster des Hörbuchs erkennen und gegen den Text legen.
+ * 
+ * `from_ms` und `len_ms` gelten global über alle Teile; ein Fenster endet
+ * am Ende seines Teils. `hint`: erwartete Zeichenstelle (aus dem letzten
+ * Fenster oder der Schätzung); ohne Hinweis wird das ganze Buch durchsucht.
+ */
+async audiosyncWindow(bookId: string, fromMs: number, lenMs: number, hintChars: number | null) : Promise<Result<AudioSyncWindow, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_window", { bookId, fromMs, lenMs, hintChars }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoicechangeRecordStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_voicechange_record_start") };
@@ -7686,6 +7712,34 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Inhalt von `sync-live.json`.
+ */
+export type AudioSyncCache = { 
+/**
+ * Fingerabdruck des Buchtexts; passt er nicht, ist der Cache verworfen.
+ */
+text_key: string; points: SyncPoint[]; inserts: AudioSyncInsert[]; covered: AudioSyncSpan[] }
+/**
+ * Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
+ */
+export type AudioSyncInsert = { at: number; start_ms: number; end_ms: number; text: string }
+/**
+ * Abgedeckter Zeitraum des Hörbuchs (ms, global über alle Teile).
+ */
+export type AudioSyncSpan = { from_ms: number; to_ms: number }
+/**
+ * Ergebnis eines Fensters.
+ */
+export type AudioSyncWindow = { points: SyncPoint[]; inserts: AudioSyncInsert[]; 
+/**
+ * Anteil der gehörten Wörter mit Treffer (0..1).
+ */
+coverage: number; 
+/**
+ * Hinweis für das nächste Fenster (Buchwort-Index nach dem letzten Treffer).
+ */
+next_hint: number | null; from_ms: number; to_ms: number }
 /**
  * Ein Teil (Datei) eines Hörbuchs.
  */

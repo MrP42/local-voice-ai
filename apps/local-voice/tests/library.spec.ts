@@ -173,6 +173,15 @@ test.beforeEach(async ({ page }) => {
           if (cmd === "book_ai_documents") return (w as { __kidocs?: unknown[] }).__kidocs ?? [];
           if (cmd === "book_ai_document_text") return (w as { __docText?: string }).__docText ?? "";
           if (cmd === "library_progress_load") return {};
+          // Hörbuch-Sync (Live-Abgleich): Antwort aus window.__liveWindow, sonst
+          // „nicht verfügbar“ wie ohne Erkennungsmodell.
+          if (cmd === "audiosync_load")
+            return { text_key: "", points: [], inserts: [], covered: [] };
+          if (cmd === "audiosync_window") {
+            const live = (w as { __liveWindow?: (a: unknown) => unknown }).__liveWindow;
+            if (!live) throw "Kein Erkennungsmodell";
+            return live(args);
+          }
           if (cmd === "library_progress_put") return null;
           if (cmd === "page_files")
             return args?.id === "page_3"
@@ -1411,6 +1420,65 @@ test("Mitlesen: der gehörte Absatz ist hervorgehoben, Klick springt, gemeinsame
   // Genaue Zeitachse: keine „ungefähr“-Kennzeichnung.
   await expect(page.getByTestId("library-follow-approx")).toHaveCount(0);
   await page.screenshot({ path: shot("mitlesen-1440-hell.png") });
+});
+
+test("Mitlesen ohne Transkript: der Live-Abgleich setzt die Stelle genau", async ({ page }) => {
+  await mitlesenSetup(page, false);
+  const { sync } = followText();
+  // Gesprochen wird langsamer als geschätzt: Absatz k beginnt bei k × 1 s
+  // (anteilig wären es k × 2,5 s). Das Fenster liefert die Stützpunkte.
+  await page.addInitScript((points) => {
+    (window as unknown as { __liveWindow: (a: { fromMs: number; lenMs: number }) => unknown }).__liveWindow = (
+      a,
+    ) => ({
+      points: points.filter((p) => p.ms >= a.fromMs && p.ms < a.fromMs + a.lenMs),
+      inserts: [],
+      coverage: 0.95,
+      next_hint: null,
+      from_ms: a.fromMs,
+      to_ms: Math.min(a.fromMs + a.lenMs, 30_000),
+    });
+  }, sync.map((p, k) => ({ chars: p.chars, ms: k * 1000 })));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  // Ohne Abgleich erst „ungefähr“, mit Abgleich nicht mehr.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls.filter(
+            ([c]) => c === "audiosync_window",
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByTestId("library-follow-approx")).toHaveCount(0);
+  const call = await page.evaluate(
+    () =>
+      (window as unknown as { __calls: [string, Record<string, unknown>][] }).__calls.find(
+        ([c]) => c === "audiosync_window",
+      )![1],
+  );
+  expect(call.bookId).toBe("book_m");
+  expect(call.fromMs).toBeLessThan(2000);
+  // 5,5 s: nach Live-Abgleich Absatz 6 (Beginn 5 s), geschätzt wäre es Absatz 3.
+  // Anhalten, sonst läuft die Zeit (Absatz je Sekunde) weiter.
+  await page.getByTestId("library-audiobar-toggle").click();
+  await expect(page.getByTestId("library-audiobar-toggle")).toHaveAccessibleName("Abspielen");
+  await seekTo(page, 5);
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 6:/);
+});
+
+test("Mitlesen ohne Erkennungsmodell bleibt bei der Schätzung", async ({ page }) => {
+  await mitlesenSetup(page, false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await openFollow(page);
+  await expect(page.getByTestId("library-follow-approx")).toBeVisible();
+  await seekTo(page, 6);
+  // anteilig: 6 s von 30 s = 20 % des Texts.
+  await expect.poll(() => activeText(page)).toMatch(/^Absatz 3:/);
 });
 
 test("Mitlesen im dunklen Erscheinungsbild (1440 px)", async ({ page }) => {
