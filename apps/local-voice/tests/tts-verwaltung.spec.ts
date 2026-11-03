@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { geheZu } from "./profilmenue";
 
@@ -714,6 +714,7 @@ test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
   test.skip(!dir, "nur mit SCREENS_DIR");
   test.setTimeout(240_000);
   mkdirSync(dir as string, { recursive: true });
+  const masse: string[] = [];
   for (const theme of ["light", "dark"] as const) {
     const label = theme === "light" ? "hell" : "dunkel";
     for (const width of [1440, 390]) {
@@ -724,7 +725,22 @@ test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
       await geheZu(p, "Modelle");
       await p.setViewportSize({ width, height: width === 1440 ? 1000 : 900 });
       await expect(p.getByTestId("voice-gallery")).toBeVisible();
+      // Touchziel des Stifts auf der Karte messen (Beleg fuer >= 44 px unter 768 px).
+      const box = async (testId: string) => {
+        const b = await p.getByTestId(testId).boundingBox();
+        return b ? `${Math.round(b.width)}x${Math.round(b.height)}` : "fehlt";
+      };
+      masse.push(
+        `${label} ${width}px Karte  Stift voice-rename-phonon:nele: ${await box("voice-rename-phonon:nele")}`,
+      );
       await p.getByTestId("voice-rename-phonon:nele").click();
+      // Doppelname: Fehlermeldung, Speichern gesperrt.
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-5-doppelname-${label}-${width}.png`,
+      });
       await p.getByTestId("voice-rename-input").fill("Nelé");
       await p.waitForTimeout(300);
       await p.screenshot({
@@ -743,10 +759,20 @@ test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
         .locator("[data-voice-id='nele']");
       await row.scrollIntoViewIfNeeded();
       await p.waitForTimeout(400);
+      masse.push(
+        `${label} ${width}px Liste  Stift tts-provider-rename-nele: ${await box("tts-provider-rename-nele")}`,
+      );
       await p.screenshot({
         path: `${dir}/umbenennen-3-liste-${label}-${width}.png`,
       });
       await p.getByTestId("tts-provider-rename-nele").click();
+      await p.getByTestId("voice-rename-input").fill("Anna");
+      await expect(p.getByTestId("voice-rename-save")).toBeDisabled();
+      await p.waitForTimeout(300);
+      await p.screenshot({
+        path: `${dir}/umbenennen-6-doppelname-liste-${label}-${width}.png`,
+      });
+      await p.getByTestId("voice-rename-input").fill("Nelé");
       await p.waitForTimeout(300);
       await p.screenshot({
         path: `${dir}/umbenennen-4-zuruecksetzen-${label}-${width}.png`,
@@ -754,6 +780,15 @@ test("Bilder: Stimme umbenennen (nur mit SCREENS_DIR)", async ({ browser }) => {
       await ctx.close();
     }
   }
+  writeFileSync(
+    `${dir}/touchziele.txt`,
+    [
+      "Touchziele der Stifte (boundingBox, Breite x Hoehe in CSS-px).",
+      "Unter 768 px (Touch) gilt >= 44 px; ab 768 px (Maus) kompakter wie der Knopf Anbieter oeffnen daneben.",
+      ...masse,
+      "",
+    ].join("\n"),
+  );
 });
 
 test("Bilder der Verwaltung (nur mit SCREENS_DIR)", async ({ browser }) => {
