@@ -5,10 +5,10 @@
 use super::account::{self, SyncConfig};
 use super::client::{HubClient, HubError, PushObject, RemoteObject};
 use super::collect::{self, LocalObject};
-use super::crypto;
 use super::ledger::{self, Entry, Ledger};
+use super::{blobs, books, crypto};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,6 +24,17 @@ const PULL_MAX_PAGES: usize = 500;
 const PULL_LIMIT: u32 = 100;
 const TICK: Duration = Duration::from_secs(60);
 const DEBOUNCE: Duration = Duration::from_secs(2);
+/// Bytes, die ein Lauf für Prüfsummen neuer Bibliotheksdateien lesen darf.
+const HASH_BUDGET: u64 = 4 * 1024 * 1024 * 1024;
+/// Klartext-Bytes, die ein Lauf hochlädt; der Rest folgt im nächsten Takt.
+const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
+/// Bytes, die ein Lauf herunterlädt (mindestens eine Datei).
+const DOWNLOAD_BUDGET: u64 = 256 * 1024 * 1024;
+/// Ab so vielen gleichzeitig verschwundenen Objekten einer Sammlung, von der
+/// lokal nichts übrig ist, greift die Löschbremse.
+const MASS_DELETE_MIN: usize = 3;
+/// Ereignis mit den Fortschritts-Schlüsseln, die ein anderes Gerät gelöscht hat.
+pub const EVENT_PROGRESS_REMOVED: &str = "sync-progress-removed";
 
 /// Ereignis an die Oberfläche nach jedem Lauf, der etwas geändert hat.
 pub const EVENT_CHANGED: &str = "sync-changed";
@@ -134,12 +145,15 @@ impl SyncEngine {
             Ok(outcome) => {
                 self.set_status(|s| {
                     s.last_success_ms = Some(now_ms());
-                    s.last_error = None;
+                    s.last_error = outcome.warning.clone();
                     s.pending = outcome.pending;
                     s.dead_letters = outcome.dead_letters;
                     s.key_mismatch = outcome.key_mismatch;
                     s.pages = outcome.pages;
                 });
+                if !outcome.removed.is_empty() {
+                    let _ = app.emit(EVENT_PROGRESS_REMOVED, outcome.removed.clone());
+                }
                 if outcome.changed {
                     let _ = app.emit(EVENT_CHANGED, ());
                 }
@@ -186,6 +200,25 @@ struct Outcome {
     dead_letters: u32,
     key_mismatch: bool,
     pages: u32,
+    /// Lauf gelungen, aber eine Datei ließ sich nicht hoch- oder herunterladen.
+    warning: Option<String>,
+    /// Fortschritts-Schlüssel, die ein anderes Gerät gelöscht hat.
+    removed: Vec<String>,
+}
+
+/// Sammlungen, deren lokale Löschung als Grabstein zum Hub geht.
+const TOMBSTONED: [&str; 4] = [
+    collect::COLLECTION_PAGE,
+    books::COLLECTION_BOOK,
+    books::COLLECTION_PROGRESS,
+    books::COLLECTION_BOOKMARK,
+];
+
+fn is_library(collection: &str) -> bool {
+    matches!(
+        collection,
+        books::COLLECTION_BOOK | books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK
+    )
 }
 
 async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
@@ -194,15 +227,140 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let client = HubClient::new(&cfg.url, &cfg.token);
     let mut led = ledger::load(app);
     let mut changed = false;
+    let mut warning: Option<String> = None;
+    let mut removed: Vec<String> = Vec::new();
+
+    // ---- Sammeln ---------------------------------------------------------
+    let mut locals = collect::collect(app).map_err(HubError::Other)?;
+    // Bibliothek: Prüfsummen großer Dateien gehören nicht auf den Executor.
+    let lib = {
+        let app2 = app.clone();
+        let mut files = std::mem::take(&mut led.files);
+        let (lib, files) = tauri::async_runtime::spawn_blocking(move || {
+            let mut budget = HASH_BUDGET;
+            let lib = books::collect_library(&app2, &key, &mut files, &mut budget);
+            (lib, files)
+        })
+        .await
+        .map_err(|e| HubError::Other(e.to_string()))?;
+        led.files = files;
+        lib.map_err(HubError::Other)?
+    };
+    if let Some(w) = lib.warnings.first() {
+        warning = Some(w.clone());
+    }
+
+    // ---- Dateien hochladen ----------------------------------------------
+    // Ein Buch geht erst zum Hub, wenn alle seine Dateien in der Ablage
+    // abgeschlossen sind (Spec: „Reihenfolge beim Hochladen“).
+    let mut blocked: HashSet<String> = lib.held.clone().into_iter().collect();
+    let mut dirty_books: Vec<(&LocalObject, u64)> = lib
+        .objects
+        .iter()
+        .filter(|o| o.collection == books::COLLECTION_BOOK)
+        .filter(|o| {
+            let h = collect::hash(&o.value);
+            led.is_dirty(o.collection, &o.id, &h) && !led.is_dead(o.collection, &o.id, &h)
+        })
+        .map(|o| {
+            let missing = lib
+                .uploads
+                .get(&o.id)
+                .map(|ups| {
+                    ups.iter()
+                        .filter(|u| !led.uploaded.contains(&u.blob.blob))
+                        .map(|u| u.blob.size)
+                        .sum()
+                })
+                .unwrap_or(0);
+            (o, missing)
+        })
+        .collect();
+    // Kleine Bücher zuerst: sie erscheinen sofort auf dem anderen Gerät.
+    dirty_books.sort_by_key(|(_, missing)| *missing);
+    let mut upload_budget = UPLOAD_BUDGET;
+    let mut upload_stopped = false;
+    for (book, _) in dirty_books {
+        let uploads = lib.uploads.get(&book.id).cloned().unwrap_or_default();
+        for u in uploads {
+            if led.uploaded.contains(&u.blob.blob) {
+                continue;
+            }
+            if upload_stopped || led.backing_off(&u.blob.blob, now_ms()) {
+                blocked.insert(book.id.clone());
+                break;
+            }
+            match blobs::upload(
+                &client,
+                &key,
+                cfg.user_id,
+                &u.blob.blob,
+                &u.source,
+                u.blob.size,
+                u.stamp.as_ref(),
+                &mut upload_budget,
+            )
+            .await
+            {
+                Ok(blobs::Upload::Done) => {
+                    led.uploaded.insert(u.blob.blob.clone());
+                    led.failed.remove(&u.blob.blob);
+                }
+                Ok(blobs::Upload::Later) => {
+                    blocked.insert(book.id.clone());
+                    upload_stopped = upload_budget == 0;
+                    break;
+                }
+                Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+                Err(e) => {
+                    log::warn!("Sync: Datei von {} nicht hochgeladen: {e}", book.id);
+                    warning = Some(format!("Datei nicht hochgeladen: {e}"));
+                    blocked.insert(book.id.clone());
+                    // Geänderte Datei: Prüfsumme im nächsten Lauf neu.
+                    if let blobs::Source::File(p) = &u.source {
+                        led.files.remove(&p.to_string_lossy().into_owned());
+                    }
+                    let text = e.to_string();
+                    if text.contains("nicht erreichbar") || text.contains("quota_exceeded") {
+                        // Netz weg oder Ablage voll: in diesem Lauf nichts mehr.
+                        upload_stopped = true;
+                    } else {
+                        // Nur diese Datei ruht eine Weile, die anderen laufen.
+                        led.note_failure(&u.blob.blob, now_ms());
+                    }
+                    break;
+                }
+            }
+        }
+        ledger::save(app, &led).map_err(HubError::Other)?;
+    }
+    let mut pending: u32 = blocked
+        .iter()
+        .filter(|id| {
+            lib.objects.iter().any(|o| {
+                o.collection == books::COLLECTION_BOOK
+                    && &o.id == *id
+                    && led.is_dirty(o.collection, &o.id, &collect::hash(&o.value))
+            })
+        })
+        .count() as u32;
+    let present: HashSet<String> = blocked
+        .iter()
+        .map(|id| ledger::key(books::COLLECTION_BOOK, id))
+        .collect();
+    locals.extend(
+        lib.objects
+            .into_iter()
+            .filter(|o| !(o.collection == books::COLLECTION_BOOK && blocked.contains(&o.id))),
+    );
 
     // ---- Push -----------------------------------------------------------
-    let locals = collect::collect(app).map_err(HubError::Other)?;
     let by_key: HashMap<String, &LocalObject> = locals
         .iter()
         .map(|o| (ledger::key(o.collection, &o.id), o))
         .collect();
 
-    let mut to_push: Vec<(PushObject, String, Option<&LocalObject>)> = Vec::new(); // (obj, hash, local)
+    let mut to_push: Vec<(PushObject, String)> = Vec::new(); // (obj, hash)
     for o in &locals {
         let h = collect::hash(&o.value);
         if !led.is_dirty(o.collection, &o.id, &h) || led.is_dead(o.collection, &o.id, &h) {
@@ -233,21 +391,50 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 deleted: false,
             },
             h,
-            Some(o),
         ));
     }
-    // Lokal verschwundene Seiten → Tombstone.
-    let gone: Vec<(String, Entry)> = led
+    // Lokal verschwundene Objekte → Grabstein.
+    let gone: Vec<(String, String, Entry)> = led
         .objects
         .iter()
-        .filter(|(k, e)| k.starts_with("page/") && !e.deleted && !by_key.contains_key(*k))
-        .map(|(k, e)| (k.clone(), e.clone()))
+        .filter(|(k, e)| !e.deleted && !by_key.contains_key(*k) && !present.contains(*k))
+        .filter_map(|(k, e)| {
+            let (c, id) = k.split_once('/')?;
+            TOMBSTONED
+                .contains(&c)
+                .then(|| (c.to_string(), id.to_string(), e.clone()))
+        })
         .collect();
-    for (k, e) in gone {
-        let id = k.trim_start_matches("page/").to_string();
+    // Löschbremse: verschwindet eine ganze Bibliotheks-Sammlung auf einmal
+    // (neues Datenverzeichnis, zurückgesetzter Fortschritt), ist das ein
+    // Unfall und keine Absicht. Dann keine Grabsteine.
+    let mut braked: HashSet<String> = HashSet::new();
+    for c in [
+        books::COLLECTION_BOOK,
+        books::COLLECTION_PROGRESS,
+        books::COLLECTION_BOOKMARK,
+    ] {
+        let gone_n = gone.iter().filter(|(gc, _, _)| gc == c).count();
+        let left = locals.iter().filter(|o| o.collection == c).count()
+            + present
+                .iter()
+                .filter(|k| k.starts_with(&format!("{c}/")))
+                .count();
+        if gone_n >= MASS_DELETE_MIN && left == 0 {
+            log::warn!("Sync: {gone_n} Objekte in {c} lokal verschwunden, keine Grabsteine");
+            warning = Some(format!(
+                "{gone_n} Einträge ({c}) fehlen lokal; nichts wurde auf anderen Geräten gelöscht"
+            ));
+            braked.insert(c.to_string());
+        }
+    }
+    for (c, id, e) in gone {
+        if braked.contains(&c) {
+            continue;
+        }
         to_push.push((
             PushObject {
-                collection: collect::COLLECTION_PAGE.to_string(),
+                collection: c,
                 object_id: id,
                 base_revision: e.revision,
                 payload: String::new(),
@@ -255,15 +442,13 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                 deleted: true,
             },
             String::new(),
-            None,
         ));
     }
 
-    let mut pending: u32 = 0;
-    let mut chunks: Vec<&[(PushObject, String, Option<&LocalObject>)]> = Vec::new();
+    let mut chunks: Vec<&[(PushObject, String)]> = Vec::new();
     let mut start = 0;
     let mut bytes = 0;
-    for (i, (o, _, _)) in to_push.iter().enumerate() {
+    for (i, (o, _)) in to_push.iter().enumerate() {
         let size = o.payload.len() + 200;
         if i > start && (i - start >= PUSH_BATCH || bytes + size > PUSH_BATCH_BYTES) {
             chunks.push(&to_push[start..i]);
@@ -276,12 +461,12 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
         chunks.push(&to_push[start..]);
     }
     for chunk in chunks {
-        let objs: Vec<PushObject> = chunk.iter().map(|(o, _, _)| o.clone()).collect();
+        let objs: Vec<PushObject> = chunk.iter().map(|(o, _)| o.clone()).collect();
         let results = client.push(&cfg.device_id, &objs).await?;
         for r in results {
-            let Some((sent, h, local)) = chunk
+            let Some((sent, h)) = chunk
                 .iter()
-                .find(|(o, _, _)| o.collection == r.collection && o.object_id == r.object_id)
+                .find(|(o, _)| o.collection == r.collection && o.object_id == r.object_id)
             else {
                 continue;
             };
@@ -297,46 +482,39 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
                         },
                     );
                 }
-                "superseded" => {
-                    match r.current {
-                        Some(remote) => {
-                            if remote.key_id != my_key_id {
-                                return Ok(finish(app, led, changed, pending + 1, true));
-                            }
-                            let synced = led
-                                .get(&remote.collection, &remote.object_id)
-                                .map(|e| e.hash.clone());
-                            let _ = local;
-                            let applied = apply_remote(app, cfg, &key, &remote, synced.as_deref())
-                                .map_err(HubError::Other)?;
-                            if applied {
-                                changed = true;
-                            }
-                            led.set(
-                                &remote.collection,
-                                &remote.object_id,
-                                Entry {
-                                    revision: remote.revision,
-                                    hash: remote_hash(&key, cfg, &remote),
-                                    deleted: remote.deleted,
-                                },
-                            );
+                "superseded" => match r.current {
+                    Some(remote) => {
+                        if remote.key_id != my_key_id {
+                            return Ok(finish(
+                                app,
+                                led,
+                                changed,
+                                pending + 1,
+                                true,
+                                warning,
+                                removed,
+                            ));
                         }
-                        None => {
-                            // Server kennt das Objekt nicht (mehr): nächster Lauf mit Basis 0.
-                            led.set(
-                                &sent.collection,
-                                &sent.object_id,
-                                Entry {
-                                    revision: 0,
-                                    hash: String::new(),
-                                    deleted: false,
-                                },
-                            );
-                            pending += 1;
+                        if settle(app, cfg, &key, &remote, &mut led, &mut removed)
+                            .map_err(HubError::Other)?
+                        {
+                            changed = true;
                         }
                     }
-                }
+                    None => {
+                        // Server kennt das Objekt nicht (mehr): nächster Lauf mit Basis 0.
+                        led.set(
+                            &sent.collection,
+                            &sent.object_id,
+                            Entry {
+                                revision: 0,
+                                hash: String::new(),
+                                deleted: false,
+                            },
+                        );
+                        pending += 1;
+                    }
+                },
                 "rejected" => {
                     led.mark_dead(
                         &sent.collection,
@@ -396,21 +574,9 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             // frischen Stand unter der Seiten-Sperre und sichert vorher die
             // Konfliktkopie -- ein Schnappschuss vom Zyklusanfang reicht
             // dafuer nicht (Review-Befund 14.09.).
-            let synced = led
-                .get(&remote.collection, &remote.object_id)
-                .map(|e| e.hash.clone());
-            if apply_remote(app, cfg, &key, remote, synced.as_deref()).map_err(HubError::Other)? {
+            if settle(app, cfg, &key, remote, &mut led, &mut removed).map_err(HubError::Other)? {
                 changed = true;
             }
-            led.set(
-                &remote.collection,
-                &remote.object_id,
-                Entry {
-                    revision: remote.revision,
-                    hash: remote_hash(&key, cfg, remote),
-                    deleted: remote.deleted,
-                },
-            );
         }
         led.cursor = page.cursor.max(since);
         since = led.cursor;
@@ -419,7 +585,105 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
             break;
         }
     }
-    Ok(finish(app, led, changed, pending, key_mismatch))
+
+    // ---- Dateien herunterladen -------------------------------------------
+    // Was andere Geräte gemeldet haben und hier fehlt: Text und Cover zuerst,
+    // Hörbuchteile in Portionen über mehrere Läufe. Eine Datei, die nicht
+    // ankommt, ruht eine Weile; die übrigen laufen weiter.
+    let wanted = books::wanted(app).map_err(HubError::Other)?;
+    let mut download_budget = DOWNLOAD_BUDGET;
+    for w in wanted {
+        if led.backing_off(&w.blob.blob, now_ms()) {
+            continue;
+        }
+        if w.blob.size > download_budget && download_budget < DOWNLOAD_BUDGET {
+            break; // mindestens eine Datei je Lauf, auch eine große
+        }
+        let target = books::download_target(&w);
+        let sha = match blobs::download(
+            &client,
+            &key,
+            cfg.user_id,
+            &w.blob.blob,
+            w.blob.size,
+            &target,
+        )
+        .await
+        {
+            Ok(sha) => sha,
+            Err(HubError::Unauthorized) => return Err(HubError::Unauthorized),
+            Err(e) => {
+                log::warn!("Sync: Datei für {} nicht geladen: {e}", w.book_id);
+                warning = Some(format!("Datei nicht geladen: {e}"));
+                led.note_failure(&w.blob.blob, now_ms());
+                if e.to_string().contains("nicht erreichbar") {
+                    break;
+                }
+                continue;
+            }
+        };
+        download_budget = download_budget.saturating_sub(w.blob.size);
+        let ledger_key = ledger::key(books::COLLECTION_BOOK, &w.book_id);
+        let before = books::local_hash(
+            app,
+            &key,
+            books::COLLECTION_BOOK,
+            &w.book_id,
+            &mut led.files,
+        )
+        .map_err(HubError::Other)?;
+        match books::finish_download(app, &w, &cfg.device_name) {
+            Ok(placed) => {
+                // Die Prüfsumme ist bekannt: nicht noch einmal einlesen.
+                if let Some(path) = placed {
+                    if let Ok((size, mtime_ms)) = blobs::stat_of(&path) {
+                        led.files.insert(
+                            path.to_string_lossy().into_owned(),
+                            blobs::FileStamp {
+                                size,
+                                mtime_ms,
+                                sha256: sha,
+                            },
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Sync: Datei für {} nicht abgelegt: {e}", w.book_id);
+                warning = Some(format!("Datei nicht abgelegt: {e}"));
+                led.note_failure(&w.blob.blob, now_ms());
+                continue;
+            }
+        }
+        led.uploaded.insert(w.blob.blob.clone());
+        led.failed.remove(&w.blob.blob);
+        // Ein gesicherter Stand bleibt gesichert: die geladene Datei ist
+        // keine lokale Änderung.
+        let after = books::local_hash(
+            app,
+            &key,
+            books::COLLECTION_BOOK,
+            &w.book_id,
+            &mut led.files,
+        )
+        .map_err(HubError::Other)?;
+        if let Some(e) = led.objects.get_mut(&ledger_key) {
+            if before.as_deref() == Some(e.hash.as_str()) {
+                e.hash = after.unwrap_or_default();
+            }
+        }
+        changed = true;
+        ledger::save(app, &led).map_err(HubError::Other)?;
+    }
+    Ok(finish(
+        app,
+        led,
+        changed,
+        pending,
+        key_mismatch,
+        warning,
+        removed,
+    ))
 }
 
 fn finish(
@@ -428,6 +692,8 @@ fn finish(
     changed: bool,
     pending: u32,
     key_mismatch: bool,
+    warning: Option<String>,
+    removed: Vec<String>,
 ) -> Outcome {
     let _ = ledger::save(app, &led);
     Outcome {
@@ -440,6 +706,8 @@ fn finish(
             .keys()
             .filter(|k| k.starts_with("page/"))
             .count() as u32,
+        warning,
+        removed,
     }
 }
 
@@ -465,22 +733,97 @@ fn decrypt(
     serde_json::from_slice(&plain).map_err(|e| format!("Objekt unlesbar: {e}"))
 }
 
+/// Ein Server-Objekt anwenden und das Ledger fortschreiben. Für die
+/// Bibliothek gilt: war der lokale Stand gesichert, ist der Stand NACH dem
+/// Anwenden der bestätigte (sonst schickte das Gerät das Zusammengeführte
+/// gleich wieder zurück); war er ungesichert, bleibt er dirty und geht beim
+/// nächsten Push hinaus.
+fn settle(
+    app: &AppHandle,
+    cfg: &SyncConfig,
+    key: &[u8; crypto::KEY_LEN],
+    remote: &RemoteObject,
+    led: &mut Ledger,
+    removed: &mut Vec<String>,
+) -> Result<bool, String> {
+    let synced = led
+        .get(&remote.collection, &remote.object_id)
+        .map(|e| e.hash.clone());
+    let library = is_library(&remote.collection);
+    let before = if library {
+        books::local_hash(
+            app,
+            key,
+            &remote.collection,
+            &remote.object_id,
+            &mut led.files,
+        )?
+    } else {
+        None
+    };
+    let applied = match apply_remote(app, cfg, key, remote, synced.as_deref(), &mut led.files) {
+        Ok(a) => a,
+        // Ein unbrauchbares Objekt (fremde Kennung, kaputter Verweis) darf
+        // den Abgleich nicht anhalten: als gesehen verbuchen, überspringen.
+        Err(books::ApplyError::Invalid(e)) => {
+            log::warn!(
+                "Sync: {}/{} übersprungen: {e}",
+                remote.collection,
+                remote.object_id
+            );
+            books::Applied::default()
+        }
+        // Ablage gerade nicht beschreibbar: Revision NICHT verbuchen, der
+        // Lauf bricht ab und versucht es beim nächsten Takt erneut.
+        Err(books::ApplyError::Retry(e)) => return Err(e),
+    };
+    led.uploaded.extend(applied.remote_blobs);
+    removed.extend(applied.removed_keys);
+    let rh = remote_hash(key, cfg, remote);
+    let hash = if library && (before.is_none() || before == synced) {
+        books::local_hash(
+            app,
+            key,
+            &remote.collection,
+            &remote.object_id,
+            &mut led.files,
+        )?
+        .unwrap_or(rh)
+    } else {
+        rh
+    };
+    led.set(
+        &remote.collection,
+        &remote.object_id,
+        Entry {
+            revision: remote.revision,
+            hash,
+            deleted: remote.deleted,
+        },
+    );
+    Ok(applied.changed)
+}
+
 /// Ein Server-Objekt lokal anwenden. `synced_hash` ist der zuletzt
 /// bestätigte Hash des Objekts; `apply_page` vergleicht damit den FRISCHEN
-/// lokalen Stand und sichert ihn bei Abweichung als Konfliktkopie. Liefert,
-/// ob sich lokal etwas geändert hat.
+/// lokalen Stand und sichert ihn bei Abweichung als Konfliktkopie.
 fn apply_remote(
     app: &AppHandle,
     cfg: &SyncConfig,
     key: &[u8; crypto::KEY_LEN],
     remote: &RemoteObject,
     synced_hash: Option<&str>,
-) -> Result<bool, String> {
+    files: &mut std::collections::BTreeMap<String, blobs::FileStamp>,
+) -> Result<books::Applied, books::ApplyError> {
+    let changed = |c: bool| books::Applied {
+        changed: c,
+        ..Default::default()
+    };
     match remote.collection.as_str() {
         collect::COLLECTION_PAGE => {
             if remote.deleted {
                 collect::tombstone_page(app, &remote.object_id)?;
-                return Ok(true);
+                return Ok(changed(true));
             }
             let value = decrypt(key, cfg, remote)?;
             collect::apply_page(
@@ -490,19 +833,44 @@ fn apply_remote(
                 synced_hash,
                 &cfg.device_name,
             )?;
-            Ok(true)
+            Ok(changed(true))
         }
         collect::COLLECTION_SETTINGS => {
             if remote.deleted {
-                return Ok(false);
+                return Ok(changed(false));
             }
             let value = decrypt(key, cfg, remote)?;
             collect::apply_settings(app, &value)?;
-            Ok(true)
+            Ok(changed(true))
+        }
+        books::COLLECTION_BOOK => {
+            let value = (!remote.deleted)
+                .then(|| decrypt(key, cfg, remote))
+                .transpose()?;
+            books::apply_book(
+                app,
+                key,
+                &remote.object_id,
+                value.as_ref(),
+                synced_hash,
+                files,
+            )
+        }
+        books::COLLECTION_PROGRESS | books::COLLECTION_BOOKMARK => {
+            let value = (!remote.deleted)
+                .then(|| decrypt(key, cfg, remote))
+                .transpose()?;
+            books::apply_progress(
+                app,
+                &remote.collection,
+                &remote.object_id,
+                value.as_ref(),
+                synced_hash,
+            )
         }
         other => {
             log::warn!("Sync: unbekannte Sammlung {other} übersprungen");
-            Ok(false)
+            Ok(changed(false))
         }
     }
 }

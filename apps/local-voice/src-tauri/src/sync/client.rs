@@ -95,6 +95,33 @@ pub struct HubStatus {
     pub devices: Vec<HubDevice>,
 }
 
+/// Stand eines Blobs in der Dateiablage (`GET /api/v1/voice/blobs/{id}`).
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct BlobInfo {
+    #[serde(default)]
+    pub complete: bool,
+    #[serde(default)]
+    pub chunks: Vec<BlobChunkInfo>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct BlobChunkInfo {
+    pub idx: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChunkBody {
+    pub data: String,
+    pub sha256: String,
+}
+
+/// Ergebnis von `commit`: vollständig oder die fehlenden Stücke.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommitOutcome {
+    Complete,
+    Missing(Vec<i64>),
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct LoginUser {
     pub id: i64,
@@ -120,8 +147,13 @@ struct ApiErrorBody {
 }
 
 fn http() -> Result<reqwest::Client, HubError> {
+    http_with(Duration::from_secs(30))
+}
+
+/// Stücke der Dateiablage tragen bis zu 4 MiB; langsame Leitungen brauchen Zeit.
+fn http_with(timeout: Duration) -> Result<reqwest::Client, HubError> {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(timeout)
         .user_agent(concat!("local-voice-ai/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| HubError::Other(e.to_string()))
@@ -234,6 +266,121 @@ impl HubClient {
         res.json()
             .await
             .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+    }
+
+    fn blob_url(&self, blob_id: &str) -> Result<String, HubError> {
+        // Nur 64 Hex: die Kennung landet im Pfad.
+        if blob_id.len() != 64 || !blob_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(HubError::Other("Ungültige Blob-Kennung".into()));
+        }
+        Ok(format!("{}/api/v1/voice/blobs/{blob_id}", self.url))
+    }
+
+    /// Stand eines Blobs; `None`, wenn der Hub ihn nicht kennt.
+    pub async fn blob_info(&self, blob_id: &str) -> Result<Option<BlobInfo>, HubError> {
+        let res = self
+            .auth(http()?.get(self.blob_url(blob_id)?))
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if res.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        res.json::<BlobInfo>()
+            .await
+            .map(Some)
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))
+    }
+
+    pub async fn put_chunk(
+        &self,
+        blob_id: &str,
+        index: usize,
+        sealed: &[u8],
+    ) -> Result<(), HubError> {
+        let body = ChunkBody {
+            data: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, sealed),
+            sha256: super::blobs::sha256_hex(sealed),
+        };
+        let res = self
+            .auth(
+                http_with(Duration::from_secs(180))?
+                    .post(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
+            )
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        Ok(())
+    }
+
+    pub async fn commit_blob(
+        &self,
+        blob_id: &str,
+        chunks: usize,
+    ) -> Result<CommitOutcome, HubError> {
+        #[derive(Deserialize)]
+        struct Body {
+            #[serde(default)]
+            outcome: String,
+            #[serde(default)]
+            missing: Vec<i64>,
+        }
+        let res = self
+            .auth(http()?.post(format!("{}/commit", self.blob_url(blob_id)?)))
+            .json(&serde_json::json!({ "chunks": chunks }))
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        let status = res.status().as_u16();
+        if res.status().is_success() || status == 409 {
+            let text = res.text().await.unwrap_or_default();
+            if let Ok(body) = serde_json::from_str::<Body>(&text) {
+                match body.outcome.as_str() {
+                    "complete" => return Ok(CommitOutcome::Complete),
+                    "incomplete" => return Ok(CommitOutcome::Missing(body.missing)),
+                    _ => {}
+                }
+            }
+            return Err(HubError::Other(format!(
+                "Blob-Abschluss abgelehnt (HTTP {status})"
+            )));
+        }
+        Err(error_from(res).await)
+    }
+
+    /// Ein versiegeltes Stück; die Prüfsumme des Transports ist geprüft.
+    pub async fn get_chunk(&self, blob_id: &str, index: usize) -> Result<Vec<u8>, HubError> {
+        let res = self
+            .auth(
+                http_with(Duration::from_secs(180))?
+                    .get(format!("{}/chunks/{index}", self.blob_url(blob_id)?)),
+            )
+            .send()
+            .await
+            .map_err(|e| HubError::Other(format!("Hub nicht erreichbar: {e}")))?;
+        if !res.status().is_success() {
+            return Err(error_from(res).await);
+        }
+        let body = res
+            .json::<ChunkBody>()
+            .await
+            .map_err(|e| HubError::Other(format!("Antwort unlesbar: {e}")))?;
+        let bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body.data.trim())
+                .map_err(|_| HubError::Other("Stück ist kein Base64".into()))?;
+        if super::blobs::sha256_hex(&bytes) != body.sha256 {
+            return Err(HubError::Other(
+                "Prüfsumme eines Stücks stimmt nicht".into(),
+            ));
+        }
+        Ok(bytes)
     }
 
     pub async fn logout(&self) -> Result<(), HubError> {

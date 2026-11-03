@@ -3,8 +3,9 @@
 //! Dead-Letter-Liste. Aus Hash-Abweichung folgt „dirty" — so bleibt jeder
 //! Schreibpfad der App unberührt (Spec Abschnitt 6).
 
+use super::blobs::FileStamp;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use tauri::AppHandle;
 
@@ -30,6 +31,28 @@ pub struct Ledger {
     /// Seite gilt weiter als ungesichert (Review-Befund 14.09.).
     #[serde(default)]
     pub dead: BTreeMap<String, DeadEntry>,
+    /// Blobs, die vollständig in der Dateiablage des Hubs liegen (selbst
+    /// hochgeladen oder von einem anderen Gerät gemeldet).
+    #[serde(default)]
+    pub uploaded: BTreeSet<String>,
+    /// Prüfsummen der Bibliotheksdateien (Pfad → Größe, Zeit, SHA-256).
+    #[serde(default)]
+    pub files: BTreeMap<String, FileStamp>,
+    /// Dateien, deren Hoch- oder Herunterladen scheiterte: Blob → Versuche.
+    #[serde(default)]
+    pub failed: BTreeMap<String, Failure>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct Failure {
+    pub count: u32,
+    pub last_ms: f64,
+}
+
+/// Wartezeit nach `count` Fehlschlägen: 1, 2, 4 … Minuten, höchstens 6 Stunden.
+pub fn backoff_ms(count: u32) -> f64 {
+    let minutes = 2f64.powi(count.saturating_sub(1).min(9) as i32).min(360.0);
+    minutes * 60_000.0
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -67,6 +90,19 @@ impl Ledger {
         self.dead
             .get(&key(collection, object_id))
             .is_some_and(|d| d.hash == hash)
+    }
+
+    pub fn note_failure(&mut self, blob: &str, now_ms: f64) {
+        let f = self.failed.entry(blob.to_string()).or_default();
+        f.count = f.count.saturating_add(1);
+        f.last_ms = now_ms;
+    }
+
+    /// Ruht diese Datei nach einem Fehlschlag noch?
+    pub fn backing_off(&self, blob: &str, now_ms: f64) -> bool {
+        self.failed
+            .get(blob)
+            .is_some_and(|f| now_ms - f.last_ms < backoff_ms(f.count))
     }
 
     pub fn mark_dead(&mut self, collection: &str, object_id: &str, hash: &str, reason: &str) {
@@ -140,6 +176,21 @@ mod tests {
             l.is_dirty("page", "p1", "h1"),
             "Tombstone bestätigt, Seite lebt wieder"
         );
+    }
+
+    #[test]
+    fn fehlschlaege_ruhen_mit_wachsender_pause() {
+        let mut l = Ledger::default();
+        assert!(!l.backing_off("b", 0.0));
+        l.note_failure("b", 1_000.0);
+        assert!(l.backing_off("b", 1_000.0 + 59_000.0));
+        assert!(!l.backing_off("b", 1_000.0 + 61_000.0));
+        l.note_failure("b", 0.0);
+        assert!(
+            l.backing_off("b", 119_000.0),
+            "zweiter Fehlschlag: 2 Minuten"
+        );
+        assert_eq!(backoff_ms(50), 360.0 * 60_000.0);
     }
 
     #[test]
