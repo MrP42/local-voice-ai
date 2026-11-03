@@ -1090,10 +1090,14 @@
   background: var(--lib-soft);
   color: inherit;
 }
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 480px) {
   .library-hero__title-edit {
     width: 44px;
     height: 44px;
+  }
+  .library-title-editor__hint,
+  .library-title-editor__row > button {
+    min-height: 44px;
   }
 }
 .library-title-editor {

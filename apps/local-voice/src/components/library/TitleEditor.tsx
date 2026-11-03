@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Check, Sparkles, X } from "lucide-react";
 import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { Button } from "../ui/Button";
@@ -34,13 +35,25 @@ export const TitleEditor: React.FC<{
     setBusy(true);
     try {
       await onSave(trimmed);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="library-title-editor" data-testid="library-title-editor">
+    <div
+      className="library-title-editor"
+      data-testid="library-title-editor"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
       <div className="library-title-editor__row">
         <Input
           ref={input}
@@ -48,13 +61,10 @@ export const TitleEditor: React.FC<{
           aria-label={t("library.field.title")}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            // Während einer IME-Eingabe gehört Enter der Komposition.
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void save();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              onCancel();
             }
           }}
           data-testid="library-title-input"

@@ -10,6 +10,9 @@ use std::path::Path;
 
 /// Obergrenze für einen gelesenen Kopf (ID3-Tag, `moov`-Atom).
 const MAX_HEADER: u64 = 64 * 1024 * 1024;
+/// Höchstens so viele Blöcke bzw. Atome ablaufen (Schutz vor Dateien aus
+/// lauter winzigen Einträgen).
+const MAX_STEPS: usize = 4096;
 
 /// Ist das ein Bild, das als Cover taugt?
 fn is_image(b: &[u8]) -> bool {
@@ -69,11 +72,12 @@ fn id3_cover(file: &mut File) -> Option<Vec<u8>> {
     let mut header = [0u8; 10];
     file.read_exact(&mut header).ok()?;
     let size = syncsafe(&header[6..10]) as u64;
-    if size > MAX_HEADER {
+    let len = file.metadata().ok()?.len();
+    if size > MAX_HEADER || size > len.saturating_sub(10) {
         return None;
     }
-    let mut tag = vec![0u8; size as usize];
-    file.read_exact(&mut tag).ok()?;
+    let mut tag = Vec::new();
+    file.by_ref().take(size).read_to_end(&mut tag).ok()?;
     parse_id3(header[3], header[5], &tag)
 }
 
@@ -90,14 +94,14 @@ pub fn parse_id3(version: u8, flags: u8, tag: &[u8]) -> Option<Vec<u8>> {
         // Erweiterter Kopf: v2.3 Größe ohne sich selbst, v2.4 syncsafe mit.
         let ext = tag.get(0..4)?;
         pos = if version == 3 {
-            be(ext) + 4
+            be(ext).saturating_add(4)
         } else {
             syncsafe(ext)
         };
     }
     let (id_len, size_len, head_len) = if version == 2 { (3, 3, 6) } else { (4, 4, 10) };
     let mut first: Option<Vec<u8>> = None;
-    while pos + head_len <= tag.len() {
+    while pos.saturating_add(head_len) <= tag.len() {
         let id = &tag[pos..pos + id_len];
         if id.iter().all(|b| *b == 0) {
             break;
@@ -105,10 +109,9 @@ pub fn parse_id3(version: u8, flags: u8, tag: &[u8]) -> Option<Vec<u8>> {
         let raw = &tag[pos + id_len..pos + id_len + size_len];
         let size = if version == 4 { syncsafe(raw) } else { be(raw) };
         let start = pos + head_len;
-        let end = start.checked_add(size)?;
-        if end > tag.len() {
+        let Some(end) = start.checked_add(size).filter(|e| *e <= tag.len()) else {
             break;
-        }
+        };
         if id == b"APIC" || id == b"PIC" {
             if let Some((kind, image)) = picture_frame(version, &tag[start..end]) {
                 if kind == 3 {
@@ -165,7 +168,10 @@ fn mp4_cover(file: &mut File) -> Option<Vec<u8>> {
     let len = file.metadata().ok()?.len();
     let mut pos = 0u64;
     // Nur oberste Ebene ablaufen; `moov` steht vorn oder hinten.
-    while pos + 8 <= len {
+    for _ in 0..MAX_STEPS {
+        if pos.saturating_add(8) > len {
+            break;
+        }
         file.seek(SeekFrom::Start(pos)).ok()?;
         let mut h = [0u8; 8];
         file.read_exact(&mut h).ok()?;
@@ -259,9 +265,11 @@ fn flac_cover(file: &mut File) -> Option<Vec<u8>> {
     file.seek(SeekFrom::Start(4)).ok()?;
     let mut read = 0u64;
     let mut first: Option<Vec<u8>> = None;
-    loop {
+    for _ in 0..MAX_STEPS {
         let mut h = [0u8; 4];
-        file.read_exact(&mut h).ok()?;
+        if file.read_exact(&mut h).is_err() {
+            return first;
+        }
         let last = h[0] & 0x80 != 0;
         let kind = h[0] & 0x7F;
         let len = be(&h[1..4]) as u64;
@@ -270,33 +278,35 @@ fn flac_cover(file: &mut File) -> Option<Vec<u8>> {
             return first;
         }
         if kind == 6 {
-            let mut block = vec![0u8; len as usize];
-            file.read_exact(&mut block).ok()?;
+            let mut block = Vec::new();
+            file.by_ref().take(len).read_to_end(&mut block).ok()?;
             if let Some((t, img)) = parse_flac_picture(&block) {
                 if t == 3 {
                     return Some(img);
                 }
                 first.get_or_insert(img);
             }
-        } else {
-            file.seek(SeekFrom::Current(len as i64)).ok()?;
+        } else if file.seek(SeekFrom::Current(len as i64)).is_err() {
+            return first;
         }
         if last {
             return first;
         }
     }
+    first
 }
 
 /// (Bildtyp, Bytes) aus einem FLAC-`PICTURE`-Block.
 pub fn parse_flac_picture(b: &[u8]) -> Option<(u8, Vec<u8>)> {
-    let u32_at = |at: usize| b.get(at..at + 4).map(be);
+    let u32_at = |at: usize| b.get(at..at.checked_add(4)?).map(be);
     let kind = u32_at(0)? as u8;
     let mime_len = u32_at(4)?;
-    let desc_at = 8 + mime_len;
+    let desc_at = mime_len.checked_add(8)?;
     let desc_len = u32_at(desc_at)?;
-    let data_len_at = desc_at + 4 + desc_len + 16;
+    let data_len_at = desc_at.checked_add(20)?.checked_add(desc_len)?;
     let data_len = u32_at(data_len_at)?;
-    let data = b.get(data_len_at + 4..data_len_at + 4 + data_len)?;
+    let data_at = data_len_at.checked_add(4)?;
+    let data = b.get(data_at..data_at.checked_add(data_len)?)?;
     Some((kind, data.to_vec()))
 }
 
@@ -414,6 +424,66 @@ mod tests {
         b.extend_from_slice(&jpeg());
         assert_eq!(parse_flac_picture(&b), Some((3, jpeg())));
         assert_eq!(parse_flac_picture(&b[..30]), None);
+    }
+
+    #[test]
+    fn hostile_size_fields_are_rejected_without_huge_reads() {
+        let dir = std::env::temp_dir().join(format!("lva-cover-h-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("x.mp3");
+        // ID3 mit maximaler Größe in einer 10-Byte-Datei.
+        std::fs::write(&p, b"ID3\x03\0\0\x7F\x7F\x7F\x7F").unwrap();
+        assert_eq!(embedded_cover(&p), None);
+        // FLAC mit Blocklänge 0xFFFFFF, Datei viel kürzer.
+        std::fs::write(&p, b"fLaC\x06\xFF\xFF\xFFabc").unwrap();
+        assert_eq!(embedded_cover(&p), None);
+        // FLAC aus lauter leeren Blöcken: endet nach MAX_STEPS.
+        let mut many = b"fLaC".to_vec();
+        many.extend(std::iter::repeat([1u8, 0, 0, 0]).take(10_000).flatten());
+        std::fs::write(&p, &many).unwrap();
+        assert_eq!(embedded_cover(&p), None);
+        // MP4 mit 64-bit-Größe u64::MAX.
+        let mut mp4 = atom(b"ftyp", b"M4B \0\0\0\0");
+        mp4.extend_from_slice(&1u32.to_be_bytes());
+        mp4.extend_from_slice(b"mdat");
+        mp4.extend_from_slice(&u64::MAX.to_be_bytes());
+        std::fs::write(&p, &mp4).unwrap();
+        assert_eq!(embedded_cover(&p), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_flac_file_and_id3v22_pic() {
+        let dir = std::env::temp_dir().join(format!("lva-cover-f-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("x.flac");
+        let mut pic = 3u32.to_be_bytes().to_vec();
+        pic.extend_from_slice(&10u32.to_be_bytes());
+        pic.extend_from_slice(b"image/jpeg");
+        pic.extend_from_slice(&0u32.to_be_bytes());
+        pic.extend_from_slice(&[0; 16]);
+        pic.extend_from_slice(&(jpeg().len() as u32).to_be_bytes());
+        pic.extend_from_slice(&jpeg());
+        let mut f = b"fLaC".to_vec();
+        f.extend_from_slice(&[0, 0, 0, 34]);
+        f.extend_from_slice(&[0; 34]);
+        let n = pic.len() as u32;
+        f.extend_from_slice(&[0x86, (n >> 16) as u8, (n >> 8) as u8, n as u8]);
+        f.extend_from_slice(&pic);
+        std::fs::write(&p, &f).unwrap();
+        assert_eq!(embedded_cover(&p), Some(jpeg()));
+        // ID3v2.2: „PIC“, drei Byte Größe, drei Zeichen Format.
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(b"JPG");
+        frame.push(3);
+        frame.push(0);
+        frame.extend_from_slice(&jpeg());
+        let mut tag = b"PIC".to_vec();
+        let n = frame.len();
+        tag.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8, n as u8]);
+        tag.extend_from_slice(&frame);
+        assert_eq!(parse_id3(2, 0, &tag), Some(jpeg()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

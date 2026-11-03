@@ -6106,6 +6106,17 @@ async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<Cover
 }
 },
 /**
+ * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+ */
+async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Das in die Hördatei eingebettete Cover übernehmen.
  */
 async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
@@ -9480,7 +9491,7 @@ source: string;
  */
 cover_id: number | null; isbn: string | null; 
 /**
- * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad samt `?v=`.
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
  */
 preview: string; 
 /**

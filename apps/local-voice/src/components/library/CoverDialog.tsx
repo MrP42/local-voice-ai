@@ -47,6 +47,7 @@ export const CoverDialog: React.FC<{
     const mine = ++ticket.current;
     setState("loading");
     setError(null);
+    setBroken(new Set());
     // Erst lokal (schnell, ohne Netz), dann mit Open Library.
     const local = await commands.libraryCoverCandidates(id, false);
     if (mine !== ticket.current) return;
@@ -67,8 +68,16 @@ export const CoverDialog: React.FC<{
     setBroken(new Set());
     setChoice({ kind: "current" });
     setBusy(false);
-    if (book) void search(book.id);
-    else ticket.current++;
+    if (!book) {
+      ticket.current++;
+      return;
+    }
+    const id = book.id;
+    void search(id);
+    // Beim Schließen die zwischengelegte Vorschau wegräumen.
+    return () => {
+      void commands.libraryCoverPreviewClear(id).catch(() => undefined);
+    };
     // Nur beim Öffnen für ein anderes Buch neu suchen.
   }, [book?.id]);
 
@@ -223,11 +232,18 @@ export const CoverDialog: React.FC<{
               choice.kind === "candidate" && keyOf(choice.candidate) === key,
               () => setChoice({ kind: "candidate", candidate: c }),
               <img
-                src={src ?? ""}
+                src={src ?? undefined}
                 alt=""
-                loading="lazy"
                 draggable={false}
-                onError={() => setBroken((b) => new Set(b).add(key))}
+                onError={() => {
+                  setBroken((b) => new Set(b).add(key));
+                  // Ein gewähltes Bild, das nicht lädt, ist keine Wahl mehr.
+                  setChoice((ch) =>
+                    ch.kind === "candidate" && keyOf(ch.candidate) === key
+                      ? { kind: "current" }
+                      : ch,
+                  );
+                }}
               />,
               c.source === "audio"
                 ? t("library.cover.fromAudio")

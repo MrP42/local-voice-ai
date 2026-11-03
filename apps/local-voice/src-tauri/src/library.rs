@@ -1354,7 +1354,7 @@ pub struct CoverCandidate {
     /// Open-Library-Cover-Kennung.
     pub cover_id: Option<i64>,
     pub isbn: Option<String>,
-    /// Vorschau: Web-Adresse (Open Library) oder lokaler Pfad samt `?v=`.
+    /// Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
     pub preview: String,
     /// Kurz: Titel, Jahr, Verlag der Ausgabe.
     pub label: String,
@@ -1371,7 +1371,22 @@ fn audio_cover_of(book: &LibraryBook) -> Option<Vec<u8>> {
         .iter()
         .filter(|p| !p.is_empty())
         .take(3)
-        .find_map(|p| crate::cover_art::embedded_cover(Path::new(p)))
+        .filter_map(|p| crate::cover_art::embedded_cover(Path::new(p)))
+        // Was `store_cover` ablehnen würde, gar nicht erst anbieten.
+        .find(|b| b.len() <= MAX_COVER_BYTES)
+}
+
+/// Vorschauen des eingebetteten Covers im Buchordner entfernen.
+fn clear_audio_previews(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(AUDIO_PREVIEW)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Ausgaben eines Werks (`/works/OL…W/editions.json`) als Cover-Vorschläge.
@@ -1441,18 +1456,20 @@ pub async fn library_cover_candidates(
         .map_err(|e| e.to_string())?;
     if let Some(bytes) = audio {
         if let Some(ext) = image_ext(&bytes) {
-            for old in ["jpg", "png", "webp"] {
-                let _ = std::fs::remove_file(dir.join(format!("{AUDIO_PREVIEW}.{old}")));
+            // Eigener Name je Aufruf: eine noch angezeigte ältere Vorschau
+            // (unter Windows evtl. gesperrt) steht dem Schreiben nicht im Weg.
+            let _guard = lock();
+            clear_audio_previews(&dir);
+            let path = dir.join(format!("{AUDIO_PREVIEW}-{}.{ext}", now_ms() as i64));
+            if write_atomic(&path, &bytes).is_ok() {
+                out.push(CoverCandidate {
+                    source: "audio".into(),
+                    cover_id: None,
+                    isbn: None,
+                    preview: path.to_string_lossy().into_owned(),
+                    label: String::new(),
+                });
             }
-            let path = dir.join(format!("{AUDIO_PREVIEW}.{ext}"));
-            write_atomic(&path, &bytes)?;
-            out.push(CoverCandidate {
-                source: "audio".into(),
-                cover_id: None,
-                isbn: None,
-                preview: format!("{}?v={}", path.to_string_lossy(), now_ms() as i64),
-                label: String::new(),
-            });
         }
     }
     if !online {
@@ -1461,7 +1478,12 @@ pub async fn library_cover_candidates(
     let author = book.authors.join(" ");
     let mut hits = Vec::new();
     if let Some(isbn) = book.isbn.as_deref().and_then(crate::isbn::normalize_isbn) {
-        hits.extend(open_library_search(&book.title, &author, Some(&isbn), 8, 8).await?);
+        // Scheitert die ISBN-Suche, hilft die Titelsuche trotzdem weiter.
+        hits.extend(
+            open_library_search(&book.title, &author, Some(&isbn), 8, 8)
+                .await
+                .unwrap_or_default(),
+        );
     }
     hits.extend(open_library_search(&book.title, &author, None, 20, 20).await?);
     let label_of = |c: &MetadataCandidate| {
@@ -1513,12 +1535,21 @@ pub async fn library_cover_from_audio(app: AppHandle, id: String) -> Result<Libr
     let _guard = lock();
     let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
     store_cover(&dir, &bytes)?;
-    for old in ["jpg", "png", "webp"] {
-        let _ = std::fs::remove_file(dir.join(format!("{AUDIO_PREVIEW}.{old}")));
-    }
+    clear_audio_previews(&dir);
     book.cover_source = "audio".into();
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_cover_preview_clear(app: AppHandle, id: String) -> Result<(), String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let _guard = lock();
+    clear_audio_previews(&dir);
+    Ok(())
 }
 
 /// Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die

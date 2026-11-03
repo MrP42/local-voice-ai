@@ -212,9 +212,10 @@ export async function addToLibrary(
   ) {
     const r = await commands.libraryCoverFromFile(book.id, file.path);
     if (r.status === "ok") book = r.data;
-  } else if (file.kind === "audio") {
-    book = await adoptAudioCover(book);
   }
+  // Kein Cover geladen (oder Laden gescheitert): das Bild aus dem Hörbuch,
+  // nur beim ersten Hörbuch des Buchs.
+  if (file.kind === "audio" && !current?.audio) book = await adoptAudioCover(book);
   return { book, attached: !!current };
 }
 
@@ -587,9 +588,9 @@ export async function addAudioGroup(
       candidate.isbn ?? null,
     );
     if (r.status === "ok") book = r.data;
-  } else {
-    book = await adoptAudioCover(book);
   }
+  // Kein Cover geladen (oder Laden gescheitert): das Bild aus dem Hörbuch.
+  if (!hadAudio) book = await adoptAudioCover(book);
   return { book, attached: !!current };
 }
 
@@ -627,7 +628,9 @@ export async function importAudioParts(
       : await commands.libraryAudioImportTracks(book.id, paths, append);
   if (r.status === "error") throw new ImportError(r.error);
   if (before.audio && !append) await cleanupReplaced(before);
-  const withCover = await adoptAudioCover(r.data);
+  // Nur beim ersten Hörbuch: wer das Cover bewusst entfernt hat, bekommt es
+  // beim Anhängen oder Ersetzen nicht ungefragt zurück.
+  const withCover = before.audio ? r.data : await adoptAudioCover(r.data);
   if (append && before.text?.origin === "transcript") {
     const next = await transcribeTracks(book.id, onWarning, tracksOf(before.audio).length);
     if (next) return next;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
@@ -95,6 +95,13 @@ export const BookDetail: React.FC<Props> = ({
   const [coverOpen, setCoverOpen] = useState(false);
   const [titleEditing, setTitleEditing] = useState(editTitle);
   useEffect(() => setTitleEditing(editTitle), [book.id, editTitle]);
+  // Editor zu: Fokus zurück auf den Stift (Tastatur, Bildschirmleser).
+  const pencil = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(titleEditing);
+  useEffect(() => {
+    if (wasEditing.current && !titleEditing) pencil.current?.focus();
+    wasEditing.current = titleEditing;
+  }, [titleEditing]);
   // Neues Buch: Formular zurücksetzen. Neu geladener Stand desselben Buchs
   // (z. B. Cover fertig) nur übernehmen, solange nichts getippt ist.
   useEffect(() => {
@@ -242,10 +249,14 @@ export const BookDetail: React.FC<Props> = ({
           </div>
           {titleEditing ? (
             <TitleEditor
+              key={book.id}
               title={book.title}
               onCancel={() => setTitleEditing(false)}
               onSave={async (title) => {
-                await onSave(book.id, (fresh) => ({ ...fresh, title }));
+                const saved = await onSave(book.id, (fresh) => ({ ...fresh, title }));
+                if (!saved) return;
+                // Ein offenes Metadatenformular darf den Titel nicht zurücksetzen.
+                setDraft((d) => ({ ...d, title }));
                 setTitleEditing(false);
                 toast(t("library.saved"));
               }}
@@ -254,6 +265,7 @@ export const BookDetail: React.FC<Props> = ({
             <div className="library-hero__title-row">
               <h2 className="library-hero__title">{book.title}</h2>
               <button
+                ref={pencil}
                 type="button"
                 className="library-hero__title-edit"
                 onClick={() => setTitleEditing(true)}

@@ -2529,6 +2529,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_cover_clear,
             library::library_cover_candidates,
             library::library_cover_from_audio,
+            library::library_cover_preview_clear,
             library::library_audio_import,
             library::library_audio_import_tracks,
             library::library_merge_audio,

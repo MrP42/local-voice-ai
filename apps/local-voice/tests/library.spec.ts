@@ -2274,14 +2274,14 @@ const serveCovers = async (page: Page) => {
     route.fulfill({
       contentType: "image/svg+xml",
       body: route.request().url().includes("cover.jpg")
-        ? svgCover("Rich Dad", route.request().url().includes("v%3D") ? 205 : 140)
+        ? svgCover("Rich Dad", 205)
         : svgCover("Hörbuch", 140),
     }),
   );
 };
 
 const RICH_DAD_CANDIDATES = [
-  { source: "audio", cover_id: null, isbn: null, preview: "C:/lib/book_rd/vorschau-hoerbuch.jpg?v=1", label: "" },
+  { source: "audio", cover_id: null, isbn: null, preview: "C:/lib/book_rd/vorschau-hoerbuch-1.jpg", label: "" },
   ...[1, 2, 3, 5, 6].map((id) => ({
     source: "openlibrary",
     cover_id: id,
@@ -2451,6 +2451,10 @@ test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele �
   await page.getByTestId("library-more-book_rd").click();
   await page.getByTestId("library-title-book_rd").click();
   await expect(page.getByTestId("library-title-input")).toBeVisible();
+  for (const id of ["library-title-suggestion", "library-title-save"]) {
+    const box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.height, id).toBeGreaterThanOrEqual(44);
+  }
   const noScroll = () =>
     page.evaluate(() => {
       const els = [document.documentElement, ...document.querySelectorAll<HTMLElement>("main, [role=dialog]")];
@@ -2459,6 +2463,10 @@ test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele �
   expect(await noScroll()).toBe(true);
   await page.screenshot({ path: `${VORSCHAU}/titel-bearbeiten-390.png` });
   await page.getByRole("button", { name: "Abbrechen" }).click();
+  // Fokus kehrt auf den Stift zurück; auch er ist groß genug.
+  await expect(page.getByTestId("library-title-edit")).toBeFocused();
+  const pen = (await page.getByTestId("library-title-edit").boundingBox())!;
+  expect(Math.min(pen.width, pen.height)).toBeGreaterThanOrEqual(44);
   await page.getByTestId("library-detail-cover").click();
   const dialog = page.getByTestId("library-cover-dialog");
   await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(7);
@@ -2477,6 +2485,11 @@ test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele �
 test("Neues Hörbuch ablegen: ein eingebettetes Cover wird gleich übernommen (lokal)", async ({
   page,
 }) => {
+  let net = 0;
+  await page.route(/openlibrary\.org/, (route) => {
+    net++;
+    return route.abort();
+  });
   await page.goto("/");
   const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
   await emit(page, "tauri://drag-drop", {
@@ -2487,4 +2500,37 @@ test("Neues Hörbuch ablegen: ein eingebettetes Cover wird gleich übernommen (l
   // Ins Netz geht dabei nichts.
   expect(await calls(page, "library_cover_candidates")).toEqual([]);
   expect(await calls(page, "library_cover_fetch")).toEqual([]);
+  expect(await calls(page, "library_metadata_search")).toEqual([]);
+  expect(net).toBe(0);
+});
+
+test("Titel per Stift bei offenem Metadatenformular: Formular-Speichern setzt ihn nicht zurück", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad("Rich Dad Poor Dad B0DD7W1VFS")]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Rich Dad Poor Dad B0DD7W1VFS“: Details öffnen" }).click();
+  await page.getByRole("tab", { name: "Metadaten" }).click();
+  await page.getByLabel("Verlag").fill("Plata");
+  await page.getByTestId("library-title-edit").click();
+  await page.getByTestId("library-title-input").fill("Rich Dad Poor Dad");
+  await page.getByTestId("library-title-input").press("Enter");
+  await expect(page.getByTestId("library-title-editor")).toHaveCount(0);
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect
+    .poll(async () => (await calls(page, "library_save")).map((a) => (a.book as { title: string; publisher: string | null }).title + "|" + (a.book as { publisher: string | null }).publisher))
+    .toEqual(["Rich Dad Poor Dad|null", "Rich Dad Poor Dad|Plata"]);
+});
+
+test("Anhängen weiterer Teile holt ein bewusst entferntes Cover nicht zurück", async ({ page }) => {
+  await addBooks(page, [richDad()]);
+  await page.addInitScript(() => {
+    (window as unknown as { __pick: string[] }).__pick = ["C:/Hoerbuecher/Teil 2.mp3"];
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Rich Dad Poor Dad“: Details öffnen" }).click();
+  await page.getByRole("tab", { name: "Fassungen" }).click();
+  await page.getByRole("button", { name: /Teile anhängen/ }).click();
+  await expect.poll(async () => (await calls(page, "library_audio_import_tracks")).length).toBe(1);
+  expect(await calls(page, "library_cover_from_audio")).toEqual([]);
 });
