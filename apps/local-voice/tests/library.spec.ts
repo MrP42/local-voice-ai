@@ -2443,3 +2443,100 @@ test("Favoriten: Stern oben rechts (≥ 44 px) holt das Buch nach vorn und filte
   await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "false");
   await expect.poll(titles).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
 });
+
+for (const [width, height, theme] of [
+  [390, 844, "hell"],
+  [390, 844, "dunkel"],
+  [1440, 900, "hell"],
+  [1440, 900, "dunkel"],
+] as const) {
+  test(`Stern und Auswahl ${width} ${theme}: ≥ 44 × 44 px, ohne Überlappung; Papierkorb mit Stern`, async ({
+    page,
+  }) => {
+    if (theme === "dunkel")
+      await page.addInitScript(() => {
+        (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+      });
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await page.getByTestId("library-star-book_2").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    const card = page.locator('[data-drop-book="book_2"]');
+    const r = (b: { x: number; y: number; width: number; height: number }) => ({
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      breite: Math.round(b.width),
+      hoehe: Math.round(b.height),
+    });
+    const overlap = (
+      a: { x: number; y: number; width: number; height: number },
+      b: { x: number; y: number; width: number; height: number },
+    ) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    const star = (await page.getByTestId("library-star-book_2").boundingBox())!;
+    const play = await card.locator(".library-card__play").boundingBox();
+    const cover = (await card.locator(".library-card__open").boundingBox())!;
+    expect(star.width).toBeGreaterThanOrEqual(44);
+    expect(star.height).toBeGreaterThanOrEqual(44);
+    // Stern liegt auf dem Cover der Karte, nicht über dem Abspielknopf.
+    expect(star.x).toBeGreaterThanOrEqual(cover.x - 1);
+    expect(star.x + star.width).toBeLessThanOrEqual(cover.x + cover.width + 1);
+    if (play) expect(overlap(star, play)).toBe(false);
+
+    // Auswahlmodus: Checkbox ≥ 44 × 44, Stern und Abspielknopf ausgeblendet.
+    await page.getByTestId("library-select-start").click();
+    const check = card.locator(".library-select");
+    const box = (await check.boundingBox())!;
+    // Die Auswahlleiste verschiebt das Raster; verglichen wird relativ zum Cover.
+    const coverSel = (await card.locator(".library-card__open").boundingBox())!;
+    const rel = (
+      b: { x: number; y: number; width: number; height: number },
+      c: { x: number; y: number },
+    ) => ({ x: b.x - c.x, y: b.y - c.y, width: b.width, height: b.height });
+    const starRel = rel(star, cover);
+    const boxRel = rel(box, coverSel);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(boxRel.x).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.y).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.x + boxRel.width).toBeLessThanOrEqual(coverSel.width + 1);
+    await expect(page.getByTestId("library-star-book_2")).toHaveCount(0);
+    await expect(card.locator(".library-card__play")).toHaveCount(0);
+    // Checkbox (links oben) und Stern (rechts oben) teilen sich keine Fläche.
+    expect(overlap(boxRel, starRel)).toBe(false);
+    if (play) expect(overlap(boxRel, rel(play, cover))).toBe(false);
+    for (const other of await page.locator(".library-select").all()) {
+      if ((await other.boundingBox())!.x === box.x && (await other.boundingBox())!.y === box.y) continue;
+      expect(overlap(box, (await other.boundingBox())!)).toBe(false);
+    }
+    await check.locator("input").check();
+    await page.screenshot({ path: shot(`auswahl-stern-${width}-${theme}.png`) });
+    writeFileSync(
+      shot(`stern-auswahl-${width}-${theme}.json`),
+      JSON.stringify(
+        {
+          breite: width,
+          theme,
+          hinweis: "x/y relativ zur linken oberen Ecke des Covers",
+          cover: { breite: Math.round(cover.width), hoehe: Math.round(cover.height) },
+          stern: r(starRel),
+          auswahl: r(boxRel),
+          abspielen: play && r(rel(play, cover)),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    // Papierkorb mit Stern: anderen Eintrag entfernen, Favorit bleibt mit Stern sichtbar.
+    await page.getByTestId("library-select-end").click();
+    await page.getByTestId("library-more-book_1").click();
+    await page.getByTestId("library-remove-book_1").click();
+    await page.getByTestId("library-remove-confirm").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("library-trash-open").click();
+    await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+    await page.screenshot({ path: shot(`papierkorb-stern-${width}-${theme}.png`) });
+  });
+}

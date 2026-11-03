@@ -6032,6 +6032,14 @@ async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
  */
@@ -6054,16 +6062,9 @@ async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
- * Endgültig löschen (`ids`), ohne Angabe nur Altlasten älter als sieben Tage.
+ * Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+ * Papierkorb liegt.
  */
 async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
     try {
@@ -9057,18 +9058,6 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
-/**
- * Ein Eintrag im Papierkorb.
- */
-export type TrashEntry = { book: LibraryBook; 
-/**
- * Entfernt am (Unix-ms).
- */
-removed_ms: number; 
-/**
- * Belegter Platz des Buchordners (Bytes).
- */
-bytes: number }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -11096,6 +11085,18 @@ flagged: FlaggedSentence[];
  * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
  */
 failed_blocks: number; blocks: number }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
