@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { Button } from "../../ui/Button";
@@ -23,7 +23,12 @@ export function useRegenerateGuard() {
   const { t } = useTranslation();
   const [pending, setPending] = useState<Pending | null>(null);
   const pendingRef = useRef<Pending | null>(null);
-  pendingRef.current = pending;
+  const open = (next: Pending | null) => {
+    pendingRef.current = next;
+    setPending(next);
+  };
+  // Beim Aushängen bleibt keine Rückfrage hängen.
+  useEffect(() => () => pendingRef.current?.resolve(false), []);
 
   const confirm = useCallback(
     async (meetingId: string, kind: string): Promise<boolean> => {
@@ -36,15 +41,16 @@ export function useRegenerateGuard() {
       // Eine offene Rückfrage wird verneint, bevor die neue kommt.
       pendingRef.current?.resolve(false);
       return new Promise<boolean>((resolve) =>
-        setPending({ version: latest.version, resolve }),
+        open({ version: latest.version, resolve }),
       );
     },
+    // `open` setzt nur Ref und Zustand (stabil genug fuer die Rueckfrage).
     [],
   );
 
   const answer = (ok: boolean) => {
-    pending?.resolve(ok);
-    setPending(null);
+    pendingRef.current?.resolve(ok);
+    open(null);
   };
 
   const dialog = (

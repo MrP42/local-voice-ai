@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { ActionMenu } from "../../ui/ActionMenu";
 import { locateInMarkdown } from "@/lib/minutesEdit";
-import { MinutesEditor } from "./MinutesEditor";
+import { MinutesEditor, minutesDraftFor } from "./MinutesEditor";
 import { useRegenerateGuard } from "./useRegenerateGuard";
 
 /** Blöcke der Leseansicht, die einzeln zum Bearbeiten angeklickt werden können. */
@@ -91,6 +91,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     block: HTMLElement;
   } | null>(null);
   const guard = useRegenerateGuard();
+  // Sperrt "Neu erzeugen" schon während der Rückfrage (Doppelklick).
+  const generatingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
   // seinen Ereignissen, nicht aus dem Aufruf dieses Reiters. So bleibt der
@@ -107,9 +109,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // drift from the first.
   const previewRef = useRef<HTMLDivElement>(null);
 
+  // Neu laden nach einem Lauf darf den offenen Editor weder aushängen noch
+  // die bearbeitete Version wechseln: der Ladetext steht nur beim ersten Laden.
+  const editingRef = useRef(false);
+  editingRef.current = editing !== null;
+  const loadedOnce = useRef(false);
   const loadLatest = useCallback(async () => {
-    setLoading(true);
+    if (!loadedOnce.current) setLoading(true);
     const result = await commands.meetingsGetDocuments(meetingId);
+    loadedOnce.current = true;
     setLoading(false);
     if (result.status !== "ok") {
       // Failing to load used to render as "no minutes yet" — which is exactly
@@ -122,6 +130,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
       .filter((d) => d.kind === docKind)
       .sort((a, b) => b.version - a.version);
     setVersions(minutes);
+    if (editingRef.current) return;
+    // Offener Entwurf (Reiter gewechselt, Besprechung verlassen): wieder öffnen.
+    const drafted = minutes.find((d) => minutesDraftFor(d.id) !== undefined);
+    if (drafted) {
+      setSelectedId(drafted.id);
+      setEditing({ reveal: null });
+      return;
+    }
     setSelectedId(null);
   }, [meetingId, t, docKind]);
 
@@ -227,7 +243,16 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, errorText]);
 
   const generate = async () => {
-    if (editing) return;
+    if (editing || generatingRef.current) return;
+    generatingRef.current = true;
+    try {
+      await runGenerate();
+    } finally {
+      generatingRef.current = false;
+    }
+  };
+
+  const runGenerate = async () => {
     // Von Hand bearbeitet? Vorher fragen; die bearbeitete Version bleibt erhalten.
     if (!(await guard.confirm(meetingId, docKind))) return;
     setRunning(true);
@@ -273,7 +298,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     if (!doc || running) return;
     const text = block?.textContent ?? "";
     setHoverPen(null);
+    // Die bearbeitete Version bleibt angezeigt, auch wenn inzwischen eine neue entsteht.
+    setSelectedId(doc.id);
     setEditing({ reveal: text ? locateInMarkdown(doc.body, text) : null });
+  };
+
+  /** Editor zu: die neueste Version wieder automatisch zeigen, eine ältere bleibt gewählt. */
+  const closeEditor = () => {
+    setEditing(null);
+    setSelectedId((id) => (id === versions[0]?.id ? null : id));
   };
 
   const blockAt = (target: EventTarget | null): HTMLElement | null => {
@@ -467,6 +500,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               }
               description={t("meetings.minutes.copyHint")}
               testId="minutes-copy"
+              disabled={editing !== null}
               onClick={copyMinutes}
             />
             <IconAction
@@ -475,12 +509,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               label={t("meetings.minutes.download")}
               description={t("meetings.detail.export")}
               testId="minutes-export"
+              disabled={editing !== null}
               onClick={exportMinutes}
             />
             <ReadAloudButton
               speakKey={`minutes:${meetingId}:${docKey ?? "minutes"}`}
               getMarkdown={() => doc.body}
               testId="minutes-readaloud"
+              disabled={editing !== null}
               fileStem={
                 docType
                   ? `${meetingTitle} \u2013 ${docType.title}`
@@ -552,10 +588,10 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           key={doc.id}
           doc={doc}
           reveal={editing.reveal}
-          onClose={() => setEditing(null)}
+          onClose={closeEditor}
           onSaved={(next) => {
             setDoc(next);
-            setEditing(null);
+            closeEditor();
           }}
         />
       ) : doc ? (

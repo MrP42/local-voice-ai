@@ -15,6 +15,18 @@ import {
 
 const SPELL_KEY = "lv.minutesEditor.spellcheck";
 
+/**
+ * Ungespeicherte Entwürfe je Dokument (Sitzungsspeicher): ein Reiter- oder
+ * Typwechsel, ein Neuladen nach einem Lauf im Hintergrund oder das Verlassen
+ * der Besprechung hängt den Editor aus. Der Entwurf überlebt das; die Ansicht
+ * öffnet den Editor wieder, solange es einen gibt (`minutesDraftFor`).
+ */
+const drafts = new Map<string, string>();
+
+/** Entwurf eines Dokuments, falls einer offen ist. */
+export const minutesDraftFor = (documentId: string): string | undefined =>
+  drafts.get(documentId);
+
 const readSpell = (): boolean => {
   try {
     return localStorage.getItem(SPELL_KEY) !== "0";
@@ -51,7 +63,7 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
   onDirtyChange,
 }) => {
   const { t } = useTranslation();
-  const [text, setText] = useState(doc.body);
+  const [text, setText] = useState(() => drafts.get(doc.id) ?? doc.body);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -63,6 +75,10 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (dirty) drafts.set(doc.id, text);
+    else drafts.delete(doc.id);
+  }, [dirty, doc.id, text]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // Angeklickte Stelle zeigen, sobald das Textfeld steht.
@@ -88,6 +104,7 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
   const save = useCallback(async () => {
     if (saving) return;
     if (!dirty) {
+      drafts.delete(doc.id);
       onClose();
       return;
     }
@@ -106,8 +123,14 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
       );
       return;
     }
+    drafts.delete(doc.id);
     onSaved(result.data);
   }, [saving, dirty, doc.id, doc.updated_at, text, onSaved, onClose, t]);
+
+  const discard = () => {
+    drafts.delete(doc.id);
+    onClose();
+  };
 
   const cancel = () => {
     if (dirty) setConfirmDiscard(true);
@@ -193,7 +216,7 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
             <Button
               size="sm"
               variant="danger"
-              onClick={onClose}
+              onClick={discard}
               data-testid="minutes-edit-discard-go"
             >
               {t("meetings.minutes.edit.discardGo")}
@@ -208,26 +231,32 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
         </Alert>
       )}
 
-      <EditorMenu
-        value={text}
-        onChange={setText}
-        readOnly={saving}
-        apiRef={apiRef}
-        spellCheck={spellCheck}
-        onSpellCheck={changeSpell}
-      />
-      <TtsChipEditor
-        value={text}
-        onChange={setText}
-        providers={[]}
-        insertApiRef={apiRef}
-        spellCheck={spellCheck}
-        rows={22}
-        placeholder={t("meetings.minutes.edit.placeholder")}
-        className="w-full"
-        onUndo={history.undo}
-        onRedo={history.redo}
-      />
+      {/* Während des Speicherns gesperrt: Getipptes ginge sonst verloren. */}
+      <fieldset
+        disabled={saving}
+        className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0"
+      >
+        <EditorMenu
+          value={text}
+          onChange={setText}
+          readOnly={saving}
+          apiRef={apiRef}
+          spellCheck={spellCheck}
+          onSpellCheck={changeSpell}
+        />
+        <TtsChipEditor
+          value={text}
+          onChange={setText}
+          providers={[]}
+          insertApiRef={apiRef}
+          spellCheck={spellCheck}
+          rows={22}
+          placeholder={t("meetings.minutes.edit.placeholder")}
+          className="w-full"
+          onUndo={history.undo}
+          onRedo={history.redo}
+        />
+      </fieldset>
       <p className="text-xs text-text/60">{t("meetings.minutes.edit.hint")}</p>
     </div>
   );

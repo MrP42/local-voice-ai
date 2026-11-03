@@ -9,6 +9,8 @@ import { locateInMarkdown, saveErrorCode } from "../src/lib/minutesEdit";
 //
 // Mit `LV_SHOTS=<Ordner>` entstehen zusaetzlich die Vorschaubilder fuer die
 // Abnahme (390 und 1440 px, hell und dunkel) samt Touchziel-Messung.
+// Den Ordner AUSSERHALB der App waehlen und danach nach docs/vorschau kopieren:
+// jede neue Datei im App-Ordner laedt die Seiten im Vite-Server neu.
 
 type Call = { cmd: string; args: Record<string, unknown> };
 
@@ -460,6 +462,37 @@ test.describe("Protokoll bearbeiten", () => {
     await expect(page.getByTestId("minutes-editor")).toHaveCount(0);
   });
 
+  test("Entwurf ueberlebt Reiterwechsel und einen fertigen Lauf im Hintergrund", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-edit").click();
+    await editor(page).fill(BODY + "\n- Entwurf");
+    // Kopieren, Herunterladen und Vorlesen sind waehrend des Bearbeitens gesperrt.
+    await expect(page.getByTestId("minutes-copy")).toBeDisabled();
+    await expect(page.getByTestId("minutes-export")).toBeDisabled();
+
+    // Ein Lauf (z. B. aus dem Menue) legt Version 2 an und meldet "done".
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__documents.push(w.__minutesDoc(2, "# Protokoll: Neu"));
+      w.__emit("minutes-event", { kind: "done", meeting_id: "m1" });
+    });
+    await expect(editor(page)).toHaveValue(/Entwurf/);
+    await expect(page.getByTestId("minutes-editor")).toContainText("Version 1");
+
+    // Reiterwechsel haengt den Editor aus; zurueck ist der Entwurf wieder da.
+    await page.getByRole("tab", { name: "Transkript", exact: true }).click();
+    await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
+    await expect(editor(page)).toHaveValue(/Entwurf/);
+    await page.getByTestId("minutes-edit-save").click();
+    const saves = await calls(page, "meetings_update_document_text");
+    expect(saves[0].args.documentId).toBe("p1");
+    // Nach dem Speichern bleibt die bearbeitete (aeltere) Version gewaehlt.
+    await expect(page.getByTestId("minutes-old-version")).toBeVisible();
+  });
+
   test("veralteter Stand: nichts gespeichert, Text bleibt im Editor", async ({
     page,
   }) => {
@@ -555,6 +588,7 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
         await page.getByTestId("replace-input").fill("Enelaco");
         await page.screenshot({ path: name("2-bearbeiten") });
 
+        let touch: string[] = [];
         if (width === 390) {
           // Touchziele >= 44 px (boundingBox) in Werkzeugzeile und Editor.
           const boxes = await page
@@ -575,13 +609,8 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
                 };
               }),
             );
-          const small = boxes.filter((b) => b.h < 44 || b.w < 44);
-          const fs = await import("node:fs");
-          fs.writeFileSync(
-            `${SHOTS}/touchziele-390-${theme}.txt`,
-            boxes.map((b) => `${b.name}: ${b.w} × ${b.h} px`).join("\n") + "\n",
-          );
-          expect(small).toEqual([]);
+          touch = boxes.map((b) => `${b.name}: ${b.w} × ${b.h} px`);
+          expect(boxes.filter((b) => b.h < 44 || b.w < 44)).toEqual([]);
         }
 
         await page.getByTestId("replace-all").click();
@@ -591,6 +620,13 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
           page.getByTestId("regenerate-edited-dialog"),
         ).toBeVisible();
         await page.screenshot({ path: name("3-neu-erzeugen") });
+        if (touch.length > 0) {
+          const fs = await import("node:fs");
+          fs.writeFileSync(
+            `${SHOTS}/touchziele-390-${theme}.txt`,
+            touch.join("\n") + "\n",
+          );
+        }
       });
     }
   }
