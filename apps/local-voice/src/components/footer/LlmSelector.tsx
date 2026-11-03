@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -51,7 +57,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   const [error, setError] = useState<string | null>(null);
   /** Ollama: was im Speicher liegt, ob gerade gearbeitet wird, letzter Fehler. */
   const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
-  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaBusyRaw, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   /** Rechtsklick auf das Modellfeld: ein Menue mit dem Sprung zu den Anbietern. */
   const [contextAt, setContextAt] = useState<{ x: number; y: number } | null>(
@@ -61,6 +67,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const knopfRef = useRef<HTMLButtonElement>(null);
+  const menueRef = useRef<HTMLDivElement>(null);
   /** Fest am Fenster verankert: die schmale Fußleiste rollt seitlich
       (overflow-x) und würde ein absolut gesetztes Menü abschneiden. */
   const [anker, setAnker] = useState<{ left: number; bottom: number } | null>(
@@ -128,6 +135,16 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   const effortText = (e: string | null) =>
     e ? t(`settings.llm.effortLevels.${e}`, { defaultValue: e }) : null;
   const activeIsLocal = active?.connection.kind === "local";
+  /** Der lokale Server läuft mit genau einem Modell: dessen Zustand gilt für
+      eine Funktion nur, wenn sie dieses Modell zeigt (sonst grau). */
+  const fitsShown = (st: LocalLlmStatus): boolean =>
+    !own ||
+    own === globalActive ||
+    (!!st.model_id &&
+      [own.model.id, own.model.remote_id].includes(st.model_id));
+  /** Ollama-Aktivität betrifft eine Funktion nur, wenn sie Ollama nutzt. */
+  const ollamaRelevant = !fn || active?.connection.kind === "ollama";
+  const ollamaBusy = ollamaBusyRaw && ollamaRelevant;
   const activeConnectionId = active?.connection.id ?? null;
 
   // Budgetstand der aktiven Verbindung — alle 30 Sekunden, das reicht: ein
@@ -239,7 +256,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
     const tick = async () => {
       try {
         const next = await commands.llmLocalStatus();
-        if (!cancelled) setStatus(next);
+        if (!cancelled) setStatus(fitsShown(next) ? next : null);
       } catch {
         // Ohne Backend (Browser-Test) bleibt der Status unbekannt.
       }
@@ -312,19 +329,65 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
     setQuery("");
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
+  // Vor dem ersten Zeichnen messen, sonst springt das Menü.
+  useLayoutEffect(() => {
+    if (!open) {
+      setAnker(null);
+      return;
+    }
     const r = knopfRef.current?.getBoundingClientRect();
     if (r)
       setAnker({
         left: Math.max(8, Math.min(r.left, window.innerWidth - 296)),
         bottom: window.innerHeight - r.top + 8,
       });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const close = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) setOpen(false);
     };
+    // Fest verankert: bei Größenänderung oder Rollen der Leiste schließen,
+    // statt neben dem Knopf stehen zu bleiben.
+    const zu = () => setOpen(false);
+    const onScroll = (event: Event) => {
+      if (!menueRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
+        setOpen(false);
+        knopfRef.current?.focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const items = Array.from(
+        menueRef.current?.querySelectorAll<HTMLElement>(
+          '[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)',
+        ) ?? [],
+      );
+      if (items.length === 0) return;
+      event.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        event.key === "ArrowDown"
+          ? (at + 1) % items.length
+          : at <= 0
+            ? items.length - 1
+            : at - 1;
+      items[next]?.focus();
+    };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", zu);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", zu);
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [open]);
 
   const light = (): string => {
@@ -402,7 +465,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   };
 
   const showOllama =
-    active?.connection.kind === "ollama" || ollamaLoaded.length > 0;
+    active?.connection.kind === "ollama" || (!fn && ollamaLoaded.length > 0);
 
   const unload = async () => {
     setOpen(false);
@@ -431,12 +494,14 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
           },
         )
       : undefined;
-  const ollamaTitle = ollamaBusy
-    ? t("tts.llm.busy")
-    : (ollamaError ??
-      (ollamaLoaded.length > 0
-        ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
-        : undefined));
+  const ollamaTitle = !ollamaRelevant
+    ? undefined
+    : ollamaBusy
+      ? t("tts.llm.busy")
+      : (ollamaError ??
+        (ollamaLoaded.length > 0
+          ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
+          : undefined));
   const fnName = fn ? t(`settings.llm.functions.names.${fn}`) : null;
   const fnTitle = fn
     ? t("footer.functionModel.title", {
@@ -451,8 +516,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
     ollamaTitle ??
     status?.message ??
     budgetTitle ??
-    fnTitle ??
-    spendTitle ??
+    ([fnTitle, spendTitle].filter(Boolean).join("\n") || undefined) ??
     undefined;
 
   const trigger = (
@@ -554,9 +618,15 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
           className="lv-fuss-menue absolute bottom-full start-0 mb-2 w-72 max-w-[calc(100vw-16px)] max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
           style={
             anker
-              ? { position: "fixed", left: anker.left, bottom: anker.bottom }
+              ? {
+                  position: "fixed",
+                  left: anker.left,
+                  right: "auto",
+                  bottom: anker.bottom,
+                }
               : undefined
           }
+          ref={menueRef}
           role="menu"
           aria-label={fnName ?? undefined}
           data-testid={fn ? `fuss-modell-menue-${fn}` : undefined}
@@ -599,7 +669,7 @@ export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
                 role="menuitemradio"
                 aria-checked={!own}
                 onClick={() => void choose(null)}
-                className={`w-full min-h-[44px] px-3 py-2 text-start text-sm text-text/80 transition-colors hover:bg-mid-gray/10 ${
+                className={`flex w-full min-h-[44px] items-center justify-start px-3 py-2 text-start text-sm text-text/80 transition-colors hover:bg-mid-gray/10 ${
                   !own ? "bg-logo-primary/10 text-logo-primary" : ""
                 }`}
                 data-function-option=""

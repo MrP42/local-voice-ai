@@ -415,6 +415,23 @@ const zu = async (page: Page, width: number, name: string) => {
   await expect(page.locator("#page-title")).toHaveText(name);
 };
 
+test("Modellmenü: Pfeiltasten wandern, Escape schließt und gibt den Fokus zurück", async ({
+  page,
+}) => {
+  await open(page, 1440, "light");
+  const knopf = page.getByTestId("fuss-modell-read_aloud");
+  await knopf.click();
+  const menue = page.getByTestId("fuss-modell-menue-read_aloud");
+  await expect(menue).toBeVisible();
+  await page.keyboard.press("ArrowDown");
+  await expect(menue.locator('[data-function-option=""]')).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(menue.locator('[data-function-option="m1"]')).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menue).toHaveCount(0);
+  await expect(knopf).toBeFocused();
+});
+
 test("Bibliothek, Vorlesen und Aufnahmen zeigen das Modell gleich", async ({
   page,
 }) => {
