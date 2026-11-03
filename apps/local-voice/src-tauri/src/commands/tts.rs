@@ -566,6 +566,7 @@ pub fn tts_transform_cancel(kind: String) {
     match kind.as_str() {
         "translation" => crate::translator::TRANSLATE_CANCEL.store(true, Ordering::SeqCst),
         "summary" => crate::summarizer::SUMMARY_CANCEL.store(true, Ordering::SeqCst),
+        "assist" => crate::summarizer::ASSIST_CANCEL.store(true, Ordering::SeqCst),
         _ => {}
     }
 }
@@ -578,6 +579,29 @@ pub fn tts_transform_cancel(kind: String) {
 pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, String> {
     let settings = crate::settings::get_settings(&app);
     crate::summarizer::tidy(&settings, &text).await
+}
+
+/// Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+/// nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+/// Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+/// `tts-transform-progress` mit `kind: "assist"`.
+#[tauri::command]
+#[specta::specta]
+pub async fn tts_text_assist(
+    app: AppHandle,
+    task: String,
+    lines: String,
+) -> Result<String, String> {
+    use tauri::Emitter;
+    let settings = crate::settings::get_settings(&app);
+    let emitter = app.clone();
+    let progress = move |done: usize, total: usize| {
+        let _ = emitter.emit(
+            "tts-transform-progress",
+            serde_json::json!({ "kind": "assist", "done": done, "total": total }),
+        );
+    };
+    crate::summarizer::assist(&settings, &task, &lines, &progress).await
 }
 
 #[tauri::command]

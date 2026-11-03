@@ -45,6 +45,7 @@ import {
   type ChipEditorSuggestion,
 } from "./editor/TtsChipEditor";
 import { ScriptCheckPanel } from "./editor/ScriptCheckPanel";
+import { EditorMenu } from "./editor/EditorMenu";
 import {
   checkScript,
   isHintFinding,
@@ -449,6 +450,8 @@ export const TtsSettings = () => {
   useEffect(() => {
     let last = 0;
     const un = listen<TransformProgress>("tts-transform-progress", (e) => {
+      // KI-Textarbeit des Editor-Menüs zeigt ihren Fortschritt selbst.
+      if ((e.payload as { kind?: string }).kind === "assist") return;
       setTransformProgress(e.payload);
       if (!resyncJob.current || Date.now() - last < 1000) return;
       last = Date.now();
@@ -1715,6 +1718,11 @@ export const TtsSettings = () => {
   );
   const [speakersShown, setSpeakersShown] = usePersistentState<"1" | "0">(
     "tts.reader.speakers",
+    "1",
+  );
+  // Rechtschreibprüfung im Editor (Editor-Menü), Standard an.
+  const [spellStored, setSpellStored] = usePersistentState<"1" | "0">(
+    "tts.editor.spell",
     "1",
   );
   const [fontFamily, setFontFamily] = usePersistentState<ReaderFont>(
@@ -3717,6 +3725,30 @@ export const TtsSettings = () => {
                 </div>
                 </div>
               ) : (
+              <>
+              {/* Editor-Menü (Suchen/Ersetzen, Rechtschreibung, Format,
+                  Bereinigen, KI) über dem Textfeld. */}
+              <EditorMenu
+                value={
+                  tab === "original"
+                    ? text
+                    : tab === "translation"
+                      ? (translation ?? "")
+                      : summary
+                }
+                onChange={(v) => {
+                  if (tab === "original") setText(v);
+                  else if (tab === "translation") {
+                    if (!streaming) setTranslation(v);
+                  } else setSummary(v);
+                }}
+                readOnly={tab === "translation" && streaming}
+                apiRef={editorApiRef}
+                spellCheck={spellStored === "1"}
+                onSpellCheck={(on) => setSpellStored(on ? "1" : "0")}
+                onTidy={tab === "original" ? () => void tidyText() : undefined}
+                tidying={tidying}
+              />
               <div className="tts-editor__fill flex-1 min-h-[160px]">
                 {tab === "original" ? (
                   <TtsChipEditor
@@ -3726,6 +3758,7 @@ export const TtsSettings = () => {
                     insertApiRef={editorApiRef}
                     pausesOnly={pausesOnly}
                     engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.inputPlaceholder")}
                     className="w-full"
                     suggestions={tagSuggestions}
@@ -3750,6 +3783,7 @@ export const TtsSettings = () => {
                     insertApiRef={editorApiRef}
                     pausesOnly={pausesOnly}
                     engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.translationPlaceholder")}
                     className="w-full"
                     lang={targetLangCode(targetLang)}
@@ -3771,6 +3805,7 @@ export const TtsSettings = () => {
                     insertApiRef={editorApiRef}
                     pausesOnly={pausesOnly}
                     engineLabel={engineCaps.providerLabel ?? undefined}
+                    spellCheck={spellStored === "1"}
                     placeholder={t("tts.summaryPlaceholder")}
                     className="w-full"
                     findings={editorFindings}
@@ -3785,6 +3820,7 @@ export const TtsSettings = () => {
                   />
                 )}
               </div>
+              </>
               )}
               <ReaderPlayerBar
                 speaking={speaking}
