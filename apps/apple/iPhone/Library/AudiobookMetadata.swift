@@ -15,6 +15,7 @@ enum AudiobookMetadataReader {
         let asset = AVURLAsset(url: url)
         var info = AudiobookInfo()
         var artwork: Data?
+        var comment: String?
         let ext = url.pathExtension.lowercased()
         info.format = ext.isEmpty ? nil : ext.uppercased()
         info.fileBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
@@ -31,6 +32,8 @@ enum AudiobookMetadataReader {
             let raw = id?.rawValue ?? ""
             if artwork == nil, id == .commonIdentifierArtwork || id == .iTunesMetadataCoverArt || id == .id3MetadataAttachedPicture {
                 artwork = try? await item.load(.dataValue)
+                // ID3-APIC liefert die Bilddaten teils als Wörterbuch.
+                if artwork == nil, let dict = (try? await item.load(.value)) as? [String: Any] { artwork = dict["data"] as? Data }
                 continue
             }
             guard let value = await string(item) else { continue }
@@ -59,9 +62,12 @@ enum AudiobookMetadataReader {
                 info.genre = info.genre ?? value
             case .commonIdentifierLanguage, .id3MetadataLanguage:
                 info.language = info.language ?? value
-            case .commonIdentifierDescription, .iTunesMetadataDescription, .iTunesMetadataUserComment, .id3MetadataComments:
+            case .commonIdentifierDescription, .iTunesMetadataDescription:
                 // Die längste Beschreibung gewinnt (`ldes` ist meist ausführlicher als `desc`).
                 if value.count > (info.summary?.count ?? 0) { info.summary = value }
+            case .iTunesMetadataUserComment, .id3MetadataComments:
+                // Kommentare (oft vom Ripper) nur, wenn sonst nichts da ist.
+                comment = comment ?? value
             case .commonIdentifierCopyrights, .iTunesMetadataCopyright, .id3MetadataCopyright:
                 info.copyright = info.copyright ?? value
             case .iTunesMetadataEncodingTool, .iTunesMetadataEncodedBy, .commonIdentifierSoftware, .id3MetadataEncodedWith:
@@ -75,6 +81,7 @@ enum AudiobookMetadataReader {
                 else if key.hasSuffix("series") || key.hasSuffix("©mvn") { info.series = info.series ?? value }
             }
         }
+        if info.summary == nil { info.summary = comment }
         info.authors = AudiobookInfo.unique(info.authors)
         info.narrators = AudiobookInfo.unique(info.narrators)
         info.summary = info.summary.map(plainText)
@@ -152,7 +159,8 @@ enum AudiobookMetadataReader {
 // MARK: - Ablage je Buch
 
 extension PhoneLibrary {
-    var coverCache: NSCache<NSString, UIImage> { PhoneLibraryCoverCache.shared }
+    /// Zählt Coveränderungen; Sperrbildschirm-Artwork wird nur dann neu gebaut.
+    var coverRevision: Int { PhoneLibraryCoverCache.revision }
 
     func coverURL(_ book: LibraryBook) -> URL? {
         ["cover.jpg", "cover.png", "cover.webp"].map { dir(book).appendingPathComponent($0) }
@@ -160,20 +168,32 @@ extension PhoneLibrary {
     }
 
     /// Cover des Buchs, falls vorhanden (aus der Hörbuchdatei, EPUB oder vom Desktop).
+    /// Im Speicher gemerkt, auch „kein Cover“: Views rufen das bei jedem Rendern auf.
     func coverImage(_ book: LibraryBook) -> UIImage? {
-        guard let url = coverURL(book) else { return nil }
-        let stamp = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate?.timeIntervalSince1970) ?? 0
-        let key = "\(url.path)#\(stamp)" as NSString
-        if let hit = coverCache.object(forKey: key) { return hit }
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
-        coverCache.setObject(image, forKey: key)
+        if let hit = PhoneLibraryCoverCache.images[book.id] { return hit }
+        let image = coverURL(book).flatMap { UIImage(contentsOfFile: $0.path) }
+        PhoneLibraryCoverCache.images[book.id] = .some(image)
         return image
+    }
+
+    /// Kleines Cover (höchstens 300 px) für Regal, Mini-Player und Listen.
+    func coverThumbnail(_ book: LibraryBook) -> UIImage? {
+        if let hit = PhoneLibraryCoverCache.thumbs[book.id] { return hit }
+        let thumb = coverImage(book).flatMap { image -> UIImage? in
+            let side = max(image.size.width, image.size.height)
+            guard side > 300 else { return image }
+            let scale = 300 / side
+            return image.preparingThumbnail(of: CGSize(width: image.size.width * scale, height: image.size.height * scale)) ?? image
+        }
+        PhoneLibraryCoverCache.thumbs[book.id] = .some(thumb)
+        return thumb
     }
 
     func storeCover(_ data: Data, for book: LibraryBook) {
         guard let jpeg = AudiobookMetadataReader.coverJPEG(data) else { return }
         for old in ["cover.png", "cover.webp"] { try? FileManager.default.removeItem(at: dir(book).appendingPathComponent(old)) }
         try? jpeg.write(to: dir(book).appendingPathComponent("cover.jpg"), options: .atomic)
+        PhoneLibraryCoverCache.forget(book.id)
         objectWillChange.send()
     }
 
@@ -223,6 +243,10 @@ private struct StoredAudiobookInfo: Codable {
     var info: AudiobookInfo
 }
 
+@MainActor
 private enum PhoneLibraryCoverCache {
-    static let shared: NSCache<NSString, UIImage> = { let c = NSCache<NSString, UIImage>(); c.countLimit = 40; return c }()
+    static var images: [String: UIImage?] = [:]
+    static var thumbs: [String: UIImage?] = [:]
+    static var revision = 0
+    static func forget(_ id: String) { images[id] = nil; thumbs[id] = nil; revision += 1 }
 }

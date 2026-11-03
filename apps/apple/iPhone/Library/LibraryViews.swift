@@ -45,7 +45,7 @@ struct LibraryCover: View {
     private func photo(_ image: UIImage) -> some View {
         Image(uiImage: image).resizable().scaledToFit()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background { Image(uiImage: image).resizable().scaledToFill().blur(radius: compact ? 4 : 14).opacity(0.85) }
+            .background { if !compact { Image(uiImage: image).resizable().scaledToFill().blur(radius: 14).opacity(0.85) } }
             .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 6))
         .accessibilityHidden(true)
@@ -170,7 +170,7 @@ struct LibraryShelf: View {
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
                         HStack(alignment: .top, spacing: 14) {
-                            LibraryCover(title: book.title, image: library.coverImage(book)).frame(width: 64, height: 96)
+                            LibraryCover(title: book.title, image: library.coverThumbnail(book)).frame(width: 64, height: 96)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title).font(.headline)
                                 if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
@@ -227,7 +227,7 @@ struct ShelfItem: View {
         let audio = library.hasAudio(book), text = library.hasText(book)
         let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
-            LibraryCover(title: book.title, image: library.coverImage(book)).aspectRatio(2/3, contentMode: .fit)
+            LibraryCover(title: book.title, image: library.coverThumbnail(book)).aspectRatio(2/3, contentMode: .fit)
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                        : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
@@ -383,7 +383,7 @@ struct LibraryMiniPlayer: View {
         HStack(spacing: 10) {
             Button { playback.presented = true } label: {
                 HStack(spacing: 10) {
-                    LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { PhoneLibrary.shared.coverImage($0) })
+                    LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { PhoneLibrary.shared.coverThumbnail($0) })
                         .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
@@ -420,6 +420,10 @@ struct FollowText<Row: View>: View {
     let row: (Int, TextParagraph) -> Row
     @State private var pausedUntil = Date.distantPast
     @State private var showReturn = false
+
+    init(paragraphs: [TextParagraph], current: Int, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
+        self.paragraphs = paragraphs; self.current = current; self.row = row
+    }
 
     var body: some View {
         ScrollViewReader { proxy in

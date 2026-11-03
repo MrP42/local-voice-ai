@@ -102,7 +102,7 @@ public enum AudiobookChapters {
         let sorted = chapters.sorted { $0.startMs < $1.startMs }
         var out: [AudiobookChapter] = []
         for (i, c) in sorted.enumerated() {
-            let end = i + 1 < sorted.count ? sorted[i + 1].startMs : max(totalMs, c.endMs)
+            let end = i + 1 < sorted.count ? sorted[i + 1].startMs : (totalMs > 0 ? totalMs : c.endMs)
             let duration = max(0, end - c.startMs)
             // Doppelte Startpunkte (Kapitel ohne Länge) zusammenfassen.
             if duration <= 0, i + 1 < sorted.count { continue }
@@ -165,7 +165,7 @@ public enum AudiobookChapters {
     public static func cleanTitle(_ raw: String, fallback: String) -> String {
         var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         for ext in [".mp3", ".m4a", ".m4b", ".aac"] where t.lowercased().hasSuffix(ext) { t.removeLast(ext.count) }
-        t = t.replacingOccurrences(of: #"^\d{1,3}[\s_]*[-_][\s_]*"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"^\d{1,3}[\s_]*[-_]?[\s_]+"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespaces)
         return t.isEmpty ? fallback : t
     }

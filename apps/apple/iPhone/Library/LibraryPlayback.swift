@@ -155,7 +155,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func tick(_ seconds: Double) {
         guard mode == .audiobook, seconds.isFinite, seekSettled else { return }
         positionMs = LibraryTracks.total(TrackPosition(index: trackIndex, offsetMs: seconds * 1000), in: tracks)
-        if let stopAt = sleepAtMs, positionMs >= stopAt - 250 { pause(); seek(toMs: stopAt); cancelSleep() }
+        if let stopAt = sleepAtMs, positionMs >= stopAt - 250 { cancelSleep(); pause(); seek(toMs: stopAt) }
         if Date().timeIntervalSince(lastSaveAt) >= 10 { saveAudio() }
         updateNowPlaying()
     }
@@ -166,6 +166,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             if playing { player?.playImmediately(atRate: rate) }
         } else {
             playing = false
+            cancelSleep()
             saveAudio()
         }
     }
@@ -173,6 +174,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     func seek(toMs ms: Double) {
         guard mode == .audiobook else { return }
         let target = max(0, totalMs > 0 ? min(ms, totalMs) : ms)
+        // Sprung hinter das Schlaftimer-Ziel (z. B. „Kapitel vor“): Timer verfällt.
+        if let stopAt = sleepAtMs, target >= stopAt - 250 { cancelSleep() }
         let pos = LibraryTracks.position(of: target, in: tracks)
         if pos.index != trackIndex { load(position: pos) }
         else {
@@ -324,6 +327,16 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard mode == .audiobook, let c = currentChapter else { return }
         sleepAtMs = c.endMs
     }
+    /// Artwork einmal je Cover bauen, nicht bei jedem Tick.
+    private var artworkCache: (key: String, art: MPMediaItemArtwork?)?
+    private func nowPlayingArtwork(_ book: LibraryBook) -> MPMediaItemArtwork? {
+        let key = book.id + "#" + String(library.coverRevision)
+        if let c = artworkCache, c.key == key { return c.art }
+        let art = library.coverImage(book).map(Self.artwork)
+        artworkCache = (key, art)
+        return art
+    }
+
     private func cancelSleep() { sleepTimer?.invalidate(); sleepTimer = nil; sleepEnds = nil; sleepAtMs = nil }
 
     private func removeObservers() {
@@ -380,9 +393,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
                 info[MPNowPlayingInfoPropertyChapterCount] = c.count
             }
         }
-        if let image = library.coverImage(book) {
-            info[MPMediaItemPropertyArtwork] = Self.artwork(image)
-        }
+        if let art = nowPlayingArtwork(book) { info[MPMediaItemPropertyArtwork] = art }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 }

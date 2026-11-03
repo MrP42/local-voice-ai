@@ -5,6 +5,7 @@ import SwiftUI
 // `apps/local-voice/docs/vorschau/ios-hoerbuchplayer/`.
 
 /// Formatierungen für Umfang und Fortschritt.
+@MainActor
 enum AudiobookFormat {
     static func pages(_ book: LibraryBook?, playback: LibraryPlayback) -> (pages: Int, estimated: Bool)? {
         let textLength = playback.paragraphs.last.map { $0.end }
@@ -28,7 +29,8 @@ struct LibraryListenView: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @ObservedObject var library = PhoneLibrary.shared
     @State private var scrubbing: Double?
-    @State private var showText = true
+    /// Standard: Cover. „Text“ schaltet auf Mitlesen um.
+    @State private var showText = false
     @State private var chaptersShown = false
     @State private var infoShown = false
 
@@ -65,7 +67,6 @@ struct LibraryListenView: View {
                 .frame(maxWidth: 310)
                 .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
                 .padding(.horizontal, 32)
-                .layoutPriority(-1)
             VStack(spacing: 3) {
                 Text(playback.title).font(.title3.bold()).multilineTextAlignment(.center).lineLimit(2)
                 if let byline { Text(byline).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).multilineTextAlignment(.center).lineLimit(2) }
@@ -280,7 +281,7 @@ struct AudiobookChapterSheet: View {
         let fraction = total > 0 ? min(1, playback.positionMs / total) : 0
         let remainingChapters = max(0, chapters.count - current - 1)
         return HStack(alignment: .top, spacing: 14) {
-            LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { library.coverImage($0) })
+            LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { library.coverThumbnail($0) })
                 .frame(width: 64, height: 64)
             VStack(alignment: .leading, spacing: 4) {
                 Text(playback.title).font(.headline).lineLimit(2)
@@ -355,8 +356,10 @@ struct AudiobookInfoSheet: View {
             List {
                 Section {
                     VStack(spacing: 10) {
+                        let aspect = library.coverAspect(book)
+                        let h = min(200, 180 / max(0.1, aspect))
                         LibraryCover(title: playback.title, image: book.flatMap { library.coverImage($0) })
-                            .aspectRatio(library.coverAspect(book), contentMode: .fit).frame(maxWidth: 180, maxHeight: 200)
+                            .frame(width: h * aspect, height: h)
                         Text(playback.title).font(.title3.bold()).multilineTextAlignment(.center)
                         if let sub = book?.subtitle ?? info?.subtitle { Text(sub).font(.subheadline).foregroundStyle(VoicePalette.secondaryText).multilineTextAlignment(.center) }
                     }

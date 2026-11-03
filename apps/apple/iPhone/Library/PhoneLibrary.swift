@@ -295,7 +295,8 @@ final class PhoneLibrary: ObservableObject {
         let found = AudiobookInfo.combine(fileInfos.map(\.info))
         let isNew = !books.contains { $0.id == book.id }
         // Ein Teil: Titel-Atom ist der Buchtitel; mehrere Teile: Album ist der Buchtitel.
-        let fileTitle = tracks.count > 1 ? (found.album ?? found.title) : (found.title ?? found.album)
+        // Ohne Album bleibt bei mehreren Teilen der gemeinsame Dateiname (Teiltitel wäre „Kapitel 1“).
+        let fileTitle = tracks.count > 1 ? found.album : (found.title ?? found.album)
         // Nur bei neuen Einträgen; das Audio liegt schon im Ordner dieses Eintrags.
         if isNew, let fileTitle, fileTitle.count >= 2 { book.title = fileTitle }
         if book.authors.isEmpty { book.authors = found.authors }
