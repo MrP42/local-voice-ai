@@ -81,6 +81,12 @@ const APPLY_ATTEMPTS: usize = 3;
 // Labels
 // ---------------------------------------------------------------------------
 
+/// Sprechernummer fuer einen ganzen Kanal ohne Sprechertrennung (Segmente
+/// mit `speaker_index = None`, z. B. "Aufnahme" eines Imports). Getrennte
+/// Sprecher zaehlen ab 1; die 0 kommt in Segmenten nie vor und steht nur in
+/// `speakers`-Zeilen (Name des ganzen Kanals).
+pub const WHOLE_CHANNEL: u32 = 0;
+
 /// Anzeigenamen der Sprecher einer Besprechung. Ersetzt
 /// `stats::label_for_channel` an allen Aufrufstellen: Name, sonst
 /// "Gegenseite 2" / "Raum 1" / "Person 1" / "Ich".
@@ -192,6 +198,20 @@ impl SpeakerDirectory {
         directory
     }
 
+    /// Dasselbe Verzeichnis ohne vergebene Namen und ohne "Mein Name": die
+    /// Standardbezeichnungen ("Person 2", "Aufnahme").
+    pub fn without_names(mut self) -> Self {
+        self.names.clear();
+        self.self_name = None;
+        self.self_speaker = None;
+        self
+    }
+
+    /// Hat der ganze Kanal (Segmente ohne Sprecher) einen Namen?
+    pub fn has_channel_name(&self, channel: u8) -> bool {
+        self.name(channel, WHOLE_CHANNEL).is_some()
+    }
+
     /// Der eingetragene Name (getrimmt), falls es einen gibt.
     pub fn name(&self, channel: u8, speaker_index: u32) -> Option<&str> {
         self.names
@@ -205,6 +225,12 @@ impl SpeakerDirectory {
 
     pub fn label_for(&self, channel: u8, speaker_index: Option<u32>) -> String {
         let Some(n) = speaker_index else {
+            // Ein Kanal ohne Sprechertrennung ("Aufnahme", "Ich", "Gegenseite")
+            // ist der Sprecher [`WHOLE_CHANNEL`] und laesst sich wie jeder
+            // andere benennen.
+            if let Some(name) = self.name(channel, WHOLE_CHANNEL) {
+                return name.to_string();
+            }
             if let (0, Some(mine)) = (channel, &self.self_name) {
                 return mine.clone();
             }

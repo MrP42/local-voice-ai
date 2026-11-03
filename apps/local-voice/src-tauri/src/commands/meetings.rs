@@ -2,6 +2,7 @@
 //! (pattern: `commands/history.rs`). No logic beyond argument shuffling and
 //! error mapping lives here.
 
+use crate::managers::meetings::relabel::Relabeler;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -229,7 +230,14 @@ pub async fn meetings_get_documents(
     meeting_id: String,
 ) -> Result<Vec<MeetingDocument>, String> {
     let store = store_of(&app)?;
-    store.get_documents(&meeting_id).map_err(store_err)
+    // #242: Texte von vor dem Benennen zeigen die aktuellen Sprechernamen.
+    let names = Relabeler::load(&store, &meeting_id);
+    Ok(store
+        .get_documents(&meeting_id)
+        .map_err(store_err)?
+        .into_iter()
+        .map(|d| names.document(d))
+        .collect())
 }
 
 /// Soft-deletes the meeting, then hard-deletes its audio files from disk

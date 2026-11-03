@@ -9710,7 +9710,8 @@ export type MeetingSpeaker = {
  */
 channel: number; 
 /**
- * Nummer im Kanal, ab 1.
+ * Nummer im Kanal, ab 1; 0 = der ganze Kanal ohne Sprechertrennung
+ * ("Aufnahme", "Ich", "Gegenseite"), benennbar wie jeder Sprecher.
  */
 speaker_index: number; 
 /**
@@ -9728,7 +9729,25 @@ human_id: string | null;
 /**
  * Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
  */
-share_pct: number }
+share_pct: number; 
+/**
+ * Sprechzeit in Millisekunden (Summe der Segmentdauern).
+ */
+speech_ms: number; 
+/**
+ * Beginn des ersten Segments dieses Sprechers (`None`: keins, nur eine
+ * Zeile in `speakers`). Ordnet die Tabelle "Sprecher & Redeanteile".
+ */
+first_ms: number | null; 
+/**
+ * Frühere Namen (älteste zuerst): Texte, die vor dem Umbenennen entstanden
+ * sind, zeigen über sie den aktuellen Namen.
+ */
+former_names: string[]; 
+/**
+ * Standardbezeichnung ohne Namen ("Person 2", "Aufnahme").
+ */
+default_label: string }
 export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; 
 /**
  * Woher die KV-Zahlen kommen: aus den Metadaten oder geraten.

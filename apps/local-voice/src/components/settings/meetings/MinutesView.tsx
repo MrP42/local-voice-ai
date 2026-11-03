@@ -26,6 +26,8 @@ import {
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
 import { useReadAloudHighlight } from "./useReadAloudHighlight";
+import { staticSharesTable } from "./SpeakerSharesTable";
+import { splitSpeakerSection } from "@/lib/meetingSpeakerShares";
 import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
@@ -40,6 +42,11 @@ interface MinutesViewProps {
   docType?: DocTypeInfo;
   /** Vorne in der Werkzeugzeile (Typleiste der Dokumente): keine eigene Zeile. */
   toolbarLead?: React.ReactNode;
+  /**
+   * #242: ersetzt die Tabelle "Sprecher & Redeanteile" des Protokolls durch die
+   * bedienbare Tabelle (Hörproben, Namen). Nur beim Protokoll.
+   */
+  speakerTable?: React.ReactNode;
 }
 
 export const MinutesView: React.FC<MinutesViewProps> = ({
@@ -48,6 +55,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   slideRefs,
   docType,
   toolbarLead,
+  speakerTable,
 }) => {
   const { t, i18n } = useTranslation();
   const docKind = docType ? docType.kind : "minutes";
@@ -110,6 +118,17 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     void loadMeta();
     void loadRunState();
   }, [loadLatest, loadMeta, loadRunState]);
+
+  // #242: ein umbenannter Sprecher erscheint auch im gespeicherten Text (das
+  // Backend setzt beim Lesen die aktuellen Namen ein).
+  useEffect(() => {
+    const un = events.speakersChanged.listen((e) => {
+      if (e.payload.meeting_id === meetingId) void loadLatest();
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [meetingId, loadLatest]);
 
   const errorText = useCallback(
     (raw: string) =>
@@ -241,11 +260,20 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
-      | HTMLElement
-      | undefined;
+      HTMLElement | undefined;
     preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
       el.replaceWith(
         document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
+      );
+    });
+    // #242: die bedienbare Sprechertabelle als schlichte Tabelle.
+    preview?.querySelectorAll("[data-speaker-shares]").forEach((el) => {
+      el.replaceWith(
+        staticSharesTable(el, {
+          speaker: t("meetings.speakers.table.speaker"),
+          time: t("meetings.speakers.table.time"),
+          share: t("meetings.speakers.table.share"),
+        }),
       );
     });
     const html = preview?.innerHTML;
@@ -411,7 +439,11 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         >
           <DocUsageLine documentId={doc.id} />
           <div ref={bodyRef} data-testid="minutes-body">
-            <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+            <MinutesBody
+              body={doc.body}
+              slideRefs={slideRefs}
+              speakerTable={docType ? undefined : speakerTable}
+            />
           </div>
         </div>
       ) : (
@@ -428,6 +460,31 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         )
       )}
     </div>
+  );
+};
+
+/**
+ * Der Dokumenttext; beim Protokoll mit bedienbarer Sprechertabelle an der
+ * Stelle des Abschnitts "Sprecher & Redeanteile" (#242).
+ */
+const MinutesBody: React.FC<{
+  body: string;
+  slideRefs?: SlideRefs;
+  speakerTable?: React.ReactNode;
+}> = ({ body, slideRefs, speakerTable }) => {
+  const parts = speakerTable ? splitSpeakerSection(body) : null;
+  if (!parts) return <MarkdownContent markdown={body} slideRefs={slideRefs} />;
+  return (
+    <>
+      <MarkdownContent markdown={parts.before} slideRefs={slideRefs} />
+      <div data-testid="minutes-speaker-section" className="mt-4">
+        <MarkdownContent markdown={parts.heading} />
+        {speakerTable}
+      </div>
+      {parts.after.trim() !== "" && (
+        <MarkdownContent markdown={parts.after} slideRefs={slideRefs} />
+      )}
+    </>
   );
 };
 
