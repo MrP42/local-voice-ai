@@ -1433,6 +1433,8 @@ fn merge_audio_in(
         sync: previous.sync,
         tracks,
     });
+    // Ein Favorit unter den Quellen macht das zusammengeführte Buch zum Favoriten.
+    target.favorite |= sources.iter().any(|(_, b)| b.favorite);
     // Ein Text aus Transkript gehört zum ersetzten Hörbuch und fällt weg.
     if replace
         && target

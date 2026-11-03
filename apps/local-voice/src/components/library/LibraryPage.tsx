@@ -299,9 +299,9 @@ export const LibraryPage: React.FC = () => {
   };
 
   const toggleFavorite = async (v: BookView) => {
-    const favorite = !isFavorite(v);
     try {
-      await save(v.book.id, (fresh) => ({ ...fresh, favorite }));
+      // Vom frischen Stand umschalten: ein Doppelklick vor dem Neuladen hebt sich auf.
+      await save(v.book.id, (fresh) => ({ ...fresh, favorite: !fresh.favorite }));
     } catch (e) {
       toast.error(t("library.favorite.failed", { error: String(e) }));
     }
