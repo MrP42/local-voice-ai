@@ -77,8 +77,13 @@ final class PhoneLibrary: ObservableObject {
 
     /// Je Teil in Hörreihenfolge die Größe der Datei auf dem iPhone, `nil` wenn sie fehlt.
     func localAudioSizes(_ book: LibraryBook) -> [Int?] {
-        (book.audio?.allTracks ?? []).map { LibrarySync.fileSize(audioDir(book).appendingPathComponent($0.file)) }
+        (book.audio?.allTracks ?? []).enumerated().map { i, track in
+            LibrarySync.fileSize(audioDir(book).appendingPathComponent(LibrarySync.audioFileName(track.file, index: i)))
+        }
     }
+
+    /// Liegt überhaupt etwas vom Hörbuch auf dem iPhone? Nur ein Verzeichnisblick, billig genug für Menüs.
+    func hasLocalAudio(_ book: LibraryBook) -> Bool { !AudioOffload.audioItems(in: dir(book)).isEmpty }
 
     /// Belegter Platz durch das Hörbuch auf dem iPhone (mit unfertigen Downloads).
     func localAudioBytes(_ book: LibraryBook) -> Int {

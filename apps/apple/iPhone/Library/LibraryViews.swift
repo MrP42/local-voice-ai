@@ -251,6 +251,7 @@ struct LibraryBookDetail: View {
     /// Warum das Hörbuch (noch) nicht vom iPhone darf.
     @State private var offloadBlocked: AudioOffload.Verdict?
     @State private var removingAudio = false
+    @State private var removeBytes = 0
     @ObservedObject var sync = LibrarySync.shared
 
     var body: some View {
@@ -355,11 +356,13 @@ struct LibraryBookDetail: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
                     Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
-                    if library.localAudioBytes(book) > 0 {
+                    if library.hasLocalAudio(book) {
                         Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") {
                             let verdict = sync.offloadVerdict(book)
                             switch verdict {
-                            case .allowed, .unconfirmed: confirmRemoveAudio = true  // wird beim Bestätigen frisch geprüft
+                            case .allowed, .unconfirmed:  // wird beim Bestätigen frisch beim Konto geprüft
+                                removeBytes = library.localAudioBytes(book)
+                                confirmRemoveAudio = true
                             default: offloadBlocked = verdict
                             }
                         }.disabled(removingAudio)
@@ -373,7 +376,7 @@ struct LibraryBookDetail: View {
             }
         }
         .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
-            Button("\(ByteCountFormatter.string(fromByteCount: Int64(library.localAudioBytes(book)), countStyle: .file)) freigeben", role: .destructive) {
+            Button("\(ByteCountFormatter.string(fromByteCount: Int64(removeBytes), countStyle: .file)) freigeben", role: .destructive) {
                 removingAudio = true
                 Task {
                     // Prüft vorher beim Konto, ob alle Teile vollständig dort liegen.

@@ -52,7 +52,7 @@ public enum AudioOffload {
                 return missing == 1
                     ? "Ein Teil ist im Konto noch nicht vollständig. Entfernen geht nach dem nächsten vollständigen Abgleich."
                     : "\(missing) Teile sind im Konto noch nicht vollständig. Entfernen geht nach dem nächsten vollständigen Abgleich."
-            case .unreachable: return "Das Konto ist gerade nicht erreichbar, und die Teile sind auf diesem iPhone noch nicht als vollständig bestätigt. Bitte mit Verbindung erneut versuchen."
+            case .unreachable: return "Das Konto ist gerade nicht erreichbar. Vor dem Entfernen muss es bestätigen, dass alle Teile vollständig dort liegen. Bitte mit Verbindung erneut versuchen."
             }
         }
     }
@@ -126,7 +126,8 @@ public enum AudioOffload {
     }
 
     /// Hörbuchdateien des Buchs löschen und den frei gewordenen Platz melden.
-    /// Prüft selbst nichts: vorher `verdict` fragen.
+    /// Prüft selbst nichts: vorher `verdict` fragen. Löscht den ganzen Ordner
+    /// `audio/`; Dateien darin, die zu keinem Teil gehören, spielt die App ohnehin nicht ab.
     @discardableResult
     public static func remove(bookDir: URL) throws -> Int {
         var freed = 0

@@ -419,10 +419,7 @@ final class LibrarySync: ObservableObject {
             try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
             PhoneLibrary.excludeFromBackup(audioDir)
             for (i, ref) in refs.enumerated() {
-                // Nur ein Dateiname, nie ein Pfad.
-                let given = (ref.file ?? "").split(separator: "/").last.map(String.init) ?? ""
-                let name = given.isEmpty || given.hasPrefix(".") ? String(format: "teil_%03d.m4a", i + 1) : given
-                let target = audioDir.appendingPathComponent(name)
+                let target = audioDir.appendingPathComponent(Self.audioFileName(ref.file, index: i))
                 if FileManager.default.fileExists(atPath: target.path),
                    Self.fileSize(target) == ref.size { done += ref.size; continue }
                 let base = done
@@ -459,6 +456,7 @@ final class LibrarySync: ObservableObject {
     /// `nil`: Konto nicht erreichbar.
     private func confirmInAccount(_ files: [AudioOffload.AccountFile], _ acc: Account) async -> Set<String>? {
         var confirmed = Set<String>()
+        defer { saveLedger() }
         for blob in AudioOffload.blobsToCheck(files) {
             guard let reply = try? await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token) else { return nil }
             let (code, data) = reply
@@ -467,7 +465,6 @@ final class LibrarySync: ObservableObject {
             else if code == 200 || code == 404 { ledger.uploaded.remove(blob) }
             else { return nil }
         }
-        saveLedger()
         return confirmed
     }
 
@@ -482,13 +479,12 @@ final class LibrarySync: ObservableObject {
         default: return (verdict, 0)
         }
         guard let acc = account else { return (.notLoggedIn, 0) }
-        // Vor dem Löschen immer frisch beim Konto nachfragen; nur ohne Verbindung
-        // zählt, was dieses Gerät schon als vollständig kennt.
-        if let fresh = await confirmInAccount(accountFiles(book), acc) {
-            verdict = offloadVerdict(book, confirmed: fresh)
-        } else if case .unconfirmed = verdict {
-            return (.unreachable, 0)
-        }
+        // Vor dem Löschen immer frisch beim Konto nachfragen. Ohne Verbindung wird
+        // nicht gelöscht: der Hub könnte einen Blob inzwischen verloren haben, und
+        // dann läge die letzte Kopie auf diesem iPhone. Geprüft wird gegen die
+        // lokalen Verweise in sync.json; genau die nutzt auch das erneute Laden.
+        guard let fresh = await confirmInAccount(accountFiles(book), acc) else { return (.unreachable, 0) }
+        verdict = offloadVerdict(book, confirmed: fresh)
         // Zwischenzeitlich gestartet (Download, Abgleich)? Dann nicht anfassen.
         guard verdict.allowed, downloads[book.id] == nil else { return (verdict.allowed ? .downloading : verdict, 0) }
         let playback = LibraryPlayback.shared
@@ -502,6 +498,13 @@ final class LibrarySync: ObservableObject {
             library.reload()
             return (verdict, 0)
         }
+    }
+
+    /// Dateiname eines Hörbuchteils auf dem iPhone: nur ein Name, nie ein Pfad.
+    /// Gemeinsam für Download und Größenprüfung vor dem Entfernen.
+    static func audioFileName(_ given: String?, index: Int) -> String {
+        let name = (given ?? "").split(separator: "/").last.map(String.init) ?? ""
+        return name.isEmpty || name.hasPrefix(".") ? String(format: "teil_%03d.m4a", index + 1) : name
     }
 
     /// Dateigröße frisch vom Dateisystem (URL-Ressourcenwerte werden zwischengespeichert).
