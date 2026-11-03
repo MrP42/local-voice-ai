@@ -32,9 +32,7 @@ import {
   useProfilmenue,
 } from "../konto/Profilknopf";
 import { ProfilHinzufuegenDialog } from "../konto/ProfilHinzufuegenDialog";
-import ModelSelector from "../model-selector";
 import { UPDATE_CHECK_EVENT } from "../update-checker/UpdateChecker";
-import { LlmSelector } from "../footer/LlmSelector";
 import { useDiagnose } from "../footer/diagnose";
 import { useKonto } from "../konto/useKonto";
 import { useKontoLabels } from "../konto/labels";
@@ -200,19 +198,14 @@ const Eintraege: React.FC<EintraegeProps> = ({
   }
 
   if (ebene === "modelle") {
-    // Die Modellwahl (Diktat- und Sprachmodell) lebt seit ADR-0027 E7 hier
-    // statt in der Statusleiste; die Auswahllisten klappen rechts neben dem
-    // Menü auf.
+    // Die Modellwahl je Modul steht wieder in der Fußleiste (Patrick 02.11.,
+    // löst ADR-0027 E7 ab); hier bleibt nur der Weg zur Verwaltung.
     return (
       <>
         {zurueck}
-        <div
-          className="lv-profilmenue__modelle"
-          data-testid="profilmenue-modelle"
-        >
-          <ModelSelector />
-          <LlmSelector />
-        </div>
+        <p className="lv-profilmenue__leer" data-testid="profilmenue-modelle">
+          {t("shell.modelleInFussleiste")}
+        </p>
         <ProfilmenueTrenner />
         <ProfilmenueEintrag
           symbol={<Cpu size={ICON} />}

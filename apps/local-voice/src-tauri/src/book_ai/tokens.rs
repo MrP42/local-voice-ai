@@ -350,6 +350,8 @@ mod tests {
                 limit: 40_000,
                 model_key: "m",
                 language: "",
+                output: "the SAME language as the source",
+                output_code: "",
             },
             &DigestCache::read_only(None),
             false,
@@ -370,6 +372,8 @@ mod tests {
             limit: 16_000,
             model_key: "m",
             language: "",
+            output: "the SAME language as the source",
+            output_code: "",
         };
         let (calls, _, _) =
             block_on(dry_run(input(), &DigestCache::read_only(None), false)).unwrap();
@@ -391,6 +395,8 @@ mod tests {
             limit: 16_000,
             model_key: "m",
             language: "",
+            output: "the SAME language as the source",
+            output_code: "",
         };
         let cache = DigestCache::read_only(Some(dir.path().to_path_buf()));
         let (cold, _, _) = block_on(dry_run(input(), &cache, false)).unwrap();

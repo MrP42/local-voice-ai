@@ -1017,13 +1017,16 @@ test("Vorlesen-Seite: tts_engine = provider:phonon zeigt benannten Eintrag statt
   await expect(select).toBeVisible();
   await expect(select).toContainText("Anbieter: Phonon");
   await expect(select).not.toContainText("Skript mit Sprechern");
-  const hint = page.getByTestId("voice-provider-hint");
-  await expect(hint).toContainText(
-    "Anbieter: Phonon (Modelle › Vorlesen › Anbieter)",
-  );
+  // Die Stimme sitzt in der Fußleiste (Patrick 02.11.); kein Dauertext
+  // „Anbieter: …“ mehr in der Spalte.
+  await expect(
+    page.getByTestId("fuss-modelle").getByTestId("voice-select"),
+  ).toHaveCount(1);
+  await expect(page.getByTestId("voice-provider-hint")).toHaveCount(0);
   // Kein Fish-"nicht eingerichtet"-Hinweis.
   await expect(page.getByTestId("voice-setup-hint")).toHaveCount(0);
-  // Der Link führt in die Anbieter-Ansicht unter Modelle.
+  // Rechtsklick auf die Stimme führt in die Anbieter-Ansicht unter Modelle.
+  await select.click({ button: "right" });
   await page.getByTestId("voice-provider-open").click();
   await expect(page.getByTestId("voice-providers-view")).toBeVisible();
   await page.getByTestId("tts-provider-open-phonon").click();

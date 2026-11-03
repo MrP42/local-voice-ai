@@ -9,6 +9,7 @@ import {
   MoreVertical,
   Play,
   Plus,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -31,6 +32,7 @@ import { useLibraryDrop } from "./useLibraryDrop";
 import { useLibrary, type TranscriptJob } from "./useLibrary";
 import {
   formatDuration,
+  isFavorite,
   isFinished,
   isStarted,
   matchesFilter,
@@ -74,6 +76,7 @@ import "./library.css";
 
 const FILTERS: Filter[] = [
   "all",
+  "favorites",
   "notStarted",
   "inProgress",
   "finished",
@@ -444,7 +447,9 @@ export const LibraryPage: React.FC = () => {
       return next.length === s.length ? s : next;
     });
   }, [shownKey]);
-  const continueViews = sortViews(views.filter(isStarted), "recent").slice(
+  const continueViews = sortViews(views.filter(isStarted), "recent", {
+    favoritesFirst: false,
+  }).slice(
     0,
     3,
   );
@@ -477,6 +482,15 @@ export const LibraryPage: React.FC = () => {
       setFinished(`text:${v.book.text.page_id}:original`, finished);
     if (v.book.audio_path) setFinished(`audio:${v.book.id}`, finished);
     await save(v.book.id, (fresh) => ({ ...fresh, finished }));
+  };
+
+  const toggleFavorite = async (v: BookView) => {
+    try {
+      // Vom frischen Stand umschalten: ein Doppelklick vor dem Neuladen hebt sich auf.
+      await save(v.book.id, (fresh) => ({ ...fresh, favorite: !fresh.favorite }));
+    } catch (e) {
+      toast.error(t("library.favorite.failed", { error: String(e) }));
+    }
   };
 
   const open = openId ? views.find((v) => v.book.id === openId) : undefined;
@@ -568,6 +582,21 @@ export const LibraryPage: React.FC = () => {
           <BookCover book={v.book} />
         </button>
         {!selecting && playButton(v, "library-card__play")}
+        {!selecting && (
+        <button
+          type="button"
+          className="library-card__star"
+          aria-pressed={isFavorite(v)}
+          aria-label={t("library.favorite.toggle", { title: v.book.title })}
+          title={t(isFavorite(v) ? "library.favorite.on" : "library.favorite.off")}
+          onClick={() => void toggleFavorite(v)}
+          data-testid={`library-star-${v.book.id}`}
+        >
+          <span className="library-card__star-dot" aria-hidden="true">
+            <Star size={18} fill={isFavorite(v) ? "currentColor" : "none"} />
+          </span>
+        </button>
+        )}
       </div>
       {v.fraction > 0 && !isFinished(v) && (
         <ProgressBar

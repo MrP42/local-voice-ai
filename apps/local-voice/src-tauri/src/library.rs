@@ -154,6 +154,10 @@ pub struct LibraryBook {
     pub audio: Option<AudioVersion>,
     pub added_ms: f64,
     pub finished: bool,
+    /// Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+    /// Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+    #[serde(default)]
+    pub favorite: bool,
     /// Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
     /// samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
     pub cover_path: Option<String>,
@@ -1649,6 +1653,8 @@ fn merge_audio_in(
         sync: previous.sync,
         tracks,
     });
+    // Ein Favorit unter den Quellen macht das zusammengeführte Buch zum Favoriten.
+    target.favorite |= sources.iter().any(|(_, b)| b.favorite);
     // Ein Text aus Transkript gehört zum ersetzten Hörbuch und fällt weg.
     if replace
         && target
@@ -1709,6 +1715,58 @@ pub fn library_progress_put(app: AppHandle, entries: Vec<ProgressEntry>) -> Resu
     let json = serde_json::to_vec(&map).map_err(|e| e.to_string())?;
     write_atomic(&progress_path(&root), &json)
 }
+
+// ---------------------------------------------------------------------------
+// Zugang für den Geräte-Sync (lva#210 P5, `sync/books.rs`)
+// ---------------------------------------------------------------------------
+
+/// Bibliotheks-Sperre für Lese-Ändern-Schreib-Zyklen des Syncs.
+pub(crate) fn sync_lock() -> MutexGuard<'static, ()> {
+    lock()
+}
+
+pub(crate) fn sync_root(app: &AppHandle) -> Result<PathBuf, String> {
+    library_root(app)
+}
+
+pub(crate) fn sync_book_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+    book_dir(root, id)
+}
+
+pub(crate) fn sync_read_book(dir: &Path) -> Option<LibraryBook> {
+    read_book(dir)
+}
+
+pub(crate) fn sync_write_book(dir: &Path, book: &LibraryBook) -> Result<(), String> {
+    if let Some(audio) = &book.audio {
+        validate_audio_names(audio)?;
+    }
+    write_book(dir, book)
+}
+
+pub(crate) fn sync_cover_file(dir: &Path) -> Option<PathBuf> {
+    cover_file(dir)
+}
+
+/// Ein Name, der im eigenen `audio/`-Ordner bleibt (kein Pfad).
+pub(crate) fn sync_plain_name(name: &str) -> bool {
+    plain_name(name)
+}
+
+pub(crate) fn sync_progress_load(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    load_progress(root)
+}
+
+pub(crate) fn sync_progress_store(
+    root: &Path,
+    map: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let json = serde_json::to_vec(map).map_err(|e| e.to_string())?;
+    write_atomic(&progress_path(root), &json)
+}
+
+pub(crate) const SYNC_MAX_PROGRESS_KEY: usize = MAX_PROGRESS_KEY;
+pub(crate) const SYNC_MAX_PROGRESS_VALUE: usize = MAX_PROGRESS_VALUE;
 
 #[cfg(test)]
 mod tests {
@@ -1906,6 +1964,7 @@ mod tests {
         let mut b = book("Woyzeck", &["Georg Büchner"], None);
         b.id = "book_42".into();
         b.cover_path = Some("/x".into());
+        b.favorite = true;
         b.audio = Some(AudioVersion {
             file: "hoerbuch.mp3".into(),
             ..Default::default()
@@ -1917,6 +1976,11 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].cover_source, "generated");
         assert_eq!(listed[0].audio_path, None, "Hörbuchdatei fehlt");
+        assert!(
+            raw.contains("\"favorite\": true"),
+            "Favorit steht in buch.json"
+        );
+        assert!(listed[0].favorite);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -2017,6 +2081,7 @@ mod tests {
         );
         touch(&dir.join("audio/hoerbuch.mp3"), "x");
         let b = read_book(&dir).unwrap();
+        assert!(!b.favorite, "ohne Feld kein Favorit");
         assert_eq!(b.audio_paths.len(), 1);
         assert_eq!(
             b.audio_path.as_deref(),

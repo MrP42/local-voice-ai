@@ -155,6 +155,81 @@ pub async fn tidy(settings: &AppSettings, text: &str) -> Result<String, String> 
     Ok(out)
 }
 
+/// Eingabe je Anfrage der Textarbeit bei Cloud-Modellen. Die Ausgabe ist
+/// klein (nur geaenderte Zeilen bzw. Gliederungsmarken), die Eingabe darf
+/// deshalb groesser sein als beim Aufbereiten.
+const ASSIST_CHARS_CLOUD: usize = 60_000;
+
+pub static ASSIST_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Prompt der Textarbeit im Editor-Menue. Die Zeilen kommen als `N|Text`
+/// (ohne Zeitstempel, Sprecher, Markdown); das Modell antwortet NUR mit dem,
+/// was sich aendert. So bleibt die Ausgabe winzig, auch fuer kleine Modelle.
+pub fn assist_prompt(task: &str, lines: &str) -> Result<String, String> {
+    let language = language_clause(lines);
+    match task {
+        "grammar" => Ok(format!(
+            "Fix spelling, grammar and punctuation in the lines below{language}. \
+             Each input line has the form `number|text`. Change only real errors; \
+             keep wording, meaning and style; never merge, split, translate or \
+             shorten lines; keep tags in square brackets like [calm] and markers like \
+             <Name> unchanged. Output ONLY the lines you changed, each as \
+             `number|corrected full line`, nothing else. If no line needs a fix, \
+             output exactly `OK`.\n\n{lines}"
+        )),
+        "structure" => Ok(format!(
+            "The lines below are consecutive sentences of one text{language}, one per \
+             line, each as `number|text`. Decide where a new paragraph should start \
+             (a new thought or topic, typically every 3 to 8 sentences) and which \
+             lines are headings (chapter or section titles, short lines without a \
+             sentence). Output ONLY those lines, each as `number|P` (a paragraph \
+             starts here) or `number|H1`, `number|H2`, `number|H3` (heading level). \
+             Do not output any text, explanation or other lines.\n\n{lines}"
+        )),
+        other => Err(format!("Unbekannte Textarbeit: {other}")),
+    }
+}
+
+/// Textarbeit (Grammatik, Gliederung) blockweise; die Antworten der Bloecke
+/// werden aneinandergehaengt. Die Zeilennummern sind global, die Bloecke
+/// schneiden nur an Zeilengrenzen.
+pub async fn assist(
+    settings: &AppSettings,
+    task: &str,
+    lines: &str,
+    progress: &(dyn Fn(usize, usize) + Send + Sync),
+) -> Result<String, String> {
+    use std::sync::atomic::Ordering;
+    ASSIST_CANCEL.store(false, Ordering::SeqCst);
+    let trimmed = lines.trim();
+    if trimmed.is_empty() {
+        return Err("Kein Text für die KI-Bearbeitung".into());
+    }
+    assist_prompt(task, "")?;
+    let chunks = chunk_text(
+        trimmed,
+        if crate::translator::active_model_is_local(settings) {
+            CHUNK_CHARS
+        } else {
+            ASSIST_CHARS_CLOUD
+        },
+    );
+    let total = chunks.len();
+    progress(0, total);
+    let mut answers = Vec::with_capacity(total);
+    for (i, chunk) in chunks.iter().enumerate() {
+        if ASSIST_CANCEL.load(Ordering::SeqCst) {
+            return Err(crate::translator::CANCELLED.to_string());
+        }
+        answers.push(ask_llm(settings, assist_prompt(task, chunk)?).await?);
+        progress(i + 1, total);
+    }
+    if ASSIST_CANCEL.load(Ordering::SeqCst) {
+        return Err(crate::translator::CANCELLED.to_string());
+    }
+    Ok(answers.join("\n"))
+}
+
 /// Prompt der Reduce-Stufe: Teilzusammenfassungen zu einer verdichten.
 pub fn combine_prompt(opts: &SummaryOptions, partials: &[String]) -> String {
     format!(
@@ -332,6 +407,29 @@ pub async fn summarize_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assist_prompts_ask_only_for_changes() {
+        let g = assist_prompt("grammar", "1|Das ist ein Satz.").unwrap();
+        assert!(g.contains("ONLY the lines you changed"));
+        assert!(g.ends_with("1|Das ist ein Satz."));
+        let s = assist_prompt("structure", "1|Kapitel eins").unwrap();
+        assert!(s.contains("number|P"));
+        assert!(s.contains("number|H1"));
+        assert!(assist_prompt("poem", "1|x").is_err());
+    }
+
+    #[test]
+    fn assist_chunks_cut_only_at_line_ends() {
+        let lines: String = (1..=50).map(|i| format!("{i}|Satz {i}.\n")).collect();
+        let chunks = chunk_text(&lines, 100);
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            for line in chunk.lines() {
+                assert!(line.contains('|') && line.ends_with('.'), "{line}");
+            }
+        }
+    }
 
     fn opts() -> SummaryOptions {
         SummaryOptions {

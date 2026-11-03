@@ -200,6 +200,20 @@
   font-size: 0.8125rem;
   color: var(--color-text-muted);
 }
+/* Sprache des Ergebnisses (lva#217): Beschriftung und Auswahl in einer
+   Zeile, der Hinweis darunter. */
+.kidoc-new__lang {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+}
+.kidoc-new__lang-select {
+  min-width: 12rem;
+}
+.kidoc-new__lang .kidoc-new__desc {
+  flex-basis: 100%;
+}
 
 /* Token-Prognose und -Verbrauch: dezent, Details im Tooltip. */
 .kidoc-tokens {

@@ -348,6 +348,43 @@ test("Klick in den Text liest ab dieser Stelle, ohne Markdown an die Engine", as
   expect(text.slice(offset - 20, offset + 20)).toContain("zwölf");
 });
 
+// Patrick 02.11.2026: Klick auf eine Kapitelüberschrift las den Satz davor
+// (Seite davor), die Überschrift selbst nie. Die Überschrift steht im
+// Sprechtext als eigener Absatz, der Offset zeigt auf sie.
+test("Klick auf eine Überschrift liest ab der Überschrift, als eigener Absatz", async ({
+  page,
+}) => {
+  await open(
+    page,
+    [
+      "# Kapitel 1",
+      "",
+      "Und dieses war der ganze Unterschied.",
+      "(übersetzt von Paul Celan)",
+      "## Eine Lektion von Robert Frost",
+      "Robert Frost ist mein Lieblingsdichter.",
+    ].join("\n"),
+  );
+  // Die Überschrift beginnt eine neue Seite: dorthin blättern.
+  const heading = page
+    .getByTestId("reader-flow")
+    .getByRole("heading", { name: "Eine Lektion von Robert Frost" });
+  await page.getByTestId("reader-flow").focus();
+  await page.keyboard.press("End");
+  await expect(heading).toBeInViewport();
+  await heading.click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  const text = String(args.text);
+  const start = text.indexOf("Eine Lektion von Robert Frost.");
+  expect(start).toBeGreaterThan(0);
+  // Leerzeile davor und danach: die Satztrennung im Kern trennt dort immer.
+  expect(text.slice(start - 2, start)).toBe("\n\n");
+  expect(text.slice(start)).toMatch(/^Eine Lektion von Robert Frost\.\n\nRobert/);
+  // Ab dem Anfang der Überschrift, nicht mitten in ihr.
+  expect(Number(args.charOffset)).toBe(start);
+});
+
 test("Bearbeiten zeigt den Editor; Tippen schaltet nicht in die Leseansicht", async ({
   page,
 }) => {
@@ -1524,7 +1561,7 @@ test("T-Menü bei 390 px: ganz im Fenster, der Rest scrollt im Menü", async ({ 
   await expect(last).toBeInViewport();
 });
 
-test("Variante A: rechte Spalte ausblenden, Stimme und Werkzeuge in der Leiste, Leiste nicht höher", async ({
+test("Variante A: rechte Spalte ausblenden, Werkzeuge in der Leiste, Stimme in der Fußleiste, Leiste nicht höher", async ({
   page,
 }) => {
   await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
@@ -1534,7 +1571,9 @@ test("Variante A: rechte Spalte ausblenden, Stimme und Werkzeuge in der Leiste, 
   await page.getByTestId("right-column-hide").click();
   await expect(page.getByTestId("tts-right-column")).toHaveCount(0);
   const dock = page.getByTestId("reader-dock");
-  await expect(dock.getByTestId("voice-select")).toBeVisible();
+  // Stimme: immer links unten in der Fußleiste (Patrick 02.11.).
+  await expect(dock.getByTestId("voice-select")).toHaveCount(0);
+  await expect(page.getByTestId("fuss-stimme").getByTestId("voice-select")).toBeVisible();
   await expect(dock.getByTestId("tts-action-menu")).toBeVisible();
   await expect(dock.getByTestId("tts-action-add")).toBeVisible();
   // Ohne eingerichtete Stimme: Warnknopf statt verborgenem Hinweistext.
@@ -1577,7 +1616,7 @@ test("Variante A schmal: Werkzeuge hinter einem Knopf, Leiste einzeilig in der T
   const height = (await bar.boundingBox())!.height;
   await btn.click();
   const panel = page.getByTestId("reader-dock-panel");
-  await expect(panel.getByTestId("voice-select")).toBeVisible();
+  await expect(panel.getByTestId("voice-select")).toHaveCount(0);
   await expect(panel.getByTestId("tts-action-menu")).toBeVisible();
   expect((await bar.boundingBox())!.height).toBeLessThanOrEqual(height + 1);
   // Fokus im Fenster; Escape schließt und gibt ihn an den Knopf zurück.
@@ -1645,7 +1684,7 @@ test("Variante A: alle Symbolknöpfe haben Namen und Tooltip", async ({ page }) 
 // Rückmeldung Patrick 01.11. abends: Abspielen vorn/mittig, Werkzeuge rechts,
 // Stimme nur als Dropdown-Knopf, Spaltenstreifen links und rechts gleich,
 // kein Untertitel.
-test("Leiste: Abspielen vor den Werkzeugen, Stimme als kompakter Knopf", async ({ page }) => {
+test("Leiste: Abspielen vor den Werkzeugen, Stimme als kompakter Knopf in der Fußleiste", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("lva.ui.tts.view", "read");
     window.localStorage.setItem("lva.ui.tts.rightHidden", "1");
@@ -1653,18 +1692,21 @@ test("Leiste: Abspielen vor den Werkzeugen, Stimme als kompakter Knopf", async (
   await open(page);
   const play = (await page.getByTestId("reader-play").boundingBox())!;
   const dock = page.getByTestId("reader-dock");
-  const voice = (await dock.getByTestId("voice-select").boundingBox())!;
   const tools = (await dock.getByTestId("tts-action-menu").boundingBox())!;
-  expect(play.x).toBeLessThan(voice.x);
   expect(play.x).toBeLessThan(tools.x);
-  // Nur Symbol + Pfeil, der Name im Tooltip und als zugänglicher Name.
+  // Stimme: links unten in der Fußleiste, nur Symbol + Sprache + Pfeil.
+  const fuss = page.getByTestId("fuss-stimme");
+  const voice = (await fuss.getByTestId("voice-select").boundingBox())!;
+  const bar = (await page.locator(".lv-statusbar").boundingBox())!;
+  expect(voice.y).toBeGreaterThanOrEqual(bar.y - 1);
   expect(voice.width).toBeLessThan(90);
-  await expect(dock.getByTestId("voice-compact")).toHaveAttribute("title", /^Stimme/);
-  // Die Liste öffnet breit und bleibt im Fenster.
-  await dock.locator(".app-select__control").click();
+  await expect(fuss.getByTestId("voice-compact")).toHaveAttribute("title", /^Stimme/);
+  // Die Liste öffnet breit nach oben und bleibt im Fenster.
+  await fuss.locator(".app-select__control").click();
   const menu = (await page.locator(".app-select__menu").boundingBox())!;
   expect(menu.width).toBeGreaterThanOrEqual(290);
   expect(menu.x + menu.width).toBeLessThanOrEqual(1440);
+  expect(menu.y + menu.height).toBeLessThanOrEqual(bar.y + 1);
 });
 
 test("Spaltenstreifen links und rechts gleich: nur Symbol, gleich breit, oben", async ({ page }) => {

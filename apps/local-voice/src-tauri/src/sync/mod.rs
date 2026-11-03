@@ -1,8 +1,12 @@
 //! Multi-Device: Konto, Ende-zu-Ende-verschlüsselter Abgleich von Seiten und
 //! Einstellungen über den Hub im wai-portal. Spec:
-//! `docs/superpowers/specs/2026-09-14-multi-device-sync-design.md`.
+//! `docs/superpowers/specs/2026-09-14-multi-device-sync-design.md`; die
+//! Bibliothek (Bücher, Fortschritt, Lesezeichen, Dateiablage):
+//! `docs/superpowers/specs/2026-11-02-bibliothek-sync.md`.
 
 pub mod account;
+pub mod blobs;
+pub mod books;
 pub mod client;
 pub mod collect;
 pub mod crypto;

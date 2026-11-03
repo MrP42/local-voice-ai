@@ -27,6 +27,94 @@
     "ariaLabel": "Hauptnavigation"
   },
   "tts": {
+    "editorMenu": {
+      "label": "Editor-Menü",
+      "find": "Suchen und Ersetzen",
+      "findHint": "Im Text suchen und ersetzen (Strg+F, Strg+H)",
+      "spellcheck": "Rechtschreibprüfung",
+      "spellcheckHint": "Rote Wellenlinie unter unbekannten Wörtern ein- oder ausschalten",
+      "format": {
+        "h1": "Überschrift 1",
+        "h1Hint": "Zeile als Kapitelüberschrift (#) – erscheint im Inhaltsverzeichnis",
+        "h2": "Überschrift 2",
+        "h2Hint": "Zeile als Abschnittsüberschrift (##)",
+        "h3": "Überschrift 3",
+        "h3Hint": "Zeile als Unterabschnitt (###)",
+        "paragraph": "Normaler Absatz",
+        "paragraphHint": "Überschrift, Zitat oder Liste von der Zeile entfernen",
+        "bold": "Fett",
+        "boldHint": "Markierung fett darstellen (**…**)",
+        "italic": "Kursiv",
+        "italicHint": "Markierung kursiv darstellen (*…*)",
+        "quote": "Zitat",
+        "quoteHint": "Zeilen als eingerücktes Zitat darstellen (>)",
+        "list": "Aufzählung",
+        "listHint": "Zeilen als Aufzählung darstellen (-)",
+        "rule": "Trennlinie",
+        "ruleHint": "Trennlinie nach der Zeile einfügen (---)"
+      },
+      "cleanup": "Bereinigen",
+      "cleanupHint": "Text nach festen Regeln aufräumen – ohne KI, sofort; gilt für die Markierung, sonst für den ganzen Text",
+      "cleanupNothing": "Nichts zu bereinigen.",
+      "cleanupDone_one": "{{count}} Stelle bereinigt.",
+      "cleanupDone_other": "{{count}} Stellen bereinigt.",
+      "rules": {
+        "all": "Alle Regeln",
+        "allHint": "Zeitstempel, abgerissene Zeilen, Leerzeichen und Absätze in einem Schritt",
+        "timestamps": "Zeitstempel entfernen",
+        "timestampsHint": "[0:12]: und übrig gebliebene Doppelpunkte am Zeilenanfang entfernen",
+        "fragments": "Abgerissene Zeilen verbinden",
+        "fragmentsHint": "Einzelne Buchstaben (J. / L.), Silbentrennung und mitten im Satz umbrochene Zeilen zusammenfügen",
+        "spaces": "Leerzeichen bereinigen",
+        "spacesHint": "Doppelte Leerzeichen und Leerzeichen vor Satzzeichen entfernen",
+        "paragraphs": "Zeilen zu Absätzen",
+        "paragraphsHint": "Einzelne Satzzeilen zu lesbaren Absätzen zusammenfassen"
+      },
+      "ai": "KI-Textarbeit",
+      "aiHint": "Grammatik und Gliederung mit dem eingestellten Sprachmodell – auch klein oder lokal; es gehen nur nummerierte Zeilen hin, zurück kommen nur Änderungen",
+      "aiGrammar": "Rechtschreibung und Grammatik verbessern",
+      "aiGrammarHint": "Nur fehlerhafte Zeilen werden zurückgegeben und ersetzt; Sinn und Wortwahl bleiben",
+      "aiStructure": "Absätze und Überschriften gliedern",
+      "aiStructureHint": "Die KI markiert nur, wo Absätze beginnen und welche Zeilen Überschriften sind",
+      "changedMeanwhile": "Der Text hat sich inzwischen geändert – KI-Ergebnis nicht übernommen.",
+      "aiCancel": "KI-Textarbeit abbrechen",
+      "busy": "KI arbeitet …",
+      "busyProgress": "KI arbeitet … {{done}}/{{total}}",
+      "grammarNothing": "Keine Korrekturen nötig.",
+      "grammarDone_one": "{{count}} Zeile korrigiert.",
+      "grammarDone_other": "{{count}} Zeilen korrigiert.",
+      "structureNothing": "Keine Gliederung erhalten – Text unverändert.",
+      "structureDone_one": "Text gegliedert ({{count}} Änderung).",
+      "structureDone_other": "Text gegliedert ({{count}} Änderungen).",
+      "rejected_one": "{{count}} Vorschlag verworfen (zu große Änderung).",
+      "rejected_other": "{{count}} Vorschläge verworfen (zu große Änderung).",
+      "findPlaceholder": "Suchen",
+      "replacePlaceholder": "Ersetzen durch",
+      "noHits": "Keine Treffer",
+      "hitOf": "{{n}} von {{total}}",
+      "prev": "Vorheriger Treffer",
+      "prevHint": "Zum vorherigen Treffer springen (Umschalt+Enter)",
+      "next": "Nächster Treffer",
+      "nextHint": "Zum nächsten Treffer springen (Enter)",
+      "opt": {
+        "caseSensitive": "Groß-/Kleinschreibung",
+        "caseSensitiveHint": "Nur Treffer mit gleicher Groß- und Kleinschreibung",
+        "wholeWord": "Ganzes Wort",
+        "wholeWordHint": "Nur ganze Wörter finden",
+        "regex": "Regulärer Ausdruck",
+        "regexHint": "Suche als regulären Ausdruck; im Ersatz $1 für Gruppen"
+      },
+      "toggleReplace": "Ersetzen anzeigen",
+      "toggleReplaceHint": "Zeile zum Ersetzen ein- oder ausblenden",
+      "closeFind": "Suche schließen",
+      "closeFindHint": "Suchleiste schließen (Esc)",
+      "replaceOne": "Ersetzen",
+      "replaceOneHint": "Aktuellen Treffer ersetzen (Enter)",
+      "replaceAll": "Alle ersetzen",
+      "replaceAllHint": "Alle Treffer ersetzen (Strg+Enter)",
+      "replacedAll_one": "{{count}} Stelle ersetzt.",
+      "replacedAll_other": "{{count}} Stellen ersetzt."
+    },
     "reader": {
       "dockTools": "Stimme und Werkzeuge",
       "originalPage": "Seite {{page}} im Original",
@@ -499,7 +587,7 @@
       "sizeNote": "Prozent nach Textmenge; ein Abschnitt umfasst etwa {{chars}} Zeichen.",
       "sizeNoteGeneric": "Prozent nach Textmenge, nicht nach Abschnitten.",
       "currentChapter": "Aktuelles Kapitel:",
-      "workersTitle": "Parallele Worker (je ein Kapitelbereich)",
+      "workersTitle": "Parallele Worker (je ein Textbereich)",
       "worker": "Worker {{n}}",
       "workerValue": "{{done}} von {{total}} Abschnitten",
       "workerAria": "Worker {{n}}: {{done}} von {{total}} Abschnitten",
@@ -702,6 +790,12 @@
       "deleteTitle": "KI-Dokument löschen?",
       "deleteText": "„{{title}}“ wird endgültig gelöscht. Das Buch bleibt unverändert.",
       "legacyTitle": "Zusammenfassung (übernommen)",
+      "lang": {
+        "title": "Sprache",
+        "source": "Wie das Buch",
+        "hint": "Auch eine andere Sprache als die des Buchs ist möglich, etwa eine deutsche Fassung eines englischen Buchs.",
+        "chip": "Sprache: {{lang}}"
+      },
       "estimateOne": "{{template}}: etwa {{steps}} Arbeitsschritte, ca. {{min}} Min. Schätzung für ein lokales Modell; die tatsächliche Dauer hängt vom Modell ab.",
       "estimate": "{{template}}: etwa {{steps}} Arbeitsschritte, ca. {{min}}–{{max}} Min. Schätzung für ein lokales Modell; die tatsächliche Dauer hängt vom Modell ab.",
       "src": {
@@ -733,7 +827,8 @@
         "cancelled": "Erstellung abgebrochen.",
         "generic": "Das hat nicht geklappt ({{code}}).",
         "outlineUnreadable": "Das Modell hat keine brauchbare Gliederung geliefert. Bitte noch einmal versuchen oder ein anderes Modell wählen.",
-        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten."
+        "emptyAnswer": "Das Modell hat für eine Kernaussage keinen Text geliefert. Bitte noch einmal versuchen; Fertiges bleibt erhalten.",
+        "languageUnknown": "Diese Sprache wird für KI-Dokumente nicht angeboten."
       }
     },
     "summaryPlaceholder": "Noch keine Zusammenfassung — unten Umfang, Detailgrad und Zielgruppe wählen und auf „Zusammenfassen“ klicken. Der Text bleibt änderbar.",
@@ -2547,12 +2642,14 @@
         "names": {
           "voice_speaker": "Sprachgespräch (Sprecher)",
           "meeting_protocol": "Besprechungsprotokoll und Notizen",
-          "dictation_refine": "Diktat-Nachbearbeitung"
+          "dictation_refine": "Diktat-Nachbearbeitung",
+          "read_aloud": "Vorlesen"
         },
         "hints": {
           "voice_speaker": "Antwortet im Gespräch und im Hauptgespräch. Ein schnelles oder lokales Modell hält die Antwortzeit kurz; schwere Fragen gehen an den Denker.",
           "meeting_protocol": "Schreibt Protokolle, Projektprotokolle und verbessert Notizen.",
-          "dictation_refine": "Überarbeitet diktierten Text nach der Erkennung."
+          "dictation_refine": "Überarbeitet diktierten Text nach der Erkennung.",
+          "read_aloud": "Übersetzen und KI-Dokumente beim Vorlesen (Zusammenfassung, Begriffe). Ein kleines oder lokales Modell reicht meist."
         }
       },
       "connections": {
@@ -2669,6 +2766,11 @@
     }
   },
   "footer": {
+    "functionModel": {
+      "title": "Modell für {{name}}: {{model}}. Klick wählt ein anderes.",
+      "none": "kein Modell",
+      "manage": "Modelle verwalten …"
+    },
     "checkingUpdates": "Suche nach Updates...",
     "updateAvailableShort": "Update verfügbar",
     "upToDate": "Aktuell",
@@ -7023,6 +7125,7 @@
     "ueber": "Über Local Voice AI",
     "info": "Über diese Seite",
     "modelleVerwalten": "Modelle verwalten",
+    "modelleInFussleiste": "Die Modelle des geöffneten Bereichs stehen unten links in der Fußleiste.",
     "verlaufSuchen": "Verlauf durchsuchen",
     "settingsKey": "Strg+,",
     "suchen": "Suchen"
@@ -7039,7 +7142,12 @@
       "open": "Öffnen",
       "listen": "Anhören",
       "resume": "Weiterhören",
-      "create": "Kurzbuch erstellen"
+      "create": "Kurzbuch erstellen",
+      "language": "Sprache des Kurzbuchs",
+      "languages": "Vorhandene Sprachen",
+      "showLang": "Kurzbuch auf {{lang}} zeigen",
+      "another": "Weitere Sprache",
+      "createLang": "Erstellen"
     },
     "title": "Bibliothek",
     "description": "Bücher und Hörbücher – ein Eintrag je Werk, als Text, Audio oder beides.",
@@ -7054,6 +7162,7 @@
       "author": "Autor"
     },
     "filter": {
+      "favorites": "Favoriten",
       "all": "Alle",
       "notStarted": "Nicht begonnen",
       "inProgress": "Läuft",
@@ -7084,6 +7193,12 @@
     "read": "Lesen",
     "listen": "Hören",
     "listenOriginal": "Hörbuch hören",
+    "favorite": {
+      "toggle": "Favorit: „{{title}}“",
+      "on": "Favorit – steht oben",
+      "off": "Als Favorit nach oben holen",
+      "failed": "Favorit nicht gespeichert: {{error}}"
+    },
     "markFinished": "Als fertig markieren",
     "markUnfinished": "Als nicht fertig markieren",
     "progressLabel": "Fortschritt von „{{title}}“",

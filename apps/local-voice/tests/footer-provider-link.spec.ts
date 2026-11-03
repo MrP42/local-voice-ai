@@ -82,6 +82,9 @@ test("Rechtsklick auf das Modellfeld: Menue mit Sprung", async ({ page }) => {
   await oeffneModellwahl(page);
   await page.locator("[data-llm-selector]").click({ button: "right" });
   await expect(page.locator("[data-llm-context-menu]")).toBeVisible();
+  // In der Fußleiste liegt der Rollen-Tooltip über dem Menü, solange der
+  // Zeiger auf dem Modellfeld steht: Zeiger erst wegbewegen (wie von Hand).
+  await page.mouse.move(700, 300);
   await page.locator("[data-llm-provider-settings]").click();
   await connectionsVisible(page);
 });

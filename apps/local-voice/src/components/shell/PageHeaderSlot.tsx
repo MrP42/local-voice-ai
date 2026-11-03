@@ -8,3 +8,14 @@ import { createContext, useContext } from "react";
 export const HelpDockSlotContext = createContext<HTMLElement | null>(null);
 
 export const useHelpDockSlot = () => useContext(HelpDockSlotContext);
+
+/**
+ * Platz für die Bedienelemente des Moduls (ⓘ, Suche, Aktionen) rechts in der
+ * Titelleiste. Das Modul hat keine eigene Titelzeile mehr (Patrick 02.11.):
+ * der Name steht in der Navigation links, der Inhalt bekommt die Höhe. Ohne
+ * Platz (Tests ohne App-Rahmen) bleiben die Bedienelemente als schmale Zeile
+ * im Inhalt.
+ */
+export const PageHeaderSlotContext = createContext<HTMLElement | null>(null);
+
+export const usePageHeaderSlot = () => useContext(PageHeaderSlotContext);
