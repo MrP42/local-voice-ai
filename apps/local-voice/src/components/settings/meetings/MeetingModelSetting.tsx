@@ -37,12 +37,13 @@ export const MeetingModelSetting: React.FC = () => {
 
   const value = getSetting("meeting_model") ?? "";
   const finalValue = getSetting("meeting_final_model") || "auto";
+  const accelerator = getSetting("transcribe_accelerator");
   const parallelSetting = getSetting("meeting_import_parallel") ?? 0;
   const parallelValue = String(parallelSetting);
   const [recommendation, setRecommendation] =
     useState<ParallelRecommendation | null>(null);
 
-  // Neu messen, wenn sich das Besprechungsmodell ändert (Größe zählt).
+  // Neu messen, wenn sich Besprechungsmodell (Größe) oder Beschleuniger ändern.
   useEffect(() => {
     let alive = true;
     commands
@@ -56,7 +57,7 @@ export const MeetingModelSetting: React.FC = () => {
     return () => {
       alive = false;
     };
-  }, [value]);
+  }, [value, accelerator]);
 
   const maxParallel = recommendation?.max ?? 4;
   const parallelOptions = [

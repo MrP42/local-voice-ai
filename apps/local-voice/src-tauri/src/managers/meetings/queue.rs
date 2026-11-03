@@ -1231,17 +1231,23 @@ pub struct ParallelRecommendation {
 
 /// So lange gilt eine gemessene Empfehlung (der Verteiler fragt im Takt).
 const RECOMMENDATION_TTL: Duration = Duration::from_secs(30);
-static RECOMMENDATION_CACHE: Mutex<Option<(Instant, u64, ParallelRecommendation)>> =
+/// Zwischenspeicher: (Zeitpunkt, GPU fuer die Transkription erlaubt, Empfehlung).
+static RECOMMENDATION_CACHE: Mutex<Option<(Instant, bool, ParallelRecommendation)>> =
     Mutex::new(None);
 
-/// Gesamtwerte des Rechners fuer [`recommended_parallel`].
-pub fn probe_capacity(app: &AppHandle) -> HardwareCapacity {
-    let settings = crate::settings::get_settings(app);
-    let gpu_allowed =
-        settings.transcribe_accelerator != crate::settings::TranscribeAcceleratorSetting::Cpu;
+fn gpu_allowed(settings: &crate::settings::AppSettings) -> bool {
+    settings.transcribe_accelerator != crate::settings::TranscribeAcceleratorSetting::Cpu
+}
+
+/// Gesamtwerte des Rechners fuer [`recommended_parallel`]. Nur der
+/// Arbeitsspeicher wird je Aufruf gemessen; die GPU-Kapazitaet stammt aus dem
+/// Start-Zwischenspeicher der Geraete.
+pub fn probe_capacity(gpu_allowed: bool) -> HardwareCapacity {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
     HardwareCapacity {
         cpus: crate::process_guard::logical_cpus(),
-        ram_total_mb: crate::managers::llm::resources::system_memory().ram_total_mb,
+        ram_total_mb: sys.total_memory() / (1024 * 1024),
         vram_total_mb: if gpu_allowed {
             crate::managers::transcription::transcribe_gpu_total_mb()
         } else {
@@ -1250,24 +1256,29 @@ pub fn probe_capacity(app: &AppHandle) -> HardwareCapacity {
     }
 }
 
-/// Die Empfehlung fuer das aktuelle Besprechungsmodell (30 s zwischengespeichert,
-/// neu gemessen, sobald sich die Modellgroesse aendert).
+/// Die Empfehlung fuer das aktuelle Besprechungsmodell. Der Verteiler nutzt
+/// den Zwischenspeicher (30 s, neu bei geaendertem Beschleuniger) und fragt
+/// dann weder Modell noch Geraete ab; `fresh` (die Einstellungsseite) misst
+/// immer neu, etwa nach einem Modellwechsel. Gemessen wird ohne gehaltene Sperre.
 pub fn recommendation_for_app(
     app: &AppHandle,
     tm: &TranscriptionManager,
+    fresh: bool,
 ) -> ParallelRecommendation {
     let settings = crate::settings::get_settings(app);
-    let (model_size_mb, gpu_model) = tm.meeting_model_footprint(&settings);
-    let key = model_size_mb.wrapping_mul(2) + u64::from(gpu_model);
-    let mut cache = RECOMMENDATION_CACHE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((at, cached_key, rec)) = *cache {
-        if cached_key == key && at.elapsed() < RECOMMENDATION_TTL {
-            return rec;
+    let allowed = gpu_allowed(&settings);
+    if !fresh {
+        let cache = RECOMMENDATION_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, cached_allowed, rec)) = *cache {
+            if cached_allowed == allowed && at.elapsed() < RECOMMENDATION_TTL {
+                return rec;
+            }
         }
     }
-    let hw = probe_capacity(app);
+    let (model_size_mb, gpu_model) = tm.meeting_model_footprint(&settings);
+    let hw = probe_capacity(allowed);
     let gpu_model = gpu_model && hw.vram_total_mb.is_some();
     let (recommended, limited_by) = recommended_parallel(&hw, model_size_mb, gpu_model);
     let rec = ParallelRecommendation {
@@ -1280,7 +1291,9 @@ pub fn recommendation_for_app(
         model_size_mb,
         gpu_model,
     };
-    *cache = Some((Instant::now(), key, rec));
+    *RECOMMENDATION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((Instant::now(), allowed, rec));
     rec
 }
 
@@ -1315,7 +1328,7 @@ impl ImportQueue {
                 None => {
                     let setting = crate::settings::get_settings(&limit_app).meeting_import_parallel;
                     resolve_limit(setting, || {
-                        recommendation_for_app(&limit_app, &limit_tm).recommended as usize
+                        recommendation_for_app(&limit_app, &limit_tm, false).recommended as usize
                     })
                 }
             }),

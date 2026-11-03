@@ -107,5 +107,5 @@ pub fn get_meeting_import_parallel_recommendation(
     app: AppHandle,
     transcription: State<'_, Arc<TranscriptionManager>>,
 ) -> crate::managers::meetings::queue::ParallelRecommendation {
-    crate::managers::meetings::queue::recommendation_for_app(&app, &transcription)
+    crate::managers::meetings::queue::recommendation_for_app(&app, &transcription, true)
 }
