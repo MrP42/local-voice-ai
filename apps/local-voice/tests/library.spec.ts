@@ -2572,14 +2572,31 @@ test("Titel bearbeiten über ⋮: Produktseite öffnet mit dem Titelfeld, Esc br
 test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele ≥ 44 px", async ({
   page,
 }) => {
-  await addBooks(page, [richDad("Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo")]);
+  await addBooks(page, [
+    {
+      ...richDad("Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo"),
+      cover_source: "openlibrary",
+      cover_path: "C:/lib/book_rd/cover.jpg?v=1",
+    },
+  ]);
   await withCandidates(page);
   await serveCovers(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByTestId("library-more-book_rd").click();
   await page.getByTestId("library-title-book_rd").click();
-  await expect(page.getByTestId("library-title-input")).toBeVisible();
+  const field = page.getByTestId("library-title-input");
+  await expect(field).toBeVisible();
+  // Mehrzeilig: der lange Rohtitel ist ganz sichtbar, nichts abgeschnitten.
+  const fit = await field.evaluate((el: HTMLTextAreaElement) => ({
+    full: el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1,
+    lines: el.clientHeight / parseFloat(getComputedStyle(el).lineHeight),
+  }));
+  expect(fit.full).toBe(true);
+  expect(fit.lines).toBeGreaterThanOrEqual(1.9);
+  await expect(page.getByTestId("library-title-suggestion")).toContainText(
+    "Vorschlag übernehmen: Rich Dad Poor Dad",
+  );
   for (const id of ["library-title-suggestion", "library-title-save"]) {
     const box = (await page.getByTestId(id).boundingBox())!;
     expect(box.height, id).toBeGreaterThanOrEqual(44);
@@ -2594,21 +2611,70 @@ test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele �
   await page.getByRole("button", { name: "Abbrechen" }).click();
   // Fokus kehrt auf den Stift zurück; auch er ist groß genug.
   await expect(page.getByTestId("library-title-edit")).toBeFocused();
+  // Alle Knöpfe der Produktseite (Stift, Kurzbuch „Transkribieren“ …) ≥ 44 px hoch.
+  for (const b of await page
+    .locator(".library-hero__title-edit, .library-kurzbuch__actions button, .library-hero .library-actions button")
+    .all()) {
+    const box = (await b.boundingBox())!;
+    expect(box.height, await b.innerText()).toBeGreaterThanOrEqual(44);
+  }
   const pen = (await page.getByTestId("library-title-edit").boundingBox())!;
-  expect(Math.min(pen.width, pen.height)).toBeGreaterThanOrEqual(44);
+  expect(pen.width).toBeGreaterThanOrEqual(44);
   await page.getByTestId("library-detail-cover").click();
   const dialog = page.getByTestId("library-cover-dialog");
-  await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(7);
+  // Aktuell + Generiert + Hörbuch + 5 Ausgaben.
+  await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(8);
+  await expect(page.getByTestId("library-cover-restore")).toBeVisible();
   expect(await noScroll()).toBe(true);
-  for (const tile of await dialog.getByTestId("library-cover-tile").all()) {
-    const box = (await tile.boundingBox())!;
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+  // Jeder Knopf im Dialog, auch Schließen-X, Übernehmen, Abbrechen, Eigenes Bild.
+  const buttons = page.getByRole("dialog").getByRole("button");
+  expect(await buttons.count()).toBeGreaterThanOrEqual(13);
+  for (const b of await buttons.all()) {
+    await b.scrollIntoViewIfNeeded();
+    const box = (await b.boundingBox())!;
+    const name = (await b.getAttribute("aria-label")) ?? (await b.innerText());
+    expect(box.height, name).toBeGreaterThanOrEqual(44);
+    expect(box.width, name).toBeGreaterThanOrEqual(44);
   }
+  await expect(page.getByTestId("library-cover-consequence")).toContainText("Abbrechen");
   await dialog.locator('[data-cover="ol-2"]').click();
+  await expect(page.getByTestId("library-cover-consequence")).toContainText(
+    "ersetzt das bisherige Cover",
+  );
+  // Mobil stehen Titel, Jahr und Verlag vollständig da.
+  await expect(dialog.locator('[data-cover="ol-5"] .library-meta')).toHaveText(
+    "Rich Dad Poor Dad (dt.) · 2014 · FinanzBuch",
+  );
+  const clipped = await dialog
+    .locator('[data-cover="ol-5"] .library-meta')
+    .evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+  expect(clipped).toBe(false);
   await expect(page.getByTestId("library-cover-apply")).toBeEnabled();
+  await page.locator(".library-cover-pick__grid").evaluate((el) => el.scrollTo(0, 0));
+  await page.locator(".lv-dialog__content").evaluate((el) => el.scrollTo(0, 0));
   await page.waitForTimeout(400); // Übergang der Knopffarbe abwarten
   await page.screenshot({ path: `${VORSCHAU}/cover-dialog-390.png` });
+});
+
+test("Cover ändern: generiertes Cover wiederherstellen mit einem Klick", async ({ page }) => {
+  await addBooks(page, [
+    { ...richDad(), cover_source: "audio", cover_path: "C:/lib/book_rd/cover.jpg?v=1" },
+  ]);
+  await withCandidates(page);
+  await serveCovers(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-cover-book_rd").click();
+  const dialog = page.getByTestId("library-cover-dialog");
+  await expect(dialog.locator('[data-cover="current"]')).toContainText("Aus dem Hörbuch");
+  await expect(dialog.locator('[data-cover="generated"]')).toBeVisible();
+  await expect(page.getByTestId("library-cover-consequence")).toBeVisible();
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${VORSCHAU}/cover-dialog-wiederherstellen-1440.png` });
+  await page.getByTestId("library-cover-restore").click();
+  await expect.poll(() => calls(page, "library_cover_clear")).toEqual([{ id: "book_rd" }]);
+  await expect(dialog).toHaveCount(0);
 });
 
 test("Neues Hörbuch ablegen: ein eingebettetes Cover wird gleich übernommen (lokal)", async ({

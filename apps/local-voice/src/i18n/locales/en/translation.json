@@ -7197,6 +7197,9 @@
       "found_one": "{{count}} cover found.",
       "found_other": "{{count}} covers found.",
       "done": "Cover changed.",
+      "restoreGenerated": "Restore generated cover",
+      "consequence": "“Apply” replaces the current cover with your choice. “Cancel” discards the choice and keeps the current cover.",
+      "consequenceNone": "Pick a cover. “Cancel” leaves the current cover unchanged.",
       "source": {
         "openlibrary": "Open Library",
         "epub": "From the EPUB",
@@ -7208,7 +7211,7 @@
     "titleEdit": {
       "action": "Edit title",
       "menu": "Edit title …",
-      "suggestion": "Suggestion without file name leftovers:"
+      "suggestion": "Apply suggestion:"
     },
     "coverGenerated": "Use generated cover",
     "delete": "Remove from library",

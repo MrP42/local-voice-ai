@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
-import { Check, ImageIcon, Search } from "lucide-react";
+import { Check, ImageIcon, RotateCcw, Search } from "lucide-react";
 import { commands, type CoverCandidate, type LibraryBook } from "@/bindings";
 import { assetUrl } from "@/lib/library/books";
 import { Dialog } from "../ui/Dialog";
@@ -147,6 +147,7 @@ export const CoverDialog: React.FC<{
       onClick={onSelect}
       data-testid="library-cover-tile"
       data-cover={key}
+      title={sub ? `${label}: ${sub}` : label}
     >
       <span className="library-cover-pick__img">
         {image}
@@ -167,7 +168,7 @@ export const CoverDialog: React.FC<{
       onOpenChange={(o) => !o && !busy && onClose()}
       title={t("library.cover.title", { title: book.title })}
       closeLabel={t("library.cancel")}
-      className="max-w-4xl"
+      className="max-w-4xl library-dialog-touch"
       footer={
         <>
           <Button
@@ -204,8 +205,29 @@ export const CoverDialog: React.FC<{
               ? t("library.searching")
               : t("library.cover.searchAgain")}
           </Button>
+          {hasCover && (
+            <Button
+              variant="ghost"
+              icon={<RotateCcw size={16} aria-hidden="true" />}
+              onClick={() =>
+                void finish(() => commands.libraryCoverClear(book.id))
+              }
+              disabled={busy}
+              data-testid="library-cover-restore"
+            >
+              {t("library.cover.restoreGenerated")}
+            </Button>
+          )}
         </div>
         <p className="library-meta">{t("library.cover.privacy")}</p>
+        <p
+          className="library-cover-pick__consequence"
+          data-testid="library-cover-consequence"
+        >
+          {choice.kind === "current"
+            ? t("library.cover.consequenceNone")
+            : t("library.cover.consequence")}
+        </p>
         <div
           className="library-cover-pick__grid"
           role="group"
@@ -224,6 +246,14 @@ export const CoverDialog: React.FC<{
                 })
               : t("library.cover.source.generated"),
           )}
+          {hasCover &&
+            tile(
+              "generated",
+              choice.kind === "generated",
+              () => setChoice({ kind: "generated" }),
+              <BookCover book={{ ...book, cover_path: null }} size="sm" />,
+              t("library.cover.generated"),
+            )}
           {visible.map((c) => {
             const key = keyOf(c);
             const src = c.source === "audio" ? assetUrl(c.preview) : c.preview;
@@ -251,16 +281,12 @@ export const CoverDialog: React.FC<{
               c.label || undefined,
             );
           })}
-          {hasCover &&
-            tile(
-              "generated",
-              choice.kind === "generated",
-              () => setChoice({ kind: "generated" }),
-              <BookCover book={{ ...book, cover_path: null }} size="sm" />,
-              t("library.cover.generated"),
-            )}
         </div>
-        <p className="library-meta" role="status" aria-live="polite">
+        <p
+          className="library-cover-pick__status"
+          role="status"
+          aria-live="polite"
+        >
           {state === "loading"
             ? t("library.cover.searching")
             : state === "error"

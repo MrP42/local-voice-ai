@@ -1113,9 +1113,13 @@
   align-items: center;
 }
 .library-title-editor__row > :first-child {
-  flex: 1 1 260px;
+  flex: 1 1 100%;
   min-width: 0;
+}
+.library-title-editor__field textarea {
   font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 .library-title-editor__hint {
   display: inline-flex;
@@ -1300,4 +1304,40 @@
 .library-undo-toast button {
   min-height: 44px !important;
   font-weight: 600;
+}
+
+/* Codex-Abnahme lva#225: Trefferflächen ≥ 44 px, Folgen der Auswahl lesbar */
+.library-cover-pick .library-bar button {
+  min-height: 44px;
+}
+.library-cover-pick__status {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text, inherit);
+}
+.library-cover-pick__consequence {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--colorBrandBackground, #0f6cbd);
+  background: var(--colorNeutralBackground2, rgba(0, 0, 0, 0.04));
+  font-size: 13px;
+}
+@media (max-width: 480px) {
+  .library-cover-pick__tile .library-meta {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+    overflow-wrap: anywhere;
+  }
+  .library-kurzbuch__actions button,
+  .library-detail .library-bar button,
+  .library-hero .library-actions button,
+  .library-title-editor__hint,
+  .library-title-editor__row > button {
+    min-height: 44px;
+  }
+}
+/* Titelfeld: Höhe aus den Zeilen, nicht aus der Mindesthöhe langer Textfelder. */
+.library-title-editor .lv-textarea.lv-textarea--default.lv-textarea--default {
+  min-height: 0;
 }

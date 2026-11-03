@@ -7197,6 +7197,9 @@
       "found_one": "{{count}} Cover gefunden.",
       "found_other": "{{count}} Cover gefunden.",
       "done": "Cover geändert.",
+      "restoreGenerated": "Generiertes Cover wiederherstellen",
+      "consequence": "„Übernehmen“ ersetzt das bisherige Cover durch die Auswahl. „Abbrechen“ verwirft die Auswahl, das bisherige Cover bleibt.",
+      "consequenceNone": "Wähle ein Cover. „Abbrechen“ lässt das bisherige Cover unverändert.",
       "source": {
         "openlibrary": "Open Library",
         "epub": "Aus der EPUB",
@@ -7208,7 +7211,7 @@
     "titleEdit": {
       "action": "Titel bearbeiten",
       "menu": "Titel bearbeiten …",
-      "suggestion": "Vorschlag ohne Dateinamen-Reste:"
+      "suggestion": "Vorschlag übernehmen:"
     },
     "coverGenerated": "Generiertes Cover verwenden",
     "delete": "Aus der Bibliothek entfernen",

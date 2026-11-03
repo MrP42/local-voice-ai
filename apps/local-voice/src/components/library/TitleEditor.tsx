@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Check, Sparkles, X } from "lucide-react";
 import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { Textarea } from "../ui/Textarea";
 
 /**
  * Titel an Ort und Stelle bearbeiten. Trägt der Titel Dateinamen-Reste
@@ -20,7 +20,7 @@ export const TitleEditor: React.FC<{
   const { t } = useTranslation();
   const [value, setValue] = useState(title);
   const [busy, setBusy] = useState(false);
-  const input = useRef<HTMLInputElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     input.current?.focus();
     input.current?.select();
@@ -55,11 +55,15 @@ export const TitleEditor: React.FC<{
       }}
     >
       <div className="library-title-editor__row">
-        <Input
+        <Textarea
           ref={input}
           value={value}
+          // Lange Rohtitel ganz zeigen: zwei bis vier Zeilen je nach Länge.
+          rows={Math.min(4, Math.max(2, Math.ceil(value.length / 26)))}
+          className="library-title-editor__field"
           aria-label={t("library.field.title")}
-          onChange={(e) => setValue(e.target.value)}
+          // Ein Titel hat keine Zeilenumbrüche; lange Titel brechen nur sichtbar um.
+          onChange={(e) => setValue(e.target.value.replace(/[\r\n]+/g, " "))}
           onKeyDown={(e) => {
             // Während einer IME-Eingabe gehört Enter der Komposition.
             if (e.key === "Enter" && !e.nativeEvent.isComposing) {
