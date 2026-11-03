@@ -25,6 +25,15 @@ neueren. `progress` mit den Regeln aus `progress.ts` (`mergeRecordText`): Stelle
 neueren `updated`, gehörte und gelesene Bereiche vereinigt, `finished` bleibt, Länge = Maximum.
 Ein Gerät schickt seinen eigenen Stand unverändert; zusammengeführt wird nur beim Empfang.
 
+**Kanonische Form und Ledger:** Hash über JSON mit sortierten Schlüsseln, `null`-Felder entfernt,
+Ganzzahlen ohne `.0`. Nach dem Anwenden eines empfangenen Objekts speichert das Ledger den Hash
+der **lokalen** kanonischen Form (nicht des empfangenen Klartexts), sonst schickt jedes Gerät den
+gerade erhaltenen Stand in eigener Schreibweise zurück. Eigene Echos (gleiche `device_id`,
+Revision bekannt) werden beim Pull übersprungen. Objekte über 256 KiB Klartext und vom Hub
+abgewiesene Objekte werden als „tot“ vermerkt und erst mit geändertem Inhalt erneut gesendet.
+Neue Felder (z. B. `favorite`, lva#222) müssen beide Seiten kennen, sonst gehen sie beim
+Zurückschreiben verloren.
+
 ## Dateien (`files` im Buch)
 
 ```json
@@ -45,9 +54,17 @@ Ein Gerät schickt seinen eigenen Stand unverändert; zusammengeführt wird nur 
   `POST /api/v1/voice/blobs/{id}/chunks/{n}`, Abschluss `POST …/{id}/commit {chunks}`.
 - **Reihenfolge beim Hochladen:** erst alle Dateien des Buchs hochladen und abschließen, dann
   das `book`-Objekt pushen. Ein Gerät sieht so nie ein Buch, dessen Dateien fehlen.
-- **Herunterladen:** iPhone lädt Text und Cover sofort, Hörbuchteile erst beim ersten Öffnen
+- `audio[].file` ist genau der Dateiname aus `audio.tracks[].file` (bzw. `audio.file` bei einem
+  Teil), ohne Pfad. Eine leere Datei hat 1 Stück: `chunks = max(1, ceil(size / 4 MiB))`.
+- **Herunterladen:** iPhone lädt Text sofort (Cover folgt; bis dahin erzeugtes Cover), Hörbuchteile erst beim ersten Öffnen
   (oder auf Wunsch), Einstellung „nur im WLAN“. Stücke einzeln prüfen (sha256 und Tag), dann
-  zusammensetzen und atomar ablegen.
+  Stück für Stück in `<ziel>.part` schreiben (Wiederaufnahme am ersten fehlenden Stück), erst
+  vollständig umbenennen.
+- **Testvektor** (Desktop und iPhone, mit libsodium bestätigt): Schlüssel 0x00..0x1f, user_id 7,
+  Klartext „Hallo Buch“, Nonce 0x40..0x57, Stück 0 → Blob `08d8fe6e…0a7322`, Stück
+  `40414243…4c4d4e4f505152535455565 79c58691c…3c4bbf` (vollständig in `LibrarySyncModelTests`).
+- **Löschen:** „Auf allen Geräten löschen“ sendet einen Grabstein; „Hörbuch vom iPhone
+  entfernen“ löscht nur die geladenen Dateien.
 
 ## Zuständig
 - P4 Hub: wai-portal PR #8.

@@ -1,5 +1,6 @@
 import XCTest
 @testable import VoiceCore
+import CryptoKit
 
 final class LibrarySyncModelTests: XCTestCase {
     func testSyncedBookRoundTripKeepsDesktopKeysAndFiles() throws {
@@ -40,5 +41,36 @@ final class LibrarySyncModelTests: XCTestCase {
         let json = #"{"objects":[{"collection":"book","object_id":"book_1","revision":2,"payload":"x","key_id":"deadbeef","deleted":false,"device_id":"d","server_seq":5}],"cursor":5,"more":false,"server_time":"2026-11-02"}"#
         let r = try JSONDecoder().decode(HubPullResponse.self, from: Data(json.utf8))
         XCTAssertEqual(r.objects.first?.serverSeq, 5); XCTAssertEqual(r.cursor, 5)
+    }
+}
+
+final class CanonicalHashTests: XCTestCase {
+    func testNullFieldsDoNotChangeTheHash() {
+        // Rust/serde schreibt None als null, Swift lässt das Feld weg.
+        XCTAssertEqual(LibrarySyncFormat.canonicalHash(Data(#"{"a":1,"b":null,"c":{"d":null,"e":2}}"#.utf8)),
+                       LibrarySyncFormat.canonicalHash(Data(#"{"c":{"e":2},"a":1}"#.utf8)))
+    }
+}
+
+final class DesktopVectorTests: XCTestCase {
+    /// Testvektor des Desktop-Strangs (P5), unabhängig mit libsodium bestätigt.
+    func testBlobIdAndChunkMatchDesktop() throws {
+        let key = (0..<32).map { UInt8($0) }
+        let plain = Array("Hallo Buch".utf8)
+        let digest = Data(SHA256.hash(data: Data(plain)))
+        let blob = LibrarySyncFormat.blobId(key: key, plaintextSha256: digest)
+        XCTAssertEqual(blob, "08d8fe6edc4415c512af3a369d59e5473fefa144043c3ca8d6ea8653210a7322")
+        let sealed = try LibrarySyncFormat.sealChunk(key: key, userId: 7, blobId: blob, index: 0, plain: plain, nonce: (0x40...0x57).map { UInt8($0) })
+        XCTAssertEqual(sealed.map { String(format: "%02x", $0) }.joined(),
+                       "404142434445464748494a4b4c4d4e4f50515253545556579c58691cbfc03b63ec9ccb2edc16b2b3f35766f059626d3c4bbf")
+    }
+
+    func testFavoriteSurvivesRoundTrip() throws {
+        var book = LibraryBook(id: "book_1", title: "T", addedMs: 1730000000000)
+        book.favorite = true
+        let data = try SyncedBook(book: book, files: BookFiles(), updated: 5).json()
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains(#""added_ms":1730000000000"#), "Ganzzahlen ohne .0")
+        XCTAssertEqual(try SyncedBook.decode(data).book.favorite, true)
+        XCTAssertEqual(try JSONDecoder().decode(LibraryBook.self, from: Data(#"{"id":"a","title":"b"}"#.utf8)).favorite, false)
     }
 }
