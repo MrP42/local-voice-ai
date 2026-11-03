@@ -3,7 +3,11 @@ import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   CheckSquare,
+  Download,
   Eraser,
+  FileText,
+  Languages,
+  Loader2,
   Headphones,
   ImageIcon,
   Layers,
@@ -11,6 +15,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Sparkles,
   Star,
   Trash2,
   X,
@@ -72,6 +77,21 @@ import {
 } from "@/lib/library/remove";
 import type { TrashEntry } from "@/bindings";
 import { TrashDialog } from "./TrashDialog";
+import {
+  KiCreateDialog,
+  ensureBookJobToasts,
+  jobStatus,
+  jobTitle,
+  type KiCreateTab,
+} from "./KiCreateDialog";
+import { ExportDialog } from "./ExportDialog";
+import {
+  cancelBookJob,
+  jobFraction,
+  jobsOfBook,
+  useBookJobs,
+} from "@/lib/library/bookJobs";
+import "./fassungen.css";
 import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -182,6 +202,11 @@ export const LibraryPage: React.FC = () => {
   /** ⋮ → „Titel bearbeiten“: Produktseite öffnet mit dem Titelfeld. */
   const [editTitleId, setEditTitleId] = useState<string | null>(null);
   const [coverFor, setCoverFor] = useState<LibraryBook | null>(null);
+  /** lva#236: KI-Aufträge und Export direkt aus der Bibliothek. */
+  const [kiFor, setKiFor] = useState<{ book: LibraryBook; tab: KiCreateTab } | null>(null);
+  const [exportFor, setExportFor] = useState<LibraryBook | null>(null);
+  const kiJobs = useBookJobs();
+  useEffect(() => ensureBookJobToasts(), []);
   useEffect(() => {
     if (!openId) setEditTitleId(null);
   }, [openId]);
@@ -463,6 +488,8 @@ export const LibraryPage: React.FC = () => {
     3,
   );
   const jobList = Object.values(jobs);
+  const kiJobList = kiJobs.filter((j) => books?.some((b) => b.id === j.bookId));
+  const hasWork = jobList.length > 0 || kiJobList.length > 0;
 
   const jobOf = (book: LibraryBook) => jobs[book.id];
 
@@ -618,15 +645,72 @@ export const LibraryPage: React.FC = () => {
       </div>
       <div className="library-meta">{v.book.authors.join(", ")}</div>
       <div className="library-meta">{statusLine(v)}</div>
+      {jobsOfBook(kiJobs, v.book.id).map((j) => (
+        <div
+          className="library-jobline"
+          key={j.id}
+          role="status"
+          data-testid={`library-kijob-${v.book.id}`}
+        >
+          <Loader2 size={12} className="lib-spin" aria-hidden="true" />
+          <span>
+            {jobTitle(t, j)} · {jobStatus(t, j)}
+          </span>
+        </div>
+      ))}
       <div className="library-card__row">
         <Formats view={v} job={jobOf(v.book)} />
-        <span className="library-touch">
+        <span className="library-touch library-card__tools">
+          {!selecting && (
+            <ActionMenu
+              trigger={{
+                icon: Sparkles,
+                label: t("library.ki.menuFor", { title: v.book.title }),
+                description: t("library.ki.menuHint"),
+                testId: `library-ki-${v.book.id}`,
+                ghost: true,
+              }}
+              menuLabel={t("library.ki.title")}
+              align="end"
+              items={[
+                {
+                  id: "translate",
+                  label: t("library.ki.menuTranslate"),
+                  icon: Languages,
+                  testId: `library-ki-translate-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "translation" }),
+                },
+                {
+                  id: "kurzbuch",
+                  label: t("library.ki.menuKurzbuch"),
+                  icon: Sparkles,
+                  testId: `library-ki-kurzbuch-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "kurzbuch" }),
+                },
+                {
+                  id: "kidoc",
+                  label: t("library.ki.menuKidoc"),
+                  icon: FileText,
+                  testId: `library-ki-kidoc-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "kidoc" }),
+                },
+                {
+                  id: "export",
+                  label: t("library.export.menu"),
+                  icon: Download,
+                  testId: `library-ki-export-${v.book.id}`,
+                  onSelect: () => setExportFor(v.book),
+                },
+              ]}
+            />
+          )}
           <ActionMenu
             trigger={{
               icon: MoreVertical,
               label: t("library.more", { title: v.book.title }),
               description: t("library.moreHint"),
               testId: `library-more-${v.book.id}`,
+              ghost: true,
             }}
             menuLabel={t("library.moreMenu")}
             align="end"
@@ -636,6 +720,13 @@ export const LibraryPage: React.FC = () => {
                 label: t("library.details"),
                 icon: BookOpen,
                 onSelect: () => setOpenId(v.book.id),
+              },
+              {
+                id: "export",
+                label: t("library.export.menu"),
+                icon: Download,
+                testId: `library-export-${v.book.id}`,
+                onSelect: () => setExportFor(v.book),
               },
               ...(v.book.text
                 ? [
@@ -781,6 +872,8 @@ export const LibraryPage: React.FC = () => {
               onRemove={() => setRemoving([open.book])}
               onChanged={reload}
               editTitle={editTitleId === open.book.id}
+              onCreate={(tab) => setKiFor({ book: open.book, tab })}
+              onExport={() => setExportFor(open.book)}
             />
           </div>
         ) : (
@@ -863,11 +956,11 @@ export const LibraryPage: React.FC = () => {
               </div>
             ) : (
               <>
-                {(continueViews.length > 0 || jobList.length > 0) &&
+                {(continueViews.length > 0 || hasWork) &&
                   filter === "all" &&
                   !query && (
                     <div
-                      className={`library-top ${jobList.length ? "" : "library-top--solo"}`}
+                      className={`library-top ${hasWork ? "" : "library-top--solo"}`}
                     >
                       {continueViews.length > 0 && (
                         <section aria-labelledby="library-continue">
@@ -928,7 +1021,7 @@ export const LibraryPage: React.FC = () => {
                           </div>
                         </section>
                       )}
-                      {jobList.length > 0 && (
+                      {hasWork && (
                         <section
                           className="library-jobs"
                           aria-labelledby="library-jobs"
@@ -959,6 +1052,45 @@ export const LibraryPage: React.FC = () => {
                                     {jobLabel(t, job)}
                                   </div>
                                 </div>
+                              </div>
+                            );
+                          })}
+                          {kiJobList.map((job) => {
+                            const book = books?.find((b) => b.id === job.bookId);
+                            if (!book) return null;
+                            return (
+                              <div
+                                className="library-job library-job--ki"
+                                key={job.id}
+                                data-testid="library-kijob-row"
+                              >
+                                <BookCover book={book} size="xs" />
+                                <div style={{ minWidth: 0 }}>
+                                  <div
+                                    className="library-title"
+                                    style={{ WebkitLineClamp: 1 }}
+                                  >
+                                    {book.title}
+                                  </div>
+                                  <div className="library-meta">
+                                    {jobTitle(t, job)} · {jobStatus(t, job)}
+                                  </div>
+                                  {job.status === "running" && (
+                                    <div className="library-job__bar" aria-hidden="true">
+                                      <span style={{ width: `${Math.round(jobFraction(job) * 100)}%` }} />
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="library-touch">
+                                  <IconButton
+                                    icon={<X size={16} aria-hidden="true" />}
+                                    label={t("library.ki.cancelJob", {
+                                      what: jobTitle(t, job),
+                                    })}
+                                    onClick={() => cancelBookJob(job.id)}
+                                    data-testid="library-kijob-cancel"
+                                  />
+                                </span>
                               </div>
                             );
                           })}
@@ -1135,6 +1267,18 @@ export const LibraryPage: React.FC = () => {
             setTrashNotice(null);
           }}
         />
+        <KiCreateDialog
+          book={kiFor?.book ?? null}
+          tab={kiFor?.tab ?? "translation"}
+          onTab={(tab) => setKiFor((k) => (k ? { ...k, tab } : k))}
+          onClose={() => setKiFor(null)}
+          onOpenDetail={() => {
+            const id = kiFor?.book.id ?? null;
+            setKiFor(null);
+            setOpenId(id);
+          }}
+        />
+        <ExportDialog book={exportFor} onClose={() => setExportFor(null)} />
         <CleanTitlesDialog
           books={cleaning}
           busy={cleanBusy}

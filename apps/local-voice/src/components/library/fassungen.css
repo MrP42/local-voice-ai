@@ -1,0 +1,288 @@
+/* lva#236: „Mit KI erstellen“ und „Exportieren“ in Bibliothek und Vorlesen.
+   Die Dialoge hängen an body, nicht in .library: Farben deshalb hier aus den
+   App-Tokens, hell und dunkel ohne eigene Palette. */
+.lv-dialog.ki-create,
+.lv-dialog.lib-export {
+  --fx-line: color-mix(in srgb, var(--color-mid-gray) 35%, transparent);
+  --fx-soft: color-mix(in srgb, var(--color-logo-primary) 12%, transparent);
+  --fx-ok: #107c10;
+  --fx-err: #c50f1f;
+  --fx-muted: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+.dark .lv-dialog.ki-create,
+.dark .lv-dialog.lib-export,
+[data-theme="dark"] .lv-dialog.ki-create,
+[data-theme="dark"] .lv-dialog.lib-export {
+  --fx-ok: #6ccb5f;
+  --fx-err: #ff99a4;
+}
+
+/* ---------------------------------------------------- Mit KI erstellen -- */
+.ki-create__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: min(480px, 100%);
+}
+.ki-create__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ki-create__field > span:first-child {
+  color: var(--fx-muted);
+}
+.ki-create__have {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.ki-create__have ul {
+  display: contents;
+  list-style: none;
+}
+.ki-create__have li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--fx-ok);
+  border: 1px solid color-mix(in srgb, var(--fx-ok) 45%, transparent);
+}
+.ki-create__note {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--fx-soft);
+  margin: 0;
+}
+.ki-create__note svg {
+  flex: none;
+  margin-top: 2px;
+}
+.ki-create__templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  max-height: min(46vh, 360px);
+  overflow-y: auto;
+}
+.ki-create__templates legend {
+  margin-bottom: 6px;
+  grid-column: 1 / -1;
+}
+.ki-create__template {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--fx-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ki-create__template:has(input:checked) {
+  border-color: var(--color-logo-primary);
+  background: var(--fx-soft);
+}
+.ki-create__template input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--color-logo-primary);
+}
+.ki-create__template span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ki-create__template small {
+  color: var(--fx-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lv-dialog.ki-create .lv-dialog__actions button,
+.lv-dialog.lib-export .lv-dialog__actions button {
+  min-height: 44px;
+}
+
+/* ---------------------------------------------------------- Exportieren -- */
+.lib-export__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: min(560px, 100%);
+}
+.lib-export__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--fx-line);
+  border-radius: 10px;
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+}
+.lib-export__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
+  grid-template-areas: "pick format" "state state";
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 10px;
+  min-height: 52px;
+}
+.lib-export__row + .lib-export__row {
+  border-top: 1px solid var(--fx-line);
+}
+.lib-export__row.is-on {
+  background: var(--fx-soft);
+}
+.lib-export__pick {
+  grid-area: pick;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  min-width: 0;
+  cursor: pointer;
+}
+.lib-export__pick input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--color-logo-primary);
+}
+.lib-export__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--fx-muted);
+}
+.lib-export__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.lib-export__name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-export__name small {
+  color: var(--fx-muted);
+}
+.lib-export__format {
+  grid-area: format;
+  min-width: 0;
+}
+.lib-export__state {
+  grid-area: state;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding-left: 28px;
+  color: var(--fx-muted);
+}
+.lib-export__state.is-done {
+  color: var(--fx-ok);
+}
+.lib-export__state.is-error {
+  color: var(--fx-err);
+}
+.lib-export__warn {
+  color: var(--fx-err);
+  margin: 0;
+}
+@media (max-width: 520px) {
+  .lib-export__row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "pick" "format" "state";
+    padding: 8px 10px;
+  }
+  .lib-export__format {
+    padding-left: 28px;
+  }
+}
+.lib-spin {
+  animation: lib-spin 1s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes lib-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-spin {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------- Karte und In Arbeit -- */
+.library-card__tools {
+  display: inline-flex;
+  flex: none;
+}
+.library-jobline {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--lib-busy, var(--color-text-muted));
+  min-width: 0;
+}
+.library-jobline > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-job--ki {
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+}
+.library-job__bar {
+  height: 3px;
+  border-radius: 2px;
+  margin-top: 4px;
+  background: color-mix(in srgb, var(--color-mid-gray) 30%, transparent);
+  overflow: hidden;
+}
+.library-job__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-logo-primary);
+  transition: width 0.3s ease;
+}
+/* Buchseite: „Mit KI“ und „Exportieren“ nebeneinander unter den Hauptaktionen */
+.library-actions__pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+/* Kennzeichen umbrechen als Ganzes („Kein Audio“ nie zweizeilig), damit die
+   zwei Knöpfe der Karte daneben Platz haben. */
+.library-card__row .library-fmt > span:not([data-state="busy"]) {
+  white-space: nowrap;
+}
+.library-card__tools {
+  gap: 0;
+}
+.ki-create__template strong {
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}

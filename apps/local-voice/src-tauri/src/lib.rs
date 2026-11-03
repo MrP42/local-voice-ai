@@ -23,6 +23,7 @@ mod isbn; // lva#149: Buchdaten per ISBN aus Open Library
 mod keep_awake; // Vorlesen: Bildschirm wach halten (Sonnen-Knopf)
 mod konto; // ADR-0024 Paket 1: Suite-Profil (lokal)
 mod library; // lva#152: Bibliothek für Bücher und Hörbücher
+mod library_export; // lva#236: Fassungen einzeln exportieren (EPUB, PDF, Word, M4B, MP3)
 mod llm_client;
 mod llm_keys;
 mod local_update;
@@ -2443,6 +2444,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::book_ai_term_hits,
             book_ai::book_ai_document_import,
             book_ai::book_ai_document_export,
+            library_export::library_export_text,
+            library_export::library_ffmpeg_available,
+            library_export::library_export_audio,
             books::books_list,
             books::books_create,
             books::books_update,
