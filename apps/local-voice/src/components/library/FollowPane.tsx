@@ -79,7 +79,11 @@ type Piece =
 function piecesOf(p: TextParagraph, inserts: AudioSyncInsert[]): Piece[] {
   const start = textStartOf(p);
   const end = start + p.text.length;
-  const mine = inserts.filter((i) => i.at >= start && i.at < end);
+  // Die Einschübe sind schon diesem Absatz zugeordnet; was am Ende oder
+  // zwischen zwei Absätzen liegt, hängt hinten an (vor dem ersten: vorn).
+  const mine = inserts.map((i) =>
+    i.at > end ? { ...i, at: end } : i.at < start ? { ...i, at: start } : i,
+  );
   if (!mine.length) return [{ kind: "text", start, text: p.text }];
   const out: Piece[] = [];
   let at = start;
@@ -220,7 +224,7 @@ export const FollowPane: React.FC<{
           lo = mid + 1;
         } else hi = mid - 1;
       }
-      if (found < 0) continue;
+      if (found < 0) found = 0;
       const list = map.get(found) ?? [];
       list.push(ins);
       map.set(found, list);
@@ -335,6 +339,8 @@ export const FollowPane: React.FC<{
   const pick = useCallback((index: number, chars: number | null) => {
     const l = latest.current;
     pausedUntil.current = 0;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
     setAway(false);
     const p = l.paragraphs[index];
     const at = chars ?? textStartOf(p);
@@ -345,6 +351,23 @@ export const FollowPane: React.FC<{
       l.onAnchor(target);
     } else l.onPick(chars === null ? p.start : target);
   }, []);
+
+  // Die Liste nur bei geändertem Absatz neu aufbauen, nicht bei jedem
+  // Zeitschritt der Wiedergabe (Bücher mit Tausenden Absätzen).
+  const list = useMemo(
+    () =>
+      paragraphs.map((p, i) => (
+        <Paragraph
+          key={p.start}
+          p={p}
+          index={i}
+          active={i === active}
+          inserts={insertsOf.get(i) ?? NO_INSERTS}
+          onPick={pick}
+        />
+      )),
+    [paragraphs, active, insertsOf, pick],
+  );
 
   return (
     <div
@@ -430,16 +453,7 @@ export const FollowPane: React.FC<{
         lang="de"
         data-testid="library-follow-text"
       >
-        {paragraphs.map((p, i) => (
-          <Paragraph
-            key={p.start}
-            p={p}
-            index={i}
-            active={i === active}
-            inserts={insertsOf.get(i) ?? NO_INSERTS}
-            onPick={pick}
-          />
-        ))}
+        {list}
       </div>
       {away && (
         <button

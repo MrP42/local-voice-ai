@@ -1612,25 +1612,35 @@ test("Mitlesen: der gehörte Satz ist hervorgehoben (ohne Umbruchwechsel)", asyn
 
 test("Mitlesen: Text nur im Hörbuch steht farbig an seiner Stelle", async ({ page }) => {
   await mitlesenSetup(page, false);
-  const { sync } = followText();
-  await page.addInitScript((at) => {
-    (window as unknown as { __liveCache: unknown }).__liveCache = {
-      text_key: "",
-      points: [],
-      inserts: [{ at, start_ms: 4000, end_ms: 6000, text: "Kapitel drei, gelesen von Anna" }],
-      covered: [],
-      anchors: [],
-    };
-  }, sync[2].chars + 9);
+  const { sync, text } = followText();
+  await page.addInitScript(
+    ([at, end]) => {
+      (window as unknown as { __liveCache: unknown }).__liveCache = {
+        text_key: "",
+        points: [],
+        inserts: [
+          { at, start_ms: 4000, end_ms: 6000, text: "Kapitel drei, gelesen von Anna" },
+          // Nach dem letzten Absatz (Abspann): hängt hinten an.
+          { at: end, start_ms: 29_000, end_ms: 30_000, text: "Ende des Hörbuchs" },
+        ],
+        covered: [],
+        anchors: [],
+      };
+    },
+    [sync[2].chars + 9, text.length] as const,
+  );
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await openFollow(page);
-  const ins = page.getByTestId("library-follow-insert");
-  await expect(ins).toHaveCount(1);
+  await expect(page.getByTestId("library-follow-insert")).toHaveCount(2);
+  await expect(
+    page.locator(".library-follow__p", { hasText: /^Absatz 12:/ }).getByTestId("library-follow-insert"),
+  ).toContainText("Ende des Hörbuchs");
+  const ins = page.getByTestId("library-follow-insert").first();
   await expect(ins).toContainText("Kapitel drei, gelesen von Anna");
   await expect(ins).toHaveAttribute("title", "Nur im Hörbuch");
   // Im dritten Absatz, nach „Absatz 3:“.
-  const para = page.locator(".library-follow__p", { has: ins });
+  const para = page.locator(".library-follow__p", { hasText: /^Absatz 3:/ });
   expect(await para.textContent()).toMatch(/^Absatz 3:Nur im Hörbuch: Kapitel drei, gelesen von Anna Der Text/);
   const color = await ins.evaluate((el) => getComputedStyle(el).color);
   const plain = await para.evaluate((el) => getComputedStyle(el).color);

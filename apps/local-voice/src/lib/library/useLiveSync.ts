@@ -5,7 +5,7 @@ import {
   type AudioSyncWindow,
   type SyncPoint,
 } from "@/bindings";
-import { addSpan, nextWindow, type LiveSpan } from "./liveSync";
+import { addSpan, monotoneChain, nextWindow, type LiveSpan } from "./liveSync";
 
 export interface LiveSyncState {
   points: SyncPoint[];
@@ -21,12 +21,17 @@ export interface LiveSyncState {
   busy: boolean;
 }
 
-const EMPTY: LiveSyncState = {
+interface InnerState extends Omit<LiveSyncState, "loaded"> {
+  /** Buch, für das der gespeicherte Abgleich geladen ist. */
+  loadedFor: string | null;
+}
+
+const EMPTY: InnerState = {
   points: [],
   inserts: [],
   covered: [],
   anchors: [],
-  loaded: false,
+  loadedFor: null,
   unavailable: false,
   busy: false,
 };
@@ -49,12 +54,12 @@ export interface LiveSync extends LiveSyncState {
   find(
     chars: number,
     estimateMs: number,
-    msPerChar: number,
+    opts: { msPerChar: number; totalMs: number; abort: { aborted: boolean } },
   ): Promise<number | null>;
 }
 
 /** Ergebnis eines Fensters in den Zustand übernehmen. */
-function withWindow(s: LiveSyncState, win: AudioSyncWindow): LiveSyncState {
+function withWindow(s: InnerState, win: AudioSyncWindow): InnerState {
   const inside = (ms: number) => ms >= win.from_ms && ms < win.to_ms;
   return {
     ...s,
@@ -98,10 +103,16 @@ export function useLiveSync(opts: {
   hintOf(ms: number): number;
 }): LiveSync {
   const { bookId, enabled, playing, positionMs, totalMs } = opts;
-  const [state, setState] = useState<LiveSyncState>(EMPTY);
+  const [state, setState] = useState<InnerState>(EMPTY);
+  // Pro Buch: ein veraltetes „geladen“ vom vorigen Buch zählt nicht.
+  const loaded = !enabled || state.loadedFor === bookId;
   const hintOf = useRef(opts.hintOf);
   hintOf.current = opts.hintOf;
-  const busy = useRef(false);
+  /** Laufende oder wartende Fenster (die Erkennung läuft seriell). */
+  const pending = useRef(0);
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  /** Startsuche läuft: die Fenster beim Hören warten. */
+  const searching = useRef(false);
   const failedAt = useRef(0);
   /** Hinweis aus dem letzten Fenster: gilt, wenn das nächste direkt anschließt. */
   const chain = useRef<{ toMs: number; chars: number } | null>(null);
@@ -111,9 +122,8 @@ export function useLiveSync(opts: {
   useEffect(() => {
     gen.current += 1;
     const mine = gen.current;
-    setState({ ...EMPTY, loaded: !enabled });
+    setState(EMPTY);
     chain.current = null;
-    busy.current = false;
     failedAt.current = 0;
     if (!enabled) return;
     void commands.audiosyncLoad(bookId).then((r) => {
@@ -122,22 +132,22 @@ export function useLiveSync(opts: {
         r.status === "ok"
           ? {
               ...s,
-              loaded: true,
+              loadedFor: bookId,
               points: r.data.points,
               inserts: r.data.inserts,
               covered: r.data.covered,
               anchors: r.data.anchors ?? [],
             }
-          : { ...s, loaded: true },
+          : { ...s, loadedFor: bookId },
       );
     });
   }, [bookId, enabled]);
 
   /** Ein Fenster erkennen; null bei Fehler (dann Pause bis RETRY_MS). */
-  const runWindow = useCallback(
-    async (from: number, len: number, hint: number) => {
-      const mine = gen.current;
-      busy.current = true;
+  const runOne = useCallback(
+    async (mine: number, from: number, len: number, hint: number) => {
+      // In der Warteschlange das Buch gewechselt: nichts mehr erkennen.
+      if (mine !== gen.current) return null;
       setState((s) => ({ ...s, busy: true }));
       try {
         const r = await commands.audiosyncWindow(
@@ -167,19 +177,32 @@ export function useLiveSync(opts: {
         if (mine === gen.current) failedAt.current = Date.now();
         return null;
       } finally {
-        if (mine === gen.current) {
-          busy.current = false;
-          setState((s) => ({ ...s, busy: false }));
-        }
+        if (mine === gen.current) setState((s) => ({ ...s, busy: false }));
       }
     },
     [bookId],
+  );
+  /** Fenster nacheinander, nie zwei Erkennungen zugleich. */
+  const runWindow = useCallback(
+    (from: number, len: number, hint: number) => {
+      const mine = gen.current;
+      pending.current += 1;
+      const p = queue.current
+        .then(() => runOne(mine, from, len, hint))
+        .finally(() => {
+          pending.current -= 1;
+        });
+      queue.current = p.catch(() => null);
+      return p;
+    },
+    [runOne],
   );
 
   // Auf 5 s gerundet: nicht bei jedem timeupdate neu prüfen.
   const tick = Math.floor(positionMs / 5000);
   useEffect(() => {
-    if (!enabled || !state.loaded || !playing || busy.current) return;
+    if (!enabled || !loaded || !playing) return;
+    if (pending.current > 0 || searching.current) return;
     if (Date.now() - failedAt.current < RETRY_MS) return;
     const w = nextWindow(state.covered, positionMs, totalMs);
     if (!w) return;
@@ -187,7 +210,7 @@ export function useLiveSync(opts: {
     const hint =
       c && Math.abs(c.toMs - w.from) < 1500 ? c.chars : hintOf.current(w.from);
     void runWindow(w.from, w.len, hint);
-  }, [enabled, state.loaded, playing, tick, state.covered, totalMs, runWindow]);
+  }, [enabled, loaded, playing, tick, state.covered, totalMs, runWindow]);
 
   const anchor = useCallback(
     async (chars: number, ms: number) => {
@@ -204,36 +227,51 @@ export function useLiveSync(opts: {
   );
 
   const find = useCallback(
-    async (chars: number, estimateMs: number, msPerChar: number) => {
-      if (!enabled || busy.current) return null;
-      let est = Math.max(0, estimateMs);
-      for (let step = 0; step < SEARCH_STEPS; step++) {
-        const from = Math.max(0, est - 3000);
-        const win = await runWindow(from, SEARCH_WINDOW_MS, chars);
-        const pts = win?.points ?? [];
-        if (pts.length < 2) return null;
-        const first = pts[0];
-        const last = pts[pts.length - 1];
-        if (chars >= first.chars && chars <= last.chars) {
-          for (let i = 1; i < pts.length; i++) {
-            const a = pts[i - 1];
-            const b = pts[i];
-            if (chars <= b.chars) {
-              const f =
-                b.chars > a.chars ? (chars - a.chars) / (b.chars - a.chars) : 0;
-              return a.ms + f * (b.ms - a.ms);
+    async (
+      chars: number,
+      estimateMs: number,
+      o: { msPerChar: number; totalMs: number; abort: { aborted: boolean } },
+    ) => {
+      if (!enabled) return null;
+      searching.current = true;
+      try {
+        let est = Math.max(0, estimateMs);
+        for (let step = 0; step < SEARCH_STEPS; step++) {
+          if (o.abort.aborted) return null;
+          const from = Math.max(0, est - 3000);
+          const win = await runWindow(from, SEARCH_WINDOW_MS, chars);
+          if (!win || o.abort.aborted) return null;
+          // Ausreißer zählen nicht: nur die monotone Kette des Fensters.
+          const pts = monotoneChain(win.points);
+          if (!pts.length) return null;
+          const first = pts[0];
+          const last = pts[pts.length - 1];
+          if (pts.length > 1 && chars >= first.chars && chars <= last.chars) {
+            for (let i = 1; i < pts.length; i++) {
+              const a = pts[i - 1];
+              const b = pts[i];
+              if (chars <= b.chars) {
+                const f =
+                  b.chars > a.chars
+                    ? (chars - a.chars) / (b.chars - a.chars)
+                    : 0;
+                return a.ms + f * (b.ms - a.ms);
+              }
             }
+            return last.ms;
           }
-          return last.ms;
+          const near = chars < first.chars ? first : last;
+          est = Math.max(0, near.ms + (chars - near.chars) * o.msPerChar);
+          if (o.totalMs > 0) est = Math.min(est, Math.max(0, o.totalMs - 1000));
         }
-        const near = chars < first.chars ? first : last;
-        est = Math.max(0, near.ms + (chars - near.chars) * msPerChar);
-        if (totalMs > 0) est = Math.min(est, Math.max(0, totalMs - 1000));
+        return null;
+      } finally {
+        searching.current = false;
       }
-      return null;
     },
-    [enabled, runWindow, totalMs],
+    [enabled, runWindow],
   );
 
-  return { ...state, anchor, find };
+  const { loadedFor: _loadedFor, ...rest } = state;
+  return { ...rest, loaded, anchor, find };
 }

@@ -263,6 +263,7 @@ export const AudioBar: React.FC<Props> = ({
     started.current = true;
     let stop = false;
     let done = false;
+    const abort = { aborted: false };
     void (async () => {
       // Erst nach dem Effekt-Durchlauf (StrictMode ruft ihn zweimal).
       await Promise.resolve();
@@ -292,12 +293,21 @@ export const AudioBar: React.FC<Props> = ({
           nearAnchor(live.anchors, ms);
         if (!sure && totalNow > 0) {
           setSearching(true);
+          abort.aborted = false;
+          let timer = 0;
           const found = await Promise.race([
-            live.find(textRec.offset, ms, totalNow / Math.max(1, text.length)),
-            new Promise<null>((r) =>
-              window.setTimeout(() => r(null), SEARCH_TIMEOUT_MS),
-            ),
+            live.find(textRec.offset, ms, {
+              msPerChar: totalNow / Math.max(1, text.length),
+              totalMs: totalNow,
+              abort,
+            }),
+            new Promise<null>((r) => {
+              timer = window.setTimeout(() => r(null), SEARCH_TIMEOUT_MS);
+            }),
           ]);
+          window.clearTimeout(timer);
+          // Zeitlimit oder Abbruch: die Suche hört nach dem laufenden Fenster auf.
+          abort.aborted = true;
           setSearching(false);
           if (stop) return;
           if (found !== null) ms = Math.round(found);
@@ -312,6 +322,7 @@ export const AudioBar: React.FC<Props> = ({
     })();
     return () => {
       stop = true;
+      abort.aborted = true;
       // Abgebrochen, bevor die Stelle feststand: beim nächsten Lauf neu.
       if (!done) started.current = false;
     };
