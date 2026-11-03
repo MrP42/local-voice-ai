@@ -636,5 +636,4 @@ mod tests {
         let chars: Vec<u32> = out.iter().map(|p| p.chars).collect();
         assert_eq!(chars, vec![10, 30, 40, 50]);
     }
-
 }
