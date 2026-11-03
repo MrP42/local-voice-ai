@@ -939,15 +939,18 @@
 .library-kurzbuch__lang-select {
   min-width: 11rem;
 }
-/* Mobil: alle Bedienziele der Karte mindestens 44 × 44 px (Codex). */
+/* Mobil: alle Bedienziele der Karte mindestens 44 × 44 px (Codex). Mit
+   Reserve gesetzt, damit Rundung bei Windows-Skalierung nicht darunter fällt. */
 @media (max-width: 640px) {
   .library-kurzbuch__chip,
   .library-kurzbuch button {
-    min-height: 44px;
-    min-width: 44px;
+    box-sizing: border-box;
+    min-height: 48px;
+    min-width: 48px;
   }
   .library-kurzbuch .app-select__control {
-    min-height: 44px;
+    box-sizing: border-box;
+    min-height: 48px;
   }
   .library-kurzbuch__lang {
     justify-content: flex-start;

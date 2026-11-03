@@ -1785,8 +1785,9 @@ test("die Produktseite zeigt Kurzbücher je Sprache und bietet weitere an", asyn
   expect(targets.length).toBeGreaterThan(5);
   for (const target of targets) {
     const box = await target.boundingBox();
-    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
-    expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
+    const name = await target.evaluate((e) => (e.textContent ?? "").trim().slice(0, 30));
+    expect(box?.height ?? 0, `Höhe von „${name}“`).toBeGreaterThanOrEqual(44);
+    expect(box?.width ?? 0, `Breite von „${name}“`).toBeGreaterThanOrEqual(44);
   }
   await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/05-bibliothek-390.png" });
 });
