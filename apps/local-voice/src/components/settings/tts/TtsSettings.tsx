@@ -3048,7 +3048,7 @@ export const TtsSettings = () => {
    * alte Text bleibt hinter "Rueckgaengig" im Toast.
    */
   const tidyText = async () => {
-    if (!text.trim() || tidying) return;
+    if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
     const previousText = text;
@@ -3078,10 +3078,22 @@ export const TtsSettings = () => {
     setLastError(null);
     setSpeeching(true);
     const previousText = text;
-    const result = await commands.ttsSpeechText(stripPageMarks(text));
-    setSpeeching(false);
+    let result: Awaited<ReturnType<typeof commands.ttsSpeechText>>;
+    try {
+      result = await commands.ttsSpeechText(stripPageMarks(text));
+    } catch (e) {
+      setLastError(String(e));
+      return;
+    } finally {
+      setSpeeching(false);
+    }
     if (result.status === "error") {
       setLastError(result.error);
+      return;
+    }
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
       return;
     }
     setTab("original");

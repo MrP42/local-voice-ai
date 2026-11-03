@@ -284,12 +284,14 @@ pub async fn speech_version(settings: &AppSettings, text: &str) -> Result<String
     Ok(parts.join("\n\n"))
 }
 
-/// Wörter mit Buchstaben (klein), ab vier Zeichen: die tragenden Wörter, an
-/// denen sich zeigt, ob Inhalt verloren ging. Zahlen zählen nicht — die
-/// Sprechfassung schreibt sie aus.
+/// Reine Buchstabenwörter (klein), ab vier Zeichen: die tragenden Wörter, an
+/// denen sich zeigt, ob Inhalt verloren ging. Satzzeichen am Rand fallen weg.
+/// Wörter mit Ziffern oder Bindestrich („5-jährige“, „3D-Drucker“, „E-Mail“)
+/// zählen nicht — die Sprechfassung schreibt sie aus oder setzt sie zusammen.
 fn content_words(text: &str) -> std::collections::HashSet<String> {
-    text.split(|c: char| !c.is_alphabetic())
-        .filter(|w| w.chars().count() >= 4)
+    text.split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+        .filter(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphabetic))
         .map(str::to_lowercase)
         .collect()
 }
@@ -326,7 +328,10 @@ pub fn check_speech_version(original: &str, spoken: &str) -> Result<(), String> 
         );
     }
     let (a, b) = (original.chars().count(), spoken.chars().count());
-    if b * 10 < a * 8 || b * 10 > a * 18 {
+    // Ausgeschriebene Zahlen wachsen stark („2021“ -> „zweitausendeinundzwanzig“):
+    // je Ziffer ein Zuschlag auf die Obergrenze.
+    let digits = original.chars().filter(char::is_ascii_digit).count();
+    if b * 10 < a * 8 || b * 10 > a * 18 + digits * 100 {
         return Err(format!(
             "Die Sprechfassung ist unplausibel lang oder kurz ({b} statt {a} Zeichen) – Ergebnis nicht übernommen."
         ));
@@ -335,7 +340,10 @@ pub fn check_speech_version(original: &str, spoken: &str) -> Result<(), String> 
     if !before.is_empty() {
         let after = content_words(spoken);
         let kept = before.iter().filter(|w| after.contains(*w)).count();
-        if kept * 10 < before.len() * 9 {
+        // Höchstens 10 % dürfen fehlen, mindestens aber ein Wort (Flexion,
+        // aufgelöste Abkürzung), sonst scheitern kurze Abschnitte zu leicht.
+        let allowed = (before.len() / 10).max(1);
+        if before.len() - kept > allowed {
             return Err(format!(
                 "Die Sprechfassung hat Inhalt verändert ({} von {} Wörtern fehlen) – Ergebnis nicht übernommen.",
                 before.len() - kept,
@@ -568,9 +576,38 @@ mod tests {
             .contains("Tags"));
         // Inhalt gekürzt.
         let gekuerzt =
-            "Die Strecke ist lang. [pause] <Nele> Sie fragte etwas, und es war kurz genug.";
+            "Die Strecke war lang. [pause] <Nele> Wohin denn nun, sagte sie leise zu ihm.";
         assert!(check_speech_version(original, gekuerzt).is_err());
         assert!(check_speech_version(original, "  ").is_err());
+        // Zahlenlastig: Jahreszahlen ausgeschrieben, deutlich über 180 %.
+        assert_eq!(
+            check_speech_version(
+                "Die Jahre 2019, 2020 und 2021.",
+                "Die Jahre zweitausendneunzehn, zweitausendzwanzig und zweitausendeinundzwanzig."
+            ),
+            Ok(())
+        );
+        // Zahlkompositum wird zu einem Wort.
+        assert_eq!(
+            check_speech_version(
+                "Das 5-jährige Kind spielt draußen.",
+                "Das fünfjährige Kind spielt draußen."
+            ),
+            Ok(())
+        );
+        // Ein einzelnes geändertes Wort in einem kurzen Satz ist erlaubt, zwei nicht.
+        assert_eq!(
+            check_speech_version(
+                "Gestern kamen viele Gäste.",
+                "Gestern kamen sehr viele Gäste."
+            ),
+            Ok(())
+        );
+        assert!(check_speech_version(
+            "Gestern kamen viele Gäste zum Fest.",
+            "Heute kamen wenige Gäste zum Fest."
+        )
+        .is_err());
     }
 
     #[test]

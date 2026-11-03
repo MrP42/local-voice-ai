@@ -1430,6 +1430,7 @@
     "speechHint": "Die KI setzt Satzzeichen, teilt lange Sätze und schreibt Zahlen aus, damit die Stimme richtig betont – nichts wird gekürzt",
     "speeching": "Erstelle Sprechfassung …",
     "speechDone": "Sprechfassung übernommen.",
+    "speechStale": "Der Text wurde während der Sprechfassung geändert – Ergebnis nicht übernommen. Bitte erneut starten.",
     "controls": "Wiedergabe und Stimme",
     "translateShort": "Übersetzen",
     "replaceAll": {

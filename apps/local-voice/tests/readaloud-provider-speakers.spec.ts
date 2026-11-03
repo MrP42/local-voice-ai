@@ -522,6 +522,36 @@ test("Sprechfassung ersetzt den Text, Rückgängig holt das Original", async ({
   await expect(editor).toHaveValue("Die Strecke ist 12,5 km lang.");
 });
 
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Bild: Sprechfassung ${width} ${theme} (nur mit SCREENS_DIR)`, async ({
+      page,
+    }) => {
+      const dir = process.env.SCREENS_DIR;
+      test.skip(!dir, "nur mit SCREENS_DIR");
+      await setup(page, { engine: "provider:phonon", theme });
+      await gotoReadAloud(page);
+      await page.setViewportSize({ width, height: width > 600 ? 900 : 844 });
+      const editor = editorOf(page);
+      await editor.fill("Die Strecke ist 12,5 km lang.");
+      const name = (n: string) => `${dir}/${n}-${width}-${theme}.png`;
+      await page.getByTestId("tts-action-menu").click();
+      await expect(page.getByTestId("speech-run")).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: name("1-menue") });
+      await page.getByTestId("speech-run").click();
+      await expect(editor).toHaveValue(
+        "Die Strecke ist zwölfeinhalb Kilometer lang.",
+      );
+      await expect(
+        page.locator("button[data-action]", { hasText: "Rückgängig" }),
+      ).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: name("2-ergebnis") });
+    });
+  }
+}
+
 test("Phonon ohne Stimmwechsel: keine Sprecher im Skript", async ({ page }) => {
   await setup(page, { engine: "provider:phonon", switching: false });
   const select = await gotoReadAloud(page);

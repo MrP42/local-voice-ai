@@ -482,7 +482,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       icon: WandSparkles,
       iconClassName: tidying ? "animate-pulse" : undefined,
       onSelect: props.onTidy,
-      disabled: tidying || !hasText,
+      disabled: tidying || speeching || !hasText,
       testId: "tidy-run",
       title: tidying ? t("tts.tidying") : t("tts.tidyHint"),
     },

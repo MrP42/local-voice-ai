@@ -1430,6 +1430,7 @@
     "speechHint": "The AI sharpens punctuation, splits long sentences and writes out numbers so the voice stresses the right words – nothing is cut",
     "speeching": "Creating speaking version …",
     "speechDone": "Speaking version applied.",
+    "speechStale": "The text changed while the speaking version was being made – result not applied. Please start again.",
     "controls": "Playback and voice",
     "translateShort": "Translate",
     "replaceAll": {
