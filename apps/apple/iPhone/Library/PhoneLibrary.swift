@@ -286,13 +286,43 @@ final class PhoneLibrary: ObservableObject {
         } else {
             try FileManager.default.moveItem(at: staging, to: audioDir)
         }
+        // Angaben aus den Dateien (M4B/M4A-Atome, ID3): Titel, Personen, Cover, Kapitel.
+        var fileInfos: [AudiobookFileInfo] = []
+        var artwork: Data?
+        for t in tracks {
+            let r = await AudiobookMetadataReader.read(audioDir.appendingPathComponent(t.file))
+            fileInfos.append(r.file)
+            if artwork == nil { artwork = r.artwork }
+        }
+        let found = AudiobookInfo.combine(fileInfos.map(\.info))
+        let isNew = !books.contains { $0.id == book.id }
+        // Ein Teil: Titel-Atom ist der Buchtitel; mehrere Teile: Album ist der Buchtitel.
+        // Ohne Album bleibt bei mehreren Teilen der gemeinsame Dateiname (Teiltitel wäre „Kapitel 1“).
+        let fileTitle = tracks.count > 1 ? found.album : (found.title ?? found.album)
+        // Nur bei neuen Einträgen; das Audio liegt schon im Ordner dieses Eintrags.
+        if isNew, let fileTitle, fileTitle.count >= 2 { book.title = fileTitle }
+        if book.authors.isEmpty { book.authors = found.authors }
+        if book.subtitle == nil { book.subtitle = found.subtitle }
+        if book.publisher == nil { book.publisher = found.publisher }
+        if book.publishDate == nil { book.publishDate = found.releaseDate }
+        if book.description == nil { book.description = found.summary }
+        if book.language == nil { book.language = found.language }
         let total = tracks.allSatisfy { $0.durationMs != nil } ? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) } : nil
         // Neue Audiodateien: alte Zeitachse und alter Hörstand passen nicht mehr.
         let replaced = book.audio != nil
         book.audio = LibraryAudioVersion(file: tracks.first?.file ?? "", durationMs: total, tracks: tracks.count > 1 ? tracks : [], sync: [])
         if replaced { progress[Self.storageKey(audioKey(book))] = nil; scheduleSave() }
         if tracks.count == 1 { book.audio?.durationMs = tracks[0].durationMs }
+        if !found.narrators.isEmpty { book.audio?.narrator = found.narrators.joined(separator: ", ") }
         try write(book)
+        if let artwork, coverURL(book) == nil || book.coverSource == "generated" {
+            storeCover(artwork, for: book)
+            if coverURL(book) != nil { book.coverSource = "file"; try write(book) }
+        }
+        var info = found
+        info.chapters = AudiobookChapters.merge(files: fileInfos, tracks: book.audio?.allTracks ?? tracks)
+        info.chaptersFromFile = fileInfos.contains { !$0.chapters.isEmpty }
+        saveAudiobookInfo(info, for: book)
         var m = meta(book); m.files.audio = []; m.updated = Self.nowMs(); setMeta(book, m)
     }
 
