@@ -14,7 +14,7 @@ import {
 /** Ab dieser Breite stehen ⓘ, Suche und Aktionen in der Titelleiste; darunter
     reicht ihr Platz neben Hamburger und Fensterknöpfen nicht, dann bleiben sie
     als schmale Zeile über dem Inhalt. */
-const TITLEBAR_TOOLS_QUERY = "(min-width: 640px)";
+const TITLEBAR_TOOLS_QUERY = "(min-width: 768px)";
 
 function useTitlebarTools(): boolean {
   const [wide, setWide] = useState(
@@ -126,7 +126,7 @@ export const PageShell: React.FC<PageShellProps> = ({
   const tools = hasTools ? (
     <div
       className="page-shell__head page-shell__actions"
-      role="toolbar"
+      role="group"
       aria-label={title}
       data-testid="page-tools"
     >

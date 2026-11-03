@@ -541,7 +541,11 @@ function App() {
             <span className="lv-titlebar__name">{APP_NAME}</span>
           </span>
           <span className="lv-titlebar__frei" />
-          <div ref={setHeaderSlot} className="lv-titlebar__modul" />
+          <div
+            ref={setHeaderSlot}
+            className="lv-titlebar__modul"
+            data-tauri-drag-region="false"
+          />
           <WindowControls />
         </header>
         <div className="workspace-shell flex-1 flex overflow-hidden">

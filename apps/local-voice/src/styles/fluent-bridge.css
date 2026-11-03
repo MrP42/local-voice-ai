@@ -225,7 +225,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   }
 }
 /* Bedienelemente des Moduls (ⓘ, Suche, Aktionen): rechts in der Titelleiste,
-   keine eigene Titelzeile im Inhalt (Patrick 02.11.). Unter 640 px (und ohne
+   keine eigene Titelzeile im Inhalt (Patrick 02.11.). Unter 768 px (und ohne
    Titelleiste) stehen sie als schmale Zeile rechtsbündig über dem Inhalt. */
 .lv-titlebar__modul {
   display: flex;
