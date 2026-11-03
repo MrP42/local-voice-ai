@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
@@ -8,6 +8,7 @@ import {
   Check,
   Headphones,
   ImageIcon,
+  Pencil,
   Play,
   RefreshCw,
   Trash2,
@@ -20,6 +21,8 @@ import { Textarea } from "../ui/Textarea";
 import { TabList } from "../ui/TabList";
 import { Dialog } from "../ui/Dialog";
 import { BookCover } from "./BookCover";
+import { CoverDialog } from "./CoverDialog";
+import { TitleEditor } from "./TitleEditor";
 import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
@@ -62,6 +65,8 @@ interface Props {
   /** Entfernen: Rückfrage und Rückgängig liegen bei der Bibliothek. */
   onRemove(): void;
   onChanged(): Promise<void>;
+  /** Beim Öffnen gleich den Titel bearbeiten (⋮ → „Titel bearbeiten“). */
+  editTitle?: boolean;
 }
 
 /**
@@ -79,6 +84,7 @@ export const BookDetail: React.FC<Props> = ({
   onSave,
   onRemove,
   onChanged,
+  editTitle = false,
 }) => {
   const { t } = useTranslation();
   const { book } = view;
@@ -86,6 +92,16 @@ export const BookDetail: React.FC<Props> = ({
   const [draft, setDraft] = useState(book);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [coverOpen, setCoverOpen] = useState(false);
+  const [titleEditing, setTitleEditing] = useState(editTitle);
+  useEffect(() => setTitleEditing(editTitle), [book.id, editTitle]);
+  // Editor zu: Fokus zurück auf den Stift (Tastatur, Bildschirmleser).
+  const pencil = useRef<HTMLButtonElement>(null);
+  const wasEditing = useRef(titleEditing);
+  useEffect(() => {
+    if (wasEditing.current && !titleEditing) pencil.current?.focus();
+    wasEditing.current = titleEditing;
+  }, [titleEditing]);
   // Neues Buch: Formular zurücksetzen. Neu geladener Stand desselben Buchs
   // (z. B. Cover fertig) nur übernehmen, solange nichts getippt ist.
   useEffect(() => {
@@ -110,20 +126,6 @@ export const BookDetail: React.FC<Props> = ({
       setBusy(null);
     }
   };
-
-  const pickCover = () =>
-    run("cover", async () => {
-      const picked = await openFile({
-        multiple: false,
-        filters: [
-          { name: t("library.coverFiles"), extensions: ["jpg", "jpeg", "png", "webp", "epub"] },
-        ],
-      });
-      if (typeof picked !== "string") return;
-      const r = await commands.libraryCoverFromFile(book.id, picked);
-      if (r.status === "error") throw new Error(r.error);
-      await onChanged();
-    });
 
   /** Hörbuch ersetzen oder (append) weitere Teile hinter die vorhandenen setzen. */
   const addAudio = (append: boolean) =>
@@ -227,12 +229,54 @@ export const BookDetail: React.FC<Props> = ({
         </Button>
       </div>
       <div className="library-hero">
-        <BookCover book={book} size="lg" />
+        <button
+          type="button"
+          className="library-hero__cover"
+          onClick={() => setCoverOpen(true)}
+          aria-label={t("library.cover.change")}
+          title={t("library.cover.change")}
+          data-testid="library-detail-cover"
+        >
+          <BookCover book={book} size="lg" />
+          <span className="library-hero__cover-edit" aria-hidden="true">
+            <ImageIcon size={14} />
+            {t("library.cover.changeShort")}
+          </span>
+        </button>
         <div style={{ minWidth: 0 }}>
           <div className="library-meta">
             {[book.language, book.publish_date].filter(Boolean).join(" · ")}
           </div>
-          <h2 className="library-hero__title">{book.title}</h2>
+          {titleEditing ? (
+            <TitleEditor
+              key={book.id}
+              title={book.title}
+              onCancel={() => setTitleEditing(false)}
+              onSave={async (title) => {
+                const saved = await onSave(book.id, (fresh) => ({ ...fresh, title }));
+                if (!saved) return;
+                // Ein offenes Metadatenformular darf den Titel nicht zurücksetzen.
+                setDraft((d) => ({ ...d, title }));
+                setTitleEditing(false);
+                toast(t("library.saved"));
+              }}
+            />
+          ) : (
+            <div className="library-hero__title-row">
+              <h2 className="library-hero__title">{book.title}</h2>
+              <button
+                ref={pencil}
+                type="button"
+                className="library-hero__title-edit"
+                onClick={() => setTitleEditing(true)}
+                aria-label={t("library.titleEdit.action")}
+                title={t("library.titleEdit.action")}
+                data-testid="library-title-edit"
+              >
+                <Pencil size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
           {book.subtitle && <div className="library-hero__sub">{book.subtitle}</div>}
           {book.authors.length > 0 && (
             <div className="library-hero__sub">
@@ -547,26 +591,12 @@ export const BookDetail: React.FC<Props> = ({
             </Button>
             <Button
               icon={<ImageIcon size={16} aria-hidden="true" />}
-              onClick={() => void pickCover()}
+              onClick={() => setCoverOpen(true)}
               disabled={busy !== null}
+              data-testid="library-meta-cover"
             >
-              {t("library.coverFromFile")}
+              {t("library.cover.change")}
             </Button>
-            {book.cover_source !== "generated" && (
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  void run("cover", async () => {
-                    const r = await commands.libraryCoverClear(book.id);
-                    if (r.status === "error") throw new Error(r.error);
-                    await onChanged();
-                  })
-                }
-                disabled={busy !== null}
-              >
-                {t("library.coverGenerated")}
-              </Button>
-            )}
             <span className="library-bar__spacer" />
             <Button
               variant="danger-ghost"
@@ -607,6 +637,14 @@ export const BookDetail: React.FC<Props> = ({
           </section>
         </div>
       )}
+      <CoverDialog
+        book={coverOpen ? book : null}
+        onClose={() => setCoverOpen(false)}
+        onChanged={async () => {
+          await onChanged();
+          toast(t("library.cover.done"));
+        }}
+      />
     </div>
   );
 };

@@ -6141,6 +6141,41 @@ async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
 }
 },
 /**
+ * Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+ * `online` zusätzlich die Cover passender Ausgaben aus Open Library
+ * (hinaus gehen nur ISBN bzw. Titel und Autor).
+ */
+async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<CoverCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_candidates", { id, online }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das in die Hördatei eingebettete Cover übernehmen.
+ */
+async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+ */
+async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
  * Kopie macht das Buch unabhängig davon, ob die Quelldatei liegen bleibt.
  */
@@ -8336,6 +8371,26 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
  */
 last_text: string }
 /**
+ * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+ */
+export type CoverCandidate = { 
+/**
+ * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+ */
+source: string; 
+/**
+ * Open-Library-Cover-Kennung.
+ */
+cover_id: number | null; isbn: string | null; 
+/**
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+ */
+preview: string; 
+/**
+ * Kurz: Titel, Jahr, Verlag der Ausgabe.
+ */
+label: string }
+/**
  * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
  * Abdeckungszeile).
  */
@@ -9068,7 +9123,8 @@ id: string; title: string; subtitle: string | null; authors: string[]; language:
  */
 metadata_source: string | null; 
 /**
- * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+ * Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+ * `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
 /**

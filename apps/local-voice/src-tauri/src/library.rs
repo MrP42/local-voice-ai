@@ -148,7 +148,8 @@ pub struct LibraryBook {
     pub description: Option<String>,
     /// Woher die Metadaten stammen: `openlibrary`, `epub`, `manual`.
     pub metadata_source: Option<String>,
-    /// Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+    /// Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+    /// `generated`.
     pub cover_source: String,
     pub text: Option<TextVersion>,
     pub audio: Option<AudioVersion>,
@@ -1249,9 +1250,21 @@ pub async fn library_metadata_search(
     author: String,
     isbn: Option<String>,
 ) -> Result<Vec<MetadataCandidate>, String> {
+    open_library_search(&title, &author, isbn.as_deref(), 8, 6).await
+}
+
+/// `search.json` abfragen: `fetch` Treffer holen, höchstens `keep` behalten.
+async fn open_library_search(
+    title: &str,
+    author: &str,
+    isbn: Option<&str>,
+    fetch: usize,
+    keep: usize,
+) -> Result<Vec<MetadataCandidate>, String> {
     const FIELDS: &str = "key,title,subtitle,author_name,first_publish_year,publisher,isbn,cover_i,language,number_of_pages_median";
-    let mut query: Vec<(&str, String)> = vec![("fields", FIELDS.into()), ("limit", "8".into())];
-    match isbn.as_deref().and_then(crate::isbn::normalize_isbn) {
+    let mut query: Vec<(&str, String)> =
+        vec![("fields", FIELDS.into()), ("limit", fetch.to_string())];
+    match isbn.and_then(crate::isbn::normalize_isbn) {
         Some(isbn) => query.push(("isbn", isbn)),
         None => {
             let title = title.trim();
@@ -1277,7 +1290,7 @@ pub async fn library_metadata_search(
     if !response.status().is_success() {
         return Err(format!("Open Library antwortete mit {}", response.status()));
     }
-    parse_search(&response.text().await.map_err(|e| e.to_string())?, 6)
+    parse_search(&response.text().await.map_err(|e| e.to_string())?, keep)
 }
 
 /// Klappentext eines Werks (`/works/OL…W`).
@@ -1402,6 +1415,212 @@ pub fn library_cover_clear(app: AppHandle, id: String) -> Result<LibraryBook, St
     book.cover_source = generated();
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
+pub struct CoverCandidate {
+    /// `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+    pub source: String,
+    /// Open-Library-Cover-Kennung.
+    pub cover_id: Option<i64>,
+    pub isbn: Option<String>,
+    /// Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+    pub preview: String,
+    /// Kurz: Titel, Jahr, Verlag der Ausgabe.
+    pub label: String,
+}
+
+/// Höchstens so viele Open-Library-Vorschläge.
+const MAX_COVER_CANDIDATES: usize = 16;
+/// Name der zwischengelegten Vorschau des eingebetteten Covers.
+const AUDIO_PREVIEW: &str = "vorschau-hoerbuch";
+
+/// Eingebettetes Cover aus den ersten Teilen des Hörbuchs (MP3, M4B, FLAC).
+fn audio_cover_of(book: &LibraryBook) -> Option<Vec<u8>> {
+    book.audio_paths
+        .iter()
+        .filter(|p| !p.is_empty())
+        .take(3)
+        .filter_map(|p| crate::cover_art::embedded_cover(Path::new(p)))
+        // Was `store_cover` ablehnen würde, gar nicht erst anbieten.
+        .find(|b| b.len() <= MAX_COVER_BYTES)
+}
+
+/// Vorschauen des eingebetteten Covers im Buchordner entfernen.
+fn clear_audio_previews(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(AUDIO_PREVIEW)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Ausgaben eines Werks (`/works/OL…W/editions.json`) als Cover-Vorschläge.
+pub fn parse_edition_covers(body: &str) -> Vec<CoverCandidate> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let entries = value["entries"].as_array().cloned().unwrap_or_default();
+    entries
+        .iter()
+        .filter_map(|e| {
+            let cover = e["covers"]
+                .as_array()?
+                .iter()
+                .filter_map(serde_json::Value::as_i64)
+                .find(|c| *c > 0)?;
+            let label = [
+                e["title"].as_str().map(str::to_string),
+                e["publish_date"].as_str().map(str::to_string),
+                e["publishers"][0].as_str().map(str::to_string),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            let isbn = e["isbn_13"][0]
+                .as_str()
+                .or_else(|| e["isbn_10"][0].as_str())
+                .map(str::to_string);
+            Some(CoverCandidate {
+                source: "openlibrary".into(),
+                cover_id: Some(cover),
+                isbn,
+                preview: format!("{OPEN_LIBRARY_COVERS}/id/{cover}-M.jpg"),
+                label,
+            })
+        })
+        .collect()
+}
+
+/// Gleiche Cover-Kennung nur einmal, höchstens [`MAX_COVER_CANDIDATES`].
+pub fn dedupe_covers(list: Vec<CoverCandidate>) -> Vec<CoverCandidate> {
+    let mut seen = std::collections::HashSet::new();
+    list.into_iter()
+        .filter(|c| c.source != "openlibrary" || c.cover_id.is_some_and(|id| seen.insert(id)))
+        .take(MAX_COVER_CANDIDATES + 1)
+        .collect()
+}
+
+/// Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+/// `online` zusätzlich die Cover passender Ausgaben aus Open Library
+/// (hinaus gehen nur ISBN bzw. Titel und Autor).
+#[tauri::command]
+#[specta::specta]
+pub async fn library_cover_candidates(
+    app: AppHandle,
+    id: String,
+    online: bool,
+) -> Result<Vec<CoverCandidate>, String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let mut out = Vec::new();
+    let probe = book.clone();
+    let audio = tauri::async_runtime::spawn_blocking(move || audio_cover_of(&probe))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(bytes) = audio {
+        if let Some(ext) = image_ext(&bytes) {
+            // Eigener Name je Aufruf: eine noch angezeigte ältere Vorschau
+            // (unter Windows evtl. gesperrt) steht dem Schreiben nicht im Weg.
+            let _guard = lock();
+            clear_audio_previews(&dir);
+            let path = dir.join(format!("{AUDIO_PREVIEW}-{}.{ext}", now_ms() as i64));
+            if write_atomic(&path, &bytes).is_ok() {
+                out.push(CoverCandidate {
+                    source: "audio".into(),
+                    cover_id: None,
+                    isbn: None,
+                    preview: path.to_string_lossy().into_owned(),
+                    label: String::new(),
+                });
+            }
+        }
+    }
+    if !online {
+        return Ok(out);
+    }
+    let author = book.authors.join(" ");
+    let mut hits = Vec::new();
+    if let Some(isbn) = book.isbn.as_deref().and_then(crate::isbn::normalize_isbn) {
+        // Scheitert die ISBN-Suche, hilft die Titelsuche trotzdem weiter.
+        hits.extend(
+            open_library_search(&book.title, &author, Some(&isbn), 8, 8)
+                .await
+                .unwrap_or_default(),
+        );
+    }
+    hits.extend(open_library_search(&book.title, &author, None, 20, 20).await?);
+    let label_of = |c: &MetadataCandidate| {
+        [
+            Some(c.title.clone()),
+            c.first_publish_year.map(|y| y.to_string()),
+            c.publisher.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+    };
+    out.extend(hits.iter().filter_map(|c| {
+        let cover = c.cover_id?;
+        Some(CoverCandidate {
+            source: "openlibrary".into(),
+            cover_id: Some(cover),
+            isbn: c.isbn.clone(),
+            preview: format!("{OPEN_LIBRARY_COVERS}/id/{cover}-M.jpg"),
+            label: label_of(c),
+        })
+    }));
+    // Weitere Ausgaben des besten Treffers: dort liegen die meisten Cover.
+    if let Some(work) = hits.iter().find_map(|c| c.work_key.clone()) {
+        let url = format!("https://openlibrary.org{work}/editions.json");
+        if let Ok(response) = http()?.get(url).query(&[("limit", "40")]).send().await {
+            if response.status().is_success() {
+                if let Ok(body) = response.text().await {
+                    out.extend(parse_edition_covers(&body));
+                }
+            }
+        }
+    }
+    Ok(dedupe_covers(out))
+}
+
+/// Das in die Hördatei eingebettete Cover übernehmen.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_cover_from_audio(app: AppHandle, id: String) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || audio_cover_of(&book))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Das Hörbuch bringt kein Cover mit.")?;
+    let _guard = lock();
+    let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    store_cover(&dir, &bytes)?;
+    clear_audio_previews(&dir);
+    book.cover_source = "audio".into();
+    write_book(&dir, &book)?;
+    read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_cover_preview_clear(app: AppHandle, id: String) -> Result<(), String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let _guard = lock();
+    clear_audio_previews(&dir);
+    Ok(())
 }
 
 /// Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
@@ -1877,6 +2096,32 @@ mod tests {
             Some("Text.")
         );
         assert_eq!(parse_description(r#"{"title":"x"}"#), None);
+    }
+
+    #[test]
+    fn edition_covers_become_candidates_once() {
+        let body = r#"{"entries":[
+          {"title":"Rich Dad Poor Dad","publish_date":"2017","publishers":["Plata"],"covers":[-1,8231856],"isbn_13":["9781612680194"]},
+          {"title":"Ohne Bild","covers":[]},
+          {"title":"Gleich","covers":[8231856]},
+          {"title":"Andere","covers":[123]}]}"#;
+        let list = parse_edition_covers(body);
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].cover_id, Some(8231856));
+        assert_eq!(list[0].label, "Rich Dad Poor Dad · 2017 · Plata");
+        assert_eq!(list[0].isbn.as_deref(), Some("9781612680194"));
+        assert!(list[0].preview.ends_with("/id/8231856-M.jpg"));
+        let mut all = vec![CoverCandidate {
+            source: "audio".into(),
+            cover_id: None,
+            isbn: None,
+            preview: "/x".into(),
+            label: String::new(),
+        }];
+        all.extend(list);
+        let unique = dedupe_covers(all);
+        assert_eq!(unique.len(), 3, "Audio bleibt, doppelte Kennung fällt weg");
+        assert!(parse_edition_covers("kein json").is_empty());
     }
 
     #[test]

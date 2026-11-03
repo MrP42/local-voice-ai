@@ -5,8 +5,10 @@ import {
   CheckSquare,
   Eraser,
   Headphones,
+  ImageIcon,
   Layers,
   MoreVertical,
+  Pencil,
   Play,
   Plus,
   Star,
@@ -27,6 +29,7 @@ import { AudioBar } from "./AudioBar";
 import { MergeDialog } from "./MergeDialog";
 import { RemoveDialog } from "./RemoveDialog";
 import { CleanTitlesDialog } from "./CleanTitlesDialog";
+import { CoverDialog } from "./CoverDialog";
 import { IconButton } from "../ui/IconButton";
 import { useLibraryDrop } from "./useLibraryDrop";
 import { useLibrary, type TranscriptJob } from "./useLibrary";
@@ -176,6 +179,12 @@ export const LibraryPage: React.FC = () => {
     isSort,
   );
   const [openId, setOpenId] = useState<string | null>(null);
+  /** ⋮ → „Titel bearbeiten“: Produktseite öffnet mit dem Titelfeld. */
+  const [editTitleId, setEditTitleId] = useState<string | null>(null);
+  const [coverFor, setCoverFor] = useState<LibraryBook | null>(null);
+  useEffect(() => {
+    if (!openId) setEditTitleId(null);
+  }, [openId]);
   const [adding, setAdding] = useState(false);
   const [listening, setListening] = useState<{
     book: LibraryBook;
@@ -666,6 +675,23 @@ export const LibraryPage: React.FC = () => {
                 icon: BookOpen,
                 onSelect: () => void toggleFinished(v),
               },
+              {
+                id: "title",
+                label: t("library.titleEdit.menu"),
+                icon: Pencil,
+                testId: `library-title-${v.book.id}`,
+                onSelect: () => {
+                  setEditTitleId(v.book.id);
+                  setOpenId(v.book.id);
+                },
+              },
+              {
+                id: "cover",
+                label: t("library.cover.menu"),
+                icon: ImageIcon,
+                testId: `library-cover-${v.book.id}`,
+                onSelect: () => setCoverFor(v.book),
+              },
               ...(hasTitleNoise(v.book.title)
                 ? [
                     {
@@ -754,6 +780,7 @@ export const LibraryPage: React.FC = () => {
               onSave={save}
               onRemove={() => setRemoving([open.book])}
               onChanged={reload}
+              editTitle={editTitleId === open.book.id}
             />
           </div>
         ) : (
@@ -1087,6 +1114,14 @@ export const LibraryPage: React.FC = () => {
           books={removing}
           onConfirm={(scope) => void doRemove(scope)}
           onCancel={() => setRemoving([])}
+        />
+        <CoverDialog
+          book={coverFor}
+          onClose={() => setCoverFor(null)}
+          onChanged={async () => {
+            await reload();
+            toast(t("library.cover.done"));
+          }}
         />
         <TrashDialog
           open={trashOpen}
