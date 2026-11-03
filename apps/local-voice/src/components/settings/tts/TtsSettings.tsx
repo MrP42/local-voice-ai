@@ -2228,6 +2228,10 @@ export const TtsSettings = () => {
       historyRef.current?.syncPresent(`${page}:summary:${id}`, r.data);
       setSummary(r.data);
       setDocLoaded({ page, id });
+      // Ein geöffnetes Dokument (Kurzbuch & Co.) zeigt die gemerkte Ansicht,
+      // wie eine Seite beim Öffnen. Vorher blieb es im Bearbeiten-Modus, den
+      // der leere Text vor dem Laden erzwungen hatte (Patrick 02.11.2026).
+      openModeRef.current?.(r.data);
     });
     return () => {
       alive = false;

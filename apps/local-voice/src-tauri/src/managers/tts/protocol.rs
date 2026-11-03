@@ -521,6 +521,14 @@ pub fn split_speaker_segments(text: &str, speakers: &[KnownSpeaker]) -> Vec<Spea
 /// nicht mittendrin zerschnitten werden. Die Mindestchunk-Länge zählt über
 /// `visible_char_count`, damit z. B. `[laughing] Hi.` nicht als voller Satz
 /// gilt (nur 4 sichtbare Zeichen).
+///
+/// Eine Leerzeile (Absatzgrenze) beendet immer einen Satz, auch einen kurzen
+/// oder einen ohne Satzzeichen: ein Satz reicht nie über einen Absatz hinaus.
+/// Sonst verschmolz eine Kapitelüberschrift mit dem letzten Satz davor (ein
+/// kurzes „Ende.“, eine Gedichtzeile ohne Punkt) — ein Klick auf die
+/// Überschrift begann dann mit diesem Satz auf der Seite davor (Patrick
+/// 02.11.2026). Eine kurze Überschrift steht so auch für sich, statt mit dem
+/// ersten Satz des Kapitels zu verschmelzen.
 pub fn split_sentences(text: &str) -> Vec<String> {
     const MIN_CHUNK_CHARS: usize = 15;
     let spans = tag_spans(text);
@@ -528,6 +536,18 @@ pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut start = 0usize;
     for (pos, &(byte_idx, c)) in chars.iter().enumerate() {
+        if c == '\n'
+            && !spans.iter().any(|span| span.contains(&byte_idx))
+            && starts_blank_line(&chars, pos)
+        {
+            let chunk = text[start..byte_idx].trim();
+            // Ein Absatz nur aus Tags (`[whisper]`) gilt für den Text danach.
+            if visible_char_count(chunk) > 0 {
+                sentences.push(chunk.to_string());
+                start = byte_idx;
+            }
+            continue;
+        }
         let is_end = matches!(c, '.' | '!' | '?' | '…');
         if !is_end || spans.iter().any(|span| span.contains(&byte_idx)) {
             continue;
@@ -551,6 +571,16 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         sentences.push(tail.to_string());
     }
     sentences
+}
+
+/// Folgt auf den Zeilenumbruch bei `chars[pos]` eine Leerzeile (nur Weißraum
+/// bis zum nächsten Umbruch)?
+fn starts_blank_line(chars: &[(usize, char)], pos: usize) -> bool {
+    chars[pos + 1..]
+        .iter()
+        .map(|(_, c)| *c)
+        .take_while(|c| c.is_whitespace())
+        .any(|c| c == '\n')
 }
 
 /// Abkürzungen, nach deren Punkt kein Satz endet (klein geschrieben, ohne Punkt).
@@ -832,6 +862,72 @@ pub fn split_oversized(sentence: &str, max_chars: u32) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Patrick 02.11.2026: Klick auf eine Kapitelüberschrift begann mit dem
+    /// Satz davor. Eine Absatzgrenze trennt immer, auch nach einer Zeile ohne
+    /// Satzzeichen oder einem kurzen Satz.
+    #[test]
+    fn heading_after_unpunctuated_line_is_own_sentence() {
+        let text = "Und dies war der ganze Unterschied.\n\n(übersetzt von Paul Celan)\n\nEine Lektion von Robert Frost.\n\nRobert Frost ist mein Lieblingsdichter.";
+        let parts = split_sentences(text);
+        assert_eq!(
+            parts,
+            vec![
+                "Und dies war der ganze Unterschied.",
+                "(übersetzt von Paul Celan)",
+                "Eine Lektion von Robert Frost.",
+                "Robert Frost ist mein Lieblingsdichter.",
+            ]
+        );
+        let spans = locate_sentences(text, &parts);
+        let heading = text.find("Eine Lektion").unwrap();
+        let heading_chars = text[..heading].chars().count();
+        assert_eq!(sentence_index_at(&spans, heading_chars), 2);
+    }
+
+    #[test]
+    fn short_sentence_before_heading_does_not_swallow_it() {
+        let text = "Das war ein langer erster Satz.\nEnde.\n\nKapitel 9.\n\nEs regnete den ganzen Tag lang.";
+        let parts = split_sentences(text);
+        assert_eq!(
+            parts,
+            vec![
+                "Das war ein langer erster Satz.",
+                "Ende.",
+                "Kapitel 9.",
+                "Es regnete den ganzen Tag lang.",
+            ]
+        );
+        let spans = locate_sentences(text, &parts);
+        let heading = text.find("Kapitel").unwrap();
+        assert_eq!(sentence_index_at(&spans, heading), 2);
+    }
+
+    #[test]
+    fn single_line_breaks_still_join_verse() {
+        let text = "In einem gelben Wald, da lief die Straße auseinander,\nund ich stand.";
+        assert_eq!(split_sentences(text).len(), 1);
+    }
+
+    #[test]
+    fn tag_only_paragraph_stays_with_following_text() {
+        let parts = split_sentences(
+            "Ein ganz normaler erster Satz.\n\n[whisper]\n\nLeise gesprochen hier.",
+        );
+        assert_eq!(
+            parts,
+            vec![
+                "Ein ganz normaler erster Satz.",
+                "[whisper]\n\nLeise gesprochen hier."
+            ]
+        );
+    }
+
+    #[test]
+    fn several_blank_lines_give_no_empty_sentences() {
+        let parts = split_sentences("Erster Absatz ohne Punkt\n\n\n  \nZweiter Absatz.");
+        assert_eq!(parts, vec!["Erster Absatz ohne Punkt", "Zweiter Absatz."]);
+    }
 
     #[test]
     fn oversized_sentences_are_split_not_cut() {
