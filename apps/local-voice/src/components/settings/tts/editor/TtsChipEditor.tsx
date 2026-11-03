@@ -121,6 +121,8 @@ export interface ChipEditorInsertApi {
    *  Brief-Vertrag (`{ insertAtCursor }`) typisierter Consumer kompiliert —
    *  dieser Editor stellt es immer bereit. */
   insertAtPoint?(x: number, y: number, text: string): boolean;
+  /** Optionale Erweiterung (Editor-Menü): aktuelle Markierung. */
+  getSelection?(): { start: number; end: number };
 }
 
 /** Ein Befund der Skript-Pruefung, den der Editor sichtbar macht: wellig
@@ -163,6 +165,8 @@ interface TtsChipEditorProps {
   pausesOnly?: boolean;
   /** Name der Engine für den Hinweis bei `pausesOnly`. */
   engineLabel?: string;
+  /** Rechtschreibprüfung des Systems (Editor-Menü), Standard an. */
+  spellCheck?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +387,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
   onReplaceSpeakerEverywhere,
   pausesOnly,
   engineLabel,
+  spellCheck = true,
 }) => {
   const { t } = useTranslation();
   const tagLang = useTagLanguage();
@@ -642,10 +647,23 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
     );
   }, []);
 
+  const getSelection = useCallback(() => {
+    const ta = taRef.current;
+    return ta
+      ? { start: ta.selectionStart, end: ta.selectionEnd }
+      : { start: 0, end: 0 };
+  }, []);
+
   useImperativeHandle(
     insertApiRef,
-    () => ({ insertAtCursor, insertAtPoint, replaceRange, revealRange }),
-    [insertAtCursor, insertAtPoint, replaceRange, revealRange],
+    () => ({
+      insertAtCursor,
+      insertAtPoint,
+      replaceRange,
+      revealRange,
+      getSelection,
+    }),
+    [insertAtCursor, insertAtPoint, replaceRange, revealRange, getSelection],
   );
 
   // ---- Autocomplete-Erkennung (onChange + selectionchange) ---------------
@@ -1170,6 +1188,7 @@ export const TtsChipEditor: React.FC<TtsChipEditorProps> = ({
         placeholder={placeholder}
         rows={rows}
         lang={lang}
+        spellCheck={spellCheck}
         className={`${METRIC_CLASSES} ${TEXTAREA_CLASSES} ${
           // Text unsichtbar, Caret und Selektion sichtbar. Während einer
           // IME-Komposition (und im Leerzustand, damit der Placeholder

@@ -31,6 +31,7 @@ type TriggerProps = Pick<
   | "badgeTestId"
   | "disabled"
   | "size"
+  | "ghost"
 >;
 
 export interface ActionMenuItem {

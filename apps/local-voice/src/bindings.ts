@@ -5936,6 +5936,20 @@ async ttsTidyText(text: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+ * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+ * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+ * `tts-transform-progress` mit `kind: "assist"`.
+ */
+async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };
