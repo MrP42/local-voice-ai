@@ -4084,6 +4084,7 @@ export const TtsSettings = () => {
           />
           {voiceMenu.menu}
           <KiDocumentDialog
+            pageId={activePage || null}
             open={kiDialogOpen}
             onOpenChange={setKiDialogOpen}
             text={text}

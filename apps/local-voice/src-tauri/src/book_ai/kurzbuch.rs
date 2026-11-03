@@ -604,7 +604,10 @@ mod tests {
                 output: "the SAME language as the source",
                 output_code: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             fake(&calls),
             &|d, n| steps.lock().unwrap().push((d, n)),
             &AtomicBool::new(false),
@@ -625,6 +628,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = DigestCache {
             dir: Some(dir.path().to_path_buf()),
+            read_only: false,
         };
         let t = builtins()
             .into_iter()
@@ -676,7 +680,10 @@ mod tests {
                 output: "the SAME language as the source",
                 output_code: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |_| {
                 *calls.lock().unwrap() += 1;
                 std::future::ready(Ok("Entschuldigung".to_string()))
@@ -709,7 +716,10 @@ mod tests {
                 output: &output,
                 output_code: "de",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             fake(&calls),
             &|_, _| {},
             &AtomicBool::new(false),

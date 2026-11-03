@@ -31,6 +31,7 @@ import {
   type KiExportFormat,
   type KiFilter,
 } from "./kiDocs";
+import { usageShort } from "./kiTokens";
 import { kiLangLabel } from "./targetLang";
 import "./kidocs.css";
 
@@ -72,7 +73,7 @@ export function KiDocumentsPanel({
   onNew: () => void;
   onDeleted: (id: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<KiDocument | null>(null);
   // Hörfortschritt ändert sich außerhalb (Vorlesen, Gerätesync): neu zeichnen.
@@ -262,6 +263,11 @@ export function KiDocumentsPanel({
                     </span>
                   )}
                   {t("tts.kiDocs.words", { count: doc.words })} ·{" "}
+                  {usageShort(doc.usage, t, i18n.language) && (
+                    <span title={t("tts.kiDocs.tokens.cardHint")}>
+                      {usageShort(doc.usage, t, i18n.language)} ·{" "}
+                    </span>
+                  )}
                   {heard >= 0.995
                     ? t("tts.kiDocs.heardAll")
                     : heard > 0

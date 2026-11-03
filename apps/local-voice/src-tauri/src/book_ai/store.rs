@@ -53,6 +53,10 @@ pub struct KiDocument {
     pub words: u32,
     /// Anbieter und Modell, mit dem das Dokument entstand.
     pub model: String,
+    /// Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
+    /// älteren und übernommenen Dokumenten).
+    #[serde(default)]
+    pub usage: Option<super::tokens::KiUsage>,
     /// Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
     /// Dokumenten und Importen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -226,6 +230,7 @@ mod tests {
             modified_ms: 1.0,
             words: 0,
             model: "ollama/x".into(),
+            usage: None,
             language: None,
         }
     }

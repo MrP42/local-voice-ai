@@ -12,6 +12,7 @@ import { ActionMenu } from "../../../ui/ActionMenu";
 import { Button } from "../../../ui/Button";
 import type { KiRun } from "./useKiDocuments";
 import { exportKiDocument, kiErrorText, type KiExportFormat } from "./kiDocs";
+import { TokenUsageLine } from "./kiTokens";
 import { kiLangLabel } from "./targetLang";
 import "./kidocs.css";
 
@@ -101,6 +102,7 @@ export function KiDocumentHeader({
           ]}
         />
       </div>
+      <TokenUsageLine usage={doc.usage} model={doc.model} />
       {run && (
         <p className="kidocs__status" aria-live="polite">
           {t("tts.kiDocs.runningElsewhere", {
