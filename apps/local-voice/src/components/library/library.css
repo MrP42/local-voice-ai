@@ -1149,29 +1149,34 @@
 /* Satzzeile über der kompakten Hörleiste: eine Zeile, Klick öffnet Mitlesen. */
 .library-audiobar__line {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 4px 14px;
+  min-height: 44px;
+  padding: 10px 14px;
   border: 0;
   border-top: 1px solid var(--lib-line);
   background: var(--color-background);
   color: inherit;
   font: inherit;
   font-size: 0.95rem;
+  line-height: 1.4;
   text-align: left;
   cursor: pointer;
 }
 .library-audiobar__line:hover {
   background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
 }
+/* Der Satz bleibt vollständig lesbar: bis zu drei Zeilen (Codex-Auflage). */
 .library-audiobar__line > :last-child {
   flex: 1;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .library-audiobar__line .library-follow__ins {
   border-bottom: 0;

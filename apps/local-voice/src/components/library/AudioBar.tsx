@@ -547,6 +547,7 @@ export const AudioBar: React.FC<Props> = ({
           aria-label={t("library.follow.lineLabel", {
             text: searching ? t("library.follow.searching") : lineText,
           })}
+          title={searching ? undefined : lineText}
           data-testid="library-audiobar-line"
         >
           {searching ? (

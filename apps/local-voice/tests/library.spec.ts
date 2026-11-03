@@ -1576,8 +1576,12 @@ test("Satzzeile über der Hörleiste: der gehörte Satz, Klick öffnet Mitlesen"
   await expect(line).not.toContainText("Absatz");
   // Genaue Zeitachse: kein „≈“.
   await expect(page.getByTestId("library-audiobar-line-approx")).toHaveCount(0);
-  const box = (await line.boundingBox())!;
-  expect(box.height).toBeLessThan(48);
+  // Der Satz ist vollständig lesbar, nicht abgeschnitten.
+  const cut = await line.locator(".library-audiobar__sentence").evaluate(
+    (el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1,
+  );
+  expect(cut).toBe(false);
+  expect((await line.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await line.click();
   await expect(page.getByTestId("library-follow")).toBeVisible();
   await expect(line).toHaveCount(0);
@@ -1590,6 +1594,8 @@ test("Mitlesen: der gehörte Satz ist hervorgehoben (ohne Umbruchwechsel)", asyn
   await openFollow(page);
   await pause(page);
   await seekTo(page, 15);
+  // Highlight-API im Einsatz (kein wandernder Span).
+  await expect.poll(() => page.evaluate(() => CSS.highlights.has("follow-cur"))).toBe(true);
   const painted = () =>
     page.evaluate(() => {
       const h = CSS.highlights.get("follow-cur");
@@ -1750,6 +1756,34 @@ for (const theme of ["hell", "dunkel"] as const)
       await expect(page.getByTestId("library-audiobar-line")).toBeVisible();
       await page.waitForTimeout(300);
       await page.screenshot({ path: shot(`satzzeile-${width}-${theme}.png`) });
+      // Touchziele ≥ 44 px (Beleg touchziele.txt, nur hell).
+      const lineBox = (await page.getByTestId("library-audiobar-line").boundingBox())!;
+      const sentenceCut = await page
+        .locator(".library-audiobar__sentence")
+        .evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+      expect(sentenceCut).toBe(false);
+      await page.getByTestId("library-audiobar-line").click();
+      await expect(page.getByTestId("library-follow")).toBeVisible();
+      const ids = [
+        "library-follow-correct",
+        "library-follow-close",
+        "library-audiobar-toggle",
+        "library-audiobar-follow",
+        "library-audiobar-close",
+      ];
+      const rows = [`library-audiobar-line\t${Math.round(lineBox.width)}\t${Math.round(lineBox.height)}`];
+      expect(lineBox.height).toBeGreaterThanOrEqual(44);
+      for (const id of ids) {
+        const b = (await page.getByTestId(id).boundingBox())!;
+        expect(b.width).toBeGreaterThanOrEqual(44);
+        expect(b.height).toBeGreaterThanOrEqual(44);
+        rows.push(`${id}\t${Math.round(b.width)}\t${Math.round(b.height)}`);
+      }
+      if (theme === "hell")
+        writeFileSync(
+          shot(`touchziele-${width}.txt`),
+          `Element\tBreite px\tHöhe px (${width} px Fensterbreite)\n${rows.join("\n")}\n`,
+        );
     });
 
 test("Mitlesen ohne Erkennungsmodell bleibt bei der Schätzung", async ({ page }) => {
