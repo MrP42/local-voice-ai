@@ -27,6 +27,7 @@ import {
 } from "@/lib/library/versions";
 import { toSpokenScript } from "@/lib/reader/spokenScript";
 import { startExport as startNarration } from "../settings/meetings/readAloudSession";
+import { toast } from "sonner";
 import { useBookJobs, type BookJob } from "@/lib/library/bookJobs";
 import { jobStatus, jobTitle } from "./KiCreateDialog";
 import "./fassungen.css";
@@ -122,6 +123,9 @@ export const ExportDialog: React.FC<{
   );
   useEffect(() => {
     if (!book) return;
+    // Hinweise („läuft im Hintergrund“) würden die Dialogknöpfe verdecken;
+    // den Stand zeigt der Dialog selbst (Codex #237).
+    toast.dismiss();
     let alive = true;
     setVersions(null);
     setRows({});
