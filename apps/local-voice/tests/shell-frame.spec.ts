@@ -80,7 +80,7 @@ async function setup(page: Page, theme: "light" | "dark") {
 const callsOf = (page: Page) =>
   page.evaluate(() => (window as unknown as { __calls: [string, unknown][] }).__calls);
 
-test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts", async ({ page }) => {
+test("Fussleiste: 24 px, Modelle des Moduls links, ohne Version, Reihenfolge rechts", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -90,9 +90,11 @@ test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts
   for (const b of await bar.locator("button.lv-status-btn").all())
     expect((await b.boundingBox())!.height).toBe(22);
 
-  // ADR-0027 E7: Modellwahl und Version stehen nicht mehr in der Fussleiste.
-  await expect(bar.locator("[data-llm-selector]")).toHaveCount(0);
-  await expect(bar.locator("[data-model-status]")).toHaveCount(0);
+  // Patrick 02.11. (löst ADR-0027 E7 ab): die Modelle des geöffneten Moduls
+  // stehen links unten; die Version nur bei Update.
+  await expect(bar.getByTestId("fuss-modelle")).toHaveAttribute("data-modul", "home");
+  await expect(bar.locator("[data-llm-selector]")).toHaveCount(1);
+  await expect(bar.locator("[data-model-status]")).toHaveCount(1);
   await expect(bar.locator("[data-testid=footer-version]")).toHaveCount(0);
 
   // Mikrofon: nur Symbol und Pfeil, Name im Tooltip
@@ -142,12 +144,12 @@ test("Fussleiste: 24 px, schlank ohne Modellwahl und Version, Reihenfolge rechts
   await expect(bar.locator("[data-resource-meter]")).toHaveCount(0);
 });
 
-test("Profilmenü ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) => {
+test("Fußleiste ▸ Modelle: Rollen-Tooltips und Modellwahl", async ({ page }) => {
   await setup(page, "light");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await oeffneModellwahl(page);
-  const modelle = page.getByTestId("profilmenue-modelle");
+  const modelle = page.getByTestId("fuss-modelle");
   await modelle.locator("[data-model-status]").hover();
   const tip = page.getByRole("tooltip");
   await expect(tip.locator("strong")).toHaveText("Spracherkennung");
@@ -288,18 +290,15 @@ for (const theme of ["dark", "light"] as const) {
     await page.goto("/");
     // Standard (Codex 01.11.): Statusleiste nur Mikrofon und Telefon.
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-rahmen.png`, animations: "disabled" });
-    // Abnahmebilder ADR-0027: Profilmenü ▸ Modelle und Vorlesen mit Modulkopf
+    // Modelle je Modul stehen links in der Fußleiste (Patrick 02.11.).
     await oeffneModellwahl(page);
-    // Codex 01.11.: lange Zustände brechen um, Pfeil bleibt im Menü.
-    const flaeche = (await page.locator(".wai-konto-menue__flaeche").boundingBox())!;
-    for (const knopf of await page.getByTestId("profilmenue-modelle").locator("button.lv-status-btn").all()) {
+    const leiste = (await page.locator(".lv-statusbar").boundingBox())!;
+    for (const knopf of await page.getByTestId("fuss-modelle").locator("button.lv-status-btn").all()) {
       const b = (await knopf.boundingBox())!;
-      expect(b.x + b.width).toBeLessThanOrEqual(flaeche.x + flaeche.width);
-      const pfeil = (await knopf.locator("svg").last().boundingBox())!;
-      expect(pfeil.x + pfeil.width).toBeLessThanOrEqual(b.x + b.width);
+      expect(b.y).toBeGreaterThanOrEqual(leiste.y - 1);
+      expect(b.y + b.height).toBeLessThanOrEqual(leiste.y + leiste.height + 1);
     }
-    await page.screenshot({ path: `${SHOTS}/${theme}-1440-profilmenue-modelle.png`, animations: "disabled" });
-    await page.keyboard.press("Escape");
+    await page.screenshot({ path: `${SHOTS}/${theme}-1440-fussleiste-modelle.png`, animations: "disabled" });
     await page.getByRole("navigation", { name: "Hauptnavigation" }).getByRole("button", { name: "Vorlesen", exact: true }).click();
     await expect(page.locator("#page-title")).toHaveText("Vorlesen");
     await page.screenshot({ path: `${SHOTS}/${theme}-1440-vorlesen.png`, animations: "disabled" });

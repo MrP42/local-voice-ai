@@ -2547,12 +2547,14 @@
         "names": {
           "voice_speaker": "Voice conversation (speaker)",
           "meeting_protocol": "Meeting minutes and notes",
-          "dictation_refine": "Dictation refinement"
+          "dictation_refine": "Dictation refinement",
+          "read_aloud": "Read aloud"
         },
         "hints": {
           "voice_speaker": "Answers in conversations and the main conversation. A fast or local model keeps response times short; hard questions go to the thinker.",
           "meeting_protocol": "Writes minutes, project minutes and improves notes.",
-          "dictation_refine": "Refines dictated text after recognition."
+          "dictation_refine": "Refines dictated text after recognition.",
+          "read_aloud": "Translation and AI documents while reading aloud (summary, terms). A small or local model is usually enough."
         }
       },
       "connections": {
@@ -2669,6 +2671,11 @@
     }
   },
   "footer": {
+    "functionModel": {
+      "title": "Model for {{name}}: {{model}}. Click to choose another.",
+      "none": "no model",
+      "manage": "Manage models …"
+    },
     "checkingUpdates": "Checking for updates...",
     "updateAvailableShort": "Update available",
     "upToDate": "Up to date",
@@ -7023,6 +7030,7 @@
     "ueber": "About Local Voice AI",
     "info": "About this page",
     "modelleVerwalten": "Manage models",
+    "modelleInFussleiste": "The models of the open area are shown at the bottom left of the status bar.",
     "verlaufSuchen": "Search history",
     "settingsKey": "Ctrl+,",
     "suchen": "Search"

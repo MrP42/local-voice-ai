@@ -871,3 +871,61 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   margin-inline-end: 2px;
   border-inline-end: 1px solid var(--colorNeutralStroke2);
 }
+
+/* Fußleiste je Modul (Patrick 02.11.): Modulplatz für Portale (Stimme beim
+   Vorlesen) und ein Kurzstatus, der von selbst verschwindet. Beide verschieben
+   nichts: der Status steht in der Zeile, die Zeile behält ihre Höhe. */
+.lv-fuss-modulplatz {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.lv-fuss-modulplatz:empty {
+  display: none;
+}
+.lv-fuss-status:empty {
+  display: none;
+}
+.lv-fuss-status {
+  padding-inline: 4px;
+  white-space: nowrap;
+}
+.lv-fuss-stimme {
+  flex-shrink: 0;
+}
+/* Kompakte Stimmenwahl (react-select) in der Statusleiste: so flach wie die
+   übrigen Einträge. */
+.lv-statusbar .lv-fuss-modulplatz .app-select__control {
+  min-height: 22px;
+  border-color: transparent;
+  background: transparent;
+}
+.lv-statusbar .lv-fuss-modulplatz .app-select__value-container {
+  padding-block: 0;
+}
+.lv-statusbar .lv-fuss-modulplatz .app-select__indicator {
+  padding: 0 2px;
+}
+
+/* Einträge der Modellliste: volle 44 px, auch innerhalb der flachen Leiste. */
+.lv-statusbar .workspace-status > div > div:first-child .lv-fuss-menue button {
+  min-height: 44px;
+  justify-content: flex-start;
+}
+
+/* Touch (Codex zu lva#213: Bedienelemente mindestens 44 px): mit grobem Zeiger
+   wird die Statusleiste so hoch, dass jeder Eintrag 44 px Trefferfläche hat. */
+@media (pointer: coarse) {
+  .lv-statusbar,
+  .lv-statusbar .workspace-status {
+    min-height: 44px;
+    height: auto;
+  }
+  .lv-statusbar .workspace-status button,
+  .lv-statusbar .workspace-status button.lv-status-btn,
+  .lv-statusbar .workspace-status > div > div:first-child button,
+  .lv-statusbar .lv-fuss-modulplatz .app-select__control {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

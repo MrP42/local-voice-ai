@@ -12,6 +12,7 @@ export const LLM_FUNCTIONS = [
   "voice_speaker",
   "meeting_protocol",
   "dictation_refine",
+  "read_aloud",
 ] as const;
 
 type RunFn = (

@@ -607,7 +607,7 @@ function App() {
         </div>
         {/* Statusleiste (Leitlinie §2, 24 px): Modelle links; Mikrofon, Speicher, Version rechts */}
         <footer className="lv-statusbar">
-          <Footer />
+          <Footer section={currentSection} />
         </footer>
       </div>
     );
