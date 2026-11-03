@@ -1,0 +1,27 @@
+{
+  "breite": 390,
+  "theme": "hell",
+  "hinweis": "x/y relativ zur linken oberen Ecke des Covers",
+  "cover": {
+    "breite": 178,
+    "hoehe": 267
+  },
+  "stern": {
+    "x": 132,
+    "y": 2,
+    "breite": 44,
+    "hoehe": 44
+  },
+  "auswahl": {
+    "x": 6,
+    "y": 6,
+    "breite": 44,
+    "hoehe": 44
+  },
+  "abspielen": {
+    "x": 126,
+    "y": 215,
+    "breite": 44,
+    "hoehe": 44
+  }
+}

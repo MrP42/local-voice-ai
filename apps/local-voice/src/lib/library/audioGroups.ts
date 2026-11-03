@@ -1,5 +1,5 @@
 import type { LibraryBook } from "@/bindings";
-import { guessFromFileName, tracksOf } from "./names.ts";
+import { cleanTitle, guessFromFileName, tracksOf } from "./names.ts";
 
 /**
  * Mehrteilige Hörbücher erkennen (lva#204). Ein Hörbuch auf CD besteht aus
@@ -128,10 +128,12 @@ export function analyzeName(name: string): Analysis {
       }
     }
   }
-  const stem = segments
-    .map((s) => s.replace(/^[\s.\-–—,;:]+|[\s.\-–—,;:]+$/g, ""))
-    .filter(Boolean)
-    .join(" - ");
+  const stem = cleanTitle(
+    segments
+      .map((s) => s.replace(/^[\s.\-–—,;:]+|[\s.\-–—,;:]+$/g, ""))
+      .filter(Boolean)
+      .join(" - "),
+  );
   const leading = /^(\d{1,3})[\s.)_-]+\S/.exec(cleaned);
   const track =
     num(TRACK, cleaned) ??
@@ -265,7 +267,8 @@ const surname = (author: string | undefined) =>
 
 /**
  * Bücher mit Audio, die wie die Teile **eines** Hörbuchs aussehen: zwei oder
- * mehr mit gleichem Stamm (aus Titel, sonst Teiltitel) und ohne Textfassung.
+ * mehr mit gleichem Stamm (aus Titel, sonst Teiltitel) und ohne Buchtext
+ * (ein Transkript je Teil zählt nicht, es wird beim Zusammenführen verbunden).
  * Ein Buch mit Disc-/Track-Angabe im Titel zählt, ein bloßes „Harry Potter 2“
  * nicht – das wären zwei Bücher einer Reihe.
  */
@@ -278,7 +281,8 @@ export function splitAudiobookGroups(books: LibraryBook[]): SplitGroup[] {
   }
   const buckets = new Map<string, Member[]>();
   books.forEach((book, index) => {
-    if (!book.audio || book.text) return;
+    if (!book.audio || (book.text && book.text.origin !== "transcript"))
+      return;
     const tracks = tracksOf(book.audio);
     if (!tracks.length) return;
     let a = analyzeName(book.title);

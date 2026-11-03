@@ -805,6 +805,142 @@
   padding: 6px 10px;
 }
 
+.library-merge__move {
+  display: inline-flex;
+  gap: 2px;
+}
+.library-merge__order li {
+  align-items: center;
+}
+
+/* Mehrfachauswahl */
+.library-card {
+  position: relative;
+}
+.library-card--selected .book-cover,
+.library-card--selected .library-card__open {
+  outline: 3px solid var(--color-logo-primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.library-select {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.library-select input {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--color-logo-primary);
+  cursor: pointer;
+}
+.library-selectbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+  background: var(--color-background);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+}
+.library-selectbar__text {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+/* Rückfrage „Entfernen“ */
+.library-remove {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.library-remove p {
+  margin: 0;
+}
+.library-remove__list {
+  margin: 0;
+  padding: 6px 10px 6px 28px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.library-remove__scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.library-remove__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.library-remove__option:has(input:checked) {
+  border-color: var(--color-logo-primary);
+  background: var(--lib-soft);
+}
+.library-remove__option input {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-logo-primary);
+}
+.library-remove__option span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.library-remove__option small {
+  color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+
+/* Titel bereinigen */
+.library-clean__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+}
+.library-clean__list li {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--lib-line);
+  overflow-wrap: anywhere;
+}
+.library-clean__list li:last-child {
+  border-bottom: 0;
+}
+.library-clean__old {
+  text-decoration: line-through;
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
 .library-merges {
   display: flex;
   flex-direction: column;
@@ -943,6 +1079,95 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* Codex-Abnahme lva#221: Trefferflächen ≥ 44 px in Leiste und Dialogen */
+.library-selectbar button,
+.lv-dialog.library-dialog-touch .lv-dialog__actions button,
+.lv-dialog.library-dialog-touch .library-trash__actions button {
+  min-height: 44px;
+}
+.lv-dialog.library-dialog-touch .fui-DialogTitle__action button,
+.lv-dialog.library-dialog-touch .lv-dialog__body > h2 button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.library-remove__option--danger:has(input:checked) {
+  border-color: var(--color-status-danger, #c50f1f);
+  background: color-mix(in srgb, #c50f1f 10%, transparent);
+}
+.library-remove__sure {
+  border-color: var(--color-status-danger, #c50f1f);
+}
+.library-trash__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.library-trash__list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+}
+.library-trash__list .book-cover {
+  width: 48px;
+  height: 72px;
+  min-width: 0;
+}
+.library-trash__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.library-trash__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.lv-dialog.library-dialog-touch .lv-dialog__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.library-trash__notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--colorBrandBackground, #0f6cbd);
+  background: var(--colorNeutralBackground2, rgba(0, 0, 0, 0.04));
+  border-radius: 4px;
+  font-weight: 600;
+}
+.library-trash__warn {
+  margin: 0;
+  color: var(--color-status-danger, #c50f1f);
+  font-weight: 600;
+}
+/* Hinweis „In den Papierkorb gelegt“: deutlich sichtbar mit Rückgängig */
+.library-undo-toast {
+  border-left: 4px solid var(--colorBrandBackground, #0f6cbd) !important;
+  font-size: 0.95rem;
+  width: min(440px, calc(100vw - 32px));
+  color: var(--colorNeutralForeground1, inherit);
+}
+.library-undo-toast [data-description] {
+  color: var(--colorNeutralForeground1, inherit);
+  margin-top: 2px;
+}
+.library-undo-toast button {
+  min-height: 44px !important;
+  font-weight: 600;
 }
 /* Sprachen des Kurzbuchs (lva#217). */
 .library-kurzbuch h3 {

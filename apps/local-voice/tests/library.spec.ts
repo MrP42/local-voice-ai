@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 
 // Bibliothek (lva#152): ein Buch = ein Eintrag, Raster mit Weiterhören,
 // Produktseite, Hinzufügen mit Dublettenerkennung, dauerhafter Fortschritt.
@@ -259,6 +260,45 @@ test.beforeEach(async ({ page }) => {
             };
             w.__books = [...list.filter((x) => x.id !== b.id), withTracks];
             return withTracks;
+          }
+          // Papierkorb (Entfernen mit Rückgängig).
+          if (cmd === "library_trash") {
+            const ids = new Set(args?.ids as string[]);
+            const trash = ((w as { __trash?: unknown[] }).__trash ??= []) as Record<string, unknown>[];
+            trash.push(...list.filter((x) => ids.has(String(x.id))));
+            w.__books = list.filter((x) => !ids.has(String(x.id)));
+            return null;
+          }
+          if (cmd === "library_restore") {
+            const ids = new Set(args?.ids as string[]);
+            const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+            const back = trash.filter((x) => ids.has(String(x.id)));
+            (w as { __trash?: unknown[] }).__trash = trash.filter((x) => !ids.has(String(x.id)));
+            w.__books = [...list, ...back];
+            return back;
+          }
+          if (cmd === "library_trash_list") {
+            const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+            return trash.map((book) => ({
+              book,
+              removed_ms: 1_793_000_000_000,
+              bytes: book.audio ? 10_485_760 : 49_152,
+            }));
+          }
+          if (cmd === "library_sizes") {
+            // Mit Hörbuch-Kopie 10 MB, sonst nur Angaben und Cover (48 KB).
+            return (args?.ids as string[]).map((id) =>
+              list.find((x) => x.id === id)?.audio ? 10_485_760 : 49_152,
+            );
+          }
+          if (cmd === "library_purge") {
+            const ids = args?.ids as string[] | null | undefined;
+            if (ids) {
+              const gone = new Set(ids);
+              const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+              (w as { __trash?: unknown[] }).__trash = trash.filter((x) => !gone.has(String(x.id)));
+            }
+            return null;
           }
           if (cmd === "library_merge_audio") {
             const target = list.find((x) => x.id === args?.targetId) as Record<string, any>;
@@ -2016,6 +2056,348 @@ test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async (
     .toEqual(["m52"]);
 });
 
+// ---------------------------------------------------------------------------
+// Aufräumen (Patrick 02.11.): Entfernen, Zusammenführen von Hand, Titel
+// ---------------------------------------------------------------------------
+
+const partWithTranscript = (id: string, title: string, ms: number): Extra => ({
+  ...baseBook(id, title, {
+    authors: ["Robert Kiyosaki"],
+    text: { page_id: `page_${id}`, origin: "transcript", source_name: null },
+    audio: {
+      file: "hoerbuch.mp3",
+      duration_ms: ms,
+      narrator: null,
+      transcript_job: null,
+      tracks: [],
+      sync: [{ chars: title.length + 4, ms: 0 }],
+    },
+    audio_path: `C:/lib/${id}/audio/hoerbuch.mp3`,
+  }),
+});
+
+test("Entfernen über ⋮: Papierkorb mit Umfang, Rückgängig im Hinweis holt den Eintrag zurück", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("library-card")).toHaveCount(3);
+  await page.getByTestId("library-more-book_2").click();
+  await page.getByTestId("library-remove-book_2").click();
+  const dialog = page.getByTestId("library-remove-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("dialog")).toContainText("„Der Schimmelreiter“ entfernen?");
+  await expect(page.getByTestId("library-remove-summary")).toContainText("10 MB");
+  await expect(page.getByTestId("library-remove-scope-trash")).toBeChecked();
+  await expect(dialog).toContainText("30 Tage lang wiederherstellen");
+  await expect(dialog).toContainText("Originaldateien");
+  await expect(page.getByTestId("library-remove-confirm")).toHaveText("In den Papierkorb legen");
+  await page.screenshot({ path: shot("entfernen-dialog-1440.png") });
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  expect(await calls(page, "library_trash")).toEqual([{ ids: ["book_2"] }]);
+  const toast = page.locator(".library-undo-toast");
+  await expect(toast).toContainText("„Der Schimmelreiter“ liegt im Papierkorb.");
+  await expect(toast).toContainText("Papierkorb");
+  await expect(page.getByTestId("library-trash-open")).toContainText("Papierkorb (1)");
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: shot("entfernen-rueckgaengig-1440.png") });
+  await toast.getByRole("button", { name: "Rückgängig" }).click();
+  await expect(page.getByTestId("library-card")).toHaveCount(3);
+  expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_2"] }]);
+  await page.waitForTimeout(300);
+  // Nichts wird endgültig gelöscht (nur das Aufräumen alter Reste ohne Kennungen).
+  expect((await calls(page, "library_purge")).filter((a) => a.ids)).toEqual([]);
+});
+
+test("Endgültig löschen: eigene Bestätigung mit Zahl und Größe, sofort samt Text im Vorlesen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-more-book_1").click();
+  await page.getByTestId("library-remove-book_1").click();
+  await page.getByTestId("library-remove-scope-delete").check();
+  const confirm = page.getByTestId("library-remove-confirm");
+  await expect(confirm).toHaveText("Endgültig löschen");
+  await expect(confirm).toBeDisabled();
+  await expect(page.getByTestId("library-remove-sure")).toBeVisible();
+  await expect(page.getByTestId("library-remove-dialog")).toContainText("endgültig gelöscht");
+  await page.getByTestId("library-remove-sure").check();
+  await expect(confirm).toBeEnabled();
+  await page.screenshot({ path: shot("endgueltig-loeschen-1440.png") });
+  await confirm.click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  await expect
+    .poll(async () => await calls(page, "library_purge"))
+    .toContainEqual({ ids: ["book_1"] });
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_1"]);
+  await expect(page.getByText("„Effi Briest“ endgültig gelöscht.")).toBeVisible();
+  // Kein Rückgängig bei endgültigem Löschen.
+  await expect(page.locator(".library-undo-toast")).toHaveCount(0);
+});
+
+test("Papierkorb: Liste, Wiederherstellen und einzeln endgültig löschen", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  await page.locator('[data-drop-book="book_1"] [data-testid="library-select"]').check();
+  await page.locator('[data-drop-book="book_2"] [data-testid="library-select"]').check();
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByTestId("library-remove-confirm")).toHaveText("2 in den Papierkorb legen");
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(1);
+  await page.getByTestId("library-trash-open").click();
+  const dialog = page.getByTestId("library-trash-dialog");
+  await expect(page.getByRole("dialog")).toContainText("Papierkorb: 2 Einträge");
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(2);
+  // Offener Papierkorb: kein Hinweis unten rechts darüber.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  await page.screenshot({ path: shot("papierkorb-1440.png") });
+  await page.getByTestId("library-trash-item").filter({ hasText: "Effi Briest" })
+    .getByTestId("library-trash-restore").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_1"] }]);
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  // Ergebnis steht im Dialog, nicht als Hinweis darüber.
+  await expect(page.getByTestId("library-trash-notice")).toHaveText("„Effi Briest“ wiederhergestellt.");
+  await page.getByTestId("library-trash-delete").click();
+  await expect(dialog).toContainText("lässt sich nicht rückgängig machen");
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(400);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  await page.screenshot({ path: shot("papierkorb-loeschen-1440.png") });
+  await page.getByTestId("library-trash-delete-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_purge"))
+    .toContainEqual({ ids: ["book_2"] });
+  await expect(page.getByTestId("library-trash-none")).toBeVisible();
+  await expect(page.getByTestId("library-trash-notice")).toHaveText("„Der Schimmelreiter“ endgültig gelöscht.");
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  const boxes = page.getByTestId("library-select");
+  await expect(boxes).toHaveCount(3);
+  await page.getByRole("button", { name: "Alle auswählen" }).click();
+  await expect(page.getByTestId("library-selectbar")).toContainText("3 ausgewählt");
+  await expect(page.getByTestId("library-select-merge")).toBeEnabled();
+  await page.screenshot({ path: shot("auswahl-leiste-1440.png") });
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByRole("dialog")).toContainText("3 Einträge entfernen?");
+  await page.getByTestId("library-remove-scope-delete").check();
+  await expect(page.getByTestId("library-remove-sure")).toContainText("3 Einträge (");
+  await page.screenshot({ path: shot("endgueltig-mehrere-1440.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(0);
+  expect((await calls(page, "library_trash"))[0].ids).toHaveLength(3);
+});
+
+test("Zusammenführen von Hand: Teile mit Transkript werden ein Text mit Zeitachse", async ({
+  page,
+}) => {
+  const titles = [2, 1].map(
+    (n) => `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+  );
+  await addBooks(page, [
+    partWithTranscript("book_t2", titles[0], 60_000),
+    partWithTranscript("book_t1", titles[1], 30_000),
+  ]);
+  await page.addInitScript((titles) => {
+    const w = window as unknown as { __pageText: Record<string, string> };
+    w.__pageText.page_book_t1 = `# ${titles[1]}\n\nAnfang des Buchs.`;
+    w.__pageText.page_book_t2 = `# ${titles[0]}\n\nZweiter Teil.`;
+  }, titles);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  // Der Vorschlag erscheint auch für Teile mit Transkript.
+  await expect(page.getByTestId("library-merge-bar")).toContainText("Rich Dad Poor Dad");
+  await page.getByTestId("library-select-start").click();
+  for (const id of ["book_t1", "book_t2"])
+    await page.locator(`[data-drop-book="${id}"] [data-testid="library-select"]`).check();
+  await page.getByTestId("library-select-merge").click();
+  const order = page.getByTestId("library-merge-item");
+  await expect(order).toHaveCount(2);
+  await expect(order.nth(0)).toContainText("Track 01");
+  await expect(page.getByRole("dialog")).toContainText(
+    "Zu einem Hörbuch zusammenführen: Rich Dad Poor Dad",
+  );
+  await expect(page.getByTestId("library-merge-transcripts")).toContainText(
+    "zu einem Text in dieser Reihenfolge verbunden",
+  );
+  await page.screenshot({ path: shot("zusammenfuehren-hand-1440.png") });
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_t1", sourceIds: ["book_t2"], replace: false }]);
+  // Gemeinsamer Text in der Seite des ersten Teils, Teil 2 mit Versatz 30 s.
+  await expect
+    .poll(async () =>
+      (await calls(page, "page_state_save")).filter((a) => a.id === "page_book_t1").length,
+    )
+    .toBe(1);
+  const saved = (await calls(page, "page_state_save")).find((a) => a.id === "page_book_t1")!;
+  const text = JSON.parse(String(saved.state)).text as string;
+  expect(text).toContain("## Teil 1\n\nAnfang des Buchs.\n\n## Teil 2\n\nZweiter Teil.");
+  const last = (await calls(page, "library_save")).at(-1)!.book as {
+    text: { page_id: string };
+    audio: { sync: { chars: number; ms: number }[] };
+  };
+  expect(last.text.page_id).toBe("page_book_t1");
+  expect(last.audio.sync.map((p) => p.ms)).toEqual([0, 30_000]);
+  expect(last.audio.sync[1].chars).toBe(text.indexOf("Zweiter Teil."));
+  // Die Seite des zweiten Teils ist im gemeinsamen Text aufgegangen.
+  await expect
+    .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
+    .toEqual(["page_book_t2"]);
+});
+
+test("Titel bereinigen: Hinweis, alt → neu, Speichern ohne ASIN und Format", async ({ page }) => {
+  await addBooks(page, [
+    baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
+    baseBook("book_i", "Alles Idioten! 3732455823 LC 128 44100 Stereo", legacyAudio("book_i")),
+  ]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const bar = page.getByTestId("library-clean-bar");
+  await expect(bar).toContainText("2 Titel enthalten Kennungen");
+  await page.screenshot({ path: shot("titel-hinweis-1440.png") });
+  await bar.getByTestId("library-clean-start").click();
+  await expect(page.getByTestId("library-clean-new")).toHaveText(["Genesis", "Alles Idioten!"]);
+  await page.screenshot({ path: shot("titel-dialog-1440.png") });
+  await page.getByTestId("library-clean-confirm").click();
+  await expect
+    .poll(async () =>
+      (await calls(page, "library_save")).map((a) => (a.book as { title: string }).title),
+    )
+    .toEqual(["Genesis", "Alles Idioten!"]);
+  await expect(page.getByTestId("library-clean-bar")).toHaveCount(0);
+});
+
+test("Text und Hörbuch eines Titels: Zusammenführen hängt das Hörbuch ans Buch", async ({
+  page,
+}) => {
+  await addBooks(page, [
+    baseBook("book_a", "Effi Briest (Hörbuch)", { authors: ["Theodor Fontane"], ...legacyAudio("book_a") }),
+  ]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  await page.locator('[data-drop-book="book_1"] [data-testid="library-select"]').check();
+  await page.locator('[data-drop-book="book_a"] [data-testid="library-select"]').check();
+  await page.getByTestId("library-select-merge").click();
+  await expect(page.getByTestId("library-merge-target")).toContainText("„Effi Briest“");
+  await page.getByTestId("library-merge-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_merge_audio"))
+    .toEqual([{ targetId: "book_1", sourceIds: ["book_a"], replace: false }]);
+});
+
+test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele ≥ 44 px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  const box = await page.locator(".library-select").first().boundingBox();
+  expect(box!.width).toBeGreaterThanOrEqual(44);
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  await page.locator(".library-select input").first().check();
+  const selectbar: { ziel: string; text: string | null; breite: number; hoehe: number }[] = [];
+  for (const el of await page.locator(".library-selectbar button").all()) {
+    const r = (await el.boundingBox())!;
+    expect(r.height).toBeGreaterThanOrEqual(44);
+    selectbar.push({ ziel: "Auswahlleiste", text: (await el.innerText()).trim(), breite: Math.round(r.width), hoehe: Math.round(r.height) });
+  }
+  await page.screenshot({ path: shot("auswahl-390.png") });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByTestId("library-remove-dialog")).toBeVisible();
+  await page.getByTestId("library-remove-scope-delete").check();
+  // Belege für die Abnahme: jede Trefferfläche mit Maßen, Schließen auch in der Breite.
+  const measure = async (name: string, selector: string, wide = false) => {
+    const all = await page.locator(selector).all();
+    expect(all.length, name).toBeGreaterThan(0);
+    const out = [];
+    for (const el of all) {
+      const r = (await el.boundingBox())!;
+      const label = (await el.innerText()).split("\n")[0].trim() || (await el.getAttribute("aria-label"));
+      expect(r.height, `${name}: ${label}`).toBeGreaterThanOrEqual(44);
+      if (wide) expect(r.width, `${name}: ${label}`).toBeGreaterThanOrEqual(44);
+      out.push({ ziel: name, text: label, breite: Math.round(r.width), hoehe: Math.round(r.height) });
+    }
+    return out;
+  };
+  const belege = [
+    ...selectbar,
+    ...(await measure("Schließen", ".lv-dialog.library-dialog-touch .fui-DialogTitle__action button", true)),
+    ...(await measure("Option", ".library-remove__option")),
+    ...(await measure("Dialogknopf", ".lv-dialog.library-dialog-touch .lv-dialog__actions button")),
+  ];
+  await page.screenshot({ path: shot("entfernen-dialog-390.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await page.getByTestId("library-trash-open").click();
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  belege.push(
+    ...(await measure("Papierkorb-Schließen", ".lv-dialog.library-dialog-touch .fui-DialogTitle__action button", true)),
+    ...(await measure("Papierkorb-Aktion", ".library-trash__actions button")),
+    ...(await measure("Papierkorb-Dialogknopf", ".lv-dialog.library-dialog-touch .lv-dialog__actions button")),
+  );
+  await page.screenshot({ path: shot("papierkorb-390.png") });
+  writeFileSync(shot("trefferflaechen-390.json"), JSON.stringify(belege, null, 2) + "\n");
+});
+
+test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", async ({ page }) => {
+  await addBooks(page, [
+    baseBook("book_g", "Genesis B0DD7W1VFS LC 128 44100 Stereo", legacyAudio("book_g")),
+    ...[3, 2, 1].map((n) =>
+      partWithTranscript(
+        `book_r${n}`,
+        `Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - ${pad(n)} - Track ${pad(n)}`,
+        60_000,
+      ),
+    ),
+  ]);
+  await page.addInitScript(() => {
+    (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByTestId("library-clean-bar")).toBeVisible();
+  await expect(page.getByTestId("library-merge-bar")).toBeVisible();
+  await page.screenshot({ path: shot("hinweise-1440-dunkel.png") });
+  await page.getByTestId("library-select-start").click();
+  for (const n of [1, 2, 3])
+    await page.locator(`[data-drop-book="book_r${n}"] [data-testid="library-select"]`).check();
+  await page.screenshot({ path: shot("auswahl-1440-dunkel.png") });
+  await page.getByTestId("library-select-merge").click();
+  await expect(page.getByTestId("library-merge-item")).toHaveCount(3);
+  await page.screenshot({ path: shot("zusammenfuehren-1440-dunkel.png") });
+  await page.getByRole("dialog").getByRole("button", { name: "Abbrechen" }).last().click();
+  await page.getByTestId("library-select-remove").click();
+  await page.getByTestId("library-remove-scope-delete").check();
+  await page.getByTestId("library-remove-sure").check();
+  await page.screenshot({ path: shot("entfernen-dialog-1440-dunkel.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await page.getByTestId("library-trash-open").click();
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(3);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+  await page.screenshot({ path: shot("papierkorb-1440-dunkel.png") });
+});
+
 test("Favoriten: Stern oben rechts (≥ 44 px) holt das Buch nach vorn und filtert", async ({
   page,
 }) => {
@@ -2061,3 +2443,100 @@ test("Favoriten: Stern oben rechts (≥ 44 px) holt das Buch nach vorn und filte
   await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "false");
   await expect.poll(titles).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
 });
+
+for (const [width, height, theme] of [
+  [390, 844, "hell"],
+  [390, 844, "dunkel"],
+  [1440, 900, "hell"],
+  [1440, 900, "dunkel"],
+] as const) {
+  test(`Stern und Auswahl ${width} ${theme}: ≥ 44 × 44 px, ohne Überlappung; Papierkorb mit Stern`, async ({
+    page,
+  }) => {
+    if (theme === "dunkel")
+      await page.addInitScript(() => {
+        (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+      });
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await page.getByTestId("library-star-book_2").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    const card = page.locator('[data-drop-book="book_2"]');
+    const r = (b: { x: number; y: number; width: number; height: number }) => ({
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      breite: Math.round(b.width),
+      hoehe: Math.round(b.height),
+    });
+    const overlap = (
+      a: { x: number; y: number; width: number; height: number },
+      b: { x: number; y: number; width: number; height: number },
+    ) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    const star = (await page.getByTestId("library-star-book_2").boundingBox())!;
+    const play = await card.locator(".library-card__play").boundingBox();
+    const cover = (await card.locator(".library-card__open").boundingBox())!;
+    expect(star.width).toBeGreaterThanOrEqual(44);
+    expect(star.height).toBeGreaterThanOrEqual(44);
+    // Stern liegt auf dem Cover der Karte, nicht über dem Abspielknopf.
+    expect(star.x).toBeGreaterThanOrEqual(cover.x - 1);
+    expect(star.x + star.width).toBeLessThanOrEqual(cover.x + cover.width + 1);
+    if (play) expect(overlap(star, play)).toBe(false);
+
+    // Auswahlmodus: Checkbox ≥ 44 × 44, Stern und Abspielknopf ausgeblendet.
+    await page.getByTestId("library-select-start").click();
+    const check = card.locator(".library-select");
+    const box = (await check.boundingBox())!;
+    // Die Auswahlleiste verschiebt das Raster; verglichen wird relativ zum Cover.
+    const coverSel = (await card.locator(".library-card__open").boundingBox())!;
+    const rel = (
+      b: { x: number; y: number; width: number; height: number },
+      c: { x: number; y: number },
+    ) => ({ x: b.x - c.x, y: b.y - c.y, width: b.width, height: b.height });
+    const starRel = rel(star, cover);
+    const boxRel = rel(box, coverSel);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(boxRel.x).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.y).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.x + boxRel.width).toBeLessThanOrEqual(coverSel.width + 1);
+    await expect(page.getByTestId("library-star-book_2")).toHaveCount(0);
+    await expect(card.locator(".library-card__play")).toHaveCount(0);
+    // Checkbox (links oben) und Stern (rechts oben) teilen sich keine Fläche.
+    expect(overlap(boxRel, starRel)).toBe(false);
+    if (play) expect(overlap(boxRel, rel(play, cover))).toBe(false);
+    for (const other of await page.locator(".library-select").all()) {
+      if ((await other.boundingBox())!.x === box.x && (await other.boundingBox())!.y === box.y) continue;
+      expect(overlap(box, (await other.boundingBox())!)).toBe(false);
+    }
+    await check.locator("input").check();
+    await page.screenshot({ path: shot(`auswahl-stern-${width}-${theme}.png`) });
+    writeFileSync(
+      shot(`stern-auswahl-${width}-${theme}.json`),
+      JSON.stringify(
+        {
+          breite: width,
+          theme,
+          hinweis: "x/y relativ zur linken oberen Ecke des Covers",
+          cover: { breite: Math.round(cover.width), hoehe: Math.round(cover.height) },
+          stern: r(starRel),
+          auswahl: r(boxRel),
+          abspielen: play && r(rel(play, cover)),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    // Papierkorb mit Stern: anderen Eintrag entfernen, Favorit bleibt mit Stern sichtbar.
+    await page.getByTestId("library-select-end").click();
+    await page.getByTestId("library-more-book_1").click();
+    await page.getByTestId("library-remove-book_1").click();
+    await page.getByTestId("library-remove-confirm").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("library-trash-open").click();
+    await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+    await page.screenshot({ path: shot(`papierkorb-stern-${width}-${theme}.png`) });
+  });
+}

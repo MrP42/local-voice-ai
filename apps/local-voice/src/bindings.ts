@@ -6021,6 +6021,60 @@ async libraryDelete(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+ * löscht danach mit [`library_purge`] endgültig.
+ */
+async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+ */
+async libraryTrashList() : Promise<Result<TrashEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+ */
+async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_sizes", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+ * Papierkorb liegt.
+ */
+async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_purge", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
  */
 async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {
@@ -11037,6 +11091,18 @@ flagged: FlaggedSentence[];
  * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
  */
 failed_blocks: number; blocks: number }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
