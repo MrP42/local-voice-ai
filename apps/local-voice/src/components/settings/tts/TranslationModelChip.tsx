@@ -28,6 +28,10 @@ export const TranslationModelChip: React.FC<{
   // Die Leiste sitzt unten im Fenster: die Liste öffnet nach oben, außer
   // unten ist genug Platz und oben weniger (Patrick 02.11.).
   const [up, setUp] = useState(true);
+  // In der Spielerleiste öffnet die Liste über der GANZEN Leiste, damit
+  // Restzeit und Seitenfeld sichtbar bleiben (Codex zu lva#213): Abstand vom
+  // Knopf bis zur Oberkante der Leiste.
+  const [lift, setLift] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
@@ -69,7 +73,12 @@ export const TranslationModelChip: React.FC<{
       const rect = ref.current?.getBoundingClientRect();
       if (rect) {
         const below = window.innerHeight - rect.bottom;
-        setUp(below < LIST_HEIGHT && rect.top > below);
+        const player = ref.current?.closest<HTMLElement>(
+          '[data-testid="reader-player"]',
+        );
+        const top = player ? player.getBoundingClientRect().top : rect.top;
+        setUp(below < LIST_HEIGHT && top > below);
+        setLift(Math.max(0, rect.top - top));
       }
     }
     setOpen((v) => !v);
@@ -110,7 +119,8 @@ export const TranslationModelChip: React.FC<{
           role="listbox"
           aria-label={t("tts.translationModel.label")}
           data-placement={up ? "above" : "below"}
-          className={`absolute ${alignEnd ? "end-0" : "start-0"} z-40 max-h-72 w-72 max-w-[85vw] overflow-auto ${up ? "bottom-full mb-1" : "top-full mt-1"} rounded-lg border border-mid-gray/40 bg-background py-1 shadow-lg`}
+          style={up ? { bottom: `calc(100% + ${lift + 4}px)` } : undefined}
+          className={`absolute ${alignEnd ? "end-0" : "start-0"} z-40 max-h-72 w-72 max-w-[85vw] overflow-auto ${up ? "" : "top-full mt-1"} rounded-lg border border-mid-gray/40 bg-background py-1 shadow-lg`}
         >
           {selectable.map(({ model, connection }) => (
             <button

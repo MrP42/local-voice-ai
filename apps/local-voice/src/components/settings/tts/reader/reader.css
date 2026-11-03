@@ -791,41 +791,19 @@
   }
 }
 
-/* Trefferflächen der Leiste mindestens 44 × 44 px (Codex zu lva#213).
-   Mit Maus bleibt die Leiste optisch kompakt: eine unsichtbare Fläche um
-   jeden Knopf erweitert das Klickziel; mit Touch (pointer: coarse) sind die
-   Knöpfe auch sichtbar 44 px hoch. */
+/* Bedienflächen der Leiste sichtbar mindestens 44 × 44 px (Codex zu
+   lva#213, zweite Runde: eine unsichtbare Trefferfläche zählt nicht). Die
+   Symbole bleiben gleich groß, nur die Fläche drumherum wächst. */
 .reader-player__ctrls button,
 .reader-player__ctrls .app-select__control {
-  position: relative;
+  min-height: 44px;
+  min-width: 44px;
 }
-/* Platz für die Erweiterung am Rand, ohne die Leiste zu verschieben: sonst
-   meldete die Überlaufmessung (ReaderPlayerBar) ein paar Pixel Überlauf und
-   die Werkzeuge wanderten hinter den Knopf. */
-.reader-player__ctrls,
-.reader-player--docked .reader-dock {
-  padding-inline: 6px;
-  margin-inline: -6px;
-}
-/* … und die Leiste selbst lässt dafür seitlich Platz (sonst Überbreite). */
-.reader-player {
-  padding-inline: 8px;
-}
-.reader-player__ctrls button::after,
-.reader-player__ctrls .app-select__control::after {
-  content: "";
-  position: absolute;
-  top: min(0px, calc((100% - 44px) / 2));
-  bottom: min(0px, calc((100% - 44px) / 2));
-  left: min(0px, calc((100% - 44px) / 2));
-  right: min(0px, calc((100% - 44px) / 2));
-}
-@media (pointer: coarse) {
-  .reader-player__ctrls button,
-  .reader-player__ctrls .app-select__control {
-    min-height: 44px;
-    min-width: 44px;
-  }
+/* Der Kapiteltitel links ist ein Textlink in der zweizeiligen
+   Positionsangabe, kein Knopf der Leiste. */
+.reader-player__ctrls .reader-player__where button {
+  min-height: 0;
+  min-width: 0;
 }
 
 /* Wird die Positionsangabe in der vollen Leiste schmaler als ein paar

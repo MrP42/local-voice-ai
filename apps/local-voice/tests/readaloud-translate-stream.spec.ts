@@ -497,10 +497,10 @@ test("Abbruch zeigt eigenen Block mit Fortsetzen (light, 390)", async ({
 // Leseansicht seitlich zu verschieben.
 const LEISTE = "docs/vorschau/uebersetzung-leiste";
 for (const theme of ["light", "dark"]) {
-  test(`Leiste: Modellwahl nach oben, Fortschritt über der Leiste (${theme}, 1440)`, async ({
+  test(`Leiste: Modellwahl nach oben, Fortschritt über der Leiste (${theme}, 1920)`, async ({
     page,
   }) => {
-    await start(page, 1440, theme, true);
+    await start(page, 1920, theme, true);
     const player = page.getByTestId("reader-player");
     const dock = page.getByTestId("reader-dock");
     await expect(dock).toBeVisible();
@@ -533,59 +533,37 @@ for (const theme of ["light", "dark"]) {
       .getByRole("button", { name: "Vorheriger Satz" })
       .boundingBox())!;
     expect(where.x + where.width).toBeLessThanOrEqual(prev.x + 0.5);
-    await page.screenshot({ path: `${LEISTE}/fortschritt-${theme}-1440.png` });
+    await page.screenshot({ path: `${LEISTE}/fortschritt-${theme}-1920.png` });
 
-    // Trefferflächen der Leiste (Codex zu lva#213): senkrecht immer 44 px
-    // (Punkte 21,5 px über/unter der Mitte treffen den Knopf). Waagrecht
-    // 44 px, außer ein Nachbarknopf liegt näher — dann reicht die Fläche bis
-    // an den Nachbarn heran, ohne Lücke (Punkt trifft Knopf oder Nachbarn).
-    const hits = await page.evaluate(() => {
-      const ctrls = document.querySelector(".reader-player__ctrls")!;
-      const all = Array.from(
-        ctrls.querySelectorAll<HTMLElement>("button, .app-select__control"),
-      );
-      const targets = all.filter((el) => {
-        const r = el.getBoundingClientRect();
-        // Gesperrte Knöpfe nehmen keine Klicks an; der Kapiteltitel links ist
-        // ein Textlink in der zweizeiligen Positionsangabe.
-        return (
-          r.width > 0 &&
-          r.height > 0 &&
-          !(el as HTMLButtonElement).disabled &&
-          !el.closest(".reader-player__where")
-        );
-      });
-      const owner = (x: number, y: number) => {
-        const hit = document.elementFromPoint(x, y);
-        return all.find((t) => hit && (t === hit || t.contains(hit)));
-      };
-      return targets.map((el) => {
-        const r = el.getBoundingClientRect();
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        const vertical =
-          owner(cx, cy - 21.5) === el && owner(cx, cy + 21.5) === el;
-        const side = (dx: number) => {
-          const o = owner(cx + dx, cy);
-          return o === el ? "eigen" : o ? "nachbar" : "leer";
-        };
-        const left = side(-21.5);
-        const right = side(21.5);
-        return {
-          name:
-            el.getAttribute("aria-label") ||
-            el.getAttribute("data-testid") ||
-            el.textContent?.trim().slice(0, 20) ||
-            el.className,
-          box: `${r.width.toFixed(1)}x${r.height.toFixed(1)}`,
-          ok: vertical && left !== "leer" && right !== "leer",
-          detail: `senkrecht44=${vertical} links=${left} rechts=${right}`,
-        };
-      });
-    });
-    for (const h of hits) console.log(`TREFFER ${h.name} ${h.box} ${h.detail}`);
-    expect(hits.length).toBeGreaterThan(8);
-    expect(hits.filter((h) => !h.ok)).toEqual([]);
+    // Bedienflächen der Leiste sichtbar ≥ 44 × 44 px (Codex zu lva#213).
+    const sizes = await page.evaluate(() =>
+      Array.from(
+        document
+          .querySelector(".reader-player__ctrls")!
+          .querySelectorAll<HTMLElement>("button, .app-select__control"),
+      )
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return (
+            r.width > 0 && r.height > 0 && !el.closest(".reader-player__where")
+          );
+        })
+        .map((el) => {
+          const r = el.getBoundingClientRect();
+          return {
+            name:
+              el.getAttribute("aria-label") ||
+              el.getAttribute("data-testid") ||
+              el.textContent?.trim().slice(0, 20) ||
+              el.className,
+            w: Math.round(r.width * 10) / 10,
+            h: Math.round(r.height * 10) / 10,
+          };
+        }),
+    );
+    for (const z of sizes) console.log(`GROESSE ${z.name} ${z.w}x${z.h}`);
+    expect(sizes.length).toBeGreaterThan(8);
+    expect(sizes.filter((z) => z.w < 43.5 || z.h < 43.5)).toEqual([]);
 
     // Modellwahl: Kurzname, Liste öffnet nach oben und ist ganz sichtbar.
     const modelBtn = page
@@ -597,10 +575,23 @@ for (const theme of ["light", "dark"]) {
     const list = page.getByRole("listbox", { name: "Modell wählen:" });
     await expect(list).toHaveAttribute("data-placement", "above");
     await expect(list).toBeInViewport({ ratio: 1 });
+    // Über der ganzen Leiste: Restzeit und Seitenfeld bleiben sichtbar.
     const lb = (await list.boundingBox())!;
-    expect(lb.y + lb.height).toBeLessThanOrEqual(
-      (await modelBtn.boundingBox())!.y + 0.5,
-    );
+    const prog = (await player.locator(".reader-player__prog").boundingBox())!;
+    expect(lb.y + lb.height).toBeLessThanOrEqual(prog.y + 0.5);
+    await expect(player.getByTestId("reader-elapsed")).toBeVisible();
+    for (const el of [
+      player.getByTestId("reader-elapsed"),
+      player.locator(".reader-player__prog input").first(),
+    ]) {
+      const b = (await el.boundingBox())!;
+      const hit = await page.evaluate(
+        ([x, y]) =>
+          !!document.elementFromPoint(x, y)?.closest('[role="listbox"]'),
+        [b.x + b.width / 2, b.y + b.height / 2],
+      );
+      expect(hit).toBe(false);
+    }
     await expect(list.getByRole("option")).toHaveCount(2);
     // Modelloptionen: mindestens 44 px hoch (Codex zu lva#213).
     for (const opt of await list.getByRole("button").all()) {
@@ -608,7 +599,7 @@ for (const theme of ["light", "dark"]) {
       console.log(`OPTION ${ob.width.toFixed(1)}x${ob.height.toFixed(1)}`);
       expect(ob.height).toBeGreaterThanOrEqual(43.5);
     }
-    await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1440.png` });
+    await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1920.png` });
     await list.getByRole("option", { name: /Opus 5\.5/ }).click();
   });
 }

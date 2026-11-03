@@ -229,10 +229,14 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     if (!dockInline || !el) return;
     // Überlauf der Ablage selbst oder der ganzen Zeile (die Werkzeugspalte
     // wächst mit ihrem Inhalt, die Wiedergabe rückt dann aus der Mitte).
+    // Auch die Zeile selbst kann breiter werden als die Leiste (Raster mit
+    // max-content-Spalte, 44-px-Knöpfe seit lva#213).
     const ctrls = ctrlsRef.current;
+    const root = rootRef.current;
     const over = Math.max(
       el.scrollWidth - el.clientWidth,
       ctrls ? ctrls.scrollWidth - ctrls.clientWidth : 0,
+      root ? root.scrollWidth - root.clientWidth : 0,
     );
     if (over > 1) setDockNeed(barWidth + over + 16);
   });
