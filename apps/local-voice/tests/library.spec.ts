@@ -1490,7 +1490,7 @@ test("Mitlesen ohne Transkript: der Live-Abgleich setzt die Stelle genau", async
 });
 
 for (const durations of ["bekannt", "unbekannt"] as const)
-  test(`„Hören und mitlesen“ aus Weitermachen startet an der gelesenen Stelle (Dauern ${durations})`, async ({
+  test(`„Hören und mitlesen“ startet an der gelesenen Stelle (Dauern ${durations})`, async ({
     page,
   }) => {
     const { text, sync } = followText();
@@ -1528,7 +1528,8 @@ for (const durations of ["bekannt", "unbekannt"] as const)
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/");
-    await page.getByTestId("library-continue-follow").first().click();
+    await openDetail(page);
+    await page.getByTestId("library-detail-listen-follow").click();
     await expect(page.getByTestId("library-follow")).toBeVisible();
     await expect.poll(() => activeText(page)).toMatch(/^Absatz 7:/);
     await expect
@@ -1691,7 +1692,8 @@ test("„Hören und mitlesen“ ohne Transkript sucht die gelesene Stelle im Hö
   );
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByTestId("library-continue-follow").first().click();
+  await openDetail(page);
+    await page.getByTestId("library-detail-listen-follow").click();
   await expect(page.getByTestId("library-follow")).toBeVisible();
   // Absatz 7 beginnt im Hörbuch bei 16 s.
   await expect
@@ -1703,6 +1705,52 @@ test("„Hören und mitlesen“ ohne Transkript sucht die gelesene Stelle im Hö
   expect(calls[0].lenMs).toBe(15_000);
   expect(calls[0].hintChars).toBe(sync[6].chars);
 });
+
+for (const theme of ["hell", "dunkel"] as const)
+  for (const width of [390, 1440])
+    test(`vorschau mitlesen-sync ${theme} ${width}`, async ({ page }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      await mitlesenSetup(page, false);
+      const { sync } = followText();
+      await page.addInitScript(
+        ([at, dark]) => {
+          const w = window as unknown as {
+            __liveCache: unknown;
+            __settings: { theme: string };
+            __liveWindow: (a: { fromMs: number; lenMs: number }) => unknown;
+          };
+          if (dark) w.__settings.theme = "dark";
+          w.__liveCache = {
+            text_key: "",
+            points: [],
+            inserts: [{ at, start_ms: 13_000, end_ms: 15_000, text: "Ende des dritten Kapitels" }],
+            covered: [{ from_ms: 0, to_ms: 30_000 }],
+            anchors: [],
+          };
+        },
+        [sync[5].chars + 9, theme === "dunkel"] as const,
+      );
+      await page.setViewportSize({ width, height: width < 800 ? 844 : 900 });
+      await page.goto("/");
+      await page
+        .getByTestId("library-card")
+        .filter({ hasText: "Der Prozess" })
+        .getByTestId("library-play")
+        .click();
+      await pause(page);
+      await seekTo(page, 16);
+      await page.getByTestId("library-audiobar-follow").click();
+      await expect(page.getByTestId("library-follow")).toBeVisible();
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: shot(`mitlesen-satz-${width}-${theme}.png`) });
+      await page.getByTestId("library-follow-correct").click();
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: shot(`mitlesen-korrektur-${width}-${theme}.png`) });
+      await page.getByTestId("library-follow-close").click();
+      await expect(page.getByTestId("library-audiobar-line")).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`satzzeile-${width}-${theme}.png`) });
+    });
 
 test("Mitlesen ohne Erkennungsmodell bleibt bei der Schätzung", async ({ page }) => {
   await mitlesenSetup(page, false);
