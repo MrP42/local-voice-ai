@@ -14,7 +14,9 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .status{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 30px;font-weight:600;font-size:16px;flex:none}
 .island{width:124px;height:36px;border-radius:20px;background:#000;position:absolute;left:133px;top:11px}
 .nav{display:flex;align-items:center;gap:10px;padding:6px 16px 10px;border-bottom:1px solid var(--border);flex:none}
-.nav h1{font-size:17px;margin:0;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav h1{font-size:16px;line-height:1.2;margin:0;font-weight:600;flex:1;min-width:0}
+.play{display:inline-grid;place-items:center;min-width:44px;min-height:44px;margin:-12px -4px -12px -12px;vertical-align:middle;font-size:14px}
+.zeigen-treffer .hit,.zeigen-treffer .beleg,.zeigen-treffer .play,.zeigen-treffer .btn,.zeigen-treffer .bar .t{outline:2px dashed #E5007E;outline-offset:-1px;background-image:repeating-linear-gradient(45deg,rgba(229,0,126,.10) 0 4px,transparent 4px 8px)}
 .rec{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-variant-numeric:tabular-nums;font-size:15px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--rec);box-shadow:0 0 0 4px color-mix(in srgb,var(--rec) 25%,transparent)}
 .icon-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;color:var(--text)}
@@ -45,7 +47,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .btn.primary{background:var(--brand);color:var(--on-brand);border-color:transparent}
 .btn.danger{color:var(--rec)}
 .bar{flex:none;border-top:1px solid var(--border);padding:8px 12px 30px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--bg)}
-.bar .t{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:12px;font-weight:500;min-height:52px;justify-content:center;color:var(--text)}
+.bar .t{display:flex;flex-direction:column;align-items:center;text-align:center;line-height:1.15;gap:3px;font-size:12px;font-weight:500;min-height:52px;justify-content:center;color:var(--text)}
 .bar .stop{width:44px;height:44px;border-radius:50%;background:var(--rec);display:grid;place-items:center}
 .bar .stop i{width:18px;height:18px;border-radius:4px;background:#fff}
 .tr{font-size:15px;line-height:1.45}
@@ -143,7 +145,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><rect x="5" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="13" y="4" width="4" height="14" rx="1" fill="currentColor"/></svg>Pause</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19c1-4 4-6 7-6s6 2 7 6M18 6v6M15 9h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Person kommt</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><path d="M5 3h9l4 4v12H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h7M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Notiz</span>
-    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Beenden</span>
+    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Aufnahme beenden</span>
   </div>
 </section><p class="caption">2 · Live: Stand, Aufgaben, offene Punkte, Vorschlag</p></div>
 
@@ -162,7 +164,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
       <span class="sp">Sprecher 1<span class="ts">07:40</span></span>
       Wir müssen den Haushaltsantrag bis Freitag einreichen.
       <span class="sp">Sprecher 1<span class="ts">08:12</span></span>
-      <span class="mark">▶ Herr Berger übernimmt die Abstimmung mit der Kämmerei.</span>
+      <span class="mark"><span class="play" role="button" aria-label="Passage ab 08:12 abspielen">▶</span>Herr Berger übernimmt die Abstimmung mit der Kämmerei.</span>
       <span class="sp">Sprecher 2<span class="ts">18:05</span></span>
       Wer übernimmt eigentlich im Januar die Vertretung?
       <span class="sp">Sprecher 3<span class="ts">23:51</span></span>
@@ -176,7 +178,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><rect x="5" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="13" y="4" width="4" height="14" rx="1" fill="currentColor"/></svg>Pause</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19c1-4 4-6 7-6s6 2 7 6M18 6v6M15 9h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Person kommt</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><path d="M5 3h9l4 4v12H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h7M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Notiz</span>
-    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Beenden</span>
+    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Aufnahme beenden</span>
   </div>
 </section><p class="caption">3 · Live-Transkript, markierter Beleg, KI pausiert</p></div>
 
@@ -214,8 +216,8 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 <div class="wrap" style="width:390px"><div style="display:flex;gap:18px;padding-top:120px">
   <section class="watch" id="v6a">
     <div class="top"><span>Besprechung</span><span>9:41</span></div>
-    <div class="sub" style="color:#fff;font-size:14px;line-height:1.25">Alle stimmen Aufnahme und Transkription zu?</div>
-    <div class="sub" style="font-size:12px">„Ja“ startet die Aufnahme auf der Uhr. Transkript am iPhone; KI nur, wenn dort aktiviert.</div>
+    <div class="sub" style="color:#fff;font-size:13px;line-height:1.25">Alle stimmen zu: Aufnahme, Transkription und KI-Auswertung?</div>
+    <div class="sub" style="font-size:11px;line-height:1.25">„Ja“ startet die Aufnahme auf der Uhr. Ohne KI-Zustimmung vorher am iPhone „KI-Auswertung“ ausschalten; dann fragt die Uhr nur Aufnahme und Transkription.</div>
     <div class="wb"><b>Nein</b><b style="background:#FFDD00;color:#111">Ja</b></div>
   </section>
   <section class="watch" id="v6b">
