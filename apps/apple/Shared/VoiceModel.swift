@@ -454,6 +454,10 @@ final class VoiceModel: NSObject, ObservableObject, AVSpeechSynthesizerDelegate,
     func start() {
         previewingVoiceID = nil
         stopOriginalPlayback()
+        #if os(iOS)
+        // Aufnahme beginnt: Hörbuch oder Vorlesen anhalten, sonst landet es im Hörer und in der Aufnahme.
+        if LibraryPlayback.shared.playing { LibraryPlayback.shared.pause() }
+        #endif
         currentUtterance = nil; speakingId = nil
         speaker.stopSpeaking(at: .immediate)
         if handsFreeEnabled {
