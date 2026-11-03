@@ -19,3 +19,12 @@ export const useHelpDockSlot = () => useContext(HelpDockSlotContext);
 export const PageHeaderSlotContext = createContext<HTMLElement | null>(null);
 
 export const usePageHeaderSlot = () => useContext(PageHeaderSlotContext);
+
+/**
+ * Platz in der Mitte der Titelleiste für den Gegenstand des Moduls, z. B. das
+ * geöffnete Buch im Vorlesen (Patrick 03.11.): wie der Dokumentname in Word.
+ * Reiner Text, die Fläche zieht weiter das Fenster.
+ */
+export const TitleContextSlotContext = createContext<HTMLElement | null>(null);
+
+export const useTitleContextSlot = () => useContext(TitleContextSlotContext);

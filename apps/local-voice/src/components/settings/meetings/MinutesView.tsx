@@ -25,6 +25,7 @@ import {
 } from "../../whats-new/MarkdownContent";
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
+import { useReadAloudHighlight } from "./useReadAloudHighlight";
 import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
 
 interface MinutesViewProps {
@@ -67,6 +68,10 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // what the user sees here, instead of a second Markdown renderer that could
   // drift from the first.
   const previewRef = useRef<HTMLDivElement>(null);
+  // Nur der Dokumenttext (ohne Verbrauchszeile): dort steht der vorgelesene Satz.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const speakKey = `minutes:${meetingId}:${docKey ?? "minutes"}`;
+  useReadAloudHighlight(bodyRef, speakKey, doc?.body ?? null);
 
   const loadLatest = useCallback(async () => {
     setLoading(true);
@@ -316,7 +321,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
+        className="lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
       >
         {toolbarLead}
         <IconAction
@@ -357,7 +362,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               onClick={exportMinutes}
             />
             <ReadAloudButton
-              speakKey={`minutes:${meetingId}:${docKey ?? "minutes"}`}
+              speakKey={speakKey}
               getMarkdown={() => doc.body}
               testId="minutes-readaloud"
               fileStem={
@@ -405,7 +410,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           className="rounded-lg border border-mid-gray/20 p-4"
         >
           <DocUsageLine documentId={doc.id} />
-          <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+          <div ref={bodyRef} data-testid="minutes-body">
+            <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+          </div>
         </div>
       ) : (
         !running && (

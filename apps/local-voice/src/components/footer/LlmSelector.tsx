@@ -1,8 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import {
   commands,
+  type FunctionModel,
   type LlmConnection,
   type LlmModelConfig,
   type BudgetState,
@@ -30,8 +37,13 @@ import {
  * Seit 0.21.7 auch das Ollama-Modell der Nachbearbeitung (vorher ein eigenes
  * Symbol oben auf der Vorlesen-Seite): Ampel gelb pulsierend, solange es
  * arbeitet, im Menü „vorwärmen“ und „entladen“.
+ *
+ * Mit `fn` zeigt derselbe Knopf das Modell EINER Funktion (`function_models`,
+ * z. B. `read_aloud` beim Vorlesen, `meeting_protocol` bei Aufnahmen):
+ * gleiche Darstellung wie in allen anderen Modulen (Patrick 03.11.), die Wahl
+ * gilt aber nur für diese Funktion; „Standard“ folgt dem aktiven Modell.
  */
-export const LlmSelector: React.FC = () => {
+export const LlmSelector: React.FC<{ fn?: string }> = ({ fn }) => {
   const { t } = useTranslation();
   const { getSetting, refreshSettings } = useSettings();
   const [open, setOpen] = useState(false);
@@ -45,7 +57,7 @@ export const LlmSelector: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   /** Ollama: was im Speicher liegt, ob gerade gearbeitet wird, letzter Fehler. */
   const [ollamaLoaded, setOllamaLoaded] = useState<string[]>([]);
-  const [ollamaBusy, setOllamaBusy] = useState(false);
+  const [ollamaBusyRaw, setOllamaBusy] = useState(false);
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   /** Rechtsklick auf das Modellfeld: ein Menue mit dem Sprung zu den Anbietern. */
   const [contextAt, setContextAt] = useState<{ x: number; y: number } | null>(
@@ -54,6 +66,13 @@ export const LlmSelector: React.FC = () => {
   /** Suchtext im Menue: filtert beim Tippen nach Name, Kennung und Verbindung. */
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
+  const knopfRef = useRef<HTMLButtonElement>(null);
+  const menueRef = useRef<HTMLDivElement>(null);
+  /** Fest am Fenster verankert: die schmale Fußleiste rollt seitlich
+      (overflow-x) und würde ein absolut gesetztes Menü abschneiden. */
+  const [anker, setAnker] = useState<{ left: number; bottom: number } | null>(
+    null,
+  );
   // Regelwerk: Wolke/Flagge hinter dem Namen, gesperrte Modelle ausgegraut.
   const { byModel, refresh: refreshCompliance } = useComplianceStore();
   useEffect(() => {
@@ -65,7 +84,11 @@ export const LlmSelector: React.FC = () => {
 
   const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const models = (getSetting("llm_models") ?? []) as LlmModelConfig[];
-  const activeId = (getSetting("llm_active_model_id") ?? null) as string | null;
+  const globalActiveId = (getSetting("llm_active_model_id") ?? null) as
+    string | null;
+  const entries = (getSetting("function_models") ?? {}) as Partial<
+    Record<string, FunctionModel>
+  >;
 
   const selectable = useMemo(() => {
     const on = new Map(
@@ -76,7 +99,18 @@ export const LlmSelector: React.FC = () => {
       .map((m) => ({ model: m, connection: on.get(m.connection_id)! }));
   }, [connections, models]);
 
-  const active = selectable.find((s) => s.model.id === activeId) ?? null;
+  const globalActive =
+    selectable.find((s) => s.model.id === globalActiveId) ?? null;
+  // Funktion: eigener Eintrag; ist dessen Modell nicht mehr wählbar, gilt der
+  // Standard (wie Rust `for_function`).
+  const own = fn
+    ? (selectable.find((s) => s.model.id === entries[fn]?.model_id) ?? null)
+    : null;
+  /** Das Modell, das der Knopf zeigt (und dessen Ampel, Budget, Verbrauch). */
+  const active = own ?? globalActive;
+  const activeId = active?.model.id ?? null;
+  /** In der Liste markiert: bei einer Funktion nur die eigene Wahl. */
+  const checkedId = fn ? (own?.model.id ?? null) : globalActiveId;
 
   const needle = query.trim().toLowerCase();
   const visible = needle
@@ -101,6 +135,16 @@ export const LlmSelector: React.FC = () => {
   const effortText = (e: string | null) =>
     e ? t(`settings.llm.effortLevels.${e}`, { defaultValue: e }) : null;
   const activeIsLocal = active?.connection.kind === "local";
+  /** Der lokale Server läuft mit genau einem Modell: dessen Zustand gilt für
+      eine Funktion nur, wenn sie dieses Modell zeigt (sonst grau). */
+  const fitsShown = (st: LocalLlmStatus): boolean =>
+    !own ||
+    own === globalActive ||
+    (!!st.model_id &&
+      [own.model.id, own.model.remote_id].includes(st.model_id));
+  /** Ollama-Aktivität betrifft eine Funktion nur, wenn sie Ollama nutzt. */
+  const ollamaRelevant = !fn || active?.connection.kind === "ollama";
+  const ollamaBusy = ollamaBusyRaw && ollamaRelevant;
   const activeConnectionId = active?.connection.id ?? null;
 
   // Budgetstand der aktiven Verbindung — alle 30 Sekunden, das reicht: ein
@@ -212,7 +256,7 @@ export const LlmSelector: React.FC = () => {
     const tick = async () => {
       try {
         const next = await commands.llmLocalStatus();
-        if (!cancelled) setStatus(next);
+        if (!cancelled) setStatus(fitsShown(next) ? next : null);
       } catch {
         // Ohne Backend (Browser-Test) bleibt der Status unbekannt.
       }
@@ -285,13 +329,65 @@ export const LlmSelector: React.FC = () => {
     setQuery("");
   }, [open]);
 
+  // Vor dem ersten Zeichnen messen, sonst springt das Menü.
+  useLayoutEffect(() => {
+    if (!open) {
+      setAnker(null);
+      return;
+    }
+    const r = knopfRef.current?.getBoundingClientRect();
+    if (r)
+      setAnker({
+        left: Math.max(8, Math.min(r.left, window.innerWidth - 296)),
+        bottom: window.innerHeight - r.top + 8,
+      });
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const close = (event: MouseEvent) => {
       if (!ref.current?.contains(event.target as Node)) setOpen(false);
     };
+    // Fest verankert: bei Größenänderung oder Rollen der Leiste schließen,
+    // statt neben dem Knopf stehen zu bleiben.
+    const zu = () => setOpen(false);
+    const onScroll = (event: Event) => {
+      if (!menueRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
+        setOpen(false);
+        knopfRef.current?.focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const items = Array.from(
+        menueRef.current?.querySelectorAll<HTMLElement>(
+          '[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)',
+        ) ?? [],
+      );
+      if (items.length === 0) return;
+      event.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        event.key === "ArrowDown"
+          ? (at + 1) % items.length
+          : at <= 0
+            ? items.length - 1
+            : at - 1;
+      items[next]?.focus();
+    };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", zu);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", zu);
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [open]);
 
   const light = (): string => {
@@ -329,10 +425,15 @@ export const LlmSelector: React.FC = () => {
     }
   };
 
-  const choose = async (id: string) => {
+  const choose = async (id: string | null) => {
     setOpen(false);
     setError(null);
-    const result = await commands.llmSetActiveModel(id);
+    const result = fn
+      ? await commands.llmSetFunctionModel(fn, id, null)
+      : id
+        ? await commands.llmSetActiveModel(id)
+        : null;
+    if (!result) return;
     if (result.status === "error") {
       setError(String(result.error));
       return;
@@ -364,7 +465,7 @@ export const LlmSelector: React.FC = () => {
   };
 
   const showOllama =
-    active?.connection.kind === "ollama" || ollamaLoaded.length > 0;
+    active?.connection.kind === "ollama" || (!fn && ollamaLoaded.length > 0);
 
   const unload = async () => {
     setOpen(false);
@@ -393,22 +494,34 @@ export const LlmSelector: React.FC = () => {
           },
         )
       : undefined;
-  const ollamaTitle = ollamaBusy
-    ? t("tts.llm.busy")
-    : (ollamaError ??
-      (ollamaLoaded.length > 0
-        ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
-        : undefined));
+  const ollamaTitle = !ollamaRelevant
+    ? undefined
+    : ollamaBusy
+      ? t("tts.llm.busy")
+      : (ollamaError ??
+        (ollamaLoaded.length > 0
+          ? t("tts.llm.loaded", { models: ollamaLoaded.join(", ") })
+          : undefined));
+  const fnName = fn ? t(`settings.llm.functions.names.${fn}`) : null;
+  const fnTitle = fn
+    ? t("footer.functionModel.title", {
+        name: fnName,
+        model: active
+          ? `${active.connection.label} · ${modelLabel(active.model.remote_id, active.model.label)}`
+          : t("footer.functionModel.none"),
+      })
+    : undefined;
   const title =
     error ??
     ollamaTitle ??
     status?.message ??
     budgetTitle ??
-    spendTitle ??
+    ([fnTitle, spendTitle].filter(Boolean).join("\n") || undefined) ??
     undefined;
 
   const trigger = (
     <button
+      ref={knopfRef}
       type="button"
       onClick={() => setOpen(!open)}
       onContextMenu={(event) => {
@@ -418,9 +531,11 @@ export const LlmSelector: React.FC = () => {
       }}
       className="lv-status-btn"
       title={title}
-      aria-label={t("llmSelector.title")}
+      aria-label={fnTitle ?? t("llmSelector.title")}
+      aria-haspopup="menu"
       aria-expanded={open}
-      data-llm-selector
+      data-llm-selector={fn ? undefined : ""}
+      data-testid={fn ? `fuss-modell-${fn}` : undefined}
     >
       <span className="relative inline-flex">
         <Sparkle size={14} aria-hidden="true" />
@@ -464,7 +579,7 @@ export const LlmSelector: React.FC = () => {
   );
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={ref} data-function-chip={fn}>
       {title ? (
         trigger
       ) : (
@@ -500,8 +615,21 @@ export const LlmSelector: React.FC = () => {
       )}
       {open && (
         <div
-          className="absolute bottom-full start-0 mb-2 w-72 max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
+          className="lv-fuss-menue absolute bottom-full start-0 mb-2 w-72 max-w-[calc(100vw-16px)] max-h-[60vh] overflow-y-auto bg-background border border-mid-gray/20 rounded-lg shadow-lg py-2 z-50"
+          style={
+            anker
+              ? {
+                  position: "fixed",
+                  left: anker.left,
+                  right: "auto",
+                  bottom: anker.bottom,
+                }
+              : undefined
+          }
+          ref={menueRef}
           role="menu"
+          aria-label={fnName ?? undefined}
+          data-testid={fn ? `fuss-modell-menue-${fn}` : undefined}
         >
           {selectable.length > 0 && (
             <div className="sticky top-0 z-10 -mt-2 mb-1 bg-background px-3 pb-2 pt-2">
@@ -526,10 +654,36 @@ export const LlmSelector: React.FC = () => {
                 autoFocus
                 placeholder={t("llmSelector.search")}
                 aria-label={t("llmSelector.search")}
-                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm"
+                className="w-full rounded-md border border-mid-gray/30 bg-background px-2 py-1.5 text-sm [@media(pointer:coarse)]:min-h-[44px]"
                 data-llm-search
               />
             </div>
+          )}
+          {fn && (
+            <>
+              <p className="px-3 pb-1 text-xs text-text/60">
+                {t(`settings.llm.functions.hints.${fn}`)}
+              </p>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={!own}
+                onClick={() => void choose(null)}
+                className={`flex w-full min-h-[44px] items-center justify-start px-3 py-2 text-start text-sm text-text/80 transition-colors hover:bg-mid-gray/10 ${
+                  !own ? "bg-logo-primary/10 text-logo-primary" : ""
+                }`}
+                data-function-option=""
+              >
+                {globalActive
+                  ? t("settings.llm.functions.default", {
+                      model: modelLabel(
+                        globalActive.model.remote_id,
+                        globalActive.model.label,
+                      ),
+                    })
+                  : t("settings.llm.functions.defaultNone")}
+              </button>
+            </>
           )}
           {selectable.length === 0 ? (
             <div className="px-3 py-2 text-sm text-text/60">
@@ -547,10 +701,12 @@ export const LlmSelector: React.FC = () => {
               return (
                 <div
                   key={model.id}
-                  role="menuitem"
+                  role={fn ? "menuitemradio" : "menuitem"}
+                  aria-checked={fn ? model.id === checkedId : undefined}
                   tabIndex={blocked ? -1 : 0}
                   aria-disabled={blocked || undefined}
                   data-llm-option={model.id}
+                  data-function-option={fn ? model.id : undefined}
                   title={blocked ? reasonsText(t, assessment) : undefined}
                   onClick={() => {
                     if (!blocked) void choose(model.id);
@@ -566,7 +722,7 @@ export const LlmSelector: React.FC = () => {
                       ? "cursor-not-allowed opacity-50"
                       : "cursor-pointer hover:bg-mid-gray/10"
                   } ${
-                    model.id === activeId
+                    model.id === checkedId
                       ? "bg-logo-primary/10 text-logo-primary"
                       : ""
                   }`}

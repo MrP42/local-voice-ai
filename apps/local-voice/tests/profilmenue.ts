@@ -22,14 +22,8 @@ export async function oeffneProfilmenue(page: Page): Promise<void> {
 export async function geheZu(page: Page, ziel: ShellZiel): Promise<void> {
   await oeffneProfilmenue(page);
   const menue = page.locator(".wai-konto-menue");
-  if (ziel === "Modelle") {
-    await menue.getByRole("button", { name: "Modelle", exact: true }).click();
-    await menue
-      .getByRole("button", { name: "Modelle verwalten", exact: true })
-      .click();
-  } else {
-    await menue.getByRole("button", { name: ziel, exact: true }).click();
-  }
+  // „Modelle“ führt seit Patrick 03.11. ohne Zwischenebene zur Verwaltung.
+  await menue.getByRole("button", { name: ziel, exact: true }).click();
   await expect(page.locator(".wai-konto-menue")).toHaveCount(0);
 }
 

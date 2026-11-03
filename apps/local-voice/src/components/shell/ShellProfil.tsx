@@ -8,7 +8,6 @@ import {
   BookOpen,
   Cog,
   Cpu,
-  Gauge,
   HelpCircle,
   Info,
   Keyboard,
@@ -18,7 +17,6 @@ import {
   Activity,
   Check,
 } from "lucide-react";
-import { commands, type BudgetState, type LlmConnection } from "@/bindings";
 import { Dialog } from "../ui/Dialog";
 import { formatKeyCombination } from "../../lib/utils/keyboard";
 import { useSettings } from "../../hooks/useSettings";
@@ -52,31 +50,7 @@ interface ShellProfilProps {
   onAktion?: () => void;
 }
 
-type Ebene =
-  "haupt" | "hilfe" | "modelle" | "kontingent" | "benachrichtigungen";
-
-/** Budgetstände der Cloud-Verbindungen; ohne Backend leer. */
-function useBudgets(): BudgetState[] {
-  const [budgets, setBudgets] = useState<BudgetState[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const result = await commands.usageBudgetStates();
-        if (!cancelled && result.status === "ok") setBudgets(result.data);
-      } catch {
-        // Ohne Backend (Browser-Test) bleibt das Kontingent unbekannt.
-      }
-    };
-    void tick();
-    const timer = window.setInterval(() => void tick(), 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
-  return budgets;
-}
+type Ebene = "haupt" | "hilfe" | "benachrichtigungen";
 
 interface EintraegeProps extends ShellProfilProps {
   onUeber: () => void;
@@ -120,9 +94,6 @@ const Eintraege: React.FC<EintraegeProps> = ({
   const [diagnose, setDiagnose] = useDiagnose();
   const hasPageHelp = useHasPageHelp();
   const startTour = useIntroTourStore((state) => state.start);
-  const budgets = useBudgets();
-  const { getSetting } = useSettings();
-  const connections = (getSetting("llm_connections") ?? []) as LlmConnection[];
   const settingsKey = IS_MAC ? "⌘," : t("shell.settingsKey");
 
   const zurueck = (
@@ -197,27 +168,6 @@ const Eintraege: React.FC<EintraegeProps> = ({
     );
   }
 
-  if (ebene === "modelle") {
-    // Die Modellwahl je Modul steht wieder in der Fußleiste (Patrick 02.11.,
-    // löst ADR-0027 E7 ab); hier bleibt nur der Weg zur Verwaltung.
-    return (
-      <>
-        {zurueck}
-        <p className="lv-profilmenue__leer" data-testid="profilmenue-modelle">
-          {t("shell.modelleInFussleiste")}
-        </p>
-        <ProfilmenueTrenner />
-        <ProfilmenueEintrag
-          symbol={<Cpu size={ICON} />}
-          text={t("shell.modelleVerwalten")}
-          aria-current={currentSection === "models" ? "page" : undefined}
-          onClick={() => onNavigate("models")}
-          data-profilmenue="modelle-verwalten"
-        />
-      </>
-    );
-  }
-
   if (ebene === "benachrichtigungen") {
     return (
       <>
@@ -227,58 +177,8 @@ const Eintraege: React.FC<EintraegeProps> = ({
     );
   }
 
-  if (ebene === "kontingent") {
-    const zeilen = budgets.filter((b) => b.spent_micro > 0 || b.limit_micro);
-    return (
-      <>
-        {zurueck}
-        {zeilen.length === 0 ? (
-          <p className="lv-profilmenue__leer">{t("shell.kontingentLeer")}</p>
-        ) : (
-          <ul className="lv-profilmenue__kontingent" data-testid="kontingent">
-            {zeilen.map((b) => {
-              const name =
-                connections.find((c) => c.id === b.connection_id)?.label ??
-                b.connection_id;
-              const frei =
-                b.ratio === null
-                  ? null
-                  : Math.max(0, Math.round((1 - b.ratio) * 100));
-              return (
-                <li key={b.connection_id}>
-                  <span className="lv-profilmenue__kontingentkopf">
-                    <span>{name}</span>
-                    <span>
-                      {frei === null
-                        ? t("shell.kontingentOhneLimit", {
-                            betrag: `${(b.spent_micro / 1e6).toFixed(2)} $`,
-                          })
-                        : t("shell.kontingentFrei", { prozent: frei })}
-                    </span>
-                  </span>
-                  {frei !== null && (
-                    <span className="lv-profilmenue__balken" aria-hidden="true">
-                      <i style={{ width: `${frei}%` }} />
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </>
-    );
-  }
-
   return (
     <>
-      <ProfilmenueEintrag
-        symbol={<Gauge size={ICON} />}
-        text={t("shell.kontingent")}
-        weiter
-        onClick={() => setEbene("kontingent")}
-        data-profilmenue="kontingent"
-      />
       <ProfilmenueEintrag
         symbol={<Bell size={ICON} />}
         text={t("shell.benachrichtigungen")}
@@ -286,11 +186,13 @@ const Eintraege: React.FC<EintraegeProps> = ({
         onClick={() => setEbene("benachrichtigungen")}
         data-profilmenue="benachrichtigungen"
       />
+      {/* Modelle führt direkt in die Verwaltung (Patrick 03.11.); die Wahl je
+          Modul steht in der Fußleiste. Kein Kontingent mehr im Menü. */}
       <ProfilmenueEintrag
         symbol={<Cpu size={ICON} />}
         text={t("shell.modelle")}
-        weiter
-        onClick={() => setEbene("modelle")}
+        aria-current={currentSection === "models" ? "page" : undefined}
+        onClick={() => onNavigate("models")}
         data-profilmenue="modelle"
       />
       <ProfilmenueEintrag
@@ -353,7 +255,7 @@ export function useShellKuerzel(
 /**
  * Profilkreis unten in der Navigation mit dem Profilmenü (ADR-0027, Suite-
  * Standard nach ChatGPT-Vorbild). Einziger Ort für Einstellungen, Modelle,
- * Integrationen, Benachrichtigungen, Kontingent und Hilfe; die Titelleiste
+ * Integrationen, Benachrichtigungen und Hilfe; die Titelleiste
  * trägt keine Werkzeuge mehr. Die Kürzel F1 und Strg+, hängt der App-Rahmen
  * über `useShellKuerzel` ein.
  */
