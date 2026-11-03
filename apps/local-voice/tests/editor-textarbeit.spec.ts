@@ -14,7 +14,12 @@ import {
   buildAssistInput,
   parseAssistAnswer,
 } from "../src/lib/reader/textAssist";
-import { applyFormat, findAll, replaceAll } from "../src/lib/reader/editorOps";
+import {
+  applyFormat,
+  findAll,
+  replaceAll,
+  replacementAt,
+} from "../src/lib/reader/editorOps";
 
 // Reine Logik des Editor-Menüs: Regeln ohne KI, das Zeilenprotokoll der
 // KI-Textarbeit und Suchen/Formatieren. Beispiel aus Patricks Hörbuch-
@@ -227,4 +232,53 @@ test("formatting toggles headings and wraps bold", () => {
   expect(bold.slice(0, unb.start) + unb.insert + bold.slice(unb.end)).toBe(
     "Kapitel eins",
   );
+});
+
+// Befunde aus dem Review (Fixrunde).
+const RX = { caseSensitive: false, wholeWord: false, regex: true };
+
+test("existing headings and quotes do not swallow the next line", () => {
+  const text = "## Kapitel\nEs war einmal.\nUnd dann.\nNoch ein Satz.";
+  const r = applyStructure(text, buildAssistInput(text), "3|P");
+  expect(r.text).toBe(
+    "## Kapitel\n\nEs war einmal.\n\nUnd dann. Noch ein Satz.",
+  );
+});
+
+test("too few structure marks for a long text change nothing", () => {
+  const lines = Array.from({ length: 100 }, (_, i) => `Satz ${i + 1}.`);
+  const text = lines.join("\n");
+  const r = applyStructure(text, buildAssistInput(text), "3|P");
+  expect(r.text).toBe(text);
+  expect(r.changes).toBe(0);
+});
+
+test("a heading keeps its speaker", () => {
+  const text = "<Anna> Der Anfang\nEin Satz.";
+  const r = applyStructure(text, buildAssistInput(text), "1|H2");
+  expect(r.text).toBe("<Anna>\n## Der Anfang\n\nEin Satz.");
+});
+
+test("single regex replace keeps lookbehind context", () => {
+  expect(replacementAt("ab", 1, "(?<=a)b", "X", RX)).toBe("X");
+});
+
+test("replace all resolves named and missing groups like String.replace", () => {
+  expect(replaceAll("ab", "(?<n>a)b", "$<n>-$2-$1", RX).text).toBe("a-$2-a");
+  expect(replaceAll("ab", "(a)b", "$10", RX).text).toBe("a0");
+  expect(replaceAll("aa", "a*", "x", RX)).toEqual({ text: "x", changes: 1 });
+});
+
+test("suspended compounds keep their hyphen", () => {
+  expect(joinFragments("Wirtschafts-\nund Sozialpolitik").text).toBe(
+    "Wirtschafts- und Sozialpolitik",
+  );
+});
+
+test("a lone capital letter line is not glued", () => {
+  expect(joinFragments("A\nErster Punkt.").text).toBe("A\nErster Punkt.");
+});
+
+test("collapsing blank lines counts as a change", () => {
+  expect(linesToParagraphs("a\n\n\n\nb").changes).toBeGreaterThan(0);
 });

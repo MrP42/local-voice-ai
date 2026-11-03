@@ -76,6 +76,7 @@
       "aiGrammarHint": "Only lines with errors are returned and replaced; meaning and wording stay",
       "aiStructure": "Structure paragraphs and headings",
       "aiStructureHint": "The AI only marks where paragraphs start and which lines are headings",
+      "changedMeanwhile": "The text changed in the meantime – AI result not applied.",
       "aiCancel": "Cancel AI text work",
       "busy": "AI working …",
       "busyProgress": "AI working … {{done}}/{{total}}",

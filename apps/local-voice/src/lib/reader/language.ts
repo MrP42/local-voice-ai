@@ -6,15 +6,29 @@
  */
 
 const LISTS: Record<string, readonly string[]> = {
-  de: "der die das und ist nicht ein eine ich sie er es wir mit auf für von zu den dem des im auch sich wie aber noch nur war wird sind haben hat bei nach aus über als wenn dann oder sehr schon kann".split(" "),
-  en: "the and is not a an of to it that was for on are with as his her they at be this have from or one had by but what were we when your can there you he she will would about which their just into".split(" "),
-  fr: "le la les et est un une des du que qui dans pour pas sur avec ce il elle nous vous sont mais plus au".split(" "),
-  es: "el la los las y es un una que de del en por para con no se su al como más pero son está muy".split(" "),
-  it: "il lo la gli le e è un una che di del della per con non si sono come più ma anche nel alla".split(" "),
+  de: "der die das und ist nicht ein eine ich sie er es wir mit auf für von zu den dem des im auch sich wie aber noch nur war wird sind haben hat bei nach aus über als wenn dann oder sehr schon kann".split(
+    " ",
+  ),
+  en: "the and is not a an of to it that was for on are with as his her they at be this have from or one had by but what were we when your can there you he she will would about which their just into".split(
+    " ",
+  ),
+  fr: "le la les et est un une des du que qui dans pour pas sur avec ce il elle nous vous sont mais plus au".split(
+    " ",
+  ),
+  es: "el la los las y es un una que de del en por para con no se su al como más pero son está muy".split(
+    " ",
+  ),
+  it: "il lo la gli le e è un una che di del della per con non si sono come più ma anche nel alla".split(
+    " ",
+  ),
   // Mitbewerber, damit Niederländisch und Portugiesisch nicht als Englisch
   // oder Spanisch durchgehen.
-  nl: "de het een en van ik je dat niet is op te zijn met voor hij er maar ook als bij nog wat dan wel".split(" "),
-  pt: "o os as um uma que de do da dos das em no na por para com não se seu sua mais mas são está também ao".split(" "),
+  nl: "de het een en van ik je dat niet is op te zijn met voor hij er maar ook als bij nog wat dan wel".split(
+    " ",
+  ),
+  pt: "o os as um uma que de do da dos das em no na por para com não se seu sua mais mas são está também ao".split(
+    " ",
+  ),
 };
 
 const SETS = Object.fromEntries(
@@ -68,7 +82,9 @@ export function detectLanguage(text: string): string | null {
 }
 
 /** Hauptsprache eines Sprachkürzels (`de_DE`, `en-US`, `EN`) oder `null`; `und` = jede. */
-export function primaryLanguage(code: string | null | undefined): string | null {
+export function primaryLanguage(
+  code: string | null | undefined,
+): string | null {
   if (!code) return null;
   const p = code.split(/[-_]/)[0]?.toLowerCase() ?? "";
   if (!p || p === "und" || p === "mul") return null;

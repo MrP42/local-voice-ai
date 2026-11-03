@@ -125,14 +125,18 @@ export function applyGrammar(
   return { text: lines.join("\n"), changes, rejected };
 }
 
+/** Mindestens ein Gliederungshinweis je so vieler gesendeter Zeilen. */
+const MIN_LINES_PER_MARK = 25;
+
 /**
  * Gliederungs-Antwort anwenden: im gesendeten Bereich werden die Zeilen zu
  * Absätzen gereiht; ein Absatz beginnt an `P`, an jeder Überschrift `H1–H3`,
  * an Leerzeilen, Sprecherwechseln und Markdown-Blöcken. Zeitstempel in
  * angehängten Zeilen entfallen (sie stünden sonst mitten im Absatz).
  *
- * Ohne einen einzigen gültigen Hinweis bleibt der Text unverändert – sonst
- * würde ein stummes Modell alles zu einem Riesenabsatz verkleben.
+ * Mit zu wenigen gültigen Hinweisen bleibt der Text unverändert – sonst
+ * würde ein schwaches Modell alles zu wenigen Riesenabsätzen verkleben.
+ * Vorhandene Überschriften, Zitate und Listenpunkte bleiben eigene Zeilen.
  */
 export function applyStructure(
   text: string,
@@ -150,7 +154,12 @@ export function applyStructure(
     else if (/^H[123]$/.test(v)) marks.set(index, Number(v[1]) as 1 | 2 | 3);
     else rejected += 1;
   }
-  if (marks.size === 0) return { text, changes: 0, rejected };
+  // Zu wenige Hinweise (stummes oder schwaches Modell) würden alles zu
+  // wenigen Riesenabsätzen verkleben: dann lieber nichts ändern.
+  if (
+    marks.size < Math.max(1, Math.ceil(input.sent.length / MIN_LINES_PER_MARK))
+  )
+    return { text, changes: 0, rejected };
 
   const out: string[] = [];
   let para: string | null = null;
@@ -168,24 +177,30 @@ export function applyStructure(
     if (!sent.has(i)) {
       // Leerzeilen, Trenner, Seitenmarken: eigene Zeile, Absatz endet.
       flush();
-      if (line.trim() === "") gap();
-      else {
-        gap();
-        out.push(line);
-      }
+      gap();
+      if (line.trim() !== "") out.push(line);
       continue;
     }
     const { prefix, body } = splitLinePrefix(line);
-    const blocky = /[#>]|^\s*[-*]\s/.test(prefix) || /<[^>]+>/.test(prefix);
+    const speaker = /<[^<>]+>/.exec(prefix)?.[0];
     if (typeof mark === "number") {
       flush();
       gap();
+      // Sprecher bleibt vor der Überschrift erhalten (eigene Zeile).
+      if (speaker) out.push(speaker);
       out.push(`${"#".repeat(mark)} ${body.trim()}`);
       gap();
       changes += 1;
       continue;
     }
-    if (para === null || mark === "P" || blocky) {
+    // Vorhandene Überschriften, Zitate, Listenpunkte bleiben eigene Zeilen
+    // und schlucken nichts.
+    if (/#|>\s?$|^\s*>|^\s*[-*]\s/.test(prefix.replace(/<[^<>]+>/g, ""))) {
+      flush();
+      out.push(line.trimEnd());
+      continue;
+    }
+    if (para === null || mark === "P" || speaker) {
       flush();
       gap();
       para = line.trimEnd();

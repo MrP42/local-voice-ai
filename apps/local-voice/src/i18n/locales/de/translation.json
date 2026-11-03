@@ -76,6 +76,7 @@
       "aiGrammarHint": "Nur fehlerhafte Zeilen werden zurückgegeben und ersetzt; Sinn und Wortwahl bleiben",
       "aiStructure": "Absätze und Überschriften gliedern",
       "aiStructureHint": "Die KI markiert nur, wo Absätze beginnen und welche Zeilen Überschriften sind",
+      "changedMeanwhile": "Der Text hat sich inzwischen geändert – KI-Ergebnis nicht übernommen.",
       "aiCancel": "KI-Textarbeit abbrechen",
       "busy": "KI arbeitet …",
       "busyProgress": "KI arbeitet … {{done}}/{{total}}",

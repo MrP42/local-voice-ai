@@ -40,11 +40,13 @@ const BLOCK_START =
 const SPEAKER_START = /^\s*<[^<>\n]{1,40}>/;
 /** Satzende (auch mit schließendem Anführungszeichen oder Klammer). */
 const SENTENCE_END = /[.!?…:;]["'»«“”‘’)\]]*\s*$/;
-/** Nur Initialen oder ein abgerissener Einzelbuchstabe: `J.`, `J. L.`, `L`. */
-const INITIALS = /^(?:(?:\p{Lu}\.\s*){1,3}|\p{Lu})$/u;
+/** Nur Initialen: `J.`, `J. L.`. */
+const INITIALS = /^(?:\p{Lu}\.\s*){1,3}$/u;
 /** Silbentrennung am Zeilenende: Kleinbuchstabe + Bindestrich. */
 const HYPHEN_END = /\p{Ll}-$/u;
 const STARTS_LOWER = /^\p{Ll}/u;
+/** Nach einem Ergänzungsstrich (`Ein- und Ausgang`). */
+const SUSPENDED = /^(?:und|oder|bzw\.|sowie|als auch|noch)\s/;
 
 const isPlain = (line: string) =>
   line.trim().length > 0 &&
@@ -86,7 +88,10 @@ export function joinFragments(text: string): CleanupResult {
         .trim();
       if (body.length > 0) {
         if (HYPHEN_END.test(prev.trimEnd()) && STARTS_LOWER.test(body)) {
-          out[out.length - 1] = prev.trimEnd().slice(0, -1) + body;
+          // `Wirtschafts-` ↵ `und Sozialpolitik`: Ergänzungsstrich bleibt.
+          out[out.length - 1] = SUSPENDED.test(body)
+            ? `${prev.trimEnd()} ${body}`
+            : prev.trimEnd().slice(0, -1) + body;
           changes += 1;
           continue;
         }
@@ -173,7 +178,7 @@ export function linesToParagraphs(text: string): CleanupResult {
   }
   flush();
   const joined = out.join("\n");
-  return { text: joined, changes: joined === text ? 0 : changes };
+  return { text: joined, changes: joined === text ? 0 : Math.max(1, changes) };
 }
 
 const RULE_FNS: Record<CleanupRule, (text: string) => CleanupResult> = {

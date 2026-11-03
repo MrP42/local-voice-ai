@@ -48,18 +48,69 @@ export function findAll(
   return out;
 }
 
-/** Ersatztext für einen Treffer (bei Ausdrücken mit `$1` …). */
-export function replacementFor(
+/**
+ * Ersatztext wie bei `String.replace` auflösen: `$$`, `$&`, `$1`–`$99`
+ * (zweistellig nur, wenn es so viele Gruppen gibt) und `$<name>`.
+ */
+function expand(
+  replacement: string,
   match: string,
+  groups: (string | undefined)[],
+  named: Record<string, string | undefined> | undefined,
+): string {
+  return replacement.replace(
+    /\$(\$|&|<([^>]*)>|(\d)(\d)?)/g,
+    (whole, tok: string, name?: string, d1?: string, d2?: string) => {
+      if (tok === "$") return "$";
+      if (tok === "&") return match;
+      if (name !== undefined) return named ? (named[name] ?? "") : whole;
+      const two = d2 !== undefined ? Number(d1! + d2) : 0;
+      if (two >= 1 && two <= groups.length) return groups[two - 1] ?? "";
+      const one = Number(d1);
+      if (one >= 1 && one <= groups.length)
+        return (groups[one - 1] ?? "") + (d2 ?? "");
+      return whole;
+    },
+  );
+}
+
+/** Alle Treffer samt Ersatztext, im Kontext des ganzen Texts (Lookbehind,
+ *  `^`, `\b` wirken wie in der Suche). Leere Treffer zählen nicht. */
+function replacements(
+  text: string,
   query: string,
   replacement: string,
   opts: FindOptions,
-): string {
-  if (!opts.regex) return replacement;
+): { start: number; end: number; insert: string }[] {
   const re = findPattern(query, opts);
-  if (!re) return replacement;
-  re.lastIndex = 0;
-  return match.replace(re, replacement);
+  if (!re) return [];
+  const out: { start: number; end: number; insert: string }[] = [];
+  for (const m of text.matchAll(re)) {
+    if (m[0].length === 0) continue;
+    const start = m.index ?? 0;
+    out.push({
+      start,
+      end: start + m[0].length,
+      insert: opts.regex
+        ? expand(replacement, m[0], m.slice(1), m.groups)
+        : replacement,
+    });
+  }
+  return out;
+}
+
+/** Ersatztext für den Treffer, der bei `start` beginnt. */
+export function replacementAt(
+  text: string,
+  start: number,
+  query: string,
+  replacement: string,
+  opts: FindOptions,
+): string | null {
+  return (
+    replacements(text, query, replacement, opts).find((r) => r.start === start)
+      ?.insert ?? null
+  );
 }
 
 export function replaceAll(
@@ -68,23 +119,16 @@ export function replaceAll(
   replacement: string,
   opts: FindOptions,
 ): { text: string; changes: number } {
-  const re = findPattern(query, opts);
-  if (!re) return { text, changes: 0 };
-  let changes = 0;
-  const next = text.replace(re, (...args: unknown[]) => {
-    const match = args[0] as string;
-    if (match.length === 0) return match;
-    changes += 1;
-    if (!opts.regex) return replacement;
-    // Gruppen wie bei String.replace auflösen.
-    const groups = args.slice(1, -2) as (string | undefined)[];
-    return replacement.replace(/\$(\$|&|\d{1,2})/g, (_, g: string) => {
-      if (g === "$") return "$";
-      if (g === "&") return match;
-      return groups[Number(g) - 1] ?? "";
-    });
-  });
-  return { text: next, changes };
+  const hits = replacements(text, query, replacement, opts);
+  if (hits.length === 0) return { text, changes: 0 };
+  let next = "";
+  let at = 0;
+  for (const h of hits) {
+    next += text.slice(at, h.start) + h.insert;
+    at = h.end;
+  }
+  next += text.slice(at);
+  return { text: next, changes: hits.length };
 }
 
 export type FormatKind =

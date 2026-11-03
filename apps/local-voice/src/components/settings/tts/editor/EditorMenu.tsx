@@ -46,7 +46,7 @@ import {
   applyFormat,
   findAll,
   replaceAll,
-  replacementFor,
+  replacementAt,
   type FindOptions,
   type FormatKind,
 } from "@/lib/reader/editorOps";
@@ -119,6 +119,8 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
 }) => {
   const { t } = useTranslation();
   const [findOpen, setFindOpen] = useState(false);
+  // Strg+F bei offener Leiste: Suchfeld erneut fokussieren.
+  const [findFocus, setFindFocus] = useState(0);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [busy, setBusy] = useState<AssistTask | null>(null);
   const [progress, setProgress] = useState<{
@@ -126,6 +128,10 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
     total: number;
   } | null>(null);
   const empty = value.trim().length === 0;
+  // Aktueller Text für Rückläufer aus der KI: wer währenddessen getippt hat,
+  // verliert nichts (Ergebnis wird dann verworfen).
+  const latest = useRef(value);
+  latest.current = value;
 
   const selection = () =>
     apiRef.current?.getSelection?.() ?? { start: 0, end: 0 };
@@ -193,6 +199,10 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
     const result = await commands.ttsTextAssist(task, input.prompt);
     setBusy(null);
     setProgress(null);
+    if (latest.current !== before) {
+      toast(t("tts.editorMenu.changedMeanwhile"));
+      return;
+    }
     if (result.status === "error") {
       if (!/abgebrochen|cancel/i.test(result.error)) toast.error(result.error);
       return;
@@ -223,7 +233,11 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
       {
         action: {
           label: t("tts.tidyUndo"),
-          onClick: () => onChange(before),
+          onClick: () => {
+            // Nur zurück, solange niemand weitergeschrieben hat.
+            if (latest.current === applied.text) onChange(before);
+            else toast(t("tts.editorMenu.changedMeanwhile"));
+          },
         },
       },
     );
@@ -234,11 +248,26 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   // ---- Tastenkürzel -------------------------------------------------------
   const openFind = useCallback((withReplace: boolean) => {
     setFindOpen(true);
+    setFindFocus((n) => n + 1);
     if (withReplace) setReplaceOpen(true);
   }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.defaultPrevented
+      )
+        return;
+      // Nur im Editor-Bereich, nicht in Dialogen oder anderen Feldern.
+      const target = event.target as Element | null;
+      if (target?.closest?.('[role="dialog"]')) return;
+      if (
+        target instanceof HTMLInputElement &&
+        !target.closest('[data-testid="editor-menu"]')
+      )
+        return;
       const key = event.key.toLowerCase();
       if (key !== "f" && key !== "h") return;
       event.preventDefault();
@@ -409,6 +438,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
           readOnly={readOnly}
           apiRef={apiRef}
           showReplace={replaceOpen}
+          focusSignal={findFocus}
           onShowReplace={setReplaceOpen}
           onClose={() => {
             setFindOpen(false);
@@ -426,6 +456,7 @@ interface FindBarProps {
   readOnly: boolean;
   apiRef: React.RefObject<ChipEditorInsertApi | null>;
   showReplace: boolean;
+  focusSignal: number;
   onShowReplace(on: boolean): void;
   onClose(): void;
 }
@@ -439,6 +470,7 @@ const FindBar: React.FC<FindBarProps> = ({
   readOnly,
   apiRef,
   showReplace,
+  focusSignal,
   onShowReplace,
   onClose,
 }) => {
@@ -459,7 +491,7 @@ const FindBar: React.FC<FindBarProps> = ({
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, []);
+  }, [focusSignal]);
 
   const hits = useMemo(() => findAll(value, query, opts), [value, query, opts]);
   const index = hits.length === 0 ? -1 : Math.min(current, hits.length - 1);
@@ -480,12 +512,8 @@ const FindBar: React.FC<FindBarProps> = ({
   const replaceOne = () => {
     const hit = hits[index];
     if (!hit || readOnly) return;
-    const insert = replacementFor(
-      value.slice(hit.start, hit.end),
-      query,
-      replacement,
-      opts,
-    );
+    const insert = replacementAt(value, hit.start, query, replacement, opts);
+    if (insert === null) return;
     const api = apiRef.current;
     if (api?.replaceRange) api.replaceRange(hit.start, hit.end, insert);
     else onChange(value.slice(0, hit.start) + insert + value.slice(hit.end));
