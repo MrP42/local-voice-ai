@@ -457,7 +457,7 @@ test("Phonon: die Palette bietet nur Pausen an, Auto-Tagging ist ausgegraut", as
   const rules = await writingRules(page);
   await expect(rules).toContainText("Phonon setzt keine Emotions-Tags um");
   await expect(rules).not.toContainText("[whisper]");
-  await expect(rules).toContainText("[short pause]");
+  await expect(rules).toContainText("[Kurze Pause]");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("tts-action-menu").click();
@@ -477,7 +477,7 @@ test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async (
   await editorOf(page).fill("Ein Satz.");
   await openTagMenu(page);
   await expect(page.getByTestId("tag-menu-pauses-only")).toContainText(
-    "nur Pausen und das Tempo",
+    "Unterstützt werden Pausen und Tempoangaben",
   );
   // Pausen und Tempo sind da, Gefühle weiterhin nicht.
   await expect(
@@ -492,7 +492,7 @@ test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async (
   await page.keyboard.press("Escape");
 
   const rules = await writingRules(page);
-  await expect(rules).toContainText("[slower]");
+  await expect(rules).toContainText("[Langsamer]");
   await expect(rules).not.toContainText("[whisper]");
   await page.keyboard.press("Escape");
 
@@ -587,7 +587,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize({ width, height: width > 600 ? 900 : 844 });
       const editor = editorOf(page);
       await editor.fill(
-        "Er öffnete langsam die Tür. [pause] [slower] Dahinter war nichts. [short pause] Gar nichts. [long pause] [faster] Dann hörte er ein Geräusch.",
+        "[Langsamer] Er öffnete langsam die Tür. [Pause] Dahinter war nichts. [Kurze Pause] Gar nichts.\n[Schneller] Dann hörte er ein Geräusch.",
       );
       await page.waitForTimeout(400);
       const name = (n: string) => `${dir}/${n}-${width}-${theme}.png`;
@@ -600,6 +600,11 @@ for (const theme of ["light", "dark"] as const) {
       await expect
         .poll(async () => (await slower.boundingBox())?.x ?? -1)
         .toBeGreaterThanOrEqual(0);
+      // In der schmalen Ansicht scrollt die Tagliste; Tempo soll im Bild sein.
+      await page
+        .getByRole("menuitem", { name: /Schneller/ })
+        .first()
+        .scrollIntoViewIfNeeded();
       await page.waitForTimeout(400);
       await page.screenshot({ path: name("2-tag-menue") });
       await page.keyboard.press("Escape");
@@ -613,6 +618,48 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+test("Touchziele bei 390 px: Menüzeilen und Leistenknöpfe sind mindestens 44 px hoch", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", pace: true });
+  await gotoReadAloud(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const editor = editorOf(page);
+  await editor.fill("Ein Satz. Noch ein Satz.");
+  const tooSmall = async (items: import("@playwright/test").Locator) => {
+    const small: string[] = [];
+    for (const item of await items.all()) {
+      if (!(await item.isVisible())) continue;
+      const box = await item.boundingBox();
+      if (box && (box.height < 44 || box.width < 44))
+        small.push(
+          `${(await item.getAttribute("aria-label")) ?? (await item.innerText())}: ${box.width}x${box.height}`,
+        );
+    }
+    return small;
+  };
+
+  await editor.click({ button: "right", position: { x: 60, y: 200 } });
+  await page.getByRole("menuitem", { name: "Tag einfügen" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: /Langsamer/ }).first(),
+  ).toBeVisible();
+  const tagItems = page.getByRole("menuitem").filter({ visible: true });
+  expect(await tagItems.count()).toBeGreaterThan(5);
+  expect(await tooSmall(tagItems)).toEqual([]);
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByTestId("autotag-open")).toBeVisible();
+  expect(await tooSmall(page.getByRole("menuitem"))).toEqual([]);
+  await page.keyboard.press("Escape");
+
+  // Symbolknöpfe in den Köpfen von „Seiten“ und „Dateien“.
+  const heads = page.locator(".lv-touch-icons button:visible");
+  expect(await heads.count()).toBeGreaterThanOrEqual(3);
+  expect(await tooSmall(heads)).toEqual([]);
+});
 
 test("Phonon: Reinhoeren im Dropdown spielt die Hoerprobe, ohne die Stimme zu waehlen", async ({
   page,

@@ -525,10 +525,24 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   cursor: default;
   background: transparent;
 }
-@media (pointer: coarse) {
-  .lv-menu-item {
+/* Touchziele >= 44 px (WCAG 2.5.5) auf Touch-Geräten und in der schmalen
+   Ansicht unter 640 px: Menüzeilen und die Symbolknöpfe in Leistenköpfen. */
+@media (pointer: coarse), (max-width: 639px) {
+  .lv-menu-item,
+  .lv-touch-row {
     min-height: 44px;
   }
+  .lv-touch-icons button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Platzhalter in Eingabefeldern mit dem gedämpften Texttoken statt
+   Foreground4: auf dunkler Fläche sonst zu schwach (WCAG 1.4.3). */
+.lv-input input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 /* ==========================================================================

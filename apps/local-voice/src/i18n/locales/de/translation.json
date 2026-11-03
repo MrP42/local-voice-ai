@@ -1064,7 +1064,7 @@
       "piperIgnores": "„{{tag}}“ — Piper setzt keine Tags um und lässt es weg (nur Pausen wirken).",
       "engineIgnores": "„{{tag}}“ — {{engine}} setzt keine Stil-Tags um und lässt es weg (nur Pausen wirken).",
       "legendPausesOnly": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen – die erzeugt die App selbst, sie wirken immer.",
-      "legendPausesAndPace": "{{engine}} setzt keine Stil-Tags um. Hier gibt es nur Pausen und das Tempo eines Satzes – beides wirkt immer.",
+      "legendPausesAndPace": "{{engine}} setzt keine Stil-Tags um. Unterstützt werden Pausen und Tempoangaben.",
       "engineIgnoresPace": "„{{tag}}“ — {{engine}} setzt keine Stil-Tags um und lässt es weg (nur Pausen und Tempo wirken)."
     },
     "speakers": {
@@ -1291,11 +1291,11 @@
       "short": "Schreibregeln",
       "title": "Schreibregeln: Sprecher & Tags",
       "tagsIntro": "Emotions- und Effekt-Tags stehen in eckigen Klammern genau dort, wo sie zu hören sein sollen:",
-      "pausesAndPace": "{{engine}} setzt keine Emotions-Tags um. In eckigen Klammern stehen nur Pausen und das Tempo eines Satzes ([slower], [faster] am Satzanfang):",
+      "pausesAndPace": "{{engine}} setzt keine Emotions-Tags um. In eckigen Klammern stehen nur Pausen und das Tempo eines Satzes ([Langsamer], [Schneller] am Satzanfang):",
       "pausesOnly": "{{engine}} setzt keine Emotions-Tags um. Nur Pausen stehen in eckigen Klammern, genau dort, wo sie zu hören sein sollen:",
       "example1": "[whisper] Komm näher …",
-      "example2": "Er öffnete die Tür. [short pause] Nichts.",
-      "examplePace": "[slower] Dann wurde es ganz still im Haus.",
+      "example2": "Er öffnete die Tür. [Kurze Pause] Nichts.",
+      "examplePace": "[Langsamer] Dann wurde es ganz still im Haus.",
       "example3": "[laughing] Das darf doch nicht wahr sein!"
     },
     "serverStartTitle": "Fish-Speech-Server starten?",
