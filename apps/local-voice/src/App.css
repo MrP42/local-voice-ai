@@ -960,6 +960,17 @@ body,
   }
 }
 
+/* Protokoll bearbeiten: Platz für „Abschnitt bearbeiten“ neben jeder
+   Abschnittsüberschrift und Markierung der Stelle unter dem Stift. */
+.minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
+  padding-inline-end: 11rem;
+}
+.minutes-preview [data-edit-hover] {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-logo-primary) 10%, transparent);
+}
+
 /* Protokoll bearbeiten (Besprechungen): Touchziele >= 44 px unter dem mobilen
    Breakpoint – Werkzeugzeile, Editor-Menü, Suchleiste und Abschnitts-Stift. */
 @media (max-width: 639px) {
@@ -974,6 +985,18 @@ body,
   .minutes-preview .minutes-block-pen {
     width: 44px;
     height: 44px;
+  }
+  .minutes-preview .minutes-section-pen {
+    width: 44px;
+    height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+  .minutes-preview .minutes-section-pen__text {
+    display: none;
+  }
+  .minutes-preview [data-testid="minutes-doc"] :is(h2, h3) {
+    padding-inline-end: 3rem;
   }
   /* Schmal ist die Arbeitsfläche nur wenige Zeilen hoch: der Editor
      öffnet dann als Vollbild-Blatt (Speichern und Abbrechen oben). */

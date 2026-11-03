@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { DocUsageLine } from "./DocUsageLine";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -27,6 +33,7 @@ import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
 import {
   Check,
+  ChevronDown,
   Copy,
   Download,
   FileText,
@@ -42,6 +49,17 @@ import { useRegenerateGuard } from "./useRegenerateGuard";
 
 /** Blöcke der Leseansicht, die einzeln zum Bearbeiten angeklickt werden können. */
 const EDIT_BLOCKS = "h1, h2, h3, p, li, td, th, blockquote";
+/** Abschnitte mit eigenem, immer sichtbarem „Abschnitt bearbeiten“. */
+const SECTION_HEADINGS = "h2, h3";
+
+/** Nächster Vorfahr, der senkrecht scrollt (Reiterfläche der Besprechung). */
+const scrollParentOf = (el: HTMLElement | null): HTMLElement | null => {
+  for (let node = el?.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return node;
+  }
+  return null;
+};
 
 interface MinutesViewProps {
   meetingId: string;
@@ -90,6 +108,13 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     top: number;
     block: HTMLElement;
   } | null>(null);
+  // Abschnittsknöpfe neben jeder Überschrift (Lage in der Vorschau gemessen).
+  const [sections, setSections] = useState<
+    { top: number; el: HTMLElement; title: string }[]
+  >([]);
+  // Unten geht es weiter: Hinweis am unteren Rand der Reiterfläche.
+  const [moreBelow, setMoreBelow] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const guard = useRegenerateGuard();
   // Sperrt "Neu erzeugen" schon während der Rückfrage (Doppelklick).
   const generatingRef = useRef(false);
@@ -316,9 +341,75 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     return block && previewRef.current?.contains(block) ? block : null;
   };
 
+  // Überschriften messen: bei jeder Größenänderung der Vorschau neu.
+  const previewKey = editing ? null : (doc?.id ?? null);
+  const docBody = doc?.body;
+  useLayoutEffect(() => {
+    const preview = previewRef.current;
+    const wrapper = wrapperRef.current;
+    if (!preview || !wrapper) {
+      setSections([]);
+      return;
+    }
+    const measure = () => {
+      const base = wrapper.getBoundingClientRect().top;
+      setSections(
+        Array.from(preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS)).map(
+          (el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              el,
+              top: rect.top - base + (rect.height - 32) / 2,
+              title: el.textContent?.trim() ?? "",
+            };
+          },
+        ),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(preview);
+    return () => observer.disconnect();
+  }, [previewKey, docBody]);
+
+  // Weiter unten Inhalt? Am scrollenden Vorfahren beobachten.
+  useEffect(() => {
+    const scroller = scrollParentOf(wrapperRef.current);
+    if (!scroller || !previewKey) {
+      setMoreBelow(false);
+      return;
+    }
+    const check = () =>
+      setMoreBelow(
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 8,
+      );
+    check();
+    scroller.addEventListener("scroll", check, { passive: true });
+    const observer = new ResizeObserver(check);
+    observer.observe(scroller);
+    if (previewRef.current) observer.observe(previewRef.current);
+    return () => {
+      scroller.removeEventListener("scroll", check);
+      observer.disconnect();
+    };
+  }, [previewKey, docBody]);
+
+  // Markierung des Blocks unter dem Mauszeiger (zeigt, was der Stift bearbeitet).
+  useEffect(() => {
+    const block = hoverPen?.block;
+    if (!block) return;
+    block.setAttribute("data-edit-hover", "");
+    return () => block.removeAttribute("data-edit-hover");
+  }, [hoverPen?.block]);
+
   const onPreviewHover = (event: React.MouseEvent<HTMLDivElement>) => {
     const block = blockAt(event.target);
     if (!block) return;
+    // Überschriften haben ihren eigenen Knopf.
+    if (block.matches(SECTION_HEADINGS)) {
+      if (hoverPen) setHoverPen(null);
+      return;
+    }
     // Innerster Block: ein Listenpunkt mit Absatz zeigt den Stift am Absatz.
     const wrapper = event.currentTarget.getBoundingClientRect();
     const rect = block.getBoundingClientRect();
@@ -340,6 +431,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
       HTMLElement | undefined;
+    preview
+      ?.querySelectorAll("[data-edit-hover]")
+      .forEach((el) => el.removeAttribute("data-edit-hover"));
     preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
       el.replaceWith(
         document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
@@ -596,6 +690,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         />
       ) : doc ? (
         <div
+          ref={wrapperRef}
           className="minutes-preview relative"
           onMouseOver={onPreviewHover}
           onMouseLeave={() => setHoverPen(null)}
@@ -612,6 +707,28 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             <DocUsageLine documentId={doc.id} />
             <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
           </div>
+          {!running &&
+            sections.map((section, i) => (
+              <button
+                key={`${i}:${section.title}`}
+                type="button"
+                data-testid="minutes-section-edit"
+                title={t("meetings.minutes.edit.sectionHint", {
+                  title: section.title,
+                })}
+                aria-label={t("meetings.minutes.edit.sectionLabel", {
+                  title: section.title,
+                })}
+                onClick={() => startEdit(section.el)}
+                style={{ top: section.top }}
+                className="minutes-section-pen absolute end-2 flex h-8 items-center gap-1.5 rounded-md border border-mid-gray/30 bg-background px-2 text-xs font-medium text-text/80 hover:border-logo-primary hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+              >
+                <Pencil width={14} height={14} aria-hidden="true" />
+                <span className="minutes-section-pen__text">
+                  {t("meetings.minutes.edit.section")}
+                </span>
+              </button>
+            ))}
           {hoverPen && !running && (
             <button
               type="button"
@@ -620,10 +737,22 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               aria-label={t("meetings.minutes.edit.block")}
               onClick={() => startEdit(hoverPen.block)}
               style={{ top: hoverPen.top }}
-              className="minutes-block-pen absolute end-1 flex h-7 w-7 items-center justify-center rounded-md text-text/50 hover:bg-mid-gray/15 hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+              className="minutes-block-pen absolute end-2 flex h-7 w-7 items-center justify-center rounded-md border border-logo-primary/50 bg-background text-logo-primary hover:bg-logo-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
             >
               <Pencil width={14} height={14} aria-hidden="true" />
             </button>
+          )}
+          {moreBelow && (
+            <div
+              aria-hidden="true"
+              data-testid="minutes-more-below"
+              className="pointer-events-none sticky bottom-0 -mt-12 flex h-12 items-end justify-center bg-gradient-to-t from-background via-background/80 to-transparent pb-1"
+            >
+              <span className="flex items-center gap-1 rounded-full border border-mid-gray/30 bg-background px-2.5 py-0.5 text-xs text-text/80 shadow-sm">
+                <ChevronDown width={14} height={14} />
+                {t("meetings.minutes.moreBelow")}
+              </span>
+            </div>
           )}
         </div>
       ) : (

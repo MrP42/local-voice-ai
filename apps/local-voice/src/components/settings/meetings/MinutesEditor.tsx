@@ -243,6 +243,7 @@ export const MinutesEditor: React.FC<MinutesEditorProps> = ({
           apiRef={apiRef}
           spellCheck={spellCheck}
           onSpellCheck={changeSpell}
+          labeled
         />
         <TtsChipEditor
           value={text}
