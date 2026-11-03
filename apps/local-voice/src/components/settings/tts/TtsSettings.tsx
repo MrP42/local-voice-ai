@@ -36,6 +36,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
+import { SpeechConfirmDialog } from "./SpeechConfirmDialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
@@ -406,6 +407,8 @@ export const TtsSettings = () => {
   const sessionDocId = SESSION_DOC_ID;
   const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
+  const [speeching, setSpeeching] = useState(false);
+  const [speechConfirmOpen, setSpeechConfirmOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -3095,7 +3098,7 @@ export const TtsSettings = () => {
    * alte Text bleibt hinter "Rueckgaengig" im Toast.
    */
   const tidyText = async () => {
-    if (!text.trim() || tidying) return;
+    if (!text.trim() || tidying || speeching) return;
     setLastError(null);
     setTidying(true);
     const previousText = text;
@@ -3108,6 +3111,44 @@ export const TtsSettings = () => {
     setTab("original");
     setText(result.data);
     toast(t("tts.tidyDone"), {
+      action: {
+        label: t("tts.tidyUndo"),
+        onClick: () => setText(previousText),
+      },
+    });
+  };
+
+  /**
+   * Sprechfassung: die KI setzt Satzzeichen, teilt Schachtelsätze und schreibt
+   * Zahlen aus, damit eine Stimme ohne Betonungs-Steuerung (Phonon, Piper)
+   * richtig betont. Wie „Text aufbereiten“: ersetzt den Text, mit Rückgängig.
+   */
+  const speechText = async () => {
+    if (!text.trim() || speeching || tidying) return;
+    setLastError(null);
+    setSpeeching(true);
+    const previousText = text;
+    let result: Awaited<ReturnType<typeof commands.ttsSpeechText>>;
+    try {
+      result = await commands.ttsSpeechText(stripPageMarks(text));
+    } catch (e) {
+      setLastError(String(e));
+      return;
+    } finally {
+      setSpeeching(false);
+    }
+    if (result.status === "error") {
+      setLastError(result.error);
+      return;
+    }
+    // Während des Laufs weitergeschrieben: nichts überschreiben.
+    if (textRef.current !== previousText) {
+      setLastError(t("tts.speechStale"));
+      return;
+    }
+    setTab("original");
+    setText(result.data);
+    toast(t("tts.speechDone"), {
       action: {
         label: t("tts.tidyUndo"),
         onClick: () => setText(previousText),
@@ -3395,6 +3436,8 @@ export const TtsSettings = () => {
         onExport={() => void openExport()}
         tidying={tidying}
         onTidy={() => void tidyText()}
+        speeching={speeching}
+        onSpeech={() => setSpeechConfirmOpen(true)}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
@@ -4258,6 +4301,11 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <SpeechConfirmDialog
+            open={speechConfirmOpen}
+            onOpenChange={setSpeechConfirmOpen}
+            onStart={() => void speechText()}
           />
           <Dialog
             open={urlDialogOpen}

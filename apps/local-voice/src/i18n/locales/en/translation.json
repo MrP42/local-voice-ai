@@ -1444,6 +1444,19 @@
     "tidying": "Cleaning up …",
     "tidyDone": "Text cleaned up.",
     "tidyUndo": "Undo",
+    "speech": "Create speaking version …",
+    "speechHint": "The AI sharpens punctuation, splits long sentences and writes out numbers so the voice stresses the right words – nothing is cut",
+    "speeching": "Creating speaking version …",
+    "speechDone": "Speaking version applied.",
+    "speechStale": "The text changed while the speaking version was being made – result not applied. Please start again.",
+    "speechConfirm": {
+      "title": "Create speaking version",
+      "body": "The AI replaces the entire text in the editor with a speaking version: sharper punctuation, long sentences split, numbers written out. Afterwards you can restore the original with “Undo” in the notice.",
+      "local": "Processed locally on this computer with {{model}}. The text does not leave the device.",
+      "cloud": "Processed in the cloud: the text is sent to {{provider}} (model {{model}}).",
+      "none": "No language model is selected for read-aloud. Please choose one in the footer.",
+      "start": "Replace and create"
+    },
     "controls": "Playback and voice",
     "translateShort": "Translate",
     "replaceAll": {

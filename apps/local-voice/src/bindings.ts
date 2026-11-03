@@ -5997,6 +5997,20 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
+ * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
+ * Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
+ * `summarizer::check_speech_version` lehnt Inhaltsänderungen ab.
+ */
+async ttsSpeechText(text: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speech_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };

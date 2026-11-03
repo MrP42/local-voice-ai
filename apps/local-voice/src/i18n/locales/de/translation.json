@@ -1444,6 +1444,19 @@
     "tidying": "Bereite auf …",
     "tidyDone": "Text aufbereitet.",
     "tidyUndo": "Rückgängig",
+    "speech": "Sprechfassung erstellen …",
+    "speechHint": "Die KI setzt Satzzeichen, teilt lange Sätze und schreibt Zahlen aus, damit die Stimme richtig betont – nichts wird gekürzt",
+    "speeching": "Erstelle Sprechfassung …",
+    "speechDone": "Sprechfassung übernommen.",
+    "speechStale": "Der Text wurde während der Sprechfassung geändert – Ergebnis nicht übernommen. Bitte erneut starten.",
+    "speechConfirm": {
+      "title": "Sprechfassung erstellen",
+      "body": "Die KI ersetzt den gesamten Text im Editor durch eine Sprechfassung: Satzzeichen geschärft, lange Sätze geteilt, Zahlen ausgeschrieben. Danach lässt sich das Original über „Rückgängig“ im Hinweis wiederherstellen.",
+      "local": "Verarbeitung lokal auf diesem Rechner mit {{model}}. Der Text verlässt das Gerät nicht.",
+      "cloud": "Verarbeitung in der Cloud: Der Text wird an {{provider}} übertragen (Modell {{model}}).",
+      "none": "Für Vorlesen ist kein Sprachmodell gewählt. Bitte unten in der Fußleiste ein Modell wählen.",
+      "start": "Ersetzen und erstellen"
+    },
     "controls": "Wiedergabe und Stimme",
     "translateShort": "Übersetzen",
     "replaceAll": {

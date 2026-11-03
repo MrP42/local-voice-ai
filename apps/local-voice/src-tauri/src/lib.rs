@@ -2518,6 +2518,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts::tts_piper_voice_for_text,
             commands::tts::tts_tidy_text,
             commands::tts::tts_text_assist,
+            commands::tts::tts_speech_text,
             commands::tts::tts_extract_document,
             commands::tts::tts_extract_url,
             isbn::isbn_lookup,

@@ -230,6 +230,130 @@ pub async fn assist(
     Ok(answers.join("\n"))
 }
 
+/// Prompt der Sprechfassung: der Text bleibt inhaltlich gleich, wird aber so
+/// gesetzt, dass eine Vorlesestimme ihn richtig betont. Phonon (und Piper)
+/// kennen keine Betonungs-Steuerung; ihre Satzmelodie folgt allein Satzbau und
+/// Satzzeichen. Darum: Satzzeichen nachschärfen, Schachtelsätze teilen, Zahlen,
+/// Einheiten und Symbole so ausschreiben, wie man sie spricht.
+pub fn speech_prompt(text: &str) -> String {
+    format!(
+        "Rewrite the following text as a script for a text-to-speech voice, in the SAME \
+         language as the text itself{}. The voice cannot be told what to stress: its \
+         intonation follows ONLY sentence structure and punctuation. Goal: the read-aloud \
+         emphasis must fit the meaning. Rules: (1) Keep EVERY statement, name and fact in \
+         the original order; do not summarize, shorten, translate, explain or add content. \
+         (2) Sharpen punctuation where the meaning calls for it: question marks for \
+         questions, exclamation marks for exclamations, commas for breathing pauses, a \
+         dash before a punch line or contrast, an ellipsis for a trailing thought, \
+         quotation marks around direct speech. (3) Split long nested sentences into \
+         several short sentences; put the key information at the end of a sentence, \
+         where the voice naturally stresses it. (4) Write numbers, dates, units, \
+         currencies, percentages and symbols the way they are spoken (e.g. 12,5 km -> \
+         zwölfeinhalb Kilometer, 3,50 EUR -> drei Euro fünfzig, 8 % -> acht Prozent). \
+         (5) Keep speaker markers like <Name> and tags in square brackets like [pause] \
+         exactly as they are, at the same place. (6) Keep paragraphs; one blank line \
+         between paragraphs. Reply with ONLY the rewritten text, no commentary.\n\n{text}",
+        language_clause(text),
+    )
+}
+
+/// Sprechfassung erstellen; lange Texte blockweise wie [`tidy`]. Das Ergebnis
+/// kommt nur zurück, wenn [`check_speech_version`] es durchlässt.
+pub async fn speech_version(settings: &AppSettings, text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Kein Text für die Sprechfassung".into());
+    }
+    let chunks = chunk_text(
+        trimmed,
+        if crate::translator::active_model_is_local(settings) {
+            CHUNK_CHARS
+        } else {
+            TIDY_CHARS_CLOUD
+        },
+    );
+    let mut parts = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let out = ask_llm(settings, speech_prompt(chunk))
+            .await?
+            .trim()
+            .to_string();
+        check_speech_version(chunk, &out)?;
+        parts.push(out);
+    }
+    Ok(parts.join("\n\n"))
+}
+
+/// Reine Buchstabenwörter (klein), ab vier Zeichen: die tragenden Wörter, an
+/// denen sich zeigt, ob Inhalt verloren ging. Satzzeichen am Rand fallen weg.
+/// Wörter mit Ziffern oder Bindestrich („5-jährige“, „3D-Drucker“, „E-Mail“)
+/// zählen nicht — die Sprechfassung schreibt sie aus oder setzt sie zusammen.
+fn content_words(text: &str) -> std::collections::HashSet<String> {
+    text.split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+        .filter(|w| w.chars().count() >= 4 && w.chars().all(char::is_alphabetic))
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// Tags `[…]` und Sprechermarker `<…>` als sortierte Liste: sie müssen in der
+/// Sprechfassung unverändert und vollständig vorkommen.
+fn fixed_marks(text: &str) -> Vec<String> {
+    use crate::managers::tts::protocol::{scan_marker_candidates, tag_spans};
+    let mut marks: Vec<String> = tag_spans(text)
+        .into_iter()
+        .map(|r| text[r].to_string())
+        .chain(
+            scan_marker_candidates(text)
+                .into_iter()
+                .map(|c| text[c.start..c.end].to_string()),
+        )
+        .collect();
+    marks.sort();
+    marks
+}
+
+/// Prüft, dass die Sprechfassung den Text nur UMSETZT, nicht verändert:
+/// Tags und Sprechermarker vollständig, Länge plausibel (ausgeschriebene
+/// Zahlen machen den Text länger, nie viel kürzer), mindestens 90 % der
+/// tragenden Wörter noch da. Sonst Fehler — der Originaltext bleibt.
+pub fn check_speech_version(original: &str, spoken: &str) -> Result<(), String> {
+    if spoken.trim().is_empty() {
+        return Err("Die Sprechfassung ist leer – Ergebnis nicht übernommen.".into());
+    }
+    if fixed_marks(original) != fixed_marks(spoken) {
+        return Err(
+            "Die Sprechfassung hat Tags oder Sprechermarker verändert – Ergebnis nicht übernommen."
+                .into(),
+        );
+    }
+    let (a, b) = (original.chars().count(), spoken.chars().count());
+    // Ausgeschriebene Zahlen wachsen stark („2021“ -> „zweitausendeinundzwanzig“):
+    // je Ziffer ein Zuschlag auf die Obergrenze.
+    let digits = original.chars().filter(char::is_ascii_digit).count();
+    if b * 10 < a * 8 || b * 10 > a * 18 + digits * 100 {
+        return Err(format!(
+            "Die Sprechfassung ist unplausibel lang oder kurz ({b} statt {a} Zeichen) – Ergebnis nicht übernommen."
+        ));
+    }
+    let before = content_words(original);
+    if !before.is_empty() {
+        let after = content_words(spoken);
+        let kept = before.iter().filter(|w| after.contains(*w)).count();
+        // Höchstens 10 % dürfen fehlen, mindestens aber ein Wort (Flexion,
+        // aufgelöste Abkürzung), sonst scheitern kurze Abschnitte zu leicht.
+        let allowed = (before.len() / 10).max(1);
+        if before.len() - kept > allowed {
+            return Err(format!(
+                "Die Sprechfassung hat Inhalt verändert ({} von {} Wörtern fehlen) – Ergebnis nicht übernommen.",
+                before.len() - kept,
+                before.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Prompt der Reduce-Stufe: Teilzusammenfassungen zu einer verdichten.
 pub fn combine_prompt(opts: &SummaryOptions, partials: &[String]) -> String {
     format!(
@@ -437,6 +561,62 @@ mod tests {
             detail: "ueberblick".into(),
             audience: "management".into(),
         }
+    }
+
+    #[test]
+    fn sprechfassung_darf_umsetzen_aber_nichts_verlieren() {
+        let original = "Die Strecke ist 12,5 km lang. [pause] <Nele> Kommst du mit, fragte sie.";
+        let gut = "Die Strecke ist zwölfeinhalb Kilometer lang. [pause] <Nele> „Kommst du mit?“, fragte sie.";
+        assert_eq!(check_speech_version(original, gut), Ok(()));
+        // Tag verloren.
+        let ohne_tag =
+            "Die Strecke ist zwölfeinhalb Kilometer lang. <Nele> „Kommst du mit?“, fragte sie.";
+        assert!(check_speech_version(original, ohne_tag)
+            .unwrap_err()
+            .contains("Tags"));
+        // Inhalt gekürzt.
+        let gekuerzt =
+            "Die Strecke war lang. [pause] <Nele> Wohin denn nun, sagte sie leise zu ihm.";
+        assert!(check_speech_version(original, gekuerzt).is_err());
+        assert!(check_speech_version(original, "  ").is_err());
+        // Zahlenlastig: Jahreszahlen ausgeschrieben, deutlich über 180 %.
+        assert_eq!(
+            check_speech_version(
+                "Die Jahre 2019, 2020 und 2021.",
+                "Die Jahre zweitausendneunzehn, zweitausendzwanzig und zweitausendeinundzwanzig."
+            ),
+            Ok(())
+        );
+        // Zahlkompositum wird zu einem Wort.
+        assert_eq!(
+            check_speech_version(
+                "Das 5-jährige Kind spielt draußen.",
+                "Das fünfjährige Kind spielt draußen."
+            ),
+            Ok(())
+        );
+        // Ein einzelnes geändertes Wort in einem kurzen Satz ist erlaubt, zwei nicht.
+        assert_eq!(
+            check_speech_version(
+                "Gestern kamen viele Gäste.",
+                "Gestern kamen sehr viele Gäste."
+            ),
+            Ok(())
+        );
+        assert!(check_speech_version(
+            "Gestern kamen viele Gäste zum Fest.",
+            "Heute kamen wenige Gäste zum Fest."
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sprechfassung_prompt_nennt_die_regeln() {
+        let p = speech_prompt("Ein Satz.");
+        assert!(p.contains("SAME language"));
+        assert!(p.contains("Split long nested sentences"));
+        assert!(p.contains("[pause]"));
+        assert!(p.ends_with("Ein Satz."));
     }
 
     #[test]
