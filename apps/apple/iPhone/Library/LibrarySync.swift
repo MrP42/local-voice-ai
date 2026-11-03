@@ -47,8 +47,6 @@ final class LibrarySync: ObservableObject {
             #endif
         }
     }
-    /// Ladefortschritt je Buch (0…1) während eines Hörbuch-Downloads.
-    @Published private(set) var downloads: [String: Double] = [:]
     @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "library.wifiOnly") as? Bool ?? true {
         didSet { UserDefaults.standard.set(wifiOnly, forKey: "library.wifiOnly") }
     }
@@ -315,6 +313,7 @@ final class LibrarySync: ObservableObject {
             do { try await push([(tomb, "")], acc); ledger[LibrarySyncFormat.collectionBook, book.id]?.deleted = true; saveLedger() }
             catch { self.error = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"; return }
         }
+        AudioDownloads.shared.discard(book.id)
         library.delete(book)
     }
 
@@ -403,39 +402,19 @@ final class LibrarySync: ObservableObject {
         ledger.uploaded.insert(ref.blob); saveLedger()
     }
 
-    /// Hörbuch beim ersten Öffnen laden. Teile werden einzeln geprüft und atomar abgelegt.
+    /// Hörbuch beim ersten Öffnen laden: startet (oder setzt fort) den Ladevorgang
+    /// im Hintergrund (`AudioDownloads`) und wartet, bis er fertig ist. `false`, wenn
+    /// er pausiert wird oder fehlschlägt; der Zustand steht dann auf der Buchseite.
     func downloadAudio(_ book: LibraryBook) async -> Bool {
-        guard let acc = account else { error = SyncError.notLoggedIn.localizedDescription; return false }
-        let refs = library.meta(book).files.audio
-        guard !refs.isEmpty else { return library.hasAudio(book) }
-        guard downloads[book.id] == nil else { return false }  // läuft schon
-        if wifiOnly && expensiveNetwork { error = SyncError.offlineRule.localizedDescription; return false }
-        let total = max(1, refs.reduce(0) { $0 + $1.size })
-        var done = 0
-        downloads[book.id] = 0
-        defer { downloads[book.id] = nil }
-        do {
-            let audioDir = library.dir(book).appendingPathComponent("audio", isDirectory: true)
-            try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-            PhoneLibrary.excludeFromBackup(audioDir)
-            for (i, ref) in refs.enumerated() {
-                let target = audioDir.appendingPathComponent(Self.audioFileName(ref.file, index: i))
-                if FileManager.default.fileExists(atPath: target.path),
-                   Self.fileSize(target) == ref.size { done += ref.size; continue }
-                let base = done
-                try await downloadBlob(ref, acc, to: target) { n in self.downloads[book.id] = Double(base + n) / Double(total) }
-                done += ref.size
-            }
-            library.reload()
-            return library.hasAudio(book)
-        } catch let e as URLError where e.networkUnavailableReason == .expensive || e.networkUnavailableReason == .constrained {
-            self.error = SyncError.offlineRule.localizedDescription
-            return false
-        } catch {
-            self.error = "Laden fehlgeschlagen: \(error.localizedDescription) Bereits geladene Teile bleiben erhalten."
-            return false
-        }
+        guard account != nil else { error = SyncError.notLoggedIn.localizedDescription; return false }
+        guard !library.meta(book).files.audio.isEmpty, !library.hasAudio(book) else { return library.hasAudio(book) }
+        let downloads = AudioDownloads.shared
+        downloads.start(book)
+        return await downloads.waitUntilDone(book.id)
     }
+
+    /// Ein Blob ist im Konto vollständig (z. B. gerade vollständig von dort geladen).
+    func markConfirmed(_ blob: String) { ledger.uploaded.insert(blob); saveLedger() }
 
     // MARK: Hörbuch vom iPhone entfernen (P8 Paket 1)
 
@@ -446,7 +425,7 @@ final class LibrarySync: ObservableObject {
 
     /// Darf das Hörbuch vom iPhone? Ohne Netz, nur aus dem bekannten Stand.
     func offloadVerdict(_ book: LibraryBook, confirmed: Set<String>? = nil) -> AudioOffload.Verdict {
-        AudioOffload.verdict(loggedIn: account != nil, synced: isSynced(book), downloading: downloads[book.id] != nil,
+        AudioOffload.verdict(loggedIn: account != nil, synced: isSynced(book), downloading: AudioDownloads.shared.isActive(book.id),
                              localSizes: library.localAudioSizes(book), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
                              account: accountFiles(book), confirmed: confirmed ?? ledger.uploaded)
     }
@@ -486,9 +465,10 @@ final class LibrarySync: ObservableObject {
         guard let fresh = await confirmInAccount(accountFiles(book), acc) else { return (.unreachable, 0) }
         verdict = offloadVerdict(book, confirmed: fresh)
         // Zwischenzeitlich gestartet (Download, Abgleich)? Dann nicht anfassen.
-        guard verdict.allowed, downloads[book.id] == nil else { return (verdict.allowed ? .downloading : verdict, 0) }
+        guard verdict.allowed, !AudioDownloads.shared.isActive(book.id) else { return (verdict.allowed ? .downloading : verdict, 0) }
         let playback = LibraryPlayback.shared
         if playback.book?.id == book.id { playback.stop() }
+        AudioDownloads.shared.discard(book.id)  // pausierte oder fehlgeschlagene Ladevorgänge
         do {
             let freed = try AudioOffload.remove(bookDir: library.dir(book))
             library.reload()

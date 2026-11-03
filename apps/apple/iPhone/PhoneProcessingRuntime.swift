@@ -134,12 +134,16 @@ final class VoicePhoneDelegate: NSObject, UIApplicationDelegate, UNUserNotificat
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         VoiceModel.shared.registerBackgroundProcessing()
         _ = ModelDownloads.shared
+        _ = AudioDownloads.shared  // Hörbuch-Downloads im Hintergrund wieder zuordnen
         UNUserNotificationCenter.current().delegate = self
         return true
     }
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-        guard identifier == ModelDownloads.sessionID else { completionHandler(); return }
-        ModelDownloads.shared.handleBackgroundEvents(completionHandler)
+        switch identifier {
+        case ModelDownloads.sessionID: ModelDownloads.shared.handleBackgroundEvents(completionHandler)
+        case AudioDownloads.sessionID: AudioDownloads.shared.handleBackgroundEvents(completionHandler)
+        default: completionHandler()
+        }
     }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([]) // Foreground progress and readiness are already visible beside the model.

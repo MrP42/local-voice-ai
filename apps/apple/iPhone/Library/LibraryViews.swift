@@ -253,6 +253,7 @@ struct LibraryBookDetail: View {
     @State private var removingAudio = false
     @State private var removeBytes = 0
     @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var downloads = AudioDownloads.shared
 
     var body: some View {
         if let book = library.books.first(where: { $0.id == bookId }) { content(book) }
@@ -292,25 +293,12 @@ struct LibraryBookDetail: View {
                         } label: {
                             Label("Hörbuch hören", systemImage: "headphones").frame(maxWidth: .infinity, minHeight: 44)
                         }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand)
-                            .disabled(sync.downloads[book.id] != nil).accessibilityIdentifier("listen")
+                            .disabled(downloads.isActive(book.id)).accessibilityIdentifier("listen")
                     }
                 }.font(.headline)
 
-                if inAccount {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if let f = sync.downloads[book.id] {
-                            Text("Hörbuch lädt … \(LibraryFormat.percent(f))").font(.subheadline.weight(.semibold))
-                            ProgressView(value: f).tint(VoicePalette.accent)
-                            Text(sync.wifiOnly ? "Nur im WLAN" : "Über WLAN oder Mobilfunk").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                        } else {
-                            Text("Hörbuch im Konto · \(ByteCountFormatter.string(fromByteCount: Int64(library.meta(book).files.audioBytes), countStyle: .file))")
-                                .font(.subheadline.weight(.semibold))
-                            Text(sync.wifiOnly && sync.expensiveNetwork ? "Wartet auf WLAN („Nur im WLAN laden“ ist an)." : "Wird beim ersten Hören geladen und ist danach offline verfügbar.")
-                                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                            Button("Jetzt laden") { Task { _ = await sync.downloadAudio(book) } }.frame(minHeight: 44)
-                        }
-                        if let e = sync.error { Text(e).font(.caption).foregroundStyle(.red) }
-                    }.voiceCard()
+                if inAccount || downloads.jobs[book.id] != nil || (hasAudio && !library.meta(book).files.audio.isEmpty) {
+                    AudioDownloadCard(book: book, onRemove: { askRemoveAudio($0) })
                 }
 
                 if hasAudio || hasText {
@@ -357,15 +345,8 @@ struct LibraryBookDetail: View {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
                     Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
                     if library.hasLocalAudio(book) {
-                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") {
-                            let verdict = sync.offloadVerdict(book)
-                            switch verdict {
-                            case .allowed, .unconfirmed:  // wird beim Bestätigen frisch beim Konto geprüft
-                                removeBytes = library.localAudioBytes(book)
-                                confirmRemoveAudio = true
-                            default: offloadBlocked = verdict
-                            }
-                        }.disabled(removingAudio)
+                        Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { askRemoveAudio(book) }
+                            .disabled(removingAudio)
                     }
                     if sync.isSynced(book) {
                         Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
@@ -407,6 +388,16 @@ struct LibraryBookDetail: View {
         }
     }
 
+    private func askRemoveAudio(_ book: LibraryBook) {
+        let verdict = sync.offloadVerdict(book)
+        switch verdict {
+        case .allowed, .unconfirmed:  // wird beim Bestätigen frisch beim Konto geprüft
+            removeBytes = library.localAudioBytes(book)
+            confirmRemoveAudio = true
+        default: offloadBlocked = verdict
+        }
+    }
+
     private func progressRow(_ title: String, value: Double, detail: String, when: Double?) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack { Text(title).fontWeight(.semibold); Spacer(); Text(detail).foregroundStyle(VoicePalette.secondaryText) }.font(.subheadline)
@@ -414,6 +405,76 @@ struct LibraryBookDetail: View {
             if let when, when > 0 { Text("Zuletzt auf diesem iPhone \(LibraryFormat.when(when))").font(.caption).foregroundStyle(VoicePalette.secondaryText) }
         }
     }
+}
+
+/// Ladezustand des Hörbuchs auf der Buchseite (Epic #210, P8 Paket 3), wie in
+/// der Vorschau `ios-bibliothek/06-ladezustaende`.
+struct AudioDownloadCard: View {
+    let book: LibraryBook
+    var onRemove: (LibraryBook) -> Void
+    @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var sync = LibrarySync.shared
+    @ObservedObject var downloads = AudioDownloads.shared
+
+    var body: some View {
+        let job = downloads.jobs[book.id]
+        let total = job?.totalBytes ?? library.meta(book).files.audioBytes
+        let done = downloads.done[book.id] ?? 0
+        let amount = "\(LibraryBytes.text(done)) von \(LibraryBytes.text(total))"
+        VStack(alignment: .leading, spacing: 8) {
+            if let job, job.phase == .failed {
+                Label("Laden fehlgeschlagen", systemImage: "exclamationmark.circle").font(.headline).foregroundStyle(.red)
+                Text(job.message ?? "Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
+                    .font(.subheadline).foregroundStyle(VoicePalette.text)
+                action("Erneut versuchen", "arrow.clockwise") { downloads.start(book) }
+            } else if let job, job.phase == .paused {
+                header("Pausiert", amount)
+                ProgressView(value: fraction(done, total)).tint(VoicePalette.secondaryText)
+                action("Fortsetzen", "play") { downloads.start(book) }
+            } else if job != nil, downloads.waitsForWifi(book.id) {
+                header("Wartet auf WLAN", amount)
+                Text("„Nur im WLAN laden“ ist an. Das Laden startet, sobald du im WLAN bist.")
+                    .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
+                action("Jetzt mobil laden", "antenna.radiowaves.left.and.right") { downloads.useCellular(book) }
+            } else if job != nil {
+                header("Hörbuch lädt … \(LibraryFormat.percent(fraction(done, total)))", amount)
+                ProgressView(value: fraction(done, total)).tint(VoicePalette.accent)
+                Text("Lädt auch weiter, wenn die App im Hintergrund ist.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                action("Pausieren", "pause") { downloads.pause(book.id) }
+            } else if library.hasAudio(book) {
+                Label("Auf dem iPhone · \(LibraryBytes.text(library.localAudioBytes(book)))", systemImage: "checkmark")
+                    .font(.headline).foregroundStyle(.green)
+                action("Vom iPhone entfernen", "icloud.and.arrow.down") { onRemove(book) }
+                Text("Bleibt im Konto und auf dem PC, Fortschritt bleibt erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
+            } else {
+                header("Hörbuch im Konto", LibraryBytes.text(total))
+                Text(sync.wifiOnly && sync.expensiveNetwork ? "Wartet auf WLAN („Nur im WLAN laden“ ist an)." : "Wird beim ersten Hören geladen und ist danach offline verfügbar.")
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                action("Jetzt laden", "arrow.down.circle") { downloads.start(book) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .voiceCard()
+        .overlay {
+            if job?.phase == .failed { RoundedRectangle(cornerRadius: 8).stroke(Color.red, lineWidth: 1.5) }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func header(_ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.headline)
+            Spacer(minLength: 8)
+            Text(detail).font(.subheadline.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
+        }
+    }
+
+    private func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) { Label(title, systemImage: symbol).frame(minHeight: 44).padding(.horizontal, 6) }
+            .buttonStyle(.bordered)
+    }
+
+    private func fraction(_ done: Int, _ total: Int) -> Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }
 }
 
 struct LibraryMiniPlayer: View {

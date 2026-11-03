@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hörbuch-Download iPhone</title>
+<style>
+:root{--bg:#F2F2F7;--card:#FFFFFF;--text:#1F2937;--sec:rgba(31,41,55,.72);--sep:rgba(128,128,128,.22);--accent:#111418;--brand:#FFDD00;--red:#FF3B30;--orange:#C2410C;--blue:#007AFF;--page:#E5E7EB;--sheet:rgba(255,255,255,.96);--dim:rgba(0,0,0,.35)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0B0B0C;--card:#1C1C1E;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--sep:rgba(128,128,128,.3);--accent:#FFDD00;--red:#FF453A;--orange:#FDBA74;--blue:#0A84FF;--page:#000;--sheet:rgba(44,44,46,.97);--dim:rgba(0,0,0,.55)}}
+:root[data-theme="dark"]{--bg:#0B0B0C;--card:#1C1C1E;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--sep:rgba(128,128,128,.3);--accent:#FFDD00;--red:#FF453A;--orange:#FDBA74;--blue:#0A84FF;--page:#000;--sheet:rgba(44,44,46,.97);--dim:rgba(0,0,0,.55)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);font:15px/1.35 "Segoe UI",-apple-system,system-ui,sans-serif;color:var(--text)}
+.gallery{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:24px 16px}
+.cap{font-size:13px;color:var(--sec);text-align:center;margin-top:8px;max-width:375px}
+.phone{width:375px;height:780px;background:var(--bg);border-radius:36px;overflow:hidden;position:relative;border:1px solid var(--sep);display:flex;flex-direction:column}
+body.single .gallery{padding:0;gap:0}
+body.single .phone{width:100vw;height:auto;min-height:100vh;border-radius:0;border:0}
+body.single .cap{display:none}
+.status{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;font-weight:600;font-size:14px}
+.nav{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:600}
+.nav a{color:var(--blue);font-weight:400;text-decoration:none;min-height:44px;min-width:44px;justify-content:flex-end;display:flex;align-items:center}
+.scroll{flex:1;overflow:hidden;padding:0 16px 24px}
+.hdr{font-size:13px;color:var(--sec);text-transform:uppercase;margin:22px 16px 6px;letter-spacing:.02em}
+.ftr{font-size:13px;color:var(--sec);margin:6px 16px 0}
+.group{background:var(--card);border-radius:12px;overflow:hidden}
+.cell{min-height:44px;display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid var(--sep);position:relative}
+.cell:first-child{border-top:0}
+.cell .v{margin-left:auto;color:var(--sec)}
+.cell .chev{color:var(--sec);margin-left:6px}
+.cell.btn{color:var(--blue)}
+.cell.red{color:var(--red)}
+.toggle{margin-left:auto;width:51px;height:31px;border-radius:16px;background:#34C759;position:relative}
+.toggle::after{content:"";position:absolute;right:2px;top:2px;width:27px;height:27px;border-radius:50%;background:#fff}
+.cover{width:40px;height:60px;border-radius:4px;flex:none;display:flex;align-items:flex-end;padding:4px;font-size:8px;font-weight:700;line-height:1.05}
+.c1{background:#2E4A3D;color:#F2E8D1}.c2{background:#8A3B2E;color:#FAE8DC}.c3{background:#213A5C;color:#DEE8F5}.c4{background:#C9A426;color:#29210A}.c5{background:#5C4578;color:#F0E8F7}
+.meta{flex:1;min-width:0}
+.t{font-weight:600}
+.d{font-size:13px;color:var(--sec)}
+.badge{font-size:12px;font-weight:600;color:var(--text);margin-top:2px}
+.size{font-size:14px;color:var(--sec);font-variant-numeric:tabular-nums;white-space:nowrap}
+.swiped{margin-right:96px;background:var(--card)}
+.swipe-wrap{position:relative;overflow:hidden;border-top:1px solid var(--sep)}
+.swipe-wrap .cell{border-top:0}
+.swipe-act{position:absolute;right:0;top:0;bottom:0;width:96px;background:var(--red);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+.notice{font-size:13px;color:var(--sec);padding:10px 16px;border-top:1px solid var(--sep)}
+.overlay{position:absolute;inset:0;background:var(--dim);display:flex;align-items:flex-end;justify-content:center;padding:8px}
+.overlay.center{align-items:center}
+.sheet{width:100%}
+.sheet .box{background:var(--sheet);border-radius:14px;text-align:center;overflow:hidden}
+.sheet .q{padding:14px 16px;font-size:13px;color:var(--sec)}
+.sheet .q b{display:block;color:var(--text);font-size:14px;margin-bottom:4px}
+.sheet .opt{min-height:56px;display:flex;align-items:center;justify-content:center;border-top:1px solid var(--sep);font-size:18px;color:var(--blue)}
+.sheet .opt.red{color:var(--red)}
+.sheet .cancel{margin-top:8px;font-weight:600}
+.alert{width:270px;background:var(--sheet);border-radius:14px;text-align:center;overflow:hidden}
+.alert .q{padding:18px 16px 14px;font-size:13px}
+.alert .q b{display:block;font-size:17px;margin-bottom:4px}
+.alert .opt{min-height:44px;display:flex;align-items:center;justify-content:center;border-top:1px solid var(--sep);font-size:17px;color:var(--blue)}
+.alert .opt.b{font-weight:600}
+.big{display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 16px;color:var(--sec);text-align:center}
+.big b{color:var(--text);font-size:20px}
+.spin{width:18px;height:18px;border:2px solid var(--sep);border-top-color:var(--sec);border-radius:50%}
+
+.book{display:flex;gap:14px;margin-top:12px}
+.bigcover{width:84px;height:126px;border-radius:6px;background:#2E4A3D;color:#F2E8D1;display:flex;align-items:flex-end;padding:8px;font-weight:700;font-size:12px}
+.btitle{font-size:22px;font-weight:700;line-height:1.2}
+.bmeta{font-size:13px;color:var(--sec)}
+.row2{display:flex;gap:10px;margin-top:14px}
+.pbtn{flex:1;min-height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:600;gap:6px}
+.pbtn.sec{background:var(--card);border:1px solid var(--sep);color:var(--text)}
+.pbtn.pri{background:#111418;color:#FFDD00}
+.pbtn.dis{opacity:.4}
+.dcard{background:var(--card);border:1px solid var(--sep);border-radius:8px;padding:16px;margin-top:16px;display:flex;flex-direction:column;gap:8px}
+.dcard.err{border:1.5px solid var(--red)}
+.dh{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.dh b{font-size:17px}
+.dh span{color:var(--sec);font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{height:6px;border-radius:3px;background:var(--sep);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.bar.grey i{background:var(--sec)}
+.txt{font-size:15px}
+.cap2{font-size:13px;color:var(--sec)}
+.abtn{align-self:flex-start;min-height:44px;min-width:44px;padding:0 16px;border-radius:10px;background:rgba(120,120,128,.16);color:var(--blue);display:flex;align-items:center;gap:6px;font-weight:500}
+.ok{color:#1F8A4C;font-weight:600;font-size:17px}
+:root[data-theme="dark"] .ok{color:#30D158}
+.errh{color:var(--red);font-weight:600;font-size:17px}
+</style>
+</head>
+<body>
+<div class="gallery">
+<div id="s1"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn dis" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard"><div class="dh"><b>Hörbuch lädt … 26 %</b><span>212 MB von 820 MB</span></div><div class="bar"><i style="width:26%"></i></div><div class="cap2">Lädt auch weiter, wenn die App im Hintergrund ist.</div><div class="abtn" data-tap="Pausieren">⏸ Pausieren</div></div>
+  </div>
+</div><div class="cap">Lädt im Hintergrund, Pausieren möglich</div></div>
+<div id="s2"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn dis" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard"><div class="dh"><b>Wartet auf WLAN</b><span>0 Byte von 820 MB</span></div><div class="cap2" style="font-size:15px">„Nur im WLAN laden“ ist an. Das Laden startet, sobald du im WLAN bist.</div><div class="abtn" data-tap="Jetzt mobil laden">📶 Jetzt mobil laden</div></div>
+  </div>
+</div><div class="cap">„Nur im WLAN“ hält das Laden an</div></div>
+<div id="s3"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard"><div class="dh"><b>Pausiert</b><span>212 MB von 820 MB</span></div><div class="bar grey"><i style="width:26%"></i></div><div class="abtn" data-tap="Fortsetzen">▶ Fortsetzen</div></div>
+  </div>
+</div><div class="cap">Pausiert, setzt an derselben Stelle fort</div></div>
+<div id="s4"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard err"><div class="errh">⚠ Laden fehlgeschlagen</div><div class="txt">Der Server ist gerade nicht erreichbar. Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.</div><div class="abtn" data-tap="Erneut versuchen">↻ Erneut versuchen</div></div>
+  </div>
+</div><div class="cap">Server nicht erreichbar</div></div>
+<div id="s5"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard err"><div class="errh">⚠ Laden fehlgeschlagen</div><div class="txt">Zu wenig Speicher: Das Hörbuch braucht noch 820 MB, frei sind 412 MB. Unter „Konto &amp; Sync › Speicher“ lassen sich fertig gehörte Hörbücher entfernen.</div><div class="abtn" data-tap="Erneut versuchen">↻ Erneut versuchen</div></div>
+  </div>
+</div><div class="cap">Zu wenig Speicher, geprüft vor dem Start</div></div>
+<div id="s6"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard"><div class="dh"><b>Hörbuch im Konto</b><span>820 MB</span></div><div class="cap2">Wird beim ersten Hören geladen und ist danach offline verfügbar.</div><div class="abtn" data-tap="Jetzt laden">⬇ Jetzt laden</div></div>
+  </div>
+</div><div class="cap">Im Konto, noch nicht geladen</div></div>
+<div id="s7"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Bibliothek</a><span></span><a>⋯</a></div>
+  <div class="scroll">
+    <div class="book"><div class="bigcover">Effi Briest</div><div><div class="btitle">Effi Briest</div><div>Theodor Fontane</div><div class="bmeta">Text: effi-briest.epub</div></div></div>
+    <div class="row2"><div class="pbtn sec btn" data-tap="Text vorlesen">📖 Text vorlesen</div><div class="pbtn pri btn" data-tap="Hörbuch hören">🎧 Hörbuch hören</div></div>
+    <div class="dcard"><div class="ok">✓ Auf dem iPhone · 820 MB</div><div class="abtn" data-tap="Vom iPhone entfernen">☁︎ Vom iPhone entfernen</div><div class="cap2">Bleibt im Konto und auf dem PC, Fortschritt bleibt erhalten.</div></div>
+  </div>
+</div><div class="cap">Fertig geladen</div></div>
+
+</div>
+<script>
+const p=new URLSearchParams(location.search);
+if(p.get('theme'))document.documentElement.dataset.theme=p.get('theme');
+const only=p.get('s');
+if(only){document.body.classList.add('single');document.querySelectorAll('.gallery>div').forEach(d=>{if(d.id!==only)d.remove()});}
+</script>
+</body>
+</html>
