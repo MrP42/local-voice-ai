@@ -11304,7 +11304,7 @@ visible_voices: string[];
  * Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
  * `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
  */
-voice_names: { [key in string]: string } }
+voice_names: Partial<{ [key in string]: string }> }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
