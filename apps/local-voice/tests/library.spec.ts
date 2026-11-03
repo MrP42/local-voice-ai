@@ -2626,6 +2626,13 @@ test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele �
   await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(8);
   await expect(page.getByTestId("library-cover-restore")).toBeVisible();
   expect(await noScroll()).toBe(true);
+  // Schließen-X ausdrücklich (Codex-Auflage): ≥ 44 × 44 px bei 390 px.
+  const closeX = page.locator(".lv-dialog .fui-DialogTitle__action button");
+  await expect(closeX).toHaveCount(1);
+  const xBox = (await closeX.boundingBox())!;
+  console.log(`Schließen-X bei 390 px: ${xBox.width} × ${xBox.height} px`);
+  expect(xBox.width).toBeGreaterThanOrEqual(44);
+  expect(xBox.height).toBeGreaterThanOrEqual(44);
   // Jeder Knopf im Dialog, auch Schließen-X, Übernehmen, Abbrechen, Eigenes Bild.
   const buttons = page.getByRole("dialog").getByRole("button");
   expect(await buttons.count()).toBeGreaterThanOrEqual(13);
