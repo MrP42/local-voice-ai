@@ -252,9 +252,16 @@ final class PhoneLibrary: ObservableObject {
         if book.authors.isEmpty { book.authors = extracted.authors }
         if book.language == nil { book.language = extracted.language }
         book.text = LibraryTextVersion(pageId: "ios_\(book.id)", origin: "document", sourceName: url.lastPathComponent)
+        // Cover aus dem EPUB wie am Desktop; ein vorhandenes echtes Cover bleibt.
+        var newCover = false
+        if let cover = extracted.cover, coverURL(book) == nil || book.coverSource == "generated" {
+            try write(book)
+            storeCover(cover, for: book)
+            if coverURL(book) != nil { book.coverSource = "file"; newCover = true }
+        }
         try write(book)
         try extracted.text.write(to: textURL(book), atomically: true, encoding: .utf8)
-        var m = meta(book); m.files.text = nil; m.updated = Self.nowMs(); setMeta(book, m)
+        var m = meta(book); m.files.text = nil; if newCover { m.files.cover = nil }; m.updated = Self.nowMs(); setMeta(book, m)
     }
 
     private func importAudio(_ urls: [URL]) async throws {
@@ -317,7 +324,10 @@ final class PhoneLibrary: ObservableObject {
         try write(book)
         if let artwork, coverURL(book) == nil || book.coverSource == "generated" {
             storeCover(artwork, for: book)
-            if coverURL(book) != nil { book.coverSource = "file"; try write(book) }
+            if coverURL(book) != nil {
+                book.coverSource = "file"; try write(book)
+                var m = meta(book); m.files.cover = nil; setMeta(book, m)  // neues Cover hochladen
+            }
         }
         var info = found
         info.chapters = AudiobookChapters.merge(files: fileInfos, tracks: book.audio?.allTracks ?? tracks)

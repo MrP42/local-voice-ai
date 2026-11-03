@@ -200,6 +200,18 @@ extension PhoneLibrary {
         return thumb
     }
 
+    /// Blob-Kennung des Kontos, die dem lokalen Cover entspricht (`cover.blob`).
+    /// Weicht sie vom Konto ab, holt der Abgleich das Cover neu.
+    func coverBlob(_ book: LibraryBook) -> String? {
+        guard coverURL(book) != nil,
+              let data = try? Data(contentsOf: dir(book).appendingPathComponent("cover.blob")) else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func setCoverBlob(_ book: LibraryBook, _ blob: String) {
+        try? Data(blob.utf8).write(to: dir(book).appendingPathComponent("cover.blob"), options: .atomic)
+    }
+
     func storeCover(_ data: Data, for book: LibraryBook) {
         guard let jpeg = AudiobookMetadataReader.coverJPEG(data) else { return }
         for old in ["cover.png", "cover.webp"] { try? FileManager.default.removeItem(at: dir(book).appendingPathComponent(old)) }
