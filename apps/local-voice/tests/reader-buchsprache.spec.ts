@@ -326,7 +326,7 @@ test("englisches Buch: Sprache erkannt und gespeichert, englische Standardstimme
     expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 });
 
-test("kompakter Stimmenknopf in der Leiste zeigt die Sprache der Stimme", async ({ page }) => {
+test("kompakter Stimmenknopf in der Fußleiste zeigt die Sprache der Stimme", async ({ page }) => {
   await setup(page, {
     engine: "provider:phonon",
     state: JSON.stringify({ text: ENGLISH, tab: "original", voices: {} }),
@@ -338,7 +338,8 @@ test("kompakter Stimmenknopf in der Leiste zeigt die Sprache der Stimme", async 
   await page.setViewportSize({ width: 1920, height: 1000 });
   await page.goto("/");
   await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
-  const dock = page.getByTestId("reader-dock");
+  // Die Stimme sitzt links unten in der Fußleiste (Patrick 02.11.).
+  const dock = page.getByTestId("fuss-stimme");
   await expect(dock.getByTestId("voice-compact-lang")).toHaveText("en");
   await expect(dock.getByTestId("voice-compact")).toHaveAttribute(
     "title",

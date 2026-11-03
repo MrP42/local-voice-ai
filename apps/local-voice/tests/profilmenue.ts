@@ -33,14 +33,12 @@ export async function geheZu(page: Page, ziel: ShellZiel): Promise<void> {
   await expect(page.locator(".wai-konto-menue")).toHaveCount(0);
 }
 
-/** Öffnet Profilmenü ▸ Modelle (Diktat- und Sprachmodell wählen). */
+/**
+ * Modellwahl (Diktat- und Sprachmodell): steht seit Patrick 02.11. wieder
+ * links unten in der Fußleiste, je Modul. Der Helfer prüft nur, dass sie da ist.
+ */
 export async function oeffneModellwahl(page: Page): Promise<void> {
-  await oeffneProfilmenue(page);
-  await page
-    .locator(".wai-konto-menue")
-    .getByRole("button", { name: "Modelle", exact: true })
-    .click();
-  await expect(page.getByTestId("profilmenue-modelle")).toBeVisible();
+  await expect(page.getByTestId("fuss-modelle")).toBeVisible();
 }
 
 export const DIAGNOSE_AN = "lva.ui.statusbar.diagnose";

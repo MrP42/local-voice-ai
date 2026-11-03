@@ -326,21 +326,12 @@ for (const theme of ["light", "dark"]) {
       await expect(flow).toContainText("The lighthouse had stood");
       await expect(page.locator("textarea")).toHaveCount(0);
 
-      // Modellwahl: klarer Auswahlbutton mit Präfix.
-      const modelBtn = page
-        .getByTestId("tts-translation-model")
-        .getByRole("button", { name: /^Modell wählen/ });
-      await expect(modelBtn).toContainText(
-        "Modell wählen: Claude (Abo) · Claude Sonnet 5.5",
-      );
-      await expect(modelBtn).toHaveAttribute("aria-haspopup", "listbox");
-      await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
-      await modelBtn.click();
-      await expect(modelBtn).toHaveAttribute("aria-expanded", "true");
-      console.log(
-        `ARIA Modellknopf haspopup=${await modelBtn.getAttribute("aria-haspopup")} expanded(offen)=${await modelBtn.getAttribute("aria-expanded")}`,
-      );
-      await page.keyboard.press("Escape");
+      // Modellwahl: nicht mehr in der Seite, sondern links unten in der
+      // Fußleiste als Modell der Funktion „Vorlesen“ (Patrick 02.11.).
+      await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
+      const modelBtn = page.getByTestId("fuss-modell-read_aloud");
+      await expect(modelBtn).toContainText("Vorlesen: Claude Sonnet 5.5");
+      await expect(modelBtn).toHaveAttribute("aria-haspopup", "menu");
       await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
 
       // Fortschrittsblock.
@@ -395,7 +386,6 @@ for (const theme of ["light", "dark"]) {
           "tts-action-menu-translation",
         ])
           await expectTouch(page.getByTestId(id));
-        await expectTouch(modelBtn);
         const player = page.getByTestId("reader-player");
         for (const b of [
           player.getByRole("button", { name: "Vorheriger Satz" }),

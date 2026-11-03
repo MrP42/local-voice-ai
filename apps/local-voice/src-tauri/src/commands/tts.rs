@@ -525,7 +525,8 @@ pub async fn tts_summarize_text(
     options: crate::summarizer::SummaryOptions,
 ) -> Result<String, String> {
     use tauri::Emitter;
-    let settings = crate::settings::get_settings(&app);
+    // Modell der Funktion „Vorlesen“ (Fusszeile), sonst das aktive.
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
     let emitter = app.clone();
     let progress = move |done: usize, total: usize| {
         let _ = emitter.emit(
@@ -577,7 +578,7 @@ pub fn tts_transform_cancel(kind: String) {
 #[tauri::command]
 #[specta::specta]
 pub async fn tts_tidy_text(app: AppHandle, text: String) -> Result<String, String> {
-    let settings = crate::settings::get_settings(&app);
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
     crate::summarizer::tidy(&settings, &text).await
 }
 

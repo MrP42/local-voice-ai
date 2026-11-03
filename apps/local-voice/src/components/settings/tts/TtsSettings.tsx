@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { createPortal } from "react-dom";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
@@ -18,6 +19,7 @@ import { ScriptWorkshopDialog } from "./books/ScriptWorkshopDialog";
 import { audioExportName } from "@/lib/utils/exportName";
 import { openModelsArea } from "@/components/settings/models/ModelsSettings";
 import { openVoiceManager } from "@/components/settings/models/voices";
+import { useFussleisteStore } from "@/stores/fussleisteStore";
 import { useSettings } from "../../../hooks/useSettings";
 import { ShortcutInput } from "../ShortcutInput";
 import {
@@ -108,6 +110,7 @@ import { Glyph } from "../../ui/AudioPlayer";
 import {
   Mic,
   PanelRightClose,
+  Plug,
   Replace,
   Settings,
   TriangleAlert,
@@ -3096,6 +3099,19 @@ export const TtsSettings = () => {
                 disabled: speakers.length < 2,
                 onSelect: () => setReplaceSpeaker({}),
               },
+              // Anbieter-Einstellungen: früher als Dauertext unter der
+              // Stimme, jetzt im Menü (Stimme sitzt in der Fußleiste).
+              ...(providerEngineId
+                ? [
+                    {
+                      id: "provider",
+                      label: t("tts.providers.dropdown.open"),
+                      icon: Plug,
+                      testId: "voice-provider-open",
+                      onSelect: () => openVoiceManager("providers"),
+                    },
+                  ]
+                : []),
               {
                 id: "manage",
                 label: t("tts.voices.manage"),
@@ -3215,30 +3231,21 @@ export const TtsSettings = () => {
             }}
             isClearable={false}
           />
-          {providerEngineId && (
-            <div
-              role="status"
-              data-testid="voice-provider-hint"
-              className="mt-1 text-xs text-text/70"
-            >
-              <p>
-                {t("tts.providers.dropdown.hint", {
-                  name: providerLabel ?? providerEngineId,
-                })}
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-testid="voice-provider-open"
-                onClick={() =>
-                  openVoiceManager("providers")
-                }
-              >
-                {t("tts.providers.dropdown.open")}
-              </Button>
-            </div>
-          )}
+          <p
+            id="voice-mode-hint"
+            className="sr-only"
+            data-testid="voice-mode-hint"
+          >
+            {scriptMode
+              ? t("tts.voices.scriptVoicesHint")
+              : t("tts.voices.singleVoiceHint")}
+          </p>
+        </div>
+  );
+  // Hinweise zur Stimme (fehlt die Einrichtung, Piper liest automatisch)
+  // bleiben in der rechten Spalte; die Wahl selbst steht in der Fußleiste.
+  const voiceHints = (
+    <div className="min-w-0 flex-1" data-testid="voice-hints">
           {selectedVoiceNotSetUp && (
             <div
               role="status"
@@ -3284,17 +3291,19 @@ export const TtsSettings = () => {
               </Button>
             </p>
           )}
-          <p
-            id="voice-mode-hint"
-            className="sr-only"
-            data-testid="voice-mode-hint"
-          >
-            {scriptMode
-              ? t("tts.voices.scriptVoicesHint")
-              : t("tts.voices.singleVoiceHint")}
-          </p>
-        </div>
+    </div>
   );
+  // Die Stimme gehört zu den Modellen des Moduls und steht deshalb immer an
+  // derselben Stelle: links unten in der Fußleiste (Patrick 02.11.).
+  const fussPlatz = useFussleisteStore((st) => st.modulPlatz);
+  const voiceInFooter = fussPlatz
+    ? createPortal(
+        <span className="lv-fuss-stimme" data-testid="fuss-stimme">
+          {voicePickerOf(true)}
+        </span>,
+        fussPlatz,
+      )
+    : null;
   const readAloudActions = (compact: boolean) => (
       <ReadAloudActions
         compact={compact}
@@ -3871,17 +3880,10 @@ export const TtsSettings = () => {
                   rightHidden
                     ? (inPopover) => (
                         <>
-                          <div
-                            className={
-                              inPopover ? "w-full" : "reader-dock__voice"
-                            }
-                          >
-                            {voicePickerOf(!inPopover)}
-                          </div>
                           {/* In der Zeile sind die Hinweise unter der Stimme
                             verborgen: fehlt eine eingerichtete Stimme, steht
                             der Weg dorthin als Warnknopf daneben. */}
-                          {!inPopover && selectedVoiceNotSetUp && (
+                          {selectedVoiceNotSetUp && (
                             <button
                               type="button"
                               className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md text-amber-700 hover:bg-mid-gray/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary dark:text-amber-400"
@@ -3972,7 +3974,7 @@ export const TtsSettings = () => {
                   Tooltip beim Ueberfahren/Fokussieren und Beschreibung fuer
                   Screenreader (aria-describedby) -- sonst wundert man sich,
                   warum die Marker nicht mehr umschalten. */}
-                <div className="min-w-0 flex-1">{voicePickerOf()}</div>
+                {voiceHints}
                 {/* Ganze Spalte ausblenden (Variante A): Stimme und Werkzeuge
                   ziehen dann in die Spielerleiste unter dem Text. */}
                 <button
@@ -4208,6 +4210,7 @@ export const TtsSettings = () => {
           </Dialog>
         </div>
       </div>
+      {voiceInFooter}
     </PageShell>
   );
 };
