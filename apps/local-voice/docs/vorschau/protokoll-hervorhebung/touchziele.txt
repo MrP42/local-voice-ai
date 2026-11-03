@@ -1,0 +1,16 @@
+Touchziele Werkzeugzeile Protokoll (lva#244), gemessen per boundingBox in Chromium (Playwright),
+Vorlesen läuft, Satz 3/6 markiert. Regel: lv-touch-icons (fluent-bridge.css) ab pointer:coarse oder < 640 px.
+Prüfung dauerhaft im Test „Touchziele: …mindestens 44 px“ (tests/meeting-readaloud.spec.ts).
+
+testid	Bedeutung	390 px (vorher)	390 px (jetzt)	1440 px Maus
+minutes-generate	Neu erzeugen	28x28	44x44	28x28
+minutes-copy	Kopieren	28x28	44x44	28x28
+minutes-export	Herunterladen	28x28	44x44	28x28
+minutes-readaloud-bar-prev	Vorheriger Satz	28x28	44x44	28x28
+minutes-readaloud-bar-toggle	Pause/Weiter	28x28	44x44	28x28
+minutes-readaloud-bar-next	Nächster Satz	28x28	44x44	28x28
+minutes-readaloud-bar-stop	Stopp	28x28	44x44	28x28
+minutes-readaloud-save	Audio speichern	28x28	44x44	28x28
+minutes-readaloud-bar-voice-menu	Stimmenmenü	28x28	44x44	28x28
+
+1440 px mit Maus (pointer: fine) bleibt bei 28 px wie in der übrigen Suite; mit Touch (pointer: coarse) gelten 44 px.

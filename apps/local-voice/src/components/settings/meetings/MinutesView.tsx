@@ -31,6 +31,7 @@ import {
 } from "../../whats-new/MarkdownContent";
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
+import { useReadAloudHighlight } from "./useReadAloudHighlight";
 import {
   Check,
   ChevronDown,
@@ -133,6 +134,15 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // what the user sees here, instead of a second Markdown renderer that could
   // drift from the first.
   const previewRef = useRef<HTMLDivElement>(null);
+  // Nur der Dokumenttext (ohne Verbrauchszeile): dort steht der vorgelesene Satz.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const speakKey = `minutes:${meetingId}:${docKey ?? "minutes"}`;
+  // Beim Bearbeiten keine Hervorhebung (die Vorschau ist ausgehängt).
+  useReadAloudHighlight(
+    bodyRef,
+    speakKey,
+    editing ? null : (doc?.body ?? null),
+  );
 
   // Neu laden nach einem Lauf darf den offenen Editor weder aushängen noch
   // die bearbeitete Version wechseln: der Ladetext steht nur beim ersten Laden.
@@ -353,17 +363,21 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     }
     const measure = () => {
       const base = wrapper.getBoundingClientRect().top;
+      const all = Array.from(
+        preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS),
+      ).map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          el,
+          top: rect.top - base + (rect.height - 32) / 2,
+          title: el.textContent?.trim() ?? "",
+        };
+      });
+      // Steht die nächste Überschrift direkt darunter (Titel über dem ersten
+      // Abschnitt), überdecken sich die Knöpfe: dann gilt der Knopf des
+      // folgenden, genaueren Abschnitts.
       setSections(
-        Array.from(preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS)).map(
-          (el) => {
-            const rect = el.getBoundingClientRect();
-            return {
-              el,
-              top: rect.top - base + (rect.height - 32) / 2,
-              title: el.textContent?.trim() ?? "",
-            };
-          },
-        ),
+        all.filter((s, i) => !all[i + 1] || all[i + 1].top - s.top >= 40),
       );
     };
     measure();
@@ -512,7 +526,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="minutes-toolbar sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
+        className="minutes-toolbar lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
       >
         {toolbarLead}
         <IconAction
@@ -607,7 +621,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               onClick={exportMinutes}
             />
             <ReadAloudButton
-              speakKey={`minutes:${meetingId}:${docKey ?? "minutes"}`}
+              speakKey={speakKey}
               getMarkdown={() => doc.body}
               testId="minutes-readaloud"
               disabled={editing !== null}
@@ -705,7 +719,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             className="rounded-lg border border-mid-gray/20 p-4 pe-10"
           >
             <DocUsageLine documentId={doc.id} />
-            <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+            <div ref={bodyRef} data-testid="minutes-body">
+              <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+            </div>
           </div>
           {!running &&
             sections.map((section, i) => (

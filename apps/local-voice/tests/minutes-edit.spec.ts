@@ -380,9 +380,16 @@ test.describe("Protokoll bearbeiten", () => {
 
     // Suchen und Ersetzen: alle "Indilarco" -> "Enelaco".
     await page.getByTestId("editor-menu-find").click();
+    // Beschriftet: "Suchen und Ersetzen" oeffnet beide Felder.
+    await expect(page.getByTestId("editor-menu-find")).toHaveText(
+      "Suchen und Ersetzen",
+    );
+    await expect(page.getByLabel("Suchen nach")).toBeVisible();
+    await expect(page.getByLabel("Ersetzen durch")).toBeVisible();
+    await expect(page.getByTestId("replace-all")).toHaveText("Alle ersetzen");
+    await expect(page.getByTestId("replace-one")).toHaveText("Ersetzen");
     await page.getByTestId("find-input").fill("Indilarco");
     await expect(page.getByTestId("find-count")).toHaveText("1 von 3");
-    await page.getByTestId("find-toggle-replace").click();
     await page.getByTestId("replace-input").fill("Enelaco");
     await page.getByTestId("replace-all").click();
     await expect(editor(page)).not.toHaveValue(/Indilarco/);
@@ -424,6 +431,48 @@ test.describe("Protokoll bearbeiten", () => {
     expect(selected).toBe(
       "Im **Indilarco** besteht derzeit wenig Handlungsspielraum",
     );
+  });
+
+  test("Abschnitt bearbeiten steht beschriftet an jeder Abschnittsueberschrift", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    const buttons = page.getByTestId("minutes-section-edit");
+    // Drei Abschnitte, der Titel nur, wenn sein Knopf nicht den des ersten
+    // Abschnitts ueberdeckt.
+    await expect(buttons.first()).toBeVisible();
+    const count = await buttons.count();
+    expect(count).toBeGreaterThanOrEqual(3);
+    const boxes = [];
+    for (let i = 0; i < count; i++)
+      boxes.push((await buttons.nth(i).boundingBox())!);
+    for (let i = 1; i < boxes.length; i++)
+      expect(boxes[i].y).toBeGreaterThanOrEqual(
+        boxes[i - 1].y + boxes[i - 1].height,
+      );
+    const target = page.getByRole("button", {
+      name: "Abschnitt „Besprochene Punkte“ bearbeiten",
+    });
+    await expect(target).toHaveText("Abschnitt bearbeiten");
+    // Der Knopf steht auf der Hoehe seiner Ueberschrift.
+    const heading = await page
+      .getByTestId("minutes-doc")
+      .getByRole("heading", { name: "Besprochene Punkte" })
+      .boundingBox();
+    const button = await target.boundingBox();
+    expect(
+      Math.abs(
+        heading!.y + heading!.height / 2 - (button!.y + button!.height / 2),
+      ),
+    ).toBeLessThan(6);
+    await target.click();
+    const selected = await editor(page).evaluate((el) => {
+      const ta = el as HTMLTextAreaElement;
+      return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    });
+    expect(selected).toBe("Besprochene Punkte");
+    // Kopieren nimmt weder Knoepfe noch Markierung mit.
   });
 
   test("Doppelklick auf eine Ueberschrift oeffnet den Editor dort", async ({
@@ -577,14 +626,26 @@ test.describe("Protokoll bearbeiten: Vorschau", () => {
           .getByText("besteht derzeit wenig Handlungsspielraum", {
             exact: false,
           });
-        await item.hover();
-        await expect(page.getByTestId("minutes-block-edit")).toBeVisible();
+        if (width === 390) {
+          // Touch: kein Hover; oben beginnen, Abschnittsknoepfe und Hinweis
+          // "Weiter unten" sichtbar.
+          await expect(page.getByTestId("minutes-more-below")).toBeVisible();
+        } else {
+          await item.hover();
+          await expect(page.getByTestId("minutes-block-edit")).toBeVisible();
+        }
+        await expect(
+          page.getByTestId("minutes-section-edit").first(),
+        ).toBeVisible();
         await page.screenshot({ path: name("1-stift") });
 
-        await page.getByTestId("minutes-block-edit").click();
+        await page
+          .getByRole("button", {
+            name: "Abschnitt „Zusammenfassung“ bearbeiten",
+          })
+          .click();
         await page.getByTestId("editor-menu-find").click();
         await page.getByTestId("find-input").fill("Indilarco");
-        await page.getByTestId("find-toggle-replace").click();
         await page.getByTestId("replace-input").fill("Enelaco");
         await page.screenshot({ path: name("2-bearbeiten") });
 

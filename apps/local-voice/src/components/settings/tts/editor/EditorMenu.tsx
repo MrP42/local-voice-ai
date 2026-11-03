@@ -614,7 +614,7 @@ const FindBar: React.FC<FindBarProps> = ({
             }
           }}
           placeholder={t("tts.editorMenu.findPlaceholder")}
-          aria-label={t("tts.editorMenu.findPlaceholder")}
+          aria-label={labeled ? undefined : t("tts.editorMenu.findPlaceholder")}
           data-testid="find-input"
         />
         <span
@@ -695,7 +695,9 @@ const FindBar: React.FC<FindBarProps> = ({
               }
             }}
             placeholder={t("tts.editorMenu.replacePlaceholder")}
-            aria-label={t("tts.editorMenu.replacePlaceholder")}
+            aria-label={
+              labeled ? undefined : t("tts.editorMenu.replacePlaceholder")
+            }
             data-testid="replace-input"
             disabled={readOnly}
           />
