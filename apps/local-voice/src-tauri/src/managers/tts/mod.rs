@@ -5132,16 +5132,15 @@ impl TtsManager {
                 }
             }
         }
-        let visible = crate::settings::get_settings(&self.app)
-            .tts_providers
-            .visible_voices
-            .get(p.id())
-            .cloned();
+        let tts_providers = crate::settings::get_settings(&self.app).tts_providers;
+        let visible = tts_providers.visible_voices.get(p.id()).cloned();
+        let names = tts_providers.voice_names_of(p.id()).cloned();
         let read = match p.list_voices().await {
-            Ok(voices) => Some(providers::speakers::build_roster(
+            Ok(voices) => Some(providers::speakers::build_roster_named(
                 &voices,
                 visible.as_ref(),
                 p.voice(),
+                names.as_ref(),
             )),
             Err(error) => {
                 log::info!(

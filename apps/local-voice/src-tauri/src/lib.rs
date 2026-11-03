@@ -2594,6 +2594,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::tts_providers::tts_provider_acknowledge_license,
             commands::tts_providers::tts_provider_set_allow_remote,
             commands::tts_providers::tts_provider_set_visible_voices,
+            commands::tts_providers::tts_provider_set_voice_name,
             commands::tts_providers::tts_provider_voice_options,
             commands::tts_providers::tts_provider_speakers,
             commands::tts_providers::tts_provider_select,

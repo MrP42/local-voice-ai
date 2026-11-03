@@ -7,6 +7,7 @@ import {
   type VoiceDescriptor,
 } from "@/bindings";
 import { useTtsModelStore } from "@/stores/ttsModelStore";
+import { useSettings } from "../../../../hooks/useSettings";
 import { useVoiceChoice } from "../../tts/useVoiceChoice";
 import { PROVIDER_VOICES_CHANGED } from "../../tts/providers/VisibleVoices";
 import { useVoiceSamplesOf } from "../../tts/providers/useVoiceSamples";
@@ -39,6 +40,9 @@ export function useVoiceCatalog(
 ) {
   const { t } = useTranslation();
   const choice = useVoiceChoice("");
+  const { getSetting } = useSettings();
+  /** Eigene Anzeigenamen je Anbieter (`tts_providers.voice_names`). */
+  const voiceNames = getSetting("tts_providers")?.voice_names;
   const downloads = useTtsModelStore((s) => s.downloads);
   const downloadingIds = useTtsModelStore((s) => s.downloadingIds);
   const downloadProgress = useTtsModelStore((s) => s.downloadProgress);
@@ -178,6 +182,13 @@ export function useVoiceCatalog(
           tryTarget: { kind: "fish", voiceId: s.id },
           samplePath: undefined,
           hiddenInReadAloud: false,
+          rename: {
+            kind: "fish",
+            providerId: "fish",
+            voiceId: s.id,
+            name: s.displayName,
+            custom: false,
+          },
         });
       }
     }
@@ -197,12 +208,23 @@ export function useVoiceCatalog(
               ? "runtime"
               : "load";
       const value = `piper:${d.id}`;
+      const piperOwn = voiceNames?.piper?.[d.id];
+      const piperName =
+        piperOwn ??
+        t(`settings.models.ttsVoices.voices.${d.id}.name`, {
+          defaultValue: d.name,
+        });
       out.push({
         ...base("piper", value),
         key: value,
-        name: t(`settings.models.ttsVoices.voices.${d.id}.name`, {
-          defaultValue: d.name,
-        }),
+        name: piperName,
+        rename: {
+          kind: "provider",
+          providerId: "piper",
+          voiceId: d.id,
+          name: piperName,
+          custom: piperOwn !== undefined,
+        },
         description:
           t(`settings.models.ttsVoices.voices.${d.id}.description`, {
             defaultValue: d.description,
@@ -271,6 +293,15 @@ export function useVoiceCatalog(
               : { kind: "provider", providerId: pid, voice: v.id },
           samplePath: sample && v.id in sample ? sample[v.id] : undefined,
           hiddenInReadAloud: listed.length > 0 && !isDefault && !option,
+          rename: isDefault
+            ? undefined
+            : {
+                kind: "provider",
+                providerId: pid,
+                voiceId: v.id,
+                name,
+                custom: v.id in (voiceNames?.[pid] ?? {}),
+              },
         });
       }
     }
@@ -285,6 +316,7 @@ export function useVoiceCatalog(
     speakers,
     fishReady,
     voiceValue,
+    voiceNames,
     t,
   ]);
 
