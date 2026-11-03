@@ -74,23 +74,9 @@ export const MeetingModelSetting: React.FC = () => {
       label: t("meetings.model.parallelFixed", { count: i + 1 }),
     })),
   ];
-  const parallelHardware = recommendation
-    ? t("meetings.model.parallelHardware", {
-        cpus: recommendation.cpus,
-        ram: gb(recommendation.ram_total_mb),
-        vram:
-          recommendation.vram_total_mb != null
-            ? t("meetings.model.parallelHardwareVram", {
-                vram: gb(recommendation.vram_total_mb),
-              })
-            : "",
-        model: gb(recommendation.model_size_mb),
-        count: recommendation.recommended,
-        limitedBy: t(
-          `meetings.model.parallelLimitedBy.${recommendation.limited_by}`,
-        ),
-      })
-    : "";
+  const explanation = recommendation ? (
+    <ParallelExplanation rec={recommendation} />
+  ) : null;
 
   const downloaded = models
     .filter((m) => m.is_downloaded)
@@ -137,10 +123,9 @@ export const MeetingModelSetting: React.FC = () => {
       </SettingContainer>
       <SettingContainer
         title={t("meetings.model.parallelTitle")}
-        description={[parallelHardware, t("meetings.model.parallelDescription")]
-          .filter(Boolean)
-          .join(" ")}
+        description={t("meetings.model.parallelDescription")}
         grouped={true}
+        layout="stacked"
       >
         <Dropdown
           options={parallelOptions}
@@ -149,7 +134,92 @@ export const MeetingModelSetting: React.FC = () => {
           placeholder={t("meetings.model.parallelAutoPending")}
           disabled={isUpdating("meeting_import_parallel")}
         />
+        {explanation}
       </SettingContainer>
     </>
+  );
+};
+
+/**
+ * Herleitung der Empfehlung und Speicherbedingungen, sichtbar unter der
+ * Auswahl (Codex zu lva#245: vollständig erreichbar, linksbündig; Herleitung
+ * zuerst, Bedingungen getrennt; "Obergrenze der App" ehrlich benennen).
+ */
+const ParallelExplanation: React.FC<{ rec: ParallelRecommendation }> = ({
+  rec,
+}) => {
+  const { t } = useTranslation();
+  const summary =
+    rec.limited_by === "maximum"
+      ? t("meetings.model.parallelSummaryMaximum", { count: rec.recommended })
+      : t("meetings.model.parallelSummary", {
+          count: rec.recommended,
+          limitedBy: t(`meetings.model.parallelLimitedBy.${rec.limited_by}`),
+        });
+  const ramLine =
+    rec.by_ram != null
+      ? t("meetings.model.parallelByRam", {
+          ram: gb(rec.ram_total_mb),
+          count: rec.by_ram,
+          perRun: gb(rec.ram_per_run_mb),
+        })
+      : t("meetings.model.parallelByRamUnknown");
+  const vramLine = !rec.gpu_model
+    ? t("meetings.model.parallelByVramCpuModel")
+    : rec.by_vram != null && rec.vram_total_mb != null
+      ? t("meetings.model.parallelByVram", {
+          vram: gb(rec.vram_total_mb),
+          count: rec.by_vram,
+          perRun: gb(rec.vram_per_run_mb ?? 0),
+        })
+      : t("meetings.model.parallelByVramUnknown");
+  const derivation = [
+    t("meetings.model.parallelByCpu", { cpus: rec.cpus, count: rec.by_cpu }),
+    ramLine,
+    vramLine,
+    t("meetings.model.parallelModel", { model: gb(rec.model_size_mb) }),
+  ];
+  const conditions = [
+    t("meetings.model.parallelConditionReload", {
+      ram: gb(rec.ram_per_run_mb),
+      vram:
+        rec.gpu_model && rec.vram_per_run_mb != null
+          ? t("meetings.model.parallelConditionReloadVram", {
+              vram: gb(rec.vram_per_run_mb),
+            })
+          : "",
+    }),
+    t("meetings.model.parallelConditionFree"),
+    t("meetings.model.parallelConditionOneLoad"),
+    t("meetings.model.parallelConditionRecording"),
+    t("meetings.model.parallelConditionAudiobook"),
+  ];
+  return (
+    <div
+      className="mt-2 text-sm text-left text-text-muted space-y-2"
+      data-testid="parallel-explanation"
+    >
+      <p className="font-medium text-text">{summary}</p>
+      <div>
+        <p className="font-medium">
+          {t("meetings.model.parallelDerivationTitle")}
+        </p>
+        <ul className="list-disc ps-5">
+          {derivation.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <p className="font-medium">
+          {t("meetings.model.parallelConditionsTitle")}
+        </p>
+        <ul className="list-disc ps-5">
+          {conditions.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 };

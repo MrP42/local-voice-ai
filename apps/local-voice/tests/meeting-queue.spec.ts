@@ -1,4 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { calls, installTauriMock } from "./calendarMock";
 import { PROGRESS, emitMeeting, openRecordings } from "./recLayoutMock";
@@ -443,10 +445,12 @@ test("schmales Fenster (480): Platz und Bedienspalte der wartenden Datei ohne Se
 // Einstellung
 // ---------------------------------------------------------------------------
 
-const VORSCHAU = path.resolve(
-  process.cwd(),
-  "docs/vorschau/gleichzeitige-transkriptionen",
-);
+// Ausserhalb des Vite-Wurzelverzeichnisses schreiben: eine neue Datei unter
+// apps/local-voice loest sonst einen Neuladen der Seite aus (leere Bilder).
+// Danach nach docs/vorschau/gleichzeitige-transkriptionen kopieren.
+const VORSCHAU =
+  process.env.LVA_VORSCHAU ??
+  path.join(os.tmpdir(), "lva-vorschau", "gleichzeitige-transkriptionen");
 
 const openParallelSetting = async (
   page: Page,
@@ -454,6 +458,9 @@ const openParallelSetting = async (
   height = 1000,
   adjust?: (page: Page) => Promise<void>,
 ) => {
+  // Eigene Seite im selben Kontext: nach vorn holen, sonst malt Chromium sie
+  // als Hintergrund-Tab nicht (leere Bilder).
+  await page.bringToFront();
   await installTauriMock(page, "main");
   // Nach der Attrappe, damit sie deren Zustand ueberschreibt.
   if (adjust) await adjust(page);
@@ -478,7 +485,7 @@ test('Einstellung "Gleichzeitige Transkriptionen": Automatisch nach Hardware ist
 }) => {
   // Eigene Seite ohne Aufnahmen-Attrappe: die Einstellungen der Gruppe Besprechungen.
   const fresh = await page.context().newPage();
-  const { title, dropdown } = await openParallelSetting(fresh);
+  const { dropdown } = await openParallelSetting(fresh);
   await expect(dropdown).toHaveText(
     "Automatisch – 4 auf diesem PC (empfohlen)",
   );
@@ -514,46 +521,93 @@ test('Einstellung "Gleichzeitige Transkriptionen": Automatisch nach Hardware ist
       ),
     )
     .toEqual([{ value: 2 }, { value: 0 }]);
-  // Die Beschreibung (Tooltip am Info-Symbol) nennt Speicher-Bedingung und Hardware.
-  await title
-    .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")
-    .getByLabel("More information")
-    .hover();
-  await expect(
-    fresh.getByText(/wartet auf Arbeitsspeicher/).first(),
-  ).toBeVisible();
-  await expect(
-    fresh
-      .getByText(
-        /Dieser PC: 16 Prozessorkerne · 32 GB Arbeitsspeicher · 12 GB Grafikspeicher/,
-      )
-      .first(),
-  ).toBeVisible();
-  await expect(
-    fresh.getByText(/begrenzt durch die Prozessorkerne/).first(),
-  ).toBeVisible();
   await fresh.close();
 });
 
-test('Einstellung "Gleichzeitige Transkriptionen": ohne Messung bleibt Automatisch waehlbar', async ({
+test('Einstellung "Gleichzeitige Transkriptionen": Herleitung sichtbar, ehrlich und linksbuendig', async ({
+  page,
+}) => {
+  const fresh = await page.context().newPage();
+  await openParallelSetting(fresh);
+  const box = fresh.getByTestId("parallel-explanation");
+  await expect(box).toBeVisible();
+  // Obergrenze der App, nicht die Kerne: die Hardware wuerde mehr erlauben.
+  await expect(box).toContainText(
+    "Empfehlung für diesen PC: 4 gleichzeitig – Obergrenze der App. Die Hardware würde mehr erlauben.",
+  );
+  const items = box.locator("li");
+  await expect(items).toHaveText([
+    "Prozessorkerne: 32 → 8 (ein Lauf je vier Kerne)",
+    /^Arbeitsspeicher: 64 GB → 18 \(die Hälfte nach 6 GB Systemreserve, je Lauf 1,6 GB\)$/,
+    "Grafikspeicher: 24 GB → 12 (je Lauf 1,9 GB)",
+    "Transkriptionsmodell: 0,7 GB",
+    "Jeder weitere Lauf lädt das Modell noch einmal: etwa 1,6 GB Arbeitsspeicher und 1,9 GB Grafikspeicher je Lauf.",
+    /wartet auf Arbeitsspeicher/,
+    /nur ein weiteres Modell/,
+    /Aufnahme hat Vorrang/,
+    /Hörbuch-Teile/,
+  ]);
+  expect(await box.evaluate((el) => getComputedStyle(el).textAlign)).toBe(
+    "left",
+  );
+  await fresh.close();
+});
+
+test('Einstellung "Gleichzeitige Transkriptionen": begrenzender Faktor wird genannt, ohne Messung bleibt Automatisch waehlbar', async ({
   page,
 }) => {
   const fresh = await page.context().newPage();
   const { dropdown } = await openParallelSetting(fresh, 1280, 1000, (p) =>
+    p.addInitScript(() => {
+      const w = window as any;
+      w.__parallelRec = {
+        ...w.__parallelRec,
+        recommended: 2,
+        limited_by: "cpu",
+        by_cpu: 2,
+        cpus: 8,
+        gpu_model: false,
+        by_vram: null,
+        vram_per_run_mb: null,
+      };
+    }),
+  );
+  await expect(dropdown).toHaveText(
+    "Automatisch – 2 auf diesem PC (empfohlen)",
+  );
+  const box = fresh.getByTestId("parallel-explanation");
+  await expect(box).toContainText(
+    "Empfehlung für diesen PC: 2 gleichzeitig, begrenzt durch die Prozessorkerne.",
+  );
+  await expect(box).toContainText(
+    "Grafikspeicher: zählt nicht, das Modell rechnet auf dem Prozessor",
+  );
+  await fresh.close();
+
+  const none = await page.context().newPage();
+  const unmeasured = await openParallelSetting(none, 1280, 1000, (p) =>
     p.addInitScript(() => ((window as any).__parallelRec = null)),
   );
-  await expect(dropdown).toHaveText("Automatisch (empfohlen)");
-  await fresh.close();
+  await expect(unmeasured.dropdown).toHaveText("Automatisch (empfohlen)");
+  await expect(none.getByTestId("parallel-explanation")).toHaveCount(0);
+  await none.close();
 });
 
-// Vorschaubilder fuer die Abnahme (LVA_SCREENSHOTS=1): 390 und 1440 px, hell und dunkel,
-// Liste geoeffnet und Tooltip; Touchziele der Liste >= 44 px.
+// Vorschaubilder fuer die Abnahme (LVA_SCREENSHOTS=1): 390 und 1440 px, hell und
+// dunkel, Liste geoeffnet und Herleitung. Touchziele per boundingBox, bei 390
+// >= 44 px; die Masse gehen nach touchziele.txt.
 for (const theme of ["light", "dark"] as const) {
   for (const width of [390, 1440]) {
     test(`Vorschau Gleichzeitige Transkriptionen ${width} ${theme}`, async ({
-      page,
+      browser,
     }) => {
-      const fresh = await page.context().newPage();
+      // Eigener Kontext (eigenes Fenster): kein Hintergrund-Tab, der nicht gemalt wird.
+      const context = await browser.newContext({
+        locale: "de-DE",
+        timezoneId: "Europe/Berlin",
+      });
+      const fresh = await context.newPage();
+      const name = `${width}-${theme === "light" ? "hell" : "dunkel"}`;
       const { title, dropdown } = await openParallelSetting(
         fresh,
         width,
@@ -568,49 +622,87 @@ for (const theme of ["light", "dark"] as const) {
           document.documentElement.clientWidth,
       );
       expect(overflow).toBeLessThanOrEqual(0);
+      const measured: string[] = [];
       const box = (await dropdown.boundingBox())!;
+      measured.push(`Auswahl ${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
       // Schmal (< 640 px): Touchziel 44 px; breit: Fluent-Standardhoehe.
       expect(box.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 30);
       await dropdown.click();
       const options = fresh.getByRole("option");
       await expect(options).toHaveCount(5);
-      if (width === 390) {
-        for (const option of await options.all()) {
-          const b = (await option.boundingBox())!;
+      for (const option of await options.all()) {
+        const b = (await option.boundingBox())!;
+        measured.push(
+          `${(await option.textContent())?.trim()} ${b.width.toFixed(0)}x${b.height.toFixed(0)}`,
+        );
+        if (width === 390)
           expect(b.height, "Touchziel").toBeGreaterThanOrEqual(44);
-        }
       }
       if (process.env.LVA_SCREENSHOTS) {
+        fs.mkdirSync(VORSCHAU, { recursive: true });
         await fresh.waitForTimeout(250);
         await fresh.screenshot({
-          path: path.join(
-            VORSCHAU,
-            `liste-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
-          ),
+          path: path.join(VORSCHAU, `liste-${name}.png`),
           animations: "disabled",
         });
+        fs.writeFileSync(
+          path.join(VORSCHAU, `touchziele-${name}.txt`),
+          measured.join("\n") + "\n",
+        );
       }
       await fresh.keyboard.press("Escape");
       await expect(options).toHaveCount(0);
-      // Begruendung der Empfehlung im Tooltip am Info-Symbol.
-      await title
-        .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")
-        .getByLabel("More information")
-        .hover();
-      await expect(
-        fresh.getByText(/Empfehlung: 4, begrenzt durch/).first(),
-      ).toBeVisible();
+      // Herleitung vollstaendig sichtbar: nach dem Scrollen liegt sie ganz im Fenster.
+      const explanation = fresh.getByTestId("parallel-explanation");
+      // Nur den Inhaltsbereich scrollen (scrollIntoView verschoebe auch den Rahmen).
+      await explanation.evaluate((el) => {
+        let box: HTMLElement | null = el.parentElement;
+        while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY))
+          box = box.parentElement;
+        if (!box) return;
+        const r = el.getBoundingClientRect();
+        const c = box.getBoundingClientRect();
+        box.scrollTop += r.bottom - c.bottom + 16;
+      });
+      const e = (await explanation.boundingBox())!;
+      const viewport = fresh.viewportSize()!;
+      expect(e.x).toBeGreaterThanOrEqual(0);
+      expect(e.x + e.width).toBeLessThanOrEqual(viewport.width);
+      // Unterkante ueber der Statusleiste (halbe Pixel aus der Skalierung erlaubt).
+      const bar = (await fresh.locator(".lv-statusbar").boundingBox())!;
+      expect(e.y + e.height).toBeLessThanOrEqual(bar.y + 1);
       if (process.env.LVA_SCREENSHOTS) {
         await fresh.waitForTimeout(250);
         await fresh.screenshot({
-          path: path.join(
-            VORSCHAU,
-            `begruendung-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
-          ),
+          path: path.join(VORSCHAU, `begruendung-${name}.png`),
           animations: "disabled",
         });
+        console.log(
+          "DBG",
+          name,
+          JSON.stringify(
+            await fresh.evaluate(() => {
+              const out: unknown[] = [];
+              let e: Element | null = document.querySelector(
+                '[data-testid="parallel-explanation"]',
+              );
+              while (e) {
+                const st = getComputedStyle(e);
+                out.push([
+                  e.tagName,
+                  e.className.toString().slice(0, 40),
+                  st.overflowY,
+                  (e as HTMLElement).scrollTop,
+                  Math.round(e.getBoundingClientRect().top),
+                ]);
+                e = e.parentElement;
+              }
+              return out;
+            }),
+          ),
+        );
       }
-      await fresh.close();
+      await context.close();
     });
   }
 }

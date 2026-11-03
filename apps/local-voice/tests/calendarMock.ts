@@ -52,14 +52,20 @@ export const installTauriMock = async (
       calendar_graph_tenant: null,
     };
     w.__settings = settings;
-    // Empfehlung "Gleichzeitige Transkriptionen" (16 Kerne, 32 GB, 12 GB GPU).
+    // Empfehlung "Gleichzeitige Transkriptionen" wie auf Patricks PC (32 Threads,
+    // 64 GB, RTX 4090 24 GB, Nemotron 0,75 GB): jede Hardware erlaubt mehr als 4.
     w.__parallelRec = {
       recommended: 4,
       max: 4,
-      limited_by: "cpu",
-      cpus: 16,
-      ram_total_mb: 32768,
-      vram_total_mb: 12288,
+      limited_by: "maximum",
+      by_cpu: 8,
+      by_ram: 18,
+      by_vram: 12,
+      ram_per_run_mb: 1637,
+      vram_per_run_mb: 1961,
+      cpus: 32,
+      ram_total_mb: 65536,
+      vram_total_mb: 24576,
       model_size_mb: 750,
       gpu_model: true,
     };

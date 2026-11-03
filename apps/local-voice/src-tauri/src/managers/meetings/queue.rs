@@ -160,6 +160,27 @@ pub enum ParallelLimitedBy {
     Vram,
 }
 
+/// Herleitung der Empfehlung: was jeder Faktor allein erlauben wuerde (ohne
+/// die Obergrenze der App) und was daraus folgt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParallelEstimate {
+    /// 1 bis [`MAX_PARALLEL`].
+    pub recommended: usize,
+    /// Der begrenzende Faktor. `Maximum` nur, wenn JEDER Faktor mehr als
+    /// [`MAX_PARALLEL`] erlauben wuerde (bei Gleichstand nennt er die Hardware).
+    pub limited_by: ParallelLimitedBy,
+    /// Laeufe nach Kernen (ein Lauf je [`CPUS_PER_RUN`]), mindestens 1.
+    pub by_cpu: usize,
+    /// Laeufe nach Arbeitsspeicher; `None` = nicht messbar.
+    pub by_ram: Option<usize>,
+    /// Laeufe nach Grafikspeicher; `None` = CPU-Modell oder nicht messbar.
+    pub by_vram: Option<usize>,
+    /// Bedarf je Lauf im Arbeitsspeicher (MB, [`ram_need_mb`]).
+    pub ram_per_run_mb: u64,
+    /// Bedarf je Lauf im Grafikspeicher (MB, [`vram_gate_mb`]); `None` = CPU-Modell.
+    pub vram_per_run_mb: Option<u64>,
+}
+
 /// Empfohlene Zahl gleichzeitiger Transkriptionen fuer diesen Rechner und
 /// dieses Modell (rein, ohne Messung):
 ///
@@ -176,39 +197,52 @@ pub fn recommended_parallel(
     hw: &HardwareCapacity,
     model_size_mb: u64,
     gpu_model: bool,
-) -> (usize, ParallelLimitedBy) {
+) -> ParallelEstimate {
     let size_mb = if model_size_mb == 0 {
         UNKNOWN_MODEL_MB
     } else {
         model_size_mb
     };
-    let mut best = (MAX_PARALLEL, ParallelLimitedBy::Maximum);
-    let mut cap = |n: usize, by: ParallelLimitedBy| {
-        let n = n.max(1);
-        if n < best.0 {
-            best = (n, by);
-        }
-    };
-    cap(hw.cpus / CPUS_PER_RUN, ParallelLimitedBy::Cpu);
-    if hw.ram_total_mb > 0 {
+    let ram_per_run_mb = ram_need_mb(size_mb);
+    let vram_per_run_mb = gpu_model.then(|| vram_gate_mb(size_mb));
+    let by_cpu = (hw.cpus / CPUS_PER_RUN).max(1);
+    let by_ram = (hw.ram_total_mb > 0).then(|| {
         let budget = hw
             .ram_total_mb
             .saturating_sub(crate::process_guard::RAM_RESERVE_MB)
             / 2;
-        cap(
-            (budget / ram_need_mb(size_mb)) as usize,
-            ParallelLimitedBy::Ram,
-        );
-    }
-    if gpu_model {
-        if let Some(vram) = hw.vram_total_mb.filter(|v| *v > 0) {
-            cap(
-                (vram / vram_gate_mb(size_mb)) as usize,
-                ParallelLimitedBy::Vram,
-            );
+        ((budget / ram_per_run_mb) as usize).max(1)
+    });
+    let by_vram = vram_per_run_mb.and_then(|need| {
+        hw.vram_total_mb
+            .filter(|v| *v > 0)
+            .map(|vram| ((vram / need) as usize).max(1))
+    });
+    let mut hardware = (by_cpu, ParallelLimitedBy::Cpu);
+    for (n, by) in [
+        (by_ram, ParallelLimitedBy::Ram),
+        (by_vram, ParallelLimitedBy::Vram),
+    ] {
+        if let Some(n) = n {
+            if n < hardware.0 {
+                hardware = (n, by);
+            }
         }
     }
-    best
+    let (recommended, limited_by) = if hardware.0 > MAX_PARALLEL {
+        (MAX_PARALLEL, ParallelLimitedBy::Maximum)
+    } else {
+        hardware
+    };
+    ParallelEstimate {
+        recommended,
+        limited_by,
+        by_cpu,
+        by_ram,
+        by_vram,
+        ram_per_run_mb,
+        vram_per_run_mb,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1219,6 +1253,13 @@ pub struct ParallelRecommendation {
     /// Hoechster einstellbarer Wert.
     pub max: u32,
     pub limited_by: ParallelLimitedBy,
+    /// Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+    pub by_cpu: u32,
+    pub by_ram: Option<u32>,
+    pub by_vram: Option<u32>,
+    /// Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+    pub ram_per_run_mb: u64,
+    pub vram_per_run_mb: Option<u64>,
     pub cpus: u32,
     pub ram_total_mb: u64,
     /// `None`: keine GPU fuer die Transkription oder nicht messbar.
@@ -1280,11 +1321,16 @@ pub fn recommendation_for_app(
     let (model_size_mb, gpu_model) = tm.meeting_model_footprint(&settings);
     let hw = probe_capacity(allowed);
     let gpu_model = gpu_model && hw.vram_total_mb.is_some();
-    let (recommended, limited_by) = recommended_parallel(&hw, model_size_mb, gpu_model);
+    let est = recommended_parallel(&hw, model_size_mb, gpu_model);
     let rec = ParallelRecommendation {
-        recommended: recommended as u32,
+        recommended: est.recommended as u32,
         max: MAX_PARALLEL as u32,
-        limited_by,
+        limited_by: est.limited_by,
+        by_cpu: est.by_cpu as u32,
+        by_ram: est.by_ram.map(|n| n as u32),
+        by_vram: est.by_vram.map(|n| n as u32),
+        ram_per_run_mb: est.ram_per_run_mb,
+        vram_per_run_mb: est.vram_per_run_mb,
         cpus: hw.cpus as u32,
         ram_total_mb: hw.ram_total_mb,
         vram_total_mb: hw.vram_total_mb,
@@ -1583,53 +1629,44 @@ mod tests {
         }
     }
 
+    fn rec(hw: HardwareCapacity, size: u64, gpu: bool) -> (usize, ParallelLimitedBy) {
+        let e = recommended_parallel(&hw, size, gpu);
+        (e.recommended, e.limited_by)
+    }
+
     #[test]
     fn recommendation_follows_cores_ram_and_vram() {
         use ParallelLimitedBy::*;
-        // Patricks Klasse: 16 Threads, 32 GB, 12 GB GPU, Nemotron 750 MB -> 4 (Gleichstand: Obergrenze).
-        assert_eq!(
-            recommended_parallel(&cap(16, 32, Some(12)), 750, true),
-            (4, Maximum)
-        );
-        // Viele Kerne: Obergrenze der App.
-        assert_eq!(
-            recommended_parallel(&cap(64, 128, Some(24)), 750, true),
-            (4, Maximum)
-        );
+        // 16 Threads, 32 GB, 12 GB GPU, Nemotron 750 MB: Kerne erlauben genau 4.
+        assert_eq!(rec(cap(16, 32, Some(12)), 750, true), (4, Cpu));
+        // Patricks PC (32 Threads, 64 GB, RTX 4090 24 GB): jede Hardware erlaubt
+        // mehr als 4 -> ehrlich die Obergrenze der App.
+        let e = recommended_parallel(&cap(32, 64, Some(24)), 750, true);
+        assert_eq!((e.recommended, e.limited_by), (4, Maximum));
+        assert_eq!(e.by_cpu, 8);
+        assert!(e.by_ram.unwrap() > 4 && e.by_vram.unwrap() > 4);
+        assert_eq!(e.ram_per_run_mb, ram_need_mb(750));
+        assert_eq!(e.vram_per_run_mb, Some(vram_gate_mb(750)));
         // Wenige Kerne.
-        assert_eq!(
-            recommended_parallel(&cap(8, 32, None), 750, false),
-            (2, Cpu)
-        );
-        assert_eq!(recommended_parallel(&cap(2, 8, None), 750, false), (1, Cpu));
+        assert_eq!(rec(cap(8, 32, None), 750, false), (2, Cpu));
+        assert_eq!(rec(cap(2, 8, None), 750, false), (1, Cpu));
         // Wenig Arbeitsspeicher: (16 GB - 6 GB Reserve) / 2 = 5 GB, je Engine ~4,5 GB.
-        assert_eq!(
-            recommended_parallel(&cap(32, 16, None), 2_900, false),
-            (1, Ram)
-        );
+        assert_eq!(rec(cap(32, 16, None), 2_900, false), (1, Ram));
         // Grosses Modell auf kleiner Karte: der Grafikspeicher begrenzt.
-        assert_eq!(
-            recommended_parallel(&cap(32, 64, Some(8)), 3_000, true),
-            (1, Vram)
-        );
-        assert_eq!(
-            recommended_parallel(&cap(32, 64, Some(16)), 3_000, true),
-            (3, Vram)
-        );
+        assert_eq!(rec(cap(32, 64, Some(8)), 3_000, true), (1, Vram));
+        assert_eq!(rec(cap(32, 64, Some(16)), 3_000, true), (3, Vram));
         // CPU-Modell: der Grafikspeicher zaehlt nicht.
-        assert_eq!(
-            recommended_parallel(&cap(32, 64, Some(4)), 3_000, false).0,
-            4
-        );
+        let cpu_model = recommended_parallel(&cap(32, 64, Some(4)), 3_000, false);
+        assert_eq!(cpu_model.recommended, 4);
+        assert_eq!((cpu_model.by_vram, cpu_model.vram_per_run_mb), (None, None));
         // Nicht messbar begrenzt nicht; unbekanntes Modell = 1 GB.
-        assert_eq!(
-            recommended_parallel(&cap(16, 0, None), 0, true),
-            (4, Maximum)
-        );
+        let unknown = recommended_parallel(&cap(16, 0, None), 0, true);
+        assert_eq!((unknown.recommended, unknown.limited_by), (4, Cpu));
+        assert_eq!((unknown.by_ram, unknown.by_vram), (None, None));
         // Nie unter 1, nie ueber MAX_PARALLEL.
         for cpus in [0, 1, 3, 4, 100] {
             for ram in [0, 1, 4, 512] {
-                let (n, _) = recommended_parallel(&cap(cpus, ram, Some(1)), 5_000, true);
+                let (n, _) = rec(cap(cpus, ram, Some(1)), 5_000, true);
                 assert!((1..=MAX_PARALLEL).contains(&n));
             }
         }

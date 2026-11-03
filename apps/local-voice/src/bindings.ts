@@ -10095,7 +10095,15 @@ recommended: number;
 /**
  * Hoechster einstellbarer Wert.
  */
-max: number; limited_by: ParallelLimitedBy; cpus: number; ram_total_mb: number; 
+max: number; limited_by: ParallelLimitedBy; 
+/**
+ * Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+ */
+by_cpu: number; by_ram: number | null; by_vram: number | null; 
+/**
+ * Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+ */
+ram_per_run_mb: number; vram_per_run_mb: number | null; cpus: number; ram_total_mb: number; 
 /**
  * `None`: keine GPU fuer die Transkription oder nicht messbar.
  */
