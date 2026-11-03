@@ -3401,7 +3401,8 @@ impl TtsManager {
         text: &str,
         target_lang: &str,
     ) -> Result<String, String> {
-        let settings = crate::settings::get_settings(&self.app);
+        let settings =
+            crate::settings::get_settings(&self.app).for_function(crate::settings::FN_READ_ALOUD);
         let translation = crate::translator::translate(&settings, text, target_lang).await?;
         self.speak_in_background(translation.clone());
         Ok(translation)
@@ -3472,7 +3473,9 @@ impl TtsManager {
                     guard.as_ref().unwrap().done.clone()
                 }
                 _ => {
-                    let settings = crate::settings::get_settings(&self.app);
+                    // Modell der Funktion „Vorlesen“ (Fusszeile), sonst das aktive.
+                    let settings = crate::settings::get_settings(&self.app)
+                        .for_function(crate::settings::FN_READ_ALOUD);
                     let gpu_busy = self.gpu_busy();
                     let tracker = Arc::new(crate::translator::JobTracker::new(target_lang, &key));
                     let (tx, rx) = tokio::sync::watch::channel(None);

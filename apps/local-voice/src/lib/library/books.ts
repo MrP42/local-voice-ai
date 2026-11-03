@@ -56,7 +56,8 @@ export type Filter =
   | "inProgress"
   | "finished"
   | "noAudio"
-  | "working";
+  | "working"
+  | "favorites";
 export type Sort = "recent" | "added" | "title" | "author";
 
 /**
@@ -103,6 +104,8 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
 export const isFinished = (v: BookView) => v.book.finished || v.fraction >= 1;
 export const isStarted = (v: BookView) => !isFinished(v) && v.fraction > 0;
 
+export const isFavorite = (v: BookView) => v.book.favorite === true;
+
 export function matchesFilter(v: BookView, filter: Filter): boolean {
   switch (filter) {
     case "notStarted":
@@ -115,6 +118,8 @@ export function matchesFilter(v: BookView, filter: Filter): boolean {
       return v.audio === "none";
     case "working":
       return v.text === "busy" || v.audio === "busy";
+    case "favorites":
+      return isFavorite(v);
     default:
       return true;
   }
@@ -142,27 +147,34 @@ const surname = (authors: string[]) => {
   return fold(name ?? "");
 };
 
-export function sortViews(views: BookView[], sort: Sort): BookView[] {
+/**
+ * Sortiert nach `sort`. Favoriten stehen davor, untereinander in derselben
+ * Ordnung (`favoritesFirst: false` z. B. für „Weitermachen“).
+ */
+export function sortViews(
+  views: BookView[],
+  sort: Sort,
+  { favoritesFirst = true }: { favoritesFirst?: boolean } = {},
+): BookView[] {
   const byTitle = (a: BookView, b: BookView) =>
     fold(a.book.title).localeCompare(fold(b.book.title), "de");
-  const sorted = [...views];
-  switch (sort) {
-    case "title":
-      return sorted.sort(byTitle);
-    case "author":
-      return sorted.sort(
-        (a, b) =>
+  const order = (a: BookView, b: BookView): number => {
+    switch (sort) {
+      case "title":
+        return byTitle(a, b);
+      case "author":
+        return (
           surname(a.book.authors).localeCompare(surname(b.book.authors), "de") ||
-          byTitle(a, b),
-      );
-    case "added":
-      return sorted.sort((a, b) => b.book.added_ms - a.book.added_ms);
-    default:
-      return sorted.sort(
-        (a, b) =>
-          b.lastUsed - a.lastUsed || b.book.added_ms - a.book.added_ms,
-      );
-  }
+          byTitle(a, b)
+        );
+      case "added":
+        return b.book.added_ms - a.book.added_ms;
+      default:
+        return b.lastUsed - a.lastUsed || b.book.added_ms - a.book.added_ms;
+    }
+  };
+  const favorite = (v: BookView) => (favoritesFirst && isFavorite(v) ? 0 : 1);
+  return [...views].sort((a, b) => favorite(a) - favorite(b) || order(a, b));
 }
 
 /** Dateipfad mit `?v=` aus dem Kern in eine Bild-URL für die WebView. */

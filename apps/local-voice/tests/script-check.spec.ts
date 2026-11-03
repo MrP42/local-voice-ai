@@ -431,9 +431,12 @@ test("replace all swaps every spot of the group and keeps the style", async ({
   await expect(editor).toHaveValue(
     "<Erzählerin> Es war einmal.\n<Leo Lausemaus> Wer bin ich?\n Ein Tag, das Fish nicht kennt.\n<Leo Lausemaus:leise> Und nochmal Bob.",
   );
-  // Sauber: das Panel bleibt offen und meldet es, keine Unterstreichung,
-  // kein Zaehler am Knopf.
-  await expect(page.getByTestId("script-check-clean")).toBeVisible();
+  // Sauber (Patrick 02.11.): das Panel schließt sich, die Fußleiste meldet es
+  // kurz; keine Unterstreichung, kein Zaehler am Knopf.
+  await expect(page.getByTestId("fuss-status")).toHaveText(
+    "Skript geprüft: keine Befunde.",
+  );
+  await expect(page.getByTestId("script-check")).toHaveCount(0);
   await expect(page.locator("[data-finding]")).toHaveCount(0);
   await expect(page.getByTestId("tts-action-menu-badge")).toHaveCount(0);
 });
@@ -463,7 +466,9 @@ test("a recommendation fixes all spots with one click", async ({ page }) => {
   await expect(editor).toHaveValue(
     "<Erzählerin> Hallo.\n<Erzählerin:leise> Psst.\n[Entspannt] Ruhig.",
   );
-  await expect(page.getByTestId("script-check-clean")).toBeVisible();
+  await expect(page.getByTestId("fuss-status")).toHaveText(
+    "Skript geprüft: keine Befunde.",
+  );
 });
 
 test("the check button runs even when the automatic check is off", async ({

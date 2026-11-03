@@ -5947,6 +5947,20 @@ async ttsTidyText(text: string) : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+ * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+ * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+ * `tts-transform-progress` mit `kind: "assist"`.
+ */
+async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };
@@ -8998,6 +9012,11 @@ metadata_source: string | null;
  * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+ * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+ */
+favorite?: boolean; 
 /**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.

@@ -194,7 +194,8 @@ impl Job {
             .ok_or("book_ai:template_missing")?;
         let selected = source::select(&page_text(dir)?, source)?;
         let sections = source::sections(&selected);
-        let settings = crate::settings::get_settings(app);
+        let settings =
+            crate::settings::get_settings(app).for_function(crate::settings::FN_READ_ALOUD);
         let provider = settings
             .active_post_process_provider()
             .map(|p| p.id.clone())
@@ -457,7 +458,7 @@ pub async fn book_ai_terms_extract(app: AppHandle, page_id: String) -> Result<Te
         .map(|(i, s)| (i, s.clone()))
         .collect();
     let skipped = sections.len() - todo.len();
-    let settings = crate::settings::get_settings(&app);
+    let settings = crate::settings::get_settings(&app).for_function(crate::settings::FN_READ_ALOUD);
     let language = crate::summarizer::language_clause(&text);
     let limit = crate::summarizer::chunk_chars(&settings);
 

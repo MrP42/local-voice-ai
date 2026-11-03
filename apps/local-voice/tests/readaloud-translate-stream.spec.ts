@@ -332,28 +332,12 @@ for (const theme of ["light", "dark"]) {
       await expect(flow).toContainText("The lighthouse had stood");
       await expect(page.locator("textarea")).toHaveCount(0);
 
-      // Modellwahl: klarer Auswahlbutton mit Präfix.
-      const modelBtn = page
-        .getByTestId("tts-translation-model")
-        .getByRole("button", { name: /^Modell wählen/ });
-      // Kurz beschriftet (Patrick 02.11.), voller Name im Namen und Tooltip.
-      await expect(modelBtn).toHaveText("Sonnet 5.5");
-      await expect(modelBtn).toHaveAttribute(
-        "aria-label",
-        "Modell wählen: Claude (Abo) · Claude Sonnet 5.5",
-      );
-      await expect(modelBtn).toHaveAttribute(
-        "title",
-        /Modell wählen: Claude \(Abo\) · Claude Sonnet 5\.5/,
-      );
-      await expect(modelBtn).toHaveAttribute("aria-haspopup", "listbox");
-      await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
-      await modelBtn.click();
-      await expect(modelBtn).toHaveAttribute("aria-expanded", "true");
-      console.log(
-        `ARIA Modellknopf haspopup=${await modelBtn.getAttribute("aria-haspopup")} expanded(offen)=${await modelBtn.getAttribute("aria-expanded")}`,
-      );
-      await page.keyboard.press("Escape");
+      // Modellwahl: nicht mehr in der Seite, sondern links unten in der
+      // Fußleiste als Modell der Funktion „Vorlesen“ (Patrick 02.11.).
+      await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
+      const modelBtn = page.getByTestId("fuss-modell-read_aloud");
+      await expect(modelBtn).toContainText("Vorlesen: Claude Sonnet 5.5");
+      await expect(modelBtn).toHaveAttribute("aria-haspopup", "menu");
       await expect(modelBtn).toHaveAttribute("aria-expanded", "false");
 
       // Fortschrittsblock.
@@ -408,7 +392,6 @@ for (const theme of ["light", "dark"]) {
           "tts-action-menu-translation",
         ])
           await expectTouch(page.getByTestId(id));
-        await expectTouch(modelBtn);
         const player = page.getByTestId("reader-player");
         for (const b of [
           player.getByRole("button", { name: "Vorheriger Satz" }),
@@ -565,20 +548,14 @@ for (const theme of ["light", "dark"]) {
     expect(sizes.length).toBeGreaterThan(8);
     expect(sizes.filter((z) => z.w < 43.5 || z.h < 43.5)).toEqual([]);
 
-    // Modellwahl: Kurzname, Liste öffnet nach oben und ist ganz sichtbar.
-    const modelBtn = page
-      .getByTestId("tts-translation-model")
-      .getByRole("button", { name: /^Modell wählen/ });
-    await expect(modelBtn).toHaveText("Sonnet 5.5");
-    expect((await modelBtn.boundingBox())!.width).toBeLessThan(160);
+    // Modellwahl (lva#229): nicht mehr in der Leiste, sondern links unten in
+    // der Fußleiste; die Liste öffnet nach oben und ist ganz sichtbar.
+    await expect(page.getByTestId("tts-translation-model")).toHaveCount(0);
+    const modelBtn = page.getByTestId("fuss-modell-read_aloud");
     await modelBtn.click();
-    const list = page.getByRole("listbox", { name: "Modell wählen:" });
-    await expect(list).toHaveAttribute("data-placement", "above");
+    const list = page.getByTestId("fuss-modell-menue-read_aloud");
     await expect(list).toBeInViewport({ ratio: 1 });
-    // Über der ganzen Leiste: Restzeit und Seitenfeld bleiben sichtbar.
-    const lb = (await list.boundingBox())!;
-    const prog = (await player.locator(".reader-player__prog").boundingBox())!;
-    expect(lb.y + lb.height).toBeLessThanOrEqual(prog.y + 0.5);
+    // Restzeit und Seitenfeld bleiben frei.
     await expect(player.getByTestId("reader-elapsed")).toBeVisible();
     for (const el of [
       player.getByTestId("reader-elapsed"),
@@ -587,19 +564,17 @@ for (const theme of ["light", "dark"]) {
       const b = (await el.boundingBox())!;
       const hit = await page.evaluate(
         ([x, y]) =>
-          !!document.elementFromPoint(x, y)?.closest('[role="listbox"]'),
+          !!document.elementFromPoint(x, y)?.closest('[role="menu"]'),
         [b.x + b.width / 2, b.y + b.height / 2],
       );
       expect(hit).toBe(false);
     }
-    await expect(list.getByRole("option")).toHaveCount(2);
     // Modelloptionen: mindestens 44 px hoch (Codex zu lva#213).
-    for (const opt of await list.getByRole("button").all()) {
+    for (const opt of await list.getByRole("menuitemradio").all()) {
       const ob = (await opt.boundingBox())!;
-      console.log(`OPTION ${ob.width.toFixed(1)}x${ob.height.toFixed(1)}`);
       expect(ob.height).toBeGreaterThanOrEqual(43.5);
     }
     await page.screenshot({ path: `${LEISTE}/modellwahl-${theme}-1920.png` });
-    await list.getByRole("option", { name: /Opus 5\.5/ }).click();
+    await list.getByRole("menuitemradio", { name: /Opus 5\.5/ }).click();
   });
 }

@@ -26,7 +26,6 @@ import { Glyph } from "../../ui/AudioPlayer";
 import { Select } from "../../ui/Select";
 import { TTS_TARGET_LANGS } from "../../../lib/constants/languages";
 import { AutoTagBar, type AutoTagBarProps } from "./tags/AutoTagBar";
-import { TranslationModelChip } from "./TranslationModelChip";
 import { counterWidthCh } from "./sentenceCounter";
 import { Button } from "../../ui/Button";
 import {
@@ -754,9 +753,6 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
         )}
       </div>
 
-      {tab === "translation" && (
-        <TranslationModelChip alignEnd={props.compact} />
-      )}
       {props.compact
         ? translateNotes.length > 0 &&
           (player
