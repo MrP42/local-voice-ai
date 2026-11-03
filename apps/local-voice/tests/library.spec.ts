@@ -1796,9 +1796,72 @@ test("die Produktseite zeigt das Kurzbuch mit Dauer und Anhören",async ({ page 
 test("ohne Kurzbuch bietet die Produktseite das Erstellen an", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
-  await expect(
-    page.getByRole("region", { name: "Kurzbuch" }).getByRole("button", { name: "Kurzbuch erstellen" }),
-  ).toBeVisible();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  await expect(card.getByRole("button", { name: "Kurzbuch erstellen" })).toBeVisible();
+  // lva#217: Sprache vorher wählbar, vorbelegt mit der App-Sprache.
+  await expect(card.getByRole("combobox", { name: "Sprache des Kurzbuchs" })).toBeVisible();
+  await expect(card).toContainText("Deutsch");
+});
+
+// lva#217: Kurzbücher in mehreren Sprachen je Buch.
+test("die Produktseite zeigt Kurzbücher je Sprache und bietet weitere an", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    const w = window as unknown as Record<string, unknown>;
+    const base = {
+      template_id: "builtin:kurzbuch",
+      template_title: "Kurzbuch",
+      source: { kind: "book" },
+      source_label: "Ganzes Buch",
+      created_ms: 1,
+      words: 400,
+      model: "ollama/x",
+    };
+    w.__kidocs = [
+      { ...base, id: "01KURZBUCHEN", title: "Kurzbuch – Ganzes Buch", modified_ms: 2, language: "en" },
+      { ...base, id: "01KURZBUCHDE", title: "Kurzbuch – Ganzes Buch", modified_ms: 1, language: "de" },
+    ];
+    w.__docText = [
+      "## Worum es geht", "", "Eine Ehe und ihre Folgen.", "",
+      "## Für wen", "", "- Leser von Klassikern", "- Schulen", "- Alle", "",
+      "## Pflicht: Die Ehe folgt der Konvention.", "", "Text. ".repeat(150), "",
+      "## Folgen: Ein Brieffund verändert alles.", "", "Text. ".repeat(150), "",
+      "## Fazit", "", "Ende.",
+    ].join("\n");
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Effi Briest“: Details öffnen" }).click();
+  const card = page.getByRole("region", { name: "Kurzbuch" });
+  const langs = card.getByRole("group", { name: "Vorhandene Sprachen" });
+  // Bevorzugt: die App-Sprache, auch wenn das englische neuer ist.
+  await expect(langs.getByRole("button", { name: "Kurzbuch auf Deutsch zeigen" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(card.getByRole("heading", { name: /Kurzbuch/ })).toContainText("Deutsch");
+  await langs.getByRole("button", { name: "Kurzbuch auf English zeigen" }).click();
+  await expect(card.getByRole("heading", { name: /Kurzbuch/ })).toContainText("English");
+  await card.getByRole("button", { name: "Weitere Sprache" }).click();
+  await expect(card.getByRole("combobox", { name: "Sprache des Kurzbuchs" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Erstellen", exact: true })).toBeVisible();
+  // Vorbelegt mit einer Sprache, die es noch nicht gibt.
+  await expect(card.locator(".library-kurzbuch__lang-select")).toContainText("Français");
+  await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/04-bibliothek-1440.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await card.scrollIntoViewIfNeeded();
+  // Mobil alle Ziele der Karte mindestens 44 × 44 px (Codex).
+  const targets = [
+    ...(await card.getByRole("button").all()),
+    card.locator(".app-select__control"),
+  ];
+  expect(targets.length).toBeGreaterThan(5);
+  for (const target of targets) {
+    const box = await target.boundingBox();
+    const name = await target.evaluate((e) => (e.textContent ?? "").trim().slice(0, 30));
+    expect(box?.height ?? 0, `Höhe von „${name}“`).toBeGreaterThanOrEqual(44);
+    expect(box?.width ?? 0, `Breite von „${name}“`).toBeGreaterThanOrEqual(44);
+  }
+  await page.screenshot({ path: "docs/vorschau/kurzbuch-sprache/05-bibliothek-390.png" });
 });
 // ---------------------------------------------------------------------------
 // lva#208: lange Einzeldatei in Abschnitten, Zusammenführen, Fortsetzen
@@ -2736,3 +2799,146 @@ test("Anhängen weiterer Teile holt ein bewusst entferntes Cover nicht zurück",
   await expect.poll(async () => (await calls(page, "library_audio_import_tracks")).length).toBe(1);
   expect(await calls(page, "library_cover_from_audio")).toEqual([]);
 });
+
+test("Favoriten: Stern oben rechts (≥ 44 px) holt das Buch nach vorn und filtert", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const cards = page.getByTestId("library-card");
+  await expect(cards).toHaveCount(3);
+  const titles = () =>
+    cards.locator(".library-title").allInnerTexts();
+  // Zuletzt gehört: Effi (40 %), dann nach Hinzufügen.
+  expect(await titles()).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
+
+  const star = page.getByTestId("library-star-book_2");
+  await expect(star).toHaveAttribute("aria-pressed", "false");
+  await expect(star).toHaveAccessibleName("Favorit: „Der Schimmelreiter“");
+  const box = (await star.boundingBox())!;
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  // Oben rechts auf dem Cover.
+  const cover = (await cards
+    .filter({ hasText: "Der Schimmelreiter" })
+    .locator(".library-card__open")
+    .boundingBox())!;
+  expect(box.y - cover.y).toBeLessThan(8);
+  expect(cover.x + cover.width - (box.x + box.width)).toBeLessThan(8);
+
+  await star.click();
+  await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+  const saved = (await calls(page, "library_save")).at(-1) as { book: { id: string; favorite: boolean } };
+  expect(saved.book).toMatchObject({ id: "book_2", favorite: true });
+  await expect.poll(titles).toEqual(["Der Schimmelreiter", "Effi Briest", "Die Verwandlung"]);
+  await page.screenshot({ path: shot("bibliothek-favorit-390.png") });
+
+  // Filter „Favoriten“ zeigt nur ihn.
+  await page.getByTestId("library-filter-favorites").click();
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("Der Schimmelreiter");
+  await expect(page.getByTestId("library-filter-favorites")).toContainText("1");
+
+  // Wieder entfernen.
+  await page.getByTestId("library-filter-all").click();
+  await page.getByTestId("library-star-book_2").click();
+  await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(titles).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
+});
+
+for (const [width, height, theme] of [
+  [390, 844, "hell"],
+  [390, 844, "dunkel"],
+  [1440, 900, "hell"],
+  [1440, 900, "dunkel"],
+] as const) {
+  test(`Stern und Auswahl ${width} ${theme}: ≥ 44 × 44 px, ohne Überlappung; Papierkorb mit Stern`, async ({
+    page,
+  }) => {
+    if (theme === "dunkel")
+      await page.addInitScript(() => {
+        (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+      });
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await page.getByTestId("library-star-book_2").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    const card = page.locator('[data-drop-book="book_2"]');
+    const r = (b: { x: number; y: number; width: number; height: number }) => ({
+      x: Math.round(b.x),
+      y: Math.round(b.y),
+      breite: Math.round(b.width),
+      hoehe: Math.round(b.height),
+    });
+    const overlap = (
+      a: { x: number; y: number; width: number; height: number },
+      b: { x: number; y: number; width: number; height: number },
+    ) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    const star = (await page.getByTestId("library-star-book_2").boundingBox())!;
+    const play = await card.locator(".library-card__play").boundingBox();
+    const cover = (await card.locator(".library-card__open").boundingBox())!;
+    expect(star.width).toBeGreaterThanOrEqual(44);
+    expect(star.height).toBeGreaterThanOrEqual(44);
+    // Stern liegt auf dem Cover der Karte, nicht über dem Abspielknopf.
+    expect(star.x).toBeGreaterThanOrEqual(cover.x - 1);
+    expect(star.x + star.width).toBeLessThanOrEqual(cover.x + cover.width + 1);
+    if (play) expect(overlap(star, play)).toBe(false);
+
+    // Auswahlmodus: Checkbox ≥ 44 × 44, Stern und Abspielknopf ausgeblendet.
+    await page.getByTestId("library-select-start").click();
+    const check = card.locator(".library-select");
+    const box = (await check.boundingBox())!;
+    // Die Auswahlleiste verschiebt das Raster; verglichen wird relativ zum Cover.
+    const coverSel = (await card.locator(".library-card__open").boundingBox())!;
+    const rel = (
+      b: { x: number; y: number; width: number; height: number },
+      c: { x: number; y: number },
+    ) => ({ x: b.x - c.x, y: b.y - c.y, width: b.width, height: b.height });
+    const starRel = rel(star, cover);
+    const boxRel = rel(box, coverSel);
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(boxRel.x).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.y).toBeGreaterThanOrEqual(-1);
+    expect(boxRel.x + boxRel.width).toBeLessThanOrEqual(coverSel.width + 1);
+    await expect(page.getByTestId("library-star-book_2")).toHaveCount(0);
+    await expect(card.locator(".library-card__play")).toHaveCount(0);
+    // Checkbox (links oben) und Stern (rechts oben) teilen sich keine Fläche.
+    expect(overlap(boxRel, starRel)).toBe(false);
+    if (play) expect(overlap(boxRel, rel(play, cover))).toBe(false);
+    for (const other of await page.locator(".library-select").all()) {
+      if ((await other.boundingBox())!.x === box.x && (await other.boundingBox())!.y === box.y) continue;
+      expect(overlap(box, (await other.boundingBox())!)).toBe(false);
+    }
+    await check.locator("input").check();
+    await page.screenshot({ path: shot(`auswahl-stern-${width}-${theme}.png`) });
+    writeFileSync(
+      shot(`stern-auswahl-${width}-${theme}.json`),
+      JSON.stringify(
+        {
+          breite: width,
+          theme,
+          hinweis: "x/y relativ zur linken oberen Ecke des Covers",
+          cover: { breite: Math.round(cover.width), hoehe: Math.round(cover.height) },
+          stern: r(starRel),
+          auswahl: r(boxRel),
+          abspielen: play && r(rel(play, cover)),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+
+    // Papierkorb mit Stern: anderen Eintrag entfernen, Favorit bleibt mit Stern sichtbar.
+    await page.getByTestId("library-select-end").click();
+    await page.getByTestId("library-more-book_1").click();
+    await page.getByTestId("library-remove-book_1").click();
+    await page.getByTestId("library-remove-confirm").click();
+    await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("library-trash-open").click();
+    await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+    await page.screenshot({ path: shot(`papierkorb-stern-${width}-${theme}.png`) });
+  });
+}

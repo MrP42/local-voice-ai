@@ -550,8 +550,15 @@ impl TtsCore {
     ///   Sprechermarker bleiben dabei unberuehrt.
     fn spoken_text(engine: &EngineImpl, text: &str) -> String {
         let tagless;
-        let text = if engine.caps().style_tags {
+        let caps = engine.caps();
+        let text = if caps.style_tags {
             text
+        } else if caps.pace_tags {
+            // Phonon: Tempo-Tags bleiben stehen (Adapter macht daraus
+            // `duration_delta`), alle anderen Tags fallen weg. Sie gehen damit
+            // auch in den Cache-Schluessel ein: langsamer gesprochen ist anderes Audio.
+            tagless = protocol::strip_tag_spans_keep_pace(text);
+            tagless.as_str()
         } else {
             tagless = protocol::strip_tag_spans(text);
             tagless.as_str()
@@ -3401,7 +3408,8 @@ impl TtsManager {
         text: &str,
         target_lang: &str,
     ) -> Result<String, String> {
-        let settings = crate::settings::get_settings(&self.app);
+        let settings =
+            crate::settings::get_settings(&self.app).for_function(crate::settings::FN_READ_ALOUD);
         let translation = crate::translator::translate(&settings, text, target_lang).await?;
         self.speak_in_background(translation.clone());
         Ok(translation)
@@ -3472,7 +3480,9 @@ impl TtsManager {
                     guard.as_ref().unwrap().done.clone()
                 }
                 _ => {
-                    let settings = crate::settings::get_settings(&self.app);
+                    // Modell der Funktion „Vorlesen“ (Fusszeile), sonst das aktive.
+                    let settings = crate::settings::get_settings(&self.app)
+                        .for_function(crate::settings::FN_READ_ALOUD);
                     let gpu_busy = self.gpu_busy();
                     let tracker = Arc::new(crate::translator::JobTracker::new(target_lang, &key));
                     let (tx, rx) = tokio::sync::watch::channel(None);
@@ -6337,6 +6347,7 @@ mod tests {
         fn caps(&self) -> EngineCaps {
             EngineCaps {
                 style_tags: self.style_tags.load(Ordering::SeqCst),
+                pace_tags: false,
                 cloning: false,
                 voice_switching: self.voice_switching.load(Ordering::SeqCst),
                 streaming: false,

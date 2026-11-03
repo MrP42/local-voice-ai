@@ -112,7 +112,7 @@ export const ReaderContents: React.FC<ReaderContentsProps> = ({
                     }}
                     data-testid="reader-contents-entry"
                   >
-                    <span className="min-w-0 flex-1 truncate" title={e.title}>
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]" title={e.title}>
                       {e.title}
                     </span>
                     {page !== null && page !== undefined && (

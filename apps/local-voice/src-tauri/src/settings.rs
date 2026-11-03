@@ -288,10 +288,17 @@ pub const FN_VOICE_SPEAKER: &str = "voice_speaker";
 pub const FN_MEETING_PROTOCOL: &str = "meeting_protocol";
 /// KI-Nachbearbeitung des Diktats.
 pub const FN_DICTATION_REFINE: &str = "dictation_refine";
+/// Vorlesen: Uebersetzen und KI-Dokumente (Zusammenfassung, Begriffe).
+pub const FN_READ_ALOUD: &str = "read_aloud";
 
 /// Funktionen mit eigener Modellwahl. Der Denker des Gespraechs hat seine Wahl
 /// schon in den Gespraechseinstellungen (`denkerModelId`).
-pub const LLM_FUNCTIONS: [&str; 3] = [FN_VOICE_SPEAKER, FN_MEETING_PROTOCOL, FN_DICTATION_REFINE];
+pub const LLM_FUNCTIONS: [&str; 4] = [
+    FN_VOICE_SPEAKER,
+    FN_MEETING_PROTOCOL,
+    FN_DICTATION_REFINE,
+    FN_READ_ALOUD,
+];
 
 fn default_llm_auto_update() -> String {
     "ask".to_string()

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { titleId } from "../src/lib/kurzbuch/kurzbuch";
 
 // Vorlesen: Übersetzung und Zusammenfassung zeigen Fortschritt und lassen sich
 // abbrechen, haben ein Menü (Skript prüfen …), und die Sprecher der Übersetzung
@@ -73,7 +74,9 @@ test.beforeEach(async ({ page }) => {
         convertFileSrc: (path: string) => path,
         invoke: async (cmd: string, args?: Record<string, unknown>) => {
           (w.__calls as unknown[]).push([cmd, args]);
-          if (cmd === "get_app_settings" || cmd === "get_default_settings") return JSON.parse(JSON.stringify(settings));
+          if (cmd === "get_app_settings" || cmd === "get_default_settings")
+            // window.__theme: dunkle Belegbilder (lva#217).
+            return JSON.parse(JSON.stringify({ ...settings, ...(w.__theme ? { theme: w.__theme } : {}) }));
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.14";
           if (cmd.includes("permission")) return true;
@@ -108,6 +111,7 @@ test.beforeEach(async ({ page }) => {
                 model: "qwen3-8b",
               }
             );
+          if (cmd === "page_state_load") return (w.__pageState as string | undefined) ?? null;
           if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
           // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
           if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
@@ -222,6 +226,8 @@ test("im Reiter KI-Dokumente gibt es das Menü, den Erstellen-Dialog und den For
     pageId: "p1",
     source: { kind: "book" },
     templateId: "builtin:eine_seite",
+    // lva#217: vorbelegt mit der App-Sprache.
+    targetLang: "de",
   });
 
   const doc = {
@@ -656,6 +662,187 @@ test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernauss
     .toBe(true);
 });
 
+// Rahmen bleibt stehen (Patrick 02.11.): Gehörte Kernaussagen tragen ein
+// unsichtbares „Gehört.“ (sr-only, absolut). Tief unten in der Liste ragte es
+// aus dem Scrollbereich und machte das Dokument scrollbar – eine zweite
+// Scrollleiste ganz rechts schob Titelleiste und Navigation mit; mit
+// „Wach halten“ wanderte derselbe Überhang in die Lesespalte. Nur die
+// Inhaltsbereiche dürfen scrollen.
+const KURZBUCH_LANG = [
+  "## Worum es geht",
+  "",
+  "Ein Buch über Geld und Vermögen. ".repeat(6),
+  "",
+  "## Für wen",
+  "",
+  "- Angestellte",
+  "- Selbständige",
+  "",
+  ...Array.from({ length: 12 }, (_, i) => [
+    `## Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    "",
+    "Ein Absatz, der vorgelesen wird und die Seite füllt. ".repeat(12),
+    "",
+  ]).flat(),
+  "## Fazit",
+  "",
+  "Kleine Schritte tragen weit.",
+].join("\n");
+
+const shellStill = async (page: Page, label: string) => {
+  // Abnahmebilder nur auf Wunsch (LVA_SHOTS=Ordner).
+  if (process.env.LVA_SHOTS)
+    await page.screenshot({
+      path: `${process.env.LVA_SHOTS}/${label.replace(/\s+/g, "-")}.png`,
+    });
+  const m = await page.evaluate(() => {
+    const doc = document.scrollingElement as HTMLElement;
+    const frame = document.querySelector<HTMLElement>(".reader-frame");
+    const fill = document.querySelector<HTMLElement>(".workspace-main--fill");
+    return {
+      docOver: doc.scrollHeight - doc.clientHeight,
+      docTop: doc.scrollTop,
+      titlebarTop: document.querySelector(".lv-titlebar")!.getBoundingClientRect().top,
+      // Breit füllt die Lesespalte ihren Bereich und scrollt nicht als Ganzes;
+      // schmal (≤ 1100 px) scrollt der Hauptbereich, die Spalte wächst mit.
+      frameOver:
+        frame && fill && getComputedStyle(fill).overflowY === "hidden"
+          ? frame.scrollHeight - frame.clientHeight
+          : 0,
+      frameTop: frame?.scrollTop ?? 0,
+    };
+  });
+  expect(m.docOver, `${label}: Dokument ragt über das Fenster`).toBeLessThanOrEqual(0);
+  expect(m.docTop, `${label}: Dokument gescrollt`).toBe(0);
+  expect(m.titlebarTop, `${label}: Titelleiste verschoben`).toBe(0);
+  expect(m.frameOver, `${label}: Lesespalte scrollbar`).toBeLessThanOrEqual(1);
+  expect(m.frameTop, `${label}: Lesespalte gescrollt`).toBe(0);
+};
+
+test("Kurzbuch mit gehörten Kernaussagen: Dokument und Rahmen scrollen nie (1440 und 390 px)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+  };
+  const heard = Array.from({ length: 12 }, (_, i) =>
+    titleId(
+      `Schlagwort ${i + 1}: Eine lange Kernaussage, die in der schmalen Spalte über mehrere Zeilen umbricht.`,
+    ),
+  );
+  await page.addInitScript(
+    ([docs, text, key, heard]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      window.localStorage.setItem(
+        key as string,
+        JSON.stringify({ heard, updated: Date.now() }),
+      );
+    },
+    [[doc], KURZBUCH_LANG, `lva.ui.progress.kurzbuch:p1:${doc.id}`, heard] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".kurzbuch__text .sr-only")).toHaveCount(12);
+  await shellStill(page, "1440");
+  // „Wach halten“ verschiebt die Lesespalte; der Rahmen bleibt trotzdem stehen.
+  await page.getByTestId("reader-keep-awake").click();
+  await shellStill(page, "1440 wach");
+  // Fokus und scrollIntoView ganz unten in der Liste dürfen nur die Liste bewegen.
+  const toggle = panel.getByRole("button", { name: "Kernaussagen und Details zeigen" });
+  if (await toggle.isVisible()) await toggle.click();
+  await panel.getByRole("button", { name: "Kernaussage 12 von 12 vorlesen" }).focus();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "1440 Fokus unten");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toBeVisible();
+  await page.evaluate(() =>
+    document.querySelector(".kurzbuch__item:last-child")?.scrollIntoView({ block: "end" }),
+  );
+  await shellStill(page, "390");
+});
+
+// Patrick 02.11.2026: das Kurzbuch öffnete immer im Bearbeiten-Modus. Ein
+// geöffnetes Dokument zeigt die gemerkte Ansicht (Standard: Lesen).
+const kurzbuchDoc = {
+  ...kiDoc(1, "builtin:kurzbuch"),
+  title: "Kurzbuch – Ganzes Buch",
+  template_title: "Kurzbuch",
+};
+const kurzbuchPanel = (page: Page) =>
+  page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+const viewButton = (page: Page, name: "Lesen" | "Bearbeiten") =>
+  page.getByRole("group", { name: "Ansicht" }).getByRole("button", { name });
+const openKurzbuchCard = (page: Page) =>
+  page.getByTestId(`kidocs-card-${kurzbuchDoc.id}`).locator("button").first().click();
+
+test("das Kurzbuch öffnet in der gemerkten Ansicht, auch nach Zurück und Wiederöffnen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[kurzbuchDoc], KURZBUCH] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await openKurzbuchCard(page);
+  // Ohne Klick auf „Lesen“: die Standardansicht gilt.
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
+  // Bearbeiten wählen, zurück zur Liste, wieder öffnen: bleibt Bearbeiten.
+  await viewButton(page, "Bearbeiten").click();
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(page.getByTestId("kidoc-head")).toBeVisible();
+  await expect(viewButton(page, "Bearbeiten")).toHaveAttribute("aria-pressed", "true");
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  // Und Lesen wieder gewählt: bleibt Lesen.
+  await viewButton(page, "Lesen").click();
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(kurzbuchPanel(page)).toBeVisible();
+});
+
+test("ein beim Start offenes Kurzbuch steht im Lesemodus", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text, state]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      w.__pageState = state;
+    },
+    [
+      [kurzbuchDoc],
+      KURZBUCH,
+      JSON.stringify({ text: ORIGINAL, tab: "summary", kiDoc: kurzbuchDoc.id }),
+    ] as const,
+  );
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
+});
+
 test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumentansicht", async ({
   page,
 }) => {
@@ -690,6 +877,228 @@ test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumenta
   ).toHaveCount(0);
 });
 
+// lva#217: Sprache des Ergebnisses wählbar, z. B. ein deutsches Kurzbuch zu
+// einem englischen Buch; die Sprache steht am Ergebnis.
+const KURZBUCH_EN = [
+  "## What it is about",
+  "",
+  "A book about habits and how they form.",
+  "",
+  "## Who it is for",
+  "",
+  "- People with good intentions",
+  "- Teams",
+  "- Learners",
+  "",
+  "## Small start: A habit begins with two minutes.",
+  "",
+  "How do you start? Small. ".repeat(20),
+  "",
+  "## Relapse: One missed day is not failure.",
+  "",
+  "What to do after a bad day? Keep going. ".repeat(20),
+  "",
+  "## Conclusion",
+  "",
+  "Small steps carry far.",
+].join("\n");
+
+test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  const dialog = page.getByRole("dialog");
+  const lang = dialog.getByRole("combobox", { name: "Sprache" });
+  await expect(page.getByTestId("kidoc-lang")).toContainText("Deutsch");
+  await lang.click();
+  await expect(page.getByRole("option", { name: "Wie das Buch" })).toBeVisible();
+  await page.getByRole("option", { name: "English" }).click();
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/01-dialog-1440.png",
+  });
+  await page.getByTestId("kidoc-create").click();
+  const call = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(call[1]).toMatchObject({ targetLang: "en" });
+  // Fertigmeldung bei 390 px (Codex): Belegbild mit sichtbarer Meldung.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await finish(page, "book_ai_summarize", kiDoc(1, "builtin:eine_seite"));
+  const toast = page.locator("[data-sonner-toast]");
+  await expect(toast).toBeVisible();
+  await expect(toast).toContainText("ist fertig");
+  // Einblendung abwarten, damit das Belegbild die fertige Meldung zeigt.
+  await page.waitForTimeout(600);
+  // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
+  // sichtbar, Rechtecke ueberlappen nicht.
+  const createBtn = page.getByTestId("tts-action-summarize");
+  await createBtn.scrollIntoViewIfNeeded();
+  await expect(createBtn).toBeVisible();
+  await expect(toast).toBeVisible();
+  const b = (await createBtn.boundingBox())!;
+  const m = (await toast.boundingBox())!;
+  expect(b.y + b.height <= m.y || m.y + m.height <= b.y || b.x + b.width <= m.x || m.x + m.width <= b.x).toBe(true);
+  expect(b.y + b.height).toBeLessThanOrEqual(844);
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
+  });
+
+  // Die Wahl gilt als Vorbelegung für das nächste Mal. Der Dialog räumt
+  // alte Meldungen ab, damit sie seine Knöpfe nicht verdecken (Codex).
+  await page.getByTestId("tts-action-summarize").click();
+  await expect(toast).toHaveCount(0);
+  await expect(page.getByTestId("kidoc-lang")).toContainText("English");
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/02-dialog-390.png",
+  });
+  await lang.click();
+  await page.getByRole("option", { name: "Wie das Buch" }).click();
+  await page.getByTestId("kidoc-create").click();
+  const again = (await calls(page))
+    .filter(([c]) => c === "book_ai_summarize")
+    .at(-1)!;
+  expect(again[1]).toMatchObject({ targetLang: null });
+});
+
+test("ein englisches Kurzbuch wird erkannt und zeigt seine Sprache (lva#217)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doc = {
+    ...kiDoc(1, "builtin:kurzbuch"),
+    title: "Kurzbuch – Ganzes Buch",
+    template_title: "Kurzbuch",
+    language: "en",
+  };
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[doc], KURZBUCH_EN] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await expect(card).toContainText("Ganzes Buch · English");
+  await card.locator("button").first().click();
+  await expect(page.getByTestId("kidoc-head")).toContainText(
+    "Kurzbuch · Ganzes Buch · English",
+  );
+  await page
+    .getByRole("group", { name: "Ansicht" })
+    .getByRole("button", { name: "Lesen" })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Überblick des Kurzbuchs",
+  });
+  await expect(panel).toContainText("2 Kernaussagen");
+  await expect(page.getByTestId("kurzbuch-lang")).toHaveText(
+    "Sprache: English",
+  );
+  await page.screenshot({
+    path: "docs/vorschau/kurzbuch-sprache/03-kurzbuch-englisch-1440.png",
+  });
+});
+
+// lva#217 (Codex): lange Titel brechen in Leiste und Überlaufmenü um, hell
+// und dunkel, statt mit „…“ zu enden.
+const LONG_TITLE =
+  "Obstacles and action: Fear, cynicism, laziness, bad habits and arrogance hold people back, and a strong reason helps";
+const KURZBUCH_LONG = KURZBUCH_EN.replace(
+  "Relapse: One missed day is not failure.",
+  LONG_TITLE,
+);
+
+for (const theme of ["light", "dark"] as const) {
+  test(`ein langer Kernaussagen-Titel bricht in der Wiedergabe um (${theme}, lva#217)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    const doc = {
+      ...kiDoc(1, "builtin:kurzbuch"),
+      title: "Kurzbuch – Ganzes Buch",
+      template_title: "Kurzbuch",
+      language: "en",
+    };
+    await page.addInitScript(
+      ([docs, text, theme]) => {
+        const w = window as unknown as Record<string, unknown>;
+        w.__kidocs = docs;
+        w.__docText = text;
+        w.__theme = theme;
+      },
+      [[doc], KURZBUCH_LONG, theme] as const,
+    );
+    await open(page);
+    await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+    await page.getByTestId(`kidocs-card-${doc.id}`).locator("button").first().click();
+    await page
+      .getByRole("group", { name: "Ansicht" })
+      .getByRole("button", { name: "Lesen" })
+      .click();
+    const panel = page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+    await expect(panel).toContainText(LONG_TITLE.split(": ")[1]);
+    await panel.getByRole("button", { name: "Kernaussage 2 von 2 vorlesen" }).click();
+    await expect
+      .poll(async () => (await calls(page)).some(([c]) => c.startsWith("tts_speak")))
+      .toBe(true);
+    await emit(page, "tts-speak-progress", { position: 9, total: 30 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 9,
+      text: "What to do after a bad day? Keep going.",
+    });
+    const chapter = page.getByTestId("reader-chapter");
+    await expect(chapter).toHaveText(LONG_TITLE);
+    // Vollständig sichtbar: kein Abschneiden in der Leiste.
+    const cut = await chapter
+      .locator(".reader-player__chapter-text")
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cut).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/06-wiedergabe-langer-titel-1920-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Lesebereich ohne Menü (Codex): Überschrift und Text vollständig in
+    // der Seite; Nachbarseiten liegen außerhalb des sichtbaren Rahmens.
+    const book = page.getByTestId("reader-book");
+    // Nach dem Umbruch auf 390 px paginiert der Reader neu: abwarten.
+    const clipped = () => book.evaluate((root) => {
+      const frame = root.getBoundingClientRect();
+      const out: string[] = [];
+      for (const el of root.querySelectorAll("h1, h2, h3, p")) {
+        for (const r of el.getClientRects()) {
+          const visible = r.right > frame.left && r.left < frame.right;
+          const inside = r.left >= frame.left - 1 && r.right <= frame.right + 1;
+          if (visible && !inside) out.push((el.textContent ?? "").slice(0, 40));
+        }
+      }
+      return out;
+    });
+    await expect.poll(clipped, { message: "angeschnittene Zeilen" }).toEqual([]);
+    await book.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/09-lesebereich-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+    await page.getByTestId("reader-more").click();
+    const where = page.getByTestId("reader-more-where");
+    await expect(where).toContainText(LONG_TITLE);
+    const cutMenu = await where
+      .locator("div")
+      .first()
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1);
+    expect(cutMenu).toBe(false);
+    await page.screenshot({
+      path: `docs/vorschau/kurzbuch-sprache/07-wiedergabe-langer-titel-390-${theme === "dark" ? "dunkel" : "hell"}.png`,
+    });
+  });
+}
 for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Prognose und danach den Verbrauch (${width} px)`, async ({ page }) => {
   const shots = "docs/vorschau/token-anzeige";
   const wide = width >= 1000;

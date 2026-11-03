@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<style>
+:root{--bg:#0B0B0C;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--accent:#FFDD00;--brand:#FFDD00;--ink:#111418;--bar:#1C1C1E;--card:rgba(128,128,128,.14);--border:rgba(128,128,128,.2);--sheet:#1C1C1E;--group:#2C2C2E;--sel:rgba(255,221,0,.16);--track:rgba(128,128,128,.35)}
+.light{--bg:#F8F9FB;--text:#1F2937;--sec:rgba(31,41,55,.72);--accent:#111418;--bar:#EEF0F3;--card:rgba(128,128,128,.12);--sheet:#F2F2F7;--group:#FFFFFF;--sel:rgba(255,221,0,.22);--track:rgba(128,128,128,.3)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:390px;height:844px;overflow:hidden;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;font-size:calc(17px*var(--dt,1));position:relative;-webkit-font-smoothing:antialiased}
+.status{height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 30px 0 38px;font-weight:600;font-size:17px}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:124px;height:36px;border-radius:20px;background:#000}
+.home{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:134px;height:5px;border-radius:3px;background:var(--text);z-index:20}
+.hdr{display:flex;align-items:center;height:52px;padding:0 8px;border-bottom:.5px solid var(--border)}
+.hdr .b{width:44px;height:44px;display:flex;align-items:center;justify-content:center}
+.hdr .t{flex:1;text-align:center;line-height:1.2}
+.hdr .t div:first-child{font-size:calc(15px*var(--dt,1));font-weight:600}
+.hdr .t div:last-child{font-size:calc(12px*var(--dt,1));color:var(--sec)}
+svg{display:block}
+.main{position:absolute;top:106px;bottom:var(--barh);left:0;right:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:0 24px}
+.cover{width:min(286px,calc(100% - 40px));aspect-ratio:1;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:hidden;position:relative;flex-shrink:1;max-height:calc(100% - 90px)}
+.cv{position:absolute;inset:0;background:linear-gradient(160deg,#21445a 0%,#1a2f45 45%,#0f1b2b 100%)}
+.cv .sea{position:absolute;left:0;right:0;bottom:0;height:38%;background:linear-gradient(180deg,#2b5c74,#122a3b)}
+.cv .sun{position:absolute;width:90px;height:90px;border-radius:50%;background:#f0c65a;left:58%;top:30%;box-shadow:0 0 60px rgba(240,198,90,.6)}
+.cv .ti{position:absolute;left:18px;right:18px;top:18px;font-family:'DejaVu Serif',Georgia,serif;color:#f6efe0}
+.cv .ti b{display:block;font-size:30px;letter-spacing:.5px}
+.cv .ti span{display:block;font-size:13px;letter-spacing:2px;text-transform:uppercase;margin-top:4px;opacity:.85}
+.cv .au{position:absolute;left:18px;bottom:14px;font-size:12px;letter-spacing:2px;color:#f6efe0;text-transform:uppercase}
+.btitle{font-size:calc(20px*var(--dt,1));font-weight:700;text-align:center}
+.by{font-size:calc(15px*var(--dt,1));color:var(--sec);text-align:center;margin-top:3px}
+.bar{position:absolute;left:0;right:0;bottom:0;background:var(--bar);padding:10px 20px 30px;display:flex;flex-direction:column;gap:8px}
+.chap{display:flex;align-items:center;gap:10px;min-height:48px;padding:0 12px;border-radius:12px;background:var(--card)}
+.chap .l{flex:1;min-width:0;line-height:1.25}
+.chap .l div:first-child{font-size:calc(12px*var(--dt,1));color:var(--sec)}
+.chap .l div:last-child{font-size:calc(15px*var(--dt,1));font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slider{position:relative;height:28px}
+.slider .tr{position:absolute;left:0;right:0;top:12px;height:4px;border-radius:2px;background:var(--track)}
+.slider .fi{position:absolute;left:0;top:12px;height:4px;border-radius:2px;background:var(--accent)}
+.slider .kn{position:absolute;top:2px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.35);transform:translateX(-12px)}
+.row{display:flex;justify-content:space-between;align-items:center;font-size:calc(12px*var(--dt,1));color:var(--sec);font-variant-numeric:tabular-nums}
+.thin{height:3px;border-radius:2px;background:var(--track);position:relative;margin-top:2px}
+.thin i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent);opacity:.75}
+.ctr{display:flex;justify-content:space-between;align-items:center}
+.cb{min-width:56px;min-height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:calc(11px*var(--dt,1));color:var(--text)}
+.play{width:64px;height:64px;border-radius:50%;background:var(--ink);display:flex;align-items:center;justify-content:center}
+.light .play{background:#111418}
+.rate{font-size:calc(17px*var(--dt,1));font-weight:600}
+/* Mitlesen */
+.txt{position:absolute;top:106px;bottom:calc(var(--barh) + 24px);left:0;right:0;overflow:hidden;padding:12px 12px 0;font-family:'DejaVu Serif',Georgia,serif;font-size:calc(17px*var(--dt,1));line-height:1.55}
+.txt p{padding:10px;border-radius:10px;margin-bottom:4px}
+.txt p.cur{background:rgba(255,255,0,.28)}
+.txt h3{padding:10px;font-size:calc(20px*var(--dt,1))}
+.hint{position:absolute;left:0;right:0;bottom:var(--barh);text-align:center;font-size:12px;color:var(--sec);padding:4px;background:var(--bg)}
+/* Sheet */
+.dim{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:5}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:var(--st);background:var(--sheet);border-radius:14px 14px 0 0;z-index:10;overflow:hidden}
+.grab{width:36px;height:5px;border-radius:3px;background:rgba(128,128,128,.5);margin:6px auto 0}
+.nav{display:flex;align-items:center;height:44px;padding:0 16px;font-weight:600;font-size:calc(17px*var(--dt,1))}
+.nav .c{flex:1;text-align:center}
+.nav .d{color:var(--accent);font-weight:600;width:60px;text-align:right}
+.nav .s{width:60px}
+.dark .nav .d{color:#FFDD00}
+.grp{margin:10px 16px;background:var(--group);border-radius:12px;overflow:hidden}
+.gh{margin:18px 32px 6px;font-size:calc(13px*var(--dt,1));color:var(--sec);text-transform:uppercase;letter-spacing:.3px}
+.gf{margin:6px 32px 0;font-size:calc(13px*var(--dt,1));color:var(--sec)}
+.li{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 16px;border-bottom:.5px solid var(--border)}
+.li:last-child{border-bottom:0}
+.li.cur{background:var(--sel)}
+.li .n{width:30px;text-align:center;color:var(--sec);font-size:calc(15px*var(--dt,1));font-variant-numeric:tabular-nums;flex-shrink:0;display:flex;justify-content:center}
+.li .m{flex:1;min-width:0}
+.li .m .tt{font-size:calc(16px*var(--dt,1))}
+.li .m .sb{font-size:calc(12px*var(--dt,1));color:var(--sec);margin-top:2px}
+.li.done .tt{color:var(--sec)}
+.li.cur .tt{font-weight:600}
+.li .du{font-size:calc(13px*var(--dt,1));color:var(--sec);font-variant-numeric:tabular-nums}
+.pv{height:4px;border-radius:2px;background:var(--track);position:relative;margin:5px 0 3px}
+.pv i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent)}
+.sum{display:flex;gap:14px;padding:12px 16px}
+.sum .cover{width:286px;height:286px;zoom:.224;border-radius:18px;box-shadow:none;flex-shrink:0}
+
+.kv{display:flex;justify-content:space-between;gap:16px;min-height:44px;align-items:center;padding:6px 16px;border-bottom:.5px solid var(--border);font-size:calc(16px*var(--dt,1))}
+.kv:last-child{border-bottom:0}
+.kv span:last-child{color:var(--sec);text-align:right}
+.desc{padding:12px 16px;font-size:calc(16px*var(--dt,1));line-height:1.4}
+.more{padding:0 16px 12px;color:var(--accent);font-weight:500;min-height:44px;display:flex;align-items:center}
+.dark .more{color:#FFDD00}
+.scr{position:absolute;top:56px;left:0;right:0;bottom:0;overflow:hidden}
+.touch .tch{outline:2px dashed #e5484d;outline-offset:-2px}
+</style></head>
+<body>
+<div class="status"><span>9:41</span><span style="display:flex;gap:6px;align-items:center"><svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5" width="3" height="7" rx="1" fill="currentColor"/><rect x="10" y="2.5" width="3" height="9.5" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg><svg width="26" height="12" viewBox="0 0 26 12"><rect x=".5" y=".5" width="22" height="11" rx="3" fill="none" stroke="currentColor" opacity=".5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="currentColor"/></svg></span></div>
+<div class="island"></div>
+<div id="app"></div>
+<div class="home"></div>
+<script>
+const q=new URLSearchParams(location.search);
+const theme=q.get('theme')||'dark', screen=q.get('screen')||'player';
+document.body.classList.add(theme); if(q.get('touch'))document.body.classList.add('touch');
+if(q.get('dt'))document.body.style.setProperty('--dt',q.get('dt'));
+const dt=+(q.get('dt')||1);
+document.body.style.setProperty('--barh',(dt>1?340:292)+'px');
+const I={
+ down:'<svg width="20" height="12" viewBox="0 0 20 12"><path d="M2 2l8 8 8-8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+ info:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="7.5" r="1.3" fill="currentColor"/><path d="M12 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+ list:'<svg width="20" height="16" viewBox="0 0 20 16"><g fill="var(--accent)"><circle cx="2" cy="2" r="1.8"/><circle cx="2" cy="8" r="1.8"/><circle cx="2" cy="14" r="1.8"/></g><g stroke="var(--accent)" stroke-width="2.4" stroke-linecap="round"><path d="M7 2h12M7 8h12M7 14h12"/></g></svg>',
+ up:'<svg width="12" height="8" viewBox="0 0 12 8"><path d="M1 7l5-5 5 5" fill="none" stroke="var(--sec)" stroke-width="2" stroke-linecap="round"/></svg>',
+ prevch:'<svg width="22" height="18" viewBox="0 0 22 18"><rect x="1" y="1" width="3" height="16" rx="1" fill="currentColor"/><path d="M21 2v14L7 9z" fill="currentColor"/></svg>',
+ nextch:'<svg width="22" height="18" viewBox="0 0 22 18"><rect x="18" y="1" width="3" height="16" rx="1" fill="currentColor"/><path d="M1 2v14l14-7z" fill="currentColor"/></svg>',
+ back15:'<svg width="28" height="28" viewBox="0 0 28 28"><path d="M8 6.5A10.5 10.5 0 1 1 3.5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.5 2.5L5 7l5 1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="14.5" y="19" font-size="9.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="Inter">15</text></svg>',
+ fwd15:'<svg width="28" height="28" viewBox="0 0 28 28"><path d="M20 6.5A10.5 10.5 0 1 0 24.5 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19.5 2.5L23 7l-5 1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="13.5" y="19" font-size="9.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="Inter">15</text></svg>',
+ play:'<svg width="26" height="28" viewBox="0 0 26 28"><path d="M3 2v24l21-12z" fill="#FFDD00"/></svg>',
+ pause:'<svg width="24" height="26" viewBox="0 0 24 26"><rect x="3" y="2" width="6" height="22" rx="1.5" fill="#FFDD00"/><rect x="15" y="2" width="6" height="22" rx="1.5" fill="#FFDD00"/></svg>',
+ toc:'<svg width="24" height="22" viewBox="0 0 24 22"><rect x="1" y="1" width="22" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 7h12M6 11h12M6 15h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+ text:'<svg width="22" height="18" viewBox="0 0 22 18"><path d="M1 2h20M1 7h14M1 12h20M1 17h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+ photo:'<svg width="24" height="20" viewBox="0 0 24 20"><rect x="1" y="1" width="22" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 16l6-6 4 4 3-3 5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="16.5" cy="6" r="2" fill="currentColor"/></svg>',
+ moon:'<svg width="22" height="22" viewBox="0 0 22 22"><path d="M19 13.5A8.5 8.5 0 1 1 8.5 3a7 7 0 0 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+ moonf:'<svg width="22" height="22" viewBox="0 0 22 22"><path d="M19 13.5A8.5 8.5 0 1 1 8.5 3a7 7 0 0 0 10.5 10.5z" fill="currentColor"/></svg>',
+ check:'<svg width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="10" fill="var(--sec)"/><path d="M6.5 11.5l3 3 6-6.5" fill="none" stroke="var(--sheet)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+ spk:'<svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="var(--accent)"/><path d="M6 10h3l4-3.5v11L9 14H6z" fill="var(--sheet)"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5" stroke="var(--sheet)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>'
+};
+// Effi Briest (Fontane, gemeinfrei): 36 Kapitel, Hörzeit synthetisch.
+const total=9*3600+52*60+42;
+const lens=[1012,968,1104,822,947,1188,1020,903,995,1066,874,931,1152,988,1049,906,1121,977,1012,890,1068,955,1003,1141,862,1097,1009,954,1036,921,1075,983,1018,1102,946,0];
+let s=lens.slice(0,35).reduce((a,b)=>a+b,0); lens[35]=total-s;
+const chapters=lens.map((l,i)=>({t:'Kapitel '+['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX','XXI','XXII','XXIII','XXIV','XXV','XXVI','XXVII','XXVIII','XXIX','XXX','XXXI','XXXII','XXXIII','XXXIV','XXXV','XXXVI'][i],l}));
+let acc=0; chapters.forEach(c=>{c.s=acc;acc+=c.l});
+chapters[0].t='Vorspann und Kapitel I';
+const pos=chapters[7].s+412; // in Kapitel VIII
+const ci=7, ch=chapters[ci];
+const clock=x=>{x=Math.max(0,Math.floor(x));const h=Math.floor(x/3600),m=Math.floor(x%3600/60),sec=x%60;return h>0?`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`:`${m}:${String(sec).padStart(2,'0')}`};
+const rem=x=>{const m=Math.round(x/60);return m>=60?`${Math.floor(m/60)} Std. ${m%60} Min.`:`${m} Min.`};
+const frac=pos/total, pct=Math.round(frac*100)+' %';
+const pages=349, page=Math.min(pages,Math.floor(frac*pages)+1);
+const cover=`<div class="cover tch"><div class="cv"><div class="sea"></div><div class="sun"></div><div class="ti"><b>Effi Briest</b><span>Roman · Hörbuch</span></div><div class="au">Theodor Fontane</div></div></div>`;
+const header=`<div class="hdr"><div class="b tch">${I.down}</div><div class="t"><div>Effi Briest</div><div>Kapitel ${ci+1} von 36</div></div><div class="b tch">${I.info}</div></div>`;
+const playing=true;
+const cf=(pos-ch.s)/ch.l;
+const bar=`<div class="bar">
+ <div class="chap tch">${I.list}<div class="l"><div>Kapitel ${ci+1} von 36</div><div>${ch.t}</div></div>${I.up}</div>
+ <div class="slider tch"><div class="tr"></div><div class="fi" style="width:${cf*100}%"></div><div class="kn" style="left:${cf*100}%"></div></div>
+ <div class="row"><span>${clock(pos-ch.s)}</span><span>noch ${clock(ch.s+ch.l-pos)} im Kapitel</span></div>
+ <div class="thin"><i style="width:${frac*100}%"></i></div>
+ ${dt>1?`<div class="row" style="flex-direction:column;align-items:flex-start;gap:2px"><span>Buch ${pct} · noch ${rem(total-pos)}</span><span>etwa Seite ${page} von ${pages}</span></div>`:`<div class="row" style="justify-content:flex-start"><span>Buch ${pct} · noch ${rem(total-pos)} · etwa Seite ${page} von ${pages}</span></div>`}
+ <div class="ctr">
+  <div class="cb tch">${I.prevch}<span>Kapitel</span></div>
+  <div class="cb tch">${I.back15}<span>15 s zurück</span></div>
+  <div class="play tch">${playing?I.pause:I.play}</div>
+  <div class="cb tch">${I.fwd15}<span>15 s vor</span></div>
+  <div class="cb tch">${I.nextch}<span>Kapitel</span></div>
+ </div>
+ <div class="ctr">
+  <div class="cb tch"><span class="rate">1,2×</span><span>Tempo</span></div>
+  <div class="cb tch">${I.toc}<span>Inhalt</span></div>
+  <div class="cb tch">${screen==='mitlesen'?I.photo:I.text}<span>${screen==='mitlesen'?'Cover':'Text'}</span></div>
+  <div class="cb tch">${screen==='player'&&q.get('sleep')?I.moonf:I.moon}<span>${q.get('sleep')?'Kapitelende':'Schlaftimer'}</span></div>
+ </div>
+</div>`;
+const main=`<div class="main">${cover}<div><div class="btitle">Effi Briest</div><div class="by">von Theodor Fontane · gelesen von Anna Beispiel</div></div></div>`;
+const text=`<div class="txt">
+<h3>Achtes Kapitel</h3>
+<p>Am andern Morgen war Effi früh auf und ging, während Innstetten noch schlief, in den Garten hinaus, um zu sehen, was die Nacht an Schaden angerichtet hätte.</p>
+<p class="cur">Der Wind hatte sich gelegt, aber vom Meer her kam noch immer ein dumpfes Rauschen, und über den Dünen hingen graue Wolkenstreifen, durch die hin und wieder ein matter Sonnenstrahl brach.</p>
+<p>Sie setzte sich auf die Bank unter dem Holunderbaum und sah auf die Plantage hinaus, wo die Schneeflocken der letzten Tage noch in den Furchen lagen.</p>
+<p>„Gnädige Frau sind schon so früh?“ sagte Johanna, die mit dem Frühstückskorb über den Hof kam.</p></div>
+<div class="hint">Absatz antippen, um im Hörbuch dorthin zu springen</div>`;
+function list(){
+ return chapters.map((c,i)=>{
+  const st=i<ci?'done':i===ci?'cur':'up';
+  const lead=st==='done'?I.check:st==='cur'?I.spk:(i+1);
+  const sub=st==='done'?'gehört':st==='cur'?`<div class="pv"><i style="width:${cf*100}%"></i></div>läuft · noch ${clock(ch.s+ch.l-pos)}`:`ab ${clock(c.s)}`;
+  return `<div class="li ${st} tch"><div class="n">${lead}</div><div class="m"><div class="tt">${c.t}</div><div class="sb">${sub}</div></div><div class="du">${clock(c.l)}</div></div>`}).join('');
+}
+function tocSheet(){
+ const after=35-ci;
+ return `<div class="dim"></div><div class="sheet" style="--st:${q.get('st')||'64px'}"><div class="grab"></div>
+ <div class="nav"><span class="s"></span><span class="c">Inhalt</span><span class="d tch">Fertig</span></div>
+ <div class="scr"><div id="inner"><div class="grp"><div class="sum">${cover}<div style="flex:1;min-width:0"><div style="font-weight:600">Effi Briest</div>
+ <div style="font-size:calc(15px*var(--dt,1));color:var(--sec)">36 Kapitel · ${clock(total)}</div><div class="pv"><i style="width:${frac*100}%"></i></div>
+ <div style="font-size:calc(12px*var(--dt,1));color:var(--sec)">${pct} gehört · noch ${rem(total-pos)}</div>
+ <div style="font-size:calc(12px*var(--dt,1));color:var(--sec)">Es folgen noch ${after} Kapitel · etwa Seite ${page} von ${pages}</div></div></div></div>
+ <div class="gh">Kapitel</div>
+ <div class="grp" id="lst" style="margin-top:0">${list()}</div></div></div></div>`;
+}
+function infoSheet(){
+ const kv=(k,v)=>`<div class="kv"><span>${k}</span><span>${v}</span></div>`;
+ return `<div class="dim"></div><div class="sheet" style="--st:64px"><div class="grab"></div>
+ <div class="nav"><span class="s"></span><span class="c">Info</span><span class="d tch">Fertig</span></div>
+ <div style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0 4px"><div style="width:286px;zoom:.56">${cover.replace('class="cover tch"','class="cover" style="width:286px"')}</div>
+ <div class="btitle">Effi Briest</div><div class="by" style="margin-top:-4px">Roman</div></div>
+ <div class="gh">Angaben</div><div class="grp" style="margin-top:0">
+ ${kv('Autor','Theodor Fontane')}${kv('Gelesen von','Anna Beispiel')}${kv('Verlag','Beispielverlag Hörbuch')}${kv('Erschienen','14.03.2019')}${kv('Genre','Klassiker')}${kv('Sprache','Deutsch')}</div>
+ <div class="gh">Umfang</div><div class="grp" style="margin-top:0">
+ ${kv('Dauer','9 Std. 53 Min.')}${kv('Kapitel','36')}${kv('Seiten','etwa 349 (geschätzt)')}${kv('Format','M4B · AAC · 64 kbit/s')}${kv('Größe','287,4 MB')}</div>
+ <div class="gh">Beschreibung</div><div class="grp" style="margin-top:0"><div class="desc">Die siebzehnjährige Effi wird mit dem deutlich älteren Baron von Innstetten verheiratet und folgt ihm in das abgelegene Kessin an der Ostsee. Fontanes Roman über Konvention, Langeweile und eine folgenreiche Liebschaft …</div><div class="more tch">Mehr anzeigen</div></div></div>`;
+}
+let html=header;
+if(screen==='mitlesen') html+=text+bar;
+else html+=main+bar;
+if(screen==='inhalt') html+=tocSheet();
+if(screen==='info') html+=infoSheet();
+document.getElementById('app').innerHTML=html;
+if(screen==='inhalt'&&!q.get('top')){const inner=document.getElementById('inner');const cur=inner.querySelector('.cur');
+ const scr=document.querySelector('.scr');const shift=Math.max(0,cur.offsetTop-scr.clientHeight/2+cur.offsetHeight/2);inner.style.transform=`translateY(-${shift}px)`;}
+</script>
+</body></html>

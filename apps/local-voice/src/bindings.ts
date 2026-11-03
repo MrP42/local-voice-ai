@@ -5173,9 +5173,9 @@ async bookAiTemplateImport(path: string) : Promise<Result<BookTemplate, string>>
 /**
  * Zusammenfassung nach Vorlage erzeugen und als KI-Dokument ablegen.
  */
-async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string) : Promise<Result<KiDocument, string>> {
+async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string, templateId: string, targetLang: string | null) : Promise<Result<KiDocument, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId }) };
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_summarize", { pageId, source, sourceLabel, templateId, targetLang }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5942,6 +5942,20 @@ async ttsPiperVoiceForText(text: string) : Promise<string | null> {
 async ttsTidyText(text: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_tidy_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Textarbeit im Editor-Menue: `task` = `grammar` | `structure`, `lines` =
+ * nummerierte Zeilen `N|Text`. Antwort: nur die Aenderungen im selben
+ * Zeilenformat (siehe `lib/reader/textAssist.ts`). Fortschritt ueber
+ * `tts-transform-progress` mit `kind: "assist"`.
+ */
+async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_text_assist", { task, lines }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8990,7 +9004,12 @@ model: string;
  * Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
  * älteren und übernommenen Dokumenten).
  */
-usage?: KiUsage | null }
+usage?: KiUsage | null; 
+/**
+ * Sprache des Ergebnisses ("de", "en", …; lva#217). Fehlt bei älteren
+ * Dokumenten und Importen.
+ */
+language?: string | null }
 /**
  * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
  */
@@ -9108,6 +9127,11 @@ metadata_source: string | null;
  * `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+ * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+ */
+favorite?: boolean; 
 /**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
@@ -10201,7 +10225,13 @@ platforms: string[]; style_tags: boolean;
  * Skript (`<Name>`): die Satz-Pipeline wählt je Satz die Stimme seines Sprechers.
  * Fish: ja; Piper: nein (eine gewählte Stimme je Lauf).
  */
-voice_switching?: boolean }
+voice_switching?: boolean; 
+/**
+ * Setzt Tempo-Tags (`[slower]`, `[faster]`) je Satz um, auch ohne `style_tags`.
+ * Phonon: `--condition duration_delta` (siehe [`crate::managers::tts::protocol::take_pace`]).
+ * Ohne diese Fähigkeit fallen die Tags wie andere Stil-Tags weg.
+ */
+pace_tags?: boolean }
 /**
  * Statische Beschreibung eines Anbieters.
  */

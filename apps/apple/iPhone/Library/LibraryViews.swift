@@ -27,6 +27,8 @@ enum LibraryFormat {
 struct LibraryCover: View {
     let title: String
     var compact = false
+    /// Echtes Cover (aus der Hörbuchdatei, EPUB oder vom Desktop); sonst erzeugt.
+    var image: UIImage? = nil
     private static let colors: [(Color, Color)] = [
         (Color(red: 0.18, green: 0.29, blue: 0.24), Color(red: 0.95, green: 0.91, blue: 0.82)),
         (Color(red: 0.54, green: 0.23, blue: 0.18), Color(red: 0.98, green: 0.91, blue: 0.86)),
@@ -35,6 +37,21 @@ struct LibraryCover: View {
         (Color(red: 0.36, green: 0.27, blue: 0.47), Color(red: 0.94, green: 0.91, blue: 0.97)),
     ]
     var body: some View {
+        if let image { photo(image) } else { generated }
+    }
+
+    /// Quadratische Hörbuch-Cover passen ohne Beschnitt in jede Form:
+    /// unscharfer Hintergrund aus demselben Bild, darüber das ganze Cover.
+    private func photo(_ image: UIImage) -> some View {
+        Image(uiImage: image).resizable().scaledToFit()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { if !compact { Image(uiImage: image).resizable().scaledToFill().blur(radius: 14).opacity(0.85) } }
+            .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: compact ? 4 : 6))
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var generated: some View {
         let pick = Self.colors[abs(title.unicodeScalars.reduce(0) { ($0 &* 31) &+ Int($1.value) }) % Self.colors.count]
         RoundedRectangle(cornerRadius: compact ? 4 : 6).fill(pick.0)
             .overlay(alignment: .topLeading) {
@@ -153,7 +170,7 @@ struct LibraryShelf: View {
                     Text(isAudio ? "WEITERHÖREN" : "WEITERLESEN").font(.caption.weight(.semibold)).tracking(0.6).foregroundStyle(VoicePalette.secondaryText)
                     NavigationLink { LibraryBookDetail(bookId: book.id) } label: {
                         HStack(alignment: .top, spacing: 14) {
-                            LibraryCover(title: book.title).frame(width: 64, height: 96)
+                            LibraryCover(title: book.title, image: library.coverThumbnail(book)).frame(width: 64, height: 96)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(book.title).font(.headline)
                                 if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.subheadline).foregroundStyle(VoicePalette.secondaryText) }
@@ -210,7 +227,7 @@ struct ShelfItem: View {
         let audio = library.hasAudio(book), text = library.hasText(book)
         let rec = audio || library.audioInAccount(book) ? library.record(library.audioKey(book)) : library.record(library.textKey(book))
         VStack(alignment: .leading, spacing: 5) {
-            LibraryCover(title: book.title).aspectRatio(2/3, contentMode: .fit)
+            LibraryCover(title: book.title, image: library.coverThumbnail(book)).aspectRatio(2/3, contentMode: .fit)
             ProgressView(value: book.finished ? 1 : LibraryProgress.fraction(rec)).tint(VoicePalette.accent)
             Text(audio || library.audioInAccount(book) ? (rec == nil ? "Hörbuch · neu" : "Hörbuch · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
                        : "Text · \(LibraryFormat.percent(LibraryProgress.fraction(rec)))")
@@ -246,7 +263,7 @@ struct LibraryBookDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
-                    LibraryCover(title: book.title).frame(width: 96, height: 144)
+                    LibraryCover(title: book.title, image: library.coverImage(book)).frame(width: 96, height: 144)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(book.title).font(.title2.bold())
                         if !book.authors.isEmpty { Text(book.authors.joined(separator: ", ")).font(.body) }
@@ -381,7 +398,8 @@ struct LibraryMiniPlayer: View {
         HStack(spacing: 10) {
             Button { playback.presented = true } label: {
                 HStack(spacing: 10) {
-                    LibraryCover(title: playback.title, compact: true).frame(width: 32, height: 44)
+                    LibraryCover(title: playback.title, compact: true, image: playback.book.flatMap { PhoneLibrary.shared.coverThumbnail($0) })
+                        .frame(width: 32, height: 44)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(playback.title).font(.subheadline.weight(.semibold)).lineLimit(1).foregroundStyle(.white)
                         Text(subtitle).font(.caption).lineLimit(1).foregroundStyle(.white.opacity(0.75))
@@ -398,7 +416,7 @@ struct LibraryMiniPlayer: View {
         .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 14))
     }
     private var subtitle: String {
-        playback.mode == .audiobook ? "Hörbuch · Teil \(playback.trackIndex + 1) · \(LibraryFormat.clock(playback.positionMs)) · zum Player"
+        playback.mode == .audiobook ? "\(playback.currentChapter?.title ?? "Teil \(playback.trackIndex + 1)") · \(LibraryFormat.clock(playback.positionMs)) · zum Player"
                                     : "Text wird vorgelesen · zum Player"
     }
 }
@@ -411,12 +429,16 @@ struct LibraryPlayerScreen: View {
 }
 
 /// Text mit markiertem Absatz; bei eigenem Scrollen 5 s kein Mitscrollen.
-private struct FollowText<Row: View>: View {
+struct FollowText<Row: View>: View {
     let paragraphs: [TextParagraph]
     let current: Int
     let row: (Int, TextParagraph) -> Row
     @State private var pausedUntil = Date.distantPast
     @State private var showReturn = false
+
+    init(paragraphs: [TextParagraph], current: Int, @ViewBuilder row: @escaping (Int, TextParagraph) -> Row) {
+        self.paragraphs = paragraphs; self.current = current; self.row = row
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -443,7 +465,7 @@ private struct FollowText<Row: View>: View {
     }
 }
 
-private struct ControlButton: View {
+struct ControlButton: View {
     let title: String; let systemImage: String; let action: () -> Void
     var body: some View {
         Button(action: action) {
@@ -452,7 +474,7 @@ private struct ControlButton: View {
     }
 }
 
-private struct PlayerHeader: View {
+struct PlayerHeader: View {
     let title: String; let subtitle: String; var trailing: AnyView? = nil
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
@@ -467,7 +489,7 @@ private struct PlayerHeader: View {
     }
 }
 
-private struct RateMenu: View {
+struct RateMenu: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         Menu {
@@ -479,7 +501,7 @@ private struct RateMenu: View {
     }
 }
 
-private struct PlayButton: View {
+struct PlayButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         Button { playback.toggle() } label: {
@@ -489,71 +511,7 @@ private struct PlayButton: View {
     }
 }
 
-struct LibraryListenView: View {
-    @ObservedObject var playback = LibraryPlayback.shared
-    @State private var scrubbing: Double?
-
-    private var currentParagraph: Int {
-        guard let map = playback.followMap else { return 0 }
-        return LibraryText.paragraphIndex(playback.paragraphs, at: map.chars(atMs: playback.positionMs))
-    }
-
-    var body: some View {
-        let tracks = playback.book?.audio?.allTracks.count ?? 1
-        VStack(spacing: 0) {
-            PlayerHeader(title: "\(playback.title) · Hörbuch",
-                         subtitle: "Teil \(playback.trackIndex + 1) von \(tracks)" + (playback.paragraphs.isEmpty ? "" : " · Text läuft mit"))
-            Divider()
-            if playback.paragraphs.isEmpty {
-                Spacer()
-                LibraryCover(title: playback.title).frame(width: 180, height: 270)
-                Text("Kein Text zu diesem Hörbuch auf dem iPhone.").font(.footnote).foregroundStyle(VoicePalette.secondaryText).padding(.top, 12)
-                Spacer()
-            } else {
-                let current = currentParagraph
-                FollowText(paragraphs: playback.paragraphs, current: current) { i, p in
-                    Text(p.text).font(p.heading ? .custom("Georgia-Bold", size: 21, relativeTo: .title3) : .custom("Georgia", size: 18, relativeTo: .body))
-                        .lineSpacing(5).fixedSize(horizontal: false, vertical: true)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(i == current ? Color.yellow.opacity(0.28) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                        .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
-                        .accessibilityAddTraits(i == current ? [.isButton, .isSelected] : .isButton)
-                        .accessibilityHint("Springt im Hörbuch zu diesem Absatz")
-                }
-            }
-            VStack(spacing: 8) {
-                if !playback.paragraphs.isEmpty {
-                    Text(playback.followMap?.approximate == true ? "Ohne Zeitachse vom PC: Markierung nur geschätzt" : "Absatz antippen, um im Hörbuch dorthin zu springen")
-                        .font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                }
-                Slider(value: Binding(get: { scrubbing ?? playback.positionMs }, set: { scrubbing = $0 }),
-                       in: 0...max(1, playback.totalMs)) { editing in
-                    if !editing, let s = scrubbing { playback.seek(toMs: s); scrubbing = nil }
-                }.tint(VoicePalette.accent).accessibilityLabel("Position im Hörbuch")
-                HStack {
-                    Text("\(LibraryFormat.clock(scrubbing ?? playback.positionMs)) gehört")
-                    Spacer(); Text("gesamt \(LibraryFormat.clock(playback.totalMs))"); Spacer()
-                    Text("noch \(LibraryFormat.clock(max(0, playback.totalMs - (scrubbing ?? playback.positionMs))))")
-                }.font(.caption.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
-                HStack {
-                    RateMenu()
-                    Spacer(); ControlButton(title: "15 s zurück", systemImage: "gobackward.15") { playback.skip(seconds: -15) }
-                    Spacer(); PlayButton()
-                    Spacer(); ControlButton(title: "15 s vor", systemImage: "goforward.15") { playback.skip(seconds: 15) }
-                    Spacer()
-                    Menu {
-                        Button("Aus") { playback.sleep(minutes: nil) }
-                        ForEach([15, 30, 45, 60], id: \.self) { m in Button("\(m) Minuten") { playback.sleep(minutes: m) } }
-                    } label: {
-                        VStack(spacing: 2) { Image(systemName: playback.sleepEnds == nil ? "moon" : "moon.fill").font(.title2); Text("Schlaftimer").font(.caption2) }
-                            .frame(minWidth: 56, minHeight: 44)
-                    }.buttonStyle(.plain).accessibilityLabel("Schlaftimer")
-                }
-            }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
-        }
-        .background(VoicePalette.background)
-    }
-}
+// LibraryListenView: siehe AudiobookPlayer.swift
 
 struct LibraryReadAloudView: View {
     @ObservedObject var playback = LibraryPlayback.shared

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import type { BookTemplate, SummarySource } from "@/bindings";
 import { buildContents, type ContentsEntry } from "@/lib/reader/contents";
 import { parseReaderDoc } from "@/lib/reader/readerDoc";
@@ -10,6 +11,7 @@ import { Select } from "../../../ui/Select";
 import { KI_CATEGORIES } from "./kiDocs";
 import { KURZBUCH_TEMPLATE_ID } from "@/lib/kurzbuch/kurzbuch";
 import { TokenEstimateLine, useTokenEstimate } from "./kiTokens";
+import { KI_LANGS, defaultKiLang, rememberKiLang } from "./targetLang";
 import "./kidocs.css";
 
 type SourceKind = "book" | "chapter" | "selection" | "pick";
@@ -45,6 +47,9 @@ export function chaptersOf(text: string, entries: ContentsEntry[]): Chapter[] {
   });
   return out;
 }
+
+/** Auswahlwert für „wie das Buch“ (die Liste kennt keinen leeren Wert). */
+const SAME_AS_BOOK = "book";
 
 const shorten = (s: string, n = 48) =>
   s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s;
@@ -104,9 +109,11 @@ export function KiDocumentDialog({
     source: SummarySource,
     sourceLabel: string,
     template: BookTemplate,
+    /** Sprache des Ergebnisses, "" = wie das Buch (lva#217). */
+    targetLang: string,
   ) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const chapters = useMemo(
     () =>
       open ? chaptersOf(text, buildContents(parseReaderDoc(text, []))) : [],
@@ -126,6 +133,7 @@ export function KiDocumentDialog({
   const [picked, setPicked] = useState(0);
   const [query, setQuery] = useState("");
   const [templateId, setTemplateId] = useState("builtin:eine_seite");
+  const [lang, setLang] = useState(() => defaultKiLang(i18n.language));
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -133,6 +141,10 @@ export function KiDocumentDialog({
     setKind(selection ? "selection" : "book");
     setPicked(Math.max(0, currentChapter));
     setQuery("");
+    setLang(defaultKiLang(i18n.language));
+    // Alte Meldungen (z. B. „erstellt“) würden mobil die Knöpfe unten
+    // verdecken (Codex lva#217).
+    toast.dismiss();
     // Nur beim Öffnen vorbelegen, nicht bei jeder Änderung der Auswahl.
   }, [open]);
 
@@ -220,11 +232,11 @@ export function KiDocumentDialog({
           <Button
             variant="primary"
             disabled={!canCreate}
-            onClick={() =>
-              source &&
-              template &&
-              onCreate(source.source, source.label, template)
-            }
+            onClick={() => {
+              if (!source || !template) return;
+              rememberKiLang(lang);
+              onCreate(source.source, source.label, template, lang);
+            }}
             data-testid="kidoc-create"
           >
             {t("tts.kiDocs.create")}
@@ -284,6 +296,28 @@ export function KiDocumentDialog({
             </p>
           )}
         </section>
+
+        <div className="kidoc-new__lang" data-testid="kidoc-lang">
+          <span className="text-sm font-semibold" aria-hidden="true">
+            {t("tts.kiDocs.lang.title")}
+          </span>
+          <Select
+            menuPortal
+            isClearable={false}
+            className="kidoc-new__lang-select"
+            value={lang || SAME_AS_BOOK}
+            options={[
+              { value: SAME_AS_BOOK, label: t("tts.kiDocs.lang.source") },
+              ...KI_LANGS.map((l) => ({ value: l.code, label: l.label })),
+            ]}
+            onChange={(v) => v !== null && setLang(v === SAME_AS_BOOK ? "" : v)}
+            ariaLabel={t("tts.kiDocs.lang.title")}
+            ariaDescribedBy="kidoc-lang-hint"
+          />
+          <p id="kidoc-lang-hint" className="kidoc-new__desc">
+            {t("tts.kiDocs.lang.hint")}
+          </p>
+        </div>
 
         <section
           aria-labelledby="kidoc-tpl-h"

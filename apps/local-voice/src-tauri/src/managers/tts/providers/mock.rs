@@ -260,6 +260,7 @@ impl TtsProvider for MockProvider {
                     .map(String::from)
                     .to_vec(),
                 style_tags: false,
+                pace_tags: false,
                 // Zwei Stimmen (`list_voices`), `cache_tag` trägt die Stimme.
                 voice_switching: true,
             },

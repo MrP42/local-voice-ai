@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  KURZBUCH_HEADS,
   minutes,
   parseKurzbuch,
   sectionAt,
@@ -82,4 +83,22 @@ test("Dauer und Kennungen", () => {
   assert.equal(minutes(3000, 200), 15);
   assert.equal(titleId("Anfang: X"), titleId(" anfang: x "));
   assert.notEqual(titleId("A"), titleId("B"));
+});
+
+test("die Gliederung wird in jeder Kurzbuch-Sprache erkannt (lva#217)", () => {
+  const en = DOC.replace("## Worum es geht", "## What it is about")
+    .replace("## Für wen", "## Who it is for")
+    .replace("## Fazit", "## Conclusion");
+  const kb = parseKurzbuch(en);
+  assert.ok(kb);
+  assert.equal(kb.about, "Ein Buch über Routinen.");
+  assert.equal(kb.audience.length, 3);
+  assert.equal(kb.ideas.length, 2);
+  assert.equal(kb.conclusion.title, "Conclusion");
+  for (const [code, [about, who, end]] of Object.entries(KURZBUCH_HEADS)) {
+    const doc = DOC.replace("Worum es geht", about)
+      .replace("Für wen", who)
+      .replace("## Fazit", `## ${end}`);
+    assert.ok(parseKurzbuch(doc), code);
+  }
 });

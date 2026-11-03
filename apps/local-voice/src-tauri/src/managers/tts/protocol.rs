@@ -57,6 +57,74 @@ pub fn strip_tag_spans(text: &str) -> String {
     tidy_spaces(&out)
 }
 
+/// Wie [`strip_tag_spans`], lässt aber Tempo-Tags ([`pace_delta`]) stehen —
+/// für Engines mit `pace_tags` (Phonon), deren Adapter sie selbst auswertet.
+pub fn strip_tag_spans_keep_pace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for span in tag_spans(text) {
+        if pace_delta(&text[span.start + 1..span.end - 1]).is_some() {
+            continue;
+        }
+        out.push_str(&text[last..span.start]);
+        last = span.end;
+    }
+    out.push_str(&text[last..]);
+    tidy_spaces(&out)
+}
+
+/// Größter Betrag der Tempo-Änderung. `docs/cli.md` (ptts v0.4.2): „Small
+/// values work best; large ones make speech less reliable.“
+pub const PACE_DELTA_MAX: f32 = 0.2;
+
+/// Schritt eines Tempo-Tags. Positiv = langsamer (`duration_delta` > 0 dehnt).
+const PACE_STEP: f32 = 0.12;
+
+/// Tempo-Änderung eines Tags, oder `None` für jedes andere Tag. Englische
+/// Namen (wie die Registry sie einfügt) und deutsche Aliase, getrimmt und
+/// case-insensitiv.
+pub fn pace_delta(inner: &str) -> Option<f32> {
+    match inner.trim().to_lowercase().as_str() {
+        "slower" | "slowly" | "langsamer" | "langsam" => Some(PACE_STEP),
+        "faster" | "quickly" | "schneller" | "schnell" => Some(-PACE_STEP),
+        _ => None,
+    }
+}
+
+/// Entfernt die Tempo-Tags eines Sprechstücks (ein `ptts`-Aufruf) und liefert
+/// das Tempo, gedeckelt auf ±[`PACE_DELTA_MAX`]. Gleichgerichtete Tags addieren
+/// sich (`[slower][slower]`); widersprechen sie sich — die Satztrennung legt
+/// kurze Sätze zu EINEM Stück zusammen („Gar nichts. [faster] Dann …“) —, gilt
+/// das erste, statt dass sie sich aufheben. `None` ohne Tempo-Tag: der Aufruf
+/// bleibt dann exakt wie bisher.
+pub fn take_pace(text: &str) -> (String, Option<f32>) {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut sum = 0.0f32;
+    let mut first: Option<f32> = None;
+    let mut mixed = false;
+    for span in tag_spans(text) {
+        if let Some(d) = pace_delta(&text[span.start + 1..span.end - 1]) {
+            match first {
+                None => first = Some(d),
+                Some(f) if f.signum() != d.signum() => mixed = true,
+                Some(_) => {}
+            }
+            sum += d;
+            out.push_str(&text[last..span.start]);
+            last = span.end;
+        }
+    }
+    let Some(first) = first else {
+        return (text.to_string(), None);
+    };
+    out.push_str(&text[last..]);
+    let delta = if mixed { first } else { sum };
+    let delta = delta.clamp(-PACE_DELTA_MAX, PACE_DELTA_MAX);
+    let delta = (delta * 100.0).round() / 100.0;
+    (tidy_spaces(&out), (delta != 0.0).then_some(delta))
+}
+
 /// Entfernt alle `<Name>`/`<Name:Stil>`-Kandidaten — für Engines ohne
 /// Stimmwechsel (Piper): dort kann kein Marker schalten, also darf auch
 /// keiner gesprochen werden, bekannt oder nicht.
@@ -521,6 +589,14 @@ pub fn split_speaker_segments(text: &str, speakers: &[KnownSpeaker]) -> Vec<Spea
 /// nicht mittendrin zerschnitten werden. Die Mindestchunk-Länge zählt über
 /// `visible_char_count`, damit z. B. `[laughing] Hi.` nicht als voller Satz
 /// gilt (nur 4 sichtbare Zeichen).
+///
+/// Eine Leerzeile (Absatzgrenze) beendet immer einen Satz, auch einen kurzen
+/// oder einen ohne Satzzeichen: ein Satz reicht nie über einen Absatz hinaus.
+/// Sonst verschmolz eine Kapitelüberschrift mit dem letzten Satz davor (ein
+/// kurzes „Ende.“, eine Gedichtzeile ohne Punkt) — ein Klick auf die
+/// Überschrift begann dann mit diesem Satz auf der Seite davor (Patrick
+/// 02.11.2026). Eine kurze Überschrift steht so auch für sich, statt mit dem
+/// ersten Satz des Kapitels zu verschmelzen.
 pub fn split_sentences(text: &str) -> Vec<String> {
     const MIN_CHUNK_CHARS: usize = 15;
     let spans = tag_spans(text);
@@ -528,6 +604,18 @@ pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut start = 0usize;
     for (pos, &(byte_idx, c)) in chars.iter().enumerate() {
+        if c == '\n'
+            && !spans.iter().any(|span| span.contains(&byte_idx))
+            && starts_blank_line(&chars, pos)
+        {
+            let chunk = text[start..byte_idx].trim();
+            // Ein Absatz nur aus Tags (`[whisper]`) gilt für den Text danach.
+            if visible_char_count(chunk) > 0 {
+                sentences.push(chunk.to_string());
+                start = byte_idx;
+            }
+            continue;
+        }
         let is_end = matches!(c, '.' | '!' | '?' | '…');
         if !is_end || spans.iter().any(|span| span.contains(&byte_idx)) {
             continue;
@@ -551,6 +639,16 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         sentences.push(tail.to_string());
     }
     sentences
+}
+
+/// Folgt auf den Zeilenumbruch bei `chars[pos]` eine Leerzeile (nur Weißraum
+/// bis zum nächsten Umbruch)?
+fn starts_blank_line(chars: &[(usize, char)], pos: usize) -> bool {
+    chars[pos + 1..]
+        .iter()
+        .map(|(_, c)| *c)
+        .take_while(|c| c.is_whitespace())
+        .any(|c| c == '\n')
 }
 
 /// Abkürzungen, nach deren Punkt kein Satz endet (klein geschrieben, ohne Punkt).
@@ -747,6 +845,11 @@ fn pause_millis(inner: &str) -> Option<u32> {
     }
 }
 
+/// Ist der Klammerinhalt ein Pausen-Tag (die App fügt Stille ein)?
+pub fn is_pause_tag(inner: &str) -> bool {
+    pause_millis(inner).is_some()
+}
+
 /// Zerlegt Vorlesetext an Pausen-Tags in Sprech- und Stille-Abschnitte.
 ///
 /// Eine Pause ist Stille definierter Länge — dafür braucht es kein
@@ -832,6 +935,72 @@ pub fn split_oversized(sentence: &str, max_chars: u32) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Patrick 02.11.2026: Klick auf eine Kapitelüberschrift begann mit dem
+    /// Satz davor. Eine Absatzgrenze trennt immer, auch nach einer Zeile ohne
+    /// Satzzeichen oder einem kurzen Satz.
+    #[test]
+    fn heading_after_unpunctuated_line_is_own_sentence() {
+        let text = "Und dies war der ganze Unterschied.\n\n(übersetzt von Paul Celan)\n\nEine Lektion von Robert Frost.\n\nRobert Frost ist mein Lieblingsdichter.";
+        let parts = split_sentences(text);
+        assert_eq!(
+            parts,
+            vec![
+                "Und dies war der ganze Unterschied.",
+                "(übersetzt von Paul Celan)",
+                "Eine Lektion von Robert Frost.",
+                "Robert Frost ist mein Lieblingsdichter.",
+            ]
+        );
+        let spans = locate_sentences(text, &parts);
+        let heading = text.find("Eine Lektion").unwrap();
+        let heading_chars = text[..heading].chars().count();
+        assert_eq!(sentence_index_at(&spans, heading_chars), 2);
+    }
+
+    #[test]
+    fn short_sentence_before_heading_does_not_swallow_it() {
+        let text = "Das war ein langer erster Satz.\nEnde.\n\nKapitel 9.\n\nEs regnete den ganzen Tag lang.";
+        let parts = split_sentences(text);
+        assert_eq!(
+            parts,
+            vec![
+                "Das war ein langer erster Satz.",
+                "Ende.",
+                "Kapitel 9.",
+                "Es regnete den ganzen Tag lang.",
+            ]
+        );
+        let spans = locate_sentences(text, &parts);
+        let heading = text.find("Kapitel").unwrap();
+        assert_eq!(sentence_index_at(&spans, heading), 2);
+    }
+
+    #[test]
+    fn single_line_breaks_still_join_verse() {
+        let text = "In einem gelben Wald, da lief die Straße auseinander,\nund ich stand.";
+        assert_eq!(split_sentences(text).len(), 1);
+    }
+
+    #[test]
+    fn tag_only_paragraph_stays_with_following_text() {
+        let parts = split_sentences(
+            "Ein ganz normaler erster Satz.\n\n[whisper]\n\nLeise gesprochen hier.",
+        );
+        assert_eq!(
+            parts,
+            vec![
+                "Ein ganz normaler erster Satz.",
+                "[whisper]\n\nLeise gesprochen hier."
+            ]
+        );
+    }
+
+    #[test]
+    fn several_blank_lines_give_no_empty_sentences() {
+        let parts = split_sentences("Erster Absatz ohne Punkt\n\n\n  \nZweiter Absatz.");
+        assert_eq!(parts, vec!["Erster Absatz ohne Punkt", "Zweiter Absatz."]);
+    }
 
     #[test]
     fn oversized_sentences_are_split_not_cut() {
@@ -1265,6 +1434,37 @@ patrick: Hi.",
                 SpeechPart::Speak("Und weiter.".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn tempo_tags_werden_zu_duration_delta() {
+        assert_eq!(pace_delta("slower"), Some(PACE_STEP));
+        assert_eq!(pace_delta(" Schneller "), Some(-PACE_STEP));
+        assert_eq!(pace_delta("pause"), None);
+        assert_eq!(
+            take_pace("[slower] Es war still im Haus."),
+            ("Es war still im Haus.".to_string(), Some(0.12))
+        );
+        assert_eq!(take_pace("Ohne Tag."), ("Ohne Tag.".to_string(), None));
+        // Gedeckelt: drei Schritte langsamer ergeben höchstens 0,2.
+        assert_eq!(
+            take_pace("[slower][slower][slower] Ja.").1,
+            Some(PACE_DELTA_MAX)
+        );
+        // Widersprüchlich (zusammengelegte kurze Sätze): das erste gilt.
+        assert_eq!(
+            take_pace("[slower] Gar nichts. [faster] Dann kam er.").1,
+            Some(PACE_STEP)
+        );
+    }
+
+    #[test]
+    fn phonon_behaelt_nur_tempo_tags() {
+        assert_eq!(
+            strip_tag_spans_keep_pace("[sad] [slower] Es regnete [whisper] leise."),
+            "[slower] Es regnete leise."
+        );
+        assert_eq!(strip_tag_spans("[slower] Ja."), "Ja.");
     }
 
     #[test]

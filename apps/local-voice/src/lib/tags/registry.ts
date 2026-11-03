@@ -5,6 +5,7 @@ import {
   Volume2,
   Wind,
   PauseCircle,
+  Gauge,
   Shapes,
 } from "lucide-react";
 import type { TagCategoryDef, TagDef } from "./types";
@@ -26,6 +27,7 @@ export const TAG_CATEGORIES: TagCategoryDef[] = [
   { id: "dynamics", icon: Volume2 },
   { id: "effects", icon: Wind },
   { id: "pauses", icon: PauseCircle },
+  { id: "pace", icon: Gauge },
   { id: "special", icon: Shapes },
 ];
 
@@ -1170,6 +1172,34 @@ export const TAG_REGISTRY: TagDef[] = [
     s1: null,
   },
 
+  // ---- Tempo ------------------------------------------------------------
+  // Phonon setzt sie je Satz als `duration_delta` um (Rust: `protocol::take_pace`),
+  // gedeckelt auf ±0,2. Fish nimmt sie als freie Beschreibung.
+  {
+    id: "slower",
+    insert: "slower",
+    category: "pace",
+    label: { en: "Slower", de: "Langsamer" },
+    description: {
+      en: "Speaks this sentence a little slower — for important, serious or suspenseful sentences. With Phonon the app sets the tempo itself.",
+      de: "Spricht diesen Satz etwas langsamer — für wichtige, ernste oder spannende Sätze. Bei Phonon stellt die App das Tempo selbst ein.",
+    },
+    aliases: ["langsamer", "langsam", "slowly"],
+    s1: null,
+  },
+  {
+    id: "faster",
+    insert: "faster",
+    category: "pace",
+    label: { en: "Faster", de: "Schneller" },
+    description: {
+      en: "Speaks this sentence a little faster — for asides, lists or hectic scenes. With Phonon the app sets the tempo itself.",
+      de: "Spricht diesen Satz etwas schneller — für Einschübe, Aufzählungen oder hektische Szenen. Bei Phonon stellt die App das Tempo selbst ein.",
+    },
+    aliases: ["schneller", "schnell", "quickly"],
+    s1: null,
+  },
+
   // ---- Spezial --------------------------------------------------------
   {
     id: "emphasis",
@@ -1392,4 +1422,12 @@ export function canonicalizeTagsAt(
     return next;
   });
   return { text: out, offset: Math.max(0, offset + shift) };
+}
+
+/**
+ * Tags, die eine Engine ohne Stil-Tags trotzdem umsetzt: Pausen (die App fügt Stille
+ * ein) und — bei `pace_tags` (Phonon) — Tempo je Satz.
+ */
+export function worksWithoutStyleTags(tag: TagDef, paceTags: boolean): boolean {
+  return tag.category === "pauses" || (paceTags && tag.category === "pace");
 }

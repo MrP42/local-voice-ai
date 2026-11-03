@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useFussleisteStore } from "@/stores/fussleisteStore";
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronFirst,
   ChevronLast,
   ChevronLeft,
@@ -49,6 +49,8 @@ interface ScriptCheckPanelProps {
   findings: ScriptFinding[];
   speakers: SpeakerRef[];
   engine: ScriptEngine;
+  /** Engine setzt Tempo-Tags um (Phonon), siehe `knownTagsFor`. */
+  paceTags?: boolean;
   uiLang: string;
   actions: ScriptCheckActions;
   onClose?: () => void;
@@ -471,40 +473,32 @@ export const ScriptCheckPanel: React.FC<ScriptCheckPanelProps> = ({
   findings,
   speakers,
   engine,
+  paceTags = false,
   uiLang,
   actions,
   onClose,
 }) => {
   const { t } = useTranslation();
-  const tags = knownTagsFor(engine);
+  const tags = knownTagsFor(engine, paceTags);
   const groups = groupFindings(findings);
   const [index, setIndex] = useState(0);
   useEffect(() => {
     if (index > groups.length - 1) setIndex(Math.max(0, groups.length - 1));
   }, [groups.length, index]);
 
-  if (groups.length === 0) {
-    return (
-      <p
-        data-testid="script-check-clean"
-        className="flex items-center gap-1.5 text-xs text-text/50"
-      >
-        <CheckCircle2 width={14} height={14} aria-hidden="true" />
-        <span className="flex-1">{t("tts.scriptCheck.clean")}</span>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className={NAV_CLASSES}
-            aria-label={t("common.close")}
-            data-testid="script-check-close"
-          >
-            <X width={14} height={14} />
-          </button>
-        )}
-      </p>
-    );
-  }
+  // Keine Befunde: kein Kasten über dem Text, sondern ein kurzer Status in
+  // der Fußleiste, der von selbst verschwindet (Patrick 02.11.). Gemeldet wird
+  // beim Prüfen ohne Befund und beim Übergang „Befunde → keine“; das Panel
+  // bleibt geöffnet und erscheint wieder, sobald es neue Befunde gibt.
+  const clean = groups.length === 0;
+  const zeigeStatus = useFussleisteStore((s) => s.zeigeStatus);
+  const warSauber = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (clean && warSauber.current !== true)
+      zeigeStatus(t("tts.scriptCheck.clean"));
+    warSauber.current = clean;
+  }, [clean, t, zeigeStatus]);
+  if (clean) return null;
   const group = groups[Math.min(index, groups.length - 1)];
   const errors = findings.filter((f) => !isHintFinding(f.kind)).length;
   const hints = findings.length - errors;
