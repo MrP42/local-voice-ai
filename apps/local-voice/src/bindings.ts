@@ -5187,6 +5187,17 @@ async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string
 async bookAiCancel() : Promise<void> {
     await TAURI_INVOKE("book_ai_cancel");
 },
+/**
+ * Prognose des Token-Bedarfs, bevor ein KI-Dokument erstellt wird.
+ */
+async bookAiEstimate(pageId: string, source: SummarySource, templateId: string) : Promise<Result<BookAiEstimate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_estimate", { pageId, source, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async bookAiDocuments(pageId: string) : Promise<Result<KiDocument[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("book_ai_documents", { pageId }) };
@@ -7715,6 +7726,26 @@ page_ids: string[]; characters: BookCharacter[];
  * Sprache der Geschichte (BCP-47-Kurzform), Vorgabe "de".
  */
 language?: string }
+/**
+ * Prognose vor dem Start (`book_ai_estimate`).
+ */
+export type BookAiEstimate = { figures: TokenFigures; 
+/**
+ * Läuft das aktive Modell lokal?
+ */
+local: boolean; 
+/**
+ * Wurde mit dem Tokenizer des Modells kalibriert (sonst Durchschnittswert)?
+ */
+measured: boolean; 
+/**
+ * Bereits zwischengespeicherte Arbeitsschritte, die nichts mehr kosten.
+ */
+cached_steps: number; 
+/**
+ * Modell, nach dessen Preis gerechnet wurde (ohne Anbieter).
+ */
+model: string }
 export type BookCharacter = { name: string; 
 /**
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
@@ -8845,7 +8876,20 @@ source_label: string; created_ms: number; modified_ms: number; words: number;
 /**
  * Anbieter und Modell, mit dem das Dokument entstand.
  */
-model: string }
+model: string; 
+/**
+ * Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
+ * älteren und übernommenen Dokumenten).
+ */
+usage?: KiUsage | null }
+/**
+ * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
+ */
+export type KiUsage = { estimate: TokenFigures | null; actual: TokenFigures | null; 
+/**
+ * Lief auf diesem Rechner (keine Kosten bei einem Anbieter).
+ */
+local: boolean }
 /**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
@@ -8954,6 +8998,11 @@ metadata_source: string | null;
  * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
+/**
+ * Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+ * Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+ */
+favorite?: boolean; 
 /**
  * Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
  * samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
@@ -10822,6 +10871,18 @@ source_name: string | null }
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Token-Zahlen eines Laufs, geschätzt oder gemessen.
+ */
+export type TokenFigures = { input_tokens: number; output_tokens: number; 
+/**
+ * Modellaufrufe (ohne Cache-Treffer).
+ */
+calls: number; 
+/**
+ * Kosten in Mikro-Dollar; `None`, wenn für das Modell kein Preis hinterlegt ist.
+ */
+cost_micro: number | null }
 /**
  * Ergebnis der Erkennung fuer die Oberflaeche.
  */

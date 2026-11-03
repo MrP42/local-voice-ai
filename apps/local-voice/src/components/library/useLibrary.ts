@@ -10,6 +10,7 @@ import {
   type TranscriptSegment,
 } from "@/lib/library/books";
 import { toast } from "sonner";
+import { listen } from "@tauri-apps/api/event";
 import i18n from "@/i18n";
 import { probeDuration } from "@/lib/library/probe";
 import { transcribeTracks } from "@/lib/library/importFile";
@@ -97,6 +98,14 @@ export function useLibrary() {
 
   useEffect(() => {
     void reload();
+  }, [reload]);
+
+  // Geräte-Sync (lva#210): Bücher von anderen Geräten erscheinen sofort.
+  useEffect(() => {
+    const unlisten = listen("sync-changed", () => void reload());
+    return () => {
+      void unlisten.then((fn) => fn()).catch(() => {});
+    };
   }, [reload]);
 
   // Fortschritt geändert (Reader, Hörleiste, Abgleich beim Start): neu rechnen.

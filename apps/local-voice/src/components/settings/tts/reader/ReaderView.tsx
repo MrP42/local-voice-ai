@@ -550,6 +550,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       onTerm(hit);
       return;
     }
+    // Klick auf eine Überschrift: ab ihrem Anfang lesen, die Überschrift
+    // selbst zuerst. Die Caret-Abfrage traf hier (Spaltensatz, große Schrift,
+    // Klick neben den kurzen Text) oft eine Stelle davor, und das Vorlesen
+    // begann mit dem Satz auf der Seite davor (Patrick 02.11.2026).
+    const target = e.target as HTMLElement;
+    const heading = target.closest<HTMLElement>(".reader-h1, .reader-h2, .reader-h3");
+    if (heading && flowRef.current?.contains(heading)) {
+      const first = heading.querySelector<HTMLElement>("[data-start]");
+      if (first) onActivate(Number(first.dataset.start));
+      return;
+    }
     const caret = caretAt(e.clientX, e.clientY);
     const node = caret?.node ?? null;
     const host = (

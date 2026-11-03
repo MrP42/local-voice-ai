@@ -300,8 +300,9 @@ test("all five content pages share one head", async ({ page }) => {
     } else {
       await page.getByRole("button", { name: label, exact: true }).click();
     }
-    // Ein Kopf je Seite, immer gleich gebaut: h1 im PageShell.
-    const head = page.locator(".page-shell__head h1");
+    // Eine Überschrift je Seite, immer gleich gebaut: unsichtbares h1 im
+    // PageShell (keine Titelzeile im Modul, Patrick 02.11.).
+    const head = page.locator("h1#page-title");
     await expect(head).toHaveCount(1);
     await page.screenshot({
       path: `test-results/page-${id}.png`,

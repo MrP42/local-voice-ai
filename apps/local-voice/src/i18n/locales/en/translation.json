@@ -629,6 +629,27 @@
       "heard": "Heard."
     },
     "kiDocs": {
+      "tokens": {
+        "estimating": "Estimating token usage …",
+        "estimate": "Estimated need: approx. {{total}} tokens",
+        "split": "{{input}} input, {{output}} output",
+        "detail_one": "{{input}} input tokens, {{output}} output tokens, {{count}} model call",
+        "detail_other": "{{input}} input tokens, {{output}} output tokens, {{count}} model calls",
+        "local": "local, no cost",
+        "noPrice": "cost unknown (no price set)",
+        "cached_one": "approx. {{count}} step already cached",
+        "cached_other": "approx. {{count}} steps already cached",
+        "measured": "Estimated with the loaded model's tokenizer; the answer length is an assumption.",
+        "average": "Estimated with an average (about 3.6 characters per token); ±25 % depending on the model.",
+        "actual": "Actual usage: {{total}} tokens",
+        "short": "{{total}} tokens",
+        "vsEstimate": "estimated before {{planned}}",
+        "cost": "approx. {{cost}} USD (price for {{model}})",
+        "vsEstimateDelta": "estimated before {{planned}} ({{delta}} % vs. estimate)",
+        "plannedDetail": "Estimated need: {{detail}}",
+        "notReported": "Provider reports no tokens",
+        "cardHint": "Tokens actually used to create it"
+      },
       "tab": "AI documents",
       "sheets": {
         "label": "Book areas",
@@ -7033,6 +7054,7 @@
       "author": "Author"
     },
     "filter": {
+      "favorites": "Favorites",
       "all": "All",
       "notStarted": "Not started",
       "inProgress": "In progress",
@@ -7063,6 +7085,12 @@
     "read": "Read",
     "listen": "Listen",
     "listenOriginal": "Play audiobook",
+    "favorite": {
+      "toggle": "Favorite: “{{title}}”",
+      "on": "Favorite – shown first",
+      "off": "Pin to the top as favorite",
+      "failed": "Favorite not saved: {{error}}"
+    },
     "markFinished": "Mark as finished",
     "markUnfinished": "Mark as not finished",
     "progressLabel": "Progress of “{{title}}”",

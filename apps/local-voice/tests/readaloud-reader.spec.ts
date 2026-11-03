@@ -348,6 +348,43 @@ test("Klick in den Text liest ab dieser Stelle, ohne Markdown an die Engine", as
   expect(text.slice(offset - 20, offset + 20)).toContain("zwölf");
 });
 
+// Patrick 02.11.2026: Klick auf eine Kapitelüberschrift las den Satz davor
+// (Seite davor), die Überschrift selbst nie. Die Überschrift steht im
+// Sprechtext als eigener Absatz, der Offset zeigt auf sie.
+test("Klick auf eine Überschrift liest ab der Überschrift, als eigener Absatz", async ({
+  page,
+}) => {
+  await open(
+    page,
+    [
+      "# Kapitel 1",
+      "",
+      "Und dieses war der ganze Unterschied.",
+      "(übersetzt von Paul Celan)",
+      "## Eine Lektion von Robert Frost",
+      "Robert Frost ist mein Lieblingsdichter.",
+    ].join("\n"),
+  );
+  // Die Überschrift beginnt eine neue Seite: dorthin blättern.
+  const heading = page
+    .getByTestId("reader-flow")
+    .getByRole("heading", { name: "Eine Lektion von Robert Frost" });
+  await page.getByTestId("reader-flow").focus();
+  await page.keyboard.press("End");
+  await expect(heading).toBeInViewport();
+  await heading.click();
+  await expect.poll(async () => (await calls(page, "tts_speak_text_from")).length).toBe(1);
+  const [args] = await calls(page, "tts_speak_text_from");
+  const text = String(args.text);
+  const start = text.indexOf("Eine Lektion von Robert Frost.");
+  expect(start).toBeGreaterThan(0);
+  // Leerzeile davor und danach: die Satztrennung im Kern trennt dort immer.
+  expect(text.slice(start - 2, start)).toBe("\n\n");
+  expect(text.slice(start)).toMatch(/^Eine Lektion von Robert Frost\.\n\nRobert/);
+  // Ab dem Anfang der Überschrift, nicht mitten in ihr.
+  expect(Number(args.charOffset)).toBe(start);
+});
+
 test("Bearbeiten zeigt den Editor; Tippen schaltet nicht in die Leseansicht", async ({
   page,
 }) => {
