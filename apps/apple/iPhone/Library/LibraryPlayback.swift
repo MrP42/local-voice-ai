@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import MediaPlayer
+import UIKit
 
 /// Was gerade in der Bibliothek läuft: Hörbuch oder Vorlesen. Es läuft immer
 /// höchstens eines; der Mini-Player zeigt es auf Regal und Buchseite.
@@ -18,6 +19,10 @@ final class LibraryPlayback: NSObject, ObservableObject {
     @Published private(set) var trackIndex = 0
     @Published var rate: Float = 1.0 { didSet { applyRate() } }
     @Published private(set) var sleepEnds: Date?
+    /// Schlaftimer „Ende des Kapitels“: Hörposition, an der angehalten wird.
+    @Published private(set) var sleepAtMs: Double?
+    /// Angaben und Kapitel aus den Hörbuchdateien (Cache `hoerbuch-info.json`).
+    @Published private(set) var info: AudiobookInfo?
     // Vorlesen
     @Published private(set) var paragraphs: [TextParagraph] = []
     @Published private(set) var paragraphIndex = 0
@@ -67,6 +72,36 @@ final class LibraryPlayback: NSObject, ObservableObject {
     }
 
     var title: String { book?.title ?? "" }
+
+    /// Kapitel des Hörbuchs: aus der Datei, sonst die Teile.
+    var chapters: [AudiobookChapter] {
+        if let c = info?.chapters, !c.isEmpty { return c }
+        return AudiobookChapters.merge(files: [], tracks: tracks)
+    }
+    var chapterIndex: Int { AudiobookChapters.index(at: positionMs, in: chapters) }
+    var currentChapter: AudiobookChapter? { let c = chapters; return c.isEmpty ? nil : c[min(chapterIndex, c.count - 1)] }
+
+    func seek(toChapter index: Int) {
+        let c = chapters
+        guard c.indices.contains(index) else { return }
+        seek(toMs: c[index].startMs)
+    }
+
+    func previousChapter() { seek(toMs: AudiobookChapters.previousTarget(at: positionMs, in: chapters)) }
+    func nextChapter() { if let t = AudiobookChapters.nextTarget(at: positionMs, in: chapters) { seek(toMs: t) } }
+
+    private func loadInfo(_ book: LibraryBook) {
+        info = library.cachedAudiobookInfo(book)
+        guard info == nil else { return }
+        let id = book.id
+        Task { [weak self] in
+            guard let self else { return }
+            let found = await self.library.audiobookInfo(book)
+            guard self.book?.id == id, self.mode == .audiobook else { return }
+            self.info = found
+            self.updateNowPlaying()
+        }
+    }
     var followMap: FollowMap? {
         guard let book, let audio = book.audio, !text.isEmpty else { return nil }
         return FollowMap(sync: audio.sync, textLength: Double(text.utf16.count), totalMs: totalMs)
@@ -88,6 +123,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         totalMs = audio.totalDurationMs ?? tracks.reduce(0) { $0 + ($1.durationMs ?? 0) }
         text = library.text(book) ?? ""
         paragraphs = LibraryText.paragraphs(text)
+        loadInfo(book)
         let start = library.record(library.audioKey(book))?.offset ?? 0
         lastSavedMs = start
         lastSaveAt = Date()
@@ -119,6 +155,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private func tick(_ seconds: Double) {
         guard mode == .audiobook, seconds.isFinite, seekSettled else { return }
         positionMs = LibraryTracks.total(TrackPosition(index: trackIndex, offsetMs: seconds * 1000), in: tracks)
+        if let stopAt = sleepAtMs, positionMs >= stopAt - 250 { pause(); seek(toMs: stopAt); cancelSleep() }
         if Date().timeIntervalSince(lastSaveAt) >= 10 { saveAudio() }
         updateNowPlaying()
     }
@@ -260,7 +297,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if mode == .readAloud { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
         removeObservers()
         player?.replaceCurrentItem(with: nil)
-        playing = false; book = nil; mode = nil; wordRange = nil
+        playing = false; book = nil; mode = nil; wordRange = nil; info = nil
         cancelSleep()
         library.flush()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -281,7 +318,13 @@ final class LibraryPlayback: NSObject, ObservableObject {
             MainActor.assumeIsolated { self?.pause(); self?.sleepEnds = nil }
         }
     }
-    private func cancelSleep() { sleepTimer?.invalidate(); sleepTimer = nil; sleepEnds = nil }
+    /// Am Ende des laufenden Kapitels anhalten.
+    func sleepAtChapterEnd() {
+        cancelSleep()
+        guard mode == .audiobook, let c = currentChapter else { return }
+        sleepAtMs = c.endMs
+    }
+    private func cancelSleep() { sleepTimer?.invalidate(); sleepTimer = nil; sleepEnds = nil; sleepAtMs = nil }
 
     private func removeObservers() {
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
@@ -310,6 +353,11 @@ final class LibraryPlayback: NSObject, ObservableObject {
             MainActor.assumeIsolated { if self?.mode == .readAloud { self?.step(paragraphs: -1) } else { self?.skip(seconds: -15) } }; return .success }
         c.skipForwardCommand.addTarget { [weak self] _ in
             MainActor.assumeIsolated { if self?.mode == .readAloud { self?.step(paragraphs: 1) } else { self?.skip(seconds: 15) } }; return .success }
+        // Kopfhörer/Sperrbildschirm „nächster/voriger Titel“ = Kapitel.
+        c.nextTrackCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.mode == .audiobook { self?.nextChapter() } else { self?.step(paragraphs: 1) } }; return .success }
+        c.previousTrackCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.mode == .audiobook { self?.previousChapter() } else { self?.step(paragraphs: -1) } }; return .success }
         c.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             MainActor.assumeIsolated { self?.seek(toMs: e.positionTime * 1000) }; return .success
@@ -324,8 +372,25 @@ final class LibraryPlayback: NSObject, ObservableObject {
         if mode == .audiobook {
             info[MPMediaItemPropertyPlaybackDuration] = totalMs / 1000
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = positionMs / 1000
+            info[MPMediaItemPropertyAlbumTitle] = book.title
+            let c = chapters
+            if c.count > 1, let current = currentChapter {
+                info[MPMediaItemPropertyTitle] = current.title
+                info[MPNowPlayingInfoPropertyChapterNumber] = chapterIndex
+                info[MPNowPlayingInfoPropertyChapterCount] = c.count
+            }
+        }
+        if let image = library.coverImage(book) {
+            info[MPMediaItemPropertyArtwork] = Self.artwork(image)
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+extension LibraryPlayback {
+    /// Außerhalb des Main Actors gebaut: MediaPlayer ruft den Block auf einer Hintergrundwarteschlange.
+    nonisolated static func artwork(_ image: UIImage) -> MPMediaItemArtwork {
+        MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 }
 
