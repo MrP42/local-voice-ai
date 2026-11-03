@@ -218,10 +218,20 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   // Mehrere Audiodateien: Auswahl zu einer Besprechung zusammenfuehren.
   const [mergeMeetings, setMergeMeetings] = useState<Meeting[] | null>(null);
-  const toggleSelected = (id: string) =>
+  // Die ausgewaehlten Besprechungen selbst: eine Auswahl bleibt auch, wenn
+  // Suche oder Filter sie aus der sichtbaren Liste nehmen.
+  const selectedMeetings = useRef(new Map<string, Meeting>());
+  const toggleSelected = (meeting: Meeting) => {
+    selectedMeetings.current.set(meeting.id, meeting);
     setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(meeting.id)
+        ? prev.filter((x) => x !== meeting.id)
+        : [...prev, meeting.id],
     );
+  };
+  // Nach dem Zusammenfuehren die frisch geladene Besprechung oeffnen (nicht
+  // das Objekt von vorher mit alter Dauer und alten Audiopfaden).
+  const selectAfterLoad = useRef<string | null>(null);
 
   // G3 (#70, U9): Auswahl fuer ein gemeinsames Protokoll (nur in einem Projekt).
   const [pmMode, setPmMode] = useState(false);
@@ -417,6 +427,15 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // Die Liste hat sich geaendert (Zuordnung, Loeschen, Import an anderer
   // Stelle): die Besprechung kann aus der gewaehlten Liste gefallen oder
   // hinzugekommen sein. Die Projekte laden sich selbst neu.
+  useEffect(() => {
+    const id = selectAfterLoad.current;
+    if (!id) return;
+    const fresh = items.find((item) => item.meeting.id === id)?.meeting;
+    if (!fresh) return;
+    selectAfterLoad.current = null;
+    onSelect(fresh);
+  }, [items, onSelect]);
+
   const loadPageRef = useRef(loadPage);
   loadPageRef.current = loadPage;
   useMeetingsChanged(() => void loadPageRef.current(0));
@@ -578,7 +597,7 @@ export const MeetingList: React.FC<MeetingListProps> = ({
     const toggle = () => {
       if (pmMode) {
         if (pickable) togglePm(meeting.id);
-      } else toggleSelected(meeting.id);
+      } else toggleSelected(meeting);
     };
     return (
       <div
@@ -946,9 +965,9 @@ export const MeetingList: React.FC<MeetingListProps> = ({
               title={t("meetings.parts.merge.selectionHint")}
               onClick={() =>
                 setMergeMeetings(
-                  items
-                    .map((item) => item.meeting)
-                    .filter((m) => selectedIds.includes(m.id)),
+                  selectedIds
+                    .map((id) => selectedMeetings.current.get(id))
+                    .filter((m): m is Meeting => m !== undefined),
                 )
               }
               disabled={selectedIds.length < 2}
@@ -975,12 +994,11 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         meetings={mergeMeetings}
         onClose={() => setMergeMeetings(null)}
         onMerged={(id) => {
-          const merged = mergeMeetings?.find((m) => m.id === id);
           setMergeMeetings(null);
           setSelecting(false);
           setSelectedIds([]);
+          selectAfterLoad.current = id;
           void loadPage(0);
-          if (merged) onSelect(merged);
         }}
       />
       {personFilter && (

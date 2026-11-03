@@ -94,6 +94,11 @@ pub async fn meetings_append_files(
     if !matches!(target.source.as_str(), "import" | "live") {
         return Err("parts_target_invalid".into());
     }
+    // Eine Live-Aufnahme wird erst nach ihrer Nachbearbeitung fertig, und dieses
+    // Ende loest keine Gruppe aus: anhaengen erst, wenn sie fertig ist.
+    if target.source == "live" && target.status != "ready" {
+        return Err("parts_not_ready".into());
+    }
     // Ein wartender Teil nimmt selbst keine Teile an: an sein Ziel anhaengen.
     let target_id = store
         .append_target_of(&target.id)
@@ -122,6 +127,9 @@ pub async fn meetings_append_files(
         }
         ids.push(meeting.id);
     }
+    // Ein Teil kann fertig geworden sein, bevor seine Vormerkung stand.
+    let group = target_id.clone();
+    tauri::async_runtime::spawn_blocking(move || parts::after_import(&app, &store, &group));
     Ok(ids)
 }
 

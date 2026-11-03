@@ -80,7 +80,8 @@ pub const PARTS_MIGRATION: &str = "CREATE TABLE IF NOT EXISTS meeting_parts (
 /// Abtastrate aller Besprechungs-WAVs (Import und Aufnahme).
 const RATE: u32 = 16_000;
 /// Schlüssel in `metadata_json`, den das Umbenennen von Sprechern pflegt
-/// („Kanal:Index“). Er passt nach dem Versatz nicht mehr und entfaellt.
+/// („Kanal:Index“ -> fruehere Namen). Die Schluessel werden beim
+/// Zusammenfuehren wie die Sprechernummern versetzt.
 const FORMER_NAMES_KEY: &str = "speaker_former_names";
 /// Hoechstens so viele Teile in einer Besprechung (Schutz vor Fehlbedienung).
 pub const MAX_PARTS: usize = 64;
@@ -188,6 +189,11 @@ pub struct PartSource {
     pub parts: Vec<MeetingPart>,
     /// Laenge des Audios dieses Teils (laengste Spur).
     pub length_ms: u64,
+    /// Fruehere Sprechernamen aus `metadata_json` („Kanal:Index“ -> Wert).
+    pub former_names: serde_json::Map<String, Value>,
+    /// Stand von Notizen, Sprechern und Metadaten beim Lesen (`side_state`);
+    /// die Transaktion bricht ab, wenn sich einer davon inzwischen geaendert hat.
+    pub side: String,
 }
 
 /// Das Ergebnis fuer die Zielbesprechung.
@@ -199,6 +205,8 @@ pub struct MergePlan {
     pub notes: Vec<NoteBlock>,
     pub parts: Vec<MeetingPart>,
     pub duration_ms: u64,
+    /// Fruehere Sprechernamen mit versetzten Schluesseln (leer = keine).
+    pub former_names: serde_json::Map<String, Value>,
 }
 
 fn file_name(path: &str) -> String {
@@ -238,6 +246,7 @@ pub fn plan(sources: &[PartSource]) -> MergePlan {
     // Je Kanal: hoechste bisher vergebene Sprechernummer (Versatz des naechsten Teils).
     let mut base: HashMap<u8, u32> = HashMap::new();
     let mut hints_root: Option<serde_json::Map<String, Value>> = None;
+    let mut former_names = serde_json::Map::new();
     let mut offset = 0u64;
 
     for src in sources {
@@ -304,6 +313,20 @@ pub fn plan(sources: &[PartSource]) -> MergePlan {
                 speaker_index: index,
                 ..row.clone()
             });
+        }
+
+        for (key, value) in &src.former_names {
+            let Some((channel, n)) = key
+                .split_once(':')
+                .and_then(|(c, n)| Some((c.parse::<u8>().ok()?, n.parse::<u32>().ok()?)))
+            else {
+                continue;
+            };
+            note(channel, n);
+            // Index 0 kann in mehreren Teilen vorkommen: der erste Eintrag gilt.
+            former_names
+                .entry(format!("{channel}:{}", shifted(channel, n)))
+                .or_insert_with(|| value.clone());
         }
 
         for block in &src.notes {
@@ -377,6 +400,7 @@ pub fn plan(sources: &[PartSource]) -> MergePlan {
         notes,
         parts,
         duration_ms: offset,
+        former_names,
     }
 }
 
@@ -581,6 +605,8 @@ pub struct MergeWrite<'a> {
     pub members: &'a [String],
     /// Erwartete `content_revision` je Besprechung (Ziel und Teile).
     pub revisions: &'a [(String, i64)],
+    /// Erwarteter `side_state` je Besprechung (Notizen, Sprecher, Metadaten).
+    pub sides: &'a [(String, String)],
     pub plan: &'a MergePlan,
     pub mic: &'a str,
     pub system: Option<&'a str>,
@@ -629,6 +655,14 @@ impl MeetingStore {
     }
 
     /// Ziel, an das `meeting_id` angehaengt werden soll.
+    /// Alle Besprechungen, an die noch Teile angehaengt werden.
+    pub fn append_targets(&self) -> Result<Vec<String>> {
+        let conn = self.get_connection()?;
+        let mut stmt = conn.prepare("SELECT DISTINCT target_id FROM meeting_append_pending")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
     pub fn append_target_of(&self, meeting_id: &str) -> Result<Option<String>> {
         let conn = self.get_connection()?;
         Ok(conn
@@ -669,6 +703,30 @@ impl MeetingStore {
             "DELETE FROM meeting_append_pending WHERE meeting_id = ?1",
             params![meeting_id],
         )? > 0)
+    }
+
+    /// Fruehere Sprechernamen aus `metadata_json` (leer, wenn keine).
+    fn former_names(&self, meeting_id: &str) -> Result<serde_json::Map<String, Value>> {
+        let conn = self.get_connection()?;
+        let text: Option<String> = conn
+            .query_row(
+                "SELECT metadata_json FROM meetings WHERE id = ?1",
+                params![meeting_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(text
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| match v {
+                Value::Object(mut m) => m.remove(FORMER_NAMES_KEY),
+                _ => None,
+            })
+            .and_then(|v| match v {
+                Value::Object(m) => Some(m),
+                _ => None,
+            })
+            .unwrap_or_default())
     }
 
     /// Anzahl lebender Transkript-Fassungen.
@@ -716,6 +774,13 @@ impl MeetingStore {
                 .map_err(|e| io(&e))?
                 .unwrap_or(0);
             if found != *expected {
+                return Err(PartsError::Changed);
+            }
+        }
+        // Notizen und Sprecher koennen waehrend der Audioverkettung bearbeitet
+        // werden; dann gilt der Stand nicht mehr (sonst gingen Eingaben verloren).
+        for (id, expected) in w.sides {
+            if side_state(&tx, id).map_err(|e| io(&e))? != *expected {
                 return Err(PartsError::Changed);
             }
         }
@@ -772,7 +837,7 @@ impl MeetingStore {
         )
         .map_err(|e| io(&e))?;
 
-        // Metadaten: frueher Namen der Sprecher passen nach dem Versatz nicht mehr.
+        // Metadaten: fruehere Sprechernamen mit versetzten Schluesseln.
         let meta: Option<Option<String>> = tx
             .query_row(
                 "SELECT metadata_json FROM meetings WHERE id = ?1",
@@ -781,10 +846,24 @@ impl MeetingStore {
             )
             .optional()
             .map_err(|e| io(&e))?;
-        if let Some(Ok(Value::Object(mut map))) =
-            meta.flatten().map(|t| serde_json::from_str::<Value>(&t))
-        {
-            if map.remove(FORMER_NAMES_KEY).is_some() {
+        // Fehlende Metadaten zaehlen als leeres Objekt; unlesbare bleiben unberuehrt.
+        let parsed = match meta.flatten() {
+            None => Some(serde_json::Map::new()),
+            Some(text) => match serde_json::from_str::<Value>(&text) {
+                Ok(Value::Object(map)) => Some(map),
+                Ok(Value::Null) => Some(serde_json::Map::new()),
+                _ => None,
+            },
+        };
+        if let Some(mut map) = parsed {
+            let had = map.remove(FORMER_NAMES_KEY).is_some();
+            if !w.plan.former_names.is_empty() {
+                map.insert(
+                    FORMER_NAMES_KEY.into(),
+                    Value::Object(w.plan.former_names.clone()),
+                );
+            }
+            if had || !w.plan.former_names.is_empty() {
                 tx.execute(
                     "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
                     params![Value::Object(map).to_string(), w.target],
@@ -916,11 +995,15 @@ impl MeetingStore {
         }
 
         // Vormerkungen der Gruppe sind erledigt; die Teile gehen in den Papierkorb.
-        tx.execute(
-            "DELETE FROM meeting_append_pending WHERE target_id = ?1",
-            params![w.target],
-        )
-        .map_err(|e| io(&e))?;
+        // Nur die Vormerkungen der zusammengefuehrten Teile: ein waehrenddessen
+        // angehaengter Teil bleibt vorgemerkt und folgt in einer naechsten Runde.
+        for member in w.members {
+            tx.execute(
+                "DELETE FROM meeting_append_pending WHERE meeting_id = ?1",
+                params![member],
+            )
+            .map_err(|e| io(&e))?;
+        }
         for member in w.members {
             let paths = Self::soft_delete_in_tx(&tx, member, now).map_err(|e| io(&e))?;
             old_paths.extend(paths);
@@ -1001,6 +1084,9 @@ pub fn load_sources(store: &MeetingStore, ids: &[String]) -> Result<Vec<PartSour
             notes: store.get_notes(id).map_err(|e| io(&e))?.blocks,
             parts: store.meeting_parts(id).map_err(|e| io(&e))?,
             length_ms: 0,
+            former_names: store.former_names(id).map_err(|e| io(&e))?,
+            side: side_state(&store.get_connection().map_err(|e| io(&e))?, id)
+                .map_err(|e| io(&e))?,
             meeting,
         });
     }
@@ -1009,6 +1095,26 @@ pub fn load_sources(store: &MeetingStore, ids: &[String]) -> Result<Vec<PartSour
         return Err(PartsError::TooMany);
     }
     Ok(out)
+}
+
+/// Stand von Notizen, Sprechern und Metadaten einer Besprechung als Vergleichswert.
+fn side_state(conn: &rusqlite::Connection, meeting_id: &str) -> rusqlite::Result<String> {
+    conn.query_row(
+        "SELECT
+           (SELECT COALESCE(MAX(revision), -1) FROM meeting_notes WHERE meeting_id = ?1),
+           (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), 0) || ':' ||
+                   COALESCE(GROUP_CONCAT(id || '=' || COALESCE(display_name, '') || '/' ||
+                                         COALESCE(human_id, ''), '|'), '')
+              FROM (SELECT * FROM speakers WHERE meeting_id = ?1 AND deleted_at IS NULL ORDER BY id)),
+           (SELECT COALESCE(metadata_json, '') FROM meetings WHERE id = ?1)",
+        params![meeting_id],
+        |row| {
+            let notes: i64 = row.get(0)?;
+            let speakers: String = row.get(1)?;
+            let meta: Option<String> = row.get(2)?;
+            Ok(format!("{notes}#{speakers}#{}", meta.unwrap_or_default()))
+        },
+    )
 }
 
 /// Fuehrt `ids` in dieser Reihenfolge in `ids[0]` zusammen: Audio, Datenbank,
@@ -1039,6 +1145,10 @@ pub fn merge_into_first(
         .iter()
         .map(|s| (s.meeting.id.clone(), s.revision))
         .collect();
+    let sides: Vec<(String, String)> = sources
+        .iter()
+        .map(|s| (s.meeting.id.clone(), s.side.clone()))
+        .collect();
     let target = ids[0].clone();
     let members: Vec<String> = ids[1..].to_vec();
     let mic = audio.mic.to_string_lossy().to_string();
@@ -1047,6 +1157,7 @@ pub fn merge_into_first(
         target: &target,
         members: &members,
         revisions: &revisions,
+        sides: &sides,
         plan: &merge_plan,
         mic: &mic,
         system: system.as_deref(),
@@ -1177,6 +1288,13 @@ fn speakers_after_merge(app: &tauri::AppHandle, store: &Arc<MeetingStore>, targe
 /// alle Teile fertig, wird zusammengefuehrt. Ein gescheiterter oder gestoppter
 /// Teil haelt die Gruppe an; die Oberflaeche zeigt ihn als wartenden Teil.
 pub fn after_import(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_id: &str) {
+    try_group(app, store, meeting_id, 0);
+}
+
+/// So oft wird eine Gruppe nach „beschaeftigt“ oder „geaendert“ erneut versucht.
+const MAX_RETRIES: u32 = 8;
+
+fn try_group(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_id: &str, attempt: u32) {
     let target = match store.append_target_of(meeting_id) {
         Ok(Some(t)) => t,
         Ok(None) => meeting_id.to_string(),
@@ -1200,10 +1318,24 @@ pub fn after_import(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_i
     let mut ids = vec![target.clone()];
     ids.extend(pending.into_iter().map(|p| p.meeting_id));
     match merge_now(app, store, &ids) {
-        Ok(_) => {}
-        // Noch etwas laeuft (z. B. der zweite Teil endet gerade): dessen Ende
-        // loest die Gruppe erneut aus.
-        Err(PartsError::Busy) => info!("meetings: append group {target} waits for a running job"),
+        Ok(_) => {
+            // Waehrend der Runde angehaengte Teile folgen in der naechsten.
+            try_group(app, store, &target, 0);
+        }
+        // Ein anderer Auftrag laeuft (auch einer am Ziel) oder Notizen bzw.
+        // Sprecher wurden gerade bearbeitet: spaeter erneut, mit wachsendem Abstand.
+        Err(PartsError::Busy | PartsError::Changed) if attempt < MAX_RETRIES => {
+            info!("meetings: append group {target} retried later (attempt {})", attempt + 1);
+            let (app, store) = (app.clone(), store.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(15 * u64::from(attempt + 1)));
+                try_group(&app, &store, &target, attempt + 1);
+            });
+        }
+        // Eine gleichzeitige Runde hat die Gruppe schon zusammengefuehrt.
+        Err(PartsError::NotFound(id)) => {
+            info!("meetings: append group {target} skipped, {id} already merged or gone")
+        }
         Err(e) => {
             warn!("meetings: append group {target} not merged: {e}");
             use tauri_specta::Event;
@@ -1214,6 +1346,30 @@ pub fn after_import(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_i
             .emit(app);
         }
     }
+}
+
+/// Vorgemerkte Gruppen erneut pruefen (Start der App: ein Teil kann vor dem
+/// Beenden fertig geworden sein, ohne dass die Gruppe zusammengefuehrt wurde).
+pub fn resume_pending(app: &tauri::AppHandle, store: &Arc<MeetingStore>) {
+    let targets: Vec<String> = match store.append_targets() {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("meetings: pending append groups not read: {e}");
+            return;
+        }
+    };
+    for target in targets {
+        try_group(app, store, &target, 0);
+    }
+}
+
+/// `resume_pending` im Hintergrund, nachdem Wiederherstellung und Warteschlange
+/// angelaufen sind.
+pub fn resume_pending_later(app: tauri::AppHandle, store: Arc<MeetingStore>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(20));
+        resume_pending(&app, &store);
+    });
 }
 
 /// Teile-Info fuer die Oberflaeche.

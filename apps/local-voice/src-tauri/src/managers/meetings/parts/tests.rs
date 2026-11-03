@@ -213,6 +213,8 @@ fn speaker_zero_is_the_whole_channel_and_keeps_the_first_name() {
         notes: vec![],
         parts: vec![],
         length_ms: 2_000,
+        former_names: Default::default(),
+        side: String::new(),
     };
     let mut b = a.clone();
     b.meeting.id = "b".into();
@@ -326,6 +328,18 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
     store.set_meeting_folders(&b.id, &[folder.id.clone()]).unwrap();
     let old_a_wav = a.mic_audio_path.clone().unwrap();
     let old_b_wav = b.mic_audio_path.clone().unwrap();
+    // Fruehere Namen (Sprecher-Umbenennung): nur Teil 2 hat welche.
+    store
+        .get_connection()
+        .unwrap()
+        .execute(
+            "UPDATE meetings SET metadata_json = ?1 WHERE id = ?2",
+            rusqlite::params![
+                r#"{"speaker_former_names":{"2:1":["Sprecher 1"],"2:0":["Saal"]}}"#,
+                b.id
+            ],
+        )
+        .unwrap();
 
     let target = merge_into_first(&store, &[a.id.clone(), b.id.clone()], &dir.path().join(&a.id)).unwrap();
     assert_eq!(target, a.id);
@@ -345,6 +359,14 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
     assert_eq!(
         segs.iter().map(|s| (s.start_ms, s.speaker_index)).collect::<Vec<_>>(),
         vec![(0, Some(1)), (2_000, Some(2))]
+    );
+    // Schluessel versetzt wie die Sprecher: Teil 2, Sprecher 1 -> 2; 0 bleibt.
+    assert_eq!(
+        store.former_names(&a.id).unwrap(),
+        serde_json::json!({"2:2": ["Sprecher 1"], "2:0": ["Saal"]})
+            .as_object()
+            .unwrap()
+            .clone()
     );
     let rows = store.speaker_rows(&a.id).unwrap();
     assert_eq!(rows.len(), 1);
@@ -418,6 +440,7 @@ fn a_change_to_a_transcript_during_the_merge_rolls_everything_back() {
             target: &a.id,
             members: &[b.id.clone()],
             revisions: &revisions,
+            sides: &[],
             plan: &p,
             mic: "x.wav",
             system: None,
@@ -426,6 +449,43 @@ fn a_change_to_a_transcript_during_the_merge_rolls_everything_back() {
     assert_eq!(err, PartsError::Changed);
     assert!(store.get_meeting(&b.id).unwrap().unwrap().deleted_at.is_none());
     assert_eq!(store.get_meeting(&a.id).unwrap().unwrap().mic_audio_path, a.mic_audio_path);
+}
+
+#[test]
+fn notes_typed_during_the_merge_abort_it_instead_of_being_overwritten() {
+    let block = |id: &str, at: Option<u64>| NoteBlock {
+        id: id.into(),
+        kind: NoteBlockKind::Paragraph,
+        text: id.into(),
+        at_ms: at,
+        checked: false,
+    };
+    let (dir, store) = tmp_store();
+    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let b = ready_import(&store, dir.path(), "b.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let mut sources = load_sources(&store, &[a.id.clone(), b.id.clone()]).unwrap();
+    for s in &mut sources {
+        s.length_ms = 1_000;
+    }
+    let p = plan(&sources);
+    // Waehrend die Audiodateien verkettet werden, tippt jemand Notizen.
+    store.save_notes(&a.id, &[block("neu", None)], 0).unwrap();
+    let revisions: Vec<(String, i64)> = sources.iter().map(|s| (s.meeting.id.clone(), s.revision)).collect();
+    let sides: Vec<(String, String)> = sources.iter().map(|s| (s.meeting.id.clone(), s.side.clone())).collect();
+    let err = store
+        .apply_merge(&MergeWrite {
+            target: &a.id,
+            members: &[b.id.clone()],
+            revisions: &revisions,
+            sides: &sides,
+            plan: &p,
+            mic: "x.wav",
+            system: None,
+        })
+        .unwrap_err();
+    assert_eq!(err, PartsError::Changed);
+    assert_eq!(store.get_notes(&a.id).unwrap().blocks.len(), 1);
+    assert!(store.get_meeting(&b.id).unwrap().is_some());
 }
 
 #[test]

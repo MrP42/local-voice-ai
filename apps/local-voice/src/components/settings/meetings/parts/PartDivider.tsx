@@ -15,12 +15,16 @@ export const partStartsBySegment = (
   const out = new Map<number, MeetingPart>();
   if (parts.length < 2) return out;
   const sorted = [...segments].sort((a, b) => a.start_ms - b.start_ms);
-  for (const part of parts.slice(1)) {
-    const first = sorted.find((s) => s.start_ms >= part.offset_ms);
-    if (first && !out.has(first.segment_index)) {
-      out.set(first.segment_index, part);
-    }
-  }
+  parts.forEach((part, i) => {
+    if (i === 0) return;
+    // Nur Segmente innerhalb des Teils: ein Teil ohne Sprache bekommt keine
+    // Marke und nimmt dem naechsten seine nicht weg.
+    const end = parts[i + 1]?.offset_ms ?? Number.POSITIVE_INFINITY;
+    const first = sorted.find(
+      (s) => s.start_ms >= part.offset_ms && s.start_ms < end,
+    );
+    if (first) out.set(first.segment_index, part);
+  });
   return out;
 };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, events, type PartsInfo } from "@/bindings";
 import { useMeetingsChanged } from "@/lib/meetingsBus";
 
@@ -25,17 +25,22 @@ export const formatPartTime = (ms: number): string => {
  */
 export function useMeetingParts(meetingId: string | null) {
   const [info, setInfo] = useState<PartsInfo>(EMPTY_PARTS);
+  // Nur die Antwort der juengsten Anfrage gilt (Wechsel der Besprechung).
+  const latest = useRef(0);
 
   const reload = useCallback(async () => {
+    const request = ++latest.current;
     if (!meetingId) {
       setInfo(EMPTY_PARTS);
       return;
     }
     const result = await commands.meetingsPartsInfo(meetingId);
+    if (request !== latest.current) return;
     setInfo(result.status === "ok" && result.data ? result.data : EMPTY_PARTS);
   }, [meetingId]);
 
   useEffect(() => {
+    setInfo(EMPTY_PARTS);
     void reload();
   }, [reload]);
 

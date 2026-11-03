@@ -26,8 +26,8 @@ const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 /** Kann an diese Besprechung Audio angehaengt werden? */
 export const canAppendAudio = (meeting: Meeting | null): boolean =>
   !!meeting &&
-  (meeting.source === "import" || meeting.source === "live") &&
-  meeting.status !== "recording";
+  ((meeting.source === "import" && meeting.status !== "recording") ||
+    (meeting.source === "live" && meeting.status === "ready"));
 
 /**
  * "Audiodatei anhängen …": Dateiauswahl, Einwilligung und Reihenfolge, dann
