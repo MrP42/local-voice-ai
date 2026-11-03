@@ -201,6 +201,26 @@
   color: var(--color-text-muted);
 }
 
+/* Token-Prognose und -Verbrauch: dezent, Details im Tooltip. */
+.kidoc-tokens {
+  display: block;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.kidoc-tokens--usage {
+  padding-inline-start: 0.25rem;
+}
+.kidoc-tokens__icon {
+  display: inline-block;
+  width: 0.8125rem;
+  height: 0.8125rem;
+  margin-inline-end: 0.375rem;
+  vertical-align: -0.125rem;
+}
+
+
 /* Inhalt, Notizen, Chat: Leiste nur im schmalen Fenster (siehe unten). */
 .book-sheets {
   display: none;
