@@ -2459,6 +2459,22 @@ async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Resul
 }
 },
 /**
+ * Handbearbeitung eines Protokolls oder Dokumenttyps (Markdown) speichern. Die
+ * Aenderung landet in der bestehenden Version; Export, Kopieren, Mail und Vorlesen
+ * lesen sie von dort. `expected_updated_at` ist der Stempel, den die Oberflaeche
+ * geladen hat; weicht er ab (neuer Lauf, zweites Fenster), scheitert der Aufruf mit
+ * `stale_document` und schreibt nichts. Fehlertexte sind Codes (siehe
+ * `MeetingStore::update_markdown_document`); der Text selbst gelangt nie ins Log.
+ */
+async meetingsUpdateDocumentText(documentId: string, body: string, expectedUpdatedAt: number) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_update_document_text", { documentId, body, expectedUpdatedAt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Alle Briefkoepfe: mitgelieferte zuerst, dann eigene.
  */
 async letterheadsList() : Promise<Result<Letterhead[], string>> {
@@ -9544,7 +9560,13 @@ template_id: string | null;
  * earlier still carry seconds — the value is only ever compared for
  * equality, never interpreted, so both work.
  */
-updated_at: number }
+updated_at: number; 
+/**
+ * Von Hand bearbeitet (Protokoll-Editor, KI-Notizen): der Stempel liegt
+ * deutlich hinter dem Anlegen. Abgeleitet, keine eigene Spalte (siehe
+ * `is_hand_edited`); die Oberflaeche warnt damit vor dem Neu-Erzeugen.
+ */
+edited: boolean }
 /**
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
  * dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
