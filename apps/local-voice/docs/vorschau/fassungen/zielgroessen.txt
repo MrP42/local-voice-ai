@@ -1,0 +1,44 @@
+Zielgrößen lva#237 (Playwright boundingBox, Chromium; Kontrollkästchen = Label, Auswahlfeld = Steuerfläche)
+Breite | Fläche | Ziel | B×H px
+1440px | Karte | „Effi Briest“: Details öffnen | 172×257
+1440px | Karte | „Effi Briest“ lesen | 44×44
+1440px | Karte | Favorit: „Effi Briest“ | 44×44
+1440px | Karte | KI und Export: Effi Briest | 44×44
+1440px | Karte | Mehr zu „Effi Briest“ | 44×44
+1440px | KI-Menü | library-ki-translate-book_1 | 238×44
+1440px | KI-Menü | library-ki-kurzbuch-book_1 | 238×44
+1440px | KI-Menü | library-ki-kidoc-book_1 | 238×44
+1440px | KI-Menü | library-ki-export-book_1 | 238×44
+1440px | KI-Dialog | Übersetzung | 101×44
+1440px | KI-Dialog | Kurzbuch | 79×44
+1440px | KI-Dialog | KI-Dokument | 106×44
+1440px | KI-Dialog |  | 212×80
+1440px | KI-Dialog |  | 212×80
+1440px | KI-Dialog |  | 212×100
+1440px | KI-Dialog | Sprache des Ergebnisses | 430×44
+1440px | Export-Dialog | Buchtext · Deutsch | 206×44
+1440px | Export-Dialog | Format für Buchtext · Deutsch | 190×44
+1440px | Export-Dialog | Übersetzung · English | 206×44
+1440px | Export-Dialog | Format für Übersetzung · English | 190×44
+390px | Karte | „Effi Briest“: Details öffnen | 178×267
+390px | Karte | „Effi Briest“ lesen | 44×44
+390px | Karte | Favorit: „Effi Briest“ | 44×44
+390px | Karte | KI und Export: Effi Briest | 44×44
+390px | Karte | Mehr zu „Effi Briest“ | 44×44
+390px | KI-Menü | library-ki-translate-book_1 | 238×44
+390px | KI-Menü | library-ki-kurzbuch-book_1 | 238×44
+390px | KI-Menü | library-ki-kidoc-book_1 | 238×44
+390px | KI-Menü | library-ki-export-book_1 | 238×44
+390px | KI-Dialog | Übersetzung | 101×44
+390px | KI-Dialog | Kurzbuch | 79×44
+390px | KI-Dialog | KI-Dokument | 106×44
+390px | KI-Dialog |  | 308×60
+390px | KI-Dialog |  | 308×60
+390px | KI-Dialog |  | 308×60
+390px | KI-Dialog | Sprache des Ergebnisses | 308×44
+390px | Export-Dialog | Buchtext · Deutsch | 286×44
+390px | Export-Dialog | Format für Buchtext · Deutsch | 258×44
+390px | Export-Dialog | Übersetzung · English | 286×44
+390px | Export-Dialog | Format für Übersetzung · English | 258×44
+
+Unter 44 px: 0

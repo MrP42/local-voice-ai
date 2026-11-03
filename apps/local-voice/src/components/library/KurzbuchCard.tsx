@@ -14,6 +14,8 @@ import {
   type Kurzbuch,
 } from "@/lib/kurzbuch/kurzbuch";
 import { openKiDocInReader } from "@/lib/library/books";
+import { startBookJob, useBookJobs } from "@/lib/library/bookJobs";
+import { ensureBookJobToasts } from "./KiCreateDialog";
 import { listenedFraction } from "../settings/tts/kidocs/kiDocs";
 import {
   KI_LANGS,
@@ -73,6 +75,16 @@ export function KurzbuchCard({
   );
   const [lang, setLang] = useState(() => defaultKiLang(i18n.language));
   const [adding, setAdding] = useState(false);
+  /** Ein Kurzbuch aus der Bibliothek ist fertig: Liste neu laden. */
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<{ page: string }>).detail?.page === page)
+        setRev((n) => n + 1);
+    };
+    window.addEventListener("lv-kidocs-changed", on);
+    return () => window.removeEventListener("lv-kidocs-changed", on);
+  }, [page]);
 
   useEffect(() => {
     setDocs([]);
@@ -87,7 +99,7 @@ export function KurzbuchCard({
     return () => {
       alive = false;
     };
-  }, [page]);
+  }, [page, rev]);
 
   const preferred = defaultKiLang(i18n.language);
   // Gezeigt wird die gewählte Sprache, sonst die bevorzugte, sonst die neueste.
@@ -114,6 +126,11 @@ export function KurzbuchCard({
     };
   }, [page, doc]);
 
+  // lva#236: im Hintergrund erstellen, ohne ins Vorlesen zu wechseln.
+  const running = useBookJobs().find(
+    (j) => j.bookId === book.id && j.kind === "kurzbuch",
+  );
+
   if (!page && !book.audio_path) return null;
   const fraction = found && page ? listenedFraction(page, found.doc.id) : 0;
   // Ältere Kurzbücher (vor lva#217) haben keine Sprachangabe.
@@ -123,7 +140,16 @@ export function KurzbuchCard({
   const create = () => {
     if (!page) return;
     rememberKiLang(lang);
-    openKiDocInReader({ page, create: "kurzbuch", lang });
+    ensureBookJobToasts();
+    startBookJob({
+      bookId: book.id,
+      pageId: page,
+      kind: "kurzbuch",
+      templateId: KURZBUCH_TEMPLATE_ID,
+      templateTitle: t("library.kurzbuch.title"),
+      lang,
+    });
+    setAdding(false);
   };
   const langPicker = (
     <div className="library-kurzbuch__lang">
@@ -139,10 +165,16 @@ export function KurzbuchCard({
         onChange={(v) => v !== null && setLang(v === SAME_AS_BOOK ? "" : v)}
         ariaLabel={t("library.kurzbuch.language")}
       />
-      <Button onClick={create} disabled={busy}>
-        {found
-          ? t("library.kurzbuch.createLang")
-          : t("library.kurzbuch.create")}
+      <Button
+        onClick={create}
+        disabled={busy || !!running}
+        data-testid="kurzbuch-create"
+      >
+        {running
+          ? t("library.ki.running")
+          : found
+            ? t("library.kurzbuch.createLang")
+            : t("library.kurzbuch.create")}
       </Button>
     </div>
   );
