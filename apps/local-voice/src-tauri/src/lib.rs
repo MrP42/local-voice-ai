@@ -2519,6 +2519,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_delete,
             library::library_trash,
             library::library_restore,
+            library::library_trash_list,
+            library::library_sizes,
             library::library_purge,
             library::library_find_duplicate,
             library::library_metadata_search,

@@ -1017,8 +1017,66 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
 
 const TRASH: &str = ".papierkorb";
 const TRASH_STAMP: &str = ".entfernt";
-/// Was länger im Papierkorb liegt (Absturz im Rückgängig-Fenster), fällt weg.
-const TRASH_KEEP_MS: f64 = 7.0 * 24.0 * 3600.0 * 1000.0;
+/// So lange bleibt ein Eintrag im Papierkorb wiederherstellbar.
+const TRASH_KEEP_MS: f64 = 30.0 * 24.0 * 3600.0 * 1000.0;
+
+/// Ein Eintrag im Papierkorb.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
+pub struct TrashEntry {
+    pub book: LibraryBook,
+    /// Entfernt am (Unix-ms).
+    pub removed_ms: f64,
+    /// Belegter Platz des Buchordners (Bytes).
+    pub bytes: f64,
+}
+
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => dir_bytes(&e.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+fn removed_ms(dir: &Path) -> Option<f64> {
+    std::fs::read_to_string(dir.join(TRASH_STAMP))
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .or_else(|| {
+            std::fs::metadata(dir)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as f64)
+        })
+}
+
+fn trash_list_in(root: &Path) -> Vec<TrashEntry> {
+    let Ok(entries) = std::fs::read_dir(root.join(TRASH)) else {
+        return Vec::new();
+    };
+    let mut list: Vec<TrashEntry> = entries
+        .flatten()
+        .filter(|e| checked_id(&e.file_name().to_string_lossy()).is_ok())
+        .filter_map(|e| {
+            let dir = e.path();
+            let book = read_book(&dir)?;
+            Some(TrashEntry {
+                removed_ms: removed_ms(&dir).unwrap_or(0.0),
+                bytes: dir_bytes(&dir) as f64,
+                book,
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| b.removed_ms.total_cmp(&a.removed_ms));
+    list
+}
 
 fn trash_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(root.join(TRASH).join(checked_id(id)?))
@@ -1111,17 +1169,7 @@ fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
             for entry in entries.flatten() {
                 // Ohne Stempel zählt die Änderungszeit des Ordners (das
                 // Verschieben setzt sie), nie „uralt“.
-                let stamp = std::fs::read_to_string(entry.path().join(TRASH_STAMP))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<f64>().ok())
-                    .or_else(|| {
-                        std::fs::metadata(entry.path())
-                            .and_then(|m| m.modified())
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_millis() as f64)
-                    })
-                    .unwrap_or(now);
+                let stamp = removed_ms(&entry.path()).unwrap_or(now);
                 if now - stamp > TRASH_KEEP_MS {
                     let _ = std::fs::remove_dir_all(entry.path());
                 }
@@ -1140,6 +1188,24 @@ pub fn library_trash(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
     trash_in(&root, &ids)
 }
 
+/// Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+#[tauri::command]
+#[specta::specta]
+pub fn library_trash_list(app: AppHandle) -> Result<Vec<TrashEntry>, String> {
+    let root = library_root(&app)?;
+    Ok(trash_list_in(&root))
+}
+
+/// Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_sizes(app: AppHandle, ids: Vec<String>) -> Result<Vec<f64>, String> {
+    let root = library_root(&app)?;
+    ids.iter()
+        .map(|id| Ok(dir_bytes(&book_dir(&root, id)?) as f64))
+        .collect()
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn library_restore(app: AppHandle, ids: Vec<String>) -> Result<Vec<LibraryBook>, String> {
@@ -1147,7 +1213,8 @@ pub fn library_restore(app: AppHandle, ids: Vec<String>) -> Result<Vec<LibraryBo
     restore_in(&root, &ids)
 }
 
-/// Endgültig löschen (`ids`), ohne Angabe nur Altlasten älter als sieben Tage.
+/// Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+/// Papierkorb liegt.
 #[tauri::command]
 #[specta::specta]
 pub fn library_purge(app: AppHandle, ids: Option<Vec<String>>) -> Result<(), String> {
@@ -2340,6 +2407,12 @@ mod tests {
         assert!(list_books(&root).is_empty(), "Papierkorb zählt nicht mit");
         assert!(root.join(".papierkorb/book_1/audio/hoerbuch.mp3").is_file());
 
+        let listed = trash_list_in(&root);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|e| e.removed_ms > 0.0));
+        assert!(listed
+            .iter()
+            .any(|e| e.book.id == "book_1" && e.bytes >= 1.0));
         let back = restore_in(&root, &["book_1".into()]).unwrap();
         assert_eq!(back.len(), 1);
         assert_eq!(list_books(&root).len(), 1);

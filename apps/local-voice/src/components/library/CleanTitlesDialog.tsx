@@ -22,6 +22,7 @@ export const CleanTitlesDialog: React.FC<{
       onOpenChange={(o) => !o && !busy && onCancel()}
       title={t("library.clean.title", { count: books.length })}
       closeLabel={t("library.cancel")}
+      className="library-dialog-touch"
       footer={
         <>
           <Button onClick={onCancel} disabled={busy}>
