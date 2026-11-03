@@ -18,7 +18,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .rec{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-variant-numeric:tabular-nums;font-size:15px}
 .dot{width:10px;height:10px;border-radius:50%;background:var(--rec);box-shadow:0 0 0 4px color-mix(in srgb,var(--rec) 25%,transparent)}
 .icon-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:12px;color:var(--text)}
-.body{flex:1;overflow:hidden;padding:12px 16px;display:flex;flex-direction:column;gap:12px}
+.body{flex:1;overflow-y:auto;padding:12px 16px 28px;display:flex;flex-direction:column;gap:12px}
 .seg{display:flex;background:var(--chip);border-radius:10px;padding:3px;flex:none}
 .seg b{flex:1;text-align:center;padding:8px 0;border-radius:8px;font-size:14px;font-weight:600;color:var(--sec)}
 .seg b.on{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
@@ -30,7 +30,10 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .row:first-of-type{border-top:0;padding-top:0}
 .box{width:22px;height:22px;border:2px solid var(--sec);border-radius:6px;flex:none;margin-top:1px}
 .meta{font-size:13px;color:var(--sec);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.beleg{font-size:12px;border:1px solid var(--border);border-radius:7px;padding:1px 6px;color:var(--sec);font-variant-numeric:tabular-nums}
+.beleg{min-height:44px;min-width:44px;display:inline-flex;align-items:center;margin:-10px 0}
+.beleg span{font-size:12px;border:1px solid var(--border);border-radius:7px;padding:2px 7px;color:var(--sec);font-variant-numeric:tabular-nums;display:inline-flex;gap:4px;align-items:center}
+.hit{width:44px;height:44px;display:grid;place-items:center;flex:none;margin:-11px -6px -11px -11px}
+.legend{font-size:12px;color:var(--sec);line-height:1.35}
 .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;border-radius:999px;padding:4px 10px;background:var(--chip);color:var(--sec)}
 .chip.ai{color:var(--text)}
 .sug{background:var(--sug-bg);border-color:transparent}
@@ -38,12 +41,12 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .tag{font-size:11px;font-weight:700;color:var(--sug);border:1px solid currentColor;border-radius:6px;padding:0 5px}
 .ask{display:flex;gap:8px;margin-top:8px}
 .btn{min-height:44px;border-radius:12px;padding:0 14px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:15px;border:1px solid var(--border);background:var(--card);color:var(--text)}
-.btn.small{min-height:36px;font-size:14px;padding:0 12px}
+.btn.small{min-height:44px;font-size:14px;padding:0 12px}
 .btn.primary{background:var(--brand);color:var(--on-brand);border-color:transparent}
 .btn.danger{color:var(--rec)}
 .bar{flex:none;border-top:1px solid var(--border);padding:8px 12px 30px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;background:var(--bg)}
 .bar .t{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:12px;font-weight:500;min-height:52px;justify-content:center;color:var(--text)}
-.bar .stop{width:52px;height:52px;border-radius:50%;background:var(--rec);display:grid;place-items:center}
+.bar .stop{width:44px;height:44px;border-radius:50%;background:var(--rec);display:grid;place-items:center}
 .bar .stop i{width:18px;height:18px;border-radius:4px;background:#fff}
 .tr{font-size:15px;line-height:1.45}
 .tr .sp{font-weight:700;font-size:13px;color:var(--sec);display:block;margin-top:10px}
@@ -59,6 +62,9 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 .field{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--border);font-size:15px}
 .field span:last-child{color:var(--sec);text-align:right}
 .toggle{width:51px;height:31px;border-radius:16px;background:var(--ok);position:relative;flex:none}
+.toggle.off{background:var(--chip);box-shadow:inset 0 0 0 1px var(--border)}
+.toggle.off:after{right:auto;left:2px;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.btn[aria-disabled=true]{opacity:.4}
 .toggle:after{content:"";position:absolute;right:2px;top:2px;width:27px;height:27px;border-radius:50%;background:#fff}
 .note{font-size:13px;color:var(--sec);line-height:1.35}
 .caption{width:390px;font:600 14px/1.3 system-ui;color:#222;margin:-18px 0 0;text-align:center}
@@ -85,8 +91,8 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
   <div class="sheet" role="dialog" aria-labelledby="c-t">
     <div class="grab"></div>
     <h2 id="c-t">Besprechung aufnehmen</h2>
-    <div class="li"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg><span>Die Besprechung wird <b>aufgenommen</b> und <b>auf diesem iPhone transkribiert</b>.</span></div>
-    <div class="li" style="align-items:center"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2l2 5 5 .5-4 3.5 1.3 5L10 13l-4.3 3 1.3-5-4-3.5L8 7z" fill="currentColor"/></svg><span style="flex:1">KI-Auswertung: Stand, Aufgaben, offene Fragen</span><span class="toggle" role="switch" aria-checked="true" aria-label="KI-Auswertung"></span></div>
+    <div class="li"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg><span>Zustimmung umfasst: <b>Aufnahme</b> und <b>Transkription</b> auf diesem iPhone.</span></div>
+    <div class="li" style="align-items:center"><svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2l2 5 5 .5-4 3.5 1.3 5L10 13l-4.3 3 1.3-5-4-3.5L8 7z" fill="currentColor"/></svg><span style="flex:1">Optional zusätzlich: <b>KI-Auswertung</b> auf dem iPhone (Stand, Aufgaben, offene Fragen)</span><span class="toggle" role="switch" aria-checked="true" aria-label="KI-Auswertung"></span></div>
     <div>
       <div class="field"><span>Zweck</span><span>Protokoll der Teamrunde</span></div>
       <div class="field"><span>Verantwortlich</span><span>Landratsamt, Amt 12</span></div>
@@ -104,7 +110,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
   <div class="island"></div><div class="status"><span>9:41</span><span>●●● ▮</span></div>
   <div class="nav">
     <span class="rec"><span class="dot" aria-hidden="true"></span>24:13</span>
-    <h1>Teamrunde Haushalt</h1>
+    <h1 title="Teamrunde Haushalt 2027" aria-label="Teamrunde Haushalt 2027">Teamrunde Haushalt 2027</h1>
     <span class="chip ai" title="Letzte Auswertung vor 40 s">KI · vor 40 s</span>
   </div>
   <div class="body">
@@ -112,29 +118,32 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
     <div class="card">
       <p class="h">Aktueller Stand</p>
       <p class="p">Der Haushaltsantrag 2027 wird bis Freitag eingereicht. Herr Berger stimmt die Zahlen mit der Kämmerei ab. Offen ist die Beteiligung des Personalrats.</p>
+      <div class="meta" style="margin-top:6px"><span>Belege</span><span class="beleg" role="button" aria-label="Zur Stelle 07:40"><span>≡ 07:40</span></span><span class="beleg" role="button" aria-label="Zur Stelle 08:12"><span>≡ 08:12</span></span><span class="beleg" role="button" aria-label="Zur Stelle 23:51"><span>≡ 23:51</span></span></div>
     </div>
     <div class="card">
       <p class="h">Aufgaben <span class="n">2</span></p>
-      <div class="row"><span class="box" role="checkbox" aria-checked="false" aria-label="Erledigt"></span><div><div class="p">Abstimmung mit der Kämmerei</div><div class="meta"><span>Herr Berger</span><span class="beleg">▶ 08:12</span></div></div></div>
-      <div class="row"><span class="box" role="checkbox" aria-checked="false" aria-label="Erledigt"></span><div><div class="p">Haushaltsantrag einreichen</div><div class="meta"><span>bis Freitag</span><span class="beleg">▶ 07:40</span></div></div></div>
+      <div class="row"><span class="hit" role="checkbox" aria-checked="false" aria-label="Als erledigt abhaken"><span class="box"></span></span><div><div class="p">Abstimmung mit der Kämmerei</div><div class="meta"><span>Herr Berger</span><span class="beleg" role="button" aria-label="Zur Stelle 08:12 im Transkript"><span>≡ 08:12</span></span></div></div></div>
+      <div class="row"><span class="hit" role="checkbox" aria-checked="false" aria-label="Als erledigt abhaken"><span class="box"></span></span><div><div class="p">Haushaltsantrag einreichen</div><div class="meta"><span>bis Freitag</span><span class="beleg" role="button" aria-label="Zur Stelle 07:40 im Transkript"><span>≡ 07:40</span></span></div></div></div>
     </div>
     <div class="card">
       <p class="h">Offene Punkte <span class="n">2</span></p>
       <div class="row"><div style="flex:1"><div class="p">Muss der Personalrat beteiligt werden?</div>
-        <div class="meta"><span style="color:var(--warn);font-weight:600">Beantwortet?</span><span class="beleg">▶ 23:51</span></div>
+        <div class="meta"><span style="color:var(--warn);font-weight:600">Beantwortet?</span><span class="beleg" role="button" aria-label="Zur Stelle 23:51 im Transkript"><span>≡ 23:51</span></span></div>
         <div class="ask"><span class="btn small">Ja, abschließen</span><span class="btn small">Noch offen</span></div></div></div>
-      <div class="row"><div><div class="p">Wer übernimmt die Vertretung im Januar?</div><div class="meta"><span class="beleg">▶ 18:05</span></div></div></div>
+      <div class="row"><div><div class="p">Wer übernimmt die Vertretung im Januar?</div><div class="meta"><span class="beleg" role="button" aria-label="Zur Stelle 18:05 im Transkript"><span>≡ 18:05</span></span></div></div></div>
     </div>
     <div class="card sug">
       <p class="h">Jetzt ansprechen? <span class="tag">Vorschlag der KI</span></p>
       <div class="p">Bis wann braucht die Kämmerei die Zahlen?</div>
+      <div class="meta"><span>Anlass</span><span class="beleg" role="button" aria-label="Zur Stelle 08:12"><span>≡ 08:12</span></span></div>
     </div>
+    <p class="legend">≡ 08:12 springt ins Transkript und hebt die Stelle hervor; dort spielt ▶ die Passage ab.</p>
   </div>
   <div class="bar">
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><rect x="5" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="13" y="4" width="4" height="14" rx="1" fill="currentColor"/></svg>Pause</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19c1-4 4-6 7-6s6 2 7 6M18 6v6M15 9h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Person kommt</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><path d="M5 3h9l4 4v12H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h7M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Notiz</span>
-    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span></span>
+    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Beenden</span>
   </div>
 </section><p class="caption">2 · Live: Stand, Aufgaben, offene Punkte, Vorschlag</p></div>
 
@@ -143,16 +152,17 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
   <div class="island"></div><div class="status"><span>9:41</span><span>●●● ▮</span></div>
   <div class="nav">
     <span class="rec"><span class="dot" aria-hidden="true"></span>24:13</span>
-    <h1>Teamrunde Haushalt</h1>
-    <span class="chip">KI pausiert (Wärme)</span>
+    <h1 title="Teamrunde Haushalt 2027" aria-label="Teamrunde Haushalt 2027">Teamrunde Haushalt 2027</h1>
+    <span class="chip" style="color:var(--warn)">KI pausiert</span>
   </div>
   <div class="body">
     <div class="seg" role="tablist"><b role="tab">Stand</b><b class="on" role="tab" aria-selected="true">Transkript</b><b role="tab">Notizen</b></div>
+    <div class="card" style="padding:8px 12px;font-size:14px;display:flex;gap:8px;align-items:center"><span style="color:var(--warn);font-weight:700">KI pausiert – iPhone zu warm.</span><span style="color:var(--sec)">Aufnahme und Transkript laufen weiter.</span></div>
     <div class="tr">
       <span class="sp">Sprecher 1<span class="ts">07:40</span></span>
       Wir müssen den Haushaltsantrag bis Freitag einreichen.
       <span class="sp">Sprecher 1<span class="ts">08:12</span></span>
-      <span class="mark">Herr Berger übernimmt die Abstimmung mit der Kämmerei.</span>
+      <span class="mark">▶ Herr Berger übernimmt die Abstimmung mit der Kämmerei.</span>
       <span class="sp">Sprecher 2<span class="ts">18:05</span></span>
       Wer übernimmt eigentlich im Januar die Vertretung?
       <span class="sp">Sprecher 3<span class="ts">23:51</span></span>
@@ -166,7 +176,7 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><rect x="5" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="13" y="4" width="4" height="14" rx="1" fill="currentColor"/></svg>Pause</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 19c1-4 4-6 7-6s6 2 7 6M18 6v6M15 9h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Person kommt</span>
     <span class="t"><svg width="22" height="22" viewBox="0 0 22 22"><path d="M5 3h9l4 4v12H5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 11h7M8 15h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Notiz</span>
-    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span></span>
+    <span class="t"><span class="stop" role="button" aria-label="Aufnahme beenden"><i></i></span>Beenden</span>
   </div>
 </section><p class="caption">3 · Live-Transkript, markierter Beleg, KI pausiert</p></div>
 
@@ -180,9 +190,10 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
     <div class="grab"></div>
     <h2>An Local Voice übergeben</h2>
     <div class="card" style="display:flex;gap:12px;align-items:center"><svg width="36" height="36" viewBox="0 0 36 36"><rect width="36" height="36" rx="9" fill="#FFDD00"/><path d="M10 18h2M14 13v10M18 9v18M22 13v10M26 18h2" stroke="#111418" stroke-width="2.4" stroke-linecap="round"/></svg><div><div class="p" style="font-weight:600">Neue Aufnahme 3.m4a</div><div class="meta">41:07 · 9,6 MB · von Apple Watch</div></div></div>
-    <div class="li" style="align-items:center"><span class="toggle" role="switch" aria-checked="true" aria-label="Zustimmung bestätigt"></span><span>Die Aufnahme erfolgte mit Zustimmung aller Beteiligten.</span></div>
+    <div class="li" style="align-items:center"><span class="toggle off" role="switch" aria-checked="false" aria-label="Zustimmung bestätigen"></span><span>Die Aufnahme erfolgte mit Zustimmung aller Beteiligten.</span></div>
     <p class="note">Wird auf dem iPhone transkribiert und ausgewertet, ohne Internet. Zweck, Verantwortlicher und Löschfrist aus den Einstellungen (Protokoll · Amt 12 · 90 Tage).</p>
-    <span class="btn primary">Übernehmen und transkribieren</span>
+    <span class="btn primary" aria-disabled="true">Übernehmen und transkribieren</span>
+    <p class="note" style="margin:-4px 0 0;text-align:center">Erst nach Bestätigung möglich.</p>
     <span class="btn">Abbrechen</span>
   </div>
 </section><p class="caption">4 · Teilen-Menü (Sprachmemos, Dateien)</p></div>
@@ -193,9 +204,9 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
   <div style="text-align:center;margin-top:30px"><div style="font-size:18px;font-weight:600;opacity:.85">Dienstag, 4. November</div><div style="font-size:88px;font-weight:700;letter-spacing:-2px;line-height:1">9:41</div></div>
   <div style="flex:1"></div>
   <div class="la" style="margin-bottom:120px">
-    <div style="display:flex;align-items:center;gap:10px"><span class="dot"></span><b style="flex:1">Teamrunde Haushalt</b><span style="font-variant-numeric:tabular-nums;font-weight:600">24:13</span></div>
+    <div style="display:flex;align-items:center;gap:10px"><span class="dot"></span><b style="flex:1">Besprechung</b><span style="font-variant-numeric:tabular-nums;font-weight:600">24:13</span></div>
     <div style="font-size:14px;opacity:.85">Aufnahme und Transkript laufen · KI holt nach dem Entsperren auf</div>
-    <div style="display:flex;gap:8px;font-size:13px"><span class="chip" style="background:#333;color:#eee">2 Aufgaben</span><span class="chip" style="background:#333;color:#eee">2 offen</span></div>
+    <div style="font-size:12px;opacity:.7">Titel und Zahlen ausgeblendet (Einstellung „Sperrbildschirm: Details zeigen“, Vorgabe aus)</div>
   </div>
 </section><p class="caption">5 · Live-Aktivität bei gesperrtem iPhone</p></div>
 
@@ -203,8 +214,8 @@ body{margin:0;background:#C9CDD3;font-family:-apple-system,"SF Pro Text","Segoe 
 <div class="wrap" style="width:390px"><div style="display:flex;gap:18px;padding-top:120px">
   <section class="watch" id="v6a">
     <div class="top"><span>Besprechung</span><span>9:41</span></div>
-    <div class="sub" style="color:#fff;font-size:15px;line-height:1.3">Alle Anwesenden haben der Aufnahme zugestimmt?</div>
-    <div class="sub">Aufnahme, Transkript und KI-Auswertung am iPhone.</div>
+    <div class="sub" style="color:#fff;font-size:14px;line-height:1.25">Alle stimmen Aufnahme und Transkription zu?</div>
+    <div class="sub" style="font-size:12px">„Ja“ startet die Aufnahme auf der Uhr. Transkript am iPhone; KI nur, wenn dort aktiviert.</div>
     <div class="wb"><b>Nein</b><b style="background:#FFDD00;color:#111">Ja</b></div>
   </section>
   <section class="watch" id="v6b">
