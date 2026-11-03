@@ -2120,13 +2120,18 @@ test.describe("Hervorhebung ohne Umbruchwechsel", () => {
       if ((await book.getAttribute("data-page")) !== "0") turned = s;
     }
     expect(turned).toBeGreaterThan(0);
-    const visible = await page.evaluate(() => {
-      const r = [...CSS.highlights.get("reader-word")!][0] as Range;
-      const word = r.getBoundingClientRect();
-      const b = document.querySelector("[data-testid=reader-book]")!.getBoundingClientRect();
-      return { ok: word.left >= b.left && word.right <= b.right, w: [word.left, word.right], b: [b.left, b.right], t: r.toString() };
-    });
-    expect(visible).toMatchObject({ ok: true });
+    // Die Blätter-Animation (0,3 s) läuft in Echtzeit, nicht auf der Testuhr:
+    // erst nach ihrem Ende steht das Wort an seinem Platz.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const r = [...CSS.highlights.get("reader-word")!][0] as Range;
+          const word = r.getBoundingClientRect();
+          const b = document.querySelector("[data-testid=reader-book]")!.getBoundingClientRect();
+          return word.left >= b.left && word.right <= b.right;
+        }),
+      )
+      .toBe(true);
   });
 
   test("der Satz wird in der Hervorhebungsfarbe gemalt", async ({ page }) => {

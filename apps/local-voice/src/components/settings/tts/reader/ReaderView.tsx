@@ -171,18 +171,23 @@ function entryAt(index: TextIndex, offset: number): number {
   return hit;
 }
 
-/** DOM-Range über einen Quellbereich; null, wenn er nicht im Text steht. */
-function rangeOf(index: TextIndex, r: SourceRange): Range | null {
-  if (!index.length || r.end <= r.start) return null;
-  const a = Math.max(0, entryAt(index, r.start));
-  const b = entryAt(index, r.end - 1);
-  if (b < a) return null;
-  const sa = index[a];
-  const sb = index[b];
-  const range = document.createRange();
-  range.setStart(sa.node, Math.max(0, Math.min(sa.node.length, r.start - sa.start)));
-  range.setEnd(sb.node, Math.max(0, Math.min(sb.node.length, r.end - sb.start)));
-  return range.collapsed ? null : range;
+/** DOM-Ranges über einen Quellbereich, je Textstück eine: so bleiben
+ *  Seitenzahlen, Sprechernamen und Aufzählungspunkte dazwischen ungemalt. */
+function rangesOf(index: TextIndex, r: SourceRange): Range[] {
+  if (!index.length || r.end <= r.start) return [];
+  const out: Range[] = [];
+  for (let i = Math.max(0, entryAt(index, r.start)); i < index.length; i++) {
+    const e = index[i];
+    if (e.start >= r.end) break;
+    const from = Math.max(0, r.start - e.start);
+    const to = Math.min(e.node.length, r.end - e.start);
+    if (to <= from) continue;
+    const range = document.createRange();
+    range.setStart(e.node, from);
+    range.setEnd(e.node, to);
+    out.push(range);
+  }
+  return out;
 }
 
 /** Seitenstand je Text, damit die Ansicht beim Zurückkehren dort steht, wo
@@ -520,31 +525,53 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     const flow = flowRef.current;
     if (!flow) return [];
     const old = indexRef.current;
-    if (old && old.blocks === blocks && old.cutKey === cutKey && old.index.length > 0)
+    if (
+      old &&
+      old.blocks === blocks &&
+      old.cutKey === cutKey &&
+      old.index.length > 0 &&
+      old.index[0].node.isConnected
+    )
       return old.index;
     const index = indexText(flow);
     indexRef.current = { blocks, cutKey, index };
     return index;
   };
+  // Je Instanz eigene Highlight-Objekte: das Aufräumen löscht nur, was diese
+  // Ansicht gesetzt hat. Neu gemalt wird nur, wenn sich Satz, Wort oder Text ändern.
+  const own = useRef<{
+    cur: Highlight | null;
+    word: Highlight | null;
+    key: string;
+    index: TextIndex | null;
+  }>({ cur: null, word: null, key: "", index: null });
+  const paintKey = `${current?.start ?? ""}-${current?.end ?? ""}|${word?.start ?? ""}-${word?.end ?? ""}`;
   useLayoutEffect(() => {
     if (!paint) return;
     const hl = CSS.highlights;
     const index = textIndex();
-    const cur = current ? rangeOf(index, current) : null;
-    const w = word ? rangeOf(index, word) : null;
-    if (cur) hl.set(HL_CUR, new Highlight(cur));
-    else hl.delete(HL_CUR);
-    if (w) {
-      const h = new Highlight(w);
-      h.priority = 1;
-      hl.set(HL_WORD, h);
-    } else hl.delete(HL_WORD);
+    if (own.current.key === paintKey && own.current.index === index) return;
+    own.current.key = paintKey;
+    own.current.index = index;
+    const put = (name: string, ranges: Range[], priority: number): Highlight | null => {
+      if (!ranges.length) {
+        if (hl.get(name) === own.current[name === HL_CUR ? "cur" : "word"]) hl.delete(name);
+        return null;
+      }
+      const h = new Highlight(...ranges);
+      h.priority = priority;
+      hl.set(name, h);
+      return h;
+    };
+    own.current.cur = put(HL_CUR, current ? rangesOf(index, current) : [], 0);
+    own.current.word = put(HL_WORD, word ? rangesOf(index, word) : [], 1);
   });
-  useEffect(
+  useLayoutEffect(
     () => () => {
       if (!paint) return;
-      CSS.highlights.delete(HL_CUR);
-      CSS.highlights.delete(HL_WORD);
+      const hl = CSS.highlights;
+      if (own.current.cur && hl.get(HL_CUR) === own.current.cur) hl.delete(HL_CUR);
+      if (own.current.word && hl.get(HL_WORD) === own.current.word) hl.delete(HL_WORD);
     },
     [paint],
   );
@@ -553,9 +580,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const curEl = (): Pick<Element, "getClientRects" | "getBoundingClientRect"> | null => {
     if (paint) {
       const index = textIndex();
-      const w = word ? rangeOf(index, word) : null;
-      if (w) return w;
-      return current ? rangeOf(index, { start: current.start, end: Math.min(current.end, current.start + 1) }) : null;
+      return (word ? rangesOf(index, word)[0] : undefined) ?? (current ? rangesOf(index, current)[0] : undefined) ?? null;
     }
     return (
       flowRef.current?.querySelector("[data-word]") ??
