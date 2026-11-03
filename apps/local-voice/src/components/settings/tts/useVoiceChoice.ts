@@ -238,12 +238,19 @@ export function useVoiceChoice(phase: string) {
      kurz -- "Thorsten · Deutsch · HQ". Die Sprache steht IMMER dabei: am Namen
      allein erkennt niemand, ob eine Stimme Deutsch oder Englisch spricht, und
      genau davon haengt ab, ob sie brauchbar klingt. */
+  /* Eigene Anzeigenamen (`tts_providers.voice_names`, Dialog "Stimme umbenennen"). Bei den
+     Anbietern stehen sie schon in der Beschriftung vom Backend; Piper-Namen kommen aus dem
+     Katalog und werden hier ersetzt. */
+  const voiceNames = getSetting("tts_providers")?.voice_names;
+  const piperNames = voiceNames?.piper;
   const piperVoiceLabel = useCallback(
     (voice: { id: string; name: string; language: string | null }) => {
+      const own = piperNames?.[voice.id];
       const localized = t(`settings.models.ttsVoices.voices.${voice.id}.name`, {
         defaultValue: voice.name,
       });
-      const base = localized.replace(/\s*\(.*\)\s*$/, "").trim() || voice.id;
+      const base =
+        own ?? (localized.replace(/\s*\(.*\)\s*$/, "").trim() || voice.id);
       let language = voice.language ?? "";
       try {
         if (language) {
@@ -266,7 +273,7 @@ export function useVoiceChoice(phase: string) {
               : "";
       return [base, language, quality].filter(Boolean).join(" · ");
     },
-    [t, uiLang],
+    [t, uiLang, piperNames],
   );
 
   /* Beschriftung einer Anbieter-Stimme: knapp "Anbieter · Name" (Patrick 27.10.2026); alphabetisch.
@@ -297,9 +304,12 @@ export function useVoiceChoice(phase: string) {
       const modelDefault = option.voice.id.endsWith(
         `:${PROVIDER_DEFAULT_VOICE}`,
       );
-      const base = modelDefault
-        ? t("tts.voices.modelDefault")
-        : shortVoiceName(option.voice.label);
+      const renamed =
+        voiceNames?.[option.provider_id]?.[option.voice.id] !== undefined;
+      const base =
+        modelDefault && !renamed
+          ? t("tts.voices.modelDefault")
+          : shortVoiceName(option.voice.label);
       const name =
         multi && lang ? `${base} · ${languageName(lang)}` : base;
       const script =

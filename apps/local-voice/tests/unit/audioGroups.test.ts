@@ -162,12 +162,12 @@ test("36 einzeln importierte Teile sind ein Kandidat, in Hörreihenfolge", () =>
   assert.equal(groups[0].books[35].id, "book_36");
 });
 
-test("Reihenbände ohne Marker und Bücher mit Text sind keine Kandidaten", () => {
+test("Reihenbände ohne Marker und Bücher mit Buchtext sind keine Kandidaten", () => {
   const groups = splitAudiobookGroups([
     book("a", "Harry Potter 1"),
     book("b", "Harry Potter 2"),
     book("c", "Buch Teil 1", {
-      text: { page_id: "p", origin: "transcript", source_name: null },
+      text: { page_id: "p", origin: "document", source_name: null },
     }),
     book("d", "Buch Teil 2"),
     book("e", "Ohne Audio Teil 1", { audio: null }),
@@ -193,5 +193,22 @@ test("wartende Transkription zählt nicht als Text", () => {
   assert.deepEqual(
     groups[0].books.map((b) => b.id),
     ["a", "b"],
+  );
+});
+
+test("Teile mit eigenem Transkript sind Kandidaten (Patricks Rich-Dad-Fall)", () => {
+  const t = (id: string) => ({
+    text: { page_id: `p${id}`, origin: "transcript", source_name: null },
+  });
+  const groups = splitAudiobookGroups([
+    book("b", "Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - 11 - Track 11", t("b")),
+    book("a", "Robert Kiyosaki - Rich Dad Poor Dad Disc 2 - 12 - Track 12", t("a")),
+    book("c", "Robert Kiyosaki - Rich Dad Poor Dad Disc 3 - 01 - Track 01", t("c")),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, "Rich Dad Poor Dad");
+  assert.deepEqual(
+    groups[0].books.map((b) => b.id),
+    ["a", "c", "b"],
   );
 });

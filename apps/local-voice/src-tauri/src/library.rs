@@ -148,7 +148,8 @@ pub struct LibraryBook {
     pub description: Option<String>,
     /// Woher die Metadaten stammen: `openlibrary`, `epub`, `manual`.
     pub metadata_source: Option<String>,
-    /// Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+    /// Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+    /// `generated`.
     pub cover_source: String,
     pub text: Option<TextVersion>,
     pub audio: Option<AudioVersion>,
@@ -980,6 +981,7 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
     if book.title.is_empty() {
         return Err("Ein Buch braucht einen Titel.".into());
     }
+    let created = book.id.is_empty();
     if book.id.is_empty() {
         book.id = fresh_id(&root);
         if book.added_ms <= 0.0 {
@@ -987,6 +989,11 @@ pub fn library_save(app: AppHandle, book: LibraryBook) -> Result<LibraryBook, St
         }
     }
     let dir = book_dir(&root, &book.id)?;
+    // Ein bekanntes Buch, dessen Ordner fehlt (Papierkorb, gelöscht), entsteht
+    // nicht als leerer Geist neu: sonst scheitert „Rückgängig“.
+    if !dir.join("buch.json").is_file() && !created {
+        return Err("Das Buch ist nicht mehr in der Bibliothek.".into());
+    }
     if let Some(audio) = &book.audio {
         validate_audio_names(audio)?;
     }
@@ -1007,6 +1014,217 @@ pub fn library_delete(app: AppHandle, id: String) -> Result<(), String> {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not delete book: {e}"))?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Papierkorb: Entfernen mit Rückgängig
+// ---------------------------------------------------------------------------
+
+const TRASH: &str = ".papierkorb";
+const TRASH_STAMP: &str = ".entfernt";
+/// So lange bleibt ein Eintrag im Papierkorb wiederherstellbar.
+const TRASH_KEEP_MS: f64 = 30.0 * 24.0 * 3600.0 * 1000.0;
+
+/// Ein Eintrag im Papierkorb.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
+pub struct TrashEntry {
+    pub book: LibraryBook,
+    /// Entfernt am (Unix-ms).
+    pub removed_ms: f64,
+    /// Belegter Platz des Buchordners (Bytes).
+    pub bytes: f64,
+}
+
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => dir_bytes(&e.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+fn removed_ms(dir: &Path) -> Option<f64> {
+    std::fs::read_to_string(dir.join(TRASH_STAMP))
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .or_else(|| {
+            std::fs::metadata(dir)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as f64)
+        })
+}
+
+fn trash_list_in(root: &Path) -> Vec<TrashEntry> {
+    let Ok(entries) = std::fs::read_dir(root.join(TRASH)) else {
+        return Vec::new();
+    };
+    let mut list: Vec<TrashEntry> = entries
+        .flatten()
+        .filter(|e| checked_id(&e.file_name().to_string_lossy()).is_ok())
+        .filter_map(|e| {
+            let dir = e.path();
+            let book = read_book(&dir)?;
+            Some(TrashEntry {
+                removed_ms: removed_ms(&dir).unwrap_or(0.0),
+                bytes: dir_bytes(&dir) as f64,
+                book,
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| b.removed_ms.total_cmp(&a.removed_ms));
+    list
+}
+
+fn trash_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+    Ok(root.join(TRASH).join(checked_id(id)?))
+}
+
+/// Bücher in den Papierkorb legen (ganzer Ordner, samt Hörbuch und Cover).
+/// Alles oder nichts: scheitert eines, kommen die schon verschobenen zurück.
+fn trash_in(root: &Path, ids: &[String]) -> Result<(), String> {
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let locks = book_locks(&refs);
+    let _book_guards: Vec<_> = locks
+        .iter()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+        .collect();
+    let _guard = lock();
+    std::fs::create_dir_all(root.join(TRASH)).map_err(|e| e.to_string())?;
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let undo = |moved: &[(PathBuf, PathBuf)]| {
+        for (from, to) in moved.iter().rev() {
+            let _ = std::fs::rename(to, from);
+        }
+    };
+    for id in ids {
+        let dir = book_dir(root, id)?;
+        if !dir.is_dir() {
+            continue;
+        }
+        let to = trash_dir(root, id)?;
+        if to.exists() {
+            let _ = std::fs::remove_dir_all(&to);
+        }
+        if let Err(e) = std::fs::rename(&dir, &to) {
+            undo(&moved);
+            return Err(format!("Entfernen fehlgeschlagen: {e}"));
+        }
+        let _ = std::fs::write(to.join(TRASH_STAMP), format!("{}", now_ms() as i64));
+        moved.push((dir, to));
+    }
+    Ok(())
+}
+
+/// Bücher aus dem Papierkorb zurückholen. Ein Buch, dessen Kennung inzwischen
+/// wieder belegt ist, bleibt im Papierkorb (Fehlermeldung nennt es).
+fn restore_in(root: &Path, ids: &[String]) -> Result<Vec<LibraryBook>, String> {
+    let _guard = lock();
+    let mut restored = Vec::new();
+    let mut blocked = Vec::new();
+    for id in ids {
+        let from = trash_dir(root, id)?;
+        if !from.is_dir() {
+            continue;
+        }
+        let to = book_dir(root, id)?;
+        if to.exists() {
+            blocked.push(id.clone());
+            continue;
+        }
+        std::fs::rename(&from, &to).map_err(|e| format!("Zurückholen fehlgeschlagen: {e}"))?;
+        let _ = std::fs::remove_file(to.join(TRASH_STAMP));
+        if let Some(book) = read_book(&to) {
+            restored.push(book);
+        }
+    }
+    if !blocked.is_empty() {
+        return Err(format!("Schon wieder vorhanden: {}", blocked.join(", ")));
+    }
+    Ok(restored)
+}
+
+/// Endgültig löschen: die genannten Bücher, ohne Angabe alles, was länger
+/// als [`TRASH_KEEP_MS`] im Papierkorb liegt.
+fn purge_in(root: &Path, ids: Option<&[String]>) -> Result<(), String> {
+    let _guard = lock();
+    let trash = root.join(TRASH);
+    match ids {
+        Some(ids) => {
+            for id in ids {
+                let dir = trash_dir(root, id)?;
+                if dir.exists() {
+                    std::fs::remove_dir_all(&dir)
+                        .map_err(|e| format!("could not delete book: {e}"))?;
+                }
+            }
+        }
+        None => {
+            let Ok(entries) = std::fs::read_dir(&trash) else {
+                return Ok(());
+            };
+            let now = now_ms();
+            for entry in entries.flatten() {
+                // Ohne Stempel zählt die Änderungszeit des Ordners (das
+                // Verschieben setzt sie), nie „uralt“.
+                let stamp = removed_ms(&entry.path()).unwrap_or(now);
+                if now - stamp > TRASH_KEEP_MS {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+/// löscht danach mit [`library_purge`] endgültig.
+#[tauri::command]
+#[specta::specta]
+pub fn library_trash(app: AppHandle, ids: Vec<String>) -> Result<(), String> {
+    let root = library_root(&app)?;
+    trash_in(&root, &ids)
+}
+
+/// Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+#[tauri::command]
+#[specta::specta]
+pub fn library_trash_list(app: AppHandle) -> Result<Vec<TrashEntry>, String> {
+    let root = library_root(&app)?;
+    Ok(trash_list_in(&root))
+}
+
+/// Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_sizes(app: AppHandle, ids: Vec<String>) -> Result<Vec<f64>, String> {
+    let root = library_root(&app)?;
+    ids.iter()
+        .map(|id| Ok(dir_bytes(&book_dir(&root, id)?) as f64))
+        .collect()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn library_restore(app: AppHandle, ids: Vec<String>) -> Result<Vec<LibraryBook>, String> {
+    let root = library_root(&app)?;
+    restore_in(&root, &ids)
+}
+
+/// Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+/// Papierkorb liegt.
+#[tauri::command]
+#[specta::specta]
+pub fn library_purge(app: AppHandle, ids: Option<Vec<String>>) -> Result<(), String> {
+    let root = library_root(&app)?;
+    purge_in(&root, ids.as_deref())
 }
 
 /// Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
@@ -1032,9 +1250,21 @@ pub async fn library_metadata_search(
     author: String,
     isbn: Option<String>,
 ) -> Result<Vec<MetadataCandidate>, String> {
+    open_library_search(&title, &author, isbn.as_deref(), 8, 6).await
+}
+
+/// `search.json` abfragen: `fetch` Treffer holen, höchstens `keep` behalten.
+async fn open_library_search(
+    title: &str,
+    author: &str,
+    isbn: Option<&str>,
+    fetch: usize,
+    keep: usize,
+) -> Result<Vec<MetadataCandidate>, String> {
     const FIELDS: &str = "key,title,subtitle,author_name,first_publish_year,publisher,isbn,cover_i,language,number_of_pages_median";
-    let mut query: Vec<(&str, String)> = vec![("fields", FIELDS.into()), ("limit", "8".into())];
-    match isbn.as_deref().and_then(crate::isbn::normalize_isbn) {
+    let mut query: Vec<(&str, String)> =
+        vec![("fields", FIELDS.into()), ("limit", fetch.to_string())];
+    match isbn.and_then(crate::isbn::normalize_isbn) {
         Some(isbn) => query.push(("isbn", isbn)),
         None => {
             let title = title.trim();
@@ -1060,7 +1290,7 @@ pub async fn library_metadata_search(
     if !response.status().is_success() {
         return Err(format!("Open Library antwortete mit {}", response.status()));
     }
-    parse_search(&response.text().await.map_err(|e| e.to_string())?, 6)
+    parse_search(&response.text().await.map_err(|e| e.to_string())?, keep)
 }
 
 /// Klappentext eines Werks (`/works/OL…W`).
@@ -1185,6 +1415,212 @@ pub fn library_cover_clear(app: AppHandle, id: String) -> Result<LibraryBook, St
     book.cover_source = generated();
     write_book(&dir, &book)?;
     read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
+pub struct CoverCandidate {
+    /// `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+    pub source: String,
+    /// Open-Library-Cover-Kennung.
+    pub cover_id: Option<i64>,
+    pub isbn: Option<String>,
+    /// Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+    pub preview: String,
+    /// Kurz: Titel, Jahr, Verlag der Ausgabe.
+    pub label: String,
+}
+
+/// Höchstens so viele Open-Library-Vorschläge.
+const MAX_COVER_CANDIDATES: usize = 16;
+/// Name der zwischengelegten Vorschau des eingebetteten Covers.
+const AUDIO_PREVIEW: &str = "vorschau-hoerbuch";
+
+/// Eingebettetes Cover aus den ersten Teilen des Hörbuchs (MP3, M4B, FLAC).
+fn audio_cover_of(book: &LibraryBook) -> Option<Vec<u8>> {
+    book.audio_paths
+        .iter()
+        .filter(|p| !p.is_empty())
+        .take(3)
+        .filter_map(|p| crate::cover_art::embedded_cover(Path::new(p)))
+        // Was `store_cover` ablehnen würde, gar nicht erst anbieten.
+        .find(|b| b.len() <= MAX_COVER_BYTES)
+}
+
+/// Vorschauen des eingebetteten Covers im Buchordner entfernen.
+fn clear_audio_previews(dir: &Path) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(AUDIO_PREVIEW)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Ausgaben eines Werks (`/works/OL…W/editions.json`) als Cover-Vorschläge.
+pub fn parse_edition_covers(body: &str) -> Vec<CoverCandidate> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
+    let entries = value["entries"].as_array().cloned().unwrap_or_default();
+    entries
+        .iter()
+        .filter_map(|e| {
+            let cover = e["covers"]
+                .as_array()?
+                .iter()
+                .filter_map(serde_json::Value::as_i64)
+                .find(|c| *c > 0)?;
+            let label = [
+                e["title"].as_str().map(str::to_string),
+                e["publish_date"].as_str().map(str::to_string),
+                e["publishers"][0].as_str().map(str::to_string),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+            let isbn = e["isbn_13"][0]
+                .as_str()
+                .or_else(|| e["isbn_10"][0].as_str())
+                .map(str::to_string);
+            Some(CoverCandidate {
+                source: "openlibrary".into(),
+                cover_id: Some(cover),
+                isbn,
+                preview: format!("{OPEN_LIBRARY_COVERS}/id/{cover}-M.jpg"),
+                label,
+            })
+        })
+        .collect()
+}
+
+/// Gleiche Cover-Kennung nur einmal, höchstens [`MAX_COVER_CANDIDATES`].
+pub fn dedupe_covers(list: Vec<CoverCandidate>) -> Vec<CoverCandidate> {
+    let mut seen = std::collections::HashSet::new();
+    list.into_iter()
+        .filter(|c| c.source != "openlibrary" || c.cover_id.is_some_and(|id| seen.insert(id)))
+        .take(MAX_COVER_CANDIDATES + 1)
+        .collect()
+}
+
+/// Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+/// `online` zusätzlich die Cover passender Ausgaben aus Open Library
+/// (hinaus gehen nur ISBN bzw. Titel und Autor).
+#[tauri::command]
+#[specta::specta]
+pub async fn library_cover_candidates(
+    app: AppHandle,
+    id: String,
+    online: bool,
+) -> Result<Vec<CoverCandidate>, String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let mut out = Vec::new();
+    let probe = book.clone();
+    let audio = tauri::async_runtime::spawn_blocking(move || audio_cover_of(&probe))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(bytes) = audio {
+        if let Some(ext) = image_ext(&bytes) {
+            // Eigener Name je Aufruf: eine noch angezeigte ältere Vorschau
+            // (unter Windows evtl. gesperrt) steht dem Schreiben nicht im Weg.
+            let _guard = lock();
+            clear_audio_previews(&dir);
+            let path = dir.join(format!("{AUDIO_PREVIEW}-{}.{ext}", now_ms() as i64));
+            if write_atomic(&path, &bytes).is_ok() {
+                out.push(CoverCandidate {
+                    source: "audio".into(),
+                    cover_id: None,
+                    isbn: None,
+                    preview: path.to_string_lossy().into_owned(),
+                    label: String::new(),
+                });
+            }
+        }
+    }
+    if !online {
+        return Ok(out);
+    }
+    let author = book.authors.join(" ");
+    let mut hits = Vec::new();
+    if let Some(isbn) = book.isbn.as_deref().and_then(crate::isbn::normalize_isbn) {
+        // Scheitert die ISBN-Suche, hilft die Titelsuche trotzdem weiter.
+        hits.extend(
+            open_library_search(&book.title, &author, Some(&isbn), 8, 8)
+                .await
+                .unwrap_or_default(),
+        );
+    }
+    hits.extend(open_library_search(&book.title, &author, None, 20, 20).await?);
+    let label_of = |c: &MetadataCandidate| {
+        [
+            Some(c.title.clone()),
+            c.first_publish_year.map(|y| y.to_string()),
+            c.publisher.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+    };
+    out.extend(hits.iter().filter_map(|c| {
+        let cover = c.cover_id?;
+        Some(CoverCandidate {
+            source: "openlibrary".into(),
+            cover_id: Some(cover),
+            isbn: c.isbn.clone(),
+            preview: format!("{OPEN_LIBRARY_COVERS}/id/{cover}-M.jpg"),
+            label: label_of(c),
+        })
+    }));
+    // Weitere Ausgaben des besten Treffers: dort liegen die meisten Cover.
+    if let Some(work) = hits.iter().find_map(|c| c.work_key.clone()) {
+        let url = format!("https://openlibrary.org{work}/editions.json");
+        if let Ok(response) = http()?.get(url).query(&[("limit", "40")]).send().await {
+            if response.status().is_success() {
+                if let Ok(body) = response.text().await {
+                    out.extend(parse_edition_covers(&body));
+                }
+            }
+        }
+    }
+    Ok(dedupe_covers(out))
+}
+
+/// Das in die Hördatei eingebettete Cover übernehmen.
+#[tauri::command]
+#[specta::specta]
+pub async fn library_cover_from_audio(app: AppHandle, id: String) -> Result<LibraryBook, String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || audio_cover_of(&book))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Das Hörbuch bringt kein Cover mit.")?;
+    let _guard = lock();
+    let mut book = read_book(&dir).ok_or("Buch nicht gefunden.")?;
+    store_cover(&dir, &bytes)?;
+    clear_audio_previews(&dir);
+    book.cover_source = "audio".into();
+    write_book(&dir, &book)?;
+    read_book(&dir).ok_or_else(|| "Buch unlesbar.".into())
+}
+
+/// Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+#[tauri::command]
+#[specta::specta]
+pub fn library_cover_preview_clear(app: AppHandle, id: String) -> Result<(), String> {
+    let root = library_root(&app)?;
+    let dir = book_dir(&root, &id)?;
+    let _guard = lock();
+    clear_audio_previews(&dir);
+    Ok(())
 }
 
 /// Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
@@ -1346,7 +1782,10 @@ fn merge_audio_in(
         if book.audio.is_none() {
             return Err(format!("\u{201e}{}\u{201c} hat kein Hörbuch.", book.title));
         }
-        if book.text.is_some() {
+        // Ein Transkript gehört nur zu diesem Teil; die Oberfläche fügt die
+        // Transkripte vorher zu einem Text zusammen. Ein Dokument (EPUB …)
+        // dagegen ginge verloren: so ein Buch ist das Ziel, nie eine Quelle.
+        if book.text.as_ref().is_some_and(|t| t.origin != "transcript") {
             return Err(format!(
                 "\u{201e}{}\u{201c} hat eine Textfassung und lässt sich nicht einfügen.",
                 book.title
@@ -1657,6 +2096,32 @@ mod tests {
             Some("Text.")
         );
         assert_eq!(parse_description(r#"{"title":"x"}"#), None);
+    }
+
+    #[test]
+    fn edition_covers_become_candidates_once() {
+        let body = r#"{"entries":[
+          {"title":"Rich Dad Poor Dad","publish_date":"2017","publishers":["Plata"],"covers":[-1,8231856],"isbn_13":["9781612680194"]},
+          {"title":"Ohne Bild","covers":[]},
+          {"title":"Gleich","covers":[8231856]},
+          {"title":"Andere","covers":[123]}]}"#;
+        let list = parse_edition_covers(body);
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].cover_id, Some(8231856));
+        assert_eq!(list[0].label, "Rich Dad Poor Dad · 2017 · Plata");
+        assert_eq!(list[0].isbn.as_deref(), Some("9781612680194"));
+        assert!(list[0].preview.ends_with("/id/8231856-M.jpg"));
+        let mut all = vec![CoverCandidate {
+            source: "audio".into(),
+            cover_id: None,
+            isbn: None,
+            preview: "/x".into(),
+            label: String::new(),
+        }];
+        all.extend(list);
+        let unique = dedupe_covers(all);
+        assert_eq!(unique.len(), 3, "Audio bleibt, doppelte Kennung fällt weg");
+        assert!(parse_edition_covers("kein json").is_empty());
     }
 
     #[test]
@@ -2239,6 +2704,79 @@ mod tests {
             "Datei fehlt"
         );
         assert!(root.join("book_5").exists(), "Quelle bleibt bei Fehler");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trash_restore_and_purge() {
+        let root = scratch("trash");
+        audio_book(&root, "book_1", "A", legacy("hoerbuch.mp3", None, None));
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "a");
+        audio_book(&root, "book_2", "B", legacy("hoerbuch.mp3", None, None));
+        trash_in(&root, &["book_1".into(), "book_2".into()]).unwrap();
+        assert!(list_books(&root).is_empty(), "Papierkorb zählt nicht mit");
+        assert!(root.join(".papierkorb/book_1/audio/hoerbuch.mp3").is_file());
+
+        let listed = trash_list_in(&root);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|e| e.removed_ms > 0.0));
+        assert!(listed
+            .iter()
+            .any(|e| e.book.id == "book_1" && e.bytes >= 1.0));
+        let back = restore_in(&root, &["book_1".into()]).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(list_books(&root).len(), 1);
+        assert!(!root.join("book_1/.entfernt").exists());
+
+        // Ohne Angabe bleiben frische Einträge liegen, alte fallen weg.
+        purge_in(&root, None).unwrap();
+        assert!(root.join(".papierkorb/book_2").exists());
+        std::fs::write(root.join(".papierkorb/book_2/.entfernt"), "0").unwrap();
+        purge_in(&root, None).unwrap();
+        assert!(!root.join(".papierkorb/book_2").exists());
+
+        trash_in(&root, &["book_1".into()]).unwrap();
+        purge_in(&root, Some(&["book_1".into()])).unwrap();
+        assert!(!root.join(".papierkorb/book_1").exists());
+        assert!(trash_in(&root, &["../x".into()]).is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn merge_takes_transcript_sources_but_never_documents() {
+        let root = scratch("merge-transcript");
+        audio_book(
+            &root,
+            "book_1",
+            "Teil 1",
+            legacy("hoerbuch.mp3", None, Some(5.0)),
+        );
+        touch(&root.join("book_1/audio/hoerbuch.mp3"), "1");
+        let mut two = audio_book(
+            &root,
+            "book_2",
+            "Teil 2",
+            legacy("hoerbuch.mp3", None, None),
+        );
+        two.text = Some(TextVersion {
+            page_id: "p2".into(),
+            origin: "transcript".into(),
+            source_name: None,
+        });
+        write_book(&root.join("book_2"), &two).unwrap();
+        touch(&root.join("book_2/audio/hoerbuch.mp3"), "2");
+        let mut doc = audio_book(&root, "book_3", "Buch", legacy("hoerbuch.mp3", None, None));
+        doc.text = Some(TextVersion {
+            page_id: "p3".into(),
+            origin: "document".into(),
+            source_name: None,
+        });
+        write_book(&root.join("book_3"), &doc).unwrap();
+        touch(&root.join("book_3/audio/hoerbuch.mp3"), "3");
+        assert!(merge_audio_in(&root, "book_1", &["book_3".into()], false).is_err());
+        let merged = merge_audio_in(&root, "book_1", &["book_2".into()], false).unwrap();
+        assert_eq!(merged.audio.unwrap().tracks.len(), 2);
+        assert!(!root.join("book_2").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

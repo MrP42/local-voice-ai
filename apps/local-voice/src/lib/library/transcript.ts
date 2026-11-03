@@ -70,3 +70,47 @@ export function textWithSync(
   });
   return { text, sync };
 }
+
+/** Ein Teil mit eigenem Transkript, der in einen gemeinsamen Text eingeht. */
+export interface TranscriptPiece {
+  /** Überschrift des Teils im gemeinsamen Text (Kapitelliste im Reader). */
+  heading: string;
+  /** Text des Teils samt seiner Titelei. */
+  text: string;
+  /** Zeitachse des Teils (Zeichen im eigenen Text → ms im eigenen Hörbuch). */
+  sync: SyncPoint[];
+  /** Beginn des Teils im zusammengeführten Hörbuch (ms). */
+  offsetMs: number;
+}
+
+/**
+ * Transkripte mehrerer Teile zu **einem** Lesetext verbinden (Zusammenführen):
+ * jede Titelei fällt weg (alles vor dem ersten Stützpunkt), jeder Teil bekommt
+ * eine Überschrift, und die Zeitachse wird auf Zeichen im neuen Text und auf
+ * die Gesamtzeit umgerechnet. Teile ohne Stützpunkte (leer) fallen weg.
+ */
+export function joinTranscripts(
+  prefix: string,
+  pieces: TranscriptPiece[],
+): { text: string; sync: SyncPoint[] } {
+  let text = prefix;
+  const sync: SyncPoint[] = [];
+  for (const piece of pieces) {
+    if (!piece.sync.length) continue;
+    const points = [...piece.sync].sort((a, b) => a.chars - b.chars);
+    const start = Math.min(points[0].chars, piece.text.length);
+    const body = piece.text.slice(start).replace(/\s+$/, "");
+    if (!body) continue;
+    if (sync.length) text += "\n\n";
+    text += `## ${piece.heading}\n\n`;
+    const base = text.length;
+    for (const p of points)
+      if (p.chars - start <= body.length)
+        sync.push({
+          chars: base + (p.chars - start),
+          ms: Math.max(0, Math.round(p.ms + piece.offsetMs)),
+        });
+    text += body;
+  }
+  return { text, sync };
+}

@@ -5298,6 +5298,42 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
+ * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
+ */
+async libraryExportText(meta: LibraryExportMeta, markdown: string, path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_text", { meta, markdown, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ist ffmpeg erreichbar? Dann bietet der Exportdialog M4B und MP3 an.
+ */
+async libraryFfmpegAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("library_ffmpeg_available");
+},
+/**
+ * Hörbuch exportieren.
+ * 
+ * - `original`: ein Teil → Kopie nach `out_path` (Endung des Originals);
+ * mehrere Teile → `out_path` ist ein Ordner, darin „01 – Titel.ext“ …
+ * - `m4b` / `mp3`: alle Teile über ffmpeg in EINE Datei; M4B mit einer
+ * Kapitelmarke je Teil, wenn alle Teile eine Dauer haben.
+ * 
+ * Rückgabe: die geschriebenen Dateien.
+ */
+async libraryExportAudio(paths: string[], chapters: LibraryExportChapter[], outPath: string, format: string, title: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_audio", { paths, chapters, outPath, format, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -6035,6 +6071,60 @@ async libraryDelete(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Bücher in den Papierkorb legen; die Oberfläche bietet „Rückgängig“ an und
+ * löscht danach mit [`library_purge`] endgültig.
+ */
+async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+ */
+async libraryTrashList() : Promise<Result<TrashEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+ */
+async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_sizes", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+ * Papierkorb liegt.
+ */
+async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_purge", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Gibt es das Werk schon? Dann soll die neue Fassung angehängt werden.
  */
 async libraryFindDuplicate(title: string, authors: string[], isbn: string | null) : Promise<Result<LibraryBook | null, string>> {
@@ -6095,6 +6185,41 @@ async libraryCoverFromFile(id: string, path: string) : Promise<Result<LibraryBoo
 async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("library_cover_clear", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+ * `online` zusätzlich die Cover passender Ausgaben aus Open Library
+ * (hinaus gehen nur ISBN bzw. Titel und Autor).
+ */
+async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<CoverCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_candidates", { id, online }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das in die Hördatei eingebettete Cover übernehmen.
+ */
+async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+ */
+async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6722,6 +6847,19 @@ async ttsProviderSetAllowRemote(id: string, allow: boolean) : Promise<Result<nul
 async ttsProviderSetVisibleVoices(id: string, voices: string[]) : Promise<Result<null, TtsError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_visible_voices", { id, voices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Anzeigenamen einer Stimme setzen; `name` leer oder `None`: ursprünglicher Name. Gilt für
+ * jeden Anbieter (auch Piper); Fish-Stimmen tragen ihren Namen in den eigenen Metadaten
+ * (`tts_set_voice_meta`). `original`: der Name, den die Oberfläche als ursprünglich zeigt.
+ */
+async ttsProviderSetVoiceName(id: string, voice: string, name: string | null, original: string | null) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_voice_name", { id, voice, name, original }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8296,6 +8434,26 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
  */
 last_text: string }
 /**
+ * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+ */
+export type CoverCandidate = { 
+/**
+ * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+ */
+source: string; 
+/**
+ * Open-Library-Cover-Kennung.
+ */
+cover_id: number | null; isbn: string | null; 
+/**
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+ */
+preview: string; 
+/**
+ * Kurz: Titel, Jahr, Verlag der Ausgabe.
+ */
+label: string }
+/**
  * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
  * Abdeckungszeile).
  */
@@ -9028,7 +9186,8 @@ id: string; title: string; subtitle: string | null; authors: string[]; language:
  */
 metadata_source: string | null; 
 /**
- * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+ * Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+ * `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
 /**
@@ -9051,6 +9210,22 @@ audio_path: string | null;
  * ist die Liste leer.
  */
 audio_paths?: string[] }
+/**
+ * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
+ */
+export type LibraryExportChapter = { title: string; duration_ms: number | null }
+/**
+ * Angaben des Buchs für Kopf und Cover der Exportdatei.
+ */
+export type LibraryExportMeta = { title: string; authors: string[]; 
+/**
+ * Sprachcode der Fassung (`de`, `en`); fehlt: unbekannt.
+ */
+language: string | null; 
+/**
+ * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
+ */
+cover_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -11051,6 +11226,18 @@ flagged: FlaggedSentence[];
  * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
  */
 failed_blocks: number; blocks: number }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
@@ -11178,7 +11365,12 @@ voice: string | null;
  * Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
  * [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
  */
-visible_voices: string[] }
+visible_voices: string[]; 
+/**
+ * Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
+ * `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
+ */
+voice_names: Partial<{ [key in string]: string }> }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
@@ -11227,7 +11419,14 @@ voices: Partial<{ [key in string]: string }>;
  * Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
  * Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
  */
-visible_voices: Partial<{ [key in string]: string[] }> }
+visible_voices: Partial<{ [key in string]: string[] }>; 
+/**
+ * Eigene Anzeigenamen je Anbieter und Stimme (nur `tts_provider_set_voice_name`), z. B.
+ * `phonon` → `Erzaehlerin` → `Erzählerin`. Die Kennung der Stimme bleibt unverändert (Synthese,
+ * Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
+ * Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
+ */
+voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }> }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).

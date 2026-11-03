@@ -5,6 +5,11 @@ import { test, expect, type Page } from "@playwright/test";
 // Befundleiste. Die Klappe "Ausdruck & Sprechstil" unter dem Text gibt es nicht mehr
 // (Patrick 01.11.: der Ausdruck kommt über das Kontextmenü).
 test.beforeEach(async ({ page }) => {
+  // Diese Tests prüfen die Satz-/Wortlogik an den Spans (.reader-cur); den
+  // Weg über die Highlight-API prüft "Hervorhebung ohne Umbruchwechsel".
+  await page.addInitScript(() => {
+    (window as unknown as { __lvaReaderSpans?: boolean }).__lvaReaderSpans = true;
+  });
   page.on("pageerror", (error) => {
     throw error;
   });
@@ -2037,4 +2042,112 @@ test("Stopp, dann Bereichswechsel: nach der Rückkehr nichts markiert, Play begi
   await page.getByTestId("reader-play").click();
   await expect.poll(async () => (await calls(page, "tts_speak_text")).length).toBe(1);
   expect(await calls(page, "tts_speak_resume")).toHaveLength(0);
+});
+
+// Hervorhebung ohne Umbruchwechsel (Patrick 03.11.): Ein Span um Satz oder Wort
+// änderte im Blocksatz den Zeilenumbruch, der Text ruckelte vor allem am
+// Absatzanfang. Über die Highlight-API bleibt das DOM und damit jede Zeile stehen.
+test.describe("Hervorhebung ohne Umbruchwechsel", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as unknown as { __lvaReaderSpans?: boolean }).__lvaReaderSpans = false;
+    });
+  });
+
+  const painted = (page: Page, name: string) =>
+    page.evaluate((n) => {
+      const h = CSS.highlights.get(n);
+      return h ? [...h].map((r) => (r as Range).toString()).join("") : null;
+    }, name);
+  // Lage jedes Textstücks im Buch: ändert sich ein Umbruch, ändert sich das.
+  const layout = (page: Page) =>
+    page.evaluate(() => {
+      // Relativ zum Fluss: Umblättern verschiebt ihn, ändert aber keinen Umbruch.
+      const flow = document.querySelector("[data-testid=reader-flow]")!.getBoundingClientRect();
+      return [...document.querySelectorAll("[data-testid=reader-flow] [data-start]")]
+        .flatMap((el) =>
+          [...el.getClientRects()].map(
+            (r) => `${Math.round(r.left - flow.left)}:${Math.round(r.top - flow.top)}:${Math.round(r.width)}`,
+          ),
+        )
+        .join(" ");
+    });
+
+  test("Satz und Wort werden gemalt, ohne den Text zu zerteilen", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+    await open(page, LONG_SENTENCE, 800);
+    await expect(page.getByTestId("reader-flow")).toContainText("Wort139");
+    const before = await layout(page);
+    await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+    await emit(page, "tts-speak-progress", { position: 1, total: 2 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 1,
+      text: LONG_SENTENCE.split("\n\n")[1],
+      duration_ms: 60_000,
+    });
+    await expect.poll(() => painted(page, "reader-word")).toBe("Wort0");
+    expect(await painted(page, "reader-cur")).toBe(LONG_SENTENCE.split("\n\n")[1]);
+    await expect(page.locator(".reader-cur, .reader-word")).toHaveCount(0);
+    expect(await layout(page)).toBe(before);
+    for (let i = 0; i < 6; i++) {
+      await page.clock.runFor(3_000);
+      expect(await layout(page)).toBe(before);
+    }
+    const mid = Number((await painted(page, "reader-word"))?.slice(4));
+    expect(mid).toBeGreaterThan(30);
+  });
+
+  test("die Seite blättert wortgenau mit", async ({ page }) => {
+    await page.clock.install();
+    await page.addInitScript(() => window.localStorage.setItem("lva.ui.tts.view", "read"));
+    await open(page, LONG_SENTENCE, 800);
+    const book = page.getByTestId("reader-book");
+    expect(Number(await book.getAttribute("data-pages"))).toBeGreaterThan(1);
+    await emit(page, "tts-state-changed", { phase: "speaking", message: null });
+    await emit(page, "tts-speak-progress", { position: 1, total: 2 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 1,
+      text: LONG_SENTENCE.split("\n\n")[1],
+      duration_ms: 120_000,
+    });
+    await expect(book).toHaveAttribute("data-page", "0");
+    let turned = -1;
+    for (let s = 0; s < 120 && turned < 0; s += 2) {
+      await page.clock.runFor(2_000);
+      if ((await book.getAttribute("data-page")) !== "0") turned = s;
+    }
+    expect(turned).toBeGreaterThan(0);
+    // Die Blätter-Animation (0,3 s) läuft in Echtzeit, nicht auf der Testuhr:
+    // erst nach ihrem Ende steht das Wort an seinem Platz.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const r = [...CSS.highlights.get("reader-word")!][0] as Range;
+          const word = r.getBoundingClientRect();
+          const b = document.querySelector("[data-testid=reader-book]")!.getBoundingClientRect();
+          return word.left >= b.left && word.right <= b.right;
+        }),
+      )
+      .toBe(true);
+  });
+
+  test("der Satz wird in der Hervorhebungsfarbe gemalt", async ({ page }) => {
+    await open(page);
+    await emit(page, "tts-speak-progress", { position: 1, total: 44 });
+    await emit(page, "tts-current-sentence", {
+      context: "speak",
+      index: 1,
+      text: "Der Leuchtturm stand seit über hundert Jahren auf der Klippe.",
+    });
+    await expect.poll(() => painted(page, "reader-cur")).toContain("Der Leuchtturm stand");
+    // Hervorhebungsfarbe greift (kein transparentes ::highlight).
+    const bg = await page.evaluate(() => {
+      const el = document.querySelector("[data-testid=reader-flow] [data-start]")!;
+      return getComputedStyle(el, "::highlight(reader-cur)").backgroundColor;
+    });
+    expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+  });
 });

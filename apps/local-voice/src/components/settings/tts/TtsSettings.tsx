@@ -82,6 +82,7 @@ import {
   type LibraryKiDocRequest,
 } from "@/lib/library/books";
 import { ReaderDrop } from "@/components/library/ReaderDrop";
+import { ExportDialog } from "@/components/library/ExportDialog";
 import {
   clearResumePoint,
   loadResumePoint,
@@ -155,7 +156,7 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { IsbnDialog } from "./reader/IsbnDialog";
 import { applyBookTitle, findIsbn } from "@/lib/reader/isbn";
-import type { IsbnBook, TranslateJob } from "@/bindings";
+import type { IsbnBook, LibraryBook, TranslateJob } from "@/bindings";
 import {
   READER_FONTS,
   READER_THEMES,
@@ -412,6 +413,41 @@ export const TtsSettings = () => {
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
   const [workshopOpen, setWorkshopOpen] = useState(false);
+  /** lva#236: Exportieren (Buch der Seite oder die Seite allein). */
+  const [exportBook, setExportBook] = useState<LibraryBook | null>(null);
+  const openExport = async () => {
+    const page = activePage;
+    if (!page) return;
+    // Gebündeltes Sichern abwarten nicht nötig: jetzt sichern, damit der
+    // Export den Stand von eben sieht (Text, Übersetzungen).
+    if (pageLoaded.current)
+      await commands.pageStateSave(page, pageStateJson()).catch(() => null);
+    const list = await commands.libraryList().catch(() => null);
+    const books = list && list.status === "ok" ? list.data : [];
+    const book = books.find((b) => b.text?.page_id === page);
+    setExportBook(
+      book ?? {
+        id: "",
+        title: pages.find((p) => p.id === page)?.title ?? t("tts.title"),
+        subtitle: null,
+        authors: [],
+        language: null,
+        isbn: null,
+        publisher: null,
+        publish_date: null,
+        pages: null,
+        description: null,
+        metadata_source: null,
+        cover_source: "generated",
+        text: { page_id: page, origin: "document", source_name: null },
+        audio: null,
+        added_ms: 0,
+        finished: false,
+        cover_path: null,
+        audio_path: null,
+      },
+    );
+  };
   /** Welcher Reiter offen ist. Das Original bleibt immer erhalten. */
   const [tab, setTab] = useState<"original" | "translation" | "summary">(
     "original",
@@ -442,6 +478,18 @@ export const TtsSettings = () => {
   const [translatedLangs, setTranslatedLangs] = useState<string[]>([]);
   const addTranslatedLang = (lang: string) =>
     setTranslatedLangs((cur) => (cur.includes(lang) ? cur : [...cur, lang]));
+  // lva#236: eine Übersetzung aus der Bibliothek ist fertig. Ohne das
+  // überschriebe ein offenes Vorlesen die Sprachliste beim nächsten Speichern.
+  const activePageForEvents = useRef<string>("");
+  activePageForEvents.current = activePage ?? "";
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ page: string; lang: string }>).detail;
+      if (d && d.page === activePageForEvents.current) addTranslatedLang(d.lang);
+    };
+    window.addEventListener("lv-page-translated", on);
+    return () => window.removeEventListener("lv-page-translated", on);
+  }, []);
   /** Zu welchem Text/welcher Sprache `translation` gehoert, und was davon schon im Speicher liegt. */
   const translationFor = useRef("");
   const savedTranslation = useRef<string | null>(null);
@@ -3385,6 +3433,7 @@ export const TtsSettings = () => {
         onCancelPrewarm={() => void commands.ttsPrewarmCancel()}
         sentenceCounter={sentenceCounter}
         onOpenWorkshop={() => setWorkshopOpen(true)}
+        onExport={() => void openExport()}
         tidying={tidying}
         onTidy={() => void tidyText()}
         speeching={speeching}
@@ -4233,6 +4282,17 @@ export const TtsSettings = () => {
             targetCode={targetLangCode(targetLang)}
             initial={swapInitial}
             onApply={applySpeakerSwap}
+          />
+          <ExportDialog
+            book={exportBook}
+            preselect={
+              tab === "translation"
+                ? [`translation:${targetLang}`]
+                : tab === "summary" && openDocId
+                  ? [`doc:${openDocId}`]
+                  : ["original"]
+            }
+            onClose={() => setExportBook(null)}
           />
           <ScriptWorkshopDialog
             open={workshopOpen}

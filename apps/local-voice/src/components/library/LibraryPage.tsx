@@ -1,13 +1,23 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
+  CheckSquare,
+  Download,
+  Eraser,
+  FileText,
+  Languages,
+  Loader2,
   Headphones,
+  ImageIcon,
   Layers,
   MoreVertical,
+  Pencil,
   Play,
   Plus,
+  Sparkles,
   Star,
+  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +32,9 @@ import { BookDetail } from "./BookDetail";
 import { AddBookDialog } from "./AddBookDialog";
 import { AudioBar } from "./AudioBar";
 import { MergeDialog } from "./MergeDialog";
+import { RemoveDialog } from "./RemoveDialog";
+import { CleanTitlesDialog } from "./CleanTitlesDialog";
+import { CoverDialog } from "./CoverDialog";
 import { IconButton } from "../ui/IconButton";
 import { useLibraryDrop } from "./useLibraryDrop";
 import { useLibrary, type TranscriptJob } from "./useLibrary";
@@ -45,7 +58,42 @@ import {
   splitAudiobookGroups,
   type SplitGroup,
 } from "@/lib/library/audioGroups";
-import { mergeGroup, planMerge, type MergePlan } from "@/lib/library/merge";
+import {
+  mergeGroup,
+  planManual,
+  planMerge,
+  reorder,
+  type MergePlan,
+} from "@/lib/library/merge";
+import {
+  deleteBooks,
+  listTrash,
+  purgeBooks,
+  purgeStaleTrash,
+  restoreBooks,
+  trashBooks,
+  UNDO_MS,
+  type RemoveScope,
+} from "@/lib/library/remove";
+import type { TrashEntry } from "@/bindings";
+import { TrashDialog } from "./TrashDialog";
+import {
+  KiCreateDialog,
+  ensureBookJobToasts,
+  jobStatus,
+  jobTitle,
+  type KiCreateTab,
+} from "./KiCreateDialog";
+import { ExportDialog } from "./ExportDialog";
+import {
+  cancelBookJob,
+  jobFraction,
+  jobsOfBook,
+  useBookJobs,
+} from "@/lib/library/bookJobs";
+import "./fassungen.css";
+import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
+import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
 import "./library.css";
 
@@ -151,6 +199,17 @@ export const LibraryPage: React.FC = () => {
     isSort,
   );
   const [openId, setOpenId] = useState<string | null>(null);
+  /** ⋮ → „Titel bearbeiten“: Produktseite öffnet mit dem Titelfeld. */
+  const [editTitleId, setEditTitleId] = useState<string | null>(null);
+  const [coverFor, setCoverFor] = useState<LibraryBook | null>(null);
+  /** lva#236: KI-Aufträge und Export direkt aus der Bibliothek. */
+  const [kiFor, setKiFor] = useState<{ book: LibraryBook; tab: KiCreateTab } | null>(null);
+  const [exportFor, setExportFor] = useState<LibraryBook | null>(null);
+  const kiJobs = useBookJobs();
+  useEffect(() => ensureBookJobToasts(), []);
+  useEffect(() => {
+    if (!openId) setEditTitleId(null);
+  }, [openId]);
   const [adding, setAdding] = useState(false);
   const [listening, setListening] = useState<{
     book: LibraryBook;
@@ -176,6 +235,43 @@ export const LibraryPage: React.FC = () => {
   });
   const listen = (book: LibraryBook, follow = false) =>
     setListening({ book, follow });
+
+  // Mehrfachauswahl: Zusammenführen, Titel bereinigen, Entfernen.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [removing, setRemoving] = useState<LibraryBook[]>([]);
+  const [cleaning, setCleaning] = useState<LibraryBook[]>([]);
+  const [cleanBusy, setCleanBusy] = useState(false);
+  /** Papierkorb: dauerhaft erreichbar, 30 Tage wiederherstellbar. */
+  const [trash, setTrash] = useState<TrashEntry[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  /** Meldung im offenen Papierkorb statt eines Hinweises darüber (lva#221). */
+  const [trashNotice, setTrashNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const trashOpenRef = useRef(false);
+  trashOpenRef.current = trashOpen;
+  /** Hinweis unten rechts, solange der Papierkorb zu ist; sonst Meldung im Dialog. */
+  const notify = (text: string, error = false) => {
+    if (trashOpenRef.current) setTrashNotice({ text, error });
+    else if (error) toast.error(text);
+    else toast(text);
+  };
+  const [trashBusy, setTrashBusy] = useState(false);
+  const refreshTrash = async () => setTrash(await listTrash());
+  useEffect(() => {
+    void purgeStaleTrash().finally(() => void refreshTrash());
+  }, []);
+  const toggleSelected = (id: string) =>
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const endSelection = () => {
+    setSelecting(false);
+    setSelected([]);
+  };
+  const selectedBooks = (books ?? []).filter((b) => selected.includes(b.id));
+  // Nur Sichtbares bleibt ausgewählt (Suche oder Filter geändert).
+  const noisy = useMemo(
+    () => (books ?? []).filter((b) => hasTitleNoise(b.title)),
+    [books],
+  );
 
   const views = useMemo(
     () =>
@@ -214,6 +310,121 @@ export const LibraryPage: React.FC = () => {
       toast.error(e instanceof Error ? e.message : String(e));
     }
   };
+  const askManualMerge = (list: LibraryBook[]) => {
+    try {
+      const { group, plan } = planManual(list);
+      setMerging({ group, plan, busy: false });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const moveMergePart = (from: number, to: number) => {
+    if (!merging?.plan || merging.busy) return;
+    const next = reorder(merging.group, merging.plan, from, to);
+    setMerging({ ...merging, ...next });
+  };
+  /** Hörleiste schließen, wenn sie aus einem der Bücher spielt. */
+  const releasePlayer = async (ids: Set<string>) => {
+    if (!listening || !ids.has(listening.book.id)) return;
+    setListening(null);
+    await new Promise((resolve) => window.setTimeout(resolve, 60));
+    await flushProgress();
+  };
+  const doRemove = async (scope: RemoveScope) => {
+    const list = removing;
+    setRemoving([]);
+    if (!list.length) return;
+    const ids = new Set(list.map((b) => b.id));
+    await releasePlayer(ids);
+    if (openId && ids.has(openId)) setOpenId(null);
+    try {
+      if (scope === "delete") await deleteBooks(list);
+      else await trashBooks(list);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+      await Promise.all([reload(), refreshTrash()]);
+      return;
+    }
+    endSelection();
+    await Promise.all([reload(), refreshTrash()]);
+    if (scope === "delete") {
+      toast(
+        t("library.remove.deleted", {
+          count: list.length,
+          title: list[0].title,
+        }),
+      );
+      return;
+    }
+    toast(
+      list.length === 1
+        ? t("library.remove.doneOne", { title: list[0].title })
+        : t("library.remove.doneMany", { count: list.length }),
+      {
+        className: "library-undo-toast",
+        description: t("library.remove.doneHint"),
+        duration: UNDO_MS,
+        action: {
+          label: t("library.remove.undo"),
+          onClick: () => void restoreFromTrash(list),
+        },
+      },
+    );
+  };
+  const restoreFromTrash = async (list: LibraryBook[]) => {
+    setTrashBusy(true);
+    try {
+      await restoreBooks(list);
+      notify(
+        t("library.remove.restored", {
+          count: list.length,
+          title: list[0]?.title ?? "",
+        }),
+      );
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setTrashBusy(false);
+      await Promise.all([reload(), refreshTrash()]);
+    }
+  };
+  const purgeFromTrash = async (list: LibraryBook[]) => {
+    setTrashBusy(true);
+    try {
+      await purgeBooks(list);
+      notify(
+        t("library.remove.deleted", {
+          count: list.length,
+          title: list[0]?.title ?? "",
+        }),
+      );
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setTrashBusy(false);
+      await refreshTrash();
+    }
+  };
+  const doClean = async () => {
+    setCleanBusy(true);
+    try {
+      // Frisch lesen und nur den Titel ändern: eine inzwischen fertige
+      // Transkription bleibt erhalten.
+      for (const book of cleaning)
+        await save(book.id, (fresh) => ({
+          ...fresh,
+          title: cleanTitle(fresh.title),
+        }));
+      toast(t("library.clean.done", { count: cleaning.length }));
+      setCleaning([]);
+      endSelection();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCleanBusy(false);
+      await reload();
+    }
+  };
   const doMerge = async () => {
     if (!merging?.plan) return;
     const { group, plan } = merging;
@@ -236,6 +447,7 @@ export const LibraryPage: React.FC = () => {
         }),
       );
       setMerging(null);
+      endSelection();
       await reload();
     } catch (e) {
       setMerging(null);
@@ -261,6 +473,14 @@ export const LibraryPage: React.FC = () => {
     views.filter((v) => matchesFilter(v, filter) && matchesSearch(v, query)),
     sort,
   );
+  const shownKey = shown.map((v) => v.book.id).join(",");
+  useEffect(() => {
+    const visible = new Set(shownKey.split(","));
+    setSelected((s) => {
+      const next = s.filter((id) => visible.has(id));
+      return next.length === s.length ? s : next;
+    });
+  }, [shownKey]);
   const continueViews = sortViews(views.filter(isStarted), "recent", {
     favoritesFirst: false,
   }).slice(
@@ -268,6 +488,8 @@ export const LibraryPage: React.FC = () => {
     3,
   );
   const jobList = Object.values(jobs);
+  const kiJobList = kiJobs.filter((j) => books?.some((b) => b.id === j.bookId));
+  const hasWork = jobList.length > 0 || kiJobList.length > 0;
 
   const jobOf = (book: LibraryBook) => jobs[book.id];
 
@@ -359,23 +581,44 @@ export const LibraryPage: React.FC = () => {
       : t("library.status.empty");
   };
 
-  const card = (v: BookView) => (
+  const card = (v: BookView) => {
+    const isSelected = selecting && selected.includes(v.book.id);
+    return (
     <article
-      className={`library-card${drop.targetId === v.book.id ? " library-card--drop" : ""}`}
+      className={`library-card${drop.targetId === v.book.id ? " library-card--drop" : ""}${isSelected ? " library-card--selected" : ""}`}
       key={v.book.id}
       data-testid="library-card"
       data-drop-book={v.book.id}
     >
       <div style={{ position: "relative" }}>
+        {selecting && (
+          <label className="library-select">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleSelected(v.book.id)}
+              aria-label={t("library.select.one", { title: v.book.title })}
+              data-testid="library-select"
+            />
+          </label>
+        )}
         <button
           type="button"
           className="library-card__open"
-          onClick={() => setOpenId(v.book.id)}
-          aria-label={t("library.openTitle", { title: v.book.title })}
+          onClick={() =>
+            selecting ? toggleSelected(v.book.id) : setOpenId(v.book.id)
+          }
+          aria-label={
+            selecting
+              ? t("library.select.one", { title: v.book.title })
+              : t("library.openTitle", { title: v.book.title })
+          }
+          aria-pressed={selecting ? isSelected : undefined}
         >
           <BookCover book={v.book} />
         </button>
-        {playButton(v, "library-card__play")}
+        {!selecting && playButton(v, "library-card__play")}
+        {!selecting && (
         <button
           type="button"
           className="library-card__star"
@@ -389,6 +632,7 @@ export const LibraryPage: React.FC = () => {
             <Star size={18} fill={isFavorite(v) ? "currentColor" : "none"} />
           </span>
         </button>
+        )}
       </div>
       {v.fraction > 0 && !isFinished(v) && (
         <ProgressBar
@@ -396,20 +640,77 @@ export const LibraryPage: React.FC = () => {
           label={t("library.progressLabel", { title: v.book.title })}
         />
       )}
-      <div className="library-title" lang="de">
+      <div className="library-title" lang="de" title={v.book.title}>
         {v.book.title}
       </div>
       <div className="library-meta">{v.book.authors.join(", ")}</div>
       <div className="library-meta">{statusLine(v)}</div>
+      {jobsOfBook(kiJobs, v.book.id).map((j) => (
+        <div
+          className="library-jobline"
+          key={j.id}
+          role="status"
+          data-testid={`library-kijob-${v.book.id}`}
+        >
+          <Loader2 size={12} className="lib-spin" aria-hidden="true" />
+          <span>
+            {jobTitle(t, j)} · {jobStatus(t, j)}
+          </span>
+        </div>
+      ))}
       <div className="library-card__row">
         <Formats view={v} job={jobOf(v.book)} />
-        <span className="library-touch">
+        <span className="library-touch library-card__tools">
+          {!selecting && (
+            <ActionMenu
+              trigger={{
+                icon: Sparkles,
+                label: t("library.ki.menuFor", { title: v.book.title }),
+                description: t("library.ki.menuHint"),
+                testId: `library-ki-${v.book.id}`,
+                ghost: true,
+              }}
+              menuLabel={t("library.ki.title")}
+              align="end"
+              items={[
+                {
+                  id: "translate",
+                  label: t("library.ki.menuTranslate"),
+                  icon: Languages,
+                  testId: `library-ki-translate-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "translation" }),
+                },
+                {
+                  id: "kurzbuch",
+                  label: t("library.ki.menuKurzbuch"),
+                  icon: Sparkles,
+                  testId: `library-ki-kurzbuch-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "kurzbuch" }),
+                },
+                {
+                  id: "kidoc",
+                  label: t("library.ki.menuKidoc"),
+                  icon: FileText,
+                  testId: `library-ki-kidoc-${v.book.id}`,
+                  onSelect: () => setKiFor({ book: v.book, tab: "kidoc" }),
+                },
+                {
+                  id: "export",
+                  label: t("library.export.menu"),
+                  icon: Download,
+                  testId: `library-ki-export-${v.book.id}`,
+                  onSelect: () => setExportFor(v.book),
+                },
+              ]}
+            />
+          )}
           <ActionMenu
             trigger={{
               icon: MoreVertical,
               label: t("library.more", { title: v.book.title }),
               description: t("library.moreHint"),
               testId: `library-more-${v.book.id}`,
+              ghost: true,
             }}
             menuLabel={t("library.moreMenu")}
             align="end"
@@ -419,6 +720,13 @@ export const LibraryPage: React.FC = () => {
                 label: t("library.details"),
                 icon: BookOpen,
                 onSelect: () => setOpenId(v.book.id),
+              },
+              {
+                id: "export",
+                label: t("library.export.menu"),
+                icon: Download,
+                testId: `library-export-${v.book.id}`,
+                onSelect: () => setExportFor(v.book),
               },
               ...(v.book.text
                 ? [
@@ -458,12 +766,56 @@ export const LibraryPage: React.FC = () => {
                 icon: BookOpen,
                 onSelect: () => void toggleFinished(v),
               },
+              {
+                id: "title",
+                label: t("library.titleEdit.menu"),
+                icon: Pencil,
+                testId: `library-title-${v.book.id}`,
+                onSelect: () => {
+                  setEditTitleId(v.book.id);
+                  setOpenId(v.book.id);
+                },
+              },
+              {
+                id: "cover",
+                label: t("library.cover.menu"),
+                icon: ImageIcon,
+                testId: `library-cover-${v.book.id}`,
+                onSelect: () => setCoverFor(v.book),
+              },
+              ...(hasTitleNoise(v.book.title)
+                ? [
+                    {
+                      id: "clean",
+                      label: t("library.clean.one"),
+                      icon: Eraser,
+                      onSelect: () => setCleaning([v.book]),
+                    },
+                  ]
+                : []),
+              {
+                id: "select",
+                label: t("library.select.start"),
+                icon: CheckSquare,
+                onSelect: () => {
+                  setSelecting(true);
+                  setSelected([v.book.id]);
+                },
+              },
+              {
+                id: "remove",
+                label: t("library.remove.action"),
+                icon: Trash2,
+                testId: `library-remove-${v.book.id}`,
+                onSelect: () => setRemoving([v.book]),
+              },
             ]}
           />
         </span>
       </div>
     </article>
-  );
+    );
+  };
 
   return (
     <PageShell
@@ -517,12 +869,11 @@ export const LibraryPage: React.FC = () => {
               onListenFollow={() => listen(open.book, true)}
               onToggleFinished={() => void toggleFinished(open)}
               onSave={save}
-              onDeleted={async () => {
-                setOpenId(null);
-                if (listening?.book.id === open.book.id) setListening(null);
-                await reload();
-              }}
+              onRemove={() => setRemoving([open.book])}
               onChanged={reload}
+              editTitle={editTitleId === open.book.id}
+              onCreate={(tab) => setKiFor({ book: open.book, tab })}
+              onExport={() => setExportFor(open.book)}
             />
           </div>
         ) : (
@@ -538,6 +889,29 @@ export const LibraryPage: React.FC = () => {
                 />
               </div>
               <span className="library-bar__spacer" />
+              {!selecting && (books?.length ?? 0) > 0 && (
+                <Button
+                  icon={<CheckSquare size={16} aria-hidden="true" />}
+                  onClick={() => setSelecting(true)}
+                  data-testid="library-select-start"
+                >
+                  {t("library.select.start")}
+                </Button>
+              )}
+              {trash.length > 0 && (
+                <Button
+                  icon={<Trash2 size={16} aria-hidden="true" />}
+                  onClick={() => {
+                    // Der Papierkorb ersetzt den Rückgängig-Hinweis; keine Überlagerung.
+                    toast.dismiss();
+                    setTrashNotice(null);
+                    setTrashOpen(true);
+                  }}
+                  data-testid="library-trash-open"
+                >
+                  {t("library.trash.open", { count: trash.length })}
+                </Button>
+              )}
               <div className="library-sort" data-testid="library-sort">
                 <Select
                   value={sort}
@@ -582,11 +956,11 @@ export const LibraryPage: React.FC = () => {
               </div>
             ) : (
               <>
-                {(continueViews.length > 0 || jobList.length > 0) &&
+                {(continueViews.length > 0 || hasWork) &&
                   filter === "all" &&
                   !query && (
                     <div
-                      className={`library-top ${jobList.length ? "" : "library-top--solo"}`}
+                      className={`library-top ${hasWork ? "" : "library-top--solo"}`}
                     >
                       {continueViews.length > 0 && (
                         <section aria-labelledby="library-continue">
@@ -647,7 +1021,7 @@ export const LibraryPage: React.FC = () => {
                           </div>
                         </section>
                       )}
-                      {jobList.length > 0 && (
+                      {hasWork && (
                         <section
                           className="library-jobs"
                           aria-labelledby="library-jobs"
@@ -681,11 +1055,126 @@ export const LibraryPage: React.FC = () => {
                               </div>
                             );
                           })}
+                          {kiJobList.map((job) => {
+                            const book = books?.find((b) => b.id === job.bookId);
+                            if (!book) return null;
+                            return (
+                              <div
+                                className="library-job library-job--ki"
+                                key={job.id}
+                                data-testid="library-kijob-row"
+                              >
+                                <BookCover book={book} size="xs" />
+                                <div style={{ minWidth: 0 }}>
+                                  <div
+                                    className="library-title"
+                                    style={{ WebkitLineClamp: 1 }}
+                                  >
+                                    {book.title}
+                                  </div>
+                                  <div className="library-meta">
+                                    {jobTitle(t, job)} · {jobStatus(t, job)}
+                                  </div>
+                                  {job.status === "running" && (
+                                    <div className="library-job__bar" aria-hidden="true">
+                                      <span style={{ width: `${Math.round(jobFraction(job) * 100)}%` }} />
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="library-touch">
+                                  <IconButton
+                                    icon={<X size={16} aria-hidden="true" />}
+                                    label={t("library.ki.cancelJob", {
+                                      what: jobTitle(t, job),
+                                    })}
+                                    onClick={() => cancelBookJob(job.id)}
+                                    data-testid="library-kijob-cancel"
+                                  />
+                                </span>
+                              </div>
+                            );
+                          })}
                         </section>
                       )}
                     </div>
                   )}
-                {splitGroups.length > 0 && !query && (
+                {selecting && (
+                  <div
+                    className="library-selectbar"
+                    role="toolbar"
+                    aria-label={t("library.select.toolbar")}
+                    data-testid="library-selectbar"
+                  >
+                    <span className="library-selectbar__text" aria-live="polite">
+                      {t("library.select.count", { count: selected.length })}
+                    </span>
+                    <Button
+                      onClick={() =>
+                        setSelected(
+                          selected.length === shown.length
+                            ? []
+                            : shown.map((v) => v.book.id),
+                        )
+                      }
+                    >
+                      {selected.length === shown.length && shown.length
+                        ? t("library.select.none")
+                        : t("library.select.all")}
+                    </Button>
+                    <Button
+                      icon={<Layers size={16} aria-hidden="true" />}
+                      disabled={selected.length < 2}
+                      onClick={() => askManualMerge(selectedBooks)}
+                      data-testid="library-select-merge"
+                    >
+                      {t("library.merge.action")}
+                    </Button>
+                    {selectedBooks.some((b) => hasTitleNoise(b.title)) && (
+                      <Button
+                        icon={<Eraser size={16} aria-hidden="true" />}
+                        onClick={() =>
+                          setCleaning(
+                            selectedBooks.filter((b) => hasTitleNoise(b.title)),
+                          )
+                        }
+                        data-testid="library-select-clean"
+                      >
+                        {t("library.clean.action")}
+                      </Button>
+                    )}
+                    <Button
+                      variant="danger-ghost"
+                      icon={<Trash2 size={16} aria-hidden="true" />}
+                      disabled={!selected.length}
+                      onClick={() => setRemoving(selectedBooks)}
+                      data-testid="library-select-remove"
+                    >
+                      {t("library.remove.action")}
+                    </Button>
+                    <Button onClick={endSelection} data-testid="library-select-end">
+                      {t("library.select.end")}
+                    </Button>
+                  </div>
+                )}
+                {noisy.length > 0 && !query && !selecting && (
+                  <div
+                    className="library-mergebar"
+                    role="status"
+                    data-testid="library-clean-bar"
+                  >
+                    <Eraser size={18} aria-hidden="true" />
+                    <span className="library-mergebar__text">
+                      {t("library.clean.bar", { count: noisy.length })}
+                    </span>
+                    <Button
+                      onClick={() => setCleaning(noisy)}
+                      data-testid="library-clean-start"
+                    >
+                      {t("library.clean.action")}
+                    </Button>
+                  </div>
+                )}
+                {splitGroups.length > 0 && !query && !selecting && (
                   <div className="library-merges" data-testid="library-merges">
                     {splitGroups.map((g) => (
                       <div
@@ -751,6 +1240,50 @@ export const LibraryPage: React.FC = () => {
           busy={!!merging?.busy}
           onConfirm={() => void doMerge()}
           onCancel={() => setMerging(null)}
+          onMove={moveMergePart}
+        />
+        <RemoveDialog
+          books={removing}
+          onConfirm={(scope) => void doRemove(scope)}
+          onCancel={() => setRemoving([])}
+        />
+        <CoverDialog
+          book={coverFor}
+          onClose={() => setCoverFor(null)}
+          onChanged={async () => {
+            await reload();
+            toast(t("library.cover.done"));
+          }}
+        />
+        <TrashDialog
+          open={trashOpen}
+          entries={trash}
+          busy={trashBusy}
+          notice={trashNotice}
+          onRestore={(list) => void restoreFromTrash(list.map((e) => e.book))}
+          onPurge={(list) => void purgeFromTrash(list.map((e) => e.book))}
+          onClose={() => {
+            setTrashOpen(false);
+            setTrashNotice(null);
+          }}
+        />
+        <KiCreateDialog
+          book={kiFor?.book ?? null}
+          tab={kiFor?.tab ?? "translation"}
+          onTab={(tab) => setKiFor((k) => (k ? { ...k, tab } : k))}
+          onClose={() => setKiFor(null)}
+          onOpenDetail={() => {
+            const id = kiFor?.book.id ?? null;
+            setKiFor(null);
+            setOpenId(id);
+          }}
+        />
+        <ExportDialog book={exportFor} onClose={() => setExportFor(null)} />
+        <CleanTitlesDialog
+          books={cleaning}
+          busy={cleanBusy}
+          onConfirm={() => void doClean()}
+          onCancel={() => setCleaning([])}
         />
         {dropDialog}
         <AddBookDialog

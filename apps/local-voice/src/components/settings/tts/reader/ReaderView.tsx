@@ -128,6 +128,68 @@ export function wordAt(text: string, at: number, within: SourceRange): SourceRan
   return { start, end: Math.max(end, start + 1) };
 }
 
+/**
+ * Hervorhebung ohne eigene Spans (CSS Custom Highlight API): ein Span um Satz
+ * oder Wort ändert in Chromium den Blocksatz — Zeilen brechen anders um, der
+ * Text ruckelt bei jedem Wort, vor allem am Absatzanfang (Patrick 03.11.).
+ * Die Highlight-API malt nur, das Layout bleibt. Ohne sie (älteres WebKit)
+ * bleibt es bei den Spans; Tests können die Spans mit `__lvaReaderSpans` erzwingen.
+ */
+const HL_CUR = "reader-cur";
+const HL_WORD = "reader-word";
+function paintHighlights(): boolean {
+  if (typeof window === "undefined" || typeof CSS === "undefined") return false;
+  if ((window as unknown as { __lvaReaderSpans?: boolean }).__lvaReaderSpans) return false;
+  return "highlights" in CSS && typeof Highlight !== "undefined";
+}
+
+type TextIndex = { start: number; node: Text }[];
+
+/** Alle Textknoten der Stücke mit ihrem Quell-Offset, aufsteigend. */
+function indexText(flow: HTMLElement): TextIndex {
+  const out: TextIndex = [];
+  for (const el of flow.querySelectorAll<HTMLElement>("[data-start]")) {
+    const node = el.firstChild;
+    if (node?.nodeType === Node.TEXT_NODE)
+      out.push({ start: Number(el.dataset.start), node: node as Text });
+  }
+  return out;
+}
+
+/** Letzter Eintrag mit start <= offset (binäre Suche). */
+function entryAt(index: TextIndex, offset: number): number {
+  let lo = 0;
+  let hi = index.length - 1;
+  let hit = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (index[mid].start <= offset) {
+      hit = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return hit;
+}
+
+/** DOM-Ranges über einen Quellbereich, je Textstück eine: so bleiben
+ *  Seitenzahlen, Sprechernamen und Aufzählungspunkte dazwischen ungemalt. */
+function rangesOf(index: TextIndex, r: SourceRange): Range[] {
+  if (!index.length || r.end <= r.start) return [];
+  const out: Range[] = [];
+  for (let i = Math.max(0, entryAt(index, r.start)); i < index.length; i++) {
+    const e = index[i];
+    if (e.start >= r.end) break;
+    const from = Math.max(0, r.start - e.start);
+    const to = Math.min(e.node.length, r.end - e.start);
+    if (to <= from) continue;
+    const range = document.createRange();
+    range.setStart(e.node, from);
+    range.setEnd(e.node, to);
+    out.push(range);
+  }
+  return out;
+}
+
 /** Seitenstand je Text, damit die Ansicht beim Zurückkehren dort steht, wo
  *  sie war — ohne Umblättern von Seite 1 her. */
 const lastPages = new Map<string, number>();
@@ -364,7 +426,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   }, [current, clock, within, text]);
 
   const pageOfElement = useCallback(
-    (el: Element | null): number | null => {
+    (el: Pick<Element, "getClientRects" | "getBoundingClientRect"> | null): number | null => {
       const flow = flowRef.current;
       if (!el || !flow || step <= 0) return null;
       // Beide Rechtecke tragen die Verschiebung; die Differenz ist die Lage im Fluss.
@@ -446,11 +508,86 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     setPage((p) => clampPage(p));
   }, [geo, clampPage]);
 
+  // Hervorhebung über die Highlight-API (siehe paintHighlights): Satz und
+  // Wort zerteilen den Text dann nicht, der Umbruch bleibt stehen.
+  const [paint] = useState(paintHighlights);
+  // Die Textknoten ändern sich nur mit Text, Befunden und Begriffen; die
+  // kommen oft als neue, aber gleiche Arrays — daher ein Inhaltsschlüssel.
+  const cutKey = useMemo(
+    () =>
+      [...marks, ...terms]
+        .map((m) => `${m.start}-${m.end}${"selected" in m && m.selected ? "s" : ""}`)
+        .join(","),
+    [marks, terms],
+  );
+  const indexRef = useRef<{ blocks: unknown; cutKey: string; index: TextIndex } | null>(null);
+  const textIndex = (): TextIndex => {
+    const flow = flowRef.current;
+    if (!flow) return [];
+    const old = indexRef.current;
+    if (
+      old &&
+      old.blocks === blocks &&
+      old.cutKey === cutKey &&
+      old.index.length > 0 &&
+      old.index[0].node.isConnected
+    )
+      return old.index;
+    const index = indexText(flow);
+    indexRef.current = { blocks, cutKey, index };
+    return index;
+  };
+  // Je Instanz eigene Highlight-Objekte: das Aufräumen löscht nur, was diese
+  // Ansicht gesetzt hat. Neu gemalt wird nur, wenn sich Satz, Wort oder Text ändern.
+  const own = useRef<{
+    cur: Highlight | null;
+    word: Highlight | null;
+    key: string;
+    index: TextIndex | null;
+  }>({ cur: null, word: null, key: "", index: null });
+  const paintKey = `${current?.start ?? ""}-${current?.end ?? ""}|${word?.start ?? ""}-${word?.end ?? ""}`;
+  useLayoutEffect(() => {
+    if (!paint) return;
+    const hl = CSS.highlights;
+    const index = textIndex();
+    if (own.current.key === paintKey && own.current.index === index) return;
+    own.current.key = paintKey;
+    own.current.index = index;
+    const put = (name: string, ranges: Range[], priority: number): Highlight | null => {
+      if (!ranges.length) {
+        if (hl.get(name) === own.current[name === HL_CUR ? "cur" : "word"]) hl.delete(name);
+        return null;
+      }
+      const h = new Highlight(...ranges);
+      h.priority = priority;
+      hl.set(name, h);
+      return h;
+    };
+    own.current.cur = put(HL_CUR, current ? rangesOf(index, current) : [], 0);
+    own.current.word = put(HL_WORD, word ? rangesOf(index, word) : [], 1);
+  });
+  useLayoutEffect(
+    () => () => {
+      if (!paint) return;
+      const hl = CSS.highlights;
+      if (own.current.cur && hl.get(HL_CUR) === own.current.cur) hl.delete(HL_CUR);
+      if (own.current.word && hl.get(HL_WORD) === own.current.word) hl.delete(HL_WORD);
+    },
+    [paint],
+  );
+
   // Die hörbare Stelle: das Wort, sonst der Satzanfang.
-  const curEl = () =>
-    flowRef.current?.querySelector("[data-word]") ??
-    flowRef.current?.querySelector("[data-cur]") ??
-    null;
+  const curEl = (): Pick<Element, "getClientRects" | "getBoundingClientRect"> | null => {
+    if (paint) {
+      const index = textIndex();
+      return (word ? rangesOf(index, word)[0] : undefined) ?? (current ? rangesOf(index, current)[0] : undefined) ?? null;
+    }
+    return (
+      flowRef.current?.querySelector("[data-word]") ??
+      flowRef.current?.querySelector("[data-cur]") ??
+      null
+    );
+  };
 
   // Mitblättern wortgenau: umgeblättert wird, wenn das Wort, das gerade zu
   // hören ist, auf der nächsten Seite steht — auch mitten im Satz.
@@ -648,7 +785,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               const Tag = (block.level === 1 ? "h2" : block.level === 2 ? "h3" : "h4") as "h2";
               return (
                 <Tag key={key} className={`reader-h${block.level ?? 1}`}>
-                  <Runs block={block} current={current} marks={marks} word={word} terms={terms} />
+                  <Runs block={block} current={paint ? null : current} marks={marks} word={paint ? null : word} terms={terms} />
                 </Tag>
               );
             }
@@ -691,7 +828,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   nur neben Text, nie als Stummel am Spaltenende. */}
                 <span className="reader-text">
                   {block.kind === "item" && <span className="reader-dot" aria-hidden="true">•</span>}
-                  <Runs block={block} current={current} marks={marks} word={word} terms={terms} />
+                  <Runs block={block} current={paint ? null : current} marks={marks} word={paint ? null : word} terms={terms} />
                 </span>
               </Tag>
             );
