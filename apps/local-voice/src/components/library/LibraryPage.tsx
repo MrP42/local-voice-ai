@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   BookOpen,
@@ -59,15 +59,17 @@ import {
   type MergePlan,
 } from "@/lib/library/merge";
 import {
-  finalizeRemoval,
-  forgetPending,
+  deleteBooks,
+  listTrash,
+  purgeBooks,
   purgeStaleTrash,
-  rememberPending,
   restoreBooks,
   trashBooks,
   UNDO_MS,
   type RemoveScope,
 } from "@/lib/library/remove";
+import type { TrashEntry } from "@/bindings";
+import { TrashDialog } from "./TrashDialog";
 import { cleanTitle, hasTitleNoise } from "@/lib/library/names";
 import { commands } from "@/bindings";
 import { usePersistentState } from "@/hooks/usePersistentState";
@@ -212,10 +214,13 @@ export const LibraryPage: React.FC = () => {
   const [removing, setRemoving] = useState<LibraryBook[]>([]);
   const [cleaning, setCleaning] = useState<LibraryBook[]>([]);
   const [cleanBusy, setCleanBusy] = useState(false);
-  /** Laufende Rückgängig-Fenster: endgültig löschen, sobald sie zu sind. */
-  const pendingRemovals = useRef(new Set<string>());
+  /** Papierkorb: dauerhaft erreichbar, 30 Tage wiederherstellbar. */
+  const [trash, setTrash] = useState<TrashEntry[]>([]);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashBusy, setTrashBusy] = useState(false);
+  const refreshTrash = async () => setTrash(await listTrash());
   useEffect(() => {
-    void purgeStaleTrash();
+    void purgeStaleTrash().finally(() => void refreshTrash());
   }, []);
   const toggleSelected = (id: string) =>
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -295,48 +300,72 @@ export const LibraryPage: React.FC = () => {
     await releasePlayer(ids);
     if (openId && ids.has(openId)) setOpenId(null);
     try {
-      await trashBooks(list);
+      if (scope === "delete") await deleteBooks(list);
+      else await trashBooks(list);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
-      await reload();
+      await Promise.all([reload(), refreshTrash()]);
       return;
     }
-    rememberPending(list, scope);
     endSelection();
-    await reload();
-    const key = list.map((b) => b.id).join(",");
-    pendingRemovals.current.add(key);
-    let undone = false;
-    const finish = () => {
-      if (undone || !pendingRemovals.current.delete(key)) return;
-      void finalizeRemoval(list, scope).catch((e) =>
-        toast.error(e instanceof Error ? e.message : String(e)),
+    await Promise.all([reload(), refreshTrash()]);
+    if (scope === "delete") {
+      toast(
+        t("library.remove.deleted", {
+          count: list.length,
+          title: list[0].title,
+        }),
       );
-    };
+      return;
+    }
     toast(
       list.length === 1
         ? t("library.remove.doneOne", { title: list[0].title })
         : t("library.remove.doneMany", { count: list.length }),
       {
+        className: "library-undo-toast",
+        description: t("library.remove.doneHint"),
         duration: UNDO_MS,
-        onAutoClose: finish,
-        onDismiss: finish,
         action: {
           label: t("library.remove.undo"),
-          onClick: () => {
-            undone = true;
-            pendingRemovals.current.delete(key);
-            forgetPending(list);
-            void restoreBooks(list)
-              .then(() => toast(t("library.remove.restored")))
-              .catch((e) =>
-                toast.error(e instanceof Error ? e.message : String(e)),
-              )
-              .finally(() => void reload());
-          },
+          onClick: () => void restoreFromTrash(list),
         },
       },
     );
+  };
+  const restoreFromTrash = async (list: LibraryBook[]) => {
+    setTrashBusy(true);
+    try {
+      await restoreBooks(list);
+      toast(
+        t("library.remove.restored", {
+          count: list.length,
+          title: list[0]?.title ?? "",
+        }),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrashBusy(false);
+      await Promise.all([reload(), refreshTrash()]);
+    }
+  };
+  const purgeFromTrash = async (list: LibraryBook[]) => {
+    setTrashBusy(true);
+    try {
+      await purgeBooks(list);
+      toast(
+        t("library.remove.deleted", {
+          count: list.length,
+          title: list[0]?.title ?? "",
+        }),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTrashBusy(false);
+      await refreshTrash();
+    }
   };
   const doClean = async () => {
     setCleanBusy(true);
@@ -545,7 +574,7 @@ export const LibraryPage: React.FC = () => {
           label={t("library.progressLabel", { title: v.book.title })}
         />
       )}
-      <div className="library-title" lang="de">
+      <div className="library-title" lang="de" title={v.book.title}>
         {v.book.title}
       </div>
       <div className="library-meta">{v.book.authors.join(", ")}</div>
@@ -735,6 +764,15 @@ export const LibraryPage: React.FC = () => {
                   data-testid="library-select-start"
                 >
                   {t("library.select.start")}
+                </Button>
+              )}
+              {trash.length > 0 && (
+                <Button
+                  icon={<Trash2 size={16} aria-hidden="true" />}
+                  onClick={() => setTrashOpen(true)}
+                  data-testid="library-trash-open"
+                >
+                  {t("library.trash.open", { count: trash.length })}
                 </Button>
               )}
               <div className="library-sort" data-testid="library-sort">
@@ -1040,6 +1078,14 @@ export const LibraryPage: React.FC = () => {
             await reload();
             toast(t("library.cover.done"));
           }}
+        />
+        <TrashDialog
+          open={trashOpen}
+          entries={trash}
+          busy={trashBusy}
+          onRestore={(list) => void restoreFromTrash(list.map((e) => e.book))}
+          onPurge={(list) => void purgeFromTrash(list.map((e) => e.book))}
+          onClose={() => setTrashOpen(false)}
         />
         <CleanTitlesDialog
           books={cleaning}

@@ -575,7 +575,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             fake(&calls),
             &|d, n| steps.lock().unwrap().push((d, n)),
             &AtomicBool::new(false),
@@ -596,6 +599,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = DigestCache {
             dir: Some(dir.path().to_path_buf()),
+            read_only: false,
         };
         let t = builtins()
             .into_iter()
@@ -643,7 +647,10 @@ mod tests {
                 model_key: "m",
                 language: "",
             },
-            &DigestCache { dir: None },
+            &DigestCache {
+                dir: None,
+                read_only: false,
+            },
             |_| {
                 *calls.lock().unwrap() += 1;
                 std::future::ready(Ok("Entschuldigung".to_string()))

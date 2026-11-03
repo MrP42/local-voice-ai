@@ -276,6 +276,22 @@ test.beforeEach(async ({ page }) => {
             w.__books = [...list, ...back];
             return back;
           }
+          if (cmd === "library_trash_list") {
+            const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+            return trash.map((book) => ({ book, removed_ms: 1_793_000_000_000, bytes: 10_485_760 }));
+          }
+          if (cmd === "library_sizes") {
+            return (args?.ids as string[]).map(() => 10_485_760);
+          }
+          if (cmd === "library_purge") {
+            const ids = args?.ids as string[] | null | undefined;
+            if (ids) {
+              const gone = new Set(ids);
+              const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
+              (w as { __trash?: unknown[] }).__trash = trash.filter((x) => !gone.has(String(x.id)));
+            }
+            return null;
+          }
           if (cmd === "library_merge_audio") {
             const target = list.find((x) => x.id === args?.targetId) as Record<string, any>;
             const parts = (b: Record<string, any>) =>
@@ -2021,7 +2037,7 @@ const partWithTranscript = (id: string, title: string, ms: number): Extra => ({
   }),
 });
 
-test("Entfernen über ⋮: Rückfrage mit Wahl, Rückgängig holt den Eintrag zurück", async ({
+test("Entfernen über ⋮: Papierkorb mit Umfang, Rückgängig im Hinweis holt den Eintrag zurück", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -2032,39 +2048,86 @@ test("Entfernen über ⋮: Rückfrage mit Wahl, Rückgängig holt den Eintrag zu
   const dialog = page.getByTestId("library-remove-dialog");
   await expect(dialog).toBeVisible();
   await expect(page.getByRole("dialog")).toContainText("„Der Schimmelreiter“ entfernen?");
-  await expect(page.getByTestId("library-remove-scope-library")).toBeChecked();
+  await expect(page.getByTestId("library-remove-summary")).toContainText("10 MB");
+  await expect(page.getByTestId("library-remove-scope-trash")).toBeChecked();
+  await expect(dialog).toContainText("30 Tage lang wiederherstellen");
   await expect(dialog).toContainText("Originaldateien");
+  await expect(page.getByTestId("library-remove-confirm")).toHaveText("In den Papierkorb legen");
   await page.screenshot({ path: shot("entfernen-dialog-1440.png") });
   await page.getByTestId("library-remove-confirm").click();
   await expect(page.getByTestId("library-card")).toHaveCount(2);
   expect(await calls(page, "library_trash")).toEqual([{ ids: ["book_2"] }]);
-  await expect(page.getByText("„Der Schimmelreiter“ entfernt.")).toBeVisible();
+  const toast = page.locator(".library-undo-toast");
+  await expect(toast).toContainText("„Der Schimmelreiter“ liegt im Papierkorb.");
+  await expect(toast).toContainText("Papierkorb");
+  await expect(page.getByTestId("library-trash-open")).toContainText("Papierkorb (1)");
   await page.screenshot({ path: shot("entfernen-rueckgaengig-1440.png") });
-  await page.getByRole("button", { name: "Rückgängig" }).click();
+  await toast.getByRole("button", { name: "Rückgängig" }).click();
   await expect(page.getByTestId("library-card")).toHaveCount(3);
   expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_2"] }]);
-  // Nach Rückgängig wird nichts endgültig gelöscht.
   await page.waitForTimeout(300);
-  // (nur das Aufräumen alter Reste beim Öffnen, ohne Kennungen)
+  // Nichts wird endgültig gelöscht (nur das Aufräumen alter Reste ohne Kennungen).
   expect((await calls(page, "library_purge")).filter((a) => a.ids)).toEqual([]);
 });
 
-test("Alles löschen: nach Ablauf endgültig, samt Text im Vorlesen", async ({ page }) => {
-  await page.clock.install();
+test("Endgültig löschen: eigene Bestätigung mit Zahl und Größe, sofort samt Text im Vorlesen", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await page.getByTestId("library-more-book_1").click();
   await page.getByTestId("library-remove-book_1").click();
-  await page.getByTestId("library-remove-scope-everything").check();
-  await page.getByTestId("library-remove-confirm").click();
+  await page.getByTestId("library-remove-scope-delete").check();
+  const confirm = page.getByTestId("library-remove-confirm");
+  await expect(confirm).toHaveText("Endgültig löschen");
+  await expect(confirm).toBeDisabled();
+  await expect(page.getByTestId("library-remove-sure")).toBeVisible();
+  await expect(page.getByTestId("library-remove-dialog")).toContainText("endgültig gelöscht");
+  await page.getByTestId("library-remove-sure").check();
+  await expect(confirm).toBeEnabled();
+  await page.screenshot({ path: shot("endgueltig-loeschen-1440.png") });
+  await confirm.click();
   await expect(page.getByTestId("library-card")).toHaveCount(2);
-  await page.clock.runFor(11_000);
   await expect
     .poll(async () => await calls(page, "library_purge"))
     .toContainEqual({ ids: ["book_1"] });
   await expect
     .poll(async () => (await calls(page, "pages_delete")).map((a) => a.id))
     .toEqual(["page_1"]);
+  await expect(page.getByText("„Effi Briest“ endgültig gelöscht.")).toBeVisible();
+  // Kein Rückgängig bei endgültigem Löschen.
+  await expect(page.locator(".library-undo-toast")).toHaveCount(0);
+});
+
+test("Papierkorb: Liste, Wiederherstellen und einzeln endgültig löschen", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-select-start").click();
+  await page.locator('[data-drop-book="book_1"] [data-testid="library-select"]').check();
+  await page.locator('[data-drop-book="book_2"] [data-testid="library-select"]').check();
+  await page.getByTestId("library-select-remove").click();
+  await expect(page.getByTestId("library-remove-confirm")).toHaveText("2 in den Papierkorb legen");
+  await page.getByTestId("library-remove-confirm").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(1);
+  await page.getByTestId("library-trash-open").click();
+  const dialog = page.getByTestId("library-trash-dialog");
+  await expect(page.getByRole("dialog")).toContainText("Papierkorb: 2 Einträge");
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(2);
+  await page.screenshot({ path: shot("papierkorb-1440.png") });
+  await page.getByTestId("library-trash-item").filter({ hasText: "Effi Briest" })
+    .getByTestId("library-trash-restore").click();
+  await expect(page.getByTestId("library-card")).toHaveCount(2);
+  expect(await calls(page, "library_restore")).toEqual([{ ids: ["book_1"] }]);
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  await page.getByTestId("library-trash-delete").click();
+  await expect(dialog).toContainText("lässt sich nicht rückgängig machen");
+  await page.mouse.move(0, 0);
+  await page.screenshot({ path: shot("papierkorb-loeschen-1440.png") });
+  await page.getByTestId("library-trash-delete-confirm").click();
+  await expect
+    .poll(async () => await calls(page, "library_purge"))
+    .toContainEqual({ ids: ["book_2"] });
+  await expect(page.getByTestId("library-trash-none")).toBeVisible();
 });
 
 test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async ({ page }) => {
@@ -2079,6 +2142,10 @@ test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async (
   await page.screenshot({ path: shot("auswahl-leiste-1440.png") });
   await page.getByTestId("library-select-remove").click();
   await expect(page.getByRole("dialog")).toContainText("3 Einträge entfernen?");
+  await page.getByTestId("library-remove-scope-delete").check();
+  await expect(page.getByTestId("library-remove-sure")).toContainText("3 Einträge (30 MB)");
+  await page.screenshot({ path: shot("endgueltig-mehrere-1440.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
   await page.getByTestId("library-remove-confirm").click();
   await expect(page.getByTestId("library-card")).toHaveCount(0);
   expect((await calls(page, "library_trash"))[0].ids).toHaveLength(3);
@@ -2194,6 +2261,10 @@ test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.locator(".library-select input").first().check();
+  for (const el of await page.locator(".library-selectbar button").all()) {
+    const r = await el.boundingBox();
+    if (r) expect(r.height).toBeGreaterThanOrEqual(44);
+  }
   await page.screenshot({ path: shot("auswahl-390.png") });
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -2201,8 +2272,15 @@ test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele
   expect(overflow).toBe(false);
   await page.getByTestId("library-select-remove").click();
   await expect(page.getByTestId("library-remove-dialog")).toBeVisible();
-  const opt = await page.locator(".library-remove__option").first().boundingBox();
-  expect(opt!.height).toBeGreaterThanOrEqual(44);
+  await page.getByTestId("library-remove-scope-delete").check();
+  const targets = page.locator(
+    ".library-remove__option, .lv-dialog.library-dialog-touch .lv-dialog__actions button, .lv-dialog.library-dialog-touch button[aria-label]",
+  );
+  for (const el of await targets.all()) {
+    const r = await el.boundingBox();
+    if (!r) continue;
+    expect(r.height, await el.evaluate((n) => n.outerHTML.slice(0, 80))).toBeGreaterThanOrEqual(44);
+  }
   await page.screenshot({ path: shot("entfernen-dialog-390.png") });
 });
 
@@ -2234,8 +2312,14 @@ test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", asyn
   await page.screenshot({ path: shot("zusammenfuehren-1440-dunkel.png") });
   await page.getByRole("dialog").getByRole("button", { name: "Abbrechen" }).last().click();
   await page.getByTestId("library-select-remove").click();
-  await page.getByTestId("library-remove-scope-everything").check();
+  await page.getByTestId("library-remove-scope-delete").check();
+  await page.getByTestId("library-remove-sure").check();
   await page.screenshot({ path: shot("entfernen-dialog-1440-dunkel.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await page.getByTestId("library-trash-open").click();
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(3);
+  await page.screenshot({ path: shot("papierkorb-1440-dunkel.png") });
 });
 
 // ---------------------------------------------------------------------------

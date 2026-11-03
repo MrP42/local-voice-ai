@@ -1212,3 +1212,78 @@
     gap: 8px;
   }
 }
+
+/* Codex-Abnahme lva#221: Trefferflächen ≥ 44 px in Leiste und Dialogen */
+.library-selectbar button,
+.lv-dialog.library-dialog-touch .lv-dialog__actions button,
+.lv-dialog.library-dialog-touch .library-trash__actions button {
+  min-height: 44px;
+}
+.lv-dialog.library-dialog-touch .fui-DialogTitle__action button,
+.lv-dialog.library-dialog-touch .lv-dialog__body > h2 button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.library-remove__option--danger:has(input:checked) {
+  border-color: var(--color-status-danger, #c50f1f);
+  background: color-mix(in srgb, #c50f1f 10%, transparent);
+}
+.library-remove__sure {
+  border-color: var(--color-status-danger, #c50f1f);
+}
+.library-trash__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.library-trash__list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--lib-line);
+  border-radius: 8px;
+}
+.library-trash__list .book-cover {
+  width: 48px;
+  height: 72px;
+  min-width: 0;
+}
+.library-trash__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.library-trash__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.lv-dialog.library-dialog-touch .lv-dialog__actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.library-trash__warn {
+  margin: 0;
+  color: var(--color-status-danger, #c50f1f);
+  font-weight: 600;
+}
+/* Hinweis „In den Papierkorb gelegt“: deutlich sichtbar mit Rückgängig */
+.library-undo-toast {
+  border-left: 4px solid var(--colorBrandBackground, #0f6cbd) !important;
+  font-size: 0.95rem;
+}
+.library-undo-toast button {
+  min-height: 44px !important;
+  font-weight: 600;
+}

@@ -1,4 +1,4 @@
-import { commands, type LibraryBook } from "@/bindings";
+import { commands, type LibraryBook, type TrashEntry } from "@/bindings";
 import { pendingJobs } from "./books";
 import {
   audioProgressKey,
@@ -8,16 +8,19 @@ import {
 } from "./progress";
 
 /**
- * Einträge entfernen mit Rückgängig: erst Papierkorb (der Kern verschiebt den
- * Buchordner), endgültig erst, wenn das Rückgängig-Fenster zu ist. Die
- * Originaldateien auf dem Rechner berührt das nie, nur die Kopien der
- * Bibliothek.
+ * Entfernen (Codex-Abnahme lva#221): zwei klar getrennte Wege.
+ * - **Papierkorb:** Der Kern verschiebt den Buchordner (Eintrag, Cover,
+ *   Hörbuch-Kopie) nach `library/.papierkorb`. Wiederherstellbar über den
+ *   Papierkorb der Bibliothek, 30 Tage lang. Der Text bleibt im Vorlesen.
+ * - **Endgültig:** sofort und ohne Rückweg, samt Text bzw. Transkript im
+ *   Vorlesen, laufenden Aufträgen und Lesestellen.
+ * Die Originaldateien auf dem Rechner berührt keiner der Wege.
  */
 
-/** Wie lange „Rückgängig“ angeboten wird. */
-export const UNDO_MS = 10_000;
+/** Wie lange der Hinweis mit „Rückgängig“ steht. */
+export const UNDO_MS = 12_000;
 
-export type RemoveScope = "library" | "everything";
+export type RemoveScope = "trash" | "delete";
 
 export async function trashBooks(books: LibraryBook[]): Promise<void> {
   const r = await commands.libraryTrash(books.map((b) => b.id));
@@ -29,22 +32,30 @@ export async function restoreBooks(books: LibraryBook[]): Promise<void> {
   if (r.status !== "ok") throw new Error(r.error);
 }
 
+export async function listTrash(): Promise<TrashEntry[]> {
+  const r = await commands.libraryTrashList();
+  return r.status === "ok" ? r.data : [];
+}
+
+/** Belegter Platz der Bücher in Bytes (unbekannt: 0). */
+export async function sizesOf(books: LibraryBook[]): Promise<number> {
+  if (!books.length) return 0;
+  const r = await commands.librarySizes(books.map((b) => b.id));
+  return r.status === "ok" ? r.data.reduce((a, b) => a + b, 0) : 0;
+}
+
 /**
- * Endgültig: Papierkorb leeren, Transkriptions-Aufträge und Hörstelle weg;
- * bei `everything` auch der Text im Vorlesen samt Lesestelle.
+ * Endgültig löschen, was schon im Papierkorb liegt: Ordner, Aufträge,
+ * Hörstelle sowie Text bzw. Transkript im Vorlesen samt Lesestelle.
  */
-export async function finalizeRemoval(
-  books: LibraryBook[],
-  scope: RemoveScope,
-): Promise<void> {
+export async function purgeBooks(books: LibraryBook[]): Promise<void> {
   const r = await commands.libraryPurge(books.map((b) => b.id));
   // Bleibt das Buch im Papierkorb, bleibt auch sein Text.
   if (r.status !== "ok") throw new Error(r.error);
-  forgetPending(books);
   for (const book of books) {
     for (const job of pendingJobs(book)) await commands.meetingsDelete(job);
     removeProgress(audioProgressKey(book.id));
-    if (scope === "everything" && book.text) {
+    if (book.text) {
       removeProgress(textProgressKey(book.text.page_id));
       await commands.pagesDelete(book.text.page_id);
     }
@@ -52,59 +63,20 @@ export async function finalizeRemoval(
   await flushProgress();
 }
 
-/**
- * Offene Entfernungen merken: endet die App im Rückgängig-Fenster, holt der
- * nächste Start das endgültige Löschen nach (samt Text bei „alles“).
- */
-const PENDING_KEY = "lva.ui.library.pendingRemovals";
-interface Pending {
-  books: LibraryBook[];
-  scope: RemoveScope;
-  /** Zeitpunkt des Entfernens (ms). */
-  at: number;
-}
-function readPending(): Pending[] {
-  try {
-    const raw = window.localStorage.getItem(PENDING_KEY);
-    const list: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? (list as Pending[]) : [];
-  } catch {
-    return [];
-  }
-}
-function writePending(list: Pending[]) {
-  try {
-    if (list.length)
-      window.localStorage.setItem(PENDING_KEY, JSON.stringify(list));
-    else window.localStorage.removeItem(PENDING_KEY);
-  } catch {
-    /* ohne Speicher räumt der Kern den Papierkorb nach sieben Tagen */
-  }
-}
-export function rememberPending(books: LibraryBook[], scope: RemoveScope) {
-  writePending([...readPending(), { books, scope, at: Date.now() }]);
-}
-export function forgetPending(books: LibraryBook[]) {
-  const ids = new Set(books.map((b) => b.id));
-  writePending(
-    readPending().filter((p) => !p.books.some((b) => ids.has(b.id))),
-  );
+/** Sofort endgültig löschen (aus der Bibliothek heraus). */
+export async function deleteBooks(books: LibraryBook[]): Promise<void> {
+  await trashBooks(books);
+  await purgeBooks(books);
 }
 
-/**
- * Beim Öffnen: liegengebliebene Entfernungen abschließen, dann Altlasten im
- * Papierkorb (älter als sieben Tage) wegräumen.
- */
+/** Was länger als 30 Tage im Papierkorb liegt, wegräumen. */
 export async function purgeStaleTrash(): Promise<void> {
-  // Nur, was außerhalb des Rückgängig-Fensters liegt: ein Bereichswechsel
-  // hängt die Seite neu ein, der Hinweis mit „Rückgängig“ steht dann noch.
-  const due = readPending().filter((p) => Date.now() - (p.at ?? 0) > UNDO_MS + 2000);
-  for (const p of due) {
-    try {
-      await finalizeRemoval(p.books, p.scope);
-    } catch {
-      forgetPending(p.books);
-    }
-  }
   await commands.libraryPurge(null);
+}
+
+export function formatBytes(bytes: number, locale = "de"): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024)
+    return `${(mb / 1024).toLocaleString(locale, { maximumFractionDigits: 1 })} GB`;
+  return `${mb.toLocaleString(locale, { maximumFractionDigits: mb < 10 ? 1 : 0 })} MB`;
 }

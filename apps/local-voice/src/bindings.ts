@@ -5187,6 +5187,17 @@ async bookAiSummarize(pageId: string, source: SummarySource, sourceLabel: string
 async bookAiCancel() : Promise<void> {
     await TAURI_INVOKE("book_ai_cancel");
 },
+/**
+ * Prognose des Token-Bedarfs, bevor ein KI-Dokument erstellt wird.
+ */
+async bookAiEstimate(pageId: string, source: SummarySource, templateId: string) : Promise<Result<BookAiEstimate, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_ai_estimate", { pageId, source, templateId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async bookAiDocuments(pageId: string) : Promise<Result<KiDocument[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("book_ai_documents", { pageId }) };
@@ -6002,6 +6013,28 @@ async libraryDelete(id: string) : Promise<Result<null, string>> {
 async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("library_trash", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
+ */
+async libraryTrashList() : Promise<Result<TrashEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_trash_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Belegter Platz je Buch (Bytes), für die Rückfrage vor dem Löschen.
+ */
+async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_sizes", { ids }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7781,6 +7814,26 @@ page_ids: string[]; characters: BookCharacter[];
  * Sprache der Geschichte (BCP-47-Kurzform), Vorgabe "de".
  */
 language?: string }
+/**
+ * Prognose vor dem Start (`book_ai_estimate`).
+ */
+export type BookAiEstimate = { figures: TokenFigures; 
+/**
+ * Läuft das aktive Modell lokal?
+ */
+local: boolean; 
+/**
+ * Wurde mit dem Tokenizer des Modells kalibriert (sonst Durchschnittswert)?
+ */
+measured: boolean; 
+/**
+ * Bereits zwischengespeicherte Arbeitsschritte, die nichts mehr kosten.
+ */
+cached_steps: number; 
+/**
+ * Modell, nach dessen Preis gerechnet wurde (ohne Anbieter).
+ */
+model: string }
 export type BookCharacter = { name: string; 
 /**
  * voice_id der Stimme, mit der die Figur spricht (`None` = Standard).
@@ -8911,7 +8964,20 @@ source_label: string; created_ms: number; modified_ms: number; words: number;
 /**
  * Anbieter und Modell, mit dem das Dokument entstand.
  */
-model: string }
+model: string; 
+/**
+ * Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
+ * älteren und übernommenen Dokumenten).
+ */
+usage?: KiUsage | null }
+/**
+ * Verbrauch eines KI-Dokuments: was vorher geschätzt und was gebraucht wurde.
+ */
+export type KiUsage = { estimate: TokenFigures | null; actual: TokenFigures | null; 
+/**
+ * Lief auf diesem Rechner (keine Kosten bei einem Anbieter).
+ */
+local: boolean }
 /**
  * Art einer Integration. `Ics` und `Graph` sind die Kalenderquellen, die das
  * Register aus `calendar_sources` uebernimmt (gleiche ID).
@@ -9007,6 +9073,18 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -10908,6 +10986,18 @@ source_name: string | null }
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
+/**
+ * Token-Zahlen eines Laufs, geschätzt oder gemessen.
+ */
+export type TokenFigures = { input_tokens: number; output_tokens: number; 
+/**
+ * Modellaufrufe (ohne Cache-Treffer).
+ */
+calls: number; 
+/**
+ * Kosten in Mikro-Dollar; `None`, wenn für das Modell kein Preis hinterlegt ist.
+ */
+cost_micro: number | null }
 /**
  * Ergebnis der Erkennung fuer die Oberflaeche.
  */

@@ -31,6 +31,7 @@ export const MergeDialog: React.FC<{
       onOpenChange={(o) => !o && !busy && onCancel()}
       title={t("library.merge.title", { title: plan?.title ?? "" })}
       closeLabel={t("library.cancel")}
+      className="library-dialog-touch"
       contentClassName="library-detail"
       footer={
         <>
