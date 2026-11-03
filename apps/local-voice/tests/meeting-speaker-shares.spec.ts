@@ -8,7 +8,11 @@ import { test, expect, type Page } from "@playwright/test";
 // Bezeichnungen im Protokoll wie das Backend ausführt.
 // Abnahmebilder: docs/vorschau/sprecher-hoerprobe/.
 
-const SHOTS = "docs/vorschau/sprecher-hoerprobe";
+// Abnahmebilder: standardmäßig unter test-results (ein Schreiben in den
+// beobachteten Quellbaum lädt parallel laufende Seiten neu). Für die Ablage
+// unter docs/vorschau: LV_SHOT_DIR=docs/vorschau/sprecher-hoerprobe, --workers=1.
+const SHOTS =
+  process.env.LV_SHOT_DIR ?? "test-results/vorschau/sprecher-hoerprobe";
 
 type Call = { cmd: string; args: Record<string, any> };
 
@@ -475,6 +479,8 @@ test.describe("Sprecher & Redeanteile", () => {
 });
 
 test.describe("Touchziele und Abnahmebilder", () => {
+  // Ganzseitige Bilder brauchen unter paralleler Last länger.
+  test.describe.configure({ timeout: 180_000 });
   for (const width of [390, 1440, 1920]) {
     for (const theme of ["light", "dark"] as const) {
       test(`${width} px ${theme}`, async ({ page }) => {

@@ -113,6 +113,11 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setProgress(result.data.running ? (result.data.progress ?? null) : null);
   }, [meetingId]);
 
+  // Andere Besprechung oder anderer Dokumenttyp: nichts Fremdes zeigen.
+  useEffect(() => {
+    setDoc(null);
+  }, [meetingId, docKind]);
+
   useEffect(() => {
     void loadLatest();
     void loadMeta();
@@ -332,7 +337,10 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setSaved(target);
   };
 
-  if (loading) {
+  // Neu laden (Umbenennen, Ende eines Laufs) ersetzt das Dokument an Ort und
+  // Stelle; "Lädt" nur, solange noch nichts da ist (#242: sonst verlöre die
+  // Sprechertabelle Fokus und laufende Hörprobe).
+  if (loading && !doc) {
     return (
       <p className="text-sm text-text/60 text-center py-3">
         {t("meetings.list.loading")}
