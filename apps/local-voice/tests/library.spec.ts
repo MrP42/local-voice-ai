@@ -3124,6 +3124,15 @@ for (const theme of ["hell", "dunkel"] as const) {
       expect(box.y).toBeGreaterThanOrEqual(0);
     }
     await page.screenshot({ path: shot(`vorschau-vorlesen-titel-390-${theme}.png`) });
+    // Ganz nach unten gerollt: der Inhalt (Seitenfußzeile) steht vollständig
+    // über der festen Spielerleiste (Codex 03.11.).
+    await page.locator("#workspace-content").evaluate((el) => (el.scrollTop = el.scrollHeight));
+    const footer = page.getByTestId("reader-book").getByText("Seite 1 von 1");
+    await expect(footer).toBeVisible();
+    const f = (await footer.boundingBox())!;
+    const p = (await player.boundingBox())!;
+    expect(f.y + f.height).toBeLessThanOrEqual(p.y);
+    await page.screenshot({ path: shot(`vorschau-vorlesen-titel-390-${theme}-unten.png`) });
   });
 }
 
