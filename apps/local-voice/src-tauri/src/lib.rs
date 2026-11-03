@@ -14,8 +14,8 @@ mod clipboard;
 mod commands;
 #[cfg(windows)]
 mod context_menu;
-mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
+mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
 mod input;

@@ -6018,6 +6018,14 @@ async libraryTrash(ids: string[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Inhalt des Papierkorbs, zuletzt entfernte zuerst.
  */
@@ -6040,16 +6048,9 @@ async librarySizes(ids: string[]) : Promise<Result<number[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async libraryRestore(ids: string[]) : Promise<Result<LibraryBook[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("library_restore", { ids }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
- * Endgültig löschen (`ids`), ohne Angabe nur Altlasten älter als sieben Tage.
+ * Endgültig löschen (`ids`), ohne Angabe nur, was länger als 30 Tage im
+ * Papierkorb liegt.
  */
 async libraryPurge(ids: string[] | null) : Promise<Result<null, string>> {
     try {
@@ -6139,22 +6140,22 @@ async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<Cover
 }
 },
 /**
- * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
+ * Das in die Hördatei eingebettete Cover übernehmen.
  */
-async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
+async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Das in die Hördatei eingebettete Cover übernehmen.
+ * Dialog „Cover ändern“ geschlossen: zwischengelegte Vorschau wegräumen.
  */
-async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
+async libraryCoverPreviewClear(id: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_preview_clear", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -8356,6 +8357,26 @@ export type ConversationSummary = { id: string; title: string; updated_at: strin
  */
 last_text: string }
 /**
+ * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+ */
+export type CoverCandidate = { 
+/**
+ * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+ */
+source: string; 
+/**
+ * Open-Library-Cover-Kennung.
+ */
+cover_id: number | null; isbn: string | null; 
+/**
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
+ */
+preview: string; 
+/**
+ * Kurz: Titel, Jahr, Verlag der Ausgabe.
+ */
+label: string }
+/**
  * Was der Chat gesehen hat (deterministisch; die UI formt daraus die graue
  * Abdeckungszeile).
  */
@@ -9073,18 +9094,6 @@ export type Letterhead = { schema: string; id: string; name: string;
  * Laden eigener Profile immer auf `false` gesetzt, ein Wert aus der Datei zaehlt nie.
  */
 builtin?: boolean; firma: Firma; logo?: Logo | null; farben: Farben; fusszeile: Fusszeile }
-/**
- * Ein Eintrag im Papierkorb.
- */
-export type TrashEntry = { book: LibraryBook; 
-/**
- * Entfernt am (Unix-ms).
- */
-removed_ms: number; 
-/**
- * Belegter Platz des Buchordners (Bytes).
- */
-bytes: number }
 export type LibraryBook = { 
 /**
  * Leer beim Anlegen; das Backend vergibt `book_<ms>`.
@@ -9095,7 +9104,8 @@ id: string; title: string; subtitle: string | null; authors: string[]; language:
  */
 metadata_source: string | null; 
 /**
- * Woher das Cover stammt: `openlibrary`, `epub`, `file` oder `generated`.
+ * Woher das Cover stammt: `openlibrary`, `epub`, `audio`, `file` oder
+ * `generated`.
  */
 cover_source: string; text: TextVersion | null; audio: AudioVersion | null; added_ms: number; finished: boolean; 
 /**
@@ -9556,26 +9566,6 @@ export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
 /**
  * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
  */
-/**
- * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
- */
-export type CoverCandidate = { 
-/**
- * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
- */
-source: string; 
-/**
- * Open-Library-Cover-Kennung.
- */
-cover_id: number | null; isbn: string | null; 
-/**
- * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad.
- */
-preview: string; 
-/**
- * Kurz: Titel, Jahr, Verlag der Ausgabe.
- */
-label: string }
 export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
 /**
  * Open-Library-Cover-Kennung (`cover_i`).
@@ -11127,6 +11117,18 @@ flagged: FlaggedSentence[];
  * Bloecke, in denen mindestens die Haelfte der Zeilen fehlte.
  */
 failed_blocks: number; blocks: number }
+/**
+ * Ein Eintrag im Papierkorb.
+ */
+export type TrashEntry = { book: LibraryBook; 
+/**
+ * Entfernt am (Unix-ms).
+ */
+removed_ms: number; 
+/**
+ * Belegter Platz des Buchordners (Bytes).
+ */
+bytes: number }
 export type TtsDownloadInfo = { id: string; kind: TtsDownloadKind; name: string; description: string; 
 /**
  * Primary language of a voice ("de", "en", …); `None` for the runtime.
