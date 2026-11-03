@@ -2446,6 +2446,19 @@ async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBas
 }
 },
 /**
+ * Ein gespeichertes Dokument (Protokoll oder Dokumenttyp) exportieren: Format nach der
+ * Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
+ * Quelle ist der gespeicherte Text samt Korrekturen von Hand.
+ */
+async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Handbearbeitung eines Protokolls oder Dokumenttyps (Markdown) speichern. Die
  * Aenderung landet in der bestehenden Version; Export, Kopieren, Mail und Vorlesen
  * lesen sie von dort. `expected_updated_at` ist der Stempel, den die Oberflaeche
@@ -2456,19 +2469,6 @@ async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBas
 async meetingsUpdateDocumentText(documentId: string, body: string, expectedUpdatedAt: number) : Promise<Result<MeetingDocument, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_update_document_text", { documentId, body, expectedUpdatedAt }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Ein gespeichertes Dokument (Protokoll oder Dokumenttyp) exportieren: Format nach der
- * Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
- * Quelle ist der gespeicherte Text samt Korrekturen von Hand.
- */
-async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
