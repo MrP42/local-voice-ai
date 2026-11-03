@@ -90,6 +90,11 @@ final class PhoneLibrary: ObservableObject {
         AudioOffload.audioItems(in: dir(book)).reduce(0) { $0 + AudioOffload.bytes(at: $1) }
     }
 
+    /// Freier Speicher für wichtige Daten (wie ihn iOS beim Laden berücksichtigt).
+    func freeBytes() -> Int64? {
+        try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
+    }
+
     func hasAudio(_ book: LibraryBook) -> Bool {
         guard let tracks = book.audio?.allTracks, !tracks.isEmpty else { return false }
         return audioURLs(book).count == tracks.count

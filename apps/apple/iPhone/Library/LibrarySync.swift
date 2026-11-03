@@ -507,6 +507,37 @@ final class LibrarySync: ObservableObject {
         return name.isEmpty || name.hasPrefix(".") ? String(format: "teil_%03d.m4a", index + 1) : name
     }
 
+    // MARK: Speicherübersicht (P8 Paket 2)
+
+    /// Hörbücher, die auf dem iPhone Platz belegen, größte zuerst.
+    func storageItems() -> [AudioStorage.Item] {
+        AudioStorage.sorted(library.books.compactMap { book in
+            let bytes = library.localAudioBytes(book)
+            guard bytes > 0 else { return nil }
+            let rec = library.record(library.audioKey(book))
+            let removable: Bool
+            switch offloadVerdict(book) {
+            case .allowed, .unconfirmed: removable = true
+            default: removable = false
+            }
+            return AudioStorage.Item(id: book.id, title: book.title, bytes: bytes, fraction: LibraryProgress.fraction(rec),
+                                     finished: book.finished || rec?.finished == true,
+                                     lastUsedMs: rec.map(\.updated).flatMap { $0 > 0 ? $0 : nil },
+                                     partial: !library.hasAudio(book), removable: removable)
+        })
+    }
+
+    /// Mehrere Hörbücher nacheinander entfernen; jedes wird einzeln geprüft.
+    func removeDownloads(ids: [String]) async -> (removed: Int, freed: Int, kept: Int) {
+        var removed = 0, freed = 0, kept = 0
+        for id in ids {
+            guard let book = library.books.first(where: { $0.id == id }) else { continue }
+            let result = await removeDownloads(book)
+            if result.verdict.allowed { removed += 1; freed += result.freed } else { kept += 1 }
+        }
+        return (removed, freed, kept)
+    }
+
     /// Dateigröße frisch vom Dateisystem (URL-Ressourcenwerte werden zwischengespeichert).
     static func fileSize(_ url: URL) -> Int? {
         (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue

@@ -644,6 +644,7 @@ struct LibrarySyncSheet: View {
                     Section {
                         Toggle("Hörbücher nur im WLAN laden", isOn: $sync.wifiOnly)
                     }
+                    LibraryStorageSummary()
                     Section { Button("Abmelden", role: .destructive) { Task { await sync.logout() } } }
                 } else {
                     Section {
@@ -651,6 +652,7 @@ struct LibrarySyncSheet: View {
                         SecureField("Passwort", text: $password).textContentType(.password)
                         TextField("Gerätename", text: $device)
                     } footer: { Text("Dasselbe Konto wie in der Desktop-App unter Einstellungen › Konto & Geräte. Das Passwort verlässt das iPhone nicht; daraus wird nur hier der Schlüssel berechnet.") }
+                    LibraryStorageSummary()
                     Section("Server") { TextField("Server", text: $url).keyboardType(.URL).textInputAutocapitalization(.never) }
                     Section {
                         Button {
@@ -666,4 +668,147 @@ struct LibrarySyncSheet: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         }
     }
+}
+
+// MARK: Speicher (Epic #210, P8 Paket 2)
+
+enum LibraryBytes {
+    static func text(_ bytes: Int) -> String { text(Int64(bytes)) }
+    static func text(_ bytes: Int64) -> String {
+        let f = ByteCountFormatter(); f.countStyle = .file; f.allowsNonnumericFormatting = false  // „0 Byte“ statt „Null KB“
+        return f.string(fromByteCount: bytes)
+    }
+}
+
+/// Abschnitt in „Konto & Sync“: belegter und freier Platz, Weg zur Übersicht.
+struct LibraryStorageSummary: View {
+    @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var sync = LibrarySync.shared
+    @State private var items: [AudioStorage.Item] = []
+    @State private var free: Int64?
+
+    var body: some View {
+        Section {
+            LabeledContent("Hörbücher auf diesem iPhone", value: LibraryBytes.text(AudioStorage.total(items)))
+            if let free { LabeledContent("Frei auf dem iPhone", value: LibraryBytes.text(free)) }
+            NavigationLink {
+                LibraryStorageView()
+            } label: {
+                LabeledContent("Speicher verwalten", value: items.isEmpty ? "" : "\(items.count) geladen")
+            }.accessibilityIdentifier("storage")
+        } header: { Text("Speicher") } footer: {
+            Text("Hörbücher liegen nur bei Bedarf auf dem iPhone und zählen nicht zum iCloud-Backup.")
+        }
+        .onAppear(perform: refresh)
+        .onChange(of: library.books) { _, _ in refresh() }
+    }
+
+    private func refresh() { items = sync.storageItems(); free = library.freeBytes() }
+}
+
+/// Geladene Hörbücher nach Größe; Entfernen per Wischen oder gesammelt.
+struct LibraryStorageView: View {
+    @ObservedObject var library = PhoneLibrary.shared
+    @ObservedObject var sync = LibrarySync.shared
+    @State private var items: [AudioStorage.Item] = []
+    @State private var free: Int64?
+    @State private var working: Set<String> = []
+    @State private var confirmFinished = false
+    @State private var blocked: AudioOffload.Verdict?
+    @State private var notice: String?
+
+    var body: some View {
+        let finished = AudioStorage.finishedRemovable(items)
+        List {
+            Section {
+                LabeledContent("Belegt durch Hörbücher", value: LibraryBytes.text(AudioStorage.total(items)))
+                if let free { LabeledContent("Frei auf dem iPhone", value: LibraryBytes.text(free)) }
+                if !finished.isEmpty {
+                    Button(role: .destructive) { confirmFinished = true } label: {
+                        Label("Fertig gehörte entfernen (\(finished.count))", systemImage: "checkmark.circle")
+                            .frame(minHeight: 44)
+                    }.disabled(!working.isEmpty).accessibilityIdentifier("removeFinished")
+                }
+                if let notice { Text(notice).font(.footnote).foregroundStyle(VoicePalette.secondaryText) }
+            } footer: {
+                Text("Entfernte Hörbücher bleiben im Konto und in der Bibliothek. Sie werden beim nächsten Hören wieder geladen, der Fortschritt bleibt.")
+            }
+            if items.isEmpty {
+                ContentUnavailableView("Keine Hörbücher geladen", systemImage: "headphones",
+                                       description: Text("Hörbücher aus dem Konto werden beim ersten Hören auf dieses iPhone geladen."))
+            } else {
+                Section("Geladene Hörbücher") {
+                    ForEach(items) { item in
+                        row(item)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                if item.removable {
+                                    Button(role: .destructive) { remove(item) } label: { Label("Entfernen", systemImage: "icloud.and.arrow.down") }
+                                }
+                            }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Speicher").navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: refresh)
+        .onChange(of: library.books) { _, _ in refresh() }
+        .refreshable { refresh() }
+        .confirmationDialog("Fertig gehörte Hörbücher entfernen?", isPresented: $confirmFinished, titleVisibility: .visible) {
+            Button("\(finished.count) entfernen · \(LibraryBytes.text(AudioStorage.total(finished))) frei", role: .destructive) {
+                let ids = finished.map(\.id)
+                working.formUnion(ids)
+                Task {
+                    let result = await sync.removeDownloads(ids: ids)
+                    working.subtract(ids)
+                    notice = AudioStorage.summary(removed: result.removed, freedText: LibraryBytes.text(result.freed), kept: result.kept)
+                    refresh()
+                }
+            }
+        } message: { Text("Sie bleiben im Konto und lassen sich jederzeit wieder laden.") }
+        .alert("Hörbuch bleibt auf dem iPhone", isPresented: Binding(get: { blocked != nil }, set: { if !$0 { blocked = nil } }),
+               presenting: blocked) { verdict in
+            if verdict.syncHelps && sync.account != nil { Button("Jetzt abgleichen") { Task { await sync.run(); refresh() } } }
+            Button("OK", role: .cancel) {}
+        } message: { verdict in Text(verdict.message) }
+    }
+
+    private func row(_ item: AudioStorage.Item) -> some View {
+        let book = library.books.first { $0.id == item.id }
+        return HStack(spacing: 12) {
+            LibraryCover(title: item.title, compact: true, image: book.flatMap { library.coverImage($0) }).frame(width: 40, height: 60)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title).font(.body.weight(.semibold)).lineLimit(2)
+                Text(detail(item)).font(.footnote).foregroundStyle(VoicePalette.secondaryText).lineLimit(2)
+                if !item.removable {
+                    Label("Nur auf diesem iPhone", systemImage: "iphone").font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                }
+            }
+            Spacer(minLength: 8)
+            if working.contains(item.id) { ProgressView() }
+            else { Text(LibraryBytes.text(item.bytes)).font(.subheadline.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText) }
+        }
+        .frame(minHeight: 60)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(item.removable ? "Zum Entfernen nach links wischen." : "Liegt nur auf diesem iPhone und lässt sich noch nicht entfernen.")
+        .accessibilityAction(named: "Entfernen") { item.removable ? remove(item) : (blocked = book.map { sync.offloadVerdict($0) }) }
+    }
+
+    private func detail(_ item: AudioStorage.Item) -> String {
+        guard let used = item.lastUsedMs else { return item.stand }
+        return "\(item.stand) · zuletzt \(LibraryFormat.when(used))"
+    }
+
+    private func remove(_ item: AudioStorage.Item) {
+        guard let book = library.books.first(where: { $0.id == item.id }) else { return }
+        working.insert(item.id)
+        Task {
+            let result = await sync.removeDownloads(book)
+            working.remove(item.id)
+            if result.verdict.allowed { notice = "„\(item.title)“ entfernt, \(LibraryBytes.text(result.freed)) frei." }
+            else { blocked = result.verdict }
+            refresh()
+        }
+    }
+
+    private func refresh() { items = sync.storageItems(); free = library.freeBytes() }
 }
