@@ -11,6 +11,27 @@ import {
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
 
+/** Ab dieser Breite stehen ⓘ, Suche und Aktionen in der Titelleiste; darunter
+    reicht ihr Platz neben Hamburger und Fensterknöpfen nicht, dann bleiben sie
+    als schmale Zeile über dem Inhalt. */
+const TITLEBAR_TOOLS_QUERY = "(min-width: 640px)";
+
+function useTitlebarTools(): boolean {
+  const [wide, setWide] = useState(
+    () =>
+      typeof window === "undefined" ||
+      window.matchMedia(TITLEBAR_TOOLS_QUERY).matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia(TITLEBAR_TOOLS_QUERY);
+    const onChange = () => setWide(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return wide;
+}
+
 const IS_MAC =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad/.test(navigator.platform);
@@ -66,7 +87,8 @@ export const PageShell: React.FC<PageShellProps> = ({
   const { t } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   const dock = useHelpDockSlot();
-  const slot = usePageHeaderSlot();
+  const headerSlot = usePageHeaderSlot();
+  const slot = useTitlebarTools() ? headerSlot : null;
   const searchRef = useRef<HTMLInputElement>(null);
   const hasSearch = !!search;
   // Strg+K (⌘K) nur in Modulen mit Suche (ADR-0027 E5).
