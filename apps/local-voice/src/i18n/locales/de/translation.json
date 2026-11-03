@@ -406,6 +406,24 @@
           "empty": "Keine Stimmen zum Auswählen.",
           "toggle": "{{name}} im Vorlesen anzeigen"
         },
+        "rename": {
+          "button": "{{name}} umbenennen",
+          "title": "Stimme umbenennen",
+          "description": "Der neue Name steht in der Vorlesen-Auswahl, in der Wiedergabeleiste, im Stimmenkatalog und als Sprecher im Skript (<Name>). Die Stimme selbst bleibt dieselbe.",
+          "label": "Anzeigename",
+          "save": "Speichern",
+          "reset": "Ursprünglichen Namen verwenden",
+          "cancel": "Abbrechen",
+          "providerHint": "Kennung: {{id}} (bleibt). Skripte mit dem alten Namen lesen weiter mit dieser Stimme.",
+          "idHint": "Kennung: {{id}} (bleibt).",
+          "problem": {
+            "tooLong": "Höchstens {{max}} Zeichen.",
+            "badChars": "Die Zeichen < > : sind nicht erlaubt (der Name steht als <Name> im Skript).",
+            "dash": "„ – “ und „ · “ mit Leerzeichen sind nicht erlaubt.",
+            "taken": "Diesen Namen trägt schon eine andere Stimme dieses Anbieters.",
+            "unknown": "Die Stimme wurde nicht gefunden; der Name ist nicht gespeichert."
+          }
+        },
         "license": "Stimme: Lizenz {{license}}",
         "gender": {
           "female": "weiblich",

@@ -406,6 +406,24 @@
           "empty": "No voices to choose from.",
           "toggle": "Show {{name}} in Read aloud"
         },
+        "rename": {
+          "button": "Rename {{name}}",
+          "title": "Rename voice",
+          "description": "The new name appears in the read-aloud picker, the playback bar, the voice catalog and as a speaker in scripts (<Name>). The voice itself stays the same.",
+          "label": "Display name",
+          "save": "Save",
+          "reset": "Use original name",
+          "cancel": "Cancel",
+          "providerHint": "ID: {{id}} (unchanged). Scripts using the old name keep reading with this voice.",
+          "idHint": "ID: {{id}} (unchanged).",
+          "problem": {
+            "tooLong": "At most {{max}} characters.",
+            "badChars": "The characters < > : are not allowed (the name is written as <Name> in scripts).",
+            "dash": "A spaced \" – \" or \" · \" is not allowed.",
+            "taken": "Another voice of this provider already has this name.",
+            "unknown": "The voice was not found; the name was not saved."
+          }
+        },
         "license": "Voice: license {{license}}",
         "gender": {
           "female": "female",

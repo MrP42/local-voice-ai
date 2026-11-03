@@ -6839,6 +6839,19 @@ async ttsProviderSetVisibleVoices(id: string, voices: string[]) : Promise<Result
 }
 },
 /**
+ * Eigenen Anzeigenamen einer Stimme setzen; `name` leer oder `None`: ursprünglicher Name. Gilt für
+ * jeden Anbieter (auch Piper); Fish-Stimmen tragen ihren Namen in den eigenen Metadaten
+ * (`tts_set_voice_meta`). `original`: der Name, den die Oberfläche als ursprünglich zeigt.
+ */
+async ttsProviderSetVoiceName(id: string, voice: string, name: string | null, original: string | null) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_voice_name", { id, voice, name, original }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Die Stimmen der freigegebenen Anbieter für das Vorlesen-Dropdown (nur die gewählten, siehe
  * [`voice_options`]). Anbieter ohne Freigabe, mit Sperre oder ohne Antwort fehlen.
  */
@@ -11338,7 +11351,12 @@ voice: string | null;
  * Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
  * [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
  */
-visible_voices: string[] }
+visible_voices: string[]; 
+/**
+ * Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
+ * `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
+ */
+voice_names: Partial<{ [key in string]: string }> }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
@@ -11387,7 +11405,14 @@ voices: Partial<{ [key in string]: string }>;
  * Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
  * Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
  */
-visible_voices: Partial<{ [key in string]: string[] }> }
+visible_voices: Partial<{ [key in string]: string[] }>; 
+/**
+ * Eigene Anzeigenamen je Anbieter und Stimme (nur `tts_provider_set_voice_name`), z. B.
+ * `phonon` → `Erzaehlerin` → `Erzählerin`. Die Kennung der Stimme bleibt unverändert (Synthese,
+ * Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
+ * Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
+ */
+voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }> }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
