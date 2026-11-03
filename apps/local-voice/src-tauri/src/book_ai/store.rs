@@ -53,6 +53,10 @@ pub struct KiDocument {
     pub words: u32,
     /// Anbieter und Modell, mit dem das Dokument entstand.
     pub model: String,
+    /// Token: Prognose vor dem Start und tatsächlicher Verbrauch (fehlt bei
+    /// älteren und übernommenen Dokumenten).
+    #[serde(default)]
+    pub usage: Option<super::tokens::KiUsage>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -222,6 +226,7 @@ mod tests {
             modified_ms: 1.0,
             words: 0,
             model: "ollama/x".into(),
+            usage: None,
         }
     }
 
