@@ -32,6 +32,8 @@ const HINT_WINDOW: usize = 4_000;
 const MIN_COVERAGE: f32 = 0.35;
 /// Ab dieser Abdeckung gilt ein Treffer ohne Hinweis als verlässlich.
 const GLOBAL_COVERAGE: f32 = 0.6;
+/// Hand-Stellen so nah beieinander ersetzen sich.
+const ANCHOR_NEAR_MS: f64 = 5_000.0;
 
 /// Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
@@ -57,6 +59,21 @@ pub struct AudioSyncCache {
     pub points: Vec<SyncPoint>,
     pub inserts: Vec<AudioSyncInsert>,
     pub covered: Vec<AudioSyncSpan>,
+    /// Von Hand gesetzte Stellen („dieser Satz ist gerade zu hören“). Sie
+    /// gehen den erkannten Punkten vor.
+    #[serde(default)]
+    pub anchors: Vec<SyncPoint>,
+}
+
+/// Eine Hand-Stelle einfügen: ersetzt Stellen in der Nähe (±`ANCHOR_NEAR_MS`)
+/// und alle, die ihr in Zeit oder Text widersprechen.
+pub fn add_anchor(anchors: &mut Vec<SyncPoint>, p: SyncPoint) {
+    anchors.retain(|a| {
+        (a.ms - p.ms).abs() > ANCHOR_NEAR_MS
+            && ((a.ms < p.ms && a.chars < p.chars) || (a.ms > p.ms && a.chars > p.chars))
+    });
+    anchors.push(p);
+    anchors.sort_by(|a, b| a.ms.total_cmp(&b.ms));
 }
 
 /// Ergebnis eines Fensters.
@@ -309,6 +326,35 @@ pub async fn audiosync_load(app: AppHandle, book_id: String) -> Result<AudioSync
     tauri::async_runtime::spawn_blocking(move || {
         let ctx = context(&app, &book_id)?;
         Ok(load_cache(&ctx.dir, &text_key(&ctx.text)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Stelle von Hand setzen: bei `ms` im Hörbuch ist Zeichen `chars` zu hören.
+#[tauri::command]
+#[specta::specta]
+pub async fn audiosync_anchor(
+    app: AppHandle,
+    book_id: String,
+    chars: u32,
+    ms: f64,
+) -> Result<AudioSyncCache, String> {
+    if !ms.is_finite() || ms < 0.0 {
+        return Err("Ungültige Zeit".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let ctx = context(&app, &book_id)?;
+        if chars as usize > ctx.text.encode_utf16().count() {
+            return Err("Stelle liegt hinter dem Text".to_string());
+        }
+        let key = text_key(&ctx.text);
+        let _lib = crate::library::sync_lock();
+        let mut cache = load_cache(&ctx.dir, &key);
+        add_anchor(&mut cache.anchors, SyncPoint { chars, ms });
+        let json = serde_json::to_vec(&cache).map_err(|e| e.to_string())?;
+        write_atomic(&cache_path(&ctx.dir), &json)?;
+        Ok(cache)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -637,4 +683,26 @@ mod tests {
         assert_eq!(chars, vec![10, 30, 40, 50]);
     }
 
+    #[test]
+    fn hand_stelle_ersetzt_nahe_und_widersprechende() {
+        let p = |chars: u32, ms: f64| SyncPoint { chars, ms };
+        let mut a = vec![p(100, 10_000.0), p(500, 50_000.0), p(900, 90_000.0)];
+        // 52 s nahe an 50 s; 900 bei 90 s bleibt, 100 bei 10 s bleibt.
+        add_anchor(&mut a, p(520, 52_000.0));
+        assert_eq!(
+            a,
+            vec![p(100, 10_000.0), p(520, 52_000.0), p(900, 90_000.0)]
+        );
+        // Widerspruch: Zeichen 50 erst bei 60 s – 100 und 520 fallen weg.
+        add_anchor(&mut a, p(50, 60_000.0));
+        assert_eq!(a, vec![p(50, 60_000.0), p(900, 90_000.0)]);
+    }
+
+    #[test]
+    fn alter_cache_ohne_hand_stellen_bleibt_lesbar() {
+        let c: AudioSyncCache =
+            serde_json::from_str(r#"{"text_key":"1:x","points":[],"inserts":[],"covered":[]}"#)
+                .unwrap();
+        assert!(c.anchors.is_empty());
+    }
 }

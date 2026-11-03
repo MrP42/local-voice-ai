@@ -6263,6 +6263,17 @@ async audiosyncWindow(bookId: string, fromMs: number, lenMs: number, hintChars: 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Stelle von Hand setzen: bei `ms` im Hörbuch ist Zeichen `chars` zu hören.
+ */
+async audiosyncAnchor(bookId: string, chars: number, ms: number) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_anchor", { bookId, chars, ms }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsVoicechangeRecordStart() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_voicechange_record_start") };
@@ -7719,7 +7730,12 @@ export type AudioSyncCache = {
 /**
  * Fingerabdruck des Buchtexts; passt er nicht, ist der Cache verworfen.
  */
-text_key: string; points: SyncPoint[]; inserts: AudioSyncInsert[]; covered: AudioSyncSpan[] }
+text_key: string; points: SyncPoint[]; inserts: AudioSyncInsert[]; covered: AudioSyncSpan[]; 
+/**
+ * Von Hand gesetzte Stellen („dieser Satz ist gerade zu hören“). Sie
+ * gehen den erkannten Punkten vor.
+ */
+anchors?: SyncPoint[] }
 /**
  * Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
  */
