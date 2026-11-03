@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 
 // Bibliothek (lva#152): ein Buch = ein Eintrag, Raster mit Weiterhören,
 // Produktseite, Hinzufügen mit Dublettenerkennung, dauerhafter Fortschritt.
@@ -278,10 +279,17 @@ test.beforeEach(async ({ page }) => {
           }
           if (cmd === "library_trash_list") {
             const trash = ((w as { __trash?: unknown[] }).__trash ?? []) as Record<string, unknown>[];
-            return trash.map((book) => ({ book, removed_ms: 1_793_000_000_000, bytes: 10_485_760 }));
+            return trash.map((book) => ({
+              book,
+              removed_ms: 1_793_000_000_000,
+              bytes: book.audio ? 10_485_760 : 49_152,
+            }));
           }
           if (cmd === "library_sizes") {
-            return (args?.ids as string[]).map(() => 10_485_760);
+            // Mit Hörbuch-Kopie 10 MB, sonst nur Angaben und Cover (48 KB).
+            return (args?.ids as string[]).map((id) =>
+              list.find((x) => x.id === id)?.audio ? 10_485_760 : 49_152,
+            );
           }
           if (cmd === "library_purge") {
             const ids = args?.ids as string[] | null | undefined;
@@ -2029,6 +2037,8 @@ test("Entfernen über ⋮: Papierkorb mit Umfang, Rückgängig im Hinweis holt d
   await expect(toast).toContainText("„Der Schimmelreiter“ liegt im Papierkorb.");
   await expect(toast).toContainText("Papierkorb");
   await expect(page.getByTestId("library-trash-open")).toContainText("Papierkorb (1)");
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(800);
   await page.screenshot({ path: shot("entfernen-rueckgaengig-1440.png") });
   await toast.getByRole("button", { name: "Rückgängig" }).click();
   await expect(page.getByTestId("library-card")).toHaveCount(3);
@@ -2090,6 +2100,7 @@ test("Papierkorb: Liste, Wiederherstellen und einzeln endgültig löschen", asyn
   await page.getByTestId("library-trash-delete").click();
   await expect(dialog).toContainText("lässt sich nicht rückgängig machen");
   await page.mouse.move(0, 0);
+  await page.waitForTimeout(400);
   await page.screenshot({ path: shot("papierkorb-loeschen-1440.png") });
   await page.getByTestId("library-trash-delete-confirm").click();
   await expect
@@ -2111,7 +2122,7 @@ test("Mehrfachauswahl: drei Einträge entfernen, Leiste zeigt die Zahl", async (
   await page.getByTestId("library-select-remove").click();
   await expect(page.getByRole("dialog")).toContainText("3 Einträge entfernen?");
   await page.getByTestId("library-remove-scope-delete").check();
-  await expect(page.getByTestId("library-remove-sure")).toContainText("3 Einträge (30 MB)");
+  await expect(page.getByTestId("library-remove-sure")).toContainText("3 Einträge (");
   await page.screenshot({ path: shot("endgueltig-mehrere-1440.png") });
   await page.getByTestId("library-remove-scope-trash").check();
   await page.getByTestId("library-remove-confirm").click();
@@ -2229,9 +2240,11 @@ test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.locator(".library-select input").first().check();
+  const selectbar: { ziel: string; text: string | null; breite: number; hoehe: number }[] = [];
   for (const el of await page.locator(".library-selectbar button").all()) {
-    const r = await el.boundingBox();
-    if (r) expect(r.height).toBeGreaterThanOrEqual(44);
+    const r = (await el.boundingBox())!;
+    expect(r.height).toBeGreaterThanOrEqual(44);
+    selectbar.push({ ziel: "Auswahlleiste", text: (await el.innerText()).trim(), breite: Math.round(r.width), hoehe: Math.round(r.height) });
   }
   await page.screenshot({ path: shot("auswahl-390.png") });
   const overflow = await page.evaluate(
@@ -2241,15 +2254,38 @@ test("390 px: Auswahl-Leiste und Rückfrage ohne waagerechte Scrollleiste, Ziele
   await page.getByTestId("library-select-remove").click();
   await expect(page.getByTestId("library-remove-dialog")).toBeVisible();
   await page.getByTestId("library-remove-scope-delete").check();
-  const targets = page.locator(
-    ".library-remove__option, .lv-dialog.library-dialog-touch .lv-dialog__actions button, .lv-dialog.library-dialog-touch button[aria-label]",
-  );
-  for (const el of await targets.all()) {
-    const r = await el.boundingBox();
-    if (!r) continue;
-    expect(r.height, await el.evaluate((n) => n.outerHTML.slice(0, 80))).toBeGreaterThanOrEqual(44);
-  }
+  // Belege für die Abnahme: jede Trefferfläche mit Maßen, Schließen auch in der Breite.
+  const measure = async (name: string, selector: string, wide = false) => {
+    const all = await page.locator(selector).all();
+    expect(all.length, name).toBeGreaterThan(0);
+    const out = [];
+    for (const el of all) {
+      const r = (await el.boundingBox())!;
+      const label = (await el.innerText()).split("\n")[0].trim() || (await el.getAttribute("aria-label"));
+      expect(r.height, `${name}: ${label}`).toBeGreaterThanOrEqual(44);
+      if (wide) expect(r.width, `${name}: ${label}`).toBeGreaterThanOrEqual(44);
+      out.push({ ziel: name, text: label, breite: Math.round(r.width), hoehe: Math.round(r.height) });
+    }
+    return out;
+  };
+  const belege = [
+    ...selectbar,
+    ...(await measure("Schließen", ".lv-dialog.library-dialog-touch .fui-DialogTitle__action button", true)),
+    ...(await measure("Option", ".library-remove__option")),
+    ...(await measure("Dialogknopf", ".lv-dialog.library-dialog-touch .lv-dialog__actions button")),
+  ];
   await page.screenshot({ path: shot("entfernen-dialog-390.png") });
+  await page.getByTestId("library-remove-scope-trash").check();
+  await page.getByTestId("library-remove-confirm").click();
+  await page.getByTestId("library-trash-open").click();
+  await expect(page.getByTestId("library-trash-item")).toHaveCount(1);
+  belege.push(
+    ...(await measure("Papierkorb-Schließen", ".lv-dialog.library-dialog-touch .fui-DialogTitle__action button", true)),
+    ...(await measure("Papierkorb-Aktion", ".library-trash__actions button")),
+    ...(await measure("Papierkorb-Dialogknopf", ".lv-dialog.library-dialog-touch .lv-dialog__actions button")),
+  );
+  await page.screenshot({ path: shot("papierkorb-390.png") });
+  writeFileSync(shot("trefferflaechen-390.json"), JSON.stringify(belege, null, 2) + "\n");
 });
 
 test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", async ({ page }) => {

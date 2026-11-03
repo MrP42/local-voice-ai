@@ -1092,6 +1092,12 @@
 .library-undo-toast {
   border-left: 4px solid var(--colorBrandBackground, #0f6cbd) !important;
   font-size: 0.95rem;
+  width: min(440px, calc(100vw - 32px));
+  color: var(--colorNeutralForeground1, inherit);
+}
+.library-undo-toast [data-description] {
+  color: var(--colorNeutralForeground1, inherit);
+  margin-top: 2px;
 }
 .library-undo-toast button {
   min-height: 44px !important;

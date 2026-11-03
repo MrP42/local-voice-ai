@@ -124,10 +124,15 @@ export const TrashDialog: React.FC<{
                 <div className="library-trash__actions">
                   {confirm === e.book.id ? (
                     <>
-                      <Button onClick={() => setConfirm(null)} disabled={busy}>
+                      <Button
+                        key="delete-cancel"
+                        onClick={() => setConfirm(null)}
+                        disabled={busy}
+                      >
                         {t("library.cancel")}
                       </Button>
                       <Button
+                        key="delete-confirm"
                         variant="danger"
                         disabled={busy}
                         onClick={() => {

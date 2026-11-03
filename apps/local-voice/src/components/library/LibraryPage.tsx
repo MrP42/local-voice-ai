@@ -742,7 +742,11 @@ export const LibraryPage: React.FC = () => {
               {trash.length > 0 && (
                 <Button
                   icon={<Trash2 size={16} aria-hidden="true" />}
-                  onClick={() => setTrashOpen(true)}
+                  onClick={() => {
+                    // Der Papierkorb ersetzt den Rückgängig-Hinweis; keine Überlagerung.
+                    toast.dismiss();
+                    setTrashOpen(true);
+                  }}
                   data-testid="library-trash-open"
                 >
                   {t("library.trash.open", { count: trash.length })}

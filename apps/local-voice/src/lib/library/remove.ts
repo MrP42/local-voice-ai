@@ -76,6 +76,7 @@ export async function purgeStaleTrash(): Promise<void> {
 
 export function formatBytes(bytes: number, locale = "de"): string {
   const mb = bytes / (1024 * 1024);
+  if (mb < 1) return `${Math.max(1, Math.round(bytes / 1024)).toLocaleString(locale)} KB`;
   if (mb >= 1024)
     return `${(mb / 1024).toLocaleString(locale, { maximumFractionDigits: 1 })} GB`;
   return `${mb.toLocaleString(locale, { maximumFractionDigits: mb < 10 ? 1 : 0 })} MB`;
