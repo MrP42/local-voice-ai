@@ -750,6 +750,16 @@ test("im Erstellen-Dialog ist die Sprache des Ergebnisses wählbar (lva#217)", a
   await expect(toast).toContainText("ist fertig");
   // Einblendung abwarten, damit das Belegbild die fertige Meldung zeigt.
   await page.waitForTimeout(600);
+  // Die Meldung darf den Knopf zum Erstellen nicht verdecken (Codex): beide
+  // sichtbar, Rechtecke ueberlappen nicht.
+  const createBtn = page.getByTestId("tts-action-summarize");
+  await createBtn.scrollIntoViewIfNeeded();
+  await expect(createBtn).toBeVisible();
+  await expect(toast).toBeVisible();
+  const b = (await createBtn.boundingBox())!;
+  const m = (await toast.boundingBox())!;
+  expect(b.y + b.height <= m.y || m.y + m.height <= b.y || b.x + b.width <= m.x || m.x + m.width <= b.x).toBe(true);
+  expect(b.y + b.height).toBeLessThanOrEqual(844);
   await page.screenshot({
     path: "docs/vorschau/kurzbuch-sprache/08-fertigmeldung-390.png",
   });
