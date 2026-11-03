@@ -24,6 +24,7 @@ import { IconAction } from "../../../ui/IconAction";
 import { MarkdownContent } from "../../../whats-new/MarkdownContent";
 import { JobPanel } from "../JobProgress";
 import { ReadAloudButton } from "../ReadAloudButton";
+import { useReadAloudHighlight } from "../useReadAloudHighlight";
 
 /** Was die Arbeitsflaeche zeigt: ein gespeichertes Dokument oder den laufenden Lauf. */
 export type OpenProjectMinutes =
@@ -62,6 +63,8 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
   // Die Vorschau dient zugleich als Quelle der formatierten Zwischenablage:
   // was in Word landet, ist genau, was die Markdown-Darstellung zeigt.
   const copyRef = useRef<HTMLDivElement>(null);
+  // Die sichtbare Darstellung: dort steht der vorgelesene Satz (nicht in copyRef).
+  const docRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -78,6 +81,12 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useReadAloudHighlight(
+    docRef,
+    `project-minutes:${doc?.id ?? id}`,
+    state === "ready" ? (doc?.body ?? null) : null,
+  );
 
   if (state === "loading") {
     return (
@@ -261,6 +270,7 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
       )}
 
       <div
+        ref={docRef}
         className="space-y-4 rounded-lg border border-mid-gray/20 p-4"
         data-testid="pm-doc"
       >

@@ -759,7 +759,9 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await expect(page.getByTestId("minutes-readaloud-bar")).toHaveCount(0);
   });
 
-  test("Stimmwechsel, dann Pause: Weiter erscheint sofort", async ({ page }) => {
+  test("Stimmwechsel, dann Pause: Weiter erscheint sofort", async ({
+    page,
+  }) => {
     await page.addInitScript(() => {
       (window as any).__voices = ["anna"];
     });
@@ -1014,6 +1016,138 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 480, height: 800 });
     await page.screenshot({ path: `${dir}/einzeiler-schmal.png` });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hervorhebung: der Satz, der gerade zu hoeren ist, steht im Dokument markiert
+// ---------------------------------------------------------------------------
+
+/** Die Textstuecke der Vorlese-Markierung (CSS Custom Highlight API), oder null. */
+const highlighted = (page: Page) =>
+  page.evaluate(() => {
+    const h = (CSS as any).highlights.get("readaloud-cur");
+    return h ? [...h].map((r: Range) => r.toString()) : null;
+  });
+
+const speakSentence = (page: Page, index: number, text: string) =>
+  page.evaluate(
+    ([index, text]) => {
+      const w = window as any;
+      w.__emit("tts-speak-progress", { position: index, total: 6 });
+      w.__emit("tts-current-sentence", { context: "speak", index, text });
+    },
+    [index, text] as const,
+  );
+
+test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
+  test("der gesprochene Satz ist markiert, folgt der Wiedergabe und verschwindet mit Stopp", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await expect(page.getByTestId("minutes-readaloud-bar")).toBeVisible();
+    expect(await highlighted(page)).toBeNull();
+
+    // Ueberschrift: gesprochen mit Punkt, angezeigt ohne -- trifft trotzdem.
+    await speakSentence(page, 0, "Protokoll: Kundentermin Meyer.");
+    await expect
+      .poll(() => highlighted(page))
+      .toEqual(["Protokoll: Kundentermin Meyer"]);
+    // Fett und Folienbeleg im Dokument, Klartext beim Sprechen.
+    await speakSentence(page, 2, "Angebot bis Freitag senden.");
+    await expect
+      .poll(async () => (await highlighted(page))?.join(""))
+      .toBe("Angebot bis Freitag senden");
+    // Link im Satz: zwei Textknoten, beide markiert.
+    await speakSentence(page, 3, "Termin im Kalender eintragen.");
+    await expect
+      .poll(async () => (await highlighted(page))?.join(""))
+      .toBe("Termin im Kalender eintragen");
+    // Tabellenzeile: "Anna, Angebot." liegt in zwei Zellen.
+    await speakSentence(page, 5, "Anna, Angebot.");
+    await expect.poll(() => highlighted(page)).toEqual(["Anna", "Angebot"]);
+    const inTable = await page.evaluate(() => {
+      const h = (CSS as any).highlights.get("readaloud-cur");
+      return [...h].every(
+        (r: Range) => r.startContainer.parentElement?.closest("td") !== null,
+      );
+    });
+    expect(inTable).toBe(true);
+
+    // Reiterwechsel pausiert; zurueck steht die Markierung wieder am selben Satz.
+    await page.getByRole("tab", { name: "Transkript", exact: true }).click();
+    await expect.poll(() => highlighted(page)).toBeNull();
+    await page.getByRole("tab", { name: "Protokoll", exact: true }).click();
+    await expect.poll(() => highlighted(page)).toEqual(["Anna", "Angebot"]);
+
+    await page.getByTestId("minutes-readaloud-bar-stop").click();
+    await expect.poll(() => highlighted(page)).toBeNull();
+  });
+
+  test("gleichlautende Saetze werden in Lesereihenfolge getroffen, nicht immer am ersten Vorkommen", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__documents = [
+        w.__minutesDoc(
+          1,
+          "## Offen\n\n- Keine.\n\n## Erledigt\n\n- Keine.\n\n## Risiken\n\n- Keine.",
+        ),
+      ];
+    });
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    const section = () =>
+      page.evaluate(() => {
+        const h = (CSS as any).highlights.get("readaloud-cur");
+        const r: Range | undefined = h ? [...h][0] : undefined;
+        const ul = r?.startContainer.parentElement?.closest("ul");
+        const all = [
+          ...document.querySelectorAll('[data-testid="minutes-body"] ul'),
+        ];
+        return ul ? all.indexOf(ul) : -1;
+      });
+    await speakSentence(page, 0, "Offen.");
+    await speakSentence(page, 1, "Keine.");
+    await expect.poll(section).toBe(0);
+    await speakSentence(page, 2, "Erledigt.");
+    await speakSentence(page, 3, "Keine.");
+    await expect.poll(section).toBe(1);
+    // Satzsprung zurueck: die gemerkte Stelle, nicht die naechstbeste.
+    await speakSentence(page, 1, "Keine.");
+    await expect.poll(section).toBe(0);
+    // Sprung nach vorn ueber zwei Saetze: hinter der letzten bekannten Stelle gesucht.
+    await speakSentence(page, 5, "Keine.");
+    await expect.poll(section).toBe(2);
+  });
+
+  test("ein langes Protokoll rollt zum gesprochenen Satz", async ({ page }) => {
+    const body = Array.from(
+      { length: 80 },
+      (_, i) => `- Punkt Nummer ${i + 1} der Besprechung.`,
+    ).join("\n");
+    await page.addInitScript((body) => {
+      const w = window as any;
+      w.__documents = [w.__minutesDoc(1, body)];
+    }, body);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await speakSentence(page, 69, "Punkt Nummer 70 der Besprechung.");
+    await expect
+      .poll(async () => (await highlighted(page))?.join(""))
+      .toBe("Punkt Nummer 70 der Besprechung.");
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const h = (CSS as any).highlights.get("readaloud-cur");
+          const rect = ([...h][0] as Range).getBoundingClientRect();
+          return rect.top > 0 && rect.bottom < window.innerHeight;
+        }),
+      )
+      .toBe(true);
   });
 });
 
