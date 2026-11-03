@@ -45,10 +45,15 @@ export function useLiveSync(opts: {
   const failedAt = useRef(0);
   /** Hinweis aus dem letzten Fenster: gilt, wenn das nächste direkt anschließt. */
   const chain = useRef<{ toMs: number; chars: number } | null>(null);
+  /** Zählt Buchwechsel: Antworten zum alten Buch werden verworfen. */
+  const gen = useRef(0);
 
   useEffect(() => {
+    gen.current += 1;
     setState(EMPTY);
     chain.current = null;
+    busy.current = false;
+    failedAt.current = 0;
     if (!enabled) return;
     let stop = false;
     void commands.audiosyncLoad(bookId).then((r) => {
@@ -75,17 +80,23 @@ export function useLiveSync(opts: {
     const c = chain.current;
     const hint =
       c && Math.abs(c.toMs - w.from) < 1500 ? c.chars : hintOf.current(w.from);
+    const mine = gen.current;
     busy.current = true;
     setState((s) => ({ ...s, busy: true }));
     void commands
       .audiosyncWindow(bookId, w.from, w.len, Math.max(0, Math.round(hint)))
       .then((r) => {
+        if (mine !== gen.current) return;
         if (r.status !== "ok") {
           failedAt.current = Date.now();
           setState((s) => ({ ...s, unavailable: true }));
           return;
         }
         const win = r.data;
+        if (!(win.to_ms > win.from_ms)) {
+          failedAt.current = Date.now();
+          return;
+        }
         chain.current =
           win.next_hint != null
             ? { toMs: win.to_ms, chars: win.next_hint }
@@ -111,6 +122,7 @@ export function useLiveSync(opts: {
         });
       })
       .finally(() => {
+        if (mine !== gen.current) return;
         busy.current = false;
         setState((s) => ({ ...s, busy: false }));
       });

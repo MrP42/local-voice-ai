@@ -16,22 +16,61 @@ export const LOOKAHEAD_MS = 90_000;
 /** Länge eines Fensters (ms). */
 export const WINDOW_MS = 30_000;
 
+const finite = (p: SyncPoint) => Number.isFinite(p.chars) && Number.isFinite(p.ms);
+
+/** Längste in Zeit und Zeichen streng steigende Kette (O(n log n)): ein
+ *  Ausreißer kostet nur sich selbst, nicht alle Punkte danach. */
+export function monotoneChain(points: SyncPoint[]): SyncPoint[] {
+  const pts = points
+    .filter(finite)
+    .sort((a, b) => a.ms - b.ms || b.chars - a.chars);
+  const tails: number[] = [];
+  const prev: number[] = new Array(pts.length).fill(-1);
+  for (let i = 0; i < pts.length; i++) {
+    const c = pts[i].chars;
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pts[tails[mid]].chars < c) lo = mid + 1;
+      else hi = mid;
+    }
+    prev[i] = lo > 0 ? tails[lo - 1] : -1;
+    tails[lo] = i;
+  }
+  const out: SyncPoint[] = [];
+  for (let i = tails.length ? tails[tails.length - 1] : -1; i >= 0; i = prev[i])
+    out.push(pts[i]);
+  return out.reverse();
+}
+
 /** Beide Quellen, streng steigend in Zeichen und Zeit. Transkript-Punkte
- *  bleiben, Live-Punkte füllen die Lücken dazwischen. */
+ *  haben Vorrang; Live-Punkte zählen nur in den Lücken dazwischen, wo sie in
+ *  beiden Achsen zwischen die Nachbarn passen. */
 export function mergeSync(
   base: SyncPoint[] | null | undefined,
   live: SyncPoint[],
 ): SyncPoint[] {
-  const all = [...(base ?? []), ...live].filter(
-    (p) => Number.isFinite(p.chars) && Number.isFinite(p.ms),
-  );
-  all.sort((a, b) => a.ms - b.ms || a.chars - b.chars);
-  const out: SyncPoint[] = [];
-  for (const p of all) {
-    const last = out[out.length - 1];
-    if (!last || (p.chars > last.chars && p.ms > last.ms)) out.push(p);
-  }
-  return out;
+  const fixed = monotoneChain(base ?? []);
+  if (!live.length) return fixed;
+  if (!fixed.length) return monotoneChain(live);
+  const fits = (p: SyncPoint) => {
+    // Erster Transkriptpunkt mit ms >= p.ms.
+    let lo = 0;
+    let hi = fixed.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (fixed[mid].ms < p.ms) lo = mid + 1;
+      else hi = mid;
+    }
+    const before = fixed[lo - 1];
+    const after = fixed[lo];
+    if (after && after.ms === p.ms) return false;
+    return (
+      (!before || p.chars > before.chars) && (!after || p.chars < after.chars)
+    );
+  };
+  return monotoneChain([...fixed, ...live.filter(finite).filter(fits)]);
 }
 
 /** Zeitraum, der `ms` enthält, oder null. */
@@ -60,6 +99,7 @@ export function nextWindow(
 
 /** Abdeckung nach einem Fenster ergänzen (zusammenhängende Bereiche verschmelzen). */
 export function addSpan(spans: LiveSpan[], span: LiveSpan): LiveSpan[] {
+  if (!(span.to_ms > span.from_ms)) return spans;
   const all = [...spans, span].sort((a, b) => a.from_ms - b.from_ms);
   const out: LiveSpan[] = [];
   for (const s of all) {
@@ -68,5 +108,11 @@ export function addSpan(spans: LiveSpan[], span: LiveSpan): LiveSpan[] {
       last.to_ms = Math.max(last.to_ms, s.to_ms);
     else out.push({ ...s });
   }
-  return out;
+  // Nichts dazugekommen: dieselbe Liste, damit kein Effekt neu läuft.
+  const same =
+    out.length === spans.length &&
+    out.every(
+      (s, i) => s.from_ms === spans[i].from_ms && s.to_ms === spans[i].to_ms,
+    );
+  return same ? spans : out;
 }

@@ -8,7 +8,7 @@
 //! braucht so keine Erkennung mehr.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -16,17 +16,22 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::pages::write_atomic;
 use crate::library::{tracks_of, AudioTrack, LibraryBook, SyncPoint};
+use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::{TimedSegment, TranscriptionManager};
 
 /// Abtastrate für die Erkennung.
 const RATE: u32 = 16_000;
 /// Längstes Fenster je Aufruf (die Erkennung hält sonst zu lange die Sperre).
 const MAX_WINDOW_MS: f64 = 60_000.0;
+/// Kürzer lohnt die Erkennung nicht (und ein leeres Fenster würde endlos wiederholt).
+const MIN_WINDOW_MS: f64 = 1_000.0;
 /// Suchfenster um den Hinweis (Buchwörter).
 const HINT_WINDOW: usize = 4_000;
 /// Unter dieser Abdeckung gilt ein Fenster mit Hinweis als verfehlt: dann
 /// wird das ganze Buch durchsucht (nach Sprung oder Kürzung im Hörbuch).
 const MIN_COVERAGE: f32 = 0.35;
+/// Ab dieser Abdeckung gilt ein Treffer ohne Hinweis als verlässlich.
+const GLOBAL_COVERAGE: f32 = 0.6;
 
 /// Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq)]
@@ -139,16 +144,7 @@ pub fn merge(cache: &mut AudioSyncCache, w: &AudioSyncWindow) {
     let inside = |ms: f64| ms >= w.from_ms && ms < w.to_ms;
     cache.points.retain(|p| !inside(p.ms));
     cache.points.extend(w.points.iter().cloned());
-    cache.points.sort_by(|a, b| a.ms.total_cmp(&b.ms));
-    // Streng steigend in beiden Achsen (ein verfehltes altes Fenster darf
-    // nicht gegen ein neues laufen): rückläufige Punkte fallen weg.
-    let mut kept: Vec<SyncPoint> = Vec::with_capacity(cache.points.len());
-    for p in cache.points.drain(..) {
-        if kept.last().is_none_or(|l| p.chars > l.chars && p.ms > l.ms) {
-            kept.push(p);
-        }
-    }
-    cache.points = kept;
+    cache.points = monotone_chain(std::mem::take(&mut cache.points));
     cache.inserts.retain(|i| !inside(i.start_ms));
     cache.inserts.extend(w.inserts.iter().cloned());
     cache
@@ -171,6 +167,35 @@ pub fn merge(cache: &mut AudioSyncCache, w: &AudioSyncWindow) {
     cache.covered = spans;
 }
 
+/// Längste in Zeit und Zeichen streng steigende Kette (O(n log n)). Ein
+/// einzelner Ausreißer kostet so nur sich selbst, nicht alle Punkte danach.
+pub fn monotone_chain(mut pts: Vec<SyncPoint>) -> Vec<SyncPoint> {
+    pts.retain(|p| p.ms.is_finite());
+    // Gleiche Zeit: absteigend in Zeichen, damit höchstens einer davon zählt.
+    pts.sort_by(|a, b| a.ms.total_cmp(&b.ms).then(b.chars.cmp(&a.chars)));
+    let n = pts.len();
+    let mut tails: Vec<usize> = Vec::new();
+    let mut prev: Vec<Option<usize>> = vec![None; n];
+    for i in 0..n {
+        let c = pts[i].chars;
+        let k = tails.partition_point(|&t| pts[t].chars < c);
+        prev[i] = if k > 0 { Some(tails[k - 1]) } else { None };
+        if k == tails.len() {
+            tails.push(i);
+        } else {
+            tails[k] = i;
+        }
+    }
+    let mut idx = Vec::with_capacity(tails.len());
+    let mut cur = tails.last().copied();
+    while let Some(i) = cur {
+        idx.push(i);
+        cur = prev[i];
+    }
+    idx.reverse();
+    idx.into_iter().map(|i| pts[i].clone()).collect()
+}
+
 /// Buchwort-Index zur Zeichenstelle (für den Hinweis aus der Schätzung).
 pub fn word_at(words: &[hoersync::BookWord], chars: u32) -> usize {
     words.partition_point(|w| w.start < chars)
@@ -187,7 +212,9 @@ pub fn align_window(
     let mut a = hoersync::align(words, heard, hint.map(|h| h as usize), HINT_WINDOW);
     if hint.is_some() && a.coverage < MIN_COVERAGE {
         let global = hoersync::align(words, heard, None, 0);
-        if global.coverage > a.coverage {
+        // Nur übernehmen, wenn die Fundstelle eindeutig ist: ein schwacher
+        // globaler Treffer darf die Kette nicht ans andere Buchende werfen.
+        if global.coverage >= GLOBAL_COVERAGE && global.coverage > a.coverage {
             a = global;
         }
     }
@@ -329,28 +356,34 @@ fn window_blocking(
     let end_local = track
         .duration_ms
         .map_or(local + len, |d| (local + len).min(d));
+    if end_local - local < MIN_WINDOW_MS {
+        return Err("Fenster leer (Ende des Hörbuchteils)".into());
+    }
     let to_ms = from_ms + (end_local - local);
     let src = ctx.dir.join("audio").join(&track.file);
-    let tmp = std::env::temp_dir().join(format!(
-        "lva-hoersync-{}-{}.wav",
-        book_id,
-        std::process::id()
-    ));
+    let tmp = TempWav::new(book_id);
     let cancel = AtomicBool::new(false);
     crate::media::decode_media_range_to_wav_cancellable(
         &src,
-        &tmp,
+        &tmp.0,
         RATE,
         Some((local as u64, Some(end_local as u64))),
         &cancel,
     )?;
-    let samples = read_wav(&tmp);
-    let _ = std::fs::remove_file(&tmp);
-    let samples = samples?;
+    let samples = read_wav(&tmp.0)?;
+    drop(tmp);
 
+    // Diktat oder Aufnahme hat Vorrang: das Erkennungsmodell nicht wegnehmen.
+    if recording(app) {
+        return Err("Aufnahme läuft".into());
+    }
     let tm = app.state::<Arc<TranscriptionManager>>();
-    tm.initiate_meeting_model_load(&crate::settings::get_settings(app));
-    let segments = tm.transcribe_segments(samples).map_err(|e| e.to_string())?;
+    let settings = crate::settings::get_settings(app);
+    tm.initiate_meeting_model_load(&settings);
+    let segments = tm.transcribe_segments(samples);
+    // Danach wieder das Diktatmodell laden (wie die Nachbearbeitung).
+    tm.initiate_model_load_target(&settings.selected_model);
+    let segments = segments.map_err(|e| e.to_string())?;
     let heard = heard_of(&segments, from_ms);
 
     let words = words_for(&ctx.text);
@@ -370,6 +403,36 @@ fn window_blocking(
     Ok(w)
 }
 
+fn recording(app: &AppHandle) -> bool {
+    app.try_state::<Arc<AudioRecordingManager>>()
+        .is_some_and(|a| a.is_recording())
+}
+
+/// Temporäre WAV-Datei mit eindeutigem Namen, die auf jedem Weg verschwindet.
+struct TempWav(PathBuf);
+
+impl TempWav {
+    fn new(book_id: &str) -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let safe: String = book_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .take(40)
+            .collect();
+        Self(std::env::temp_dir().join(format!(
+            "lva-hoersync-{safe}-{}-{n}.wav",
+            std::process::id()
+        )))
+    }
+}
+
+impl Drop for TempWav {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn read_wav(path: &Path) -> Result<Vec<f32>, String> {
     let mut r = hound::WavReader::open(path).map_err(|e| format!("WAV unlesbar: {e}"))?;
     let spec = r.spec();
@@ -377,11 +440,14 @@ fn read_wav(path: &Path) -> Result<Vec<f32>, String> {
         hound::SampleFormat::Int => {
             let scale = (1i64 << (spec.bits_per_sample - 1)) as f32;
             r.samples::<i32>()
-                .filter_map(Result::ok)
-                .map(|s| s as f32 / scale)
-                .collect()
+                .map(|s| s.map(|s| s as f32 / scale))
+                .collect::<Result<_, _>>()
+                .map_err(|e| format!("WAV unlesbar: {e}"))?
         }
-        hound::SampleFormat::Float => r.samples::<f32>().filter_map(Result::ok).collect(),
+        hound::SampleFormat::Float => r
+            .samples::<f32>()
+            .collect::<Result<_, _>>()
+            .map_err(|e| format!("WAV unlesbar: {e}"))?,
     };
     Ok(out)
 }
@@ -556,4 +622,19 @@ mod tests {
         assert!(w.coverage > 0.9);
         assert_eq!(w.next_hint, Some(9040));
     }
+
+    #[test]
+    fn ein_ausreisser_kostet_nur_sich_selbst() {
+        let p = |chars: u32, ms: f64| SyncPoint { chars, ms };
+        let out = monotone_chain(vec![
+            p(10, 1000.0),
+            p(9000, 2000.0), // Ausreißer weit vorn im Buch
+            p(30, 3000.0),
+            p(40, 4000.0),
+            p(50, 5000.0),
+        ]);
+        let chars: Vec<u32> = out.iter().map(|p| p.chars).collect();
+        assert_eq!(chars, vec![10, 30, 40, 50]);
+    }
+
 }
