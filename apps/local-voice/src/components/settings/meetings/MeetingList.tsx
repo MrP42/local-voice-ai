@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { MergeDialog } from "./parts/MergeDialog";
 import {
   commands,
   events,
@@ -26,6 +27,7 @@ import {
   ListChecks,
   Menu,
   MessageSquare,
+  Combine,
   Plus,
   X,
 } from "lucide-react";
@@ -214,6 +216,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   // M4-P4e: Auswahlmodus fuer "Auswahl fragen".
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Mehrere Audiodateien: Auswahl zu einer Besprechung zusammenfuehren.
+  const [mergeMeetings, setMergeMeetings] = useState<Meeting[] | null>(null);
   const toggleSelected = (id: string) =>
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -806,23 +810,19 @@ export const MeetingList: React.FC<MeetingListProps> = ({
         align="end"
         widthClass="w-56"
         items={[
-          ...(onAsk
-            ? [
-                {
-                  id: "select",
-                  label: selecting
-                    ? t("meetings.chat.list.selectDone")
-                    : t("meetings.chat.list.select"),
-                  icon: CheckSquare,
-                  testId: "projects-select",
-                  onSelect: () => {
-                    setPmMode(false);
-                    setSelecting((on) => !on);
-                    setSelectedIds([]);
-                  },
-                },
-              ]
-            : []),
+          {
+            id: "select",
+            label: selecting
+              ? t("meetings.chat.list.selectDone")
+              : t("meetings.chat.list.select"),
+            icon: CheckSquare,
+            testId: "projects-select",
+            onSelect: () => {
+              setPmMode(false);
+              setSelecting((on) => !on);
+              setSelectedIds([]);
+            },
+          },
           ...(onStartProjectMinutes
             ? [
                 {
@@ -938,16 +938,51 @@ export const MeetingList: React.FC<MeetingListProps> = ({
           <span className="text-sm">
             {t("meetings.chat.list.selected", { count: selectedIds.length })}
           </span>
-          <Button
-            size="sm"
-            onClick={askSelection}
-            disabled={selectedIds.length === 0}
-          >
-            <MessageSquare width={14} height={14} />
-            {t("meetings.chat.list.askSelection")}
-          </Button>
+          <span className="flex flex-wrap items-center justify-end gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="selection-merge"
+              title={t("meetings.parts.merge.selectionHint")}
+              onClick={() =>
+                setMergeMeetings(
+                  items
+                    .map((item) => item.meeting)
+                    .filter((m) => selectedIds.includes(m.id)),
+                )
+              }
+              disabled={selectedIds.length < 2}
+              className="max-sm:min-h-[44px]"
+            >
+              <Combine width={14} height={14} />
+              {t("meetings.parts.merge.selection")}
+            </Button>
+            {onAsk && (
+              <Button
+                size="sm"
+                onClick={askSelection}
+                disabled={selectedIds.length === 0}
+                className="max-sm:min-h-[44px]"
+              >
+                <MessageSquare width={14} height={14} />
+                {t("meetings.chat.list.askSelection")}
+              </Button>
+            )}
+          </span>
         </div>
       )}
+      <MergeDialog
+        meetings={mergeMeetings}
+        onClose={() => setMergeMeetings(null)}
+        onMerged={(id) => {
+          const merged = mergeMeetings?.find((m) => m.id === id);
+          setMergeMeetings(null);
+          setSelecting(false);
+          setSelectedIds([]);
+          void loadPage(0);
+          if (merged) onSelect(merged);
+        }}
+      />
       {personFilter && (
         <div
           className="flex shrink-0 flex-wrap items-center gap-1.5"

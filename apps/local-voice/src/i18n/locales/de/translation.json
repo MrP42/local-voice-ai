@@ -2901,6 +2901,83 @@
     "unavailable": "Mikrofonpegel nicht verfügbar — Zugriff verweigert oder kein Gerät."
   },
   "meetings": {
+    "parts": {
+      "orderLabel": "Reihenfolge der Teile",
+      "moveUp": "„{{name}}“ nach vorn",
+      "moveUpShort": "Nach vorn",
+      "moveDown": "„{{name}}“ nach hinten",
+      "moveDownShort": "Nach hinten",
+      "chip_one": "{{count}} Teil",
+      "chip_other": "{{count}} Teile",
+      "chipPending_one": "{{count}} Teil · {{pending}} in Arbeit",
+      "chipPending_other": "{{count}} Teile · {{pending}} in Arbeit",
+      "chipHint": "Diese Besprechung besteht aus mehreren Audiodateien. Klick zeigt die Teile.",
+      "title": "Teile dieser Besprechung",
+      "close": "Schließen",
+      "playFrom": "Ab hier abspielen",
+      "partLabel": "Teil {{n}} · {{title}}",
+      "divider": "Teil {{n}} · {{title}} · ab {{at}}",
+      "pendingTitle": "Wird angehängt",
+      "pendingHint": "Sobald alle Teile fertig transkribiert sind, werden sie hinten angehängt. Das Transkript läuft dann mit fortlaufenden Zeitstempeln durch.",
+      "detach": "Nicht anhängen",
+      "detachHint": "Dieser Teil bleibt eine eigene Besprechung; die übrigen Teile werden ohne ihn angehängt.",
+      "mergeNow": "Jetzt anhängen",
+      "appendNotice": "Diese Aufnahme wird nach der Transkription an „{{title}}“ angehängt.",
+      "keepSeparate": "Als eigene Besprechung behalten",
+      "pending": {
+        "queued": "wartet",
+        "processing": "wird transkribiert",
+        "ready": "fertig",
+        "failed": "fehlgeschlagen",
+        "cancelled": "gestoppt"
+      },
+      "import": {
+        "combine": "Als eine Besprechung zusammenfassen",
+        "combineHint": "Für Teile einer Besprechung, etwa vor und nach einer Pause. Die Reihenfolge oben ist die Zeitachse; Transkript, Sprecher, Notizen und Protokoll gelten für das Ganze.",
+        "queued_one": "{{count}} Datei wird als eine Besprechung importiert.",
+        "queued_other": "{{count}} Dateien werden als eine Besprechung importiert."
+      },
+      "append": {
+        "menu": "Audiodatei anhängen …",
+        "menuHint": "Weitere Aufnahme hinten anfügen, z. B. den Teil nach einer Pause",
+        "title": "Audiodatei anhängen?",
+        "body": "Die Dateien werden transkribiert und danach in dieser Reihenfolge hinten an „{{title}}“ angefügt.",
+        "confirm": "Alle Beteiligten haben zugestimmt",
+        "queued_one": "{{count}} Datei wird an „{{title}}“ angehängt.",
+        "queued_other": "{{count}} Dateien werden an „{{title}}“ angehängt."
+      },
+      "merge": {
+        "selection": "Zusammenführen",
+        "selectionHint": "Die ausgewählten Aufnahmen zu einer Besprechung zusammenführen",
+        "title": "Zu einer Besprechung zusammenführen?",
+        "body": "Die Aufnahmen werden in dieser Reihenfolge aneinandergehängt. Das Transkript läuft mit fortlaufenden Zeitstempeln durch, und der Player spielt alles am Stück.",
+        "keeps": "„{{title}}“ bleibt erhalten und nimmt die anderen Teile auf (Titel, Projekte, Notizen).",
+        "loss": "Die übrigen Einträge entfallen. Notizen, Projekte und Teilnehmende gehen über; Protokolle, KI-Notizen und Chats der einzelnen Teile entfallen. Erstelle das Protokoll danach für die ganze Besprechung. Die Sprechertrennung läuft einmal über alles.",
+        "confirm_one": "{{count}} Aufnahme zusammenführen",
+        "confirm_other": "{{count}} Aufnahmen zusammenführen",
+        "running": "Wird zusammengeführt …",
+        "done_one": "{{count}} Aufnahme zusammengeführt.",
+        "done_other": "{{count}} Aufnahmen zu einer Besprechung zusammengeführt.",
+        "needTwo": "Bitte mindestens zwei Aufnahmen auswählen.",
+        "notReady": "Alle Aufnahmen müssen fertig transkribiert sein.",
+        "noAudio": "Nur Aufnahmen mit Audio lassen sich zusammenführen (keine Untertitel, Links oder leeren Einträge).",
+        "mixed": "Live-Aufnahmen und importierte Dateien lassen sich nicht mischen."
+      },
+      "errors": {
+        "tooFew": "Bitte mindestens zwei Aufnahmen auswählen.",
+        "tooMany": "Zu viele Teile für eine Besprechung (höchstens 64).",
+        "notReady": "Eine der Aufnahmen ist noch nicht fertig transkribiert.",
+        "noAudio": "Eine der Aufnahmen hat kein Audio (Untertitel, Link oder leerer Eintrag).",
+        "audioMissing": "Die Audiodatei einer Aufnahme fehlt (Aufbewahrungsfrist abgelaufen oder gelöscht).",
+        "mixedSources": "Live-Aufnahmen und importierte Dateien lassen sich nicht mischen.",
+        "hasVariants": "Eine Aufnahme hat mehrere Transkript-Fassungen. Bitte zuerst die überzähligen Fassungen entfernen.",
+        "changed": "Ein Transkript wurde während des Zusammenführens geändert. Bitte erneut versuchen.",
+        "busy": "Gerade läuft eine andere Verarbeitung. Bitte kurz warten.",
+        "failed": "Das Zusammenführen ist fehlgeschlagen. Es wurde nichts verändert.",
+        "subtitle": "Untertiteldateien lassen sich nicht anhängen, nur Audio und Video.",
+        "targetInvalid": "An diese Besprechung lässt sich kein Audio anhängen."
+      }
+    },
     "presenter": {
       "button": "An Presenter senden",
       "title": "An Presenter senden",

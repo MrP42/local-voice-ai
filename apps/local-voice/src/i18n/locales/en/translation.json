@@ -2901,6 +2901,83 @@
     "unavailable": "Microphone level unavailable — access denied or no device."
   },
   "meetings": {
+    "parts": {
+      "orderLabel": "Order of the parts",
+      "moveUp": "Move “{{name}}” up",
+      "moveUpShort": "Move up",
+      "moveDown": "Move “{{name}}” down",
+      "moveDownShort": "Move down",
+      "chip_one": "{{count}} part",
+      "chip_other": "{{count}} parts",
+      "chipPending_one": "{{count}} part · {{pending}} in progress",
+      "chipPending_other": "{{count}} parts · {{pending}} in progress",
+      "chipHint": "This meeting consists of several audio files. Click to show the parts.",
+      "title": "Parts of this meeting",
+      "close": "Close",
+      "playFrom": "Play from here",
+      "partLabel": "Part {{n}} · {{title}}",
+      "divider": "Part {{n}} · {{title}} · from {{at}}",
+      "pendingTitle": "Being appended",
+      "pendingHint": "As soon as every part is transcribed, they are appended at the end. The transcript then runs with continuous timestamps.",
+      "detach": "Don't append",
+      "detachHint": "This part stays a meeting of its own; the other parts are appended without it.",
+      "mergeNow": "Append now",
+      "appendNotice": "After transcription this recording is appended to “{{title}}”.",
+      "keepSeparate": "Keep as a separate meeting",
+      "pending": {
+        "queued": "waiting",
+        "processing": "transcribing",
+        "ready": "done",
+        "failed": "failed",
+        "cancelled": "stopped"
+      },
+      "import": {
+        "combine": "Combine into one meeting",
+        "combineHint": "For parts of one meeting, e.g. before and after a break. The order above is the timeline; transcript, speakers, notes and minutes cover the whole.",
+        "queued_one": "{{count}} file is imported as one meeting.",
+        "queued_other": "{{count}} files are imported as one meeting."
+      },
+      "append": {
+        "menu": "Append audio file …",
+        "menuHint": "Add another recording at the end, e.g. the part after a break",
+        "title": "Append audio file?",
+        "body": "The files are transcribed and then appended to “{{title}}” in this order.",
+        "confirm": "Everyone involved has consented",
+        "queued_one": "{{count}} file is appended to “{{title}}”.",
+        "queued_other": "{{count}} files are appended to “{{title}}”."
+      },
+      "merge": {
+        "selection": "Combine",
+        "selectionHint": "Combine the selected recordings into one meeting",
+        "title": "Combine into one meeting?",
+        "body": "The recordings are joined in this order. The transcript runs with continuous timestamps and the player plays everything in one go.",
+        "keeps": "“{{title}}” is kept and takes in the other parts (title, projects, notes).",
+        "loss": "The other entries are removed. Notes, projects and participants carry over; minutes, AI notes and chats of the single parts are removed. Create the minutes for the whole meeting afterwards. Speaker separation runs once over everything.",
+        "confirm_one": "Combine {{count}} recording",
+        "confirm_other": "Combine {{count}} recordings",
+        "running": "Combining …",
+        "done_one": "{{count}} recording combined.",
+        "done_other": "{{count}} recordings combined into one meeting.",
+        "needTwo": "Please select at least two recordings.",
+        "notReady": "All recordings must be fully transcribed.",
+        "noAudio": "Only recordings with audio can be combined (no subtitles, links or empty entries).",
+        "mixed": "Live recordings and imported files cannot be mixed."
+      },
+      "errors": {
+        "tooFew": "Please select at least two recordings.",
+        "tooMany": "Too many parts for one meeting (at most 64).",
+        "notReady": "One of the recordings is not fully transcribed yet.",
+        "noAudio": "One of the recordings has no audio (subtitles, link or empty entry).",
+        "audioMissing": "The audio file of a recording is missing (retention period expired or deleted).",
+        "mixedSources": "Live recordings and imported files cannot be mixed.",
+        "hasVariants": "A recording has several transcript versions. Please remove the extra versions first.",
+        "changed": "A transcript was changed while combining. Please try again.",
+        "busy": "Another process is running. Please wait a moment.",
+        "failed": "Combining failed. Nothing was changed.",
+        "subtitle": "Subtitle files cannot be appended, only audio and video.",
+        "targetInvalid": "Audio cannot be appended to this meeting."
+      }
+    },
     "presenter": {
       "button": "Send to Presenter",
       "title": "Send to Presenter",

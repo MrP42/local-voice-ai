@@ -189,6 +189,8 @@ interface MeetingHeaderProps {
   tabsLabel: string;
   /** Das Menue (Hamburger) sitzt in der Titelzeile neben "Details" (schmal mit allen Aktionen). */
   menu?: React.ReactNode;
+  /** Mehrere Audiodateien: Chip "N Teile" neben der Dauer (fehlt: kein Chip). */
+  partsSlot?: React.ReactNode;
   /**
    * G1 (#70): der Titel steht beim Anzeigen gleich im Eingabefeld (ein eben
    * angelegter Eintrag). `onAutoEditStarted` meldet, dass es offen ist.
@@ -222,6 +224,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
   onTab,
   tabsLabel,
   menu,
+  partsSlot,
   autoEdit = false,
   onAutoEditStarted,
 }) => {
@@ -417,6 +420,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
               })}
             </span>
           )}
+          {partsSlot}
           {languageSlot}
         </div>
         <div
