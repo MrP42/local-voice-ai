@@ -76,6 +76,13 @@ final class AudiobookTests: XCTestCase {
         XCTAssertEqual(AudiobookInfo.displayDate("2019"), "2019")
     }
 
+    func testChapterLocaleOrderTriesUndetermined() {
+        // ffmpeg/inAudible: Kapitelspur nur mit „und“ – muss trotzdem probiert werden.
+        XCTAssertEqual(AudiobookChapters.chapterLocaleOrder(["und"], preferred: ["de-DE", "en"]), ["und"])
+        XCTAssertEqual(AudiobookChapters.chapterLocaleOrder(["fr", "und", "en_US", "de"], preferred: ["de-DE", "en"]), ["de", "en_US", "und", "fr"])
+        XCTAssertEqual(AudiobookChapters.chapterLocaleOrder([], preferred: ["de"]), [])
+    }
+
     func testInfoRoundTripsAsJSON() throws {
         var info = AudiobookInfo(); info.title = "X"; info.chapters = [ch("A", 0, 10)]; info.chaptersFromFile = true
         let back = try JSONDecoder().decode(AudiobookInfo.self, from: JSONEncoder().encode(info))

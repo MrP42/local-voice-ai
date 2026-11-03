@@ -53,7 +53,8 @@ public struct AudiobookInfo: Codable, Equatable, Sendable {
     /// Version des Auslesers; ältere Caches werden neu gelesen.
     public var version = AudiobookInfo.currentVersion
 
-    public static let currentVersion = 1
+    /// 2: Kapitel auch aus Locale „und“ (Caches aus Version 1 haben dort keine).
+    public static let currentVersion = 2
 
     public init() {}
 }
@@ -159,6 +160,18 @@ public enum AudiobookChapters {
         if let textUTF16, textUTF16 > 2000 { return (max(1, Int((Double(textUTF16) / 1800).rounded())), true) }
         if totalMs > 60_000 { return (max(1, Int((totalMs / 102_000).rounded())), true) }
         return nil
+    }
+
+    /// Reihenfolge, in der die Kapitelspuren einer Datei probiert werden:
+    /// erst bevorzugte Sprachen (nach Sprachcode), dann „und“/unbestimmt, dann der Rest.
+    public static func chapterLocaleOrder(_ available: [String], preferred: [String]) -> [String] {
+        func lang(_ id: String) -> String { String(id.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first ?? "") }
+        let wanted = preferred.map(lang)
+        var out: [String] = []
+        for w in wanted { for a in available where lang(a) == w && !out.contains(a) { out.append(a) } }
+        for a in available where ["und", "", "mul", "zxx"].contains(lang(a)) && !out.contains(a) { out.append(a) }
+        for a in available where !out.contains(a) { out.append(a) }
+        return out
     }
 
     /// Kapiteltitel aufräumen: Dateiendung, führende Tracknummern.

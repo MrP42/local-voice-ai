@@ -95,7 +95,16 @@ enum AudiobookMetadataReader {
 
         var chapters: [AudiobookChapter] = []
         let languages = Locale.preferredLanguages + ["de", "en"]
-        if let groups = try? await asset.loadChapterMetadataGroups(bestMatchingPreferredLanguages: languages) {
+        var groups = (try? await asset.loadChapterMetadataGroups(bestMatchingPreferredLanguages: languages)) ?? []
+        if groups.isEmpty, let locales = try? await asset.load(.availableChapterLocales) {
+            // Kapitel ohne passende Sprache (ffmpeg/inAudible schreiben „und“) kommen
+            // über die bevorzugten Sprachen nicht an: jede vorhandene Locale probieren.
+            for id in AudiobookChapters.chapterLocaleOrder(locales.map(\.identifier), preferred: languages) {
+                let found = (try? await asset.loadChapterMetadataGroups(withTitleLocale: Locale(identifier: id), containingItemsWithCommonKeys: [])) ?? []
+                if !found.isEmpty { groups = found; break }
+            }
+        }
+        do {
             for (n, group) in groups.enumerated() {
                 let range = group.timeRange
                 guard range.start.seconds.isFinite else { continue }
@@ -103,6 +112,8 @@ enum AudiobookMetadataReader {
                 for item in group.items where item.commonKey == .commonKeyTitle || item.identifier == .quickTimeUserDataChapter {
                     if let s = await string(item) { title = s; break }
                 }
+                // Manche Werkzeuge setzen keinen Titel-Schlüssel: erster Text der Gruppe.
+                if title == nil { for item in group.items { if let s = await string(item) { title = s; break } } }
                 let duration = range.duration.seconds.isFinite ? range.duration.seconds * 1000 : 0
                 chapters.append(AudiobookChapter(title: title ?? "Kapitel \(n + 1)", startMs: range.start.seconds * 1000, durationMs: duration))
             }
