@@ -14,6 +14,7 @@ mod clipboard;
 mod commands;
 #[cfg(windows)]
 mod context_menu;
+mod cover_art; // Eingebettete Cover aus Hörbuch-Dateien
 mod conversations; // U3: Sprachgespräche dauerhaft speichern
 mod ebook; // lva#149: EPUB-Import, PDF-Reflow
 mod helpers;
@@ -2526,6 +2527,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             library::library_cover_fetch,
             library::library_cover_from_file,
             library::library_cover_clear,
+            library::library_cover_candidates,
+            library::library_cover_from_audio,
             library::library_audio_import,
             library::library_audio_import_tracks,
             library::library_merge_audio,

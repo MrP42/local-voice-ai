@@ -6093,6 +6093,30 @@ async libraryCoverClear(id: string) : Promise<Result<LibraryBook, string>> {
 }
 },
 /**
+ * Cover-Vorschläge: lokal das in die Hördatei eingebettete Bild; mit
+ * `online` zusätzlich die Cover passender Ausgaben aus Open Library
+ * (hinaus gehen nur ISBN bzw. Titel und Autor).
+ */
+async libraryCoverCandidates(id: string, online: boolean) : Promise<Result<CoverCandidate[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_candidates", { id, online }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Das in die Hördatei eingebettete Cover übernehmen.
+ */
+async libraryCoverFromAudio(id: string) : Promise<Result<LibraryBook, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_cover_from_audio", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Hörbuch in die Bibliothek kopieren und als Audiofassung eintragen. Die
  * Kopie macht das Buch unabhängig davon, ob die Quelldatei liegen bleibt.
  */
@@ -9443,6 +9467,26 @@ export type MemoryProposal = { verlauf: string; figuren: string; welt: string }
 /**
  * Ein Treffer aus Open Library, als Vorschlag für den Dialog.
  */
+/**
+ * Ein Cover-Vorschlag für die Auswahl „Cover ändern“.
+ */
+export type CoverCandidate = { 
+/**
+ * `audio` (in der Hördatei eingebettet) oder `openlibrary`.
+ */
+source: string; 
+/**
+ * Open-Library-Cover-Kennung.
+ */
+cover_id: number | null; isbn: string | null; 
+/**
+ * Vorschau: Web-Adresse (Open Library) oder lokaler Pfad samt `?v=`.
+ */
+preview: string; 
+/**
+ * Kurz: Titel, Jahr, Verlag der Ausgabe.
+ */
+label: string }
 export type MetadataCandidate = { title: string; subtitle: string | null; authors: string[]; first_publish_year: number | null; publisher: string | null; isbn: string | null; language: string | null; pages: number | null; 
 /**
  * Open-Library-Cover-Kennung (`cover_i`).

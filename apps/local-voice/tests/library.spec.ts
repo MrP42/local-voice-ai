@@ -327,6 +327,38 @@ test.beforeEach(async ({ page }) => {
           )
             return [];
           if (cmd === "library_metadata_search") return [];
+          // Cover ändern: Vorschläge aus window.__coverCandidates.
+          if (cmd === "library_cover_candidates") {
+            const all = ((w as { __coverCandidates?: Record<string, unknown>[] })
+              .__coverCandidates ?? []);
+            return args?.online ? all : all.filter((c) => c.source === "audio");
+          }
+          if (
+            cmd === "library_cover_fetch" ||
+            cmd === "library_cover_from_audio" ||
+            cmd === "library_cover_from_file" ||
+            cmd === "library_cover_clear"
+          ) {
+            const b = list.find((x) => x.id === args?.id)!;
+            const source =
+              cmd === "library_cover_fetch"
+                ? "openlibrary"
+                : cmd === "library_cover_from_audio"
+                  ? "audio"
+                  : cmd === "library_cover_from_file"
+                    ? "file"
+                    : "generated";
+            const changed = {
+              ...b,
+              cover_source: source,
+              cover_path:
+                source === "generated"
+                  ? null
+                  : `C:/lib/${b.id}/cover.jpg?v=${args?.coverId ?? source}`,
+            };
+            w.__books = [...list.filter((x) => x.id !== b.id), changed];
+            return changed;
+          }
           if (cmd.includes("models") || cmd.includes("history") || cmd.includes("devices"))
             return [];
           return null;
@@ -2204,4 +2236,255 @@ test("Dunkel 1440: Patricks Fall mit Auswahl, Titelhinweis und Rückfrage", asyn
   await page.getByTestId("library-select-remove").click();
   await page.getByTestId("library-remove-scope-everything").check();
   await page.screenshot({ path: shot("entfernen-dialog-1440-dunkel.png") });
+});
+
+// ---------------------------------------------------------------------------
+// Eigene Cover und Titel bearbeiten
+// ---------------------------------------------------------------------------
+
+const VORSCHAU = "docs/vorschau/cover-titel";
+
+/** Farbiges SVG als Ersatz für Cover aus dem Netz (Tests laufen offline). */
+const svgCover = (label: string, hue: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="270" viewBox="0 0 180 270">` +
+  `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="hsl(${hue} 55% 46%)"/>` +
+  `<stop offset="1" stop-color="hsl(${(hue + 30) % 360} 60% 22%)"/></linearGradient></defs>` +
+  `<rect width="180" height="270" fill="url(#g)"/><rect x="12" y="12" width="156" height="246" fill="none" stroke="#fff" stroke-opacity=".5"/>` +
+  `<text x="90" y="120" fill="#fff" font-family="Georgia" font-size="19" font-weight="700" text-anchor="middle">${label}</text>` +
+  `<text x="90" y="150" fill="#fff" font-family="Georgia" font-size="12" text-anchor="middle" opacity=".85">Robert T. Kiyosaki</text></svg>`;
+
+/** Cover-Bilder: Open Library und lokale Dateien (asset://) über eine Testadresse. */
+const serveCovers = async (page: Page) => {
+  await page.addInitScript(() => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__: Record<string, unknown> })
+      .__TAURI_INTERNALS__;
+    internals.convertFileSrc = (path: string) =>
+      `https://lva.test/asset/${encodeURIComponent(path)}`;
+  });
+  const hues: Record<string, number> = { "1": 205, "2": 28, "3": 350, "4": 140, "5": 265, "6": 48 };
+  await page.route("https://covers.openlibrary.org/**", (route) => {
+    const id = route.request().url().match(/\/id\/(\d+)/)?.[1] ?? "1";
+    if (id === "999") return route.fulfill({ status: 404, body: "" });
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: svgCover(id === "5" ? "Reicher Vater" : "Rich Dad", hues[id.slice(-1)] ?? 200),
+    });
+  });
+  await page.route("https://lva.test/asset/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: route.request().url().includes("cover.jpg")
+        ? svgCover("Rich Dad", route.request().url().includes("v%3D") ? 205 : 140)
+        : svgCover("Hörbuch", 140),
+    }),
+  );
+};
+
+const RICH_DAD_CANDIDATES = [
+  { source: "audio", cover_id: null, isbn: null, preview: "C:/lib/book_rd/vorschau-hoerbuch.jpg?v=1", label: "" },
+  ...[1, 2, 3, 5, 6].map((id) => ({
+    source: "openlibrary",
+    cover_id: id,
+    isbn: id === 1 ? "9781612680194" : null,
+    preview: `https://covers.openlibrary.org/b/id/${id}-M.jpg`,
+    label: ["Rich Dad Poor Dad · 1997 · Warner", "Rich Dad Poor Dad · 2017 · Plata", "Rich Dad Poor Dad · 2011", "Rich Dad Poor Dad (dt.) · 2014 · FinanzBuch", "Rich Dad Poor Dad · 2000"][[1, 2, 3, 5, 6].indexOf(id)],
+  })),
+  // Ein Cover, das nicht lädt, erscheint gar nicht erst.
+  { source: "openlibrary", cover_id: 999, isbn: null, preview: "https://covers.openlibrary.org/b/id/999-M.jpg", label: "kaputt" },
+];
+
+const richDad = (title = "Rich Dad Poor Dad") =>
+  baseBook("book_rd", title, {
+    authors: ["Robert T. Kiyosaki"],
+    ...legacyAudio("book_rd"),
+  });
+
+const withCandidates = (page: Page) =>
+  page.addInitScript((c) => {
+    (window as unknown as { __coverCandidates: unknown }).__coverCandidates = c;
+  }, RICH_DAD_CANDIDATES);
+
+test("Cover ändern: Hörbuch-Cover und mehrere Ausgaben zur Wahl, Übernehmen lädt das gewählte", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad()]);
+  await withCandidates(page);
+  await serveCovers(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-cover-book_rd").click();
+  const dialog = page.getByTestId("library-cover-dialog");
+  await expect(dialog).toBeVisible();
+  // Aktuell + Hörbuch + 5 Ausgaben; das kaputte Bild fällt weg.
+  await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(7);
+  await expect(dialog.locator('[data-cover="ol-999"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-cover="audio"]')).toContainText("Aus dem Hörbuch");
+  await expect(dialog.getByRole("status")).toHaveText("6 Cover gefunden.");
+  // Online gesucht wird beim Öffnen genau einmal (dazu einmal lokal).
+  const asked = await calls(page, "library_cover_candidates");
+  expect(asked.map((a) => a.online)).toEqual([false, true]);
+  await expect(page.getByTestId("library-cover-apply")).toBeDisabled();
+  await dialog.locator('[data-cover="ol-5"]').click();
+  await expect(dialog.locator('[data-cover="ol-5"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("library-cover-apply")).toBeEnabled();
+  await page.waitForTimeout(400); // Übergang der Knopffarbe abwarten
+  await page.screenshot({ path: `${VORSCHAU}/cover-dialog-1440.png` });
+  await page.getByTestId("library-cover-apply").click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => calls(page, "library_cover_fetch")).toEqual([
+    { id: "book_rd", coverId: 5, isbn: null },
+  ]);
+  await expect(page.getByText("Cover geändert.")).toBeVisible();
+});
+
+test("Cover ändern: das Bild aus dem Hörbuch übernehmen, eigenes Bild von der Platte", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad()]);
+  await withCandidates(page);
+  await serveCovers(page);
+  await page.goto("/");
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-cover-book_rd").click();
+  const dialog = page.getByTestId("library-cover-dialog");
+  await dialog.locator('[data-cover="audio"]').click();
+  await page.getByTestId("library-cover-apply").click();
+  await expect.poll(() => calls(page, "library_cover_from_audio")).toEqual([{ id: "book_rd" }]);
+  // Eigenes Bild: Dateiauswahl, dann sofort übernommen.
+  await page.evaluate(() => {
+    (window as unknown as { __pick: string }).__pick = "C:/Bilder/rich-dad.jpg";
+  });
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-cover-book_rd").click();
+  // Jetzt hat das Buch ein Cover: „Generiert“ steht zur Wahl.
+  await expect(page.locator('[data-cover="generated"]')).toBeVisible();
+  await page.getByTestId("library-cover-file").click();
+  await expect.poll(() => calls(page, "library_cover_from_file")).toEqual([
+    { id: "book_rd", path: "C:/Bilder/rich-dad.jpg" },
+  ]);
+  await expect(page.getByTestId("library-cover-dialog")).toHaveCount(0);
+});
+
+test("Produktseite: Klick aufs Cover öffnet die Auswahl, im dunklen Erscheinungsbild", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+  });
+  await addBooks(page, [richDad()]);
+  await withCandidates(page);
+  await serveCovers(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "„Rich Dad Poor Dad“: Details öffnen" }).click();
+  await page.getByTestId("library-detail-cover").click();
+  const dialog = page.getByTestId("library-cover-dialog");
+  await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(7);
+  await dialog.locator('[data-cover="ol-1"]').click();
+  await expect(page.getByTestId("library-cover-apply")).toBeEnabled();
+  await page.waitForTimeout(400); // Übergang der Knopffarbe abwarten
+  await page.screenshot({ path: `${VORSCHAU}/cover-dialog-1440-dunkel.png` });
+  await page.getByTestId("library-cover-apply").click();
+  await expect.poll(() => calls(page, "library_cover_fetch")).toEqual([
+    { id: "book_rd", coverId: 1, isbn: "9781612680194" },
+  ]);
+  await page.screenshot({ path: `${VORSCHAU}/produktseite-mit-cover-1440-dunkel.png` });
+});
+
+test("Titel bearbeiten: Stift auf der Produktseite, Vorschlag ohne ASIN, Enter speichert", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad("Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo")]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page
+    .getByRole("button", {
+      name: "„Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo“: Details öffnen",
+    })
+    .click();
+  await page.getByTestId("library-title-edit").click();
+  const input = page.getByTestId("library-title-input");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo");
+  await expect(page.getByTestId("library-title-suggestion")).toContainText("Rich Dad Poor Dad");
+  await page.screenshot({ path: `${VORSCHAU}/titel-bearbeiten-1440.png` });
+  await page.getByTestId("library-title-suggestion").click();
+  await expect(input).toHaveValue("Rich Dad Poor Dad");
+  await expect(page.getByTestId("library-title-suggestion")).toHaveCount(0);
+  await input.press("End");
+  await input.type(" (Hörbuch)");
+  await input.press("Enter");
+  await expect
+    .poll(async () => (await calls(page, "library_save")).map((a) => (a.book as { title: string }).title))
+    .toEqual(["Rich Dad Poor Dad (Hörbuch)"]);
+  await expect(page.getByTestId("library-title-editor")).toHaveCount(0);
+  await expect(page.locator(".library-hero__title")).toHaveText("Rich Dad Poor Dad (Hörbuch)");
+});
+
+test("Titel bearbeiten über ⋮: Produktseite öffnet mit dem Titelfeld, Esc bricht ab", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad()]);
+  await page.goto("/");
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-title-book_rd").click();
+  const input = page.getByTestId("library-title-input");
+  await expect(input).toBeFocused();
+  // Unverändert: Speichern bleibt aus, kein Vorschlag.
+  await expect(page.getByTestId("library-title-save")).toBeDisabled();
+  await expect(page.getByTestId("library-title-suggestion")).toHaveCount(0);
+  await input.press("Escape");
+  await expect(page.getByTestId("library-title-editor")).toHaveCount(0);
+  await expect(page.getByTestId("library-detail")).toBeVisible();
+  expect(await calls(page, "library_save")).toEqual([]);
+});
+
+test("390 px: Cover-Auswahl und Titelfeld ohne waagerechte Scrollleiste, Ziele ≥ 44 px", async ({
+  page,
+}) => {
+  await addBooks(page, [richDad("Rich Dad Poor Dad B0DD7W1VFS LC 128 44100 Stereo")]);
+  await withCandidates(page);
+  await serveCovers(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByTestId("library-more-book_rd").click();
+  await page.getByTestId("library-title-book_rd").click();
+  await expect(page.getByTestId("library-title-input")).toBeVisible();
+  const noScroll = () =>
+    page.evaluate(() => {
+      const els = [document.documentElement, ...document.querySelectorAll<HTMLElement>("main, [role=dialog]")];
+      return els.every((e) => e.scrollWidth <= e.clientWidth + 1);
+    });
+  expect(await noScroll()).toBe(true);
+  await page.screenshot({ path: `${VORSCHAU}/titel-bearbeiten-390.png` });
+  await page.getByRole("button", { name: "Abbrechen" }).click();
+  await page.getByTestId("library-detail-cover").click();
+  const dialog = page.getByTestId("library-cover-dialog");
+  await expect(dialog.getByTestId("library-cover-tile")).toHaveCount(7);
+  expect(await noScroll()).toBe(true);
+  for (const tile of await dialog.getByTestId("library-cover-tile").all()) {
+    const box = (await tile.boundingBox())!;
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+  await dialog.locator('[data-cover="ol-2"]').click();
+  await expect(page.getByTestId("library-cover-apply")).toBeEnabled();
+  await page.waitForTimeout(400); // Übergang der Knopffarbe abwarten
+  await page.screenshot({ path: `${VORSCHAU}/cover-dialog-390.png` });
+});
+
+test("Neues Hörbuch ablegen: ein eingebettetes Cover wird gleich übernommen (lokal)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const free = await centerOf(page, page.getByRole("heading", { name: /Alle Titel/ }));
+  await emit(page, "tauri://drag-drop", {
+    paths: ["C:/Hoerbuecher/Franz Kafka - Der Prozess.m4b"],
+    position: free,
+  });
+  await expect.poll(async () => (await calls(page, "library_cover_from_audio")).length).toBe(1);
+  // Ins Netz geht dabei nichts.
+  expect(await calls(page, "library_cover_candidates")).toEqual([]);
+  expect(await calls(page, "library_cover_fetch")).toEqual([]);
 });

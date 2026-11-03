@@ -212,6 +212,8 @@ export async function addToLibrary(
   ) {
     const r = await commands.libraryCoverFromFile(book.id, file.path);
     if (r.status === "ok") book = r.data;
+  } else if (file.kind === "audio") {
+    book = await adoptAudioCover(book);
   }
   return { book, attached: !!current };
 }
@@ -585,6 +587,8 @@ export async function addAudioGroup(
       candidate.isbn ?? null,
     );
     if (r.status === "ok") book = r.data;
+  } else {
+    book = await adoptAudioCover(book);
   }
   return { book, attached: !!current };
 }
@@ -623,9 +627,25 @@ export async function importAudioParts(
       : await commands.libraryAudioImportTracks(book.id, paths, append);
   if (r.status === "error") throw new ImportError(r.error);
   if (before.audio && !append) await cleanupReplaced(before);
+  const withCover = await adoptAudioCover(r.data);
   if (append && before.text?.origin === "transcript") {
     const next = await transcribeTracks(book.id, onWarning, tracksOf(before.audio).length);
     if (next) return next;
   }
-  return r.data;
+  return withCover;
+}
+
+/**
+ * Bringt das Hörbuch ein eingebettetes Cover mit (MP3, M4B, FLAC) und hat
+ * das Buch noch keins, wird es übernommen – lokal, ohne Netz. Ohne Bild
+ * bleibt alles, wie es ist.
+ */
+export async function adoptAudioCover(book: LibraryBook): Promise<LibraryBook> {
+  if (book.cover_source !== "generated" || !book.audio_path) return book;
+  try {
+    const r = await commands.libraryCoverFromAudio(book.id);
+    return r.status === "ok" ? r.data : book;
+  } catch {
+    return book;
+  }
 }
