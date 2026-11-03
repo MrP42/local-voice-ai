@@ -154,6 +154,10 @@ pub struct LibraryBook {
     pub audio: Option<AudioVersion>,
     pub added_ms: f64,
     pub finished: bool,
+    /// Favorit: steht in der Bibliothek vor den übrigen Büchern. Gehört zum
+    /// Buch (nicht zur Anzeige) und reist deshalb in der Sync-Sammlung `book` mit.
+    #[serde(default)]
+    pub favorite: bool,
     /// Nur zur Anzeige, wird beim Auflisten gesetzt: absoluter Pfad des Covers
     /// samt Änderungszeit (`?v=`), damit ein neues Cover sofort erscheint.
     pub cover_path: Option<String>,
@@ -1429,6 +1433,8 @@ fn merge_audio_in(
         sync: previous.sync,
         tracks,
     });
+    // Ein Favorit unter den Quellen macht das zusammengeführte Buch zum Favoriten.
+    target.favorite |= sources.iter().any(|(_, b)| b.favorite);
     // Ein Text aus Transkript gehört zum ersetzten Hörbuch und fällt weg.
     if replace
         && target
@@ -1686,6 +1692,7 @@ mod tests {
         let mut b = book("Woyzeck", &["Georg Büchner"], None);
         b.id = "book_42".into();
         b.cover_path = Some("/x".into());
+        b.favorite = true;
         b.audio = Some(AudioVersion {
             file: "hoerbuch.mp3".into(),
             ..Default::default()
@@ -1697,6 +1704,11 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].cover_source, "generated");
         assert_eq!(listed[0].audio_path, None, "Hörbuchdatei fehlt");
+        assert!(
+            raw.contains("\"favorite\": true"),
+            "Favorit steht in buch.json"
+        );
+        assert!(listed[0].favorite);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1797,6 +1809,7 @@ mod tests {
         );
         touch(&dir.join("audio/hoerbuch.mp3"), "x");
         let b = read_book(&dir).unwrap();
+        assert!(!b.favorite, "ohne Feld kein Favorit");
         assert_eq!(b.audio_paths.len(), 1);
         assert_eq!(
             b.audio_path.as_deref(),

@@ -1952,3 +1952,49 @@ test("Fortsetzen: nur der fehlgeschlagene Abschnitt wird neu gestartet", async (
     .poll(async () => (await calls(page, "meetings_delete")).map((a) => a.meetingId))
     .toEqual(["m52"]);
 });
+
+test("Favoriten: Stern oben rechts (≥ 44 px) holt das Buch nach vorn und filtert", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const cards = page.getByTestId("library-card");
+  await expect(cards).toHaveCount(3);
+  const titles = () =>
+    cards.locator(".library-title").allInnerTexts();
+  // Zuletzt gehört: Effi (40 %), dann nach Hinzufügen.
+  expect(await titles()).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
+
+  const star = page.getByTestId("library-star-book_2");
+  await expect(star).toHaveAttribute("aria-pressed", "false");
+  await expect(star).toHaveAccessibleName("Favorit: „Der Schimmelreiter“");
+  const box = (await star.boundingBox())!;
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  // Oben rechts auf dem Cover.
+  const cover = (await cards
+    .filter({ hasText: "Der Schimmelreiter" })
+    .locator(".library-card__open")
+    .boundingBox())!;
+  expect(box.y - cover.y).toBeLessThan(8);
+  expect(cover.x + cover.width - (box.x + box.width)).toBeLessThan(8);
+
+  await star.click();
+  await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "true");
+  const saved = (await calls(page, "library_save")).at(-1) as { book: { id: string; favorite: boolean } };
+  expect(saved.book).toMatchObject({ id: "book_2", favorite: true });
+  await expect.poll(titles).toEqual(["Der Schimmelreiter", "Effi Briest", "Die Verwandlung"]);
+  await page.screenshot({ path: shot("bibliothek-favorit-390.png") });
+
+  // Filter „Favoriten“ zeigt nur ihn.
+  await page.getByTestId("library-filter-favorites").click();
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("Der Schimmelreiter");
+  await expect(page.getByTestId("library-filter-favorites")).toContainText("1");
+
+  // Wieder entfernen.
+  await page.getByTestId("library-filter-all").click();
+  await page.getByTestId("library-star-book_2").click();
+  await expect(page.getByTestId("library-star-book_2")).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(titles).toEqual(["Effi Briest", "Die Verwandlung", "Der Schimmelreiter"]);
+});
