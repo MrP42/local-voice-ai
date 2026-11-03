@@ -7228,6 +7228,7 @@
       "rowRunning": "writing …",
       "rowBackground": "being read aloud and saved in the background",
       "rowDone": "saved",
+      "rowBusy": "In progress · {{status}} – can be exported when done",
       "oneNarration": "Read-aloud audio works for one version per export. Choose a text format for the others.",
       "ffmpegHint": "M4B and a single MP3 file need ffmpeg (e.g. winget install ffmpeg). Original files can always be exported.",
       "hint": "EPUB opens in Apple Books, Kindle (Send to Kindle), Tolino and Calibre; PDF and MP3 can be shared anywhere."

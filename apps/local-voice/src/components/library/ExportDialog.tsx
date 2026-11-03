@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -27,6 +27,8 @@ import {
 } from "@/lib/library/versions";
 import { toSpokenScript } from "@/lib/reader/spokenScript";
 import { startExport as startNarration } from "../settings/meetings/readAloudSession";
+import { useBookJobs, type BookJob } from "@/lib/library/bookJobs";
+import { jobStatus, jobTitle } from "./KiCreateDialog";
 import "./fassungen.css";
 
 /** Formate je Art. `narrate` = Text von der eingestellten Stimme vorgelesen (MP3/WAV). */
@@ -94,6 +96,30 @@ export const ExportDialog: React.FC<{
   const [lastDir, setLastDir] = useState<string | null>(null);
 
   const key = book ? `${book.id}:${book.text?.page_id ?? ""}` : "";
+
+  // Was gerade entsteht, ist noch nicht fertig und lässt sich nicht exportieren.
+  const pageId = book?.text?.page_id ?? null;
+  const jobs = useBookJobs().filter((j) => !!pageId && j.pageId === pageId);
+  const bookLang = versions?.find((v) => v.kind === "original")?.lang ?? null;
+  const jobFor = (v: BookVersion): BookJob | undefined =>
+    jobs.find((j) => {
+      if (v.kind === "translation")
+        return j.kind === "translation" && j.target === v.target;
+      const sameLang =
+        (j.lang || bookLang || null) === (v.lang || bookLang || null);
+      if (v.kind === "kurzbuch") return j.kind === "kurzbuch" && sameLang;
+      if (v.kind === "kidoc")
+        return (
+          j.kind === "kidoc" && j.templateId === v.doc?.template_id && sameLang
+        );
+      return false;
+    });
+  const pendingJobs = jobs.filter(
+    (j) => !(versions ?? []).some((v) => jobFor(v)?.id === j.id),
+  );
+  const busyKeys = new Set(
+    (versions ?? []).filter((v) => !!jobFor(v)).map((v) => v.key),
+  );
   useEffect(() => {
     if (!book) return;
     let alive = true;
@@ -170,9 +196,8 @@ export const ExportDialog: React.FC<{
           }))
         : [];
 
-  const selected = useMemo(
-    () => (versions ?? []).filter((v) => chosen[v.key]),
-    [versions, chosen],
+  const selected = (versions ?? []).filter(
+    (v) => chosen[v.key] && !busyKeys.has(v.key),
   );
   const narrations = selected.filter(
     (v) => formats[v.key] === "narrate",
@@ -359,17 +384,20 @@ export const ExportDialog: React.FC<{
               const opts = formatOptions(v);
               const state = rows[v.key];
               const name = label(v);
+              const job = jobFor(v);
+              const on = !!chosen[v.key] && !job;
               return (
                 <li
                   key={v.key}
-                  className={`lib-export__row${chosen[v.key] ? " is-on" : ""}`}
+                  className={`lib-export__row${on ? " is-on" : ""}${job ? " is-busy" : ""}`}
                   data-testid={`export-row-${v.kind}`}
+                  aria-disabled={job ? true : undefined}
                 >
                   <label className="lib-export__pick">
                     <input
                       type="checkbox"
-                      checked={!!chosen[v.key]}
-                      disabled={running}
+                      checked={on}
+                      disabled={running || !!job}
                       onChange={(e) =>
                         setChosen((c) => ({ ...c, [v.key]: e.target.checked }))
                       }
@@ -397,7 +425,7 @@ export const ExportDialog: React.FC<{
                           setFormats((s) => ({ ...s, [v.key]: f as Format }))
                         }
                         ariaLabel={t("library.export.formatFor", { name })}
-                        disabled={running}
+                        disabled={running || !!job}
                       />
                     ) : (
                       <span className="library-meta">
@@ -406,6 +434,22 @@ export const ExportDialog: React.FC<{
                       </span>
                     )}
                   </span>
+                  {job && (
+                    <span
+                      className="lib-export__state is-busy"
+                      role="status"
+                      data-testid={`export-busy-${v.kind}`}
+                    >
+                      <Loader2
+                        size={14}
+                        className="lib-spin"
+                        aria-hidden="true"
+                      />
+                      {t("library.export.rowBusy", {
+                        status: jobStatus(t, job),
+                      })}
+                    </span>
+                  )}
                   {state && state.phase !== "idle" && (
                     <span
                       className={`lib-export__state is-${state.phase}`}
@@ -439,6 +483,37 @@ export const ExportDialog: React.FC<{
                 </li>
               );
             })}
+            {pendingJobs.map((j) => (
+              <li
+                key={j.id}
+                className="lib-export__row is-busy"
+                aria-disabled
+                data-testid="export-row-pending"
+              >
+                <span className="lib-export__pick">
+                  <input
+                    type="checkbox"
+                    checked={false}
+                    disabled
+                    aria-label={jobTitle(t, j)}
+                  />
+                  <span className="lib-export__icon" aria-hidden="true">
+                    {j.kind === "translation" ? (
+                      <Languages size={16} />
+                    ) : (
+                      <Sparkles size={16} />
+                    )}
+                  </span>
+                  <span className="lib-export__name">
+                    <span>{jobTitle(t, j)}</span>
+                  </span>
+                </span>
+                <span className="lib-export__state is-busy" role="status">
+                  <Loader2 size={14} className="lib-spin" aria-hidden="true" />
+                  {t("library.export.rowBusy", { status: jobStatus(t, j) })}
+                </span>
+              </li>
+            ))}
           </ul>
         )}
         {narrations > 1 && (

@@ -7228,6 +7228,7 @@
       "rowRunning": "wird geschrieben …",
       "rowBackground": "wird im Hintergrund vorgelesen und gespeichert",
       "rowDone": "gespeichert",
+      "rowBusy": "In Arbeit · {{status}} – nach Abschluss exportierbar",
       "oneNarration": "Vorlesen als Audio geht für eine Fassung je Export. Wähle für die übrigen ein Textformat.",
       "ffmpegHint": "Für M4B und eine einzelne MP3-Datei braucht es ffmpeg (z. B. winget install ffmpeg). Die Originaldateien lassen sich immer exportieren.",
       "hint": "EPUB öffnen Apple Books, Kindle (Send to Kindle), Tolino und Calibre; PDF und MP3 lassen sich überall teilen."
