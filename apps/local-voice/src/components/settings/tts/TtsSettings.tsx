@@ -36,6 +36,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
 import { Dialog } from "../../ui/Dialog";
+import { SpeechConfirmDialog } from "./SpeechConfirmDialog";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Slider } from "../../ui/Slider";
 import { Select } from "../../ui/Select";
@@ -406,6 +407,7 @@ export const TtsSettings = () => {
   const kiDocs = useKiDocuments(activePage || null);
   const [tidying, setTidying] = useState(false);
   const [speeching, setSpeeching] = useState(false);
+  const [speechConfirmOpen, setSpeechConfirmOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState<string>("");
   const [loadingSource, setLoadingSource] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
@@ -3386,7 +3388,7 @@ export const TtsSettings = () => {
         tidying={tidying}
         onTidy={() => void tidyText()}
         speeching={speeching}
-        onSpeech={() => void speechText()}
+        onSpeech={() => setSpeechConfirmOpen(true)}
         errorCount={errorCount}
         onCheckScript={runScriptCheck}
         autoTagBlockedReason={
@@ -4239,6 +4241,11 @@ export const TtsSettings = () => {
             activePageId={activePage}
             onCreatePage={createPageWithText}
             onPagesChanged={() => void reloadPages()}
+          />
+          <SpeechConfirmDialog
+            open={speechConfirmOpen}
+            onOpenChange={setSpeechConfirmOpen}
+            onStart={() => void speechText()}
           />
           <Dialog
             open={urlDialogOpen}

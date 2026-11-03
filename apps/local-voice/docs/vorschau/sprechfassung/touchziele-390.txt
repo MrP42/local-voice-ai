@@ -1,0 +1,10 @@
+Aktionsmenü (390 px):
+Skript-Werkstatt…: 238x44
+Text aufbereiten: 238x44
+Sprechfassung erstellen …: 238x44
+Skript prüfen: 238x44
+Auto-Tagging: 238x44
+
+Dialog Sprechfassung (390 px):
+Abbrechen: 308x44
+Ersetzen und erstellen: 308x44
