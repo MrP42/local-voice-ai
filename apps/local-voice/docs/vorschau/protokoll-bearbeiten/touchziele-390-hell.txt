@@ -1,0 +1,34 @@
+Neu erzeugen: 44 × 44 px
+Bearbeiten: 44 × 44 px
+Protokoll kopieren: 44 × 44 px
+Herunterladen: 44 × 44 px
+Vorlesen: 44 × 44 px
+Audio speichern: 44 × 44 px
+Rückgängig: 44 × 44 px
+Wiederherstellen: 44 × 44 px
+minutes-edit-cancel: 110 × 44 px
+minutes-edit-save: 106 × 44 px
+Suchen und Ersetzen: 44 × 44 px
+Rechtschreibprüfung: 44 × 44 px
+Überschrift 1: 44 × 44 px
+Überschrift 2: 44 × 44 px
+Überschrift 3: 44 × 44 px
+Normaler Absatz: 44 × 44 px
+Fett: 44 × 44 px
+Kursiv: 44 × 44 px
+Zitat: 44 × 44 px
+Aufzählung: 44 × 44 px
+Trennlinie: 44 × 44 px
+Bereinigen: 44 × 44 px
+KI-Textarbeit: 44 × 44 px
+Suchen: 142 × 44 px
+Vorheriger Treffer: 44 × 44 px
+Nächster Treffer: 44 × 44 px
+Groß-/Kleinschreibung: 44 × 44 px
+Ganzes Wort: 44 × 44 px
+Regulärer Ausdruck: 44 × 44 px
+Ersetzen anzeigen: 44 × 44 px
+Suche schließen: 44 × 44 px
+Ersetzen durch: 253 × 44 px
+Ersetzen: 44 × 44 px
+Alle ersetzen: 44 × 44 px

@@ -25,7 +25,23 @@ import {
 } from "../../whats-new/MarkdownContent";
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
-import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  FileText,
+  History,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
+import { ActionMenu } from "../../ui/ActionMenu";
+import { locateInMarkdown } from "@/lib/minutesEdit";
+import { MinutesEditor } from "./MinutesEditor";
+import { useRegenerateGuard } from "./useRegenerateGuard";
+
+/** Blöcke der Leseansicht, die einzeln zum Bearbeiten angeklickt werden können. */
+const EDIT_BLOCKS = "h1, h2, h3, p, li, td, th, blockquote";
 
 interface MinutesViewProps {
   meetingId: string;
@@ -51,7 +67,30 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   const { t, i18n } = useTranslation();
   const docKind = docType ? docType.kind : "minutes";
   const docKey = docType?.key ?? null;
-  const [doc, setDoc] = useState<MeetingDocument | null>(null);
+  // Alle Versionen dieses Typs, neueste zuerst; angezeigt wird die gewählte
+  // (Standard: die neueste). Neu erzeugen legt eine Version an, eine
+  // Handbearbeitung ändert die angezeigte Version.
+  const [versions, setVersions] = useState<MeetingDocument[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const doc = versions.find((d) => d.id === selectedId) ?? versions[0] ?? null;
+  const setDoc = useCallback((next: MeetingDocument | null) => {
+    if (!next) return;
+    setVersions((list) =>
+      [next, ...list.filter((d) => d.id !== next.id)].sort(
+        (a, b) => b.version - a.version,
+      ),
+    );
+  }, []);
+  // Bearbeiten: `null` = Leseansicht; sonst die Stelle, an der der Editor öffnet.
+  const [editing, setEditing] = useState<{
+    reveal: { start: number; end: number } | null;
+  } | null>(null);
+  // Stift neben dem Block unter dem Mauszeiger (wie beim Transkript).
+  const [hoverPen, setHoverPen] = useState<{
+    top: number;
+    block: HTMLElement;
+  } | null>(null);
+  const guard = useRegenerateGuard();
   const [loading, setLoading] = useState(true);
   // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
   // seinen Ereignissen, nicht aus dem Aufruf dieses Reiters. So bleibt der
@@ -82,7 +121,8 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     const minutes = result.data
       .filter((d) => d.kind === docKind)
       .sort((a, b) => b.version - a.version);
-    setDoc(minutes[0] ?? null);
+    setVersions(minutes);
+    setSelectedId(null);
   }, [meetingId, t, docKind]);
 
   const loadMeta = useCallback(async () => {
@@ -187,6 +227,9 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, errorText]);
 
   const generate = async () => {
+    if (editing) return;
+    // Von Hand bearbeitet? Vorher fragen; die bearbeitete Version bleibt erhalten.
+    if (!(await guard.confirm(meetingId, docKind))) return;
     setRunning(true);
     setProgress(null);
     setError(null);
@@ -221,7 +264,34 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setRunning(false);
     setProgress(null);
     setDoc(result.data);
+    setSelectedId(null);
     void loadMeta();
+  };
+
+  /** Bearbeiten öffnen; mit Block: der Editor zeigt und markiert dessen Stelle. */
+  const startEdit = (block?: HTMLElement | null) => {
+    if (!doc || running) return;
+    const text = block?.textContent ?? "";
+    setHoverPen(null);
+    setEditing({ reveal: text ? locateInMarkdown(doc.body, text) : null });
+  };
+
+  const blockAt = (target: EventTarget | null): HTMLElement | null => {
+    const el = target instanceof Element ? target : null;
+    if (!el || el.closest("[data-slide-ref], a, button, input")) return null;
+    const block = el.closest<HTMLElement>(EDIT_BLOCKS);
+    return block && previewRef.current?.contains(block) ? block : null;
+  };
+
+  const onPreviewHover = (event: React.MouseEvent<HTMLDivElement>) => {
+    const block = blockAt(event.target);
+    if (!block) return;
+    // Innerster Block: ein Listenpunkt mit Absatz zeigt den Stift am Absatz.
+    const wrapper = event.currentTarget.getBoundingClientRect();
+    const rect = block.getBoundingClientRect();
+    const top = rect.top - wrapper.top;
+    if (hoverPen?.block === block && hoverPen.top === top) return;
+    setHoverPen({ top, block });
   };
 
   /**
@@ -236,8 +306,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
-      | HTMLElement
-      | undefined;
+      HTMLElement | undefined;
     preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
       el.replaceWith(
         document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
@@ -316,7 +385,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
+        className="minutes-toolbar sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
       >
         {toolbarLead}
         <IconAction
@@ -329,11 +398,63 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           }
           description={t("meetings.minutes.regenerateHint")}
           testId="minutes-generate"
-          disabled={running}
-          onClick={generate}
+          disabled={running || editing !== null}
+          onClick={() => void generate()}
         />
         {doc && (
           <>
+            <IconAction
+              size="sm"
+              icon={Pencil}
+              label={t("meetings.minutes.edit.start")}
+              description={t("meetings.minutes.edit.startHint")}
+              testId="minutes-edit"
+              aria-pressed={editing !== null}
+              className={
+                editing
+                  ? "!border-logo-primary/60 !bg-logo-primary/15 !text-text"
+                  : ""
+              }
+              disabled={running || editing !== null}
+              onClick={() => startEdit()}
+            />
+            {versions.length > 1 && (
+              <ActionMenu
+                menuLabel={t("meetings.minutes.versions.menu")}
+                widthClass="w-72"
+                trigger={{
+                  icon: History,
+                  size: "sm",
+                  label: t("meetings.minutes.versions.label", {
+                    version: doc.version,
+                    count: versions.length,
+                  }),
+                  description: t("meetings.minutes.versions.hint"),
+                  testId: "minutes-versions",
+                  disabled: editing !== null,
+                }}
+                items={versions.map((v, i) => ({
+                  id: v.id,
+                  label: t(
+                    v.edited
+                      ? "meetings.minutes.versions.itemEdited"
+                      : "meetings.minutes.versions.item",
+                    {
+                      version: v.version,
+                      date: new Date(v.created_at * 1000).toLocaleString(
+                        i18n.language,
+                        { dateStyle: "short", timeStyle: "short" },
+                      ),
+                    },
+                  ),
+                  title:
+                    i === 0 ? t("meetings.minutes.versions.latest") : undefined,
+                  icon: v.id === doc.id ? Check : FileText,
+                  testId: `minutes-version-${v.version}`,
+                  onSelect: () => setSelectedId(i === 0 ? null : v.id),
+                }))}
+              />
+            )}
             <IconAction
               size="sm"
               icon={copied ? Check : Copy}
@@ -377,6 +498,13 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             </span>
           </Badge>
         )}
+        {doc?.edited && (
+          <Badge variant="secondary">
+            <span data-testid="minutes-edited">
+              {t("meetings.minutes.edit.edited")}
+            </span>
+          </Badge>
+        )}
         {saved && (
           <span className="min-w-0 break-all text-xs text-text/60">
             {t("meetings.minutes.exportSaved", { path: saved })}
@@ -398,14 +526,69 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         </Alert>
       )}
 
-      {doc ? (
+      {doc && versions[0] && doc.id !== versions[0].id && (
+        <Alert variant="info">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="me-auto" data-testid="minutes-old-version">
+              {t("meetings.minutes.versions.olderShown", {
+                version: doc.version,
+                latest: versions[0].version,
+              })}
+            </span>
+            <button
+              type="button"
+              className="min-h-8 rounded-md px-2 text-sm font-medium text-logo-primary hover:underline"
+              data-testid="minutes-version-latest"
+              onClick={() => setSelectedId(null)}
+            >
+              {t("meetings.minutes.versions.toLatest")}
+            </button>
+          </div>
+        </Alert>
+      )}
+
+      {doc && editing ? (
+        <MinutesEditor
+          key={doc.id}
+          doc={doc}
+          reveal={editing.reveal}
+          onClose={() => setEditing(null)}
+          onSaved={(next) => {
+            setDoc(next);
+            setEditing(null);
+          }}
+        />
+      ) : doc ? (
         <div
-          ref={previewRef}
-          data-testid="minutes-doc"
-          className="rounded-lg border border-mid-gray/20 p-4"
+          className="minutes-preview relative"
+          onMouseOver={onPreviewHover}
+          onMouseLeave={() => setHoverPen(null)}
+          onDoubleClick={(event) => {
+            const block = blockAt(event.target);
+            if (block) startEdit(block);
+          }}
         >
-          <DocUsageLine documentId={doc.id} />
-          <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+          <div
+            ref={previewRef}
+            data-testid="minutes-doc"
+            className="rounded-lg border border-mid-gray/20 p-4 pe-10"
+          >
+            <DocUsageLine documentId={doc.id} />
+            <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+          </div>
+          {hoverPen && !running && (
+            <button
+              type="button"
+              data-testid="minutes-block-edit"
+              title={t("meetings.minutes.edit.block")}
+              aria-label={t("meetings.minutes.edit.block")}
+              onClick={() => startEdit(hoverPen.block)}
+              style={{ top: hoverPen.top }}
+              className="minutes-block-pen absolute end-1 flex h-7 w-7 items-center justify-center rounded-md text-text/50 hover:bg-mid-gray/15 hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+            >
+              <Pencil width={14} height={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
       ) : (
         !running && (
@@ -420,6 +603,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           </p>
         )
       )}
+      {guard.dialog}
     </div>
   );
 };

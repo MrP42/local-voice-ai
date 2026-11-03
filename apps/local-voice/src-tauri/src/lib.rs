@@ -2172,6 +2172,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_documents::meetings_document_meta,
             commands::meeting_documents::meetings_generate_document,
             commands::meeting_documents::meetings_export_document_as,
+            commands::meeting_documents::meetings_update_document_text,
             commands::meeting_documents::letterheads_list,
             commands::meeting_documents::letterhead_save,
             commands::meeting_documents::letterhead_delete,
