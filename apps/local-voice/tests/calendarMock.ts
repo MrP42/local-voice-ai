@@ -52,6 +52,17 @@ export const installTauriMock = async (
       calendar_graph_tenant: null,
     };
     w.__settings = settings;
+    // Empfehlung "Gleichzeitige Transkriptionen" (16 Kerne, 32 GB, 12 GB GPU).
+    w.__parallelRec = {
+      recommended: 4,
+      max: 4,
+      limited_by: "cpu",
+      cpus: 16,
+      ram_total_mb: 32768,
+      vram_total_mb: 12288,
+      model_size_mb: 750,
+      gpu_model: true,
+    };
     w.__calls = [];
     w.__sources = [];
     w.__upcoming = [];
@@ -292,6 +303,8 @@ export const installTauriMock = async (
                 w.__workflowRun = { state: "failed", recordings: 0 };
               }
               return null;
+            case "get_meeting_import_parallel_recommendation":
+              return w.__parallelRec;
             case "tts_server_status":
               return { phase: "stopped", message: null };
             case "get_custom_sounds":

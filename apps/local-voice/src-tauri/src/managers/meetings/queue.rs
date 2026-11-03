@@ -105,6 +105,112 @@ pub fn threads_per_engine(cpus: usize, engines: usize) -> usize {
     (crate::process_guard::cpu_threads_for(cpus) / engines.max(1)).max(1)
 }
 
+/// Einstellungswert fuer "Automatisch": die Zahl gleichzeitiger Laeufe richtet
+/// sich nach der Hardware ([`recommended_parallel`]).
+pub const PARALLEL_AUTO: u32 = 0;
+/// Ab so vielen logischen Kernen gibt es einen weiteren gleichzeitigen Lauf
+/// (jede Engine soll mindestens vier Rechen-Threads behalten).
+const CPUS_PER_RUN: usize = 4;
+/// Groesse, mit der gerechnet wird, wenn das Modell unbekannt ist (MB).
+const UNKNOWN_MODEL_MB: u64 = 1_024;
+
+/// Der gespeicherte Wert der Einstellung: 0 (Automatisch) bleibt, alles
+/// andere zaehlt als der naechste gueltige Wert von 1 bis [`MAX_PARALLEL`].
+pub fn normalize_setting(value: u32) -> u32 {
+    if value == PARALLEL_AUTO {
+        PARALLEL_AUTO
+    } else {
+        clamp_limit(value) as u32
+    }
+}
+
+/// Die wirksame Grenze: eine feste Zahl gilt, "Automatisch" nimmt die
+/// Empfehlung fuer diesen Rechner (erst dann gemessen).
+pub fn resolve_limit(setting: u32, recommended: impl FnOnce() -> usize) -> usize {
+    if setting == PARALLEL_AUTO {
+        recommended().clamp(1, MAX_PARALLEL)
+    } else {
+        clamp_limit(setting)
+    }
+}
+
+/// Was der Rechner fuer die Empfehlung hergibt (Gesamtwerte, nicht der
+/// gerade freie Speicher: den prueft das Speicher-Tor vor jedem Lauf).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HardwareCapacity {
+    pub cpus: usize,
+    /// Arbeitsspeicher insgesamt (MB); 0 = nicht messbar.
+    pub ram_total_mb: u64,
+    /// Grafikspeicher der groessten eigenen Karte (MB), nur wenn die
+    /// Transkription die GPU nutzen darf; `None` = keine oder nicht messbar.
+    pub vram_total_mb: Option<u64>,
+}
+
+/// Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ParallelLimitedBy {
+    /// Die Obergrenze der App ([`MAX_PARALLEL`]).
+    Maximum,
+    /// Die Zahl der Prozessorkerne.
+    Cpu,
+    /// Der Arbeitsspeicher.
+    Ram,
+    /// Der Grafikspeicher.
+    Vram,
+}
+
+/// Empfohlene Zahl gleichzeitiger Transkriptionen fuer diesen Rechner und
+/// dieses Modell (rein, ohne Messung):
+///
+/// - Kerne: ein Lauf je [`CPUS_PER_RUN`] logische Kerne.
+/// - Arbeitsspeicher: jede Engine laedt das Modell selbst ([`ram_need_mb`]);
+///   zusammen hoechstens die Haelfte des Arbeitsspeichers abzueglich der
+///   Systemreserve, der Rest bleibt fuer System und andere Programme.
+/// - Grafikspeicher (nur GPU-Modell auf GPU): jede Engine braucht
+///   [`vram_gate_mb`].
+///
+/// Das Ergebnis liegt immer zwischen 1 und [`MAX_PARALLEL`]. Was nicht messbar
+/// ist, begrenzt nicht; das Speicher-Tor vor jedem weiteren Lauf bleibt.
+pub fn recommended_parallel(
+    hw: &HardwareCapacity,
+    model_size_mb: u64,
+    gpu_model: bool,
+) -> (usize, ParallelLimitedBy) {
+    let size_mb = if model_size_mb == 0 {
+        UNKNOWN_MODEL_MB
+    } else {
+        model_size_mb
+    };
+    let mut best = (MAX_PARALLEL, ParallelLimitedBy::Maximum);
+    let mut cap = |n: usize, by: ParallelLimitedBy| {
+        let n = n.max(1);
+        if n < best.0 {
+            best = (n, by);
+        }
+    };
+    cap(hw.cpus / CPUS_PER_RUN, ParallelLimitedBy::Cpu);
+    if hw.ram_total_mb > 0 {
+        let budget = hw
+            .ram_total_mb
+            .saturating_sub(crate::process_guard::RAM_RESERVE_MB)
+            / 2;
+        cap(
+            (budget / ram_need_mb(size_mb)) as usize,
+            ParallelLimitedBy::Ram,
+        );
+    }
+    if gpu_model {
+        if let Some(vram) = hw.vram_total_mb.filter(|v| *v > 0) {
+            cap(
+                (vram / vram_gate_mb(size_mb)) as usize,
+                ParallelLimitedBy::Vram,
+            );
+        }
+    }
+    best
+}
+
 // ---------------------------------------------------------------------------
 // Sicht fuer die Oberflaeche
 // ---------------------------------------------------------------------------
@@ -1105,6 +1211,79 @@ fn run_request(
     }
 }
 
+/// Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ParallelRecommendation {
+    /// So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+    pub recommended: u32,
+    /// Hoechster einstellbarer Wert.
+    pub max: u32,
+    pub limited_by: ParallelLimitedBy,
+    pub cpus: u32,
+    pub ram_total_mb: u64,
+    /// `None`: keine GPU fuer die Transkription oder nicht messbar.
+    pub vram_total_mb: Option<u64>,
+    /// Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+    pub model_size_mb: u64,
+    /// Das Besprechungsmodell rechnet auf der GPU.
+    pub gpu_model: bool,
+}
+
+/// So lange gilt eine gemessene Empfehlung (der Verteiler fragt im Takt).
+const RECOMMENDATION_TTL: Duration = Duration::from_secs(30);
+static RECOMMENDATION_CACHE: Mutex<Option<(Instant, u64, ParallelRecommendation)>> =
+    Mutex::new(None);
+
+/// Gesamtwerte des Rechners fuer [`recommended_parallel`].
+pub fn probe_capacity(app: &AppHandle) -> HardwareCapacity {
+    let settings = crate::settings::get_settings(app);
+    let gpu_allowed =
+        settings.transcribe_accelerator != crate::settings::TranscribeAcceleratorSetting::Cpu;
+    HardwareCapacity {
+        cpus: crate::process_guard::logical_cpus(),
+        ram_total_mb: crate::managers::llm::resources::system_memory().ram_total_mb,
+        vram_total_mb: if gpu_allowed {
+            crate::managers::transcription::transcribe_gpu_total_mb()
+        } else {
+            None
+        },
+    }
+}
+
+/// Die Empfehlung fuer das aktuelle Besprechungsmodell (30 s zwischengespeichert,
+/// neu gemessen, sobald sich die Modellgroesse aendert).
+pub fn recommendation_for_app(
+    app: &AppHandle,
+    tm: &TranscriptionManager,
+) -> ParallelRecommendation {
+    let settings = crate::settings::get_settings(app);
+    let (model_size_mb, gpu_model) = tm.meeting_model_footprint(&settings);
+    let key = model_size_mb.wrapping_mul(2) + u64::from(gpu_model);
+    let mut cache = RECOMMENDATION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((at, cached_key, rec)) = *cache {
+        if cached_key == key && at.elapsed() < RECOMMENDATION_TTL {
+            return rec;
+        }
+    }
+    let hw = probe_capacity(app);
+    let gpu_model = gpu_model && hw.vram_total_mb.is_some();
+    let (recommended, limited_by) = recommended_parallel(&hw, model_size_mb, gpu_model);
+    let rec = ParallelRecommendation {
+        recommended: recommended as u32,
+        max: MAX_PARALLEL as u32,
+        limited_by,
+        cpus: hw.cpus as u32,
+        ram_total_mb: hw.ram_total_mb,
+        vram_total_mb: hw.vram_total_mb,
+        model_size_mb,
+        gpu_model,
+    };
+    *cache = Some((Instant::now(), key, rec));
+    rec
+}
+
 impl ImportQueue {
     /// Die Warteschlange der App: Einstellung `meeting_import_parallel`,
     /// Aufnahme-Vorrang ueber `recording`, Speicher-Tor ueber
@@ -1118,6 +1297,7 @@ impl ImportQueue {
         limit_override: Option<usize>,
     ) -> Self {
         let limit_app = app.clone();
+        let limit_tm = Arc::clone(&tm);
         let gate_app = app.clone();
         let gate_tm = Arc::clone(&tm);
         let run_app = app.clone();
@@ -1133,7 +1313,10 @@ impl ImportQueue {
                 // Nur der Headless-Nachweis: gilt fuer diesen Lauf, schreibt nichts.
                 Some(limit) => limit.clamp(1, MAX_PARALLEL),
                 None => {
-                    clamp_limit(crate::settings::get_settings(&limit_app).meeting_import_parallel)
+                    let setting = crate::settings::get_settings(&limit_app).meeting_import_parallel;
+                    resolve_limit(setting, || {
+                        recommendation_for_app(&limit_app, &limit_tm).recommended as usize
+                    })
                 }
             }),
             recording,
@@ -1366,6 +1549,77 @@ mod tests {
     #[test]
     fn what_cannot_be_measured_never_blocks() {
         assert!(plan_extra_slot(50_000, true, &hw(None, true, None)).is_ok());
+    }
+
+    #[test]
+    fn auto_setting_stays_auto_and_resolves_to_the_recommendation() {
+        assert_eq!(normalize_setting(0), PARALLEL_AUTO);
+        assert_eq!(normalize_setting(3), 3);
+        assert_eq!(normalize_setting(99), 4);
+        assert_eq!(resolve_limit(0, || 3), 3);
+        assert_eq!(resolve_limit(0, || 0), 1);
+        assert_eq!(resolve_limit(0, || 99), MAX_PARALLEL);
+        assert_eq!(resolve_limit(2, || panic!("fest: keine Messung")), 2);
+    }
+
+    fn cap(cpus: usize, ram_gb: u64, vram_gb: Option<u64>) -> HardwareCapacity {
+        HardwareCapacity {
+            cpus,
+            ram_total_mb: ram_gb * 1024,
+            vram_total_mb: vram_gb.map(|g| g * 1024),
+        }
+    }
+
+    #[test]
+    fn recommendation_follows_cores_ram_and_vram() {
+        use ParallelLimitedBy::*;
+        // Patricks Klasse: 16 Threads, 32 GB, 12 GB GPU, Nemotron 750 MB -> 4 (Gleichstand: Obergrenze).
+        assert_eq!(
+            recommended_parallel(&cap(16, 32, Some(12)), 750, true),
+            (4, Maximum)
+        );
+        // Viele Kerne: Obergrenze der App.
+        assert_eq!(
+            recommended_parallel(&cap(64, 128, Some(24)), 750, true),
+            (4, Maximum)
+        );
+        // Wenige Kerne.
+        assert_eq!(
+            recommended_parallel(&cap(8, 32, None), 750, false),
+            (2, Cpu)
+        );
+        assert_eq!(recommended_parallel(&cap(2, 8, None), 750, false), (1, Cpu));
+        // Wenig Arbeitsspeicher: (16 GB - 6 GB Reserve) / 2 = 5 GB, je Engine ~4,5 GB.
+        assert_eq!(
+            recommended_parallel(&cap(32, 16, None), 2_900, false),
+            (1, Ram)
+        );
+        // Grosses Modell auf kleiner Karte: der Grafikspeicher begrenzt.
+        assert_eq!(
+            recommended_parallel(&cap(32, 64, Some(8)), 3_000, true),
+            (1, Vram)
+        );
+        assert_eq!(
+            recommended_parallel(&cap(32, 64, Some(16)), 3_000, true),
+            (3, Vram)
+        );
+        // CPU-Modell: der Grafikspeicher zaehlt nicht.
+        assert_eq!(
+            recommended_parallel(&cap(32, 64, Some(4)), 3_000, false).0,
+            4
+        );
+        // Nicht messbar begrenzt nicht; unbekanntes Modell = 1 GB.
+        assert_eq!(
+            recommended_parallel(&cap(16, 0, None), 0, true),
+            (4, Maximum)
+        );
+        // Nie unter 1, nie ueber MAX_PARALLEL.
+        for cpus in [0, 1, 3, 4, 100] {
+            for ram in [0, 1, 4, 512] {
+                let (n, _) = recommended_parallel(&cap(cpus, ram, Some(1)), 5_000, true);
+                assert!((1..=MAX_PARALLEL).contains(&n));
+            }
+        }
     }
 
     #[test]

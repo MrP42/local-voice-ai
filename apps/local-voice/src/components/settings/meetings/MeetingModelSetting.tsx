@@ -1,9 +1,10 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
 import { useModelStore } from "../../../stores/modelStore";
+import { commands, type ParallelRecommendation } from "@/bindings";
 
 /**
  * Dedicated transcription model for meetings/imports. Empty = use the
@@ -16,9 +17,15 @@ import { useModelStore } from "../../../stores/modelStore";
  * (`meeting_final_model`: `auto` | `off` | model id, see final_pass.rs).
  *
  * U7: third field — how many imports transcribe at the same time
- * (`meeting_import_parallel`: 1 to 4). More than one only while memory
- * allows; otherwise the next file waits ("wartet auf Arbeitsspeicher").
+ * (`meeting_import_parallel`: 0 = Automatisch, sonst 1 bis 4). Automatisch
+ * folgt der Empfehlung des Backends (Kerne, Arbeits- und Grafikspeicher,
+ * `queue::recommended_parallel`); die Zeile nennt sie samt Begründung. More
+ * than one only while memory allows; otherwise the next file waits.
  */
+
+const gb = (mb: number) =>
+  (mb / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 });
+
 export const MeetingModelSetting: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
@@ -30,11 +37,59 @@ export const MeetingModelSetting: React.FC = () => {
 
   const value = getSetting("meeting_model") ?? "";
   const finalValue = getSetting("meeting_final_model") || "auto";
-  const parallelValue = String(getSetting("meeting_import_parallel") ?? 1);
-  const parallelOptions = [1, 2, 3, 4].map((n) => ({
-    value: String(n),
-    label: t(`meetings.model.parallel${n}`),
-  }));
+  const parallelSetting = getSetting("meeting_import_parallel") ?? 0;
+  const parallelValue = String(parallelSetting);
+  const [recommendation, setRecommendation] =
+    useState<ParallelRecommendation | null>(null);
+
+  // Neu messen, wenn sich das Besprechungsmodell ändert (Größe zählt).
+  useEffect(() => {
+    let alive = true;
+    commands
+      .getMeetingImportParallelRecommendation()
+      .then((rec) => {
+        if (alive) setRecommendation(rec);
+      })
+      .catch(() => {
+        if (alive) setRecommendation(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [value]);
+
+  const maxParallel = recommendation?.max ?? 4;
+  const parallelOptions = [
+    {
+      value: "0",
+      label: recommendation
+        ? t("meetings.model.parallelAuto", {
+            count: recommendation.recommended,
+          })
+        : t("meetings.model.parallelAutoPending"),
+    },
+    ...Array.from({ length: maxParallel }, (_, i) => ({
+      value: String(i + 1),
+      label: t("meetings.model.parallelFixed", { count: i + 1 }),
+    })),
+  ];
+  const parallelHardware = recommendation
+    ? t("meetings.model.parallelHardware", {
+        cpus: recommendation.cpus,
+        ram: gb(recommendation.ram_total_mb),
+        vram:
+          recommendation.vram_total_mb != null
+            ? t("meetings.model.parallelHardwareVram", {
+                vram: gb(recommendation.vram_total_mb),
+              })
+            : "",
+        model: gb(recommendation.model_size_mb),
+        count: recommendation.recommended,
+        limitedBy: t(
+          `meetings.model.parallelLimitedBy.${recommendation.limited_by}`,
+        ),
+      })
+    : "";
 
   const downloaded = models
     .filter((m) => m.is_downloaded)
@@ -81,14 +136,16 @@ export const MeetingModelSetting: React.FC = () => {
       </SettingContainer>
       <SettingContainer
         title={t("meetings.model.parallelTitle")}
-        description={t("meetings.model.parallelDescription")}
+        description={[parallelHardware, t("meetings.model.parallelDescription")]
+          .filter(Boolean)
+          .join(" ")}
         grouped={true}
       >
         <Dropdown
           options={parallelOptions}
           selectedValue={parallelValue}
           onSelect={(v) => updateSetting("meeting_import_parallel", Number(v))}
-          placeholder={t("meetings.model.parallel1")}
+          placeholder={t("meetings.model.parallelAutoPending")}
           disabled={isUpdating("meeting_import_parallel")}
         />
       </SettingContainer>

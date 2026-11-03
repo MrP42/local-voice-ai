@@ -3596,11 +3596,18 @@
       "finalAuto": "Automatisch (empfohlen)",
       "finalOff": "Aus – Live-Transkript behalten",
       "parallelTitle": "Gleichzeitige Transkriptionen",
-      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Mehr als eine nur, wenn Arbeitsspeicher (und Grafikspeicher) für jede weitere reichen – jede lädt das Modell noch einmal. Sonst wartet die nächste Datei („wartet auf Arbeitsspeicher“). Eine laufende Aufnahme hat immer Vorrang: dann pausiert die Warteschlange. Teile von Hörbüchern (Bibliothek) laufen unabhängig davon bis zu vier gleichzeitig – ebenfalls nur, solange der Speicher reicht.",
-      "parallel1": "1 (Standard)",
-      "parallel2": "2",
-      "parallel3": "3",
-      "parallel4": "4"
+      "parallelDescription": "Wie viele Dateien gleichzeitig transkribiert werden. Jede weitere lädt das Modell noch einmal und beginnt nur, wenn Arbeits- und Grafikspeicher gerade reichen – sonst wartet sie („wartet auf Arbeitsspeicher“). Eine Aufnahme hat Vorrang. Hörbuch-Teile laufen unabhängig davon bis zu vier gleichzeitig.",
+      "parallelAuto": "Automatisch – {{count}} auf diesem PC (empfohlen)",
+      "parallelAutoPending": "Automatisch (empfohlen)",
+      "parallelFixed": "{{count}} gleichzeitig",
+      "parallelHardware": "Dieser PC: {{cpus}} Prozessorkerne · {{ram}} GB Arbeitsspeicher{{vram}} · Modell {{model}} GB. Empfehlung: {{count}}, begrenzt durch {{limitedBy}}.",
+      "parallelHardwareVram": " · {{vram}} GB Grafikspeicher",
+      "parallelLimitedBy": {
+        "maximum": "die Obergrenze der App (4)",
+        "cpu": "die Prozessorkerne (ein Lauf je vier Kerne)",
+        "ram": "den Arbeitsspeicher",
+        "vram": "den Grafikspeicher"
+      }
     },
     "header": {
       "renameName": "Umbenennen",

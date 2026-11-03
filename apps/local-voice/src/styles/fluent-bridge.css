@@ -534,6 +534,14 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     min-width: 44px;
     min-height: 44px;
   }
+  /* Auswahllisten (Fluent Dropdown): Ausloeser und Eintraege. */
+  .lv-dropdown.lv-dropdown,
+  .fui-Listbox .fui-Option {
+    min-height: 44px;
+  }
+  .fui-Listbox .fui-Option {
+    align-items: center;
+  }
 }
 
 /* Platzhalter in Eingabefeldern mit dem gedämpften Texttoken statt

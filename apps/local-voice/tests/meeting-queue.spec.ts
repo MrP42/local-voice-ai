@@ -443,26 +443,57 @@ test("schmales Fenster (480): Platz und Bedienspalte der wartenden Datei ohne Se
 // Einstellung
 // ---------------------------------------------------------------------------
 
-test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lassen sich waehlen', async ({
+const VORSCHAU = path.resolve(
+  process.cwd(),
+  "docs/vorschau/gleichzeitige-transkriptionen",
+);
+
+const openParallelSetting = async (
+  page: Page,
+  width = 1280,
+  height = 1000,
+  adjust?: (page: Page) => Promise<void>,
+) => {
+  await installTauriMock(page, "main");
+  // Nach der Attrappe, damit sie deren Zustand ueberschreibt.
+  if (adjust) await adjust(page);
+  await page.setViewportSize({ width, height });
+  await page.goto("/");
+  await geheZu(page, "Einstellungen");
+  const title = page.getByText("Gleichzeitige Transkriptionen", {
+    exact: true,
+  });
+  await expect(title).toBeVisible();
+  return {
+    title,
+    // Fluent-Auswahlliste: der Zeilentitel nennt sie, der Wert steht darin.
+    dropdown: page.getByRole("combobox", {
+      name: "Gleichzeitige Transkriptionen",
+    }),
+  };
+};
+
+test('Einstellung "Gleichzeitige Transkriptionen": Automatisch nach Hardware ist Standard, feste Zahl waehlbar', async ({
   page,
 }) => {
   // Eigene Seite ohne Aufnahmen-Attrappe: die Einstellungen der Gruppe Besprechungen.
   const fresh = await page.context().newPage();
-  await installTauriMock(fresh, "main");
-  await fresh.setViewportSize({ width: 1280, height: 1000 });
-  await fresh.goto("/");
-  await geheZu(fresh, "Einstellungen");
-  const title = fresh.getByText("Gleichzeitige Transkriptionen", {
-    exact: true,
-  });
-  await expect(title).toBeVisible();
-  // Fluent-Auswahlliste: der Zeilentitel nennt sie, der Wert steht darin.
-  const dropdown = fresh.getByRole("combobox", {
-    name: "Gleichzeitige Transkriptionen",
-  });
-  await expect(dropdown).toHaveText(/1 \(Standard\)/);
+  const { title, dropdown } = await openParallelSetting(fresh);
+  await expect(dropdown).toHaveText(
+    "Automatisch – 4 auf diesem PC (empfohlen)",
+  );
   await dropdown.click();
-  await fresh.getByRole("option", { name: "2", exact: true }).click();
+  // Automatisch plus 1 bis 4.
+  await expect(fresh.getByRole("option")).toHaveText([
+    "Automatisch – 4 auf diesem PC (empfohlen)",
+    "1 gleichzeitig",
+    "2 gleichzeitig",
+    "3 gleichzeitig",
+    "4 gleichzeitig",
+  ]);
+  await fresh
+    .getByRole("option", { name: "2 gleichzeitig", exact: true })
+    .click();
   await expect
     .poll(
       async () =>
@@ -472,9 +503,18 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
   expect(
     (await calls(fresh, "change_meeting_import_parallel_setting"))[0].args,
   ).toEqual({ value: 2 });
-  // Die Auswahl zeigt jetzt "2".
-  await expect(dropdown).toHaveText("2");
-  // Die Beschreibung (Tooltip am Info-Symbol) nennt die Bedingung: Speicher, sonst wartet die Datei.
+  await expect(dropdown).toHaveText("2 gleichzeitig");
+  // Zurueck auf Automatisch schreibt 0.
+  await dropdown.click();
+  await fresh.getByRole("option", { name: /^Automatisch/ }).click();
+  await expect
+    .poll(async () =>
+      (await calls(fresh, "change_meeting_import_parallel_setting")).map(
+        (c) => c.args,
+      ),
+    )
+    .toEqual([{ value: 2 }, { value: 0 }]);
+  // Die Beschreibung (Tooltip am Info-Symbol) nennt Speicher-Bedingung und Hardware.
   await title
     .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")
     .getByLabel("More information")
@@ -482,5 +522,95 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
   await expect(
     fresh.getByText(/wartet auf Arbeitsspeicher/).first(),
   ).toBeVisible();
+  await expect(
+    fresh
+      .getByText(
+        /Dieser PC: 16 Prozessorkerne · 32 GB Arbeitsspeicher · 12 GB Grafikspeicher/,
+      )
+      .first(),
+  ).toBeVisible();
+  await expect(
+    fresh.getByText(/begrenzt durch die Prozessorkerne/).first(),
+  ).toBeVisible();
   await fresh.close();
 });
+
+test('Einstellung "Gleichzeitige Transkriptionen": ohne Messung bleibt Automatisch waehlbar', async ({
+  page,
+}) => {
+  const fresh = await page.context().newPage();
+  const { dropdown } = await openParallelSetting(fresh, 1280, 1000, (p) =>
+    p.addInitScript(() => ((window as any).__parallelRec = null)),
+  );
+  await expect(dropdown).toHaveText("Automatisch (empfohlen)");
+  await fresh.close();
+});
+
+// Vorschaubilder fuer die Abnahme (LVA_SCREENSHOTS=1): 390 und 1440 px, hell und dunkel,
+// Liste geoeffnet und Tooltip; Touchziele der Liste >= 44 px.
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [390, 1440]) {
+    test(`Vorschau Gleichzeitige Transkriptionen ${width} ${theme}`, async ({
+      page,
+    }) => {
+      const fresh = await page.context().newPage();
+      const { title, dropdown } = await openParallelSetting(
+        fresh,
+        width,
+        width === 390 ? 844 : 900,
+        (p) =>
+          p.addInitScript((t) => ((window as any).__settings.theme = t), theme),
+      );
+      await title.scrollIntoViewIfNeeded();
+      const overflow = await fresh.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+      const box = (await dropdown.boundingBox())!;
+      // Schmal (< 640 px): Touchziel 44 px; breit: Fluent-Standardhoehe.
+      expect(box.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 30);
+      await dropdown.click();
+      const options = fresh.getByRole("option");
+      await expect(options).toHaveCount(5);
+      if (width === 390) {
+        for (const option of await options.all()) {
+          const b = (await option.boundingBox())!;
+          expect(b.height, "Touchziel").toBeGreaterThanOrEqual(44);
+        }
+      }
+      if (process.env.LVA_SCREENSHOTS) {
+        await fresh.waitForTimeout(250);
+        await fresh.screenshot({
+          path: path.join(
+            VORSCHAU,
+            `liste-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
+          ),
+          animations: "disabled",
+        });
+      }
+      await fresh.keyboard.press("Escape");
+      await expect(options).toHaveCount(0);
+      // Begruendung der Empfehlung im Tooltip am Info-Symbol.
+      await title
+        .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")
+        .getByLabel("More information")
+        .hover();
+      await expect(
+        fresh.getByText(/Empfehlung: 4, begrenzt durch/).first(),
+      ).toBeVisible();
+      if (process.env.LVA_SCREENSHOTS) {
+        await fresh.waitForTimeout(250);
+        await fresh.screenshot({
+          path: path.join(
+            VORSCHAU,
+            `begruendung-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
+          ),
+          animations: "disabled",
+        });
+      }
+      await fresh.close();
+    });
+  }
+}

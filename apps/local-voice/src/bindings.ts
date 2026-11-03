@@ -2318,8 +2318,8 @@ async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Re
 }
 },
 /**
- * Einstellung `meeting_import_parallel`: 1 bis 4 gleichzeitige
- * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+ * Einstellung `meeting_import_parallel`: 0 = Automatisch (nach Hardware)
+ * oder 1 bis 4 gleichzeitige Transkriptionen (Werte ueber 4 zaehlen als 4). Wirkt
  * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
  * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
  * reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
@@ -2332,6 +2332,14 @@ async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, s
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Empfehlung fuer "Gleichzeitige Transkriptionen" auf diesem Rechner: so viele
+ * laufen bei "Automatisch", und wodurch die Zahl begrenzt ist (Kerne,
+ * Arbeits- oder Grafikspeicher, Obergrenze).
+ */
+async getMeetingImportParallelRecommendation() : Promise<ParallelRecommendation> {
+    return await TAURI_INVOKE("get_meeting_import_parallel_recommendation");
 },
 /**
  * Generates the minutes for a finished meeting, following a template, and
@@ -7489,11 +7497,13 @@ meeting_final_model?: string;
 meeting_diarization?: string; 
 /**
  * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
- * werden: 1 (Standard) bis 4. Mehr als eine nur, solange Arbeitsspeicher
- * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
- * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
- * settings.json) gilt 1; Werte ausserhalb 1 bis 4 zaehlen als der naechste
- * gueltige.
+ * werden: 0 = Automatisch (Standard, nach Kernen, Arbeits- und
+ * Grafikspeicher, `queue::recommended_parallel`) oder fest 1 bis 4. Mehr
+ * als eine nur, solange Arbeitsspeicher (und bei GPU-Modellen
+ * Grafikspeicher) fuer die weitere Engine reichen; sonst wartet die
+ * naechste Datei. Ohne den Schluessel gilt Automatisch; Werte ueber 4
+ * zaehlen als 4. Schema 5 stellt den alten Standard 1 einmalig auf
+ * Automatisch um.
  */
 meeting_import_parallel?: number; 
 /**
@@ -9975,6 +9985,50 @@ modified_ms?: number;
  */
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+ */
+export type ParallelLimitedBy = 
+/**
+ * Die Obergrenze der App ([`MAX_PARALLEL`]).
+ */
+"maximum" | 
+/**
+ * Die Zahl der Prozessorkerne.
+ */
+"cpu" | 
+/**
+ * Der Arbeitsspeicher.
+ */
+"ram" | 
+/**
+ * Der Grafikspeicher.
+ */
+"vram"
+/**
+ * Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+ */
+export type ParallelRecommendation = { 
+/**
+ * So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+ */
+recommended: number; 
+/**
+ * Hoechster einstellbarer Wert.
+ */
+max: number; limited_by: ParallelLimitedBy; cpus: number; ram_total_mb: number; 
+/**
+ * `None`: keine GPU fuer die Transkription oder nicht messbar.
+ */
+vram_total_mb: number | null; 
+/**
+ * Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+ */
+model_size_mb: number; 
+/**
+ * Das Besprechungsmodell rechnet auf der GPU.
+ */
+gpu_model: boolean }
 /**
  * Eine teilnehmende Person einer Besprechung.
  */

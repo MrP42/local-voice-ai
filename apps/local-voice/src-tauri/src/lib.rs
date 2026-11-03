@@ -2160,6 +2160,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_queue::meetings_queue_to_front,
             commands::meeting_queue::meetings_update_metadata,
             commands::meeting_queue::change_meeting_import_parallel_setting,
+            commands::meeting_queue::get_meeting_import_parallel_recommendation,
             commands::meetings::meetings_generate_minutes,
             commands::meetings::meetings_minutes_file,
             // P1k
