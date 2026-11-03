@@ -1027,7 +1027,11 @@ test.describe("Vorlesen in den Aufnahmen", () => {
 const highlighted = (page: Page) =>
   page.evaluate(() => {
     const h = (CSS as any).highlights.get("readaloud-cur");
-    return h ? [...h].map((r: Range) => r.toString()) : null;
+    return h
+      ? [...h].map((r: StaticRange) =>
+          (r.startContainer as Text).data.slice(r.startOffset, r.endOffset),
+        )
+      : null;
   });
 
 const speakSentence = (page: Page, index: number, text: string) =>
@@ -1041,6 +1045,49 @@ const speakSentence = (page: Page, index: number, text: string) =>
   );
 
 test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
+  test("Touchziele: in der schmalen Ansicht sind alle Knoepfe der Werkzeugzeile mindestens 44 px gross", async ({
+    page,
+  }) => {
+    await withMinutes(page);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await speakSentence(page, 2, "Angebot bis Freitag senden.");
+    const sizes = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('[data-testid="minutes-toolbar"] button')]
+          .filter((el) => (el as HTMLElement).offsetParent !== null)
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              id: el.getAttribute("data-testid"),
+              w: Math.round(r.width),
+              h: Math.round(r.height),
+            };
+          }),
+      );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect
+      .poll(async () =>
+        (await sizes()).filter((s) => s.w < 44 || s.h < 44).map((s) => s.id),
+      )
+      .toEqual([]);
+    const narrow = await sizes();
+    expect(narrow.length).toBeGreaterThanOrEqual(8);
+    // Kein waagerechtes Scrollen durch die groesseren Knoepfe.
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    console.log(
+      "TOUCH 390\n" + narrow.map((s) => `${s.id}\t${s.w}x${s.h}`).join("\n"),
+    );
+    // Die Markierung bleibt beim Umbruch der Leiste stehen.
+    await expect
+      .poll(async () => (await highlighted(page))?.join(""))
+      .toBe("Angebot bis Freitag senden");
+  });
+
   test("der gesprochene Satz ist markiert, folgt der Wiedergabe und verschwindet mit Stopp", async ({
     page,
   }) => {
@@ -1071,7 +1118,8 @@ test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
     const inTable = await page.evaluate(() => {
       const h = (CSS as any).highlights.get("readaloud-cur");
       return [...h].every(
-        (r: Range) => r.startContainer.parentElement?.closest("td") !== null,
+        (r: StaticRange) =>
+          r.startContainer.parentElement?.closest("td") !== null,
       );
     });
     expect(inTable).toBe(true);
@@ -1103,7 +1151,7 @@ test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
     const section = () =>
       page.evaluate(() => {
         const h = (CSS as any).highlights.get("readaloud-cur");
-        const r: Range | undefined = h ? [...h][0] : undefined;
+        const r: StaticRange | undefined = h ? [...h][0] : undefined;
         const ul = r?.startContainer.parentElement?.closest("ul");
         const all = [
           ...document.querySelectorAll('[data-testid="minutes-body"] ul'),
@@ -1122,6 +1170,19 @@ test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
     // Sprung nach vorn ueber zwei Saetze: hinter der letzten bekannten Stelle gesucht.
     await speakSentence(page, 5, "Keine.");
     await expect.poll(section).toBe(2);
+  });
+
+  test('kurze Saetze treffen nur ganze Woerter: "Ja." nicht das Ja in Januar', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__documents = [w.__minutesDoc(1, "- Januar beginnt.\n- Ja.")];
+    });
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await speakSentence(page, 1, "Ja.");
+    await expect.poll(() => highlighted(page)).toEqual(["Ja."]);
   });
 
   test("ein langes Protokoll rollt zum gesprochenen Satz", async ({ page }) => {
@@ -1143,7 +1204,11 @@ test.describe("Hervorhebung beim Vorlesen des Protokolls", () => {
       .poll(() =>
         page.evaluate(() => {
           const h = (CSS as any).highlights.get("readaloud-cur");
-          const rect = ([...h][0] as Range).getBoundingClientRect();
+          const s = [...h][0] as StaticRange;
+          const range = document.createRange();
+          range.setStart(s.startContainer, s.startOffset);
+          range.setEnd(s.endContainer, s.endOffset);
+          const rect = range.getBoundingClientRect();
           return rect.top > 0 && rect.bottom < window.innerHeight;
         }),
       )

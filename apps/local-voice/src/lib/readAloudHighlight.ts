@@ -41,6 +41,8 @@ export interface CharStream {
   /** Je Zeichen in `chars`: Offset im Textknoten (UTF-16) und Länge des Zeichens. */
   offsetOf: number[];
   lengthOf: number[];
+  /** Je Zeichen: beginnt hier ein Wort (Knotenanfang oder Nicht-Buchstabe davor)? */
+  wordStart: boolean[];
 }
 
 export function buildCharStream(root: Node): CharStream {
@@ -50,6 +52,7 @@ export function buildCharStream(root: Node): CharStream {
     nodeOf: [],
     offsetOf: [],
     lengthOf: [],
+    wordStart: [],
   };
   const parts: string[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -59,8 +62,10 @@ export function buildCharStream(root: Node): CharStream {
     const nodeIndex = stream.nodes.length;
     let used = false;
     let offset = 0;
+    let inWord = false;
     for (const ch of text) {
-      if (WORD_CHAR.test(ch)) {
+      const isWord = WORD_CHAR.test(ch);
+      if (isWord) {
         const lower = ch.toLowerCase();
         // Ein Zeichen kann klein geschrieben aus mehreren Einheiten bestehen ("İ"):
         // jede Einheit zeigt auf dasselbe Zeichen im Knoten.
@@ -69,9 +74,11 @@ export function buildCharStream(root: Node): CharStream {
           stream.nodeOf.push(nodeIndex);
           stream.offsetOf.push(offset);
           stream.lengthOf.push(ch.length);
+          stream.wordStart.push(k === 0 && !inWord);
         }
         used = true;
       }
+      inWord = isWord;
       offset += ch.length;
     }
     if (used) stream.nodes.push(node);
@@ -105,16 +112,25 @@ export interface MatchSpan {
  * Lesereihenfolge getroffen und nicht immer am ersten Vorkommen.
  */
 export function locateSentence(
-  chars: string,
+  stream: Pick<CharStream, "chars" | "wordStart">,
   sentence: string,
   from = 0,
 ): MatchSpan | null {
+  const { chars, wordStart } = stream;
   if (!sentence || !chars) return null;
+  // Nur an Wortgrenzen: "Ja." trifft nicht das "Ja" in "Januar".
+  const bounded = (start: number, end: number) =>
+    wordStart[start] && (end >= chars.length || wordStart[end]);
   const starts = from > 0 ? [from, 0] : [0];
   // Zuerst wörtlich: der Normalfall, und schnell.
   for (const begin of starts) {
-    const p = chars.indexOf(sentence, begin);
-    if (p >= 0) return { start: p, end: p + sentence.length };
+    for (
+      let p = chars.indexOf(sentence, begin);
+      p >= 0;
+      p = chars.indexOf(sentence, p + 1)
+    )
+      if (bounded(p, p + sentence.length))
+        return { start: p, end: p + sentence.length };
   }
   // Sonst mit Lücken (ungesprochene Zeichen im Dokument). Ein Treffer mit wenigen
   // Lückenzeichen gilt sofort; sonst der mit den wenigsten -- so greift "Punkt 70" nicht
@@ -128,8 +144,9 @@ export function locateSentence(
       p >= 0;
       p = chars.indexOf(head, p + 1)
     ) {
+      if (!wordStart[p]) continue;
       const end = matchAt(chars, sentence, p);
-      if (end === null) continue;
+      if (end === null || !bounded(p, end)) continue;
       const skipped = end - p - sentence.length;
       if (skipped <= tolerance) return { start: p, end };
       if (!best || skipped < best.end - best.start - sentence.length)
@@ -139,9 +156,12 @@ export function locateSentence(
   return best;
 }
 
-/** DOM-Ranges über einen Treffer, je Textknoten eine (Zwischenraum im Knoten inklusive). */
-export function rangesOfSpan(stream: CharStream, span: MatchSpan): Range[] {
-  const out: Range[] = [];
+/** DOM-Bereiche über einen Treffer, je Textknoten eine (Zwischenraum im Knoten inklusive). */
+export function rangesOfSpan(
+  stream: CharStream,
+  span: MatchSpan,
+): StaticRange[] {
+  const out: StaticRange[] = [];
   let i = span.start;
   while (i < span.end) {
     const node = stream.nodeOf[i];
@@ -158,10 +178,16 @@ export function rangesOfSpan(stream: CharStream, span: MatchSpan): Range[] {
     // den Leerraum bis zum nächsten Stück ("im [Kalender]").
     const tail = last + 1 === span.end ? TRAILING : /\s/;
     while (to < text.length && tail.test(text.data[to])) to++;
-    const range = document.createRange();
-    range.setStart(text, from);
-    range.setEnd(text, to);
-    out.push(range);
+    // StaticRange statt Range: eine lebende Range klappt zusammen, sobald die Ansicht
+    // das Dokument im DOM umhängt (schmales Fenster), die Textknoten aber bleiben.
+    out.push(
+      new StaticRange({
+        startContainer: text,
+        startOffset: from,
+        endContainer: text,
+        endOffset: to,
+      }),
+    );
     i = last + 1;
   }
   return out;
@@ -170,5 +196,9 @@ export function rangesOfSpan(stream: CharStream, span: MatchSpan): Range[] {
 /** Kann die Ansicht über die Highlight-API malen? (WebView2, WebKit ab 17.2.) */
 export function canPaintHighlights(): boolean {
   if (typeof window === "undefined" || typeof CSS === "undefined") return false;
-  return "highlights" in CSS && typeof Highlight !== "undefined";
+  return (
+    "highlights" in CSS &&
+    typeof Highlight !== "undefined" &&
+    typeof StaticRange !== "undefined"
+  );
 }

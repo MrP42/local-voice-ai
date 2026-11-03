@@ -185,7 +185,7 @@ export const ProjectMinutesView: React.FC<ProjectMinutesViewProps> = ({
         <div
           role="toolbar"
           aria-label={t("meetings.projectMinutes.view.toolbar")}
-          className="flex min-w-0 max-w-full flex-wrap items-center gap-2"
+          className="lv-touch-icons flex min-w-0 max-w-full flex-wrap items-center gap-2"
           data-testid="pm-toolbar"
         >
           <IconAction

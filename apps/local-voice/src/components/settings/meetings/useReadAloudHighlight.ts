@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RefObject } from "react";
 import {
   buildCharStream,
@@ -6,6 +6,7 @@ import {
   locateSentence,
   normalizeForMatch,
   rangesOfSpan,
+  type CharStream,
   type MatchSpan,
 } from "@/lib/readAloudHighlight";
 import { getReadAloudSession, subscribeReadAloud } from "./readAloudSession";
@@ -27,7 +28,10 @@ function scrollParent(el: Element | null): Element | null {
 }
 
 /** Den Satz ins Bild holen, wenn er außerhalb steht; sonst nichts bewegen. */
-function revealRange(range: Range) {
+function revealRange(at: StaticRange) {
+  const range = document.createRange();
+  range.setStart(at.startContainer, at.startOffset);
+  range.setEnd(at.endContainer, at.endOffset);
   const rect = range.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return;
   const container = scrollParent(range.startContainer.parentElement ?? null);
@@ -64,60 +68,114 @@ export function useReadAloudHighlight(
 ) {
   const session = useSyncExternalStore(subscribeReadAloud, getReadAloudSession);
   const mine = session?.key === speakKey ? session : null;
-  const sentence = mine?.sentence ?? null;
+  const active = mine !== null;
   const token = mine?.token ?? null;
+  const index = mine?.sentence?.index ?? null;
+  const text = mine?.sentence?.text ?? null;
 
-  // Fundstellen je Satznummer dieser Sitzung und dieses Inhalts: der nächste Satz wird
-  // hinter dem vorigen gesucht, gleichlautende Sätze treffen so die richtige Stelle.
+  // Rendert die Ansicht das Dokument neu (gleicher Text, neue Textknoten), zeigen alte
+  // Ranges ins Leere: ein MutationObserver am Wurzelelement zählt jede Änderung mit.
+  const [domVersion, setDomVersion] = useState(0);
+  const observed = useRef<{
+    root: HTMLElement | null;
+    obs: MutationObserver | null;
+  }>({ root: null, obs: null });
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (observed.current.root === root) return;
+    observed.current.obs?.disconnect();
+    const obs =
+      root && typeof MutationObserver !== "undefined"
+        ? new MutationObserver(() => setDomVersion((v) => v + 1))
+        : null;
+    obs?.observe(root!, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    observed.current = { root, obs };
+    // Neues Wurzelelement (Ansicht neu aufgebaut): neu zuordnen und malen.
+    setDomVersion((v) => v + 1);
+  });
+  useLayoutEffect(() => () => observed.current.obs?.disconnect(), []);
+
+  // Zeichenstrom je DOM-Stand, Fundstellen je Satznummer dieser Sitzung und dieses
+  // Stroms: der nächste Satz wird hinter dem vorigen gesucht, gleichlautende Sätze
+  // treffen so die richtige Stelle.
   const found = useRef<{
     token: number | null;
+    root: HTMLElement | null;
+    version: number;
     content: unknown;
+    stream: CharStream | null;
     spans: Map<number, MatchSpan>;
-  }>({ token: null, content: null, spans: new Map() });
+  }>({
+    token: null,
+    root: null,
+    version: -1,
+    content: null,
+    stream: null,
+    spans: new Map(),
+  });
   const own = useRef<Highlight | null>(null);
-  const shownIndex = useRef<number | null>(null);
+  const shown = useRef<string | null>(null);
 
   const clear = () => {
     if (own.current && CSS.highlights.get(READ_ALOUD_HIGHLIGHT) === own.current)
       CSS.highlights.delete(READ_ALOUD_HIGHLIGHT);
     own.current = null;
-    shownIndex.current = null;
+    shown.current = null;
   };
 
   useLayoutEffect(() => {
     if (!canPaintHighlights()) return;
     const root = rootRef.current;
-    if (!mine || !root) {
+    if (!active || !root) {
       clear();
       return;
     }
     // Nach einem Satzsprung ist der neue Satz kurz unbekannt: die alte Markierung
     // bleibt stehen, bis er gemeldet wird -- kein Flackern.
-    if (!sentence) return;
+    if (index === null || text === null) return;
 
-    const cache = found.current;
-    if (cache.token !== token || cache.content !== content) {
-      found.current = { token, content, spans: new Map() };
+    let cache = found.current;
+    if (
+      cache.token !== token ||
+      cache.root !== root ||
+      cache.version !== domVersion ||
+      cache.content !== content ||
+      !cache.stream
+    ) {
+      cache = {
+        token,
+        root,
+        version: domVersion,
+        content,
+        stream: buildCharStream(root),
+        spans: new Map(),
+      };
+      found.current = cache;
     }
-    const spans = found.current.spans;
+    const stream = cache.stream!;
+    const spans = cache.spans;
 
-    const stream = buildCharStream(root);
-    const wanted = normalizeForMatch(sentence.text);
-    let from = 0;
-    let prev = -1;
-    for (const [i, span] of spans) {
-      if (i < sentence.index && i > prev) {
-        prev = i;
-        from = span.end;
+    let span = spans.get(index) ?? null;
+    if (!span) {
+      let from = 0;
+      let prev = -1;
+      for (const [i, known] of spans) {
+        if (i < index && i > prev) {
+          prev = i;
+          from = known.end;
+        }
       }
+      span = locateSentence(stream, normalizeForMatch(text), from);
     }
-    const span =
-      spans.get(sentence.index) ?? locateSentence(stream.chars, wanted, from);
-    if (!span || span.end > stream.chars.length) {
+    if (!span) {
       clear();
       return;
     }
-    spans.set(sentence.index, span);
+    spans.set(index, span);
 
     const ranges = rangesOfSpan(stream, span);
     if (!ranges.length) {
@@ -127,11 +185,13 @@ export function useReadAloudHighlight(
     const h = new Highlight(...ranges);
     CSS.highlights.set(READ_ALOUD_HIGHLIGHT, h);
     own.current = h;
-    if (shownIndex.current !== sentence.index) {
-      shownIndex.current = sentence.index;
+    // Ins Bild holen bei jedem neuen Satz, neuen Lauf (Neustart) und neuen Aufbau der Ansicht.
+    const shownKey = `${token}:${index}`;
+    if (shown.current !== shownKey) {
+      shown.current = shownKey;
       revealRange(ranges[0]);
     }
-  }, [mine, sentence, token, content, rootRef]);
+  }, [active, token, index, text, content, domVersion, rootRef]);
 
   useLayoutEffect(
     () => () => {
