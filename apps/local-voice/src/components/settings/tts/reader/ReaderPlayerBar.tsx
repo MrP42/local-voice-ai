@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSectionActive } from "../../../shell/KeepAlive";
 import {
   ChevronUp,
   Moon,
@@ -342,6 +343,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     </span>
   ) : null;
 
+  const sectionActive = useSectionActive();
   // Schmal steht die Leiste fest unten (reader.css): Höhe an den
   // Arbeitsbereich melden (Platz frei halten), Abstand = Statusleiste.
   useEffect(() => {
@@ -355,11 +357,16 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
         ? Math.max(0, window.innerHeight - status.getBoundingClientRect().top)
         : 0;
       root.style.setProperty("--reader-player-bottom", `${bottom}px`);
+      const h = Math.ceil(root.getBoundingClientRect().height);
       workspace.style.setProperty(
         "--reader-player-h",
-        fixed
-          ? `${Math.ceil(root.getBoundingClientRect().height) + 12}px`
-          : "0px",
+        fixed ? `${h + 12}px` : "0px",
+      );
+      // App-weit: Meldungen (Toaster) und Bildlauf-Ziele halten Abstand zur
+      // festen Leiste – nur solange Vorlesen sichtbar ist.
+      document.documentElement.style.setProperty(
+        "--lv-player-h",
+        fixed && sectionActive ? `${h}px` : "0px",
       );
     };
     report();
@@ -370,8 +377,9 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
       ro.disconnect();
       window.removeEventListener("resize", report);
       workspace.style.removeProperty("--reader-player-h");
+      document.documentElement.style.removeProperty("--lv-player-h");
     };
-  }, []);
+  }, [sectionActive]);
 
   return (
     <div

@@ -1000,3 +1000,16 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     min-block-size: 44px;
   }
 }
+
+/* Feste Spielerleiste des Vorlesens (schmal, reader.css): Meldungen stehen
+   darüber, Bildlauf-Ziele (scrollIntoView) enden darüber. 0 px sonst. */
+:root {
+  --lv-player-h: 0px;
+}
+[data-sonner-toaster] {
+  --offset-bottom: calc(72px + var(--lv-player-h)) !important;
+  --mobile-offset-bottom: calc(72px + var(--lv-player-h)) !important;
+}
+#workspace-content {
+  scroll-padding-bottom: var(--lv-player-h);
+}
