@@ -5298,6 +5298,42 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
+ * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
+ */
+async libraryExportText(meta: LibraryExportMeta, markdown: string, path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_text", { meta, markdown, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ist ffmpeg erreichbar? Dann bietet der Exportdialog M4B und MP3 an.
+ */
+async libraryFfmpegAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("library_ffmpeg_available");
+},
+/**
+ * Hörbuch exportieren.
+ * 
+ * - `original`: ein Teil → Kopie nach `out_path` (Endung des Originals);
+ * mehrere Teile → `out_path` ist ein Ordner, darin „01 – Titel.ext“ …
+ * - `m4b` / `mp3`: alle Teile über ffmpeg in EINE Datei; M4B mit einer
+ * Kapitelmarke je Teil, wenn alle Teile eine Dauer haben.
+ * 
+ * Rückgabe: die geschriebenen Dateien.
+ */
+async libraryExportAudio(paths: string[], chapters: LibraryExportChapter[], outPath: string, format: string, title: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_audio", { paths, chapters, outPath, format, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -9147,6 +9183,22 @@ audio_path: string | null;
  * ist die Liste leer.
  */
 audio_paths?: string[] }
+/**
+ * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
+ */
+export type LibraryExportChapter = { title: string; duration_ms: number | null }
+/**
+ * Angaben des Buchs für Kopf und Cover der Exportdatei.
+ */
+export type LibraryExportMeta = { title: string; authors: string[]; 
+/**
+ * Sprachcode der Fassung (`de`, `en`); fehlt: unbekannt.
+ */
+language: string | null; 
+/**
+ * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
+ */
+cover_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe

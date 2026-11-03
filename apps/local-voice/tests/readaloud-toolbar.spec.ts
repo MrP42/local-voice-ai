@@ -217,11 +217,13 @@ test("the menu offers workshop, tidy, check and auto-tagging and each runs", asy
   await openMenu(page);
   await expect(menuButton).toHaveAttribute("aria-expanded", "true");
   const items = page.getByRole("menuitem");
-  await expect(items).toHaveCount(4);
+  await expect(items).toHaveCount(5);
   await expect(items.nth(0)).toContainText("Skript-Werkstatt");
   await expect(items.nth(1)).toContainText("Text aufbereiten");
   await expect(items.nth(2)).toContainText("Skript prüfen");
   await expect(items.nth(3)).toContainText("Auto-Tagging");
+  // lva#236: Export jeder Fassung aus dem Vorlesen.
+  await expect(items.nth(4)).toContainText("Exportieren");
 
   // Werkstatt: Dialog auf.
   await page.getByTestId("workshop-open").click();

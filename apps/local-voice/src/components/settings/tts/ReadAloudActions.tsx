@@ -10,6 +10,7 @@ import {
   Menu,
   Mic,
   Plus,
+  Share2,
   Sparkles,
   SpellCheck,
   Tags,
@@ -77,6 +78,8 @@ export interface ReadAloudActionsProps {
   sentenceCounter: Progress | null;
 
   onOpenWorkshop: () => void;
+  /** lva#236: Fassungen exportieren (EPUB, PDF, Word, Audio …). */
+  onExport?: () => void;
   tidying: boolean;
   onTidy: () => void;
   errorCount: number;
@@ -462,6 +465,18 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
   ];
 
   const tidyLabel = tidying ? t("tts.tidying") : t("tts.tidy");
+  const exportItem: ActionMenuItem[] = props.onExport
+    ? [
+        {
+          id: "export",
+          label: t("library.export.menu"),
+          icon: Share2,
+          onSelect: props.onExport,
+          testId: "tts-export-open",
+          title: t("library.export.readerHint"),
+        },
+      ]
+    : [];
   const menuItems: ActionMenuItem[] = [
     {
       id: "workshop",
@@ -512,6 +527,7 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
       testId: "autotag-open",
       title: props.autoTagBlockedReason,
     },
+    ...exportItem,
   ];
 
   // Übersetzung und Zusammenfassung: dasselbe Menü, aber nur, was auf den
@@ -519,7 +535,10 @@ export const ReadAloudActions: React.FC<ReadAloudActionsProps> = (props) => {
   // Original und bleiben dort.
   const otherTabItems: ActionMenuItem[] = [
     ...menuItems.filter(
-      (item) => item.id === "workshop" || item.id === "script-check",
+      (item) =>
+        item.id === "workshop" ||
+        item.id === "script-check" ||
+        item.id === "export",
     ),
     ...(tab === "translation"
       ? [
