@@ -6,11 +6,13 @@ import {
   ArrowLeft,
   BookOpen,
   Check,
+  Download,
   Headphones,
   ImageIcon,
   Pencil,
   Play,
   RefreshCw,
+  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -27,6 +29,8 @@ import { Formats, jobLabel, ProgressBar } from "./LibraryPage";
 import type { TranscriptJob } from "./useLibrary";
 import { MetadataPicker } from "./MetadataPicker";
 import { KurzbuchCard } from "./KurzbuchCard";
+import "./fassungen.css";
+import type { KiCreateTab } from "./KiCreateDialog";
 import {
   fileNameOf,
   formatDuration,
@@ -67,6 +71,10 @@ interface Props {
   onChanged(): Promise<void>;
   /** Beim Öffnen gleich den Titel bearbeiten (⋮ → „Titel bearbeiten“). */
   editTitle?: boolean;
+  /** lva#236: „Mit KI erstellen“ (Übersetzung, Kurzbuch, KI-Dokument). */
+  onCreate?(tab: KiCreateTab): void;
+  /** lva#236: Fassungen exportieren. */
+  onExport?(): void;
 }
 
 /**
@@ -85,6 +93,8 @@ export const BookDetail: React.FC<Props> = ({
   onRemove,
   onChanged,
   editTitle = false,
+  onCreate,
+  onExport,
 }) => {
   const { t } = useTranslation();
   const { book } = view;
@@ -353,6 +363,30 @@ export const BookDetail: React.FC<Props> = ({
           >
             {isFinished(view) ? t("library.markUnfinished") : t("library.markFinished")}
           </Button>
+          {(onCreate || onExport) && (
+            <div className="library-actions__pair">
+              {onCreate && (
+                <Button
+                  size="lg"
+                  icon={<Sparkles size={16} aria-hidden="true" />}
+                  onClick={() => onCreate("translation")}
+                  data-testid="library-detail-ki"
+                >
+                  {t("library.ki.short")}
+                </Button>
+              )}
+              {onExport && (
+                <Button
+                  size="lg"
+                  icon={<Download size={16} aria-hidden="true" />}
+                  onClick={onExport}
+                  data-testid="library-detail-export"
+                >
+                  {t("library.export.short")}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

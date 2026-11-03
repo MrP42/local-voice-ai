@@ -5353,6 +5353,42 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
+ * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
+ */
+async libraryExportText(meta: LibraryExportMeta, markdown: string, path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_text", { meta, markdown, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ist ffmpeg erreichbar? Dann bietet der Exportdialog M4B und MP3 an.
+ */
+async libraryFfmpegAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("library_ffmpeg_available");
+},
+/**
+ * Hörbuch exportieren.
+ * 
+ * - `original`: ein Teil → Kopie nach `out_path` (Endung des Originals);
+ * mehrere Teile → `out_path` ist ein Ordner, darin „01 – Titel.ext“ …
+ * - `m4b` / `mp3`: alle Teile über ffmpeg in EINE Datei; M4B mit einer
+ * Kapitelmarke je Teil, wenn alle Teile eine Dauer haben.
+ * 
+ * Rückgabe: die geschriebenen Dateien.
+ */
+async libraryExportAudio(paths: string[], chapters: LibraryExportChapter[], outPath: string, format: string, title: string) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("library_export_audio", { paths, chapters, outPath, format, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async booksList() : Promise<Result<Book[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("books_list") };
@@ -6016,6 +6052,20 @@ async ttsTextAssist(task: string, lines: string) : Promise<Result<string, string
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sprechfassung: den Text so umsetzen, dass eine Vorlesestimme ohne
+ * Betonungs-Steuerung (Phonon, Piper) ihn richtig betont — Satzzeichen,
+ * Satzteilung, Zahlen ausschreiben. Nichts kürzen; die Prüfung
+ * `summarizer::check_speech_version` lehnt Inhaltsänderungen ab.
+ */
+async ttsSpeechText(text: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_speech_text", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async ttsExtractDocument(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_extract_document", { path }) };
@@ -6287,6 +6337,43 @@ async libraryProgressLoad() : Promise<Result<Partial<{ [key in string]: string }
 async libraryProgressPut(entries: ProgressEntry[]) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("library_progress_put", { entries }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Gespeicherter Abgleich des Buchs (leer, wenn der Text sich geändert hat).
+ */
+async audiosyncLoad(bookId: string) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_load", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein Fenster des Hörbuchs erkennen und gegen den Text legen.
+ * 
+ * `from_ms` und `len_ms` gelten global über alle Teile; ein Fenster endet
+ * am Ende seines Teils. `hint`: erwartete Zeichenstelle (aus dem letzten
+ * Fenster oder der Schätzung); ohne Hinweis wird das ganze Buch durchsucht.
+ */
+async audiosyncWindow(bookId: string, fromMs: number, lenMs: number, hintChars: number | null) : Promise<Result<AudioSyncWindow, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_window", { bookId, fromMs, lenMs, hintChars }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stelle von Hand setzen: bei `ms` im Hörbuch ist Zeichen `chars` zu hören.
+ */
+async audiosyncAnchor(bookId: string, chars: number, ms: number) : Promise<Result<AudioSyncCache, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("audiosync_anchor", { bookId, chars, ms }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6852,6 +6939,19 @@ async ttsProviderSetAllowRemote(id: string, allow: boolean) : Promise<Result<nul
 async ttsProviderSetVisibleVoices(id: string, voices: string[]) : Promise<Result<null, TtsError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_visible_voices", { id, voices }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Eigenen Anzeigenamen einer Stimme setzen; `name` leer oder `None`: ursprünglicher Name. Gilt für
+ * jeden Anbieter (auch Piper); Fish-Stimmen tragen ihren Namen in den eigenen Metadaten
+ * (`tts_set_voice_meta`). `original`: der Name, den die Oberfläche als ursprünglich zeigt.
+ */
+async ttsProviderSetVoiceName(id: string, voice: string, name: string | null, original: string | null) : Promise<Result<null, TtsError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("tts_provider_set_voice_name", { id, voice, name, original }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7741,6 +7841,39 @@ export type AudioSegment = { text: string;
  * Sprecher dieses Satzes; `None` ist die Stimme des Stuecks.
  */
 voice: string | null; start_ms: number; end_ms: number }
+/**
+ * Inhalt von `sync-live.json`.
+ */
+export type AudioSyncCache = { 
+/**
+ * Fingerabdruck des Buchtexts; passt er nicht, ist der Cache verworfen.
+ */
+text_key: string; points: SyncPoint[]; inserts: AudioSyncInsert[]; covered: AudioSyncSpan[]; 
+/**
+ * Von Hand gesetzte Stellen („dieser Satz ist gerade zu hören“). Sie
+ * gehen den erkannten Punkten vor.
+ */
+anchors?: SyncPoint[] }
+/**
+ * Gehörter Text ohne Gegenstück im Buch (vor Zeichen `at`).
+ */
+export type AudioSyncInsert = { at: number; start_ms: number; end_ms: number; text: string }
+/**
+ * Abgedeckter Zeitraum des Hörbuchs (ms, global über alle Teile).
+ */
+export type AudioSyncSpan = { from_ms: number; to_ms: number }
+/**
+ * Ergebnis eines Fensters.
+ */
+export type AudioSyncWindow = { points: SyncPoint[]; inserts: AudioSyncInsert[]; 
+/**
+ * Anteil der gehörten Wörter mit Treffer (0..1).
+ */
+coverage: number; 
+/**
+ * Hinweis für das nächste Fenster (Buchwort-Index nach dem letzten Treffer).
+ */
+next_hint: number | null; from_ms: number; to_ms: number }
 /**
  * Ein Teil (Datei) eines Hörbuchs.
  */
@@ -9202,6 +9335,22 @@ audio_path: string | null;
  * ist die Liste leer.
  */
 audio_paths?: string[] }
+/**
+ * Ein Teil des Hörbuchs als Kapitelmarke (M4B).
+ */
+export type LibraryExportChapter = { title: string; duration_ms: number | null }
+/**
+ * Angaben des Buchs für Kopf und Cover der Exportdatei.
+ */
+export type LibraryExportMeta = { title: string; authors: string[]; 
+/**
+ * Sprachcode der Fassung (`de`, `en`); fehlt: unbekannt.
+ */
+language: string | null; 
+/**
+ * Absoluter Pfad des Covers (mit oder ohne `?v=`), nur für EPUB.
+ */
+cover_path: string | null }
 /**
  * Zustimmung des Nutzers zu den Lizenzangaben eines Anbieters. Gilt nur,
  * solange `fingerprint` dem aktuellen Stand entspricht (siehe
@@ -11369,7 +11518,12 @@ voice: string | null;
  * Stimmen, die im Vorlesen-Dropdown stehen (leer = alle). Siehe
  * [`TtsProvidersSettings::visible_voices`]; gesetzt über `tts_provider_set_visible_voices`.
  */
-visible_voices: string[] }
+visible_voices: string[]; 
+/**
+ * Eigene Anzeigenamen je Stimmen-Kennung ([`TtsProvidersSettings::voice_names`]); gesetzt über
+ * `tts_provider_set_voice_name`. Die Stimmenlisten der Befehle tragen sie schon in `label`.
+ */
+voice_names: Partial<{ [key in string]: string }> }
 /**
  * Ereignis `tts-provider-preview` (siehe Moduldoku).
  */
@@ -11418,7 +11572,14 @@ voices: Partial<{ [key in string]: string }>;
  * Die Liste „keine“ ist `["default"]` (die Standardstimme steht immer da). Die gerade gewählte
  * Stimme bleibt in jedem Fall sichtbar ([`visible_voice`]).
  */
-visible_voices: Partial<{ [key in string]: string[] }> }
+visible_voices: Partial<{ [key in string]: string[] }>; 
+/**
+ * Eigene Anzeigenamen je Anbieter und Stimme (nur `tts_provider_set_voice_name`), z. B.
+ * `phonon` → `Erzaehlerin` → `Erzählerin`. Die Kennung der Stimme bleibt unverändert (Synthese,
+ * Auswahl, Sichtbarkeit, Hörproben); nur die Beschriftung wechselt ([`apply_voice_names`]).
+ * Gilt für alle Anbieter mit Stimmenliste und für Piper (`piper` → Katalog-Kennung).
+ */
+voice_names: Partial<{ [key in string]: Partial<{ [key in string]: string }> }> }
 export type TtsRuntimeStatus = { 
 /**
  * `windows-x64`, `macos-aarch64`, ... (wie im Katalog).
