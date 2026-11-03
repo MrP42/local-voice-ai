@@ -108,6 +108,7 @@ test.beforeEach(async ({ page }) => {
                 model: "qwen3-8b",
               }
             );
+          if (cmd === "page_state_load") return (w.__pageState as string | undefined) ?? null;
           if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
           // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
           if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
@@ -654,6 +655,74 @@ test("ein Kurzbuch zeigt Überblick und Kernaussagen und liest ab einer Kernauss
       (await calls(page)).slice(before).some(([c]) => c.startsWith("tts_")),
     )
     .toBe(true);
+});
+
+// Patrick 02.11.2026: das Kurzbuch öffnete immer im Bearbeiten-Modus. Ein
+// geöffnetes Dokument zeigt die gemerkte Ansicht (Standard: Lesen).
+const kurzbuchDoc = {
+  ...kiDoc(1, "builtin:kurzbuch"),
+  title: "Kurzbuch – Ganzes Buch",
+  template_title: "Kurzbuch",
+};
+const kurzbuchPanel = (page: Page) =>
+  page.getByRole("complementary", { name: "Überblick des Kurzbuchs" });
+const viewButton = (page: Page, name: "Lesen" | "Bearbeiten") =>
+  page.getByRole("group", { name: "Ansicht" }).getByRole("button", { name });
+const openKurzbuchCard = (page: Page) =>
+  page.getByTestId(`kidocs-card-${kurzbuchDoc.id}`).locator("button").first().click();
+
+test("das Kurzbuch öffnet in der gemerkten Ansicht, auch nach Zurück und Wiederöffnen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+    },
+    [[kurzbuchDoc], KURZBUCH] as const,
+  );
+  await open(page);
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await openKurzbuchCard(page);
+  // Ohne Klick auf „Lesen“: die Standardansicht gilt.
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
+  // Bearbeiten wählen, zurück zur Liste, wieder öffnen: bleibt Bearbeiten.
+  await viewButton(page, "Bearbeiten").click();
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(page.getByTestId("kidoc-head")).toBeVisible();
+  await expect(viewButton(page, "Bearbeiten")).toHaveAttribute("aria-pressed", "true");
+  await expect(kurzbuchPanel(page)).toHaveCount(0);
+  // Und Lesen wieder gewählt: bleibt Lesen.
+  await viewButton(page, "Lesen").click();
+  await page.getByTestId("kidoc-head").getByRole("button").first().click();
+  await openKurzbuchCard(page);
+  await expect(kurzbuchPanel(page)).toBeVisible();
+});
+
+test("ein beim Start offenes Kurzbuch steht im Lesemodus", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1000 });
+  await page.addInitScript(
+    ([docs, text, state]) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__kidocs = docs;
+      w.__docText = text;
+      w.__pageState = state;
+    },
+    [
+      [kurzbuchDoc],
+      KURZBUCH,
+      JSON.stringify({ text: ORIGINAL, tab: "summary", kiDoc: kurzbuchDoc.id }),
+    ] as const,
+  );
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: "Vorlesen", exact: true }).click();
+  await expect(kurzbuchPanel(page)).toBeVisible();
+  await expect(viewButton(page, "Lesen")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumentansicht", async ({
