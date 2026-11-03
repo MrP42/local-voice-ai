@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 
 // Vorlesen mit mehreren Sprechern über einen Anbieter (Phonon zuerst, jeder Anbieter
@@ -24,6 +25,8 @@ type Cfg = {
   pace?: boolean;
   /** Farbschema (Vorgabe: hell). */
   theme?: "light" | "dark";
+  /** Sprachmodell für Vorlesen: lokal oder Cloud (Vorgabe: keins). */
+  llm?: "local" | "cloud";
 };
 
 async function setup(page: Page, cfg: Cfg) {
@@ -64,6 +67,34 @@ async function setup(page: Page, cfg: Cfg) {
       tts_piper_voice: null,
       tts_translate_lang: "English",
       tts_script_check: true,
+      ...(cfg.llm
+        ? {
+            llm_connections: [
+              cfg.llm === "local"
+                ? {
+                    id: "c1",
+                    kind: "local",
+                    label: "Lokal",
+                    base_url: "http://127.0.0.1:0/v1",
+                  }
+                : {
+                    id: "c1",
+                    kind: "openai",
+                    label: "Beispiel-Cloud",
+                    base_url: "https://api.example.com/v1",
+                  },
+            ],
+            llm_models: [
+              {
+                id: "m1",
+                connection_id: "c1",
+                remote_id: "qwen3-8b",
+                label: "Qwen3 8B",
+              },
+            ],
+            llm_active_model_id: "m1",
+          }
+        : {}),
       tts_providers: {
         enabled: ["phonon"],
         license_acks: [],
@@ -234,6 +265,8 @@ async function setup(page: Page, cfg: Cfg) {
           if (cmd === "tts_translate")
             return "<Nele> Good day.\n<Anton> Hello everyone.";
           if (cmd === "tts_cached_translation") return null;
+          if (cmd === "tts_speech_text")
+            return "Die Strecke ist zwölfeinhalb Kilometer lang.";
           if (cmd === "tts_list_downloads") return [];
           if (
             cmd === "llm_ps" ||
@@ -498,6 +531,113 @@ test("Phonon mit Tempo-Tags: Palette bietet Tempo, KI-Vortrag ist frei", async (
 
   await page.getByTestId("tts-action-menu").click();
   await expect(page.getByTestId("autotag-open")).toBeEnabled();
+});
+
+test("Sprechfassung ersetzt den Text, Rückgängig holt das Original", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", llm: "local" });
+  await gotoReadAloud(page);
+  const editor = editorOf(page);
+  await editor.fill("Die Strecke ist 12,5 km lang.");
+  await pickMenuItem(page, "speech-run");
+  // Erst der Hinweis: Text wird ersetzt, Verarbeitung lokal mit Modell.
+  await expect(page.getByTestId("speech-replace-note")).toContainText(
+    "ersetzt den gesamten Text",
+  );
+  await expect(page.getByTestId("speech-where")).toContainText(
+    "lokal auf diesem Rechner",
+  );
+  await expect(page.getByTestId("speech-where")).toContainText("Qwen3 8B");
+  expect(await calls(page, "tts_speech_text")).toHaveLength(0);
+  await page.getByTestId("speech-start").click();
+  await expect(editor).toHaveValue(
+    "Die Strecke ist zwölfeinhalb Kilometer lang.",
+  );
+  const sent = (await calls(page, "tts_speech_text")) as [
+    string,
+    { text: string },
+  ][];
+  expect(sent.at(-1)?.[1].text).toBe("Die Strecke ist 12,5 km lang.");
+  await page.locator("button[data-action]", { hasText: "Rückgängig" }).click();
+  await expect(editor).toHaveValue("Die Strecke ist 12,5 km lang.");
+});
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Bild: Sprechfassung ${width} ${theme} (nur mit SCREENS_DIR)`, async ({
+      page,
+    }) => {
+      const dir = process.env.SCREENS_DIR;
+      test.skip(!dir, "nur mit SCREENS_DIR");
+      // Hell zeigt die lokale, dunkel die Cloud-Verarbeitung.
+      const llm = theme === "light" ? "local" : "cloud";
+      await setup(page, { engine: "provider:phonon", theme, llm });
+      await gotoReadAloud(page);
+      await page.setViewportSize({ width, height: width > 600 ? 900 : 844 });
+      const editor = editorOf(page);
+      await editor.fill("Die Strecke ist 12,5 km lang.");
+      const name = (n: string) => `${dir}/${n}-${width}-${theme}.png`;
+      await page.getByTestId("tts-action-menu").click();
+      await expect(page.getByTestId("speech-run")).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: name("1-menue") });
+      await page.getByTestId("speech-run").click();
+      await expect(page.getByTestId("speech-where")).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: name(`2-hinweis-${llm}`) });
+      await page.getByTestId("speech-start").click();
+      await expect(editor).toHaveValue(
+        "Die Strecke ist zwölfeinhalb Kilometer lang.",
+      );
+      await expect(
+        page.locator("button[data-action]", { hasText: "Rückgängig" }),
+      ).toBeVisible();
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: name("3-ergebnis") });
+    });
+  }
+}
+
+test("Sprechfassung bei 390 px: Menüzeilen und Dialogknöpfe sind mindestens 44 px hoch", async ({
+  page,
+}) => {
+  await setup(page, { engine: "provider:phonon", llm: "cloud" });
+  await gotoReadAloud(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await editorOf(page).fill("Die Strecke ist 12,5 km lang.");
+  const measure = async (items: import("@playwright/test").Locator) => {
+    const rows: string[] = [];
+    for (const item of await items.all()) {
+      const box = await item.boundingBox();
+      if (!box) continue;
+      rows.push(
+        `${(await item.innerText()).split("\n")[0].trim()}: ${Math.round(box.width)}x${Math.round(box.height)}`,
+      );
+      expect(box.height, await item.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    return rows;
+  };
+  await page.getByTestId("tts-action-menu").click();
+  await expect(page.getByTestId("speech-run")).toBeVisible();
+  const menu = await measure(
+    page.getByRole("menuitem").filter({ visible: true }),
+  );
+  expect(menu.length).toBeGreaterThanOrEqual(5);
+  await page.getByTestId("speech-run").click();
+  await expect(page.getByTestId("speech-where")).toContainText(
+    "Beispiel-Cloud",
+  );
+  const dialog = await measure(
+    page.locator('[data-testid="speech-cancel"], [data-testid="speech-start"]'),
+  );
+  expect(dialog).toHaveLength(2);
+  const dir = process.env.SCREENS_DIR;
+  if (dir)
+    fs.writeFileSync(
+      `${dir}/touchziele-390.txt`,
+      `Aktionsmenü (390 px):\n${menu.join("\n")}\n\nDialog Sprechfassung (390 px):\n${dialog.join("\n")}\n`,
+    );
 });
 
 test("Phonon ohne Stimmwechsel: keine Sprecher im Skript", async ({ page }) => {

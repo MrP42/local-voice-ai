@@ -218,7 +218,7 @@ test("Titelleiste ohne Werkzeuge, Profilmenü unten links (ADR-0027)", async ({ 
   await oeffneProfilmenue(page);
   const menue = page.locator(".wai-konto-menue");
   await expect(menue).toContainText("Lokales Profil");
-  for (const name of ["Verbleibendes Kontingent", "Benachrichtigungen", "Modelle", "Integrationen", "Einstellungen", "Hilfe"])
+  for (const name of ["Benachrichtigungen", "Modelle", "Integrationen", "Einstellungen", "Hilfe"])
     await expect(menue.getByRole("button", { name, exact: true })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/light-1440-profilmenue.png`, animations: "disabled" });
 

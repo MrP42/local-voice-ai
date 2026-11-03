@@ -82,30 +82,106 @@
 .library-top--solo {
   grid-template-columns: minmax(0, 1fr);
 }
+/* Weitermachen (Patrick 03.11.): kompakte Karten statt ganzer Zeilen. Bis zu
+   drei nebeneinander, jede ein Ganzes: Klick öffnet die Produktseite,
+   Abspielen sitzt unten rechts darüber. */
 .library-continue {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr));
   gap: 12px;
 }
 .library-ccard {
+  position: relative;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-columns: 56px minmax(0, 1fr);
   gap: 12px;
-  align-items: center;
+  align-items: start;
+  min-width: 0;
+  padding: 10px 10px 10px 10px;
   border: 1px solid var(--lib-line);
   border-radius: 8px;
-  padding: 10px;
+  background: var(--colorNeutralBackground1, transparent);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.library-ccard:hover {
+  border-color: color-mix(in srgb, var(--color-mid-gray) 60%, transparent);
+  box-shadow: var(--shadow4, 0 1px 3px rgb(0 0 0 / 0.12));
+}
+.library-ccard:has(.library-ccard__title:focus-visible) {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: 2px;
+}
+.library-ccard__cover {
+  width: 56px;
+}
+.library-ccard__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 84px;
 }
 .library-ccard__title {
-  font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   background: none;
   border: 0;
   padding: 0;
   color: inherit;
   font: inherit;
+  font-size: 14px;
+  line-height: 20px;
   font-weight: 600;
   text-align: start;
   cursor: pointer;
+}
+/* Der Titel deckt die ganze Karte ab: überall klickbar, ein Tabstopp. */
+.library-ccard__title::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+}
+.library .library-ccard__title:focus-visible {
+  outline: none;
+}
+.library-ccard__author {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-ccard__foot {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+.library-ccard__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 2px;
+}
+.library-ccard__status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.library-ccard__play {
+  position: relative;
+  z-index: 1;
 }
 .library-play {
   width: 44px;
@@ -597,9 +673,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 16px 12px;
   }
-  .library-continue {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .library-hero {
     grid-template-columns: minmax(0, 1fr);
     padding: 14px;
@@ -707,10 +780,18 @@
   font-weight: 600;
 }
 
+/* Hinzufügen in der Titelleiste: nur das Plus, volle Leistenhöhe. */
+.library-add-button.lv-btn {
+  min-width: 44px;
+  min-height: 40px;
+}
 /* Touch (≤ 760 px): Filter, Sortierung und Menüs mit Trefferfläche ≥ 44 px. */
 @media (max-width: 760px) {
   .library-chip {
     min-height: 44px;
+    min-width: 44px;
+  }
+  .library-add-button.lv-btn {
     min-width: 44px;
   }
   .library-add-button.lv-btn,

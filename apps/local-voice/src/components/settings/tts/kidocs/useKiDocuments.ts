@@ -72,6 +72,16 @@ export function useKiDocuments(pageId: string | null): KiDocumentsState {
     void reload();
   }, [pageId, reload]);
 
+  // lva#236: ein KI-Dokument aus der Bibliothek ist fertig.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const page = (e as CustomEvent<{ page: string }>).detail?.page;
+      if (page && page === pageRef.current) void reload();
+    };
+    window.addEventListener("lv-kidocs-changed", on);
+    return () => window.removeEventListener("lv-kidocs-changed", on);
+  }, [reload]);
+
   useEffect(() => {
     void commands.bookAiTemplates().then((result) => {
       if (result.status === "ok" && Array.isArray(result.data))

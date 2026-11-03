@@ -487,7 +487,8 @@ test("help choice survives reload, page switch and module switch", async ({
     .getByRole("navigation")
     .getByRole("button", { name: "Verlauf", exact: true })
     .click();
-  await expect(page.getByTestId("tts-files")).toHaveCount(0);
+  // Vorlesen bleibt erhalten (KeepAlive), ist aber verdeckt.
+  await expect(page.getByTestId("tts-files")).toBeHidden();
   await goToReadAloud(page);
   await expect(help).toBeVisible();
 

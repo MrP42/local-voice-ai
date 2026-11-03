@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useSectionActive } from "../shell/KeepAlive";
 import {
   BookOpen,
   ListMusic,
@@ -404,6 +405,19 @@ export const AudioBar: React.FC<Props> = ({
       el.pause();
     }
   };
+
+  // Die Bibliothek bleibt beim Bereichswechsel erhalten (KeepAlive); ohne
+  // sichtbare Leiste hört niemand weiter: anhalten und die Stelle sichern.
+  const sectionActive = useSectionActive();
+  useEffect(() => {
+    if (sectionActive) return;
+    // Auch während des Ladens: kein späteres Anlaufen im Verborgenen.
+    wantPlay.current = false;
+    const el = audio.current;
+    if (!el || el.paused) return;
+    el.pause();
+    persistRef.current(true);
+  }, [sectionActive]);
 
   useEffect(() => {
     return () => {

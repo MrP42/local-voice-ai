@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
+import { oeffneProfilmenue } from "./profilmenue";
 
 // Bibliothek (lva#152): ein Buch = ein Eintrag, Raster mit Weiterhören,
 // Produktseite, Hinzufügen mit Dublettenerkennung, dauerhafter Fortschritt.
@@ -3243,3 +3244,245 @@ for (const [width, height, theme] of [
     await page.screenshot({ path: shot(`papierkorb-stern-${width}-${theme}.png`) });
   });
 }
+
+// Patrick 03.11.: Weitermachen kompakt, ganze Karte öffnet die Produktseite.
+test("Weitermachen: kompakte Karte, Klick irgendwo auf die Karte öffnet die Produktseite", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const card = page.getByTestId("library-continue-card").filter({ hasText: "Effi Briest" });
+  await expect(card).toBeVisible();
+  const box = (await card.boundingBox())!;
+  expect(box.width).toBeLessThanOrEqual(420);
+  await expect(card.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+  await page.screenshot({ path: shot("bibliothek-weitermachen-1440.png") });
+  // Unten links auf den Fortschritt, nicht auf den Titel: öffnet trotzdem.
+  await card.click({ position: { x: box.width / 2, y: box.height - 14 } });
+  await expect(
+    page.getByTestId("library-detail").getByRole("heading", { name: "Effi Briest" }),
+  ).toBeVisible();
+});
+
+test("Weitermachen 390: eine Spalte, keine waagerechte Scrollleiste, Lesen ≥ 44 px", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const card = page.getByTestId("library-continue-card").first();
+  await expect(card).toBeVisible();
+  const quick = card.getByTestId("library-read-quick");
+  const q = (await quick.boundingBox())!;
+  expect(q.width).toBeGreaterThanOrEqual(44);
+  expect(q.height).toBeGreaterThanOrEqual(44);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true);
+});
+
+const nav = (page: Page, name: string) =>
+  page.getByRole("navigation").getByRole("button", { name, exact: true });
+
+test("Hin und her zwischen Bibliothek und Vorlesen: kein Neuladen, Zustand bleibt, Buchtitel oben", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const search = page.getByRole("searchbox").or(page.getByPlaceholder(/Titel, Autor/)).first();
+  await search.fill("Effi");
+  await expect(page.getByTestId("library-card")).toHaveCount(1);
+
+  await nav(page, "Vorlesen").click();
+  await expect(page.getByTestId("reader-book").or(page.locator(".tts-workspace")).first()).toBeVisible();
+  // Geöffnetes Buch steht in der Titelleiste.
+  const context = page.locator(".lv-titlebar").getByTestId("page-context");
+  await expect(context).toContainText("Effi Briest");
+  await expect(context).toHaveAttribute("aria-label", "Geöffnetes Buch: Effi Briest");
+  await page.screenshot({ path: shot("vorlesen-buchtitel-1440.png") });
+  // Merkmal am Lesetext: überlebt nur, wenn Vorlesen nicht neu eingehängt wird.
+  await page.getByTestId("reader-book").evaluate((el) => el.setAttribute("data-probe", "1"));
+
+  await nav(page, "Bibliothek").click();
+  // Die Suche ist noch da, der Buchtitel des Vorlesens nicht mehr.
+  await expect(search).toHaveValue("Effi");
+  await expect(page.getByTestId("library-card")).toHaveCount(1);
+  await expect(page.locator(".lv-titlebar").getByTestId("page-context")).toHaveCount(0);
+  // Hinzufügen ist dezent: nur das Plus, der Name steht im Tooltip.
+  const add = page.locator(".lv-titlebar").getByRole("button", { name: /Hinzufügen/ });
+  await expect(add).toHaveCount(1);
+  await expect(add).toHaveText("");
+
+  await nav(page, "Vorlesen").click();
+  await expect(context).toContainText("Effi Briest");
+  // Nicht neu eingehängt: derselbe Lesetext, sofort sichtbar, nichts geleert.
+  await expect(page.locator("[data-testid=reader-book][data-probe='1']")).toBeVisible({
+    timeout: 1000,
+  });
+  // Die Werkzeuge der verdeckten Bibliothek bleiben aus der Titelleiste.
+  await expect(
+    page.locator(".lv-titlebar").getByRole("button", { name: /Hinzufügen/ }),
+  ).toHaveCount(0);
+});
+
+test("Vorlesen bleibt erhalten und übernimmt trotzdem ein anderes Buch aus der Bibliothek", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await nav(page, "Vorlesen").click();
+  const context = page.locator(".lv-titlebar").getByTestId("page-context");
+  await expect(context).toContainText("Effi Briest");
+  await nav(page, "Bibliothek").click();
+  await page
+    .getByTestId("library-card")
+    .filter({ hasText: "Die Verwandlung" })
+    .getByTestId("library-play")
+    .click();
+  await expect(context).toContainText("Die Verwandlung");
+  await expect
+    .poll(async () =>
+      (await calls(page, "tts_speak_text")).length +
+      (await calls(page, "tts_speak_resume")).length,
+    )
+    .toBeGreaterThan(0);
+});
+
+test("Profilmenü: kein Kontingent, Modelle führt direkt zur Verwaltung", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await oeffneProfilmenue(page);
+  const menue = page.locator(".wai-konto-menue");
+  await expect(menue.locator("[data-profilmenue=kontingent]")).toHaveCount(0);
+  await expect(menue.getByText(/Kontingent/)).toHaveCount(0);
+  await menue.getByRole("button", { name: "Modelle", exact: true }).click();
+  await expect(menue).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem("lva.ui.section")))
+    .toBe("models");
+});
+
+// Belege für die Abnahme (Patrick 03.11.): Weitermachen mit drei Büchern,
+// Buchtitel im Vorlesen, Profilmenü – 390/1440, hell/dunkel.
+for (const [width, height] of [
+  [1440, 900],
+  [390, 844],
+] as const) {
+  for (const theme of ["hell", "dunkel"] as const) {
+    test(`Belege Weitermachen und Buchtitel ${width} ${theme}`, async ({ page }) => {
+      await page.addInitScript((dark) => {
+        const w = window as unknown as { __settings: { theme: string } };
+        if (dark) w.__settings.theme = "dark";
+        const now = Date.now();
+        window.localStorage.setItem(
+          "lva.ui.progress.text:page_3:original",
+          JSON.stringify({ offset: 120, length: 1000, heard: [[0, 120]], read: [], updated: now - 5000 }),
+        );
+        window.localStorage.setItem(
+          "lva.ui.progress.audio:book_2",
+          JSON.stringify({ offset: 1800000, length: 31260000, unit: "ms", heard: [[0, 1800000]], read: [], updated: now - 9000 }),
+        );
+      }, theme === "dunkel");
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      await expect(page.getByTestId("library-continue-card")).toHaveCount(3);
+      await expect(page.getByTestId("library-continue-card").first()).toBeVisible();
+      await page.screenshot({ path: shot(`vorschau-weitermachen-${width}-${theme}.png`) });
+      if (width < 768) await page.locator(".lv-titlebar__hamburger").click();
+      await nav(page, "Vorlesen").click();
+      await expect(page.locator(".lv-titlebar").getByTestId("page-context")).toBeVisible();
+      await page.screenshot({ path: shot(`vorschau-vorlesen-titel-${width}-${theme}.png`) });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      await oeffneProfilmenue(page);
+      await page.screenshot({ path: shot(`vorschau-profilmenue-${width}-${theme}.png`) });
+    });
+  }
+}
+
+// Codex-Auflagen (03.11.): Spielerleiste bei 390 ganz sichtbar, Tooltip des
+// Plus, Touchziele ≥ 44 px mit Messwerten.
+for (const theme of ["hell", "dunkel"] as const) {
+  test(`390 ${theme}: Spielerleiste im Vorlesen vollständig über der Statusleiste`, async ({
+    page,
+  }) => {
+    if (theme === "dunkel")
+      await page.addInitScript(() => {
+        (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+      });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.locator(".lv-titlebar__hamburger").click();
+    await nav(page, "Vorlesen").click();
+    const player = page.getByTestId("reader-player");
+    await expect(player).toBeVisible();
+    const status = (await page.locator(".lv-statusbar").boundingBox())!;
+    const buttons = await player.locator("button:visible").all();
+    expect(buttons.length).toBeGreaterThan(3);
+    for (const b of buttons) {
+      const box = (await b.boundingBox())!;
+      expect(box.y + box.height, await b.getAttribute("aria-label")).toBeLessThanOrEqual(status.y + 0.5);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+    }
+    await page.screenshot({ path: shot(`vorschau-vorlesen-titel-390-${theme}.png`) });
+    // Ganz nach unten gerollt: der Inhalt (Seitenfußzeile) steht vollständig
+    // über der festen Spielerleiste (Codex 03.11.).
+    await page.locator("#workspace-content").evaluate((el) => (el.scrollTop = el.scrollHeight));
+    const footer = page.getByTestId("reader-book").getByText("Seite 1 von 1");
+    await expect(footer).toBeVisible();
+    const f = (await footer.boundingBox())!;
+    const p = (await player.boundingBox())!;
+    expect(f.y + f.height).toBeLessThanOrEqual(p.y);
+    await page.screenshot({ path: shot(`vorschau-vorlesen-titel-390-${theme}-unten.png`) });
+  });
+}
+
+test("Plus in der Titelleiste: Tooltip „Hinzufügen“ beim Überfahren", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const add = page.getByTestId("library-add");
+  await add.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Hinzufügen" })).toBeVisible();
+  await page.screenshot({ path: shot("vorschau-plus-tooltip-1440-hell.png") });
+});
+
+test("Touchziele ≥ 44 px: Plus, Weitermachen-Karte, Profilmenü (390), Messwerte", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const messung: string[] = [];
+  const pruefe = async (name: string, loc: import("@playwright/test").Locator) => {
+    const b = (await loc.boundingBox())!;
+    messung.push(`${name}: ${Math.round(b.width)} × ${Math.round(b.height)} px`);
+    expect(b.width, name).toBeGreaterThanOrEqual(44);
+    expect(b.height, name).toBeGreaterThanOrEqual(44);
+  };
+  await pruefe("Plus (Hinzufügen)", page.getByTestId("library-add"));
+  const card = page.getByTestId("library-continue-card").first();
+  await pruefe("Weitermachen-Karte", card);
+  await pruefe("Weitermachen-Karte: Lesen/Abspielen", card.locator(".library-ccard__play"));
+  await oeffneProfilmenue(page);
+  for (const id of ["benachrichtigungen", "modelle", "integrationen", "einstellungen", "hilfe"])
+    await pruefe(`Profilmenü ${id}`, page.locator(`.wai-konto-menue [data-profilmenue=${id}]`));
+  writeFileSync(shot("touchziele-390.txt"), messung.join("\n") + "\n");
+  console.log(messung.join("\n"));
+});
+
+
+test("Erhaltenes Vorlesen übernimmt still einen in der Bibliothek geänderten Text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await nav(page, "Vorlesen").click();
+  await expect(page.getByTestId("reader-book")).toContainText("In Front des Herrenhauses");
+  await nav(page, "Bibliothek").click();
+  await page.waitForTimeout(700);
+  await page.evaluate(() => {
+    (window as unknown as { __pageText: Record<string, string> }).__pageText.page_1 =
+      "# Effi Briest\n\nZusammengeführt aus der Bibliothek.";
+  });
+  await nav(page, "Vorlesen").click();
+  await expect(page.getByTestId("reader-book")).toContainText("Zusammengeführt aus der Bibliothek");
+});

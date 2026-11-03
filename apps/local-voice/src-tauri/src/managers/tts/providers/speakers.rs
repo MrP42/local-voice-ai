@@ -221,6 +221,55 @@ pub fn build_roster(
     visible: Option<&Vec<String>>,
     selected: Option<&str>,
 ) -> Vec<ProviderSpeaker> {
+    build_roster_named(voices, visible, selected, None)
+}
+
+/// Wie [`build_roster`], mit eigenen Anzeigenamen (`tts_providers.voice_names` des Anbieters):
+/// der eigene Name ist der Name im Marker, der ursprüngliche Name (und die ursprüngliche
+/// Beschriftung) bleiben weitere Schreibweisen, sofern sie frei sind — ein Skript mit dem alten
+/// Namen liest also weiter mit derselben Stimme.
+pub fn build_roster_named(
+    voices: &[VoiceDescriptor],
+    visible: Option<&Vec<String>>,
+    selected: Option<&str>,
+    names: Option<&std::collections::BTreeMap<String, String>>,
+) -> Vec<ProviderSpeaker> {
+    let mut renamed = voices.to_vec();
+    super::policy::apply_voice_names(&mut renamed, names);
+    let mut roster = build_roster_plain(&renamed, visible, selected);
+    let Some(names) = names.filter(|n| !n.is_empty()) else {
+        return roster;
+    };
+    let mut claimed: std::collections::HashSet<String> = roster
+        .iter()
+        .flat_map(|s| {
+            std::iter::once(s.name.as_str())
+                .chain(std::iter::once(s.id.as_str()))
+                .chain(s.aliases.iter().map(String::as_str))
+        })
+        .map(fold_speaker_name)
+        .collect();
+    for speaker in roster.iter_mut() {
+        if !names.contains_key(&speaker.id) {
+            continue;
+        }
+        let Some(original) = voices.iter().find(|v| v.id == speaker.id) else {
+            continue;
+        };
+        for alias in [short_name(&original.label), original.label.trim()] {
+            if is_marker_safe(alias) && claimed.insert(fold_speaker_name(alias)) {
+                speaker.aliases.push(alias.to_string());
+            }
+        }
+    }
+    roster
+}
+
+fn build_roster_plain(
+    voices: &[VoiceDescriptor],
+    visible: Option<&Vec<String>>,
+    selected: Option<&str>,
+) -> Vec<ProviderSpeaker> {
     let mut roster: Vec<ProviderSpeaker> = Vec::new();
     // Vergleichsformen aller schon vergebenen Namen und Kennungen.
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -484,5 +533,43 @@ mod tests {
         // `phonon` darf nicht `phonon2` treffen.
         assert_eq!(voice_of_key("phonon", "provider:phonon2:x"), None);
         assert!(is_provider_key(&key) && !is_provider_key("erzaehlerin"));
+    }
+
+    #[test]
+    fn ein_eigener_name_ist_der_marker_und_der_alte_name_trifft_weiter() {
+        let voices = vec![
+            voice("en:Zoey", "Zoey – Bright", Some("female")),
+            voice("Erzaehlerin", "Erzaehlerin", None),
+        ];
+        let names: std::collections::BTreeMap<String, String> = [
+            ("en:Zoey".to_string(), "Zoë".to_string()),
+            ("Erzaehlerin".to_string(), "Erzählerin".to_string()),
+        ]
+        .into();
+        let roster = build_roster_named(&voices, None, None, Some(&names));
+        assert_eq!(roster[0].id, "en:Zoey");
+        assert_eq!(roster[0].name, "Zoë");
+        assert!(
+            roster[0].aliases.iter().any(|a| a == "Zoey"),
+            "{:?}",
+            roster[0].aliases
+        );
+        assert!(roster[0].aliases.iter().any(|a| a == "Zoë – Bright"));
+        assert_eq!(roster[1].name, "Erzählerin");
+        let known: Vec<_> = roster.iter().map(|s| s.known("phonon")).collect();
+        let segments = split_speaker_segments("<Zoey> Hallo. <Erzählerin> Ja.", &known);
+        assert_eq!(
+            segments[0].voice.as_deref(),
+            Some("provider:phonon:en:Zoey")
+        );
+        assert_eq!(
+            segments[1].voice.as_deref(),
+            Some("provider:phonon:Erzaehlerin")
+        );
+        // Ohne eigene Namen: unverändert.
+        assert_eq!(
+            build_roster_named(&voices, None, None, None),
+            build_roster(&voices, None, None)
+        );
     }
 }
