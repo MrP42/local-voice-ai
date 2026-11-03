@@ -28,6 +28,8 @@ final class PhoneLibrary: ObservableObject {
     // MARK: Lesen
 
     func reload() {
+        // Ausstehenden Fortschritt erst sichern, sonst überschreibt das Neuladen ihn.
+        if saveTask != nil { flush() }
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         var list: [LibraryBook] = []

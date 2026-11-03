@@ -9,6 +9,7 @@ import { Input } from "../../../ui/Input";
 import { Select } from "../../../ui/Select";
 import { KI_CATEGORIES } from "./kiDocs";
 import { KURZBUCH_TEMPLATE_ID } from "@/lib/kurzbuch/kurzbuch";
+import { TokenEstimateLine, useTokenEstimate } from "./kiTokens";
 import "./kidocs.css";
 
 type SourceKind = "book" | "chapter" | "selection" | "pick";
@@ -80,6 +81,7 @@ export function estimate(
  * Laufzeit ausdrücklich als Schätzung.
  */
 export function KiDocumentDialog({
+  pageId,
   open,
   onOpenChange,
   text,
@@ -88,6 +90,8 @@ export function KiDocumentDialog({
   selection,
   onCreate,
 }: {
+  /** Seite des Buchs (für die Token-Prognose im Kern). */
+  pageId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Originaltext des Buchs. */
@@ -183,6 +187,12 @@ export function KiDocumentDialog({
     ? estimate(source.chars, template?.id === KURZBUCH_TEMPLATE_ID)
     : null;
   const canCreate = source !== null && template !== null && source.chars > 0;
+  const tokens = useTokenEstimate(
+    pageId,
+    source?.source ?? null,
+    template?.id ?? null,
+    open && canCreate,
+  );
 
   const sourceChip = (k: SourceKind, label: string, disabled = false) => (
     <button
@@ -341,6 +351,12 @@ export function KiDocumentDialog({
               },
             )}
           </p>
+        )}
+        {canCreate && (
+          <TokenEstimateLine
+            estimate={tokens.estimate}
+            loading={tokens.loading}
+          />
         )}
       </div>
     </Dialog>

@@ -97,6 +97,8 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
     public var audio: LibraryAudioVersion?
     public var addedMs: Double
     public var finished: Bool
+    /// Favorit (Desktop lva#222); fehlt in älteren buch.json.
+    public var favorite: Bool = false
 
     public init(id: String, title: String, authors: [String] = [], coverSource: String = "generated",
                 text: LibraryTextVersion? = nil, audio: LibraryAudioVersion? = nil, addedMs: Double, finished: Bool = false) {
@@ -106,7 +108,7 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, subtitle, authors, language, isbn, publisher, publishDate = "publish_date", pages, description
-        case metadataSource = "metadata_source", coverSource = "cover_source", text, audio, addedMs = "added_ms", finished
+        case metadataSource = "metadata_source", coverSource = "cover_source", text, audio, addedMs = "added_ms", finished, favorite
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -126,6 +128,7 @@ public struct LibraryBook: Codable, Equatable, Identifiable, Sendable {
         audio = try c.decodeIfPresent(LibraryAudioVersion.self, forKey: .audio)
         addedMs = try c.decodeIfPresent(Double.self, forKey: .addedMs) ?? 0
         finished = try c.decodeIfPresent(Bool.self, forKey: .finished) ?? false
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
     }
 }
 

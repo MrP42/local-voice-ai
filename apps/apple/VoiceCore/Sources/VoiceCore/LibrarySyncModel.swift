@@ -119,6 +119,8 @@ public enum LibrarySyncFormat {
     public static let collectionBookmark = "bookmark"
     /// Klartext in den Stücken einer Datei.
     public static let chunkPlainBytes = 4 * 1024 * 1024
+    /// Größter Klartext eines Objekts (wie `MAX_PLAINTEXT` am Desktop).
+    public static let maxPlaintext = 256 * 1024
 
     static func sha256Hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
@@ -147,10 +149,17 @@ public enum LibrarySyncFormat {
                                           aad: chunkAAD(userId: userId, blobId: blobId, index: index))
     }
 
-    /// Kanonischer Hash eines Klartext-JSON (Schlüssel sortiert), für das Ledger.
+    /// Kanonischer Hash eines Klartext-JSON für das Ledger: Schlüssel sortiert,
+    /// `null`-Felder entfernt (Rust schreibt `null`, Swift lässt sie weg).
     public static func canonicalHash(_ json: Data) -> String {
-        guard let obj = try? JSONSerialization.jsonObject(with: json),
-              let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return sha256Hex(json) }
+        func strip(_ v: Any) -> Any? {
+            if v is NSNull { return nil }
+            if let d = v as? [String: Any] { return d.compactMapValues(strip) }
+            if let a = v as? [Any] { return a.map { strip($0) ?? NSNull() } }
+            return v
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: json), let clean = strip(obj),
+              let data = try? JSONSerialization.data(withJSONObject: clean, options: [.sortedKeys]) else { return sha256Hex(json) }
         return sha256Hex(data)
     }
 }
@@ -167,7 +176,17 @@ public struct SyncLedger: Codable, Equatable, Sendable {
     public var entries: [String: Entry] = [:]
     /// Blobs, die dieses Gerät vollständig hochgeladen hat.
     public var uploaded: Set<String> = []
+    /// Abgewiesene Stände (Objekt → Hash); erst ein geänderter Stand wird erneut gesendet.
+    public var dead: [String: String] = [:]
     public init() {}
+    enum CodingKeys: String, CodingKey { case cursor, entries, uploaded, dead }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cursor = try c.decodeIfPresent(Int64.self, forKey: .cursor) ?? 0
+        entries = try c.decodeIfPresent([String: Entry].self, forKey: .entries) ?? [:]
+        uploaded = try c.decodeIfPresent(Set<String>.self, forKey: .uploaded) ?? []
+        dead = try c.decodeIfPresent([String: String].self, forKey: .dead) ?? [:]
+    }
     public static func key(_ collection: String, _ objectId: String) -> String { collection + "/" + objectId }
     public subscript(collection: String, objectId: String) -> Entry? {
         get { entries[Self.key(collection, objectId)] }

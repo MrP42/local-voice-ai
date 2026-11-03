@@ -247,6 +247,7 @@ struct LibraryBookDetail: View {
     @ObservedObject var playback = LibraryPlayback.shared
     @Environment(\.dismiss) private var dismiss
     @State private var confirmDelete = false
+    @State private var confirmRemoveAudio = false
     @ObservedObject var sync = LibrarySync.shared
 
     var body: some View {
@@ -351,19 +352,33 @@ struct LibraryBookDetail: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu("Mehr", systemImage: "ellipsis.circle") {
                     Button(book.finished ? "Als nicht fertig markieren" : "Als fertig markieren", systemImage: "checkmark.circle") { library.setFinished(book, !book.finished) }
-                    Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                    if sync.isSynced(book) {
+                        if library.hasAudio(book) && !library.meta(book).files.audio.isEmpty {
+                            Button("Hörbuch vom iPhone entfernen", systemImage: "icloud.and.arrow.down") { confirmRemoveAudio = true }
+                        }
+                        Button("Auf allen Geräten löschen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                    } else {
+                        Button("Vom iPhone entfernen", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                    }
                 }
             }
         }
-        .confirmationDialog("„\(book.title)“ vom iPhone entfernen?", isPresented: $confirmDelete, titleVisibility: .visible) {
+        .confirmationDialog("Hörbuch von diesem iPhone entfernen?", isPresented: $confirmRemoveAudio, titleVisibility: .visible) {
             Button("Entfernen", role: .destructive) {
                 if playback.book?.id == book.id { playback.stop() }
-                if sync.account != nil && !library.meta(book).files.audio.isEmpty { sync.removeDownloads(book) }
+                sync.removeDownloads(book)
+            }
+        } message: { Text("Es bleibt im Konto und auf dem PC und wird beim nächsten Hören wieder geladen. Der Fortschritt bleibt erhalten.") }
+        .confirmationDialog(sync.isSynced(book) ? "„\(book.title)“ auf allen Geräten löschen?" : "„\(book.title)“ vom iPhone entfernen?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Löschen", role: .destructive) {
+                if playback.book?.id == book.id { playback.stop() }
+                if sync.isSynced(book) { Task { await sync.deleteEverywhere(book); dismiss() } }
                 else { library.delete(book); dismiss() }
             }
         } message: {
-            Text(sync.account != nil && !library.meta(book).files.audio.isEmpty
-                 ? "Das Hörbuch wird vom iPhone gelöscht. Es bleibt im Konto und auf dem PC, der Fortschritt bleibt erhalten."
+            Text(sync.isSynced(book)
+                 ? "Das Buch verschwindet aus dem Konto, vom PC und von allen Geräten."
                  : "Text, Hörbuch und Fortschritt auf diesem iPhone werden gelöscht.")
         }
     }

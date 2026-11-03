@@ -39,7 +39,14 @@ final class LibrarySync: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var status = "Nicht angemeldet"
     @Published private(set) var lastSync: Date?
-    @Published var error: String?
+    @Published var error: String? {
+        didSet {
+            #if DEBUG
+            // Diagnose für Simulator-Proben: letzter Fehler als Datei.
+            if let error { try? error.write(to: library.root.appendingPathComponent("sync-letzter-fehler.txt"), atomically: true, encoding: .utf8) }
+            #endif
+        }
+    }
     /// Ladefortschritt je Buch (0…1) während eines Hörbuch-Downloads.
     @Published private(set) var downloads: [String: Double] = [:]
     @Published var wifiOnly: Bool = UserDefaults.standard.object(forKey: "library.wifiOnly") as? Bool ?? true {
@@ -92,10 +99,10 @@ final class LibrarySync: ObservableObject {
                   let token = json["token"] as? String, let user = json["user"] as? [String: Any],
                   let uid = (user["id"] as? NSNumber)?.int64Value else { throw Self.httpError(code, data) }
             var id = [UInt8](repeating: 0, count: 16)
-            _ = SecRandomCopyBytes(kSecRandomDefault, 16, &id)
+            guard SecRandomCopyBytes(kSecRandomDefault, 16, &id) == errSecSuccess else { throw SyncError.http(0, "Zufallszahlen nicht verfügbar.") }
             let acc = Account(url: base, email: mail, userId: uid, token: token, key: Data(key),
                               deviceId: id.map { String(format: "%02x", $0) }.joined(), deviceName: deviceName)
-            Keychain.save(acc)
+            guard Keychain.save(acc) else { throw SyncError.http(0, "Das Konto konnte nicht im Schlüsselbund gespeichert werden.") }
             account = acc
             ledger = SyncLedger(); saveLedger()
             status = "Angemeldet als \(mail)"
@@ -132,6 +139,7 @@ final class LibrarySync: ObservableObject {
             try await pushBooks(acc)
             try await pushProgress(acc)
             saveLedger()
+            library.flush()
             library.reload()
             lastSync = Date()
             status = "Synchronisiert"
@@ -146,10 +154,10 @@ final class LibrarySync: ObservableObject {
     }
 
     private func pull(_ acc: Account) async throws {
-        var more = true
+        var more = true, restarted = false
         while more {
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/sync/pull?since=\(ledger.cursor)&limit=100", method: "GET", token: acc.token)
-            if code == 410 { ledger.cursor = 0; continue }
+            if code == 410 && !restarted { ledger.cursor = 0; restarted = true; continue }
             guard code == 200 else { throw Self.httpError(code, data) }
             let page = try JSONDecoder().decode(HubPullResponse.self, from: data)
             for remote in page.objects { try apply(remote, acc) }
@@ -167,10 +175,14 @@ final class LibrarySync: ObservableObject {
             ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: "", deleted: true)
             return
         }
+        // Eigenes Echo (Desktop: engine.rs): Stand ist schon im Ledger.
+        if remote.deviceId == acc.deviceId, let e = ledger[remote.collection, remote.objectId], e.revision >= remote.revision { return }
         guard remote.keyId == acc.keyId else { throw SyncError.wrongKey }
         let plain = Data(try SyncCrypto.open(key: [UInt8](acc.key), aad: SyncCrypto.aad(userId: acc.userId, collection: remote.collection, objectId: remote.objectId),
                                              sealedBase64: remote.payload))
-        let hash = LibrarySyncFormat.canonicalHash(plain)
+        // Ledger-Hash = Hash der LOKALEN kanonischen Form nach dem Anwenden; sonst
+        // schickt jedes Gerät den gerade erhaltenen Stand in eigener Schreibweise zurück.
+        var hash = LibrarySyncFormat.canonicalHash(plain)
         switch remote.collection {
         case LibrarySyncFormat.collectionBook:
             let synced = try SyncedBook.decode(plain)
@@ -183,25 +195,29 @@ final class LibrarySync: ObservableObject {
                 // Lokale Fassungen, die das Konto nicht kennt, nicht verlieren.
                 if book.text == nil, let t = local?.text { book.text = t }
                 try library.storeRemote(book, meta: .init(files: synced.files, updated: synced.updated))
-                if let text = synced.files.text, !library.hasText(book) { pendingText.append((book, text)) }
+                if book.text == synced.book.text {
+                    hash = LibrarySyncFormat.canonicalHash(try SyncedBook(book: book, files: synced.files, updated: synced.updated).json())
+                }
             }
         case LibrarySyncFormat.collectionProgress:
             let p = try JSONDecoder().decode(SyncedProgress.self, from: plain)
             library.mergeRemote(p.key, p.record)
+            // Unverändert gegenüber dem Konto: lokale Schreibweise merken, sonst neu senden lassen.
+            if let merged = library.record(p.key), merged == p.record {
+                hash = LibrarySyncFormat.canonicalHash(try JSONEncoder().encode(SyncedProgress(key: p.key, record: merged)))
+            }
         default: break
         }
         ledger[remote.collection, remote.objectId] = .init(revision: remote.revision, hash: hash, deleted: false)
     }
 
-    /// Texte sind klein und werden nach dem Pull sofort geladen.
-    private var pendingText: [(LibraryBook, BlobRef)] = []
-
     private func pushBooks(_ acc: Account) async throws {
-        for (book, ref) in pendingText {
-            let data = try await downloadBlob(ref, acc) { _ in }
-            try data.write(to: library.textURL(book), options: .atomic)
+        // Texte sind klein: bei jedem Lauf fehlende nachladen (überlebt Abbrüche).
+        for book in library.books {
+            if let ref = library.meta(book).files.text, !library.hasText(book) {
+                try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
+            }
         }
-        pendingText.removeAll()
 
         var objects: [(HubPushObject, String)] = []
         for book in library.books {
@@ -223,7 +239,8 @@ final class LibrarySync: ObservableObject {
             let value = try SyncedBook(book: book, files: meta.files, updated: meta.updated).json()
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionBook, book.id]
-            if entry?.hash == hash { continue }
+            if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionBook, book.id)] == hash { continue }
+            if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionBook, book.id, hash, "„\(book.title)“ ist zu groß für den Abgleich."); continue }
             objects.append((try sealObject(LibrarySyncFormat.collectionBook, book.id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
@@ -237,7 +254,8 @@ final class LibrarySync: ObservableObject {
             let value = try JSONEncoder().encode(SyncedProgress(key: key, record: rec))
             let hash = LibrarySyncFormat.canonicalHash(value)
             let entry = ledger[LibrarySyncFormat.collectionProgress, id]
-            if entry?.hash == hash { continue }
+            if entry?.hash == hash || ledger.dead[SyncLedger.key(LibrarySyncFormat.collectionProgress, id)] == hash { continue }
+            if value.count > LibrarySyncFormat.maxPlaintext { markDead(LibrarySyncFormat.collectionProgress, id, hash, "Ein Fortschritt ist zu groß für den Abgleich."); continue }
             objects.append((try sealObject(LibrarySyncFormat.collectionProgress, id, value, base: entry?.revision ?? 0, acc), hash))
         }
         try await push(objects, acc)
@@ -270,17 +288,38 @@ final class LibrarySync: ObservableObject {
                 guard let sent = batch.first(where: { $0.0.collection == r.collection && $0.0.objectId == r.objectId }) else { continue }
                 switch r.outcome {
                 case "accepted":
-                    ledger[sent.0.collection, sent.0.objectId] = .init(revision: r.revision ?? 0, hash: sent.1, deleted: false)
+                    ledger[sent.0.collection, sent.0.objectId] = .init(revision: r.revision ?? 0, hash: sent.1, deleted: sent.0.deleted)
                 case "superseded":
                     if let current = r.current { try apply(current, acc) }
                     else { ledger[sent.0.collection, sent.0.objectId] = nil }
                     again = true
+                case "rejected":
+                    markDead(sent.0.collection, sent.0.objectId, sent.1, "Der Server lehnt ein Objekt ab (\(r.reason ?? "unbekannt")).")
                 default: break
                 }
             }
             start = end
         }
     }
+
+    private func markDead(_ collection: String, _ id: String, _ hash: String, _ message: String) {
+        ledger.dead[SyncLedger.key(collection, id)] = hash
+        error = message
+    }
+
+    /// Buch auf allen Geräten löschen: Grabstein senden, dann lokal entfernen.
+    func deleteEverywhere(_ book: LibraryBook) async {
+        if let acc = account, let entry = ledger[LibrarySyncFormat.collectionBook, book.id], !entry.deleted {
+            let tomb = HubPushObject(collection: LibrarySyncFormat.collectionBook, objectId: book.id, baseRevision: entry.revision,
+                                     payload: "", keyId: acc.keyId, deleted: true)
+            do { try await push([(tomb, "")], acc); ledger[LibrarySyncFormat.collectionBook, book.id]?.deleted = true; saveLedger() }
+            catch { self.error = "Löschen im Konto fehlgeschlagen: \(error.localizedDescription)"; return }
+        }
+        library.delete(book)
+    }
+
+    /// Kennt das Konto dieses Buch?
+    func isSynced(_ book: LibraryBook) -> Bool { account != nil && ledger[LibrarySyncFormat.collectionBook, book.id].map { !$0.deleted } == true }
 
     // MARK: Dateien
 
@@ -297,24 +336,26 @@ final class LibrarySync: ObservableObject {
         let chunks = max(1, (size + LibrarySyncFormat.chunkPlainBytes - 1) / LibrarySyncFormat.chunkPlainBytes)
         let ref = BlobRef(blob: blob, size: size, chunks: chunks, type: type, file: file)
         if ledger.uploaded.contains(blob) { return ref }
-        let (infoCode, infoData) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token)
+        let (infoCode, infoData) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token, bulk: wifiOnly)
+        if infoCode != 200 && infoCode != 404 { throw Self.httpError(infoCode, infoData) }
         var have = Set<Int>()
         if infoCode == 200, let info = try JSONSerialization.jsonObject(with: infoData) as? [String: Any] {
             if info["complete"] as? Bool == true { ledger.uploaded.insert(blob); return ref }
             have = Set((info["chunks"] as? [[String: Any]] ?? []).compactMap { ($0["idx"] as? NSNumber)?.intValue })
         }
         for index in 0..<chunks where !have.contains(index) {
-            let sealed = try await Task.detached(priority: .utility) { () throws -> [UInt8] in
+            let userId = acc.userId
+            let body = try await Task.detached(priority: .utility) { () throws -> Data in
                 let h = try FileHandle(forReadingFrom: url); defer { try? h.close() }
                 try h.seek(toOffset: UInt64(index * LibrarySyncFormat.chunkPlainBytes))
                 let plain = try h.read(upToCount: LibrarySyncFormat.chunkPlainBytes) ?? Data()
-                return try LibrarySyncFormat.sealChunk(key: key, userId: acc.userId, blobId: blob, index: index, plain: [UInt8](plain))
+                let sealed = Data(try LibrarySyncFormat.sealChunk(key: key, userId: userId, blobId: blob, index: index, plain: [UInt8](plain)))
+                return try JSONSerialization.data(withJSONObject: [
+                    "data": sealed.base64EncodedString(),
+                    "sha256": SHA256.hash(data: sealed).map { String(format: "%02x", $0) }.joined(),
+                ])
             }.value
-            let body = try JSONSerialization.data(withJSONObject: [
-                "data": Data(sealed).base64EncodedString(),
-                "sha256": SHA256.hash(data: Data(sealed)).map { String(format: "%02x", $0) }.joined(),
-            ])
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)/chunks/\(index)", method: "POST", token: acc.token, body: body)
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)/chunks/\(index)", method: "POST", token: acc.token, body: body, bulk: wifiOnly)
             guard code == 200 else { throw Self.httpError(code, data) }
         }
         let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)/commit", method: "POST", token: acc.token,
@@ -324,20 +365,40 @@ final class LibrarySync: ObservableObject {
         return ref
     }
 
-    /// Blob laden, Stück für Stück prüfen und entschlüsseln.
-    private func downloadBlob(_ ref: BlobRef, _ acc: Account, progress: (Int) -> Void) async throws -> Data {
-        var out = Data(); out.reserveCapacity(ref.size)
-        for index in 0..<ref.chunks {
-            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token)
-            guard code == 200, let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
-                  let raw = json["data"].flatMap({ Data(base64Encoded: $0) }) else { throw Self.httpError(code, data) }
-            guard SHA256.hash(data: raw).map({ String(format: "%02x", $0) }).joined() == json["sha256"] else { throw SyncError.corrupt("Prüfsumme") }
-            let plain = try LibrarySyncFormat.openChunk(key: [UInt8](acc.key), userId: acc.userId, blobId: ref.blob, index: index, sealed: [UInt8](raw))
-            out.append(contentsOf: plain)
-            progress(out.count)
+    /// Blob Stück für Stück laden, prüfen, entschlüsseln und in `<ziel>.part`
+    /// schreiben; erst vollständig wird umbenannt. Ein Abbruch setzt beim
+    /// nächsten Mal am ersten fehlenden Stück wieder an. Nie die ganze Datei im Speicher.
+    private func downloadBlob(_ ref: BlobRef, _ acc: Account, to target: URL, progress: (Int) -> Void) async throws {
+        let part = target.appendingPathExtension("part")
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: part.path) {
+            fm.createFile(atPath: part.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         }
-        guard out.count == ref.size else { throw SyncError.corrupt("Größe") }
-        return out
+        let chunk = LibrarySyncFormat.chunkPlainBytes
+        var have = (Self.fileSize(part) ?? 0) / chunk
+        have = min(have, ref.chunks)
+        let key = [UInt8](acc.key), userId = acc.userId
+        progress(have * chunk)
+        for index in have..<ref.chunks {
+            let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(ref.blob)/chunks/\(index)", method: "GET", token: acc.token, bulk: wifiOnly)
+            guard code == 200 else { throw Self.httpError(code, data) }
+            let written = try await Task.detached(priority: .utility) { () throws -> Int in
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: String],
+                      let raw = json["data"].flatMap({ Data(base64Encoded: $0) }) else { throw SyncError.corrupt("Antwort") }
+                guard SHA256.hash(data: raw).map({ String(format: "%02x", $0) }).joined() == json["sha256"] else { throw SyncError.corrupt("Prüfsumme") }
+                let plain = try LibrarySyncFormat.openChunk(key: key, userId: userId, blobId: ref.blob, index: index, sealed: [UInt8](raw))
+                let h = try FileHandle(forWritingTo: part); defer { try? h.close() }
+                try h.truncate(atOffset: UInt64(index * chunk))
+                try h.write(contentsOf: plain)
+                return index * chunk + plain.count
+            }.value
+            progress(written)
+        }
+        guard Self.fileSize(part) == ref.size else {
+            try? fm.removeItem(at: part); throw SyncError.corrupt("Größe")
+        }
+        _ = try? fm.removeItem(at: target)
+        try fm.moveItem(at: part, to: target)
     }
 
     /// Hörbuch beim ersten Öffnen laden. Teile werden einzeln geprüft und atomar abgelegt.
@@ -345,6 +406,7 @@ final class LibrarySync: ObservableObject {
         guard let acc = account else { error = SyncError.notLoggedIn.localizedDescription; return false }
         let refs = library.meta(book).files.audio
         guard !refs.isEmpty else { return library.hasAudio(book) }
+        guard downloads[book.id] == nil else { return false }  // läuft schon
         if wifiOnly && expensiveNetwork { error = SyncError.offlineRule.localizedDescription; return false }
         let total = max(1, refs.reduce(0) { $0 + $1.size })
         var done = 0
@@ -353,18 +415,22 @@ final class LibrarySync: ObservableObject {
         do {
             let audioDir = library.dir(book).appendingPathComponent("audio", isDirectory: true)
             try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
-            for ref in refs {
-                let name = ref.file ?? "teil.m4a"
+            for (i, ref) in refs.enumerated() {
+                // Nur ein Dateiname, nie ein Pfad.
+                let given = (ref.file ?? "").split(separator: "/").last.map(String.init) ?? ""
+                let name = given.isEmpty || given.hasPrefix(".") ? String(format: "teil_%03d.m4a", i + 1) : given
                 let target = audioDir.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: target.path),
-                   (try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize) == ref.size { done += ref.size; continue }
+                   Self.fileSize(target) == ref.size { done += ref.size; continue }
                 let base = done
-                let data = try await downloadBlob(ref, acc) { n in self.downloads[book.id] = Double(base + n) / Double(total) }
-                try data.write(to: target, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                try await downloadBlob(ref, acc, to: target) { n in self.downloads[book.id] = Double(base + n) / Double(total) }
                 done += ref.size
             }
             library.reload()
             return library.hasAudio(book)
+        } catch let e as URLError where e.networkUnavailableReason == .expensive || e.networkUnavailableReason == .constrained {
+            self.error = SyncError.offlineRule.localizedDescription
+            return false
         } catch {
             self.error = "Laden fehlgeschlagen: \(error.localizedDescription) Bereits geladene Teile bleiben erhalten."
             return false
@@ -377,11 +443,18 @@ final class LibrarySync: ObservableObject {
         library.reload()
     }
 
+    /// Dateigröße frisch vom Dateisystem (URL-Ressourcenwerte werden zwischengespeichert).
+    static func fileSize(_ url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue
+    }
+
     // MARK: HTTP
 
-    static func send(_ url: String, method: String, token: String?, body: Data? = nil) async throws -> (Int, Data) {
+    /// `bulk`: Dateiverkehr unter „nur im WLAN“ – kein Mobilfunk, kein Datensparmodus.
+    static func send(_ url: String, method: String, token: String?, body: Data? = nil, bulk: Bool = false) async throws -> (Int, Data) {
         guard let u = URL(string: url) else { throw SyncError.http(0, "Ungültige Server-Adresse.") }
         var req = URLRequest(url: u, timeoutInterval: 60)
+        if bulk { req.allowsExpensiveNetworkAccess = false; req.allowsConstrainedNetworkAccess = false }
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body { req.httpBody = body; req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
@@ -400,11 +473,11 @@ final class LibrarySync: ObservableObject {
 /// Konto und Schlüssel im Schlüsselbund, nur auf diesem Gerät.
 enum Keychain {
     private static let service = "de.localvoice.library-sync"
-    static func save(_ account: LibrarySync.Account) {
-        guard let data = try? JSONEncoder().encode(account) else { return }
+    @discardableResult static func save(_ account: LibrarySync.Account) -> Bool {
+        guard let data = try? JSONEncoder().encode(account) else { return false }
         delete()
-        SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: "account",
-                    kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, kSecValueData: data] as CFDictionary, nil)
+        return SecItemAdd([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: "account",
+                           kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, kSecValueData: data] as CFDictionary, nil) == errSecSuccess
     }
     static func load() -> LibrarySync.Account? {
         var out: CFTypeRef?

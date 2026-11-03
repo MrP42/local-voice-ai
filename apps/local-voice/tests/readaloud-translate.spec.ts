@@ -97,6 +97,17 @@ test.beforeEach(async ({ page }) => {
               { id: "builtin:lernzettel", title: "Lernzettel", category: "lernen", description: "Zum Wiederholen.", context: "", sections: [], target_words: 600, form: "List", audience: "lernende", builtin: true },
             ];
           if (cmd === "book_ai_documents") return (w.__kidocs as unknown[] | undefined) ?? [];
+          // Token-Prognose: Trockenlauf im Kern, hier fest.
+          if (cmd === "book_ai_estimate")
+            return (
+              w.__estimate ?? {
+                figures: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 0 },
+                local: true,
+                measured: false,
+                cached_steps: 3,
+                model: "qwen3-8b",
+              }
+            );
           if (cmd === "book_ai_document_text") return (w.__docText as string | undefined) ?? "Kurz gesagt: alles gut.";
           // Begriffe (lva#185): Liste und Fundstellen aus window.__terms / __hits.
           if (cmd === "book_ai_terms") return (w.__terms as unknown[] | undefined) ?? [];
@@ -677,4 +688,90 @@ test("ein umgeschriebenes Kurzbuch ohne Gliederung bleibt eine normale Dokumenta
   await expect(
     page.getByRole("complementary", { name: "Überblick des Kurzbuchs" }),
   ).toHaveCount(0);
+});
+
+for (const width of [1440, 390]) test(`KI-Dokument zeigt vorher die Token-Prognose und danach den Verbrauch (${width} px)`, async ({ page }) => {
+  const shots = "docs/vorschau/token-anzeige";
+  const wide = width >= 1000;
+  const suffix = String(width);
+  // Erst breit öffnen (schmal liegt die Navigation im Menü), dann auf die Zielbreite.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page);
+  if (!wide) await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "KI-Dokumente" }).click();
+  await page.getByTestId("tts-action-summarize").click();
+  await page.getByTestId("kidoc-tpl-builtin:eine_seite").click();
+  const line = page.getByTestId("kidoc-token-estimate");
+  await expect(line).toContainText("Geschätzter Bedarf: ca. 48.200 Tokens");
+  await expect(line).toContainText("41.900 Eingabe, 6.320 Ausgabe");
+  await expect(line).toContainText("lokal, keine Kosten");
+  await expect(line).toContainText("ca. 3 Schritte schon zwischengespeichert");
+  await expect(line).toHaveAttribute("title", /14 Modellaufrufe/);
+  const est = (await calls(page)).filter(([c]) => c === "book_ai_estimate").at(-1)!;
+  expect(est[1]).toMatchObject({ pageId: "p1", source: { kind: "book" }, templateId: "builtin:eine_seite" });
+  await line.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/01-dialog-prognose-${suffix}.png` });
+
+  // Cloud-Anbieter mit Preis: Kosten statt „lokal“.
+  await page.evaluate(() => {
+    (window as unknown as { __estimate: unknown }).__estimate = {
+      figures: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 220_350 },
+      local: false,
+      measured: false,
+      cached_steps: 0,
+      model: "claude-sonnet-5-5",
+    };
+  });
+  await page.getByTestId("kidoc-tpl-builtin:lernzettel").click();
+  await expect(line).toContainText("ca. 0,22 USD (Preis für claude-sonnet-5-5)");
+  await line.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${shots}/02-dialog-prognose-kosten-${suffix}.png` });
+  await page.getByTestId("kidoc-create").click();
+
+  const doc = {
+    id: "01JAAAAAAAAAAAAAAAAAAAAAAB",
+    title: "Lernzettel – Ganzes Buch",
+    template_id: "builtin:lernzettel",
+    template_title: "Lernzettel",
+    source: { kind: "book" },
+    source_label: "Ganzes Buch",
+    created_ms: 1,
+    modified_ms: 1,
+    words: 612,
+    model: "anthropic/claude-sonnet-5-5",
+    usage: {
+      estimate: { input_tokens: 41_850, output_tokens: 6_320, calls: 14, cost_micro: 220_350 },
+      actual: { input_tokens: 44_120, output_tokens: 7_045, calls: 14, cost_micro: 238_035 },
+      local: false,
+    },
+  };
+  await page.evaluate((d) => {
+    (window as unknown as { __kidocs: unknown[] }).__kidocs = [d];
+  }, doc);
+  await finish(page, "book_ai_summarize", doc);
+
+  const used = page.getByTestId("kidoc-token-usage");
+  await expect(used).toContainText("Tatsächlicher Verbrauch: 51.200 Tokens");
+  await expect(used).toContainText("Schätzung vorher 48.200 (+6 % gegenüber Schätzung)");
+  await expect(used).toContainText("ca. 0,238 USD (Preis für claude-sonnet-5-5)");
+  await expect(used).toHaveAttribute("title", /Geschätzter Bedarf: 41.900 Tokens Eingabe/);
+  // Den Fertig-Hinweis abwarten, damit er im Bild nichts überdeckt.
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0, { timeout: 15_000 });
+  const head = page.getByTestId("kidoc-head");
+  await head.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/03-dokument-verbrauch-${suffix}.png` });
+  else {
+    // Schmal: genau der Kopf samt Verbrauchszeile, nicht ein angeschnittener Ausschnitt.
+    const box = (await head.boundingBox())!;
+    await page.screenshot({
+      path: `${shots}/03-dokument-verbrauch-${suffix}.png`,
+      clip: { x: 0, y: Math.max(0, box.y - 4), width: 390, height: Math.min(844 - Math.max(0, box.y - 4), box.height + 220) },
+    });
+  }
+  await page.getByTestId("kidoc-back").click();
+  await expect(page.getByTestId(`kidocs-card-${doc.id}`)).toContainText("612 Wörter · 51.200 Tokens · noch nicht gehört");
+  const card = page.getByTestId(`kidocs-card-${doc.id}`);
+  await card.scrollIntoViewIfNeeded();
+  if (wide) await page.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
+  else await card.screenshot({ path: `${shots}/04-liste-verbrauch-${suffix}.png` });
 });
