@@ -162,6 +162,11 @@ public struct MeetingDocument: Codable, Identifiable, Sendable {
     public var summarizedSegments: Int?
     public var processingEvents: [ProcessingEvent]?
     public var timings: [String: Double]?
+    /// Einwilligungsnachweis (Zeitpunkt, Weg, Umfang, Zweck, Verantwortlicher, Löschfrist).
+    /// Fehlt bei Altbeständen vor 0.23.0.
+    public var consent: ConsentLog?
+    /// Laufendes Protokoll während der Aufnahme (Entwurf mit Belegen).
+    public var live: LiveState?
 }
 
 /// Separate from short Watch captures. Commit the original before acknowledging import.
