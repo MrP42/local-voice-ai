@@ -342,6 +342,37 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
     </span>
   ) : null;
 
+  // Schmal steht die Leiste fest unten (reader.css): Höhe an den
+  // Arbeitsbereich melden (Platz frei halten), Abstand = Statusleiste.
+  useEffect(() => {
+    const root = rootRef.current;
+    const workspace = root?.closest<HTMLElement>(".tts-workspace");
+    if (!root || !workspace) return;
+    const report = () => {
+      const fixed = getComputedStyle(root).position === "fixed";
+      const status = document.querySelector(".lv-statusbar");
+      const bottom = status
+        ? Math.max(0, window.innerHeight - status.getBoundingClientRect().top)
+        : 0;
+      root.style.setProperty("--reader-player-bottom", `${bottom}px`);
+      workspace.style.setProperty(
+        "--reader-player-h",
+        fixed
+          ? `${Math.ceil(root.getBoundingClientRect().height) + 12}px`
+          : "0px",
+      );
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(root);
+    window.addEventListener("resize", report);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", report);
+      workspace.style.removeProperty("--reader-player-h");
+    };
+  }, []);
+
   return (
     <div
       ref={rootRef}

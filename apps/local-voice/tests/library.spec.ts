@@ -2998,8 +2998,8 @@ test("Hin und her zwischen Bibliothek und Vorlesen: kein Neuladen, Zustand bleib
   await expect(context).toContainText("Effi Briest");
   await expect(context).toHaveAttribute("aria-label", "Geöffnetes Buch: Effi Briest");
   await page.screenshot({ path: shot("vorlesen-buchtitel-1440.png") });
-  const loads = (await calls(page, "page_state_load")).length;
-  const lists = (await calls(page, "pages_list")).length;
+  // Merkmal am Lesetext: überlebt nur, wenn Vorlesen nicht neu eingehängt wird.
+  await page.getByTestId("reader-book").evaluate((el) => el.setAttribute("data-probe", "1"));
 
   await nav(page, "Bibliothek").click();
   // Die Suche ist noch da, der Buchtitel des Vorlesens nicht mehr.
@@ -3013,10 +3013,10 @@ test("Hin und her zwischen Bibliothek und Vorlesen: kein Neuladen, Zustand bleib
 
   await nav(page, "Vorlesen").click();
   await expect(context).toContainText("Effi Briest");
-  // Kein erneutes Laden der Seite oder der Seitenliste.
-  await page.waitForTimeout(300);
-  expect((await calls(page, "page_state_load")).length).toBe(loads);
-  expect((await calls(page, "pages_list")).length).toBe(lists);
+  // Nicht neu eingehängt: derselbe Lesetext, sofort sichtbar, nichts geleert.
+  await expect(page.locator("[data-testid=reader-book][data-probe='1']")).toBeVisible({
+    timeout: 1000,
+  });
   // Die Werkzeuge der verdeckten Bibliothek bleiben aus der Titelleiste.
   await expect(
     page.locator(".lv-titlebar").getByRole("button", { name: /Hinzufügen/ }),
@@ -3098,3 +3098,81 @@ for (const [width, height] of [
     });
   }
 }
+
+// Codex-Auflagen (03.11.): Spielerleiste bei 390 ganz sichtbar, Tooltip des
+// Plus, Touchziele ≥ 44 px mit Messwerten.
+for (const theme of ["hell", "dunkel"] as const) {
+  test(`390 ${theme}: Spielerleiste im Vorlesen vollständig über der Statusleiste`, async ({
+    page,
+  }) => {
+    if (theme === "dunkel")
+      await page.addInitScript(() => {
+        (window as unknown as { __settings: { theme: string } }).__settings.theme = "dark";
+      });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.locator(".lv-titlebar__hamburger").click();
+    await nav(page, "Vorlesen").click();
+    const player = page.getByTestId("reader-player");
+    await expect(player).toBeVisible();
+    const status = (await page.locator(".lv-statusbar").boundingBox())!;
+    const buttons = await player.locator("button:visible").all();
+    expect(buttons.length).toBeGreaterThan(3);
+    for (const b of buttons) {
+      const box = (await b.boundingBox())!;
+      expect(box.y + box.height, await b.getAttribute("aria-label")).toBeLessThanOrEqual(status.y + 0.5);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+    }
+    await page.screenshot({ path: shot(`vorschau-vorlesen-titel-390-${theme}.png`) });
+  });
+}
+
+test("Plus in der Titelleiste: Tooltip „Hinzufügen“ beim Überfahren", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const add = page.getByTestId("library-add");
+  await add.hover();
+  await expect(page.getByRole("tooltip").filter({ hasText: "Hinzufügen" })).toBeVisible();
+  await page.screenshot({ path: shot("vorschau-plus-tooltip-1440-hell.png") });
+});
+
+test("Touchziele ≥ 44 px: Plus, Weitermachen-Karte, Profilmenü (390), Messwerte", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const messung: string[] = [];
+  const pruefe = async (name: string, loc: import("@playwright/test").Locator) => {
+    const b = (await loc.boundingBox())!;
+    messung.push(`${name}: ${Math.round(b.width)} × ${Math.round(b.height)} px`);
+    expect(b.width, name).toBeGreaterThanOrEqual(44);
+    expect(b.height, name).toBeGreaterThanOrEqual(44);
+  };
+  await pruefe("Plus (Hinzufügen)", page.getByTestId("library-add"));
+  const card = page.getByTestId("library-continue-card").first();
+  await pruefe("Weitermachen-Karte", card);
+  await pruefe("Weitermachen-Karte: Lesen/Abspielen", card.locator(".library-ccard__play"));
+  await oeffneProfilmenue(page);
+  for (const id of ["benachrichtigungen", "modelle", "integrationen", "einstellungen", "hilfe"])
+    await pruefe(`Profilmenü ${id}`, page.locator(`.wai-konto-menue [data-profilmenue=${id}]`));
+  writeFileSync(shot("touchziele-390.txt"), messung.join("\n") + "\n");
+  console.log(messung.join("\n"));
+});
+
+
+test("Erhaltenes Vorlesen übernimmt still einen in der Bibliothek geänderten Text", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await nav(page, "Vorlesen").click();
+  await expect(page.getByTestId("reader-book")).toContainText("In Front des Herrenhauses");
+  await nav(page, "Bibliothek").click();
+  await page.waitForTimeout(700);
+  await page.evaluate(() => {
+    (window as unknown as { __pageText: Record<string, string> }).__pageText.page_1 =
+      "# Effi Briest\n\nZusammengeführt aus der Bibliothek.";
+  });
+  await nav(page, "Vorlesen").click();
+  await expect(page.getByTestId("reader-book")).toContainText("Zusammengeführt aus der Bibliothek");
+});

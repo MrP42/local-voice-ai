@@ -817,3 +817,22 @@
     display: none;
   }
 }
+
+/* Schmal (Touch) scrollt der ganze Bereich (App.css): die Spielerleiste
+   steht fest unten über der Statusleiste wie ein Mini-Player, alle Knöpfe
+   bleiben sichtbar (Codex 03.11.). Der Arbeitsbereich hält unten ihren Platz
+   frei (`--reader-player-h`, ReaderPlayerBar). */
+@media (max-width: 767px) {
+  .reader-player {
+    position: fixed;
+    inset-inline: 0;
+    bottom: var(--reader-player-bottom, 24px);
+    z-index: 30;
+    padding: 6px 12px 8px;
+    background: var(--color-background);
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 0.12);
+  }
+  .tts-workspace {
+    padding-bottom: var(--reader-player-h, 0px);
+  }
+}

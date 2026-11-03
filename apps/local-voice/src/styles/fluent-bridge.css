@@ -273,7 +273,10 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   flex-shrink: 1;
   min-width: 0;
 }
-.lv-titlebar__modul:empty,
+.lv-titlebar__modul:empty {
+  display: none;
+}
+/* Eigene Regel: ohne :has() bliebe sonst auch die :empty-Regel wirkungslos. */
 .lv-titlebar__modul:not(:has(> :not(.lv-keepslot:empty))) {
   display: none;
 }
@@ -324,7 +327,9 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   min-height: 0;
   background: var(--colorNeutralBackground1);
 }
-.lv-helpdock:empty,
+.lv-helpdock:empty {
+  display: none;
+}
 .lv-helpdock:not(:has(> :not(.lv-keepslot:empty))) {
   display: none;
 }
@@ -335,7 +340,7 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   border-inline-start: 1px solid var(--colorNeutralStroke2);
 }
 @media (max-width: 767px) {
-  .lv-helpdock:has(> :not(.lv-keepslot:empty)) {
+  .lv-helpdock:not(:empty) {
     position: absolute;
     inset-block: 40px 24px;
     inset-inline-end: 0;
@@ -985,5 +990,13 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
   .lv-statusbar .lv-fuss-modulplatz .app-select__control {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/* Profilmenü schmal (Touch): Einträge ≥ 44 px hoch (Codex 03.11.). Die
+   Vorlage ist aus @wai/ui kopiert und bleibt unberührt; hier überschrieben. */
+@media (max-width: 767px) {
+  .wai-konto-menue .wai-konto-menue__eintrag {
+    min-block-size: 44px;
   }
 }

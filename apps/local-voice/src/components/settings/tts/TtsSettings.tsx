@@ -1010,13 +1010,19 @@ export const TtsSettings = () => {
       autoTag: autoTagOptions ?? undefined,
     });
 
+  /** Ein Sichern des Seitenstands steht noch aus (siehe unten). */
+  const savePending = useRef(false);
   // Arbeitsstand sichern — gebuendelt, eine halbe Sekunde nach der letzten
   // Aenderung. Jeder Tastendruck einzeln waere ein Schreibzugriff zu viel.
   useEffect(() => {
     if (!activePage || !pageLoaded.current) return;
+    savePending.current = true;
     const handle = window.setTimeout(() => {
       void commands
         .pageStateSave(activePage, pageStateJson())
+        .finally(() => {
+          savePending.current = false;
+        })
         // Die Seitenliste zeigt Vorschau und Zeitpunkt — die stammen aus
         // genau dieser Datei und sollen nicht erst beim naechsten Start
         // stimmen. Und der Geraete-Sync soll die Aenderung zeitnah sehen.
@@ -2102,6 +2108,9 @@ export const TtsSettings = () => {
   const lastSessionPage = SESSION_LAST_PAGE;
   /** Nach dem Seitenwechsel sofort weiterlesen (Seite, auf die gewechselt wurde). */
   const autoplayPage = useRef<string | null>(null);
+  /** Der Autostart kam aus der Bibliothek („Weiterhören“), nicht vom
+   *  Weiterlesen im nächsten Buchteil. */
+  const libraryAutoplay = useRef(false);
 
   const startPartSession = (
     page: string | null = activePageRef.current,
@@ -2177,7 +2186,10 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!sectionActive) return;
     const page = takeLibraryAutoplay();
-    if (page && page === storedActivePage()) autoplayPage.current = page;
+    if (page && page === storedActivePage()) {
+      autoplayPage.current = page;
+      libraryAutoplay.current = true;
+    }
     // Nur beim Öffnen (Sichtbarwerden) von Vorlesen.
   }, [sectionActive]);
   // Bibliothek (lva#205): Kurzbuch öffnen, vorlesen oder erstellen, sobald
@@ -2221,7 +2233,18 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (!autoplayPage.current || autoplayPage.current !== activePage) return;
     if (!pageLoaded.current) return;
+    // „Weiterhören“ aus der Bibliothek meint das Buch selbst: steht die Seite
+    // (erhalten, KeepAlive) auf Übersetzung oder KI-Dokument, erst zurück
+    // zum Original; der Effekt läuft mit dem neuen Reiter erneut.
+    if (libraryAutoplay.current && tab !== "original") {
+      setTab("original");
+      return;
+    }
     autoplayPage.current = null;
+    libraryAutoplay.current = false;
+    // Liest Vorlesen diese Seite schon (im Hintergrund weiter), nicht neu
+    // starten.
+    if (speaking) return;
     // Nur im Originaltext und nur, wenn es etwas zu lesen gibt: eine
     // Übersetzung oder Zusammenfassung des nächsten Teils liest niemand
     // ungefragt vor.
@@ -2267,6 +2290,38 @@ export const TtsSettings = () => {
     docAutoplay.current = null;
   }, [activePage, flushDocSave]);
   useEffect(() => () => void flushDocSave(), [flushDocSave]);
+
+  // KeepAlive (Patrick 03.11.): Früher lud das Neu-Einhängen alles frisch.
+  // Verdeckt: KI-Dokument sofort sichern. Wieder sichtbar: Seitenliste still
+  // auffrischen und den Text übernehmen, falls die Bibliothek ihn inzwischen
+  // geändert hat (Zusammenführen, Bereinigen, Transkript) – ohne Leeren,
+  // ohne Aufblinken; eine eigene, noch nicht gesicherte Änderung hat Vorrang.
+  // `textRef` (oben) trägt den aktuellen Text.
+  const wasVisible = useRef(sectionActive);
+  useEffect(() => {
+    const was = wasVisible.current;
+    wasVisible.current = sectionActive;
+    if (!sectionActive) {
+      if (was) void flushDocSave();
+      return;
+    }
+    if (was) return;
+    void reloadPages();
+    const page = activePage;
+    if (!page || !pageLoaded.current || storedActivePage() !== page) return;
+    void commands.pageStateLoad(page).then((result) => {
+      if (result.status !== "ok" || !result.data) return;
+      if (savePending.current || storedActivePage() !== page) return;
+      try {
+        const state = JSON.parse(result.data) as { text?: unknown };
+        if (typeof state.text === "string" && state.text !== textRef.current)
+          setText(state.text);
+      } catch {
+        /* alter Klartext-Stand: unverändert lassen */
+      }
+    });
+    // Nur beim Wechsel der Sichtbarkeit.
+  }, [sectionActive]);
 
   // Offenes Dokument laden – erst, wenn die Seite geladen ist. Fehlt es
   // (gelöscht, anderes Gerät), zurück zur Liste.

@@ -360,9 +360,11 @@ export const AudioBar: React.FC<Props> = ({
   // sichtbare Leiste hört niemand weiter: anhalten und die Stelle sichern.
   const sectionActive = useSectionActive();
   useEffect(() => {
-    const el = audio.current;
-    if (sectionActive || !el || el.paused) return;
+    if (sectionActive) return;
+    // Auch während des Ladens: kein späteres Anlaufen im Verborgenen.
     wantPlay.current = false;
+    const el = audio.current;
+    if (!el || el.paused) return;
     el.pause();
     persistRef.current(true);
   }, [sectionActive]);

@@ -162,14 +162,6 @@ export const ProgressBar: React.FC<{ fraction: number; label: string }> = ({
 export const LibraryPage: React.FC = () => {
   const { t } = useTranslation();
   const { books, pageAudio, jobs, reload, save, tick } = useLibrary();
-  // Erhalten beim Bereichswechsel (KeepAlive): beim Zurückkommen still
-  // auffrischen (Fortschritt, neue Kurzbücher), ohne die Seite zu leeren.
-  const sectionActive = useSectionActive();
-  const wasActive = useRef(sectionActive);
-  useEffect(() => {
-    if (sectionActive && !wasActive.current) void reload();
-    wasActive.current = sectionActive;
-  }, [sectionActive, reload]);
   const {
     drop,
     working,
@@ -224,6 +216,22 @@ export const LibraryPage: React.FC = () => {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [removing, setRemoving] = useState<LibraryBook[]>([]);
+  // Erhalten beim Bereichswechsel (KeepAlive): beim Zurückkommen still
+  // auffrischen (Fortschritt, neue Kurzbücher), ohne die Seite zu leeren.
+  const sectionActive = useSectionActive();
+  const wasActive = useRef(sectionActive);
+  useEffect(() => {
+    if (sectionActive && !wasActive.current) void reload();
+    wasActive.current = sectionActive;
+    // Verdeckt: Dialoge schließen (sie liegen im Portal am body und blieben
+    // sonst über dem anderen Bereich stehen).
+    if (!sectionActive) {
+      setAdding(false);
+      setMerging(null);
+      setRemoving([]);
+      setCoverFor(null);
+    }
+  }, [sectionActive, reload]);
   const [cleaning, setCleaning] = useState<LibraryBook[]>([]);
   const [cleanBusy, setCleanBusy] = useState(false);
   /** Papierkorb: dauerhaft erreichbar, 30 Tage wiederherstellbar. */

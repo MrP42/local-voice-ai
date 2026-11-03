@@ -1,5 +1,7 @@
 import React, {
   createContext,
+  useEffect,
+  useRef,
   useContext,
   useLayoutEffect,
   useState,
@@ -59,8 +61,36 @@ export const KeepAlive: React.FC<{
   const ownDock = useOwnSlot(helpDock, active);
   const kontext = useTitleContextSlot();
   const ownKontext = useOwnSlot(kontext, active);
+  // Bildlaufstellen: `display: none` verwirft sie im Browser. Darum laufend
+  // mitschreiben (innere Spalten und der gemeinsame Bildlauf des Inhalts)
+  // und beim Sichtbarwerden vor dem ersten Bild zurückschreiben.
+  const root = useRef<HTMLDivElement>(null);
+  const scrolls = useRef(new Map<Element, number>());
+  const mainScroll = useRef(0);
+  useEffect(() => {
+    if (!active) return;
+    const main = document.getElementById("workspace-content");
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target === main) mainScroll.current = main?.scrollTop ?? 0;
+      else if (target instanceof Element && root.current?.contains(target))
+        scrolls.current.set(target, target.scrollTop);
+    };
+    document.addEventListener("scroll", onScroll, true);
+    return () => document.removeEventListener("scroll", onScroll, true);
+  }, [active]);
+  useLayoutEffect(() => {
+    if (!active) return;
+    scrolls.current.forEach((top, el) => {
+      if (el.isConnected) el.scrollTop = top;
+      else scrolls.current.delete(el);
+    });
+    const main = document.getElementById("workspace-content");
+    if (main) main.scrollTop = mainScroll.current;
+  }, [active]);
   return (
     <div
+      ref={root}
       className="lv-keepalive"
       data-keepalive={name}
       hidden={!active}
