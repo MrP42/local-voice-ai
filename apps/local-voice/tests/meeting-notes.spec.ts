@@ -530,8 +530,8 @@ test("Notizblock: Flush bei Blur schreibt sofort, ohne die Entprellzeit abzuwart
   await pad.getByTestId("note-starter").click();
   await page.keyboard.type("Kurz", { delay: 10 });
   expect(await calls(page, "meeting_notes_save")).toHaveLength(0);
-  // Klick auf die Seitenueberschrift nimmt den Fokus aus dem Editor.
-  await page.locator(".page-shell__head h1").click();
+  // Klick auf den App-Namen in der Titelleiste nimmt den Fokus aus dem Editor.
+  await page.locator(".lv-titlebar__app").click();
   await expect
     .poll(async () => (await calls(page, "meeting_notes_save")).length, {
       timeout: 450,

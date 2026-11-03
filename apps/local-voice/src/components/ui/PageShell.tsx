@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useHelpDockSlot } from "../shell/PageHeaderSlot";
+import { useHelpDockSlot, usePageHeaderSlot } from "../shell/PageHeaderSlot";
 import { useTranslation } from "react-i18next";
 import { Info, X } from "lucide-react";
 import { HelpPanel } from "../help/HelpPanel";
@@ -10,6 +10,27 @@ import {
   SearchBox,
   Tooltip as FluentTooltip,
 } from "@fluentui/react-components";
+
+/** Ab dieser Breite stehen ⓘ, Suche und Aktionen in der Titelleiste; darunter
+    reicht ihr Platz neben Hamburger und Fensterknöpfen nicht, dann bleiben sie
+    als schmale Zeile über dem Inhalt. */
+const TITLEBAR_TOOLS_QUERY = "(min-width: 768px)";
+
+function useTitlebarTools(): boolean {
+  const [wide, setWide] = useState(
+    () =>
+      typeof window === "undefined" ||
+      window.matchMedia(TITLEBAR_TOOLS_QUERY).matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia(TITLEBAR_TOOLS_QUERY);
+    const onChange = () => setWide(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return wide;
+}
 
 const IS_MAC =
   typeof navigator !== "undefined" &&
@@ -24,14 +45,15 @@ export interface PageShellSearch {
 }
 
 interface PageShellProps {
-  /** Seitentitel — eine Zeile, dieselbe Groesse auf jeder Seite. */
+  /** Seitentitel: unsichtbare Überschrift (h1) und Name der Werkzeugleiste
+      in der Titelleiste; sichtbar ist er nur in der Navigation. */
   title: string;
   /** Ein Satz, was man hier tut: nur als Tooltip am ⓘ neben dem Titel
       (ADR-0027 E4), keine eigene Zeile. */
   description?: string;
-  /** Rechts im Kopf: Schalter, Statussymbole, ein Knopf. Kein Menue. */
+  /** Rechts in der Titelleiste: Schalter, Statussymbole, ein Knopf. Kein Menue. */
   actions?: React.ReactNode;
-  /** Suchfeld im Modulkopf, Strg+K springt hinein (ADR-0027 E5). Ohne
+  /** Suchfeld in der Titelleiste, Strg+K springt hinein (ADR-0027 E5). Ohne
       diese Angabe hat das Modul weder Feld noch Kürzel. */
   search?: PageShellSearch;
   /** Bereich der Kontexthilfe (`src/content/help/<bereich>.<sprache>.md`).
@@ -41,17 +63,17 @@ interface PageShellProps {
       setzt das nicht. */
   help?: string;
   /** Arbeitsflaeche: nimmt die volle Hoehe, der Inhalt scrollt in seinen
-      Spalten, der Kopf steht. Listen und Einstellungen lassen das aus und
+      Spalten. Listen und Einstellungen lassen das aus und
       scrollen als Ganzes. */
   fill?: boolean;
   children: React.ReactNode;
 }
 
 /**
- * Der gemeinsame Rahmen aller Inhaltsseiten: Kopfzeile mit Titel,
- * Beschreibung und Aktionen, darunter der Inhalt. Vorher hatte jede Seite
- * ihren eigenen Kopf (h1 hier, h2 dort, keiner bei den Einstellungen) — das
- * sah nach fuenf Apps aus. Menue- und Fussleiste bleiben unberuehrt.
+ * Der gemeinsame Rahmen aller Inhaltsseiten: unsichtbare Überschrift (h1 für
+ * Screenreader), Bedienelemente des Moduls in der Titelleiste, darunter der
+ * Inhalt ab der ersten Zeile. Eine sichtbare Titelzeile gibt es nicht mehr
+ * (Patrick 02.11.): der Modulname steht in der Navigation links.
  */
 export const PageShell: React.FC<PageShellProps> = ({
   title,
@@ -65,6 +87,8 @@ export const PageShell: React.FC<PageShellProps> = ({
   const { t } = useTranslation();
   const [helpOpen, setHelpOpen] = useState(false);
   const dock = useHelpDockSlot();
+  const headerSlot = usePageHeaderSlot();
+  const slot = useTitlebarTools() ? headerSlot : null;
   const searchRef = useRef<HTMLInputElement>(null);
   const hasSearch = !!search;
   // Strg+K (⌘K) nur in Modulen mit Suche (ADR-0027 E5).
@@ -90,52 +114,57 @@ export const PageShell: React.FC<PageShellProps> = ({
       help ? registerPageHelp(() => setHelpOpen((open) => !open)) : undefined,
     [help],
   );
-  const head = (
-    <header className="page-shell__head">
-      <div className="page-shell__titel">
-        <h1 id="page-title" className="page-shell__title text-text">
-          {title}
-        </h1>
-        {description && (
-          <FluentTooltip
-            content={description}
-            relationship="description"
-            withArrow
+  // Keine Titelzeile im Modul (Patrick 02.11.): Der Name steht in der
+  // Navigation links. Für Screenreader und Sprunglisten bleibt er als
+  // unsichtbare Überschrift; ⓘ, Suche und Aktionen wandern in die Titelleiste.
+  const heading = (
+    <h1 id="page-title" className="page-shell__title sr-only">
+      {title}
+    </h1>
+  );
+  const hasTools = !!(description || actions || search);
+  const tools = hasTools ? (
+    <div
+      className="page-shell__head page-shell__actions"
+      role="group"
+      aria-label={title}
+      data-testid="page-tools"
+    >
+      {description && (
+        <FluentTooltip
+          content={description}
+          relationship="description"
+          withArrow
+        >
+          {/* Ein Knopf, damit Tastatur und Screenreader ihn als Bedien-
+              element finden; der Tooltip hängt die Kurzbeschreibung per
+              aria-describedby an (relationship="description"). */}
+          <button
+            type="button"
+            className="page-shell__info"
+            aria-label={t("shell.info")}
+            data-testid="page-info"
           >
-            {/* Ein Knopf, damit Tastatur und Screenreader ihn als Bedien-
-                element finden; der Tooltip hängt die Kurzbeschreibung per
-                aria-describedby an (relationship="description"). */}
-            <button
-              type="button"
-              className="page-shell__info"
-              aria-label={t("shell.info")}
-              data-testid="page-info"
-            >
-              <Info width={16} height={16} aria-hidden="true" />
-            </button>
-          </FluentTooltip>
-        )}
-      </div>
-      {(actions || search) && (
-        <div className="page-shell__actions flex items-center gap-1 shrink-0">
-          {search && (
-            <div className="lv-search">
-              <SearchBox
-                ref={searchRef}
-                size="medium"
-                placeholder={search.placeholder}
-                aria-label={search.placeholder}
-                value={search.value}
-                onChange={(_event, data) => search.onChange(data.value)}
-                data-module-search
-              />
-            </div>
-          )}
-          {actions}
+            <Info width={16} height={16} aria-hidden="true" />
+          </button>
+        </FluentTooltip>
+      )}
+      {search && (
+        <div className="lv-search">
+          <SearchBox
+            ref={searchRef}
+            size="medium"
+            placeholder={search.placeholder}
+            aria-label={search.placeholder}
+            value={search.value}
+            onChange={(_event, data) => search.onChange(data.value)}
+            data-module-search
+          />
         </div>
       )}
-    </header>
-  );
+      {actions}
+    </div>
+  ) : null;
   const helpAside = (className: string) =>
     help ? (
       <aside className={className} aria-label={t("help.title")}>
@@ -157,7 +186,8 @@ export const PageShell: React.FC<PageShellProps> = ({
       className={`page-shell w-full ${fill ? "page-shell--fill flex flex-col gap-4" : "space-y-4"}`}
       aria-labelledby="page-title"
     >
-      {head}
+      {heading}
+      {tools && (slot ? createPortal(tools, slot) : tools)}
       {help && helpOpen && !dock ? (
         <div
           className={`flex gap-4 ${fill ? "flex-1 min-h-0 items-stretch" : "items-start"}`}
