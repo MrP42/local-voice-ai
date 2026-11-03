@@ -1490,6 +1490,58 @@ pub fn library_progress_put(app: AppHandle, entries: Vec<ProgressEntry>) -> Resu
     write_atomic(&progress_path(&root), &json)
 }
 
+// ---------------------------------------------------------------------------
+// Zugang für den Geräte-Sync (lva#210 P5, `sync/books.rs`)
+// ---------------------------------------------------------------------------
+
+/// Bibliotheks-Sperre für Lese-Ändern-Schreib-Zyklen des Syncs.
+pub(crate) fn sync_lock() -> MutexGuard<'static, ()> {
+    lock()
+}
+
+pub(crate) fn sync_root(app: &AppHandle) -> Result<PathBuf, String> {
+    library_root(app)
+}
+
+pub(crate) fn sync_book_dir(root: &Path, id: &str) -> Result<PathBuf, String> {
+    book_dir(root, id)
+}
+
+pub(crate) fn sync_read_book(dir: &Path) -> Option<LibraryBook> {
+    read_book(dir)
+}
+
+pub(crate) fn sync_write_book(dir: &Path, book: &LibraryBook) -> Result<(), String> {
+    if let Some(audio) = &book.audio {
+        validate_audio_names(audio)?;
+    }
+    write_book(dir, book)
+}
+
+pub(crate) fn sync_cover_file(dir: &Path) -> Option<PathBuf> {
+    cover_file(dir)
+}
+
+/// Ein Name, der im eigenen `audio/`-Ordner bleibt (kein Pfad).
+pub(crate) fn sync_plain_name(name: &str) -> bool {
+    plain_name(name)
+}
+
+pub(crate) fn sync_progress_load(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    load_progress(root)
+}
+
+pub(crate) fn sync_progress_store(
+    root: &Path,
+    map: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let json = serde_json::to_vec(map).map_err(|e| e.to_string())?;
+    write_atomic(&progress_path(root), &json)
+}
+
+pub(crate) const SYNC_MAX_PROGRESS_KEY: usize = MAX_PROGRESS_KEY;
+pub(crate) const SYNC_MAX_PROGRESS_VALUE: usize = MAX_PROGRESS_VALUE;
+
 #[cfg(test)]
 mod tests {
     use super::*;

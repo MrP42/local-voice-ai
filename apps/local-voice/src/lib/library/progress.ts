@@ -92,7 +92,18 @@ function restorePending() {
   }
 }
 
-async function flush(): Promise<void> {
+/** Laufendes Sichern: wer den Kern liest, wartet es ab. */
+let inflight: Promise<void> = Promise.resolve();
+/** Der Abgleich beim Start; die Übernahme nach dem Geräte-Sync wartet darauf. */
+let hydration: Promise<void> | null = null;
+
+function flush(): Promise<void> {
+  const run = inflight.then(flushNow);
+  inflight = run.catch(() => {});
+  return run;
+}
+
+async function flushNow(): Promise<void> {
   if (timer !== null) {
     window.clearTimeout(timer);
     timer = null;
@@ -170,7 +181,12 @@ const updatedOf = (raw: string | null): number => {
  * aus dem Kern; ist ein lokaler Datensatz neuer (Absturz vor dem Sichern) oder
  * gibt es ihn nur lokal, geht er in den Kern.
  */
-export async function hydrateProgress(): Promise<void> {
+export function hydrateProgress(): Promise<void> {
+  hydration ??= hydrateNow();
+  return hydration;
+}
+
+async function hydrateNow(): Promise<void> {
   restorePending();
   let remote: Partial<Record<string, string>> = {};
   try {
@@ -220,6 +236,76 @@ export async function hydrateProgress(): Promise<void> {
   }
   if (pending.size) await flush();
   window.dispatchEvent(new Event(HYDRATED_EVENT));
+}
+
+/**
+ * Nach einem Geräte-Abgleich (Ereignis `sync-changed`): Der Kern hat
+ * Fortschritt und Lesezeichen eines anderen Geräts übernommen. Anders als
+ * beim Start gilt hier der Kern für alles, was lokal nicht ungesichert
+ * geändert ist. Fortschritts-Datensätze werden wie beim Start
+ * zusammengeführt. Gelöscht wird hier nichts: das meldet der Kern einzeln
+ * ({@link removeSyncedKeys}).
+ */
+export async function adoptSyncedProgress(): Promise<void> {
+  await hydrateProgress();
+  await flush();
+  let remote: Partial<Record<string, string>> = {};
+  try {
+    const result = await commands.libraryProgressLoad();
+    if (result.status !== "ok") return;
+    remote = result.data ?? {};
+  } catch {
+    return;
+  }
+  const local = storage();
+  if (!local) return;
+  let touched = false;
+  for (const [key, value] of Object.entries(remote)) {
+    if (value === undefined || !mirrored(key) || pending.has(key)) continue;
+    const mine = local.getItem(LS_PREFIX + key);
+    const next =
+      mine !== null && key.startsWith("progress.")
+        ? (mergeRecordText(mine, value) ?? value)
+        : value;
+    if (next === mine) continue;
+    try {
+      local.setItem(LS_PREFIX + key, next);
+      touched = true;
+    } catch {
+      /* ignorieren */
+    }
+    if (next !== value) pending.set(key, next);
+  }
+  if (pending.size) {
+    persistPending();
+    schedule();
+  }
+  if (touched) window.dispatchEvent(new Event(HYDRATED_EVENT));
+}
+
+/**
+ * Ein anderes Gerät hat diese Schlüssel gelöscht (Ereignis
+ * `sync-progress-removed`): aus dem lokalen Speicher nehmen, sofern sie hier
+ * nicht ungesichert geändert sind.
+ */
+export async function removeSyncedKeys(keys: string[]): Promise<void> {
+  await hydrateProgress();
+  await flush();
+  const local = storage();
+  if (!local) return;
+  let touched = false;
+  for (const key of keys) {
+    if (typeof key !== "string" || !mirrored(key) || pending.has(key)) continue;
+    try {
+      if (local.getItem(LS_PREFIX + key) !== null) {
+        local.removeItem(LS_PREFIX + key);
+        touched = true;
+      }
+    } catch {
+      /* ignorieren */
+    }
+  }
+  if (touched) window.dispatchEvent(new Event(HYDRATED_EVENT));
 }
 
 /**
