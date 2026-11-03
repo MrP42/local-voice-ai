@@ -549,13 +549,23 @@ mod tests {
         let roster = build_roster_named(&voices, None, None, Some(&names));
         assert_eq!(roster[0].id, "en:Zoey");
         assert_eq!(roster[0].name, "Zoë");
-        assert!(roster[0].aliases.iter().any(|a| a == "Zoey"), "{:?}", roster[0].aliases);
+        assert!(
+            roster[0].aliases.iter().any(|a| a == "Zoey"),
+            "{:?}",
+            roster[0].aliases
+        );
         assert!(roster[0].aliases.iter().any(|a| a == "Zoë – Bright"));
         assert_eq!(roster[1].name, "Erzählerin");
         let known: Vec<_> = roster.iter().map(|s| s.known("phonon")).collect();
         let segments = split_speaker_segments("<Zoey> Hallo. <Erzählerin> Ja.", &known);
-        assert_eq!(segments[0].voice.as_deref(), Some("provider:phonon:en:Zoey"));
-        assert_eq!(segments[1].voice.as_deref(), Some("provider:phonon:Erzaehlerin"));
+        assert_eq!(
+            segments[0].voice.as_deref(),
+            Some("provider:phonon:en:Zoey")
+        );
+        assert_eq!(
+            segments[1].voice.as_deref(),
+            Some("provider:phonon:Erzaehlerin")
+        );
         // Ohne eigene Namen: unverändert.
         assert_eq!(
             build_roster_named(&voices, None, None, None),

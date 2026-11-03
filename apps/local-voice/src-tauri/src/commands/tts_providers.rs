@@ -254,7 +254,9 @@ pub fn set_voice_name_in(
     known(registry, id)?;
     let voice = voice.trim();
     if voice.is_empty() || voice.len() > 256 || voice.chars().any(char::is_control) {
-        return Err(TtsError::bad_request("Ungültige Stimmen-Kennung".to_string()));
+        return Err(TtsError::bad_request(
+            "Ungültige Stimmen-Kennung".to_string(),
+        ));
     }
     let clean = policy::clean_voice_name(name.unwrap_or("")).map_err(TtsError::bad_request)?;
     let clean = clean.filter(|n| original.map_or(true, |o| o.trim() != n));
@@ -1272,14 +1274,33 @@ mod tests {
         set(&mut s, "phonon", "Erzaehlerin", Some("  Erzählerin  ")).unwrap();
         assert_eq!(s.voice_names["phonon"]["Erzaehlerin"], "Erzählerin");
         // Piper und jeder andere Anbieter der Registry auch.
-        set(&mut s, "piper", "de_DE-thorsten-medium", Some("Thorsten  (ruhig)")).unwrap();
-        assert_eq!(s.voice_names["piper"]["de_DE-thorsten-medium"], "Thorsten (ruhig)");
+        set(
+            &mut s,
+            "piper",
+            "de_DE-thorsten-medium",
+            Some("Thorsten  (ruhig)"),
+        )
+        .unwrap();
+        assert_eq!(
+            s.voice_names["piper"]["de_DE-thorsten-medium"],
+            "Thorsten (ruhig)"
+        );
 
-        for bad in ["<Nele>", "a:b", "Nele – Alt", "Nele · HQ", &"x".repeat(61), "bö\u{7}se"] {
+        for bad in [
+            "<Nele>",
+            "a:b",
+            "Nele – Alt",
+            "Nele · HQ",
+            &"x".repeat(61),
+            "bö\u{7}se",
+        ] {
             let e = set(&mut s, "phonon", "Erzaehlerin", Some(bad)).unwrap_err();
             assert_eq!(e.kind, TtsErrorKind::BadRequest, "{bad}");
         }
-        assert_eq!(s.voice_names["phonon"]["Erzaehlerin"], "Erzählerin", "bleibt");
+        assert_eq!(
+            s.voice_names["phonon"]["Erzaehlerin"], "Erzählerin",
+            "bleibt"
+        );
 
         // Gleich dem ursprünglichen Namen oder leer: zurück zum Original, Eintrag weg.
         set(&mut s, "phonon", "Erzaehlerin", Some("Erzaehlerin")).unwrap();
@@ -1319,7 +1340,11 @@ mod tests {
         });
         let options = voice_options(&snap, all).await;
         let de = options.iter().find(|o| o.voice.id == "mock-de").unwrap();
-        assert!(de.voice.label.starts_with("Prüfstimme"), "{}", de.voice.label);
+        assert!(
+            de.voice.label.starts_with("Prüfstimme"),
+            "{}",
+            de.voice.label
+        );
         let en = options.iter().find(|o| o.voice.id == "mock-en").unwrap();
         assert!(!en.voice.label.starts_with("Prüfstimme"));
     }
