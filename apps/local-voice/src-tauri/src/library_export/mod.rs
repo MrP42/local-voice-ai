@@ -446,8 +446,11 @@ mod tests {
         assert_eq!(written.len(), 2);
         assert!(out.join("01 – a.mp3").exists());
         assert!(out.join("02 – b.mp3").exists());
-        let single = copy_original(&[a], &dir.path().join("Einzeln.m4b")).unwrap();
+        // Der Dialog übergibt den Namen ohne Endung; die Originaldatei behält ihre.
+        let single = copy_original(&[a.clone()], &dir.path().join("Einzeln")).unwrap();
         assert!(single[0].ends_with("Einzeln.mp3"));
+        let dotted = copy_original(&[a], &dir.path().join("Dr. Faust – Hörbuch")).unwrap();
+        assert!(dotted[0].ends_with("Dr. Faust – Hörbuch.mp3"));
     }
 
     #[test]
