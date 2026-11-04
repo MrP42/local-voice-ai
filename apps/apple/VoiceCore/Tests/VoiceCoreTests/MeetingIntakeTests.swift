@@ -322,13 +322,18 @@ final class MeetingIntakeTests: XCTestCase {
         let item = try inbox.deposit(try file("l.m4a", [2, 4, 6, 8]), from: .openIn, consent: consent(.import, .import))
         let done = DispatchSemaphore(value: 0)
         // Semaphore-wait ist in async-Kontexten nicht erlaubt: auf die Sperre per Continuation warten.
-        await withCheckedContinuation { (held: CheckedContinuation<Void, Never>) in
-            Thread.detachNewThread { _ = try? inbox.locked(item.id) { held.resume(); done.wait() } }
+        defer { done.signal() }
+        // Kann die Sperre nicht genommen werden, wird die Continuation trotzdem fortgesetzt (Test scheitert statt zu hängen).
+        let locked = await withCheckedContinuation { (held: CheckedContinuation<Bool, Never>) in
+            Thread.detachNewThread {
+                do { try inbox.locked(item.id) { held.resume(returning: true); done.wait() } }
+                catch { held.resume(returning: false) }
+            }
         }
+        guard locked else { return XCTFail("Sperre nicht genommen") }
         do { _ = try await inbox.take(item) { _, _ in XCTFail("darf nicht importieren") }; XCTFail("busy erwartet") }
         catch IntakeError.busy {}
         XCTAssertThrowsError(try inbox.discard(item)) { XCTAssertEqual($0 as? IntakeError, .busy) }
-        done.signal()
         XCTAssertEqual(try inbox.pending().map(\.id), [item.id])
     }
 

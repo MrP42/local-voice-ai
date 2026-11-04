@@ -441,7 +441,8 @@ public struct WatchRecordingAssembler: Sendable {
         guard header.sequence >= 0, header.sequence < 100_000, header.endSample != nil,
               (8_000...48_000).contains(header.sampleRate), header.end <= Self.maxSeconds,
               header.digest.count == 64, header.digest.allSatisfy(\.isHexDigit) else { throw IntakeError.invalid }
-        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        var fresh = file; fresh.removeAllCachedResourceValues()  // erneute Zustellung: keine alte Größe
+        let size = try fresh.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size > 0, size <= Self.maxChunkBytes else { throw IntakeError.invalid }
         let receipt = WatchChunkReceipt(sessionId: header.sessionId, sequence: header.sequence, digest: header.digest)
         let folder = dir(header.sessionId)
