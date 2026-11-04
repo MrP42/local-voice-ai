@@ -2334,6 +2334,61 @@ async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, s
 }
 },
 /**
+ * Teile einer Besprechung: zusammengefuehrte Teile, noch laufende Teile, die
+ * angehaengt werden, und (fuer einen solchen Teil) sein Ziel.
+ */
+async meetingsPartsInfo(meetingId: string) : Promise<Result<PartsInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_parts_info", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt fertige Besprechungen zu einer zusammen. `keep_order = false`: nach
+ * Aufnahmebeginn (bei Gleichstand nach Dateiname) geordnet, die erste bleibt
+ * erhalten und nimmt die anderen auf (Titel, Projekte, Notizen bleiben; die
+ * anderen gehen in den Papierkorb). Gibt die ID der Besprechung zurueck. Die
+ * Sprechertrennung ueber das Ganze laeuft danach im Hintergrund.
+ */
+async meetingsMerge(meetingIds: string[], keepOrder: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_merge", { meetingIds, keepOrder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt Audiodateien an eine Besprechung an. Jede Datei kommt als eigener
+ * Auftrag in die Import-Warteschlange (Fortschritt wie jeder Import); sobald
+ * alle Teile fertig sind, werden sie in dieser Reihenfolge hinten angefuegt.
+ * Das Ziel darf selbst noch in der Warteschlange stehen (Import mehrerer
+ * Dateien "als eine Besprechung"). Gibt die IDs der Teile zurueck.
+ */
+async meetingsAppendFiles(targetMeetingId: string, paths: string[], consentConfirmed: boolean) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_files", { targetMeetingId, paths, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein vorgemerkter Teil wird doch eine eigene Besprechung (z. B. weil er
+ * gescheitert ist und die anderen nicht warten sollen). Sind danach alle
+ * uebrigen Teile fertig, wird sofort zusammengefuehrt.
+ */
+async meetingsAppendDetach(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_detach", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Generates the minutes for a finished meeting, following a template, and
  * stores them as a new document version. `template_id`: a template id, `"auto"`
  * (chosen by content) or `None` (the meeting's own choice, else the standard
@@ -9650,6 +9705,14 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
+ * Ein Teil einer Besprechung (Anzeige).
+ */
+export type MeetingPart = { part_index: number; title: string; source_path: string | null; 
+/**
+ * Beginn des Teils auf der Zeitachse der Besprechung.
+ */
+offset_ms: number; duration_ms: number }
+/**
  * Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
  * Oberflaeche holt ihn ueber `meeting_prompt_current`), `close` = zu.
  */
@@ -10177,11 +10240,31 @@ role: string;
  * `calendar`, `speaker` oder `manual`.
  */
 source: string; is_self: boolean; meeting_count: number }
+/**
+ * Alles, was die Oberflaeche ueber die Teile einer Besprechung braucht.
+ */
+export type PartsInfo = { 
+/**
+ * Die zusammengefuehrten Teile (leer = ein einziger Teil).
+ */
+parts: MeetingPart[]; 
+/**
+ * Teile, die noch laufen oder warten und danach angehaengt werden.
+ */
+pending: PendingPart[]; 
+/**
+ * Diese Besprechung ist selbst ein wartender Teil: Ziel (ID, Titel).
+ */
+append_to: [string, string] | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 /**
  * Eine offene Freigabe mit dem Namen der Integration.
  */
 export type PendingApproval = { approval: Approval; integration_label: string | null; integration_kind: Kind | null }
+/**
+ * Ein Teil, der noch verarbeitet wird und danach angehaengt wird.
+ */
+export type PendingPart = { meeting_id: string; title: string; status: string; position: number }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 /**
  * Eine Person mit allem fuer das Popover.

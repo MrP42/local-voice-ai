@@ -128,6 +128,9 @@ pub(crate) static MIGRATIONS: &[M] = &[
     // lva#208 (Hoerbuch-Teile und -Abschnitte in der Warteschlange), Index 14: hinter
     // ADR-0026 PR-7. Nur CREATE ... IF NOT EXISTS. Der SQL-Text steht in `queue_store.rs`.
     M::up(super::queue_store::QUEUE_PART_MIGRATION),
+    // Mehrere Audiodateien je Besprechung (Teile), Index 15: hinter lva#208. Nur
+    // CREATE ... IF NOT EXISTS. Der SQL-Text steht in `parts.rs`.
+    M::up(super::parts::PARTS_MIGRATION),
 ];
 
 /// Migration Index 3 (M4, `entwurf/m4-chat-suche.md` §3).
@@ -1815,7 +1818,20 @@ impl MeetingStore {
         // DEFERRED wuerde ein Fremdschreiber dazwischen das Hochstufen sofort
         // scheitern lassen (SQLITE_BUSY_SNAPSHOT), statt den Busy-Timeout zu nutzen.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let audio_paths = Self::soft_delete_in_tx(&tx, id, now)?;
+        tx.commit()?;
+        Ok(audio_paths)
+    }
 
+    /// Der Kern von [`Self::soft_delete_meeting`] in einer fremden Transaktion:
+    /// das Zusammenfuehren mehrerer Teile (`parts.rs`) loescht die angehaengten
+    /// Besprechungen in DERSELBEN Transaktion, in der die Zielbesprechung ihr
+    /// Transkript bekommt. Gibt die Audiopfade zurueck.
+    pub(super) fn soft_delete_in_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: &str,
+        now: i64,
+    ) -> Result<Vec<String>> {
         let paths: Option<(Option<String>, Option<String>)> = tx
             .query_row(
                 "SELECT mic_audio_path, system_audio_path FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
@@ -1898,8 +1914,16 @@ impl MeetingStore {
             "DELETE FROM meeting_participants WHERE meeting_id = ?1",
             params![id],
         )?;
-
-        tx.commit()?;
+        // lva (Teile): ein geloeschter Teil wird nie mehr angehaengt, ein
+        // geloeschtes Ziel nimmt keine Teile mehr an; die Teilliste geht mit.
+        tx.execute(
+            "DELETE FROM meeting_append_pending WHERE meeting_id = ?1 OR target_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_parts WHERE meeting_id = ?1",
+            params![id],
+        )?;
 
         let mut audio_paths = Vec::new();
         if let Some(mic) = mic {

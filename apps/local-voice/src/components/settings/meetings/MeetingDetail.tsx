@@ -84,6 +84,10 @@ import { usePersistentState } from "@/hooks/usePersistentState";
 import { JobPanel } from "./JobProgress";
 import { QueuePanel } from "./QueueStatus";
 import { audioTranscriptPlayer } from "./transcriptPlayer";
+import { useMeetingParts } from "./parts/useMeetingParts";
+import { AppendNotice, PartsDialog, PartsTrigger } from "./parts/PartsChip";
+import { PartDivider, partStartsBySegment } from "./parts/PartDivider";
+import { canAppendAudio, useAppendAudio } from "./parts/useAppendAudio";
 import { SlideMarkRow } from "./slides/SlideMark";
 import { SlideViewer } from "./slides/SlideViewer";
 import { SlidesPanel } from "./slides/SlidesPanel";
@@ -200,6 +204,10 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const meetingId = meeting.id;
+  // Mehrere Audiodateien (Teile): Teilliste, wartende Teile, Anhaengen.
+  const { info: partsInfo, reload: reloadParts } = useMeetingParts(meetingId);
+  const [partsOpen, setPartsOpen] = useState(false);
+  const appendAudio = useAppendAudio(meeting);
   const emptyEntry = isEmptyEntry(meeting);
   const meetingTitle = meeting.title;
   // Dialoge und Anfragen aus Menue und Kopf.
@@ -1024,6 +1032,8 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       hasAudio={hasAudio}
       canDetectSlides={canDetectSlides(meeting)}
       onDetectSlides={() => void detectSlides()}
+      canAppendAudio={canAppendAudio(meeting) && partsInfo.append_to === null}
+      onAppendAudio={() => void appendAudio.pick()}
       busy={
         live ||
         meeting.status === "processing" ||
@@ -1068,6 +1078,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     !meeting.system_audio_path &&
     !loading &&
     segments.length === 0;
+
+  const partStarts = partStartsBySegment(segments, partsInfo.parts);
+  // Ab 100 Minuten ist die Zeitmarke breiter (z. B. 221:30).
+  const longTimeline =
+    (segments[segments.length - 1]?.start_ms ?? 0) >= 6_000_000;
 
   /** Transkript (Reiter in der Mitte): Werkzeugzeilen fest, die Liste scrollt. */
   const activeVariant = variants.find((v) => v.active) ?? null;
@@ -1190,6 +1205,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
           >
             {segments.map((segment) => (
               <React.Fragment key={segment.segment_index}>
+                {partStarts.get(segment.segment_index) && (
+                  <PartDivider
+                    part={partStarts.get(segment.segment_index)!}
+                    onSeek={
+                      player.canSeek ? (ms) => player.seek(ms) : undefined
+                    }
+                  />
+                )}
                 {slideMarksBySegment.get(segment.segment_index)?.map((mark) => (
                   <SlideMarkRow
                     key={`${mark.slideId}-${mark.startMs}`}
@@ -1220,12 +1243,14 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
                         player.seek(segment.start_ms, segment.channel)
                       }
                       title={t("meetings.detail.playFrom")}
-                      className="text-xs text-text/60 w-10 shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer"
+                      className={`text-xs text-text/60 ${longTimeline ? "w-12" : "w-10"} shrink-0 pt-0.5 text-left tabular-nums hover:text-logo-primary hover:underline cursor-pointer`}
                     >
                       {formatMmSs(segment.start_ms)}
                     </button>
                   ) : (
-                    <span className="text-xs text-text/60 w-10 shrink-0 pt-0.5">
+                    <span
+                      className={`text-xs text-text/60 ${longTimeline ? "w-12" : "w-10"} shrink-0 pt-0.5`}
+                    >
                       {formatMmSs(segment.start_ms)}
                     </span>
                   )}
@@ -1379,9 +1404,38 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         }}
         tabsLabel={t("meetings.layout.contentTabs")}
         menu={actions(compact ? "menu-all" : "menu")}
+        partsSlot={
+          <PartsTrigger
+            info={partsInfo}
+            variant="chip"
+            onOpen={() => setPartsOpen(true)}
+          />
+        }
         autoEdit={autoRename}
         onAutoEditStarted={onAutoRenameStarted}
       />
+
+      <PartsTrigger
+        info={partsInfo}
+        variant="row"
+        onOpen={() => setPartsOpen(true)}
+      />
+      <PartsDialog
+        open={partsOpen}
+        onOpenChange={setPartsOpen}
+        meetingId={meetingId}
+        info={partsInfo}
+        onSeek={player.canSeek ? (ms) => player.seek(ms) : undefined}
+        onChanged={() => void reloadParts()}
+      />
+      {appendAudio.dialog}
+      {partsInfo.append_to && (
+        <AppendNotice
+          meetingId={meetingId}
+          target={partsInfo.append_to}
+          onChanged={() => void reloadParts()}
+        />
+      )}
 
       {emptyEntry && fill && (
         <EmptyStartCard
