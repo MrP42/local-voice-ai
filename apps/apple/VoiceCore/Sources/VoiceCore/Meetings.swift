@@ -203,8 +203,22 @@ public actor MeetingArchive {
               try url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else { throw VoiceError.persistence }
         return url
     }
-    public func importMedia(_ source: URL, duration: Double) throws -> MeetingDocument {
+    /// Nachweis und Live-Ergebnis einer in der App aufgenommenen Besprechung.
+    public struct LiveImport: Sendable {
+        public var consent: ConsentLog
+        public var live: LiveState?
+        public var segments: [LiveSegment]
+        public var notes: String?
+        public init(consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?) {
+            self.consent = consent; self.live = live; self.segments = segments; self.notes = notes
+        }
+    }
+
+    /// `live` wird im selben Schritt wie das Original geschrieben: ein Dokument
+    /// aus einer Live-Aufnahme existiert nie ohne seinen Einwilligungsnachweis.
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil) throws -> MeetingDocument {
         guard duration.isFinite, duration > 0, duration <= 7200 else { throw VoiceError.invalid }
+        if let live { guard live.consent.canRecord, live.segments.count <= 20_000 else { throw VoiceError.invalid } }
         let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard info.isRegularFile == true, info.isSymbolicLink != true, let bytes = info.fileSize, bytes > 0, bytes <= 2 * 1024 * 1024 * 1024 else { throw VoiceError.invalid }
         // Count actual files, including interrupted imports and damaged metadata.
@@ -231,23 +245,18 @@ public actor MeetingArchive {
         }
         guard copied == bytes else { throw VoiceError.conflict }
         try syncFile(target)
-        let doc = MeetingDocument(id: id, createdAt: Date(), originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
+        var doc = MeetingDocument(id: id, createdAt: Date(), originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
+        if let live {
+            doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments
+            doc.liveNotes = live.notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
+        }
         try write(try JSONEncoder().encode(doc), at: staging.appendingPathComponent("meeting.json"))
         try syncDirectory(staging)
         try fm.moveItem(at: staging, to: folder(id))
         try syncDirectory(root)
         return doc
     }
-    /// Nachweis und Live-Ergebnis einer in der App aufgenommenen Besprechung anhängen.
-    public func attachLive(_ id: UUID, consent: ConsentLog, live: LiveState?, segments: [LiveSegment], notes: String?) throws {
-        guard consent.canRecord, segments.count <= 20_000 else { throw VoiceError.invalid }
-        var doc = try load(id)
-        doc.consent = consent; doc.live = live; doc.liveSegments = segments
-        doc.liveNotes = notes.flatMap { $0.isEmpty ? nil : String($0.prefix(100_000)) }
-        try save(doc)
-    }
-
     public func appendChunk(_ id: UUID, offset: Double, nextOffset: Double, segments: [MeetingSegment], event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard offset == doc.nextOffset else { throw VoiceError.conflict }

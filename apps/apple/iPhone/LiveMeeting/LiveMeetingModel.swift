@@ -5,7 +5,7 @@ import UIKit
 /// dauerhafte Sicherung für den Wiederanlauf (Epic #247, P3).
 @MainActor
 final class LiveMeetingModel: ObservableObject {
-    enum Phase: Equatable { case idle, recording, paused, stopping, finished }
+    enum Phase: Equatable { case idle, starting, recording, paused, stopping, finished }
 
     /// Gesichert nach jedem fertigen Segment und jedem Takt (`sitzung.json`).
     struct SessionFile: Codable {
@@ -17,7 +17,13 @@ final class LiveMeetingModel: ObservableObject {
         var segments: [LiveSegment]
         var notes: String
         var seconds: Double
+
+        /// Ohne Inhalt: kein Segment, keine Notiz. Nur solche Sitzungen dürfen verworfen werden.
+        var isEmpty: Bool { segments.isEmpty && notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
+
+    /// Höchstdauer einer Live-Aufnahme; danach wird sie sauber beendet.
+    static let maxSeconds: Double = 2 * 60 * 60
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var segments: [LiveSegment] = []
@@ -27,6 +33,7 @@ final class LiveMeetingModel: ObservableObject {
     @Published private(set) var aiStatus = ""
     @Published private(set) var lastTick: Date?
     @Published private(set) var consent = ConsentLog()
+    @Published private(set) var hint: String?
     @Published var notes = ""
     @Published var title = ""
     @Published var error: String?
@@ -35,13 +42,15 @@ final class LiveMeetingModel: ObservableObject {
     private var capture: LiveCapture?
     private var session: SessionFile?
     private var timer: Timer?
-    private var ticking = false
+    private var beats = 0
+    private var tickTask: Task<Void, Never>?
+    private var notesSave: Task<Void, Never>?
     private var lastTickAudio: Double?
     private let policy = LiveTickPolicy()
     private let finish: (URL, SessionFile) async -> Void
 
     static let runningRoot = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Laufend", isDirectory: true)
-    /// Sitzung, die gerade aufnimmt; die Wiederherstellung lässt sie in Ruhe.
+    /// Sitzung, die gerade aufnimmt oder übernommen wird; die Wiederherstellung lässt sie in Ruhe.
     static private(set) var activeId: UUID?
 
     init(finish: @escaping (URL, SessionFile) async -> Void) { self.finish = finish }
@@ -51,40 +60,49 @@ final class LiveMeetingModel: ObservableObject {
     // MARK: Start, Pause, Person kommt hinzu, Ende
 
     func start(title: String, consent record: ConsentRecord) async {
-        guard phase == .idle else { return }
+        guard phase == .idle, Self.activeId == nil else { return }
         var log = ConsentLog()
         do { try log.append(record) } catch { self.error = "Einwilligung unvollständig. Bitte Zweck und Verantwortlichen angeben."; return }
         let id = UUID()
+        // Vor dem ersten `await`: die Wiederherstellung darf diese Sitzung nicht übernehmen.
+        Self.activeId = id
+        phase = .starting
         let dir = Self.runningRoot.appendingPathComponent(id.uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let name = Self.fileName(title)
-            let capture = LiveCapture(fileURL: dir.appendingPathComponent(name + ".caf"))
+            let capture = LiveCapture(fileURL: dir.appendingPathComponent(Self.fileName(title) + ".caf"))
             capture.onUpdate = { [weak self] u in self?.receive(u) }
             capture.onError = { [weak self] e in self?.error = e.localizedDescription }
+            capture.onInterrupted = { [weak self] why in self?.interrupted(why) }
             self.consent = log; self.title = title
             session = SessionFile(id: id, title: title, startedAt: Date(), consent: log, live: LiveState(), segments: [], notes: "", seconds: 0)
             persist()
-            try await capture.start()
             self.capture = capture
-            Self.activeId = id
+            try await capture.start()
             phase = .recording
             UIApplication.shared.isIdleTimerDisabled = true
             startTimer()
         } catch {
             self.error = error.localizedDescription
+            self.capture = nil
+            session = nil
             try? FileManager.default.removeItem(at: dir)
+            Self.activeId = nil
             phase = .idle
         }
     }
 
-    func pause() { capture?.pause(); phase = .paused; persist() }
-
-    func resume() {
-        do { try capture?.resume(); phase = .recording } catch { self.error = error.localizedDescription }
+    func pause() {
+        guard phase == .recording else { return }
+        capture?.pause(); phase = .paused; persist()
     }
 
-    /// Person kommt hinzu: Aufnahme ist pausiert, neue Bestätigung ab dieser Stelle.
+    func resume() {
+        guard phase == .paused else { return }
+        do { try capture?.resume(); hint = nil; phase = .recording } catch { self.error = error.localizedDescription }
+    }
+
+    /// Person kommt hinzu: Aufnahme ist pausiert, neue Bestätigung ab `audioPosition`.
     func confirmJoin(_ record: ConsentRecord) {
         do {
             try consent.append(record)
@@ -93,17 +111,24 @@ final class LiveMeetingModel: ObservableObject {
         } catch { self.error = "Einwilligung unvollständig. Aufnahme bleibt pausiert." }
     }
 
+    /// Audiostelle für eine neue Einwilligung („Person kommt hinzu“).
+    var audioPosition: Double { capture?.seconds ?? seconds }
+
     func stop() async {
         guard let capture, phase == .recording || phase == .paused else { return }
         phase = .stopping
         timer?.invalidate(); timer = nil
         await capture.stop()
+        // Laufenden Takt abwarten, damit sein Ergebnis mitgesichert wird.
+        await tickTask?.value
+        tickTask = nil
+        notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
         persist()
         UIApplication.shared.isIdleTimerDisabled = false
-        Self.activeId = nil
         if let session { await finish(capture.fileURL, session) }
         self.capture = nil
+        Self.activeId = nil
         phase = .finished
     }
 
@@ -112,7 +137,15 @@ final class LiveMeetingModel: ObservableObject {
     func confirmDone(_ id: String) { live.confirmDone(id); persist() }
     func rejectAnswer(_ id: String) { live.rejectAnswer(id); persist() }
 
-    func saveNotes() { persist() }
+    /// Notizen: gebündelt sichern, nicht bei jedem Tastendruck.
+    func saveNotes() {
+        notesSave?.cancel()
+        notesSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.persist()
+        }
+    }
 
     func time(of segmentId: String) -> Double? { segments.first { $0.id == segmentId }?.start }
 
@@ -122,18 +155,39 @@ final class LiveMeetingModel: ObservableObject {
         if !u.finals.isEmpty { segments += u.finals; volatile = ""; persist() } else { volatile = u.volatile }
     }
 
+    private func interrupted(_ why: String) {
+        guard phase == .recording else { return }
+        capture?.pause()
+        phase = .paused
+        hint = why
+        persist()
+    }
+
     private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.heartbeat() }
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.clock() }
         }
     }
 
-    private func heartbeat() {
+    /// Jede Sekunde die Uhr, jede fünfte Sekunde der Takt-Entscheid.
+    private func clock() {
         guard let capture else { return }
         seconds = capture.seconds
-        let pending = segments.filter { $0.end > live.processedThrough }
+        if seconds >= Self.maxSeconds, phase == .recording {
+            hint = "Höchstdauer von zwei Stunden erreicht. Die Aufnahme wurde beendet."
+            Task { await stop() }
+            return
+        }
+        beats += 1
+        if beats % 5 == 0 { heartbeat() }
+    }
+
+    private func heartbeat() {
+        guard phase == .recording else { return }
+        // Nur Abschnitte, für die zur jeweiligen Audiostelle eine KI-Einwilligung vorliegt.
+        let pending = segments.filter { $0.end > live.processedThrough && consent.allows(.aiAnalysis, at: $0.start) }
         let words = pending.reduce(0) { $0 + $1.text.split(separator: " ").count }
-        let decision = policy.decide(now: seconds, lastRun: lastTickAudio, newWords: words, running: ticking,
+        let decision = policy.decide(now: seconds, lastRun: lastTickAudio, newWords: words, running: tickTask != nil,
                                      thermal: LiveThermal(ProcessInfo.processInfo.thermalState),
                                      lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
                                      foreground: UIApplication.shared.applicationState == .active,
@@ -142,16 +196,20 @@ final class LiveMeetingModel: ObservableObject {
         case .paused(let why):
             aiStatus = LiveSummarizer.available ? (why == "KI pausiert (Wärme)" ? "KI pausiert – iPhone zu warm" : why) : "KI nicht verfügbar"
         case .wait: if aiStatus.hasPrefix("KI pausiert") { aiStatus = "" }
-        case .run: Task { await tick(pending: pending) }
+        case .run:
+            guard !pending.isEmpty else { return }
+            tickTask = Task { [weak self] in
+                await self?.tick(pending: pending)
+                self?.tickTask = nil
+            }
         }
     }
 
     private func tick(pending: [LiveSegment]) async {
-        ticking = true; defer { ticking = false }
         lastTickAudio = seconds
         // Gezielt ältere Belege: Segmente, auf die offene Einträge verweisen.
         let wanted = Set(live.items.filter { $0.status != .done }.flatMap { $0.evidence.map(\.segmentId) })
-        let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough }.suffix(12)
+        let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough && consent.allows(.aiAnalysis, at: $0.start) }.suffix(12)
         do {
             let (delta, prompt) = try await LiveSummarizer.tick(state: live, pending: pending, older: Array(older))
             _ = live.apply(delta, segments: prompt.segments)

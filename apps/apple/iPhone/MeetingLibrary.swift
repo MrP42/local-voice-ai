@@ -10,6 +10,8 @@ final class MeetingLibrary: ObservableObject {
     @Published private(set) var importBusy = false
     @Published var error: String?
     private var archive: MeetingArchive?
+    /// Sitzungen, die gerade übernommen werden (Szenenwechsel kann doppelt auslösen).
+    private var importingLive: Set<UUID> = []
     private var worker: Task<Void, Never>?
     private var token: InferenceCancellation?
     private var exporter: AVAssetExportSession?
@@ -53,19 +55,29 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Import nicht abgeschlossen. Bitte eine lesbare Audio-/Videodatei bis 2 Stunden und 2 GB wählen und freien Speicher prüfen."
         }
     }
-    /// In der App aufgenommene Besprechung übernehmen: Original ins Archiv,
-    /// dann Einwilligungsnachweis und Live-Stand anhängen. Erst danach wird der
-    /// Laufend-Ordner entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
+    /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
+    /// und Live-Stand in einem Schritt ins Archiv. Erst danach wird der Laufend-Ordner
+    /// entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
     func importLive(_ url: URL, _ session: LiveMeetingModel.SessionFile) async {
-        guard let archive else { return }
+        guard let archive, !importingLive.contains(session.id) else { return }
+        importingLive.insert(session.id); defer { importingLive.remove(session.id) }
+        let folder = url.deletingLastPathComponent()
+        // Ohne gültigen Nachweis wird nichts übernommen; der Ordner bleibt zur Klärung liegen.
+        guard session.consent.canRecord else {
+            self.error = "Eine Aufnahme ohne vollständigen Einwilligungsnachweis wurde nicht übernommen."; return
+        }
         do {
-            let duration = try await AVURLAsset(url: url).load(.duration).seconds
+            let measured = try? await AVURLAsset(url: url).load(.duration).seconds
+            let duration = (measured?.isFinite == true && measured! > 0) ? measured! : session.seconds
             guard duration.isFinite, duration > 0.5 else {
-                try? FileManager.default.removeItem(at: url.deletingLastPathComponent()); return
+                // Nur eine wirklich leere Sitzung wird verworfen, nie eine mit Inhalt.
+                if session.isEmpty { try? FileManager.default.removeItem(at: folder) }
+                else { self.error = "Die Aufnahme ist gesichert, aber nicht lesbar. Sie bleibt erhalten und wird erneut versucht." }
+                return
             }
-            let doc = try await archive.importMedia(url, duration: min(duration, 7200))
-            try await archive.attachLive(doc.id, consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
-            try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
+            _ = try await archive.importMedia(url, duration: min(duration, 7200), live: live)
+            try? FileManager.default.removeItem(at: folder)
             status = "gespeichert – Verarbeitung folgt"
             await refresh(); start()
         } catch {

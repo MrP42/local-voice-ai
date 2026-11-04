@@ -13,7 +13,8 @@ struct ConsentSheet: View {
     @AppStorage("consent.purpose") private var purpose = "Protokoll der Besprechung"
     @AppStorage("consent.controller") private var controller = ""
     @AppStorage("consent.retentionDays") private var retentionDays = 90
-    @AppStorage("consent.ai") private var ai = true
+    // KI-Auswertung ist Opt-in je Aufnahme: nie vorbelegt, nicht gespeichert.
+    @State private var ai = false
     @State private var title = ""
 
     private var isStart: Bool { if case .start = mode { return true }; return false }
@@ -78,6 +79,13 @@ struct LiveMeetingScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let hint = model.hint {
+                Label(hint, systemImage: "exclamationmark.triangle")
+                    .font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.15))
+                    .accessibilityAddTraits(.isStaticText)
+            }
             Picker("Ansicht", selection: $tab) {
                 Text("Stand").tag(0); Text("Transkript").tag(1); Text("Notizen").tag(2)
             }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.vertical, 10)
@@ -92,6 +100,7 @@ struct LiveMeetingScreen: View {
             actionBar
         }
         .background(VoicePalette.background)
+        .onChange(of: model.phase) { _, phase in if phase == .finished { dismiss() } }
         .sheet(isPresented: Binding(get: { consentFor != nil }, set: { if !$0 { consentFor = nil } })) {
             if let mode = consentFor {
                 ConsentSheet(mode: mode, onConfirm: { record, title in
@@ -134,7 +143,7 @@ struct LiveMeetingScreen: View {
             barButton(model.phase == .paused ? "Weiter" : "Pause", model.phase == .paused ? "play.fill" : "pause.fill") {
                 model.phase == .paused ? model.resume() : model.pause()
             }
-            barButton("Person kommt", "person.badge.plus") { model.pause(); consentFor = .personJoined(model.seconds) }
+            barButton("Person kommt", "person.badge.plus") { model.pause(); consentFor = .personJoined(model.audioPosition) }
             barButton("Notiz", "square.and.pencil") { tab = 2 }
             Button { confirmStop = true } label: {
                 VStack(spacing: 3) {
@@ -143,7 +152,7 @@ struct LiveMeetingScreen: View {
                 }.frame(maxWidth: .infinity, minHeight: 52)
             }.buttonStyle(.plain).accessibilityLabel("Aufnahme beenden")
         }
-        .disabled(model.phase == .stopping || model.phase == .idle)
+        .disabled(model.phase == .stopping || model.phase == .idle || model.phase == .starting)
         .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
         .background(VoicePalette.background).overlay(alignment: .top) { Divider() }
     }

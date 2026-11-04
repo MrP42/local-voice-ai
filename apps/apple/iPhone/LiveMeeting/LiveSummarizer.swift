@@ -6,8 +6,18 @@ import FoundationModels
 /// Prompt, gebaut im festen Tokenbudget (`LivePromptBuilder`).
 enum LiveSummarizer {
     @Generable
-    enum Kind: String {
+    enum Kind {
         case topic, decision, todo, open, suggestion
+
+        var item: LiveItem.Kind {
+            switch self {
+            case .topic: return .topic
+            case .decision: return .decision
+            case .todo: return .todo
+            case .open: return .open
+            case .suggestion: return .suggestion
+            }
+        }
     }
 
     @Generable
@@ -71,7 +81,7 @@ enum LiveSummarizer {
         func ids(_ list: [String]) -> [String] { list.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "[] ")) }.filter { !$0.isEmpty } }
         return LiveDelta(
             summary: opt(d.summary),
-            add: d.add.map { .init(kind: LiveItem.Kind(rawValue: $0.kind.rawValue) ?? .topic, text: $0.text, owner: opt($0.owner), due: opt($0.due), evidence: ids($0.evidence)) },
+            add: d.add.map { .init(kind: $0.kind.item, text: $0.text, owner: opt($0.owner), due: opt($0.due), evidence: ids($0.evidence)) },
             update: d.update.map { .init(id: $0.id, text: opt($0.text), owner: opt($0.owner), due: opt($0.due), evidence: ids($0.evidence)) },
             answered: d.answered.map { .init(id: $0.id, evidence: ids($0.evidence)) })
     }

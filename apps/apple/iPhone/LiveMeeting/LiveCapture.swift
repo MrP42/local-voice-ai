@@ -3,9 +3,10 @@ import AVFoundation
 import Speech
 
 /// Aufnahme einer Besprechung mit Live-Erkennung (Epic #247, P3).
-/// Ein Mikrofonstrom geht in zwei Richtungen: als AAC in eine CAF-Datei (bleibt
-/// auch nach einem Absturz lesbar) und in `SpeechAnalyzer`. Die Zeitachse der
-/// Ergebnisse ist die geschriebene Audiozeit; Pausen schreiben und analysieren nichts.
+/// Ein Mikrofonstrom geht in zwei Richtungen: als 16-bit-PCM in eine CAF-Datei
+/// (unkomprimiert, bleibt nach einem Absturz bis zum letzten Puffer lesbar) und
+/// in `SpeechAnalyzer`. Beide bekommen denselben Puffer oder keinen, damit die
+/// Zeitachse der Ergebnisse der Dateizeit entspricht. Pausen liefern nichts.
 final class LiveCapture {
     struct Update {
         var finals: [LiveSegment] = []
@@ -25,93 +26,126 @@ final class LiveCapture {
 
     let fileURL: URL
     private let engine = AVAudioEngine()
-    private var file: AVAudioFile?
     private var analyzer: SpeechAnalyzer?
-    private var transcriber: SpeechTranscriber?
-    private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var results: Task<Void, Never>?
-    private var toAnalyzer: AVAudioConverter?
-    private var toFile: AVAudioConverter?
     private var analyzerFormat: AVAudioFormat?
     private let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
-    private let lock = NSLock()
-    private var writtenFrames: AVAudioFramePosition = 0
-    private var nextIndex: Int
+    private var observers: [NSObjectProtocol] = []
+    private var nextIndex = 0
     private(set) var running = false
 
-    /// Liefert neue finalisierte Segmente und den vorläufigen Rest (nur Anzeige).
+    // Vom Audio-Thread benutzt: nur unter `lock` lesen oder setzen.
+    private let lock = NSLock()
+    private var file: AVAudioFile?
+    private var input: AsyncStream<AnalyzerInput>.Continuation?
+    private var toAnalyzer: AVAudioConverter?
+    private var toFile: AVAudioConverter?
+    private var writtenFrames: AVAudioFramePosition = 0
+
+    /// Neue finalisierte Segmente und der vorläufige Rest (nur Anzeige).
     var onUpdate: (@MainActor (Update) -> Void)?
     var onError: (@MainActor (Error) -> Void)?
+    /// Anruf, Siri, Routenwechsel: Aufnahme steht, Grund für die Anzeige.
+    var onInterrupted: (@MainActor (String) -> Void)?
 
-    init(fileURL: URL) { self.fileURL = fileURL; self.nextIndex = 0 }
+    init(fileURL: URL) { self.fileURL = fileURL }
 
     /// Geschriebene Audiozeit in Sekunden.
     var seconds: Double { lock.lock(); defer { lock.unlock() }; return Double(writtenFrames) / fileFormat.sampleRate }
 
-    static func requestPermission() async -> Bool { await AVAudioApplication.requestRecordPermission() }
-
     func start() async throws {
-        guard await Self.requestPermission() else { throw CaptureError.microphone }
+        guard await AVAudioApplication.requestRecordPermission() else { throw CaptureError.microphone }
         guard SpeechTranscriber.isAvailable,
               let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "de-DE")) else { throw CaptureError.noSpeechAssets }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])
         // Nie stillschweigend Assets laden oder Serverkennung nutzen.
         guard await AssetInventory.status(forModules: [transcriber]) == .installed else { throw CaptureError.noSpeechAssets }
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else { throw CaptureError.noFormat }
-        self.transcriber = transcriber; analyzerFormat = format
+        analyzerFormat = format
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetooth, .defaultToSpeaker])
         try session.setActive(true)
 
-        // AAC in CAF: bleibt bis zum letzten geschriebenen Paket lesbar.
-        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32_000]
         // Eine Datei je Aufnahme; nach einem Absturz wird sie übernommen, nicht fortgeschrieben.
         guard !FileManager.default.fileExists(atPath: fileURL.path) else { throw CocoaError(.fileWriteFileExists) }
-        file = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1,
+                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+        let written = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
         try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: fileURL.path)
 
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-        input = continuation
+        lock.lock(); file = written; input = continuation; lock.unlock()
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         try await analyzer.start(inputSequence: stream)
         results = Task { [weak self] in await self?.consume(transcriber) }
 
-        let micFormat = engine.inputNode.outputFormat(forBus: 0)
-        toAnalyzer = AVAudioConverter(from: micFormat, to: format)
-        toFile = AVAudioConverter(from: micFormat, to: fileFormat)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in self?.handle(buffer) }
-        engine.prepare()
-        try engine.start()
-        running = true
+        observe()
+        try installTapAndStart()
     }
 
     func pause() { engine.pause(); running = false }
 
-    func resume() throws { try engine.start(); running = true }
+    /// Fortsetzen; nach Routenwechsel mit neuem Mikrofonformat.
+    func resume() throws {
+        try AVAudioSession.sharedInstance().setActive(true)
+        try installTapAndStart()
+    }
 
     /// Beendet Aufnahme und Erkennung; wartet, bis alle Ergebnisse finalisiert sind.
     func stop() async {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
-        input?.finish()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
+        lock.lock(); let continuation = input; input = nil; lock.unlock()
+        continuation?.finish()
         try? await analyzer?.finalizeAndFinishThroughEndOfInput()
         await results?.value
-        file = nil   // schließt die Datei
+        lock.lock(); file = nil; lock.unlock()   // schließt die Datei
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    private func installTapAndStart() throws {
+        guard let format = analyzerFormat else { throw CaptureError.noFormat }
+        engine.inputNode.removeTap(onBus: 0)
+        let micFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard micFormat.sampleRate > 0, let a = AVAudioConverter(from: micFormat, to: format),
+              let f = AVAudioConverter(from: micFormat, to: fileFormat) else { throw CaptureError.noFormat }
+        lock.lock(); toAnalyzer = a; toFile = f; lock.unlock()
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in self?.handle(buffer) }
+        engine.prepare()
+        try engine.start()
+        running = true
+    }
+
+    private func observe() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            self.running = false
+            Task { @MainActor in self.onInterrupted?("Aufnahme unterbrochen (Anruf oder Systemton). Zum Fortsetzen „Weiter“ tippen.") }
+        })
+        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.running = false
+            Task { @MainActor in self.onInterrupted?("Audiogerät gewechselt. Zum Fortsetzen „Weiter“ tippen.") }
+        })
+    }
+
     private func handle(_ buffer: AVAudioPCMBuffer) {
-        if let out = convert(buffer, with: toFile, to: fileFormat) {
-            do {
-                try file?.write(from: out)
-                lock.lock(); writtenFrames += AVAudioFramePosition(out.frameLength); lock.unlock()
-            } catch { Task { @MainActor in self.onError?(error) } }
-        }
-        if let format = analyzerFormat, let out = convert(buffer, with: toAnalyzer, to: format) {
-            input?.yield(AnalyzerInput(buffer: out))
+        lock.lock(); let f = toFile, a = toAnalyzer, file = file, input = input; lock.unlock()
+        guard let file, let input, let format = analyzerFormat,
+              let forFile = convert(buffer, with: f, to: fileFormat), let forAnalyzer = convert(buffer, with: a, to: format) else { return }
+        do {
+            try file.write(from: forFile)
+            lock.lock(); writtenFrames += AVAudioFramePosition(forFile.frameLength); lock.unlock()
+            input.yield(AnalyzerInput(buffer: forAnalyzer))
+        } catch {
+            Task { @MainActor in self.onError?(error) }
         }
     }
 
@@ -137,13 +171,13 @@ final class LiveCapture {
                 if result.isFinal {
                     guard !text.isEmpty else { continue }
                     let start = result.range.start.seconds, end = result.range.end.seconds
-                    // Zeitachse = geschriebene Audiozeit (Pausen liefern keine Puffer).
                     let id = "a\(nextIndex)"; nextIndex += 1
                     update.finals = [LiveSegment(id: id, start: start.isFinite ? start : 0, end: end.isFinite ? end : start, text: text)]
                 } else {
                     update.volatile = text
                 }
-                await MainActor.run { self.onUpdate?(update) }
+                let u = update
+                await MainActor.run { self.onUpdate?(u) }
             }
         } catch {
             await MainActor.run { self.onError?(error) }
