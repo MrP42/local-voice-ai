@@ -70,6 +70,8 @@ enum LiveSummarizer {
     /// (nur diese dürfen als Beleg gelten) sowie die Audioposition, bis zu der ausgewertet ist.
     static func tick(state: LiveState, pending: [LiveSegment], older: [LiveSegment], budget: LiveTokenBudget = LiveTokenBudget()) async throws -> (LiveDelta, LivePrompt) {
         let prompt = LivePromptBuilder.build(state: state, pending: pending, older: older, budget: budget)
+        // Harte Grenze vor dem Modellaufruf.
+        guard prompt.fits, !prompt.segments.isEmpty else { throw CancellationError() }
         let session = LanguageModelSession(instructions: prompt.instructions)
         let response = try await session.respond(to: prompt.input, generating: Delta.self,
                                                  options: GenerationOptions(temperature: 0.2, maximumResponseTokens: budget.output))

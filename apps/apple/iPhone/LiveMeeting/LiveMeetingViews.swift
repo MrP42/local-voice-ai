@@ -140,10 +140,16 @@ struct LiveMeetingScreen: View {
 
     private var actionBar: some View {
         HStack {
-            barButton(model.phase == .paused ? "Weiter" : "Pause", model.phase == .paused ? "play.fill" : "pause.fill") {
-                model.phase == .paused ? model.resume() : model.pause()
+            if model.phase == .awaitingConsent || model.phase == .savingConsent {
+                // Kein „Weiter“ ohne neue Bestätigung.
+                barButton("Einwilligung", "checkmark.shield") { consentFor = .personJoined(model.audioPosition) }
+            } else {
+                barButton(model.phase == .paused ? "Weiter" : "Pause", model.phase == .paused ? "play.fill" : "pause.fill") {
+                    model.phase == .paused ? model.resume() : model.pause()
+                }
             }
-            barButton("Person kommt", "person.badge.plus") { model.pause(); consentFor = .personJoined(model.audioPosition) }
+            barButton("Person kommt", "person.badge.plus") { model.requestJoin(); consentFor = .personJoined(model.audioPosition) }
+                .disabled(model.phase == .awaitingConsent)
             barButton("Notiz", "square.and.pencil") { tab = 2 }
             Button { confirmStop = true } label: {
                 VStack(spacing: 3) {
@@ -152,7 +158,7 @@ struct LiveMeetingScreen: View {
                 }.frame(maxWidth: .infinity, minHeight: 52)
             }.buttonStyle(.plain).accessibilityLabel("Aufnahme beenden")
         }
-        .disabled(model.phase == .stopping || model.phase == .idle || model.phase == .starting)
+        .disabled([.stopping, .idle, .starting, .savingConsent].contains(model.phase))
         .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
         .background(VoicePalette.background).overlay(alignment: .top) { Divider() }
     }

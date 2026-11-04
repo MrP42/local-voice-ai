@@ -148,7 +148,13 @@ public struct WatchChunkHeader: Codable, Equatable, Sendable {
         self.sampleRate = sampleRate; self.digest = digest; self.isLast = isLast; self.consent = consent
     }
     public var start: Double { Double(firstSample) / Double(sampleRate) }
-    public var end: Double { Double(firstSample + sampleCount) / Double(sampleRate) }
+    /// Letzte Sampleposition + 1, überlaufsicher; `nil` bei ungültigem Kopf.
+    public var endSample: Int64? {
+        guard firstSample >= 0, sampleCount > 0 else { return nil }
+        let (sum, overflow) = firstSample.addingReportingOverflow(sampleCount)
+        return overflow ? nil : sum
+    }
+    public var end: Double { endSample.map { Double($0) / Double(sampleRate) } ?? .infinity }
 }
 
 public struct WatchChunkReceipt: Codable, Equatable, Sendable {
@@ -183,7 +189,7 @@ public struct WatchRecordingAssembler: Sendable {
 
     public func receive(_ header: WatchChunkHeader, file: URL) throws -> WatchChunkReceipt {
         let fm = FileManager.default
-        guard header.sequence >= 0, header.sequence < 100_000, header.firstSample >= 0, header.sampleCount > 0,
+        guard header.sequence >= 0, header.sequence < 100_000, header.endSample != nil,
               (8_000...48_000).contains(header.sampleRate), header.end <= Self.maxSeconds,
               header.digest.count == 64, header.digest.allSatisfy(\.isHexDigit) else { throw IntakeError.invalid }
         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -237,7 +243,7 @@ public struct WatchRecordingAssembler: Sendable {
         let missing = maxSeq < 0 ? [] : (0...maxSeq).filter { !have.contains($0) }
         var gaps: [ClosedRange<Double>] = []
         for (a, b) in zip(hs, hs.dropFirst()) where b.sequence == a.sequence + 1 {
-            let expected = a.firstSample + a.sampleCount
+            guard let expected = a.endSample else { continue }
             if b.firstSample != expected {
                 let x = Double(min(expected, b.firstSample)) / Double(a.sampleRate), y = Double(max(expected, b.firstSample)) / Double(a.sampleRate)
                 gaps.append(x...y)

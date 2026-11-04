@@ -230,9 +230,16 @@ public actor MeetingArchive {
     /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
     public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil) throws -> MeetingDocument {
         if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
+            // Wiederholung: nur dasselbe Original mit denselben Sitzungsdaten gilt als schon übernommen.
             let existing = try load(fixedId)
-            let bytes = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            guard existing.bytes == bytes, (existing.consent == nil) == (live == nil) else { throw VoiceError.conflict }
+            let archived = try originalURL(fixedId)
+            let size = try archived.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            guard existing.originalName == String(source.lastPathComponent.prefix(255)),
+                  size == existing.bytes, try Self.sha256(of: archived) == existing.digest,
+                  try Self.sha256(of: source) == existing.digest,
+                  existing.consent == live?.consent, existing.live == live?.live,
+                  (existing.liveSegments ?? []) == (live?.segments ?? []),
+                  existing.liveNotes == live?.notes.flatMap({ $0.isEmpty ? nil : String($0.prefix(100_000)) }) else { throw VoiceError.conflict }
             return existing
         }
         guard duration.isFinite, duration > 0, duration <= 7200 else { throw VoiceError.invalid }
@@ -298,6 +305,14 @@ public actor MeetingArchive {
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)
     }
+    static func sha256(of url: URL) throws -> String {
+        let reader = try FileHandle(forReadingFrom: url)
+        defer { try? reader.close() }
+        var hash = SHA256()
+        while let part = try reader.read(upToCount: 1024 * 1024), !part.isEmpty { hash.update(data: part) }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Abschnitte ohne KI-Einwilligung überspringen: sie bleiben im Transkript, gehen
     /// aber in keine Auswertung ein. Nur für Abschnitte, die wirklich nicht freigegeben sind.
     public func skipMinutes(_ id: UUID, from: Int, through: Int, event: ProcessingEvent? = nil) throws {

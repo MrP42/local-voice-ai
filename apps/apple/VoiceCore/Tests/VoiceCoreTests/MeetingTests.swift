@@ -113,6 +113,11 @@ final class MeetingTests: XCTestCase {
         let again = try await archive.importMedia(source, duration: 8, live: live, id: id)
         XCTAssertEqual(again.digest, doc.digest)
         XCTAssertEqual(try await archive.list().count, 1)
+        // Andere Sitzungsdaten oder anderes Original unter derselben Kennung: Konflikt, nichts überschrieben.
+        let other = MeetingArchive.LiveImport(consent: consent, live: nil, segments: [], notes: "Andere Notiz")
+        do { _ = try await archive.importMedia(source, duration: 8, live: other, id: id); XCTFail("Different session data") } catch {}
+        try Data([9,9,9,9]).write(to: source)
+        do { _ = try await archive.importMedia(source, duration: 8, live: live, id: id); XCTFail("Different original") } catch {}
         try await archive.appendChunk(id, offset: 0, nextOffset: 8, segments: [MeetingSegment(index: 0, start: 0, end: 3, text: "Ohne KI"),
                                                                               MeetingSegment(index: 1, start: 5, end: 7, text: "Mit KI")])
         let report = MeetingMinutes(summary: "Mit KI", scope: "Mit KI", decisions: [], tasks: [], next_steps: [], follow_ups: [], open_questions: [])

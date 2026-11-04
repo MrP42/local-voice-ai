@@ -7,8 +7,10 @@ import Speech
 /// (unkomprimiert, bleibt nach einem Absturz bis zum letzten Puffer lesbar) und
 /// in `SpeechAnalyzer`. Beide bekommen denselben Puffer oder keinen, damit die
 /// Zeitachse der Ergebnisse der Dateizeit entspricht. Pausen liefern nichts.
-/// Ob Puffer angenommen werden, entscheidet allein `accepting` unter `lock`:
-/// Pause, Unterbrechung, Routenwechsel und Formatfehler sperren synchron.
+/// Ob Puffer angenommen werden, entscheidet allein `accepting` unter `lock`.
+/// `handle` hält `lock` vom Prüfen bis zum Schreiben; Pause, Unterbrechung,
+/// Routenwechsel, Konverterwechsel und Rückbau nehmen denselben Lock und warten
+/// damit, bis ein laufender Callback fertig ist. Danach wird nichts mehr geschrieben.
 final class LiveCapture {
     struct Update {
         var finals: [LiveSegment] = []
@@ -106,7 +108,7 @@ final class LiveCapture {
     func pause() { suspend() }
 
     private func suspend() {
-        lock.lock(); accepting = false; lock.unlock()
+        lock.lock(); accepting = false; lock.unlock()   // wartet auf einen laufenden Callback
         engine.pause()
         running = false
     }
@@ -133,12 +135,14 @@ final class LiveCapture {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         continuation?.finish()
-        if finalize { try? await analyzer?.finalizeAndFinishThroughEndOfInput() } else { await analyzer?.cancelAndFinishNow() }
+        // Jeder Schritt ist zeitlich begrenzt; die Aufnahme liegt zu diesem Zeitpunkt schon in der Datei.
+        if let analyzer {
+            let done = finalize ? await Self.bounded(10) { try? await analyzer.finalizeAndFinishThroughEndOfInput() } : false
+            if !done { _ = await Self.bounded(3) { await analyzer.cancelAndFinishNow() } }
+        }
         if let results {
-            // Hängt die Erkennung, wird der Task nach 10 s beendet; die Aufnahme ist dann schon gesichert.
-            let guardTask = Task { try? await Task.sleep(for: .seconds(10)); results.cancel() }
-            await results.value
-            guardTask.cancel()
+            results.cancel()
+            _ = await Self.bounded(3) { await results.value }
         }
         results = nil; analyzer = nil
         lock.lock(); file = nil; lock.unlock()   // schließt die Datei
@@ -182,19 +186,13 @@ final class LiveCapture {
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
-        lock.lock()
-        guard accepting, let file, let input, let f = toFile, let a = toAnalyzer, let format = analyzerFormat else { lock.unlock(); return }
+        lock.lock(); defer { lock.unlock() }
+        guard accepting, let file, let input, let f = toFile, let a = toAnalyzer, let format = analyzerFormat else { return }
         let remaining = maxFrames - writtenFrames
-        lock.unlock()
-        guard remaining > 0 else { return reportLimit() }
+        guard remaining > 0 else { return limitLocked() }
         guard let forFile = convert(buffer, with: f, to: fileFormat), let forAnalyzer = convert(buffer, with: a, to: format) else {
             // Kein stilles Verwerfen: sperren und melden, die Lücke wird als Unterbrechung sichtbar.
-            lock.lock(); accepting = false; lock.unlock()
-            DispatchQueue.main.async { [weak self] in
-                self?.engine.pause(); self?.running = false
-                Task { @MainActor in self?.onInterrupted?("Audioformat konnte nicht umgewandelt werden. Aufnahme pausiert, zum Fortsetzen „Weiter“ tippen.") }
-            }
-            return
+            return failLocked("Audioformat konnte nicht umgewandelt werden. Aufnahme pausiert, zum Fortsetzen „Weiter“ tippen.")
         }
         let last = AVAudioFramePosition(forFile.frameLength) >= remaining
         if last {
@@ -203,19 +201,48 @@ final class LiveCapture {
         }
         do {
             try file.write(from: forFile)
-            lock.lock(); writtenFrames += AVAudioFramePosition(forFile.frameLength); lock.unlock()
-            input.yield(AnalyzerInput(buffer: forAnalyzer))
-            if last { reportLimit() }
         } catch {
-            lock.lock(); accepting = false; lock.unlock()
-            Task { @MainActor in self.onError?(error) }
+            return failLocked("Die Aufnahme konnte nicht gespeichert werden (Speicher voll?). Aufnahme pausiert.")
+        }
+        writtenFrames += AVAudioFramePosition(forFile.frameLength)
+        input.yield(AnalyzerInput(buffer: forAnalyzer))
+        if last { limitLocked() }
+    }
+
+    /// Unter `lock`: sperren, Engine auf dem Hauptthread pausieren, Unterbrechung melden.
+    private func failLocked(_ why: String) {
+        accepting = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.engine.pause(); self.running = false
+            Task { @MainActor in self.onInterrupted?(why) }
         }
     }
 
-    private func reportLimit() {
-        lock.lock(); accepting = false; let first = !limitReported; limitReported = true; lock.unlock()
-        guard first else { return }
+    /// Unter `lock`: Höchstdauer erreicht, einmal melden.
+    private func limitLocked() {
+        accepting = false
+        guard !limitReported else { return }
+        limitReported = true
         Task { @MainActor [weak self] in self?.onLimit?() }
+    }
+
+    /// Wartet höchstens `seconds` auf `work`; `true`, wenn es rechtzeitig fertig war.
+    /// Ein hängender Schritt läuft im Hintergrund weiter, blockiert den Rückbau aber nicht.
+    private static func bounded(_ seconds: Double, _ work: @escaping () async -> Void) async -> Bool {
+        let once = Once()
+        return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            once.set(c)
+            Task { await work(); once.resume(true) }
+            Task { try? await Task.sleep(for: .seconds(seconds)); once.resume(false) }
+        }
+    }
+
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var c: CheckedContinuation<Bool, Never>?
+        func set(_ c: CheckedContinuation<Bool, Never>) { lock.lock(); self.c = c; lock.unlock() }
+        func resume(_ value: Bool) { lock.lock(); let c = self.c; self.c = nil; lock.unlock(); c?.resume(returning: value) }
     }
 
     private func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter?, to format: AVAudioFormat) -> AVAudioPCMBuffer? {

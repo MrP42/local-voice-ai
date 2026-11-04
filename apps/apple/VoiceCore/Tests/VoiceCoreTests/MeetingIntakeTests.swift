@@ -69,6 +69,10 @@ final class MeetingIntakeTests: XCTestCase {
             return (WatchChunkHeader(sessionId: session, sequence: seq, firstSample: first, sampleCount: 480_000,
                                      digest: try d.hex(of: f), isLast: last, consent: c), f)
         }
+        // Überlaufender Kopf wird vor jeder weiteren Prüfung abgelehnt.
+        let huge = WatchChunkHeader(sessionId: session, sequence: 0, firstSample: .max - 1, sampleCount: 10, digest: String(repeating: "0", count: 64))
+        XCTAssertNil(huge.endSample)
+        XCTAssertThrowsError(try asm.receive(huge, file: try file("huge.m4a", [1]))) { XCTAssertEqual($0 as? IntakeError, .invalid) }
         // Stück 0 ohne Einwilligung wird abgelehnt.
         let (h0bad, f0bad) = try chunk(0, first: 0)
         XCTAssertThrowsError(try asm.receive(h0bad, file: f0bad)) { XCTAssertEqual($0 as? IntakeError, .consentMissing) }

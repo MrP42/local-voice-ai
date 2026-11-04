@@ -268,6 +268,9 @@ public struct LivePrompt: Equatable, Sendable {
     /// Bis hierhin gilt der Takt als ausgewertet; spätere Segmente kommen im nächsten Takt.
     public let through: Double
     public let estimatedTokens: Int
+    /// Harte Obergrenze: Kontext minus Reserve. Ein Prompt darüber wird nicht gesendet.
+    public let limit: Int
+    public var fits: Bool { estimatedTokens <= limit }
 }
 
 public enum LivePromptBuilder {
@@ -287,34 +290,59 @@ public enum LivePromptBuilder {
     public static func build(state: LiveState, pending: [LiveSegment], older: [LiveSegment] = [],
                              budget: LiveTokenBudget = LiveTokenBudget(), count: (String) -> Int = estimate) -> LivePrompt {
         let fresh = pending.filter { $0.isFinal && $0.end > state.processedThrough }.sorted { $0.start < $1.start }
-        func line(_ s: LiveSegment) -> String { "[\(s.id)] " + (s.speaker.map { $0 + ": " } ?? "") + s.text }
+        // Jede Zeile hart begrenzt: auch ein einzelnes überlanges Segment sprengt das Budget nicht.
+        func line(_ s: LiveSegment, max: Int) -> String { clip("[\(s.id)] " + (s.speaker.map { $0 + ": " } ?? "") + s.text, to: max, count: count) }
 
-        var included: [LiveSegment] = [], used = 0
+        var included: [(LiveSegment, String)] = [], used = 0
         for s in fresh {
-            let t = count(line(s)) + 1
-            if used + t > budget.newSegments && !included.isEmpty { break }
-            included.append(s); used += t
+            let l = line(s, max: budget.newSegments - used - 1)
+            let t = count(l) + 1
+            guard t > 1, used + t <= budget.newSegments else { break }
+            included.append((s, l)); used += t
         }
-        var olderLines: [LiveSegment] = [], olderUsed = 0
-        let ids = Set(included.map(\.id))
+        var olderLines: [(LiveSegment, String)] = [], olderUsed = 0
+        let ids = Set(included.map(\.0.id))
         for s in older where s.isFinal && !ids.contains(s.id) {
-            let t = count(line(s)) + 1
+            let l = line(s, max: budget.olderEvidence)
+            let t = count(l) + 1
             if olderUsed + t > budget.olderEvidence { break }
-            olderLines.append(s); olderUsed += t
+            olderLines.append((s, l)); olderUsed += t
         }
         let stateText = compact(state, budget: budget.state, count: count)
-        let input = "STAND:\n" + stateText + "\n\nFRÜHERE BELEGE:\n" + olderLines.map(line).joined(separator: "\n")
-            + "\n\nNEUE SEGMENTE:\n" + included.map(line).joined(separator: "\n")
-        let through = included.last?.end ?? state.processedThrough
-        return LivePrompt(instructions: instructions, input: input, segments: olderLines + included, through: through,
-                          estimatedTokens: count(instructions) + count(input) + budget.schema + budget.output)
+        let limit = budget.context - budget.reserve
+        func assemble() -> (String, Int) {
+            let input = "STAND:\n" + stateText + "\n\nFRÜHERE BELEGE:\n" + olderLines.map(\.1).joined(separator: "\n")
+                + "\n\nNEUE SEGMENTE:\n" + included.map(\.1).joined(separator: "\n")
+            return (input, count(instructions) + count(input) + budget.schema + budget.output)
+        }
+        // Gesamtbudget vor dem Modellaufruf: erst frühere Belege, dann die jüngsten neuen Segmente kürzen.
+        var (input, total) = assemble()
+        while total > limit, !olderLines.isEmpty { olderLines.removeLast(); (input, total) = assemble() }
+        while total > limit, !included.isEmpty { included.removeLast(); (input, total) = assemble() }
+        let through = included.last?.0.end ?? state.processedThrough
+        return LivePrompt(instructions: instructions, input: input, segments: olderLines.map(\.0) + included.map(\.0), through: through,
+                          estimatedTokens: total, limit: limit)
+    }
+
+    /// Schneidet einen Text auf höchstens `tokens` (nach `count`) und markiert den Schnitt.
+    static func clip(_ text: String, to tokens: Int, count: (String) -> Int) -> String {
+        guard tokens > 0 else { return "" }
+        guard count(text) > tokens else { return text }
+        var lo = 0, hi = text.count
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if count(String(text.prefix(mid)) + " …") <= tokens { lo = mid } else { hi = mid - 1 }
+        }
+        return lo == 0 ? "" : String(text.prefix(lo)) + " …"
     }
 
     /// Stand kompakt; passt er nicht, fallen erledigte Einträge, dann die ältesten Themen weg.
     static func compact(_ state: LiveState, budget: Int, count: (String) -> Int) -> String {
         var items = state.items.filter { $0.status != .done }
+        // Zusammenfassung höchstens ein Drittel des Stands.
+        let summary = clip(state.summary, to: budget / 3, count: count)
         func render() -> String {
-            (["Zusammenfassung: " + state.summary] + items.map { i in
+            (["Zusammenfassung: " + summary] + items.map { i in
                 "\(i.id) \(i.kind.rawValue)\(i.status == .answerProposed ? " (beantwortet?)" : ""): \(i.text)"
                     + (i.owner.map { " · wer: " + $0 } ?? "") + (i.due.map { " · bis: " + $0 } ?? "")
             }).joined(separator: "\n")
@@ -324,7 +352,7 @@ public enum LivePromptBuilder {
             if let t = items.firstIndex(where: { $0.kind == .topic }) { items.remove(at: t) } else { items.removeFirst() }
             text = render()
         }
-        return text
+        return clip(text, to: budget, count: count)
     }
 }
 

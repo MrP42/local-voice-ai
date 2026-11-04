@@ -93,6 +93,14 @@ final class LiveMeetingTests: XCTestCase {
         let many = (0..<400).map { LiveSegment(id: "n\($0)", start: Double(10 + $0 * 5), end: Double(14 + $0 * 5), text: "Wir sprechen über Punkt \($0) und seine Folgen für den Haushalt.") }
         let prompt = LivePromptBuilder.build(state: state, pending: segs + many, older: [segs[0]])
         XCTAssertLessThanOrEqual(prompt.estimatedTokens, budget.context - budget.reserve)
+        XCTAssertTrue(prompt.fits)
+        // Ein einzelnes überlanges Segment und eine riesige Zusammenfassung sprengen das Budget nicht.
+        var big = LiveState(); big.summary = String(repeating: "Zusammenfassung ", count: 2000)
+        let long = LiveSegment(id: "a99", start: 0, end: 5, text: String(repeating: "Wort ", count: 5000))
+        let capped = LivePromptBuilder.build(state: big, pending: [long])
+        XCTAssertTrue(capped.fits)
+        XCTAssertLessThanOrEqual(capped.estimatedTokens, budget.context - budget.reserve)
+        XCTAssertEqual(capped.segments.map(\.id), ["a99"])
         XCTAssertFalse(prompt.segments.contains { $0.id == "s4" }, "vorläufige Segmente nie auswerten")
         XCTAssertTrue(prompt.segments.contains { $0.id == "s1" }, "ältere Belege gezielt nachgeladen")
         XCTAssertTrue(prompt.input.contains("[s2] Anna: Herr Berger"))

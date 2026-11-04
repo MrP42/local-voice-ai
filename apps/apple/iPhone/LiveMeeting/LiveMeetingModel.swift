@@ -5,7 +5,9 @@ import UIKit
 /// dauerhafte Sicherung für den Wiederanlauf (Epic #247, P3).
 @MainActor
 final class LiveMeetingModel: ObservableObject {
-    enum Phase: Equatable { case idle, starting, recording, paused, stopping, finished }
+    /// `awaitingConsent`: Person kommt hinzu, Aufnahme steht bis zur neuen Bestätigung.
+    /// `savingConsent`: Bestätigung wird dauerhaft gesichert; nichts ist bedienbar.
+    enum Phase: Equatable { case idle, starting, recording, paused, awaitingConsent, savingConsent, stopping, finished }
 
     /// Gesichert nach jedem fertigen Segment und jedem Takt (`sitzung.json`).
     struct SessionFile: Codable, Sendable {
@@ -107,17 +109,30 @@ final class LiveMeetingModel: ObservableObject {
         do { try capture?.resume(); hint = nil; phase = .recording } catch { self.error = error.localizedDescription }
     }
 
-    /// Person kommt hinzu: Aufnahme ist pausiert, neue Bestätigung ab `audioPosition`.
-    /// Ein laufender KI-Takt wird abgebrochen; fortgesetzt wird erst nach gesichertem Nachweis.
-    func confirmJoin(_ record: ConsentRecord) async {
-        let before = consent
-        do { try consent.append(record) } catch { self.error = "Einwilligung unvollständig. Aufnahme bleibt pausiert."; return }
+    /// Person kommt hinzu: Aufnahme anhalten. Fortsetzen geht danach nur über eine neue
+    /// Bestätigung (`confirmJoin`), nicht über „Weiter“. Ein laufender KI-Takt wird abgebrochen.
+    func requestJoin() {
+        guard phase == .recording || phase == .paused else { return }
+        if phase == .recording { capture?.pause(); markBreak() }
         tickTask?.cancel()
+        phase = .awaitingConsent
+        hint = "Person kommt hinzu: Aufnahme angehalten, bis die Einwilligung bestätigt ist."
+        checkpoint()
+    }
+
+    /// Neue Bestätigung ab `audioPosition`; fortgesetzt wird erst nach dauerhaft gesichertem Nachweis.
+    func confirmJoin(_ record: ConsentRecord) async {
+        guard phase == .awaitingConsent else { return }
+        let before = consent
+        do { try consent.append(record) } catch { self.error = "Einwilligung unvollständig. Aufnahme bleibt angehalten."; return }
+        phase = .savingConsent
         do { try await save() } catch {
             consent = before
-            self.error = "Der Einwilligungsnachweis konnte nicht gespeichert werden. Aufnahme bleibt pausiert."
+            phase = .awaitingConsent
+            self.error = "Der Einwilligungsnachweis konnte nicht gespeichert werden. Aufnahme bleibt angehalten."
             return
         }
+        phase = .paused
         resume()
     }
 
@@ -125,7 +140,7 @@ final class LiveMeetingModel: ObservableObject {
     var audioPosition: Double { capture?.seconds ?? seconds }
 
     func stop() async {
-        guard let capture, phase == .recording || phase == .paused else { return }
+        guard let capture, [.recording, .paused, .awaitingConsent].contains(phase) else { return }
         phase = .stopping
         timer?.invalidate(); timer = nil
         await capture.stop()
@@ -176,7 +191,7 @@ final class LiveMeetingModel: ObservableObject {
     }
 
     private func limitReached() {
-        guard phase == .recording || phase == .paused else { return }
+        guard [.recording, .paused, .awaitingConsent].contains(phase) else { return }
         hint = "Höchstdauer von zwei Stunden erreicht. Die Aufnahme wurde beendet."
         Task { await stop() }
     }
@@ -291,13 +306,29 @@ final class LiveMeetingModel: ObservableObject {
     }
 }
 
-/// Schreibt `sitzung.json` seriell. Ältere Stände (niedrigere Revision) überschreiben nie neuere.
+/// Schreibt `sitzung.json` seriell und dauerhaft: temporäre Datei schreiben und per
+/// fsync sichern, umbenennen, dann das Verzeichnis per fsync sichern. Ältere Stände
+/// (niedrigere Revision) überschreiben nie neuere.
 actor SessionWriter {
     private var written = 0
     func write(_ s: LiveMeetingModel.SessionFile, revision: Int, to url: URL) throws {
         guard revision > written else { return }
         let data = try JSONEncoder().encode(s)
-        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        let dir = url.deletingLastPathComponent()
+        let tmp = dir.appendingPathComponent(".sitzung-\(revision).tmp")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try data.write(to: tmp, options: [.completeFileProtectionUntilFirstUserAuthentication])
+        try Self.fullSync(tmp)
+        guard rename(tmp.path, url.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        try Self.fullSync(dir)
         written = revision
+    }
+
+    /// F_FULLFSYNC: bis auf den Datenträger, nicht nur in den Laufwerkscache.
+    private static func fullSync(_ url: URL) throws {
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { close(fd) }
+        guard fcntl(fd, F_FULLFSYNC) == 0 || fsync(fd) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
     }
 }
