@@ -509,6 +509,86 @@ fn write_speakers(
     Ok(())
 }
 
+/// #266: die lebenden Zeilen eines Kanals (Kennung, Nummer, Name), aelteste zuerst.
+fn speaker_rows_of_channel(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    channel: u8,
+) -> rusqlite::Result<Vec<(String, u32, Option<String>)>> {
+    let mut stmt = tx.prepare(
+        "SELECT id, speaker_index, display_name FROM speakers
+         WHERE meeting_id = ?1 AND channel = ?2 AND deleted_at IS NULL
+           AND speaker_index IS NOT NULL ORDER BY created_at",
+    )?;
+    let mapped = stmt.query_map(params![meeting_id, i64::from(channel)], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    mapped.collect()
+}
+
+/// #266: `metadata_json` als Objekt innerhalb einer Transaktion (leer: neues
+/// Objekt; kein Objekt: Fehler, damit nichts ueberschrieben wird).
+fn metadata_object_tx(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
+    let text: Option<String> = tx.query_row(
+        "SELECT metadata_json FROM meetings WHERE id = ?1 AND deleted_at IS NULL",
+        params![meeting_id],
+        |row| row.get(0),
+    )?;
+    match text.as_deref().map(str::trim) {
+        None | Some("") => Ok(serde_json::Map::new()),
+        Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Object(map)) => Ok(map),
+            _ => Err(anyhow!(
+                "metadata_json of {} is not a JSON object",
+                meeting_id
+            )),
+        },
+    }
+}
+
+fn write_metadata_object_tx(
+    tx: &rusqlite::Transaction<'_>,
+    meeting_id: &str,
+    map: serde_json::Map<String, serde_json::Value>,
+    now: i64,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE meetings SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3",
+        params![serde_json::Value::Object(map).to_string(), now, meeting_id],
+    )?;
+    Ok(())
+}
+
+/// Die frueheren Namen (#242) aus einem Metadaten-Objekt.
+fn former_names_of(
+    meta: &serde_json::Map<String, serde_json::Value>,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    meta.get(super::relabel::FORMER_NAMES_KEY)
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default()
+}
+
+/// #266: Segmente neu geschrieben (Sprechertrennung, Neu-Transkription,
+/// Enddurchlauf): die Zusammenfuehrungen gelten nicht mehr.
+fn forget_merges_tx(tx: &rusqlite::Transaction<'_>, meeting_id: &str, now: i64) -> Result<()> {
+    let mut meta = match metadata_object_tx(tx, meeting_id) {
+        Ok(m) => m,
+        Err(_) => return Ok(()),
+    };
+    if meta.remove(super::speaker_merges::MERGES_KEY).is_some() {
+        write_metadata_object_tx(tx, meeting_id, meta, now)?;
+    }
+    Ok(())
+}
+
 /// `content_revision + 1` fuer die Transkriptzeile einer Besprechung (Namen
 /// von Sprechern aendern das Transkript, ohne `segments_json` anzufassen).
 fn bump_transcript_revision(
@@ -1347,6 +1427,7 @@ impl MeetingStore {
         let epoch = write_transcript_row(&tx, meeting_id, row, &json, &mode, now)?;
         if let Some(speakers) = speakers {
             write_speakers(&tx, meeting_id, speakers, now).map_err(|e| store_err(&e))?;
+            forget_merges_tx(&tx, meeting_id, now).map_err(|e| store_err(&e))?;
         }
         tx.commit().map_err(|e| store_err(&e))?;
         Ok(epoch as u32)
@@ -1453,106 +1534,123 @@ impl MeetingStore {
     /// M3-P3c: zwei Sprecher eines Kanals sind dieselbe Person. Segmente und
     /// Turns (`speaker_hints_json`) von `from` gehen an `into`, die Zeile von
     /// `from` faellt weg; ein Name von `from` bleibt erhalten, wenn `into`
-    /// keinen hat. Eine Transaktion, `content_revision + 1`, die Epoche bleibt
-    /// (Segmentnummern aendern sich nicht). Fehlercodes: `speaker_invalid`
-    /// (gleiche oder null-Nummer), `speaker_not_found`.
+    /// keinen hat. #266: `from` = 0 ordnet die Segmente ohne Sprecher
+    /// ("Aufnahme") `into` zu. `from_labels` (was Texte fuer `from` sagen)
+    /// kommen zu den frueheren Namen von `into` (#242); bei `from` = 0 nicht:
+    /// Kanalwoerter wie "Aufnahme" stehen in alten Texten auch fuer Stellen,
+    /// die nicht zu `into` gehoeren. Was sich aendert, steht
+    /// danach als [`MergeRecord`] in den Metadaten ("Trennen" nimmt es
+    /// zurueck); die Kennung kommt zurueck. Eine Transaktion,
+    /// `content_revision + 1`, die Epoche bleibt. Fehlercodes:
+    /// `speaker_invalid` (gleiche Nummer, Ziel 0), `speaker_not_found`.
     pub fn merge_speakers(
         &self,
         meeting_id: &str,
         channel: u8,
         from: u32,
         into: u32,
-    ) -> Result<()> {
-        if from == into || from == 0 || into == 0 {
+        from_labels: &[String],
+    ) -> Result<String> {
+        use super::speaker_merges::{self as sm, MergeRecord};
+        if from == into || into == 0 {
             return Err(anyhow!("speaker_invalid"));
         }
         let mut conn = self.get_connection()?;
         let now = Utc::now().timestamp();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
-        let (transcript_id, segments_json, hints): (String, String, Option<String>) = tx
-            .query_row(
-                "SELECT id, segments_json, speaker_hints_json FROM transcripts
+        let (transcript_id, segments_json, hints, epoch): (String, String, Option<String>, i64) =
+            tx.query_row(
+                "SELECT id, segments_json, speaker_hints_json, segment_epoch FROM transcripts
                  WHERE meeting_id = ?1 AND deleted_at IS NULL",
                 params![meeting_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?
             .ok_or_else(|| anyhow!("No transcript for meeting {}", meeting_id))?;
         let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
-        let rows: Vec<(String, u32, Option<String>)> = {
-            let mut stmt = tx.prepare(
-                "SELECT id, speaker_index, display_name FROM speakers
-                 WHERE meeting_id = ?1 AND channel = ?2 AND deleted_at IS NULL
-                   AND speaker_index IS NOT NULL ORDER BY created_at",
-            )?;
-            let mapped = stmt.query_map(params![meeting_id, i64::from(channel)], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?.clamp(0, i64::from(u32::MAX)) as u32,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })?;
-            mapped.collect::<rusqlite::Result<_>>()?
+        let rows = speaker_rows_of_channel(&tx, meeting_id, channel)?;
+        let speaks =
+            |s: &StoredSegment, n: u32| s.channel == channel && s.speaker_index.unwrap_or(0) == n;
+        let known = |n: u32| segments.iter().any(|s| speaks(s, n)) || rows.iter().any(|r| r.1 == n);
+        // `from` = 0 zaehlt nur mit eigenen Segmenten (die Zeile des Kanals bleibt).
+        let from_known = if from == 0 {
+            segments.iter().any(|s| speaks(s, 0))
+        } else {
+            known(from)
         };
-        let known = |n: u32| {
-            segments
-                .iter()
-                .any(|s| s.channel == channel && s.speaker_index == Some(n))
-                || rows.iter().any(|r| r.1 == n)
-        };
-        if !known(from) || !known(into) {
+        if !from_known || !known(into) {
             return Err(anyhow!("speaker_not_found"));
         }
-        for s in segments
-            .iter_mut()
-            .filter(|s| s.channel == channel && s.speaker_index == Some(from))
-        {
+        let mut record = MergeRecord {
+            id: Ulid::new().to_string(),
+            channel,
+            from,
+            into,
+            epoch: epoch.clamp(0, i64::from(u32::MAX)) as u32,
+            at: now,
+            from_label: from_labels.last().cloned().unwrap_or_default(),
+            from_default_label: from_labels.first().cloned().unwrap_or_default(),
+            ..Default::default()
+        };
+        for s in segments.iter_mut().filter(|s| speaks(s, from)) {
+            record.segments.push(s.segment_index);
             s.speaker_index = Some(into);
         }
-        let from_rows: Vec<&(String, u32, Option<String>)> =
-            rows.iter().filter(|r| r.1 == from).collect();
-        let into_row = rows.iter().find(|r| r.1 == into);
-        let from_name = from_rows.iter().find_map(|r| r.2.clone());
-        match into_row {
-            Some((id, _, name)) => {
-                if name.is_none() {
-                    if let Some(carry) = &from_name {
-                        tx.execute(
-                            "UPDATE speakers SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
-                            params![carry, now, id],
-                        )?;
+        if from != 0 {
+            let from_rows: Vec<&(String, u32, Option<String>)> =
+                rows.iter().filter(|r| r.1 == from).collect();
+            let into_row = rows.iter().find(|r| r.1 == into);
+            let from_name = from_rows.iter().find_map(|r| r.2.clone());
+            match into_row {
+                Some((id, _, name)) => {
+                    if name.is_none() {
+                        if let Some(carry) = &from_name {
+                            tx.execute(
+                                "UPDATE speakers SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![carry, now, id],
+                            )?;
+                            record.carried_name = Some(carry.clone());
+                        }
                     }
-                }
-                for (id, _, _) in &from_rows {
-                    tx.execute(
-                        "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
-                        params![now, id],
-                    )?;
-                }
-            }
-            None => {
-                // `into` hat noch keine Zeile: die von `from` zieht um und
-                // nimmt Namen und Personenbezug mit; weitere Zeilen entfallen.
-                for (i, (id, _, _)) in from_rows.iter().enumerate() {
-                    if i == 0 {
-                        tx.execute(
-                            "UPDATE speakers SET speaker_index = ?1, updated_at = ?2 WHERE id = ?3",
-                            params![i64::from(into), now, id],
-                        )?;
-                    } else {
+                    for (id, _, _) in &from_rows {
                         tx.execute(
                             "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
                             params![now, id],
                         )?;
+                        record.deleted_rows.push(id.clone());
+                    }
+                }
+                None => {
+                    // `into` hat noch keine Zeile: die von `from` zieht um und
+                    // nimmt Namen und Personenbezug mit; weitere Zeilen entfallen.
+                    for (i, (id, _, _)) in from_rows.iter().enumerate() {
+                        if i == 0 {
+                            tx.execute(
+                                "UPDATE speakers SET speaker_index = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![i64::from(into), now, id],
+                            )?;
+                            record.moved_row = Some(id.clone());
+                            record.moved_name = from_rows[0].2.clone();
+                        } else {
+                            tx.execute(
+                                "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                                params![now, id],
+                            )?;
+                            record.deleted_rows.push(id.clone());
+                        }
                     }
                 }
             }
         }
         let json = serde_json::to_string(&segments)?;
-        let hints = hints
-            .filter(|h| !h.trim().is_empty())
-            .map(|h| super::speakers::rewrite_turn_speaker(&h, channel, from, into));
+        let hints = hints.filter(|h| !h.trim().is_empty()).map(|h| {
+            if from == 0 {
+                return h;
+            }
+            record.turns = super::speakers::turn_positions(&h, channel, from);
+            super::speakers::rewrite_turn_speaker(&h, channel, from, into)
+        });
         tx.execute(
             "UPDATE transcripts SET segments_json = ?1,
                  speaker_hints_json = COALESCE(?2, speaker_hints_json),
@@ -1560,6 +1658,183 @@ impl MeetingStore {
              WHERE id = ?4",
             params![json, hints, now, transcript_id],
         )?;
+        let mut meta = metadata_object_tx(&tx, meeting_id)?;
+        if from != 0 {
+            let mut former = former_names_of(&meta);
+            let (former_from, carried) =
+                sm::carry_former(&mut former, channel, from, into, from_labels);
+            record.former_from = former_from;
+            record.carried_former = carried;
+            meta.insert(
+                super::relabel::FORMER_NAMES_KEY.into(),
+                serde_json::json!(former),
+            );
+        }
+        let id = record.id.clone();
+        let current = record.epoch;
+        let mut list = sm::live(
+            sm::records(Some(&serde_json::Value::Object(meta.clone()))),
+            current,
+        );
+        list.push(record);
+        let excess = list.len().saturating_sub(sm::MAX_MERGES);
+        list.drain(..excess);
+        meta.insert(sm::MERGES_KEY.into(), serde_json::to_value(&list)?);
+        write_metadata_object_tx(&tx, meeting_id, meta, now)?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen
+    /// (nur die der aktuellen Segmentepoche), aelteste zuerst.
+    pub fn speaker_merges(
+        &self,
+        meeting_id: &str,
+    ) -> Result<Vec<super::speaker_merges::SpeakerMerge>> {
+        use super::speaker_merges as sm;
+        let epoch = self.segment_epoch(meeting_id)?;
+        let meta = self.metadata_json(meeting_id)?;
+        Ok(sm::summaries(&sm::live(sm::records(meta.as_ref()), epoch)))
+    }
+
+    /// #266: eine Zusammenfuehrung zuruecknehmen ("Trennen"). Segmente und
+    /// Turns, die noch bei `into` stehen, gehen an `from` zurueck; Zeilen,
+    /// Name und fruehere Namen wie vorher. Was danach von Hand an einem
+    /// Segment geaendert wurde, bleibt. Fehlercodes: `merge_not_found`
+    /// (unbekannt oder durch eine neue Sprechertrennung verworfen),
+    /// `merge_blocked` (eine spaetere Zusammenfuehrung nahm `into` auf),
+    /// `speaker_taken` (die Nummer von `from` ist inzwischen neu vergeben).
+    pub fn unmerge_speakers(&self, meeting_id: &str, merge_id: &str) -> Result<()> {
+        use super::speaker_merges as sm;
+        let mut conn = self.get_connection()?;
+        let now = Utc::now().timestamp();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        Self::ensure_meeting_is_live(&tx, meeting_id)?;
+        let (transcript_id, segments_json, hints, epoch): (String, String, Option<String>, i64) =
+            tx.query_row(
+                "SELECT id, segments_json, speaker_hints_json, segment_epoch FROM transcripts
+                 WHERE meeting_id = ?1 AND deleted_at IS NULL",
+                params![meeting_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("merge_not_found"))?;
+        let mut meta = metadata_object_tx(&tx, meeting_id)?;
+        let epoch = epoch.clamp(0, i64::from(u32::MAX)) as u32;
+        let mut list = sm::live(
+            sm::records(Some(&serde_json::Value::Object(meta.clone()))),
+            epoch,
+        );
+        let at = list
+            .iter()
+            .position(|r| r.id == merge_id)
+            .ok_or_else(|| anyhow!("merge_not_found"))?;
+        if !sm::is_undoable(&list, at) {
+            return Err(anyhow!("merge_blocked"));
+        }
+        let rec = list.remove(at);
+        let (channel, from, into) = (rec.channel, rec.from, rec.into);
+        let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
+        let rows = speaker_rows_of_channel(&tx, meeting_id, channel)?;
+        // Die Nummer von `from` ist neu vergeben, wenn sie wieder Segmente oder
+        // einen Namen hat. Eine leere, namenlose Zeile (Segment hin- und
+        // wieder weggeschoben) blockiert nicht: sie entfaellt.
+        if from != 0 {
+            let has_segments = segments
+                .iter()
+                .any(|s| s.channel == channel && s.speaker_index == Some(from));
+            let named = rows.iter().any(|r| r.1 == from && r.2.is_some());
+            if has_segments || named {
+                return Err(anyhow!("speaker_taken"));
+            }
+            for (id, _, _) in rows.iter().filter(|r| r.1 == from) {
+                tx.execute(
+                    "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+            }
+        }
+        for s in segments.iter_mut().filter(|s| {
+            s.channel == channel
+                && s.speaker_index == Some(into)
+                && rec.segments.contains(&s.segment_index)
+        }) {
+            s.speaker_index = (from != 0).then_some(from);
+        }
+        if let Some(id) = &rec.moved_row {
+            let current: Option<(Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT display_name, human_id FROM speakers
+                     WHERE id = ?1 AND speaker_index = ?2 AND deleted_at IS NULL",
+                    params![id, i64::from(into)],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((name, human)) = current {
+                let renamed = name != rec.moved_name;
+                tx.execute(
+                    "UPDATE speakers SET speaker_index = ?1, display_name = ?2,
+                         human_id = CASE WHEN ?3 THEN NULL ELSE human_id END, updated_at = ?4
+                     WHERE id = ?5",
+                    params![i64::from(from), rec.moved_name, renamed, now, id],
+                )?;
+                // `into` wurde nach dem Zusammenfuehren umbenannt: der Name
+                // bleibt bei `into` (eigene Zeile), `from` hat seinen alten.
+                if renamed && name.is_some() {
+                    tx.execute(
+                        "INSERT INTO speakers (id, meeting_id, channel, speaker_index,
+                             human_id, display_name, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                        params![
+                            Ulid::new().to_string(),
+                            meeting_id,
+                            i64::from(channel),
+                            i64::from(into),
+                            human,
+                            name,
+                            now
+                        ],
+                    )?;
+                }
+            }
+        }
+        for id in &rec.deleted_rows {
+            tx.execute(
+                "UPDATE speakers SET deleted_at = NULL, updated_at = ?1
+                 WHERE id = ?2 AND meeting_id = ?3",
+                params![now, id, meeting_id],
+            )?;
+        }
+        if let Some(name) = &rec.carried_name {
+            // Nur, wenn `into` den Namen noch traegt (nicht inzwischen umbenannt).
+            tx.execute(
+                "UPDATE speakers SET display_name = NULL, updated_at = ?1
+                 WHERE meeting_id = ?2 AND channel = ?3 AND speaker_index = ?4
+                   AND deleted_at IS NULL AND display_name = ?5",
+                params![now, meeting_id, i64::from(channel), i64::from(into), name],
+            )?;
+        }
+        let json = serde_json::to_string(&segments)?;
+        let hints = hints
+            .filter(|h| !h.trim().is_empty())
+            .map(|h| super::speakers::restore_turn_speaker(&h, channel, &rec.turns, into, from));
+        tx.execute(
+            "UPDATE transcripts SET segments_json = ?1,
+                 speaker_hints_json = COALESCE(?2, speaker_hints_json),
+                 content_revision = content_revision + 1, updated_at = ?3
+             WHERE id = ?4",
+            params![json, hints, now, transcript_id],
+        )?;
+        if from != 0 {
+            let mut former = former_names_of(&meta);
+            sm::restore_former(&mut former, &rec, &list);
+            meta.insert(
+                super::relabel::FORMER_NAMES_KEY.into(),
+                serde_json::json!(former),
+            );
+        }
+        meta.insert(sm::MERGES_KEY.into(), serde_json::to_value(&list)?);
+        write_metadata_object_tx(&tx, meeting_id, meta, now)?;
         tx.commit()?;
         Ok(())
     }

@@ -145,3 +145,93 @@ export function formatShare(pct: number, language: string): string {
   }).format(pct);
   return `${number} %`;
 }
+
+// ---------------------------------------------------------------------------
+// #266: Sprecher zusammenführen und trennen
+// ---------------------------------------------------------------------------
+
+type ShareSpeaker = Pick<
+  MeetingSpeaker,
+  "channel" | "speaker_index" | "speech_ms" | "display_name"
+>;
+
+/** Für den Vergleich gleicher Namen: getrimmt, Leerraum einfach, klein. */
+export const nameKey = (name: string | null | undefined) =>
+  (name ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("de");
+
+/**
+ * Wer geht in wem auf? "Aufnahme" (ohne Sprecher, Nummer 0) geht immer auf;
+ * sonst bleibt der Sprecher mit der längeren Redezeit (gleich lang: die
+ * kleinere Nummer). Unabhängig davon, in welcher Zeile man anfängt.
+ */
+export function mergeDirection<T extends ShareSpeaker>(
+  a: T,
+  b: T,
+): { from: T; into: T } {
+  if (a.speaker_index === WHOLE_CHANNEL) return { from: a, into: b };
+  if (b.speaker_index === WHOLE_CHANNEL) return { from: b, into: a };
+  const aWins =
+    a.speech_ms > b.speech_ms ||
+    (a.speech_ms === b.speech_ms && a.speaker_index < b.speaker_index);
+  return aWins ? { from: b, into: a } : { from: a, into: b };
+}
+
+/** Mit wem sich `speaker` zusammenführen lässt: gleiche Spur, nicht er selbst. */
+export function mergeCandidates<T extends ShareSpeaker>(
+  rows: T[],
+  speaker: T,
+): T[] {
+  return rows.filter(
+    (r) =>
+      r.channel === speaker.channel &&
+      r.speaker_index !== speaker.speaker_index,
+  );
+}
+
+/**
+ * Zeilen mit demselben Namen in derselben Spur (z. B. "Patrick Wolff"
+ * dreimal): je Gruppe zuerst der Sprecher, in dem die anderen aufgehen.
+ */
+export function duplicateGroups<T extends ShareSpeaker>(rows: T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = nameKey(row.display_name);
+    if (!key) continue;
+    const id = `${row.channel}|${key}`;
+    groups.set(id, [...(groups.get(id) ?? []), row]);
+  }
+  return [...groups.values()]
+    .filter((g) => g.length > 1)
+    .map((g) =>
+      [...g].sort(
+        (a, b) =>
+          b.speech_ms - a.speech_ms || a.speaker_index - b.speaker_index,
+      ),
+    );
+}
+
+/** Die Zusammenführungen, die in `speaker` aufgegangen sind (älteste zuerst). */
+export function absorbedInto<M extends { channel: number; into: number }>(
+  merges: M[],
+  speaker: { channel: number; speaker_index: number },
+): M[] {
+  return merges.filter(
+    (m) => m.channel === speaker.channel && m.into === speaker.speaker_index,
+  );
+}
+
+/**
+ * Wie ein aufgegangener Sprecher unter dem Ziel heißt: trug er denselben
+ * Namen wie das Ziel, zählt nur die Standardbezeichnung ("Person 3"); einen
+ * anderen Namen mit Standardbezeichnung ("Pat (Person 3)").
+ */
+export function absorbedLabel(
+  merge: { from_label: string; from_default_label: string },
+  currentLabel: string,
+): string {
+  const fallback = merge.from_default_label || merge.from_label;
+  if (!merge.from_label || nameKey(merge.from_label) === nameKey(currentLabel))
+    return fallback;
+  if (merge.from_label === fallback) return fallback;
+  return `${merge.from_label} (${fallback})`;
+}
