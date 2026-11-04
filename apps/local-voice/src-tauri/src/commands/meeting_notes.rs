@@ -335,8 +335,11 @@ mod tests {
             import_template(&store, &dir.path().join("fehlt.json")).unwrap_err(),
             "template_import:unreadable"
         );
-        // Nichts davon hat eine Vorlage angelegt: nur die acht mitgelieferten.
-        assert_eq!(store.list_template_infos().unwrap().len(), 8);
+        // Nichts davon hat eine Vorlage angelegt: nur die mitgelieferten.
+        assert_eq!(
+            store.list_template_infos().unwrap().len(),
+            crate::managers::meetings::notes::templates::builtin_templates().len()
+        );
     }
 
     #[test]
