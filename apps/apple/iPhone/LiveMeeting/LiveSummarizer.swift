@@ -104,13 +104,21 @@ enum LiveSummarizer {
         throw CancellationError()
     }
 
+    // Token-API (contextSize, tokenCount) fehlt im iOS-SDK 26.2 (Xcode 26.3); `#available`
+    // hilft beim Kompilieren nicht. Erst mit einem SDK, das die Symbole enthält, die
+    // Kompilierbedingung FOUNDATION_MODELS_TOKEN_API setzen. Bis dahin konservativ:
+    // 4096 Token Kontext und die UTF-8-Bytezahl als obere Schranke der Tokenzahl.
     private static func contextSize(_ model: SystemLanguageModel) -> Int {
+        #if FOUNDATION_MODELS_TOKEN_API
         if #available(iOS 26.4, *) { return model.contextSize }
+        #endif
         return 4096
     }
 
     private static func tokens(_ text: String, _ model: SystemLanguageModel) async throws -> Int {
+        #if FOUNDATION_MODELS_TOKEN_API
         if #available(iOS 26.4, *) { return try await model.tokenCount(for: Prompt(text)) }
+        #endif
         return text.utf8.count
     }
 
