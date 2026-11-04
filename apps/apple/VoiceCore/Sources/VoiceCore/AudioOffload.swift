@@ -145,3 +145,62 @@ public enum AudioOffload {
         return (attrs[.size] as? NSNumber)?.intValue ?? 0
     }
 }
+
+/// Speicherübersicht der Hörbücher auf dem Gerät (Epic #210, P8 Paket 2).
+public enum AudioStorage {
+    public struct Item: Equatable, Sendable, Identifiable {
+        public var id: String
+        public var title: String
+        /// Belegter Platz auf dem Gerät, mit unfertigen Downloads.
+        public var bytes: Int
+        /// Gehörter Anteil 0…1.
+        public var fraction: Double
+        public var finished: Bool
+        /// Letzte Nutzung (ms seit 1970), `nil` wenn nie gehört.
+        public var lastUsedMs: Double?
+        /// Nicht alle Teile liegen vollständig auf dem Gerät.
+        public var partial: Bool
+        /// Darf (nach Prüfung beim Konto) entfernt werden.
+        public var removable: Bool
+        /// Liegt nur auf diesem Gerät (nicht im Konto oder ohne Konto).
+        public var localOnly: Bool
+        public init(id: String, title: String, bytes: Int, fraction: Double, finished: Bool,
+                    lastUsedMs: Double?, partial: Bool, removable: Bool, localOnly: Bool = false) {
+            self.id = id; self.title = title; self.bytes = bytes; self.fraction = fraction; self.finished = finished
+            self.lastUsedMs = lastUsedMs; self.partial = partial; self.removable = removable; self.localOnly = localOnly
+        }
+
+        /// Stand in Worten, z. B. „45 % gehört“.
+        public var stand: String {
+            if finished { return "Fertig gehört" }
+            if partial && fraction <= 0 { return "Download unvollständig" }
+            let percent = Int((min(max(fraction, 0), 1) * 100).rounded())
+            let heard = percent == 0 ? "Noch nicht gehört" : "\(percent) % gehört"
+            return partial ? heard + " · Download unvollständig" : heard
+        }
+    }
+
+    /// Größte zuerst; bei gleicher Größe nach Titel.
+    public static func sorted(_ items: [Item]) -> [Item] {
+        items.sorted { $0.bytes != $1.bytes ? $0.bytes > $1.bytes
+            : $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    public static func total(_ items: [Item]) -> Int { items.reduce(0) { $0 + $1.bytes } }
+
+    /// Kandidaten für „Fertig gehörte entfernen“.
+    public static func finishedRemovable(_ items: [Item]) -> [Item] { sorted(items.filter { $0.finished && $0.removable }) }
+
+    /// Ergebnis einer Sammelentfernung in Worten.
+    public static func summary(removed: Int, freedText: String, kept: Int) -> String {
+        let head: String
+        switch removed {
+        case 0: head = "Nichts entfernt."
+        case 1: head = "1 Hörbuch entfernt, \(freedText) frei."
+        default: head = "\(removed) Hörbücher entfernt, \(freedText) frei."
+        }
+        guard kept > 0 else { return head }
+        return head + (kept == 1 ? " 1 Hörbuch bleibt, weil das Konto es nicht als vollständig bestätigt hat."
+                                 : " \(kept) Hörbücher bleiben, weil das Konto sie nicht als vollständig bestätigt hat.")
+    }
+}

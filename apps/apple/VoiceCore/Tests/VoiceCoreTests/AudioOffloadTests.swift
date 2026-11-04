@@ -77,3 +77,39 @@ final class AudioOffloadTests: XCTestCase {
         XCTAssertEqual(try AudioOffload.remove(bookDir: dir), 0)
     }
 }
+
+final class AudioStorageTests: XCTestCase {
+    private func item(_ id: String, _ bytes: Int, fraction: Double = 0, finished: Bool = false,
+                      partial: Bool = false, removable: Bool = true) -> AudioStorage.Item {
+        AudioStorage.Item(id: id, title: id, bytes: bytes, fraction: fraction, finished: finished,
+                          lastUsedMs: nil, partial: partial, removable: removable)
+    }
+
+    func testSortedBySizeThenTitle() {
+        let list = AudioStorage.sorted([item("b", 10), item("a", 10), item("c", 500)])
+        XCTAssertEqual(list.map(\.id), ["c", "a", "b"])
+        XCTAssertEqual(AudioStorage.total(list), 520)
+    }
+
+    func testFinishedRemovableSkipsLocalOnlyAndUnfinished() {
+        let list = [item("fertig", 10, finished: true), item("eigen", 99, finished: true, removable: false),
+                    item("laufend", 50, fraction: 0.4), item("gross", 80, finished: true)]
+        XCTAssertEqual(AudioStorage.finishedRemovable(list).map(\.id), ["gross", "fertig"])
+    }
+
+    func testStandInWords() {
+        XCTAssertEqual(item("x", 1, finished: true).stand, "Fertig gehört")
+        XCTAssertEqual(item("x", 1, fraction: 0.454).stand, "45 % gehört")
+        XCTAssertEqual(item("x", 1).stand, "Noch nicht gehört")
+        XCTAssertEqual(item("x", 1, partial: true).stand, "Download unvollständig")
+        XCTAssertEqual(item("x", 1, fraction: 0.2, partial: true).stand, "20 % gehört · Download unvollständig")
+    }
+
+    func testSummary() {
+        XCTAssertEqual(AudioStorage.summary(removed: 1, freedText: "1 GB", kept: 0), "1 Hörbuch entfernt, 1 GB frei.")
+        XCTAssertEqual(AudioStorage.summary(removed: 3, freedText: "2 GB", kept: 1),
+                       "3 Hörbücher entfernt, 2 GB frei. 1 Hörbuch bleibt, weil das Konto es nicht als vollständig bestätigt hat.")
+        XCTAssertEqual(AudioStorage.summary(removed: 0, freedText: "0 KB", kept: 2),
+                       "Nichts entfernt. 2 Hörbücher bleiben, weil das Konto sie nicht als vollständig bestätigt hat.")
+    }
+}

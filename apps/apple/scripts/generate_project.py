@@ -33,7 +33,12 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     asset_ref = obj(asset_path, isa='PBXFileReference', lastKnownFileType='folder.assetcatalog', path=asset_path, sourceTree='<group>')
     if asset_ref not in files: files.append(asset_ref)
     asset_build = obj(name+'assets', isa='PBXBuildFile', fileRef=asset_ref)
-    resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build], runOnlyForDeploymentPostprocessing=0)
+    # Datenschutz-Manifest (Required Reason APIs: freier Speicher, Dateizeiten, UserDefaults).
+    privacy_path = 'Shared/PrivacyInfo.xcprivacy'
+    privacy_ref = obj(privacy_path, isa='PBXFileReference', lastKnownFileType='text.xml', path=privacy_path, sourceTree='<group>')
+    if privacy_ref not in files: files.append(privacy_ref)
+    privacy_build = obj(name+'privacy', isa='PBXBuildFile', fileRef=privacy_ref)
+    resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build, privacy_build], runOnlyForDeploymentPostprocessing=0)
     extra_phases=[resources]
     if platform == 'iphoneos':
         settings.update({'SWIFT_OBJC_BRIDGING_HEADER':'iPhone/Engines/LVEngines.h','CLANG_CXX_LANGUAGE_STANDARD':'c++17','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks'})
