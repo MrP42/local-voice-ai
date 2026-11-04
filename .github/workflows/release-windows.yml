@@ -191,9 +191,11 @@ jobs:
           args: --features gpu-vulkan --bundles nsis,updater
 
       # Portable Versionen (ZIP, ohne Installation). Packt die EXE, die tauri-action eben
-      # gebaut hat; siehe scripts/build-portable-zip.ps1. Ein Fehler hier darf das schon
-      # veroeffentlichte Release nicht zuruecknehmen, faellt aber im Lauf rot auf.
+      # gebaut hat; siehe scripts/build-portable-zip.ps1. continue-on-error: ein Fehler hier
+      # darf weder das veroeffentlichte Release noch den SBOM-Upload danach verhindern; der
+      # Schritt bleibt im Lauf als fehlgeschlagen sichtbar.
       - name: Build portable ZIP
+        continue-on-error: true
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'portable'
@@ -209,11 +211,15 @@ jobs:
       # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
       # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
       - name: Build portable offline ZIPs
+        continue-on-error: true
         shell: pwsh
         run: |
           $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
           $out = Join-Path $env:RUNNER_TEMP 'portable-offline'
-          ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -OutDir $out
+          # -RequireHfToken: lieber kein Offline-Paket als eines ohne deutsche Phonon-Stimme, das
+          # die Release-Notizen falsch beschreibt. Nach dem Anlegen des Secrets per
+          # workflow_dispatch neu laufen lassen.
+          ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -RequireHfToken -OutDir $out
           gh release upload "app-v${{ steps.version.outputs.version }}" (Get-ChildItem $out -File).FullName --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
         env:

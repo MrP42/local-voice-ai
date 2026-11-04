@@ -47,7 +47,7 @@ Die Wahl von Qwen 3.5 4B: Es ist der Nachfolger des Katalog-Standards Qwen3 4B u
 - **Risiko:** Wird das Paket in einem kommerziellen Rahmen eingesetzt oder weitergegeben, etwa als bezahlte Leistung von Wolff.ai, deckt die Lizenz das deutsche Modell nicht. Für die Nutzung in der öffentlichen Verwaltung ist „nicht-kommerziell“ nicht abschließend geklärt. Hier vor dem Produktivbetrieb die Rechtsabteilung bzw. den Lizenzgeber fragen. In diesen Fällen das Paket ohne `phonon-40m-de` bauen (`-Provision` ohne die Kennung): Englisch und die Windows-Stimmen bleiben verfügbar.
 - Programm `ptts`, das englische Modell und alle Stimmen-Dateien stehen unter MIT bzw. Apache-2.0 und sind frei weitergebbar, mit Lizenztext.
 
-Hinweis für den Bau: Das deutsche Modell lässt sich nur mit einem Hugging-Face-Token laden, dessen Konto die Bedingungen angenommen hat. Repository-Secret `HF_TOKEN`. Fehlt es, baut der Workflow das Offline-Paket ohne deutsches Phonon-Modell und gibt eine Warnung aus.
+Hinweis für den Bau: Das deutsche Modell lässt sich nur mit einem Hugging-Face-Token laden, dessen Konto die Bedingungen angenommen hat. Repository-Secret `HF_TOKEN`. Fehlt es, bricht der Workflow nur den Offline-Schritt ab (`-RequireHfToken`). Installer und leichte ZIP erscheinen trotzdem. Nach dem Anlegen des Secrets den Workflow per „Run workflow“ (workflow_dispatch) erneut starten. Lokal ohne `-RequireHfToken` wird das deutsche Modell mit Warnung ausgelassen.
 
 ## Datenablage und Verhalten
 

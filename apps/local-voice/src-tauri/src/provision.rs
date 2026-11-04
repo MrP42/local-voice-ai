@@ -95,6 +95,12 @@ pub fn run(app: &AppHandle, ids: &[String]) -> i32 {
             }
             Kind::Asr => {
                 if asr.is_none() {
+                    use tauri::Manager;
+                    if let Some(m) = app.try_state::<Arc<ModelManager>>() {
+                        asr = Some(m.inner().clone());
+                    }
+                }
+                if asr.is_none() {
                     match ModelManager::new(app) {
                         Ok(m) => asr = Some(Arc::new(m)),
                         Err(e) => return fail_init("Spracherkennung", &e.to_string()),
@@ -133,8 +139,11 @@ pub fn run(app: &AppHandle, ids: &[String]) -> i32 {
     if failed > 0 {
         return 1;
     }
-    preselect(app, selected_asr.as_deref(), &ids);
-    0
+    if preselect(app, selected_asr.as_deref(), &ids) {
+        0
+    } else {
+        1
+    }
 }
 
 /// Kennung wie in `--list-models`; ein eindeutiger Teil davon reicht
@@ -165,13 +174,13 @@ fn resolve_asr(m: &ModelManager, id: &str) -> Option<String> {
 /// Zusammenfassung und Protokoll. Phonon wird bewusst NICHT eingeschaltet:
 /// Opt-in und Lizenzhinweis (CC BY-NC beim deutschen Modell) bestaetigt die
 /// Person selbst in der App.
-fn preselect(app: &AppHandle, asr: Option<&str>, ids: &[&str]) {
+fn preselect(app: &AppHandle, asr: Option<&str>, ids: &[&str]) -> bool {
     let llm = ids
         .iter()
         .copied()
         .find(|id| id.starts_with("llm-") && !id.starts_with("llm-runtime-"));
     if asr.is_none() && llm.is_none() {
-        return;
+        return true;
     }
     let mut settings = crate::settings::get_settings(app);
     if let Some(id) = asr {
@@ -186,7 +195,20 @@ fn preselect(app: &AppHandle, asr: Option<&str>, ids: &[&str]) {
         settings.llm_active_model_id = Some(format!("{local}:{id}"));
     }
     crate::settings::write_settings(app, settings);
+    // Der Store schreibt verzoegert; der Prozess endet gleich per `exit`, also jetzt sichern.
+    use tauri_plugin_store::StoreExt;
+    let saved = app
+        .store(crate::portable::store_path(
+            crate::settings::SETTINGS_STORE_PATH,
+        ))
+        .map_err(|e| e.to_string())
+        .and_then(|store| store.save().map_err(|e| e.to_string()));
+    if let Err(e) = saved {
+        eprintln!("[provision] Voreinstellung nicht gespeichert: {e}");
+        return false;
+    }
     eprintln!("[provision] voreingestellt: Spracherkennung {asr:?}, Sprachmodell {llm:?}");
+    true
 }
 
 fn fail_init(what: &str, e: &str) -> i32 {

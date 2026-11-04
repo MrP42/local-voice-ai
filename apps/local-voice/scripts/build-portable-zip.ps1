@@ -168,8 +168,13 @@ try {
         # Voreinstellung unter eigenem Namen: portable_parts.rs uebernimmt sie nur, wenn es noch
         # keine Einstellungen gibt; Entpacken ueber einen bestehenden Ordner aendert nichts.
         $store = Join-Path $data 'settings_store.json'
-        if (Test-Path $store) { Move-Item $store (Join-Path $data 'settings_store.seed.json') -Force }
+        if (-not (Test-Path $store)) { throw 'Voreinstellung fehlt: --provision hat Data\settings_store.json nicht geschrieben' }
+        Move-Item $store (Join-Path $data 'settings_store.seed.json') -Force
         Get-ChildItem $data -Recurse -File | Where-Object { $_.Length -gt $ZipBudget } | ForEach-Object { Split-LargeFile $_ }
+        Write-Host 'Inhalt Data\ im Paket:'
+        Get-ChildItem $data -Recurse -File | ForEach-Object {
+            Write-Host ("  {0,12:N0}  {1}" -f $_.Length, $_.FullName.Substring($data.Length + 1))
+        }
     }
 
     # Dateien auf ZIPs verteilen: App-Teil (alles ausser Data\) immer in Teil 1, dann
@@ -226,7 +231,9 @@ try {
         $probe = Join-Path $stage 'probe'
         foreach ($z in $zips) { Expand-Archive -Path $z -DestinationPath $probe -Force }
         $probeRoot = Join-Path $probe $folderName
-        foreach ($f in @('local-voice-ai.exe', 'portable', 'LIESMICH-PORTABLE.txt', 'resources/default_settings.json')) {
+        $must = @('local-voice-ai.exe', 'portable', 'LIESMICH-PORTABLE.txt', 'resources/default_settings.json')
+        if ($Offline) { $must += @('LIZENZEN-MODELLE.txt', 'Data/settings_store.seed.json') }
+        foreach ($f in $must) {
             if (-not (Test-Path (Join-Path $probeRoot $f))) { throw "Rauchtest: $f fehlt im ZIP" }
         }
         # `--help` beendet sich vor jeder Tauri-Initialisierung (clap in main.rs), laedt aber
