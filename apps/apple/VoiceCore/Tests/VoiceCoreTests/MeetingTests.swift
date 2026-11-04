@@ -91,6 +91,38 @@ final class MeetingTests: XCTestCase {
         let finished = try await archive.load(doc.id)
         XCTAssertEqual(finished.minutes?.summary, "Inhalt")
     }
+    func testLiveImportIsIdempotentAndRespectsAIConsent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("aufnahme.caf"); try Data([1,2,3,4]).write(to: source)
+        let archive = try MeetingArchive(root: root.appendingPathComponent("archive"), quota: 100)
+        func rec(_ reason: ConsentRecord.Reason, _ at: Double, _ scopes: [ConsentRecord.Scope]) -> ConsentRecord {
+            ConsentRecord(confirmedAt: Date(timeIntervalSince1970: 1_000 + at), channel: .app, reason: reason, scopes: scopes,
+                          purpose: "Protokoll", controller: "Amt 12", retentionDays: 90, audioOffset: at)
+        }
+        var consent = ConsentLog()
+        try consent.append(rec(.start, 0, [.recording, .transcription]))
+        try consent.append(rec(.personJoined, 4, ConsentRecord.Scope.allCases))
+        let live = MeetingArchive.LiveImport(consent: consent, live: nil, segments: [], notes: "Notiz")
+        let id = UUID()
+        let doc = try await archive.importMedia(source, duration: 8, live: live, id: id)
+        XCTAssertEqual(doc.id, id)
+        XCTAssertEqual(doc.consent, consent)
+        // Wiederholung nach Absturz: dasselbe Dokument, keine Kopie.
+        let again = try await archive.importMedia(source, duration: 8, live: live, id: id)
+        XCTAssertEqual(again.digest, doc.digest)
+        XCTAssertEqual(try await archive.list().count, 1)
+        try await archive.appendChunk(id, offset: 0, nextOffset: 8, segments: [MeetingSegment(index: 0, start: 0, end: 3, text: "Ohne KI"),
+                                                                              MeetingSegment(index: 1, start: 5, end: 7, text: "Mit KI")])
+        let report = MeetingMinutes(summary: "Mit KI", scope: "Mit KI", decisions: [], tasks: [], next_steps: [], follow_ups: [], open_questions: [])
+        do { try await archive.appendMinutes(id, from: 0, through: 1, minutes: report); XCTFail("No AI consent for 0–3 s") } catch {}
+        do { try await archive.skipMinutes(id, from: 0, through: 2); XCTFail("Must not skip permitted segments") } catch {}
+        try await archive.skipMinutes(id, from: 0, through: 1)
+        try await archive.appendMinutes(id, from: 1, through: 2, minutes: report)
+        try await archive.finishMinutes(id)
+        XCTAssertEqual(try await archive.load(id).minutes?.summary, "Mit KI")
+    }
     func testQuotaFailurePreservesExistingOriginal() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

@@ -353,7 +353,8 @@ public struct ConsentRecord: Codable, Equatable, Sendable {
         self.scopes = scopes; self.purpose = purpose; self.controller = controller; self.retentionDays = retentionDays; self.audioOffset = audioOffset
     }
     public var isComplete: Bool {
-        scopes.contains(.recording) && !purpose.trimmingCharacters(in: .whitespaces).isEmpty
+        // Kein reiner Aufnahmemodus: die Live-Erkennung läuft immer mit.
+        scopes.contains(.recording) && scopes.contains(.transcription) && !purpose.trimmingCharacters(in: .whitespaces).isEmpty
             && !controller.trimmingCharacters(in: .whitespaces).isEmpty && retentionDays > 0 && audioOffset.isFinite && audioOffset >= 0
     }
 }
@@ -390,12 +391,26 @@ public struct ConsentLog: Codable, Equatable, Sendable {
     }
 
     /// Darf die Aufnahme starten bzw. fortgesetzt werden?
-    public var canRecord: Bool { records.first.map { $0.isComplete && $0.scopes.contains(.recording) } ?? false }
+    public var canRecord: Bool { records.first.map(\.isComplete) ?? false }
+
+    /// Zählt jede Änderung; ein KI-Takt mit älterer Version wird verworfen.
+    public var version: Int { records.count }
 
     /// Gilt ein Umfang ab einer Audioposition? Jede neue Bestätigung (Person kommt
     /// hinzu) legt den Umfang ab ihrer Stelle neu fest.
     public func allows(_ scope: ConsentRecord.Scope, at offset: Double = .infinity) -> Bool {
         guard let current = records.last(where: { $0.audioOffset <= offset }) else { return false }
         return current.scopes.contains(scope)
+    }
+
+    /// Gilt ein Umfang für das ganze Intervall `[from, to]`? Jede Bestätigung, die
+    /// das Intervall berührt, muss ihn enthalten. Eine Bestätigung genau bei `to`
+    /// gilt erst danach.
+    public func allows(_ scope: ConsentRecord.Scope, from: Double, to: Double) -> Bool {
+        guard from.isFinite, to.isFinite, to >= from,
+              let first = records.lastIndex(where: { $0.audioOffset <= from }) else { return false }
+        return records[first...].enumerated().allSatisfy { i, r in
+            (i > 0 && r.audioOffset >= to) || r.scopes.contains(scope)
+        }
     }
 }

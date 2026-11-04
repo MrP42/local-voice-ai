@@ -105,7 +105,7 @@ struct LiveMeetingScreen: View {
             if let mode = consentFor {
                 ConsentSheet(mode: mode, onConfirm: { record, title in
                     consentFor = nil
-                    if case .start = mode { Task { await model.start(title: title, consent: record) } } else { model.confirmJoin(record) }
+                    if case .start = mode { Task { await model.start(title: title, consent: record) } } else { Task { await model.confirmJoin(record) } }
                 }, onCancel: {
                     consentFor = nil
                     if case .start = mode { dismiss() }
@@ -281,7 +281,12 @@ private struct LiveTranscriptView: View {
                     if model.aiStatus.hasPrefix("KI pausiert") {
                         Text("**\(model.aiStatus).** Aufnahme und Transkript laufen weiter.").font(.subheadline).voiceCard()
                     }
-                    ForEach(model.segments, id: \.id) { s in
+                    ForEach(Array(model.segments.enumerated()), id: \.element.id) { i, s in
+                        if hasBreak(before: i) {
+                            Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
+                                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(LiveMeetingScreen.clock(s.start)).font(.caption.monospacedDigit()).foregroundStyle(VoicePalette.secondaryText)
                             Text(s.text)
@@ -289,6 +294,11 @@ private struct LiveTranscriptView: View {
                         .padding(6)
                         .background(RoundedRectangle(cornerRadius: 6).fill(model.jumpTo == s.id ? Color.yellow.opacity(0.4) : .clear))
                         .id(s.id)
+                    }
+                    if hasBreak(before: model.segments.count) {
+                        Label("Unterbrechung – hier fehlt Gesprächszeit", systemImage: "pause.circle")
+                            .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .center)
                     }
                     if !model.volatile.isEmpty {
                         Text(model.volatile).italic().foregroundStyle(VoicePalette.secondaryText).id("volatile")
@@ -300,5 +310,12 @@ private struct LiveTranscriptView: View {
             .onChange(of: model.jumpTo, initial: true) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }
             .onChange(of: model.segments.count) { _, _ in if model.jumpTo == nil, let last = model.segments.last { proxy.scrollTo(last.id, anchor: .bottom) } }
         }
+    }
+
+    /// Liegt zwischen dem vorigen und diesem Segment eine Pause oder Unterbrechung?
+    private func hasBreak(before i: Int) -> Bool {
+        let lower = i > 0 ? model.segments[i - 1].start : -1
+        let upper = i < model.segments.count ? model.segments[i].start : .infinity
+        return model.breaks.contains { $0 > lower && $0 <= upper }
     }
 }

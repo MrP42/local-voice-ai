@@ -67,6 +67,7 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Eine Aufnahme ohne vollständigen Einwilligungsnachweis wurde nicht übernommen."; return
         }
         do {
+            // Echte Dateidauer archivieren; die Aufnahme selbst endet spätestens bei 2 Stunden.
             let measured = try? await AVURLAsset(url: url).load(.duration).seconds
             let duration = (measured?.isFinite == true && measured! > 0) ? measured! : session.seconds
             guard duration.isFinite, duration > 0.5 else {
@@ -76,7 +77,9 @@ final class MeetingLibrary: ObservableObject {
                 return
             }
             let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
-            _ = try await archive.importMedia(url, duration: min(duration, 7200), live: live)
+            // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
+            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id)
+            // Erst nach dem synchronisierten Übernehmen wird die Quelle entfernt.
             try? FileManager.default.removeItem(at: folder)
             status = "gespeichert – Verarbeitung folgt"
             await refresh(); start()
@@ -156,8 +159,16 @@ final class MeetingLibrary: ObservableObject {
         while (doc.summarizedSegments ?? 0) < doc.segments.count {
             try Task.checkCancellation()
             let from = doc.summarizedSegments ?? 0
+            // Ohne KI-Einwilligung für diesen Zeitbereich: überspringen, nie auswerten.
+            if !doc.aiPermitted(doc.segments[from]) {
+                var through = from
+                while through < doc.segments.count, !doc.aiPermitted(doc.segments[through]) { through += 1 }
+                try await archive.skipMinutes(doc.id, from: from, through: through, event: ProcessingEvent(operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
+                doc = try await archive.load(doc.id); await refresh()
+                continue
+            }
             var through = from, text = ""
-            while through < doc.segments.count {
+            while through < doc.segments.count, doc.aiPermitted(doc.segments[through]) {
                 let next = doc.segments[through].text
                 if text.count + next.count + 1 > 2400 { break }
                 text += next + "\n"; through += 1

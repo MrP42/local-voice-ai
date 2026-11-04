@@ -8,7 +8,7 @@ final class LiveMeetingModel: ObservableObject {
     enum Phase: Equatable { case idle, starting, recording, paused, stopping, finished }
 
     /// Gesichert nach jedem fertigen Segment und jedem Takt (`sitzung.json`).
-    struct SessionFile: Codable {
+    struct SessionFile: Codable, Sendable {
         var id: UUID
         var title: String
         var startedAt: Date
@@ -17,13 +17,12 @@ final class LiveMeetingModel: ObservableObject {
         var segments: [LiveSegment]
         var notes: String
         var seconds: Double
+        /// Audiostellen, an denen die Aufnahme pausiert oder unterbrochen wurde (Lücken im Gespräch).
+        var breaks: [Double]? = nil
 
         /// Ohne Inhalt: kein Segment, keine Notiz. Nur solche Sitzungen dürfen verworfen werden.
         var isEmpty: Bool { segments.isEmpty && notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
-
-    /// Höchstdauer einer Live-Aufnahme; danach wird sie sauber beendet.
-    static let maxSeconds: Double = 2 * 60 * 60
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var segments: [LiveSegment] = []
@@ -34,6 +33,7 @@ final class LiveMeetingModel: ObservableObject {
     @Published private(set) var lastTick: Date?
     @Published private(set) var consent = ConsentLog()
     @Published private(set) var hint: String?
+    @Published private(set) var breaks: [Double] = []
     @Published var notes = ""
     @Published var title = ""
     @Published var error: String?
@@ -45,6 +45,8 @@ final class LiveMeetingModel: ObservableObject {
     private var beats = 0
     private var tickTask: Task<Void, Never>?
     private var notesSave: Task<Void, Never>?
+    private let writer = SessionWriter()
+    private var revision = 0
     private var lastTickAudio: Double?
     private let policy = LiveTickPolicy()
     private let finish: (URL, SessionFile) async -> Void
@@ -62,7 +64,8 @@ final class LiveMeetingModel: ObservableObject {
     func start(title: String, consent record: ConsentRecord) async {
         guard phase == .idle, Self.activeId == nil else { return }
         var log = ConsentLog()
-        do { try log.append(record) } catch { self.error = "Einwilligung unvollständig. Bitte Zweck und Verantwortlichen angeben."; return }
+        do { try log.append(record) } catch { self.error = "Einwilligung unvollständig. Aufnahme und Transkription, Zweck und Verantwortlichen angeben."; return }
+        guard log.canRecord else { self.error = "Einwilligung unvollständig."; return }
         let id = UUID()
         // Vor dem ersten `await`: die Wiederherstellung darf diese Sitzung nicht übernehmen.
         Self.activeId = id
@@ -74,9 +77,11 @@ final class LiveMeetingModel: ObservableObject {
             capture.onUpdate = { [weak self] u in self?.receive(u) }
             capture.onError = { [weak self] e in self?.error = e.localizedDescription }
             capture.onInterrupted = { [weak self] why in self?.interrupted(why) }
+            capture.onLimit = { [weak self] in self?.limitReached() }
             self.consent = log; self.title = title
             session = SessionFile(id: id, title: title, startedAt: Date(), consent: log, live: LiveState(), segments: [], notes: "", seconds: 0)
-            persist()
+            // Erst wenn der Nachweis gesichert ist, darf aufgenommen werden.
+            try await save()
             self.capture = capture
             try await capture.start()
             phase = .recording
@@ -94,7 +99,7 @@ final class LiveMeetingModel: ObservableObject {
 
     func pause() {
         guard phase == .recording else { return }
-        capture?.pause(); phase = .paused; persist()
+        capture?.pause(); phase = .paused; markBreak(); checkpoint()
     }
 
     func resume() {
@@ -103,12 +108,17 @@ final class LiveMeetingModel: ObservableObject {
     }
 
     /// Person kommt hinzu: Aufnahme ist pausiert, neue Bestätigung ab `audioPosition`.
-    func confirmJoin(_ record: ConsentRecord) {
-        do {
-            try consent.append(record)
-            session?.consent = consent
-            persist(); resume()
-        } catch { self.error = "Einwilligung unvollständig. Aufnahme bleibt pausiert." }
+    /// Ein laufender KI-Takt wird abgebrochen; fortgesetzt wird erst nach gesichertem Nachweis.
+    func confirmJoin(_ record: ConsentRecord) async {
+        let before = consent
+        do { try consent.append(record) } catch { self.error = "Einwilligung unvollständig. Aufnahme bleibt pausiert."; return }
+        tickTask?.cancel()
+        do { try await save() } catch {
+            consent = before
+            self.error = "Der Einwilligungsnachweis konnte nicht gespeichert werden. Aufnahme bleibt pausiert."
+            return
+        }
+        resume()
     }
 
     /// Audiostelle für eine neue Einwilligung („Person kommt hinzu“).
@@ -124,7 +134,7 @@ final class LiveMeetingModel: ObservableObject {
         tickTask = nil
         notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
-        persist()
+        do { try await save() } catch { self.error = "Der letzte Stand konnte nicht gesichert werden; die Aufnahme wird trotzdem übernommen." }
         UIApplication.shared.isIdleTimerDisabled = false
         if let session { await finish(capture.fileURL, session) }
         self.capture = nil
@@ -134,8 +144,8 @@ final class LiveMeetingModel: ObservableObject {
 
     // MARK: Nutzeraktionen im Live-Stand
 
-    func confirmDone(_ id: String) { live.confirmDone(id); persist() }
-    func rejectAnswer(_ id: String) { live.rejectAnswer(id); persist() }
+    func confirmDone(_ id: String) { live.confirmDone(id); checkpoint() }
+    func rejectAnswer(_ id: String) { live.rejectAnswer(id); checkpoint() }
 
     /// Notizen: gebündelt sichern, nicht bei jedem Tastendruck.
     func saveNotes() {
@@ -143,7 +153,7 @@ final class LiveMeetingModel: ObservableObject {
         notesSave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            self?.persist()
+            self?.checkpoint()
         }
     }
 
@@ -152,15 +162,28 @@ final class LiveMeetingModel: ObservableObject {
     // MARK: Intern
 
     private func receive(_ u: LiveCapture.Update) {
-        if !u.finals.isEmpty { segments += u.finals; volatile = ""; persist() } else { volatile = u.volatile }
+        if !u.finals.isEmpty { segments += u.finals; volatile = ""; checkpoint() } else { volatile = u.volatile }
     }
 
+    /// Die Aufnahme ist im Aufnahmepfad schon gesperrt; hier nur Zustand und Anzeige.
     private func interrupted(_ why: String) {
         guard phase == .recording else { return }
         capture?.pause()
         phase = .paused
         hint = why
-        persist()
+        markBreak()
+        checkpoint()
+    }
+
+    private func limitReached() {
+        guard phase == .recording || phase == .paused else { return }
+        hint = "Höchstdauer von zwei Stunden erreicht. Die Aufnahme wurde beendet."
+        Task { await stop() }
+    }
+
+    private func markBreak() {
+        let at = capture?.seconds ?? seconds
+        if breaks.last != at { breaks.append(at) }
     }
 
     private func startTimer() {
@@ -173,11 +196,6 @@ final class LiveMeetingModel: ObservableObject {
     private func clock() {
         guard let capture else { return }
         seconds = capture.seconds
-        if seconds >= Self.maxSeconds, phase == .recording {
-            hint = "Höchstdauer von zwei Stunden erreicht. Die Aufnahme wurde beendet."
-            Task { await stop() }
-            return
-        }
         beats += 1
         if beats % 5 == 0 { heartbeat() }
     }
@@ -185,7 +203,7 @@ final class LiveMeetingModel: ObservableObject {
     private func heartbeat() {
         guard phase == .recording else { return }
         // Nur Abschnitte, für die zur jeweiligen Audiostelle eine KI-Einwilligung vorliegt.
-        let pending = segments.filter { $0.end > live.processedThrough && consent.allows(.aiAnalysis, at: $0.start) }
+        let pending = segments.filter { $0.end > live.processedThrough && consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }
         let words = pending.reduce(0) { $0 + $1.text.split(separator: " ").count }
         let decision = policy.decide(now: seconds, lastRun: lastTickAudio, newWords: words, running: tickTask != nil,
                                      thermal: LiveThermal(ProcessInfo.processInfo.thermalState),
@@ -198,35 +216,60 @@ final class LiveMeetingModel: ObservableObject {
         case .wait: if aiStatus.hasPrefix("KI pausiert") { aiStatus = "" }
         case .run:
             guard !pending.isEmpty else { return }
+            let version = consent.version
             tickTask = Task { [weak self] in
-                await self?.tick(pending: pending)
+                await self?.tick(pending: pending, consentVersion: version)
                 self?.tickTask = nil
             }
         }
     }
 
-    private func tick(pending: [LiveSegment]) async {
+    private func tick(pending: [LiveSegment], consentVersion: Int) async {
         lastTickAudio = seconds
         // Gezielt ältere Belege: Segmente, auf die offene Einträge verweisen.
         let wanted = Set(live.items.filter { $0.status != .done }.flatMap { $0.evidence.map(\.segmentId) })
-        let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough && consent.allows(.aiAnalysis, at: $0.start) }.suffix(12)
+        let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough && consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }.suffix(12)
         do {
             let (delta, prompt) = try await LiveSummarizer.tick(state: live, pending: pending, older: Array(older))
+            // Einwilligung inzwischen geändert oder Takt abgebrochen: Ergebnis verwerfen.
+            guard !Task.isCancelled, consentVersion == consent.version, aiAllowed else { aiStatus = "KI-Takt verworfen (Einwilligung geändert)"; return }
             _ = live.apply(delta, segments: prompt.segments)
             lastTick = Date(); aiStatus = ""
-            persist()
+            checkpoint()
         } catch {
             aiStatus = "KI-Takt übersprungen"
         }
     }
 
-    private func persist() {
-        guard var s = session else { return }
+    // MARK: Sicherung (seriell, außerhalb des MainActors)
+
+    private func snapshot() -> (SessionFile, Int, URL)? {
+        guard var s = session else { return nil }
         s.live = live; s.segments = segments; s.notes = notes; s.consent = consent; s.title = title
         s.seconds = capture?.seconds ?? seconds
+        s.breaks = breaks.isEmpty ? nil : breaks
         session = s
-        let url = Self.runningRoot.appendingPathComponent(s.id.uuidString).appendingPathComponent("sitzung.json")
-        try? JSONEncoder().encode(s).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        revision += 1
+        return (s, revision, Self.runningRoot.appendingPathComponent(s.id.uuidString).appendingPathComponent("sitzung.json"))
+    }
+
+    /// Wartet, bis der aktuelle Stand auf dem Datenträger liegt; Fehler werden weitergegeben.
+    private func save() async throws {
+        guard let (s, r, url) = snapshot() else { return }
+        try await writer.write(s, revision: r, to: url)
+    }
+
+    /// Checkpoint ohne Warten. Scheitert er, wird die Aufnahme pausiert statt still weiterzulaufen.
+    private func checkpoint() {
+        guard let (s, r, url) = snapshot() else { return }
+        Task { [weak self, writer] in
+            do { try await writer.write(s, revision: r, to: url) } catch { self?.saveFailed() }
+        }
+    }
+
+    private func saveFailed() {
+        error = "Der Stand konnte nicht gesichert werden (Speicher voll?). Die Aufnahme ist pausiert."
+        if phase == .recording { capture?.pause(); phase = .paused; markBreak() }
     }
 
     static func fileName(_ title: String) -> String {
@@ -245,5 +288,16 @@ final class LiveMeetingModel: ObservableObject {
                   let audio = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).first(where: { $0.pathExtension == "caf" }) else { return nil }
             return (audio, s)
         }
+    }
+}
+
+/// Schreibt `sitzung.json` seriell. Ältere Stände (niedrigere Revision) überschreiben nie neuere.
+actor SessionWriter {
+    private var written = 0
+    func write(_ s: LiveMeetingModel.SessionFile, revision: Int, to url: URL) throws {
+        guard revision > written else { return }
+        let data = try JSONEncoder().encode(s)
+        try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        written = revision
     }
 }

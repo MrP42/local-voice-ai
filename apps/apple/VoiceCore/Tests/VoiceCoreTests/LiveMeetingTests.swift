@@ -131,6 +131,15 @@ final class LiveMeetingTests: XCTestCase {
         XCTAssertFalse(log.allows(.aiAnalysis, at: 700))
         XCTAssertFalse(log.allows(.aiAnalysis))
         XCTAssertThrowsError(try log.append(rec(.personJoined, 100))) { XCTAssertEqual($0 as? ConsentLog.ConsentError, .outOfOrder) }
+        // Ganzes Intervall: ein Segment über die Beitrittsstelle hinweg ist nicht freigegeben.
+        XCTAssertTrue(log.allows(.aiAnalysis, from: 550, to: 600))
+        XCTAssertFalse(log.allows(.aiAnalysis, from: 590, to: 610))
+        XCTAssertFalse(log.allows(.aiAnalysis, from: 650, to: 660))
+        XCTAssertTrue(log.allows(.transcription, from: 0, to: 900))
+        XCTAssertEqual(log.version, 2)
+        // Kein reiner Aufnahmemodus: ohne Transkription unvollständig.
+        var bare = ConsentLog()
+        XCTAssertThrowsError(try bare.append(rec(.start, 0, scopes: [.recording]))) { XCTAssertEqual($0 as? ConsentLog.ConsentError, .incomplete) }
         let round = try JSONDecoder().decode(ConsentLog.self, from: JSONEncoder().encode(log))
         XCTAssertEqual(round, log)
         XCTAssertEqual(round.records[0].noticeVersion, ConsentNotice.version)

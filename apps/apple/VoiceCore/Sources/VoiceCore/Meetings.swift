@@ -148,6 +148,13 @@ public struct MeetingMinutes: Codable, Equatable, Sendable {
 }
 
 public struct MeetingDocument: Codable, Identifiable, Sendable {
+    /// Darf dieser Abschnitt mit KI ausgewertet werden? Mit Nachweis (Live-Aufnahme)
+    /// nur, wenn die KI-Einwilligung den ganzen Zeitbereich deckt. Ohne Nachweis
+    /// (Dateiimport durch die Person selbst) wie bisher.
+    public func aiPermitted(_ s: MeetingSegment) -> Bool {
+        consent.map { $0.allows(.aiAnalysis, from: s.start, to: s.end) } ?? true
+    }
+
     public let id: UUID
     public let createdAt: Date
     public let originalName: String
@@ -216,7 +223,18 @@ public actor MeetingArchive {
 
     /// `live` wird im selben Schritt wie das Original geschrieben: ein Dokument
     /// aus einer Live-Aufnahme existiert nie ohne seinen Einwilligungsnachweis.
-    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil) throws -> MeetingDocument {
+    ///
+    /// Mit `id` ist der Import wiederholbar: liegt das Dokument schon vollständig vor
+    /// (Absturz nach dem Übernehmen, vor dem Aufräumen der Quelle), wird es
+    /// unverändert zurückgegeben. Das Dokument entsteht in einem Staging-Ordner,
+    /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil) throws -> MeetingDocument {
+        if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
+            let existing = try load(fixedId)
+            let bytes = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            guard existing.bytes == bytes, (existing.consent == nil) == (live == nil) else { throw VoiceError.conflict }
+            return existing
+        }
         guard duration.isFinite, duration > 0, duration <= 7200 else { throw VoiceError.invalid }
         if let live { guard live.consent.canRecord, live.segments.count <= 20_000 else { throw VoiceError.invalid } }
         let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
@@ -231,7 +249,7 @@ public actor MeetingArchive {
         guard bytes <= quota - used else { throw VoiceError.full }
         let ext = source.pathExtension.lowercased()
         guard !ext.isEmpty, ext.count <= 10, ext.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { throw VoiceError.invalid }
-        let id = UUID(), staging = root.appendingPathComponent(".import-" + UUID().uuidString)
+        let id = fixedId ?? UUID(), staging = root.appendingPathComponent(".import-" + UUID().uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) }
         let target = staging.appendingPathComponent("original." + ext)
@@ -272,9 +290,20 @@ public actor MeetingArchive {
     public func appendMinutes(_ id: UUID, from: Int, through: Int, minutes: MeetingMinutes, event: ProcessingEvent? = nil) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
+        guard doc.segments[from..<through].allSatisfy(doc.aiPermitted) else { throw VoiceError.invalid }
         let validated = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
         try validated.validateEvidence(in: doc.segments[from..<through].map(\.text).joined(separator: "\n"))
         doc.summaryParts = (doc.summaryParts ?? []) + [validated]
+        doc.summarizedSegments = through
+        if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
+        try save(doc)
+    }
+    /// Abschnitte ohne KI-Einwilligung überspringen: sie bleiben im Transkript, gehen
+    /// aber in keine Auswertung ein. Nur für Abschnitte, die wirklich nicht freigegeben sind.
+    public func skipMinutes(_ id: UUID, from: Int, through: Int, event: ProcessingEvent? = nil) throws {
+        var doc = try load(id)
+        guard doc.nextOffset == doc.duration, from == (doc.summarizedSegments ?? 0), through > from, through <= doc.segments.count else { throw VoiceError.conflict }
+        guard doc.segments[from..<through].allSatisfy({ !doc.aiPermitted($0) }) else { throw VoiceError.invalid }
         doc.summarizedSegments = through
         if let event { doc.processingEvents = (doc.processingEvents ?? []) + [event] }
         try save(doc)

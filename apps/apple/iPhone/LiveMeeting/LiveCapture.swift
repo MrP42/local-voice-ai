@@ -7,6 +7,8 @@ import Speech
 /// (unkomprimiert, bleibt nach einem Absturz bis zum letzten Puffer lesbar) und
 /// in `SpeechAnalyzer`. Beide bekommen denselben Puffer oder keinen, damit die
 /// Zeitachse der Ergebnisse der Dateizeit entspricht. Pausen liefern nichts.
+/// Ob Puffer angenommen werden, entscheidet allein `accepting` unter `lock`:
+/// Pause, Unterbrechung, Routenwechsel und Formatfehler sperren synchron.
 final class LiveCapture {
     struct Update {
         var finals: [LiveSegment] = []
@@ -31,7 +33,6 @@ final class LiveCapture {
     private var analyzerFormat: AVAudioFormat?
     private let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var observers: [NSObjectProtocol] = []
-    private var nextIndex = 0
     private(set) var running = false
 
     // Vom Audio-Thread benutzt: nur unter `lock` lesen oder setzen.
@@ -41,12 +42,20 @@ final class LiveCapture {
     private var toAnalyzer: AVAudioConverter?
     private var toFile: AVAudioConverter?
     private var writtenFrames: AVAudioFramePosition = 0
+    private var accepting = false
+    private var limitReported = false
+
+    /// Höchstdauer, im Aufnahmepfad über die geschriebenen Frames durchgesetzt.
+    static let maxSeconds: Double = 2 * 60 * 60 - 0.5
+    private var maxFrames: AVAudioFramePosition { AVAudioFramePosition(Self.maxSeconds * fileFormat.sampleRate) }
 
     /// Neue finalisierte Segmente und der vorläufige Rest (nur Anzeige).
     var onUpdate: (@MainActor (Update) -> Void)?
     var onError: (@MainActor (Error) -> Void)?
-    /// Anruf, Siri, Routenwechsel: Aufnahme steht, Grund für die Anzeige.
+    /// Anruf, Siri, Routenwechsel, Formatfehler: Aufnahme steht bereits, Grund für die Anzeige.
     var onInterrupted: (@MainActor (String) -> Void)?
+    /// Höchstdauer erreicht: es wird nichts mehr angenommen.
+    var onLimit: (@MainActor () -> Void)?
 
     init(fileURL: URL) { self.fileURL = fileURL }
 
@@ -63,12 +72,20 @@ final class LiveCapture {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber]) else { throw CaptureError.noFormat }
         analyzerFormat = format
 
+        // Eine Datei je Aufnahme; nach einem Absturz wird sie übernommen, nicht fortgeschrieben.
+        guard !FileManager.default.fileExists(atPath: fileURL.path) else { throw CocoaError(.fileWriteFileExists) }
+        do { try await startPipeline(transcriber) } catch {
+            // Teilstart vollständig zurückbauen, bevor der Aufrufer den Ordner löscht.
+            await teardown(finalize: false)
+            throw error
+        }
+    }
+
+    private func startPipeline(_ transcriber: SpeechTranscriber) async throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetooth, .defaultToSpeaker])
         try session.setActive(true)
 
-        // Eine Datei je Aufnahme; nach einem Absturz wird sie übernommen, nicht fortgeschrieben.
-        guard !FileManager.default.fileExists(atPath: fileURL.path) else { throw CocoaError(.fileWriteFileExists) }
         let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1,
                                        AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
         let written = try AVAudioFile(forWriting: fileURL, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
@@ -79,31 +96,51 @@ final class LiveCapture {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         self.analyzer = analyzer
         try await analyzer.start(inputSequence: stream)
-        results = Task { [weak self] in await self?.consume(transcriber) }
+        results = Self.consume(transcriber, owner: self)
 
         observe()
         try installTapAndStart()
     }
 
-    func pause() { engine.pause(); running = false }
+    /// Sperrt synchron, dann steht die Engine. Nach der Rückkehr wird kein Puffer mehr geschrieben.
+    func pause() { suspend() }
 
-    /// Fortsetzen; nach Routenwechsel mit neuem Mikrofonformat.
+    private func suspend() {
+        lock.lock(); accepting = false; lock.unlock()
+        engine.pause()
+        running = false
+    }
+
+    /// Fortsetzen; nach Routenwechsel mit neuem Mikrofonformat. Angenommen wird erst
+    /// nach erfolgreicher Neukonfiguration.
     func resume() throws {
+        lock.lock(); let full = writtenFrames >= maxFrames; lock.unlock()
+        guard !full else { return }
         try AVAudioSession.sharedInstance().setActive(true)
         try installTapAndStart()
     }
 
     /// Beendet Aufnahme und Erkennung; wartet, bis alle Ergebnisse finalisiert sind.
-    func stop() async {
+    func stop() async { await teardown(finalize: true) }
+
+    /// Zentraler Rückbau in fester Reihenfolge: sperren, Tap und Engine, Beobachter,
+    /// Eingabestrom, Analyzer, Ergebnis-Task (begrenzt), Datei schließen, Audiositzung.
+    private func teardown(finalize: Bool) async {
+        lock.lock(); accepting = false; let continuation = input; input = nil; lock.unlock()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
-        lock.lock(); let continuation = input; input = nil; lock.unlock()
         continuation?.finish()
-        try? await analyzer?.finalizeAndFinishThroughEndOfInput()
-        await results?.value
+        if finalize { try? await analyzer?.finalizeAndFinishThroughEndOfInput() } else { await analyzer?.cancelAndFinishNow() }
+        if let results {
+            // Hängt die Erkennung, wird der Task nach 10 s beendet; die Aufnahme ist dann schon gesichert.
+            let guardTask = Task { try? await Task.sleep(for: .seconds(10)); results.cancel() }
+            await results.value
+            guardTask.cancel()
+        }
+        results = nil; analyzer = nil
         lock.lock(); file = nil; lock.unlock()   // schließt die Datei
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
@@ -118,6 +155,7 @@ final class LiveCapture {
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { [weak self] buffer, _ in self?.handle(buffer) }
         engine.prepare()
         try engine.start()
+        lock.lock(); accepting = true; lock.unlock()
         running = true
     }
 
@@ -126,27 +164,58 @@ final class LiveCapture {
         observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-            self.running = false
+            self.suspend()
             Task { @MainActor in self.onInterrupted?("Aufnahme unterbrochen (Anruf oder Systemton). Zum Fortsetzen „Weiter“ tippen.") }
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, self.running, let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+                  [.oldDeviceUnavailable, .newDeviceAvailable, .categoryChange, .override, .routeConfigurationChange].contains(reason) else { return }
+            self.suspend()
+            Task { @MainActor in self.onInterrupted?("Mikrofon gewechselt. Zum Fortsetzen „Weiter“ tippen.") }
         })
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             guard let self else { return }
-            self.running = false
+            self.suspend()
             Task { @MainActor in self.onInterrupted?("Audiogerät gewechselt. Zum Fortsetzen „Weiter“ tippen.") }
         })
     }
 
     private func handle(_ buffer: AVAudioPCMBuffer) {
-        lock.lock(); let f = toFile, a = toAnalyzer, file = file, input = input; lock.unlock()
-        guard let file, let input, let format = analyzerFormat,
-              let forFile = convert(buffer, with: f, to: fileFormat), let forAnalyzer = convert(buffer, with: a, to: format) else { return }
+        lock.lock()
+        guard accepting, let file, let input, let f = toFile, let a = toAnalyzer, let format = analyzerFormat else { lock.unlock(); return }
+        let remaining = maxFrames - writtenFrames
+        lock.unlock()
+        guard remaining > 0 else { return reportLimit() }
+        guard let forFile = convert(buffer, with: f, to: fileFormat), let forAnalyzer = convert(buffer, with: a, to: format) else {
+            // Kein stilles Verwerfen: sperren und melden, die Lücke wird als Unterbrechung sichtbar.
+            lock.lock(); accepting = false; lock.unlock()
+            DispatchQueue.main.async { [weak self] in
+                self?.engine.pause(); self?.running = false
+                Task { @MainActor in self?.onInterrupted?("Audioformat konnte nicht umgewandelt werden. Aufnahme pausiert, zum Fortsetzen „Weiter“ tippen.") }
+            }
+            return
+        }
+        let last = AVAudioFramePosition(forFile.frameLength) >= remaining
+        if last {
+            forFile.frameLength = AVAudioFrameCount(remaining)
+            forAnalyzer.frameLength = min(forAnalyzer.frameLength, AVAudioFrameCount(Double(remaining) * format.sampleRate / fileFormat.sampleRate))
+        }
         do {
             try file.write(from: forFile)
             lock.lock(); writtenFrames += AVAudioFramePosition(forFile.frameLength); lock.unlock()
             input.yield(AnalyzerInput(buffer: forAnalyzer))
+            if last { reportLimit() }
         } catch {
+            lock.lock(); accepting = false; lock.unlock()
             Task { @MainActor in self.onError?(error) }
         }
+    }
+
+    private func reportLimit() {
+        lock.lock(); accepting = false; let first = !limitReported; limitReported = true; lock.unlock()
+        guard first else { return }
+        Task { @MainActor [weak self] in self?.onLimit?() }
     }
 
     private func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter?, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
@@ -163,24 +232,31 @@ final class LiveCapture {
         return error == nil && out.frameLength > 0 ? out : nil
     }
 
-    private func consume(_ transcriber: SpeechTranscriber) async {
-        do {
-            for try await result in transcriber.results {
-                let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
-                var update = Update()
-                if result.isFinal {
-                    guard !text.isEmpty else { continue }
-                    let start = result.range.start.seconds, end = result.range.end.seconds
-                    let id = "a\(nextIndex)"; nextIndex += 1
-                    update.finals = [LiveSegment(id: id, start: start.isFinite ? start : 0, end: end.isFinite ? end : start, text: text)]
-                } else {
-                    update.volatile = text
+    /// Liest die Ergebnisse, ohne die Aufnahme festzuhalten: `owner` nur schwach,
+    /// der Task endet mit dem Strom oder spätestens im Rückbau.
+    private static func consume(_ transcriber: SpeechTranscriber, owner: LiveCapture) -> Task<Void, Never> {
+        Task { [weak owner] in
+            var next = 0
+            do {
+                for try await result in transcriber.results {
+                    guard let capture = owner else { return }
+                    let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+                    var update = Update()
+                    if result.isFinal {
+                        guard !text.isEmpty else { continue }
+                        let start = result.range.start.seconds, end = result.range.end.seconds
+                        update.finals = [LiveSegment(id: "a\(next)", start: start.isFinite ? start : 0, end: end.isFinite ? end : start, text: text)]
+                        next += 1
+                    } else {
+                        update.volatile = text
+                    }
+                    let u = update, sink = capture.onUpdate
+                    await MainActor.run { sink?(u) }
                 }
-                let u = update
-                await MainActor.run { self.onUpdate?(u) }
+            } catch {
+                let sink = owner?.onError
+                await MainActor.run { sink?(error) }
             }
-        } catch {
-            await MainActor.run { self.onError?(error) }
         }
     }
 }
