@@ -183,9 +183,35 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertTrue(try inbox.verifyCommitted(item))
     }
 
+    /// Prüfsumme, die die Quelle NACH dem ersten Hashen bei gleicher Größe überschreibt.
+    final class RewritingSourceDigest: ContentDigest, @unchecked Sendable {
+        let source: URL; var rewritten = false
+        init(source: URL) { self.source = source }
+        func hex(of url: URL) throws -> String {
+            let hex = try TestDigest().hex(of: url)
+            if url.standardizedFileURL.path == source.standardizedFileURL.path, !rewritten {
+                rewritten = true
+                try Data([9, 9, 9, 9]).write(to: url)
+            }
+            return hex
+        }
+    }
+
+    func testInboxRejectsSameSizeChangeDuringIntake() throws {
+        let root = tmp.appendingPathComponent("Eingang")
+        let source = try file("h.m4a", [5, 5, 5, 5])
+        let inbox = try MeetingInbox(root: root, digest: RewritingSourceDigest(source: source))
+        XCTAssertThrowsError(try inbox.deposit(source, from: .openIn, consent: consent(.import, .import))) {
+            XCTAssertEqual($0 as? IntakeError, .digestMismatch)
+        }
+        XCTAssertTrue(try inbox.pending().isEmpty)
+        // Staging vollständig aufgeräumt; nur die (leere) Sperrdatei bleibt.
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { $0.hasPrefix(".lock-") })
+    }
+
     struct Crash: Error {}
 
-    func testInboxRepairSurvivesFaultAtEveryStep() throws {
+    func testInboxRepairThrowingAtEveryStepKeepsReadableEntry() throws {
         let steps: [MeetingInbox.RepairStep] = [.afterOriginal, .beforeMetadata, .afterMetadata]
         for step in steps {
             let root = tmp.appendingPathComponent("Eingang-\(step)")
@@ -213,6 +239,35 @@ final class MeetingIntakeTests: XCTestCase {
             let done = try reopened.deposit(reshared, from: .shareSheet, consent: consent(.import, .import))
             XCTAssertTrue(try reopened.verifyCommitted(done), "\(step)")
             XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(), ["eingang.json", "original.qta"], "\(step)")
+        }
+    }
+
+    /// Prozessabbruch (kein defer, kein Aufräumen) an jeder Stelle der Reparatur, als Zustand auf
+    /// der Platte nachgestellt: halbe `.neu-`-Kopie, beide Originale mit alten oder neuen Metadaten.
+    func testInboxRepairRecoversFromProcessAbortStates() throws {
+        let content: [UInt8] = [1, 3, 5, 7]
+        for state in 0..<3 {
+            let root = tmp.appendingPathComponent("Abbruch-\(state)")
+            let inbox = try MeetingInbox(root: root, digest: TestDigest())
+            let item = try inbox.deposit(try file("a.m4a", content), from: .openIn, consent: consent(.import, .import))
+            let dir = root.appendingPathComponent(item.id.uuidString)
+            try Data([0, 0, 0, 0]).write(to: dir.appendingPathComponent("original.m4a"))
+            switch state {
+            case 0: // Abbruch beim Kopieren: halbe Kopie liegt im Eintrag.
+                try Data([1, 3]).write(to: dir.appendingPathComponent(".neu-HALB"))
+            case 1: // Abbruch nach dem Original-Rename: neues Original, alte Metadaten.
+                try Data(content).write(to: dir.appendingPathComponent("original.qta"))
+            default: // Abbruch nach dem Metadatenersatz: neuer Stand, altes Original liegt noch.
+                try Data(content).write(to: dir.appendingPathComponent("original.qta"))
+                let next = InboxItem(id: item.id, source: .shareSheet, originalName: "a.qta", originalExtension: "qta", bytes: 4,
+                                     digest: item.digest, createdAt: item.createdAt, consent: item.consent)
+                try JSONEncoder().encode(next).write(to: dir.appendingPathComponent("eingang.json"))
+            }
+            let reopened = try MeetingInbox(root: root, digest: TestDigest())
+            XCTAssertEqual(try reopened.pending().count, 1, "\(state)")
+            let done = try reopened.deposit(try file("a.qta", content), from: .shareSheet, consent: consent(.import, .import))
+            XCTAssertTrue(try reopened.verifyCommitted(done), "\(state)")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(), ["eingang.json", "original.qta"], "\(state)")
         }
     }
 
