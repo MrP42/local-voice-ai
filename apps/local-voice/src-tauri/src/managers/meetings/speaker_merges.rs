@@ -57,6 +57,10 @@ pub struct MergeRecord {
     /// Zeile von `from`, die auf `into` umzog (`into` hatte keine).
     #[serde(default)]
     pub moved_row: Option<String>,
+    /// Name der umgezogenen Zeile beim Zusammenführen (benennt `into` danach
+    /// jemand um, bekommt `from` beim Trennen trotzdem seinen alten Namen).
+    #[serde(default)]
+    pub moved_name: Option<String>,
     /// Name, den `into` von `from` bekam (`into` hatte keinen).
     #[serde(default)]
     pub carried_name: Option<String>,
@@ -163,12 +167,34 @@ pub fn carry_former(
     (former_from, added)
 }
 
+/// Was ein Eintrag zu den früheren Namen von `into` beiträgt.
+fn contributes(rec: &MergeRecord, name: &str) -> bool {
+    rec.carried_former.iter().any(|n| n == name)
+        || rec.former_from.iter().any(|n| n == name)
+        || rec.from_label.trim() == name
+        || rec.from_default_label.trim() == name
+}
+
 /// Frühere Namen beim Trennen: `from` bekommt seine Liste zurück, bei `into`
 /// fallen die Namen weg, die erst durch das Zusammenführen dazukamen (was
-/// danach durch Umbenennen dazukam, bleibt).
-pub fn restore_former(all: &mut BTreeMap<String, Vec<String>>, rec: &MergeRecord) {
+/// danach durch Umbenennen dazukam, bleibt). Ein Name, den eine andere, noch
+/// bestehende Zusammenführung in `into` (`others`) ebenfalls mitbrachte,
+/// bleibt (zwei "Anna" in "Ben": das Trennen der einen lässt die andere wirken).
+pub fn restore_former(
+    all: &mut BTreeMap<String, Vec<String>>,
+    rec: &MergeRecord,
+    others: &[MergeRecord],
+) {
     if let Some(list) = all.get_mut(&former_key(rec.channel, rec.into)) {
-        list.retain(|n| !rec.carried_former.contains(n));
+        list.retain(|n| {
+            !rec.carried_former.contains(n)
+                || others.iter().any(|o| {
+                    o.id != rec.id
+                        && o.channel == rec.channel
+                        && o.into == rec.into
+                        && contributes(o, n)
+                })
+        });
     }
     if !rec.former_from.is_empty() {
         all.insert(former_key(rec.channel, rec.from), rec.former_from.clone());
@@ -222,9 +248,30 @@ mod tests {
         r.carried_former = added;
         // Danach umbenannt: "Neu" kam bei 1 dazu und bleibt.
         all.get_mut("2:1").unwrap().push("Neu".into());
-        restore_former(&mut all, &r);
+        restore_former(&mut all, &r, &[]);
         assert_eq!(all["2:3"], ["Pat"]);
         assert_eq!(all["2:1"], ["Person 1", "Neu"]);
+    }
+
+    #[test]
+    fn a_name_another_merge_still_brings_stays_at_the_target() {
+        // Zwei "Anna" (3 und 4) gehen in 1 auf; nur der erste Eintrag hat
+        // "Anna" neu hinzugefuegt.
+        let mut all = BTreeMap::new();
+        let anna = vec!["Anna".to_string()];
+        let (_, first) = carry_former(&mut all, 2, 3, 1, &anna);
+        let (_, second) = carry_former(&mut all, 2, 4, 1, &anna);
+        assert_eq!(first, ["Anna"]);
+        assert!(second.is_empty());
+        let mut a = rec("a", 3, 1);
+        a.from_label = "Anna".into();
+        a.carried_former = first;
+        let mut b = rec("b", 4, 1);
+        b.from_label = "Anna".into();
+        restore_former(&mut all, &a, &[b.clone()]);
+        assert_eq!(all["2:1"], ["Anna"], "4 ist noch drin");
+        restore_former(&mut all, &a, &[]);
+        assert!(!all.contains_key("2:1"));
     }
 
     #[test]

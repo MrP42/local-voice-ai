@@ -1166,6 +1166,35 @@ mod tests {
     }
 
     #[test]
+    fn renaming_after_a_row_moving_merge_keeps_both_names_apart() {
+        let f = fixture();
+        rename_speaker(&f.store, &f.id, 1, 1, Some("Anna")).unwrap();
+        // 1 -> 2: die Zeile von 1 (Anna) zieht nach 2 um; 2 heisst dann Carl.
+        let id = merge_speakers(&f.store, &f.id, 1, 1, 2).unwrap();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Carl")).unwrap();
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(speaker(&f, 1, 1).label, "Anna");
+        assert_eq!(speaker(&f, 1, 2).label, "Carl");
+    }
+
+    #[test]
+    fn an_empty_leftover_row_of_the_source_does_not_block_splitting() {
+        let f = fixture();
+        let epoch = f.store.segment_epoch(&f.id).unwrap();
+        let before = state(&f);
+        let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        // Segment kurz an 2 und zurueck: eine leere Zeile fuer 2 bleibt.
+        f.store
+            .set_segment_speaker(&f.id, 2, epoch, Some(2))
+            .unwrap();
+        f.store
+            .set_segment_speaker(&f.id, 2, epoch, Some(1))
+            .unwrap();
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before);
+    }
+
+    #[test]
     fn a_new_epoch_forgets_the_merges() {
         let f = fixture();
         let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();

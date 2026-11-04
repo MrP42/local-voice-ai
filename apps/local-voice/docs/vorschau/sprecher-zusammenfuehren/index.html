@@ -25,6 +25,13 @@
 <h1>Sprecher zusammenführen und trennen (#266)</h1>
 <p class="muted">Local Voice AI · Besprechungen › Protokoll › Sprecher &amp; Redeanteile · Bilder aus <code>tests/meeting-speaker-merge.spec.ts</code> (Playwright, Tauri-Attrappe). Fall aus Patricks Bildschirmfoto: „Patrick Wolff“ dreimal, dazu „Aufnahme“.</p>
 
+<h2>Runde 2 (Codex-Must-fixes)</h2>
+<ul>
+  <li>Der Knopf „Zu einem Sprecher zusammenführen“ bricht um und bleibt im Hinweis. Der Test misst, dass er nicht über den Rand ragt und nichts abgeschnitten ist.</li>
+  <li>Die geöffnete Auswahl rollt automatisch in die Mitte des Bildes. Der Test prüft, dass sie vollständig im Bild ist.</li>
+  <li>Kein Verlauf und kein „Weiter unten geht es weiter“ überdeckt die Auswahlknöpfe: In der Mitte jedes Knopfes liegt der Knopf selbst (<code>elementFromPoint</code>). Die Bilder 1 und 2 zeigen jetzt das ganze Fenster statt nur des Abschnitts.</li>
+</ul>
+
 <h2>Was neu ist</h2>
 <ul>
   <li><strong>Hinweis bei gleichem Namen:</strong> „„Patrick Wolff“ steht 3-mal in der Tabelle. Ist das dieselbe Person?“ mit dem Knopf „Zu einem Sprecher zusammenführen“.</li>

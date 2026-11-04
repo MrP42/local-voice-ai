@@ -1536,7 +1536,9 @@ impl MeetingStore {
     /// `from` faellt weg; ein Name von `from` bleibt erhalten, wenn `into`
     /// keinen hat. #266: `from` = 0 ordnet die Segmente ohne Sprecher
     /// ("Aufnahme") `into` zu. `from_labels` (was Texte fuer `from` sagen)
-    /// kommen zu den frueheren Namen von `into` (#242). Was sich aendert, steht
+    /// kommen zu den frueheren Namen von `into` (#242); bei `from` = 0 nicht:
+    /// Kanalwoerter wie "Aufnahme" stehen in alten Texten auch fuer Stellen,
+    /// die nicht zu `into` gehoeren. Was sich aendert, steht
     /// danach als [`MergeRecord`] in den Metadaten ("Trennen" nimmt es
     /// zurueck); die Kennung kommt zurueck. Eine Transaktion,
     /// `content_revision + 1`, die Epoche bleibt. Fehlercodes:
@@ -1629,6 +1631,7 @@ impl MeetingStore {
                                 params![i64::from(into), now, id],
                             )?;
                             record.moved_row = Some(id.clone());
+                            record.moved_name = from_rows[0].2.clone();
                         } else {
                             tx.execute(
                                 "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
@@ -1733,13 +1736,23 @@ impl MeetingStore {
         let (channel, from, into) = (rec.channel, rec.from, rec.into);
         let mut segments: Vec<StoredSegment> = serde_json::from_str(&segments_json)?;
         let rows = speaker_rows_of_channel(&tx, meeting_id, channel)?;
-        if from != 0
-            && (rows.iter().any(|r| r.1 == from)
-                || segments
-                    .iter()
-                    .any(|s| s.channel == channel && s.speaker_index == Some(from)))
-        {
-            return Err(anyhow!("speaker_taken"));
+        // Die Nummer von `from` ist neu vergeben, wenn sie wieder Segmente oder
+        // einen Namen hat. Eine leere, namenlose Zeile (Segment hin- und
+        // wieder weggeschoben) blockiert nicht: sie entfaellt.
+        if from != 0 {
+            let has_segments = segments
+                .iter()
+                .any(|s| s.channel == channel && s.speaker_index == Some(from));
+            let named = rows.iter().any(|r| r.1 == from && r.2.is_some());
+            if has_segments || named {
+                return Err(anyhow!("speaker_taken"));
+            }
+            for (id, _, _) in rows.iter().filter(|r| r.1 == from) {
+                tx.execute(
+                    "UPDATE speakers SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
+                    params![now, id],
+                )?;
+            }
         }
         for s in segments.iter_mut().filter(|s| {
             s.channel == channel
@@ -1749,11 +1762,41 @@ impl MeetingStore {
             s.speaker_index = (from != 0).then_some(from);
         }
         if let Some(id) = &rec.moved_row {
-            tx.execute(
-                "UPDATE speakers SET speaker_index = ?1, updated_at = ?2
-                 WHERE id = ?3 AND speaker_index = ?4 AND deleted_at IS NULL",
-                params![i64::from(from), now, id, i64::from(into)],
-            )?;
+            let current: Option<(Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT display_name, human_id FROM speakers
+                     WHERE id = ?1 AND speaker_index = ?2 AND deleted_at IS NULL",
+                    params![id, i64::from(into)],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((name, human)) = current {
+                let renamed = name != rec.moved_name;
+                tx.execute(
+                    "UPDATE speakers SET speaker_index = ?1, display_name = ?2,
+                         human_id = CASE WHEN ?3 THEN NULL ELSE human_id END, updated_at = ?4
+                     WHERE id = ?5",
+                    params![i64::from(from), rec.moved_name, renamed, now, id],
+                )?;
+                // `into` wurde nach dem Zusammenfuehren umbenannt: der Name
+                // bleibt bei `into` (eigene Zeile), `from` hat seinen alten.
+                if renamed && name.is_some() {
+                    tx.execute(
+                        "INSERT INTO speakers (id, meeting_id, channel, speaker_index,
+                             human_id, display_name, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                        params![
+                            Ulid::new().to_string(),
+                            meeting_id,
+                            i64::from(channel),
+                            i64::from(into),
+                            human,
+                            name,
+                            now
+                        ],
+                    )?;
+                }
+            }
         }
         for id in &rec.deleted_rows {
             tx.execute(
@@ -1784,7 +1827,7 @@ impl MeetingStore {
         )?;
         if from != 0 {
             let mut former = former_names_of(&meta);
-            sm::restore_former(&mut former, &rec);
+            sm::restore_former(&mut former, &rec, &list);
             meta.insert(
                 super::relabel::FORMER_NAMES_KEY.into(),
                 serde_json::json!(former),

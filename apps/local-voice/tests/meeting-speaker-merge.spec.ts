@@ -516,14 +516,41 @@ test.describe("Touchziele und Abnahmebilder", () => {
         await section.scrollIntoViewIfNeeded();
         await page.mouse.move(0, 0);
         fs.mkdirSync(SHOTS, { recursive: true });
-        await section.screenshot({
+        // Der Knopf im Hinweis passt ganz hinein (bricht notfalls um).
+        const hint = page.getByTestId("speaker-duplicate-hint");
+        const action = hint.getByTestId("speaker-duplicate-merge");
+        const [hb, ab] = [await hint.boundingBox(), await action.boundingBox()];
+        expect(ab!.x).toBeGreaterThanOrEqual(hb!.x);
+        expect(ab!.x + ab!.width).toBeLessThanOrEqual(hb!.x + hb!.width + 0.5);
+        const clipped = await action.evaluate(
+          (el) => el.scrollWidth > el.clientWidth + 1,
+        );
+        expect(clipped).toBe(false);
+        await hint.scrollIntoViewIfNeeded();
+        await page.screenshot({
           animations: "disabled",
           path: shot("1-hinweis", width, theme),
         });
 
         await mergeButton(page, "2:4").click();
         await page.mouse.move(0, 0);
-        await section.screenshot({
+        // Die Auswahl rollt ins Bild und ist frei bedienbar: in der Mitte
+        // jedes Knopfes liegt der Knopf selbst (kein Verlauf, kein Hinweis).
+        const panel = rowOf(page, "2:4").getByTestId("speaker-merge-panel");
+        await expect(panel).toBeInViewport({ ratio: 1 });
+        const buttons = panel.getByRole("button");
+        for (let i = 0; i < (await buttons.count()); i++) {
+          const free = await buttons.nth(i).evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            const hit = document.elementFromPoint(
+              r.left + r.width / 2,
+              r.top + r.height / 2,
+            );
+            return !!hit && el.contains(hit);
+          });
+          expect(free).toBe(true);
+        }
+        await page.screenshot({
           animations: "disabled",
           path: shot("2-auswahl", width, theme),
         });

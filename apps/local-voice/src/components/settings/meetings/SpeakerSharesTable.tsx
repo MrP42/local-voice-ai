@@ -1,10 +1,4 @@
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Check,
@@ -62,6 +56,14 @@ const TOUCH: React.CSSProperties = {
 
 /** Textknöpfe (Zusammenführen, Trennen): mindestens 44 px hoch. */
 const TOUCH_TEXT: React.CSSProperties = { minHeight: 44 };
+/** Längere Textknöpfe: umbrechen statt seitlich abgeschnitten. */
+const TOUCH_WRAP: React.CSSProperties = {
+  minHeight: 44,
+  height: "auto",
+  maxWidth: "100%",
+  whiteSpace: "normal",
+  textAlign: "start",
+};
 
 /** Läuft gerade: welcher Sprecher, welche Probe. */
 interface Playing {
@@ -122,19 +124,42 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
   );
   const groups = useMemo(() => duplicateGroups(rows), [rows]);
 
-  const loadMerges = useCallback(async () => {
-    try {
-      const result = await commands.meetingSpeakerMerges(meetingId);
-      if (result.status === "ok")
-        setMerges(Array.isArray(result.data) ? result.data : []);
-    } catch {
-      // Ohne Liste gibt es nur kein "Trennen"; Zusammenführen geht weiter.
-    }
-  }, [meetingId]);
+  /** Läuft ein Zusammenführen oder Trennen (gegen Doppelklick im selben Takt). */
+  const mergeBusyRef = useRef(false);
+  /** Ein gerade laufendes Speichern eines Namens (Fokus wechselt zum Knopf). */
+  const pendingSave = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
-    void loadMerges();
-  }, [loadMerges, speakers]);
+    let current = true;
+    void (async () => {
+      try {
+        const result = await commands.meetingSpeakerMerges(meetingId);
+        if (current && result.status === "ok")
+          setMerges(Array.isArray(result.data) ? result.data : []);
+      } catch {
+        // Ohne Liste gibt es nur kein "Trennen"; Zusammenführen geht weiter.
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, [meetingId, speakers]);
+
+  // Andere Besprechung: kein "Rückgängig" und keine offene Auswahl von vorher.
+  useEffect(() => {
+    setNotice(null);
+    setMergeOpen(null);
+    setMergeError(null);
+  }, [meetingId]);
+
+  // Geöffnete Auswahl ganz zeigen (schmale Fenster, Hinweis am unteren Rand).
+  useEffect(() => {
+    if (!mergeOpen) return;
+    const panel = document.getElementById(
+      `speaker-merge-${mergeOpen.replace(":", "-")}`,
+    );
+    panel?.scrollIntoView?.({ block: "center", behavior: "auto" });
+  }, [mergeOpen]);
 
   // Ansicht verlassen: keine Probe läuft weiter.
   useEffect(
@@ -240,13 +265,15 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
   const runMerges = async (
     pairs: { from: MeetingSpeaker; into: MeetingSpeaker }[],
   ) => {
-    if (pairs.length === 0 || mergeBusy) return;
+    if (pairs.length === 0 || mergeBusyRef.current) return;
+    mergeBusyRef.current = true;
     stopSamples();
     setMergeBusy(true);
     setMergeError(null);
     setNotice(null);
     const ids: string[] = [];
     try {
+      await pendingSave.current;
       for (const { from, into } of pairs) {
         const result = await commands.meetingSpeakerMerge(
           meetingId,
@@ -263,6 +290,7 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
     } catch {
       setMergeError(speakerErrorText("generic", t));
     } finally {
+      mergeBusyRef.current = false;
       setMergeBusy(false);
     }
     if (ids.length === 0) return;
@@ -279,12 +307,14 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
 
   /** Trennt (neueste zuerst); bricht beim ersten Fehler ab. */
   const runUnmerge = async (ids: string[]) => {
-    if (ids.length === 0 || mergeBusy) return;
+    if (ids.length === 0 || mergeBusyRef.current) return;
+    mergeBusyRef.current = true;
     stopSamples();
     setMergeBusy(true);
     setMergeError(null);
     let done = 0;
     try {
+      await pendingSave.current;
       for (const id of [...ids].reverse()) {
         const result = await commands.meetingSpeakerUnmerge(meetingId, id);
         if (result.status === "error") {
@@ -296,6 +326,7 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
     } catch {
       setMergeError(speakerErrorText("generic", t));
     } finally {
+      mergeBusyRef.current = false;
       setMergeBusy(false);
     }
     if (done === 0) return;
@@ -303,10 +334,24 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
     onChanged();
   };
 
-  const mergeGroup = (group: MeetingSpeaker[]) =>
-    runMerges(group.slice(1).map((from) => ({ from, into: group[0] })));
+  /** Alle Zeilen einer Gruppe gehen im ersten benannten Sprecher (nicht
+   *  "Aufnahme") mit der längsten Redezeit auf. */
+  const mergeGroup = (group: MeetingSpeaker[]) => {
+    const into = group.find((s) => s.speaker_index !== 0) ?? group[0];
+    return runMerges(
+      group.filter((s) => s !== into).map((from) => ({ from, into })),
+    );
+  };
 
-  const save = async (speaker: MeetingSpeaker, value: string) => {
+  const save = (speaker: MeetingSpeaker, value: string) => {
+    const run = saveNow(speaker, value);
+    pendingSave.current = run;
+    return run.finally(() => {
+      if (pendingSave.current === run) pendingSave.current = null;
+    });
+  };
+
+  const saveNow = async (speaker: MeetingSpeaker, value: string) => {
     const key = speakerKey(speaker);
     const trimmed = value.trim();
     if (trimmed === (speaker.display_name ?? "")) {
@@ -385,7 +430,7 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
           <Button
             variant="secondary"
             size="md"
-            style={TOUCH_TEXT}
+            style={TOUCH_WRAP}
             disabled={mergeBusy}
             data-testid="speaker-duplicate-merge"
             onClick={() => void mergeGroup(group)}
