@@ -76,6 +76,27 @@ final class AudioOffloadTests: XCTestCase {
         XCTAssertFalse(AudioOffload.hasLeftovers(in: dir))
         XCTAssertEqual(try AudioOffload.remove(bookDir: dir), 0)
     }
+
+    /// Entfernen und Abbrechen eines Downloads löschen nur `audio/`: das Cover
+    /// (`cover.jpg` + `cover.blob` aus dem Konto) bleibt im Buchordner.
+    func testRemoveKeepsCoverAndDropsDownloadPieces() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("offload-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: dir) }
+        let audio = dir.appendingPathComponent(AudioOffload.audioFolder, isDirectory: true)
+        let pieces = audio.appendingPathComponent(AudioDownload.stagingFolder, isDirectory: true)
+        try fm.createDirectory(at: pieces, withIntermediateDirectories: true)
+        try Data(count: 64).write(to: audio.appendingPathComponent("teil_001.m4a"))
+        try Data(count: 16).write(to: pieces.appendingPathComponent(AudioDownload.stagedName(.init(part: 0, index: 3))))
+        let cover = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+        try cover.write(to: dir.appendingPathComponent("cover.jpg"))
+        try Data("abc".utf8).write(to: dir.appendingPathComponent("cover.blob"))
+
+        XCTAssertEqual(try AudioOffload.remove(bookDir: dir), 80)
+        XCTAssertFalse(fm.fileExists(atPath: audio.path))
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("cover.jpg")), cover)
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("cover.blob"), encoding: .utf8), "abc")
+    }
 }
 
 final class AudioStorageTests: XCTestCase {
