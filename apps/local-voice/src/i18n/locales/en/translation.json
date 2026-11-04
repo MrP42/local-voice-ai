@@ -1804,6 +1804,14 @@
       "detectIgnoredPlaceholder": "e.g. obs64.exe, Discord",
       "diarization": "Separate speakers automatically",
       "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run.",
+      "voiceSuggestions": "Recognise identical voices",
+      "voiceSuggestionsDescription": "Default: on, but only takes effect once the voice model is downloaded. When speaker separation splits one person into several speakers, the speaker table suggests merging them. Nothing is merged automatically and every merge can be split again. Voices are only compared within one meeting; the voiceprints stay in memory and are never stored.",
+      "voiceSuggestionsDownload": "Download voice model ({{size}} MB)",
+      "voiceSuggestionsDownloading": "Downloading …",
+      "voiceSuggestionsDownloadFailed": "Download failed. Please try again.",
+      "voiceSuggestionsReady": "Voice model CAM++ is installed (Apache-2.0).",
+      "voiceSuggestionsModel": "Voice model",
+      "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) runs locally. It is only downloaded on request.",
       "selfName": "My name",
       "selfNameDescription": "Your own name in the transcript: your microphone (\"Me\") and, if the microphone is split into several people, the speaker with the largest share always carry this name, even if nobody addresses you. In People you are marked as \"me\". Leave empty to keep \"Me\".",
       "selfNamePlaceholder": "e.g. Patrick Wolff"
@@ -2819,7 +2827,7 @@
     "preparing": "Preparing...",
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
+    "portableUpdateMessage": "The portable version does not update itself. To update: quit the app (including the tray icon), download the new portable ZIP from GitHub Releases and extract it over the existing folder. The Data folder with your settings, models and recordings is not part of the ZIP and is kept.",
     "portableUpdateButton": "Open GitHub Releases",
     "localUpdateAvailable": "Update {{version}} available locally",
     "localInstalling": "Starting installer…",
@@ -3323,6 +3331,27 @@
         "sampleOf": "{{n}}/{{total}}",
         "saved": "Name saved"
       },
+      "merge": {
+        "openFor": "Merge {{label}} with another speaker",
+        "none": "No other speaker on the same track",
+        "question": "Who else is “{{label}}”?",
+        "rule": "The speaker with the longer speaking time stays, an assigned name is kept. The change applies to the whole meeting and can be split again.",
+        "cancel": "Cancel",
+        "duplicate": "“{{name}}” appears {{count}} times in the table. Is this the same person?",
+        "duplicateAction": "Merge into one speaker",
+        "done_one": "Merged {{count}} speakers into “{{name}}”.",
+        "done_other": "Merged {{count}} speakers into “{{name}}”.",
+        "undo": "Undo",
+        "split": "Speakers split again.",
+        "contains": "Merged from:",
+        "splitAction": "Split",
+        "splitFor": "Make “{{label}}” a separate speaker again",
+        "blocked": "Split the later merge first.",
+        "voice": "“{{a}}” and “{{b}}” sound alike (similarity {{score}} %). Is this the same person?",
+        "voiceAction": "Merge",
+        "voiceDismiss": "Different people",
+        "voiceNote": "Only a hint from comparing voices in this meeting, not a reliable identification. “Merge” combines both rows into one speaker and can be reverted with “Undo” or later with “Split”. “Different people” lasts until the next speaker separation. Voiceprints are not stored."
+      },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",
         "model_missing": "The speaker separation model is not installed, so there are no speakers here.",
@@ -3338,6 +3367,8 @@
         "invalid": "This choice is not possible.",
         "segmentNotFound": "This segment no longer exists.",
         "staleEpoch": "The transcript has been replaced in the meantime. Please reopen it.",
+        "mergeNotFound": "This merge can no longer be split (speakers were detected again since).",
+        "speakerTaken": "This speaker's number has been reused, so it can no longer be split.",
         "failed": "The change could not be saved."
       }
     },
@@ -7326,6 +7357,16 @@
     "suchen": "Search"
   },
   "library": {
+    "fmt": {
+      "text": "Text",
+      "audiobook": "Audiobook",
+      "kurzbuch": "Book in brief",
+      "group": "Versions of “{{title}}”",
+      "readTitle": "Read “{{title}}” · text {{value}}",
+      "listenTitle": "Listen to “{{title}}” · audiobook {{value}}",
+      "kurzbuchTitle": "Listen to the book in brief of “{{title}}” · {{value}}",
+      "kurzbuchOpen": "Open book in brief"
+    },
     "ki": {
       "title": "Create with AI",
       "short": "Create with AI",
@@ -7727,7 +7768,8 @@
       "searching": "Finding the position in the audiobook …",
       "correct": "Correct position",
       "correctHint": "Tap the sentence you are hearing right now.",
-      "lineLabel": "Current sentence: {{text}}. Open reading view"
+      "aligning": "Matching the audio to the text …",
+      "lineLabel": "Current passage: {{text}}. Open reading view"
     },
     "merge": {
       "bar": "{{count}} entries probably belong to one audiobook: {{title}}",

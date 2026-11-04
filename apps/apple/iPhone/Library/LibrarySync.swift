@@ -218,6 +218,12 @@ final class LibrarySync: ObservableObject {
             if let ref = library.meta(book).files.text, !library.hasText(book) {
                 try await downloadBlob(ref, acc, to: library.textURL(book)) { _ in }
             }
+            // Cover wie am Desktop: neues oder geändertes Cover aus dem Konto holen.
+            if let ref = library.meta(book).files.cover, library.coverBlob(book) != ref.blob {
+                do { try await downloadCover(ref, book, acc) }
+                catch SyncError.http(401, let msg) { throw SyncError.http(401, msg) }
+                catch { /* Erzeugtes Cover bleibt; nächster Lauf versucht es erneut. */ }
+            }
         }
 
         var objects: [(HubPushObject, String)] = []
@@ -227,6 +233,13 @@ final class LibrarySync: ObservableObject {
             if meta.files.text == nil, library.hasText(book) {
                 meta.files.text = try await uploadFile(library.textURL(book), acc, type: "txt", file: nil)
                 library.setMeta(book, meta)
+            }
+            // Eigenes Cover (aus Hörbuchdatei oder EPUB) für die anderen Geräte hochladen.
+            if meta.files.cover == nil, let url = library.coverURL(book) {
+                let ref = try await uploadFile(url, acc, type: url.pathExtension.lowercased(), file: nil)
+                meta.files.cover = ref
+                library.setMeta(book, meta)
+                library.setCoverBlob(book, ref.blob)
             }
             if meta.files.audio.isEmpty, library.hasAudio(book), let tracks = book.audio?.allTracks {
                 var refs: [BlobRef] = []
@@ -404,6 +417,20 @@ final class LibrarySync: ObservableObject {
         // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
         ledger.uploaded.insert(ref.blob); saveLedger()
     }
+
+    /// Cover laden (klein, meist ein Stück), als JPEG ablegen und merken,
+    /// welcher Blob jetzt lokal liegt. Unlesbare Bilder bleiben unbeachtet.
+    private func downloadCover(_ ref: BlobRef, _ book: LibraryBook, _ acc: Account) async throws {
+        guard ref.size > 0, ref.size <= Self.maxCoverBytes else { throw SyncError.corrupt("Cover") }
+        let target = library.dir(book).appendingPathComponent("cover.download")
+        defer { try? FileManager.default.removeItem(at: target) }
+        try await downloadBlob(ref, acc, to: target) { _ in }
+        let data = try Data(contentsOf: target)
+        library.storeCover(data, for: book)
+        guard library.coverURL(book) != nil else { throw SyncError.corrupt("Cover") }
+        library.setCoverBlob(book, ref.blob)
+    }
+    static let maxCoverBytes = 20 * 1024 * 1024
 
     /// Hörbuch beim ersten Öffnen laden: startet (oder setzt fort) den Ladevorgang
     /// im Hintergrund (`AudioDownloads`) und wartet, bis er fertig ist. `false`, wenn

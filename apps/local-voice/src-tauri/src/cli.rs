@@ -627,4 +627,15 @@ pub struct CliArgs {
     /// Output directory of --tts-bench (rows.jsonl, env.json, wav/).
     #[arg(long, value_name = "DIR")]
     pub bench_out: Option<PathBuf>,
+
+    /// Vorinstallieren fuer das portable Offline-Paket: laedt die genannten
+    /// Katalogeintraege (kommagetrennt) ueber denselben Weg wie die Modellseite
+    /// in das aktive Datenverzeichnis (im portablen Modus `Data\` neben der EXE)
+    /// und beendet sich. Spracherkennung mit der Kennung aus `--list-models`,
+    /// Sprachmodell/Laufzeit als `llm-…`, Phonon als `phonon-runtime`,
+    /// `phonon-40m-de` usw. (Modelle bringen ihre Stimmen mit). Gesperrte
+    /// Hugging-Face-Modelle brauchen HF_TOKEN. Exit 0 alles installiert,
+    /// 1 mindestens ein Eintrag fehlgeschlagen, 2 unbekannte Kennung.
+    #[arg(long, value_name = "IDS", value_delimiter = ',')]
+    pub provision: Vec<String>,
 }

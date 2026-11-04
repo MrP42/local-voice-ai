@@ -11,8 +11,8 @@ def configs(name, settings):
     return obj(name+'configs', isa='XCConfigurationList', buildConfigurations=ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Debug')
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
-    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','Shared/SpeechVoicePicker.swift','VoiceCore/Sources/VoiceCore/Conversation.swift','VoiceCore/Sources/VoiceCore/ProcessingAccess.swift','VoiceCore/Sources/VoiceCore/WatchDestination.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ProcessingDeadline.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift']
-    if platform == 'iphoneos': sources += ['iPhone/PhoneProcessingRuntime.swift','VoiceCore/Sources/VoiceCore/Meetings.swift','iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelDownloads.swift','iPhone/ModelPanel.swift','iPhone/MeetingLibrary.swift','VoiceCore/Sources/VoiceCore/Library.swift','VoiceCore/Sources/VoiceCore/BookText.swift','iPhone/Library/PhoneLibrary.swift','iPhone/Library/LibraryPlayback.swift','iPhone/Library/LibraryViews.swift','iPhone/Library/LibrarySync.swift','iPhone/Library/AudiobookMetadata.swift','iPhone/Library/AudiobookPlayer.swift','VoiceCore/Sources/VoiceCore/Audiobook.swift','VoiceCore/Sources/VoiceCore/SyncCrypto.swift','VoiceCore/Sources/VoiceCore/LibrarySyncModel.swift','VoiceCore/Sources/VoiceCore/AudioOffload.swift','VoiceCore/Sources/VoiceCore/AudioDownload.swift','iPhone/Library/AudioDownloads.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
+    sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','Shared/SpeechVoicePicker.swift','VoiceCore/Sources/VoiceCore/Conversation.swift','VoiceCore/Sources/VoiceCore/ProcessingAccess.swift','VoiceCore/Sources/VoiceCore/WatchDestination.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ProcessingDeadline.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift','VoiceCore/Sources/VoiceCore/LiveMeeting.swift','VoiceCore/Sources/VoiceCore/MeetingIntake.swift']
+    if platform == 'iphoneos': sources += ['iPhone/PhoneProcessingRuntime.swift','VoiceCore/Sources/VoiceCore/Meetings.swift','iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelDownloads.swift','iPhone/ModelPanel.swift','iPhone/MeetingLibrary.swift','iPhone/Intake/IncomingFiles.swift','Shared/ImportConsentView.swift','iPhone/LiveMeeting/LiveCapture.swift','iPhone/LiveMeeting/LiveSummarizer.swift','iPhone/LiveMeeting/LiveMeetingModel.swift','iPhone/LiveMeeting/LiveMeetingViews.swift','VoiceCore/Sources/VoiceCore/Library.swift','VoiceCore/Sources/VoiceCore/BookText.swift','iPhone/Library/PhoneLibrary.swift','iPhone/Library/LibraryPlayback.swift','iPhone/Library/LibraryViews.swift','iPhone/Library/LibrarySync.swift','iPhone/Library/AudiobookMetadata.swift','iPhone/Library/AudiobookPlayer.swift','VoiceCore/Sources/VoiceCore/Audiobook.swift','VoiceCore/Sources/VoiceCore/SyncCrypto.swift','VoiceCore/Sources/VoiceCore/LibrarySyncModel.swift','VoiceCore/Sources/VoiceCore/AudioOffload.swift','VoiceCore/Sources/VoiceCore/AudioDownload.swift','iPhone/Library/AudioDownloads.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
@@ -21,10 +21,14 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     sourcephase=obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=buildfiles, runOnlyForDeploymentPostprocessing=0)
     frameworks=obj(name+'frameworks', isa='PBXFrameworksBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)
     product=obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.application', includeInIndex=0, path=name+'.app', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
-    info={'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'APPL', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSMicrophoneUsageDescription':'Nimmt deine ausdrücklich gestarteten Sprachnotizen auf.', 'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen lokal.'}
+    info={'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'APPL', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSMicrophoneUsageDescription':'Nimmt deine ausdrücklich gestarteten Sprachnotizen und Besprechungen auf.', 'NSSpeechRecognitionUsageDescription':'Transkribiert deine Sprachnotizen und Besprechungen lokal auf dem Gerät.'}
     if platform=='watchos': info.update(WKApplication=True, WKCompanionAppBundleIdentifier='de.localvoice.prototype', CFBundleURLTypes=[{'CFBundleURLName':'de.localvoice.watch.navigation', 'CFBundleURLSchemes':['localvoice-watch']}])
     else: info.update(UILaunchScreen={}, UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
-    if platform == 'iphoneos': info.update({'UIBackgroundModes':['audio','processing'], 'BGTaskSchedulerPermittedIdentifiers':['de.localvoice.prototype.process-recordings']})
+    if platform == 'iphoneos': info.update({'UIBackgroundModes':['audio','processing'], 'BGTaskSchedulerPermittedIdentifiers':['de.localvoice.prototype.process-recordings'],
+        # „Öffnen in“ Local Voice für Audio und Video (Sprachmemos .m4a/.qta, Aufnahmen anderer Apps). Kopie statt Bearbeiten am Ort.
+        'CFBundleDocumentTypes':[{'CFBundleTypeName':'Audio- und Videoaufnahme','CFBundleTypeRole':'Viewer','LSHandlerRank':'Alternate',
+                                  'LSItemContentTypes':['public.audio','public.movie','public.audiovisual-content','com.apple.quicktime-audio','com.apple.m4a-audio']}],
+        'LSSupportsOpeningDocumentsInPlace':False})
     (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}
     settings['SKIP_INSTALL'] = 'NO' if platform == 'iphoneos' else 'YES'
@@ -41,6 +45,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build, privacy_build], runOnlyForDeploymentPostprocessing=0)
     extra_phases=[resources]
     if platform == 'iphoneos':
+        settings['CODE_SIGN_ENTITLEMENTS'] = 'VoicePhone.entitlements'
         settings.update({'SWIFT_OBJC_BRIDGING_HEADER':'iPhone/Engines/LVEngines.h','CLANG_CXX_LANGUAGE_STANDARD':'c++17','LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks'})
         embedded=[]
         for library in ['whisper','llama']:
@@ -74,6 +79,38 @@ embedfile=obj('watchEmbedFile',isa='PBXBuildFile',fileRef=uid('VoiceWatchproduct
 embed=obj('watchEmbed',isa='PBXCopyFilesBuildPhase',buildActionMask=2147483647,dstPath='$(CONTENTS_FOLDER_PATH)/Watch',dstSubfolderSpec=16,files=[embedfile],name='Embed Watch Content',runOnlyForDeploymentPostprocessing=0)
 objects[uid('VoicePhone')]['dependencies']=[dependency]
 objects[uid('VoicePhone')]['buildPhases'].append(embed)
+# Share-Extension (Epic #247, P4): kopiert genau eine Audio-/Videodatei mit Bestätigung in den Eingang der App-Gruppe.
+name = 'VoiceShare'
+share_files = []
+for path in ['ShareExtension/ShareViewController.swift', 'Shared/ImportConsentView.swift', 'VoiceCore/Sources/VoiceCore/LiveMeeting.swift', 'VoiceCore/Sources/VoiceCore/MeetingIntake.swift']:
+    ref = obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=path, sourceTree='<group>')
+    if ref not in files: files.append(ref)
+    share_files.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
+phase = obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=share_files, runOnlyForDeploymentPostprocessing=0)
+# Auch die Extension nutzt UserDefaults der App-Gruppe: eigenes Datenschutz-Manifest (dieselbe Datei).
+share_privacy = obj(name+'privacy', isa='PBXBuildFile', fileRef=uid('Shared/PrivacyInfo.xcprivacy'))
+share_resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[share_privacy], runOnlyForDeploymentPostprocessing=0)
+product = obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.app-extension', includeInIndex=0, path=name+'.appex', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
+# Genau ein Element mit genau einem Anhang, und der ist Audio oder Video.
+rule = ('SUBQUERY (extensionItems, $extensionItem, $extensionItem.attachments.@count == 1 AND '
+        'SUBQUERY ($extensionItem.attachments, $attachment, '
+        'ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content").@count == 1).@count == 1 '
+        'AND extensionItems.@count == 1')
+(root/(name+'-Info.plist')).write_bytes(plistlib.dumps({'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2',
+    'NSExtension':{'NSExtensionPointIdentifier':'com.apple.share-services', 'NSExtensionPrincipalClass':'$(PRODUCT_MODULE_NAME).ShareViewController',
+                   'NSExtensionAttributes':{'NSExtensionActivationRule':rule}}}))
+settings = {'PRODUCT_NAME':name, 'PRODUCT_BUNDLE_IDENTIFIER':'de.localvoice.prototype.share', 'INFOPLIST_FILE':name+'-Info.plist', 'SDKROOT':'iphoneos', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'1', 'CODE_SIGN_STYLE':'Automatic', 'CODE_SIGN_ENTITLEMENTS':'VoiceShare.entitlements', 'GENERATE_INFOPLIST_FILE':'NO', 'SUPPORTED_PLATFORMS':'iphoneos iphonesimulator', 'IPHONEOS_DEPLOYMENT_TARGET':'26.0', 'APPLICATION_EXTENSION_API_ONLY':'YES', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'}
+target = obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[phase, share_resources], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.app-extension'); targets.append(target)
+proxy = obj(name+'proxy', isa='PBXContainerItemProxy', containerPortal=uid('project'), proxyType=1, remoteGlobalIDString=target, remoteInfo=name)
+share_dependency = obj(name+'dependency', isa='PBXTargetDependency', target=target, targetProxy=proxy)
+embedfile = obj(name+'embedfile', isa='PBXBuildFile', fileRef=product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})
+share_embed = obj(name+'embed', isa='PBXCopyFilesBuildPhase', buildActionMask=2147483647, dstPath='', dstSubfolderSpec=13, files=[embedfile], name='Embed Share Extension', runOnlyForDeploymentPostprocessing=0)
+objects[uid('VoicePhone')]['dependencies'].append(share_dependency)
+objects[uid('VoicePhone')]['buildPhases'].append(share_embed)
+for path in ['VoicePhone.entitlements', 'VoiceShare.entitlements']:
+    (root/path).write_bytes(plistlib.dumps({'com.apple.security.application-groups':['group.de.localvoice.prototype']}))
+    ref = obj(path, isa='PBXFileReference', lastKnownFileType='text.plist.entitlements', path=path, sourceTree='<group>')
+    if ref not in files: files.append(ref)
 # Native UI test targets. They do not change either production app target.
 for tested, platform in [('VoicePhone','iphoneos'),('VoiceWatch','watchos')]:
     name=tested+'UITests';path='UITests/VoiceUITests.swift'

@@ -3890,11 +3890,82 @@ async meetingSpeakerRename(meetingId: string, channel: number, speakerIndex: num
 }
 },
 /**
- * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+ * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf;
+ * #266: `from` = 0 sind die Segmente ohne Sprecher). Gibt die Kennung der
+ * Zusammenfuehrung zurueck ("Trennen").
  */
-async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<null, string>> {
+async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merge", { meetingId, channel, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen.
+ */
+async meetingSpeakerMerges(meetingId: string) : Promise<Result<SpeakerMerge[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merges", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: eine Zusammenfuehrung zuruecknehmen ("Trennen").
+ */
+async meetingSpeakerUnmerge(meetingId: string, mergeId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_unmerge", { meetingId, mergeId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceMatches(meetingId: string) : Promise<Result<VoiceMatches, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voice_matches", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceMatchDismiss(meetingId: string, channel: number, a: number, b: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voice_match_dismiss", { meetingId, channel, a, b }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async meetingVoiceprintStatus() : Promise<Result<VoiceprintStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Lädt das Modell (30 MB) -- nur auf Knopfdruck. Fortschritt über die
+ * üblichen Ereignisse `model-download-progress` und `model-download-complete`.
+ */
+async meetingVoiceprintDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `meeting_voice_suggestions`. Ausschalten vergisst die Abdrücke sofort.
+ */
+async changeMeetingVoiceSuggestionsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meeting_voice_suggestions_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7640,6 +7711,12 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
+ * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
+ * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
+ * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
+ */
+meeting_voice_suggestions?: boolean; 
+/**
  * D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
  * (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
  * kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -10939,6 +11016,40 @@ segments: number }
  */
 export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
 /**
+ * Für die Oberfläche: eine Zusammenführung, die sich trennen lässt.
+ */
+export type SpeakerMerge = { id: string; channel: number; 
+/**
+ * Der aufgegangene Sprecher.
+ */
+from: number; 
+/**
+ * Der Sprecher, in dem er aufging.
+ */
+into: number; 
+/**
+ * Bezeichnung von `from` beim Zusammenführen.
+ */
+from_label: string; 
+/**
+ * Standardbezeichnung von `from` ohne Namen ("Person 3", "Aufnahme"):
+ * unterscheidet zusammengeführte Sprecher mit gleichem Namen.
+ */
+from_default_label: string; 
+/**
+ * Wie viele Segmente zurückgehen.
+ */
+segment_count: number; 
+/**
+ * Zeitpunkt (Sekunden).
+ */
+at: number; 
+/**
+ * `false`: eine spätere Zusammenführung hat `into` selbst aufgenommen;
+ * erst die trennen.
+ */
+undoable: boolean }
+/**
  * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
  * Ansichten laden Segmente und Sprecher neu.
  */
@@ -11792,6 +11903,19 @@ export type VoiceInfo = { id: string; meta: VoiceMeta; origin: VoiceOrigin;
  */
 avatar_path: string | null }
 /**
+ * Ein Vorschlag: Sprecher `a` und `b` derselben Spur klingen gleich.
+ */
+export type VoiceMatch = { channel: number; a: number; b: number; 
+/**
+ * Ähnlichkeit in Prozent (Kosinus × 100, gerundet).
+ */
+score: number }
+/**
+ * Antwort für die Sprechertabelle. `state`: `ready`, `off` (Einstellung),
+ * `model_missing`, `low_memory`, `no_audio`.
+ */
+export type VoiceMatches = { state: string; matches: VoiceMatch[] }
+/**
  * Metadaten einer Referenzstimme.
  */
 export type VoiceMeta = { version?: number; 
@@ -11885,6 +12009,14 @@ parameters_json: string;
  * Fähigkeit des Katalogs, z. B. `meeting.read`.
  */
 capability: string }
+/**
+ * Stand für die Einstellungszeile.
+ */
+export type VoiceprintStatus = { enabled: boolean; model_ready: boolean; downloading: boolean; 
+/**
+ * Größe des Modells in MB (gerundet).
+ */
+size_mb: number }
 /**
  * Warum die wartenden Dateien nicht beginnen.
  */

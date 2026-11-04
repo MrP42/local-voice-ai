@@ -33,7 +33,10 @@ import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
 import { useReadAloudHighlight } from "./useReadAloudHighlight";
 import { staticSharesTable } from "./SpeakerSharesTable";
-import { splitSpeakerSection } from "@/lib/meetingSpeakerShares";
+import {
+  splitSpeakerSection,
+  withoutSpeakerSection,
+} from "@/lib/meetingSpeakerShares";
 import {
   Check,
   ChevronDown,
@@ -578,7 +581,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="minutes-toolbar lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
+        className="minutes-toolbar lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b border-mid-gray/20 bg-background pt-0.5 pb-1"
       >
         {toolbarLead}
         <IconAction
@@ -674,7 +677,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             />
             <ReadAloudButton
               speakKey={speakKey}
-              getMarkdown={() => doc.body}
+              getMarkdown={() => withoutSpeakerSection(doc.body)}
               testId="minutes-readaloud"
               disabled={editing !== null}
               fileStem={

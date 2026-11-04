@@ -48,6 +48,15 @@ export interface BookView {
   audioSource: "audiobook" | "narrated" | null;
   /** Stand der Transkription (Hörbuch → Text). */
   transcription: "done" | "running" | "possible" | "none";
+  /** Fortschritt je Fassung (Patrick 04.11.: je Format eigener Fortschritt). */
+  textFraction: number;
+  /** Länge der Textfassung in Zeichen, sobald sie einmal geöffnet war. */
+  textChars: number | null;
+  audioFraction: number;
+  /** Gesamtdauer des Hörbuchs in ms, sofern bekannt. */
+  audioTotalMs: number | null;
+  /** Restdauer des Hörbuchs in ms, sofern bekannt. */
+  audioLeftMs: number | null;
 }
 
 export type Filter =
@@ -82,6 +91,18 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
           ? "audio"
           : null;
   const fraction = book.finished ? 1 : progressFraction(progress);
+  const textFraction = book.finished ? 1 : progressFraction(textRec);
+  const audioFraction = book.finished ? 1 : progressFraction(audioRec);
+  const audioTotalMs = book.audio_path
+    ? (totalDuration(book.audio) ??
+      (audioRec?.unit === "ms" && audioRec.length > 0 ? audioRec.length : null))
+    : null;
+  const audioLeftMs =
+    audioTotalMs == null
+      ? null
+      : audioFraction >= 1
+        ? 0
+        : Math.max(0, audioTotalMs - (audioRec?.offset ?? 0));
   return {
     book,
     progress,
@@ -98,6 +119,11 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
         : book.audio_path && !book.text
           ? "possible"
           : "none",
+    textFraction,
+    textChars: textRec && textRec.length > 0 ? textRec.length : null,
+    audioFraction,
+    audioTotalMs,
+    audioLeftMs,
   };
 }
 

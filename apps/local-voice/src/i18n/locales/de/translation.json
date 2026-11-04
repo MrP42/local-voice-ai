@@ -1804,6 +1804,14 @@
       "detectIgnoredPlaceholder": "z. B. obs64.exe, Discord",
       "diarization": "Sprecher automatisch trennen",
       "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf.",
+      "voiceSuggestions": "Gleiche Stimmen erkennen",
+      "voiceSuggestionsDescription": "Standard: an, wirkt aber erst nach dem Laden des Stimmmodells. Teilt die Sprechertrennung eine Person auf mehrere Sprecher auf, schlägt die Sprechertabelle das Zusammenführen vor. Es wird nie automatisch zusammengeführt, jede Zusammenführung lässt sich trennen. Die Stimmen werden nur innerhalb einer Besprechung verglichen, die Abdrücke bleiben im Arbeitsspeicher und werden nie gespeichert.",
+      "voiceSuggestionsDownload": "Stimmmodell laden ({{size}} MB)",
+      "voiceSuggestionsDownloading": "Wird geladen …",
+      "voiceSuggestionsDownloadFailed": "Download fehlgeschlagen. Bitte erneut versuchen.",
+      "voiceSuggestionsReady": "Stimmmodell CAM++ ist installiert (Apache-2.0).",
+      "voiceSuggestionsModel": "Stimmmodell",
+      "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) läuft lokal. Es wird nur auf Knopfdruck geladen.",
       "selfName": "Mein Name",
       "selfNameDescription": "Ihr eigener Name im Transkript: Ihr Mikrofon („Ich“) und, wenn das Mikrofon mehrere Personen trennt, der Sprecher mit dem größten Redeanteil tragen immer diesen Namen, auch wenn niemand Sie anspricht. In den Personen sind Sie als „ich“ markiert. Leer lassen: Es bleibt bei „Ich“.",
       "selfNamePlaceholder": "z. B. Patrick Wolff"
@@ -2819,7 +2827,7 @@
     "preparing": "Wird vorbereitet...",
     "checkForUpdates": "Nach Updates suchen",
     "portableUpdateTitle": "Manuelles Update erforderlich",
-    "portableUpdateMessage": "Portable Installationen können nicht automatisch aktualisiert werden. Zum Aktualisieren: Lade den neuesten NSIS-Installer von GitHub Releases herunter, installiere ihn im selben Ordner und kopiere dann deinen Data/-Ordner (Einstellungen, Modelle, Aufnahmen) von der alten Version in die neue.",
+    "portableUpdateMessage": "Die portable Version aktualisiert sich nicht selbst. So geht es: App beenden (auch im Infobereich), die neue portable ZIP von GitHub Releases herunterladen und über den bisherigen Ordner entpacken. Der Ordner Data mit Einstellungen, Modellen und Aufnahmen ist nicht in der ZIP und bleibt erhalten.",
     "portableUpdateButton": "GitHub Releases öffnen",
     "localUpdateAvailable": "Update {{version}} lokal verfügbar",
     "localInstalling": "Installer wird gestartet…",
@@ -3323,6 +3331,27 @@
         "sampleOf": "{{n}}/{{total}}",
         "saved": "Name gespeichert"
       },
+      "merge": {
+        "openFor": "{{label}} mit einem anderen Sprecher zusammenführen",
+        "none": "Kein anderer Sprecher in derselben Spur",
+        "question": "Mit wem ist „{{label}}“ dieselbe Person?",
+        "rule": "Der Sprecher mit der längeren Redezeit bleibt, ein vergebener Name geht nicht verloren. Die Änderung gilt in der ganzen Besprechung und lässt sich wieder trennen.",
+        "cancel": "Abbrechen",
+        "duplicate": "„{{name}}“ steht {{count}}-mal in der Tabelle. Ist das dieselbe Person?",
+        "duplicateAction": "Zu einem Sprecher zusammenführen",
+        "done_one": "{{count}} Sprecher zu „{{name}}“ zusammengeführt.",
+        "done_other": "{{count}} Sprecher zu „{{name}}“ zusammengeführt.",
+        "undo": "Rückgängig",
+        "split": "Sprecher wieder getrennt.",
+        "contains": "Zusammengeführt aus:",
+        "splitAction": "Trennen",
+        "splitFor": "„{{label}}“ wieder als eigenen Sprecher führen",
+        "blocked": "Erst die spätere Zusammenführung trennen.",
+        "voice": "„{{a}}“ und „{{b}}“ klingen ähnlich (Ähnlichkeit {{score}} %). Ist das dieselbe Person?",
+        "voiceAction": "Zusammenführen",
+        "voiceDismiss": "Verschiedene Personen",
+        "voiceNote": "Nur ein Hinweis aus dem Stimmvergleich in dieser Besprechung, keine sichere Erkennung. „Zusammenführen“ legt beide Zeilen zu einem Sprecher zusammen und lässt sich mit „Rückgängig“ oder später mit „Trennen“ zurücknehmen. „Verschiedene Personen“ gilt bis zur nächsten Sprechertrennung. Stimmabdrücke werden nicht gespeichert."
+      },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
         "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",
@@ -3338,6 +3367,8 @@
         "invalid": "Diese Auswahl ist nicht möglich.",
         "segmentNotFound": "Dieses Segment gibt es nicht mehr.",
         "staleEpoch": "Das Transkript wurde inzwischen ersetzt. Bitte neu öffnen.",
+        "mergeNotFound": "Diese Zusammenführung lässt sich nicht mehr trennen (die Sprecher wurden inzwischen neu erkannt).",
+        "speakerTaken": "Die Nummer dieses Sprechers ist inzwischen neu vergeben, Trennen ist nicht mehr möglich.",
         "failed": "Die Änderung ließ sich nicht speichern."
       }
     },
@@ -7326,6 +7357,16 @@
     "suchen": "Suchen"
   },
   "library": {
+    "fmt": {
+      "text": "Text",
+      "audiobook": "Hörbuch",
+      "kurzbuch": "Kurzbuch",
+      "group": "Fassungen von „{{title}}“",
+      "readTitle": "„{{title}}“ lesen · Text {{value}}",
+      "listenTitle": "„{{title}}“ hören · Hörbuch {{value}}",
+      "kurzbuchTitle": "Kurzbuch zu „{{title}}“ anhören · {{value}}",
+      "kurzbuchOpen": "Kurzbuch öffnen"
+    },
     "ki": {
       "title": "Mit KI erstellen",
       "short": "Mit KI erstellen",
@@ -7727,7 +7768,8 @@
       "searching": "Stelle wird im Hörbuch gesucht …",
       "correct": "Stelle korrigieren",
       "correctHint": "Tippe auf den Satz, der gerade zu hören ist.",
-      "lineLabel": "Aktueller Satz: {{text}}. Mitlesen öffnen"
+      "aligning": "Stelle wird mit dem Text abgeglichen …",
+      "lineLabel": "Aktuelle Stelle: {{text}}. Mitlesen öffnen"
     },
     "merge": {
       "bar": "{{count}} Einträge gehören wohl zu einem Hörbuch: {{title}}",

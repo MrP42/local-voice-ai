@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 #if canImport(Compression)
 import Compression
 #endif
@@ -90,6 +93,8 @@ public struct ExtractedBook: Equatable, Sendable {
     public var authors: [String]
     public var language: String?
     public var text: String
+    /// Coverbild aus dem EPUB (Rohdaten, JPEG/PNG/WebP), falls vorhanden.
+    public var cover: Data? = nil
 }
 
 public enum BookText {
@@ -107,7 +112,8 @@ public enum BookText {
         let opf = try zip.read(opfPath)
         let dir = (opfPath as NSString).deletingLastPathComponent
         var manifest: [String: String] = [:]
-        for attrs in XMLScan.attributes(in: opf, element: "item") { if let id = attrs["id"], let href = attrs["href"] { manifest[id] = href } }
+        let items = XMLScan.attributes(in: opf, element: "item")
+        for attrs in items { if let id = attrs["id"], let href = attrs["href"] { manifest[id] = href } }
         var seen = Set<String>()
         let spine = XMLScan.attributes(in: opf, element: "itemref").compactMap { $0["idref"] }.filter { seen.insert($0).inserted }
         var parts: [String] = []
@@ -121,7 +127,27 @@ public enum BookText {
         let text = parts.joined(separator: "\n\n")
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw BookTextError.empty }
         let meta = XMLScan.texts(in: opf, elements: ["dc:title", "dc:creator", "dc:language"])
-        return ExtractedBook(title: meta["dc:title"]?.first, authors: meta["dc:creator"] ?? [], language: meta["dc:language"]?.first, text: text)
+        var book = ExtractedBook(title: meta["dc:title"]?.first, authors: meta["dc:creator"] ?? [], language: meta["dc:language"]?.first, text: text)
+        if let href = coverHref(items: items, metas: XMLScan.attributes(in: opf, element: "meta")) {
+            let decoded = href.removingPercentEncoding ?? href
+            let path = normalize(dir.isEmpty ? decoded : dir + "/" + decoded)
+            // Ein defektes Cover kostet nie das Buch.
+            if let entry = zip.entries[path], entry.size <= maxCoverBytes, let data = try? zip.read(path), !data.isEmpty { book.cover = data }
+        }
+        return book
+    }
+
+    /// Größtes zulässiges Coverbild im EPUB.
+    public static let maxCoverBytes = 20 * 1024 * 1024
+
+    /// Cover wie am Desktop suchen: EPUB 3 `properties="cover-image"`, dann
+    /// EPUB 2 `<meta name="cover" content="id">`, dann ein Bild mit „cover“ im Namen.
+    static func coverHref(items: [[String: String]], metas: [[String: String]]) -> String? {
+        func isImage(_ a: [String: String]) -> Bool { (a["media-type"] ?? "").lowercased().hasPrefix("image/") }
+        if let a = items.first(where: { ($0["properties"] ?? "").split(separator: " ").contains("cover-image") }), let h = a["href"] { return h }
+        if let id = metas.first(where: { $0["name"]?.lowercased() == "cover" })?["content"],
+           let a = items.first(where: { $0["id"] == id && isImage($0) }), let h = a["href"] { return h }
+        return items.first(where: { isImage($0) && (($0["id"] ?? "") + " " + ($0["href"] ?? "")).lowercased().contains("cover") })?["href"]
     }
 
     static func normalize(_ path: String) -> String {

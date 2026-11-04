@@ -73,10 +73,12 @@
   font-size: 12px;
   color: var(--color-text-muted);
 }
+/* Patrick 04.11.: „Weitermachen“ nimmt die volle Breite (vier und mehr
+   Kacheln), „In Arbeit“ steht darunter als flache Leiste. */
 .library-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 .library-top--solo {
@@ -85,19 +87,21 @@
 /* Weitermachen (Patrick 03.11.): kompakte Karten statt ganzer Zeilen. Bis zu
    drei nebeneinander, jede ein Ganzes: Klick öffnet die Produktseite,
    Abspielen sitzt unten rechts darüber. */
+/* Patrick 04.11.: mindestens vier, wo es geht. Die Zahl der Kacheln kommt aus
+   useContinueSlots (gleiche Mindestbreite 220 px, Abstand 12 px). */
 .library-continue {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   gap: 12px;
 }
 .library-ccard {
   position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
   align-items: start;
   min-width: 0;
-  padding: 10px 10px 10px 10px;
+  padding: 10px;
   border: 1px solid var(--lib-line);
   border-radius: 8px;
   background: var(--colorNeutralBackground1, transparent);
@@ -113,6 +117,10 @@
 .library-ccard:has(.library-ccard__title:focus-visible) {
   outline: 2px solid var(--color-logo-primary);
   outline-offset: 2px;
+}
+.library-ccard__media {
+  position: relative;
+  width: 56px;
 }
 .library-ccard__cover {
   width: 56px;
@@ -173,15 +181,27 @@
   padding-bottom: 2px;
 }
 .library-ccard__status {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
   font-size: 12px;
   color: var(--color-text-muted);
 }
+.library-ccard__status > .library-fmtvalue {
+  white-space: nowrap;
+}
+.library-ccard__status > .library-fmtvalue:first-child {
+  color: var(--color-text);
+}
 .library-ccard__play {
-  position: relative;
+  position: absolute;
   z-index: 1;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.35);
+  opacity: 0.94;
 }
 .library-play {
   width: 44px;
@@ -197,9 +217,16 @@
   flex: none;
 }
 .library-jobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+  column-gap: 16px;
   border: 1px solid var(--lib-line);
   border-radius: 10px;
   padding: 10px 12px;
+}
+.library-jobs > .library-section__head {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
 }
 .library-job {
   display: grid;
@@ -208,9 +235,7 @@
   align-items: center;
   padding: 6px 0;
 }
-.library-job + .library-job {
-  border-top: 1px solid var(--lib-line);
-}
+
 .library-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
@@ -310,6 +335,175 @@
 .library-card__row > .library-fmt {
   flex: 1;
   min-width: 0;
+}
+/* Karte (Patrick 04.11.): Titel und Autor links, das eine Menü rechts daneben;
+   darunter je Fassung eine Zeile mit eigenem Fortschritt. */
+.library-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 2px;
+}
+.library-card__names {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+}
+.library-card__author {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-card__head > .library-card__tools {
+  flex: none;
+  margin-right: -10px;
+}
+.library-fmtrows {
+  display: flex;
+  flex-direction: column;
+}
+/* Ganze Zeile ist der Start dieser Fassung: 44 px hoch, zweizeilig
+   (Name und Wert, darunter der Balken). */
+.library-fmtrow {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  width: calc(100% + 12px);
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.library-fmtrow:hover {
+  background: color-mix(in srgb, var(--color-mid-gray) 14%, transparent);
+}
+.library-fmtrow:focus-visible {
+  outline: 2px solid var(--color-logo-primary);
+  outline-offset: -2px;
+}
+.library-fmtrow--busy {
+  cursor: default;
+  color: var(--lib-busy);
+}
+.library-fmtrow--busy:hover {
+  background: none;
+}
+.library-fmtrow__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+.library-fmtrow__line > svg {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.library-fmtrow__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.library-fmtrow__badge {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--lib-line);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+.library-fmtrow__value {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.library-fmtrow[data-finished] .library-fmtrow__value {
+  color: var(--lib-ok);
+}
+.library-fmtrow__percent {
+  flex: none;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Startzeichen: die Zeile ist ein Knopf (Codex 04.11.). */
+.library-fmtrow__go {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  color: var(--color-logo-primary);
+  border: 1px solid color-mix(in srgb, var(--color-logo-primary) 45%, transparent);
+}
+.library-fmtrow:hover .library-fmtrow__go,
+.library-fmtrow:focus-visible .library-fmtrow__go {
+  background: var(--color-logo-primary);
+  color: #fff;
+}
+.library-fmtrow__busy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-fmtrow__bar {
+  display: block;
+  flex: 1;
+  min-width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--lib-line);
+  overflow: hidden;
+}
+.library-fmtrow__bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-logo-primary);
+}
+.library-fmtrow[data-finished] .library-fmtrow__bar > span {
+  background: var(--lib-ok);
+}
+/* Fassung und Wert in einer Zeile, z. B. in „Weitermachen“. */
+.library-fmtvalue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.library-fmtvalue > svg {
+  flex: none;
+}
+.library-fmtvalue__name {
+  font-weight: 600;
+}
+/* In „Weitermachen“ genügt das Symbol, der Wert braucht den Platz. */
+.library-ccard .library-fmtvalue__name {
+  display: none;
+}
+.library-fmtvalue__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .library-title {
   font-weight: 600;
@@ -1146,8 +1340,12 @@
 .library-follow[data-correcting="true"] .library-follow__p {
   cursor: crosshair;
 }
-/* Satzzeile über der kompakten Hörleiste: eine Zeile, Klick öffnet Mitlesen. */
+/* Textzeile über der kompakten Hörleiste: ein ruhiger Abschnitt aus zwei bis
+   drei Zeilen, fest in der Höhe (die Leiste springt nicht). Nur die Markierung
+   des gehörten Satzes wandert; umgeblättert wird erst am Abschnittsende.
+   Klick öffnet Mitlesen. */
 .library-audiobar__line {
+  --line-rows: 2;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1160,23 +1358,56 @@
   color: inherit;
   font: inherit;
   font-size: 0.95rem;
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
   cursor: pointer;
 }
 .library-audiobar__line:hover {
   background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
 }
-/* Der Satz bleibt vollständig lesbar: bis zu drei Zeilen (Codex-Auflage). */
-.library-audiobar__line > :last-child {
+.library-audiobar__clip {
+  position: relative;
+  display: block;
   flex: 1;
   min-width: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
+  height: calc(var(--line-rows) * 1.45em);
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+.library-audiobar__passage {
+  display: block;
+  animation: lva-passage-in 220ms ease-out;
+}
+@keyframes lva-passage-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .library-audiobar__passage {
+    animation: none;
+  }
+}
+/* Gehört: zurückgenommen; gehört wird: volle Farbe, ruhig hinterlegt;
+   kommt noch: normal lesbar. Nur Farbe, damit der Umbruch gleich bleibt. */
+.library-audiobar__done {
+  color: color-mix(in srgb, currentColor 62%, var(--color-background));
+}
+.library-audiobar__sentence {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-accent-text) 16%, transparent);
+  box-shadow:
+    -2px 0 0 color-mix(in srgb, var(--color-accent-text) 16%, transparent),
+    2px 0 0 color-mix(in srgb, var(--color-accent-text) 16%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 180ms ease-out;
+}
+.library-audiobar__next {
+  color: color-mix(in srgb, currentColor 85%, var(--color-background));
 }
 .library-audiobar__line .library-follow__ins {
   border-bottom: 0;
@@ -1620,4 +1851,20 @@
   .library-kurzbuch__lang {
     justify-content: flex-start;
   }
+}
+
+/* Langes Kartenmenü: höhenbegrenzt (ActionMenu) und scrollbar; Schatten oben
+   und unten zeigen, dass es weitergeht (Codex 04.11.). */
+.library-cardmenu.library-cardmenu {
+  overscroll-behavior: contain;
+  background:
+    linear-gradient(var(--color-background) 30%, transparent) top / 100% 24px
+      no-repeat local,
+    linear-gradient(transparent, var(--color-background) 70%) bottom / 100%
+      24px no-repeat local,
+    radial-gradient(farthest-side at 50% 0, rgb(0 0 0 / 0.22), transparent)
+      top / 100% 10px no-repeat scroll,
+    radial-gradient(farthest-side at 50% 100%, rgb(0 0 0 / 0.22), transparent)
+      bottom / 100% 10px no-repeat scroll,
+    var(--color-background);
 }

@@ -40,6 +40,7 @@ pub mod segmenter;
 pub mod signal_watch; // M2-P2e
 pub mod simulate;
 pub mod slides; // D1 (#70, M7): Folien aus Videos
+pub mod speaker_merges; // #266: Sprecher zusammenführen und trennen
 pub mod speaker_names; // U8
 pub mod speakers; // M3-P3b
 pub mod stats;
@@ -47,6 +48,7 @@ pub mod store;
 pub mod subtitle;
 pub mod translate; // G5: Uebersetzung als neue Fassung
 pub mod variants; // A3: Transkript-Fassungen
+pub mod voiceprint; // Stimmprofile 2a: Stimmabdruecke innerhalb einer Besprechung
 
 use std::path::{Path, PathBuf};
 

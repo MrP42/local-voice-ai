@@ -34,7 +34,7 @@ use super::store::{MeetingDocument, MeetingStore};
 /// (`{"Kanal:Nummer": ["Anna", ...]}`, aelteste zuerst).
 pub const FORMER_NAMES_KEY: &str = "speaker_former_names";
 /// So viele fruehere Namen merkt sich ein Sprecher hoechstens.
-const MAX_FORMER_NAMES: usize = 10;
+pub const MAX_FORMER_NAMES: usize = 10;
 
 /// Ein Sprecher, wie die Ersetzung ihn braucht.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,33 +85,6 @@ pub fn remember_former_name(
             names.retain(|n| n != new);
         }
     }
-    all.retain(|_, names| !names.is_empty());
-    store.set_metadata_key(meeting_id, FORMER_NAMES_KEY, json!(all))
-}
-
-/// Nach dem Zusammenfuehren (`from` geht in `into` auf): was Texte fuer
-/// `from` sagen (Standardlabel, angezeigter Name, fruehere Namen), gehoert
-/// jetzt zu `into`. Die Eintraege von `from` fallen weg.
-pub fn carry_former_names(
-    store: &MeetingStore,
-    meeting_id: &str,
-    channel: u8,
-    from: u32,
-    into: u32,
-    from_labels: &[String],
-) -> anyhow::Result<()> {
-    let mut all = former_names(store, meeting_id);
-    let mut carried = all.remove(&former_key(channel, from)).unwrap_or_default();
-    carried.extend(from_labels.iter().cloned());
-    let list = all.entry(former_key(channel, into)).or_default();
-    for name in carried {
-        let name = name.trim().to_string();
-        if !name.is_empty() && !list.contains(&name) {
-            list.push(name);
-        }
-    }
-    let excess = list.len().saturating_sub(MAX_FORMER_NAMES);
-    list.drain(..excess);
     all.retain(|_, names| !names.is_empty());
     store.set_metadata_key(meeting_id, FORMER_NAMES_KEY, json!(all))
 }

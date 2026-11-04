@@ -211,6 +211,8 @@ private struct VoiceHome: View {
             LibraryTab().tabItem { Label("Bibliothek", systemImage: "books.vertical") }.tag(3)
         }
         .sheet(isPresented: $showModels) { ModelPanel(model: model) }
+        // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
+        .onOpenURL { url in if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } }
         #endif
     }
 

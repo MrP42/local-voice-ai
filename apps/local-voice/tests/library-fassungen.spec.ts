@@ -271,8 +271,13 @@ test.beforeEach(async ({ page }) => {
             return [`${String(args?.outPath)}.${String(args?.format)}`];
           if (cmd === "library_list") return list;
           // Kurzbuch (lva#205): Dokumente und Text aus window.__kidocs / __docText.
-          if (cmd === "book_ai_documents")
+          if (cmd === "book_ai_documents") {
+            // Je Seite eigene Dokumente (Karten je Fassung), sonst für alle gleich.
+            const by = (w as { __kidocsByPage?: Record<string, unknown[]> })
+              .__kidocsByPage;
+            if (by) return by[String(args?.pageId)] ?? [];
             return (w as { __kidocs?: unknown[] }).__kidocs ?? [];
+          }
           if (cmd === "book_ai_document_text")
             return (w as { __docText?: string }).__docText ?? "";
           if (cmd === "library_progress_load") return {};
@@ -606,7 +611,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto("/");
       await expect(page.getByTestId("library-card")).toHaveCount(3);
       const suffix = `${width}-${theme === "light" ? "hell" : "dunkel"}`;
-      await page.getByTestId("library-ki-book_1").click();
+      await page.getByTestId("library-more-book_1").click();
       await expect(
         page.getByTestId("library-ki-translate-book_1"),
       ).toBeVisible();
@@ -689,7 +694,7 @@ test("Übersetzen aus der Bibliothek: läuft im Hintergrund und trägt die Sprac
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByTestId("library-ki-book_1").click();
+  await page.getByTestId("library-more-book_1").click();
   await page.getByTestId("library-ki-translate-book_1").click();
   await expect(page.getByTestId("ki-create")).toBeVisible();
   // Vorbelegt ist eine Sprache, die das Buch noch nicht hat (nicht English).
@@ -702,7 +707,7 @@ test("Übersetzen aus der Bibliothek: läuft im Hintergrund und trägt die Sprac
   expect(call.text).toContain("In Front des Herrenhauses");
   expect(call.targetLang).not.toBe("English");
   // Seite verlassen und zurück: der Auftrag bleibt sichtbar.
-  await page.getByTestId("library-ki-book_1").click();
+  await page.getByTestId("library-more-book_1").click();
   await page.keyboard.press("Escape");
   await page.evaluate(() =>
     (
@@ -728,7 +733,7 @@ test("Kurzbuch aus der Bibliothek: Kern-Aufruf mit Vorlage und Sprache, ohne Vor
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByTestId("library-ki-book_1").click();
+  await page.getByTestId("library-more-book_1").click();
   await page.getByTestId("library-ki-kurzbuch-book_1").click();
   await page.getByTestId("ki-create-start").click();
   const [call] = await calls(page, "book_ai_summarize");
@@ -737,7 +742,7 @@ test("Kurzbuch aus der Bibliothek: Kern-Aufruf mit Vorlage und Sprache, ohne Vor
   // Die Bibliothek bleibt offen.
   await expect(page.getByTestId("library-card")).toHaveCount(3);
   // Ein zweites Kurzbuch derselben Sprache startet nicht doppelt.
-  await page.getByTestId("library-ki-book_1").click();
+  await page.getByTestId("library-more-book_1").click();
   await page.getByTestId("library-ki-kurzbuch-book_1").click();
   await expect(page.getByTestId("ki-create-start")).toBeDisabled();
   await page.keyboard.press("Escape");
@@ -753,7 +758,7 @@ test("Hörbuch ohne Text: KI-Dialog verweist auf die Transkription", async ({
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
-  await page.getByTestId("library-ki-book_2").click();
+  await page.getByTestId("library-more-book_2").click();
   await page.getByTestId("library-ki-translate-book_2").click();
   await expect(page.getByTestId("ki-create-notext")).toContainText(
     "transkribieren",
@@ -855,7 +860,7 @@ for (const width of [390, 1440]) {
       );
     const all: { scope: string; name: string; w: number; h: number }[] = [];
     all.push(...(await measure("Karte", '[data-drop-book="book_1"]')));
-    await page.getByTestId("library-ki-book_1").click();
+    await page.getByTestId("library-more-book_1").click();
     all.push(...(await measure("KI-Menü", '[role="menu"]')));
     await page.getByTestId("library-ki-kidoc-book_1").click();
     await expect(page.getByTestId("ki-create")).toBeVisible();
@@ -875,4 +880,345 @@ for (const width of [390, 1440]) {
     expect(all.length).toBeGreaterThan(10);
     expect(all.filter((m) => m.w < 44 || m.h < 44)).toEqual([]);
   });
+}
+
+/**
+ * Patrick 04.11.: Karten zeigen je Fassung (Text, Hörbuch, Kurzbuch) eine
+ * Zeile mit eigenem Fortschritt und Start, das Hörbuch immer mit Dauer; KI und
+ * Export liegen im einen ⋮-Menü; „Weitermachen“ nutzt die Breite (≥ 4).
+ */
+const H = 3_600_000;
+const book = (
+  id: string,
+  title: string,
+  author: string,
+  opts: {
+    text?: boolean;
+    audioMs?: number | null;
+    job?: string;
+    added: number;
+  },
+) => ({
+  id,
+  title,
+  subtitle: null,
+  authors: [author],
+  language: "Deutsch",
+  isbn: null,
+  publisher: null,
+  publish_date: null,
+  pages: null,
+  description: null,
+  metadata_source: "manual",
+  cover_source: "generated",
+  text: opts.text
+    ? { page_id: `page_${id}`, origin: "document", source_name: `${id}.epub` }
+    : null,
+  audio:
+    opts.audioMs !== undefined
+      ? {
+          file: "hoerbuch.m4b",
+          duration_ms: opts.audioMs,
+          narrator: null,
+          transcript_job: opts.job ?? null,
+        }
+      : null,
+  added_ms: opts.added,
+  finished: false,
+  cover_path: null,
+  audio_path:
+    opts.audioMs !== undefined ? `C:/lib/${id}/audio/hoerbuch.m4b` : null,
+});
+const KARTEN_BOOKS = [
+  book("b_a", "Der Weg zur Gelassenheit", "Anna Beispiel", {
+    text: true,
+    audioMs: 9.88 * H,
+    added: 9,
+  }),
+  book("b_b", "Garten im Wandel", "Ben Muster", { audioMs: 8.9 * H, added: 8 }),
+  book("b_c", "Kleine Geschichte der Zahlen", "Clara Probe", {
+    text: true,
+    added: 7,
+  }),
+  book("b_d", "Werkstatt der Worte", "David Test", {
+    text: true,
+    audioMs: 6.5 * H,
+    added: 6,
+  }),
+  book("b_e", "Leise Wellen", "Eva Fiktiv", {
+    audioMs: 4.2 * H,
+    job: "m9",
+    added: 5,
+  }),
+  book("b_f", "Das Archiv am Fluss", "Felix Demo", { text: true, added: 4 }),
+  book("b_g", "Morgenlicht", "Greta Platzhalter", {
+    text: true,
+    audioMs: 3.1 * H,
+    added: 3,
+  }),
+];
+const kb = (id: string, language: string, modified: number) => ({
+  id,
+  title: `Kurzbuch – ${language}`,
+  template_id: "builtin:kurzbuch",
+  template_title: "Kurzbuch",
+  source: { kind: "book" },
+  source_label: "Buch",
+  created_ms: modified,
+  modified_ms: modified,
+  words: 2250,
+  model: "",
+  usage: null,
+  language,
+});
+
+const kartenSetup = (page: Page) =>
+  page.addInitScript(
+    ({ books, kidocs }) => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__books = books;
+      w.__kidocsByPage = kidocs;
+      (w.__jobs as string[] | undefined)?.push("m9");
+      const now = Date.now();
+      const put = (key: string, rec: Record<string, unknown>, ago: number) =>
+        window.localStorage.setItem(
+          `lva.ui.progress.${key}`,
+          JSON.stringify({ heard: [], read: [], ...rec, updated: now - ago }),
+        );
+      const h = 3_600_000;
+      put(
+        "audio:b_a",
+        {
+          offset: 0.4 * h,
+          length: 9.88 * h,
+          unit: "ms",
+          heard: [[0, 0.4 * h]],
+        },
+        1000,
+      );
+      put(
+        "text:page_b_a:original",
+        { offset: 400, length: 20000, read: [[0, 400]] },
+        90000,
+      );
+      put(
+        "doc:page_b_a:kb_a",
+        { offset: 3000, length: 12000, heard: [[0, 3000]] },
+        120000,
+      );
+      put(
+        "audio:b_b",
+        { offset: 0.2 * h, length: 8.9 * h, unit: "ms", heard: [[0, 0.2 * h]] },
+        5000,
+      );
+      put(
+        "text:page_b_c:original",
+        { offset: 6000, length: 10000, read: [[0, 6000]] },
+        9000,
+      );
+      put(
+        "text:page_b_d:original",
+        { offset: 0, length: 9000, finished: true },
+        13000,
+      );
+      put(
+        "audio:b_d",
+        { offset: 2 * h, length: 6.5 * h, unit: "ms", heard: [[0, 2 * h]] },
+        14000,
+      );
+      put(
+        "text:page_b_f:original",
+        { offset: 1500, length: 30000, read: [[0, 1500]] },
+        20000,
+      );
+      put(
+        "audio:b_g",
+        { offset: 1 * h, length: 3.1 * h, unit: "ms", heard: [[0, 1 * h]] },
+        30000,
+      );
+    },
+    {
+      books: KARTEN_BOOKS,
+      kidocs: {
+        page_b_a: [kb("kb_a", "de", 5)],
+        page_b_d: [kb("kb_d1", "de", 5), kb("kb_d2", "en", 6)],
+      },
+    },
+  );
+
+test("Karten: je Fassung eine Zeile mit Fortschritt, Dauer und Start", async ({
+  page,
+}) => {
+  await kartenSetup(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  const card = page.locator('[data-drop-book="b_a"]');
+  const text = card.getByTestId("library-fmt-text-b_a");
+  const audio = card.getByTestId("library-fmt-audiobook-b_a");
+  const kurz = card.getByTestId("library-fmt-kurzbuch-b_a");
+  await expect(text).toContainText("Text");
+  await expect(text).toContainText("2 %");
+  // Hörbuch: Restdauer, wenn begonnen (auch neben einem Text).
+  await expect(audio).toContainText("Hörbuch");
+  await expect(audio).toContainText("noch 9 h 29 min");
+  await expect(kurz).toContainText("Kurzbuch");
+  await expect(kurz).toContainText("noch 11 min");
+  // Nicht begonnenes Hörbuch zeigt die Gesamtdauer.
+  await expect(page.getByTestId("library-fmt-audiobook-b_e")).toHaveCount(1);
+  await expect(page.getByTestId("library-fmt-text-b_e")).toContainText(
+    "Wird transkribiert",
+  );
+  // Fertiger Text, Kurzbuch in zwei Sprachen mit Sprachkennung.
+  await expect(page.getByTestId("library-fmt-text-b_d")).toContainText(
+    "Fertig",
+  );
+  await expect(page.getByTestId("library-fmt-kurzbuch-b_d")).toContainText(
+    "Deutsch",
+  );
+  // Ein Menü: kein eigener KI-Knopf mehr, KI und Export stehen im ⋮-Menü.
+  await expect(page.getByTestId("library-ki-b_a")).toHaveCount(0);
+  await page.getByTestId("library-more-b_a").click();
+  for (const id of ["translate", "kurzbuch", "kidoc"])
+    await expect(page.getByTestId(`library-ki-${id}-b_a`)).toBeVisible();
+  await expect(page.getByTestId("library-export-b_a")).toBeVisible();
+  await expect(page.getByTestId("library-kurzbuch-open-b_a")).toBeVisible();
+  await page.keyboard.press("Escape");
+});
+
+test("Karten: Kurzbuch-Zeile öffnet das Kurzbuch im Vorlesen und spielt", async ({
+  page,
+}) => {
+  await kartenSetup(page);
+  await page.addInitScript(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key === "lva.library.kidoc")
+        (window as unknown as { __kidocReq?: string }).__kidocReq = value;
+      return set.call(this, key, value);
+    };
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page.getByTestId("library-fmt-kurzbuch-b_a").click();
+  // Vorlesen öffnet mit dem Auftrag „dieses Kurzbuch vorlesen“.
+  await expect(page.getByRole("main", { name: "Vorlesen" })).toBeVisible();
+  const req = await page.evaluate(
+    () => (window as unknown as { __kidocReq?: string }).__kidocReq ?? null,
+  );
+  expect(JSON.parse(req ?? "null")).toMatchObject({
+    page: "page_b_a",
+    doc: "kb_a",
+    play: true,
+  });
+});
+
+for (const [width, height, min] of [
+  [1440, 900, 4],
+  [1920, 1080, 4],
+  [390, 844, 4],
+] as const) {
+  test(`Weitermachen ${width}: so viele Kacheln wie passen (${min})`, async ({
+    page,
+  }) => {
+    await kartenSetup(page);
+    await page.setViewportSize({ width, height });
+    await page.goto("/");
+    await expect(
+      page.getByTestId("library-continue-card").first(),
+    ).toBeVisible();
+    const n = await page.getByTestId("library-continue-card").count();
+    expect(n).toBeGreaterThanOrEqual(Math.min(min, 6));
+    // Alle gezeigten Kacheln stehen in einer Reihe (breit) bzw. untereinander.
+    const tops = await page
+      .getByTestId("library-continue-card")
+      .evaluateAll((els) =>
+        els.map((e) => Math.round(e.getBoundingClientRect().top)),
+      );
+    if (width >= 1440) expect(new Set(tops).size).toBe(1);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+  ] as const) {
+    test(`Vorschau Karten je Fassung ${width} ${theme}`, async ({ page }) => {
+      await setTheme(page, theme);
+      await kartenSetup(page);
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      await expect(page.getByTestId("library-fmt-audiobook-b_a")).toBeVisible();
+      const suffix = `${width}-${theme === "light" ? "hell" : "dunkel"}`;
+      await page.waitForTimeout(300);
+      await page.screenshot({
+        path: shot(`karten-01-uebersicht-${suffix}.png`),
+      });
+      await page.getByTestId("library-card").first().scrollIntoViewIfNeeded();
+      await page.locator(".library-grid").scrollIntoViewIfNeeded();
+      await page.screenshot({ path: shot(`karten-02-raster-${suffix}.png`) });
+      await page.getByTestId("library-more-b_a").click();
+      await expect(page.getByTestId("library-ki-translate-b_a")).toBeVisible();
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: shot(`karten-03-menue-${suffix}.png`) });
+      // Alle Menüeinträge erreichbar: Menü scrollt, letzter Eintrag sichtbar.
+      const menu = page.locator('[role="menu"]');
+      const items = menu.getByRole("menuitem");
+      const count = await items.count();
+      // Details, mitlesen, Kurzbuch öffnen | 4× KI/Export | Fertig, Titel, Cover, Auswählen | Entfernen.
+      expect(count).toBe(12);
+      const box = await menu.boundingBox();
+      expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+      const reach: { name: string; y: number; h: number; w: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        const item = items.nth(i);
+        await item.scrollIntoViewIfNeeded();
+        const b = (await item.boundingBox())!;
+        const m = (await menu.boundingBox())!;
+        expect(b.y).toBeGreaterThanOrEqual(m.y - 1);
+        expect(b.y + b.height).toBeLessThanOrEqual(m.y + m.height + 1);
+        reach.push({
+          name: (await item.textContent())?.trim() ?? "",
+          y: Math.round(b.y),
+          h: Math.round(b.height),
+          w: Math.round(b.width),
+        });
+      }
+      await page.screenshot({
+        path: shot(`karten-04-menue-unten-${suffix}.png`),
+      });
+      const rows = await page.$$eval('[data-testid^="library-fmt-"]', (els) =>
+        els
+          .filter((el) => (el as HTMLElement).offsetParent !== null)
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              id: el.getAttribute("data-testid"),
+              w: Math.round(r.width),
+              h: Math.round(r.height),
+            };
+          }),
+      );
+      writeFileSync(
+        shot(`karten-belege-${suffix}.json`),
+        JSON.stringify({ menu: reach, rows }, null, 2),
+      );
+      expect(rows.filter((r) => r.h < 44 || r.w < 44)).toEqual([]);
+      // Ziele ≥ 44 px: Fassungszeilen und Menüeinträge.
+      const small = await page.$$eval(
+        '[data-testid^="library-fmt-"], [role="menu"] [role="menuitem"]',
+        (els) =>
+          els
+            .filter((el) => (el as HTMLElement).offsetParent !== null)
+            .map((el) => el.getBoundingClientRect())
+            .filter((r) => r.height < 44 || r.width < 44).length,
+      );
+      expect(small).toBe(0);
+    });
+  }
 }

@@ -368,6 +368,52 @@ pub fn rewrite_turn_speaker(hints: &str, channel: u8, from: u32, into: u32) -> S
     root.to_string()
 }
 
+/// #266: Positionen der Turns von `speaker` im Kanal `channel` (fuer "Trennen").
+pub fn turn_positions(hints: &str, channel: u8, speaker: u32) -> Vec<usize> {
+    let Ok(root) = serde_json::from_str::<Value>(hints) else {
+        return Vec::new();
+    };
+    root.get("channels")
+        .and_then(|c| c.get(channel.to_string()))
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .enumerate()
+                .filter(|(_, t)| t.get(2).and_then(Value::as_u64) == Some(u64::from(speaker)))
+                .map(|(i, _)| i)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// #266 (Trennen): die Turns an `positions`, die noch `into` gehoeren, gehen an
+/// `from` zurueck. Unlesbarer Text kommt unveraendert zurueck.
+pub fn restore_turn_speaker(
+    hints: &str,
+    channel: u8,
+    positions: &[usize],
+    into: u32,
+    from: u32,
+) -> String {
+    let Ok(mut root) = serde_json::from_str::<Value>(hints) else {
+        return hints.to_string();
+    };
+    let list = root
+        .get_mut("channels")
+        .and_then(|c| c.get_mut(channel.to_string()))
+        .and_then(Value::as_array_mut);
+    if let Some(list) = list {
+        for &at in positions {
+            if let Some(turn) = list.get_mut(at).and_then(Value::as_array_mut) {
+                if turn.get(2).and_then(Value::as_u64) == Some(u64::from(into)) {
+                    turn[2] = json!(from);
+                }
+            }
+        }
+    }
+    root.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Namen ueber eine neue Diarisierung hinweg
 // ---------------------------------------------------------------------------
