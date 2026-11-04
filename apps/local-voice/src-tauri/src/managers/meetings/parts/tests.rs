@@ -116,7 +116,10 @@ fn the_plan_puts_every_part_on_one_continuous_timeline() {
         "Aufnahme 112.m4a",
         10_000,
         1,
-        vec![seg(0, 2, 0, 4_000, Some(1)), seg(1, 2, 5_000, 9_000, Some(2))],
+        vec![
+            seg(0, 2, 0, 4_000, Some(1)),
+            seg(1, 2, 5_000, 9_000, Some(2)),
+        ],
         Some("Laura"),
     );
     let b = ready_import(
@@ -125,7 +128,10 @@ fn the_plan_puts_every_part_on_one_continuous_timeline() {
         "Aufnahme 113.m4a",
         6_000,
         2,
-        vec![seg(0, 2, 1_000, 3_000, Some(1)), seg(1, 2, 3_000, 5_000, None)],
+        vec![
+            seg(0, 2, 1_000, 3_000, Some(1)),
+            seg(1, 2, 3_000, 5_000, None),
+        ],
         Some("David"),
     );
     let mut sources = load_sources(&store, &[a.id.clone(), b.id.clone()]).unwrap();
@@ -141,7 +147,12 @@ fn the_plan_puts_every_part_on_one_continuous_timeline() {
         .collect();
     assert_eq!(
         times,
-        vec![(0, 0, 4_000), (1, 5_000, 9_000), (2, 11_000, 13_000), (3, 13_000, 15_000)]
+        vec![
+            (0, 0, 4_000),
+            (1, 5_000, 9_000),
+            (2, 11_000, 13_000),
+            (3, 13_000, 15_000)
+        ]
     );
     // Wortzeiten wandern mit.
     assert_eq!(p.segments[2].words.as_ref().unwrap()[0].start_ms, 11_000);
@@ -222,7 +233,10 @@ fn speaker_zero_is_the_whole_channel_and_keeps_the_first_name() {
     a.speakers[0].display_name = None;
     let p = plan(&[a, b]);
     assert_eq!(
-        p.segments.iter().map(|s| s.speaker_index).collect::<Vec<_>>(),
+        p.segments
+            .iter()
+            .map(|s| s.speaker_index)
+            .collect::<Vec<_>>(),
         vec![Some(0), Some(0)]
     );
     assert_eq!(p.speakers.len(), 1);
@@ -239,9 +253,27 @@ fn notes_keep_their_position_on_the_new_timeline() {
         checked: false,
     };
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "a.m4a", 4_000, 1, vec![seg(0, 2, 0, 1_000, None)], None);
-    let b = ready_import(&store, dir.path(), "b.m4a", 4_000, 1, vec![seg(0, 2, 0, 1_000, None)], None);
-    store.save_notes(&a.id, &[block("n1", Some(1_000))], 0).unwrap();
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "a.m4a",
+        4_000,
+        1,
+        vec![seg(0, 2, 0, 1_000, None)],
+        None,
+    );
+    let b = ready_import(
+        &store,
+        dir.path(),
+        "b.m4a",
+        4_000,
+        1,
+        vec![seg(0, 2, 0, 1_000, None)],
+        None,
+    );
+    store
+        .save_notes(&a.id, &[block("n1", Some(1_000))], 0)
+        .unwrap();
     store
         .save_notes(&b.id, &[block("n2", Some(500)), block("n3", None)], 0)
         .unwrap();
@@ -249,8 +281,12 @@ fn notes_keep_their_position_on_the_new_timeline() {
     sources[0].length_ms = 4_000;
     sources[1].length_ms = 4_000;
     let p = plan(&sources);
-    let notes: Vec<(&str, Option<u64>)> = p.notes.iter().map(|n| (n.id.as_str(), n.at_ms)).collect();
-    assert_eq!(notes, vec![("n1", Some(1_000)), ("n2", Some(4_500)), ("n3", None)]);
+    let notes: Vec<(&str, Option<u64>)> =
+        p.notes.iter().map(|n| (n.id.as_str(), n.at_ms)).collect();
+    assert_eq!(
+        notes,
+        vec![("n1", Some(1_000)), ("n2", Some(4_500)), ("n3", None)]
+    );
 }
 
 #[test]
@@ -325,7 +361,9 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
         None,
     );
     let folder = store.folder_save(None, "Komm.ONE", None).unwrap();
-    store.set_meeting_folders(&b.id, &[folder.id.clone()]).unwrap();
+    store
+        .set_meeting_folders(&b.id, &[folder.id.clone()])
+        .unwrap();
     let old_a_wav = a.mic_audio_path.clone().unwrap();
     let old_b_wav = b.mic_audio_path.clone().unwrap();
     // Fruehere Namen (Sprecher-Umbenennung): nur Teil 2 hat welche.
@@ -341,7 +379,12 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
         )
         .unwrap();
 
-    let target = merge_into_first(&store, &[a.id.clone(), b.id.clone()], &dir.path().join(&a.id)).unwrap();
+    let target = merge_into_first(
+        &store,
+        &[a.id.clone(), b.id.clone()],
+        &dir.path().join(&a.id),
+    )
+    .unwrap();
     assert_eq!(target, a.id);
 
     let merged = store.get_meeting(&a.id).unwrap().unwrap();
@@ -357,7 +400,9 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
 
     let segs = store.get_segments(&a.id).unwrap();
     assert_eq!(
-        segs.iter().map(|s| (s.start_ms, s.speaker_index)).collect::<Vec<_>>(),
+        segs.iter()
+            .map(|s| (s.start_ms, s.speaker_index))
+            .collect::<Vec<_>>(),
         vec![(0, Some(1)), (2_000, Some(2))]
     );
     // Schluessel versetzt wie die Sprecher: Teil 2, Sprecher 1 -> 2; 0 bleibt.
@@ -384,11 +429,45 @@ fn merging_writes_one_meeting_and_removes_the_others_in_one_go() {
 #[test]
 fn a_meeting_merged_before_keeps_its_parts_when_more_are_appended() {
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "1.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    let b = ready_import(&store, dir.path(), "2.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    let c = ready_import(&store, dir.path(), "3.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    merge_into_first(&store, &[a.id.clone(), b.id.clone()], &dir.path().join(&a.id)).unwrap();
-    merge_into_first(&store, &[a.id.clone(), c.id.clone()], &dir.path().join(&a.id)).unwrap();
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "1.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    let b = ready_import(
+        &store,
+        dir.path(),
+        "2.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    let c = ready_import(
+        &store,
+        dir.path(),
+        "3.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    merge_into_first(
+        &store,
+        &[a.id.clone(), b.id.clone()],
+        &dir.path().join(&a.id),
+    )
+    .unwrap();
+    merge_into_first(
+        &store,
+        &[a.id.clone(), c.id.clone()],
+        &dir.path().join(&a.id),
+    )
+    .unwrap();
     let parts = store.meeting_parts(&a.id).unwrap();
     assert_eq!(
         parts
@@ -411,12 +490,36 @@ fn a_meeting_merged_before_keeps_its_parts_when_more_are_appended() {
 #[test]
 fn a_part_that_is_not_ready_blocks_the_merge_and_changes_nothing() {
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    let b = ready_import(&store, dir.path(), "b.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "a.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    let b = ready_import(
+        &store,
+        dir.path(),
+        "b.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
     store.set_status(&b.id, MeetingStatus::Processing).unwrap();
-    let err = merge_into_first(&store, &[a.id.clone(), b.id.clone()], &dir.path().join(&a.id)).unwrap_err();
+    let err = merge_into_first(
+        &store,
+        &[a.id.clone(), b.id.clone()],
+        &dir.path().join(&a.id),
+    )
+    .unwrap_err();
     assert_eq!(err, PartsError::NotReady(b.id.clone()));
-    assert_eq!(store.get_meeting(&a.id).unwrap().unwrap().mic_audio_path, a.mic_audio_path);
+    assert_eq!(
+        store.get_meeting(&a.id).unwrap().unwrap().mic_audio_path,
+        a.mic_audio_path
+    );
     assert!(store.meeting_parts(&a.id).unwrap().is_empty());
     // Keine neue Datei im Zielordner.
     assert!(!dir.path().join(&a.id).exists());
@@ -425,8 +528,24 @@ fn a_part_that_is_not_ready_blocks_the_merge_and_changes_nothing() {
 #[test]
 fn a_change_to_a_transcript_during_the_merge_rolls_everything_back() {
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    let b = ready_import(&store, dir.path(), "b.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "a.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    let b = ready_import(
+        &store,
+        dir.path(),
+        "b.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
     let mut sources = load_sources(&store, &[a.id.clone(), b.id.clone()]).unwrap();
     for s in &mut sources {
         s.length_ms = 1_000;
@@ -434,7 +553,10 @@ fn a_change_to_a_transcript_during_the_merge_rolls_everything_back() {
     let p = plan(&sources);
     // Eine Korrektur von Hand nach dem Lesen.
     store.update_segment_text(&b.id, 0, "korrigiert").unwrap();
-    let revisions: Vec<(String, i64)> = sources.iter().map(|s| (s.meeting.id.clone(), s.revision)).collect();
+    let revisions: Vec<(String, i64)> = sources
+        .iter()
+        .map(|s| (s.meeting.id.clone(), s.revision))
+        .collect();
     let err = store
         .apply_merge(&MergeWrite {
             target: &a.id,
@@ -447,8 +569,16 @@ fn a_change_to_a_transcript_during_the_merge_rolls_everything_back() {
         })
         .unwrap_err();
     assert_eq!(err, PartsError::Changed);
-    assert!(store.get_meeting(&b.id).unwrap().unwrap().deleted_at.is_none());
-    assert_eq!(store.get_meeting(&a.id).unwrap().unwrap().mic_audio_path, a.mic_audio_path);
+    assert!(store
+        .get_meeting(&b.id)
+        .unwrap()
+        .unwrap()
+        .deleted_at
+        .is_none());
+    assert_eq!(
+        store.get_meeting(&a.id).unwrap().unwrap().mic_audio_path,
+        a.mic_audio_path
+    );
 }
 
 #[test]
@@ -461,8 +591,24 @@ fn notes_typed_during_the_merge_abort_it_instead_of_being_overwritten() {
         checked: false,
     };
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
-    let b = ready_import(&store, dir.path(), "b.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "a.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
+    let b = ready_import(
+        &store,
+        dir.path(),
+        "b.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
     let mut sources = load_sources(&store, &[a.id.clone(), b.id.clone()]).unwrap();
     for s in &mut sources {
         s.length_ms = 1_000;
@@ -470,8 +616,14 @@ fn notes_typed_during_the_merge_abort_it_instead_of_being_overwritten() {
     let p = plan(&sources);
     // Waehrend die Audiodateien verkettet werden, tippt jemand Notizen.
     store.save_notes(&a.id, &[block("neu", None)], 0).unwrap();
-    let revisions: Vec<(String, i64)> = sources.iter().map(|s| (s.meeting.id.clone(), s.revision)).collect();
-    let sides: Vec<(String, String)> = sources.iter().map(|s| (s.meeting.id.clone(), s.side.clone())).collect();
+    let revisions: Vec<(String, i64)> = sources
+        .iter()
+        .map(|s| (s.meeting.id.clone(), s.revision))
+        .collect();
+    let sides: Vec<(String, String)> = sources
+        .iter()
+        .map(|s| (s.meeting.id.clone(), s.side.clone()))
+        .collect();
     let err = store
         .apply_merge(&MergeWrite {
             target: &a.id,
@@ -491,7 +643,15 @@ fn notes_typed_during_the_merge_abort_it_instead_of_being_overwritten() {
 #[test]
 fn subtitles_youtube_and_mixed_sources_are_refused() {
     let (dir, store) = tmp_store();
-    let a = ready_import(&store, dir.path(), "a.m4a", 1_000, 1, vec![seg(0, 2, 0, 500, None)], None);
+    let a = ready_import(
+        &store,
+        dir.path(),
+        "a.m4a",
+        1_000,
+        1,
+        vec![seg(0, 2, 0, 500, None)],
+        None,
+    );
     let sub = store
         .create_meeting("Untertitel", MeetingSource::Subtitle, None)
         .unwrap();
@@ -500,16 +660,23 @@ fn subtitles_youtube_and_mixed_sources_are_refused() {
         load_sources(&store, &[a.id.clone(), sub.id.clone()]).unwrap_err(),
         PartsError::NoAudio(sub.id.clone())
     );
-    let live = store.create_meeting("Live", MeetingSource::Live, Some(1)).unwrap();
+    let live = store
+        .create_meeting("Live", MeetingSource::Live, Some(1))
+        .unwrap();
     let wav = dir.path().join("live.wav");
     write_wav(&wav, 500, 1);
-    store.set_audio_paths(&live.id, wav.to_str(), None, Some(500)).unwrap();
+    store
+        .set_audio_paths(&live.id, wav.to_str(), None, Some(500))
+        .unwrap();
     store.set_status(&live.id, MeetingStatus::Ready).unwrap();
     assert_eq!(
         load_sources(&store, &[a.id.clone(), live.id.clone()]).unwrap_err(),
         PartsError::MixedSources
     );
-    assert_eq!(load_sources(&store, &[a.id.clone()]).unwrap_err(), PartsError::TooFew);
+    assert_eq!(
+        load_sources(&store, &[a.id.clone()]).unwrap_err(),
+        PartsError::TooFew
+    );
     assert_eq!(
         load_sources(&store, &[a.id.clone(), a.id.clone()]).unwrap_err(),
         PartsError::TooFew
@@ -538,10 +705,16 @@ fn pending_parts_are_listed_in_order_and_go_with_a_deleted_target() {
     assert_eq!(store.append_pending_add(&c.id, &a.id).unwrap(), 2);
     let pending = store.append_pending_of(&a.id).unwrap();
     assert_eq!(
-        pending.iter().map(|p| (p.meeting_id.as_str(), p.status.as_str())).collect::<Vec<_>>(),
+        pending
+            .iter()
+            .map(|p| (p.meeting_id.as_str(), p.status.as_str()))
+            .collect::<Vec<_>>(),
         vec![(b.id.as_str(), "queued"), (c.id.as_str(), "queued")]
     );
-    assert_eq!(store.append_target_of(&b.id).unwrap().as_deref(), Some(a.id.as_str()));
+    assert_eq!(
+        store.append_target_of(&b.id).unwrap().as_deref(),
+        Some(a.id.as_str())
+    );
     let info = parts_info(&store, &b.id).unwrap();
     assert_eq!(info.append_to, Some((a.id.clone(), "Komm.ONE".to_string())));
 

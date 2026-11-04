@@ -412,7 +412,9 @@ pub fn chronological(meetings: &mut [Meeting]) {
         let ka = a.started_at.unwrap_or(a.created_at);
         let kb = b.started_at.unwrap_or(b.created_at);
         ka.cmp(&kb)
-            .then_with(|| natural_key(a.source_path.as_deref()).cmp(&natural_key(b.source_path.as_deref())))
+            .then_with(|| {
+                natural_key(a.source_path.as_deref()).cmp(&natural_key(b.source_path.as_deref()))
+            })
             .then_with(|| a.id.cmp(&b.id))
     });
 }
@@ -428,7 +430,10 @@ fn natural_key(path: Option<&str>) -> Vec<(String, u64)> {
             digits.push(c);
         } else {
             if !digits.is_empty() {
-                out.push((std::mem::take(&mut text), digits.parse().unwrap_or(u64::MAX)));
+                out.push((
+                    std::mem::take(&mut text),
+                    digits.parse().unwrap_or(u64::MAX),
+                ));
                 digits.clear();
             }
             text.push(c);
@@ -785,8 +790,8 @@ impl MeetingStore {
             }
         }
 
-        let (old_mic, old_system, description): (Option<String>, Option<String>, Option<String>) = tx
-            .query_row(
+        let (old_mic, old_system, description): (Option<String>, Option<String>, Option<String>) =
+            tx.query_row(
                 "SELECT mic_audio_path, system_audio_path, description FROM meetings WHERE id = ?1",
                 params![w.target],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1152,7 +1157,10 @@ pub fn merge_into_first(
     let target = ids[0].clone();
     let members: Vec<String> = ids[1..].to_vec();
     let mic = audio.mic.to_string_lossy().to_string();
-    let system = audio.system.as_ref().map(|p| p.to_string_lossy().to_string());
+    let system = audio
+        .system
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
     let applied = store.apply_merge(&MergeWrite {
         target: &target,
         members: &members,
@@ -1209,12 +1217,18 @@ pub fn merge_now(
     drop(guard);
     let target = merged?;
     for member in &ids[1..] {
-        super::search::indexer::submit(app, super::search::indexer::IndexJob::Deleted(member.clone()));
+        super::search::indexer::submit(
+            app,
+            super::search::indexer::IndexJob::Deleted(member.clone()),
+        );
         if let Err(e) = super::retention::remove_meeting_dir(&base, member) {
             warn!("meetings: folder of merged part {member} not removed: {e}");
         }
     }
-    super::search::indexer::submit(app, super::search::indexer::IndexJob::Meeting(target.clone()));
+    super::search::indexer::submit(
+        app,
+        super::search::indexer::IndexJob::Meeting(target.clone()),
+    );
     let _ = (super::recorder::MeetingEvent::Reset {
         meeting_id: target.clone(),
     })
@@ -1325,7 +1339,10 @@ fn try_group(app: &tauri::AppHandle, store: &Arc<MeetingStore>, meeting_id: &str
         // Ein anderer Auftrag laeuft (auch einer am Ziel) oder Notizen bzw.
         // Sprecher wurden gerade bearbeitet: spaeter erneut, mit wachsendem Abstand.
         Err(PartsError::Busy | PartsError::Changed) if attempt < MAX_RETRIES => {
-            info!("meetings: append group {target} retried later (attempt {})", attempt + 1);
+            info!(
+                "meetings: append group {target} retried later (attempt {})",
+                attempt + 1
+            );
             let (app, store) = (app.clone(), store.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(15 * u64::from(attempt + 1)));

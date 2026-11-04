@@ -1915,7 +1915,10 @@ impl MeetingStore {
             "DELETE FROM meeting_append_pending WHERE meeting_id = ?1 OR target_id = ?1",
             params![id],
         )?;
-        tx.execute("DELETE FROM meeting_parts WHERE meeting_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM meeting_parts WHERE meeting_id = ?1",
+            params![id],
+        )?;
 
         let mut audio_paths = Vec::new();
         if let Some(mic) = mic {

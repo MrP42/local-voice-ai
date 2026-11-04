@@ -55,7 +55,10 @@ pub async fn meetings_merge(
     } else {
         let mut meetings = Vec::with_capacity(meeting_ids.len());
         for id in &meeting_ids {
-            match store.get_meeting(id).map_err(|e| format!("parts_failed: {e}"))? {
+            match store
+                .get_meeting(id)
+                .map_err(|e| format!("parts_failed: {e}"))?
+            {
                 Some(m) if m.deleted_at.is_none() => meetings.push(m),
                 _ => return Err("meeting_not_found".into()),
             }
@@ -122,7 +125,10 @@ pub async fn meetings_append_files(
         let meeting = queue.enqueue(&title, &source, consent_at)?;
         if let Err(e) = store.append_pending_add(&meeting.id, &target_id) {
             // Ohne Vormerkung bliebe der Teil eine eigene Besprechung: sichtbar, kein Verlust.
-            log::warn!("meetings: part {} not marked for appending: {e}", meeting.id);
+            log::warn!(
+                "meetings: part {} not marked for appending: {e}",
+                meeting.id
+            );
             return Err(format!("parts_failed: {e}"));
         }
         ids.push(meeting.id);
