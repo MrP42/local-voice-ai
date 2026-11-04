@@ -21,6 +21,7 @@ use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::doc_types::{self, DocEngine, DocTypeInfo};
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{self, error_code, MinutesMeta, MinutesPhase, CODE_BUSY};
+use crate::managers::meetings::relabel::Relabeler;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore};
 
 /// Code, wenn der Schluessel keinen erzeugbaren Dokumenttyp nennt (unbekannt, das
@@ -219,6 +220,31 @@ pub(crate) fn export_with_letterhead(
     )
 }
 
+/// Handbearbeitung eines Protokolls oder Dokumenttyps (Markdown) speichern. Die
+/// Aenderung landet in der bestehenden Version; Export, Kopieren, Mail und Vorlesen
+/// lesen sie von dort. `expected_updated_at` ist der Stempel, den die Oberflaeche
+/// geladen hat; weicht er ab (neuer Lauf, zweites Fenster), scheitert der Aufruf mit
+/// `stale_document` und schreibt nichts. Fehlertexte sind Codes (siehe
+/// `MeetingStore::update_markdown_document`); der Text selbst gelangt nie ins Log.
+#[tauri::command]
+#[specta::specta]
+pub async fn meetings_update_document_text(
+    app: AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    document_id: String,
+    body: String,
+    expected_updated_at: i64,
+) -> Result<MeetingDocument, String> {
+    let document = store
+        .update_markdown_document(&document_id, &body, expected_updated_at)
+        .map_err(|e| e.to_string())?;
+    crate::managers::meetings::search::indexer::submit(
+        &app,
+        crate::managers::meetings::search::indexer::IndexJob::Meeting(document.meeting_id.clone()),
+    );
+    Ok(document)
+}
+
 /// Ein gespeichertes Dokument (Protokoll oder Dokumenttyp) exportieren: Format nach der
 /// Endung (`md`, `txt`, `docx`, `pdf`), Word und PDF mit dem eingestellten Briefkopf.
 /// Quelle ist der gespeicherte Text samt Korrekturen von Hand.
@@ -234,6 +260,7 @@ pub async fn meetings_export_document_as(
         .get_document(&document_id)
         .map_err(|e| format!("store_failed: {e}"))?
         .ok_or_else(|| "document_not_found".to_string())?;
+    let document = Relabeler::load(&store, &document.meeting_id).document(document);
     tauri::async_runtime::spawn_blocking(move || {
         export_with_letterhead(&app, path, document.body, None)
     })

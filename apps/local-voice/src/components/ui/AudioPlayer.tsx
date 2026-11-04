@@ -140,12 +140,13 @@ export interface AudioPlayerHandle {
    * `onEnd` kommt genau einmal: am Ende der Probe, bei jeder Pause (auch von
    * aussen, auch wenn ein anderer Player der Gruppe startet), bei `stop()`,
    * wenn eine neue Probe oder ein Sprung die Probe abloest oder das Abspielen
-   * scheitert.
+   * scheitert. `completed` ist nur wahr, wenn die Probe bis zu ihrem Ende
+   * (oder dem Ende der Datei) gelaufen ist.
    */
   playRange: (
     startSeconds: number,
     endSeconds: number,
-    onEnd: () => void,
+    onEnd: (completed: boolean) => void,
   ) => void;
   /** Haelt an (ohne zurueckzuspulen); beendet eine laufende Probe. */
   stop: () => void;
@@ -243,16 +244,23 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const dragTimeRef = useRef<number>(0);
   // Eine laufende Hoerprobe: Ende in Sekunden und der Rueckruf. Jede Pause,
   // das Ende der Datei und das Ende der Probe loesen ihn genau einmal aus.
-  const rangeRef = useRef<{ end: number; onEnd: () => void } | null>(null);
-  const finishRange = useCallback(() => {
+  const rangeRef = useRef<{
+    end: number;
+    reached: boolean;
+    onEnd: (completed: boolean) => void;
+  } | null>(null);
+  const finishRange = useCallback((completed = false) => {
     const range = rangeRef.current;
     rangeRef.current = null;
-    range?.onEnd();
+    range?.onEnd(completed || (range?.reached ?? false));
   }, []);
   const checkRange = useCallback(() => {
     const audio = audioRef.current;
     const range = rangeRef.current;
-    if (audio && range && audio.currentTime >= range.end) audio.pause();
+    if (audio && range && audio.currentTime >= range.end) {
+      range.reached = true;
+      audio.pause();
+    }
   }, []);
 
   // Use refs to avoid stale closures in animation loop
@@ -368,7 +376,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       group?.releasePlayback(audio);
       setIsPlaying(false);
       setCurrentTime(audio.duration || 0);
-      finishRange();
+      finishRange(true);
     };
 
     const handlePlay = () => {
@@ -505,6 +513,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         finishRange();
         rangeRef.current = {
           end: Math.max(startSeconds, endSeconds),
+          reached: false,
           onEnd,
         };
         void playFrom(startSeconds);

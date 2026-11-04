@@ -12,6 +12,12 @@ import { useSelectedProject } from "./projects/selectedProject";
 import { findMeeting } from "./findMeeting";
 import { isVideoPath } from "@/lib/meetingSlides";
 import { queueSlideDetection } from "./slides/useSlidesBackground";
+import { PartOrderList } from "./parts/PartOrderList";
+
+const isSubtitlePath = (path: string) => {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return ext === "vtt" || ext === "srt";
+};
 
 /** Dieselben Endungen fuer Auswahl und Ablage (gleiche Import-Pipeline). */
 export const IMPORT_EXTENSIONS = [
@@ -33,6 +39,10 @@ const hasImportExtension = (path: string) => {
 };
 
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
+/** Mehrere Audio-/Videodateien (keine Untertitel) lassen sich zu einer Besprechung zusammenfassen. */
+const canCombine = (paths: string[]) =>
+  paths.length >= 2 && paths.every((p) => !isSubtitlePath(p));
 
 /** So viele Besprechungen sieht die Suche nach der neuen (sie steht ganz vorn). */
 const LIST_PAGE = 50;
@@ -112,6 +122,8 @@ export function useMeetingImport(
   const [busy, setBusy] = useState(false);
   // D4: "Folien erkennen" beim Import von Videos (nur gefragt, wenn eines dabei ist).
   const [detectSlides, setDetectSlides] = useState(false);
+  // Mehrere Audiodateien als EINE Besprechung (z. B. Teile vor und nach einer Pause).
+  const [combine, setCombine] = useState(false);
 
   /** Einwilligung einholen; das Projekt gilt so, wie es jetzt links gewaehlt ist. */
   const ask = useCallback(async (paths: string[]) => {
@@ -129,6 +141,7 @@ export function useMeetingImport(
     }
     const entry = targetRef.current;
     setDetectSlides(false);
+    setCombine(false);
     setRequest({
       paths,
       projectId: id,
@@ -157,6 +170,10 @@ export function useMeetingImport(
     setRequest(null);
     setBusy(true);
     try {
+      if (combine && canCombine(current.paths)) {
+        await importCombined(current);
+        return;
+      }
       for (const [index, path] of current.paths.entries()) {
         const { error, id } = await importIntoProject(
           path,
@@ -181,6 +198,40 @@ export function useMeetingImport(
     }
   };
 
+  /**
+   * Mehrere Dateien als eine Besprechung: die erste wird wie gewohnt importiert
+   * (Projekt, leerer Eintrag), die weiteren werden an sie angehaengt. Alle
+   * laufen als eigene Auftraege durch die Warteschlange; sobald der letzte Teil
+   * fertig ist, fuehrt das Backend sie zu einer Zeitachse zusammen.
+   */
+  const importCombined = async (current: ImportRequest) => {
+    const [first, ...rest] = current.paths;
+    const { error, id } = await importIntoProject(
+      first,
+      current.projectId,
+      (meeting) => createdRef.current(meeting),
+      current.target?.id ?? null,
+    );
+    if (error || !id) {
+      if (error) toast.error(translateMeetingError(error, t));
+      return;
+    }
+    const appended = await commands.meetingsAppendFiles(id, rest, true);
+    if (appended.status === "error") {
+      toast.error(translateMeetingError(appended.error, t));
+    } else {
+      toast.success(
+        t("meetings.parts.import.queued", { count: current.paths.length }),
+      );
+    }
+    current.paths.forEach((path, index) => {
+      if (index === 0 && detectSlides && isVideoPath(path)) {
+        queueSlideDetection(id);
+      }
+    });
+    notifyMeetingsChanged();
+  };
+
   const dialog = (
     <Dialog
       open={request !== null}
@@ -194,7 +245,10 @@ export function useMeetingImport(
           <Button variant="secondary" onClick={() => setRequest(null)}>
             {t("meetings.consent.cancel")}
           </Button>
-          <Button onClick={() => void confirmImport()} data-testid="import-confirm">
+          <Button
+            onClick={() => void confirmImport()}
+            data-testid="import-confirm"
+          >
             {t("meetings.consent.confirm")}
           </Button>
         </>
@@ -206,13 +260,45 @@ export function useMeetingImport(
         </p>
         {request && (
           <>
-            <ul className="mt-2 space-y-0.5 text-xs text-text/60">
-              {request.paths.map((p) => (
-                <li key={p} className="truncate">
-                  {baseName(p)}
-                </li>
-              ))}
-            </ul>
+            {combine && canCombine(request.paths) ? (
+              <div className="mt-2">
+                <PartOrderList
+                  items={request.paths.map((p) => ({
+                    id: p,
+                    label: baseName(p),
+                  }))}
+                  onChange={(items) =>
+                    setRequest({ ...request, paths: items.map((i) => i.id) })
+                  }
+                  testId="import-order"
+                />
+              </div>
+            ) : (
+              <ul className="mt-2 space-y-0.5 text-xs text-text/60">
+                {request.paths.map((p) => (
+                  <li key={p} className="truncate">
+                    {baseName(p)}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {canCombine(request.paths) && (
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm max-sm:min-h-[44px]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 max-sm:h-5 max-sm:w-5"
+                  data-testid="import-combine"
+                  checked={combine}
+                  onChange={(e) => setCombine(e.target.checked)}
+                />
+                <span>
+                  {t("meetings.parts.import.combine")}
+                  <span className="block text-xs text-text/60">
+                    {t("meetings.parts.import.combineHint")}
+                  </span>
+                </span>
+              </label>
+            )}
             {request.paths.some(isVideoPath) && (
               <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm">
                 <input
