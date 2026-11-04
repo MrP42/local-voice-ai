@@ -63,7 +63,13 @@ enum DurableFiles {
             missing.insert(cursor, at: 0); cursor = cursor.deletingLastPathComponent()
         }
         for dir in missing {
-            try fm.createDirectory(at: dir, withIntermediateDirectories: false)
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: false)
+            } catch CocoaError.fileWriteFileExists {
+                // App und Extension legen die Kette gleichzeitig an: ein vorhandenes Verzeichnis genügt.
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { throw IntakeError.invalid }
+            }
             try sync(dir)
             try sync(dir.deletingLastPathComponent())
         }
