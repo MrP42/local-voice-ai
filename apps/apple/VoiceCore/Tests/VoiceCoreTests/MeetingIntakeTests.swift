@@ -49,6 +49,22 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertTrue(try inbox.pending().isEmpty)
     }
 
+    func testInboxKeepsDisplayNameAndRejectsLinks() throws {
+        let inbox = try MeetingInbox(root: tmp.appendingPathComponent("Eingang"), digest: TestDigest())
+        let f = try file("A1B2C3.m4a", [1, 2, 3, 4])
+        let item = try inbox.deposit(f, from: .shareSheet, consent: consent(.import, .import), name: "Teamrunde/03.11.:2026")
+        XCTAssertEqual(item.originalName, "Teamrunde03.11.2026.m4a")
+        XCTAssertEqual(MeetingInbox.displayName("..", fallback: "x.m4a", ext: "m4a"), "Aufnahme.m4a")
+        XCTAssertEqual(MeetingInbox.displayName(nil, fallback: "Sprachmemo.m4a", ext: "m4a"), "Sprachmemo.m4a")
+        // Symlink auf eine Datei wird nicht übernommen.
+        let link = tmp.appendingPathComponent("link.m4a")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: try file("ziel.m4a", [9, 9]))
+        XCTAssertThrowsError(try inbox.deposit(link, from: .openIn, consent: consent(.import, .import))) { XCTAssertEqual($0 as? IntakeError, .invalid) }
+        // Keine Staging-Reste nach Fehlern.
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: inbox.root.path).filter { $0.hasPrefix(".tmp-") }
+        XCTAssertEqual(leftovers, [])
+    }
+
     func testInboxIgnoresAbandonedCopies() throws {
         let root = tmp.appendingPathComponent("Eingang")
         let inbox = try MeetingInbox(root: root, digest: TestDigest())

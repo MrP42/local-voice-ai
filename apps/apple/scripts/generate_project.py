@@ -83,8 +83,11 @@ for path in ['ShareExtension/ShareViewController.swift', 'Shared/ImportConsentVi
     share_files.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
 phase = obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=share_files, runOnlyForDeploymentPostprocessing=0)
 product = obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.app-extension', includeInIndex=0, path=name+'.appex', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
-rule = ('SUBQUERY (extensionItems, $extensionItem, SUBQUERY ($extensionItem.attachments, $attachment, '
-        'ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content").@count == 1).@count == 1')
+# Genau ein Element mit genau einem Anhang, und der ist Audio oder Video.
+rule = ('SUBQUERY (extensionItems, $extensionItem, $extensionItem.attachments.@count == 1 AND '
+        'SUBQUERY ($extensionItem.attachments, $attachment, '
+        'ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content").@count == 1).@count == 1 '
+        'AND extensionItems.@count == 1')
 (root/(name+'-Info.plist')).write_bytes(plistlib.dumps({'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2',
     'NSExtension':{'NSExtensionPointIdentifier':'com.apple.share-services', 'NSExtensionPrincipalClass':'$(PRODUCT_MODULE_NAME).ShareViewController',
                    'NSExtensionAttributes':{'NSExtensionActivationRule':rule}}}))

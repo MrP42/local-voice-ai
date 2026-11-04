@@ -90,11 +90,18 @@ public struct MeetingInbox: Sendable {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    public func deposit(_ source: URL, from kind: InboxItem.Source, consent: ConsentRecord) throws -> InboxItem {
+    /// Kopiert `source` dauerhaft in den Eingang. Größe, Dateiart (reguläre Datei, kein
+    /// Symlink) und Endung werden vor dem Kopieren geprüft; die Kopie entsteht im Staging,
+    /// wird per Prüfsumme verglichen, synchronisiert und erst dann per Rename sichtbar.
+    /// Reste bleiben bei Fehlern nicht liegen. `name` ist der Anzeigename (Metadatum),
+    /// falls die Quelle nur eine Zufallsdatei ist.
+    public func deposit(_ source: URL, from kind: InboxItem.Source, consent: ConsentRecord, name: String? = nil) throws -> InboxItem {
         guard consent.isComplete, consent.reason == .import, consent.channel == .import else { throw IntakeError.consentMissing }
         let fm = FileManager.default
         let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard info.isRegularFile == true, info.isSymbolicLink != true, let bytes = info.fileSize, bytes > 0 else { throw IntakeError.invalid }
+        // Zusätzlich ohne Symlink-Auflösung prüfen (lstat): nur eine echte, reguläre Datei.
+        guard (try fm.attributesOfItem(atPath: source.path)[.type] as? FileAttributeType) == .typeRegular else { throw IntakeError.invalid }
         guard bytes <= Self.maxBytes else { throw IntakeError.tooLarge }
         guard let ext = DurableFiles.safeExtension(source) else { throw IntakeError.invalid }
         let hex = try digest.hex(of: source)
@@ -104,7 +111,7 @@ public struct MeetingInbox: Sendable {
             try DurableFiles.syncDirectory(root)
             return same
         }
-        let item = InboxItem(id: UUID(), source: kind, originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
+        let item = InboxItem(id: UUID(), source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
                              bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
         let staging = root.appendingPathComponent(".tmp-" + item.id.uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
@@ -117,6 +124,16 @@ public struct MeetingInbox: Sendable {
         try fm.moveItem(at: staging, to: root.appendingPathComponent(item.id.uuidString))
         try DurableFiles.syncDirectory(root)
         return item
+    }
+
+    /// Anzeigename ohne Pfadtrenner und Steuerzeichen, höchstens 255 Zeichen, mit Endung.
+    static func displayName(_ name: String?, fallback: String, ext: String) -> String {
+        let raw = (name?.isEmpty == false ? name! : fallback)
+        var clean = String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && !"/\\:".unicodeScalars.contains($0) })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty || clean == "." || clean == ".." { clean = "Aufnahme" }
+        if !clean.lowercased().hasSuffix("." + ext) { clean += "." + ext }
+        return String(clean.suffix(255))
     }
 
     /// Wartende Einträge, älteste zuerst. Abgebrochene Kopien (`.tmp-…`) zählen nicht.

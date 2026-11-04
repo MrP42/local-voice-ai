@@ -65,8 +65,12 @@ final class MeetingLibrary: ObservableObject {
         }
     }
     /// Bestätigte Datei in den Eingang kopieren (geprüft, dauerhaft) und gleich übernehmen.
-    func deposit(_ url: URL, from source: InboxItem.Source, consent: ConsentRecord) async {
-        guard let inbox, !importBusy else { return }
+    /// `true` erst nach dem dauerhaften Eingangs-Commit; nur dann darf die Quelle weg.
+    @discardableResult
+    func deposit(_ url: URL, from source: InboxItem.Source, consent: ConsentRecord) async -> Bool {
+        guard let inbox else { self.error = "Der Eingang ist nicht verfügbar."; return false }
+        // Nacheinander, nie verworfen: warten, bis ein laufender Import fertig ist.
+        while importBusy { try? await Task.sleep(for: .milliseconds(200)) }
         importBusy = true; defer { importBusy = false }
         error = nil
         let scoped = url.startAccessingSecurityScopedResource()
@@ -74,11 +78,12 @@ final class MeetingLibrary: ObservableObject {
         do {
             _ = try await Task.detached { try inbox.deposit(url, from: source, consent: consent) }.value
         } catch IntakeError.tooLarge {
-            self.error = "Die Datei ist größer als 2 GB."; return
+            self.error = "Die Datei ist größer als 2 GB."; return false
         } catch {
-            self.error = "Die Datei konnte nicht gesichert werden. Bitte freien Speicher prüfen."; return
+            self.error = "Die Datei konnte nicht gesichert werden. Bitte freien Speicher prüfen."; return false
         }
         await drainInbox()
+        return true
     }
 
     /// Wartende Einträge ins Archiv übernehmen; Transkription und (falls freigegeben)
@@ -303,6 +308,13 @@ struct MeetingLibraryView: View {
     @ObservedObject private var incoming = IncomingFiles.shared
     /// Datei, die gerade bestätigt wird: aus der Dateiauswahl oder per „Öffnen in“.
     @State private var confirming: PendingImport?
+    /// Fehlgeschlagene Übernahmen dieser Sitzung: nicht sofort erneut anbieten (beim nächsten Start wieder).
+    @State private var deferred: Set<URL> = []
+
+    private func offerNext() {
+        guard confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) }) else { return }
+        confirming = PendingImport(url: url, source: .openIn)
+    }
 
     struct PendingImport: Identifiable {
         let url: URL
@@ -366,22 +378,20 @@ struct MeetingLibraryView: View {
             ImportConsentView(fileName: pending.url.lastPathComponent, channel: .import, onConfirm: { record in
                 confirming = nil
                 Task {
-                    await library.deposit(pending.url, from: pending.source, consent: record)
-                    if pending.source == .openIn { incoming.discardCopy(pending.url) }
+                    let saved = await library.deposit(pending.url, from: pending.source, consent: record)
+                    // Kopie nur nach dauerhaftem Eingangs-Commit löschen; sonst bleibt sie für den nächsten Versuch.
+                    if pending.source == .openIn, saved { incoming.finish(pending.url, deleteCopy: true) }
+                    else if pending.source == .openIn { deferred.insert(pending.url) }
                 }
             }, onCancel: {
                 confirming = nil
-                if pending.source == .openIn { incoming.discardCopy(pending.url) }
+                // Ausdrücklich verworfen.
+                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true) }
             }).interactiveDismissDisabled()
         }
-        .onChange(of: incoming.pending, initial: true) { _, list in
-            guard confirming == nil, let url = list.first else { return }
-            incoming.take(url)
-            confirming = PendingImport(url: url, source: .openIn)
-        }
-        .onChange(of: confirming == nil) { _, closed in
-            if closed, let url = incoming.next { incoming.take(url); confirming = PendingImport(url: url, source: .openIn) }
-        }
+        .onAppear { incoming.rescan() }
+        .onChange(of: incoming.pending, initial: true) { _, _ in offerNext() }
+        .onChange(of: confirming == nil) { _, closed in if closed { offerNext() } }
         .onChange(of: phase, initial: true) { _, value in library.scene(active: value == .active) }
         #if DEBUG
         .task { await library.importProbe() }
