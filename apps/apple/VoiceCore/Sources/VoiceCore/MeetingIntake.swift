@@ -105,7 +105,8 @@ public struct MeetingInbox: Sendable {
     /// Nur für Tests: simuliert einen Ausfall an einem Reparaturschritt.
     var fault: (@Sendable (RepairStep) throws -> Void)?
     enum RepairStep: Sendable { case afterOriginal, beforeMetadata, afterMetadata }
-    public static let maxBytes = 2 * 1024 * 1024 * 1024
+    /// 2 GiB. Auf der Watch (arm64_32) ist `Int` 32 Bit breit, dort gilt `Int.max`.
+    public static let maxBytes = Int(clamping: Int64(2) * 1024 * 1024 * 1024)
     /// App-Gruppe von App und Share-Extension; der Eingang liegt in ihrem Container.
     public static let appGroup = "group.de.localvoice.prototype"
 
