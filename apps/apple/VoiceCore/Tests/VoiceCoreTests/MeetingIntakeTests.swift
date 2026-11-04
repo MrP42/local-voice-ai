@@ -104,6 +104,55 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     }
 
+    func testInboxRepairsWrongSizeInDecodableMetadata() throws {
+        let inbox = try MeetingInbox(root: tmp.appendingPathComponent("Eingang"), digest: TestDigest())
+        let source = try file("b.m4a", [9, 8, 7, 6])
+        let terms = consent(.import, .import)
+        let item = try inbox.deposit(source, from: .openIn, consent: terms)
+        // Dekodierbar, aber falsche Größe: bei gleichen Bedingungen reparieren, kein Konflikt.
+        let wrong = InboxItem(id: item.id, source: item.source, originalName: item.originalName, originalExtension: item.originalExtension,
+                              bytes: item.bytes + 1, digest: item.digest, createdAt: item.createdAt, consent: item.consent)
+        try JSONEncoder().encode(wrong).write(to: inbox.fileURL(item).deletingLastPathComponent().appendingPathComponent("eingang.json"))
+        let repaired = try inbox.deposit(source, from: .openIn, consent: terms)
+        XCTAssertEqual(repaired.bytes, 4)
+        XCTAssertTrue(try inbox.verifyCommitted(repaired))
+        XCTAssertEqual(try inbox.pending().count, 1)
+        // Abweichende Einwilligung bleibt ein Konflikt, auch wenn der Bestand beschädigt ist.
+        let other = ConsentRecord(confirmedAt: Date(), channel: .import, reason: .import, scopes: [.recording, .transcription],
+                                  purpose: "Protokoll", controller: "Amt 12", retentionDays: 90)
+        XCTAssertThrowsError(try inbox.deposit(source, from: .openIn, consent: other))
+        XCTAssertTrue(try inbox.verifyCommitted(repaired))
+    }
+
+    func testInboxSerializesConcurrentDeposits() throws {
+        let root = tmp.appendingPathComponent("Eingang")
+        let source = try file("c.m4a", Array(repeating: 5, count: 64 * 1024))
+        let ai = consent(.import, .import)
+        let plain = ConsentRecord(confirmedAt: Date(), channel: .import, reason: .import, scopes: [.recording, .transcription],
+                                  purpose: "Protokoll", controller: "Amt 12", retentionDays: 90)
+        // App und Extension (getrennte Instanzen, eigene Sperr-Deskriptoren) gleichzeitig, mit
+        // abweichender Einwilligung: genau einer gewinnt, sein Eintrag bleibt intakt und unverändert.
+        final class Results: @unchecked Sendable { let lock = NSLock(); var ok: [InboxItem] = []; var conflicts = 0 }
+        let results = Results()
+        DispatchQueue.concurrentPerform(iterations: 8) { i in
+            do {
+                let inbox = try MeetingInbox(root: root, digest: TestDigest())
+                let item = try inbox.deposit(source, from: .shareSheet, consent: i.isMultiple(of: 2) ? ai : plain)
+                results.lock.lock(); results.ok.append(item); results.lock.unlock()
+            } catch IntakeError.conflict {
+                results.lock.lock(); results.conflicts += 1; results.lock.unlock()
+            } catch { XCTFail("unerwartet: \(error)") }
+        }
+        let inbox = try MeetingInbox(root: root, digest: TestDigest())
+        let stored = try XCTUnwrap(inbox.pending().first)
+        XCTAssertEqual(try inbox.pending().count, 1)
+        XCTAssertTrue(try inbox.verifyCommitted(stored))
+        XCTAssertEqual(results.ok.count + results.conflicts, 8)
+        XCTAssertEqual(results.ok.count, 4)
+        XCTAssertTrue(results.ok.allSatisfy { $0.consent.sameTerms(as: stored.consent) && $0.id == stored.id })
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".tmp-") })
+    }
+
     func testInboxCreatesWholeDirectoryChain() throws {
         let deep = tmp.appendingPathComponent("a/b/Eingang")
         _ = try MeetingInbox(root: deep, digest: TestDigest())

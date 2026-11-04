@@ -124,7 +124,7 @@ final class MeetingLibrary: ObservableObject {
                 }
             } catch VoiceError.invalid {
                 // Keine lesbare Tonspur oder über 2 Stunden: nicht aufbewahren (Datenminimierung).
-                try? FileManager.default.removeItem(at: inbox.fileURL(item).deletingLastPathComponent())
+                try? inbox.discard(item)
                 self.error = "„\(item.originalName)“ hat keine lesbare Tonspur oder ist länger als 2 Stunden und wurde nicht übernommen."
             } catch {
                 self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."

@@ -132,40 +132,61 @@ public struct MeetingInbox: Sendable {
         // Kennung aus dem Inhalt: dieselbe Datei hat immer dieselbe Eingangs- und Archivkennung,
         // auch nach einem Absturz zwischen Übernahme und Aufräumen (kein Doppelimport).
         let id = Self.itemId(digest: hex)
-        if let same = try pending().first(where: { $0.id == id }) {
-            // Zweimal geteilt: nur mit denselben Einwilligungsbedingungen derselbe Eintrag.
-            // Eine frühere (z. B. KI-)Freigabe wird nie still für eine neue Bestätigung übernommen.
-            guard same.bytes == bytes, same.consent.sameTerms(as: consent) else { throw IntakeError.conflict("bereits mit anderer Einwilligung im Eingang") }
-            // Erfolg nur, wenn das gespeicherte Original vollständig ist und erneut gesichert wurde.
-            if try verifyCommitted(same) { return same }
-        }
-        // Beschädigter oder unlesbarer Eintrag derselben Kennung: entfernen und neu anlegen.
-        // Die Quelle bleibt unangetastet; ein sichtbarer Eintrag ist per Rename vollständig
-        // committet, ein Fehlschlag der Prüfung bedeutet also echten Schaden, keinen laufenden Commit.
-        let finalDir = root.appendingPathComponent(id.uuidString)
-        if fm.fileExists(atPath: finalDir.path) {
-            try fm.removeItem(at: finalDir)
+        // Prüfen, Reparieren und Veröffentlichen je Kennung prozessübergreifend serialisiert:
+        // App und Extension sehen unter der Sperre immer den committeten Stand des anderen.
+        return try locked(id) {
+            let finalDir = root.appendingPathComponent(id.uuidString)
+            var damaged = false
+            if fm.fileExists(atPath: finalDir.path) {
+                if let same = Self.read(finalDir) {
+                    // Zweimal geteilt: nur mit denselben Einwilligungsbedingungen derselbe Eintrag.
+                    // Eine frühere (z. B. KI-)Freigabe wird nie still übernommen oder überschrieben.
+                    guard same.consent.sameTerms(as: consent) else { throw IntakeError.conflict("bereits mit anderer Einwilligung im Eingang") }
+                    // Erfolg nur bei vollständigem Bestand (Metadaten passen zum Inhalt, Original intakt).
+                    if same.bytes == bytes, same.digest == hex, try verifyCommitted(same) { return same }
+                }
+                // Gleiche Bedingungen, aber beschädigt, oder Metadaten unlesbar: reparieren.
+                damaged = true
+            }
+            let item = InboxItem(id: id, source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
+                                 bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
+            let staging = root.appendingPathComponent(".tmp-" + UUID().uuidString)
+            try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+            defer { try? fm.removeItem(at: staging) }
+            let target = staging.appendingPathComponent("original." + ext)
+            try fm.copyItem(at: source, to: target)
+            try DurableFiles.sync(target)
+            guard try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
+            try DurableFiles.write(try JSONEncoder().encode(item), to: staging.appendingPathComponent("eingang.json"))
+            // Den beschädigten Bestand erst beiseitelegen, wenn die neue Kopie vollständig ist:
+            // scheitert vorher etwas, bleibt der alte Stand unverändert liegen.
+            if damaged {
+                let broken = root.appendingPathComponent(".tmp-" + UUID().uuidString)
+                try fm.moveItem(at: finalDir, to: broken)
+                defer { try? fm.removeItem(at: broken) }
+                try fm.moveItem(at: staging, to: finalDir)
+            } else {
+                try fm.moveItem(at: staging, to: finalDir)
+            }
             try DurableFiles.syncDirectory(root)
+            return item
         }
-        let item = InboxItem(id: id, source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
-                             bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
-        let staging = root.appendingPathComponent(".tmp-" + UUID().uuidString)
-        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
-        defer { try? fm.removeItem(at: staging) }
-        let target = staging.appendingPathComponent("original." + ext)
-        try fm.copyItem(at: source, to: target)
-        try DurableFiles.sync(target)
-        guard try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
-        try DurableFiles.write(try JSONEncoder().encode(item), to: staging.appendingPathComponent("eingang.json"))
-        do {
-            try fm.moveItem(at: staging, to: finalDir)
-        } catch {
-            // App und Extension haben dieselbe Datei gleichzeitig übernommen: der andere war schneller.
-            guard let other = try pending().first(where: { $0.id == id }), other.consent.sameTerms(as: consent),
-                  try verifyCommitted(other) else { throw error }
-            return other
-        }
-        try DurableFiles.syncDirectory(root)
+    }
+
+    /// Prozessübergreifende Sperre je Kennung (`flock` auf `.lock-<id>` im Eingang).
+    /// Die leeren Sperrdateien bleiben liegen: Löschen unter Konkurrenz würde die Sperre aufheben.
+    func locked<T>(_ id: UUID, _ body: () throws -> T) throws -> T {
+        let fd = open(root.appendingPathComponent(".lock-" + id.uuidString).path, O_RDWR | O_CREAT, 0o600)
+        guard fd >= 0 else { throw IntakeError.invalid }
+        defer { close(fd) }
+        while flock(fd, LOCK_EX) != 0 { guard errno == EINTR else { throw IntakeError.invalid } }
+        defer { flock(fd, LOCK_UN) }
+        return try body()
+    }
+
+    static func read(_ dir: URL) -> InboxItem? {
+        guard let data = try? Data(contentsOf: dir.appendingPathComponent("eingang.json")),
+              let item = try? JSONDecoder().decode(InboxItem.self, from: data), item.id.uuidString == dir.lastPathComponent else { return nil }
         return item
     }
 
@@ -195,11 +216,7 @@ public struct MeetingInbox: Sendable {
     public func pending() throws -> [InboxItem] {
         try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
             .filter { UUID(uuidString: $0.lastPathComponent) != nil }
-            .compactMap { dir -> InboxItem? in
-                guard let data = try? Data(contentsOf: dir.appendingPathComponent("eingang.json")),
-                      let item = try? JSONDecoder().decode(InboxItem.self, from: data), item.id.uuidString == dir.lastPathComponent else { return nil }
-                return item
-            }
+            .compactMap { Self.read($0) }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
@@ -214,10 +231,17 @@ public struct MeetingInbox: Sendable {
         // Löschen dauerhaft machen. Scheitert das Löschen, bleibt der Eintrag; scheitert erst der
         // Sync, ist er schon entfernt, kann aber nach einem Stromausfall wieder auftauchen. Beides
         // ist unkritisch, weil die nächste Übernahme dank gleicher Kennung idempotent ist.
-        let dir = root.appendingPathComponent(item.id.uuidString)
-        if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
-        try DurableFiles.syncDirectory(root)
+        try discard(item)
         return result
+    }
+
+    /// Eintrag entfernen (nach der Übernahme oder bei unbrauchbarem Inhalt), unter der Sperre der Kennung.
+    public func discard(_ item: InboxItem) throws {
+        try locked(item.id) {
+            let dir = root.appendingPathComponent(item.id.uuidString)
+            if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
+            try DurableFiles.syncDirectory(root)
+        }
     }
 
     /// Liegt der Eintrag vollständig vor (Original vorhanden, Größe und Prüfsumme stimmen)?
