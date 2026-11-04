@@ -3988,6 +3988,7 @@ dependencies = [
  "native-tls",
  "natural",
  "once_cell",
+ "ort",
  "pdf-extract",
  "rand 0.8.8",
  "rdev",

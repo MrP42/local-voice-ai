@@ -40,12 +40,14 @@ const install = (page: Page, theme: "light" | "dark") =>
     };
     w.__calls = [];
     w.__played = [];
-    w.__names = {
-      "2:1": "Peter Wöhrle",
-      "2:2": "Patrick Wolff",
-      "2:3": "Patrick Wolff",
-      "2:4": "Patrick Wolff",
-    } as Record<string, string>;
+    w.__names =
+      w.__presetNames ??
+      ({
+        "2:1": "Peter Wöhrle",
+        "2:2": "Patrick Wolff",
+        "2:3": "Patrick Wolff",
+        "2:4": "Patrick Wolff",
+      } as Record<string, string>);
     w.__merges = [] as any[];
     w.__mergeSeq = 0;
     w.__people = [
@@ -320,6 +322,25 @@ const install = (page: Page, theme: "light" | "dark") =>
               changed();
               return null;
             }
+            case "meeting_voice_matches": {
+              // Wie das Backend: nur Paare, deren Sprecher es noch gibt.
+              const alive = new Set(
+                w.__segments.map((x: any) => x.speaker_index ?? 0),
+              );
+              const dismissed = w.__voiceDismissed ?? [];
+              return {
+                state: w.__voice ? "ready" : "model_missing",
+                matches: (w.__voice ?? []).filter(
+                  (m: any) =>
+                    alive.has(m.a) &&
+                    alive.has(m.b) &&
+                    !dismissed.some((d: any) => d.a === m.a && d.b === m.b),
+                ),
+              };
+            }
+            case "meeting_voice_match_dismiss":
+              (w.__voiceDismissed ??= []).push({ a: args.a, b: args.b });
+              return null;
             case "meeting_speaker_rename": {
               const key = `${args.channel}:${args.speakerIndex}`;
               const name = (args.name ?? "").trim();
@@ -590,4 +611,129 @@ test.describe("Touchziele und Abnahmebilder", () => {
       });
     }
   }
+});
+
+// Stimmprofile 2a: Vorschlag "klingen gleich" aus Stimmabdrücken. Patrick ist
+// einmal benannt (2), die Sprechertrennung hat ihn zusätzlich als "Person 3"
+// geführt; das Backend meldet 87 % Ähnlichkeit.
+const SHOTS_VOICE =
+  process.env.LV_SHOT_DIR_VOICE ?? "test-results/vorschau/stimmen-vorschlag";
+
+const openVoice = async (
+  page: Page,
+  width = 1440,
+  theme: "light" | "dark" = "light",
+) => {
+  await page.addInitScript(() => {
+    const w = window as any;
+    w.__presetNames = { "2:1": "Peter Wöhrle", "2:2": "Patrick Wolff" };
+    w.__voice = [{ channel: 2, a: 2, b: 3, score: 87 }];
+  });
+  await open(page, width, theme);
+};
+
+test.describe("Gleiche Stimmen", () => {
+  test("Vorschlag führt zusammen, Rückgängig trennt wieder", async ({
+    page,
+  }) => {
+    await openVoice(page);
+    const hint = page.getByTestId("speaker-voice-hint");
+    await expect(hint).toHaveCount(1);
+    await expect(hint).toContainText(
+      "„Person 3“ und „Patrick Wolff“ klingen gleich (87 % ähnlich). Ist das dieselbe Person?",
+    );
+    await expect(hint).toContainText("Er wird nicht gespeichert.");
+    await expect(page.getByTestId("speaker-duplicate-hint")).toHaveCount(0);
+    await hint.getByTestId("speaker-voice-merge").click();
+    const merge = await calls(page, "meeting_speaker_merge");
+    // Patrick (21 s) bleibt, Person 3 (5 s) geht in ihm auf.
+    expect(merge.map((c) => [c.args.from, c.args.into])).toEqual([[3, 2]]);
+    await expect(rowOf(page, "2:3")).toHaveCount(0);
+    await expect(page.getByTestId("speaker-voice-hint")).toHaveCount(0);
+    await expect(page.getByTestId("speaker-merge-notice")).toContainText(
+      "2 Sprecher zu „Patrick Wolff“ zusammengeführt.",
+    );
+    await page.getByTestId("speaker-merge-undo").click();
+    await expect(rowOf(page, "2:3")).toHaveCount(1);
+    await expect(page.getByTestId("speaker-voice-hint")).toHaveCount(1);
+  });
+
+  test("„Verschiedene Personen“ verwirft den Vorschlag dauerhaft", async ({
+    page,
+  }) => {
+    await openVoice(page);
+    await page.getByTestId("speaker-voice-dismiss").click();
+    await expect(page.getByTestId("speaker-voice-hint")).toHaveCount(0);
+    const sent = await calls(page, "meeting_voice_match_dismiss");
+    expect(sent.map((c) => c.args)).toEqual([
+      { meetingId: "m1", channel: 2, a: 2, b: 3 },
+    ]);
+    expect(await calls(page, "meeting_speaker_merge")).toHaveLength(0);
+    // Neu laden der Tabelle (Umbenennen): der Vorschlag bleibt weg.
+    await page.evaluate(() =>
+      (window as any).__emit("speakers-changed", { meeting_id: "m1" }),
+    );
+    await expect(rows(page)).toHaveCount(5);
+    await expect(page.getByTestId("speaker-voice-hint")).toHaveCount(0);
+  });
+
+  test("ohne Stimmmodell kein Hinweis", async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__presetNames = { "2:2": "Patrick Wolff" };
+    });
+    await open(page);
+    await expect(rows(page)).toHaveCount(5);
+    await expect(page.getByTestId("speaker-voice-hint")).toHaveCount(0);
+  });
+
+  test.describe("Abnahmebilder", () => {
+    test.describe.configure({ timeout: 180_000 });
+    for (const width of [390, 1440]) {
+      for (const theme of ["light", "dark"] as const) {
+        test(`${width} px ${theme}`, async ({ page }) => {
+          await openVoice(page, width, theme);
+          const hint = page.getByTestId("speaker-voice-hint");
+          // In die Mitte rollen: unten liegt der Hinweis "Weiter unten geht es weiter".
+          await hint.evaluate((el) => el.scrollIntoView({ block: "center" }));
+          await expect(hint).toBeInViewport({ ratio: 1 });
+          await page.mouse.move(0, 0);
+          // Beide Knöpfe passen in den Hinweis, sind frei und mindestens 44 px hoch.
+          const hb = await hint.boundingBox();
+          for (const id of ["speaker-voice-merge", "speaker-voice-dismiss"]) {
+            const button = hint.getByTestId(id);
+            const box = await button.boundingBox();
+            expect(box!.x).toBeGreaterThanOrEqual(hb!.x);
+            expect(box!.x + box!.width).toBeLessThanOrEqual(
+              hb!.x + hb!.width + 0.5,
+            );
+            expect(box!.height).toBeGreaterThanOrEqual(44);
+            const free = await button.evaluate((el) => {
+              const r = el.getBoundingClientRect();
+              const hit = document.elementFromPoint(
+                r.left + r.width / 2,
+                r.top + r.height / 2,
+              );
+              return !!hit && el.contains(hit);
+            });
+            expect(free).toBe(true);
+            const clipped = await button.evaluate(
+              (el) => el.scrollWidth > el.clientWidth + 1,
+            );
+            expect(clipped).toBe(false);
+          }
+          const overflow = await page.evaluate(
+            () =>
+              document.documentElement.scrollWidth >
+              document.documentElement.clientWidth,
+          );
+          expect(overflow).toBe(false);
+          fs.mkdirSync(SHOTS_VOICE, { recursive: true });
+          await page.screenshot({
+            animations: "disabled",
+            path: `${SHOTS_VOICE}/5-vorschlag-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
+          });
+        });
+      }
+    }
+  });
 });

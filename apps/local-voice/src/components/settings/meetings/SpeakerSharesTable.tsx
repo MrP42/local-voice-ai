@@ -15,6 +15,7 @@ import {
   type MeetingSpeaker,
   type SpeakerMerge,
   type StoredSegment,
+  type VoiceMatch,
 } from "@/bindings";
 import {
   absorbedInto,
@@ -27,6 +28,7 @@ import {
   shareRows,
   speakerKey,
   speakerSamples,
+  voicePairs,
   type SpeakerSample,
 } from "@/lib/meetingSpeakerShares";
 import { Button } from "../../ui/Button";
@@ -123,6 +125,12 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
     null,
   );
   const groups = useMemo(() => duplicateGroups(rows), [rows]);
+  // Stimmprofile 2a: "klingen gleich" aus Stimmabdrücken dieser Besprechung.
+  const [voiceMatches, setVoiceMatches] = useState<VoiceMatch[]>([]);
+  const voices = useMemo(
+    () => voicePairs(rows, voiceMatches),
+    [rows, voiceMatches],
+  );
 
   /** Läuft ein Zusammenführen oder Trennen (gegen Doppelklick im selben Takt). */
   const mergeBusyRef = useRef(false);
@@ -144,6 +152,44 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
       current = false;
     };
   }, [meetingId, speakers]);
+
+  useEffect(() => {
+    let current = true;
+    setVoiceMatches([]);
+    void (async () => {
+      try {
+        const result = await commands.meetingVoiceMatches(meetingId);
+        if (
+          current &&
+          result.status === "ok" &&
+          result.data?.state === "ready" &&
+          Array.isArray(result.data.matches)
+        )
+          setVoiceMatches(result.data.matches);
+      } catch {
+        // Ohne Modell oder Audio gibt es nur keinen Vorschlag.
+      }
+    })();
+    return () => {
+      current = false;
+    };
+  }, [meetingId, speakers]);
+
+  /** "Verschiedene Personen": Vorschlag sofort weg, dann merken. */
+  const dismissVoice = (match: {
+    from: MeetingSpeaker;
+    into: MeetingSpeaker;
+  }) => {
+    const { channel } = match.from;
+    const a = Math.min(match.from.speaker_index, match.into.speaker_index);
+    const b = Math.max(match.from.speaker_index, match.into.speaker_index);
+    setVoiceMatches((old) =>
+      old.filter((m) => !(m.channel === channel && m.a === a && m.b === b)),
+    );
+    void commands
+      .meetingVoiceMatchDismiss(meetingId, channel, a, b)
+      .catch(() => undefined);
+  };
 
   // Andere Besprechung: kein "Rückgängig" und keine offene Auswahl von vorher.
   useEffect(() => {
@@ -438,6 +484,47 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
             <Combine width={16} height={16} aria-hidden="true" />
             {t("meetings.speakers.merge.duplicateAction")}
           </Button>
+        </div>
+      ))}
+      {voices.map((match) => (
+        <div
+          key={`voice:${match.from.channel}:${match.from.speaker_index}:${match.into.speaker_index}`}
+          data-testid="speaker-voice-hint"
+          className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-logo-primary/10 px-3 py-1.5 text-sm"
+        >
+          <span className="min-w-[12rem] flex-1">
+            {t("meetings.speakers.merge.voice", {
+              a: match.from.label,
+              b: match.into.label,
+              score: match.score,
+            })}
+            <span className="block text-xs text-text/60">
+              {t("meetings.speakers.merge.voiceNote")}
+            </span>
+          </span>
+          <span className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="md"
+              style={TOUCH_WRAP}
+              disabled={mergeBusy}
+              data-testid="speaker-voice-merge"
+              onClick={() => void runMerges([match])}
+            >
+              <Combine width={16} height={16} aria-hidden="true" />
+              {t("meetings.speakers.merge.voiceAction")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="md"
+              style={TOUCH_WRAP}
+              disabled={mergeBusy}
+              data-testid="speaker-voice-dismiss"
+              onClick={() => dismissVoice(match)}
+            >
+              {t("meetings.speakers.merge.voiceDismiss")}
+            </Button>
+          </span>
         </div>
       ))}
       {notice && (

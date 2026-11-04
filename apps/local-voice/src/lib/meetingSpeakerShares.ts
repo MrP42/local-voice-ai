@@ -1,4 +1,4 @@
-import type { MeetingSpeaker, StoredSegment } from "@/bindings";
+import type { MeetingSpeaker, StoredSegment, VoiceMatch } from "@/bindings";
 
 /**
  * #242: Tabelle "Sprecher & Redeanteile" mit Hörproben und Umbenennen.
@@ -186,6 +186,28 @@ export function mergeCandidates<T extends ShareSpeaker>(
       r.channel === speaker.channel &&
       r.speaker_index !== speaker.speaker_index,
   );
+}
+
+/**
+ * Stimmprofile 2a: Vorschläge "klingen gleich" als Zeilenpaare. Paare, deren
+ * Zeilen es (nach einem Zusammenführen) nicht mehr gibt oder die schon gleich
+ * heißen (das zeigt der Hinweis bei gleichem Namen), fallen weg. `from`/`into`
+ * wie beim Zusammenführen über die Auswahl.
+ */
+export function voicePairs<T extends ShareSpeaker>(
+  rows: T[],
+  matches: VoiceMatch[],
+): { from: T; into: T; score: number }[] {
+  const find = (channel: number, index: number) =>
+    rows.find((r) => r.channel === channel && r.speaker_index === index);
+  return matches.flatMap((m) => {
+    const a = find(m.channel, m.a);
+    const b = find(m.channel, m.b);
+    if (!a || !b) return [];
+    if (a.display_name && nameKey(a.display_name) === nameKey(b.display_name))
+      return [];
+    return [{ ...mergeDirection(a, b), score: m.score }];
+  });
 }
 
 /**
