@@ -344,21 +344,42 @@ struct MeetingLibraryView: View {
     /// URLs, die gerade bestätigt, geprüft oder übernommen werden: nie ein zweites Mal anbieten.
     @State private var inFlight: Set<URL> = []
 
-    /// Synchron gesetzt: immer nur eine Prüfung oder Bestätigung zur Zeit.
-    @State private var offering = false
+    /// Aus der Dateiauswahl gewählte Dateien. Sie warten wie „Öffnen in“-Kopien in derselben
+    /// Reihe und überschreiben nie eine laufende Bestätigung.
+    @State private var requests: [PendingImport] = []
 
+    /// Reservierung: die eine Übernahme, die gerade geprüft, bestätigt oder gesichert wird.
+    /// Synchron gesetzt, erst nach dem Abschluss (Bestätigen oder Verwerfen) wieder frei.
+    @State private var current: PendingImport?
+
+    /// Nächste Übernahme reservieren. Gewählte Dateien zuerst, dann „Öffnen in“-Kopien.
     private func offerNext() {
-        guard !offering, confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) else { return }
-        offering = true
-        inFlight.insert(url)
+        guard current == nil, confirming == nil else { return }
+        let next: PendingImport
+        if !requests.isEmpty {
+            next = requests.removeFirst()
+        } else if let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) {
+            next = PendingImport(url: url, source: .openIn)
+        } else { return }
+        current = next
+        inFlight.insert(next.url)
         Task {
             // Nach einem Absturz kann die Kopie schon übernommen sein: dann nur aufräumen.
-            if await library.alreadyHeld(url) {
-                incoming.finish(url, deleteCopy: true); inFlight.remove(url); offering = false; offerNext(); return
+            if next.source == .openIn, await library.alreadyHeld(next.url) {
+                incoming.finish(next.url, deleteCopy: true)
+                return complete(next)
             }
-            confirming = PendingImport(url: url, source: .openIn)
-            // `offering` bleibt gesetzt, bis die Bestätigung abgeschlossen oder verworfen ist.
+            // Nach dem await prüfen, ob die Reservierung noch gilt und keine Bestätigung offen ist.
+            guard current?.id == next.id, confirming == nil else { return complete(next) }
+            confirming = next
         }
+    }
+
+    /// Reservierung freigeben (jeder Abschluss, jede Quelle) und das Nächste anbieten.
+    private func complete(_ done: PendingImport) {
+        inFlight.remove(done.url)
+        if current?.id == done.id { current = nil }
+        offerNext()
     }
 
     struct PendingImport: Identifiable {
@@ -414,7 +435,11 @@ struct MeetingLibraryView: View {
             .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
-                case .success(let urls): if let first = urls.first { confirming = PendingImport(url: first, source: .files) }
+                case .success(let urls):
+                    if let first = urls.first, !inFlight.contains(first), !requests.contains(where: { $0.url == first }) {
+                        requests.append(PendingImport(url: first, source: .files))
+                    }
+                    offerNext()
                 case .failure: library.error = "Datei konnte nicht geöffnet werden."
                 }
             }
@@ -427,16 +452,13 @@ struct MeetingLibraryView: View {
                     // Kopie nur nach dauerhaftem Eingangs-Commit löschen; sonst bleibt sie für den nächsten Versuch.
                     if pending.source == .openIn, saved { incoming.finish(pending.url, deleteCopy: true) }
                     else if pending.source == .openIn { deferred.insert(pending.url) }
-                    inFlight.remove(pending.url)
-                    if pending.source == .openIn { offering = false }
-                    offerNext()
+                    complete(pending)
                 }
             }, onCancel: {
                 confirming = nil
                 // Ausdrücklich verworfen.
-                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true); offering = false }
-                inFlight.remove(pending.url)
-                offerNext()
+                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true) }
+                complete(pending)
             }).interactiveDismissDisabled()
         }
         .onAppear { incoming.rescan() }

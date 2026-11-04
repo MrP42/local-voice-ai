@@ -136,8 +136,16 @@ public struct MeetingInbox: Sendable {
             // Zweimal geteilt: nur mit denselben Einwilligungsbedingungen derselbe Eintrag.
             // Eine frühere (z. B. KI-)Freigabe wird nie still für eine neue Bestätigung übernommen.
             guard same.bytes == bytes, same.consent.sameTerms(as: consent) else { throw IntakeError.conflict("bereits mit anderer Einwilligung im Eingang") }
+            // Erfolg nur, wenn das gespeicherte Original vollständig ist und erneut gesichert wurde.
+            if try verifyCommitted(same) { return same }
+        }
+        // Beschädigter oder unlesbarer Eintrag derselben Kennung: entfernen und neu anlegen.
+        // Die Quelle bleibt unangetastet; ein sichtbarer Eintrag ist per Rename vollständig
+        // committet, ein Fehlschlag der Prüfung bedeutet also echten Schaden, keinen laufenden Commit.
+        let finalDir = root.appendingPathComponent(id.uuidString)
+        if fm.fileExists(atPath: finalDir.path) {
+            try fm.removeItem(at: finalDir)
             try DurableFiles.syncDirectory(root)
-            return same
         }
         let item = InboxItem(id: id, source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
                              bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
@@ -149,7 +157,14 @@ public struct MeetingInbox: Sendable {
         try DurableFiles.sync(target)
         guard try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
         try DurableFiles.write(try JSONEncoder().encode(item), to: staging.appendingPathComponent("eingang.json"))
-        try fm.moveItem(at: staging, to: root.appendingPathComponent(item.id.uuidString))
+        do {
+            try fm.moveItem(at: staging, to: finalDir)
+        } catch {
+            // App und Extension haben dieselbe Datei gleichzeitig übernommen: der andere war schneller.
+            guard let other = try pending().first(where: { $0.id == id }), other.consent.sameTerms(as: consent),
+                  try verifyCommitted(other) else { throw error }
+            return other
+        }
         try DurableFiles.syncDirectory(root)
         return item
     }

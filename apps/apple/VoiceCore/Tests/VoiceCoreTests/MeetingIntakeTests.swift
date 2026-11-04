@@ -85,6 +85,25 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertFalse(try inbox.verifyCommitted(item))
     }
 
+    func testInboxRepairsDamagedDuplicate() throws {
+        let inbox = try MeetingInbox(root: tmp.appendingPathComponent("Eingang"), digest: TestDigest())
+        let source = try file("r.m4a", [7, 7, 7, 1])
+        let terms = consent(.import, .import)
+        let item = try inbox.deposit(source, from: .openIn, consent: terms)
+        // Beschädigtes Original: erneutes Teilen meldet keinen Erfolg auf kaputtem Stand, sondern repariert.
+        try Data([7, 7, 7, 0]).write(to: inbox.fileURL(item))
+        let repaired = try inbox.deposit(source, from: .openIn, consent: terms)
+        XCTAssertEqual(repaired.id, item.id)
+        XCTAssertTrue(try inbox.verifyCommitted(repaired))
+        XCTAssertEqual(try Data(contentsOf: inbox.fileURL(repaired)), Data([7, 7, 7, 1]))
+        // Unlesbare Metadaten derselben Kennung: ebenso neu anlegen statt am Rename zu scheitern.
+        try Data("kaputt".utf8).write(to: inbox.fileURL(item).deletingLastPathComponent().appendingPathComponent("eingang.json"))
+        let again = try inbox.deposit(source, from: .openIn, consent: terms)
+        XCTAssertEqual(again.id, item.id)
+        XCTAssertEqual(try inbox.pending().map(\.id), [item.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testInboxCreatesWholeDirectoryChain() throws {
         let deep = tmp.appendingPathComponent("a/b/Eingang")
         _ = try MeetingInbox(root: deep, digest: TestDigest())
