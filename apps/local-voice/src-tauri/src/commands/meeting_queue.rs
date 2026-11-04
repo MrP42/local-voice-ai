@@ -16,6 +16,7 @@ use crate::managers::meetings::metadata::MetadataEdit;
 use crate::managers::meetings::queue::{ImportQueue, QueueSnapshot, RemoveOutcome};
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::store::{Meeting, MeetingStore};
+use crate::managers::transcription::TranscriptionManager;
 
 /// Der Stand der Warteschlange (Hydrierung der Oberflaeche; danach halten ihn
 /// die `ImportQueueEvent` aktuell).
@@ -78,8 +79,8 @@ pub async fn meetings_update_metadata(
     Ok(meeting)
 }
 
-/// Einstellung `meeting_import_parallel`: 1 bis 4 gleichzeitige
-/// Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+/// Einstellung `meeting_import_parallel`: 0 = Automatisch (nach Hardware)
+/// oder 1 bis 4 gleichzeitige Transkriptionen (Werte ueber 4 zaehlen als 4). Wirkt
 /// ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
 /// nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
 /// reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
@@ -88,11 +89,23 @@ pub async fn meetings_update_metadata(
 #[specta::specta]
 pub fn change_meeting_import_parallel_setting(app: AppHandle, value: u32) -> Result<(), String> {
     let mut settings = crate::settings::get_settings(&app);
-    settings.meeting_import_parallel = crate::managers::meetings::queue::clamp_limit(value) as u32;
+    settings.meeting_import_parallel = crate::managers::meetings::queue::normalize_setting(value);
     crate::settings::write_settings(&app, settings);
     // Die Einstellung gilt auch ohne Warteschlange (Besprechungen nicht verfuegbar).
     if let Some(queue) = app.try_state::<Arc<ImportQueue>>() {
         queue.notify();
     }
     Ok(())
+}
+
+/// Empfehlung fuer "Gleichzeitige Transkriptionen" auf diesem Rechner: so viele
+/// laufen bei "Automatisch", und wodurch die Zahl begrenzt ist (Kerne,
+/// Arbeits- oder Grafikspeicher, Obergrenze).
+#[tauri::command]
+#[specta::specta]
+pub fn get_meeting_import_parallel_recommendation(
+    app: AppHandle,
+    transcription: State<'_, Arc<TranscriptionManager>>,
+) -> crate::managers::meetings::queue::ParallelRecommendation {
+    crate::managers::meetings::queue::recommendation_for_app(&app, &transcription, true)
 }

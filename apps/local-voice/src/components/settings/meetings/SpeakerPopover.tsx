@@ -74,7 +74,10 @@ export const SpeakerPopover: React.FC<SpeakerPopoverProps> = ({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const sameChannel = speakers.filter((s) => s.channel === speaker.channel);
+  // Der ganze Kanal (#242, Nummer 0) ist kein Ziel zum Zusammenführen/Umhängen.
+  const sameChannel = speakers.filter(
+    (s) => s.channel === speaker.channel && s.speaker_index !== 0,
+  );
   const others = sameChannel.filter(
     (s) => s.speaker_index !== speaker.speaker_index,
   );

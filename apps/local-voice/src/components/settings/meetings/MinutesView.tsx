@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { DocUsageLine } from "./DocUsageLine";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -26,7 +32,37 @@ import {
 import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
 import { useReadAloudHighlight } from "./useReadAloudHighlight";
-import { Check, Copy, Download, RefreshCw, Sparkles } from "lucide-react";
+import { staticSharesTable } from "./SpeakerSharesTable";
+import { splitSpeakerSection } from "@/lib/meetingSpeakerShares";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  FileText,
+  History,
+  Pencil,
+  RefreshCw,
+  Sparkles,
+} from "lucide-react";
+import { ActionMenu } from "../../ui/ActionMenu";
+import { locateInMarkdown } from "@/lib/minutesEdit";
+import { MinutesEditor, minutesDraftFor } from "./MinutesEditor";
+import { useRegenerateGuard } from "./useRegenerateGuard";
+
+/** Blöcke der Leseansicht, die einzeln zum Bearbeiten angeklickt werden können. */
+const EDIT_BLOCKS = "h1, h2, h3, p, li, td, th, blockquote";
+/** Abschnitte mit eigenem, immer sichtbarem „Abschnitt bearbeiten“. */
+const SECTION_HEADINGS = "h2, h3";
+
+/** Nächster Vorfahr, der senkrecht scrollt (Reiterfläche der Besprechung). */
+const scrollParentOf = (el: HTMLElement | null): HTMLElement | null => {
+  for (let node = el?.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return node;
+  }
+  return null;
+};
 
 interface MinutesViewProps {
   meetingId: string;
@@ -40,6 +76,11 @@ interface MinutesViewProps {
   docType?: DocTypeInfo;
   /** Vorne in der Werkzeugzeile (Typleiste der Dokumente): keine eigene Zeile. */
   toolbarLead?: React.ReactNode;
+  /**
+   * #242: ersetzt die Tabelle "Sprecher & Redeanteile" des Protokolls durch die
+   * bedienbare Tabelle (Hörproben, Namen). Nur beim Protokoll.
+   */
+  speakerTable?: React.ReactNode;
 }
 
 export const MinutesView: React.FC<MinutesViewProps> = ({
@@ -48,11 +89,44 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   slideRefs,
   docType,
   toolbarLead,
+  speakerTable,
 }) => {
   const { t, i18n } = useTranslation();
   const docKind = docType ? docType.kind : "minutes";
   const docKey = docType?.key ?? null;
-  const [doc, setDoc] = useState<MeetingDocument | null>(null);
+  // Alle Versionen dieses Typs, neueste zuerst; angezeigt wird die gewählte
+  // (Standard: die neueste). Neu erzeugen legt eine Version an, eine
+  // Handbearbeitung ändert die angezeigte Version.
+  const [versions, setVersions] = useState<MeetingDocument[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const doc = versions.find((d) => d.id === selectedId) ?? versions[0] ?? null;
+  const setDoc = useCallback((next: MeetingDocument | null) => {
+    if (!next) return;
+    setVersions((list) =>
+      [next, ...list.filter((d) => d.id !== next.id)].sort(
+        (a, b) => b.version - a.version,
+      ),
+    );
+  }, []);
+  // Bearbeiten: `null` = Leseansicht; sonst die Stelle, an der der Editor öffnet.
+  const [editing, setEditing] = useState<{
+    reveal: { start: number; end: number } | null;
+  } | null>(null);
+  // Stift neben dem Block unter dem Mauszeiger (wie beim Transkript).
+  const [hoverPen, setHoverPen] = useState<{
+    top: number;
+    block: HTMLElement;
+  } | null>(null);
+  // Abschnittsknöpfe neben jeder Überschrift (Lage in der Vorschau gemessen).
+  const [sections, setSections] = useState<
+    { top: number; el: HTMLElement; title: string }[]
+  >([]);
+  // Unten geht es weiter: Hinweis am unteren Rand der Reiterfläche.
+  const [moreBelow, setMoreBelow] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const guard = useRegenerateGuard();
+  // Sperrt "Neu erzeugen" schon während der Rückfrage (Doppelklick).
+  const generatingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   // Der Lauf gehoert dem Backend (B14): `running` kommt aus dessen Zustand und
   // seinen Ereignissen, nicht aus dem Aufruf dieses Reiters. So bleibt der
@@ -71,24 +145,48 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   // Nur der Dokumenttext (ohne Verbrauchszeile): dort steht der vorgelesene Satz.
   const bodyRef = useRef<HTMLDivElement>(null);
   const speakKey = `minutes:${meetingId}:${docKey ?? "minutes"}`;
-  useReadAloudHighlight(bodyRef, speakKey, doc?.body ?? null);
+  // Beim Bearbeiten keine Hervorhebung (die Vorschau ist ausgehängt).
+  useReadAloudHighlight(
+    bodyRef,
+    speakKey,
+    editing ? null : (doc?.body ?? null),
+  );
 
-  const loadLatest = useCallback(async () => {
-    setLoading(true);
-    const result = await commands.meetingsGetDocuments(meetingId);
-    setLoading(false);
-    if (result.status !== "ok") {
-      // Failing to load used to render as "no minutes yet" — which is exactly
-      // what a deleted document looks like. Say which of the two it is.
-      setError(t("meetings.minutes.loadError", { error: result.error }));
-      return;
-    }
-    setError(null);
-    const minutes = result.data
-      .filter((d) => d.kind === docKind)
-      .sort((a, b) => b.version - a.version);
-    setDoc(minutes[0] ?? null);
-  }, [meetingId, t, docKind]);
+  // Neu laden nach einem Lauf darf den offenen Editor weder aushängen noch
+  // die bearbeitete Version wechseln: der Ladetext steht nur beim ersten Laden.
+  const editingRef = useRef(false);
+  editingRef.current = editing !== null;
+  const loadedOnce = useRef(false);
+  const loadLatest = useCallback(
+    async (keepSelection = false) => {
+      if (!loadedOnce.current) setLoading(true);
+      const result = await commands.meetingsGetDocuments(meetingId);
+      loadedOnce.current = true;
+      setLoading(false);
+      if (result.status !== "ok") {
+        // Failing to load used to render as "no minutes yet" — which is exactly
+        // what a deleted document looks like. Say which of the two it is.
+        setError(t("meetings.minutes.loadError", { error: result.error }));
+        return;
+      }
+      setError(null);
+      const minutes = result.data
+        .filter((d) => d.kind === docKind)
+        .sort((a, b) => b.version - a.version);
+      setVersions(minutes);
+      // #242: nach dem Umbenennen bleibt die gewählte Version stehen.
+      if (editingRef.current || keepSelection) return;
+      // Offener Entwurf (Reiter gewechselt, Besprechung verlassen): wieder öffnen.
+      const drafted = minutes.find((d) => minutesDraftFor(d.id) !== undefined);
+      if (drafted) {
+        setSelectedId(drafted.id);
+        setEditing({ reveal: null });
+        return;
+      }
+      setSelectedId(null);
+    },
+    [meetingId, t, docKind],
+  );
 
   const loadMeta = useCallback(async () => {
     const result = docKey
@@ -105,11 +203,28 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setProgress(result.data.running ? (result.data.progress ?? null) : null);
   }, [meetingId]);
 
+  // Andere Besprechung oder anderer Dokumenttyp: nichts Fremdes zeigen.
+  useEffect(() => {
+    setVersions([]);
+    setSelectedId(null);
+  }, [meetingId, docKind]);
+
   useEffect(() => {
     void loadLatest();
     void loadMeta();
     void loadRunState();
   }, [loadLatest, loadMeta, loadRunState]);
+
+  // #242: ein umbenannter Sprecher erscheint auch im gespeicherten Text (das
+  // Backend setzt beim Lesen die aktuellen Namen ein).
+  useEffect(() => {
+    const un = events.speakersChanged.listen((e) => {
+      if (e.payload.meeting_id === meetingId) void loadLatest(true);
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [meetingId, loadLatest]);
 
   const errorText = useCallback(
     (raw: string) =>
@@ -192,6 +307,18 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
   }, [meetingId, docKey, loadLatest, loadMeta, loadRunState, errorText]);
 
   const generate = async () => {
+    if (editing || generatingRef.current) return;
+    generatingRef.current = true;
+    try {
+      await runGenerate();
+    } finally {
+      generatingRef.current = false;
+    }
+  };
+
+  const runGenerate = async () => {
+    // Von Hand bearbeitet? Vorher fragen; die bearbeitete Version bleibt erhalten.
+    if (!(await guard.confirm(meetingId, docKind))) return;
     setRunning(true);
     setProgress(null);
     setError(null);
@@ -226,7 +353,122 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setRunning(false);
     setProgress(null);
     setDoc(result.data);
+    setSelectedId(null);
     void loadMeta();
+  };
+
+  /** Bearbeiten öffnen; mit Block: der Editor zeigt und markiert dessen Stelle. */
+  const startEdit = (block?: HTMLElement | null) => {
+    if (!doc || running) return;
+    const text = block?.textContent ?? "";
+    setHoverPen(null);
+    // Die bearbeitete Version bleibt angezeigt, auch wenn inzwischen eine neue entsteht.
+    setSelectedId(doc.id);
+    setEditing({ reveal: text ? locateInMarkdown(doc.body, text) : null });
+  };
+
+  /** Editor zu: die neueste Version wieder automatisch zeigen, eine ältere bleibt gewählt. */
+  const closeEditor = () => {
+    setEditing(null);
+    setSelectedId((id) => (id === versions[0]?.id ? null : id));
+  };
+
+  const blockAt = (target: EventTarget | null): HTMLElement | null => {
+    const el = target instanceof Element ? target : null;
+    if (
+      !el ||
+      el.closest("[data-slide-ref], [data-speaker-shares], a, button, input")
+    )
+      return null;
+    const block = el.closest<HTMLElement>(EDIT_BLOCKS);
+    return block && previewRef.current?.contains(block) ? block : null;
+  };
+
+  // Überschriften messen: bei jeder Größenänderung der Vorschau neu.
+  const previewKey = editing ? null : (doc?.id ?? null);
+  const docBody = doc?.body;
+  useLayoutEffect(() => {
+    const preview = previewRef.current;
+    const wrapper = wrapperRef.current;
+    if (!preview || !wrapper) {
+      setSections([]);
+      return;
+    }
+    const measure = () => {
+      const base = wrapper.getBoundingClientRect().top;
+      // Höhe des Abschnittsknopfs (schmal 44 px Touchziel, sonst h-8).
+      const penHeight = window.matchMedia("(max-width: 639px)").matches
+        ? 44
+        : 32;
+      const all = Array.from(
+        preview.querySelectorAll<HTMLElement>(SECTION_HEADINGS),
+      ).map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          el,
+          top: rect.top - base + (rect.height - penHeight) / 2,
+          title: el.textContent?.trim() ?? "",
+        };
+      });
+      // Steht die nächste Überschrift direkt darunter (Titel über dem ersten
+      // Abschnitt), überdecken sich die Knöpfe: dann gilt der Knopf des
+      // folgenden, genaueren Abschnitts.
+      setSections(
+        all.filter(
+          (s, i) => !all[i + 1] || all[i + 1].top - s.top >= penHeight + 4,
+        ),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(preview);
+    return () => observer.disconnect();
+  }, [previewKey, docBody]);
+
+  // Weiter unten Inhalt? Am scrollenden Vorfahren beobachten.
+  useEffect(() => {
+    const scroller = scrollParentOf(wrapperRef.current);
+    if (!scroller || !previewKey) {
+      setMoreBelow(false);
+      return;
+    }
+    const check = () =>
+      setMoreBelow(
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight > 8,
+      );
+    check();
+    scroller.addEventListener("scroll", check, { passive: true });
+    const observer = new ResizeObserver(check);
+    observer.observe(scroller);
+    if (previewRef.current) observer.observe(previewRef.current);
+    return () => {
+      scroller.removeEventListener("scroll", check);
+      observer.disconnect();
+    };
+  }, [previewKey, docBody]);
+
+  // Markierung des Blocks unter dem Mauszeiger (zeigt, was der Stift bearbeitet).
+  useEffect(() => {
+    const block = hoverPen?.block;
+    if (!block) return;
+    block.setAttribute("data-edit-hover", "");
+    return () => block.removeAttribute("data-edit-hover");
+  }, [hoverPen?.block]);
+
+  const onPreviewHover = (event: React.MouseEvent<HTMLDivElement>) => {
+    const block = blockAt(event.target);
+    if (!block) return;
+    // Überschriften haben ihren eigenen Knopf.
+    if (block.matches(SECTION_HEADINGS)) {
+      if (hoverPen) setHoverPen(null);
+      return;
+    }
+    // Innerster Block: ein Listenpunkt mit Absatz zeigt den Stift am Absatz.
+    const wrapper = event.currentTarget.getBoundingClientRect();
+    const rect = block.getBoundingClientRect();
+    const top = rect.top - wrapper.top;
+    if (hoverPen?.block === block && hoverPen.top === top) return;
+    setHoverPen({ top, block });
   };
 
   /**
@@ -241,11 +483,23 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     // D5: die Folienmarken sind im Dokument Schaltflaechen; in der Zwischenablage stehen sie
     // wieder als Text (`[F7]`), wie im gespeicherten Protokoll.
     const preview = previewRef.current?.cloneNode(true) as
-      | HTMLElement
-      | undefined;
+      HTMLElement | undefined;
+    preview
+      ?.querySelectorAll("[data-edit-hover]")
+      .forEach((el) => el.removeAttribute("data-edit-hover"));
     preview?.querySelectorAll("[data-slide-ref]").forEach((el) => {
       el.replaceWith(
         document.createTextNode(`[F${el.getAttribute("data-slide-ref")}]`),
+      );
+    });
+    // #242: die bedienbare Sprechertabelle als schlichte Tabelle.
+    preview?.querySelectorAll("[data-speaker-shares]").forEach((el) => {
+      el.replaceWith(
+        staticSharesTable(el, {
+          speaker: t("meetings.speakers.table.speaker"),
+          time: t("meetings.speakers.table.time"),
+          share: t("meetings.speakers.table.share"),
+        }),
       );
     });
     const html = preview?.innerHTML;
@@ -304,7 +558,10 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
     setSaved(target);
   };
 
-  if (loading) {
+  // Neu laden (Umbenennen, Ende eines Laufs) ersetzt das Dokument an Ort und
+  // Stelle; "Lädt" nur, solange noch nichts da ist (#242: sonst verlöre die
+  // Sprechertabelle Fokus und laufende Hörprobe).
+  if (loading && !doc) {
     return (
       <p className="text-sm text-text/60 text-center py-3">
         {t("meetings.list.loading")}
@@ -321,7 +578,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         role="toolbar"
         aria-label={t("meetings.minutes.toolbar")}
         data-testid="minutes-toolbar"
-        className="lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
+        className="minutes-toolbar lv-touch-icons sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-0.5"
       >
         {toolbarLead}
         <IconAction
@@ -334,11 +591,63 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           }
           description={t("meetings.minutes.regenerateHint")}
           testId="minutes-generate"
-          disabled={running}
-          onClick={generate}
+          disabled={running || editing !== null}
+          onClick={() => void generate()}
         />
         {doc && (
           <>
+            <IconAction
+              size="sm"
+              icon={Pencil}
+              label={t("meetings.minutes.edit.start")}
+              description={t("meetings.minutes.edit.startHint")}
+              testId="minutes-edit"
+              aria-pressed={editing !== null}
+              className={
+                editing
+                  ? "!border-logo-primary/60 !bg-logo-primary/15 !text-text"
+                  : ""
+              }
+              disabled={running || editing !== null}
+              onClick={() => startEdit()}
+            />
+            {versions.length > 1 && (
+              <ActionMenu
+                menuLabel={t("meetings.minutes.versions.menu")}
+                widthClass="w-72"
+                trigger={{
+                  icon: History,
+                  size: "sm",
+                  label: t("meetings.minutes.versions.label", {
+                    version: doc.version,
+                    count: versions.length,
+                  }),
+                  description: t("meetings.minutes.versions.hint"),
+                  testId: "minutes-versions",
+                  disabled: editing !== null,
+                }}
+                items={versions.map((v, i) => ({
+                  id: v.id,
+                  label: t(
+                    v.edited
+                      ? "meetings.minutes.versions.itemEdited"
+                      : "meetings.minutes.versions.item",
+                    {
+                      version: v.version,
+                      date: new Date(v.created_at * 1000).toLocaleString(
+                        i18n.language,
+                        { dateStyle: "short", timeStyle: "short" },
+                      ),
+                    },
+                  ),
+                  title:
+                    i === 0 ? t("meetings.minutes.versions.latest") : undefined,
+                  icon: v.id === doc.id ? Check : FileText,
+                  testId: `minutes-version-${v.version}`,
+                  onSelect: () => setSelectedId(i === 0 ? null : v.id),
+                }))}
+              />
+            )}
             <IconAction
               size="sm"
               icon={copied ? Check : Copy}
@@ -351,6 +660,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               }
               description={t("meetings.minutes.copyHint")}
               testId="minutes-copy"
+              disabled={editing !== null}
               onClick={copyMinutes}
             />
             <IconAction
@@ -359,12 +669,14 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               label={t("meetings.minutes.download")}
               description={t("meetings.detail.export")}
               testId="minutes-export"
+              disabled={editing !== null}
               onClick={exportMinutes}
             />
             <ReadAloudButton
               speakKey={speakKey}
               getMarkdown={() => doc.body}
               testId="minutes-readaloud"
+              disabled={editing !== null}
               fileStem={
                 docType
                   ? `${meetingTitle} \u2013 ${docType.title}`
@@ -379,6 +691,13 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
               {docType
                 ? t("meetings.documents.generating", { title: docType.title })
                 : t("meetings.minutes.generating")}
+            </span>
+          </Badge>
+        )}
+        {doc?.edited && (
+          <Badge variant="secondary">
+            <span data-testid="minutes-edited">
+              {t("meetings.minutes.edit.edited")}
             </span>
           </Badge>
         )}
@@ -403,16 +722,110 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
         </Alert>
       )}
 
-      {doc ? (
-        <div
-          ref={previewRef}
-          data-testid="minutes-doc"
-          className="rounded-lg border border-mid-gray/20 p-4"
-        >
-          <DocUsageLine documentId={doc.id} />
-          <div ref={bodyRef} data-testid="minutes-body">
-            <MarkdownContent markdown={doc.body} slideRefs={slideRefs} />
+      {doc && versions[0] && doc.id !== versions[0].id && (
+        <Alert variant="info">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="me-auto" data-testid="minutes-old-version">
+              {t("meetings.minutes.versions.olderShown", {
+                version: doc.version,
+                latest: versions[0].version,
+              })}
+            </span>
+            <button
+              type="button"
+              className="min-h-8 rounded-md px-2 text-sm font-medium text-logo-primary hover:underline"
+              data-testid="minutes-version-latest"
+              onClick={() => setSelectedId(null)}
+            >
+              {t("meetings.minutes.versions.toLatest")}
+            </button>
           </div>
+        </Alert>
+      )}
+
+      {doc && editing ? (
+        <MinutesEditor
+          key={doc.id}
+          doc={doc}
+          reveal={editing.reveal}
+          onClose={closeEditor}
+          onSaved={(next) => {
+            setDoc(next);
+            closeEditor();
+          }}
+        />
+      ) : doc ? (
+        <div
+          ref={wrapperRef}
+          className="minutes-preview relative"
+          onMouseOver={onPreviewHover}
+          onMouseLeave={() => setHoverPen(null)}
+          onDoubleClick={(event) => {
+            const block = blockAt(event.target);
+            if (block) startEdit(block);
+          }}
+        >
+          <div
+            ref={previewRef}
+            data-testid="minutes-doc"
+            className="rounded-lg border border-mid-gray/20 p-4 pe-10"
+          >
+            <DocUsageLine documentId={doc.id} />
+            <div ref={bodyRef} data-testid="minutes-body">
+              <MinutesBody
+                body={doc.body}
+                slideRefs={slideRefs}
+                speakerTable={docType ? undefined : speakerTable}
+              />
+            </div>
+          </div>
+          {!running &&
+            sections.map((section, i) => (
+              <button
+                key={`${i}:${section.title}`}
+                type="button"
+                data-testid="minutes-section-edit"
+                title={t("meetings.minutes.edit.sectionHint", {
+                  title: section.title,
+                })}
+                aria-label={t("meetings.minutes.edit.sectionLabel", {
+                  title: section.title,
+                })}
+                onClick={() => startEdit(section.el)}
+                style={{ top: section.top }}
+                className="minutes-section-pen absolute end-2 flex h-8 items-center gap-1.5 rounded-md border border-mid-gray/30 bg-background px-2 text-xs font-medium text-text/80 hover:border-logo-primary hover:text-logo-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+              >
+                <Pencil width={14} height={14} aria-hidden="true" />
+                <span className="minutes-section-pen__text">
+                  {t("meetings.minutes.edit.section")}
+                </span>
+              </button>
+            ))}
+          {hoverPen && !running && (
+            <button
+              type="button"
+              data-testid="minutes-block-edit"
+              title={t("meetings.minutes.edit.block")}
+              aria-label={t("meetings.minutes.edit.block")}
+              onClick={() => startEdit(hoverPen.block)}
+              style={{ top: hoverPen.top }}
+              className="minutes-block-pen absolute end-2 flex h-7 w-7 items-center justify-center rounded-md border border-logo-primary/50 bg-background text-logo-primary hover:bg-logo-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary"
+            >
+              <Pencil width={14} height={14} aria-hidden="true" />
+            </button>
+          )}
+          {moreBelow && (
+            <div
+              aria-hidden="true"
+              data-testid="minutes-more-below"
+              className="pointer-events-none sticky bottom-0 -mt-12 flex h-12 items-end justify-center bg-gradient-to-t from-background via-background/80 to-transparent pb-1"
+            >
+              <span className="flex items-center gap-1 rounded-full border border-mid-gray/30 bg-background px-2.5 py-0.5 text-xs text-text/80 shadow-sm">
+                <ChevronDown width={14} height={14} />
+                {t("meetings.minutes.moreBelow")}
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         !running && (
@@ -427,7 +840,33 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
           </p>
         )
       )}
+      {guard.dialog}
     </div>
+  );
+};
+
+/**
+ * Der Dokumenttext; beim Protokoll mit bedienbarer Sprechertabelle an der
+ * Stelle des Abschnitts "Sprecher & Redeanteile" (#242).
+ */
+const MinutesBody: React.FC<{
+  body: string;
+  slideRefs?: SlideRefs;
+  speakerTable?: React.ReactNode;
+}> = ({ body, slideRefs, speakerTable }) => {
+  const parts = speakerTable ? splitSpeakerSection(body) : null;
+  if (!parts) return <MarkdownContent markdown={body} slideRefs={slideRefs} />;
+  return (
+    <>
+      <MarkdownContent markdown={parts.before} slideRefs={slideRefs} />
+      <div data-testid="minutes-speaker-section" className="mt-4">
+        <MarkdownContent markdown={parts.heading} />
+        {speakerTable}
+      </div>
+      {parts.after.trim() !== "" && (
+        <MarkdownContent markdown={parts.after} slideRefs={slideRefs} />
+      )}
+    </>
   );
 };
 

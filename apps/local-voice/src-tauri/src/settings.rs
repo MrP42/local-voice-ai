@@ -954,11 +954,13 @@ pub struct AppSettings {
     #[serde(default = "default_meeting_diarization")]
     pub meeting_diarization: String,
     /// U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
-    /// werden: 1 (Standard) bis 4. Mehr als eine nur, solange Arbeitsspeicher
-    /// (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
-    /// sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
-    /// settings.json) gilt 1; Werte ausserhalb 1 bis 4 zaehlen als der naechste
-    /// gueltige.
+    /// werden: 0 = Automatisch (Standard, nach Kernen, Arbeits- und
+    /// Grafikspeicher, `queue::recommended_parallel`) oder fest 1 bis 4. Mehr
+    /// als eine nur, solange Arbeitsspeicher (und bei GPU-Modellen
+    /// Grafikspeicher) fuer die weitere Engine reichen; sonst wartet die
+    /// naechste Datei. Ohne den Schluessel gilt Automatisch; Werte ueber 4
+    /// zaehlen als 4. Schema 5 stellt den alten Standard 1 einmalig auf
+    /// Automatisch um.
     #[serde(default = "default_meeting_import_parallel")]
     pub meeting_import_parallel: u32,
     /// M5-P5c (F16): Ad-hoc-Erkennung laufender Besprechungen ueber die
@@ -1057,7 +1059,7 @@ fn default_meeting_diarization() -> String {
 }
 
 fn default_meeting_import_parallel() -> u32 {
-    1
+    crate::managers::meetings::queue::PARALLEL_AUTO
 }
 
 /// M3-P3b: ist die Sprechertrennung eingeschaltet (`meeting_diarization`)?
@@ -1177,7 +1179,7 @@ fn default_model() -> String {
     "".to_string()
 }
 
-const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 4;
+const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 5;
 
 fn default_settings_schema_version() -> u32 {
     CURRENT_SETTINGS_SCHEMA_VERSION
@@ -2346,6 +2348,18 @@ fn apply_settings_migrations(
         } else {
             DictationAudio::Duck
         };
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        updated = true;
+    }
+
+    // Schema 5: gleichzeitige Transkriptionen nach Hardware. Bis hier war 1
+    // der einzige Standard und wurde mitgespeichert; ein bewusstes "1" laesst
+    // sich davon nicht unterscheiden. Einmalig auf Automatisch; wer genau eine
+    // will, stellt es wieder ein. Andere feste Werte bleiben.
+    if stored_schema_version < 5 {
+        if settings.meeting_import_parallel == 1 {
+            settings.meeting_import_parallel = crate::managers::meetings::queue::PARALLEL_AUTO;
+        }
         settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
         updated = true;
     }
@@ -3847,17 +3861,51 @@ mod tests {
 
     // U7
     #[test]
-    fn import_parallelism_defaults_to_one_and_old_files_load() {
-        assert_eq!(get_default_settings().meeting_import_parallel, 1);
+    fn import_parallelism_defaults_to_auto_and_old_files_load() {
+        assert_eq!(get_default_settings().meeting_import_parallel, 0);
         let old: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
         assert_eq!(
-            old.meeting_import_parallel, 1,
-            "aeltere settings.json: ein Lauf"
+            old.meeting_import_parallel, 0,
+            "aeltere settings.json ohne Schluessel: Automatisch"
         );
         let two: AppSettings =
             serde_json::from_value(serde_json::json!({ "meeting_import_parallel": 2 })).unwrap();
         assert_eq!(two.meeting_import_parallel, 2);
+    }
+
+    #[test]
+    fn schema_5_moves_the_old_default_one_to_auto_once() {
+        let mut settings = get_default_settings();
+        settings.meeting_import_parallel = 1;
+        settings.settings_schema_version = 4;
+        let raw = serde_json::json!({ "settings_schema_version": 4, "meeting_import_parallel": 1 });
+        assert!(apply_settings_migrations(&mut settings, &raw));
+        assert_eq!(
+            settings.meeting_import_parallel, 0,
+            "alter Standard 1 -> Automatisch"
+        );
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+
+        // Andere feste Werte bleiben.
+        let mut three = get_default_settings();
+        three.meeting_import_parallel = 3;
+        let raw = serde_json::json!({ "settings_schema_version": 4, "meeting_import_parallel": 3 });
+        apply_settings_migrations(&mut three, &raw);
+        assert_eq!(three.meeting_import_parallel, 3);
+
+        // Schon auf Schema 5: ein bewusstes "1" bleibt.
+        let mut chosen = get_default_settings();
+        chosen.meeting_import_parallel = 1;
+        let raw = serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "meeting_import_parallel": 1
+        });
+        apply_settings_migrations(&mut chosen, &raw);
+        assert_eq!(chosen.meeting_import_parallel, 1);
     }
 
     // M3-P3b

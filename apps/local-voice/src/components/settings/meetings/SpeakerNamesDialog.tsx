@@ -114,10 +114,10 @@ export const SpeakerNamesDialog: React.FC<SpeakerNamesDialogProps> = ({
   const stats = useMemo(() => {
     const map = new Map<string, { count: number; sample: StoredSegment }>();
     for (const segment of segments) {
-      if (segment.speaker_index === null) continue;
+      // Ohne Sprecher: der ganze Kanal (#242, Nummer 0).
       const key = keyOf({
         channel: segment.channel,
-        speaker_index: segment.speaker_index,
+        speaker_index: segment.speaker_index ?? 0,
       });
       const entry = map.get(key);
       const length = segment.end_ms - segment.start_ms;
