@@ -125,7 +125,15 @@ export function stepPassage(
   const { para, units, chars, budget, seek, now } = input;
   if (!units.length) return null;
   const k = unitAt(units, chars);
-  if (!prev || seek) return open(para, units, k, budget);
+  if (!prev) return open(para, units, k, budget);
+  if (seek) {
+    // Sprung innerhalb des sichtbaren Abschnitts: Text bleibt stehen.
+    const inside =
+      para === prev.para && k >= prev.from && k < prev.from + prev.units.length;
+    return inside
+      ? { ...prev, cur: k - prev.from, behindSince: null }
+      : open(para, units, k, budget);
+  }
 
   // Position relativ zur Anzeige: -1 davor, 0 im Abschnitt, 1 dahinter.
   let where: -1 | 0 | 1;

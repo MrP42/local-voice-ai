@@ -1622,6 +1622,51 @@ test("Textzeile: ohne Abgleich ein Hinweis statt geschätztem Text", async ({ pa
   const line = page.getByTestId("library-audiobar-line");
   await expect(line).toContainText("Stelle wird mit dem Text abgeglichen");
   await expect(line).not.toContainText("Absatz");
+  if (process.env.LV_SHOT_DIR) {
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: shot("textzeile-1440-hell-abgleich.png") });
+  }
+});
+
+test("Textzeile: Abschnitt steht still, Rücksprünge ohne Sprung erst nach 1,5 s", async ({ page }) => {
+  await page.goto("/");
+  const r = await page.evaluate(async () => {
+    const m = await import("/src/lib/library/passage.ts");
+    const units = [0, 1, 2, 3, 4, 5].map((i) => ({ start: i * 50, end: i * 50 + 48 }));
+    const go = (prev: unknown, chars: number, now: number, seek = false) =>
+      m.stepPassage(prev as never, { para: 0, units, chars, budget: 160, seek, now });
+    const a = go(null, 10, 0)!; // Abschnitt Einheit 0–2
+    const b = go(a, 60, 100)!; // Einheit 1: gleicher Abschnitt
+    const c = go(b, 110, 200)!; // Einheit 2: gleicher Abschnitt
+    const d = go(c, 60, 300)!; // Zittern zurück: bleibt bei 2
+    const e = go(d, 60, 1700)!; // 1,4 s später: noch immer 2
+    const f = go(e, 60, 1900)!; // > 1,5 s: folgt
+    const g = go(f, 160, 2000)!; // Abschnittsende: umblättern
+    const h = go(g, 10, 2100, true)!; // echter Sprung: sofort
+    const i = go(h, 60, 2200, true)!; // Sprung im Abschnitt: Text bleibt
+    return {
+      a: [a.from, a.units.length, a.cur],
+      b: [b.from, b.cur, b.units === a.units],
+      c: [c.from, c.cur, c.units === a.units],
+      d: [d.cur, d.units === a.units],
+      e: e.cur,
+      f: f.cur,
+      g: [g.from, g.cur],
+      h: [h.from, h.cur],
+      i: [i.from, i.cur],
+    };
+  });
+  expect(r).toEqual({
+    a: [0, 3, 0],
+    b: [0, 1, true],
+    c: [0, 2, true],
+    d: [2, true],
+    e: 2,
+    f: 1,
+    g: [3, 0],
+    h: [0, 0],
+    i: [0, 1],
+  });
 });
 
 /** Vorschau Textzeile: lesbarer Beispieltext statt Wiederholungen. */
@@ -1685,6 +1730,28 @@ for (const theme of ["hell", "dunkel"] as const)
       await pause(page);
       await page.waitForTimeout(300);
       await page.screenshot({ path: shot(`textzeile-${width}-${theme}-2.png`) });
+      if (theme === "hell") {
+        const ids = [
+          "library-audiobar-line",
+          "library-audiobar-back",
+          "library-audiobar-toggle",
+          "library-audiobar-forward",
+          "library-audiobar-parts",
+          "library-audiobar-follow",
+          "library-audiobar-close",
+        ];
+        const rows: string[] = [];
+        for (const id of ids) {
+          const b = (await page.getByTestId(id).boundingBox())!;
+          expect(b.width).toBeGreaterThanOrEqual(44);
+          expect(b.height).toBeGreaterThanOrEqual(44);
+          rows.push(`${id}\t${Math.round(b.width)}\t${Math.round(b.height)}`);
+        }
+        writeFileSync(
+          shot(`touchziele-textzeile-${width}.txt`),
+          `Element\tBreite px\tHöhe px (${width} px Fensterbreite)\n${rows.join("\n")}\n`,
+        );
+      }
     });
 
 test("Mitlesen: der gehörte Satz ist hervorgehoben (ohne Umbruchwechsel)", async ({ page }) => {

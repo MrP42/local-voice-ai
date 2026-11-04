@@ -556,6 +556,7 @@ export const AudioBar: React.FC<Props> = ({
           approx={approxNow}
           unavailable={live.unavailable}
           searching={searching}
+          aligningNow={playing || live.busy}
           onOpen={() => setFollowPref("on")}
         />
       )}
@@ -620,7 +621,11 @@ export const AudioBar: React.FC<Props> = ({
                 wantPlay.current = false;
               persist(true);
             }}
-            onSeeking={() => setSeekGen((n) => n + 1)}
+            onSeeking={() => {
+              // Stelle und Sprung im selben Render: die Zeile folgt sofort.
+              setAt(globalMs() / 1000);
+              setSeekGen((n) => n + 1);
+            }}
             onSeeked={() => {
               setAt(globalMs() / 1000);
               persist(true);

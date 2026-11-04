@@ -40,6 +40,8 @@ interface Props {
   /** Abgleich nicht verfügbar: die Schätzung ist alles, was es gibt. */
   unavailable: boolean;
   searching: boolean;
+  /** Hörbuch läuft oder ein Fenster wird gerade erkannt: der Abgleich arbeitet. */
+  aligningNow: boolean;
   onOpen(): void;
 }
 
@@ -59,13 +61,13 @@ export const AudioBarLine: React.FC<Props> = ({
   approx,
   unavailable,
   searching,
+  aligningNow,
   onOpen,
 }) => {
   const { t } = useTranslation();
   const box = useRef<HTMLButtonElement>(null);
   const nowEl = useRef<HTMLSpanElement>(null);
 
-  const visible = searching || paragraphs.length > 0;
   // Platz: Zeilen und Zeichen je Zeile aus der Breite.
   const [geom, setGeom] = useState({ lines: 2, budget: 220 });
   useLayoutEffect(() => {
@@ -93,7 +95,7 @@ export const AudioBarLine: React.FC<Props> = ({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [visible]);
+  }, []);
   const { lines, budget } = geom;
 
   /** Einheiten je Absatz, erst bei Bedarf zerlegt. */
@@ -106,7 +108,8 @@ export const AudioBarLine: React.FC<Props> = ({
       let list = unitCache.get(i);
       if (!list) {
         const p = paragraphs[i];
-        list = unitsOf(text, sentencesOf(p.text, textStartOf(p)), budget);
+        // Lange Sätze kleiner teilen als der Platz: der gehörte Teil bleibt sichtbar.
+        list = unitsOf(text, sentencesOf(p.text, textStartOf(p)), budget * 0.8);
         unitCache.set(i, list);
       }
       return list;
@@ -167,7 +170,7 @@ export const AudioBarLine: React.FC<Props> = ({
       i.end_ms - i.start_ms >= MIN_INSERT_MS &&
       i.text.trim(),
   );
-  const aligning = approx && !unavailable && !searching;
+  const aligning = approx && !unavailable && aligningNow && !searching;
 
   const passageText = passage
     ? passage.units.map((u) => text.slice(u.start, u.end)).join(" ")
@@ -216,7 +219,7 @@ export const AudioBarLine: React.FC<Props> = ({
         ))}
       </span>
     );
-  } else return null;
+  } else content = null;
 
   return (
     <button
@@ -229,7 +232,7 @@ export const AudioBarLine: React.FC<Props> = ({
       title={searching || aligning ? undefined : label}
       data-testid="library-audiobar-line"
     >
-      {approx && unavailable && !searching && (
+      {approx && !aligning && !searching && passage && !insert && (
         <span
           className="library-audiobar__approx"
           title={t("library.follow.approx")}
