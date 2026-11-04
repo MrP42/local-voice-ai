@@ -10,6 +10,9 @@ final class MeetingLibrary: ObservableObject {
     @Published private(set) var importBusy = false
     @Published var error: String?
     private var archive: MeetingArchive?
+    /// Eingang in der App-Gruppe (Share-Extension, „Öffnen in“, Dateiauswahl).
+    private var inbox: MeetingInbox?
+    private var draining = false
     /// Sitzungen, die gerade übernommen werden (Szenenwechsel kann doppelt auslösen).
     private var importingLive: Set<UUID> = []
     private var worker: Task<Void, Never>?
@@ -22,11 +25,17 @@ final class MeetingLibrary: ObservableObject {
         do {
             let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Meetings")
             archive = try MeetingArchive(root: root)
+            // Ohne eingerichtete App-Gruppe (z. B. unsignierter Simulator) ein lokaler Eingang;
+            // die Share-Extension meldet dann selbst, dass sie nicht übergeben kann.
+            let inboxRoot = MeetingInbox.sharedRoot() ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Eingang")
+            let inbox = try MeetingInbox(root: inboxRoot, digest: SHA256Digest())
+            inbox.sweepAbandoned()
+            self.inbox = inbox
         } catch { self.error = "Aufnahmespeicher konnte nicht geöffnet werden." }
     }
     func scene(active: Bool) {
         self.active = active
-        if active { Task { await recoverLive(); await refresh(); start() } }
+        if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
@@ -55,6 +64,53 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Import nicht abgeschlossen. Bitte eine lesbare Audio-/Videodatei bis 2 Stunden und 2 GB wählen und freien Speicher prüfen."
         }
     }
+    /// Bestätigte Datei in den Eingang kopieren (geprüft, dauerhaft) und gleich übernehmen.
+    func deposit(_ url: URL, from source: InboxItem.Source, consent: ConsentRecord) async {
+        guard let inbox, !importBusy else { return }
+        importBusy = true; defer { importBusy = false }
+        error = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            _ = try await Task.detached { try inbox.deposit(url, from: source, consent: consent) }.value
+        } catch IntakeError.tooLarge {
+            self.error = "Die Datei ist größer als 2 GB."; return
+        } catch {
+            self.error = "Die Datei konnte nicht gesichert werden. Bitte freien Speicher prüfen."; return
+        }
+        await drainInbox()
+    }
+
+    /// Wartende Einträge ins Archiv übernehmen; Transkription und (falls freigegeben)
+    /// Auswertung starten danach automatisch. Ein Eintrag verschwindet erst nach
+    /// erfolgreicher, dauerhafter Übernahme; die Wiederholung ist idempotent (gleiche Kennung).
+    func drainInbox() async {
+        guard let inbox, let archive, !draining else { return }
+        draining = true; defer { draining = false }
+        for item in (try? inbox.pending()) ?? [] {
+            do {
+                _ = try await inbox.take(item) { url, item in
+                    let asset = AVURLAsset(url: url)
+                    guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw VoiceError.invalid }
+                    let duration = try await asset.load(.duration).seconds
+                    var log = ConsentLog()
+                    try log.append(item.consent)
+                    return try await archive.importMedia(url, duration: duration,
+                                                         live: MeetingArchive.LiveImport(consent: log, live: nil, segments: [], notes: nil),
+                                                         id: item.id, name: item.originalName)
+                }
+                status = "gespeichert – Verarbeitung folgt"
+            } catch VoiceError.invalid {
+                // Keine lesbare Tonspur oder über 2 Stunden: nicht aufbewahren (Datenminimierung).
+                try? FileManager.default.removeItem(at: inbox.fileURL(item).deletingLastPathComponent())
+                self.error = "„\(item.originalName)“ hat keine lesbare Tonspur oder ist länger als 2 Stunden und wurde nicht übernommen."
+            } catch {
+                self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
+            }
+        }
+        await refresh(); start()
+    }
+
     /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
     /// und Live-Stand in einem Schritt ins Archiv. Erst danach wird der Laufend-Ordner
     /// entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
@@ -244,6 +300,16 @@ struct MeetingLibraryView: View {
     @Environment(\.scenePhase) private var phase
     @State private var importer = false
     @State private var recordLive = false
+    @ObservedObject private var incoming = IncomingFiles.shared
+    /// Datei, die gerade bestätigt wird: aus der Dateiauswahl oder per „Öffnen in“.
+    @State private var confirming: PendingImport?
+
+    struct PendingImport: Identifiable {
+        let url: URL
+        let source: InboxItem.Source
+        var id: URL { url }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -291,10 +357,30 @@ struct MeetingLibraryView: View {
             .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
-                case .success(let urls): if let first = urls.first { Task { await library.importMedia(first) } }
+                case .success(let urls): if let first = urls.first { confirming = PendingImport(url: first, source: .files) }
                 case .failure: library.error = "Datei konnte nicht geöffnet werden."
                 }
             }
+        }
+        .sheet(item: $confirming) { pending in
+            ImportConsentView(fileName: pending.url.lastPathComponent, channel: .import, onConfirm: { record in
+                confirming = nil
+                Task {
+                    await library.deposit(pending.url, from: pending.source, consent: record)
+                    if pending.source == .openIn { incoming.discardCopy(pending.url) }
+                }
+            }, onCancel: {
+                confirming = nil
+                if pending.source == .openIn { incoming.discardCopy(pending.url) }
+            }).interactiveDismissDisabled()
+        }
+        .onChange(of: incoming.pending, initial: true) { _, list in
+            guard confirming == nil, let url = list.first else { return }
+            incoming.take(url)
+            confirming = PendingImport(url: url, source: .openIn)
+        }
+        .onChange(of: confirming == nil) { _, closed in
+            if closed, let url = incoming.next { incoming.take(url); confirming = PendingImport(url: url, source: .openIn) }
         }
         .onChange(of: phase, initial: true) { _, value in library.scene(active: value == .active) }
         #if DEBUG

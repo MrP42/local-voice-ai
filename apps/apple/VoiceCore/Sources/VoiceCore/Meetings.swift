@@ -228,13 +228,14 @@ public actor MeetingArchive {
     /// (Absturz nach dem Übernehmen, vor dem Aufräumen der Quelle), wird es
     /// unverändert zurückgegeben. Das Dokument entsteht in einem Staging-Ordner,
     /// wird synchronisiert und erst dann mit einem einzigen Rename sichtbar.
-    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil) throws -> MeetingDocument {
+    public func importMedia(_ source: URL, duration: Double, live: LiveImport? = nil, id fixedId: UUID? = nil, name: String? = nil) throws -> MeetingDocument {
+        let displayName = String((name ?? source.lastPathComponent).prefix(255))
         if let fixedId, fm.fileExists(atPath: folder(fixedId).path) {
             // Wiederholung: nur dasselbe Original mit denselben Sitzungsdaten gilt als schon übernommen.
             let existing = try load(fixedId)
             let archived = try originalURL(fixedId)
             let size = try archived.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            guard existing.originalName == String(source.lastPathComponent.prefix(255)),
+            guard existing.originalName == displayName,
                   size == existing.bytes, try Self.sha256(of: archived) == existing.digest,
                   try Self.sha256(of: source) == existing.digest,
                   existing.consent == live?.consent, existing.live == live?.live,
@@ -275,7 +276,7 @@ public actor MeetingArchive {
         }
         guard copied == bytes else { throw VoiceError.conflict }
         try syncFile(target)
-        var doc = MeetingDocument(id: id, createdAt: Date(), originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
+        var doc = MeetingDocument(id: id, createdAt: Date(), originalName: displayName, originalExtension: ext,
             digest: hash.finalize().map { String(format: "%02x", $0) }.joined(), bytes: bytes, duration: duration)
         if let live {
             doc.consent = live.consent; doc.live = live.live; doc.liveSegments = live.segments

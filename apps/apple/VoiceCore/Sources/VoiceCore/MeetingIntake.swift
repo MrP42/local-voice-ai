@@ -54,7 +54,7 @@ enum DurableFiles {
 // MARK: - Eingang (Teilen-Menü, „Öffnen in“)
 
 public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
-    public enum Source: String, Codable, Sendable { case shareSheet, openIn, shortcut }
+    public enum Source: String, Codable, Sendable { case shareSheet, openIn, files, shortcut }
     public let id: UUID
     public let source: Source
     public let originalName: String
@@ -73,6 +73,17 @@ public struct MeetingInbox: Sendable {
     public let root: URL
     let digest: ContentDigest
     public static let maxBytes = 2 * 1024 * 1024 * 1024
+    /// App-Gruppe von App und Share-Extension; der Eingang liegt in ihrem Container.
+    public static let appGroup = "group.de.localvoice.prototype"
+
+    /// Eingangsordner im App-Group-Container; `nil`, wenn die Gruppe nicht eingerichtet ist.
+    public static func sharedRoot() -> URL? {
+        #if canImport(Darwin)
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?.appendingPathComponent("Eingang", isDirectory: true)
+        #else
+        return nil
+        #endif
+    }
 
     public init(root: URL, digest: ContentDigest) throws {
         self.root = root; self.digest = digest
@@ -197,7 +208,7 @@ public struct WatchRecordingAssembler: Sendable {
     public let root: URL
     let digest: ContentDigest
     /// Verzeichnis-fsync; im Test austauschbar, um Fehler und Reihenfolge zu prüfen.
-    var syncDirectory: @Sendable (URL) throws -> Void = DurableFiles.syncDirectory
+    var syncDirectory: @Sendable (URL) throws -> Void = { try DurableFiles.syncDirectory($0) }
     public static let maxChunkBytes = 8 * 1024 * 1024
     public static let maxSeconds: Double = 2 * 3600
 
