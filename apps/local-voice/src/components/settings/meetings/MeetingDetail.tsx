@@ -46,6 +46,7 @@ import { isEmptyEntry } from "./emptyEntry";
 import { RetranscribeDialog } from "./RetranscribeDialog";
 import { SpeakerPopover } from "./SpeakerPopover";
 import { SpeakerNamesDialog } from "./SpeakerNamesDialog";
+import { SpeakerSharesTable } from "./SpeakerSharesTable";
 import { SpeakerSuggestionHints } from "./SpeakerSuggestionHints";
 import { useNameSuggestions } from "./useNameSuggestions";
 import { useSettings } from "@/hooks/useSettings";
@@ -728,11 +729,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     void loadParticipants();
   }, [meetingId, loadSpeakers, loadParticipants]);
 
+  // Erkannte Sprecher: ohne den ganzen Kanal (#242, Nummer 0), den die
+  // Sprechertrennung nicht erkannt hat und der nur in der Protokolltabelle
+  // benannt wird.
+  const hasDiarizedSpeakers = speakers.some((s) => s.speaker_index !== 0);
+
   // U8: Namensvorschläge aus dem Gesagten; nie automatisch übernommen.
   const nameHints = useNameSuggestions(
     meetingId,
     speakers,
-    !growing && !loading && speakers.length > 0,
+    !growing && !loading && hasDiarizedSpeakers,
   );
 
   // Aendert sich die Hoehe der Liste (Fortschrittsblock waechst, Fenster wird
@@ -872,8 +878,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             s.speaker_index === segment.speaker_index,
         );
   /** Kanalname ohne Sprechertrennung; "Ich" trägt, wenn gesetzt, "Mein Name". */
-  const channelLabel = (channel: number) =>
-    channel === 0 && selfName !== "" ? selfName : t(channelLabelKey(channel));
+  const channelLabel = (channel: number) => {
+    // #242: der ganze Kanal ("Aufnahme") kann einen Namen tragen.
+    const whole = speakers.find(
+      (s) => s.channel === channel && s.speaker_index === 0,
+    );
+    if (whole?.display_name) return whole.display_name;
+    return channel === 0 && selfName !== ""
+      ? selfName
+      : t(channelLabelKey(channel));
+  };
   const whoLabel = (segment: StoredSegment) =>
     speakerOf(segment)?.label ?? channelLabel(segment.channel);
 
@@ -1014,7 +1028,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     <MeetingActions
       mode={mode}
       hasSegments={segments.length > 0}
-      hasSpeakers={speakers.length > 0}
+      hasSpeakers={hasDiarizedSpeakers}
       hasAudio={hasAudio}
       canDetectSlides={canDetectSlides(meeting)}
       onDetectSlides={() => void detectSlides()}
@@ -1502,6 +1516,16 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
             slideRefs={slideRefs}
             onOpenSlide={(id) => setSlideJump({ id })}
             onFollowup={() => setFollowupOpen(true)}
+            speakerTable={
+              <SpeakerSharesTable
+                meetingId={meetingId}
+                speakers={speakers}
+                segments={segments}
+                player={player}
+                onChanged={onSpeakersChanged}
+                onJump={jumpToSource}
+              />
+            }
           />
         </div>
       )}

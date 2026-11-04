@@ -32,6 +32,7 @@ pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
 pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;
+pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
 pub mod retention;
 pub mod retranscribe;
 pub mod search;

@@ -3307,6 +3307,22 @@
         "stop": "Stopp",
         "stopFor": "{{label}} stoppen"
       },
+      "table": {
+        "label": "Sprecher und Redeanteile",
+        "hint": "Hörprobe anhören und den Namen direkt eintragen (Enter). Der Name gilt in der ganzen Besprechung: Transkript, Protokoll, KI-Notizen, Fragen und Export.",
+        "hintNoAudio": "Ohne Audio gibt es keine Hörproben. Den Namen können Sie trotzdem direkt eintragen (Enter); er gilt in der ganzen Besprechung.",
+        "speaker": "Sprecher",
+        "listen": "Hörprobe",
+        "time": "Redezeit",
+        "share": "Anteil",
+        "nameFor": "Name für {{label}}",
+        "playFor": "Hörproben von {{label}} abspielen",
+        "stopFor": "Hörprobe von {{label}} anhalten",
+        "nextFor": "Nächste Hörprobe von {{label}}",
+        "jumpFor": "{{label}} im Transkript zeigen und ab dort abspielen",
+        "sampleOf": "{{n}}/{{total}}",
+        "saved": "Name gespeichert"
+      },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
         "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",

@@ -459,6 +459,11 @@ fn write_speakers(
         };
         for (id, index) in rows {
             let old = index.and_then(|i| u32::try_from(i).ok());
+            // Der Name des ganzen Kanals (Segmente ohne Sprecher) haengt an
+            // keiner Diarisierung und bleibt stehen.
+            if old == Some(super::speakers::WHOLE_CHANNEL) {
+                continue;
+            }
             let target = old.and_then(|o| remap.get(&o).copied());
             match target {
                 Some(new) if Some(new) != old => {

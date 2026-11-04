@@ -220,9 +220,13 @@ pub async fn action_items_list(
     store: State<'_, Arc<MeetingStore>>,
     meeting_id: String,
 ) -> Result<Vec<ActionItem>, String> {
-    store
+    let items = store
         .list_action_items(&meeting_id)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(
+        crate::managers::meetings::relabel::Relabeler::load(&store, &meeting_id)
+            .action_items(items),
+    )
 }
 
 #[tauri::command]

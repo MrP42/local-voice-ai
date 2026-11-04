@@ -455,6 +455,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setMessages(result.status === "ok" ? (result.data ?? []) : []);
   };
 
+  // #242: ein umbenannter Sprecher erscheint auch in früheren Antworten.
+  useEffect(() => {
+    if (scope.kind !== "meeting") return;
+    const meetingId = scope.meeting_id;
+    const un = events.speakersChanged.listen((e) => {
+      const id = threadIdRef.current;
+      if (e.payload.meeting_id !== meetingId || !id || pendingRef.current)
+        return;
+      void commands.meetingChatThread(id).then((result) => {
+        if (result.status === "ok" && threadIdRef.current === id)
+          setMessages(result.data ?? []);
+      });
+    });
+    return () => {
+      void un.then((f) => f());
+    };
+  }, [scopeKey]);
+
   // M5-P5e: gespeicherter Brief. Wie beim Recipe erst nach den Mount-Effekten.
   const handledThreadNonce = useRef<number | null>(null);
   useEffect(() => {

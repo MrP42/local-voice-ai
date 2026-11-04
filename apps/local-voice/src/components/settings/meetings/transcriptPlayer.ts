@@ -15,12 +15,13 @@ export interface TranscriptPlayer {
    * Eine Hoerprobe: von `startMs` bis `endMs` abspielen und dann anhalten.
    * `onEnd` kommt genau einmal, wenn die Probe endet: am Ende, bei `stop()`,
    * bei Pause von aussen oder wenn etwas anderes die Probe abloest.
+   * `completed` ist nur wahr, wenn die Probe bis zu ihrem Ende lief.
    */
   playRange(
     startMs: number,
     endMs: number,
     channel: number | undefined,
-    onEnd: () => void,
+    onEnd: (completed: boolean) => void,
   ): void;
   /** Haelt jede laufende Wiedergabe dieses Players an. */
   stop(): void;
@@ -30,7 +31,7 @@ export interface TranscriptPlayer {
 export const NO_PLAYER: TranscriptPlayer = {
   canSeek: false,
   seek: () => {},
-  playRange: (_start, _end, _channel, onEnd) => onEnd(),
+  playRange: (_start, _end, _channel, onEnd) => onEnd(false),
   stop: () => {},
 };
 
@@ -55,7 +56,7 @@ export function audioTranscriptPlayer(
     playRange(startMs, endMs, channel, onEnd) {
       const player = pick(channel);
       if (!player) {
-        onEnd();
+        onEnd(false);
         return;
       }
       player.playRange(startMs / 1000, endMs / 1000, onEnd);
@@ -78,14 +79,14 @@ export function timedRange(
 ): Pick<TranscriptPlayer, "playRange" | "stop"> {
   let current: {
     timer: ReturnType<typeof setTimeout>;
-    onEnd: () => void;
+    onEnd: (completed: boolean) => void;
   } | null = null;
-  const finish = () => {
+  const finish = (completed = false) => {
     const running = current;
     current = null;
     if (!running) return;
     clearTimeout(running.timer);
-    running.onEnd();
+    running.onEnd(completed);
   };
   return {
     playRange(startMs, endMs, _channel, onEnd) {
@@ -94,7 +95,7 @@ export function timedRange(
       const timer = setTimeout(
         () => {
           stop();
-          finish();
+          finish(true);
         },
         Math.max(0, endMs - startMs),
       );

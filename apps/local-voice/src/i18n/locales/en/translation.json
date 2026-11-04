@@ -3307,6 +3307,22 @@
         "stop": "Stop",
         "stopFor": "Stop {{label}}"
       },
+      "table": {
+        "label": "Speakers and speaking time",
+        "hint": "Listen to a sample and type the name right here (Enter). The name applies to the whole meeting: transcript, minutes, AI notes, questions and export.",
+        "hintNoAudio": "Without audio there are no samples. You can still type the name right here (Enter); it applies to the whole meeting.",
+        "speaker": "Speaker",
+        "listen": "Sample",
+        "time": "Speaking time",
+        "share": "Share",
+        "nameFor": "Name for {{label}}",
+        "playFor": "Play samples of {{label}}",
+        "stopFor": "Stop sample of {{label}}",
+        "nextFor": "Next sample of {{label}}",
+        "jumpFor": "Show {{label}} in the transcript and play from there",
+        "sampleOf": "{{n}}/{{total}}",
+        "saved": "Name saved"
+      },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",
         "model_missing": "The speaker separation model is not installed, so there are no speakers here.",

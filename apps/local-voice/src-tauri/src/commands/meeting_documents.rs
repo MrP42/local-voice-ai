@@ -21,6 +21,7 @@ use crate::managers::meetings::basis::DocBasis;
 use crate::managers::meetings::doc_types::{self, DocEngine, DocTypeInfo};
 use crate::managers::meetings::job::{self, JobPhase};
 use crate::managers::meetings::minutes::{self, error_code, MinutesMeta, MinutesPhase, CODE_BUSY};
+use crate::managers::meetings::relabel::Relabeler;
 use crate::managers::meetings::store::{MeetingDocument, MeetingStore};
 
 /// Code, wenn der Schluessel keinen erzeugbaren Dokumenttyp nennt (unbekannt, das
@@ -259,6 +260,7 @@ pub async fn meetings_export_document_as(
         .get_document(&document_id)
         .map_err(|e| format!("store_failed: {e}"))?
         .ok_or_else(|| "document_not_found".to_string())?;
+    let document = Relabeler::load(&store, &document.meeting_id).document(document);
     tauri::async_runtime::spawn_blocking(move || {
         export_with_letterhead(&app, path, document.body, None)
     })
