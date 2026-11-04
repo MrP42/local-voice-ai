@@ -16,6 +16,7 @@ pub mod meeting_language; // G5
 pub mod meeting_mcp; // M6-P6e
 pub mod meeting_minutes; // P1k
 pub mod meeting_notes;
+pub mod meeting_parts; // Mehrere Audiodateien je Besprechung
 pub mod meeting_queue; // U7
 pub mod meeting_search;
 pub mod meeting_slides; // D1 (#70, M7)

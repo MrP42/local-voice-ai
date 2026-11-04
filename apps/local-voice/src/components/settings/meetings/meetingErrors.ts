@@ -61,6 +61,19 @@ const ERROR_KEY_MAP: Record<string, string> = {
   // B2: Bitte eines Ablaufs um die Einwilligung zur Aufnahme
   consent_not_pending: "meetings.errors.consentNotPending",
   consent_invalid: "meetings.errors.consentInvalid",
+  // Mehrere Audiodateien je Besprechung (parts.rs)
+  parts_too_few: "meetings.parts.errors.tooFew",
+  parts_too_many: "meetings.parts.errors.tooMany",
+  parts_not_ready: "meetings.parts.errors.notReady",
+  parts_no_audio: "meetings.parts.errors.noAudio",
+  parts_audio_missing: "meetings.parts.errors.audioMissing",
+  parts_mixed_sources: "meetings.parts.errors.mixedSources",
+  parts_has_variants: "meetings.parts.errors.hasVariants",
+  parts_changed: "meetings.parts.errors.changed",
+  parts_busy: "meetings.parts.errors.busy",
+  parts_failed: "meetings.parts.errors.failed",
+  parts_subtitle: "meetings.parts.errors.subtitle",
+  parts_target_invalid: "meetings.parts.errors.targetInvalid",
   // D4: Folienerkennung (recording_active, meeting_not_finished, slides_*)
   ...SLIDE_ERROR_KEYS,
 };

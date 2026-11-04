@@ -1240,7 +1240,12 @@ fn run_request(
     let result = super::import::run_import(app, store, tm, &meeting_id, &path, range, job.handle());
     drop(job);
     match result {
-        Ok(()) => RunOutcome::Done,
+        Ok(()) => {
+            // Teil einer Besprechung aus mehreren Dateien: ist jetzt alles fertig,
+            // werden die Teile zusammengefuehrt (`parts.rs`).
+            super::parts::after_import(app, store, &meeting_id);
+            RunOutcome::Done
+        }
         Err(e) => RunOutcome::Failed(e),
     }
 }
