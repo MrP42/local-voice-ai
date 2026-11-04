@@ -59,6 +59,9 @@ pub enum Purpose {
     /// M3-P3a: Sprechertrennungs-Modell (Kategorie "Sprechertrennung",
     /// `managers::meetings::diarize`). Nie im ASR-Katalog: es transkribiert nicht.
     Diarization,
+    /// Stimmprofile 2a: Sprecher-Embedding-Modell (ONNX, CAM++), rechnet Stimmabdruecke
+    /// fuer Zusammenfuehrungs-Vorschlaege (`managers::meetings::voiceprint`).
+    SpeakerEmbedding,
     /// Phonon: das Programm `ptts` je Plattform (Release-Archiv von GitHub),
     /// `managers::tts::phonon_models`. Getrennt von `TtsRuntime` (Piper).
     PhononRuntime,
@@ -671,6 +674,7 @@ mod tests {
             Purpose::LlmEmbedding,
             Purpose::LlmProjector,
             Purpose::Diarization,
+            Purpose::SpeakerEmbedding,
             Purpose::PhononRuntime,
             Purpose::PhononModel,
             Purpose::PhononVoice,

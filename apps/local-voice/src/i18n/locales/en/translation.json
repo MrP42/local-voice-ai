@@ -1804,6 +1804,14 @@
       "detectIgnoredPlaceholder": "e.g. obs64.exe, Discord",
       "diarization": "Separate speakers automatically",
       "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run.",
+      "voiceSuggestions": "Recognise identical voices",
+      "voiceSuggestionsDescription": "Default: on, but only takes effect once the voice model is downloaded. When speaker separation splits one person into several speakers, the speaker table suggests merging them. Nothing is merged automatically and every merge can be split again. Voices are only compared within one meeting; the voiceprints stay in memory and are never stored.",
+      "voiceSuggestionsDownload": "Download voice model ({{size}} MB)",
+      "voiceSuggestionsDownloading": "Downloading …",
+      "voiceSuggestionsDownloadFailed": "Download failed. Please try again.",
+      "voiceSuggestionsReady": "Voice model CAM++ is installed (Apache-2.0).",
+      "voiceSuggestionsModel": "Voice model",
+      "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) runs locally. It is only downloaded on request.",
       "selfName": "My name",
       "selfNameDescription": "Your own name in the transcript: your microphone (\"Me\") and, if the microphone is split into several people, the speaker with the largest share always carry this name, even if nobody addresses you. In People you are marked as \"me\". Leave empty to keep \"Me\".",
       "selfNamePlaceholder": "e.g. Patrick Wolff"
@@ -3338,7 +3346,11 @@
         "contains": "Merged from:",
         "splitAction": "Split",
         "splitFor": "Make “{{label}}” a separate speaker again",
-        "blocked": "Split the later merge first."
+        "blocked": "Split the later merge first.",
+        "voice": "“{{a}}” and “{{b}}” sound alike (similarity {{score}} %). Is this the same person?",
+        "voiceAction": "Merge",
+        "voiceDismiss": "Different people",
+        "voiceNote": "Only a hint from comparing voices in this meeting, not a reliable identification. “Merge” combines both rows into one speaker and can be reverted with “Undo” or later with “Split”. “Different people” lasts until the next speaker separation. Voiceprints are not stored."
       },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",

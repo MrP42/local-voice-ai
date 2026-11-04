@@ -48,6 +48,7 @@ pub mod store;
 pub mod subtitle;
 pub mod translate; // G5: Uebersetzung als neue Fassung
 pub mod variants; // A3: Transkript-Fassungen
+pub mod voiceprint; // Stimmprofile 2a: Stimmabdruecke innerhalb einer Besprechung
 
 use std::path::{Path, PathBuf};
 

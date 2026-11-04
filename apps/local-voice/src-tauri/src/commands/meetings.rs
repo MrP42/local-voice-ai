@@ -255,6 +255,7 @@ pub async fn meetings_delete(app: tauri::AppHandle, meeting_id: String) -> Resul
     queue.forget(&meeting_id);
     let paths = store.soft_delete_meeting(&meeting_id).map_err(store_err)?;
     indexer::submit(&app, IndexJob::Deleted(meeting_id.clone())); // M4-P4b
+    super::meeting_voiceprint::forget_meeting(&meeting_id); // Stimmprofile 2a
     delete_audio_files(&paths);
     // #15: der Ordner der Besprechung geht mit (Protokoll als Markdown, Reste ohne
     // DB-Eintrag). Die Besprechung ist hier schon geloescht: ein Fehler wird nur
