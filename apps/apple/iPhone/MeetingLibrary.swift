@@ -122,6 +122,9 @@ final class MeetingLibrary: ObservableObject {
                 } else {
                     self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
                 }
+            } catch IntakeError.busy {
+                // Die Extension schreibt gerade an diesem Eintrag: beim nächsten Durchlauf erneut.
+                continue
             } catch VoiceError.invalid {
                 // Keine lesbare Tonspur oder über 2 Stunden: nicht aufbewahren (Datenminimierung).
                 try? inbox.discard(item)
