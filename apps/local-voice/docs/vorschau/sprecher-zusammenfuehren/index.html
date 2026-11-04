@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprecher zusammenführen – Vorschau #266</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fafafa; --fg:#1b1b1b; --muted:#555; --card:#fff; --line:#ddd; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1e1e1e; --fg:#eee; --muted:#aaa; --card:#2a2a2a; --line:#444; } }
+  body { margin:0; padding:16px; font:15px/1.5 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:1500px; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:.2rem 0 .6rem; }
+  h2 { font-size:1.1rem; margin:1.6rem 0 .4rem; }
+  p, li { max-width:75ch; }
+  .muted { color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  figure img { width:100%; height:auto; display:block; border-radius:4px; }
+  figcaption { font-size:.85rem; color:var(--muted); margin-top:4px; }
+  table { border-collapse:collapse; } td, th { border:1px solid var(--line); padding:4px 8px; text-align:left; }
+</style>
+</head>
+<body>
+<main>
+<h1>Sprecher zusammenführen und trennen (#266)</h1>
+<p class="muted">Local Voice AI · Besprechungen › Protokoll › Sprecher &amp; Redeanteile · Bilder aus <code>tests/meeting-speaker-merge.spec.ts</code> (Playwright, Tauri-Attrappe). Fall aus Patricks Bildschirmfoto: „Patrick Wolff“ dreimal, dazu „Aufnahme“.</p>
+
+<h2>Was neu ist</h2>
+<ul>
+  <li><strong>Hinweis bei gleichem Namen:</strong> „„Patrick Wolff“ steht 3-mal in der Tabelle. Ist das dieselbe Person?“ mit dem Knopf „Zu einem Sprecher zusammenführen“.</li>
+  <li><strong>Zusammenführen je Zeile:</strong> Ein Knopf neben dem Namensfeld öffnet unter der Zeile die Auswahl „Mit wem ist … dieselbe Person?“. Angeboten werden nur Sprecher derselben Spur. Es bleibt der Sprecher mit der längeren Redezeit, „Aufnahme“ geht immer im anderen auf, und ein vergebener Name geht nicht verloren.</li>
+  <li><strong>Rückgängig und Trennen:</strong> Direkt nach dem Zusammenführen gibt es „Rückgängig“. Später steht unter dem Namen „Zusammengeführt aus: Person 3 · Trennen“. Eine Kette wird von hinten getrennt, der ältere Eintrag ist bis dahin gesperrt (mit Tooltip).</li>
+  <li><strong>Besprechungsweit:</strong> Segmente, gespeicherte Turns, Sprecherzeilen und frühere Namen werden umgeschrieben. Damit zeigen Transkript, Protokoll, KI-Notizen, Fragen und Export den Namen. Trennen stellt den Stand exakt wieder her (Rust-Tests vergleichen den gesamten Zustand vorher und nachher).</li>
+</ul>
+
+<h2>1 · Hinweis bei gleichem Namen</h2>
+<div class="grid">
+  <figure><img src="1-hinweis-1440-hell.png" alt="Hinweis, 1440 px, hell"><figcaption>1440 px, hell</figcaption></figure>
+  <figure><img src="1-hinweis-1440-dunkel.png" alt="Hinweis, 1440 px, dunkel"><figcaption>1440 px, dunkel</figcaption></figure>
+  <figure><img src="1-hinweis-390-hell.png" alt="Hinweis, 390 px, hell"><figcaption>390 px, hell</figcaption></figure>
+  <figure><img src="1-hinweis-390-dunkel.png" alt="Hinweis, 390 px, dunkel"><figcaption>390 px, dunkel</figcaption></figure>
+</div>
+
+<h2>2 · Auswahl „Mit wem ist … dieselbe Person?“</h2>
+<div class="grid">
+  <figure><img src="2-auswahl-1440-hell.png" alt="Auswahl, 1440 px, hell"><figcaption>1440 px, hell</figcaption></figure>
+  <figure><img src="2-auswahl-1440-dunkel.png" alt="Auswahl, 1440 px, dunkel"><figcaption>1440 px, dunkel</figcaption></figure>
+  <figure><img src="2-auswahl-390-hell.png" alt="Auswahl, 390 px, hell"><figcaption>390 px, hell</figcaption></figure>
+  <figure><img src="2-auswahl-390-dunkel.png" alt="Auswahl, 390 px, dunkel"><figcaption>390 px, dunkel</figcaption></figure>
+</div>
+
+<h2>3 · Zusammengeführt, mit Rückgängig und Trennen</h2>
+<div class="grid">
+  <figure><img src="3-zusammengefuehrt-1440-hell.png" alt="Zusammengeführt, 1440 px, hell"><figcaption>1440 px, hell</figcaption></figure>
+  <figure><img src="3-zusammengefuehrt-1440-dunkel.png" alt="Zusammengeführt, 1440 px, dunkel"><figcaption>1440 px, dunkel</figcaption></figure>
+  <figure><img src="3-zusammengefuehrt-390-hell.png" alt="Zusammengeführt, 390 px, hell"><figcaption>390 px, hell</figcaption></figure>
+  <figure><img src="3-zusammengefuehrt-390-dunkel.png" alt="Zusammengeführt, 390 px, dunkel"><figcaption>390 px, dunkel</figcaption></figure>
+</div>
+
+<h2>Touchziele (gemessen)</h2>
+<p>Alle neuen Knöpfe sind mindestens 44 × 44 px groß (Zusammenführen 44×44, Trennen 102×44, Rückgängig 128×44), siehe <code>touchziele.txt</code>. Es gibt keine horizontale Scrollleiste bei 390 und 1440 px.</p>
+
+<h2>Grenzen</h2>
+<ul>
+  <li>Zusammenführen geht nur innerhalb einer Spur. „Ich“ (Mikrofon) und „Gegenseite“ bleiben getrennte Kanäle.</li>
+  <li>Eine neue Sprechertrennung oder Neu-Transkription verwirft die Trenn-Einträge. Die Namen bleiben dabei wie bisher über den Abgleich erhalten.</li>
+  <li>Automatische Vorschläge per Stimmähnlichkeit kommen mit Teil 2 (Stimmprofile, eigenes Konzept).</li>
+</ul>
+</main>
+</body>
+</html>

@@ -137,6 +137,14 @@ Sprecher, um ihn zu **benennen**, mit einem anderen **zusammenzuführen** oder *
 **Mehrere Personen am Mikrofon**. Ausschalten: Einstellungen → Diktat → Besprechungen → Sprecher automatisch trennen.
 Das Modell (NVIDIA Sortformer) wird bei Bedarf geladen; seine Lizenz steht unter Info → Danksagungen.
 
+**Zusammenführen und Trennen** geht auch in der Tabelle „Sprecher & Redeanteile“ im Protokoll: Steht derselbe
+Name mehrfach da, bietet ein Hinweis an, die Zeilen zu einem Sprecher zusammenzuführen. Der Knopf neben dem
+Namensfeld führt eine Zeile mit einem anderen Sprecher derselben Spur zusammen, auch „Aufnahme“ (Stellen ohne
+Sprecher). Es bleibt der Sprecher mit der längeren Redezeit, ein vergebener Name geht nicht verloren. Die Änderung gilt
+in der ganzen Besprechung (Transkript, Protokoll, KI-Notizen, Fragen, Export). Direkt danach gibt es „Rückgängig“,
+später steht unter dem Namen „Zusammengeführt aus … Trennen“. Eine neue Sprechertrennung oder Neu-Transkription
+beginnt von vorn, ältere Zusammenführungen lassen sich danach nicht mehr trennen.
+
 ## Chat und Suche
 
 - **Suche** (oben in der Projekte-Spalte): Stichworte im gewählten Projekt (oder über „Alle Aufnahmen“), Filter nach Zeitraum, Quelle und „Mit Notizen“.

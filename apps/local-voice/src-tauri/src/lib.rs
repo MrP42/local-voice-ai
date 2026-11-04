@@ -2313,6 +2313,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_speakers::meeting_speakers_list,
             commands::meeting_speakers::meeting_speaker_rename,
             commands::meeting_speakers::meeting_speaker_merge,
+            commands::meeting_speakers::meeting_speaker_merges,
+            commands::meeting_speakers::meeting_speaker_unmerge,
             commands::meeting_speakers::meeting_segment_set_speaker,
             commands::meeting_speakers::meeting_speaker_notices,
             commands::meeting_speakers::meeting_speaker_suggestions,

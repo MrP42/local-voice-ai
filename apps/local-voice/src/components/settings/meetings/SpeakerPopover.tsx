@@ -22,6 +22,12 @@ export const speakerErrorText = (code: string, t: TFunction) => {
       return t("meetings.speakers.errors.segmentNotFound");
     case "stale_epoch":
       return t("meetings.speakers.errors.staleEpoch");
+    case "merge_not_found":
+      return t("meetings.speakers.errors.mergeNotFound");
+    case "merge_blocked":
+      return t("meetings.speakers.merge.blocked");
+    case "speaker_taken":
+      return t("meetings.speakers.errors.speakerTaken");
     default:
       return t("meetings.speakers.errors.failed");
   }
