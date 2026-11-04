@@ -31,10 +31,17 @@ public enum CoverLookup {
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
+    /// Haupttitel ohne Untertitel, so wird gesucht. EPUBs trennen ihn auch mit „·“
+    /// („Rich Dad Poor Dad · Was die Reichen …“); mit Untertitel findet Open Library nichts.
+    public static func searchTitle(_ title: String) -> String {
+        var head = title.split(whereSeparator: { ":|([·•".contains($0) }).first.map(String.init) ?? title
+        for separator in [" – ", " — ", " - "] { head = head.components(separatedBy: separator).first ?? head }
+        return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Titel ohne Untertitel und Artikel, nur Buchstaben und Ziffern.
     static func coreTitle(_ title: String) -> String {
-        var head = title.split(whereSeparator: { ":|([".contains($0) }).first.map(String.init) ?? title
-        for separator in [" – ", " - "] { head = head.components(separatedBy: separator).first ?? head }
+        let head = searchTitle(title)
         let words = head.split(separator: " ").map(String.init)
         if words.count > 1, ["der", "die", "das", "the", "a", "an", "le", "la", "les"].contains(words[0].lowercased()) {
             return fold(words.dropFirst().joined())

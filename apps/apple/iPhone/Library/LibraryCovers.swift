@@ -6,7 +6,7 @@ import Foundation
 extension PhoneLibrary {
     private static let retryAfter: TimeInterval = 14 * 86_400
 
-    private func markerURL(_ book: LibraryBook) -> URL { dir(book).appendingPathComponent("cover-gesucht") }
+    private func markerURL(_ book: LibraryBook) -> URL { dir(book).appendingPathComponent("cover-gesucht-2") }
 
     private func searchedRecently(_ book: LibraryBook) -> Bool {
         guard let date = (try? FileManager.default.attributesOfItem(atPath: markerURL(book).path))?[.modificationDate] as? Date else { return false }
@@ -67,7 +67,7 @@ extension PhoneLibrary {
 
     private static func findCover(title: String, authors: [String]) async throws -> Data? {
         for author in [authors.first, nil] {
-            guard let url = CoverLookup.searchURL(title: title, author: author), let json = try await get(url) else { continue }
+            guard let url = CoverLookup.searchURL(title: CoverLookup.searchTitle(title), author: author), let json = try await get(url) else { continue }
             if let id = CoverLookup.bestCoverId(json, title: title, authors: authors), let cover = CoverLookup.coverURL(id: id) {
                 if let data = try await get(cover), CoverLookup.plausibleCover(bytes: data.count) { return data }
                 return nil
