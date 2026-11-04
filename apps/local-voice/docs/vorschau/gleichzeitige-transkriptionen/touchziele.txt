@@ -1,8 +1,9 @@
 Touchziele „Gleichzeitige Transkriptionen“ (Playwright boundingBox, CSS-px, Breite x Höhe)
-Regel: bei 390 px jedes Ziel ≥ 44 px hoch (im Test geprüft); 1440 px nur zur Information.
+Regel: bei 390 px jedes Ziel ≥ 44 px hoch (im Test geprüft, auch ein einzeiliger Auslöser); 1440 px nur zur Information.
 
 ## 390-hell
 Auswahl 334x50
+Auswahl einzeilig (Transkriptionssprache) 334x44
 Automatisch – 4 auf diesem PC (empfohlen) 328x44
 1 gleichzeitig 328x44
 2 gleichzeitig 328x44
@@ -11,6 +12,7 @@ Automatisch – 4 auf diesem PC (empfohlen) 328x44
 
 ## 390-dunkel
 Auswahl 334x50
+Auswahl einzeilig (Transkriptionssprache) 334x44
 Automatisch – 4 auf diesem PC (empfohlen) 328x44
 1 gleichzeitig 328x44
 2 gleichzeitig 328x44

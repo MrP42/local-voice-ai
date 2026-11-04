@@ -585,8 +585,10 @@ html:root[data-fluent][data-scheme="dark"] .lv-btn--danger-ghost.lv-btn--danger-
     min-width: 44px;
     min-height: 44px;
   }
-  /* Auswahllisten (Fluent Dropdown): Ausloeser und Eintraege. */
+  /* Auswahllisten (Fluent Dropdown): Ausloeser und Eintraege. Der Knopf im
+     Ausloeser selbst, nicht nur der Rahmen darum (sonst 42 px innen). */
   .lv-dropdown.lv-dropdown,
+  .lv-dropdown.lv-dropdown > .fui-Dropdown__button,
   .fui-Listbox .fui-Option {
     min-height: 44px;
   }

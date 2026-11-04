@@ -627,6 +627,17 @@ for (const theme of ["light", "dark"] as const) {
       measured.push(`Auswahl ${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
       // Schmal (< 640 px): Touchziel 44 px; breit: Fluent-Standardhoehe.
       expect(box.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 30);
+      // Auch ein einzeiliger Ausloeser (unter Segoe UI bricht der lange Text
+      // nicht um): der Knopf selbst, nicht nur der Rahmen, hat 44 px.
+      if (width === 390) {
+        const single = (await fresh
+          .getByRole("combobox", { name: "Transkriptionssprache" })
+          .boundingBox())!;
+        measured.push(
+          `Auswahl einzeilig (Transkriptionssprache) ${single.width.toFixed(0)}x${single.height.toFixed(0)}`,
+        );
+        expect(single.height, "Touchziel einzeilig").toBeGreaterThanOrEqual(44);
+      }
       await dropdown.click();
       const options = fresh.getByRole("option");
       await expect(options).toHaveCount(5);

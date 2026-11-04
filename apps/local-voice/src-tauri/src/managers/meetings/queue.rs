@@ -1828,6 +1828,8 @@ mod tests {
         /// Die Laeufe melden sich beim Auftragsverzeichnis mit Phase Transkription.
         register_jobs: bool,
         tick: Duration,
+        /// Abkuehlzeit nach einem verschobenen Lauf.
+        cooldown: Duration,
     }
 
     impl Default for RigOptions {
@@ -1839,6 +1841,7 @@ mod tests {
                 manual_engine_ready: false,
                 register_jobs: false,
                 tick: Duration::from_millis(20),
+                cooldown: Duration::from_millis(150),
             }
         }
     }
@@ -1964,7 +1967,7 @@ mod tests {
             }),
             bulk_limit: options.bulk,
             tick: options.tick,
-            cooldown: Duration::from_millis(150),
+            cooldown: options.cooldown,
         });
         Rig {
             _dir: dir,
@@ -2368,12 +2371,18 @@ mod tests {
         r.recording.store(false, Ordering::SeqCst);
         eventually(|| r.status(&id) == "failed", "Auftrag scheitert");
         assert!(r.started().is_empty(), "nie als Besprechung gestartet");
-        assert!(r
-            .errors
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(m, c)| m == &id && c == "queue_part_unreadable"));
+        // Die Fehlermeldung folgt dem Status `failed` (`fail`): darauf warten,
+        // nicht im selben Augenblick erwarten.
+        eventually(
+            || {
+                r.errors
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|(m, c)| m == &id && c == "queue_part_unreadable")
+            },
+            "Fehlermeldung queue_part_unreadable",
+        );
     }
 
     #[test]
@@ -2647,8 +2656,12 @@ mod tests {
 
     #[test]
     fn a_deferred_extra_engine_puts_the_file_back_in_its_place_and_retries_later() {
+        // Abkuehlzeit lang genug, dass der Stand "b wartet wieder" auch auf einem
+        // ausgelasteten Rechner geprueft werden kann, bevor der zweite Versuch
+        // beginnt (150 ms reichten im Windows-Tor nicht).
         let r = rig(RigOptions {
             limit: 2,
+            cooldown: Duration::from_secs(2),
             ..RigOptions::default()
         });
         let (a, b, c) = (r.add("a"), r.add("b"), r.add("c"));
