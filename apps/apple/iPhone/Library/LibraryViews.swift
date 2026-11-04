@@ -15,7 +15,8 @@ enum LibraryFormat {
         let minutes = max(0, Int((ms / 60_000).rounded()))
         return minutes >= 60 ? "\(minutes / 60) Std. \(minutes % 60) Min." : "\(minutes) Min."
     }
-    static func percent(_ f: Double) -> String { "\(Int((f * 100).rounded())) %" }
+    /// Mit geschütztem Leerzeichen, damit „26 %“ nie umbricht.
+    static func percent(_ f: Double) -> String { "\(Int((f * 100).rounded()))\u{00A0}%" }
     static func when(_ ms: Double) -> String {
         guard ms > 0 else { return "" }
         let f = RelativeDateTimeFormatter(); f.locale = Locale(identifier: "de_DE"); f.unitsStyle = .full
@@ -415,6 +416,7 @@ struct AudioDownloadCard: View {
     @ObservedObject var library = PhoneLibrary.shared
     @ObservedObject var sync = LibrarySync.shared
     @ObservedObject var downloads = AudioDownloads.shared
+    @State private var confirmCancel = false
 
     var body: some View {
         let job = downloads.jobs[book.id]
@@ -423,27 +425,29 @@ struct AudioDownloadCard: View {
         let amount = "\(LibraryBytes.text(done)) von \(LibraryBytes.text(total))"
         VStack(alignment: .leading, spacing: 8) {
             if let job, job.phase == .failed {
-                Label("Laden fehlgeschlagen", systemImage: "exclamationmark.circle").font(.headline).foregroundStyle(.red)
+                Label("Laden fehlgeschlagen", systemImage: "exclamationmark.circle").font(.headline).foregroundStyle(VoicePalette.danger)
                 Text(job.message ?? "Bereits geladene Teile bleiben erhalten, es geht an derselben Stelle weiter.")
                     .font(.subheadline).foregroundStyle(VoicePalette.text)
-                action("Erneut versuchen", "arrow.clockwise") { downloads.start(book) }
+                actions(action("Erneut versuchen", "arrow.clockwise") { downloads.start(book) }, cancel)
             } else if let job, job.phase == .paused {
                 header("Pausiert", amount)
                 ProgressView(value: fraction(done, total)).tint(VoicePalette.secondaryText)
-                action("Fortsetzen", "play") { downloads.start(book) }
+                Text("Bereits geladene Teile bleiben erhalten. „Fortsetzen“ lädt nur den Rest.")
+                    .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                actions(action("Fortsetzen", "play") { downloads.start(book) }, cancel)
             } else if job != nil, downloads.waitsForWifi(book.id) {
                 header("Wartet auf WLAN", amount)
                 Text("„Nur im WLAN laden“ ist an. Das Laden startet, sobald du im WLAN bist.")
                     .font(.subheadline).foregroundStyle(VoicePalette.secondaryText)
-                action("Jetzt mobil laden", "antenna.radiowaves.left.and.right") { downloads.useCellular(book) }
+                actions(action("Jetzt mobil laden", "antenna.radiowaves.left.and.right") { downloads.useCellular(book) }, cancel)
             } else if job != nil {
                 header("Hörbuch lädt … \(LibraryFormat.percent(fraction(done, total)))", amount)
                 ProgressView(value: fraction(done, total)).tint(VoicePalette.accent)
                 Text("Lädt auch weiter, wenn die App im Hintergrund ist.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
-                action("Pausieren", "pause") { downloads.pause(book.id) }
+                actions(action("Pausieren", "pause") { downloads.pause(book.id) }, cancel)
             } else if library.hasAudio(book) {
                 Label("Auf dem iPhone · \(LibraryBytes.text(library.localAudioBytes(book)))", systemImage: "checkmark")
-                    .font(.headline).foregroundStyle(.green)
+                    .font(.headline).foregroundStyle(VoicePalette.success)
                 action("Vom iPhone entfernen", "icloud.and.arrow.down") { onRemove(book) }
                 Text("Bleibt im Konto und auf dem PC, Fortschritt bleibt erhalten.").font(.caption).foregroundStyle(VoicePalette.secondaryText)
             } else {
@@ -456,9 +460,32 @@ struct AudioDownloadCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .voiceCard()
         .overlay {
-            if job?.phase == .failed { RoundedRectangle(cornerRadius: 8).stroke(Color.red, lineWidth: 1.5) }
+            if job?.phase == .failed { RoundedRectangle(cornerRadius: 8).stroke(VoicePalette.danger, lineWidth: 1.5) }
         }
         .accessibilityElement(children: .contain)
+        .confirmationDialog("Laden abbrechen?", isPresented: $confirmCancel, titleVisibility: .visible) {
+            Button("Laden abbrechen", role: .destructive) { downloads.cancel(book) }
+            Button("Weiter laden", role: .cancel) {}
+        } message: {
+            Text(done > 0
+                 ? "Bereits geladene \(LibraryBytes.text(done)) werden vom iPhone gelöscht. Das Hörbuch bleibt im Konto und kann jederzeit neu geladen werden."
+                 : "Das Hörbuch bleibt im Konto und kann jederzeit neu geladen werden.")
+        }
+    }
+
+    private var cancel: some View {
+        Button(role: .destructive) { confirmCancel = true } label: {
+            Label("Abbrechen", systemImage: "xmark").frame(minHeight: 44).padding(.horizontal, 6)
+        }
+        .buttonStyle(.bordered).tint(VoicePalette.danger)
+        .accessibilityHint("Bricht das Laden ab und löscht bereits geladene Teile vom iPhone.")
+    }
+
+    private func actions(_ primary: some View, _ secondary: some View) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { primary; secondary }
+            VStack(alignment: .leading, spacing: 8) { primary; secondary }
+        }
     }
 
     private func header(_ title: String, _ detail: String) -> some View {
@@ -471,7 +498,7 @@ struct AudioDownloadCard: View {
 
     private func action(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> some View {
         Button(action: run) { Label(title, systemImage: symbol).frame(minHeight: 44).padding(.horizontal, 6) }
-            .buttonStyle(.bordered)
+            .buttonStyle(.bordered).tint(VoicePalette.accent)
     }
 
     private func fraction(_ done: Int, _ total: Int) -> Double { total > 0 ? min(1, Double(done) / Double(total)) : 0 }

@@ -6,26 +6,31 @@ s1	44x44	ja	⋯
 s1	175x44	ja	Text vorlesen
 s1	173x44	ja	Hörbuch hören
 s1	115x44	ja	Pausieren
+s1	128x44	ja	Abbrechen
 s2	80x44	ja	‹ Bibliothek
 s2	44x44	ja	⋯
 s2	175x44	ja	Text vorlesen
 s2	173x44	ja	Hörbuch hören
 s2	177x44	ja	Jetzt mobil laden
+s2	128x44	ja	Abbrechen
 s3	80x44	ja	‹ Bibliothek
 s3	44x44	ja	⋯
 s3	175x44	ja	Text vorlesen
 s3	173x44	ja	Hörbuch hören
 s3	126x44	ja	Fortsetzen
+s3	128x44	ja	Abbrechen
 s4	80x44	ja	‹ Bibliothek
 s4	44x44	ja	⋯
 s4	175x44	ja	Text vorlesen
 s4	173x44	ja	Hörbuch hören
 s4	177x44	ja	Erneut versuchen
+s4	128x44	ja	Abbrechen
 s5	80x44	ja	‹ Bibliothek
 s5	44x44	ja	⋯
 s5	175x44	ja	Text vorlesen
 s5	173x44	ja	Hörbuch hören
 s5	177x44	ja	Erneut versuchen
+s5	128x44	ja	Abbrechen
 s6	80x44	ja	‹ Bibliothek
 s6	44x44	ja	⋯
 s6	175x44	ja	Text vorlesen
@@ -36,5 +41,11 @@ s7	44x44	ja	⋯
 s7	175x44	ja	Text vorlesen
 s7	173x44	ja	Hörbuch hören
 s7	210x44	ja	Vom iPhone entfernen
+s8	80x44	ja	‹ Bibliothek
+s8	44x44	ja	⋯
+s8	175x44	ja	📖 Text vorlesen
+s8	173x44	ja	🎧 Hörbuch hören
+s8	374x56	ja	Laden abbrechen
+s8	374x56	ja	Weiter laden
 
-Ergebnis: alle Ziele >= 44 px (35 Ziele)
+Ergebnis: alle Ziele >= 44 px (46 Ziele)

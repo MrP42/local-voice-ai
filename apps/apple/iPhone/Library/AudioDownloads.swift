@@ -121,6 +121,14 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Für dieses Buch auch über Mobilfunk laden.
     func useCellular(_ book: LibraryBook) { start(book, allowCellular: true) }
 
+    /// Vom Nutzer abgebrochen: Auftrag verwerfen und alles Geladene löschen.
+    /// Geladen wird nur, was im Konto liegt; das Hörbuch bleibt dort erhalten.
+    func cancel(_ book: LibraryBook) {
+        discard(book.id)
+        _ = try? AudioOffload.remove(bookDir: library.dir(book))
+        library.reload()
+    }
+
     /// Ladevorgang verwerfen (Hörbuch wird entfernt oder Buch gelöscht).
     func discard(_ id: String) {
         guard jobs[id] != nil || inFlight[id] != nil else { return }
