@@ -28,9 +28,16 @@ public enum IntakeError: Error, Equatable {
 }
 
 enum DurableFiles {
+    /// Datei oder Verzeichnis bis auf den Datenträger sichern: F_FULLFSYNC auf Apple
+    /// (fsync allein leert dort nicht den Laufwerkscache), sonst fsync.
     static func sync(_ url: URL) throws {
-        let h = try FileHandle(forUpdating: url); defer { try? h.close() }
-        try h.synchronize()
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { throw IntakeError.invalid }
+        defer { close(fd) }
+        #if canImport(Darwin)
+        if fcntl(fd, F_FULLFSYNC) == 0 { return }
+        #endif
+        guard fsync(fd) == 0 else { throw IntakeError.invalid }
     }
     static func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
@@ -38,11 +45,21 @@ enum DurableFiles {
         try syncDirectory(url.deletingLastPathComponent())
     }
     /// Verzeichniseintrag dauerhaft machen (nach Anlegen, Umbenennen, Löschen).
-    static func syncDirectory(_ url: URL) throws {
-        let fd = open(url.path, O_RDONLY)
-        guard fd >= 0 else { throw IntakeError.invalid }
-        defer { close(fd) }
-        guard fsync(fd) == 0 else { throw IntakeError.invalid }
+    static func syncDirectory(_ url: URL) throws { try sync(url) }
+
+    /// Verzeichniskette anlegen; jedes neu angelegte Verzeichnis wird im Elternverzeichnis
+    /// gesichert, damit es nach einem Stromausfall noch existiert.
+    static func createDirectoryChain(_ url: URL) throws {
+        let fm = FileManager.default
+        var missing: [URL] = [], cursor = url.standardizedFileURL
+        while !fm.fileExists(atPath: cursor.path), cursor.pathComponents.count > 1 {
+            missing.insert(cursor, at: 0); cursor = cursor.deletingLastPathComponent()
+        }
+        for dir in missing {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: false)
+            try sync(dir)
+            try sync(dir.deletingLastPathComponent())
+        }
     }
     static func safeExtension(_ url: URL) -> String? {
         let ext = url.pathExtension.lowercased()
@@ -87,7 +104,7 @@ public struct MeetingInbox: Sendable {
 
     public init(root: URL, digest: ContentDigest) throws {
         self.root = root; self.digest = digest
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try DurableFiles.createDirectoryChain(root)
     }
 
     /// Kopiert `source` dauerhaft in den Eingang. Größe, Dateiart (reguläre Datei, kein
@@ -105,15 +122,19 @@ public struct MeetingInbox: Sendable {
         guard bytes <= Self.maxBytes else { throw IntakeError.tooLarge }
         guard let ext = DurableFiles.safeExtension(source) else { throw IntakeError.invalid }
         let hex = try digest.hex(of: source)
-        // Zweimal geteilt: derselbe Eintrag, keine Doppelung.
-        if let same = try pending().first(where: { $0.digest == hex && $0.bytes == bytes }) {
-            // Auch die Wiederholung bestätigt erst nach gesichertem Verzeichniseintrag.
+        // Kennung aus dem Inhalt: dieselbe Datei hat immer dieselbe Eingangs- und Archivkennung,
+        // auch nach einem Absturz zwischen Übernahme und Aufräumen (kein Doppelimport).
+        let id = Self.itemId(digest: hex)
+        if let same = try pending().first(where: { $0.id == id }) {
+            // Zweimal geteilt: nur mit denselben Einwilligungsbedingungen derselbe Eintrag.
+            // Eine frühere (z. B. KI-)Freigabe wird nie still für eine neue Bestätigung übernommen.
+            guard same.bytes == bytes, same.consent.sameTerms(as: consent) else { throw IntakeError.conflict("bereits mit anderer Einwilligung im Eingang") }
             try DurableFiles.syncDirectory(root)
             return same
         }
-        let item = InboxItem(id: UUID(), source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
+        let item = InboxItem(id: id, source: kind, originalName: Self.displayName(name, fallback: source.lastPathComponent, ext: ext), originalExtension: ext,
                              bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
-        let staging = root.appendingPathComponent(".tmp-" + item.id.uuidString)
+        let staging = root.appendingPathComponent(".tmp-" + UUID().uuidString)
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) }
         let target = staging.appendingPathComponent("original." + ext)
@@ -124,6 +145,18 @@ public struct MeetingInbox: Sendable {
         try fm.moveItem(at: staging, to: root.appendingPathComponent(item.id.uuidString))
         try DurableFiles.syncDirectory(root)
         return item
+    }
+
+    /// Inhaltsabgeleitete Kennung (erste 128 Bit der Prüfsumme, als UUID Version 8 markiert).
+    public static func itemId(digest hex: String) -> UUID {
+        var bytes = stride(from: 0, to: 32, by: 2).map { i -> UInt8 in
+            let a = hex.index(hex.startIndex, offsetBy: i), b = hex.index(a, offsetBy: 2)
+            return UInt8(hex[a..<b], radix: 16) ?? 0
+        }
+        bytes[6] = (bytes[6] & 0x0F) | 0x80
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 
     /// Anzeigename ohne Pfadtrenner und Steuerzeichen, höchstens 255 Zeichen, mit Endung.
@@ -156,15 +189,26 @@ public struct MeetingInbox: Sendable {
     /// danach wird der Eingang geleert. Wirft `importer`, bleibt der Eintrag liegen.
     public func take<T>(_ item: InboxItem, _ importer: (URL, InboxItem) async throws -> T) async throws -> T {
         let result = try await importer(fileURL(item), item)
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(item.id.uuidString))
+        // Löschen dauerhaft machen. Scheitert es, bleibt der Eintrag und die nächste Übernahme
+        // ist dank gleicher Kennung idempotent.
+        let dir = root.appendingPathComponent(item.id.uuidString)
+        if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
+        try DurableFiles.syncDirectory(root)
         return result
     }
 
-    /// Reste abgebrochener Kopien entfernen (beim App-Start).
-    public func sweepAbandoned() {
+    /// Mindestalter, ab dem eine Staging-Kopie als abgebrochen gilt. App und Extension
+    /// kopieren nebenläufig; eine frische `.tmp-`-Kopie gehört womöglich gerade dem
+    /// anderen Prozess und wird nie angefasst (Besitz per Alter, kein gemeinsamer Lock nötig).
+    public static let abandonedAfter: TimeInterval = 6 * 3600
+
+    /// Reste abgebrochener Kopien entfernen (beim App-Start), nur wenn älter als `abandonedAfter`.
+    public func sweepAbandoned(now: Date = Date()) {
         let fm = FileManager.default
-        for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where url.lastPathComponent.hasPrefix(".tmp-") {
-            try? fm.removeItem(at: url)
+        for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        where url.lastPathComponent.hasPrefix(".tmp-") {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? now
+            if now.timeIntervalSince(modified) > Self.abandonedAfter { try? fm.removeItem(at: url) }
         }
     }
 }
@@ -231,7 +275,7 @@ public struct WatchRecordingAssembler: Sendable {
 
     public init(root: URL, digest: ContentDigest) throws {
         self.root = root; self.digest = digest
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try DurableFiles.createDirectoryChain(root)
     }
 
     func dir(_ id: UUID) -> URL { root.appendingPathComponent(id.uuidString, isDirectory: true) }

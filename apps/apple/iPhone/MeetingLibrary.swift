@@ -79,6 +79,8 @@ final class MeetingLibrary: ObservableObject {
             _ = try await Task.detached { try inbox.deposit(url, from: source, consent: consent) }.value
         } catch IntakeError.tooLarge {
             self.error = "Die Datei ist größer als 2 GB."; return false
+        } catch IntakeError.conflict {
+            self.error = "Diese Aufnahme wartet bereits mit einer anderen Einwilligung. Eine frühere Freigabe wird nicht übernommen."; return false
         } catch {
             self.error = "Die Datei konnte nicht gesichert werden. Bitte freien Speicher prüfen."; return false
         }
@@ -105,6 +107,15 @@ final class MeetingLibrary: ObservableObject {
                                                          id: item.id, name: item.originalName)
                 }
                 status = "gespeichert – Verarbeitung folgt"
+            } catch VoiceError.conflict {
+                // Schon im Archiv (Absturz nach der Übernahme, vor dem Aufräumen): nicht doppelt
+                // anlegen. Es gilt die beim ersten Mal gespeicherte Einwilligung.
+                let archived = (try? await archive.load(item.id))?.digest == item.digest
+                if archived, (try? await inbox.take(item) { _, _ in () }) != nil {
+                    self.error = "„\(item.originalName)“ war bereits übernommen. Es gilt die damalige Einwilligung; zum Ändern das Dokument löschen und neu teilen."
+                } else {
+                    self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
+                }
             } catch VoiceError.invalid {
                 // Keine lesbare Tonspur oder über 2 Stunden: nicht aufbewahren (Datenminimierung).
                 try? FileManager.default.removeItem(at: inbox.fileURL(item).deletingLastPathComponent())
@@ -114,6 +125,16 @@ final class MeetingLibrary: ObservableObject {
             }
         }
         await refresh(); start()
+    }
+
+    /// Liegt diese Datei schon dauerhaft im Eingang oder Archiv? (Kennung aus dem Inhalt.)
+    /// Dann darf die iOS-Kopie ohne neue Rückfrage weg; ein Neustart importiert nicht doppelt.
+    func alreadyHeld(_ url: URL) async -> Bool {
+        guard let inbox, let archive else { return false }
+        guard let hex = try? await Task.detached(operation: { try SHA256Digest().hex(of: url) }).value else { return false }
+        let id = MeetingInbox.itemId(digest: hex)
+        if (try? inbox.pending())?.contains(where: { $0.id == id }) == true { return true }
+        return (try? await archive.load(id))?.digest == hex
     }
 
     /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
@@ -311,9 +332,19 @@ struct MeetingLibraryView: View {
     /// Fehlgeschlagene Übernahmen dieser Sitzung: nicht sofort erneut anbieten (beim nächsten Start wieder).
     @State private var deferred: Set<URL> = []
 
+    /// URLs, die gerade bestätigt, geprüft oder übernommen werden: nie ein zweites Mal anbieten.
+    @State private var inFlight: Set<URL> = []
+
     private func offerNext() {
-        guard confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) }) else { return }
-        confirming = PendingImport(url: url, source: .openIn)
+        guard confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) else { return }
+        inFlight.insert(url)
+        Task {
+            // Nach einem Absturz kann die Kopie schon übernommen sein: dann nur aufräumen.
+            if await library.alreadyHeld(url) {
+                incoming.finish(url, deleteCopy: true); inFlight.remove(url); offerNext(); return
+            }
+            confirming = PendingImport(url: url, source: .openIn)
+        }
     }
 
     struct PendingImport: Identifiable {
@@ -382,11 +413,14 @@ struct MeetingLibraryView: View {
                     // Kopie nur nach dauerhaftem Eingangs-Commit löschen; sonst bleibt sie für den nächsten Versuch.
                     if pending.source == .openIn, saved { incoming.finish(pending.url, deleteCopy: true) }
                     else if pending.source == .openIn { deferred.insert(pending.url) }
+                    inFlight.remove(pending.url)
+                    offerNext()
                 }
             }, onCancel: {
                 confirming = nil
                 // Ausdrücklich verworfen.
                 if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true) }
+                inFlight.remove(pending.url)
             }).interactiveDismissDisabled()
         }
         .onAppear { incoming.rescan() }

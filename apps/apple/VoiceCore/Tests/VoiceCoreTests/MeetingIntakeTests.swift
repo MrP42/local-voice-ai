@@ -36,6 +36,14 @@ final class MeetingIntakeTests: XCTestCase {
         let b = try inbox.deposit(memo, from: .openIn, consent: consent(.import, .import))
         XCTAssertEqual(a, b)
         XCTAssertEqual(try inbox.pending().map(\.id), [a.id])
+        // Kennung aus dem Inhalt: stabil über Neustarts, gleiche Datei = gleiche Kennung.
+        XCTAssertEqual(a.id, MeetingInbox.itemId(digest: a.digest))
+        // Dieselbe Datei mit anderer Einwilligung (ohne KI): nie still die frühere KI-Freigabe übernehmen.
+        let noAI = ConsentRecord(confirmedAt: Date(), channel: .import, reason: .import, scopes: [.recording, .transcription],
+                                 purpose: "Protokoll", controller: "Amt 12", retentionDays: 90)
+        XCTAssertThrowsError(try inbox.deposit(memo, from: .openIn, consent: noAI)) {
+            guard case .conflict = $0 as? IntakeError else { return XCTFail("\($0)") }
+        }
         XCTAssertEqual(try Data(contentsOf: inbox.fileURL(a)), Data([1, 2, 3, 4]))
         XCTAssertEqual(a.originalExtension, "m4a")
         XCTAssertThrowsError(try inbox.deposit(try file("x.m4a", []), from: .shareSheet, consent: consent(.import, .import)))
@@ -65,13 +73,23 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    func testInboxCreatesWholeDirectoryChain() throws {
+        let deep = tmp.appendingPathComponent("a/b/Eingang")
+        _ = try MeetingInbox(root: deep, digest: TestDigest())
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: deep.path, isDirectory: &isDir) && isDir.boolValue)
+    }
+
     func testInboxIgnoresAbandonedCopies() throws {
         let root = tmp.appendingPathComponent("Eingang")
         let inbox = try MeetingInbox(root: root, digest: TestDigest())
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".tmp-abc"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: root.appendingPathComponent(UUID().uuidString), withIntermediateDirectories: true)
         XCTAssertTrue(try inbox.pending().isEmpty)
+        // Eine frische Staging-Kopie gehört womöglich gerade der Extension: nicht anfassen.
         inbox.sweepAbandoned()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent(".tmp-abc").path))
+        inbox.sweepAbandoned(now: Date().addingTimeInterval(MeetingInbox.abandonedAfter + 60))
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".tmp-abc").path))
     }
 
