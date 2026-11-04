@@ -84,7 +84,8 @@ export const MeetingVoiceSuggestionsSetting: React.FC = () => {
     state = (
       <Button
         variant="secondary"
-        size="sm"
+        size="md"
+        style={{ minHeight: 44 }}
         onClick={() => void download()}
         disabled={downloading}
         data-testid="voiceprint-download"
@@ -110,7 +111,7 @@ export const MeetingVoiceSuggestionsSetting: React.FC = () => {
         isUpdating={isUpdating("meeting_voice_suggestions")}
         label={t("settings.meetings.voiceSuggestions")}
         description={t("settings.meetings.voiceSuggestionsDescription")}
-        descriptionMode="tooltip"
+        descriptionMode="inline"
         grouped={true}
         testId="voiceprint-toggle"
       />

@@ -84,9 +84,23 @@ fn cache() -> &'static Mutex<ClipCache> {
     })
 }
 
-/// Vergisst alle Abdrücke (Einstellung aus, Besprechung gelöscht).
+/// Sperre auch nach einer Panik in einem anderen Lauf (der Inhalt ist dann
+/// höchstens unvollständig, nie falsch: Einträge werden nur ganz eingefügt).
+fn lock_cache() -> std::sync::MutexGuard<'static, ClipCache> {
+    cache().lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Vergisst alle Abdrücke (Einstellung aus).
 pub fn forget_all() {
-    if let Ok(mut c) = cache().lock() {
+    let mut c = lock_cache();
+    c.meeting.clear();
+    c.clips.clear();
+}
+
+/// Vergisst die Abdrücke von `meeting_id` (Besprechung gelöscht).
+pub fn forget_meeting(meeting_id: &str) {
+    let mut c = lock_cache();
+    if c.meeting == meeting_id {
         c.meeting.clear();
         c.clips.clear();
     }
@@ -145,11 +159,17 @@ pub fn voice_matches(
     let dismissed = dismissed_pairs(metadata.as_ref(), epoch);
 
     let mut model: Option<EmbedFn> = None;
-    let mut cache = cache().lock().map_err(|_| "voiceprint_cache".to_string())?;
-    if cache.meeting != meeting_id {
-        cache.meeting = meeting_id.to_string();
-        cache.clips.clear();
-    }
+    // Zwischenspeicher nur kurz sperren: Lesen und Modell laufen ohne Sperre,
+    // damit Ausschalten (`forget_all`) nie auf einen Lauf wartet.
+    let mut clips: HashMap<ClipKey, Vec<f32>> = {
+        let cache = lock_cache();
+        if cache.meeting == meeting_id {
+            cache.clips.clone()
+        } else {
+            HashMap::new()
+        }
+    };
+    let known = clips.len();
     let mut voices = Vec::new();
     let mut any_audio = false;
     for (channel, list) in &turns {
@@ -170,7 +190,7 @@ pub fn voice_matches(
         any_audio = true;
         // Audio erst lesen, wenn ein Ausschnitt nicht im Zwischenspeicher ist.
         let mut pcm: Option<Vec<f32>> = None;
-        let clips = &mut cache.clips;
+        let clips = &mut clips;
         let mut embed = |clip: similar::Clip| -> Result<Option<Vec<f32>>, String> {
             let key = (*channel, clip.start_ms, clip.end_ms);
             if let Some(v) = clips.get(&key) {
@@ -193,6 +213,14 @@ pub fn voice_matches(
             Ok(Some(v))
         };
         voices.extend(voiceprint::voices_of_channel(*channel, list, &mut embed)?);
+    }
+    if clips.len() != known {
+        let mut cache = lock_cache();
+        if cache.meeting != meeting_id {
+            cache.meeting = meeting_id.to_string();
+            cache.clips.clear();
+        }
+        cache.clips.extend(clips);
     }
     if !any_audio {
         return Ok(VoiceMatches::empty("no_audio"));

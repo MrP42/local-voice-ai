@@ -153,9 +153,12 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
     };
   }, [meetingId, speakers]);
 
+  // Andere Besprechung: alte Vorschläge sofort weg (nicht bei jeder Änderung,
+  // sonst flackert der Hinweis bei jedem Umbenennen).
+  useEffect(() => setVoiceMatches([]), [meetingId]);
+
   useEffect(() => {
     let current = true;
-    setVoiceMatches([]);
     void (async () => {
       try {
         const result = await commands.meetingVoiceMatches(meetingId);
@@ -176,19 +179,34 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
   }, [meetingId, speakers]);
 
   /** "Verschiedene Personen": Vorschlag sofort weg, dann merken. */
-  const dismissVoice = (match: {
+  const dismissVoice = async (match: {
     from: MeetingSpeaker;
     into: MeetingSpeaker;
   }) => {
     const { channel } = match.from;
     const a = Math.min(match.from.speaker_index, match.into.speaker_index);
     const b = Math.max(match.from.speaker_index, match.into.speaker_index);
-    setVoiceMatches((old) =>
-      old.filter((m) => !(m.channel === channel && m.a === a && m.b === b)),
-    );
-    void commands
-      .meetingVoiceMatchDismiss(meetingId, channel, a, b)
-      .catch(() => undefined);
+    const same = (m: VoiceMatch) =>
+      m.channel === channel && m.a === a && m.b === b;
+    const removed = voiceMatches.filter(same);
+    setVoiceMatches((old) => old.filter((m) => !same(m)));
+    let ok = false;
+    try {
+      const result = await commands.meetingVoiceMatchDismiss(
+        meetingId,
+        channel,
+        a,
+        b,
+      );
+      ok = result.status === "ok";
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // Nicht gemerkt: Vorschlag wieder zeigen, statt ihn still zu verlieren.
+      setVoiceMatches((old) => [...old, ...removed]);
+      setMergeError(speakerErrorText("generic", t));
+    }
   };
 
   // Andere Besprechung: kein "Rückgängig" und keine offene Auswahl von vorher.
@@ -520,7 +538,7 @@ export const SpeakerSharesTable: React.FC<SpeakerSharesTableProps> = ({
               style={TOUCH_WRAP}
               disabled={mergeBusy}
               data-testid="speaker-voice-dismiss"
-              onClick={() => dismissVoice(match)}
+              onClick={() => void dismissVoice(match)}
             >
               {t("meetings.speakers.merge.voiceDismiss")}
             </Button>

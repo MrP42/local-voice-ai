@@ -95,12 +95,12 @@ impl Embedder {
     }
 }
 
-/// Der Ausschnitt `clip` aus `pcm`, wenn das Audio ihn ganz enthält
-/// (mindestens [`similar::MIN_CLIP_MS`]); sonst `None`.
+/// Der Ausschnitt `clip` aus `pcm`, nur wenn das Audio ihn ganz enthält
+/// (ein angeschnittener Ausschnitt käme sonst unter seinem vollen Schlüssel in
+/// den Zwischenspeicher); sonst `None`.
 pub fn clip_pcm(pcm: &[f32], clip: Clip) -> Option<&[f32]> {
-    let at = |ms: u64| ((ms as usize) * fbank::SAMPLE_RATE / 1_000).min(pcm.len());
-    let part = &pcm[at(clip.start_ms)..at(clip.end_ms)];
-    (part.len() >= (similar::MIN_CLIP_MS as usize) * fbank::SAMPLE_RATE / 1_000).then_some(part)
+    let at = |ms: u64| (ms as usize) * fbank::SAMPLE_RATE / 1_000;
+    pcm.get(at(clip.start_ms)..at(clip.end_ms))
 }
 
 /// Stimmabdrücke aller Sprecher eines Kanals mit genug Sprache. `embed`
@@ -223,26 +223,26 @@ mod tests {
         let mut embed = |c: Clip| Ok(clip_pcm(&pcm, c).map(|_| vec![1.0, 0.0]));
         let voices = voices_of_channel(0, &turns, &mut embed).unwrap();
         assert!(voices.is_empty());
-        // 3 s Audio: vom ersten Ausschnitt sind 2,8 s da (genug), vom zweiten nichts.
+        // 3 s Audio: der erste Ausschnitt ist nur angeschnitten da, also keiner.
         let pcm = vec![0.1f32; 16 * 3_000];
+        assert!(clip_pcm(
+            &pcm,
+            Clip {
+                start_ms: 200,
+                end_ms: 10_220
+            }
+        )
+        .is_none());
         assert_eq!(
             clip_pcm(
                 &pcm,
                 Clip {
                     start_ms: 200,
-                    end_ms: 10_220
+                    end_ms: 2_220
                 }
             )
             .map(<[f32]>::len),
-            Some(16 * 2_800)
+            Some(16 * 2_020)
         );
-        assert!(clip_pcm(
-            &pcm,
-            Clip {
-                start_ms: 10_220,
-                end_ms: 20_000
-            }
-        )
-        .is_none());
     }
 }

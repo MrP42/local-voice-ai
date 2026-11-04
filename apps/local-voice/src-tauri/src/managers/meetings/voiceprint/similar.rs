@@ -42,9 +42,23 @@ fn solo_spans(turns: &[Turn], speaker: u32) -> Vec<(u64, u64)> {
         .filter(|t| t.speaker != speaker)
         .map(|t| (t.start_ms, t.end_ms))
         .collect();
+    // Aneinanderstoßende Turns desselben Sprechers zuerst verbinden.
+    let mut own: Vec<(u64, u64)> = turns
+        .iter()
+        .filter(|t| t.speaker == speaker)
+        .map(|t| (t.start_ms, t.end_ms))
+        .collect();
+    own.sort_unstable();
+    let mut joined: Vec<(u64, u64)> = Vec::new();
+    for (s, e) in own {
+        match joined.last_mut() {
+            Some(last) if s <= last.1 => last.1 = last.1.max(e),
+            _ => joined.push((s, e)),
+        }
+    }
     let mut out = Vec::new();
-    for t in turns.iter().filter(|t| t.speaker == speaker) {
-        let mut pieces = vec![(t.start_ms, t.end_ms)];
+    for (ts, te) in joined {
+        let mut pieces = vec![(ts, te)];
         for &(os, oe) in &others {
             pieces = pieces
                 .into_iter()
@@ -236,6 +250,18 @@ mod tests {
             }]
         );
         assert!(clips_for_speaker(&turns, 3).is_empty());
+    }
+
+    #[test]
+    fn touching_turns_of_one_speaker_count_together() {
+        let turns = [t(0, 1_800, 1), t(1_800, 3_600, 1)];
+        assert_eq!(
+            clips_for_speaker(&turns, 1),
+            vec![Clip {
+                start_ms: 200,
+                end_ms: 3_400
+            }]
+        );
     }
 
     #[test]

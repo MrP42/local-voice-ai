@@ -21,8 +21,8 @@ pub mod meeting_queue; // U7
 pub mod meeting_search;
 pub mod meeting_slides; // D1 (#70, M7)
 pub mod meeting_speakers; // M3-P3c
-pub mod meeting_voiceprint; // Stimmprofile 2a: Vorschlaege aus Stimmabdruecken
 pub mod meeting_variants; // A3
+pub mod meeting_voiceprint; // Stimmprofile 2a: Vorschlaege aus Stimmabdruecken
 pub mod meetings;
 pub mod models;
 pub mod pages;

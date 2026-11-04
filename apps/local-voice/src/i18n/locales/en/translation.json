@@ -1805,7 +1805,7 @@
       "diarization": "Separate speakers automatically",
       "diarizationDescription": "After stopping, on import and on re-transcription, a local model detects who speaks when and labels the transcript with numbered speakers (\"Gegenseite 1\", \"Person 2\", ...). You can name the speakers in the transcript. Nothing that recognises a voice is stored. Takes effect from the next run.",
       "voiceSuggestions": "Recognise identical voices",
-      "voiceSuggestionsDescription": "When speaker separation splits one person into several speakers, the speaker table suggests merging them (“Person 3” and “Person 1” sound the same). A local model compares the voices within one meeting. The voiceprints stay in memory, are never stored and never compared with other meetings.",
+      "voiceSuggestionsDescription": "Default: on, but only takes effect once the voice model is downloaded. When speaker separation splits one person into several speakers, the speaker table suggests merging them. Nothing is merged automatically and every merge can be split again. Voices are only compared within one meeting; the voiceprints stay in memory and are never stored.",
       "voiceSuggestionsDownload": "Download voice model ({{size}} MB)",
       "voiceSuggestionsDownloading": "Downloading …",
       "voiceSuggestionsDownloadFailed": "Download failed. Please try again.",
@@ -3347,10 +3347,10 @@
         "splitAction": "Split",
         "splitFor": "Make “{{label}}” a separate speaker again",
         "blocked": "Split the later merge first.",
-        "voice": "“{{a}}” and “{{b}}” sound the same ({{score}} % similar). Is this the same person?",
+        "voice": "“{{a}}” and “{{b}}” sound alike (similarity {{score}} %). Is this the same person?",
         "voiceAction": "Merge",
         "voiceDismiss": "Different people",
-        "voiceNote": "Detected from voiceprints within this meeting. They are not stored."
+        "voiceNote": "Only a hint from comparing voices in this meeting, not a reliable identification. “Merge” combines both rows into one speaker and can be reverted with “Undo” or later with “Split”. “Different people” lasts until the next speaker separation. Voiceprints are not stored."
       },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",

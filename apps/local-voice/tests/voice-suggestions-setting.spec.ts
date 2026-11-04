@@ -32,31 +32,36 @@ const open = async (
   theme: "light" | "dark" = "light",
 ) => {
   await installTauriMock(page, "main");
-  await page.addInitScript((initial) => {
-    const w = window as any;
-    w.__voiceStatus = initial;
-    const original = w.__TAURI_INTERNALS__.invoke;
-    w.__TAURI_INTERNALS__.invoke = async (
-      cmd: string,
-      args: Record<string, unknown> = {},
-    ) => {
-      if (cmd === "meeting_voiceprint_status") {
-        w.__calls.push({ cmd, args });
-        return w.__voiceStatus;
-      }
-      if (cmd === "meeting_voiceprint_download") {
-        w.__calls.push({ cmd, args });
-        w.__voiceStatus = { ...w.__voiceStatus, model_ready: true };
-        return null;
-      }
-      if (cmd === "change_meeting_voice_suggestions_setting") {
-        w.__calls.push({ cmd, args });
-        w.__voiceStatus = { ...w.__voiceStatus, enabled: args.enabled };
-        return null;
-      }
-      return original(cmd, args);
-    };
-  }, status);
+  await page.addInitScript(
+    ({ initial, theme }) => {
+      const w = window as any;
+      w.__voiceStatus = initial;
+      const original = w.__TAURI_INTERNALS__.invoke;
+      w.__TAURI_INTERNALS__.invoke = async (
+        cmd: string,
+        args: Record<string, unknown> = {},
+      ) => {
+        if (cmd === "get_app_settings" || cmd === "get_default_settings")
+          return { ...(await original(cmd, args)), theme };
+        if (cmd === "meeting_voiceprint_status") {
+          w.__calls.push({ cmd, args });
+          return w.__voiceStatus;
+        }
+        if (cmd === "meeting_voiceprint_download") {
+          w.__calls.push({ cmd, args });
+          w.__voiceStatus = { ...w.__voiceStatus, model_ready: true };
+          return null;
+        }
+        if (cmd === "change_meeting_voice_suggestions_setting") {
+          w.__calls.push({ cmd, args });
+          w.__voiceStatus = { ...w.__voiceStatus, enabled: args.enabled };
+          return null;
+        }
+        return original(cmd, args);
+      };
+    },
+    { initial: status, theme },
+  );
   await page.emulateMedia({ colorScheme: theme });
   await page.setViewportSize({ width, height: 1000 });
   await page.goto("/");
@@ -102,8 +107,31 @@ test.describe("Abnahmebilder Einstellung", () => {
             document.documentElement.clientWidth,
         );
         expect(overflow).toBe(false);
+        // Echte Dunkelansicht: der Seitenhintergrund ist dunkel.
+        const bg = await page.evaluate(() => {
+          const c = getComputedStyle(document.body).backgroundColor;
+          const [r, g, b] = c.match(/\d+/g)!.map(Number);
+          return (r + g + b) / 3;
+        });
+        if (theme === "dark") expect(bg).toBeLessThan(80);
+        else expect(bg).toBeGreaterThan(180);
+        // Maße der Bedienelemente (Schalter, Knopf) mitschreiben.
+        const sizes: string[] = [];
+        for (const [name, loc] of [
+          ["Schalter", toggle],
+          ["Laden", button],
+        ] as const) {
+          const b = await loc.boundingBox();
+          sizes.push(
+            `${name} ${Math.round(b!.width)}x${Math.round(b!.height)}`,
+          );
+        }
         await page.mouse.move(0, 0);
         fs.mkdirSync(SHOTS, { recursive: true });
+        fs.appendFileSync(
+          `${SHOTS}/masse.txt`,
+          `Einstellung ${width} ${theme}: ${sizes.join(", ")}\n`,
+        );
         await page.screenshot({
           animations: "disabled",
           path: `${SHOTS}/4-einstellung-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,

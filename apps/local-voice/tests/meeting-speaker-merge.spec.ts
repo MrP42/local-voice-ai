@@ -640,9 +640,12 @@ test.describe("Gleiche Stimmen", () => {
     const hint = page.getByTestId("speaker-voice-hint");
     await expect(hint).toHaveCount(1);
     await expect(hint).toContainText(
-      "„Person 3“ und „Patrick Wolff“ klingen gleich (87 % ähnlich). Ist das dieselbe Person?",
+      "„Person 3“ und „Patrick Wolff“ klingen ähnlich (Ähnlichkeit 87 %). Ist das dieselbe Person?",
     );
-    await expect(hint).toContainText("Er wird nicht gespeichert.");
+    await expect(hint).toContainText("keine sichere Erkennung");
+    await expect(hint).toContainText(
+      "„Verschiedene Personen“ gilt bis zur nächsten Sprechertrennung.",
+    );
     await expect(page.getByTestId("speaker-duplicate-hint")).toHaveCount(0);
     await hint.getByTestId("speaker-voice-merge").click();
     const merge = await calls(page, "meeting_speaker_merge");
@@ -693,15 +696,27 @@ test.describe("Gleiche Stimmen", () => {
         test(`${width} px ${theme}`, async ({ page }) => {
           await openVoice(page, width, theme);
           const hint = page.getByTestId("speaker-voice-hint");
-          // In die Mitte rollen: unten liegt der Hinweis "Weiter unten geht es weiter".
-          await hint.evaluate((el) => el.scrollIntoView({ block: "center" }));
+          // Überschrift „Sprecher & Redeanteile“ direkt unter die feste Werkzeugleiste
+          // rollen: kein Text halb unter der Leiste, der Hinweis ganz im Bild.
+          await page.getByTestId("minutes-speaker-section").evaluate((el) => {
+            const bar = document.querySelector(
+              '[data-testid="minutes-toolbar"]',
+            );
+            (el as HTMLElement).style.scrollMarginTop =
+              `${(bar?.getBoundingClientRect().height ?? 0) + 8}px`;
+            el.scrollIntoView({ block: "start" });
+          });
           await expect(hint).toBeInViewport({ ratio: 1 });
           await page.mouse.move(0, 0);
           // Beide Knöpfe passen in den Hinweis, sind frei und mindestens 44 px hoch.
           const hb = await hint.boundingBox();
+          const sizes: string[] = [];
           for (const id of ["speaker-voice-merge", "speaker-voice-dismiss"]) {
             const button = hint.getByTestId(id);
             const box = await button.boundingBox();
+            sizes.push(
+              `${id} ${Math.round(box!.width)}x${Math.round(box!.height)}`,
+            );
             expect(box!.x).toBeGreaterThanOrEqual(hb!.x);
             expect(box!.x + box!.width).toBeLessThanOrEqual(
               hb!.x + hb!.width + 0.5,
@@ -728,6 +743,10 @@ test.describe("Gleiche Stimmen", () => {
           );
           expect(overflow).toBe(false);
           fs.mkdirSync(SHOTS_VOICE, { recursive: true });
+          fs.appendFileSync(
+            `${SHOTS_VOICE}/masse.txt`,
+            `Vorschlag ${width} ${theme}: ${sizes.join(", ")}\n`,
+          );
           await page.screenshot({
             animations: "disabled",
             path: `${SHOTS_VOICE}/5-vorschlag-${width}-${theme === "light" ? "hell" : "dunkel"}.png`,
