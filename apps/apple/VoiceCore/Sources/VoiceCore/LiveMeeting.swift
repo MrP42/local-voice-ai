@@ -19,6 +19,9 @@ public struct LiveSegment: Codable, Equatable, Sendable {
     public init(id: String, start: Double, end: Double, text: String, speaker: String? = nil, isFinal: Bool = true) {
         self.id = id; self.start = start; self.end = end; self.text = text; self.speaker = speaker; self.isFinal = isFinal
     }
+
+    /// Kennung des Ursprungssegments; Teilstücke heißen `a12.3`.
+    public static func baseId(_ id: String) -> String { id.split(separator: ".", maxSplits: 1).first.map(String.init) ?? id }
 }
 
 /// Beleg mit Transkriptversion, Segment-ID und Audiozeitbereich. Der Zeitbereich
@@ -289,22 +292,22 @@ public enum LivePromptBuilder {
 
     public static func build(state: LiveState, pending: [LiveSegment], older: [LiveSegment] = [],
                              budget: LiveTokenBudget = LiveTokenBudget(), count: (String) -> Int = estimate) -> LivePrompt {
-        let fresh = pending.filter { $0.isFinal && $0.end > state.processedThrough }.sorted { $0.start < $1.start }
-        // Jede Zeile hart begrenzt: auch ein einzelnes überlanges Segment sprengt das Budget nicht.
-        func line(_ s: LiveSegment, max: Int) -> String { clip("[\(s.id)] " + (s.speaker.map { $0 + ": " } ?? "") + s.text, to: max, count: count) }
-
+        // Segmente werden nie gekürzt, sondern bei Bedarf in Teilstücke geteilt (`a12.1`, `a12.2` …).
+        // Gesendet und als Beleg zugelassen wird nur, was wirklich im Prompt steht; der
+        // Fortschritt (`through`) endet am letzten gesendeten Teilstück.
+        let fresh = pending.filter { $0.isFinal }.sorted { $0.start < $1.start }
+            .flatMap { pieces($0, maxTokens: budget.newSegments - 1, count: count) }
+            .filter { $0.end > state.processedThrough }
         var included: [(LiveSegment, String)] = [], used = 0
         for s in fresh {
-            let l = line(s, max: budget.newSegments - used - 1)
-            let t = count(l) + 1
-            guard t > 1, used + t <= budget.newSegments else { break }
+            let l = line(s), t = count(l) + 1
+            guard used + t <= budget.newSegments else { break }
             included.append((s, l)); used += t
         }
         var olderLines: [(LiveSegment, String)] = [], olderUsed = 0
-        let ids = Set(included.map(\.0.id))
-        for s in older where s.isFinal && !ids.contains(s.id) {
-            let l = line(s, max: budget.olderEvidence)
-            let t = count(l) + 1
+        let ids = Set(included.map { LiveSegment.baseId($0.0.id) })
+        for s in older.filter({ $0.isFinal && !ids.contains($0.id) }).flatMap({ pieces($0, maxTokens: budget.olderEvidence - 1, count: count) }) {
+            let l = line(s), t = count(l) + 1
             if olderUsed + t > budget.olderEvidence { break }
             olderLines.append((s, l)); olderUsed += t
         }
@@ -322,6 +325,39 @@ public enum LivePromptBuilder {
         let through = included.last?.0.end ?? state.processedThrough
         return LivePrompt(instructions: instructions, input: input, segments: olderLines.map(\.0) + included.map(\.0), through: through,
                           estimatedTokens: total, limit: limit)
+    }
+
+    static func line(_ s: LiveSegment) -> String { "[\(s.id)] " + (s.speaker.map { $0 + ": " } ?? "") + s.text }
+
+    /// Teilt ein zu langes Segment an Wortgrenzen in Teilstücke, die je für sich in
+    /// `maxTokens` passen. Zeiten werden anteilig nach Zeichen verteilt, das letzte
+    /// Stück endet genau am Segmentende. Deterministisch: gleiche Eingabe, gleiche Stücke.
+    public static func pieces(_ s: LiveSegment, maxTokens: Int, count: (String) -> Int) -> [LiveSegment] {
+        guard maxTokens > 0, count(line(s)) > maxTokens else { return [s] }
+        let probe = LiveSegment(id: s.id + ".9999", start: 0, end: 0, text: "", speaker: s.speaker)
+        let overhead = count(line(probe))
+        // Überlange „Wörter“ (ohne Leerzeichen) hart teilen, damit jedes Stück passt.
+        let wordChars = Swift.max(1, (maxTokens - overhead) / 4)
+        let words = s.text.split(separator: " ").flatMap { w -> [String] in
+            var out: [String] = [], rest = Substring(w)
+            while rest.count > wordChars { out.append(String(rest.prefix(wordChars))); rest = rest.dropFirst(wordChars) }
+            if !rest.isEmpty { out.append(String(rest)) }
+            return out
+        }
+        var chunks: [String] = [], current = ""
+        for w in words {
+            let candidate = current.isEmpty ? w : current + " " + w
+            if !current.isEmpty, count(candidate) + overhead > maxTokens { chunks.append(current); current = w } else { current = candidate }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        let total = Double(Swift.max(1, s.text.count)), span = s.end - s.start
+        var position = 0
+        return chunks.enumerated().map { k, text in
+            let a = s.start + span * Double(position) / total
+            position += text.count + 1
+            let b = k == chunks.count - 1 ? s.end : s.start + span * Swift.min(1, Double(position) / total)
+            return LiveSegment(id: "\(s.id).\(k + 1)", start: a, end: b, text: text, speaker: s.speaker)
+        }
     }
 
     /// Schneidet einen Text auf höchstens `tokens` (nach `count`) und markiert den Schnitt.

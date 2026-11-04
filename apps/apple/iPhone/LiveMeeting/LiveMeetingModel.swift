@@ -143,10 +143,11 @@ final class LiveMeetingModel: ObservableObject {
         guard let capture, [.recording, .paused, .awaitingConsent].contains(phase) else { return }
         phase = .stopping
         timer?.invalidate(); timer = nil
-        await capture.stop()
-        // Laufenden Takt abwarten, damit sein Ergebnis mitgesichert wird.
-        await tickTask?.value
+        // Laufenden Takt abbrechen und höchstens 5 s abwarten; ein später Rückläufer wird
+        // in `tick` verworfen, weil die Phase nicht mehr aufnimmt.
+        if let t = tickTask { t.cancel(); _ = await LiveCapture.bounded(5) { await t.value } }
         tickTask = nil
+        await capture.stop()
         notesSave?.cancel(); notesSave = nil
         seconds = capture.seconds
         do { try await save() } catch { self.error = "Der letzte Stand konnte nicht gesichert werden; die Aufnahme wird trotzdem übernommen." }
@@ -172,7 +173,7 @@ final class LiveMeetingModel: ObservableObject {
         }
     }
 
-    func time(of segmentId: String) -> Double? { segments.first { $0.id == segmentId }?.start }
+    func time(of segmentId: String) -> Double? { segments.first { $0.id == LiveSegment.baseId(segmentId) }?.start }
 
     // MARK: Intern
 
@@ -242,12 +243,13 @@ final class LiveMeetingModel: ObservableObject {
     private func tick(pending: [LiveSegment], consentVersion: Int) async {
         lastTickAudio = seconds
         // Gezielt ältere Belege: Segmente, auf die offene Einträge verweisen.
-        let wanted = Set(live.items.filter { $0.status != .done }.flatMap { $0.evidence.map(\.segmentId) })
+        let wanted = Set(live.items.filter { $0.status != .done }.flatMap { $0.evidence.map { LiveSegment.baseId($0.segmentId) } })
         let older = segments.filter { wanted.contains($0.id) && $0.end <= live.processedThrough && consent.allows(.aiAnalysis, from: $0.start, to: $0.end) }.suffix(12)
         do {
             let (delta, prompt) = try await LiveSummarizer.tick(state: live, pending: pending, older: Array(older))
             // Einwilligung inzwischen geändert oder Takt abgebrochen: Ergebnis verwerfen.
-            guard !Task.isCancelled, consentVersion == consent.version, aiAllowed else { aiStatus = "KI-Takt verworfen (Einwilligung geändert)"; return }
+            guard !Task.isCancelled, phase == .recording || phase == .paused else { return }
+            guard consentVersion == consent.version, aiAllowed else { aiStatus = "KI-Takt verworfen (Einwilligung geändert)"; return }
             _ = live.apply(delta, segments: prompt.segments)
             lastTick = Date(); aiStatus = ""
             checkpoint()

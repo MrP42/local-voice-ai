@@ -66,16 +66,49 @@ enum LiveSummarizer {
 
     static var available: Bool { SystemLanguageModel.default.availability == .available }
 
-    /// Führt einen Takt aus. Gibt das Delta und die gezeigten Segmente zurück
-    /// (nur diese dürfen als Beleg gelten) sowie die Audioposition, bis zu der ausgewertet ist.
+    /// Führt einen Takt aus. Gibt das Delta und den gesendeten Prompt zurück (nur dessen
+    /// Segmente dürfen als Beleg gelten).
+    ///
+    /// Das Budget wird nicht geschätzt, sondern vor dem Aufruf gemessen: mit der
+    /// Tokenzählung des Systemmodells (iOS 26.4+), sonst mit der UTF-8-Bytezahl als
+    /// sicherer Obergrenze (jedes Token deckt mindestens ein Byte). Gezählt werden
+    /// Anweisungen, Eingabe und das tatsächliche Antwortschema; dazu die feste
+    /// Ausgabegrenze und 10 % Sicherheitsabstand. Passt es nicht, wird das Budget
+    /// verkleinert und neu gebaut; nach vier Versuchen fällt der Takt aus.
     static func tick(state: LiveState, pending: [LiveSegment], older: [LiveSegment], budget: LiveTokenBudget = LiveTokenBudget()) async throws -> (LiveDelta, LivePrompt) {
-        let prompt = LivePromptBuilder.build(state: state, pending: pending, older: older, budget: budget)
-        // Harte Grenze vor dem Modellaufruf.
-        guard prompt.fits, !prompt.segments.isEmpty else { throw CancellationError() }
-        let session = LanguageModelSession(instructions: prompt.instructions)
-        let response = try await session.respond(to: prompt.input, generating: Delta.self,
-                                                 options: GenerationOptions(temperature: 0.2, maximumResponseTokens: budget.output))
-        return (convert(response.content), prompt)
+        let model = SystemLanguageModel.default
+        let schemaText = String(describing: Delta.generationSchema)
+        let context = contextSize(model)
+        var b = budget
+        for _ in 0..<4 {
+            try Task.checkCancellation()
+            let prompt = LivePromptBuilder.build(state: state, pending: pending, older: older, budget: b)
+            guard !prompt.segments.isEmpty else { throw CancellationError() }
+            let measured = try await tokens(prompt.instructions, model) + tokens(prompt.input, model) + tokens(schemaText, model)
+            let total = Int(Double(measured + b.output) * 1.1)
+            if total <= context {
+                let session = LanguageModelSession(instructions: prompt.instructions)
+                let response = try await session.respond(to: prompt.input, generating: Delta.self,
+                                                         options: GenerationOptions(temperature: 0.2, maximumResponseTokens: b.output))
+                return (convert(response.content), prompt)
+            }
+            // Überhang anteilig aus Stand, neuen Segmenten und früheren Belegen nehmen.
+            let factor = max(0.2, 1 - Double(total - context) / Double(max(1, b.state + b.newSegments + b.olderEvidence)) - 0.05)
+            b.state = Int(Double(b.state) * factor)
+            b.newSegments = Int(Double(b.newSegments) * factor)
+            b.olderEvidence = Int(Double(b.olderEvidence) * factor)
+        }
+        throw CancellationError()
+    }
+
+    private static func contextSize(_ model: SystemLanguageModel) -> Int {
+        if #available(iOS 26.4, *) { return model.contextSize }
+        return 4096
+    }
+
+    private static func tokens(_ text: String, _ model: SystemLanguageModel) async throws -> Int {
+        if #available(iOS 26.4, *) { return try await model.tokenCount(for: Prompt(text)) }
+        return text.utf8.count
     }
 
     static func convert(_ d: Delta) -> LiveDelta {

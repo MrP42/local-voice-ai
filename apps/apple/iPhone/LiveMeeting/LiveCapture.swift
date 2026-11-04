@@ -229,7 +229,7 @@ final class LiveCapture {
 
     /// Wartet höchstens `seconds` auf `work`; `true`, wenn es rechtzeitig fertig war.
     /// Ein hängender Schritt läuft im Hintergrund weiter, blockiert den Rückbau aber nicht.
-    private static func bounded(_ seconds: Double, _ work: @escaping () async -> Void) async -> Bool {
+    static func bounded(_ seconds: Double, _ work: @escaping () async -> Void) async -> Bool {
         let once = Once()
         return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
             once.set(c)

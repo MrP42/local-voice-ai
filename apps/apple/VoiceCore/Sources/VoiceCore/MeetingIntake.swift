@@ -35,6 +35,14 @@ enum DurableFiles {
     static func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
         try sync(url)
+        try syncDirectory(url.deletingLastPathComponent())
+    }
+    /// Verzeichniseintrag dauerhaft machen (nach Anlegen, Umbenennen, Löschen).
+    static func syncDirectory(_ url: URL) throws {
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { throw IntakeError.invalid }
+        defer { close(fd) }
+        guard fsync(fd) == 0 else { throw IntakeError.invalid }
     }
     static func safeExtension(_ url: URL) -> String? {
         let ext = url.pathExtension.lowercased()
@@ -198,9 +206,15 @@ public struct WatchRecordingAssembler: Sendable {
         let folder = dir(header.sessionId)
         let headerURL = folder.appendingPathComponent(name(header.sequence) + ".json")
         // Doppelt zugestellt: gleiche Quittung, nichts neu schreiben.
+        let audio = folder.appendingPathComponent(name(header.sequence) + ".m4a")
         if let data = try? Data(contentsOf: headerURL), let stored = try? JSONDecoder().decode(WatchChunkHeader.self, from: data) {
             guard stored == header else { throw IntakeError.conflict("Stück \(header.sequence) mit anderem Inhalt") }
-            return receipt
+            // Nur quittieren, wenn das Audio wirklich vorliegt und passt; sonst neu schreiben.
+            if fm.fileExists(atPath: audio.path), (try? digest.hex(of: audio)) == header.digest {
+                try DurableFiles.syncDirectory(folder)
+                return receipt
+            }
+            try fm.removeItem(at: headerURL)
         }
         if header.sequence == 0 {
             guard let c = header.consent, c.isComplete, c.channel == .watch, c.reason == .start, c.scopes.contains(.recording) else { throw IntakeError.consentMissing }
@@ -208,15 +222,18 @@ public struct WatchRecordingAssembler: Sendable {
             guard fm.fileExists(atPath: folder.appendingPathComponent(name(0) + ".json").path) || header.consent == nil else { throw IntakeError.invalid }
         }
         guard try digest.hex(of: file) == header.digest else { throw IntakeError.digestMismatch }
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        let audio = folder.appendingPathComponent(name(header.sequence) + ".m4a")
+        if !fm.fileExists(atPath: folder.path) {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try DurableFiles.syncDirectory(folder.deletingLastPathComponent())
+        }
         let tmp = folder.appendingPathComponent(".tmp-" + UUID().uuidString)
         defer { try? fm.removeItem(at: tmp) }
         try fm.copyItem(at: file, to: tmp)
         try DurableFiles.sync(tmp)
         if fm.fileExists(atPath: audio.path) { try fm.removeItem(at: audio) }
         try fm.moveItem(at: tmp, to: audio)
-        // Kopf zuletzt: er macht das Stück gültig.
+        try DurableFiles.syncDirectory(folder)
+        // Kopf zuletzt: er macht das Stück gültig. `write` sichert Datei und Verzeichnis vor der Quittung.
         try DurableFiles.write(try JSONEncoder().encode(header), to: headerURL)
         return receipt
     }

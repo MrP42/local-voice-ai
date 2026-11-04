@@ -240,6 +240,11 @@ public actor MeetingArchive {
                   existing.consent == live?.consent, existing.live == live?.live,
                   (existing.liveSegments ?? []) == (live?.segments ?? []),
                   existing.liveNotes == live?.notes.flatMap({ $0.isEmpty ? nil : String($0.prefix(100_000)) }) else { throw VoiceError.conflict }
+            // Der erste Versuch kann nach dem Rename vor dem Sync abgebrochen sein: erneut sichern.
+            try syncFile(archived)
+            try syncFile(folder(fixedId).appendingPathComponent("meeting.json"))
+            try syncDirectory(folder(fixedId))
+            try syncDirectory(root)
             return existing
         }
         guard duration.isFinite, duration > 0, duration <= 7200 else { throw VoiceError.invalid }
@@ -346,6 +351,8 @@ public actor MeetingArchive {
     public func saveMinutes(_ id: UUID, minutes: MeetingMinutes) throws {
         var doc = try load(id)
         guard doc.nextOffset == doc.duration else { throw VoiceError.conflict }
+        // Gesamtprotokoll nur, wenn jeder Abschnitt für die KI-Auswertung freigegeben ist.
+        guard doc.segments.allSatisfy(doc.aiPermitted) else { throw VoiceError.invalid }
         doc.minutes = try MeetingMinutes.decode(JSONEncoder().encode(minutes))
         try save(doc)
     }

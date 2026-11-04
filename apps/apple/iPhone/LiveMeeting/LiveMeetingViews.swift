@@ -91,7 +91,7 @@ struct LiveMeetingScreen: View {
             }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.vertical, 10)
             Group {
                 switch tab {
-                case 0: LiveStateView(model: model, jump: { id in model.jumpTo = id; tab = 1 })
+                case 0: LiveStateView(model: model, jump: { id in model.jumpTo = LiveSegment.baseId(id); tab = 1 })
                 case 1: LiveTranscriptView(model: model)
                 default: TextEditor(text: $model.notes).padding(12).onChange(of: model.notes) { _, _ in model.saveNotes() }
                         .accessibilityLabel("Eigene Notizen")
