@@ -3,6 +3,11 @@
 import hashlib, pathlib, plistlib, json
 root = pathlib.Path(__file__).resolve().parents[1]
 objects = {}
+def put(path, data):
+    """Nur bei inhaltlicher Änderung schreiben: Xcode bricht inkrementelle Builds ab,
+    wenn Entitlements oder Info.plist während des Builds ein neues Änderungsdatum bekommen."""
+    if path.exists() and path.read_bytes() == data: return
+    path.write_bytes(data)
 def uid(name): return hashlib.sha1(name.encode()).hexdigest()[:24].upper()
 def obj(key, **values):
     ident = uid(key); objects[ident] = values; return ident
@@ -29,7 +34,7 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
         'CFBundleDocumentTypes':[{'CFBundleTypeName':'Audio- und Videoaufnahme','CFBundleTypeRole':'Viewer','LSHandlerRank':'Alternate',
                                   'LSItemContentTypes':['public.audio','public.movie','public.audiovisual-content','com.apple.quicktime-audio','com.apple.m4a-audio']}],
         'LSSupportsOpeningDocumentsInPlace':False})
-    (root/(name+'-Info.plist')).write_bytes(plistlib.dumps(info))
+    put(root/(name+'-Info.plist'), plistlib.dumps(info))
     settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'INFOPLIST_FILE':name+'-Info.plist','SDKROOT':platform,'SWIFT_VERSION':'5.0','TARGETED_DEVICE_FAMILY':'1' if platform=='iphoneos' else '4','CODE_SIGN_STYLE':'Automatic','GENERATE_INFOPLIST_FILE':'NO','SUPPORTED_PLATFORMS':'iphoneos iphonesimulator' if platform=='iphoneos' else 'watchos watchsimulator','IPHONEOS_DEPLOYMENT_TARGET':'26.0','WATCHOS_DEPLOYMENT_TARGET':'26.0','ENABLE_USER_SCRIPT_SANDBOXING':'YES'}
     settings['SKIP_INSTALL'] = 'NO' if platform == 'iphoneos' else 'YES'
     settings['ASSETCATALOG_COMPILER_APPICON_NAME'] = 'AppIcon'
@@ -64,7 +69,7 @@ for path in ['WatchWidgets/VoiceComplications.swift', 'VoiceCore/Sources/VoiceCo
     widget_files.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
 phase = obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=widget_files, runOnlyForDeploymentPostprocessing=0)
 product = obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.app-extension', includeInIndex=0, path=name+'.appex', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
-(root/(name+'-Info.plist')).write_bytes(plistlib.dumps({'CFBundleDisplayName':'Local Voice AI', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSExtension':{'NSExtensionPointIdentifier':'com.apple.widgetkit-extension'}}))
+put(root/(name+'-Info.plist'), plistlib.dumps({'CFBundleDisplayName':'Local Voice AI', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2', 'NSExtension':{'NSExtensionPointIdentifier':'com.apple.widgetkit-extension'}}))
 settings = {'PRODUCT_NAME':name, 'PRODUCT_BUNDLE_IDENTIFIER':'de.localvoice.prototype.watchkitapp.complications', 'INFOPLIST_FILE':name+'-Info.plist', 'SDKROOT':'watchos', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'4', 'CODE_SIGN_STYLE':'Automatic', 'GENERATE_INFOPLIST_FILE':'NO', 'SUPPORTED_PLATFORMS':'watchos watchsimulator', 'WATCHOS_DEPLOYMENT_TARGET':'26.0', 'APPLICATION_EXTENSION_API_ONLY':'YES', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'}
 target = obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[phase], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.app-extension'); targets.append(target)
 proxy = obj(name+'proxy', isa='PBXContainerItemProxy', containerPortal=uid('project'), proxyType=1, remoteGlobalIDString=target, remoteInfo=name)
@@ -96,7 +101,7 @@ rule = ('SUBQUERY (extensionItems, $extensionItem, $extensionItem.attachments.@c
         'SUBQUERY ($extensionItem.attachments, $attachment, '
         'ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.audiovisual-content").@count == 1).@count == 1 '
         'AND extensionItems.@count == 1')
-(root/(name+'-Info.plist')).write_bytes(plistlib.dumps({'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2',
+put(root/(name+'-Info.plist'), plistlib.dumps({'CFBundleDisplayName':'Local Voice', 'CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable':'$(EXECUTABLE_NAME)', 'CFBundleName':'$(PRODUCT_NAME)', 'CFBundlePackageType':'XPC!', 'CFBundleShortVersionString':'0.2.0', 'CFBundleVersion':'2',
     'NSExtension':{'NSExtensionPointIdentifier':'com.apple.share-services', 'NSExtensionPrincipalClass':'$(PRODUCT_MODULE_NAME).ShareViewController',
                    'NSExtensionAttributes':{'NSExtensionActivationRule':rule}}}))
 settings = {'PRODUCT_NAME':name, 'PRODUCT_BUNDLE_IDENTIFIER':'de.localvoice.prototype.share', 'INFOPLIST_FILE':name+'-Info.plist', 'SDKROOT':'iphoneos', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'1', 'CODE_SIGN_STYLE':'Automatic', 'CODE_SIGN_ENTITLEMENTS':'VoiceShare.entitlements', 'GENERATE_INFOPLIST_FILE':'NO', 'SUPPORTED_PLATFORMS':'iphoneos iphonesimulator', 'IPHONEOS_DEPLOYMENT_TARGET':'26.0', 'APPLICATION_EXTENSION_API_ONLY':'YES', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'}
@@ -108,7 +113,7 @@ share_embed = obj(name+'embed', isa='PBXCopyFilesBuildPhase', buildActionMask=21
 objects[uid('VoicePhone')]['dependencies'].append(share_dependency)
 objects[uid('VoicePhone')]['buildPhases'].append(share_embed)
 for path in ['VoicePhone.entitlements', 'VoiceShare.entitlements']:
-    (root/path).write_bytes(plistlib.dumps({'com.apple.security.application-groups':['group.de.localvoice.prototype']}))
+    put(root/path, plistlib.dumps({'com.apple.security.application-groups':['group.de.localvoice.prototype']}))
     ref = obj(path, isa='PBXFileReference', lastKnownFileType='text.plist.entitlements', path=path, sourceTree='<group>')
     if ref not in files: files.append(ref)
 # Native UI test targets. They do not change either production app target.
@@ -137,7 +142,7 @@ def render(value):
     if isinstance(value,list): return '('+','.join(render(v) for v in value)+')'
     return json.dumps(str(value))
 p=root/'LocalVoice.xcodeproj'; p.mkdir(exist_ok=True)
-(p/'project.pbxproj').write_text('// !$*UTF8*$!\n'+render({'archiveVersion':1,'classes':{},'objectVersion':56,'objects':objects,'rootObject':project})+'\n')
+put(p/'project.pbxproj', ('// !$*UTF8*$!\n'+render({'archiveVersion':1,'classes':{},'objectVersion':56,'objects':objects,'rootObject':project})+'\n').encode())
 
 # Explicit shared schemes make command-line UI testing reproducible.
 for tested in ['VoicePhone','VoiceWatch']:
@@ -156,11 +161,11 @@ for tested in ['VoicePhone','VoiceWatch']:
 </Scheme>
 """
     directory=p/'xcshareddata/xcschemes';directory.mkdir(parents=True,exist_ok=True)
-    (directory/(name+'.xcscheme')).write_text(scheme)
-    (directory/(tested+'.xcscheme')).write_text(scheme)
+    put(directory/(name+'.xcscheme'), (scheme).encode())
+    put(directory/(tested+'.xcscheme'), (scheme).encode())
 
 name='SimulatorControlsUITests'
 ref=reference(name,name+'.xctest')
-(p/'xcshareddata/xcschemes'/f'{name}.xcscheme').write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+put(p/'xcshareddata/xcschemes'/f'{name}.xcscheme', (f"""<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion="2630" version="1.3"><BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">{ref}</BuildActionEntry></BuildActionEntries></BuildAction><TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES"><Testables><TestableReference skipped="NO">{ref}</TestableReference></Testables></TestAction></Scheme>
-""")
+""").encode())
