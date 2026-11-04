@@ -17,11 +17,17 @@ public enum CoverLookup {
         return c?.url
     }
 
+    static let minTitleWithoutAuthor = 12
+    /// Kleiner ist ein Platzhalterbild, größer ein Irrläufer (wie `library.rs`).
+    public static func plausibleCover(bytes: Int) -> Bool { bytes >= 512 && bytes <= 8 * 1024 * 1024 }
+
     public static func coverURL(id: Int) -> URL? { URL(string: "\(covers)/id/\(id)-L.jpg") }
 
     static func fold(_ s: String) -> String {
-        s.replacingOccurrences(of: "ß", with: "ss")
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "de"))
+        // Umlaute wie am Desktop: „Müller“ und „Mueller“ sind gleich, „Bär“ und „Bar“ nicht.
+        var t = s.lowercased()
+        for (a, b) in [("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")] { t = t.replacingOccurrences(of: a, with: b) }
+        return t.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "de"))
             .unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
@@ -48,7 +54,8 @@ public enum CoverLookup {
         guard let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
               let docs = root["docs"] as? [[String: Any]] else { return nil }
         let wanted = coreTitle(title), mine = surnames(authors)
-        guard !wanted.isEmpty else { return nil }
+        // Ohne Autor nur bei langem Titel: „Notizen“ darf kein fremdes Cover bekommen.
+        guard !wanted.isEmpty, !mine.isEmpty || wanted.count >= minTitleWithoutAuthor else { return nil }
         for doc in docs {
             guard let id = (doc["cover_i"] as? NSNumber)?.intValue, id > 0, let t = doc["title"] as? String,
                   coreTitle(t) == wanted else { continue }

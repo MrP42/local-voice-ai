@@ -15,8 +15,21 @@ final class CoverLookupTests: XCTestCase {
         XCTAssertEqual(CoverLookup.bestCoverId(json, title: "Die Verwandlung", authors: ["Franz Kafka"]), 3)
     }
 
-    func testUnknownAuthorTakesFirstSameTitle() {
-        XCTAssertEqual(CoverLookup.bestCoverId(json, title: "Verwandlung", authors: []), 2)
+    func testUnknownAuthorNeedsLongTitle() {
+        XCTAssertNil(CoverLookup.bestCoverId(json, title: "Verwandlung", authors: []), "kurzer Titel ohne Autor ist zu unsicher")
+        let long = Data(#"{"docs":[{"title":"Schnelles Denken","author_name":["D. K."],"cover_i":9}]}"#.utf8)
+        XCTAssertEqual(CoverLookup.bestCoverId(long, title: "Schnelles Denken", authors: []), 9)
+    }
+
+    func testUmlautsFoldLikeDesktop() {
+        XCTAssertEqual(CoverLookup.coreTitle("Müller"), CoverLookup.coreTitle("Mueller"))
+        XCTAssertNotEqual(CoverLookup.coreTitle("Bär"), CoverLookup.coreTitle("Bar"))
+    }
+
+    func testCoverSizeGuard() {
+        XCTAssertFalse(CoverLookup.plausibleCover(bytes: 43))
+        XCTAssertTrue(CoverLookup.plausibleCover(bytes: 90_000))
+        XCTAssertFalse(CoverLookup.plausibleCover(bytes: 9 * 1024 * 1024))
     }
 
     func testNoMatchAndBrokenAnswerGiveNil() {
