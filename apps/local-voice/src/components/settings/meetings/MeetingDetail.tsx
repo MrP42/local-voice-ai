@@ -104,6 +104,7 @@ import {
 } from "./language/DocBasisFields";
 import { storeOutputLanguage, useLanguageInfo } from "./language/languages";
 import { documentBasisText, useDocumentBasis } from "./language/documentBasis";
+import { useRegenerateGuard } from "./useRegenerateGuard";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -811,8 +812,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       }
     });
   };
-  const regenerateMinutes = (choice?: DocBasisChoice) => {
+  const regenerateGuard = useRegenerateGuard();
+  const regenerateMinutes = async (choice?: DocBasisChoice) => {
     setCenterTab("minutes");
+    // Von Hand bearbeitetes Protokoll: erst fragen (die Version bleibt erhalten).
+    if (!(await regenerateGuard.confirm(meetingId, "minutes"))) return;
     const basis = toDocBasis(choice ?? initialDocBasisChoice(i18n.language));
     void commands
       .meetingsGenerateMinutes(meetingId, null, basis)
@@ -838,7 +842,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
     setRegenOpen(false);
     storeOutputLanguage(regenChoice.outputLanguage);
     if (kind === "notes") regenerateNotes(regenChoice);
-    else regenerateMinutes(regenChoice);
+    else void regenerateMinutes(regenChoice);
   };
 
   /**
@@ -1026,7 +1030,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
       }}
       onTranslate={() => setTranslateOpen(true)}
       onRegenNotes={() => regenerateNotes()}
-      onRegenMinutes={() => regenerateMinutes()}
+      onRegenMinutes={() => void regenerateMinutes()}
       onTemplate={() => setTemplateOpen(true)}
       onManageTemplates={() => setManagerOpen(true)}
       onRegenWithTemplate={() => setRegenOpen(true)}
@@ -1672,6 +1676,7 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
         onOpenChange={setManagerOpen}
         onChanged={() => void reloadTemplate().catch(() => {})}
       />
+      {regenerateGuard.dialog}
       <Dialog
         open={regenOpen}
         onOpenChange={setRegenOpen}
