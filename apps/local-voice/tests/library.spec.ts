@@ -1554,7 +1554,7 @@ const pause = async (page: Page) => {
   await expect(toggle).toHaveAccessibleName("Abspielen");
 };
 
-test("Satzzeile über der Hörleiste: der gehörte Satz, Klick öffnet Mitlesen", async ({ page }) => {
+test("Textzeile über der Hörleiste: ruhiger Abschnitt, gehörter Satz markiert, Klick öffnet Mitlesen", async ({ page }) => {
   await mitlesenSetup(page);
   await page.addInitScript(() => localStorage.setItem("lva.ui.library.followText", JSON.stringify("off")));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1565,27 +1565,194 @@ test("Satzzeile über der Hörleiste: der gehörte Satz, Klick öffnet Mitlesen"
     .getByTestId("library-play")
     .click();
   const line = page.getByTestId("library-audiobar-line");
+  const now = page.getByTestId("library-audiobar-now");
   await expect(line).toBeVisible();
   await pause(page);
-  // 15 s: Beginn von Absatz 7 – erster Satz.
+  // 15 s: Beginn von Absatz 7 – der Abschnitt zeigt mehr als den einen Satz.
   await seekTo(page, 15);
-  await expect(line).toContainText("Absatz 7: Der Text läuft hier");
-  // 17 s: 80 % in Absatz 7 – dritter Satz, ohne „Absatz 7“.
+  await expect(now).toHaveText(/^Absatz 7: Der Text läuft hier.*muss\.$/);
+  const passage = page.getByTestId("library-audiobar-passage");
+  const before = await passage.innerText();
+  expect(before.length).toBeGreaterThan((await now.innerText()).length + 40);
+  // Zwei Zeilen, feste Höhe: die Leiste springt nicht.
+  const h = (await line.boundingBox())!.height;
+  expect(h).toBeGreaterThanOrEqual(44);
+  // Weiterhören innerhalb des Abschnitts: der Text bleibt stehen, nur die
+  // Markierung wandert (kein Umblättern im Halbsatztakt).
+  await page.getByTestId("library-audiobar-toggle").click();
+  await expect(now).toHaveText(/^Der Text läuft hier/, { timeout: 5000 });
+  await pause(page);
+  expect(await passage.innerText()).toBe(before);
+  expect((await line.boundingBox())!.height).toBe(h);
+  await expect(page.locator(".library-audiobar__done")).toHaveCount(1);
+  // Sprung: die Anzeige folgt sofort; 17 s ist der dritte Satz.
   await seekTo(page, 17);
-  await expect(line).toContainText("Der Text läuft hier");
-  await expect(line).not.toContainText("Absatz");
+  await expect(now).toHaveText(/^Der Text läuft hier.*muss\.$/);
+  await expect(line).not.toContainText("Absatz 7");
   // Genaue Zeitachse: kein „≈“.
   await expect(page.getByTestId("library-audiobar-line-approx")).toHaveCount(0);
-  // Der Satz ist vollständig lesbar, nicht abgeschnitten.
-  const cut = await line.locator(".library-audiobar__sentence").evaluate(
-    (el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1,
-  );
-  expect(cut).toBe(false);
-  expect((await line.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  // Der gehörte Satz ist vollständig sichtbar.
+  const visible = await now.evaluate((el) => {
+    const clip = el.closest(".library-audiobar__clip") as HTMLElement;
+    const a = el.getBoundingClientRect();
+    const b = clip.getBoundingClientRect();
+    return a.top >= b.top - 1 && a.bottom <= b.bottom + 1;
+  });
+  expect(visible).toBe(true);
   await line.click();
   await expect(page.getByTestId("library-follow")).toBeVisible();
   await expect(line).toHaveCount(0);
 });
+
+test("Textzeile: ohne Abgleich ein Hinweis statt geschätztem Text", async ({ page }) => {
+  await mitlesenSetup(page, false);
+  // Das Erkennen dauert: bis dahin ist die Stelle nur geschätzt.
+  await page.addInitScript(() => {
+    (window as unknown as { __liveWindow: () => Promise<unknown> }).__liveWindow = () =>
+      new Promise(() => {});
+  });
+  await page.addInitScript(() => localStorage.setItem("lva.ui.library.followText", JSON.stringify("off")));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await page
+    .getByTestId("library-card")
+    .filter({ hasText: "Der Prozess" })
+    .getByTestId("library-play")
+    .click();
+  const line = page.getByTestId("library-audiobar-line");
+  await expect(line).toContainText("Stelle wird mit dem Text abgeglichen");
+  await expect(line).not.toContainText("Absatz");
+  if (process.env.LV_SHOT_DIR) {
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: shot("textzeile-1440-hell-abgleich.png") });
+  }
+});
+
+test("Textzeile: Abschnitt steht still, Rücksprünge ohne Sprung erst nach 1,5 s", async ({ page }) => {
+  await page.goto("/");
+  const r = await page.evaluate(async () => {
+    const m = await import("/src/lib/library/passage.ts");
+    const units = [0, 1, 2, 3, 4, 5].map((i) => ({ start: i * 50, end: i * 50 + 48 }));
+    const go = (prev: unknown, chars: number, now: number, seek = false) =>
+      m.stepPassage(prev as never, { para: 0, units, chars, budget: 160, seek, now });
+    const a = go(null, 10, 0)!; // Abschnitt Einheit 0–2
+    const b = go(a, 60, 100)!; // Einheit 1: gleicher Abschnitt
+    const c = go(b, 110, 200)!; // Einheit 2: gleicher Abschnitt
+    const d = go(c, 60, 300)!; // Zittern zurück: bleibt bei 2
+    const e = go(d, 60, 1700)!; // 1,4 s später: noch immer 2
+    const f = go(e, 60, 1900)!; // > 1,5 s: folgt
+    const g = go(f, 160, 2000)!; // Abschnittsende: umblättern
+    const h = go(g, 10, 2100, true)!; // echter Sprung: sofort
+    const i = go(h, 60, 2200, true)!; // Sprung im Abschnitt: Text bleibt
+    return {
+      a: [a.from, a.units.length, a.cur],
+      b: [b.from, b.cur, b.units === a.units],
+      c: [c.from, c.cur, c.units === a.units],
+      d: [d.cur, d.units === a.units],
+      e: e.cur,
+      f: f.cur,
+      g: [g.from, g.cur],
+      h: [h.from, h.cur],
+      i: [i.from, i.cur],
+    };
+  });
+  expect(r).toEqual({
+    a: [0, 3, 0],
+    b: [0, 1, true],
+    c: [0, 2, true],
+    d: [2, true],
+    e: 2,
+    f: 1,
+    g: [3, 0],
+    h: [0, 0],
+    i: [0, 1],
+  });
+});
+
+/** Vorschau Textzeile: lesbarer Beispieltext statt Wiederholungen. */
+const zeileText = () => {
+  const paras = [
+    "Am Morgen lag Nebel über dem Fluss. Die Fähre wartete am Steg, und der Fährmann zählte leise die Münzen in seiner Hand. Niemand sprach. Erst als die Glocke vom Kirchturm schlug, löste er das Seil.",
+    "Auf der anderen Seite stand eine Frau mit einem Koffer. Sie hob die Hand, als wolle sie grüßen, ließ sie dann aber wieder sinken. Der Fährmann kannte sie nicht. Trotzdem hatte er das Gefühl, dass sie schon lange auf ihn wartete.",
+    "„Sie sind spät“, sagte sie, als das Boot anlegte. Er nickte nur. Der Nebel hatte sich inzwischen gelichtet, und die Sonne lag flach auf dem Wasser.",
+  ];
+  let text = "# Die Fähre\n\n";
+  const sync: { chars: number; ms: number }[] = [];
+  paras.forEach((p, k) => {
+    if (k > 0) text += "\n\n";
+    sync.push({ chars: text.length, ms: k * 10_000 });
+    text += p;
+  });
+  return { text, sync };
+};
+
+for (const theme of ["hell", "dunkel"] as const)
+  for (const width of [390, 1440])
+    test(`vorschau textzeile ${theme} ${width}`, async ({ page }) => {
+      test.skip(!process.env.LV_SHOT_DIR, "nur mit LV_SHOT_DIR");
+      const { text, sync } = zeileText();
+      await serveAudio(page, { "teil_001.wav": 10, "teil_002.wav": 20 });
+      await addBooks(page, [
+        baseBook("book_m", "Die Fähre", {
+          authors: ["Beispieltext"],
+          text: { page_id: "page_m", origin: "transcript", source_name: null },
+          ...multiAudio("book_m", [track(1, "Teil 1", 10_000), track(2, "Teil 2", 20_000)], sync),
+        }),
+      ]);
+      await page.addInitScript(
+        ([t, dark]) => {
+          const w = window as unknown as {
+            __pageText: Record<string, string>;
+            __settings: { theme: string };
+          };
+          w.__pageText["page_m"] = t as string;
+          if (dark) w.__settings.theme = "dark";
+          localStorage.setItem("lva.ui.library.followText", JSON.stringify("off"));
+        },
+        [text, theme === "dunkel"] as const,
+      );
+      await page.setViewportSize({ width, height: width < 800 ? 844 : 900 });
+      await page.goto("/");
+      await page
+        .getByTestId("library-card")
+        .filter({ hasText: "Die Fähre" })
+        .getByTestId("library-play")
+        .click();
+      await pause(page);
+      const now = page.getByTestId("library-audiobar-now");
+      await seekTo(page, 11);
+      await expect(now).toBeVisible();
+      await page.waitForTimeout(400);
+      await page.screenshot({ path: shot(`textzeile-${width}-${theme}-1.png`) });
+      // Weiterhören: gleicher Abschnitt, Markierung auf dem nächsten Satz.
+      await page.getByTestId("library-audiobar-toggle").click();
+      await expect(now).toHaveText(/^Sie hob die Hand/, { timeout: 6000 });
+      await pause(page);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: shot(`textzeile-${width}-${theme}-2.png`) });
+      if (theme === "hell") {
+        const ids = [
+          "library-audiobar-line",
+          "library-audiobar-back",
+          "library-audiobar-toggle",
+          "library-audiobar-forward",
+          "library-audiobar-parts",
+          "library-audiobar-follow",
+          "library-audiobar-close",
+        ];
+        const rows: string[] = [];
+        for (const id of ids) {
+          const b = (await page.getByTestId(id).boundingBox())!;
+          expect(b.width).toBeGreaterThanOrEqual(44);
+          expect(b.height).toBeGreaterThanOrEqual(44);
+          rows.push(`${id}\t${Math.round(b.width)}\t${Math.round(b.height)}`);
+        }
+        writeFileSync(
+          shot(`touchziele-textzeile-${width}.txt`),
+          `Element\tBreite px\tHöhe px (${width} px Fensterbreite)\n${rows.join("\n")}\n`,
+        );
+      }
+    });
 
 test("Mitlesen: der gehörte Satz ist hervorgehoben (ohne Umbruchwechsel)", async ({ page }) => {
   await mitlesenSetup(page);

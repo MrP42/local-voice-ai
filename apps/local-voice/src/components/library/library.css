@@ -1146,8 +1146,12 @@
 .library-follow[data-correcting="true"] .library-follow__p {
   cursor: crosshair;
 }
-/* Satzzeile über der kompakten Hörleiste: eine Zeile, Klick öffnet Mitlesen. */
+/* Textzeile über der kompakten Hörleiste: ein ruhiger Abschnitt aus zwei bis
+   drei Zeilen, fest in der Höhe (die Leiste springt nicht). Nur die Markierung
+   des gehörten Satzes wandert; umgeblättert wird erst am Abschnittsende.
+   Klick öffnet Mitlesen. */
 .library-audiobar__line {
+  --line-rows: 2;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1160,23 +1164,56 @@
   color: inherit;
   font: inherit;
   font-size: 0.95rem;
-  line-height: 1.4;
+  line-height: 1.45;
   text-align: left;
   cursor: pointer;
 }
 .library-audiobar__line:hover {
   background: color-mix(in srgb, var(--color-mid-gray) 12%, transparent);
 }
-/* Der Satz bleibt vollständig lesbar: bis zu drei Zeilen (Codex-Auflage). */
-.library-audiobar__line > :last-child {
+.library-audiobar__clip {
+  position: relative;
+  display: block;
   flex: 1;
   min-width: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
+  height: calc(var(--line-rows) * 1.45em);
   overflow: hidden;
   overflow-wrap: anywhere;
+}
+.library-audiobar__passage {
+  display: block;
+  animation: lva-passage-in 220ms ease-out;
+}
+@keyframes lva-passage-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .library-audiobar__passage {
+    animation: none;
+  }
+}
+/* Gehört: zurückgenommen; gehört wird: volle Farbe, ruhig hinterlegt;
+   kommt noch: normal lesbar. Nur Farbe, damit der Umbruch gleich bleibt. */
+.library-audiobar__done {
+  color: color-mix(in srgb, currentColor 62%, var(--color-background));
+}
+.library-audiobar__sentence {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-accent-text) 16%, transparent);
+  box-shadow:
+    -2px 0 0 color-mix(in srgb, var(--color-accent-text) 16%, transparent),
+    2px 0 0 color-mix(in srgb, var(--color-accent-text) 16%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background-color 180ms ease-out;
+}
+.library-audiobar__next {
+  color: color-mix(in srgb, currentColor 85%, var(--color-background));
 }
 .library-audiobar__line .library-follow__ins {
   border-bottom: 0;
