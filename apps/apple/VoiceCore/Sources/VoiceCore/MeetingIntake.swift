@@ -131,7 +131,9 @@ public struct MeetingInbox: Sendable {
     public func deposit(_ source: URL, from kind: InboxItem.Source, consent: ConsentRecord, name: String? = nil) throws -> InboxItem {
         guard consent.isComplete, consent.reason == .import, consent.channel == .import else { throw IntakeError.consentMissing }
         let fm = FileManager.default
-        let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        // URL-Ressourcenwerte sind zwischengespeichert: bei erneutem Versuch sonst die alte Größe.
+        var fresh = source; fresh.removeAllCachedResourceValues()
+        let info = try fresh.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard info.isRegularFile == true, info.isSymbolicLink != true, let bytes = info.fileSize, bytes > 0 else { throw IntakeError.invalid }
         // Zusätzlich ohne Symlink-Auflösung prüfen (lstat): nur eine echte, reguläre Datei.
         guard (try fm.attributesOfItem(atPath: source.path)[.type] as? FileAttributeType) == .typeRegular else { throw IntakeError.invalid }

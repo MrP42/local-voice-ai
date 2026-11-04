@@ -320,9 +320,11 @@ final class MeetingIntakeTests: XCTestCase {
     func testTakeAndDiscardNeverWaitForTheLock() async throws {
         let inbox = try MeetingInbox(root: tmp.appendingPathComponent("Eingang"), digest: TestDigest())
         let item = try inbox.deposit(try file("l.m4a", [2, 4, 6, 8]), from: .openIn, consent: consent(.import, .import))
-        let holding = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
-        Thread.detachNewThread { _ = try? inbox.locked(item.id) { holding.signal(); done.wait() } }
-        holding.wait()
+        let done = DispatchSemaphore(value: 0)
+        // Semaphore-wait ist in async-Kontexten nicht erlaubt: auf die Sperre per Continuation warten.
+        await withCheckedContinuation { (held: CheckedContinuation<Void, Never>) in
+            Thread.detachNewThread { _ = try? inbox.locked(item.id) { held.resume(); done.wait() } }
+        }
         do { _ = try await inbox.take(item) { _, _ in XCTFail("darf nicht importieren") }; XCTFail("busy erwartet") }
         catch IntakeError.busy {}
         XCTAssertThrowsError(try inbox.discard(item)) { XCTAssertEqual($0 as? IntakeError, .busy) }
