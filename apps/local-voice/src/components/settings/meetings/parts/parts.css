@@ -1,0 +1,8 @@
+/* Dialoge der Teile (Zusammenführen, Anhängen, Teilliste): unter 640 px
+   auch der Schließen-Knopf mit Touchziel >= 44 px. */
+@media (max-width: 639px) {
+  .lv-dialog.parts-dialog-touch .fui-DialogTitle__action button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

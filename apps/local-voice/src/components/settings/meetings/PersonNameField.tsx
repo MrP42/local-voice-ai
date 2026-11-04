@@ -43,6 +43,8 @@ interface PersonNameFieldProps {
   inputTestId?: string;
   disabled?: boolean;
   className?: string;
+  /** Zusätzliche Klassen am Eingabefeld (z. B. Mindesthöhe für Touch). */
+  inputClassName?: string;
   /** Namen, die nicht angeboten werden (z. B. der aktuelle Name des Sprechers). */
   exclude?: string[];
 }
@@ -64,6 +66,7 @@ export const PersonNameField: React.FC<PersonNameFieldProps> = ({
   inputTestId,
   disabled,
   className = "",
+  inputClassName = "",
   exclude = [],
 }) => {
   const { t } = useTranslation();
@@ -96,7 +99,7 @@ export const PersonNameField: React.FC<PersonNameFieldProps> = ({
         disabled={disabled}
         autoComplete="off"
         data-testid={inputTestId}
-        className="w-full min-w-0"
+        className={`w-full min-w-0 ${inputClassName}`.trim()}
       />
       {matches.length > 0 && (
         <ul

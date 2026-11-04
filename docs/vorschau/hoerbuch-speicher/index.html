@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hörbuch-Speicher iPhone</title>
+<style>
+:root{--bg:#F2F2F7;--card:#FFFFFF;--text:#1F2937;--sec:rgba(31,41,55,.72);--sep:rgba(128,128,128,.22);--accent:#111418;--brand:#FFDD00;--red:#FF3B30;--orange:#C2410C;--blue:#007AFF;--page:#E5E7EB;--sheet:rgba(255,255,255,.96);--dim:rgba(0,0,0,.35)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0B0B0C;--card:#1C1C1E;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--sep:rgba(128,128,128,.3);--accent:#FFDD00;--red:#FF453A;--orange:#FDBA74;--blue:#0A84FF;--page:#000;--sheet:rgba(44,44,46,.97);--dim:rgba(0,0,0,.55)}}
+:root[data-theme="dark"]{--bg:#0B0B0C;--card:#1C1C1E;--text:#EDEDE7;--sec:rgba(237,237,231,.72);--sep:rgba(128,128,128,.3);--accent:#FFDD00;--red:#FF453A;--orange:#FDBA74;--blue:#0A84FF;--page:#000;--sheet:rgba(44,44,46,.97);--dim:rgba(0,0,0,.55)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);font:15px/1.35 "Segoe UI",-apple-system,system-ui,sans-serif;color:var(--text)}
+.gallery{display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:24px 16px}
+.cap{font-size:13px;color:var(--sec);text-align:center;margin-top:8px;max-width:375px}
+.phone{width:375px;height:780px;background:var(--bg);border-radius:36px;overflow:hidden;position:relative;border:1px solid var(--sep);display:flex;flex-direction:column}
+body.single .gallery{padding:0;gap:0}
+body.single .phone{width:100vw;height:auto;min-height:100vh;border-radius:0;border:0}
+body.single .cap{display:none}
+.status{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 24px;font-weight:600;font-size:14px}
+.nav{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:600}
+.nav a{color:var(--blue);font-weight:400;text-decoration:none;min-height:44px;min-width:44px;justify-content:flex-end;display:flex;align-items:center}
+.scroll{flex:1;overflow:hidden;padding:0 16px 24px}
+.hdr{font-size:13px;color:var(--sec);text-transform:uppercase;margin:22px 16px 6px;letter-spacing:.02em}
+.ftr{font-size:13px;color:var(--sec);margin:6px 16px 0}
+.group{background:var(--card);border-radius:12px;overflow:hidden}
+.cell{min-height:44px;display:flex;align-items:center;gap:12px;padding:10px 16px;border-top:1px solid var(--sep);position:relative}
+.cell:first-child{border-top:0}
+.cell .v{margin-left:auto;color:var(--sec)}
+.cell .chev{color:var(--sec);margin-left:6px}
+.cell.btn{color:var(--blue)}
+.cell.red{color:var(--red)}
+.toggle{margin-left:auto;width:51px;height:31px;border-radius:16px;background:#34C759;position:relative}
+.toggle::after{content:"";position:absolute;right:2px;top:2px;width:27px;height:27px;border-radius:50%;background:#fff}
+.cover{width:40px;height:60px;border-radius:4px;flex:none;display:flex;align-items:flex-end;padding:4px;font-size:8px;font-weight:700;line-height:1.05}
+.c1{background:#2E4A3D;color:#F2E8D1}.c2{background:#8A3B2E;color:#FAE8DC}.c3{background:#213A5C;color:#DEE8F5}.c4{background:#C9A426;color:#29210A}.c5{background:#5C4578;color:#F0E8F7}
+.meta{flex:1;min-width:0}
+.t{font-weight:600}
+.d{font-size:13px;color:var(--sec)}
+.badge{font-size:12px;font-weight:600;color:var(--text);margin-top:2px}
+.size{font-size:14px;color:var(--sec);font-variant-numeric:tabular-nums;white-space:nowrap}
+.swiped{margin-right:96px;background:var(--card)}
+.swipe-wrap{position:relative;overflow:hidden;border-top:1px solid var(--sep)}
+.swipe-wrap .cell{border-top:0}
+.swipe-act{position:absolute;right:0;top:0;bottom:0;width:96px;background:var(--red);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+.notice{font-size:13px;color:var(--sec);padding:10px 16px;border-top:1px solid var(--sep)}
+.overlay{position:absolute;inset:0;background:var(--dim);display:flex;align-items:flex-end;justify-content:center;padding:8px}
+.overlay.center{align-items:center}
+.sheet{width:100%}
+.sheet .box{background:var(--sheet);border-radius:14px;text-align:center;overflow:hidden}
+.sheet .q{padding:14px 16px;font-size:13px;color:var(--sec)}
+.sheet .q b{display:block;color:var(--text);font-size:14px;margin-bottom:4px}
+.sheet .opt{min-height:56px;display:flex;align-items:center;justify-content:center;border-top:1px solid var(--sep);font-size:18px;color:var(--blue)}
+.sheet .opt.red{color:var(--red)}
+.sheet .cancel{margin-top:8px;font-weight:600}
+.alert{width:270px;background:var(--sheet);border-radius:14px;text-align:center;overflow:hidden}
+.alert .q{padding:18px 16px 14px;font-size:13px}
+.alert .q b{display:block;font-size:17px;margin-bottom:4px}
+.alert .opt{min-height:44px;display:flex;align-items:center;justify-content:center;border-top:1px solid var(--sep);font-size:17px;color:var(--blue)}
+.alert .opt.b{font-weight:600}
+.big{display:flex;flex-direction:column;align-items:center;gap:8px;padding:30px 16px;color:var(--sec);text-align:center}
+.big b{color:var(--text);font-size:20px}
+.spin{width:18px;height:18px;border:2px solid var(--sep);border-top-color:var(--sec);border-radius:50%}
+</style>
+</head>
+<body>
+<div class="gallery">
+
+<!-- 1: Konto & Sync -->
+<div id="s1"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><span style="width:60px"></span><span>Konto &amp; Sync</span><a>Fertig</a></div>
+  <div class="scroll">
+    <div class="group" style="margin-top:12px">
+      <div class="cell">Konto<span class="v">patrick@example.org</span></div>
+      <div class="cell">Stand<span class="v">Synchronisiert</span></div>
+      <div class="cell">Zuletzt<span class="v">23:40</span></div>
+      <div class="cell btn">Jetzt abgleichen</div>
+    </div>
+    <div class="ftr">Bibliothek und Fortschritt werden mit der Desktop-App abgeglichen, Ende-zu-Ende verschlüsselt. Der Server sieht nur Chiffrat.</div>
+    <div class="group" style="margin-top:22px"><div class="cell">Hörbücher nur im WLAN laden<span class="toggle"></span></div></div>
+    <div class="hdr">Speicher</div>
+    <div class="group">
+      <div class="cell">Hörbücher auf diesem iPhone<span class="v">2,84 GB</span></div>
+      <div class="cell">Frei auf dem iPhone<span class="v">11,2 GB</span></div>
+      <div class="cell">Speicher verwalten<span class="v">5 geladen</span><span class="chev">›</span></div>
+    </div>
+    <div class="ftr">Hörbücher liegen nur bei Bedarf auf dem iPhone und zählen nicht zum iCloud-Backup.</div>
+    <div class="group" style="margin-top:22px"><div class="cell red">Abmelden</div></div>
+  </div>
+</div><div class="cap">Konto &amp; Sync: neuer Abschnitt „Speicher“</div></div>
+
+<!-- 2: Speicher-Liste, ein Eintrag gewischt -->
+<div id="s2"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="group" style="margin-top:12px">
+      <div class="cell">Belegt durch Hörbücher<span class="v">2,84 GB</span></div>
+      <div class="cell">Frei auf dem iPhone<span class="v">11,2 GB</span></div>
+      <div class="cell red">✓&nbsp; Fertig gehörte entfernen (2)</div>
+    </div>
+    <div class="ftr">Entfernte Hörbücher bleiben im Konto und in der Bibliothek. Sie werden beim nächsten Hören wieder geladen, der Fortschritt bleibt.</div>
+    <div class="hdr">Geladene Hörbücher</div>
+    <div class="group">
+      <div class="cell"><div class="cover c3">Der Zauber&shy;berg</div><div class="meta"><div class="t">Der Zauberberg</div><div class="d">45 % gehört · zuletzt vor 2 Stunden</div></div><span class="size">1,12 GB</span></div>
+      <div class="swipe-wrap"><div class="swipe-act" data-tap="Wischaktion Entfernen">☁︎<br>Entfernen</div><div class="cell swiped"><div class="cover c1">Effi Briest</div><div class="meta"><div class="t">Effi Briest</div><div class="d">Fertig gehört · zuletzt vor 6 Tagen</div></div><span class="size">684 MB</span></div></div>
+      <div class="cell"><div class="cover c5">Eigene Aufnahme</div><div class="meta"><div class="t">Vortrag Verwaltung digital</div><div class="d">Noch nicht gehört</div><div class="badge">▯ Nur auf diesem iPhone</div></div><span class="size">512 MB</span></div>
+      <div class="cell"><div class="cover c2">Die Ver&shy;wandlung</div><div class="meta"><div class="t">Die Verwandlung</div><div class="d">Fertig gehört · zuletzt vor 3 Wochen</div></div><span class="size">318 MB</span></div>
+      <div class="cell"><div class="cover c4">Kurz&shy;geschichten</div><div class="meta"><div class="t">Kurzgeschichten</div><div class="d">Download unvollständig</div></div><span class="size">226 MB</span></div>
+    </div>
+  </div>
+</div><div class="cap">Speicher: nach Größe, Stand und letzte Nutzung; Entfernen per Wischen</div></div>
+
+<!-- 3: Fertig gehörte entfernen -->
+<div id="s3"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="group" style="margin-top:12px">
+      <div class="cell">Belegt durch Hörbücher<span class="v">2,84 GB</span></div>
+      <div class="cell">Frei auf dem iPhone<span class="v">11,2 GB</span></div>
+      <div class="cell red">✓&nbsp; Fertig gehörte entfernen (2)</div>
+    </div>
+  </div>
+  <div class="overlay"><div class="sheet">
+    <div class="box">
+      <div class="q"><b>Fertig gehörte Hörbücher entfernen?</b>Sie bleiben im Konto und lassen sich jederzeit wieder laden.</div>
+      <div class="opt red">2 entfernen · 1 GB frei</div>
+    </div>
+    <div class="box cancel"><div class="opt" style="border:0;font-weight:600">Abbrechen</div></div>
+  </div></div>
+</div><div class="cap">Rückfrage mit frei werdendem Platz</div></div>
+
+<!-- 6: Rückfrage nach dem Wischen -->
+<div id="s6"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="hdr">Geladene Hörbücher</div>
+    <div class="group">
+      <div class="cell"><div class="cover c3">Der Zauber&shy;berg</div><div class="meta"><div class="t">Der Zauberberg</div><div class="d">45 % gehört · zuletzt vor 2 Stunden</div></div><span class="size">1,12 GB</span></div>
+      <div class="cell"><div class="cover c1">Effi Briest</div><div class="meta"><div class="t">Effi Briest</div><div class="d">Fertig gehört · zuletzt vor 6 Tagen</div></div><span class="size">684 MB</span></div>
+    </div>
+  </div>
+  <div class="overlay"><div class="sheet">
+    <div class="box">
+      <div class="q"><b>„Effi Briest“ vom iPhone entfernen?</b>Fertig gehört. Es bleibt im Konto und wird beim nächsten Hören wieder geladen.</div>
+      <div class="opt red">684 MB freigeben</div>
+    </div>
+    <div class="box cancel"><div class="opt" style="border:0;font-weight:600">Abbrechen</div></div>
+  </div></div>
+</div><div class="cap">Nach dem Wischen: Rückfrage nennt Titel, Stand und Größe</div></div>
+
+<!-- 4: Ergebnis + Hinweis bei eigenem Import -->
+<div id="s4"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="group" style="margin-top:12px">
+      <div class="cell">Belegt durch Hörbücher<span class="v">1,86 GB</span></div>
+      <div class="cell">Frei auf dem iPhone<span class="v">12,2 GB</span></div>
+      <div class="notice">2 Hörbücher entfernt, 1 GB frei.</div>
+    </div>
+    <div class="hdr">Geladene Hörbücher</div>
+    <div class="group">
+      <div class="cell"><div class="cover c3">Der Zauber&shy;berg</div><div class="meta"><div class="t">Der Zauberberg</div><div class="d">45 % gehört · zuletzt vor 2 Stunden</div></div><span class="size">1,12 GB</span></div>
+      <div class="cell"><div class="cover c5">Eigene Aufnahme</div><div class="meta"><div class="t">Vortrag Verwaltung digital</div><div class="d">Noch nicht gehört</div><div class="badge">▯ Nur auf diesem iPhone</div></div><span class="size">512 MB</span></div>
+      <div class="cell"><div class="cover c4">Kurz&shy;geschichten</div><div class="meta"><div class="t">Kurzgeschichten</div><div class="d">Download unvollständig</div></div><span class="spin"></span></div>
+    </div>
+  </div>
+  <div class="overlay center"><div class="alert">
+    <div class="q"><b>Hörbuch bleibt auf dem iPhone</b>Das Hörbuch liegt nur auf diesem iPhone. Es lässt sich entfernen, sobald der Abgleich es vollständig ins Konto hochgeladen hat.</div>
+    <div class="opt">Jetzt abgleichen</div>
+    <div class="opt b">OK</div>
+  </div></div>
+</div><div class="cap">Nach dem Entfernen; Hinweis, wenn ein Hörbuch nur auf dem iPhone liegt</div></div>
+
+<!-- 5: Leer -->
+<div id="s5"><div class="phone">
+  <div class="status"><span>9:41</span><span>WLAN ▮</span></div>
+  <div class="nav"><a>‹ Konto &amp; Sync</a><span>Speicher</span><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="group" style="margin-top:12px">
+      <div class="cell">Belegt durch Hörbücher<span class="v">0 Byte</span></div>
+      <div class="cell">Frei auf dem iPhone<span class="v">14,1 GB</span></div>
+    </div>
+    <div class="big"><span style="font-size:40px">🎧</span><b>Keine Hörbücher geladen</b>Hörbücher aus dem Konto werden beim ersten Hören auf dieses iPhone geladen.</div>
+  </div>
+</div><div class="cap">Leerer Zustand</div></div>
+
+</div>
+<script>
+const p=new URLSearchParams(location.search);
+if(p.get('theme'))document.documentElement.dataset.theme=p.get('theme');
+const only=p.get('s');
+if(only){document.body.classList.add('single');document.querySelectorAll('.gallery>div').forEach(d=>{if(d.id!==only)d.remove()});}
+</script>
+</body>
+</html>

@@ -52,6 +52,23 @@ export const installTauriMock = async (
       calendar_graph_tenant: null,
     };
     w.__settings = settings;
+    // Empfehlung "Gleichzeitige Transkriptionen" wie auf Patricks PC (32 Threads,
+    // 64 GB, RTX 4090 24 GB, Nemotron 0,75 GB): jede Hardware erlaubt mehr als 4.
+    w.__parallelRec = {
+      recommended: 4,
+      max: 4,
+      limited_by: "maximum",
+      by_cpu: 8,
+      by_ram: 18,
+      by_vram: 12,
+      ram_per_run_mb: 1637,
+      vram_per_run_mb: 1961,
+      cpus: 32,
+      ram_total_mb: 65536,
+      vram_total_mb: 24576,
+      model_size_mb: 750,
+      gpu_model: true,
+    };
     w.__calls = [];
     w.__sources = [];
     w.__upcoming = [];
@@ -292,6 +309,8 @@ export const installTauriMock = async (
                 w.__workflowRun = { state: "failed", recordings: 0 };
               }
               return null;
+            case "get_meeting_import_parallel_recommendation":
+              return w.__parallelRec;
             case "tts_server_status":
               return { phase: "stopped", message: null };
             case "get_custom_sounds":

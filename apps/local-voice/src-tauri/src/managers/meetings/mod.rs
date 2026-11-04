@@ -25,12 +25,14 @@ pub mod mic_capture;
 mod migration_chain; // I1: Migrationskette A1, A3, U7
 pub mod minutes;
 pub mod notes;
+pub mod parts; // Mehrere Audiodateien (Teile) je Besprechung
 pub mod pdf; // M6-P6b
 pub mod project_minutes_store; // G3 (#70): Projekt-Protokolle
 pub mod projekt; // ADR-0026 PR-7: Besprechungsordner <-> Suite-Projekt
 pub mod queue; // U7
 pub mod queue_store; // U7
 pub mod recorder;
+pub mod relabel; // #242: Sprechernamen in gespeicherten Texten
 pub mod retention;
 pub mod retranscribe;
 pub mod search;

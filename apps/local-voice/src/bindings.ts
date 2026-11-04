@@ -2318,8 +2318,8 @@ async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Re
 }
 },
 /**
- * Einstellung `meeting_import_parallel`: 1 bis 4 gleichzeitige
- * Transkriptionen (Werte ausserhalb zaehlen als der naechste gueltige). Wirkt
+ * Einstellung `meeting_import_parallel`: 0 = Automatisch (nach Hardware)
+ * oder 1 bis 4 gleichzeitige Transkriptionen (Werte ueber 4 zaehlen als 4). Wirkt
  * ab der naechsten Datei; laufende Laeufe werden nie abgebrochen. Mehr als 1
  * nur, solange Arbeitsspeicher (und Grafikspeicher) fuer die weitere Engine
  * reichen, sonst wartet die Datei. Hörbuch-Teile der Bibliothek (lva#208) laufen
@@ -2328,6 +2328,69 @@ async meetingsUpdateMetadata(meetingId: string, edit: MetadataEdit) : Promise<Re
 async changeMeetingImportParallelSetting(value: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_meeting_import_parallel_setting", { value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Empfehlung fuer "Gleichzeitige Transkriptionen" auf diesem Rechner: so viele
+ * laufen bei "Automatisch", und wodurch die Zahl begrenzt ist (Kerne,
+ * Arbeits- oder Grafikspeicher, Obergrenze).
+ */
+async getMeetingImportParallelRecommendation() : Promise<ParallelRecommendation> {
+    return await TAURI_INVOKE("get_meeting_import_parallel_recommendation");
+},
+/**
+ * Teile einer Besprechung: zusammengefuehrte Teile, noch laufende Teile, die
+ * angehaengt werden, und (fuer einen solchen Teil) sein Ziel.
+ */
+async meetingsPartsInfo(meetingId: string) : Promise<Result<PartsInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_parts_info", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Fuehrt fertige Besprechungen zu einer zusammen. `keep_order = false`: nach
+ * Aufnahmebeginn (bei Gleichstand nach Dateiname) geordnet, die erste bleibt
+ * erhalten und nimmt die anderen auf (Titel, Projekte, Notizen bleiben; die
+ * anderen gehen in den Papierkorb). Gibt die ID der Besprechung zurueck. Die
+ * Sprechertrennung ueber das Ganze laeuft danach im Hintergrund.
+ */
+async meetingsMerge(meetingIds: string[], keepOrder: boolean) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_merge", { meetingIds, keepOrder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Haengt Audiodateien an eine Besprechung an. Jede Datei kommt als eigener
+ * Auftrag in die Import-Warteschlange (Fortschritt wie jeder Import); sobald
+ * alle Teile fertig sind, werden sie in dieser Reihenfolge hinten angefuegt.
+ * Das Ziel darf selbst noch in der Warteschlange stehen (Import mehrerer
+ * Dateien "als eine Besprechung"). Gibt die IDs der Teile zurueck.
+ */
+async meetingsAppendFiles(targetMeetingId: string, paths: string[], consentConfirmed: boolean) : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_files", { targetMeetingId, paths, consentConfirmed }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ein vorgemerkter Teil wird doch eine eigene Besprechung (z. B. weil er
+ * gescheitert ist und die anderen nicht warten sollen). Sind danach alle
+ * uebrigen Teile fertig, wird sofort zusammengefuehrt.
+ */
+async meetingsAppendDetach(meetingId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_append_detach", { meetingId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2453,6 +2516,22 @@ async meetingsGenerateDocument(meetingId: string, docType: string, basis: DocBas
 async meetingsExportDocumentAs(documentId: string, path: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meetings_export_document_as", { documentId, path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Handbearbeitung eines Protokolls oder Dokumenttyps (Markdown) speichern. Die
+ * Aenderung landet in der bestehenden Version; Export, Kopieren, Mail und Vorlesen
+ * lesen sie von dort. `expected_updated_at` ist der Stempel, den die Oberflaeche
+ * geladen hat; weicht er ab (neuer Lauf, zweites Fenster), scheitert der Aufruf mit
+ * `stale_document` und schreibt nichts. Fehlertexte sind Codes (siehe
+ * `MeetingStore::update_markdown_document`); der Text selbst gelangt nie ins Log.
+ */
+async meetingsUpdateDocumentText(documentId: string, body: string, expectedUpdatedAt: number) : Promise<Result<MeetingDocument, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meetings_update_document_text", { documentId, body, expectedUpdatedAt }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -7589,11 +7668,13 @@ meeting_final_model?: string;
 meeting_diarization?: string; 
 /**
  * U7: wie viele Dateien der Import-Warteschlange gleichzeitig transkribiert
- * werden: 1 (Standard) bis 4. Mehr als eine nur, solange Arbeitsspeicher
- * (und bei GPU-Modellen Grafikspeicher) fuer die weitere Engine reichen;
- * sonst wartet die naechste Datei. Ohne den Schluessel (aeltere
- * settings.json) gilt 1; Werte ausserhalb 1 bis 4 zaehlen als der naechste
- * gueltige.
+ * werden: 0 = Automatisch (Standard, nach Kernen, Arbeits- und
+ * Grafikspeicher, `queue::recommended_parallel`) oder fest 1 bis 4. Mehr
+ * als eine nur, solange Arbeitsspeicher (und bei GPU-Modellen
+ * Grafikspeicher) fuer die weitere Engine reichen; sonst wartet die
+ * naechste Datei. Ohne den Schluessel gilt Automatisch; Werte ueber 4
+ * zaehlen als 4. Schema 5 stellt den alten Standard 1 einmalig auf
+ * Automatisch um.
  */
 meeting_import_parallel?: number; 
 /**
@@ -9544,7 +9625,13 @@ template_id: string | null;
  * earlier still carry seconds — the value is only ever compared for
  * equality, never interpreted, so both work.
  */
-updated_at: number }
+updated_at: number; 
+/**
+ * Von Hand bearbeitet (Protokoll-Editor, KI-Notizen): der Stempel liegt
+ * deutlich hinter dem Anlegen. Abgeleitet, keine eigene Spalte (siehe
+ * `is_hand_edited`); die Oberflaeche warnt damit vor dem Neu-Erzeugen.
+ */
+edited: boolean }
 /**
  * M2-P2c2: Echo-Unterdrückung der Ich-Spur einer Besprechung (der Systemton
  * dient als Referenz; Rauschunterdrückung und AGC bleiben immer aus).
@@ -9628,6 +9715,14 @@ export type MeetingNotes = { meeting_id: string; blocks: NoteBlock[]; revision: 
  */
 export type MeetingNotesEvent = { kind: "progress"; meeting_id: string; step: number; total: number } | { kind: "done"; meeting_id: string; document_id: string } | { kind: "failed"; meeting_id: string; code: string }
 /**
+ * Ein Teil einer Besprechung (Anzeige).
+ */
+export type MeetingPart = { part_index: number; title: string; source_path: string | null; 
+/**
+ * Beginn des Teils auf der Zeitachse der Besprechung.
+ */
+offset_ms: number; duration_ms: number }
+/**
  * Ereignis an das Fenster: `show` = es liegt ein neuer Hinweis vor (die
  * Oberflaeche holt ihn ueber `meeting_prompt_current`), `close` = zu.
  */
@@ -9710,7 +9805,8 @@ export type MeetingSpeaker = {
  */
 channel: number; 
 /**
- * Nummer im Kanal, ab 1.
+ * Nummer im Kanal, ab 1; 0 = der ganze Kanal ohne Sprechertrennung
+ * ("Aufnahme", "Ich", "Gegenseite"), benennbar wie jeder Sprecher.
  */
 speaker_index: number; 
 /**
@@ -9728,7 +9824,25 @@ human_id: string | null;
 /**
  * Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
  */
-share_pct: number }
+share_pct: number; 
+/**
+ * Sprechzeit in Millisekunden (Summe der Segmentdauern).
+ */
+speech_ms: number; 
+/**
+ * Beginn des ersten Segments dieses Sprechers (`None`: keins, nur eine
+ * Zeile in `speakers`). Ordnet die Tabelle "Sprecher & Redeanteile".
+ */
+first_ms: number | null; 
+/**
+ * Frühere Namen (älteste zuerst): Texte, die vor dem Umbenennen entstanden
+ * sind, zeigen über sie den aktuellen Namen.
+ */
+former_names: string[]; 
+/**
+ * Standardbezeichnung ohne Namen ("Person 2", "Aufnahme").
+ */
+default_label: string }
 export type MemoryEstimate = { weights_mb: number; kv_mb: number; overhead_mb: number; total_mb: number; context_tokens: number; 
 /**
  * Woher die KV-Zahlen kommen: aus den Metadaten oder geraten.
@@ -10125,6 +10239,58 @@ modified_ms?: number;
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 /**
+ * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+ */
+export type ParallelLimitedBy = 
+/**
+ * Die Obergrenze der App ([`MAX_PARALLEL`]).
+ */
+"maximum" | 
+/**
+ * Die Zahl der Prozessorkerne.
+ */
+"cpu" | 
+/**
+ * Der Arbeitsspeicher.
+ */
+"ram" | 
+/**
+ * Der Grafikspeicher.
+ */
+"vram"
+/**
+ * Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+ */
+export type ParallelRecommendation = { 
+/**
+ * So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+ */
+recommended: number; 
+/**
+ * Hoechster einstellbarer Wert.
+ */
+max: number; limited_by: ParallelLimitedBy; 
+/**
+ * Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+ */
+by_cpu: number; by_ram: number | null; by_vram: number | null; 
+/**
+ * Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+ */
+ram_per_run_mb: number; vram_per_run_mb: number | null; cpus: number; ram_total_mb: number; 
+/**
+ * `None`: keine GPU fuer die Transkription oder nicht messbar.
+ */
+vram_total_mb: number | null; 
+/**
+ * Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+ */
+model_size_mb: number; 
+/**
+ * Das Besprechungsmodell rechnet auf der GPU.
+ */
+gpu_model: boolean }
+/**
  * Eine teilnehmende Person einer Besprechung.
  */
 export type Participant = { human_id: string; name: string; email: string | null; company: string | null; 
@@ -10136,11 +10302,31 @@ role: string;
  * `calendar`, `speaker` oder `manual`.
  */
 source: string; is_self: boolean; meeting_count: number }
+/**
+ * Alles, was die Oberflaeche ueber die Teile einer Besprechung braucht.
+ */
+export type PartsInfo = { 
+/**
+ * Die zusammengefuehrten Teile (leer = ein einziger Teil).
+ */
+parts: MeetingPart[]; 
+/**
+ * Teile, die noch laufen oder warten und danach angehaengt werden.
+ */
+pending: PendingPart[]; 
+/**
+ * Diese Besprechung ist selbst ein wartender Teil: Ziel (ID, Titel).
+ */
+append_to: [string, string] | null }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 /**
  * Eine offene Freigabe mit dem Namen der Integration.
  */
 export type PendingApproval = { approval: Approval; integration_label: string | null; integration_kind: Kind | null }
+/**
+ * Ein Teil, der noch verarbeitet wird und danach angehaengt wird.
+ */
+export type PendingPart = { meeting_id: string; title: string; status: string; position: number }
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 /**
  * Eine Person mit allem fuer das Popover.

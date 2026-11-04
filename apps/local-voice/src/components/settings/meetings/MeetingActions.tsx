@@ -4,6 +4,7 @@ import {
   Check,
   Copy,
   Download,
+  FilePlus2,
   FileText,
   FolderInput,
   Info,
@@ -47,6 +48,8 @@ export interface MeetingActionHandlers {
   onSpeakers: () => void;
   /** D4: "Folien erkennen" (nur bei Besprechungen mit Videodatei, siehe `canDetectSlides`). */
   onDetectSlides?: () => void;
+  /** Mehrere Dateien: "Audiodatei anhängen …" (nur Import/Aufnahme, siehe `canAppendAudio`). */
+  onAppendAudio?: () => void;
   onRename: () => void;
   onMove: () => void;
   onCopyPlain: () => void;
@@ -67,6 +70,8 @@ interface MeetingActionsProps extends MeetingActionHandlers {
   hasAudio: boolean;
   /** D4: Quelle ist ein Video; nur dann steht "Folien erkennen" im Menü. */
   canDetectSlides?: boolean;
+  /** Kann Audio angehängt werden (Import oder Aufnahme, nicht während der Aufnahme)? */
+  canAppendAudio?: boolean;
   /** Die Besprechung wird gerade aufgenommen: Löschen ist gesperrt. */
   live?: boolean;
   /**
@@ -91,6 +96,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   busy,
   hasAudio,
   canDetectSlides = false,
+  canAppendAudio = false,
   live = false,
   mode = "toolbar",
   onExport,
@@ -107,6 +113,7 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
   onRegenWithTemplate,
   onSpeakers,
   onDetectSlides,
+  onAppendAudio,
   onRename,
   onMove,
   onCopyPlain,
@@ -132,6 +139,19 @@ export const MeetingActions: React.FC<MeetingActionsProps> = ({
       title: retranscribeTitle,
       testId: "menu-retranscribe",
     },
+    ...(canAppendAudio && onAppendAudio
+      ? [
+          {
+            id: "append-audio",
+            label: t("meetings.parts.append.menu"),
+            icon: FilePlus2,
+            onSelect: onAppendAudio,
+            disabled: live,
+            title: t("meetings.parts.append.menuHint"),
+            testId: "menu-append-audio",
+          } satisfies ActionMenuItem,
+        ]
+      : []),
     {
       id: "translate",
       label: t("meetings.actions.translate"),
