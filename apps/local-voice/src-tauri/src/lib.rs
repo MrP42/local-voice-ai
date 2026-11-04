@@ -37,6 +37,8 @@ mod overlay;
 mod paste_guard;
 mod paste_session;
 pub mod portable;
+pub mod portable_parts;
+pub mod provision;
 mod process_guard;
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
 mod refinement;
@@ -2688,6 +2690,10 @@ pub fn export_bindings(path: &std::path::Path) -> Result<(), String> {
 pub fn run(cli_args: CliArgs) {
     // Detect portable mode before anything else
     portable::init();
+    // Offline-Paket: auf mehrere ZIPs verteilte Modelle (> 2 GiB) wieder zusammensetzen.
+    if let Some(dir) = portable::data_dir() {
+        portable_parts::assemble_all(dir);
+    }
 
     // Rebranding-Umzug der App-Daten (Settings, Verlauf, Modelle) — muss vor
     // dem ersten Store-Zugriff laufen und ist idempotent.
@@ -2714,6 +2720,7 @@ pub fn run(cli_args: CliArgs) {
     let headless_mode = cli_args.transcribe_file.is_some()
         || cli_args.list_devices
         || cli_args.list_models
+        || !cli_args.provision.is_empty() // portables Offline-Paket
         || cli_args.tts_test
         || cli_args.tts_providers // P3b
         || cli_args.tts_voices // P3b
@@ -3230,6 +3237,21 @@ pub fn run(cli_args: CliArgs) {
                         let code = run_headless_guarded(|| {
                             run_headless_followup_draft(&app_handle, &args, &id)
                         });
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
+                }
+
+                // Portables Offline-Paket: Modelle vorinstallieren und beenden.
+                if !cli_args.provision.is_empty() {
+                    let app_handle = app.handle().clone();
+                    let ids = cli_args.provision.clone();
+                    std::thread::spawn(move || {
+                        let code =
+                            run_headless_guarded(|| crate::provision::run(&app_handle, &ids));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();
                         let _ = std::io::stderr().flush();

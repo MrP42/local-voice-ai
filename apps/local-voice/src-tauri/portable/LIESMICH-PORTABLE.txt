@@ -1,0 +1,81 @@
+Local Voice AI – portable Version für Windows
+=============================================
+
+Diese Version wird nicht installiert. Entpacken und starten:
+
+  1. ZIP in einen Ordner entpacken, in den Sie schreiben dürfen
+     (z. B. Desktop, Dokumente, USB-Stick). NICHT nach "C:\Programme",
+     dort darf die App ihre Daten nicht ablegen.
+  2. Im Ordner "Local Voice AI" die Datei local-voice-ai.exe starten.
+  3. Beim ersten Start fragt Windows SmartScreen eventuell nach
+     ("Weitere Informationen" -> "Trotzdem ausführen").
+
+Offline-Version (mehrere ZIP-Teile)
+-----------------------------------
+Die Offline-Version bringt alles mit und braucht kein Internet:
+Spracherkennung Nemotron 3.5 ASR, Sprachausgabe Phonon (Deutsch und
+Englisch mit allen Stimmen), lokale KI Qwen 3.5 4B mit Laufzeit für
+Grafikchip (Vulkan) und CPU.
+
+  - ALLE Teile (…teil1vonN.zip, …teil2vonN.zip, …) in DENSELBEN Ordner
+    entpacken; jeder Teil enthält den Ordner "Local Voice AI".
+  - Beim ersten Start setzt die App das große Sprachmodell aus den Teilen
+    zusammen und prüft es (einmalig, etwa eine Minute; das Fenster
+    erscheint danach).
+  - Spracherkennung und KI-Modell sind bereits eingestellt. Phonon ist
+    aus: Einstellungen -> Vorlesen -> Phonon einschalten und den
+    Lizenzhinweis bestätigen.
+  - Lizenzen der Modelle: LIZENZEN-MODELLE.txt. Das deutsche Phonon-Modell
+    ist nur für nicht-kommerzielle Nutzung freigegeben.
+
+Wo liegen meine Daten?
+----------------------
+Alles, was die App speichert, liegt im Unterordner "Data" neben der EXE:
+Einstellungen, heruntergeladene Modelle (Spracherkennung, Stimmen, KI),
+Verlauf und Aufnahmen, Besprechungen, Bibliothek und Hörbücher, Protokolle
+und der WebView-Zwischenspeicher. Der Ordner entsteht beim ersten Start.
+
+  - Die Datei "portable" neben der EXE schaltet diesen Modus ein.
+    Nicht löschen und nicht umbenennen, sonst legt die App ihre Daten
+    wieder unter %APPDATA% bzw. %LOCALAPPDATA% ab.
+  - Den ganzen Ordner "Local Voice AI" können Sie verschieben oder auf
+    einen anderen PC kopieren; die Daten wandern mit.
+  - Sicherung = den Ordner "Data" kopieren.
+  - Entfernen = App beenden (auch im Infobereich der Taskleiste) und den
+    Ordner löschen. Es bleibt nichts in der Registry zurück, außer Sie
+    haben in den Einstellungen "Mit Windows starten" eingeschaltet –
+    dann vorher dort ausschalten.
+
+Aktualisieren
+-------------
+Die portable Version aktualisiert sich nicht selbst. Die App meldet eine
+neue Version und öffnet auf Wunsch die Download-Seite. Dann:
+
+  1. App beenden (auch im Infobereich).
+  2. Neue ZIP herunterladen (LocalVoiceAI_<Version>_x64-portable.zip;
+     die kleine ZIP reicht auch für die Offline-Version).
+  3. Über den bisherigen Ordner entpacken und vorhandene Dateien ersetzen.
+     Ihre Daten im Ordner "Data" bleiben erhalten (auch die Offline-ZIPs
+     überschreiben keine Einstellungen).
+
+Voraussetzungen
+---------------
+  - Windows 10 oder 11, 64 Bit.
+  - Microsoft Edge WebView2 Runtime (auf Windows 11 und aktuellen
+    Windows-10-Systemen bereits vorhanden; sonst kostenlos bei Microsoft:
+    https://developer.microsoft.com/microsoft-edge/webview2/).
+  - Für Spracherkennung auf der Grafikkarte ein aktueller Grafiktreiber
+    mit Vulkan; sonst rechnet die App auf der CPU.
+
+Hinweise
+--------
+  - Installierte und portable Version laufen nicht gleichzeitig: Es kann
+    nur eine Instanz von Local Voice AI aktiv sein.
+  - Installierte und portable Version teilen keine Daten. Wer umziehen
+    möchte, kopiert die Inhalte aus %APPDATA%\de.wolffappliedai.localvoiceai
+    und %LOCALAPPDATA%\de.wolffappliedai.localvoiceai bei beendeter App in
+    den Ordner "Data".
+  - Prüfsumme: Zu jeder ZIP gibt es eine Datei .zip.sha256
+    (PowerShell: Get-FileHash <Datei> -Algorithm SHA256).
+
+Lizenzen: resources\THIRD-PARTY-NOTICES.md

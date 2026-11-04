@@ -169,7 +169,16 @@ jobs:
           projectPath: apps/local-voice
           tagName: app-v${{ steps.version.outputs.version }}
           releaseName: Local Voice AI ${{ steps.version.outputs.version }}
-          releaseBody: "Automatischer Windows-Build. Die App aktualisiert sich hierauf selbst."
+          releaseBody: |
+            Windows-Build von Local Voice AI.
+
+            | Datei | Wofür |
+            |---|---|
+            | `Local Voice AI_<Version>_x64-setup.exe` | Installer. Die installierte App aktualisiert sich hierauf selbst. |
+            | `LocalVoiceAI_<Version>_x64-portable.zip` | Portable Version ohne Installation (nur die App, Modelle werden bei Bedarf geladen). |
+            | `LocalVoiceAI_<Version>_x64-portable-offline.teil1vonN.zip` … | Portable Offline-Version: ALLE Teile herunterladen und in denselben Ordner entpacken. Enthält Nemotron 3.5 ASR, Phonon (Programm, Modelle, Stimmen), die lokale KI-Laufzeit (Vulkan/CPU) und Qwen 3.5 4B; läuft ohne Internet. Das Sprachmodell wird beim ersten Start aus den Teilen zusammengesetzt (einmalig, ca. 1 min). |
+
+            Anleitung und Datenablage: `LIESMICH-PORTABLE.txt` im ZIP. Lizenzen: `THIRD-PARTY-NOTICES.md`; das deutsche Phonon-Modell steht unter CC BY-NC 4.0 (nur nicht-kommerzielle Nutzung).
           # Published, not draft: `releases/latest/download/latest.json` — the
           # updater endpoint — does not resolve to a draft.
           releaseDraft: false
@@ -180,6 +189,36 @@ jobs:
           # SPIRV-Headers der Schritte oben; build.rs buendelt ggml-vulkan.dll
           # ueber transcribe-libs/ (tauri.windows.conf.json), keine Extra-Ressource.
           args: --features gpu-vulkan --bundles nsis,updater
+
+      # Portable Versionen (ZIP, ohne Installation). Packt die EXE, die tauri-action eben
+      # gebaut hat; siehe scripts/build-portable-zip.ps1. Ein Fehler hier darf das schon
+      # veroeffentlichte Release nicht zuruecknehmen, faellt aber im Lauf rot auf.
+      - name: Build portable ZIP
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'portable'
+          ./scripts/build-portable-zip.ps1 -Release -SmokeTest -OutDir $out
+          gh release upload "app-v${{ steps.version.outputs.version }}" (Get-ChildItem $out -File).FullName --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Offline-Variante: laedt die Modelle einmal ueber `--provision` (derselbe Weg wie die
+      # Modellseite) und verteilt sie auf ZIPs unter 2 GiB (GitHub-Grenze je Datei).
+      # HF_TOKEN (Repo-Secret) ist fuer das zugangsbeschraenkte deutsche Phonon-Modell noetig;
+      # ohne ihn wird es mit Warnung ausgelassen. Arbeitsordner auf RUNNER_TEMP (Laufwerk D:),
+      # weil C: fuer ~16 GB Zwischenstand zu knapp ist.
+      - name: Build portable offline ZIPs
+        shell: pwsh
+        run: |
+          $env:TMP = $env:RUNNER_TEMP; $env:TEMP = $env:RUNNER_TEMP
+          $out = Join-Path $env:RUNNER_TEMP 'portable-offline'
+          ./scripts/build-portable-zip.ps1 -Release -Offline -SmokeTest -OutDir $out
+          gh release upload "app-v${{ steps.version.outputs.version }}" (Get-ChildItem $out -File).FullName --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
       # Issue #7: SBOM (CycloneDX 1.5) and the licence notices ship with every
       # release. The notices file is the committed one (resources/, also inside

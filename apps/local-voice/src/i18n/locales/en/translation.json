@@ -2819,7 +2819,7 @@
     "preparing": "Preparing...",
     "checkForUpdates": "Check for updates",
     "portableUpdateTitle": "Manual update required",
-    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
+    "portableUpdateMessage": "The portable version does not update itself. To update: quit the app (including the tray icon), download the new portable ZIP from GitHub Releases and extract it over the existing folder. The Data folder with your settings, models and recordings is not part of the ZIP and is kept.",
     "portableUpdateButton": "Open GitHub Releases",
     "localUpdateAvailable": "Update {{version}} available locally",
     "localInstalling": "Starting installer…",
