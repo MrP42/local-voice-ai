@@ -88,6 +88,8 @@
       "structureDone_other": "Text gegliedert ({{count}} Änderungen).",
       "rejected_one": "{{count}} Vorschlag verworfen (zu große Änderung).",
       "rejected_other": "{{count}} Vorschläge verworfen (zu große Änderung).",
+      "findLabel": "Suchen nach",
+      "replaceLabel": "Ersetzen durch",
       "findPlaceholder": "Suchen",
       "replacePlaceholder": "Ersetzen durch",
       "noHits": "Keine Treffer",
@@ -3655,6 +3657,47 @@
         "template": "Vorlage wird gewählt …",
         "write": "Transkript wird ausgewertet …",
         "merge": "Teile werden zusammengeführt …"
+      },
+      "moreBelow": "Weiter unten geht es weiter",
+      "edit": {
+        "start": "Bearbeiten",
+        "startHint": "Text von Hand korrigieren – mit Suchen und Ersetzen, Formatierung und KI-Textarbeit wie beim Vorlesen",
+        "section": "Abschnitt bearbeiten",
+        "sectionLabel": "Abschnitt „{{title}}“ bearbeiten",
+        "sectionHint": "Abschnitt „{{title}}“ im Editor öffnen",
+        "block": "Diese Stelle bearbeiten",
+        "title": "Bearbeiten · Version {{version}}",
+        "saveHint": "Änderungen in dieser Version speichern (Strg+S)",
+        "saving": "Speichert …",
+        "placeholder": "Text des Dokuments (Markdown)",
+        "hint": "Strg+F sucht, Strg+H ersetzt, Strg+Z macht rückgängig, Strg+S speichert, Esc bricht ab. Gespeichert wird in diese Version; Kopieren, Herunterladen, Mail und Vorlesen nutzen danach den korrigierten Text.",
+        "edited": "Von Hand bearbeitet",
+        "discard": "Ungespeicherte Änderungen verwerfen?",
+        "keepEditing": "Weiter bearbeiten",
+        "discardGo": "Verwerfen",
+        "errors": {
+          "stale_document": "Das Dokument wurde inzwischen geändert (zum Beispiel neu erzeugt). Nichts gespeichert – Ihr Text steht noch im Editor; bitte kopieren und nach dem Neuladen einfügen.",
+          "document_not_found": "Das Dokument gibt es nicht mehr. Nichts gespeichert.",
+          "document_not_editable": "Dieses Dokument lässt sich hier nicht bearbeiten.",
+          "document_empty": "Ein leeres Dokument kann nicht gespeichert werden.",
+          "document_too_large": "Der Text ist zu groß (höchstens 2 MB).",
+          "other": "Speichern fehlgeschlagen: {{error}}"
+        }
+      },
+      "versions": {
+        "menu": "Versionen",
+        "label": "Version {{version}} von {{count}}",
+        "hint": "Frühere Versionen anzeigen – auch bearbeitete Fassungen vor einem Neu-Erzeugen",
+        "item": "Version {{version}} · {{date}}",
+        "itemEdited": "Version {{version}} · {{date}} · bearbeitet",
+        "latest": "Neueste Version",
+        "olderShown": "Sie sehen Version {{version}}; die neueste ist Version {{latest}}.",
+        "toLatest": "Zur neuesten Version"
+      },
+      "regenerateEdited": {
+        "title": "Bearbeitetes Dokument neu erzeugen?",
+        "body": "Version {{version}} wurde von Hand bearbeitet. Neu erzeugen legt eine neue Version an. Ihre Korrekturen bleiben als Version {{version}} unter „Versionen“ erhalten, fließen aber nicht in die neue Version ein.",
+        "go": "Neue Version erzeugen"
       },
       "stepOf": "Schritt {{done}} von {{total}}",
       "cancelled": "Die Erzeugung wurde abgebrochen.",

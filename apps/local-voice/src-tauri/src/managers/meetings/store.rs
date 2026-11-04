@@ -611,7 +611,27 @@ pub struct MeetingDocument {
     /// earlier still carry seconds — the value is only ever compared for
     /// equality, never interpreted, so both work.
     pub updated_at: i64,
+    /// Von Hand bearbeitet (Protokoll-Editor, KI-Notizen): der Stempel liegt
+    /// deutlich hinter dem Anlegen. Abgeleitet, keine eigene Spalte (siehe
+    /// `is_hand_edited`); die Oberflaeche warnt damit vor dem Neu-Erzeugen.
+    pub edited: bool,
 }
+
+/// Ob ein Dokument nach dem Anlegen von Hand geaendert wurde. `insert_document`
+/// setzt `created_at` (Sekunden) und `updated_at` (Millisekunden) aus demselben
+/// Augenblick; jede Aenderung ueber `update_document_body` hebt `updated_at` auf
+/// die Uhrzeit des Speicherns. Zwei Sekunden Abstand schliessen Zeilen aus, deren
+/// zwei Zeitstempel noch aus getrennten Uhrabfragen stammen (Sekundengrenze), und
+/// Altzeilen vor M1 (Stempel in Sekunden, also viel kleiner) zaehlen nie als
+/// bearbeitet.
+pub fn is_hand_edited(created_at: i64, updated_at: i64) -> bool {
+    updated_at >= created_at.saturating_add(2).saturating_mul(1000)
+}
+
+/// Obergrenze fuer den Text eines von Hand bearbeiteten Dokuments (Zeichen in
+/// Bytes). Ein Protokoll hat einige Kilobyte; die Grenze faengt nur Versehen ab
+/// (eingefuegte Datei statt Text).
+pub const MAX_DOCUMENT_TEXT_BYTES: usize = 2 * 1024 * 1024;
 
 // M9/M10 will let users pick a pinned template when generating minutes; the
 // `meeting_templates` table and its read path exist already so that later
@@ -2062,8 +2082,9 @@ impl MeetingStore {
         generation_metadata: Option<&str>,
     ) -> Result<String> {
         let mut conn = self.get_connection()?;
-        let now = Utc::now().timestamp();
+        // Beide Stempel aus EINEM Augenblick: `is_hand_edited` vergleicht sie.
         let now_ms = Utc::now().timestamp_millis();
+        let now = now_ms.div_euclid(1000);
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         Self::ensure_meeting_is_live(&tx, meeting_id)?;
@@ -2123,6 +2144,7 @@ impl MeetingStore {
             created_at: row.get("created_at")?,
             template_id: row.get("template_id")?,
             updated_at: row.get("updated_at")?,
+            edited: is_hand_edited(row.get("created_at")?, row.get("updated_at")?),
         })
     }
 
@@ -2373,6 +2395,38 @@ impl MeetingStore {
         )?;
         tx.commit()?;
         Ok(new_stamp)
+    }
+
+    /// Handbearbeitung eines Markdown-Dokuments (Protokoll, Dokumenttypen):
+    /// ersetzt den Text der bestehenden Version unter der optimistischen Sperre
+    /// von `update_document_body` und liefert das gespeicherte Dokument. Eine
+    /// neue Version entsteht erst beim Neu-Erzeugen; die bearbeitete bleibt dann
+    /// als aeltere Version erhalten.
+    ///
+    /// Fehlercodes: `document_not_found`, `document_not_editable` (kein
+    /// Markdown, etwa KI-Notizen mit eigenem Editor), `document_empty`,
+    /// `document_too_large`, `stale_document`.
+    pub fn update_markdown_document(
+        &self,
+        document_id: &str,
+        body: &str,
+        expected_updated_at: i64,
+    ) -> Result<MeetingDocument> {
+        let document = self
+            .get_document(document_id)?
+            .ok_or_else(|| anyhow!("document_not_found"))?;
+        if !document.body_format.starts_with("markdown") {
+            return Err(anyhow!("document_not_editable"));
+        }
+        if body.trim().is_empty() {
+            return Err(anyhow!("document_empty"));
+        }
+        if body.len() > MAX_DOCUMENT_TEXT_BYTES {
+            return Err(anyhow!("document_too_large"));
+        }
+        self.update_document_body(document_id, body, expected_updated_at)?;
+        self.get_document(document_id)?
+            .ok_or_else(|| anyhow!("document_not_found"))
     }
 
     // ---- Vorlagen --------------------------------------------------------
@@ -4806,6 +4860,113 @@ mod tests {
             .collect();
         versions.sort_unstable();
         assert_eq!(versions, (1..=8).collect::<Vec<_>>());
+    }
+
+    /// Ein Protokoll, dessen Stempel zehn Sekunden zurueckliegen (sonst faellt
+    /// eine Bearbeitung im Test in dieselbe Sekunde wie das Anlegen).
+    fn aged_minutes(s: &MeetingStore, meeting_id: &str) -> MeetingDocument {
+        let id = s
+            .insert_document(
+                meeting_id,
+                "minutes",
+                "markdown@1",
+                "# Protokoll\n\n- Punkt",
+                None,
+                None,
+            )
+            .unwrap();
+        s.get_connection()
+            .unwrap()
+            .execute(
+                "UPDATE meeting_documents SET created_at = created_at - 10,
+                 updated_at = (created_at - 10) * 1000 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        s.get_document(&id).unwrap().unwrap()
+    }
+
+    #[test]
+    fn hand_edit_rule_ignores_fresh_and_legacy_rows() {
+        // Frisch angelegt (gleicher Augenblick), Sekundengrenze, Altzeile in Sekunden.
+        assert!(!is_hand_edited(1_000, 1_000_000));
+        assert!(!is_hand_edited(1_000, 1_001_999));
+        assert!(!is_hand_edited(1_000, 1_000));
+        assert!(is_hand_edited(1_000, 1_002_000));
+    }
+
+    #[test]
+    fn new_documents_are_not_marked_edited() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let id = s
+            .insert_document(&m.id, "minutes", "markdown@1", "# P", None, None)
+            .unwrap();
+        let doc = s.get_document(&id).unwrap().unwrap();
+        assert!(!doc.edited);
+        assert_eq!(doc.updated_at.div_euclid(1000), doc.created_at);
+    }
+
+    #[test]
+    fn markdown_document_hand_edit_is_stored_and_marked() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let before = aged_minutes(&s, &m.id);
+        assert!(!before.edited);
+
+        let after = s
+            .update_markdown_document(&before.id, "# Protokoll\n\n- Korrigiert", before.updated_at)
+            .unwrap();
+        assert_eq!(after.body, "# Protokoll\n\n- Korrigiert");
+        assert_eq!(after.version, before.version, "keine neue Version");
+        assert!(after.edited);
+        assert!(after.updated_at > before.updated_at);
+        // Export, Kopieren, Mail und Vorlesen lesen das gespeicherte Dokument.
+        let latest = s.get_documents(&m.id).unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].body, "# Protokoll\n\n- Korrigiert");
+
+        // Neu erzeugen legt eine neue Version an; die bearbeitete bleibt.
+        s.insert_document(&m.id, "minutes", "markdown@1", "# Neu", None, None)
+            .unwrap();
+        let docs = s.get_documents(&m.id).unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs
+            .iter()
+            .any(|d| d.version == 1 && d.edited && d.body.contains("Korrigiert")));
+    }
+
+    #[test]
+    fn markdown_document_hand_edit_rejects_bad_input() {
+        let (_dir, s) = tmp_store();
+        let m = live_meeting(&s);
+        let doc = aged_minutes(&s, &m.id);
+        let code = |r: Result<MeetingDocument>| r.unwrap_err().to_string();
+
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, "  \n ", doc.updated_at)),
+            "document_empty"
+        );
+        let huge = "x".repeat(MAX_DOCUMENT_TEXT_BYTES + 1);
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, &huge, doc.updated_at)),
+            "document_too_large"
+        );
+        assert_eq!(
+            code(s.update_markdown_document(&doc.id, "# A", doc.updated_at - 1)),
+            "stale_document"
+        );
+        assert_eq!(
+            code(s.update_markdown_document("gibt-es-nicht", "# A", 1)),
+            "document_not_found"
+        );
+        let notes = enhanced_doc(&s, &m.id);
+        let stamp = s.get_document(&notes).unwrap().unwrap().updated_at;
+        assert_eq!(
+            code(s.update_markdown_document(&notes, "# A", stamp)),
+            "document_not_editable"
+        );
+        assert_eq!(s.get_document(&doc.id).unwrap().unwrap().body, doc.body);
     }
 
     #[test]
