@@ -115,6 +115,18 @@ export function splitSpeakerSection(
   };
 }
 
+/**
+ * Das Protokoll ohne den Abschnitt "Sprecher & Redeanteile": Namen, Zeiten und
+ * Prozentwerte werden nicht vorgelesen (auch nicht in der Audiodatei).
+ */
+export function withoutSpeakerSection(markdown: string): string {
+  const parts = splitSpeakerSection(markdown);
+  if (!parts) return markdown;
+  return [parts.before, parts.after]
+    .filter((part) => part.trim() !== "")
+    .join("\n\n");
+}
+
 /** Redezeit wie im Protokoll: "05:09", ab einer Stunde "1:02:05". */
 export function formatSpeechTime(ms: number): string {
   const total = Math.round(ms / 1000);
