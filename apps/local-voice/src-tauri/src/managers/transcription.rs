@@ -3414,6 +3414,17 @@ pub fn transcribe_gpu_memory() -> Vec<(String, u64)> {
         .collect()
 }
 
+/// Der groesste Grafikspeicher (MB) unter den GPU-Geraeten, die transcribe-cpp
+/// nutzen darf (Kapazitaet, nicht frei; aus dem Start-Zwischenspeicher).
+/// `None` ohne GPU oder wenn kein Treiber die Groesse meldet.
+pub fn transcribe_gpu_total_mb() -> Option<u64> {
+    cached_gpu_devices()
+        .iter()
+        .map(|d| d.total_vram_mb as u64)
+        .filter(|mb| *mb > 0)
+        .max()
+}
+
 fn available_transcribe_accelerators(gpu_disabled: bool) -> Vec<String> {
     if gpu_disabled {
         vec!["cpu".to_string()]

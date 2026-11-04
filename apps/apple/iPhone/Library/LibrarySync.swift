@@ -412,6 +412,8 @@ final class LibrarySync: ObservableObject {
         }
         _ = try? fm.removeItem(at: target)
         try fm.moveItem(at: part, to: target)
+        // Vollständig aus dem Konto geladen: dort also vollständig vorhanden.
+        ledger.uploaded.insert(ref.blob); saveLedger()
     }
 
     /// Cover laden (klein, meist ein Stück), als JPEG ablegen und merken,
@@ -442,11 +444,9 @@ final class LibrarySync: ObservableObject {
         do {
             let audioDir = library.dir(book).appendingPathComponent("audio", isDirectory: true)
             try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+            PhoneLibrary.excludeFromBackup(audioDir)
             for (i, ref) in refs.enumerated() {
-                // Nur ein Dateiname, nie ein Pfad.
-                let given = (ref.file ?? "").split(separator: "/").last.map(String.init) ?? ""
-                let name = given.isEmpty || given.hasPrefix(".") ? String(format: "teil_%03d.m4a", i + 1) : given
-                let target = audioDir.appendingPathComponent(name)
+                let target = audioDir.appendingPathComponent(Self.audioFileName(ref.file, index: i))
                 if FileManager.default.fileExists(atPath: target.path),
                    Self.fileSize(target) == ref.size { done += ref.size; continue }
                 let base = done
@@ -464,10 +464,107 @@ final class LibrarySync: ObservableObject {
         }
     }
 
-    /// Geladene Dateien vom iPhone entfernen; Eintrag und Fortschritt bleiben im Konto.
-    func removeDownloads(_ book: LibraryBook) {
-        try? FileManager.default.removeItem(at: library.dir(book).appendingPathComponent("audio"))
-        library.reload()
+    // MARK: Hörbuch vom iPhone entfernen (P8 Paket 1)
+
+    /// Teile laut Konto in Hörreihenfolge.
+    private func accountFiles(_ book: LibraryBook) -> [AudioOffload.AccountFile] {
+        library.meta(book).files.audio.map { AudioOffload.AccountFile(blob: $0.blob, size: $0.size) }
+    }
+
+    /// Darf das Hörbuch vom iPhone? Ohne Netz, nur aus dem bekannten Stand.
+    func offloadVerdict(_ book: LibraryBook, confirmed: Set<String>? = nil) -> AudioOffload.Verdict {
+        AudioOffload.verdict(loggedIn: account != nil, synced: isSynced(book), downloading: downloads[book.id] != nil,
+                             localSizes: library.localAudioSizes(book), hasLeftovers: AudioOffload.hasLeftovers(in: library.dir(book)),
+                             account: accountFiles(book), confirmed: confirmed ?? ledger.uploaded)
+    }
+
+    /// Teile beim Hub frisch prüfen. Vollständige landen in `ledger.uploaded`,
+    /// fehlende fliegen heraus (der nächste Abgleich lädt sie dann wieder hoch).
+    /// `nil`: Konto nicht erreichbar.
+    private func confirmInAccount(_ files: [AudioOffload.AccountFile], _ acc: Account) async -> Set<String>? {
+        var confirmed = Set<String>()
+        defer { saveLedger() }
+        for blob in AudioOffload.blobsToCheck(files) {
+            guard let reply = try? await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)", method: "GET", token: acc.token) else { return nil }
+            let (code, data) = reply
+            let complete = code == 200 && ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["complete"] as? Bool == true
+            if complete { confirmed.insert(blob); ledger.uploaded.insert(blob) }
+            else if code == 200 || code == 404 { ledger.uploaded.remove(blob) }
+            else { return nil }
+        }
+        return confirmed
+    }
+
+    /// Hörbuchdateien vom iPhone entfernen, wenn sie sicher im Konto liegen.
+    /// Eintrag, Text und Fortschritt bleiben. Liefert das Urteil; nur bei
+    /// `.allowed` wurde gelöscht. `freed`: frei gewordener Platz in Bytes.
+    @discardableResult
+    func removeDownloads(_ book: LibraryBook) async -> (verdict: AudioOffload.Verdict, freed: Int) {
+        var verdict = offloadVerdict(book)
+        switch verdict {
+        case .allowed, .unconfirmed: break
+        default: return (verdict, 0)
+        }
+        guard let acc = account else { return (.notLoggedIn, 0) }
+        // Vor dem Löschen immer frisch beim Konto nachfragen. Ohne Verbindung wird
+        // nicht gelöscht: der Hub könnte einen Blob inzwischen verloren haben, und
+        // dann läge die letzte Kopie auf diesem iPhone. Geprüft wird gegen die
+        // lokalen Verweise in sync.json; genau die nutzt auch das erneute Laden.
+        guard let fresh = await confirmInAccount(accountFiles(book), acc) else { return (.unreachable, 0) }
+        verdict = offloadVerdict(book, confirmed: fresh)
+        // Zwischenzeitlich gestartet (Download, Abgleich)? Dann nicht anfassen.
+        guard verdict.allowed, downloads[book.id] == nil else { return (verdict.allowed ? .downloading : verdict, 0) }
+        let playback = LibraryPlayback.shared
+        if playback.book?.id == book.id { playback.stop() }
+        do {
+            let freed = try AudioOffload.remove(bookDir: library.dir(book))
+            library.reload()
+            return (.allowed, freed)
+        } catch {
+            self.error = "Entfernen fehlgeschlagen: \(error.localizedDescription)"
+            library.reload()
+            return (verdict, 0)
+        }
+    }
+
+    /// Dateiname eines Hörbuchteils auf dem iPhone: nur ein Name, nie ein Pfad.
+    /// Gemeinsam für Download und Größenprüfung vor dem Entfernen.
+    static func audioFileName(_ given: String?, index: Int) -> String {
+        let name = (given ?? "").split(separator: "/").last.map(String.init) ?? ""
+        return name.isEmpty || name.hasPrefix(".") ? String(format: "teil_%03d.m4a", index + 1) : name
+    }
+
+    // MARK: Speicherübersicht (P8 Paket 2)
+
+    /// Hörbücher, die auf dem iPhone Platz belegen, größte zuerst.
+    func storageItems() -> [AudioStorage.Item] {
+        AudioStorage.sorted(library.books.compactMap { book in
+            let bytes = library.localAudioBytes(book)
+            guard bytes > 0 else { return nil }
+            let rec = library.record(library.audioKey(book))
+            let verdict = offloadVerdict(book)
+            let removable: Bool, localOnly: Bool
+            switch verdict {
+            case .allowed, .unconfirmed: removable = true; localOnly = false
+            case .notInAccount, .notLoggedIn: removable = false; localOnly = true
+            default: removable = false; localOnly = false
+            }
+            return AudioStorage.Item(id: book.id, title: book.title, bytes: bytes, fraction: LibraryProgress.fraction(rec),
+                                     finished: book.finished || rec?.finished == true,
+                                     lastUsedMs: rec.map(\.updated).flatMap { $0 > 0 ? $0 : nil },
+                                     partial: !library.hasAudio(book), removable: removable, localOnly: localOnly)
+        })
+    }
+
+    /// Mehrere Hörbücher nacheinander entfernen; jedes wird einzeln geprüft.
+    func removeDownloads(ids: [String]) async -> (removed: Int, freed: Int, kept: Int) {
+        var removed = 0, freed = 0, kept = 0
+        for id in ids {
+            guard let book = library.books.first(where: { $0.id == id }) else { continue }
+            let result = await removeDownloads(book)
+            if result.verdict.allowed { removed += 1; freed += result.freed } else { kept += 1 }
+        }
+        return (removed, freed, kept)
     }
 
     /// Dateigröße frisch vom Dateisystem (URL-Ressourcenwerte werden zwischengespeichert).

@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -41,6 +42,7 @@ import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
 import { IconAction } from "../../../ui/IconAction";
 import { ActionMenu } from "../../../ui/ActionMenu";
+import { Button } from "../../../ui/Button";
 import type { ChipEditorInsertApi } from "./TtsChipEditor";
 import {
   applyFormat,
@@ -75,6 +77,12 @@ interface EditorMenuProps {
   /** Bestehendes „Text aufbereiten" (ganzer Text über das LLM). */
   onTidy?: () => void;
   tidying?: boolean;
+  /**
+   * Suchen und Ersetzen mit sichtbarer Beschriftung statt nur Symbolen
+   * (Protokoll-Editor): Knopf „Suchen und Ersetzen“ in der Leiste, Feldnamen
+   * und Textknöpfe „Ersetzen“/„Alle ersetzen“ in der Suchleiste.
+   */
+  labeled?: boolean;
 }
 
 const FMT: { kind: FormatKind; icon: LucideIcon; key: string }[] = [
@@ -116,6 +124,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
   onSpellCheck,
   onTidy,
   tidying = false,
+  labeled = false,
 }) => {
   const { t } = useTranslation();
   const [findOpen, setFindOpen] = useState(false);
@@ -292,20 +301,40 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
         aria-label={t("tts.editorMenu.label")}
         className="flex flex-wrap items-center gap-0.5 rounded-md border border-mid-gray/20 bg-mid-gray/5 px-1 py-0.5"
       >
-        <IconAction
-          icon={Search}
-          size="sm"
-          ghost
-          label={t("tts.editorMenu.find")}
-          description={t("tts.editorMenu.findHint")}
-          testId="editor-menu-find"
-          aria-pressed={findOpen}
-          className={findOpen ? TOGGLE_ON : ""}
-          onClick={() => {
-            setFindOpen((v) => !v);
-            if (findOpen) setReplaceOpen(false);
-          }}
-        />
+        {labeled ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            className={findOpen ? TOGGLE_ON : ""}
+            icon={<Search width={16} height={16} aria-hidden="true" />}
+            data-testid="editor-menu-find"
+            aria-pressed={findOpen}
+            title={t("tts.editorMenu.findHint")}
+            onClick={() => {
+              if (findOpen) {
+                setFindOpen(false);
+                setReplaceOpen(false);
+              } else openFind(true);
+            }}
+          >
+            {t("tts.editorMenu.find")}
+          </Button>
+        ) : (
+          <IconAction
+            icon={Search}
+            size="sm"
+            ghost
+            label={t("tts.editorMenu.find")}
+            description={t("tts.editorMenu.findHint")}
+            testId="editor-menu-find"
+            aria-pressed={findOpen}
+            className={findOpen ? TOGGLE_ON : ""}
+            onClick={() => {
+              setFindOpen((v) => !v);
+              if (findOpen) setReplaceOpen(false);
+            }}
+          />
+        )}
         <IconAction
           icon={SpellCheck}
           size="sm"
@@ -438,6 +467,7 @@ export const EditorMenu: React.FC<EditorMenuProps> = ({
           readOnly={readOnly}
           apiRef={apiRef}
           showReplace={replaceOpen}
+          labeled={labeled}
           focusSignal={findFocus}
           onShowReplace={setReplaceOpen}
           onClose={() => {
@@ -456,6 +486,7 @@ interface FindBarProps {
   readOnly: boolean;
   apiRef: React.RefObject<ChipEditorInsertApi | null>;
   showReplace: boolean;
+  labeled: boolean;
   focusSignal: number;
   onShowReplace(on: boolean): void;
   onClose(): void;
@@ -470,10 +501,13 @@ const FindBar: React.FC<FindBarProps> = ({
   readOnly,
   apiRef,
   showReplace,
+  labeled,
   focusSignal,
   onShowReplace,
   onClose,
 }) => {
+  const findId = useId();
+  const replaceId = useId();
   const { t } = useTranslation();
   const [query, setQuery] = useState(() => {
     const sel = apiRef.current?.getSelection?.();
@@ -559,7 +593,13 @@ const FindBar: React.FC<FindBarProps> = ({
       onKeyDown={onKeyDown}
     >
       <div className="flex flex-wrap items-center gap-1">
+        {labeled && (
+          <label htmlFor={findId} className="w-28 shrink-0 text-sm font-medium">
+            {t("tts.editorMenu.findLabel")}
+          </label>
+        )}
         <input
+          id={findId}
           ref={inputRef}
           className={FIELD}
           value={query}
@@ -574,7 +614,7 @@ const FindBar: React.FC<FindBarProps> = ({
             }
           }}
           placeholder={t("tts.editorMenu.findPlaceholder")}
-          aria-label={t("tts.editorMenu.findPlaceholder")}
+          aria-label={labeled ? undefined : t("tts.editorMenu.findPlaceholder")}
           data-testid="find-input"
         />
         <span
@@ -634,7 +674,16 @@ const FindBar: React.FC<FindBarProps> = ({
       </div>
       {showReplace && (
         <div className="flex flex-wrap items-center gap-1">
+          {labeled && (
+            <label
+              htmlFor={replaceId}
+              className="w-28 shrink-0 text-sm font-medium"
+            >
+              {t("tts.editorMenu.replaceLabel")}
+            </label>
+          )}
           <input
+            id={replaceId}
             className={FIELD}
             value={replacement}
             onChange={(e) => setReplacement(e.target.value)}
@@ -646,30 +695,61 @@ const FindBar: React.FC<FindBarProps> = ({
               }
             }}
             placeholder={t("tts.editorMenu.replacePlaceholder")}
-            aria-label={t("tts.editorMenu.replacePlaceholder")}
+            aria-label={
+              labeled ? undefined : t("tts.editorMenu.replacePlaceholder")
+            }
             data-testid="replace-input"
             disabled={readOnly}
           />
-          <IconAction
-            icon={Replace}
-            size="sm"
-            ghost
-            label={t("tts.editorMenu.replaceOne")}
-            description={t("tts.editorMenu.replaceOneHint")}
-            testId="replace-one"
-            disabled={readOnly || hits.length === 0}
-            onClick={replaceOne}
-          />
-          <IconAction
-            icon={ReplaceAll}
-            size="sm"
-            ghost
-            label={t("tts.editorMenu.replaceAll")}
-            description={t("tts.editorMenu.replaceAllHint")}
-            testId="replace-all"
-            disabled={readOnly || hits.length === 0}
-            onClick={replaceEvery}
-          />
+          {labeled ? (
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Replace width={16} height={16} aria-hidden="true" />}
+                data-testid="replace-one"
+                title={t("tts.editorMenu.replaceOneHint")}
+                disabled={readOnly || hits.length === 0}
+                onClick={replaceOne}
+              >
+                {t("tts.editorMenu.replaceOne")}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<ReplaceAll width={16} height={16} aria-hidden="true" />}
+                data-testid="replace-all"
+                title={t("tts.editorMenu.replaceAllHint")}
+                disabled={readOnly || hits.length === 0}
+                onClick={replaceEvery}
+              >
+                {t("tts.editorMenu.replaceAll")}
+              </Button>
+            </>
+          ) : (
+            <>
+              <IconAction
+                icon={Replace}
+                size="sm"
+                ghost
+                label={t("tts.editorMenu.replaceOne")}
+                description={t("tts.editorMenu.replaceOneHint")}
+                testId="replace-one"
+                disabled={readOnly || hits.length === 0}
+                onClick={replaceOne}
+              />
+              <IconAction
+                icon={ReplaceAll}
+                size="sm"
+                ghost
+                label={t("tts.editorMenu.replaceAll")}
+                description={t("tts.editorMenu.replaceAllHint")}
+                testId="replace-all"
+                disabled={readOnly || hits.length === 0}
+                onClick={replaceEvery}
+              />
+            </>
+          )}
         </div>
       )}
     </div>

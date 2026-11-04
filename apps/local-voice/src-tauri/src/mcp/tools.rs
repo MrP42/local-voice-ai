@@ -866,6 +866,8 @@ fn transcript_text(store: &MeetingStore, id: &str) -> Res<String> {
         }
         let label = match segment.speaker_index {
             Some(_) => directory.label(segment),
+            // Ganzer Kanal mit Namen ("Aufnahme" umbenannt).
+            None if directory.has_channel_name(segment.channel) => directory.label(segment),
             None => speaker_label(segment, &BTreeMap::new()),
         };
         let time = duration_label(segment.start_ms);

@@ -12,7 +12,7 @@ def configs(name, settings):
 products=[]; files=[]; targets=[]
 for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype'),('VoiceWatch','watchos','de.localvoice.prototype.watchkitapp')]:
     sources = ['Shared/VoiceApp.swift','Shared/VoiceModel.swift','Shared/VoiceTransport.swift','Shared/CaptureController.swift','Shared/SpeechVoicePicker.swift','VoiceCore/Sources/VoiceCore/Conversation.swift','VoiceCore/Sources/VoiceCore/ProcessingAccess.swift','VoiceCore/Sources/VoiceCore/WatchDestination.swift','VoiceCore/Sources/VoiceCore/Store.swift','VoiceCore/Sources/VoiceCore/Envelope.swift','VoiceCore/Sources/VoiceCore/Chunks.swift','VoiceCore/Sources/VoiceCore/CaptureStartGate.swift','VoiceCore/Sources/VoiceCore/StorageInventory.swift','VoiceCore/Sources/VoiceCore/Jobs.swift','VoiceCore/Sources/VoiceCore/JobProcessor.swift','VoiceCore/Sources/VoiceCore/ProcessingDeadline.swift','VoiceCore/Sources/VoiceCore/ResponsePolicy.swift','VoiceCore/Sources/VoiceCore/LiveMeeting.swift','VoiceCore/Sources/VoiceCore/MeetingIntake.swift']
-    if platform == 'iphoneos': sources += ['iPhone/PhoneProcessingRuntime.swift','VoiceCore/Sources/VoiceCore/Meetings.swift','iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelDownloads.swift','iPhone/ModelPanel.swift','iPhone/MeetingLibrary.swift','iPhone/Intake/IncomingFiles.swift','Shared/ImportConsentView.swift','iPhone/LiveMeeting/LiveCapture.swift','iPhone/LiveMeeting/LiveSummarizer.swift','iPhone/LiveMeeting/LiveMeetingModel.swift','iPhone/LiveMeeting/LiveMeetingViews.swift','VoiceCore/Sources/VoiceCore/Library.swift','VoiceCore/Sources/VoiceCore/BookText.swift','iPhone/Library/PhoneLibrary.swift','iPhone/Library/LibraryPlayback.swift','iPhone/Library/LibraryViews.swift','iPhone/Library/LibrarySync.swift','iPhone/Library/AudiobookMetadata.swift','iPhone/Library/AudiobookPlayer.swift','VoiceCore/Sources/VoiceCore/Audiobook.swift','VoiceCore/Sources/VoiceCore/SyncCrypto.swift','VoiceCore/Sources/VoiceCore/LibrarySyncModel.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
+    if platform == 'iphoneos': sources += ['iPhone/PhoneProcessingRuntime.swift','VoiceCore/Sources/VoiceCore/Meetings.swift','iPhone/LocalProviders.swift','iPhone/CPULocalProviders.swift','iPhone/InferenceCancellation.swift','iPhone/ModelLibrary.swift','iPhone/ModelDownloads.swift','iPhone/ModelPanel.swift','iPhone/MeetingLibrary.swift','iPhone/Intake/IncomingFiles.swift','Shared/ImportConsentView.swift','iPhone/LiveMeeting/LiveCapture.swift','iPhone/LiveMeeting/LiveSummarizer.swift','iPhone/LiveMeeting/LiveMeetingModel.swift','iPhone/LiveMeeting/LiveMeetingViews.swift','VoiceCore/Sources/VoiceCore/Library.swift','VoiceCore/Sources/VoiceCore/BookText.swift','iPhone/Library/PhoneLibrary.swift','iPhone/Library/LibraryPlayback.swift','iPhone/Library/LibraryViews.swift','iPhone/Library/LibrarySync.swift','iPhone/Library/AudiobookMetadata.swift','iPhone/Library/AudiobookPlayer.swift','VoiceCore/Sources/VoiceCore/Audiobook.swift','VoiceCore/Sources/VoiceCore/SyncCrypto.swift','VoiceCore/Sources/VoiceCore/LibrarySyncModel.swift','VoiceCore/Sources/VoiceCore/AudioOffload.swift','iPhone/Engines/Cancellation.mm','iPhone/Engines/WhisperBridge.mm','iPhone/Engines/LlamaBridge.mm']
     buildfiles=[]
     for path in sources:
         ref=obj(path, isa='PBXFileReference', lastKnownFileType='sourcecode.cpp.objcpp' if path.endswith('.mm') else 'sourcecode.swift', path=path, sourceTree='<group>')
@@ -37,7 +37,12 @@ for name, platform, bundle in [('VoicePhone','iphoneos','de.localvoice.prototype
     asset_ref = obj(asset_path, isa='PBXFileReference', lastKnownFileType='folder.assetcatalog', path=asset_path, sourceTree='<group>')
     if asset_ref not in files: files.append(asset_ref)
     asset_build = obj(name+'assets', isa='PBXBuildFile', fileRef=asset_ref)
-    resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build], runOnlyForDeploymentPostprocessing=0)
+    # Datenschutz-Manifest (Required Reason APIs: freier Speicher, Dateizeiten, UserDefaults).
+    privacy_path = 'Shared/PrivacyInfo.xcprivacy'
+    privacy_ref = obj(privacy_path, isa='PBXFileReference', lastKnownFileType='text.xml', path=privacy_path, sourceTree='<group>')
+    if privacy_ref not in files: files.append(privacy_ref)
+    privacy_build = obj(name+'privacy', isa='PBXBuildFile', fileRef=privacy_ref)
+    resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[asset_build, privacy_build], runOnlyForDeploymentPostprocessing=0)
     extra_phases=[resources]
     if platform == 'iphoneos':
         settings['CODE_SIGN_ENTITLEMENTS'] = 'VoicePhone.entitlements'
@@ -82,6 +87,9 @@ for path in ['ShareExtension/ShareViewController.swift', 'Shared/ImportConsentVi
     if ref not in files: files.append(ref)
     share_files.append(obj(name+path, isa='PBXBuildFile', fileRef=ref))
 phase = obj(name+'sources', isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=share_files, runOnlyForDeploymentPostprocessing=0)
+# Auch die Extension nutzt UserDefaults der App-Gruppe: eigenes Datenschutz-Manifest (dieselbe Datei).
+share_privacy = obj(name+'privacy', isa='PBXBuildFile', fileRef=uid('Shared/PrivacyInfo.xcprivacy'))
+share_resources = obj(name+'resources', isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[share_privacy], runOnlyForDeploymentPostprocessing=0)
 product = obj(name+'product', isa='PBXFileReference', explicitFileType='wrapper.app-extension', includeInIndex=0, path=name+'.appex', sourceTree='BUILT_PRODUCTS_DIR'); products.append(product)
 # Genau ein Element mit genau einem Anhang, und der ist Audio oder Video.
 rule = ('SUBQUERY (extensionItems, $extensionItem, $extensionItem.attachments.@count == 1 AND '
@@ -92,7 +100,7 @@ rule = ('SUBQUERY (extensionItems, $extensionItem, $extensionItem.attachments.@c
     'NSExtension':{'NSExtensionPointIdentifier':'com.apple.share-services', 'NSExtensionPrincipalClass':'$(PRODUCT_MODULE_NAME).ShareViewController',
                    'NSExtensionAttributes':{'NSExtensionActivationRule':rule}}}))
 settings = {'PRODUCT_NAME':name, 'PRODUCT_BUNDLE_IDENTIFIER':'de.localvoice.prototype.share', 'INFOPLIST_FILE':name+'-Info.plist', 'SDKROOT':'iphoneos', 'SWIFT_VERSION':'5.0', 'TARGETED_DEVICE_FAMILY':'1', 'CODE_SIGN_STYLE':'Automatic', 'CODE_SIGN_ENTITLEMENTS':'VoiceShare.entitlements', 'GENERATE_INFOPLIST_FILE':'NO', 'SUPPORTED_PLATFORMS':'iphoneos iphonesimulator', 'IPHONEOS_DEPLOYMENT_TARGET':'26.0', 'APPLICATION_EXTENSION_API_ONLY':'YES', 'SKIP_INSTALL':'YES', 'LD_RUNPATH_SEARCH_PATHS':'$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks'}
-target = obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[phase], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.app-extension'); targets.append(target)
+target = obj(name, isa='PBXNativeTarget', buildConfigurationList=configs(name,settings), buildPhases=[phase, share_resources], buildRules=[], dependencies=[], name=name, productName=name, productReference=product, productType='com.apple.product-type.app-extension'); targets.append(target)
 proxy = obj(name+'proxy', isa='PBXContainerItemProxy', containerPortal=uid('project'), proxyType=1, remoteGlobalIDString=target, remoteInfo=name)
 share_dependency = obj(name+'dependency', isa='PBXTargetDependency', target=target, targetProxy=proxy)
 embedfile = obj(name+'embedfile', isa='PBXBuildFile', fileRef=product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})

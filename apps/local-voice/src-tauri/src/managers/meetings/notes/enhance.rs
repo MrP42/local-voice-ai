@@ -2599,6 +2599,8 @@ pub fn update_enhanced(
         .map_err(|e| store_err(e).to_string())?
         .ok_or_else(|| EnhanceError::code_only("document_not_found").to_string())?;
     let stored = parse_enhanced(&document).map_err(String::from)?;
+    let relabeler = super::super::relabel::Relabeler::load(store, &document.meeting_id);
+    let edited = restore_relabeled(&stored, edited, &relabeler);
     let merged = apply_manual_edit(&stored, edited)?;
     let body = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
     let stamp = store
@@ -2608,12 +2610,54 @@ pub fn update_enhanced(
     Ok(stamp)
 }
 
+/// #242: Der Client sieht die Eintraege mit aktuellen Sprechernamen
+/// (`Relabeler`). Was er davon unveraendert zurueckschickt, bekommt wieder den
+/// gespeicherten Text bzw. die gespeicherte Zustaendigkeit - sonst gaelte die
+/// Umbenennung als Handbearbeitung (`flags.edited`) und wuerde eingefroren.
+pub fn restore_relabeled(
+    stored: &EnhancedNotes,
+    mut edited: EnhancedNotes,
+    relabeler: &super::super::relabel::Relabeler,
+) -> EnhancedNotes {
+    if relabeler.is_empty() {
+        return edited;
+    }
+    let known: std::collections::HashMap<&str, &EnhancedEntry> = stored
+        .sections
+        .iter()
+        .flat_map(|s| s.entries.iter())
+        .map(|e| (e.id.as_str(), e))
+        .collect();
+    for entry in edited
+        .sections
+        .iter_mut()
+        .flat_map(|s| s.entries.iter_mut())
+    {
+        let Some(original) = known.get(entry.id.as_str()) else {
+            continue;
+        };
+        if entry.text != original.text && entry.text == relabeler.apply(&original.text) {
+            entry.text = original.text.clone();
+        }
+        if let (Some(shown), Some(saved)) =
+            (entry.assignee.as_deref(), original.assignee.as_deref())
+        {
+            if shown.trim() != saved.trim() && shown.trim() == relabeler.apply_field(saved).trim() {
+                entry.assignee = Some(saved.to_string());
+            }
+        }
+    }
+    edited
+}
+
 /// Markdown einer KI-Notizen-Version; erledigte Aufgaben abgehakt.
 pub fn markdown_for(store: &MeetingStore, document_id: &str) -> Result<String, String> {
     let document = store
         .get_document(document_id)
         .map_err(|e| store_err(e).to_string())?
         .ok_or_else(|| EnhanceError::code_only("document_not_found").to_string())?;
+    let document =
+        super::super::relabel::Relabeler::load(store, &document.meeting_id).document(document);
     let notes = parse_enhanced(&document).map_err(String::from)?;
     let title = store
         .get_meeting(&document.meeting_id)

@@ -1,4 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { calls, installTauriMock } from "./calendarMock";
 import { PROGRESS, emitMeeting, openRecordings } from "./recLayoutMock";
@@ -443,26 +445,62 @@ test("schmales Fenster (480): Platz und Bedienspalte der wartenden Datei ohne Se
 // Einstellung
 // ---------------------------------------------------------------------------
 
-test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lassen sich waehlen', async ({
+// Ausserhalb des Vite-Wurzelverzeichnisses schreiben: eine neue Datei unter
+// apps/local-voice loest sonst einen Neuladen der Seite aus (leere Bilder).
+// Danach nach docs/vorschau/gleichzeitige-transkriptionen kopieren.
+const VORSCHAU =
+  process.env.LVA_VORSCHAU ??
+  path.join(os.tmpdir(), "lva-vorschau", "gleichzeitige-transkriptionen");
+
+const openParallelSetting = async (
+  page: Page,
+  width = 1280,
+  height = 1000,
+  adjust?: (page: Page) => Promise<void>,
+) => {
+  // Eigene Seite im selben Kontext: nach vorn holen, sonst malt Chromium sie
+  // als Hintergrund-Tab nicht (leere Bilder).
+  await page.bringToFront();
+  await installTauriMock(page, "main");
+  // Nach der Attrappe, damit sie deren Zustand ueberschreibt.
+  if (adjust) await adjust(page);
+  await page.setViewportSize({ width, height });
+  await page.goto("/");
+  await geheZu(page, "Einstellungen");
+  const title = page.getByText("Gleichzeitige Transkriptionen", {
+    exact: true,
+  });
+  await expect(title).toBeVisible();
+  return {
+    title,
+    // Fluent-Auswahlliste: der Zeilentitel nennt sie, der Wert steht darin.
+    dropdown: page.getByRole("combobox", {
+      name: "Gleichzeitige Transkriptionen",
+    }),
+  };
+};
+
+test('Einstellung "Gleichzeitige Transkriptionen": Automatisch nach Hardware ist Standard, feste Zahl waehlbar', async ({
   page,
 }) => {
   // Eigene Seite ohne Aufnahmen-Attrappe: die Einstellungen der Gruppe Besprechungen.
   const fresh = await page.context().newPage();
-  await installTauriMock(fresh, "main");
-  await fresh.setViewportSize({ width: 1280, height: 1000 });
-  await fresh.goto("/");
-  await geheZu(fresh, "Einstellungen");
-  const title = fresh.getByText("Gleichzeitige Transkriptionen", {
-    exact: true,
-  });
-  await expect(title).toBeVisible();
-  // Fluent-Auswahlliste: der Zeilentitel nennt sie, der Wert steht darin.
-  const dropdown = fresh.getByRole("combobox", {
-    name: "Gleichzeitige Transkriptionen",
-  });
-  await expect(dropdown).toHaveText(/1 \(Standard\)/);
+  const { dropdown } = await openParallelSetting(fresh);
+  await expect(dropdown).toHaveText(
+    "Automatisch – 4 auf diesem PC (empfohlen)",
+  );
   await dropdown.click();
-  await fresh.getByRole("option", { name: "2", exact: true }).click();
+  // Automatisch plus 1 bis 4.
+  await expect(fresh.getByRole("option")).toHaveText([
+    "Automatisch – 4 auf diesem PC (empfohlen)",
+    "1 gleichzeitig",
+    "2 gleichzeitig",
+    "3 gleichzeitig",
+    "4 gleichzeitig",
+  ]);
+  await fresh
+    .getByRole("option", { name: "2 gleichzeitig", exact: true })
+    .click();
   await expect
     .poll(
       async () =>
@@ -472,15 +510,210 @@ test('Einstellung "Gleichzeitige Transkriptionen": 1 ist Standard, 2 und 3 lasse
   expect(
     (await calls(fresh, "change_meeting_import_parallel_setting"))[0].args,
   ).toEqual({ value: 2 });
-  // Die Auswahl zeigt jetzt "2".
-  await expect(dropdown).toHaveText("2");
-  // Die Beschreibung (Tooltip am Info-Symbol) nennt die Bedingung: Speicher, sonst wartet die Datei.
-  await title
-    .locator("xpath=ancestor::div[.//*[@aria-label='More information']][1]")
-    .getByLabel("More information")
-    .hover();
-  await expect(
-    fresh.getByText(/wartet auf Arbeitsspeicher/).first(),
-  ).toBeVisible();
+  await expect(dropdown).toHaveText("2 gleichzeitig");
+  // Zurueck auf Automatisch schreibt 0.
+  await dropdown.click();
+  await fresh.getByRole("option", { name: /^Automatisch/ }).click();
+  await expect
+    .poll(async () =>
+      (await calls(fresh, "change_meeting_import_parallel_setting")).map(
+        (c) => c.args,
+      ),
+    )
+    .toEqual([{ value: 2 }, { value: 0 }]);
   await fresh.close();
 });
+
+test('Einstellung "Gleichzeitige Transkriptionen": Herleitung sichtbar, ehrlich und linksbuendig', async ({
+  page,
+}) => {
+  const fresh = await page.context().newPage();
+  await openParallelSetting(fresh);
+  const box = fresh.getByTestId("parallel-explanation");
+  await expect(box).toBeVisible();
+  // Obergrenze der App, nicht die Kerne: die Hardware wuerde mehr erlauben.
+  await expect(box).toContainText(
+    "Empfehlung für diesen PC: 4 gleichzeitig – Obergrenze der App. Die Hardware würde mehr erlauben.",
+  );
+  const items = box.locator("li");
+  await expect(items).toHaveText([
+    "Prozessorkerne: 32 → 8 (ein Lauf je vier Kerne)",
+    /^Arbeitsspeicher: 64 GB → 18 \(die Hälfte nach 6 GB Systemreserve, je Lauf 1,6 GB\)$/,
+    "Grafikspeicher: 24 GB → 12 (je Lauf 1,9 GB)",
+    "Transkriptionsmodell: 0,7 GB",
+    "Jeder weitere Lauf lädt das Modell noch einmal: etwa 1,6 GB Arbeitsspeicher und 1,9 GB Grafikspeicher je Lauf.",
+    /wartet auf Arbeitsspeicher/,
+    /nur ein weiteres Modell/,
+    /Aufnahme hat Vorrang/,
+    /Hörbuch-Teile/,
+  ]);
+  expect(await box.evaluate((el) => getComputedStyle(el).textAlign)).toBe(
+    "left",
+  );
+  await fresh.close();
+});
+
+test('Einstellung "Gleichzeitige Transkriptionen": begrenzender Faktor wird genannt, ohne Messung bleibt Automatisch waehlbar', async ({
+  page,
+}) => {
+  const fresh = await page.context().newPage();
+  const { dropdown } = await openParallelSetting(fresh, 1280, 1000, (p) =>
+    p.addInitScript(() => {
+      const w = window as any;
+      w.__parallelRec = {
+        ...w.__parallelRec,
+        recommended: 2,
+        limited_by: "cpu",
+        by_cpu: 2,
+        cpus: 8,
+        gpu_model: false,
+        by_vram: null,
+        vram_per_run_mb: null,
+      };
+    }),
+  );
+  await expect(dropdown).toHaveText(
+    "Automatisch – 2 auf diesem PC (empfohlen)",
+  );
+  const box = fresh.getByTestId("parallel-explanation");
+  await expect(box).toContainText(
+    "Empfehlung für diesen PC: 2 gleichzeitig, begrenzt durch die Prozessorkerne.",
+  );
+  await expect(box).toContainText(
+    "Grafikspeicher: zählt nicht, das Modell rechnet auf dem Prozessor",
+  );
+  await fresh.close();
+
+  const none = await page.context().newPage();
+  const unmeasured = await openParallelSetting(none, 1280, 1000, (p) =>
+    p.addInitScript(() => ((window as any).__parallelRec = null)),
+  );
+  await expect(unmeasured.dropdown).toHaveText("Automatisch (empfohlen)");
+  await expect(none.getByTestId("parallel-explanation")).toHaveCount(0);
+  await none.close();
+});
+
+// Vorschaubilder fuer die Abnahme (LVA_SCREENSHOTS=1): 390 und 1440 px, hell und
+// dunkel, Liste geoeffnet und Herleitung. Touchziele per boundingBox, bei 390
+// >= 44 px; die Masse gehen nach touchziele.txt.
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [390, 1440]) {
+    test(`Vorschau Gleichzeitige Transkriptionen ${width} ${theme}`, async ({
+      browser,
+    }) => {
+      // Eigener Kontext (eigenes Fenster): kein Hintergrund-Tab, der nicht gemalt wird.
+      const context = await browser.newContext({
+        locale: "de-DE",
+        timezoneId: "Europe/Berlin",
+      });
+      const fresh = await context.newPage();
+      const name = `${width}-${theme === "light" ? "hell" : "dunkel"}`;
+      const { title, dropdown } = await openParallelSetting(
+        fresh,
+        width,
+        width === 390 ? 844 : 900,
+        (p) =>
+          p.addInitScript((t) => ((window as any).__settings.theme = t), theme),
+      );
+      await title.scrollIntoViewIfNeeded();
+      const overflow = await fresh.evaluate(
+        () =>
+          document.documentElement.scrollWidth -
+          document.documentElement.clientWidth,
+      );
+      expect(overflow).toBeLessThanOrEqual(0);
+      const measured: string[] = [];
+      const box = (await dropdown.boundingBox())!;
+      measured.push(`Auswahl ${box.width.toFixed(0)}x${box.height.toFixed(0)}`);
+      // Schmal (< 640 px): Touchziel 44 px; breit: Fluent-Standardhoehe.
+      expect(box.height).toBeGreaterThanOrEqual(width === 390 ? 44 : 30);
+      // Auch ein einzeiliger Ausloeser (unter Segoe UI bricht der lange Text
+      // nicht um): der Knopf selbst, nicht nur der Rahmen, hat 44 px.
+      if (width === 390) {
+        const single = (await fresh
+          .getByRole("combobox", { name: "Transkriptionssprache" })
+          .boundingBox())!;
+        measured.push(
+          `Auswahl einzeilig (Transkriptionssprache) ${single.width.toFixed(0)}x${single.height.toFixed(0)}`,
+        );
+        expect(single.height, "Touchziel einzeilig").toBeGreaterThanOrEqual(44);
+      }
+      await dropdown.click();
+      const options = fresh.getByRole("option");
+      await expect(options).toHaveCount(5);
+      for (const option of await options.all()) {
+        const b = (await option.boundingBox())!;
+        measured.push(
+          `${(await option.textContent())?.trim()} ${b.width.toFixed(0)}x${b.height.toFixed(0)}`,
+        );
+        if (width === 390)
+          expect(b.height, "Touchziel").toBeGreaterThanOrEqual(44);
+      }
+      if (process.env.LVA_SCREENSHOTS) {
+        fs.mkdirSync(VORSCHAU, { recursive: true });
+        await fresh.waitForTimeout(250);
+        await fresh.screenshot({
+          path: path.join(VORSCHAU, `liste-${name}.png`),
+          animations: "disabled",
+        });
+        fs.writeFileSync(
+          path.join(VORSCHAU, `touchziele-${name}.txt`),
+          measured.join("\n") + "\n",
+        );
+      }
+      await fresh.keyboard.press("Escape");
+      await expect(options).toHaveCount(0);
+      // Herleitung vollstaendig sichtbar: nach dem Scrollen liegt sie ganz im Fenster.
+      const explanation = fresh.getByTestId("parallel-explanation");
+      // Nur den Inhaltsbereich scrollen (scrollIntoView verschoebe auch den Rahmen).
+      await explanation.evaluate((el) => {
+        let box: HTMLElement | null = el.parentElement;
+        while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY))
+          box = box.parentElement;
+        if (!box) return;
+        const r = el.getBoundingClientRect();
+        const c = box.getBoundingClientRect();
+        box.scrollTop += r.bottom - c.bottom + 16;
+      });
+      const e = (await explanation.boundingBox())!;
+      const viewport = fresh.viewportSize()!;
+      expect(e.x).toBeGreaterThanOrEqual(0);
+      expect(e.x + e.width).toBeLessThanOrEqual(viewport.width);
+      // Unterkante ueber der Statusleiste (halbe Pixel aus der Skalierung erlaubt).
+      const bar = (await fresh.locator(".lv-statusbar").boundingBox())!;
+      expect(e.y + e.height).toBeLessThanOrEqual(bar.y + 1);
+      if (process.env.LVA_SCREENSHOTS) {
+        await fresh.waitForTimeout(250);
+        await fresh.screenshot({
+          path: path.join(VORSCHAU, `begruendung-${name}.png`),
+          animations: "disabled",
+        });
+        console.log(
+          "DBG",
+          name,
+          JSON.stringify(
+            await fresh.evaluate(() => {
+              const out: unknown[] = [];
+              let e: Element | null = document.querySelector(
+                '[data-testid="parallel-explanation"]',
+              );
+              while (e) {
+                const st = getComputedStyle(e);
+                out.push([
+                  e.tagName,
+                  e.className.toString().slice(0, 40),
+                  st.overflowY,
+                  (e as HTMLElement).scrollTop,
+                  Math.round(e.getBoundingClientRect().top),
+                ]);
+                e = e.parentElement;
+              }
+              return out;
+            }),
+          ),
+        );
+      }
+      await context.close();
+    });
+  }
+}

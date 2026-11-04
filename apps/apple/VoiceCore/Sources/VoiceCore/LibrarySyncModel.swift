@@ -174,7 +174,8 @@ public struct SyncLedger: Codable, Equatable, Sendable {
     }
     public var cursor: Int64 = 0
     public var entries: [String: Entry] = [:]
-    /// Blobs, die dieses Gerät vollständig hochgeladen hat.
+    /// Blobs, die im Konto vollständig vorliegen: von diesem Gerät hochgeladen,
+    /// vollständig von dort geladen oder vor dem Entfernen beim Hub bestätigt.
     public var uploaded: Set<String> = []
     /// Abgewiesene Stände (Objekt → Hash); erst ein geänderter Stand wird erneut gesendet.
     public var dead: [String: String] = [:]

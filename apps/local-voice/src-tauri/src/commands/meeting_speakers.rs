@@ -17,9 +17,12 @@ use specta::Type;
 use tauri::{AppHandle, Manager, State};
 use tauri_specta::Event;
 
+use crate::managers::meetings::relabel;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
 use crate::managers::meetings::speaker_names::{self, NameSuggestion};
-use crate::managers::meetings::speakers::{self, SpeakerDirectory, DIARIZE_MIC_KEY, REPORT_KEY};
+use crate::managers::meetings::speakers::{
+    self, SpeakerDirectory, DIARIZE_MIC_KEY, REPORT_KEY, WHOLE_CHANNEL,
+};
 use crate::managers::meetings::store::MeetingStore;
 
 /// Laengster Sprechername (Zeichen); mehr wird abgeschnitten.
@@ -30,7 +33,8 @@ pub const MAX_NAME_CHARS: usize = 80;
 pub struct MeetingSpeaker {
     /// 0 = Mikrofon, 1 = Systemton (Gegenseite), 2 = Import (Mischspur).
     pub channel: u8,
-    /// Nummer im Kanal, ab 1.
+    /// Nummer im Kanal, ab 1; 0 = der ganze Kanal ohne Sprechertrennung
+    /// ("Aufnahme", "Ich", "Gegenseite"), benennbar wie jeder Sprecher.
     pub speaker_index: u32,
     /// Anzeige: der Name, sonst "Gegenseite 2" / "Raum 1" / "Person 1".
     pub label: String,
@@ -40,6 +44,16 @@ pub struct MeetingSpeaker {
     pub human_id: Option<String>,
     /// Redeanteil an der gesamten Sprechzeit, in Prozent (eine Nachkommastelle).
     pub share_pct: f64,
+    /// Sprechzeit in Millisekunden (Summe der Segmentdauern).
+    pub speech_ms: u64,
+    /// Beginn des ersten Segments dieses Sprechers (`None`: keins, nur eine
+    /// Zeile in `speakers`). Ordnet die Tabelle "Sprecher & Redeanteile".
+    pub first_ms: Option<u64>,
+    /// Frühere Namen (älteste zuerst): Texte, die vor dem Umbenennen entstanden
+    /// sind, zeigen über sie den aktuellen Namen.
+    pub former_names: Vec<String>,
+    /// Standardbezeichnung ohne Namen ("Person 2", "Aufnahme").
+    pub default_label: String,
 }
 
 /// Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
@@ -101,14 +115,25 @@ pub fn list_speakers_with(
     let rows = store.speaker_rows(meeting_id).map_err(store_err)?;
     let directory = SpeakerDirectory::load_with(store, meeting_id, self_name);
 
+    let plain = SpeakerDirectory::load_with(store, meeting_id, None).without_names();
+    let former = relabel::former_names(store, meeting_id);
+
     let mut speech_ms: BTreeMap<(u8, u32), u64> = BTreeMap::new();
+    let mut first_ms: BTreeMap<(u8, u32), u64> = BTreeMap::new();
     let mut total_ms = 0u64;
     for segment in &segments {
         let duration = segment.end_ms.saturating_sub(segment.start_ms);
         total_ms += duration;
-        if let Some(index) = segment.speaker_index {
-            *speech_ms.entry((segment.channel, index)).or_insert(0) += duration;
-        }
+        // Segmente ohne Sprecher gehoeren dem ganzen Kanal ("Aufnahme").
+        let key = (
+            segment.channel,
+            segment.speaker_index.unwrap_or(WHOLE_CHANNEL),
+        );
+        *speech_ms.entry(key).or_insert(0) += duration;
+        first_ms
+            .entry(key)
+            .and_modify(|m| *m = (*m).min(segment.start_ms))
+            .or_insert(segment.start_ms);
     }
     let mut human: BTreeMap<(u8, u32), Option<String>> = BTreeMap::new();
     for row in &rows {
@@ -123,7 +148,7 @@ pub fn list_speakers_with(
         .map(|((channel, speaker_index), ms)| MeetingSpeaker {
             channel,
             speaker_index,
-            label: directory.label_for(channel, Some(speaker_index)),
+            label: directory.label_for(channel, index_of(speaker_index)),
             display_name: directory.name(channel, speaker_index).map(str::to_string),
             human_id: human.get(&(channel, speaker_index)).cloned().flatten(),
             share_pct: if total_ms == 0 {
@@ -131,8 +156,21 @@ pub fn list_speakers_with(
             } else {
                 (ms as f64 * 1000.0 / total_ms as f64).round() / 10.0
             },
+            speech_ms: ms,
+            first_ms: first_ms.get(&(channel, speaker_index)).copied(),
+            former_names: former
+                .get(&relabel::former_key(channel, speaker_index))
+                .cloned()
+                .unwrap_or_default(),
+            default_label: plain.label_for(channel, index_of(speaker_index)),
         })
         .collect())
+}
+
+/// Die Nummer, wie `SpeakerDirectory::label_for` sie erwartet: der ganze
+/// Kanal ist "ohne Sprecher".
+fn index_of(speaker_index: u32) -> Option<u32> {
+    (speaker_index != WHOLE_CHANNEL).then_some(speaker_index)
 }
 
 /// Einen Sprecher benennen (`None` oder leer: Namen loeschen). Der Name gilt
@@ -144,17 +182,39 @@ pub fn rename_speaker(
     speaker_index: u32,
     name: Option<&str>,
 ) -> Result<MeetingSpeaker, String> {
-    let exists = |list: &[MeetingSpeaker]| {
-        list.iter()
-            .any(|s| s.channel == channel && s.speaker_index == speaker_index)
-    };
-    if !exists(&list_speakers(store, meeting_id)?) {
+    let Some(before) = list_speakers(store, meeting_id)?
+        .into_iter()
+        .find(|s| s.channel == channel && s.speaker_index == speaker_index)
+    else {
         return Err("speaker_not_found".to_string());
-    }
+    };
     let name = clean_name(name);
-    store
+    let changed = store
         .set_speaker_name(meeting_id, channel, speaker_index, name.as_deref())
         .map_err(store_err)?;
+    // Der bisher gezeigte Name: der vergebene oder "Mein Name" am Mikrofon.
+    let shown = before
+        .display_name
+        .clone()
+        .or_else(|| (before.label != before.default_label).then(|| before.label.clone()));
+    if changed {
+        if let Some(old) = shown.as_deref() {
+            if Some(old) != name.as_deref() {
+                // Der Name ist gespeichert; fehlt nur die Merkliste, zeigen
+                // aeltere Texte den alten Namen weiter (kein Abbruch).
+                if let Err(e) = relabel::remember_former_name(
+                    store,
+                    meeting_id,
+                    channel,
+                    speaker_index,
+                    old,
+                    name.as_deref(),
+                ) {
+                    log::warn!("speakers: former name not kept: {e}");
+                }
+            }
+        }
+    }
     sync_people(store, meeting_id);
     list_speakers(store, meeting_id)?
         .into_iter()
@@ -357,9 +417,21 @@ pub async fn meeting_speaker_merge(
     from: u32,
     into: u32,
 ) -> Result<(), String> {
+    let directory = SpeakerDirectory::load(&store, &meeting_id);
+    let plain = SpeakerDirectory::load_with(&store, &meeting_id, None).without_names();
+    let from_labels = vec![
+        plain.label_for(channel, Some(from)),
+        directory.label_for(channel, Some(from)),
+    ];
     store
         .merge_speakers(&meeting_id, channel, from, into)
         .map_err(store_err)?;
+    // #242: Texte, die `from` nennen, zeigen danach den Namen von `into`.
+    if let Err(e) =
+        relabel::carry_former_names(&store, &meeting_id, channel, from, into, &from_labels)
+    {
+        log::warn!("Fruehere Sprechernamen nicht uebernommen: {e}");
+    }
     sync_people(&store, &meeting_id);
     changed(&app, &meeting_id);
     Ok(())
@@ -590,13 +662,20 @@ mod tests {
     fn the_list_has_labels_and_shares() {
         let f = fixture();
         let list = list_speakers(&f.store, &f.id).unwrap();
-        assert_eq!(list.len(), 2, "\"Ich\" ohne Sprecher zaehlt nicht mit");
-        assert_eq!(list[0].label, "Gegenseite 1");
-        assert_eq!(list[1].label, "Gegenseite 2");
-        assert_eq!(list[0].display_name, None);
+        // #242: "Ich" ohne Sprechertrennung ist der ganze Kanal (Nummer 0).
+        assert_eq!(list.len(), 3);
+        assert_eq!((list[0].channel, list[0].speaker_index), (0, WHOLE_CHANNEL));
+        assert_eq!(list[0].label, "Ich");
+        assert_eq!(list[1].label, "Gegenseite 1");
+        assert_eq!(list[2].label, "Gegenseite 2");
+        assert_eq!(list[1].display_name, None);
         // 6 s von 10 s Sprechzeit gesamt, 2 s davon "Ich".
-        assert!((list[0].share_pct - 60.0).abs() < 0.01, "{list:?}");
-        assert!((list[1].share_pct - 20.0).abs() < 0.01, "{list:?}");
+        assert!((list[0].share_pct - 20.0).abs() < 0.01, "{list:?}");
+        assert!((list[1].share_pct - 60.0).abs() < 0.01, "{list:?}");
+        assert!((list[2].share_pct - 20.0).abs() < 0.01, "{list:?}");
+        assert_eq!(list[1].speech_ms, 6_000);
+        assert_eq!(list[1].first_ms, Some(2_000));
+        assert_eq!(list[2].default_label, "Gegenseite 2");
     }
 
     #[test]
@@ -687,7 +766,11 @@ mod tests {
             .filter(|s| s.channel == 1)
             .all(|s| s.speaker_index == Some(1)));
         assert_eq!(segments[0].speaker_index, None, "\"Ich\" bleibt");
-        let list = list_speakers(&f.store, &f.id).unwrap();
+        let list: Vec<_> = list_speakers(&f.store, &f.id)
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.channel == 1)
+            .collect();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].label, "Anna", "der Name von `from` bleibt erhalten");
         assert!((list[0].share_pct - 80.0).abs() < 0.01);
@@ -744,7 +827,12 @@ mod tests {
         rename_speaker(&f.store, &f.id, 1, 1, Some("Ben")).unwrap();
         // 1 -> 2: Ziel 2 hat keinen Namen, der Name von 1 geht mit.
         f.store.merge_speakers(&f.id, 1, 1, 2).unwrap();
-        let list = list_speakers(&f.store, &f.id).unwrap();
+        // Ohne "Ich" (ganzer Kanal 0, #242).
+        let list: Vec<_> = list_speakers(&f.store, &f.id)
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.channel == 1)
+            .collect();
         assert_eq!(list.len(), 1);
         assert_eq!((list[0].speaker_index, list[0].label.as_str()), (2, "Ben"));
     }
@@ -770,7 +858,8 @@ mod tests {
         let list = list_speakers(&f.store, &f.id).unwrap();
         assert_eq!(
             list.iter().map(|s| s.speaker_index).collect::<Vec<_>>(),
-            [1, 2, 3]
+            [0, 1, 2, 3],
+            "0 = \"Ich\" als ganzer Kanal (#242)"
         );
         assert_eq!(speaker(&f, 1, 3).label, "Gegenseite 3");
         // Zuordnung aufheben.
@@ -801,6 +890,117 @@ mod tests {
             f.store.get_segments(&f.id).unwrap()[1].speaker_index,
             Some(1)
         );
+    }
+
+    #[test]
+    fn the_whole_channel_can_be_named_like_any_speaker() {
+        let f = fixture();
+        let me = rename_speaker(&f.store, &f.id, 0, WHOLE_CHANNEL, Some("Patrick")).unwrap();
+        assert_eq!(
+            (me.label.as_str(), me.default_label.as_str()),
+            ("Patrick", "Ich")
+        );
+        let segments = f.store.get_segments(&f.id).unwrap();
+        let dir = SpeakerDirectory::load(&f.store, &f.id);
+        assert_eq!(dir.label(&segments[0]), "Patrick");
+        // Export: Segmente ohne Sprecher tragen den Namen des Kanals.
+        let bundle = build_bundle(&f.store, &f.id).unwrap();
+        assert_eq!(bundle.label(&segments[0]), "Patrick");
+        // Zusammenfuehren und Umhaengen kennen die Nummer 0 nicht.
+        assert!(f.store.merge_speakers(&f.id, 0, 0, 1).is_err());
+    }
+
+    #[test]
+    fn earlier_names_and_labels_in_stored_texts_show_the_current_name() {
+        let f = fixture();
+        f.store
+            .insert_document(
+                &f.id,
+                "minutes",
+                "markdown@1",
+                "Gegenseite 2 berichtet.\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 00:02 | 20,0 % |\n| Gegenseite 2 | 00:02 | 20,0 % |\n",
+                None,
+                None,
+            )
+            .unwrap();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
+        // Ein spaeteres Dokument nennt schon "Anna".
+        f.store
+            .insert_document(
+                &f.id,
+                "summary",
+                "markdown@1",
+                "Anna fasst zusammen.",
+                None,
+                None,
+            )
+            .unwrap();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna Berg")).unwrap();
+        rename_speaker(&f.store, &f.id, 0, WHOLE_CHANNEL, Some("Patrick")).unwrap();
+        assert_eq!(speaker(&f, 1, 2).former_names, vec!["Anna".to_string()]);
+
+        let names = relabel::Relabeler::load(&f.store, &f.id);
+        let docs: Vec<String> = f
+            .store
+            .get_documents(&f.id)
+            .unwrap()
+            .into_iter()
+            .map(|d| names.document(d).body)
+            .collect();
+        assert!(
+            docs.iter().any(|b| b.starts_with("Anna Berg berichtet.")),
+            "{docs:?}"
+        );
+        assert!(
+            docs.iter().any(|b| b.contains("| Patrick | 00:02")),
+            "{docs:?}"
+        );
+        assert!(
+            docs.iter().any(|b| b.contains("| Anna Berg | 00:02")),
+            "{docs:?}"
+        );
+        assert!(
+            docs.iter().any(|b| b == "Anna Berg fasst zusammen."),
+            "{docs:?}"
+        );
+        // Gespeichert bleibt der Text, wie er erzeugt wurde.
+        assert!(f
+            .store
+            .get_documents(&f.id)
+            .unwrap()
+            .iter()
+            .any(|d| d.body.starts_with("Gegenseite 2 berichtet.")));
+        // Zurueckbenennen: der alte Name ist kein "frueherer" mehr.
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
+        assert_eq!(
+            speaker(&f, 1, 2).former_names,
+            vec!["Anna Berg".to_string()]
+        );
+    }
+
+    #[test]
+    fn after_a_merge_texts_naming_the_merged_speaker_show_the_target() {
+        let f = fixture();
+        f.store
+            .insert_document(
+                &f.id,
+                "minutes",
+                "markdown@1",
+                "Gegenseite 2 sagt ja.",
+                None,
+                None,
+            )
+            .unwrap();
+        rename_speaker(&f.store, &f.id, 1, 1, Some("Bernd")).unwrap();
+        let labels = vec!["Gegenseite 2".to_string()];
+        f.store.merge_speakers(&f.id, 1, 2, 1).unwrap();
+        relabel::carry_former_names(&f.store, &f.id, 1, 2, 1, &labels).unwrap();
+        let names = relabel::Relabeler::load(&f.store, &f.id);
+        let body = names
+            .document(f.store.get_documents(&f.id).unwrap().remove(0))
+            .body;
+        assert_eq!(body, "Bernd sagt ja.");
+        assert!(!relabel::former_names(&f.store, &f.id).contains_key("1:2"));
     }
 
     #[test]
