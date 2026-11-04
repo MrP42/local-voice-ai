@@ -7746,7 +7746,8 @@
       "searching": "Stelle wird im Hörbuch gesucht …",
       "correct": "Stelle korrigieren",
       "correctHint": "Tippe auf den Satz, der gerade zu hören ist.",
-      "lineLabel": "Aktueller Satz: {{text}}. Mitlesen öffnen"
+      "aligning": "Stelle wird mit dem Text abgeglichen …",
+      "lineLabel": "Aktuelle Stelle: {{text}}. Mitlesen öffnen"
     },
     "merge": {
       "bar": "{{count}} Einträge gehören wohl zu einem Hörbuch: {{title}}",

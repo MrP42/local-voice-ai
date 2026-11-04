@@ -7746,7 +7746,8 @@
       "searching": "Finding the position in the audiobook …",
       "correct": "Correct position",
       "correctHint": "Tap the sentence you are hearing right now.",
-      "lineLabel": "Current sentence: {{text}}. Open reading view"
+      "aligning": "Matching the audio to the text …",
+      "lineLabel": "Current passage: {{text}}. Open reading view"
     },
     "merge": {
       "bar": "{{count}} entries probably belong to one audiobook: {{title}}",

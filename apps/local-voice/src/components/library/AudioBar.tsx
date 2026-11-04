@@ -20,6 +20,7 @@ import { commands, type AudioVersion, type LibraryBook } from "@/bindings";
 import { IconButton } from "../ui/IconButton";
 import { BookCover } from "./BookCover";
 import { FollowPane, textStartOf } from "./FollowPane";
+import { AudioBarLine } from "./AudioBarLine";
 import { assetUrl, formatDuration, tracksOf } from "@/lib/library/books";
 import {
   makeFollowMap,
@@ -151,6 +152,8 @@ export const AudioBar: React.FC<Props> = ({
   const lastEl = useRef<HTMLAudioElement | null>(null);
   const pendingSeek = useRef<number | null>(null);
   const [partsOpen, setPartsOpen] = useState(false);
+  /** Zählt Sprünge im Hörbuch (die Textzeile folgt dann sofort). */
+  const [seekGen, setSeekGen] = useState(0);
 
   const [followPref, setFollowPref] = usePersistentState<"on" | "off">(
     "library.followText",
@@ -474,14 +477,6 @@ export const AudioBar: React.FC<Props> = ({
     [paragraphs, sentenceCache],
   );
   const sentence = activeParagraph >= 0 ? sentenceOf(nowChars) : null;
-  /** Gerade gehörter Einschub (Text nur im Hörbuch). */
-  const insertNow = live.inserts.find(
-    (i) => at * 1000 >= i.start_ms && at * 1000 < i.end_ms,
-  );
-  const lineText =
-    insertNow?.text ??
-    (sentence && text ? text.slice(sentence.start, sentence.end) : "");
-
   if (!urls.length || urls.every((u) => !u)) return null;
   const multi = tracks.length > 1;
   const partNo = (current ?? 0) + 1;
@@ -550,40 +545,19 @@ export const AudioBar: React.FC<Props> = ({
           </ol>
         </div>
       )}
-      {!follow && text && (lineText || searching) && (
-        <button
-          type="button"
-          className="library-audiobar__line"
-          onClick={() => setFollowPref("on")}
-          aria-label={t("library.follow.lineLabel", {
-            text: searching ? t("library.follow.searching") : lineText,
-          })}
-          title={searching ? undefined : lineText}
-          data-testid="library-audiobar-line"
-        >
-          {searching ? (
-            <span className="library-meta">
-              {t("library.follow.searching")}
-            </span>
-          ) : (
-            <>
-              {approxNow && (
-                <span
-                  className="library-audiobar__approx"
-                  title={t("library.follow.approx")}
-                  data-testid="library-audiobar-line-approx"
-                >
-                  ≈
-                </span>
-              )}
-              {insertNow ? (
-                <ins className="library-follow__ins">{lineText}</ins>
-              ) : (
-                <span className="library-audiobar__sentence">{lineText}</span>
-              )}
-            </>
-          )}
-        </button>
+      {!follow && text && (
+        <AudioBarLine
+          text={text}
+          paragraphs={paragraphs}
+          chars={nowChars}
+          ms={at * 1000}
+          seekGen={seekGen}
+          inserts={live.inserts}
+          approx={approxNow}
+          unavailable={live.unavailable}
+          searching={searching}
+          onOpen={() => setFollowPref("on")}
+        />
       )}
       <div
         className="library-audiobar"
@@ -646,6 +620,7 @@ export const AudioBar: React.FC<Props> = ({
                 wantPlay.current = false;
               persist(true);
             }}
+            onSeeking={() => setSeekGen((n) => n + 1)}
             onSeeked={() => {
               setAt(globalMs() / 1000);
               persist(true);

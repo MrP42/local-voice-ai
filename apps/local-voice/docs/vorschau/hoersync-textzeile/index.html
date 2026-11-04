@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Textzeile Hörleiste</title>
+<style>
+:root{--bg:#fff;--fg:#1b1b1b;--mut:#555}
+@media (prefers-color-scheme:dark){:root{--bg:#1e1e1e;--fg:#eee;--mut:#aaa}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font-family:"Segoe UI",system-ui,sans-serif;line-height:1.5}
+main{max-width:1500px;margin:auto}h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:2rem}
+p,li{color:var(--mut)}img{max-width:100%;border:1px solid #8884;border-radius:6px}
+.row{display:flex;gap:16px;flex-wrap:wrap}.row figure{margin:0;flex:1 1 300px}
+figcaption{font-size:.85rem;color:var(--mut)}
+</style></head><body><main>
+<h1>Textzeile über der Hörleiste – ruhig und synchron</h1>
+<ul>
+<li>Statt eines einzelnen (Halb-)Satzes steht ein Abschnitt aus mehreren Sätzen: zwei Zeilen ab 900 px Breite, drei Zeilen darunter. Die Höhe ist fest, die Leiste springt nicht.</li>
+<li>Der Abschnitt bleibt stehen, solange das Hören darin liegt. Nur die Markierung des gehörten Satzes wandert; Gehörtes wird zurückgenommen. Umgeblättert wird erst am Abschnittsende (sanftes Einblenden, ohne bei reduzierter Bewegung).</li>
+<li>Kleine Rücksprünge der Zeitachse (neue Stützpunkte aus dem Live-Abgleich) werden 1,5 s zurückgehalten; nach einem echten Sprung im Hörbuch folgt die Anzeige sofort.</li>
+<li>Ist die Stelle nur geschätzt und der Abgleich läuft noch, steht „Stelle wird mit dem Text abgeglichen …“ statt eines womöglich falschen Texts. Nur ohne Erkennungsmodell bleibt die Schätzung mit „≈“.</li>
+<li>Einschübe (nur im Hörbuch) erst ab 1,5 s Länge, leere nie – sonst blinkte die Zeile.</li>
+</ul>
+<h2>1440 px – Satz 1, dann Satz 2 im selben Abschnitt</h2>
+<div class="row">
+<figure><img src="textzeile-1440-hell-1.png" alt="1440 hell, erster Satz markiert"><figcaption>hell, Satz 1</figcaption></figure>
+<figure><img src="textzeile-1440-hell-2.png" alt="1440 hell, zweiter Satz markiert"><figcaption>hell, Satz 2 – Text unverändert</figcaption></figure>
+<figure><img src="textzeile-1440-dunkel-1.png" alt="1440 dunkel, erster Satz"><figcaption>dunkel, Satz 1</figcaption></figure>
+<figure><img src="textzeile-1440-dunkel-2.png" alt="1440 dunkel, zweiter Satz"><figcaption>dunkel, Satz 2</figcaption></figure>
+</div>
+<h2>390 px – drei Zeilen</h2>
+<div class="row">
+<figure><img src="textzeile-390-hell-1.png" alt="390 hell, Satz 1"><figcaption>hell, Satz 1</figcaption></figure>
+<figure><img src="textzeile-390-hell-2.png" alt="390 hell, Satz 2"><figcaption>hell, Satz 2</figcaption></figure>
+<figure><img src="textzeile-390-dunkel-1.png" alt="390 dunkel, Satz 1"><figcaption>dunkel, Satz 1</figcaption></figure>
+<figure><img src="textzeile-390-dunkel-2.png" alt="390 dunkel, Satz 2"><figcaption>dunkel, Satz 2</figcaption></figure>
+</div>
+</main></body></html>
