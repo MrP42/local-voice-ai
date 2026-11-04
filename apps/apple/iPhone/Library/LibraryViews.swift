@@ -213,10 +213,10 @@ struct LibraryShelf: View {
             }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: PhoneLibrary.importTypes, allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { Task { await library.importFiles(urls); await sync.run() } }
+            if case .success(let urls) = result { Task { await library.importFiles(urls); await sync.run(); if await library.fillMissingCovers() { await sync.run() } } }
         }
-        .refreshable { await sync.run(); library.reload() }
-        .task { await sync.run() }
+        .refreshable { await sync.run(); library.reload(); if await library.fillMissingCovers() { await sync.run() } }
+        .task { await sync.run(); if await library.fillMissingCovers() { await sync.run() } }
         .sheet(isPresented: $showSync) { LibrarySyncSheet() }
     }
 }

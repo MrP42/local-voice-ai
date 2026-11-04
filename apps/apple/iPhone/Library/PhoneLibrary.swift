@@ -14,6 +14,7 @@ final class PhoneLibrary: ObservableObject {
     @Published private(set) var progress: [String: String] = [:]
     @Published private(set) var importing = false
     @Published var error: String?
+    var coverSearchRunning = false
 
     let root: URL
     private var saveTask: Task<Void, Never>?
@@ -274,9 +275,11 @@ final class PhoneLibrary: ObservableObject {
                 let pages = (0..<pdf.pageCount).compactMap { pdf.page(at: $0)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
                 guard !pages.isEmpty else { throw BookTextError.empty }
                 let attrs = pdf.documentAttributes
+                // Erste Seite als Titelbild; PDFs tragen kein eigenes Cover.
+                let first = pdf.page(at: 0)?.thumbnail(of: CGSize(width: 900, height: 1300), for: .mediaBox).jpegData(compressionQuality: 0.85)
                 return ExtractedBook(title: attrs?[PDFDocumentAttribute.titleAttribute] as? String,
                                      authors: (attrs?[PDFDocumentAttribute.authorAttribute] as? String).map { [$0] } ?? [], language: nil,
-                                     text: pages.joined(separator: "\n\n"))
+                                     text: pages.joined(separator: "\n\n"), cover: first)
             default: return ExtractedBook(title: nil, authors: [], language: nil, text: try BookText.plain(data))
             }
         }.value
