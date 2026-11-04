@@ -112,7 +112,8 @@ final class MeetingTests: XCTestCase {
         // Wiederholung nach Absturz: dasselbe Dokument, keine Kopie.
         let again = try await archive.importMedia(source, duration: 8, live: live, id: id)
         XCTAssertEqual(again.digest, doc.digest)
-        XCTAssertEqual(try await archive.list().count, 1)
+        let listed = try await archive.list()
+        XCTAssertEqual(listed.count, 1)
         // Andere Sitzungsdaten oder anderes Original unter derselben Kennung: Konflikt, nichts überschrieben.
         let other = MeetingArchive.LiveImport(consent: consent, live: nil, segments: [], notes: "Andere Notiz")
         do { _ = try await archive.importMedia(source, duration: 8, live: other, id: id); XCTFail("Different session data") } catch {}
@@ -126,7 +127,8 @@ final class MeetingTests: XCTestCase {
         try await archive.skipMinutes(id, from: 0, through: 1)
         try await archive.appendMinutes(id, from: 1, through: 2, minutes: report)
         try await archive.finishMinutes(id)
-        XCTAssertEqual(try await archive.load(id).minutes?.summary, "Mit KI")
+        let withAI = try await archive.load(id)
+        XCTAssertEqual(withAI.minutes?.summary, "Mit KI")
     }
     func testQuotaFailurePreservesExistingOriginal() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
