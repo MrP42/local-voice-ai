@@ -38,9 +38,9 @@ mod paste_guard;
 mod paste_session;
 pub mod portable;
 pub mod portable_parts;
-pub mod provision;
 mod process_guard;
 mod projekte; // ADR-0026 PR-7: Suite-Projekte und Recherche
+pub mod provision;
 mod refinement;
 pub mod segmenter;
 pub mod selftest;
