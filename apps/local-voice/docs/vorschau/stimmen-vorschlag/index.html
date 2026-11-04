@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gleiche Stimmen erkennen – Vorschau</title>
+<style>
+  :root { color-scheme: light dark; --bg:#fafafa; --fg:#1b1b1b; --muted:#555; --card:#fff; --line:#ddd; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1e1e1e; --fg:#eee; --muted:#aaa; --card:#2a2a2a; --line:#444; } }
+  body { margin:0; padding:16px; font:15px/1.5 "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:1500px; margin:0 auto; }
+  h1 { font-size:1.4rem; margin:.2rem 0 .6rem; }
+  h2 { font-size:1.1rem; margin:1.6rem 0 .4rem; }
+  p, li { max-width:75ch; }
+  .muted { color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+  figure { margin:0; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  figure img { width:100%; height:auto; display:block; border-radius:4px; }
+  figcaption { font-size:.85rem; color:var(--muted); margin-top:4px; }
+  table { border-collapse:collapse; } td, th { border:1px solid var(--line); padding:4px 8px; text-align:left; }
+</style>
+</head>
+<body>
+<main>
+<h1>Gleiche Stimmen erkennen (Stimmprofile, Schritt 2a)</h1>
+<p class="muted">Local Voice AI · Besprechungen › Protokoll › Sprecher &amp; Redeanteile und Einstellungen › Diktat › Besprechungen · Bilder aus <code>tests/meeting-speaker-merge.spec.ts</code> und <code>tests/voice-suggestions-setting.spec.ts</code> (Playwright, Tauri-Attrappe). Folge zu #266/#267.</p>
+
+<h2>Was neu ist</h2>
+<ul>
+  <li><strong>Vorschlag in der Sprechertabelle:</strong> „„Person 3“ und „Patrick Wolff“ klingen gleich (87 % ähnlich). Ist das dieselbe Person?“ mit „Zusammenführen“ und „Verschiedene Personen“. Darunter klein: „Erkannt am Stimmabdruck in dieser Besprechung. Er wird nicht gespeichert.“</li>
+  <li><strong>Zusammenführen</strong> nutzt denselben Weg wie #267: Es bleibt der Sprecher mit der längeren Redezeit, „Rückgängig“ und „Trennen“ gelten wie gehabt.</li>
+  <li><strong>Verschiedene Personen</strong> blendet den Vorschlag aus und merkt sich das Paar bis zur nächsten Sprechertrennung (nur Sprechernummern, kein Abdruck).</li>
+  <li><strong>Einstellung „Gleiche Stimmen erkennen“</strong> (Standard an) und Zeile „Stimmmodell“ mit dem Knopf „Stimmmodell laden (30 MB)“. Ohne Modell erscheint kein Vorschlag, es wird nie von selbst geladen.</li>
+</ul>
+
+<h2>4 · Einstellung</h2>
+<div class="grid">
+  <figure><img src="4-einstellung-1440-hell.png" alt="Einstellung, 1440 px, hell"><figcaption>1440 px, hell</figcaption></figure>
+  <figure><img src="4-einstellung-1440-dunkel.png" alt="Einstellung, 1440 px, dunkel"><figcaption>1440 px, dunkel</figcaption></figure>
+  <figure><img src="4-einstellung-390-hell.png" alt="Einstellung, 390 px, hell"><figcaption>390 px, hell</figcaption></figure>
+  <figure><img src="4-einstellung-390-dunkel.png" alt="Einstellung, 390 px, dunkel"><figcaption>390 px, dunkel</figcaption></figure>
+</div>
+
+<h2>5 · Vorschlag in der Sprechertabelle</h2>
+<div class="grid">
+  <figure><img src="5-vorschlag-1440-hell.png" alt="Vorschlag, 1440 px, hell"><figcaption>1440 px, hell</figcaption></figure>
+  <figure><img src="5-vorschlag-1440-dunkel.png" alt="Vorschlag, 1440 px, dunkel"><figcaption>1440 px, dunkel</figcaption></figure>
+  <figure><img src="5-vorschlag-390-hell.png" alt="Vorschlag, 390 px, hell"><figcaption>390 px, hell</figcaption></figure>
+  <figure><img src="5-vorschlag-390-dunkel.png" alt="Vorschlag, 390 px, dunkel"><figcaption>390 px, dunkel</figcaption></figure>
+</div>
+
+<h2>Gemessen</h2>
+<ul>
+  <li>Beide Knöpfe im Hinweis sind mindestens 44 px hoch, liegen ganz im Hinweis, sind nicht abgeschnitten und nicht überdeckt (<code>elementFromPoint</code>). Keine horizontale Scrollleiste bei 390 und 1440 px.</li>
+  <li>Kalibrierung an Mini-LibriSpeech (26 Sprecher, 650 Paare): ab 8 s Sprache je Sprecher 100 % Treffer und kein Fehlvorschlag bei der Schwelle 65 %. Tabelle im Konzept (<code>docs/konzept-stimmprofile.md</code>).</li>
+  <li>Filterbank und Modell in Rust liefern dieselben Werte wie die Python-Referenz (kaldi-native-fbank, onnxruntime 1.24 und 1.29).</li>
+</ul>
+
+<h2>Datenschutz</h2>
+<ul>
+  <li>Abdrücke nur im Arbeitsspeicher, nur innerhalb einer Besprechung, nie gespeichert, nie im Log, nie mit anderen Besprechungen verglichen. Ausschalten vergisst sie sofort.</li>
+  <li>Stimmprofile über Besprechungen hinweg (Art. 9 DSGVO, Einwilligung je Person) kommen erst mit Schritt 2b nach Freigabe.</li>
+</ul>
+</main>
+</body>
+</html>

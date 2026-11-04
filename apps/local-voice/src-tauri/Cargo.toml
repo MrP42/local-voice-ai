@@ -128,6 +128,10 @@ url = "2"
 # transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
 # Canary, Cohere). Per-platform backend features are added in the target tables.
 transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+# Stimmprofile 2a: Stimmabdruck-Modell (CAM++) direkt ueber ONNX Runtime. Gleiche,
+# exakt gepinnte Version wie in transcribe-rs (MIT OR Apache-2.0), also keine neue
+# Bibliothek im Lockfile.
+ort = "=2.0.0-rc.12"
 transcribe-cpp = { version = "=0.2.4", default-features = false }
 # G5: Sprache eines Textes erkennen (Rueckfall und Gegenprobe, wenn das Modell keine
 # eigene Spracherkennung liefert). Reines Rust, MIT, ohne Modelldatei.

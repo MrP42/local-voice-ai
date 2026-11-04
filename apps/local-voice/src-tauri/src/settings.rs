@@ -930,6 +930,11 @@ pub struct AppSettings {
     /// heruntergeladen ist; ohne den Schluessel gilt `true`.
     #[serde(default = "default_true")]
     pub meeting_semantic_search: bool,
+    /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
+    /// innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
+    /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
+    #[serde(default = "default_true")]
+    pub meeting_voice_suggestions: bool,
     /// D3 (#70): Bildanalyse fuer Folien. Gemma 4 E4B liest den Text erkannter Folien neu
     /// (Zahlen und Tabellen stimmen) und beschreibt sie; dafuer startet der lokale Server
     /// kurz mit Bild-Projektor. Standard AUS (der Projektor ist ein optionaler 990-MB-
@@ -1916,6 +1921,7 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
         meeting_semantic_search: true,
+        meeting_voice_suggestions: true,
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,
         meeting_final_model: default_meeting_final_model(),
@@ -3733,6 +3739,18 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "meeting_semantic_search": false }))
                 .unwrap();
         assert!(!off.meeting_semantic_search);
+    }
+
+    #[test]
+    fn meeting_voice_suggestions_default_on_and_keep_a_choice() {
+        assert!(get_default_settings().meeting_voice_suggestions);
+        let old: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_language": "de" })).unwrap();
+        assert!(old.meeting_voice_suggestions);
+        let off: AppSettings =
+            serde_json::from_value(serde_json::json!({ "meeting_voice_suggestions": false }))
+                .unwrap();
+        assert!(!off.meeting_voice_suggestions);
     }
 
     /// D3: die Bildanalyse fuer Folien ist Standard AUS (auch ohne den Schluessel in einer

@@ -145,6 +145,15 @@ in der ganzen Besprechung (Transkript, Protokoll, KI-Notizen, Fragen, Export). D
 später steht unter dem Namen „Zusammengeführt aus … Trennen“. Eine neue Sprechertrennung oder Neu-Transkription
 beginnt von vorn, ältere Zusammenführungen lassen sich danach nicht mehr trennen.
 
+**Gleiche Stimmen erkennen**: Teilt die Sprechertrennung eine Person auf, schlägt die Tabelle das Zusammenführen vor
+(„„Person 3“ und „Patrick Wolff“ klingen gleich (87 % ähnlich). Ist das dieselbe Person?“). Dafür rechnet ein kleines
+lokales Modell (CAM++, Apache-2.0, 30 MB, nur per Knopf in Einstellungen → Diktat → Besprechungen → Stimmmodell) je
+Sprecher einen Stimmabdruck aus bis zu 60 s seiner längsten Sätze. Vorgeschlagen wird ab 65 % Ähnlichkeit und mindestens
+8 s Sprache je Sprecher, nur innerhalb derselben Spur und nicht, wenn beide Sprecher schon verschiedene Namen haben.
+„Verschiedene Personen“ verwirft den Vorschlag bis zur nächsten Sprechertrennung. Die Abdrücke bleiben im
+Arbeitsspeicher, werden nie gespeichert und nie mit anderen Besprechungen verglichen; gespeichert wird nur, welche
+Vorschläge verworfen wurden. Stimmprofile über Besprechungen hinweg: [Konzept](konzept-stimmprofile.md) (Schritt 2b).
+
 ## Chat und Suche
 
 - **Suche** (oben in der Projekte-Spalte): Stichworte im gewählten Projekt (oder über „Alle Aufnahmen“), Filter nach Zeitraum, Quelle und „Mit Notizen“.

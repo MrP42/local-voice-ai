@@ -1804,6 +1804,14 @@
       "detectIgnoredPlaceholder": "z. B. obs64.exe, Discord",
       "diarization": "Sprecher automatisch trennen",
       "diarizationDescription": "Nach dem Stopp, beim Import und bei der Neu-Transkription erkennt ein lokales Modell, wer wann spricht, und beschriftet das Transkript mit „Gegenseite 1“, „Person 2“ usw. Sie können die Sprecher im Transkript benennen. Es wird nichts gespeichert, was eine Stimme wiedererkennt. Wirkt ab dem nächsten Durchlauf.",
+      "voiceSuggestions": "Gleiche Stimmen erkennen",
+      "voiceSuggestionsDescription": "Standard: an, wirkt aber erst nach dem Laden des Stimmmodells. Teilt die Sprechertrennung eine Person auf mehrere Sprecher auf, schlägt die Sprechertabelle das Zusammenführen vor. Es wird nie automatisch zusammengeführt, jede Zusammenführung lässt sich trennen. Die Stimmen werden nur innerhalb einer Besprechung verglichen, die Abdrücke bleiben im Arbeitsspeicher und werden nie gespeichert.",
+      "voiceSuggestionsDownload": "Stimmmodell laden ({{size}} MB)",
+      "voiceSuggestionsDownloading": "Wird geladen …",
+      "voiceSuggestionsDownloadFailed": "Download fehlgeschlagen. Bitte erneut versuchen.",
+      "voiceSuggestionsReady": "Stimmmodell CAM++ ist installiert (Apache-2.0).",
+      "voiceSuggestionsModel": "Stimmmodell",
+      "voiceSuggestionsModelDescription": "CAM++ (3D-Speaker, Apache-2.0) läuft lokal. Es wird nur auf Knopfdruck geladen.",
       "selfName": "Mein Name",
       "selfNameDescription": "Ihr eigener Name im Transkript: Ihr Mikrofon („Ich“) und, wenn das Mikrofon mehrere Personen trennt, der Sprecher mit dem größten Redeanteil tragen immer diesen Namen, auch wenn niemand Sie anspricht. In den Personen sind Sie als „ich“ markiert. Leer lassen: Es bleibt bei „Ich“.",
       "selfNamePlaceholder": "z. B. Patrick Wolff"
@@ -3338,7 +3346,11 @@
         "contains": "Zusammengeführt aus:",
         "splitAction": "Trennen",
         "splitFor": "„{{label}}“ wieder als eigenen Sprecher führen",
-        "blocked": "Erst die spätere Zusammenführung trennen."
+        "blocked": "Erst die spätere Zusammenführung trennen.",
+        "voice": "„{{a}}“ und „{{b}}“ klingen ähnlich (Ähnlichkeit {{score}} %). Ist das dieselbe Person?",
+        "voiceAction": "Zusammenführen",
+        "voiceDismiss": "Verschiedene Personen",
+        "voiceNote": "Nur ein Hinweis aus dem Stimmvergleich in dieser Besprechung, keine sichere Erkennung. „Zusammenführen“ legt beide Zeilen zu einem Sprecher zusammen und lässt sich mit „Rückgängig“ oder später mit „Trennen“ zurücknehmen. „Verschiedene Personen“ gilt bis zur nächsten Sprechertrennung. Stimmabdrücke werden nicht gespeichert."
       },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
