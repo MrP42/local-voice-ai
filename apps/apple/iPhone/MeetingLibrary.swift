@@ -10,6 +10,8 @@ final class MeetingLibrary: ObservableObject {
     @Published private(set) var importBusy = false
     @Published var error: String?
     private var archive: MeetingArchive?
+    /// Sitzungen, die gerade übernommen werden (Szenenwechsel kann doppelt auslösen).
+    private var importingLive: Set<UUID> = []
     private var worker: Task<Void, Never>?
     private var token: InferenceCancellation?
     private var exporter: AVAssetExportSession?
@@ -24,7 +26,7 @@ final class MeetingLibrary: ObservableObject {
     }
     func scene(active: Bool) {
         self.active = active
-        if active { Task { await refresh(); start() } }
+        if active { Task { await recoverLive(); await refresh(); start() } }
         else {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
@@ -53,6 +55,44 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Import nicht abgeschlossen. Bitte eine lesbare Audio-/Videodatei bis 2 Stunden und 2 GB wählen und freien Speicher prüfen."
         }
     }
+    /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
+    /// und Live-Stand in einem Schritt ins Archiv. Erst danach wird der Laufend-Ordner
+    /// entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
+    func importLive(_ url: URL, _ session: LiveMeetingModel.SessionFile) async {
+        guard let archive, !importingLive.contains(session.id) else { return }
+        importingLive.insert(session.id); defer { importingLive.remove(session.id) }
+        let folder = url.deletingLastPathComponent()
+        // Ohne gültigen Nachweis wird nichts übernommen; der Ordner bleibt zur Klärung liegen.
+        guard session.consent.canRecord else {
+            self.error = "Eine Aufnahme ohne vollständigen Einwilligungsnachweis wurde nicht übernommen."; return
+        }
+        do {
+            // Echte Dateidauer archivieren; die Aufnahme selbst endet spätestens bei 2 Stunden.
+            let measured = try? await AVURLAsset(url: url).load(.duration).seconds
+            let duration = (measured?.isFinite == true && measured! > 0) ? measured! : session.seconds
+            guard duration.isFinite, duration > 0.5 else {
+                // Nur eine wirklich leere Sitzung wird verworfen, nie eine mit Inhalt.
+                if session.isEmpty { try? FileManager.default.removeItem(at: folder) }
+                else { self.error = "Die Aufnahme ist gesichert, aber nicht lesbar. Sie bleibt erhalten und wird erneut versucht." }
+                return
+            }
+            let live = MeetingArchive.LiveImport(consent: session.consent, live: session.live, segments: session.segments, notes: session.notes)
+            // Feste Kennung = Sitzungskennung: nach einem Absturz liefert die Wiederholung dasselbe Dokument.
+            _ = try await archive.importMedia(url, duration: duration, live: live, id: session.id)
+            // Erst nach dem synchronisierten Übernehmen wird die Quelle entfernt.
+            try? FileManager.default.removeItem(at: folder)
+            status = "gespeichert – Verarbeitung folgt"
+            await refresh(); start()
+        } catch {
+            self.error = "Die Aufnahme ist gesichert, konnte aber noch nicht übernommen werden. Sie wird beim nächsten Öffnen erneut übernommen."
+        }
+    }
+
+    /// Nach Absturz oder Beenden während einer Aufnahme: gesicherte Sitzungen übernehmen.
+    func recoverLive() async {
+        for (url, session) in LiveMeetingModel.abandoned() { await importLive(url, session) }
+    }
+
     #if DEBUG
     func importProbe() async {
         let args = ProcessInfo.processInfo.arguments
@@ -119,16 +159,39 @@ final class MeetingLibrary: ObservableObject {
         while (doc.summarizedSegments ?? 0) < doc.segments.count {
             try Task.checkCancellation()
             let from = doc.summarizedSegments ?? 0
+            // Ohne KI-Einwilligung für diesen Zeitbereich: überspringen, nie auswerten.
+            if !doc.aiPermitted(doc.segments[from]) {
+                var through = from
+                while through < doc.segments.count, !doc.aiPermitted(doc.segments[through]) { through += 1 }
+                try await archive.skipMinutes(doc.id, from: from, through: through, event: ProcessingEvent(operation: "Auswertung ausgelassen · keine KI-Einwilligung", model: "–", completedAt: Date(), durationMS: 0, isAI: false))
+                doc = try await archive.load(doc.id); await refresh()
+                continue
+            }
             var through = from, text = ""
-            while through < doc.segments.count {
+            while through < doc.segments.count, doc.aiPermitted(doc.segments[through]) {
                 let next = doc.segments[through].text
                 if text.count + next.count + 1 > 2400 { break }
                 text += next + "\n"; through += 1
             }
-            guard through > from else { throw VoiceError.invalid }
             status = "Lokal auswerten · Abschnitt \((doc.summaryParts?.count ?? 0) + 1)"
             let startTime = ContinuousClock.now
-            let minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
+            let minutes: MeetingMinutes
+            if through == from {
+                // Ein einzelnes Segment über 2400 Zeichen: verlustfrei in Teile an Wortgrenzen
+                // zerlegen, je Teil auswerten und zu einem Abschnitt zusammenführen. Belege
+                // bleiben gültig, weil jeder Teil wörtlich im Segment steht.
+                through = from + 1
+                var merged: MeetingMinutes?
+                for part in Self.slices(doc.segments[from].text, max: 2400) {
+                    try Task.checkCancellation()
+                    let m = try await CPULocalProviders.shared.minutes(for: part, cancellation: cancellation)
+                    merged = merged.map { Self.merge($0, m) } ?? m
+                }
+                guard let merged else { throw VoiceError.invalid }
+                minutes = merged
+            } else {
+                minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
+            }
             try Task.checkCancellation()
             try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes, event: ProcessingEvent(operation: "Auswertung · Abschnitt", model: "Qwen 2.5 1.5B Instruct · Q4_K_M", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
             try await archive.recordTiming(doc.id, phase: "minutes", milliseconds: elapsed(startTime))
@@ -137,6 +200,27 @@ final class MeetingLibrary: ObservableObject {
         try await archive.finishMinutes(doc.id)
         status = "Transkript und Auswertung gespeichert"
     }
+    /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.
+    static func slices(_ text: String, max: Int) -> [String] {
+        var out: [String] = [], current = ""
+        for word in text.split(separator: " ") {
+            var w = Substring(word)
+            while w.count > max { if !current.isEmpty { out.append(current); current = "" }; out.append(String(w.prefix(max))); w = w.dropFirst(max) }
+            if w.isEmpty { continue }
+            if !current.isEmpty, current.count + 1 + w.count > max { out.append(current); current = String(w) }
+            else { current = current.isEmpty ? String(w) : current + " " + w }
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    static func merge(_ a: MeetingMinutes, _ b: MeetingMinutes) -> MeetingMinutes {
+        MeetingMinutes(summary: [a.summary, b.summary].filter { !$0.isEmpty }.joined(separator: "\n"),
+                       scope: [a.scope, b.scope].filter { !$0.isEmpty }.joined(separator: "\n"),
+                       decisions: a.decisions + b.decisions, tasks: a.tasks + b.tasks, next_steps: a.next_steps + b.next_steps,
+                       follow_ups: a.follow_ups + b.follow_ups, open_questions: a.open_questions + b.open_questions)
+    }
+
     private func elapsed(_ start: ContinuousClock.Instant) -> Double {
         let duration = start.duration(to: .now).components
         return Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15
@@ -159,11 +243,17 @@ struct MeetingLibraryView: View {
     @StateObject private var library = MeetingLibrary()
     @Environment(\.scenePhase) private var phase
     @State private var importer = false
+    @State private var recordLive = false
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 10) {
+                        Button { recordLive = true } label: {
+                            Label("Besprechung aufnehmen", systemImage: "record.circle")
+                                .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
+                        }.buttonStyle(VoicePrimaryButtonStyle(recording: false))
+                            .accessibilityIdentifier("recordMeeting")
                         Button { importer = true } label: {
                             Label("Audio oder Video importieren", systemImage: "square.and.arrow.down")
                                 .frame(maxWidth: .infinity, minHeight: 44).foregroundStyle(VoicePalette.ink)
@@ -198,6 +288,7 @@ struct MeetingLibraryView: View {
             }
             .background(VoicePalette.background)
             .navigationTitle("Transkripte").navigationBarTitleDisplayMode(.inline)
+            .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
                 case .success(let urls): if let first = urls.first { Task { await library.importMedia(first) } }

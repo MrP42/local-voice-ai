@@ -2,7 +2,7 @@ import XCTest
 @testable import VoiceCore
 
 final class BookTextTests: XCTestCase {
-    private func makeEpub(chapters: [String], compress: Bool = true) throws -> Data {
+    private func makeEpub(chapters: [String], compress: Bool = true, manifest extra: String = "", meta extraMeta: String = "", files: [String: Data] = [:]) throws -> Data {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         func write(_ path: String, _ text: String) throws {
@@ -19,10 +19,15 @@ final class BookTextTests: XCTestCase {
         let refs = chapters.indices.reversed().map { "<itemref idref=\"c\($0)\"/>" }.joined()
         try write("OEBPS/content.opf", """
         <?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/">
-        <metadata><dc:title>Die Verwandlung</dc:title><dc:creator>Franz Kafka</dc:creator><dc:language>de</dc:language></metadata>
-        <manifest>\(items)</manifest><spine>\(refs)</spine></package>
+        <metadata><dc:title>Die Verwandlung</dc:title><dc:creator>Franz Kafka</dc:creator><dc:language>de</dc:language>\(extraMeta)</metadata>
+        <manifest>\(items)\(extra)</manifest><spine>\(refs)</spine></package>
         """)
         for (i, body) in chapters.enumerated() { try write("OEBPS/text/kap \(i).xhtml", body) }
+        for (path, data) in files {
+            let url = dir.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+        }
         let out = dir.appendingPathComponent("book.epub")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
@@ -53,6 +58,31 @@ final class BookTextTests: XCTestCase {
             let paragraphs = LibraryText.paragraphs(book.text)
             XCTAssertEqual(paragraphs.filter(\.heading).map(\.text), ["Erstes Kapitel"])
         }
+    }
+
+    func testEpubCoverIsFoundLikeOnTheDesktop() throws {
+        let png = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+        // EPUB 3: properties="cover-image"
+        var book = try BookText.epub(try makeEpub(chapters: [chapterA], compress: false,
+            manifest: #"<item id="bild" href="images/titel%20bild.png" media-type="image/png" properties="cover-image"/>"#,
+            files: ["OEBPS/images/titel bild.png": png]))
+        XCTAssertEqual(book.cover, png)
+        // EPUB 2: <meta name="cover" content="id">
+        book = try BookText.epub(try makeEpub(chapters: [chapterA], compress: false,
+            manifest: #"<item id="x1" href="./bilder/../bilder/front.jpg" media-type="image/jpeg"/>"#, meta: #"<meta name="cover" content="x1"/>"#,
+            files: ["OEBPS/bilder/front.jpg": png]))
+        XCTAssertEqual(book.cover, png)
+        // Nur ein Bild mit „cover“ im Namen
+        book = try BookText.epub(try makeEpub(chapters: [chapterA], compress: false,
+            manifest: #"<item id="i9" href="Cover.jpeg" media-type="image/jpeg"/>"#, files: ["OEBPS/Cover.jpeg": png]))
+        XCTAssertEqual(book.cover, png)
+        // Fehlende Datei: Buch bleibt lesbar, ohne Cover
+        book = try BookText.epub(try makeEpub(chapters: [chapterA], compress: false,
+            manifest: #"<item id="c" href="weg.png" media-type="image/png" properties="cover-image"/>"#))
+        XCTAssertNil(book.cover)
+        XCTAssertFalse(book.text.isEmpty)
+        // Kein Bild: kein Cover
+        XCTAssertNil(try BookText.epub(try makeEpub(chapters: [chapterA], compress: false)).cover)
     }
 
     func testBrokenChapterFallsBackToTagStripping() {
