@@ -4,7 +4,8 @@
 //!
 //! Fehlercodes (an die UI, die sie uebersetzt): `speaker_not_found`,
 //! `speaker_invalid`, `segment_not_found`, `stale_epoch` (das Transkript wurde
-//! inzwischen ersetzt: die Segmentnummer der UI gilt nicht mehr).
+//! inzwischen ersetzt: die Segmentnummer der UI gilt nicht mehr); beim
+//! Trennen (#266) `merge_not_found`, `merge_blocked`, `speaker_taken`.
 //!
 //! Datenschutz: Sprechernamen stehen in keinem Log und in keiner Fehlermeldung.
 
@@ -19,6 +20,7 @@ use tauri_specta::Event;
 
 use crate::managers::meetings::relabel;
 use crate::managers::meetings::search::indexer::{self, IndexJob};
+use crate::managers::meetings::speaker_merges::SpeakerMerge;
 use crate::managers::meetings::speaker_names::{self, NameSuggestion};
 use crate::managers::meetings::speakers::{
     self, SpeakerDirectory, DIARIZE_MIC_KEY, REPORT_KEY, WHOLE_CHANNEL,
@@ -243,6 +245,43 @@ fn dismissed_keys(store: &MeetingStore, meeting_id: &str) -> Result<Vec<String>,
         .unwrap_or_default())
 }
 
+/// #266: Zusammenfuehren ohne Tauri. Was Texte fuer `from` sagen
+/// (Standardlabel, angezeigter Name) wird zum frueheren Namen von `into`
+/// (#242): Protokoll und KI-Notizen zeigen danach den Namen von `into`.
+pub fn merge_speakers(
+    store: &MeetingStore,
+    meeting_id: &str,
+    channel: u8,
+    from: u32,
+    into: u32,
+) -> Result<String, String> {
+    let directory = SpeakerDirectory::load(store, meeting_id);
+    let plain = SpeakerDirectory::load_with(store, meeting_id, None).without_names();
+    let index = (from != WHOLE_CHANNEL).then_some(from);
+    let from_labels = vec![
+        plain.label_for(channel, index),
+        directory.label_for(channel, index),
+    ];
+    let id = store
+        .merge_speakers(meeting_id, channel, from, into, &from_labels)
+        .map_err(store_err)?;
+    sync_people(store, meeting_id);
+    Ok(id)
+}
+
+/// #266: Trennen ohne Tauri.
+pub fn unmerge_speakers(
+    store: &MeetingStore,
+    meeting_id: &str,
+    merge_id: &str,
+) -> Result<(), String> {
+    store
+        .unmerge_speakers(meeting_id, merge_id)
+        .map_err(store_err)?;
+    sync_people(store, meeting_id);
+    Ok(())
+}
+
 /// Namensvorschlaege fuer die unbenannten Sprecher aus dem Gesagten (U8):
 /// nur Vorschlaege, nie eine Uebernahme. Bekannt sind die Personen des
 /// Verzeichnisses (P5d, Kalender-Teilnehmende); der eigene Name und der
@@ -406,7 +445,9 @@ pub async fn meeting_speaker_rename(
     Ok(speaker)
 }
 
-/// Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+/// Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf;
+/// #266: `from` = 0 sind die Segmente ohne Sprecher). Gibt die Kennung der
+/// Zusammenfuehrung zurueck ("Trennen").
 #[tauri::command]
 #[specta::specta]
 pub async fn meeting_speaker_merge(
@@ -416,23 +457,32 @@ pub async fn meeting_speaker_merge(
     channel: u8,
     from: u32,
     into: u32,
+) -> Result<String, String> {
+    let id = merge_speakers(&store, &meeting_id, channel, from, into)?;
+    changed(&app, &meeting_id);
+    Ok(id)
+}
+
+/// #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen.
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_speaker_merges(
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+) -> Result<Vec<SpeakerMerge>, String> {
+    store.speaker_merges(&meeting_id).map_err(store_err)
+}
+
+/// #266: eine Zusammenfuehrung zuruecknehmen ("Trennen").
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_speaker_unmerge(
+    app: AppHandle,
+    store: State<'_, Arc<MeetingStore>>,
+    meeting_id: String,
+    merge_id: String,
 ) -> Result<(), String> {
-    let directory = SpeakerDirectory::load(&store, &meeting_id);
-    let plain = SpeakerDirectory::load_with(&store, &meeting_id, None).without_names();
-    let from_labels = vec![
-        plain.label_for(channel, Some(from)),
-        directory.label_for(channel, Some(from)),
-    ];
-    store
-        .merge_speakers(&meeting_id, channel, from, into)
-        .map_err(store_err)?;
-    // #242: Texte, die `from` nennen, zeigen danach den Namen von `into`.
-    if let Err(e) =
-        relabel::carry_former_names(&store, &meeting_id, channel, from, into, &from_labels)
-    {
-        log::warn!("Fruehere Sprechernamen nicht uebernommen: {e}");
-    }
-    sync_people(&store, &meeting_id);
+    unmerge_speakers(&store, &meeting_id, &merge_id)?;
     changed(&app, &meeting_id);
     Ok(())
 }
@@ -758,7 +808,7 @@ mod tests {
         rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
         let epoch = f.store.segment_epoch(&f.id).unwrap();
         let before = revision(&f);
-        f.store.merge_speakers(&f.id, 1, 2, 1).unwrap();
+        f.store.merge_speakers(&f.id, 1, 2, 1, &[]).unwrap();
 
         let segments = f.store.get_segments(&f.id).unwrap();
         assert!(segments
@@ -793,19 +843,19 @@ mod tests {
         let f = fixture();
         rename_speaker(&f.store, &f.id, 1, 1, Some("Ben")).unwrap();
         rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
-        f.store.merge_speakers(&f.id, 1, 2, 1).unwrap();
+        f.store.merge_speakers(&f.id, 1, 2, 1, &[]).unwrap();
         assert_eq!(speaker(&f, 1, 1).label, "Ben", "Ziel behaelt seinen Namen");
 
         assert_eq!(
             f.store
-                .merge_speakers(&f.id, 1, 1, 1)
+                .merge_speakers(&f.id, 1, 1, 1, &[])
                 .unwrap_err()
                 .to_string(),
             "speaker_invalid"
         );
         assert_eq!(
             f.store
-                .merge_speakers(&f.id, 1, 2, 1)
+                .merge_speakers(&f.id, 1, 2, 1, &[])
                 .unwrap_err()
                 .to_string(),
             "speaker_not_found",
@@ -813,7 +863,7 @@ mod tests {
         );
         assert_eq!(
             f.store
-                .merge_speakers(&f.id, 0, 1, 2)
+                .merge_speakers(&f.id, 0, 1, 2, &[])
                 .unwrap_err()
                 .to_string(),
             "speaker_not_found",
@@ -826,7 +876,7 @@ mod tests {
         let f = fixture();
         rename_speaker(&f.store, &f.id, 1, 1, Some("Ben")).unwrap();
         // 1 -> 2: Ziel 2 hat keinen Namen, der Name von 1 geht mit.
-        f.store.merge_speakers(&f.id, 1, 1, 2).unwrap();
+        f.store.merge_speakers(&f.id, 1, 1, 2, &[]).unwrap();
         // Ohne "Ich" (ganzer Kanal 0, #242).
         let list: Vec<_> = list_speakers(&f.store, &f.id)
             .unwrap()
@@ -907,7 +957,7 @@ mod tests {
         let bundle = build_bundle(&f.store, &f.id).unwrap();
         assert_eq!(bundle.label(&segments[0]), "Patrick");
         // Zusammenfuehren und Umhaengen kennen die Nummer 0 nicht.
-        assert!(f.store.merge_speakers(&f.id, 0, 0, 1).is_err());
+        assert!(f.store.merge_speakers(&f.id, 0, 0, 1, &[]).is_err());
     }
 
     #[test]
@@ -992,15 +1042,168 @@ mod tests {
             )
             .unwrap();
         rename_speaker(&f.store, &f.id, 1, 1, Some("Bernd")).unwrap();
-        let labels = vec!["Gegenseite 2".to_string()];
-        f.store.merge_speakers(&f.id, 1, 2, 1).unwrap();
-        relabel::carry_former_names(&f.store, &f.id, 1, 2, 1, &labels).unwrap();
+        merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
         let names = relabel::Relabeler::load(&f.store, &f.id);
         let body = names
             .document(f.store.get_documents(&f.id).unwrap().remove(0))
             .body;
         assert_eq!(body, "Bernd sagt ja.");
         assert!(!relabel::former_names(&f.store, &f.id).contains_key("1:2"));
+    }
+
+    /// Alles, was Zusammenfuehren und Trennen anfassen.
+    fn state(f: &Fixture) -> (Vec<StoredSegment>, String, Vec<MeetingSpeaker>, Value) {
+        (
+            f.store.get_segments(&f.id).unwrap(),
+            f.store.speaker_hints(&f.id).unwrap().unwrap_or_default(),
+            list_speakers(&f.store, &f.id).unwrap(),
+            serde_json::to_value(relabel::former_names(&f.store, &f.id)).unwrap(),
+        )
+    }
+
+    #[test]
+    fn unmerging_restores_segments_turns_names_and_former_names() {
+        let f = fixture();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna Berg")).unwrap();
+        let before = state(&f);
+        let rev = revision(&f);
+        let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        assert_eq!(speaker(&f, 1, 1).label, "Anna Berg", "Name geht mit");
+        let merges = f.store.speaker_merges(&f.id).unwrap();
+        assert_eq!(merges.len(), 1);
+        assert_eq!((merges[0].from, merges[0].into), (2, 1));
+        assert_eq!(merges[0].from_label, "Anna Berg");
+        assert_eq!(merges[0].segment_count, 1);
+        assert!(merges[0].undoable);
+
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before, "alles wie vorher");
+        assert_eq!(revision(&f), rev + 2, "Suchindex baut neu");
+        assert!(f.store.speaker_merges(&f.id).unwrap().is_empty());
+        assert_eq!(
+            unmerge_speakers(&f.store, &f.id, &id).unwrap_err(),
+            "merge_not_found"
+        );
+    }
+
+    #[test]
+    fn unmerging_an_unnamed_target_gives_the_name_row_back() {
+        let f = fixture();
+        rename_speaker(&f.store, &f.id, 1, 1, Some("Ben")).unwrap();
+        let before = state(&f);
+        // 1 -> 2: die Zeile von 1 zieht um.
+        let id = merge_speakers(&f.store, &f.id, 1, 1, 2).unwrap();
+        assert_eq!(speaker(&f, 1, 2).label, "Ben");
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before);
+        // Ziel hatte keinen Namen und bekam ihn: er geht beim Trennen zurueck.
+        let f = fixture();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Anna")).unwrap();
+        rename_speaker(&f.store, &f.id, 1, 1, None).unwrap();
+        let before = state(&f);
+        let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        assert_eq!(speaker(&f, 1, 1).label, "Anna");
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before);
+    }
+
+    #[test]
+    fn segments_without_a_speaker_can_be_merged_and_split_again() {
+        let f = fixture();
+        let epoch = f.store.segment_epoch(&f.id).unwrap();
+        f.store.set_segment_speaker(&f.id, 3, epoch, None).unwrap();
+        let before = state(&f);
+        let id = merge_speakers(&f.store, &f.id, 1, WHOLE_CHANNEL, 2).unwrap();
+        let segments = f.store.get_segments(&f.id).unwrap();
+        assert_eq!(segments[3].speaker_index, Some(2));
+        assert_eq!(segments[0].speaker_index, None, "anderer Kanal bleibt");
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before);
+        // Ohne Segmente ohne Sprecher gibt es nichts zuzuordnen; Ziel 0 nie.
+        assert_eq!(
+            merge_speakers(&f.store, &f.id, 0, WHOLE_CHANNEL, 1).unwrap_err(),
+            "speaker_not_found"
+        );
+        assert_eq!(
+            merge_speakers(&f.store, &f.id, 1, 1, WHOLE_CHANNEL).unwrap_err(),
+            "speaker_invalid"
+        );
+    }
+
+    #[test]
+    fn a_chain_is_split_from_the_end_and_a_taken_number_blocks() {
+        let f = fixture();
+        let epoch = f.store.segment_epoch(&f.id).unwrap();
+        // Dritter Sprecher: Segment 3 an 3.
+        f.store
+            .set_segment_speaker(&f.id, 3, epoch, Some(3))
+            .unwrap();
+        let before = state(&f);
+        let a = merge_speakers(&f.store, &f.id, 1, 3, 2).unwrap();
+        let b = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        let merges = f.store.speaker_merges(&f.id).unwrap();
+        assert!(!merges[0].undoable && merges[1].undoable);
+        assert_eq!(
+            unmerge_speakers(&f.store, &f.id, &a).unwrap_err(),
+            "merge_blocked"
+        );
+        unmerge_speakers(&f.store, &f.id, &b).unwrap();
+        unmerge_speakers(&f.store, &f.id, &a).unwrap();
+        assert_eq!(state(&f), before);
+
+        // Nummer inzwischen neu vergeben: Trennen verweigert, nichts aendert sich.
+        let id = merge_speakers(&f.store, &f.id, 1, 3, 1).unwrap();
+        f.store
+            .set_segment_speaker(&f.id, 2, epoch, Some(3))
+            .unwrap();
+        let taken = state(&f);
+        assert_eq!(
+            unmerge_speakers(&f.store, &f.id, &id).unwrap_err(),
+            "speaker_taken"
+        );
+        assert_eq!(state(&f), taken);
+    }
+
+    #[test]
+    fn renaming_after_a_row_moving_merge_keeps_both_names_apart() {
+        let f = fixture();
+        rename_speaker(&f.store, &f.id, 1, 1, Some("Anna")).unwrap();
+        // 1 -> 2: die Zeile von 1 (Anna) zieht nach 2 um; 2 heisst dann Carl.
+        let id = merge_speakers(&f.store, &f.id, 1, 1, 2).unwrap();
+        rename_speaker(&f.store, &f.id, 1, 2, Some("Carl")).unwrap();
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(speaker(&f, 1, 1).label, "Anna");
+        assert_eq!(speaker(&f, 1, 2).label, "Carl");
+    }
+
+    #[test]
+    fn an_empty_leftover_row_of_the_source_does_not_block_splitting() {
+        let f = fixture();
+        let epoch = f.store.segment_epoch(&f.id).unwrap();
+        let before = state(&f);
+        let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        // Segment kurz an 2 und zurueck: eine leere Zeile fuer 2 bleibt.
+        f.store
+            .set_segment_speaker(&f.id, 2, epoch, Some(2))
+            .unwrap();
+        f.store
+            .set_segment_speaker(&f.id, 2, epoch, Some(1))
+            .unwrap();
+        unmerge_speakers(&f.store, &f.id, &id).unwrap();
+        assert_eq!(state(&f), before);
+    }
+
+    #[test]
+    fn a_new_epoch_forgets_the_merges() {
+        let f = fixture();
+        let id = merge_speakers(&f.store, &f.id, 1, 2, 1).unwrap();
+        f.store.clear_segments(&f.id).unwrap();
+        assert!(f.store.speaker_merges(&f.id).unwrap().is_empty());
+        assert_eq!(
+            unmerge_speakers(&f.store, &f.id, &id).unwrap_err(),
+            "merge_not_found"
+        );
     }
 
     #[test]

@@ -3323,6 +3323,23 @@
         "sampleOf": "{{n}}/{{total}}",
         "saved": "Name saved"
       },
+      "merge": {
+        "openFor": "Merge {{label}} with another speaker",
+        "none": "No other speaker on the same track",
+        "question": "Who else is “{{label}}”?",
+        "rule": "The speaker with the longer speaking time stays, an assigned name is kept. The change applies to the whole meeting and can be split again.",
+        "cancel": "Cancel",
+        "duplicate": "“{{name}}” appears {{count}} times in the table. Is this the same person?",
+        "duplicateAction": "Merge into one speaker",
+        "done_one": "Merged {{count}} speakers into “{{name}}”.",
+        "done_other": "Merged {{count}} speakers into “{{name}}”.",
+        "undo": "Undo",
+        "split": "Speakers split again.",
+        "contains": "Merged from:",
+        "splitAction": "Split",
+        "splitFor": "Make “{{label}}” a separate speaker again",
+        "blocked": "Split the later merge first."
+      },
       "notices": {
         "disabled": "Speaker separation was switched off for this meeting.",
         "model_missing": "The speaker separation model is not installed, so there are no speakers here.",
@@ -3338,6 +3355,8 @@
         "invalid": "This choice is not possible.",
         "segmentNotFound": "This segment no longer exists.",
         "staleEpoch": "The transcript has been replaced in the meantime. Please reopen it.",
+        "mergeNotFound": "This merge can no longer be split (speakers were detected again since).",
+        "speakerTaken": "This speaker's number has been reused, so it can no longer be split.",
         "failed": "The change could not be saved."
       }
     },

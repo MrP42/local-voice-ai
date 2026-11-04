@@ -3323,6 +3323,23 @@
         "sampleOf": "{{n}}/{{total}}",
         "saved": "Name gespeichert"
       },
+      "merge": {
+        "openFor": "{{label}} mit einem anderen Sprecher zusammenführen",
+        "none": "Kein anderer Sprecher in derselben Spur",
+        "question": "Mit wem ist „{{label}}“ dieselbe Person?",
+        "rule": "Der Sprecher mit der längeren Redezeit bleibt, ein vergebener Name geht nicht verloren. Die Änderung gilt in der ganzen Besprechung und lässt sich wieder trennen.",
+        "cancel": "Abbrechen",
+        "duplicate": "„{{name}}“ steht {{count}}-mal in der Tabelle. Ist das dieselbe Person?",
+        "duplicateAction": "Zu einem Sprecher zusammenführen",
+        "done_one": "{{count}} Sprecher zu „{{name}}“ zusammengeführt.",
+        "done_other": "{{count}} Sprecher zu „{{name}}“ zusammengeführt.",
+        "undo": "Rückgängig",
+        "split": "Sprecher wieder getrennt.",
+        "contains": "Zusammengeführt aus:",
+        "splitAction": "Trennen",
+        "splitFor": "„{{label}}“ wieder als eigenen Sprecher führen",
+        "blocked": "Erst die spätere Zusammenführung trennen."
+      },
       "notices": {
         "disabled": "Die Sprechertrennung war für diese Besprechung ausgeschaltet.",
         "model_missing": "Das Modell zur Sprechertrennung ist nicht installiert, deshalb gibt es hier keine Sprecher.",
@@ -3338,6 +3355,8 @@
         "invalid": "Diese Auswahl ist nicht möglich.",
         "segmentNotFound": "Dieses Segment gibt es nicht mehr.",
         "staleEpoch": "Das Transkript wurde inzwischen ersetzt. Bitte neu öffnen.",
+        "mergeNotFound": "Diese Zusammenführung lässt sich nicht mehr trennen (die Sprecher wurden inzwischen neu erkannt).",
+        "speakerTaken": "Die Nummer dieses Sprechers ist inzwischen neu vergeben, Trennen ist nicht mehr möglich.",
         "failed": "Die Änderung ließ sich nicht speichern."
       }
     },

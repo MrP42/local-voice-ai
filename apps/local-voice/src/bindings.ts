@@ -3890,11 +3890,35 @@ async meetingSpeakerRename(meetingId: string, channel: number, speakerIndex: num
 }
 },
 /**
- * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf).
+ * Fuehrt zwei Sprecher eines Kanals zusammen (`from` geht in `into` auf;
+ * #266: `from` = 0 sind die Segmente ohne Sprecher). Gibt die Kennung der
+ * Zusammenfuehrung zurueck ("Trennen").
  */
-async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<null, string>> {
+async meetingSpeakerMerge(meetingId: string, channel: number, from: number, into: number) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merge", { meetingId, channel, from, into }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: die Zusammenfuehrungen der Besprechung, die sich trennen lassen.
+ */
+async meetingSpeakerMerges(meetingId: string) : Promise<Result<SpeakerMerge[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_merges", { meetingId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * #266: eine Zusammenfuehrung zuruecknehmen ("Trennen").
+ */
+async meetingSpeakerUnmerge(meetingId: string, mergeId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_speaker_unmerge", { meetingId, mergeId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -10938,6 +10962,40 @@ segments: number }
  * Kleinbuchstaben, Ziffern und `_`).
  */
 export type SourceRef = { kind: string; ref: string; title: string | null; url: string | null }
+/**
+ * Für die Oberfläche: eine Zusammenführung, die sich trennen lässt.
+ */
+export type SpeakerMerge = { id: string; channel: number; 
+/**
+ * Der aufgegangene Sprecher.
+ */
+from: number; 
+/**
+ * Der Sprecher, in dem er aufging.
+ */
+into: number; 
+/**
+ * Bezeichnung von `from` beim Zusammenführen.
+ */
+from_label: string; 
+/**
+ * Standardbezeichnung von `from` ohne Namen ("Person 3", "Aufnahme"):
+ * unterscheidet zusammengeführte Sprecher mit gleichem Namen.
+ */
+from_default_label: string; 
+/**
+ * Wie viele Segmente zurückgehen.
+ */
+segment_count: number; 
+/**
+ * Zeitpunkt (Sekunden).
+ */
+at: number; 
+/**
+ * `false`: eine spätere Zusammenführung hat `into` selbst aufgenommen;
+ * erst die trennen.
+ */
+undoable: boolean }
 /**
  * Namen, Zusammenfuehrungen oder Zuordnungen haben sich geaendert: offene
  * Ansichten laden Segmente und Sprecher neu.
