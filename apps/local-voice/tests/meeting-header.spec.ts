@@ -361,10 +361,11 @@ test.describe("Symbolzeile und Menue", () => {
     await openM2(page);
     await page.getByTestId("meeting-menu").click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(14);
+    await expect(items).toHaveCount(15);
     const labels = (await items.allTextContents()).map((t) => t.trim());
     expect(labels).toEqual([
       "Neu transkribieren …",
+      "Audiodatei anhängen …",
       "Übersetzen nach …",
       "KI-Notizen neu erzeugen",
       "Protokoll neu erzeugen",
