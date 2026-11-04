@@ -116,10 +116,32 @@ final class MeetingIntakeTests: XCTestCase {
         for (h, f) in [try cchunk(0, first: 0, consent: consent(.watch, .start)), try cchunk(1, first: 480_000, last: true)] { _ = try asm.receive(h, file: f) }
         XCTAssertTrue(try asm.status(clean).complete)
 
+        // fsync der Wurzel scheitert beim ersten Versuch: keine Quittung. Die Wiederholung findet
+        // den Sitzungsordner schon vor und muss die Wurzel trotzdem vor der Quittung sichern.
+        let fresh = UUID()
+        let log = SyncLog()
+        var failing = asm
+        failing.syncDirectory = { url in log.add(url); if url.standardizedFileURL == asm.root.standardizedFileURL, log.count(asm.root) == 1 { throw IntakeError.invalid } }
+        let f0x = try file("x0.m4a", [5, 5])
+        let h0x = WatchChunkHeader(sessionId: fresh, sequence: 0, firstSample: 0, sampleCount: 480_000, digest: try d.hex(of: f0x), consent: consent(.watch, .start))
+        XCTAssertThrowsError(try failing.receive(h0x, file: f0x))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: asm.root.appendingPathComponent(fresh.uuidString).path))
+        _ = try failing.receive(h0x, file: f0x)
+        XCTAssertEqual(log.count(asm.root), 2, "Wurzel vor der Quittung erneut gesichert")
+        _ = try failing.receive(h0x, file: f0x)   // Duplikat
+        XCTAssertEqual(log.count(asm.root), 3)
+
         // Uhr löscht nur bei passender Quittung.
         XCTAssertFalse(outbox.acknowledge(WatchChunkReceipt(sessionId: session, sequence: 0, digest: String(repeating: "f", count: 64))))
         XCTAssertTrue(outbox.acknowledge(WatchChunkReceipt(sessionId: session, sequence: 0, digest: h0.digest)))
         XCTAssertEqual(outbox.pending().map(\.0.sequence), [2])
         XCTAssertEqual(h2.end, 91)
     }
+}
+
+final class SyncLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [URL] = []
+    func add(_ u: URL) { lock.lock(); urls.append(u.standardizedFileURL); lock.unlock() }
+    func count(_ u: URL) -> Int { lock.lock(); defer { lock.unlock() }; return urls.filter { $0 == u.standardizedFileURL }.count }
 }

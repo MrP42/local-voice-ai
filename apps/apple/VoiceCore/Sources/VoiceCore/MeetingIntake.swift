@@ -196,6 +196,8 @@ public struct WatchSessionStatus: Equatable, Sendable {
 public struct WatchRecordingAssembler: Sendable {
     public let root: URL
     let digest: ContentDigest
+    /// Verzeichnis-fsync; im Test austauschbar, um Fehler und Reihenfolge zu prüfen.
+    var syncDirectory: @Sendable (URL) throws -> Void = DurableFiles.syncDirectory
     public static let maxChunkBytes = 8 * 1024 * 1024
     public static let maxSeconds: Double = 2 * 3600
 
@@ -226,8 +228,8 @@ public struct WatchRecordingAssembler: Sendable {
                 // Der erste Versuch kann vor einem fsync abgebrochen sein: alles erneut sichern.
                 try DurableFiles.sync(audio)
                 try DurableFiles.sync(headerURL)
-                try DurableFiles.syncDirectory(folder)
-                try DurableFiles.syncDirectory(folder.deletingLastPathComponent())
+                try syncDirectory(folder)
+                try syncDirectory(root)
                 return receipt
             }
             try fm.removeItem(at: headerURL)
@@ -238,19 +240,21 @@ public struct WatchRecordingAssembler: Sendable {
             guard fm.fileExists(atPath: folder.appendingPathComponent(name(0) + ".json").path) || header.consent == nil else { throw IntakeError.invalid }
         }
         guard try digest.hex(of: file) == header.digest else { throw IntakeError.digestMismatch }
-        if !fm.fileExists(atPath: folder.path) {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try DurableFiles.syncDirectory(folder.deletingLastPathComponent())
-        }
+        if !fm.fileExists(atPath: folder.path) { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
         let tmp = folder.appendingPathComponent(".tmp-" + UUID().uuidString)
         defer { try? fm.removeItem(at: tmp) }
         try fm.copyItem(at: file, to: tmp)
         try DurableFiles.sync(tmp)
         if fm.fileExists(atPath: audio.path) { try fm.removeItem(at: audio) }
         try fm.moveItem(at: tmp, to: audio)
-        try DurableFiles.syncDirectory(folder)
-        // Kopf zuletzt: er macht das Stück gültig. `write` sichert Datei und Verzeichnis vor der Quittung.
-        try DurableFiles.write(try JSONEncoder().encode(header), to: headerURL)
+        try syncDirectory(folder)
+        // Kopf zuletzt: er macht das Stück gültig.
+        try JSONEncoder().encode(header).write(to: headerURL, options: .atomic)
+        try DurableFiles.sync(headerURL)
+        // Vor jeder Quittung: Sitzungsordner und Wurzel sichern, auch wenn der Ordner schon
+        // bestand (ein früherer Versuch kann nach dem Anlegen vor dem fsync gescheitert sein).
+        try syncDirectory(folder)
+        try syncDirectory(root)
         return receipt
     }
 
