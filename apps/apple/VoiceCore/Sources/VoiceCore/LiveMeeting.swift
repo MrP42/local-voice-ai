@@ -296,7 +296,7 @@ public enum LivePromptBuilder {
         // Gesendet und als Beleg zugelassen wird nur, was wirklich im Prompt steht; der
         // Fortschritt (`through`) endet am letzten gesendeten Teilstück.
         let fresh = pending.filter { $0.isFinal }.sorted { $0.start < $1.start }
-            .flatMap { pieces($0, maxTokens: budget.newSegments - 1, count: count) }
+            .flatMap(pieces)
             .filter { $0.end > state.processedThrough }
         var included: [(LiveSegment, String)] = [], used = 0
         for s in fresh {
@@ -306,7 +306,7 @@ public enum LivePromptBuilder {
         }
         var olderLines: [(LiveSegment, String)] = [], olderUsed = 0
         let ids = Set(included.map { LiveSegment.baseId($0.0.id) })
-        for s in older.filter({ $0.isFinal && !ids.contains($0.id) }).flatMap({ pieces($0, maxTokens: budget.olderEvidence - 1, count: count) }) {
+        for s in older.filter({ $0.isFinal && !ids.contains($0.id) }).flatMap(pieces) {
             let l = line(s), t = count(l) + 1
             if olderUsed + t > budget.olderEvidence { break }
             olderLines.append((s, l)); olderUsed += t
@@ -329,25 +329,27 @@ public enum LivePromptBuilder {
 
     static func line(_ s: LiveSegment) -> String { "[\(s.id)] " + (s.speaker.map { $0 + ": " } ?? "") + s.text }
 
-    /// Teilt ein zu langes Segment an Wortgrenzen in Teilstücke, die je für sich in
-    /// `maxTokens` passen. Zeiten werden anteilig nach Zeichen verteilt, das letzte
-    /// Stück endet genau am Segmentende. Deterministisch: gleiche Eingabe, gleiche Stücke.
-    public static func pieces(_ s: LiveSegment, maxTokens: Int, count: (String) -> Int) -> [LiveSegment] {
-        guard maxTokens > 0, count(line(s)) > maxTokens else { return [s] }
-        let probe = LiveSegment(id: s.id + ".9999", start: 0, end: 0, text: "", speaker: s.speaker)
-        let overhead = count(line(probe))
-        // Überlange „Wörter“ (ohne Leerzeichen) hart teilen, damit jedes Stück passt.
-        let wordChars = Swift.max(1, (maxTokens - overhead) / 4)
+    /// Höchstlänge eines Teilstücks in Zeichen. Fest und unabhängig von Budget und
+    /// Tokenzählung: dieselbe Segment-ID meint immer denselben Text und Zeitbereich.
+    /// 400 Zeichen passen auch bei verkleinertem Budget und UTF-8-Obergrenze in einen Takt.
+    public static let pieceChars = 400
+
+    /// Teilt ein Segment über `pieceChars` an Wortgrenzen in Teilstücke (`a12.1`, `a12.2` …).
+    /// Hängt nur vom (finalisierten, unveränderlichen) Text ab und ist damit dauerhaft stabil.
+    /// Zeiten werden anteilig nach Zeichen verteilt; das letzte Stück endet am Segmentende.
+    public static func pieces(_ s: LiveSegment) -> [LiveSegment] {
+        guard s.text.count > pieceChars else { return [s] }
+        // Überlange „Wörter“ (ohne Leerzeichen) hart teilen.
         let words = s.text.split(separator: " ").flatMap { w -> [String] in
             var out: [String] = [], rest = Substring(w)
-            while rest.count > wordChars { out.append(String(rest.prefix(wordChars))); rest = rest.dropFirst(wordChars) }
+            while rest.count > pieceChars { out.append(String(rest.prefix(pieceChars))); rest = rest.dropFirst(pieceChars) }
             if !rest.isEmpty { out.append(String(rest)) }
             return out
         }
         var chunks: [String] = [], current = ""
         for w in words {
-            let candidate = current.isEmpty ? w : current + " " + w
-            if !current.isEmpty, count(candidate) + overhead > maxTokens { chunks.append(current); current = w } else { current = candidate }
+            if !current.isEmpty, current.count + 1 + w.count > pieceChars { chunks.append(current); current = w }
+            else { current = current.isEmpty ? w : current + " " + w }
         }
         if !current.isEmpty { chunks.append(current) }
         let total = Double(Swift.max(1, s.text.count)), span = s.end - s.start

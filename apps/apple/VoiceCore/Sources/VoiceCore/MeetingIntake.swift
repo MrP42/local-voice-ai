@@ -88,7 +88,11 @@ public struct MeetingInbox: Sendable {
         guard let ext = DurableFiles.safeExtension(source) else { throw IntakeError.invalid }
         let hex = try digest.hex(of: source)
         // Zweimal geteilt: derselbe Eintrag, keine Doppelung.
-        if let same = try pending().first(where: { $0.digest == hex && $0.bytes == bytes }) { return same }
+        if let same = try pending().first(where: { $0.digest == hex && $0.bytes == bytes }) {
+            // Auch die Wiederholung bestätigt erst nach gesichertem Verzeichniseintrag.
+            try DurableFiles.syncDirectory(root)
+            return same
+        }
         let item = InboxItem(id: UUID(), source: kind, originalName: String(source.lastPathComponent.prefix(255)), originalExtension: ext,
                              bytes: bytes, digest: hex, createdAt: Date(), consent: consent)
         let staging = root.appendingPathComponent(".tmp-" + item.id.uuidString)
@@ -100,6 +104,7 @@ public struct MeetingInbox: Sendable {
         guard try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
         try DurableFiles.write(try JSONEncoder().encode(item), to: staging.appendingPathComponent("eingang.json"))
         try fm.moveItem(at: staging, to: root.appendingPathComponent(item.id.uuidString))
+        try DurableFiles.syncDirectory(root)
         return item
     }
 
@@ -177,7 +182,14 @@ public struct WatchSessionStatus: Equatable, Sendable {
     /// Sample-Lücken oder Überlappungen zwischen aufeinanderfolgenden Stücken (Sekunden).
     public var gaps: [ClosedRange<Double>]
     public var lastReceived: Bool
-    public var complete: Bool { lastReceived && missingSequences.isEmpty }
+    /// Erstes Stück beginnt bei Sample 0, alle Stücke haben dieselbe Samplerate, genau ein
+    /// Abschlussstück, und es ist das letzte.
+    public var startsAtZero = false
+    public var uniformRate = false
+    public var singleFinalChunk = false
+    public var complete: Bool {
+        lastReceived && missingSequences.isEmpty && gaps.isEmpty && startsAtZero && uniformRate && singleFinalChunk
+    }
 }
 
 /// iPhone-Seite: nimmt Stücke an, speichert sie dauerhaft und quittiert erst dann.
@@ -211,7 +223,11 @@ public struct WatchRecordingAssembler: Sendable {
             guard stored == header else { throw IntakeError.conflict("Stück \(header.sequence) mit anderem Inhalt") }
             // Nur quittieren, wenn das Audio wirklich vorliegt und passt; sonst neu schreiben.
             if fm.fileExists(atPath: audio.path), (try? digest.hex(of: audio)) == header.digest {
+                // Der erste Versuch kann vor einem fsync abgebrochen sein: alles erneut sichern.
+                try DurableFiles.sync(audio)
+                try DurableFiles.sync(headerURL)
                 try DurableFiles.syncDirectory(folder)
+                try DurableFiles.syncDirectory(folder.deletingLastPathComponent())
                 return receipt
             }
             try fm.removeItem(at: headerURL)
@@ -266,7 +282,11 @@ public struct WatchRecordingAssembler: Sendable {
                 gaps.append(x...y)
             }
         }
-        return WatchSessionStatus(received: seqs, missingSequences: missing, gaps: gaps, lastReceived: hs.contains(where: \.isLast))
+        let finals = hs.filter(\.isLast)
+        return WatchSessionStatus(received: seqs, missingSequences: missing, gaps: gaps, lastReceived: !finals.isEmpty,
+                                  startsAtZero: hs.first.map { $0.sequence == 0 && $0.firstSample == 0 } ?? false,
+                                  uniformRate: Set(hs.map(\.sampleRate)).count == 1,
+                                  singleFinalChunk: finals.count == 1 && finals[0].sequence == seqs.max())
     }
 
     /// Einwilligung der Uhr (aus Stück 0) für den Nachweis am Dokument.

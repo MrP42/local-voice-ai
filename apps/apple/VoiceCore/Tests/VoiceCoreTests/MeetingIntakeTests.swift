@@ -99,11 +99,22 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertThrowsError(try asm.receive(h1c, file: other)) { XCTAssertEqual($0 as? IntakeError, .digestMismatch) }
 
         st = try asm.status(session)
-        XCTAssertTrue(st.complete)
+        // Alle Stücke da, aber 1 s Samplelücke: nicht vollständig.
+        XCTAssertTrue(st.missingSequences.isEmpty && st.lastReceived && st.startsAtZero && st.uniformRate && st.singleFinalChunk)
+        XCTAssertFalse(st.complete)
         XCTAssertEqual(st.gaps, [60...61])
         XCTAssertEqual(try asm.contiguousPrefix(session).map(\.sequence), [0, 1, 2])
         XCTAssertEqual(try asm.consent(session)?.channel, .watch)
         XCTAssertEqual(try Data(contentsOf: asm.audioURL(h2)), Data([2, 7, 7]))
+
+        // Lückenlose Sitzung mit einem Abschlussstück ist vollständig.
+        let clean = UUID()
+        func cchunk(_ seq: Int, first: Int64, last: Bool = false, consent c: ConsentRecord? = nil) throws -> (WatchChunkHeader, URL) {
+            let f = try file("k\(seq).m4a", [UInt8(seq), 3])
+            return (WatchChunkHeader(sessionId: clean, sequence: seq, firstSample: first, sampleCount: 480_000, digest: try d.hex(of: f), isLast: last, consent: c), f)
+        }
+        for (h, f) in [try cchunk(0, first: 0, consent: consent(.watch, .start)), try cchunk(1, first: 480_000, last: true)] { _ = try asm.receive(h, file: f) }
+        XCTAssertTrue(try asm.status(clean).complete)
 
         // Uhr löscht nur bei passender Quittung.
         XCTAssertFalse(outbox.acknowledge(WatchChunkReceipt(sessionId: session, sequence: 0, digest: String(repeating: "f", count: 64))))

@@ -173,10 +173,25 @@ final class MeetingLibrary: ObservableObject {
                 if text.count + next.count + 1 > 2400 { break }
                 text += next + "\n"; through += 1
             }
-            guard through > from else { throw VoiceError.invalid }
             status = "Lokal auswerten · Abschnitt \((doc.summaryParts?.count ?? 0) + 1)"
             let startTime = ContinuousClock.now
-            let minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
+            let minutes: MeetingMinutes
+            if through == from {
+                // Ein einzelnes Segment über 2400 Zeichen: verlustfrei in Teile an Wortgrenzen
+                // zerlegen, je Teil auswerten und zu einem Abschnitt zusammenführen. Belege
+                // bleiben gültig, weil jeder Teil wörtlich im Segment steht.
+                through = from + 1
+                var merged: MeetingMinutes?
+                for part in Self.slices(doc.segments[from].text, max: 2400) {
+                    try Task.checkCancellation()
+                    let m = try await CPULocalProviders.shared.minutes(for: part, cancellation: cancellation)
+                    merged = merged.map { Self.merge($0, m) } ?? m
+                }
+                guard let merged else { throw VoiceError.invalid }
+                minutes = merged
+            } else {
+                minutes = try await CPULocalProviders.shared.minutes(for: text, cancellation: cancellation)
+            }
             try Task.checkCancellation()
             try await archive.appendMinutes(doc.id, from: from, through: through, minutes: minutes, event: ProcessingEvent(operation: "Auswertung · Abschnitt", model: "Qwen 2.5 1.5B Instruct · Q4_K_M", completedAt: Date(), durationMS: elapsed(startTime), isAI: true))
             try await archive.recordTiming(doc.id, phase: "minutes", milliseconds: elapsed(startTime))
@@ -185,6 +200,27 @@ final class MeetingLibrary: ObservableObject {
         try await archive.finishMinutes(doc.id)
         status = "Transkript und Auswertung gespeichert"
     }
+    /// Zerlegt Text an Wortgrenzen in Teile von höchstens `max` Zeichen, ohne etwas auszulassen.
+    static func slices(_ text: String, max: Int) -> [String] {
+        var out: [String] = [], current = ""
+        for word in text.split(separator: " ") {
+            var w = Substring(word)
+            while w.count > max { if !current.isEmpty { out.append(current); current = "" }; out.append(String(w.prefix(max))); w = w.dropFirst(max) }
+            if w.isEmpty { continue }
+            if !current.isEmpty, current.count + 1 + w.count > max { out.append(current); current = String(w) }
+            else { current = current.isEmpty ? String(w) : current + " " + w }
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    static func merge(_ a: MeetingMinutes, _ b: MeetingMinutes) -> MeetingMinutes {
+        MeetingMinutes(summary: [a.summary, b.summary].filter { !$0.isEmpty }.joined(separator: "\n"),
+                       scope: [a.scope, b.scope].filter { !$0.isEmpty }.joined(separator: "\n"),
+                       decisions: a.decisions + b.decisions, tasks: a.tasks + b.tasks, next_steps: a.next_steps + b.next_steps,
+                       follow_ups: a.follow_ups + b.follow_ups, open_questions: a.open_questions + b.open_questions)
+    }
+
     private func elapsed(_ start: ContinuousClock.Instant) -> Double {
         let duration = start.duration(to: .now).components
         return Double(duration.seconds) * 1000 + Double(duration.attoseconds) / 1e15

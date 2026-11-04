@@ -109,7 +109,12 @@ final class LiveMeetingTests: XCTestCase {
         XCTAssertTrue(next.fits)
         XCTAssertNotEqual(next.segments.first?.id, capped.segments.first?.id)
         XCTAssertGreaterThan(next.through, capped.through)
-        let all = LivePromptBuilder.pieces(long, maxTokens: 1099, count: LivePromptBuilder.estimate)
+        let all = LivePromptBuilder.pieces(long)
+        XCTAssertTrue(all.allSatisfy { $0.text.count <= LivePromptBuilder.pieceChars })
+        // Stabil: anderes Budget, gleiche Stücke unter gleicher ID.
+        var small = LiveTokenBudget(); small.newSegments = 300
+        let other = LivePromptBuilder.build(state: big, pending: [long], budget: small)
+        for p in other.segments { XCTAssertEqual(all.first { $0.id == p.id }, p) }
         XCTAssertEqual(all.map(\.text).joined(separator: " "), long.text.trimmingCharacters(in: .whitespaces))
         XCTAssertEqual(all.last?.end, 5)
         XCTAssertEqual(LiveSegment.baseId("a99.3"), "a99")

@@ -72,12 +72,15 @@ enum LiveSummarizer {
     /// Das Budget wird nicht geschätzt, sondern vor dem Aufruf gemessen: mit der
     /// Tokenzählung des Systemmodells (iOS 26.4+), sonst mit der UTF-8-Bytezahl als
     /// sicherer Obergrenze (jedes Token deckt mindestens ein Byte). Gezählt werden
-    /// Anweisungen, Eingabe und das tatsächliche Antwortschema; dazu die feste
+    /// Anweisungen, Eingabe und das JSON-kodierte Antwortschema; dazu die feste
     /// Ausgabegrenze und 10 % Sicherheitsabstand. Passt es nicht, wird das Budget
     /// verkleinert und neu gebaut; nach vier Versuchen fällt der Takt aus.
     static func tick(state: LiveState, pending: [LiveSegment], older: [LiveSegment], budget: LiveTokenBudget = LiveTokenBudget()) async throws -> (LiveDelta, LivePrompt) {
         let model = SystemLanguageModel.default
-        let schemaText = String(describing: Delta.generationSchema)
+        // Das Schema geht als JSON-Schema in den Prompt (`includeSchemaInPrompt`). Gezählt wird
+        // seine JSON-Kodierung; ist sie nicht verfügbar, fällt der Takt aus (nie schätzen).
+        guard let schemaData = try? JSONEncoder().encode(Delta.generationSchema),
+              let schemaText = String(data: schemaData, encoding: .utf8), !schemaText.isEmpty else { throw CancellationError() }
         let context = contextSize(model)
         var b = budget
         for _ in 0..<4 {
@@ -88,7 +91,7 @@ enum LiveSummarizer {
             let total = Int(Double(measured + b.output) * 1.1)
             if total <= context {
                 let session = LanguageModelSession(instructions: prompt.instructions)
-                let response = try await session.respond(to: prompt.input, generating: Delta.self,
+                let response = try await session.respond(to: prompt.input, generating: Delta.self, includeSchemaInPrompt: true,
                                                          options: GenerationOptions(temperature: 0.2, maximumResponseTokens: b.output))
                 return (convert(response.content), prompt)
             }
