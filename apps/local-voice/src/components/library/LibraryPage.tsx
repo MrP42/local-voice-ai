@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSectionActive } from "../shell/KeepAlive";
 import {
   BookOpen,
+  CheckCircle2,
   CheckSquare,
   Download,
   Eraser,
@@ -26,7 +27,9 @@ import type { LibraryBook } from "@/bindings";
 import { PageShell } from "../ui/PageShell";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
-import { ActionMenu } from "../ui/ActionMenu";
+import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
+import { FormatRows, FormatValue, formatEntries } from "./FormatRows";
+import { useKurzbuecher } from "./useKurzbuecher";
 import { Select } from "../ui/Select";
 import { BookCover } from "./BookCover";
 import { BookDetail } from "./BookDetail";
@@ -47,6 +50,7 @@ import {
   matchesFilter,
   matchesSearch,
   openInReader,
+  openKiDocInReader,
   sortViews,
   viewOf,
   type BookView,
@@ -110,6 +114,38 @@ const FILTERS: Filter[] = [
 const SORTS: Sort[] = ["recent", "added", "title", "author"];
 const isSort = (v: string) => (SORTS as string[]).includes(v);
 const isFilter = (v: string) => (FILTERS as string[]).includes(v);
+
+/** Mindestbreite einer „Weitermachen“-Kachel samt Abstand (library.css). */
+const CONTINUE_MIN = 220;
+const CONTINUE_GAP = 12;
+
+/**
+ * Wie viele „Weitermachen“-Kacheln passen (Patrick 04.11.: Platz nutzen,
+ * mindestens vier). Breit: eine volle Reihe; mittel: zwei Reihen;
+ * schmal (eine Spalte): vier untereinander.
+ */
+function useContinueSlots(el: HTMLDivElement | null): number {
+  const [slots, setSlots] = useState(4);
+  useEffect(() => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const width = el.clientWidth;
+      if (!width) return;
+      const cols = Math.max(
+        1,
+        Math.floor((width + CONTINUE_GAP) / (CONTINUE_MIN + CONTINUE_GAP)),
+      );
+      setSlots(
+        cols >= 4 ? Math.min(cols, 8) : cols === 1 ? 4 : Math.min(cols * 2, 6),
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return slots;
+}
 
 /** Text zum Stand der Transkription: bei mehreren Aufträgen „12 von 36 · 4 parallel“. */
 export function jobLabel(
@@ -207,6 +243,8 @@ export const LibraryPage: React.FC = () => {
   const [kiFor, setKiFor] = useState<{ book: LibraryBook; tab: KiCreateTab } | null>(null);
   const [exportFor, setExportFor] = useState<LibraryBook | null>(null);
   const kiJobs = useBookJobs();
+  const kurzbuecher = useKurzbuecher(books);
+  const [continueEl, setContinueEl] = useState<HTMLDivElement | null>(null);
   useEffect(() => ensureBookJobToasts(), []);
   useEffect(() => {
     if (!openId) setEditTitleId(null);
@@ -498,12 +536,10 @@ export const LibraryPage: React.FC = () => {
       return next.length === s.length ? s : next;
     });
   }, [shownKey]);
+  const continueSlots = useContinueSlots(continueEl);
   const continueViews = sortViews(views.filter(isStarted), "recent", {
     favoritesFirst: false,
-  }).slice(
-    0,
-    3,
-  );
+  }).slice(0, continueSlots);
   const jobList = Object.values(jobs);
   const kiJobList = kiJobs.filter((j) => books?.some((b) => b.id === j.bookId));
   const hasWork = jobList.length > 0 || kiJobList.length > 0;
@@ -598,6 +634,131 @@ export const LibraryPage: React.FC = () => {
       : t("library.status.empty");
   };
 
+  /**
+   * Ein Menü je Karte (Patrick 04.11.): Öffnen, KI und Export, Verwalten.
+   * Das frühere KI-Menü ist hier aufgegangen; Lesen und Hören starten über die
+   * Fassungszeilen der Karte.
+   */
+  const moreItems = (v: BookView): ActionMenuItem[] => {
+    const kb = kurzbuecher[v.book.id];
+    return [
+      {
+        id: "details",
+        label: t("library.details"),
+        icon: BookOpen,
+        onSelect: () => setOpenId(v.book.id),
+      },
+      ...(v.book.audio_path && v.book.text
+        ? [
+            {
+              id: "listen-follow",
+              label: t("library.listenFollow"),
+              icon: BookOpen,
+              onSelect: () => listen(v.book, true),
+            },
+          ]
+        : []),
+      ...(kb
+        ? [
+            {
+              id: "kurzbuch-open",
+              label: t("library.fmt.kurzbuchOpen"),
+              icon: Sparkles,
+              testId: `library-kurzbuch-open-${v.book.id}`,
+              onSelect: () =>
+                openKiDocInReader({
+                  page: kb.page,
+                  doc: kb.doc.id,
+                  play: false,
+                }),
+            },
+          ]
+        : []),
+      {
+        id: "translate",
+        label: t("library.ki.menuTranslate"),
+        icon: Languages,
+        dividerBefore: true,
+        testId: `library-ki-translate-${v.book.id}`,
+        onSelect: () => setKiFor({ book: v.book, tab: "translation" }),
+      },
+      {
+        id: "kurzbuch",
+        label: t("library.ki.menuKurzbuch"),
+        icon: Sparkles,
+        testId: `library-ki-kurzbuch-${v.book.id}`,
+        onSelect: () => setKiFor({ book: v.book, tab: "kurzbuch" }),
+      },
+      {
+        id: "kidoc",
+        label: t("library.ki.menuKidoc"),
+        icon: FileText,
+        testId: `library-ki-kidoc-${v.book.id}`,
+        onSelect: () => setKiFor({ book: v.book, tab: "kidoc" }),
+      },
+      {
+        id: "export",
+        label: t("library.export.menu"),
+        icon: Download,
+        testId: `library-export-${v.book.id}`,
+        onSelect: () => setExportFor(v.book),
+      },
+      {
+        id: "finished",
+        label: isFinished(v)
+          ? t("library.markUnfinished")
+          : t("library.markFinished"),
+        icon: CheckCircle2,
+        dividerBefore: true,
+        onSelect: () => void toggleFinished(v),
+      },
+      {
+        id: "title",
+        label: t("library.titleEdit.menu"),
+        icon: Pencil,
+        testId: `library-title-${v.book.id}`,
+        onSelect: () => {
+          setEditTitleId(v.book.id);
+          setOpenId(v.book.id);
+        },
+      },
+      {
+        id: "cover",
+        label: t("library.cover.menu"),
+        icon: ImageIcon,
+        testId: `library-cover-${v.book.id}`,
+        onSelect: () => setCoverFor(v.book),
+      },
+      ...(hasTitleNoise(v.book.title)
+        ? [
+            {
+              id: "clean",
+              label: t("library.clean.one"),
+              icon: Eraser,
+              onSelect: () => setCleaning([v.book]),
+            },
+          ]
+        : []),
+      {
+        id: "select",
+        label: t("library.select.start"),
+        icon: CheckSquare,
+        onSelect: () => {
+          setSelecting(true);
+          setSelected([v.book.id]);
+        },
+      },
+      {
+        id: "remove",
+        label: t("library.remove.action"),
+        icon: Trash2,
+        dividerBefore: true,
+        testId: `library-remove-${v.book.id}`,
+        onSelect: () => setRemoving([v.book]),
+      },
+    ];
+  };
+
   const card = (v: BookView) => {
     const isSelected = selecting && selected.includes(v.book.id);
     return (
@@ -651,17 +812,39 @@ export const LibraryPage: React.FC = () => {
         </button>
         )}
       </div>
-      {v.fraction > 0 && !isFinished(v) && (
-        <ProgressBar
-          fraction={v.fraction}
-          label={t("library.progressLabel", { title: v.book.title })}
-        />
-      )}
-      <div className="library-title" lang="de" title={v.book.title}>
-        {v.book.title}
+      <div className="library-card__head">
+        <div className="library-card__names">
+          <div className="library-title" lang="de" title={v.book.title}>
+            {v.book.title}
+          </div>
+          {v.book.authors.length > 0 && (
+            <div className="library-meta library-card__author">
+              {v.book.authors.join(", ")}
+            </div>
+          )}
+        </div>
+        <span className="library-touch library-card__tools">
+          <ActionMenu
+            trigger={{
+              icon: MoreVertical,
+              label: t("library.more", { title: v.book.title }),
+              description: t("library.moreHint"),
+              testId: `library-more-${v.book.id}`,
+              ghost: true,
+            }}
+            menuLabel={t("library.moreMenu")}
+            align="end"
+            widthClass="w-64 library-cardmenu"
+            items={moreItems(v)}
+          />
+        </span>
       </div>
-      <div className="library-meta">{v.book.authors.join(", ")}</div>
-      <div className="library-meta">{statusLine(v)}</div>
+      <FormatRows
+        view={v}
+        busyText={v.text === "busy" ? jobLabel(t, jobOf(v.book)) : undefined}
+        kurzbuch={kurzbuecher[v.book.id]}
+        onListen={() => listen(v.book)}
+      />
       {jobsOfBook(kiJobs, v.book.id).map((j) => (
         <div
           className="library-jobline"
@@ -675,161 +858,6 @@ export const LibraryPage: React.FC = () => {
           </span>
         </div>
       ))}
-      <div className="library-card__row">
-        <Formats view={v} job={jobOf(v.book)} />
-        <span className="library-touch library-card__tools">
-          {!selecting && (
-            <ActionMenu
-              trigger={{
-                icon: Sparkles,
-                label: t("library.ki.menuFor", { title: v.book.title }),
-                description: t("library.ki.menuHint"),
-                testId: `library-ki-${v.book.id}`,
-                ghost: true,
-              }}
-              menuLabel={t("library.ki.title")}
-              align="end"
-              items={[
-                {
-                  id: "translate",
-                  label: t("library.ki.menuTranslate"),
-                  icon: Languages,
-                  testId: `library-ki-translate-${v.book.id}`,
-                  onSelect: () => setKiFor({ book: v.book, tab: "translation" }),
-                },
-                {
-                  id: "kurzbuch",
-                  label: t("library.ki.menuKurzbuch"),
-                  icon: Sparkles,
-                  testId: `library-ki-kurzbuch-${v.book.id}`,
-                  onSelect: () => setKiFor({ book: v.book, tab: "kurzbuch" }),
-                },
-                {
-                  id: "kidoc",
-                  label: t("library.ki.menuKidoc"),
-                  icon: FileText,
-                  testId: `library-ki-kidoc-${v.book.id}`,
-                  onSelect: () => setKiFor({ book: v.book, tab: "kidoc" }),
-                },
-                {
-                  id: "export",
-                  label: t("library.export.menu"),
-                  icon: Download,
-                  testId: `library-ki-export-${v.book.id}`,
-                  onSelect: () => setExportFor(v.book),
-                },
-              ]}
-            />
-          )}
-          <ActionMenu
-            trigger={{
-              icon: MoreVertical,
-              label: t("library.more", { title: v.book.title }),
-              description: t("library.moreHint"),
-              testId: `library-more-${v.book.id}`,
-              ghost: true,
-            }}
-            menuLabel={t("library.moreMenu")}
-            align="end"
-            items={[
-              {
-                id: "details",
-                label: t("library.details"),
-                icon: BookOpen,
-                onSelect: () => setOpenId(v.book.id),
-              },
-              {
-                id: "export",
-                label: t("library.export.menu"),
-                icon: Download,
-                testId: `library-export-${v.book.id}`,
-                onSelect: () => setExportFor(v.book),
-              },
-              ...(v.book.text
-                ? [
-                    {
-                      id: "read",
-                      label: t("library.read"),
-                      icon: BookOpen,
-                      onSelect: () => openInReader(v.book.text!.page_id, false),
-                    },
-                  ]
-                : []),
-              ...(v.book.audio_path && v.book.text
-                ? [
-                    {
-                      id: "listen-follow",
-                      label: t("library.listenFollow"),
-                      icon: BookOpen,
-                      onSelect: () => listen(v.book, true),
-                    },
-                  ]
-                : []),
-              ...(v.book.audio_path
-                ? [
-                    {
-                      id: "listen",
-                      label: t("library.listen"),
-                      icon: Headphones,
-                      onSelect: () => listen(v.book),
-                    },
-                  ]
-                : []),
-              {
-                id: "finished",
-                label: isFinished(v)
-                  ? t("library.markUnfinished")
-                  : t("library.markFinished"),
-                icon: BookOpen,
-                onSelect: () => void toggleFinished(v),
-              },
-              {
-                id: "title",
-                label: t("library.titleEdit.menu"),
-                icon: Pencil,
-                testId: `library-title-${v.book.id}`,
-                onSelect: () => {
-                  setEditTitleId(v.book.id);
-                  setOpenId(v.book.id);
-                },
-              },
-              {
-                id: "cover",
-                label: t("library.cover.menu"),
-                icon: ImageIcon,
-                testId: `library-cover-${v.book.id}`,
-                onSelect: () => setCoverFor(v.book),
-              },
-              ...(hasTitleNoise(v.book.title)
-                ? [
-                    {
-                      id: "clean",
-                      label: t("library.clean.one"),
-                      icon: Eraser,
-                      onSelect: () => setCleaning([v.book]),
-                    },
-                  ]
-                : []),
-              {
-                id: "select",
-                label: t("library.select.start"),
-                icon: CheckSquare,
-                onSelect: () => {
-                  setSelecting(true);
-                  setSelected([v.book.id]);
-                },
-              },
-              {
-                id: "remove",
-                label: t("library.remove.action"),
-                icon: Trash2,
-                testId: `library-remove-${v.book.id}`,
-                onSelect: () => setRemoving([v.book]),
-              },
-            ]}
-          />
-        </span>
-      </div>
     </article>
     );
   };
@@ -987,7 +1015,7 @@ export const LibraryPage: React.FC = () => {
                             {t("library.continue")}
                             <small>{t("library.continueHint")}</small>
                           </h2>
-                          <div className="library-continue">
+                          <div className="library-continue" ref={setContinueEl}>
                             {continueViews.map((v) => (
                               // Ganze Karte öffnet die Produktseite wie unter
                               // „Alle Titel“ (Patrick 03.11.); der Titel ist der
@@ -997,11 +1025,16 @@ export const LibraryPage: React.FC = () => {
                                 key={v.book.id}
                                 data-testid="library-continue-card"
                               >
-                                <BookCover
-                                  book={v.book}
-                                  size="xs"
-                                  className="library-ccard__cover"
-                                />
+                                {/* Abspielen liegt auf dem Cover: der Text hat
+                                    so die ganze Breite (Patrick 04.11.). */}
+                                <div className="library-ccard__media">
+                                  <BookCover
+                                    book={v.book}
+                                    size="xs"
+                                    className="library-ccard__cover"
+                                  />
+                                  {playButton(v, "library-ccard__play")}
+                                </div>
                                 <div className="library-ccard__body">
                                   <button
                                     type="button"
@@ -1017,18 +1050,50 @@ export const LibraryPage: React.FC = () => {
                                     </div>
                                   )}
                                   <div className="library-ccard__foot">
-                                    <div className="library-ccard__progress">
-                                      <ProgressBar
-                                        fraction={v.fraction}
-                                        label={t("library.progressLabel", {
-                                          title: v.book.title,
-                                        })}
-                                      />
-                                      <span className="library-ccard__status">
-                                        {statusLine(v)}
-                                      </span>
-                                    </div>
-                                    {playButton(v, "library-ccard__play")}
+                                    {(() => {
+                                      const list = formatEntries(
+                                        t,
+                                        v,
+                                        kurzbuecher[v.book.id],
+                                      );
+                                      const entry =
+                                        list.find(
+                                          (e) =>
+                                            e.kind ===
+                                            (v.resumeWith === "audio"
+                                              ? "audiobook"
+                                              : "text"),
+                                        ) ?? list[0];
+                                      return (
+                                        <div className="library-ccard__progress">
+                                          <ProgressBar
+                                            fraction={
+                                              entry?.fraction ?? v.fraction
+                                            }
+                                            label={t("library.progressLabel", {
+                                              title: v.book.title,
+                                            })}
+                                          />
+                                          {/* Alle Fassungen mit Wert, die
+                                              fortzusetzende zuerst (Codex 04.11.). */}
+                                          <span className="library-ccard__status">
+                                            {entry
+                                              ? [
+                                                  entry,
+                                                  ...list.filter(
+                                                    (e) => e !== entry && !e.busy,
+                                                  ),
+                                                ].map((e) => (
+                                                  <FormatValue
+                                                    key={e.kind}
+                                                    entry={e}
+                                                  />
+                                                ))
+                                              : statusLine(v)}
+                                          </span>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                               </article>

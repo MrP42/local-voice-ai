@@ -7345,6 +7345,16 @@
     "suchen": "Suchen"
   },
   "library": {
+    "fmt": {
+      "text": "Text",
+      "audiobook": "Hörbuch",
+      "kurzbuch": "Kurzbuch",
+      "group": "Fassungen von „{{title}}“",
+      "readTitle": "„{{title}}“ lesen · Text {{value}}",
+      "listenTitle": "„{{title}}“ hören · Hörbuch {{value}}",
+      "kurzbuchTitle": "Kurzbuch zu „{{title}}“ anhören · {{value}}",
+      "kurzbuchOpen": "Kurzbuch öffnen"
+    },
     "ki": {
       "title": "Mit KI erstellen",
       "short": "Mit KI erstellen",

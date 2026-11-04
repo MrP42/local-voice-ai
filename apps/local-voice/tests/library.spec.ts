@@ -439,14 +439,15 @@ test("Raster: ein Eintrag je Buch mit Text-/Audio-Kennzeichen und Fortschritt", 
   await expect(cards).toHaveCount(3);
   await page.screenshot({ path: shot("bibliothek-raster-mehrere-1440.png") });
   const effi = cards.filter({ hasText: "Effi Briest" });
-  await expect(effi.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
-  await expect(effi).toContainText("Text");
-  // Ohne Audio eindeutig beschriftet, kein Abspielen, sondern Lesen.
-  await expect(effi).toContainText("Kein Audio");
+  // Je Fassung eine Zeile mit eigenem Fortschritt (Patrick 04.11.).
+  const effiText = effi.locator('[data-testid^="library-fmt-text-"]');
+  await expect(effiText).toContainText("Text");
+  await expect(effiText).toContainText("40 %");
+  // Ohne Audio keine Hörbuch-Zeile, kein Abspielen, sondern Lesen.
+  await expect(effi.locator('[data-testid^="library-fmt-audiobook-"]')).toHaveCount(0);
   await expect(effi.getByTestId("library-play")).toHaveCount(0);
   await expect(effi.getByTestId("library-read-quick")).toBeVisible();
   const kafka = cards.filter({ hasText: "Die Verwandlung" });
-  await expect(kafka).toContainText("Vertont");
   await expect(kafka.getByTestId("library-play")).toBeVisible();
   const storm = cards.filter({ hasText: "Der Schimmelreiter" });
   await expect(storm).toContainText("Hörbuch");
