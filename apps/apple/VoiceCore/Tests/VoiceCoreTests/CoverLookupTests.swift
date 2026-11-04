@@ -37,6 +37,13 @@ final class CoverLookupTests: XCTestCase {
         XCTAssertNil(CoverLookup.bestCoverId(Data("kein json".utf8), title: "x", authors: []))
     }
 
+    func testSubtitleAfterMiddleDotIsDropped() {
+        let t = "Rich Dad Poor Dad · Was die Reichen ihren Kindern über Geld beibringen"
+        XCTAssertEqual(CoverLookup.searchTitle(t), "Rich Dad Poor Dad")
+        let docs = Data(#"{"docs":[{"title":"Rich Dad Poor Dad","author_name":["Robert T. Kiyosaki"],"cover_i":7}]}"#.utf8)
+        XCTAssertEqual(CoverLookup.bestCoverId(docs, title: t, authors: ["Kiyosaki, Robert T."]), 7)
+    }
+
     func testCoreTitleFoldsLikeDesktop() {
         XCTAssertEqual(CoverLookup.coreTitle("Die Straße: Ein Roman"), CoverLookup.coreTitle("straße"))
         XCTAssertEqual(CoverLookup.coreTitle("Dieb"), "dieb")
