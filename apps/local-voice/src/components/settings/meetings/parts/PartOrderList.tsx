@@ -50,11 +50,17 @@ export const PartOrderList: React.FC<{
             {index + 1}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm" title={item.label}>
+            <span
+              className="block text-sm [overflow-wrap:anywhere]"
+              title={item.label}
+            >
               {item.label}
             </span>
             {item.detail && (
-              <span className="block truncate text-xs text-text/60">
+              <span
+                className="block text-xs text-text/60 [overflow-wrap:anywhere]"
+                title={item.detail}
+              >
                 {item.detail}
               </span>
             )}

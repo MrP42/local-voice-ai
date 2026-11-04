@@ -8,6 +8,7 @@ import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import { translateMeetingError } from "../meetingErrors";
 import { PartOrderList, type OrderItem } from "./PartOrderList";
+import "./parts.css";
 
 /** Audio und Video (Untertitel haben keine Tonspur zum Anhaengen). */
 export const APPEND_EXTENSIONS = [
@@ -87,6 +88,8 @@ export function useAppendAudio(meeting: Meeting | null) {
 
   const dialog = (
     <Dialog
+      className="parts-dialog-touch"
+      contentFades={false}
       open={items !== null}
       onOpenChange={(isOpen) => {
         if (!isOpen && !busy) setItems(null);

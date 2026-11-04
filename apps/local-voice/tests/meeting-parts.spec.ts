@@ -102,8 +102,30 @@ const expectTouchTargets = async (page: Page, testIds: string[]) => {
       if (!(await el.isVisible())) continue;
       const box = (await el.boundingBox())!;
       expect(box.height, `${id}[${i}] Höhe`).toBeGreaterThanOrEqual(44);
+      expect(box.width, `${id}[${i}] Breite`).toBeGreaterThanOrEqual(44);
     }
   }
+};
+
+/**
+ * Offener Dialog: Schließen-Knopf >= 44 x 44 px und kein Ausblenden des
+ * Inhalts zum Rand hin (Hinweise zu Verlust und Einwilligung voll lesbar).
+ */
+const expectDialogReadable = async (page: Page, touch: boolean) => {
+  const content = page.locator(".lv-dialog .lv-dialog__content").last();
+  expect(
+    await content.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return cs.maskImage || cs.webkitMaskImage || "none";
+    }),
+  ).toBe("none");
+  if (!touch) return;
+  const close = page
+    .locator(".lv-dialog .fui-DialogTitle__action button")
+    .last();
+  const box = (await close.boundingBox())!;
+  expect(box.height, "Schließen Höhe").toBeGreaterThanOrEqual(44);
+  expect(box.width, "Schließen Breite").toBeGreaterThanOrEqual(44);
 };
 
 /** Auswahlmodus der Liste einschalten; bei 390 px erst die Liste aufklappen. */
@@ -278,6 +300,7 @@ test.describe("Belege für die Abnahme", () => {
           )
           .click();
         await expect(page.getByTestId("parts-dialog")).toBeVisible();
+        await expectDialogReadable(page, view.label === "390");
         await page.screenshot({ path: shot(`teilliste-${suffix}.png`) });
       });
 
@@ -296,6 +319,7 @@ test.describe("Belege für die Abnahme", () => {
           .getByTestId("menu-append-audio")
           .evaluate((el) => (el as HTMLElement).click());
         await expect(page.getByTestId("append-dialog")).toBeVisible();
+        await expectDialogReadable(page, view.label === "390");
         if (view.label === "390")
           await expectTouchTargets(page, [
             "append-order-up",
@@ -317,6 +341,7 @@ test.describe("Belege für die Abnahme", () => {
         await page.screenshot({ path: shot(`auswahl-${suffix}.png`) });
         await page.getByTestId("selection-merge").click();
         await expect(page.getByTestId("merge-dialog")).toBeVisible();
+        await expectDialogReadable(page, view.label === "390");
         if (view.label === "390")
           await expectTouchTargets(page, [
             "merge-order-up",

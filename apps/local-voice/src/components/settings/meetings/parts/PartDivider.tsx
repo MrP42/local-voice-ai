@@ -52,8 +52,9 @@ export const PartDivider: React.FC<{
         type="button"
         disabled={!onSeek}
         onClick={() => onSeek?.(part.offset_ms)}
-        title={t("meetings.parts.playFrom")}
-        className="inline-flex max-w-[80%] items-center gap-1 rounded-full border border-mid-gray/30 px-2 py-0.5 hover:bg-mid-gray/15 disabled:cursor-default max-sm:min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60"
+        title={`${label}\n${t("meetings.parts.playFrom")}`}
+        aria-label={label}
+        className="inline-flex max-w-[80%] items-center gap-1 rounded-full border max-sm:rounded-lg max-sm:text-start border-mid-gray/30 px-2 py-0.5 hover:bg-mid-gray/15 disabled:cursor-default max-sm:min-h-[44px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60"
         data-testid="part-divider-button"
       >
         <Layers
@@ -62,7 +63,9 @@ export const PartDivider: React.FC<{
           aria-hidden="true"
           className="shrink-0"
         />
-        <span className="truncate">{label}</span>
+        <span className="truncate max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">
+          {label}
+        </span>
       </button>
       <span className="h-px flex-1 bg-mid-gray/30" aria-hidden="true" />
     </div>

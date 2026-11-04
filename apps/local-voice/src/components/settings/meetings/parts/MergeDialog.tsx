@@ -8,6 +8,7 @@ import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import { translateMeetingError } from "../meetingErrors";
 import { PartOrderList, type OrderItem } from "./PartOrderList";
+import "./parts.css";
 
 const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
@@ -103,6 +104,8 @@ export const MergeDialog: React.FC<{
 
   return (
     <Dialog
+      className="parts-dialog-touch"
+      contentFades={false}
       open={meetings !== null}
       onOpenChange={(open) => {
         if (!open && !busy) onClose();

@@ -8,6 +8,7 @@ import { Button } from "../../../ui/Button";
 import { Dialog } from "../../../ui/Dialog";
 import { translateMeetingError } from "../meetingErrors";
 import { formatPartTime } from "./useMeetingParts";
+import "./parts.css";
 
 const CHIP =
   "inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-mid-gray/30 px-2 text-xs text-text/80 hover:bg-mid-gray/15 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-primary/60";
@@ -131,6 +132,8 @@ export const PartsDialog: React.FC<{
 
   return (
     <Dialog
+      className="parts-dialog-touch"
+      contentFades={false}
       open={open}
       onOpenChange={setOpen}
       title={t("meetings.parts.title")}
@@ -164,7 +167,7 @@ export const PartsDialog: React.FC<{
                   <span className="w-14 shrink-0 text-xs tabular-nums text-text/60">
                     {formatPartTime(part.offset_ms)}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                     {t("meetings.parts.partLabel", {
                       n: part.part_index + 1,
                       title: part.title,
@@ -190,7 +193,9 @@ export const PartsDialog: React.FC<{
                   className="flex items-center gap-2 px-2 py-1 text-sm"
                   data-testid="parts-pending-row"
                 >
-                  <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                    {p.title}
+                  </span>
                   <span className="shrink-0 text-xs text-text/60">
                     {t(pendingStatusKey(p.status))}
                   </span>
