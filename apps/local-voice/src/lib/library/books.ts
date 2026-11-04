@@ -50,6 +50,8 @@ export interface BookView {
   transcription: "done" | "running" | "possible" | "none";
   /** Fortschritt je Fassung (Patrick 04.11.: je Format eigener Fortschritt). */
   textFraction: number;
+  /** Länge der Textfassung in Zeichen, sobald sie einmal geöffnet war. */
+  textChars: number | null;
   audioFraction: number;
   /** Gesamtdauer des Hörbuchs in ms, sofern bekannt. */
   audioTotalMs: number | null;
@@ -118,6 +120,7 @@ export function viewOf(book: LibraryBook, pageAudio: boolean): BookView {
           ? "possible"
           : "none",
     textFraction,
+    textChars: textRec && textRec.length > 0 ? textRec.length : null,
     audioFraction,
     audioTotalMs,
     audioLeftMs,

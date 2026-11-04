@@ -1,0 +1,143 @@
+{
+  "menu": [
+    {
+      "name": "Details",
+      "y": 368,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Hören und mitlesen",
+      "y": 412,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Kurzbuch öffnen",
+      "y": 456,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Übersetzen …",
+      "y": 508,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Kurzbuch erstellen …",
+      "y": 552,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "KI-Dokument erstellen …",
+      "y": 596,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Exportieren …",
+      "y": 640,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Als fertig markieren",
+      "y": 693,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Titel bearbeiten …",
+      "y": 737,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Cover ändern …",
+      "y": 781,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Auswählen",
+      "y": 791,
+      "h": 44,
+      "w": 238
+    },
+    {
+      "name": "Entfernen …",
+      "y": 787,
+      "h": 44,
+      "w": 238
+    }
+  ],
+  "rows": [
+    {
+      "id": "library-fmt-text-b_a",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-audiobook-b_a",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-kurzbuch-b_a",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-audiobook-b_b",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-text-b_c",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-text-b_d",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-audiobook-b_d",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-kurzbuch-b_d",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-text-b_f",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-text-b_g",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-audiobook-b_g",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-text-b_e",
+      "w": 190,
+      "h": 44
+    },
+    {
+      "id": "library-fmt-audiobook-b_e",
+      "w": 190,
+      "h": 44
+    }
+  ]
+}

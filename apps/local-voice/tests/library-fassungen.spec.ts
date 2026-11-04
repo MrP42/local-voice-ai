@@ -1115,7 +1115,7 @@ test("Karten: Kurzbuch-Zeile öffnet das Kurzbuch im Vorlesen und spielt", async
 for (const [width, height, min] of [
   [1440, 900, 4],
   [1920, 1080, 4],
-  [390, 844, 3],
+  [390, 844, 4],
 ] as const) {
   test(`Weitermachen ${width}: so viele Kacheln wie passen (${min})`, async ({
     page,
@@ -1166,6 +1166,49 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByTestId("library-ki-translate-b_a")).toBeVisible();
       await page.waitForTimeout(250);
       await page.screenshot({ path: shot(`karten-03-menue-${suffix}.png`) });
+      // Alle Menüeinträge erreichbar: Menü scrollt, letzter Eintrag sichtbar.
+      const menu = page.locator('[role="menu"]');
+      const items = menu.getByRole("menuitem");
+      const count = await items.count();
+      // Details, mitlesen, Kurzbuch öffnen | 4× KI/Export | Fertig, Titel, Cover, Auswählen | Entfernen.
+      expect(count).toBe(12);
+      const box = await menu.boundingBox();
+      expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+      const reach: { name: string; y: number; h: number; w: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        const item = items.nth(i);
+        await item.scrollIntoViewIfNeeded();
+        const b = (await item.boundingBox())!;
+        const m = (await menu.boundingBox())!;
+        expect(b.y).toBeGreaterThanOrEqual(m.y - 1);
+        expect(b.y + b.height).toBeLessThanOrEqual(m.y + m.height + 1);
+        reach.push({
+          name: (await item.textContent())?.trim() ?? "",
+          y: Math.round(b.y),
+          h: Math.round(b.height),
+          w: Math.round(b.width),
+        });
+      }
+      await page.screenshot({
+        path: shot(`karten-04-menue-unten-${suffix}.png`),
+      });
+      const rows = await page.$$eval('[data-testid^="library-fmt-"]', (els) =>
+        els
+          .filter((el) => (el as HTMLElement).offsetParent !== null)
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              id: el.getAttribute("data-testid"),
+              w: Math.round(r.width),
+              h: Math.round(r.height),
+            };
+          }),
+      );
+      writeFileSync(
+        shot(`karten-belege-${suffix}.json`),
+        JSON.stringify({ menu: reach, rows }, null, 2),
+      );
+      expect(rows.filter((r) => r.h < 44 || r.w < 44)).toEqual([]);
       // Ziele ≥ 44 px: Fassungszeilen und Menüeinträge.
       const small = await page.$$eval(
         '[data-testid^="library-fmt-"], [role="menu"] [role="menuitem"]',

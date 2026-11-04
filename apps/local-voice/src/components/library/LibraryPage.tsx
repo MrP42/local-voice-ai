@@ -121,8 +121,8 @@ const CONTINUE_GAP = 12;
 
 /**
  * Wie viele „Weitermachen“-Kacheln passen (Patrick 04.11.: Platz nutzen,
- * mindestens vier, wo es geht). Breit: eine volle Reihe; mittel: zwei Reihen;
- * schmal (eine Spalte): drei untereinander.
+ * mindestens vier). Breit: eine volle Reihe; mittel: zwei Reihen;
+ * schmal (eine Spalte): vier untereinander.
  */
 function useContinueSlots(el: HTMLDivElement | null): number {
   const [slots, setSlots] = useState(4);
@@ -136,7 +136,7 @@ function useContinueSlots(el: HTMLDivElement | null): number {
         Math.floor((width + CONTINUE_GAP) / (CONTINUE_MIN + CONTINUE_GAP)),
       );
       setSlots(
-        cols >= 4 ? Math.min(cols, 8) : cols === 1 ? 3 : Math.min(cols * 2, 6),
+        cols >= 4 ? Math.min(cols, 8) : cols === 1 ? 4 : Math.min(cols * 2, 6),
       );
     };
     measure();
@@ -1074,12 +1074,22 @@ export const LibraryPage: React.FC = () => {
                                               title: v.book.title,
                                             })}
                                           />
+                                          {/* Alle Fassungen mit Wert, die
+                                              fortzusetzende zuerst (Codex 04.11.). */}
                                           <span className="library-ccard__status">
-                                            {entry ? (
-                                              <FormatValue entry={entry} />
-                                            ) : (
-                                              statusLine(v)
-                                            )}
+                                            {entry
+                                              ? [
+                                                  entry,
+                                                  ...list.filter(
+                                                    (e) => e !== entry && !e.busy,
+                                                  ),
+                                                ].map((e) => (
+                                                  <FormatValue
+                                                    key={e.kind}
+                                                    entry={e}
+                                                  />
+                                                ))
+                                              : statusLine(v)}
                                           </span>
                                         </div>
                                       );
