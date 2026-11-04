@@ -73,6 +73,18 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertEqual(leftovers, [])
     }
 
+    func testInboxVerifiesCommittedEntry() throws {
+        let inbox = try MeetingInbox(root: tmp.appendingPathComponent("Eingang"), digest: TestDigest())
+        let item = try inbox.deposit(try file("v.m4a", [4, 3, 2, 1]), from: .openIn, consent: consent(.import, .import))
+        XCTAssertTrue(try inbox.verifyCommitted(item))
+        // Verändertes Original: nicht intakt, die Quelle darf nicht gelöscht werden.
+        try Data([4, 3, 2, 0]).write(to: inbox.fileURL(item))
+        XCTAssertFalse(try inbox.verifyCommitted(item))
+        // Fehlendes Original: ebenso.
+        try FileManager.default.removeItem(at: inbox.fileURL(item))
+        XCTAssertFalse(try inbox.verifyCommitted(item))
+    }
+
     func testInboxCreatesWholeDirectoryChain() throws {
         let deep = tmp.appendingPathComponent("a/b/Eingang")
         _ = try MeetingInbox(root: deep, digest: TestDigest())

@@ -29,15 +29,22 @@ public enum IntakeError: Error, Equatable {
 
 enum DurableFiles {
     /// Datei oder Verzeichnis bis auf den Datenträger sichern: F_FULLFSYNC auf Apple
-    /// (fsync allein leert dort nicht den Laufwerkscache), sonst fsync.
+    /// (fsync allein leert dort nicht den Laufwerkscache). Auf fsync wird nur zurückgefallen,
+    /// wenn das Dateisystem F_FULLFSYNC nicht unterstützt (ENOTSUP, EINVAL, ENOTTY); die
+    /// Garantie ist dann schwächer (Laufwerkscache). Jeder andere Fehler wird weitergegeben.
     static func sync(_ url: URL) throws {
         let fd = open(url.path, O_RDONLY)
         guard fd >= 0 else { throw IntakeError.invalid }
         defer { close(fd) }
+        guard fullSync(fd) else { throw IntakeError.invalid }
+    }
+
+    static func fullSync(_ fd: Int32) -> Bool {
         #if canImport(Darwin)
-        if fcntl(fd, F_FULLFSYNC) == 0 { return }
+        if fcntl(fd, F_FULLFSYNC) == 0 { return true }
+        guard [ENOTSUP, EINVAL, ENOTTY].contains(errno) else { return false }
         #endif
-        guard fsync(fd) == 0 else { throw IntakeError.invalid }
+        return fsync(fd) == 0
     }
     static func write(_ data: Data, to url: URL) throws {
         try data.write(to: url, options: .atomic)
@@ -189,12 +196,27 @@ public struct MeetingInbox: Sendable {
     /// danach wird der Eingang geleert. Wirft `importer`, bleibt der Eintrag liegen.
     public func take<T>(_ item: InboxItem, _ importer: (URL, InboxItem) async throws -> T) async throws -> T {
         let result = try await importer(fileURL(item), item)
-        // Löschen dauerhaft machen. Scheitert es, bleibt der Eintrag und die nächste Übernahme
-        // ist dank gleicher Kennung idempotent.
+        // Löschen dauerhaft machen. Scheitert das Löschen, bleibt der Eintrag; scheitert erst der
+        // Sync, ist er schon entfernt, kann aber nach einem Stromausfall wieder auftauchen. Beides
+        // ist unkritisch, weil die nächste Übernahme dank gleicher Kennung idempotent ist.
         let dir = root.appendingPathComponent(item.id.uuidString)
         if FileManager.default.fileExists(atPath: dir.path) { try FileManager.default.removeItem(at: dir) }
         try DurableFiles.syncDirectory(root)
         return result
+    }
+
+    /// Liegt der Eintrag vollständig vor (Original vorhanden, Größe und Prüfsumme stimmen)?
+    /// Sichert ihn dabei erneut, falls der erste Commit vor dem Sync abgebrochen ist.
+    public func verifyCommitted(_ item: InboxItem) throws -> Bool {
+        let file = fileURL(item)
+        guard (try? FileManager.default.attributesOfItem(atPath: file.path)[.type] as? FileAttributeType) == .typeRegular,
+              (try file.resourceValues(forKeys: [.fileSizeKey]).fileSize) == item.bytes,
+              try digest.hex(of: file) == item.digest else { return false }
+        try DurableFiles.sync(file)
+        try DurableFiles.sync(file.deletingLastPathComponent().appendingPathComponent("eingang.json"))
+        try DurableFiles.syncDirectory(file.deletingLastPathComponent())
+        try DurableFiles.syncDirectory(root)
+        return true
     }
 
     /// Mindestalter, ab dem eine Staging-Kopie als abgebrochen gilt. App und Extension

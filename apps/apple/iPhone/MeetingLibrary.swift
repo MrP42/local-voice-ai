@@ -110,9 +110,15 @@ final class MeetingLibrary: ObservableObject {
             } catch VoiceError.conflict {
                 // Schon im Archiv (Absturz nach der Übernahme, vor dem Aufräumen): nicht doppelt
                 // anlegen. Es gilt die beim ersten Mal gespeicherte Einwilligung.
-                let archived = (try? await archive.load(item.id))?.digest == item.digest
-                if archived, (try? await inbox.take(item) { _, _ in () }) != nil {
+                // Nur bei intaktem Archivbestand UND gleichen Einwilligungsbedingungen als erledigt
+                // quittieren; eine abweichende (z. B. KI-)Einwilligung bleibt ein Konflikt.
+                let doc = try? await archive.load(item.id)
+                let sameTerms = doc?.consent?.records.first.map { $0.sameTerms(as: item.consent) } ?? false
+                let intact = (try? await archive.verifyCommitted(item.id, digest: item.digest)) ?? false
+                if sameTerms, intact, (try? await inbox.take(item) { _, _ in () }) != nil {
                     self.error = "„\(item.originalName)“ war bereits übernommen. Es gilt die damalige Einwilligung; zum Ändern das Dokument löschen und neu teilen."
+                } else if intact, !sameTerms {
+                    self.error = "„\(item.originalName)“ liegt bereits mit einer anderen Einwilligung im Archiv. Zum Ändern das Dokument löschen und neu teilen."
                 } else {
                     self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
                 }
@@ -133,8 +139,11 @@ final class MeetingLibrary: ObservableObject {
         guard let inbox, let archive else { return false }
         guard let hex = try? await Task.detached(operation: { try SHA256Digest().hex(of: url) }).value else { return false }
         let id = MeetingInbox.itemId(digest: hex)
-        if (try? inbox.pending())?.contains(where: { $0.id == id }) == true { return true }
-        return (try? await archive.load(id))?.digest == hex
+        // Nur ein intakter, erneut gesicherter Bestand zählt (Original, Größe, voller Digest).
+        if let item = (try? inbox.pending())?.first(where: { $0.id == id && $0.digest == hex }) {
+            return (try? await Task.detached(operation: { try inbox.verifyCommitted(item) }).value) ?? false
+        }
+        return (try? await archive.verifyCommitted(id, digest: hex)) ?? false
     }
 
     /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
@@ -335,15 +344,20 @@ struct MeetingLibraryView: View {
     /// URLs, die gerade bestätigt, geprüft oder übernommen werden: nie ein zweites Mal anbieten.
     @State private var inFlight: Set<URL> = []
 
+    /// Synchron gesetzt: immer nur eine Prüfung oder Bestätigung zur Zeit.
+    @State private var offering = false
+
     private func offerNext() {
-        guard confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) else { return }
+        guard !offering, confirming == nil, let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) else { return }
+        offering = true
         inFlight.insert(url)
         Task {
             // Nach einem Absturz kann die Kopie schon übernommen sein: dann nur aufräumen.
             if await library.alreadyHeld(url) {
-                incoming.finish(url, deleteCopy: true); inFlight.remove(url); offerNext(); return
+                incoming.finish(url, deleteCopy: true); inFlight.remove(url); offering = false; offerNext(); return
             }
             confirming = PendingImport(url: url, source: .openIn)
+            // `offering` bleibt gesetzt, bis die Bestätigung abgeschlossen oder verworfen ist.
         }
     }
 
@@ -414,13 +428,15 @@ struct MeetingLibraryView: View {
                     if pending.source == .openIn, saved { incoming.finish(pending.url, deleteCopy: true) }
                     else if pending.source == .openIn { deferred.insert(pending.url) }
                     inFlight.remove(pending.url)
+                    if pending.source == .openIn { offering = false }
                     offerNext()
                 }
             }, onCancel: {
                 confirming = nil
                 // Ausdrücklich verworfen.
-                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true) }
+                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true); offering = false }
                 inFlight.remove(pending.url)
+                offerNext()
             }).interactiveDismissDisabled()
         }
         .onAppear { incoming.rescan() }
