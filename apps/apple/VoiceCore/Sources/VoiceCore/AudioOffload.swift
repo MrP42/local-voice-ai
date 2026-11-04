@@ -175,7 +175,7 @@ public enum AudioStorage {
             if finished { return "Fertig gehört" }
             if partial && fraction <= 0 { return "Download unvollständig" }
             let percent = Int((min(max(fraction, 0), 1) * 100).rounded())
-            let heard = percent == 0 ? "Noch nicht gehört" : "\(percent) % gehört"
+            let heard = percent == 0 ? "Noch nicht gehört" : "\(percent)\u{00A0}% gehört"
             return partial ? heard + " · Download unvollständig" : heard
         }
     }

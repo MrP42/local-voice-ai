@@ -99,10 +99,10 @@ final class AudioStorageTests: XCTestCase {
 
     func testStandInWords() {
         XCTAssertEqual(item("x", 1, finished: true).stand, "Fertig gehört")
-        XCTAssertEqual(item("x", 1, fraction: 0.454).stand, "45 % gehört")
+        XCTAssertEqual(item("x", 1, fraction: 0.454).stand, "45\u{00A0}% gehört")
         XCTAssertEqual(item("x", 1).stand, "Noch nicht gehört")
         XCTAssertEqual(item("x", 1, partial: true).stand, "Download unvollständig")
-        XCTAssertEqual(item("x", 1, fraction: 0.2, partial: true).stand, "20 % gehört · Download unvollständig")
+        XCTAssertEqual(item("x", 1, fraction: 0.2, partial: true).stand, "20\u{00A0}% gehört · Download unvollständig")
     }
 
     func testSummary() {

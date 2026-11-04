@@ -1,0 +1,115 @@
+Kontrast der Vorschau (390 px), Text gegen tatsächliche Fläche
+Regel: >= 4,5:1 (kleiner Text, WCAG 1.4.3)
+
+s1	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s1	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s1	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s1	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Hörbuch lädt … 26 %
+s1	hell	5,9:1	ja	#5E656F auf #FFFFFF	212 MB von 820 MB
+s1	hell	5,9:1	ja	#5E656F auf #FFFFFF	Lädt auch weiter, wenn die App im Hinter
+s1	hell	15,3:1	ja	#111418 auf #E9E9EB	⏸ Pausieren
+s1	hell	5,4:1	ja	#B3261E auf #E9E9EB	✕ Abbrechen
+s2	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s2	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s2	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s2	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Wartet auf WLAN
+s2	hell	5,9:1	ja	#5E656F auf #FFFFFF	0 Byte von 820 MB
+s2	hell	5,9:1	ja	#5E656F auf #FFFFFF	„Nur im WLAN laden“ ist an. Das Laden st
+s2	hell	15,3:1	ja	#111418 auf #E9E9EB	📶 Jetzt mobil laden
+s2	hell	5,4:1	ja	#B3261E auf #E9E9EB	✕ Abbrechen
+s3	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s3	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s3	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s3	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Pausiert
+s3	hell	5,9:1	ja	#5E656F auf #FFFFFF	212 MB von 820 MB
+s3	hell	5,9:1	ja	#5E656F auf #FFFFFF	Bereits geladene Teile bleiben erhalten.
+s3	hell	15,3:1	ja	#111418 auf #E9E9EB	▶ Fortsetzen
+s3	hell	5,4:1	ja	#B3261E auf #E9E9EB	✕ Abbrechen
+s4	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s4	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s4	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s4	hell	6,5:1	ja	#B3261E auf #FFFFFF	⚠ Laden fehlgeschlagen
+s4	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Der Server ist gerade nicht erreichbar. 
+s4	hell	15,3:1	ja	#111418 auf #E9E9EB	↻ Erneut versuchen
+s4	hell	5,4:1	ja	#B3261E auf #E9E9EB	✕ Abbrechen
+s5	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s5	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s5	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s5	hell	6,5:1	ja	#B3261E auf #FFFFFF	⚠ Laden fehlgeschlagen
+s5	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Zu wenig Speicher: Das Hörbuch braucht n
+s5	hell	15,3:1	ja	#111418 auf #E9E9EB	↻ Erneut versuchen
+s5	hell	5,4:1	ja	#B3261E auf #E9E9EB	✕ Abbrechen
+s6	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s6	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s6	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s6	hell	14,7:1	ja	#1F2937 auf #FFFFFF	Hörbuch im Konto
+s6	hell	5,9:1	ja	#5E656F auf #FFFFFF	820 MB
+s6	hell	5,9:1	ja	#5E656F auf #FFFFFF	Wird beim ersten Hören geladen und ist d
+s6	hell	15,3:1	ja	#111418 auf #E9E9EB	⬇ Jetzt laden
+s7	hell	16,6:1	ja	#111418 auf #F2F2F7	‹ Bibliothek
+s7	hell	16,6:1	ja	#111418 auf #F2F2F7	⋯
+s7	hell	5,6:1	ja	#5A616D auf #F2F2F7	Text: effi-briest.epub
+s7	hell	6,1:1	ja	#17703D auf #FFFFFF	✓ Auf dem iPhone · 820 MB
+s7	hell	15,3:1	ja	#111418 auf #E9E9EB	☁︎ Vom iPhone entfernen
+s7	hell	5,9:1	ja	#5E656F auf #FFFFFF	Bleibt im Konto und auf dem PC, Fortschr
+s8	hell	5,8:1	ja	#5D646E auf #FBFBFB	Laden abbrechen? Bereits geladene 212 MB
+s8	hell	14,2:1	ja	#1F2937 auf #FBFBFB	Laden abbrechen?
+s8	hell	6,3:1	ja	#B3261E auf #FBFBFB	Laden abbrechen
+s8	hell	17,9:1	ja	#111418 auf #FBFBFB	Weiter laden
+s1	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s1	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s1	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s1	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Hörbuch lädt … 26 %
+s1	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	212 MB von 820 MB
+s1	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	Lädt auch weiter, wenn die App im Hinter
+s1	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	⏸ Pausieren
+s1	dunkel	5,0:1	ja	#FF6961 auf #2B2B2E	✕ Abbrechen
+s2	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s2	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s2	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s2	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Wartet auf WLAN
+s2	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	0 Byte von 820 MB
+s2	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	„Nur im WLAN laden“ ist an. Das Laden st
+s2	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	📶 Jetzt mobil laden
+s2	dunkel	5,0:1	ja	#FF6961 auf #2B2B2E	✕ Abbrechen
+s3	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s3	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s3	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s3	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Pausiert
+s3	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	212 MB von 820 MB
+s3	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	Bereits geladene Teile bleiben erhalten.
+s3	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	▶ Fortsetzen
+s3	dunkel	5,0:1	ja	#FF6961 auf #2B2B2E	✕ Abbrechen
+s4	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s4	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s4	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s4	dunkel	6,0:1	ja	#FF6961 auf #1C1C1E	⚠ Laden fehlgeschlagen
+s4	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Der Server ist gerade nicht erreichbar. 
+s4	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	↻ Erneut versuchen
+s4	dunkel	5,0:1	ja	#FF6961 auf #2B2B2E	✕ Abbrechen
+s5	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s5	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s5	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s5	dunkel	6,0:1	ja	#FF6961 auf #1C1C1E	⚠ Laden fehlgeschlagen
+s5	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Zu wenig Speicher: Das Hörbuch braucht n
+s5	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	↻ Erneut versuchen
+s5	dunkel	5,0:1	ja	#FF6961 auf #2B2B2E	✕ Abbrechen
+s6	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s6	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s6	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s6	dunkel	14,5:1	ja	#EDEDE7 auf #1C1C1E	Hörbuch im Konto
+s6	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	820 MB
+s6	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	Wird beim ersten Hören geladen und ist d
+s6	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	⬇ Jetzt laden
+s7	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	‹ Bibliothek
+s7	dunkel	14,6:1	ja	#FFDD00 auf #0B0B0C	⋯
+s7	dunkel	8,8:1	ja	#AEAEAA auf #0B0B0C	Text: effi-briest.epub
+s7	dunkel	8,4:1	ja	#30D158 auf #1C1C1E	✓ Auf dem iPhone · 820 MB
+s7	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2E	☁︎ Vom iPhone entfernen
+s7	dunkel	8,0:1	ja	#B2B2AF auf #1C1C1E	Bleibt im Konto und auf dem PC, Fortschr
+s8	dunkel	7,0:1	ja	#B7B7B3 auf #2B2B2D	Laden abbrechen? Bereits geladene 212 MB
+s8	dunkel	12,1:1	ja	#EDEDE7 auf #2B2B2D	Laden abbrechen?
+s8	dunkel	5,0:1	ja	#FF6961 auf #2B2B2D	Laden abbrechen
+s8	dunkel	10,5:1	ja	#FFDD00 auf #2B2B2D	Weiter laden
+
+Ergebnis: alle Texte >= 4,5:1 (110 Messungen, Minimum 5,02:1)

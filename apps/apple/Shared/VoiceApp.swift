@@ -22,6 +22,10 @@ enum VoicePalette {
     static var text: Color { adaptive(light: lightText, dark: darkText) }
     static var secondaryText: Color { text.opacity(0.72) }
     static var background: Color { adaptive(light: lightBackground, dark: darkBackground) }
+    /// Fehlerrot mit mindestens 4,5:1 auf hellen und dunklen Flächen (#B3261E / #FF6961).
+    static var danger: Color { adaptive(light: 0xB3261E, dark: 0xFF6961) }
+    /// Erfolgsgrün mit mindestens 4,5:1 (#17703D / #30D158).
+    static var success: Color { adaptive(light: 0x17703D, dark: 0x30D158) }
 
     private static func color(_ hex: Int) -> Color {
         Color(red: Double((hex >> 16) & 255) / 255, green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255)
