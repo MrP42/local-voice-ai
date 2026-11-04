@@ -88,6 +88,8 @@
       "structureDone_other": "Text structured ({{count}} changes).",
       "rejected_one": "{{count}} suggestion discarded (change too large).",
       "rejected_other": "{{count}} suggestions discarded (change too large).",
+      "findLabel": "Find",
+      "replaceLabel": "Replace with",
       "findPlaceholder": "Find",
       "replacePlaceholder": "Replace with",
       "noHits": "No results",
@@ -3594,6 +3596,47 @@
         "template": "Choosing the template …",
         "write": "Evaluating the transcript …",
         "merge": "Merging the parts …"
+      },
+      "moreBelow": "More below",
+      "edit": {
+        "start": "Edit",
+        "startHint": "Correct the text by hand – with find and replace, formatting and AI text tools as in Read aloud",
+        "section": "Edit section",
+        "sectionLabel": "Edit section “{{title}}”",
+        "sectionHint": "Open section “{{title}}” in the editor",
+        "block": "Edit this passage",
+        "title": "Editing · version {{version}}",
+        "saveHint": "Save changes to this version (Ctrl+S)",
+        "saving": "Saving …",
+        "placeholder": "Document text (Markdown)",
+        "hint": "Ctrl+F finds, Ctrl+H replaces, Ctrl+Z undoes, Ctrl+S saves, Esc cancels. Changes are saved to this version; copy, download, mail and read aloud then use the corrected text.",
+        "edited": "Edited by hand",
+        "discard": "Discard unsaved changes?",
+        "keepEditing": "Keep editing",
+        "discardGo": "Discard",
+        "errors": {
+          "stale_document": "The document has changed in the meantime (for example regenerated). Nothing was saved – your text is still in the editor; copy it and paste it after reloading.",
+          "document_not_found": "The document no longer exists. Nothing was saved.",
+          "document_not_editable": "This document cannot be edited here.",
+          "document_empty": "An empty document cannot be saved.",
+          "document_too_large": "The text is too large (2 MB at most).",
+          "other": "Saving failed: {{error}}"
+        }
+      },
+      "versions": {
+        "menu": "Versions",
+        "label": "Version {{version}} of {{count}}",
+        "hint": "Show earlier versions – including edited ones from before a regeneration",
+        "item": "Version {{version}} · {{date}}",
+        "itemEdited": "Version {{version}} · {{date}} · edited",
+        "latest": "Latest version",
+        "olderShown": "You are viewing version {{version}}; the latest is version {{latest}}.",
+        "toLatest": "Go to latest version"
+      },
+      "regenerateEdited": {
+        "title": "Regenerate an edited document?",
+        "body": "Version {{version}} was edited by hand. Regenerating creates a new version. Your corrections stay available as version {{version}} under “Versions” but are not carried into the new version.",
+        "go": "Create new version"
       },
       "stepOf": "Step {{done}} of {{total}}",
       "cancelled": "Generation was cancelled.",
