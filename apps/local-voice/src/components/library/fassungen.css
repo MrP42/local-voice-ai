@@ -314,7 +314,8 @@
   min-height: 44px;
 }
 [role="menuitem"][data-testid^="library-ki-"],
-[role="menuitem"][data-testid^="library-export-"] {
+[role="menuitem"][data-testid^="library-export-"],
+.library-cardmenu [role="menuitem"] {
   min-height: 44px;
 }
 .ki-create .app-select__control,

@@ -7345,6 +7345,16 @@
     "suchen": "Search"
   },
   "library": {
+    "fmt": {
+      "text": "Text",
+      "audiobook": "Audiobook",
+      "kurzbuch": "Book in brief",
+      "group": "Versions of “{{title}}”",
+      "readTitle": "Read “{{title}}” · text {{value}}",
+      "listenTitle": "Listen to “{{title}}” · audiobook {{value}}",
+      "kurzbuchTitle": "Listen to the book in brief of “{{title}}” · {{value}}",
+      "kurzbuchOpen": "Open book in brief"
+    },
     "ki": {
       "title": "Create with AI",
       "short": "Create with AI",
