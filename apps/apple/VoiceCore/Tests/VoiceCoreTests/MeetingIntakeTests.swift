@@ -116,20 +116,38 @@ final class MeetingIntakeTests: XCTestCase {
         for (h, f) in [try cchunk(0, first: 0, consent: consent(.watch, .start)), try cchunk(1, first: 480_000, last: true)] { _ = try asm.receive(h, file: f) }
         XCTAssertTrue(try asm.status(clean).complete)
 
-        // fsync der Wurzel scheitert beim ersten Versuch: keine Quittung. Die Wiederholung findet
-        // den Sitzungsordner schon vor und muss die Wurzel trotzdem vor der Quittung sichern.
+        // Dauerhaftigkeit vor der Quittung: je Versuch erst Sitzungsordner, dann Wurzel.
         let fresh = UUID()
+        let sessionDir = asm.root.appendingPathComponent(fresh.uuidString)
         let log = SyncLog()
-        var failing = asm
-        failing.syncDirectory = { url in log.add(url); if url.standardizedFileURL == asm.root.standardizedFileURL, log.count(asm.root) == 1 { throw IntakeError.invalid } }
+        log.failRoot = 1
+        var probe = asm
+        probe.syncDirectory = { url in
+            log.add(url)
+            if url.standardizedFileURL.path == asm.root.standardizedFileURL.path, log.take(root: true) { throw IntakeError.invalid }
+            if url.standardizedFileURL.path == sessionDir.standardizedFileURL.path, log.take(root: false) { throw IntakeError.invalid }
+        }
+        func lastTwo() -> [String] { Array(log.all.suffix(2)) }
+        let expected = [sessionDir, asm.root].map(\.standardizedFileURL.path)
         let f0x = try file("x0.m4a", [5, 5])
         let h0x = WatchChunkHeader(sessionId: fresh, sequence: 0, firstSample: 0, sampleCount: 480_000, digest: try d.hex(of: f0x), consent: consent(.watch, .start))
-        XCTAssertThrowsError(try failing.receive(h0x, file: f0x))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: asm.root.appendingPathComponent(fresh.uuidString).path))
-        _ = try failing.receive(h0x, file: f0x)
-        XCTAssertEqual(log.count(asm.root), 2, "Wurzel vor der Quittung erneut gesichert")
-        _ = try failing.receive(h0x, file: f0x)   // Duplikat
-        XCTAssertEqual(log.count(asm.root), 3)
+        // a) Wurzel-fsync scheitert: keine Quittung, Ordner bleibt.
+        XCTAssertThrowsError(try probe.receive(h0x, file: f0x))
+        XCTAssertEqual(lastTwo(), expected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sessionDir.path))
+        // b) Neuschreiben bei schon vorhandenem Ordner (Kopf fehlt, z. B. Absturz davor).
+        try FileManager.default.removeItem(at: sessionDir.appendingPathComponent("000000.json"))
+        log.reset()
+        _ = try probe.receive(h0x, file: f0x)
+        XCTAssertEqual(lastTwo(), expected, "Neuschreiben: Ordner vor Wurzel")
+        // c) Duplikat: ebenfalls Ordner vor Wurzel.
+        log.reset()
+        _ = try probe.receive(h0x, file: f0x)
+        XCTAssertEqual(log.all, expected, "Duplikat: Ordner vor Wurzel")
+        // d) Sitzungsordner-fsync scheitert: Fehler wird weitergegeben, Wurzel wird nicht mehr angefasst.
+        log.failFolder = 1; log.reset()
+        XCTAssertThrowsError(try probe.receive(h0x, file: f0x)) { XCTAssertEqual($0 as? IntakeError, .invalid) }
+        XCTAssertEqual(log.all, [sessionDir.standardizedFileURL.path])
 
         // Uhr löscht nur bei passender Quittung.
         XCTAssertFalse(outbox.acknowledge(WatchChunkReceipt(sessionId: session, sequence: 0, digest: String(repeating: "f", count: 64))))
@@ -141,7 +159,14 @@ final class MeetingIntakeTests: XCTestCase {
 
 final class SyncLog: @unchecked Sendable {
     private let lock = NSLock()
-    private var urls: [URL] = []
-    func add(_ u: URL) { lock.lock(); urls.append(u.standardizedFileURL); lock.unlock() }
-    func count(_ u: URL) -> Int { lock.lock(); defer { lock.unlock() }; return urls.filter { $0 == u.standardizedFileURL }.count }
+    private var urls: [String] = []
+    func add(_ u: URL) { lock.lock(); urls.append(u.standardizedFileURL.path); lock.unlock() }
+    var failRoot = 0, failFolder = 0
+    func take(root: Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if root { guard failRoot > 0 else { return false }; failRoot -= 1 } else { guard failFolder > 0 else { return false }; failFolder -= 1 }
+        return true
+    }
+    func reset() { lock.lock(); urls = []; lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return urls }
 }
