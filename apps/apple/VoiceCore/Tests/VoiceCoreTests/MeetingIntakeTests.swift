@@ -155,6 +155,67 @@ final class MeetingIntakeTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(), ["eingang.json", "original.m4a"])
     }
 
+    /// Prüfsumme, die die Quelle vor dem ersten Hashen verlängert (Datei ändert sich während der Übernahme).
+    final class GrowingSourceDigest: ContentDigest, @unchecked Sendable {
+        let source: URL; var grown = false
+        init(source: URL) { self.source = source }
+        func hex(of url: URL) throws -> String {
+            if url.standardizedFileURL.path == source.standardizedFileURL.path, !grown {
+                grown = true
+                let h = try FileHandle(forWritingTo: url); try h.seekToEnd(); try h.write(contentsOf: Data([1, 2, 3])); try h.close()
+            }
+            return try TestDigest().hex(of: url)
+        }
+    }
+
+    func testInboxRejectsSourceChangedDuringIntake() throws {
+        let root = tmp.appendingPathComponent("Eingang")
+        let source = try file("g.m4a", [5, 5, 5, 5])
+        let inbox = try MeetingInbox(root: root, digest: GrowingSourceDigest(source: source))
+        XCTAssertThrowsError(try inbox.deposit(source, from: .openIn, consent: consent(.import, .import))) {
+            XCTAssertEqual($0 as? IntakeError, .digestMismatch)
+        }
+        // Kein Eintrag mit veralteter Größe, keine Reste; ein neuer Versuch übernimmt den neuen Stand.
+        XCTAssertTrue(try inbox.pending().isEmpty)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".tmp-") })
+        let item = try inbox.deposit(source, from: .openIn, consent: consent(.import, .import))
+        XCTAssertEqual(item.bytes, 7)
+        XCTAssertTrue(try inbox.verifyCommitted(item))
+    }
+
+    struct Crash: Error {}
+
+    func testInboxRepairSurvivesFaultAtEveryStep() throws {
+        let steps: [MeetingInbox.RepairStep] = [.afterOriginal, .beforeMetadata, .afterMetadata]
+        for step in steps {
+            let root = tmp.appendingPathComponent("Eingang-\(step)")
+            let content: [UInt8] = [4, 2, 4, 2]
+            let item = try MeetingInbox(root: root, digest: TestDigest()).deposit(try file("s.m4a", content), from: .openIn, consent: consent(.import, .import))
+            let dir = root.appendingPathComponent(item.id.uuidString)
+            try Data([0, 0, 0, 0]).write(to: dir.appendingPathComponent("original.m4a"))
+            // Reparatur mit Endungswechsel, Ausfall am Schritt `step`.
+            var faulty = try MeetingInbox(root: root, digest: TestDigest())
+            faulty.fault = { if $0 == step { throw Crash() } }
+            let reshared = try file("s.qta", content)
+            XCTAssertThrowsError(try faulty.deposit(reshared, from: .shareSheet, consent: consent(.import, .import)))
+            // Wieder geöffneter Bestand: nie leer, nie ein halber Zustand ohne Original.
+            let reopened = try MeetingInbox(root: root, digest: TestDigest())
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+            XCTAssertFalse(names.contains { $0.hasPrefix(".neu-") }, "\(step)")
+            XCTAssertEqual(names, ["eingang.json", "original.m4a", "original.qta"], "\(step)")
+            let seen = try XCTUnwrap(reopened.pending().first, "\(step)")
+            if step == .afterMetadata {
+                XCTAssertEqual(seen.originalExtension, "qta"); XCTAssertTrue(try reopened.verifyCommitted(seen))
+            } else {
+                XCTAssertEqual(seen.originalExtension, "m4a"); XCTAssertFalse(try reopened.verifyCommitted(seen))
+            }
+            // Erneutes Teilen schließt jede Variante sauber ab.
+            let done = try reopened.deposit(reshared, from: .shareSheet, consent: consent(.import, .import))
+            XCTAssertTrue(try reopened.verifyCommitted(done), "\(step)")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted(), ["eingang.json", "original.qta"], "\(step)")
+        }
+    }
+
     func testInboxRepairResumesAfterAbortAndSwitchesExtension() throws {
         let root = tmp.appendingPathComponent("Eingang")
         let inbox = try MeetingInbox(root: root, digest: TestDigest())

@@ -102,6 +102,9 @@ public struct InboxItem: Codable, Equatable, Identifiable, Sendable {
 public struct MeetingInbox: Sendable {
     public let root: URL
     let digest: ContentDigest
+    /// Nur für Tests: simuliert einen Ausfall an einem Reparaturschritt.
+    var fault: (@Sendable (RepairStep) throws -> Void)?
+    enum RepairStep: Sendable { case afterOriginal, beforeMetadata, afterMetadata }
     public static let maxBytes = 2 * 1024 * 1024 * 1024
     /// App-Gruppe von App und Share-Extension; der Eingang liegt in ihrem Container.
     public static let appGroup = "group.de.localvoice.prototype"
@@ -149,7 +152,7 @@ public struct MeetingInbox: Sendable {
                 let staging = root.appendingPathComponent(".tmp-" + UUID().uuidString)
                 try fm.createDirectory(at: staging, withIntermediateDirectories: false)
                 defer { try? fm.removeItem(at: staging) }
-                try copyVerified(source, to: staging.appendingPathComponent("original." + ext), digest: hex)
+                try copyVerified(source, to: staging.appendingPathComponent("original." + ext), digest: hex, bytes: bytes)
                 try DurableFiles.write(try JSONEncoder().encode(item), to: staging.appendingPathComponent("eingang.json"))
                 try fm.moveItem(at: staging, to: finalDir)
                 try DurableFiles.syncDirectory(root)
@@ -160,7 +163,10 @@ public struct MeetingInbox: Sendable {
                 // Eine frühere (z. B. KI-)Freigabe wird nie still übernommen oder überschrieben.
                 guard same.consent.sameTerms(as: consent) else { throw IntakeError.conflict("bereits mit anderer Einwilligung im Eingang") }
                 // Erfolg nur bei vollständigem Bestand (Metadaten passen zum Inhalt, Original intakt).
-                if same.bytes == bytes, same.digest == hex, try verifyCommitted(same) { return same }
+                if same.bytes == bytes, same.digest == hex, try verifyCommitted(same) {
+                    try tidy(finalDir, keeping: "original." + same.originalExtension)
+                    return same
+                }
             }
             try repair(finalDir, with: item, from: source)
             return item
@@ -180,11 +186,14 @@ public struct MeetingInbox: Sendable {
         for name in entries where name.hasPrefix(".neu-") { try fm.removeItem(at: dir.appendingPathComponent(name)) }
         let fresh = dir.appendingPathComponent(".neu-" + UUID().uuidString)
         defer { try? fm.removeItem(at: fresh) }
-        try copyVerified(source, to: fresh, digest: item.digest)
+        try copyVerified(source, to: fresh, digest: item.digest, bytes: item.bytes)
         let target = dir.appendingPathComponent("original." + item.originalExtension)
         guard rename(fresh.path, target.path) == 0 else { throw IntakeError.invalid }
+        try fault?(.afterOriginal)
         try DurableFiles.syncDirectory(dir)
+        try fault?(.beforeMetadata)
         try DurableFiles.write(try JSONEncoder().encode(item), to: dir.appendingPathComponent("eingang.json"))
+        try fault?(.afterMetadata)
         for name in entries where name.hasPrefix("original.") && name != target.lastPathComponent {
             try fm.removeItem(at: dir.appendingPathComponent(name))
         }
@@ -192,11 +201,25 @@ public struct MeetingInbox: Sendable {
         try DurableFiles.syncDirectory(root)
     }
 
-    /// Kopieren (APFS-Klon, wo möglich), sichern und gegen die Prüfsumme der Quelle vergleichen.
-    private func copyVerified(_ source: URL, to target: URL, digest hex: String) throws {
+    /// Kopieren (APFS-Klon, wo möglich), sichern und an der KOPIE prüfen: Größe wie in den
+    /// Metadaten, höchstens `maxBytes`, Prüfsumme der Quelle. Hat sich die Quelle zwischen
+    /// Größenermittlung, Hashen und Kopieren verändert, wird kontrolliert abgebrochen.
+    private func copyVerified(_ source: URL, to target: URL, digest hex: String, bytes: Int) throws {
         try FileManager.default.copyItem(at: source, to: target)
         try DurableFiles.sync(target)
-        guard try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
+        let copied = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1
+        guard copied <= Self.maxBytes else { throw IntakeError.tooLarge }
+        guard copied == bytes, try digest.hex(of: target) == hex else { throw IntakeError.digestMismatch }
+    }
+
+    /// Reste einer abgebrochenen Reparatur entfernen: `.neu-*` und Originale anderer Endung.
+    private func tidy(_ dir: URL, keeping original: String) throws {
+        let fm = FileManager.default
+        let stray = try fm.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasPrefix(".neu-") || ($0.hasPrefix("original.") && $0 != original) }
+        guard !stray.isEmpty else { return }
+        for name in stray { try fm.removeItem(at: dir.appendingPathComponent(name)) }
+        try DurableFiles.syncDirectory(dir)
     }
 
     /// Prozessübergreifende Sperre je Kennung (`flock` auf `.lock-<id>` im Eingang).
@@ -281,7 +304,7 @@ public struct MeetingInbox: Sendable {
             let snapshot = root.appendingPathComponent(".take-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: false)
             do {
-                try copyVerified(fileURL(current), to: snapshot.appendingPathComponent("original." + current.originalExtension), digest: current.digest)
+                try copyVerified(fileURL(current), to: snapshot.appendingPathComponent("original." + current.originalExtension), digest: current.digest, bytes: current.bytes)
             } catch { dropSnapshot(snapshot); throw error }
             return (snapshot, current)
         }
