@@ -418,6 +418,11 @@ public struct ConsentRecord: Codable, Equatable, Sendable {
         self.confirmedAt = confirmedAt; self.channel = channel; self.reason = reason; self.noticeVersion = noticeVersion
         self.scopes = scopes; self.purpose = purpose; self.controller = controller; self.retentionDays = retentionDays; self.audioOffset = audioOffset
     }
+    /// Gleiche Bedingungen (ohne Zeitpunkt): Kanal, Anlass, Umfang, Zweck, Verantwortlicher, Frist, Hinweisfassung.
+    public func sameTerms(as other: ConsentRecord) -> Bool {
+        channel == other.channel && reason == other.reason && Set(scopes) == Set(other.scopes) && purpose == other.purpose
+            && controller == other.controller && retentionDays == other.retentionDays && noticeVersion == other.noticeVersion
+    }
     public var isComplete: Bool {
         // Kein reiner Aufnahmemodus: die Live-Erkennung läuft immer mit.
         scopes.contains(.recording) && scopes.contains(.transcription) && !purpose.trimmingCharacters(in: .whitespaces).isEmpty

@@ -10,6 +10,9 @@ final class MeetingLibrary: ObservableObject {
     @Published private(set) var importBusy = false
     @Published var error: String?
     private var archive: MeetingArchive?
+    /// Eingang in der App-Gruppe (Share-Extension, „Öffnen in“, Dateiauswahl).
+    private var inbox: MeetingInbox?
+    private var draining = false
     /// Sitzungen, die gerade übernommen werden (Szenenwechsel kann doppelt auslösen).
     private var importingLive: Set<UUID> = []
     private var worker: Task<Void, Never>?
@@ -22,11 +25,17 @@ final class MeetingLibrary: ObservableObject {
         do {
             let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Meetings")
             archive = try MeetingArchive(root: root)
+            // Ohne eingerichtete App-Gruppe (z. B. unsignierter Simulator) ein lokaler Eingang;
+            // die Share-Extension meldet dann selbst, dass sie nicht übergeben kann.
+            let inboxRoot = MeetingInbox.sharedRoot() ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Eingang")
+            let inbox = try MeetingInbox(root: inboxRoot, digest: SHA256Digest())
+            inbox.sweepAbandoned()
+            self.inbox = inbox
         } catch { self.error = "Aufnahmespeicher konnte nicht geöffnet werden." }
     }
     func scene(active: Bool) {
         self.active = active
-        if active { Task { await recoverLive(); await refresh(); start() } }
+        if active { Task { await recoverLive(); await drainInbox(); await refresh(); start() } }
         else {
             worker?.cancel(); token?.cancel(); exporter?.cancelExport()
             if running != nil { status = "gespeichert – Verarbeitung folgt" }
@@ -55,6 +64,91 @@ final class MeetingLibrary: ObservableObject {
             self.error = "Import nicht abgeschlossen. Bitte eine lesbare Audio-/Videodatei bis 2 Stunden und 2 GB wählen und freien Speicher prüfen."
         }
     }
+    /// Bestätigte Datei in den Eingang kopieren (geprüft, dauerhaft) und gleich übernehmen.
+    /// `true` erst nach dem dauerhaften Eingangs-Commit; nur dann darf die Quelle weg.
+    @discardableResult
+    func deposit(_ url: URL, from source: InboxItem.Source, consent: ConsentRecord) async -> Bool {
+        guard let inbox else { self.error = "Der Eingang ist nicht verfügbar."; return false }
+        // Nacheinander, nie verworfen: warten, bis ein laufender Import fertig ist.
+        while importBusy { try? await Task.sleep(for: .milliseconds(200)) }
+        importBusy = true; defer { importBusy = false }
+        error = nil
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            _ = try await Task.detached { try inbox.deposit(url, from: source, consent: consent) }.value
+        } catch IntakeError.tooLarge {
+            self.error = "Die Datei ist größer als 2 GB."; return false
+        } catch IntakeError.conflict {
+            self.error = "Diese Aufnahme wartet bereits mit einer anderen Einwilligung. Eine frühere Freigabe wird nicht übernommen."; return false
+        } catch {
+            self.error = "Die Datei konnte nicht gesichert werden. Bitte freien Speicher prüfen."; return false
+        }
+        await drainInbox()
+        return true
+    }
+
+    /// Wartende Einträge ins Archiv übernehmen; Transkription und (falls freigegeben)
+    /// Auswertung starten danach automatisch. Ein Eintrag verschwindet erst nach
+    /// erfolgreicher, dauerhafter Übernahme; die Wiederholung ist idempotent (gleiche Kennung).
+    func drainInbox() async {
+        guard let inbox, let archive, !draining else { return }
+        draining = true; defer { draining = false }
+        for item in (try? inbox.pending()) ?? [] {
+            do {
+                _ = try await inbox.take(item) { url, item in
+                    let asset = AVURLAsset(url: url)
+                    guard !(try await asset.loadTracks(withMediaType: .audio)).isEmpty else { throw VoiceError.invalid }
+                    let duration = try await asset.load(.duration).seconds
+                    var log = ConsentLog()
+                    try log.append(item.consent)
+                    return try await archive.importMedia(url, duration: duration,
+                                                         live: MeetingArchive.LiveImport(consent: log, live: nil, segments: [], notes: nil),
+                                                         id: item.id, name: item.originalName)
+                }
+                status = "gespeichert – Verarbeitung folgt"
+            } catch VoiceError.conflict {
+                // Schon im Archiv (Absturz nach der Übernahme, vor dem Aufräumen): nicht doppelt
+                // anlegen. Es gilt die beim ersten Mal gespeicherte Einwilligung.
+                // Nur bei intaktem Archivbestand UND gleichen Einwilligungsbedingungen als erledigt
+                // quittieren; eine abweichende (z. B. KI-)Einwilligung bleibt ein Konflikt.
+                let doc = try? await archive.load(item.id)
+                let sameTerms = doc?.consent?.records.first.map { $0.sameTerms(as: item.consent) } ?? false
+                let intact = (try? await archive.verifyCommitted(item.id, digest: item.digest)) ?? false
+                if sameTerms, intact, (try? await inbox.take(item) { _, _ in () }) != nil {
+                    self.error = "„\(item.originalName)“ war bereits übernommen. Es gilt die damalige Einwilligung; zum Ändern das Dokument löschen und neu teilen."
+                } else if intact, !sameTerms {
+                    self.error = "„\(item.originalName)“ liegt bereits mit einer anderen Einwilligung im Archiv. Zum Ändern das Dokument löschen und neu teilen."
+                } else {
+                    self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
+                }
+            } catch IntakeError.busy {
+                // Die Extension schreibt gerade an diesem Eintrag: beim nächsten Durchlauf erneut.
+                continue
+            } catch VoiceError.invalid {
+                // Keine lesbare Tonspur oder über 2 Stunden: nicht aufbewahren (Datenminimierung).
+                try? inbox.discard(item)
+                self.error = "„\(item.originalName)“ hat keine lesbare Tonspur oder ist länger als 2 Stunden und wurde nicht übernommen."
+            } catch {
+                self.error = "„\(item.originalName)“ ist gesichert, konnte aber noch nicht übernommen werden. Nächster Versuch beim nächsten Öffnen."
+            }
+        }
+        await refresh(); start()
+    }
+
+    /// Liegt diese Datei schon dauerhaft im Eingang oder Archiv? (Kennung aus dem Inhalt.)
+    /// Dann darf die iOS-Kopie ohne neue Rückfrage weg; ein Neustart importiert nicht doppelt.
+    func alreadyHeld(_ url: URL) async -> Bool {
+        guard let inbox, let archive else { return false }
+        guard let hex = try? await Task.detached(operation: { try SHA256Digest().hex(of: url) }).value else { return false }
+        let id = MeetingInbox.itemId(digest: hex)
+        // Nur ein intakter, erneut gesicherter Bestand zählt (Original, Größe, voller Digest).
+        if let item = (try? inbox.pending())?.first(where: { $0.id == id && $0.digest == hex }) {
+            return (try? await Task.detached(operation: { try inbox.verifyCommitted(item) }).value) ?? false
+        }
+        return (try? await archive.verifyCommitted(id, digest: hex)) ?? false
+    }
+
     /// In der App aufgenommene Besprechung übernehmen: Original, Einwilligungsnachweis
     /// und Live-Stand in einem Schritt ins Archiv. Erst danach wird der Laufend-Ordner
     /// entfernt; scheitert etwas, bleibt er für den nächsten Versuch.
@@ -244,6 +338,59 @@ struct MeetingLibraryView: View {
     @Environment(\.scenePhase) private var phase
     @State private var importer = false
     @State private var recordLive = false
+    @ObservedObject private var incoming = IncomingFiles.shared
+    /// Datei, die gerade bestätigt wird: aus der Dateiauswahl oder per „Öffnen in“.
+    @State private var confirming: PendingImport?
+    /// Fehlgeschlagene Übernahmen dieser Sitzung: nicht sofort erneut anbieten (beim nächsten Start wieder).
+    @State private var deferred: Set<URL> = []
+
+    /// URLs, die gerade bestätigt, geprüft oder übernommen werden: nie ein zweites Mal anbieten.
+    @State private var inFlight: Set<URL> = []
+
+    /// Aus der Dateiauswahl gewählte Dateien. Sie warten wie „Öffnen in“-Kopien in derselben
+    /// Reihe und überschreiben nie eine laufende Bestätigung.
+    @State private var requests: [PendingImport] = []
+
+    /// Reservierung: die eine Übernahme, die gerade geprüft, bestätigt oder gesichert wird.
+    /// Synchron gesetzt, erst nach dem Abschluss (Bestätigen oder Verwerfen) wieder frei.
+    @State private var current: PendingImport?
+
+    /// Nächste Übernahme reservieren. Gewählte Dateien zuerst, dann „Öffnen in“-Kopien.
+    private func offerNext() {
+        guard current == nil, confirming == nil else { return }
+        let next: PendingImport
+        if !requests.isEmpty {
+            next = requests.removeFirst()
+        } else if let url = incoming.pending.first(where: { !deferred.contains($0) && !inFlight.contains($0) }) {
+            next = PendingImport(url: url, source: .openIn)
+        } else { return }
+        current = next
+        inFlight.insert(next.url)
+        Task {
+            // Nach einem Absturz kann die Kopie schon übernommen sein: dann nur aufräumen.
+            if next.source == .openIn, await library.alreadyHeld(next.url) {
+                incoming.finish(next.url, deleteCopy: true)
+                return complete(next)
+            }
+            // Nach dem await prüfen, ob die Reservierung noch gilt und keine Bestätigung offen ist.
+            guard current?.id == next.id, confirming == nil else { return complete(next) }
+            confirming = next
+        }
+    }
+
+    /// Reservierung freigeben (jeder Abschluss, jede Quelle) und das Nächste anbieten.
+    private func complete(_ done: PendingImport) {
+        inFlight.remove(done.url)
+        if current?.id == done.id { current = nil }
+        offerNext()
+    }
+
+    struct PendingImport: Identifiable {
+        let url: URL
+        let source: InboxItem.Source
+        var id: URL { url }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -291,11 +438,35 @@ struct MeetingLibraryView: View {
             .fullScreenCover(isPresented: $recordLive) { LiveMeetingScreen(library: library) }
             .fileImporter(isPresented: $importer, allowedContentTypes: [.audio, .movie], allowsMultipleSelection: false) { result in
                 switch result {
-                case .success(let urls): if let first = urls.first { Task { await library.importMedia(first) } }
+                case .success(let urls):
+                    if let first = urls.first, !inFlight.contains(first), !requests.contains(where: { $0.url == first }) {
+                        requests.append(PendingImport(url: first, source: .files))
+                    }
+                    offerNext()
                 case .failure: library.error = "Datei konnte nicht geöffnet werden."
                 }
             }
         }
+        .sheet(item: $confirming) { pending in
+            ImportConsentView(fileName: pending.url.lastPathComponent, channel: .import, onConfirm: { record in
+                confirming = nil
+                Task {
+                    let saved = await library.deposit(pending.url, from: pending.source, consent: record)
+                    // Kopie nur nach dauerhaftem Eingangs-Commit löschen; sonst bleibt sie für den nächsten Versuch.
+                    if pending.source == .openIn, saved { incoming.finish(pending.url, deleteCopy: true) }
+                    else if pending.source == .openIn { deferred.insert(pending.url) }
+                    complete(pending)
+                }
+            }, onCancel: {
+                confirming = nil
+                // Ausdrücklich verworfen.
+                if pending.source == .openIn { incoming.finish(pending.url, deleteCopy: true) }
+                complete(pending)
+            }).interactiveDismissDisabled()
+        }
+        .onAppear { incoming.rescan() }
+        .onChange(of: incoming.pending, initial: true) { _, _ in offerNext() }
+        .onChange(of: confirming == nil) { _, closed in if closed { offerNext() } }
         .onChange(of: phase, initial: true) { _, value in library.scene(active: value == .active) }
         #if DEBUG
         .task { await library.importProbe() }
