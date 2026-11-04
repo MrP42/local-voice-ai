@@ -11,6 +11,12 @@ Spracherkennung
            GGUF-Umwandlung handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf
   Lizenz:  OpenMDW-1.1 – https://openmdw.ai/license/1-1/
 
+Stimmabdruck (Sprecher-Vorschläge in Besprechungen)
+  CAM++ (3D-Speaker, iic/speech_campplus_sv_en_voxceleb_16k, ONNX-Export
+  sherpa-onnx)
+  Urheber: Alibaba DAMO Academy (3D-Speaker)
+  Lizenz:  Apache License 2.0
+
 Lokales Sprachmodell
   Qwen 3.5 4B (GGUF Q4_K_M)
   Urheber: Qwen-Team, Alibaba Cloud (Qwen/Qwen3.5-4B),

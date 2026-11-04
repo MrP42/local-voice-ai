@@ -27,6 +27,7 @@ Zielgerät: Laptop ohne eigene Grafikkarte mit 16 GB RAM, Referenz ist ein Lenov
 | Deutsche Phonon-Stimmen | `phonon-voice-de-*` | Apache-2.0 | erlaubt |
 | Windows-Stimmen (SAPI/OneCore) | – | Teil von Windows | nicht im Paket, kommen vom Betriebssystem |
 | Silero VAD | bereits im Programm | MIT | erlaubt |
+| Stimmabdruck CAM++ (3D-Speaker, 30 MB) für Vorschläge zum Zusammenführen von Sprechern | `spk-campplus-voxceleb-16k` | Apache-2.0 | erlaubt |
 
 Nicht enthalten:
 - **Fish Audio.** Ausdrücklich ausgeschlossen (Patrick, 04.11.2026).

@@ -33,12 +33,13 @@ param(
     [switch]$Offline,
     # Katalogkennungen fuer -Offline. Vorgabe: Laptop ohne Grafikkarte, 16 GB RAM
     # (Core Ultra 5 225U): Nemotron 3.5 ASR, Phonon DE+EN mit Stimmen, LLM-Laufzeit
-    # Vulkan (iGPU) + CPU, Qwen 3.5 4B Q4.
+    # Vulkan (iGPU) + CPU, Qwen 3.5 4B Q4, Stimmabdruck CAM++ (Sprecher-Vorschlaege).
     [string[]]$Provision = @(
         'nemotron-3.5-asr-streaming-0.6b-Q8_0',
         'phonon-runtime', 'phonon-40m-de', 'phonon-31m-en',
         'llm-runtime-windows-x64-vulkan', 'llm-runtime-windows-x64-cpu',
-        'llm-qwen3.5-4b-q4'
+        'llm-qwen3.5-4b-q4',
+        'spk-campplus-voxceleb-16k'
     ),
     # Mit -Release: ohne HF_TOKEN abbrechen statt das deutsche Phonon-Modell auszulassen.
     [switch]$RequireHfToken

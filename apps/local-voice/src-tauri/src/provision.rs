@@ -11,6 +11,8 @@
 //! * `llm-…`, `emb-…` → [`LlmRuntimeManager`] (Laufzeit und Sprachmodelle),
 //! * Phonon/Piper (`phonon-runtime`, `phonon-40m-de`, Stimmen, `piper-runtime`)
 //!   → [`TtsModelManager`],
+//! * `spk-campplus-voxceleb-16k` (Stimmabdruck CAM++ fuer Sprecher-Vorschlaege)
+//!   → derselbe Ladeweg wie der Knopf in den Besprechungs-Einstellungen,
 //! * alles andere → [`ModelManager`] (Spracherkennung, Kennung wie `--list-models`).
 
 use std::sync::Arc;
@@ -26,6 +28,7 @@ use crate::managers::tts::phonon_models;
 enum Kind {
     Llm,
     Tts,
+    Voiceprint,
     Asr,
 }
 
@@ -34,6 +37,8 @@ fn kind_of(id: &str) -> Kind {
         Kind::Llm
     } else if id == PIPER_RUNTIME_ID || phonon_models::is_phonon_id(id) {
         Kind::Tts
+    } else if id == crate::managers::meetings::voiceprint::MODEL_ID {
+        Kind::Voiceprint
     } else {
         Kind::Asr
     }
@@ -93,6 +98,13 @@ pub fn run(app: &AppHandle, ids: &[String]) -> i32 {
                         .any(|d| d.id == id && d.is_downloaded)
                 })
             }
+            Kind::Voiceprint => tauri::async_runtime::block_on(
+                crate::commands::meeting_voiceprint::meeting_voiceprint_download(app.clone()),
+            )
+            .and_then(|()| {
+                crate::commands::meeting_voiceprint::meeting_voiceprint_status(app.clone())
+                    .map(|s| s.model_ready)
+            }),
             Kind::Asr => {
                 if asr.is_none() {
                     use tauri::Manager;
@@ -234,6 +246,7 @@ mod tests {
         assert_eq!(kind_of("phonon-40m-de"), Kind::Tts);
         assert_eq!(kind_of("phonon-31m-en"), Kind::Tts);
         assert_eq!(kind_of("piper-runtime"), Kind::Tts);
+        assert_eq!(kind_of("spk-campplus-voxceleb-16k"), Kind::Voiceprint);
         assert_eq!(
             kind_of("handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf"),
             Kind::Asr
