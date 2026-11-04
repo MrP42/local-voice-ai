@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { markdownToSpeech } from "../src/lib/speechText";
+import { withoutSpeakerSection } from "../src/lib/meetingSpeakerShares";
 
 // Aufnahmen: "Vorlesen" fuer erzeugte Inhalte (Protokoll, Dokumente) ueber den vorhandenen
 // Befehl `tts_speak_text`, und der Status "Fertig" erscheint nirgends mehr (nur Laufendes
@@ -353,6 +354,65 @@ test.describe("Vorlesen in den Aufnahmen", () => {
     expect(markdownToSpeech("snake_case_name bleibt, 2 * 3 auch")).toBe(
       "snake_case_name bleibt, 2 * 3 auch",
     );
+  });
+
+  test("Sprecher & Redeanteile werden nicht vorgelesen, der Rest davor und danach schon", () => {
+    const body = [
+      "## Zusammenfassung",
+      "",
+      "Start im Oktober.",
+      "",
+      "## Sprecher & Redeanteile",
+      "",
+      "| Sprecher | Redezeit | Anteil |",
+      "|---|---|---|",
+      "| Anna | 10:00 | 60,0 % |",
+      "| Ben | 06:40 | 40,0 % |",
+      "",
+      "## Offene Fragen",
+      "",
+      "- Wer zahlt?",
+    ].join("\n");
+    const spoken = markdownToSpeech(withoutSpeakerSection(body));
+    expect(spoken).toBe(
+      "Zusammenfassung.\n\nStart im Oktober.\n\nOffene Fragen.\n\nWer zahlt?",
+    );
+    // Abschnitt am Ende (Normalfall) und Protokolle ohne Abschnitt.
+    const tail =
+      "## Aufgaben\n\n- Raum buchen\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Ich | 03:19 | 48,9 % |\n";
+    expect(markdownToSpeech(withoutSpeakerSection(tail))).toBe(
+      "Aufgaben.\n\nRaum buchen.",
+    );
+    expect(withoutSpeakerSection(MINUTES)).toBe(MINUTES);
+  });
+
+  test("Protokoll mit Sprechertabelle: Vorlesen und Audio speichern ohne Namen und Anteile", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as any).__saveTarget = "C:\\Audio\\protokoll.wav";
+    });
+    await page.addInitScript((body) => {
+      const w = window as any;
+      w.__documents = [w.__minutesDoc(1, body)];
+    }, `${MINUTES}\n\n## Sprecher & Redeanteile\n\n| Sprecher | Redezeit | Anteil |\n|---|---|---|\n| Anna | 10:00 | 60,0 % |\n| Ben | 06:40 | 40,0 % |\n`);
+    await openMinutes(page);
+    await page.getByTestId("minutes-readaloud").click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_text")).length)
+      .toBe(1);
+    expect((await calls(page, "tts_speak_text"))[0].args).toEqual({
+      text: SPOKEN,
+    });
+    await page.getByTestId("minutes-readaloud-bar-stop").click();
+    await page.getByTestId("minutes-readaloud-save").click();
+    await expect
+      .poll(async () => (await calls(page, "tts_speak_to_file")).length)
+      .toBe(1);
+    expect((await calls(page, "tts_speak_to_file"))[0].args).toEqual({
+      text: SPOKEN,
+      outPath: "C:\\Audio\\protokoll.wav",
+    });
   });
 
   test("Vorlesen-Knopf blendet die Steuerung in der Werkzeugzeile ein, Stopp blendet sie aus", async ({

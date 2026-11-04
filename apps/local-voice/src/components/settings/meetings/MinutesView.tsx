@@ -33,7 +33,10 @@ import { defaultDocBasis } from "./language/DocBasisFields";
 import { ReadAloudButton } from "./ReadAloudButton";
 import { useReadAloudHighlight } from "./useReadAloudHighlight";
 import { staticSharesTable } from "./SpeakerSharesTable";
-import { splitSpeakerSection } from "@/lib/meetingSpeakerShares";
+import {
+  splitSpeakerSection,
+  withoutSpeakerSection,
+} from "@/lib/meetingSpeakerShares";
 import {
   Check,
   ChevronDown,
@@ -674,7 +677,7 @@ export const MinutesView: React.FC<MinutesViewProps> = ({
             />
             <ReadAloudButton
               speakKey={speakKey}
-              getMarkdown={() => doc.body}
+              getMarkdown={() => withoutSpeakerSection(doc.body)}
               testId="minutes-readaloud"
               disabled={editing !== null}
               fileStem={
