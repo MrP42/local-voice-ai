@@ -5,7 +5,8 @@ use super::*;
 use crate::settings::{LlmConnection, LlmModelConfig};
 use serde_json::json;
 
-const GOLDEN: &str = include_str!("../../../../../../tooling/fixtures/buch-gespraech/relay/golden.json");
+const GOLDEN: &str =
+    include_str!("../../../../../../tooling/fixtures/buch-gespraech/relay/golden.json");
 
 /// Unix-Sekunde der Testanfrage (wie in der Golden-Datei).
 const CREATED: i64 = 1_793_900_000;
@@ -91,7 +92,10 @@ fn golden_schluessel_und_key_id() {
     let g = golden();
     let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
     assert_eq!(key.len(), 32);
-    assert_eq!(URL_SAFE_NO_PAD.encode(&key), g["key_b64url"].as_str().unwrap());
+    assert_eq!(
+        URL_SAFE_NO_PAD.encode(&key),
+        g["key_b64url"].as_str().unwrap()
+    );
     assert_eq!(key_id_of(&key), g["key_id"].as_str().unwrap());
 }
 
@@ -102,9 +106,18 @@ fn golden_anfrage_kanonische_zeichenfolge_und_mac() {
     let case = &g["request"];
     let req: ReqPayload = serde_json::from_value(case["request"].clone()).unwrap();
     assert_eq!(req_canonical(&req), case["canonical"].as_str().unwrap());
-    assert_eq!(sha256_hex(&req.system), case["system_sha256"].as_str().unwrap());
-    assert_eq!(sha256_hex(&req.prompt), case["prompt_sha256"].as_str().unwrap());
-    assert_eq!(mac_hex(&key, req_canonical(&req).as_bytes()), case["mac"].as_str().unwrap());
+    assert_eq!(
+        sha256_hex(&req.system),
+        case["system_sha256"].as_str().unwrap()
+    );
+    assert_eq!(
+        sha256_hex(&req.prompt),
+        case["prompt_sha256"].as_str().unwrap()
+    );
+    assert_eq!(
+        mac_hex(&key, req_canonical(&req).as_bytes()),
+        case["mac"].as_str().unwrap()
+    );
     assert_eq!(req.mac, case["mac"].as_str().unwrap());
     assert!(mac_ok(&key, req_canonical(&req).as_bytes(), &req.mac));
     // Ein geaenderter Prompt bricht den MAC.
@@ -122,7 +135,10 @@ fn golden_antworten_kanonische_zeichenfolge_und_mac() {
     for case in cases {
         let resp: RespPayload = serde_json::from_value(case["response"].clone()).unwrap();
         assert_eq!(resp_canonical(&resp), case["canonical"].as_str().unwrap());
-        assert_eq!(mac_hex(&key, resp_canonical(&resp).as_bytes()), case["mac"].as_str().unwrap());
+        assert_eq!(
+            mac_hex(&key, resp_canonical(&resp).as_bytes()),
+            case["mac"].as_str().unwrap()
+        );
         assert!(resp_mac_ok(&key, &resp));
     }
     // Zwischenstand, Ende, Fehler -- und was der PC selbst baut, ist byte-gleich.
@@ -146,7 +162,15 @@ fn golden_antworten_kanonische_zeichenfolge_und_mac() {
     // Lebenszeichen beim Annehmen und Abweisung mit Code: byte-gleich.
     let start = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key).start();
     assert_eq!(serde_json::to_value(&start).unwrap(), cases[3]["response"]);
-    assert_eq!((start.seq, start.text.as_str(), start.model_tuple.as_str(), start.done), (1, "", "pending", false));
+    assert_eq!(
+        (
+            start.seq,
+            start.text.as_str(),
+            start.model_tuple.as_str(),
+            start.done
+        ),
+        (1, "", "pending", false)
+    );
     let clock = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key).finish(
         "",
         MODEL_UNKNOWN,
@@ -161,7 +185,12 @@ fn golden_antworten_kanonische_zeichenfolge_und_mac() {
     assert!(special.error.as_deref().unwrap().contains('😀'));
     let mut p = Progress::new("0123456789abcdef0123456789abcdef", PHONE, &key);
     p.update("x");
-    let again = p.finish(&special.text, &special.model_tuple, special.error.as_deref(), None);
+    let again = p.finish(
+        &special.text,
+        &special.model_tuple,
+        special.error.as_deref(),
+        None,
+    );
     assert_eq!(again.mac, special.mac);
 }
 
@@ -171,10 +200,20 @@ fn golden_anfrage_mit_steuer_und_nicht_ascii_zeichen() {
     let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
     let case = &g["request_special"];
     let req: ReqPayload = serde_json::from_value(case["request"].clone()).unwrap();
-    assert!(req.model_id.contains('\u{c}') && req.model_id.contains('\u{1}') && req.model_id.contains('😀'));
+    assert!(
+        req.model_id.contains('\u{c}')
+            && req.model_id.contains('\u{1}')
+            && req.model_id.contains('😀')
+    );
     assert_eq!(req_canonical(&req), case["canonical"].as_str().unwrap());
-    assert!(case["canonical"].as_str().unwrap().contains("\\u0008\\u000c\\u0001"));
-    assert_eq!(mac_hex(&key, req_canonical(&req).as_bytes()), case["mac"].as_str().unwrap());
+    assert!(case["canonical"]
+        .as_str()
+        .unwrap()
+        .contains("\\u0008\\u000c\\u0001"));
+    assert_eq!(
+        mac_hex(&key, req_canonical(&req).as_bytes()),
+        case["mac"].as_str().unwrap()
+    );
     assert!(mac_ok(&key, req_canonical(&req).as_bytes(), &req.mac));
 }
 
@@ -184,8 +223,14 @@ fn golden_signierte_modellliste() {
     let key = unhex(g["key_hex"].as_str().unwrap()).unwrap();
     let case = &g["model_list"];
     let payload: ModelsPayload = serde_json::from_value(case["list"].clone()).unwrap();
-    assert_eq!(models_canonical(&payload), case["canonical"].as_str().unwrap());
-    assert_eq!(mac_hex(&key, models_canonical(&payload).as_bytes()), case["mac"].as_str().unwrap());
+    assert_eq!(
+        models_canonical(&payload),
+        case["canonical"].as_str().unwrap()
+    );
+    assert_eq!(
+        mac_hex(&key, models_canonical(&payload).as_bytes()),
+        case["mac"].as_str().unwrap()
+    );
     assert!(models_mac_ok(&key, &payload));
     let ids: Vec<&str> = payload.models.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, ["gpt-6.1-sol", "sonnet"], "nach id sortiert");
@@ -196,7 +241,13 @@ fn golden_signierte_modellliste() {
     };
     let mut input = payload.models.clone();
     input.reverse();
-    let built = signed_models(&payload.desktop_device_id, &grant, &key, input, payload.issued_at * 1000 + 123);
+    let built = signed_models(
+        &payload.desktop_device_id,
+        &grant,
+        &key,
+        input,
+        payload.issued_at * 1000 + 123,
+    );
     assert_eq!(serde_json::to_value(&built).unwrap(), case["list"]);
     // Jede Aenderung bricht den MAC; `mac` selbst liegt ausserhalb der Signatur.
     let tamper: [fn(&mut ModelsPayload); 7] = [
@@ -213,7 +264,10 @@ fn golden_signierte_modellliste() {
         f(&mut bad);
         assert!(!models_mac_ok(&key, &bad));
     }
-    assert!(!models_mac_ok(&[1u8; 32], &payload), "Schluessel eines anderen Geraets");
+    assert!(
+        !models_mac_ok(&[1u8; 32], &payload),
+        "Schluessel eines anderen Geraets"
+    );
     assert!(!models_canonical(&payload).contains("\"mac\""));
 }
 
@@ -249,10 +303,19 @@ fn golden_einrichtungscode_entspricht_dem_ios_format() {
         "Codeablauf (10 min) vor Freigabeablauf (90 Tage)"
     );
     // Der Code der Golden-Datei liest sich gleich.
-    let golden_body: serde_json::Value =
-        serde_json::from_str(e["code"].as_str().unwrap().strip_prefix("lvrelay1:").unwrap()).unwrap();
+    let golden_body: serde_json::Value = serde_json::from_str(
+        e["code"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("lvrelay1:")
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(golden_body, want);
-    assert_eq!(URL_SAFE_NO_PAD.decode(want["k"].as_str().unwrap()).unwrap(), key);
+    assert_eq!(
+        URL_SAFE_NO_PAD.decode(want["k"].as_str().unwrap()).unwrap(),
+        key
+    );
 }
 
 #[test]
@@ -286,8 +349,12 @@ fn models_payload_hat_genau_die_formen_der_spec() {
         })
     );
     assert!(models_mac_ok(&KEY, &payload));
-    let back: ModelsPayload = serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
-    assert_eq!(back.models[0].config_id, "", "config_id geht nie in den Hub");
+    let back: ModelsPayload =
+        serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
+    assert_eq!(
+        back.models[0].config_id, "",
+        "config_id geht nie in den Hub"
+    );
     assert!(models_mac_ok(&KEY, &back));
 }
 
@@ -313,7 +380,10 @@ fn resp_payload_laesst_error_und_usage_weg_wenn_leer() {
     let mut progress = Progress::new("r-1", PHONE, &KEY);
     let part = progress.update("Hallo").unwrap();
     let v = serde_json::to_value(&part).unwrap();
-    assert_eq!((v["seq"].as_i64(), v["done"].as_bool()), (Some(1), Some(false)));
+    assert_eq!(
+        (v["seq"].as_i64(), v["done"].as_bool()),
+        (Some(1), Some(false))
+    );
     assert_eq!(v["model_tuple"], MODEL_PENDING);
     assert!(v.get("error").is_none() && v.get("usage").is_none());
     let last = progress.finish(
@@ -327,7 +397,8 @@ fn resp_payload_laesst_error_und_usage_weg_wenn_leer() {
     );
     let v = serde_json::to_value(&last).unwrap();
     assert_eq!(v["usage"], json!({"input_tokens": 10, "output_tokens": 3}));
-    let failed = Progress::new("r-2", PHONE, &KEY).finish("", MODEL_UNKNOWN, Some(ERR_TIMEOUT), None);
+    let failed =
+        Progress::new("r-2", PHONE, &KEY).finish("", MODEL_UNKNOWN, Some(ERR_TIMEOUT), None);
     assert_eq!(serde_json::to_value(&failed).unwrap()["error"], "timeout");
 }
 
@@ -388,22 +459,40 @@ fn falscher_mac_wird_ignoriert() {
     let s = store(&["sonnet"]);
     let mut r = signed("r-1", "sonnet");
     r.mac = "00".repeat(32);
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
     let mut r = signed("r-1", "sonnet");
     r.prompt = "Etwas ganz anderes".into();
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
     let mut r = signed("r-1", "sonnet");
     r.system = "Neue Anweisung".into();
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
     let mut r = signed("r-1", "sonnet");
     r.max_tokens = 100;
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
     let mut r = signed("r-1", "sonnet");
     r.mac = mac_hex(&[9u8; 32], req_canonical(&r).as_bytes());
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
     let mut r = signed("r-1", "sonnet");
     r.mac = "kein hex".into();
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("mac"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("mac")
+    );
 }
 
 #[test]
@@ -416,7 +505,10 @@ fn fremdes_geraet_ohne_freigabe_wird_ignoriert() {
     resign(&mut r);
     let mut g = gate(&published, &s);
     g.hub_device_id = other;
-    assert_eq!(check_request("r-1", &r, &g), Verdict::Ignore("keine_freigabe"));
+    assert_eq!(
+        check_request("r-1", &r, &g),
+        Verdict::Ignore("keine_freigabe")
+    );
     // Der Inhalt nennt ein anderes Geraet als das, das ihn in den Hub gelegt hat.
     let r = signed("r-1", "sonnet");
     let mut g = gate(&published, &s);
@@ -425,7 +517,10 @@ fn fremdes_geraet_ohne_freigabe_wird_ignoriert() {
     let mut r = signed("r-1", "sonnet");
     r.key_id = "0000000000000000".into();
     resign(&mut r);
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("keine_freigabe"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("keine_freigabe")
+    );
 }
 
 #[test]
@@ -445,7 +540,10 @@ fn nicht_freigegebenes_oder_unbekanntes_modell_wird_abgewiesen() {
     let mut r = signed("r-1", "sonnet");
     r.function = "dictation".into();
     resign(&mut r);
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Reject(ERR_NOT_ALLOWED));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Reject(ERR_NOT_ALLOWED)
+    );
 }
 
 #[test]
@@ -453,12 +551,21 @@ fn replay_derselben_request_id_startet_keinen_zweiten_aufruf() {
     let published = [entry("sonnet")];
     let mut s = store(&["sonnet"]);
     let r = signed("r-1", "sonnet");
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Accept);
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Accept
+    );
     s.record("r-1", &device_key(PHONE), true, r.expires_at * 1000, NOW);
-    assert_eq!(check_request("r-1", &r, &gate(&published, &s)), Verdict::Ignore("replay"));
+    assert_eq!(
+        check_request("r-1", &r, &gate(&published, &s)),
+        Verdict::Ignore("replay")
+    );
     let r2 = signed("r-2", "sonnet");
     s.record("r-2", &device_key(PHONE), false, r2.expires_at * 1000, NOW);
-    assert_eq!(check_request("r-2", &r2, &gate(&published, &s)), Verdict::Ignore("replay"));
+    assert_eq!(
+        check_request("r-2", &r2, &gate(&published, &s)),
+        Verdict::Ignore("replay")
+    );
 }
 
 #[test]
@@ -509,17 +616,29 @@ fn abgelaufene_und_schief_datierte_anfragen_bekommen_clock() {
     early.expires_at = early.created_at + REQUEST_WINDOW_S;
     resign(&mut early);
     g.now_ms = CREATED * 1000;
-    assert_eq!(check_request("r-1", &early, &g), Verdict::Reject(ERR_CLOCK), "iPhone-Uhr geht vor");
+    assert_eq!(
+        check_request("r-1", &early, &g),
+        Verdict::Reject(ERR_CLOCK),
+        "iPhone-Uhr geht vor"
+    );
     let mut ahead = signed("r-1", "sonnet");
     ahead.created_at = CREATED + CLOCK_SKEW_S;
     ahead.expires_at = ahead.created_at + REQUEST_WINDOW_S;
     resign(&mut ahead);
-    assert_eq!(check_request("r-1", &ahead, &g), Verdict::Accept, "genau 120 s vor: noch gueltig");
+    assert_eq!(
+        check_request("r-1", &ahead, &g),
+        Verdict::Accept,
+        "genau 120 s vor: noch gueltig"
+    );
     let mut late = signed("r-1", "sonnet");
     late.created_at = CREATED - CLOCK_SKEW_S - 5;
     late.expires_at = late.created_at + REQUEST_WINDOW_S;
     resign(&mut late);
-    assert_eq!(check_request("r-1", &late, &g), Verdict::Reject(ERR_CLOCK), "iPhone-Uhr geht nach");
+    assert_eq!(
+        check_request("r-1", &late, &g),
+        Verdict::Reject(ERR_CLOCK),
+        "iPhone-Uhr geht nach"
+    );
     // Eine nicht authentische Anfrage mit falscher Zeit bleibt unbeantwortet.
     let mut forged = early.clone();
     forged.mac = "00".repeat(32);
@@ -528,7 +647,10 @@ fn abgelaufene_und_schief_datierte_anfragen_bekommen_clock() {
     let mut long = signed("r-1", "sonnet");
     long.expires_at = long.created_at + 600;
     resign(&mut long);
-    assert_eq!(check_request("r-1", &long, &gate(&published, &s)), Verdict::Ignore("frist"));
+    assert_eq!(
+        check_request("r-1", &long, &gate(&published, &s)),
+        Verdict::Ignore("frist")
+    );
 }
 
 #[test]
@@ -539,9 +661,21 @@ fn clock_antwort_wird_nur_einmal_gegeben() {
     early.created_at = CREATED + 1000;
     early.expires_at = early.created_at + REQUEST_WINDOW_S;
     resign(&mut early);
-    assert_eq!(check_request("r-1", &early, &gate(&published, &s)), Verdict::Reject(ERR_CLOCK));
-    s.record("r-1", &device_key(PHONE), false, early.expires_at * 1000, NOW);
-    assert_eq!(check_request("r-1", &early, &gate(&published, &s)), Verdict::Ignore("replay"));
+    assert_eq!(
+        check_request("r-1", &early, &gate(&published, &s)),
+        Verdict::Reject(ERR_CLOCK)
+    );
+    s.record(
+        "r-1",
+        &device_key(PHONE),
+        false,
+        early.expires_at * 1000,
+        NOW,
+    );
+    assert_eq!(
+        check_request("r-1", &early, &gate(&published, &s)),
+        Verdict::Ignore("replay")
+    );
     // Auch bei weit zurueckliegender `created_at` bleibt die Sperre mindestens 10 min ab jetzt.
     let mut s = store(&["sonnet"]);
     s.record("old", &device_key(PHONE), false, 1000, NOW);
@@ -560,21 +694,36 @@ fn grenzen_groesse_tokens_stunde_tag_parallel() {
     let mut big = signed("r-1", "sonnet");
     big.prompt = "ä".repeat(MAX_PROMPT_CHARS);
     resign(&mut big);
-    assert_eq!(check_request("r-1", &big, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
+    assert_eq!(
+        check_request("r-1", &big, &gate(&published, &s)),
+        Verdict::Reject(ERR_LIMIT)
+    );
     let mut sys = signed("r-1", "sonnet");
     sys.system = "x".repeat(MAX_SYSTEM_CHARS + 1);
     resign(&mut sys);
-    assert_eq!(check_request("r-1", &sys, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
+    assert_eq!(
+        check_request("r-1", &sys, &gate(&published, &s)),
+        Verdict::Reject(ERR_LIMIT)
+    );
     let mut tokens = signed("r-1", "sonnet");
     tokens.max_tokens = MAX_TOKENS_LIMIT + 1;
     resign(&mut tokens);
-    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
+    assert_eq!(
+        check_request("r-1", &tokens, &gate(&published, &s)),
+        Verdict::Reject(ERR_LIMIT)
+    );
     tokens.max_tokens = MAX_TOKENS_LIMIT;
     resign(&mut tokens);
-    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Accept);
+    assert_eq!(
+        check_request("r-1", &tokens, &gate(&published, &s)),
+        Verdict::Accept
+    );
     tokens.max_tokens = 0;
     resign(&mut tokens);
-    assert_eq!(check_request("r-1", &tokens, &gate(&published, &s)), Verdict::Reject(ERR_LIMIT));
+    assert_eq!(
+        check_request("r-1", &tokens, &gate(&published, &s)),
+        Verdict::Reject(ERR_LIMIT)
+    );
     // 30 je Stunde.
     for i in 0..MAX_PER_HOUR {
         s.record(&format!("h-{i}"), &dkey, true, NOW, NOW - 60_000);
@@ -588,7 +737,10 @@ fn grenzen_groesse_tokens_stunde_tag_parallel() {
     for i in 0..MAX_PER_HOUR - 1 {
         s29.record(&format!("h-{i}"), &dkey, true, NOW, NOW - 60_000);
     }
-    assert_eq!(check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s29)), Verdict::Accept);
+    assert_eq!(
+        check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s29)),
+        Verdict::Accept
+    );
     // 200 je Tag (die Stunde ist leer, der Tag voll).
     let mut s = store(&["sonnet"]);
     for i in 0..MAX_PER_DAY {
@@ -598,7 +750,11 @@ fn grenzen_groesse_tokens_stunde_tag_parallel() {
         check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s)),
         Verdict::Reject(ERR_LIMIT)
     );
-    assert_eq!(s.accepted_since("anderes", NOW - DAY_MS * 2), 0, "andere Geraete zaehlen getrennt");
+    assert_eq!(
+        s.accepted_since("anderes", NOW - DAY_MS * 2),
+        0,
+        "andere Geraete zaehlen getrennt"
+    );
 }
 
 #[test]
@@ -609,7 +765,10 @@ fn zweite_parallele_anfrage_desselben_geraets_wird_abgewiesen() {
     assert!(busy.try_begin(PHONE, "r-1"));
     let mut g = gate(&published, &s);
     g.busy = busy.is_busy(PHONE);
-    assert_eq!(check_request("r-2", &signed("r-2", "sonnet"), &g), Verdict::Reject(ERR_LIMIT));
+    assert_eq!(
+        check_request("r-2", &signed("r-2", "sonnet"), &g),
+        Verdict::Reject(ERR_LIMIT)
+    );
     assert!(!busy.try_begin(PHONE, "r-2"));
     assert!(busy.try_begin("tablet", "r-3"));
     busy.end(PHONE, "r-2");
@@ -635,7 +794,10 @@ fn widerruf_entzieht_freigabe_schluessel_und_laufende_anfrage() {
         check_request("r-1", &signed("r-1", "sonnet"), &gate(&published, &s)),
         Verdict::Ignore("keine_freigabe")
     );
-    assert!(!update_store(&path, |s| s.revoke(&device_key(PHONE))).unwrap(), "zweiter Widerruf: nichts");
+    assert!(
+        !update_store(&path, |s| s.revoke(&device_key(PHONE))).unwrap(),
+        "zweiter Widerruf: nichts"
+    );
     // Ohne Freigabe bleibt die Modellliste leer (models_ wird zurueckgezogen).
     assert!(published_models(&published, &s.grants, NOW).is_empty());
 }
@@ -737,8 +899,14 @@ fn langer_text_wird_an_zeichengrenze_gekuerzt() {
 
 #[test]
 fn fehlertexte_werden_auf_spec_codes_abgebildet() {
-    assert_eq!(map_error("cli_timeout: Die CLI hat nicht rechtzeitig geantwortet"), ERR_TIMEOUT);
-    assert_eq!(map_error("cli_missing: nicht installiert"), ERR_MODEL_UNAVAILABLE);
+    assert_eq!(
+        map_error("cli_timeout: Die CLI hat nicht rechtzeitig geantwortet"),
+        ERR_TIMEOUT
+    );
+    assert_eq!(
+        map_error("cli_missing: nicht installiert"),
+        ERR_MODEL_UNAVAILABLE
+    );
     assert_eq!(map_error("cli_not_logged_in: login"), ERR_MODEL_UNAVAILABLE);
     assert_eq!(map_error("cli_model_not_in_plan: x"), ERR_MODEL_UNAVAILABLE);
     assert_eq!(map_error("compliance_blocked: Claude (x)"), ERR_NOT_ALLOWED);
@@ -753,7 +921,13 @@ const INJECTION: &str =
 #[test]
 fn claude_aufruf_ist_isoliert_und_traegt_den_buchtext_nicht_in_der_argumentliste() {
     use crate::managers::llm::cli::{args_with, missing_flags, required_flags};
-    let argv = args_with(Cli::Claude, "sonnet", Some("high"), false, Some("Antworte kurz."));
+    let argv = args_with(
+        Cli::Claude,
+        "sonnet",
+        Some("high"),
+        false,
+        Some("Antworte kurz."),
+    );
     let joined = argv.join(" ");
     let at = argv.iter().position(|a| a == "--tools").expect("--tools");
     assert_eq!(argv[at + 1], "", "leere Werkzeugliste");
@@ -764,7 +938,10 @@ fn claude_aufruf_ist_isoliert_und_traegt_den_buchtext_nicht_in_der_argumentliste
     assert!(joined.contains(r#"{"mcpServers":{}}"#));
     assert!(argv.contains(&"--disable-slash-commands".to_string()));
     assert!(!joined.contains("dangerously"), "nie --dangerously-*");
-    assert!(!joined.contains(INJECTION), "Buchtext geht ueber stdin, nicht ueber die Argumente");
+    assert!(
+        !joined.contains(INJECTION),
+        "Buchtext geht ueber stdin, nicht ueber die Argumente"
+    );
     for flag in required_flags(Cli::Claude) {
         assert!(argv.iter().any(|a| a == flag), "{flag} fehlt");
     }
@@ -789,7 +966,11 @@ fn codex_aufruf_ist_isoliert() {
     let joined = argv.join(" ");
     let at = argv.iter().position(|a| a == "--sandbox").unwrap();
     assert_eq!(argv[at + 1], "read-only");
-    assert_eq!(argv.last().map(String::as_str), Some("-"), "Prompt aus stdin");
+    assert_eq!(
+        argv.last().map(String::as_str),
+        Some("-"),
+        "Prompt aus stdin"
+    );
     for needle in [
         "exec",
         "--ephemeral",
@@ -828,11 +1009,22 @@ fn modell_aus_cli_ausgabe_wird_gelesen() {
     use crate::managers::llm::cli::{parse_claude, parse_codex};
     let claude = r#"{"type":"result","is_error":false,"result":"Hallo","usage":{"input_tokens":5,"output_tokens":2},
         "modelUsage":{"claude-haiku-5":{"outputTokens":1},"claude-sonnet-5-5":{"outputTokens":40}}}"#;
-    assert_eq!(parse_claude(claude).unwrap().model.as_deref(), Some("claude-sonnet-5-5"));
-    assert_eq!(parse_claude(r#"{"result":"x","is_error":false}"#).unwrap().model, None);
+    assert_eq!(
+        parse_claude(claude).unwrap().model.as_deref(),
+        Some("claude-sonnet-5-5")
+    );
+    assert_eq!(
+        parse_claude(r#"{"result":"x","is_error":false}"#)
+            .unwrap()
+            .model,
+        None
+    );
     let codex = "{\"type\":\"thread.started\",\"model\":\"gpt-6.1-sol\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Hi\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}";
     let r = parse_codex(codex).unwrap();
-    assert_eq!((r.model.as_deref(), r.text.as_str()), (Some("gpt-6.1-sol"), "Hi"));
+    assert_eq!(
+        (r.model.as_deref(), r.text.as_str()),
+        (Some("gpt-6.1-sol"), "Hi")
+    );
 }
 
 // ---- Modellliste ------------------------------------------------------------------
@@ -849,21 +1041,22 @@ fn settings_with_models() -> AppSettings {
         budget_enforced: false,
         training_opt_out: false,
     };
-    let model = |id: &str, conn: &str, remote: &str, enabled: bool, ctx: Option<u32>| LlmModelConfig {
-        id: id.into(),
-        connection_id: conn.into(),
-        remote_id: remote.into(),
-        label: format!("Label {remote}"),
-        enabled,
-        context_limit: ctx,
-        max_input_tokens: None,
-        max_output_tokens: None,
-        price_input_per_mtok: None,
-        price_output_per_mtok: None,
-        tags: Vec::new(),
-        effort: None,
-        fast: false,
-    };
+    let model =
+        |id: &str, conn: &str, remote: &str, enabled: bool, ctx: Option<u32>| LlmModelConfig {
+            id: id.into(),
+            connection_id: conn.into(),
+            remote_id: remote.into(),
+            label: format!("Label {remote}"),
+            enabled,
+            context_limit: ctx,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            price_input_per_mtok: None,
+            price_output_per_mtok: None,
+            tags: Vec::new(),
+            effort: None,
+            fast: false,
+        };
     s.llm_connections = vec![
         conn("claude_cli", "cli://claude", true),
         conn("codex_cli", "cli://codex", true),
@@ -899,16 +1092,26 @@ fn modellliste_nur_eingeschaltete_bereite_abo_modelle_mit_cli_kennung() {
     s.book_talk_relay_enabled = true;
     let list = eligible_models(&s, BOTH);
     let ids: Vec<&str> = list.iter().map(|m| m.id.as_str()).collect();
-    assert_eq!(ids, ["sonnet", "gpt-6.1-sol"], "veroeffentlicht wird die CLI-Kennung");
+    assert_eq!(
+        ids,
+        ["sonnet", "gpt-6.1-sol"],
+        "veroeffentlicht wird die CLI-Kennung"
+    );
     assert_eq!(list[0].config_id, "claude:sonnet");
     assert_eq!(list[0].provider, "claude_cli");
     assert_eq!(list[0].context_tokens, 200_000);
     assert_eq!(list[1].provider, "codex_cli");
     assert_eq!(list[1].context_tokens, DEFAULT_CONTEXT_TOKENS);
-    let only: Vec<String> = eligible_models(&s, Ready { claude: true, codex: false })
-        .into_iter()
-        .map(|m| m.id)
-        .collect();
+    let only: Vec<String> = eligible_models(
+        &s,
+        Ready {
+            claude: true,
+            codex: false,
+        },
+    )
+    .into_iter()
+    .map(|m| m.id)
+    .collect();
     assert_eq!(only, ["sonnet"]);
 }
 
@@ -917,17 +1120,30 @@ fn veroeffentlicht_wird_nur_was_ein_geraet_nutzen_darf() {
     let mut s = settings_with_models();
     s.book_talk_relay_enabled = true;
     let eligible = eligible_models(&s, BOTH);
-    assert!(published_models(&eligible, &[], NOW).is_empty(), "ohne Freigabe nichts");
+    assert!(
+        published_models(&eligible, &[], NOW).is_empty(),
+        "ohne Freigabe nichts"
+    );
     let g = [grant(&["gpt-6.1-sol"])];
-    let ids: Vec<String> = published_models(&eligible, &g, NOW).into_iter().map(|m| m.id).collect();
+    let ids: Vec<String> = published_models(&eligible, &g, NOW)
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
     assert_eq!(ids, ["gpt-6.1-sol"]);
     let mut expired = grant(&["gpt-6.1-sol"]);
     expired.expires_at_ms = NOW - 1;
     assert!(published_models(&eligible, &[expired], NOW).is_empty());
     let a = models_fingerprint(&g[0].key_id, &published_models(&eligible, &g, NOW));
     let g2 = [grant(&["gpt-6.1-sol", "sonnet"])];
-    assert_ne!(a, models_fingerprint(&g[0].key_id, &published_models(&eligible, &g2, NOW)));
-    assert_ne!(a, models_fingerprint("anderer-schluessel", &published_models(&eligible, &g, NOW)), "neuer Schluessel = neu signieren");
+    assert_ne!(
+        a,
+        models_fingerprint(&g[0].key_id, &published_models(&eligible, &g2, NOW))
+    );
+    assert_ne!(
+        a,
+        models_fingerprint("anderer-schluessel", &published_models(&eligible, &g, NOW)),
+        "neuer Schluessel = neu signieren"
+    );
 }
 
 #[test]
@@ -937,7 +1153,8 @@ fn aufruf_einstellungen_machen_das_modell_zum_aktiven() {
     let published = eligible_models(&s, BOTH);
     let codex = published.iter().find(|m| m.id == "gpt-6.1-sol").unwrap();
     let call = settings_for_model(&s, &codex.config_id);
-    let (provider, model, _) = crate::managers::meetings::llm_call::resolve_provider_coded(&call).unwrap();
+    let (provider, model, _) =
+        crate::managers::meetings::llm_call::resolve_provider_coded(&call).unwrap();
     assert_eq!(provider.id, "codex_cli");
     assert!(model.starts_with("gpt-6.1-sol"));
     assert!(Cli::from_base_url(&provider.base_url).is_some());
@@ -958,7 +1175,12 @@ fn test_cfg() -> SyncConfig {
 }
 
 fn ctx_from(st: &LoopState, path: &Path) -> Arc<Ctx> {
-    Arc::new(Ctx::new(test_cfg(), [5u8; 32], path.to_path_buf(), st.shared.clone()))
+    Arc::new(Ctx::new(
+        test_cfg(),
+        [5u8; 32],
+        path.to_path_buf(),
+        st.shared.clone(),
+    ))
 }
 
 #[test]
@@ -970,7 +1192,12 @@ fn belegt_status_und_abbruch_ueberleben_mehrere_takte() {
     let tick1 = ctx_from(&st, &path);
     assert!(tick1.shared.lock().unwrap().busy.try_begin(PHONE, "r-1"));
     let flag = Arc::new(AtomicBool::new(false));
-    tick1.shared.lock().unwrap().cancels.insert("r-1".into(), flag.clone());
+    tick1
+        .shared
+        .lock()
+        .unwrap()
+        .cancels
+        .insert("r-1".into(), flag.clone());
     // Takt 2 (neuer Ctx): dieselbe Anfrage ist weiter belegt, zweite wird abgewiesen.
     let tick2 = ctx_from(&st, &path);
     assert!(tick2.shared.lock().unwrap().busy.is_busy(PHONE));
@@ -981,7 +1208,10 @@ fn belegt_status_und_abbruch_ueberleben_mehrere_takte() {
     // Ende ueber Takt 3 gibt das Geraet frei; die naechste Anfrage laeuft wieder.
     let tick3 = ctx_from(&st, &path);
     end_busy(&tick3, PHONE, "r-1");
-    assert!(!tick1.shared.lock().unwrap().busy.is_busy(PHONE), "alle Takte sehen dasselbe");
+    assert!(
+        !tick1.shared.lock().unwrap().busy.is_busy(PHONE),
+        "alle Takte sehen dasselbe"
+    );
     assert!(tick3.shared.lock().unwrap().cancels.is_empty());
     assert!(tick3.shared.lock().unwrap().busy.try_begin(PHONE, "r-2"));
     assert!(tick1.shared.lock().unwrap().busy.is_busy(PHONE));
@@ -1027,8 +1257,14 @@ fn defekte_ablage_wird_beiseite_gelegt_nie_ueberschrieben() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(aside.len(), 1);
-    assert!(aside[0].starts_with("booktalk_relay.json.defekt-"), "{aside:?}");
-    assert_eq!(std::fs::read_to_string(dir.path().join(&aside[0])).unwrap(), "{ kaputt");
+    assert!(
+        aside[0].starts_with("booktalk_relay.json.defekt-"),
+        "{aside:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(&aside[0])).unwrap(),
+        "{ kaputt"
+    );
     // Das Relay ist aus (keine Freigabe), bis neu freigegeben wird.
     assert!(!still_authorized(&path, PHONE, "k"));
     update_store(&path, |s| s.add_grant(grant(&["sonnet"]))).unwrap();
@@ -1041,7 +1277,10 @@ fn freigabe_ist_pending_bis_zur_ersten_gueltigen_anfrage() {
     let g = new_grant(PHONE, "iPhone", vec!["sonnet".into()], NOW);
     let key_id = g.key_id.clone();
     s.add_grant(g.clone());
-    assert!(g.pending(NOW) && g.active(NOW), "Code gilt, Freigabe nutzbar fuer die erste Anfrage");
+    assert!(
+        g.pending(NOW) && g.active(NOW),
+        "Code gilt, Freigabe nutzbar fuer die erste Anfrage"
+    );
     assert!(s.grant_for(PHONE, &key_id, NOW + 9 * 60_000).is_some());
     // Code nach 10 Minuten ohne Nutzung: Freigabe samt Schluessel verfaellt.
     assert!(s.grant_for(PHONE, &key_id, NOW + CODE_TTL_MS + 1).is_none());
@@ -1076,11 +1315,19 @@ fn erneutes_anzeigen_erzeugt_neuen_schluessel_und_entwertet_den_alten() {
     let first = new_grant(PHONE, "iPhone", vec!["sonnet".into()], NOW);
     s.add_grant(first.clone());
     s.activate(PHONE, &first.key_id);
-    let fresh = new_grant(&first.device_id, &first.name, first.model_ids.clone(), NOW + 5000);
+    let fresh = new_grant(
+        &first.device_id,
+        &first.name,
+        first.model_ids.clone(),
+        NOW + 5000,
+    );
     s.add_grant(fresh.clone());
     assert_eq!(s.grants.len(), 1);
     assert_ne!(first.key_id, fresh.key_id);
-    assert!(s.grant_for(PHONE, &first.key_id, NOW + 6000).is_none(), "alter Schluessel ungueltig");
+    assert!(
+        s.grant_for(PHONE, &first.key_id, NOW + 6000).is_none(),
+        "alter Schluessel ungueltig"
+    );
     assert!(s.grant_for(PHONE, &fresh.key_id, NOW + 6000).is_some());
     // Eine mit dem alten Schluessel signierte Anfrage wird ignoriert.
     let published = [entry("sonnet")];
@@ -1090,14 +1337,18 @@ fn erneutes_anzeigen_erzeugt_neuen_schluessel_und_entwertet_den_alten() {
     old_signed.mac = mac_hex(&key, req_canonical(&old_signed).as_bytes());
     let mut g = gate(&published, &s);
     g.now_ms = NOW + 6000;
-    assert_eq!(check_request("r-1", &old_signed, &g), Verdict::Ignore("keine_freigabe"));
+    assert_eq!(
+        check_request("r-1", &old_signed, &g),
+        Verdict::Ignore("keine_freigabe")
+    );
 }
 
 #[test]
 fn einrichtungscode_traegt_code_und_freigabeablauf_getrennt() {
     let g = new_grant(PHONE, "iPhone", vec!["sonnet".into()], 1_793_900_000_000);
     let code = pairing_code("desk-1", "PC", &g);
-    let v: serde_json::Value = serde_json::from_str(code.strip_prefix("lvrelay1:").unwrap()).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(code.strip_prefix("lvrelay1:").unwrap()).unwrap();
     assert_eq!(v["expires_at"], 1_793_900_600_i64);
     assert_eq!(v["grant_expires_at"], 1_793_900_000_i64 + 90 * 86_400);
 }
@@ -1110,7 +1361,10 @@ fn qr_bild_ist_ein_skriptfreies_svg_mit_ruhezone() {
     assert!(svg.starts_with("<svg ") && svg.ends_with("</svg>"));
     assert!(svg.contains("viewBox=\"0 0 ") && svg.contains("<path d=\"M"));
     assert!(!svg.contains("<script") && !svg.contains("onload"));
-    assert!(qr_svg(&"x".repeat(10_000)).is_err(), "zu lang fuer einen QR-Code: Fehler statt Absturz");
+    assert!(
+        qr_svg(&"x".repeat(10_000)).is_err(),
+        "zu lang fuer einen QR-Code: Fehler statt Absturz"
+    );
 }
 
 #[test]
@@ -1126,7 +1380,10 @@ fn listen_je_geraet_nur_mit_erlaubten_modellen() {
     expired.device_key = "dddddddddddd".into();
     expired.expires_at_ms = NOW - 1;
     let lists = device_lists(&published, &[a, b, none, expired], NOW);
-    assert_eq!(lists.keys().cloned().collect::<Vec<_>>(), ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]);
+    assert_eq!(
+        lists.keys().cloned().collect::<Vec<_>>(),
+        ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]
+    );
     assert_eq!(lists["aaaaaaaaaaaa"].1.len(), 1);
     assert_eq!(lists["bbbbbbbbbbbb"].1.len(), 2);
 }
@@ -1134,6 +1391,14 @@ fn listen_je_geraet_nur_mit_erlaubten_modellen() {
 #[test]
 fn abgewiesene_anfrage_ist_unknown_mit_code_und_mac() {
     let end = Progress::new("r-1", PHONE, &KEY).finish("", MODEL_UNKNOWN, Some(ERR_LIMIT), None);
-    assert_eq!((end.model_tuple.as_str(), end.error.as_deref(), end.done, end.seq), ("unknown", Some("limit"), true, 1));
+    assert_eq!(
+        (
+            end.model_tuple.as_str(),
+            end.error.as_deref(),
+            end.done,
+            end.seq
+        ),
+        ("unknown", Some("limit"), true, 1)
+    );
     assert!(resp_mac_ok(&KEY, &end));
 }

@@ -73,7 +73,9 @@ use super::client::{HubClient, HubDevice, HubError, PushObject, RemoteObject};
 use super::crypto;
 use crate::managers::llm::cli::Cli;
 use crate::settings::AppSettings;
-use base64::{engine::general_purpose::STANDARD as B64, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::STANDARD as B64, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _,
+};
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -540,7 +542,14 @@ impl RelayStore {
     }
 
     /// Anfrage merken; `accepted` zaehlt gegen die Stunden- und Tagesgrenze.
-    pub fn record(&mut self, request_id: &str, device_key: &str, accepted: bool, expires_ms: i64, now_ms: i64) {
+    pub fn record(
+        &mut self,
+        request_id: &str,
+        device_key: &str,
+        accepted: bool,
+        expires_ms: i64,
+        now_ms: i64,
+    ) {
         // Auch bei einer Anfrage mit abwegiger Uhrzeit mindestens `SEEN_GRACE_MS` ab jetzt sperren.
         let until = if accepted {
             (expires_ms + SEEN_GRACE_MS).max(now_ms + DAY_MS)
@@ -558,7 +567,8 @@ impl RelayStore {
     pub fn prune(&mut self, now_ms: i64) {
         self.seen.retain(|s| s.until_ms > now_ms);
         // Nie benutzter Einrichtungscode abgelaufen: Freigabe samt Schluessel weg.
-        self.grants.retain(|g| g.activated || g.code_expires_at_ms > now_ms);
+        self.grants
+            .retain(|g| g.activated || g.code_expires_at_ms > now_ms);
     }
 
     /// Erste gueltige Anfrage des iPhones: Freigabe aktivieren (der Code ist damit
@@ -581,7 +591,9 @@ impl RelayStore {
     pub fn accepted_since(&self, device_key: &str, since_ms: i64) -> usize {
         self.seen
             .iter()
-            .filter(|s| s.device_key == device_key && s.accepted_ms > 0 && s.accepted_ms >= since_ms)
+            .filter(|s| {
+                s.device_key == device_key && s.accepted_ms > 0 && s.accepted_ms >= since_ms
+            })
             .count()
     }
 
@@ -649,7 +661,10 @@ pub fn update_store<R>(path: &Path, f: impl FnOnce(&mut RelayStore) -> R) -> Res
         Loaded::Ok(store) => store,
         Loaded::Missing => RelayStore::default(),
         Loaded::Corrupt => {
-            let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+            let mut name = path
+                .file_name()
+                .map(|n| n.to_os_string())
+                .unwrap_or_default();
             name.push(format!(".defekt-{}", now_ms()));
             std::fs::rename(path, path.with_file_name(name))
                 .map_err(|e| format!("Relay-Ablage defekt und nicht beiseite zu legen: {e}"))?;
@@ -724,7 +739,11 @@ pub fn qr_svg(text: &str) -> Result<String, String> {
     let mut path = String::new();
     for (i, c) in code.to_colors().into_iter().enumerate() {
         if c == Color::Dark {
-            path.push_str(&format!("M{} {}h1v1h-1z", i % width + quiet, i / width + quiet));
+            path.push_str(&format!(
+                "M{} {}h1v1h-1z",
+                i % width + quiet,
+                i / width + quiet
+            ));
         }
     }
     Ok(format!(
@@ -799,7 +818,11 @@ pub fn eligible_models(settings: &AppSettings, ready: Ready) -> Vec<ModelEntry> 
 
 /// Veroeffentlicht wird, was mindestens ein Geraet nutzen darf (R1). Ohne
 /// Freigabe bleibt die Liste leer -- dann wird das Objekt geloescht.
-pub fn published_models(eligible: &[ModelEntry], grants: &[DeviceGrant], now_ms: i64) -> Vec<ModelEntry> {
+pub fn published_models(
+    eligible: &[ModelEntry],
+    grants: &[DeviceGrant],
+    now_ms: i64,
+) -> Vec<ModelEntry> {
     eligible
         .iter()
         .filter(|m| {
@@ -814,7 +837,10 @@ pub fn published_models(eligible: &[ModelEntry], grants: &[DeviceGrant], now_ms:
 /// Fingerabdruck einer Geraeteliste (ohne `updated_at`, mit Schluessel-ID, weil
 /// ein neuer Schluessel eine neu signierte Liste braucht).
 pub fn models_fingerprint(key_id: &str, models: &[ModelEntry]) -> String {
-    sha256_hex(&format!("{key_id}|{}", serde_json::to_string(models).unwrap_or_default()))
+    sha256_hex(&format!(
+        "{key_id}|{}",
+        serde_json::to_string(models).unwrap_or_default()
+    ))
 }
 
 /// Objekt-Kennung der Liste fuer ein Geraet: `models_<desktop>_<geraet>`.
@@ -847,18 +873,24 @@ pub fn device_lists(
 
 /// Beim Start: das fruehere gemeinsame `models_<desktop>` und Listen von
 /// Geraeten ohne gueltige Freigabe loeschen (Hub-Objekte haben keine TTL).
-async fn sweep_lists(ctx: &Arc<Ctx>, st: &mut LoopState, keep: &BTreeSet<String>) -> Result<(), HubError> {
+async fn sweep_lists(
+    ctx: &Arc<Ctx>,
+    st: &mut LoopState,
+    keep: &BTreeSet<String>,
+) -> Result<(), HubError> {
     let status = ctx.client.status().await?;
     st.devices = status.devices.clone();
     st.devices_at = Some(Instant::now());
     if status.objects.get(COLLECTION).copied().unwrap_or(0) == 0 {
         return Ok(());
     }
-    ctx.put(&object_id(Kind::Models, &ctx.cfg.device_id), None).await?;
+    ctx.put(&object_id(Kind::Models, &ctx.cfg.device_id), None)
+        .await?;
     let own = device_key(&ctx.cfg.device_id);
     for d in &status.devices {
         if valid_device_key(&d.device) && d.device != own && !keep.contains(&d.device) {
-            ctx.put(&list_object_id(&ctx.cfg.device_id, &d.device), None).await?;
+            ctx.put(&list_object_id(&ctx.cfg.device_id, &d.device), None)
+                .await?;
         }
     }
     Ok(())
@@ -913,7 +945,10 @@ pub fn check_request(object_request_id: &str, req: &ReqPayload, gate: &Gate<'_>)
         return Verdict::Ignore("kennung");
     }
     let dkey = device_key(&req.device_id);
-    let Some(grant) = gate.store.grant_for(&req.device_id, &req.key_id, gate.now_ms) else {
+    let Some(grant) = gate
+        .store
+        .grant_for(&req.device_id, &req.key_id, gate.now_ms)
+    else {
         return Verdict::Ignore("keine_freigabe");
     };
     let Some(key) = grant.key() else {
@@ -1025,7 +1060,14 @@ impl Progress {
         }
     }
 
-    fn build(&mut self, text: &str, model_tuple: &str, done: bool, error: Option<&str>, usage: Option<Usage>) -> RespPayload {
+    fn build(
+        &mut self,
+        text: &str,
+        model_tuple: &str,
+        done: bool,
+        error: Option<&str>,
+        usage: Option<Usage>,
+    ) -> RespPayload {
         self.seq += 1;
         self.sent_len = text.len();
         let mut r = RespPayload {
@@ -1059,7 +1101,13 @@ impl Progress {
     }
 
     /// Letzter Stand: `done:true`, bei einem Fehler mit Code.
-    pub fn finish(&mut self, text: &str, model_tuple: &str, error: Option<&str>, usage: Option<Usage>) -> RespPayload {
+    pub fn finish(
+        &mut self,
+        text: &str,
+        model_tuple: &str,
+        error: Option<&str>,
+        usage: Option<Usage>,
+    ) -> RespPayload {
         let text = clip_text(text, MAX_RESP_BYTES);
         self.build(text, model_tuple, true, error, usage)
     }
@@ -1161,7 +1209,12 @@ struct Ctx {
 }
 
 impl Ctx {
-    fn new(cfg: SyncConfig, key: [u8; crypto::KEY_LEN], store_path: PathBuf, shared: Arc<Mutex<Shared>>) -> Self {
+    fn new(
+        cfg: SyncConfig,
+        key: [u8; crypto::KEY_LEN],
+        store_path: PathBuf,
+        shared: Arc<Mutex<Shared>>,
+    ) -> Self {
         Self {
             key_id: crypto::key_id(&key),
             client: HubClient::new(&cfg.url, &cfg.token),
@@ -1238,14 +1291,20 @@ impl Ctx {
                     };
                     self.remember(object_id, current.revision);
                     if current.deleted {
-                        return Ok(if plain.is_none() { Written::Done } else { Written::Gone });
+                        return Ok(if plain.is_none() {
+                            Written::Done
+                        } else {
+                            Written::Gone
+                        });
                     }
                     base = current.revision;
                 }
                 other => return Err(HubError::Other(format!("Hub lehnt ab: {other}"))),
             }
         }
-        Err(HubError::Other("Hub ueberholt das Objekt wiederholt".into()))
+        Err(HubError::Other(
+            "Hub ueberholt das Objekt wiederholt".into(),
+        ))
     }
 
     async fn put_json<T: Serialize>(&self, id: &str, value: &T) -> Result<Written, HubError> {
@@ -1256,7 +1315,10 @@ impl Ctx {
     fn schedule_cleanup(&self, object_id: String, after_ms: i64) {
         let due = now_ms() + after_ms;
         let _ = update_store(&self.store_path, |s| {
-            s.cleanup.push(PendingCleanup { object_id, due_ms: due });
+            s.cleanup.push(PendingCleanup {
+                object_id,
+                due_ms: due,
+            });
         });
     }
 
@@ -1309,7 +1371,10 @@ pub fn start(app: AppHandle) {
 }
 
 fn account_tag(cfg: &SyncConfig) -> String {
-    format!("{}|{}|{}|{}", cfg.url, cfg.device_id, cfg.user_id, cfg.token)
+    format!(
+        "{}|{}|{}|{}",
+        cfg.url, cfg.device_id, cfg.user_id, cfg.token
+    )
 }
 
 async fn tick(app: &AppHandle, st: &mut LoopState) -> Duration {
@@ -1374,7 +1439,8 @@ async fn run_tick(
         let stale: Vec<String> = st.published_lists.drain().map(|(k, _)| k).collect();
         let had_lists = !stale.is_empty();
         for key in stale {
-            ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None).await?;
+            ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None)
+                .await?;
         }
         if had_lists {
             st.published.clear();
@@ -1399,7 +1465,8 @@ async fn run_tick(
         .cloned()
         .collect();
     for key in gone {
-        ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None).await?;
+        ctx.put(&list_object_id(&ctx.cfg.device_id, &key), None)
+            .await?;
         st.published_lists.remove(&key);
     }
     for (dkey, (grant, entries)) in &lists {
@@ -1411,7 +1478,8 @@ async fn run_tick(
             continue;
         };
         let payload = signed_models(&ctx.cfg.device_id, grant, &key, entries.clone(), now);
-        ctx.put_json(&list_object_id(&ctx.cfg.device_id, dkey), &payload).await?;
+        ctx.put_json(&list_object_id(&ctx.cfg.device_id, dkey), &payload)
+            .await?;
         st.published_lists.insert(dkey.clone(), fingerprint);
         log::info!("Buch-Relay: {} Modell(e) veroeffentlicht", entries.len());
     }
@@ -1461,7 +1529,12 @@ async fn run_cleanup(ctx: &Arc<Ctx>, due: Vec<PendingCleanup>) {
     }
 }
 
-async fn handle_remote(ctx: &Arc<Ctx>, st: &mut LoopState, settings: &AppSettings, remote: &RemoteObject) {
+async fn handle_remote(
+    ctx: &Arc<Ctx>,
+    st: &mut LoopState,
+    settings: &AppSettings,
+    remote: &RemoteObject,
+) {
     if remote.collection != COLLECTION || remote.device_id == ctx.cfg.device_id {
         return;
     }
@@ -1476,7 +1549,9 @@ async fn handle_remote(ctx: &Arc<Ctx>, st: &mut LoopState, settings: &AppSetting
                 cancel_request(ctx, id);
                 ctx.remember(&remote.object_id, remote.revision);
                 let oid = remote.object_id.clone();
-                let _ = update_store(&ctx.store_path, |s| s.cleanup.retain(|c| c.object_id != oid));
+                let _ = update_store(&ctx.store_path, |s| {
+                    s.cleanup.retain(|c| c.object_id != oid)
+                });
             }
         }
         Kind::Req if !remote.deleted => {
@@ -1561,7 +1636,9 @@ async fn handle_request(
                     store.record(request_id, &dkey, false, req.expires_at * 1000, now);
                 }
             }
-            Verdict::Reject(_) => store.record(request_id, &dkey, false, req.expires_at * 1000, now),
+            Verdict::Reject(_) => {
+                store.record(request_id, &dkey, false, req.expires_at * 1000, now)
+            }
             Verdict::Ignore(_) => {}
         }
         (verdict, grant)
@@ -1621,10 +1698,7 @@ async fn device_listed(ctx: &Ctx, st: &mut LoopState, device_id: &str) -> bool {
     if listed(&st.devices) {
         return true;
     }
-    if st
-        .devices_at
-        .is_some_and(|t| t.elapsed() < DEVICES_REFRESH)
-    {
+    if st.devices_at.is_some_and(|t| t.elapsed() < DEVICES_REFRESH) {
         return false;
     }
     match ctx.client.status().await {
@@ -1646,9 +1720,17 @@ fn still_authorized(path: &Path, device_id: &str, key_id: &str) -> bool {
 
 /// Eine Anfrage beantworten: Modell isoliert aufrufen, den Text jede Sekunde
 /// zurueckschreiben, am Ende `done`, `resp` zum Loeschen vormerken.
-async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: ReqPayload, sender: &str, key: &[u8]) {
+async fn process(
+    ctx: &Arc<Ctx>,
+    settings: &AppSettings,
+    config_id: &str,
+    req: ReqPayload,
+    sender: &str,
+    key: &[u8],
+) {
     use crate::llm_client::{
-        send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META, CLI_TIMEOUT,
+        send_chat_completion_stream, CliMeta, StreamMessage, CLI_CANCEL, CLI_MAX_TOKENS, CLI_META,
+        CLI_TIMEOUT,
     };
     let mut progress = Progress::new(&req.request_id, &req.device_id, key);
     // Das Abbruchsignal gehoert dieser Anfrage; verlassen wir `process` auf
@@ -1662,7 +1744,10 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
     let _cancel_on_exit = CancelOnDrop(cancel.clone());
     // Lebenszeichen vor der 15-s-Frist des iPhones.
     let started = progress.start();
-    if let Ok(Written::Gone) = ctx.put_json(&object_id(Kind::Resp, &req.request_id), &started).await {
+    if let Ok(Written::Gone) = ctx
+        .put_json(&object_id(Kind::Resp, &req.request_id), &started)
+        .await
+    {
         end_busy(ctx, sender, &req.request_id);
         return;
     }
@@ -1673,13 +1758,29 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
         Ok(r) => match Cli::from_base_url(&r.0.base_url) {
             Some(cli) if !crate::managers::llm::cli::api_key_in_env(cli) => r,
             _ => {
-                finish(ctx, &mut progress, "", MODEL_UNKNOWN, Some(ERR_MODEL_UNAVAILABLE), None).await;
+                finish(
+                    ctx,
+                    &mut progress,
+                    "",
+                    MODEL_UNKNOWN,
+                    Some(ERR_MODEL_UNAVAILABLE),
+                    None,
+                )
+                .await;
                 end_busy(ctx, sender, &req.request_id);
                 return;
             }
         },
         Err(_) => {
-            finish(ctx, &mut progress, "", MODEL_UNKNOWN, Some(ERR_MODEL_UNAVAILABLE), None).await;
+            finish(
+                ctx,
+                &mut progress,
+                "",
+                MODEL_UNKNOWN,
+                Some(ERR_MODEL_UNAVAILABLE),
+                None,
+            )
+            .await;
             end_busy(ctx, sender, &req.request_id);
             return;
         }
@@ -1742,14 +1843,19 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
         }
     };
     // Abbruch durch das iPhone (req/resp geloescht): nichts mehr schreiben.
-    if cancel.load(Ordering::SeqCst) || !still_authorized(&ctx.store_path, &req.device_id, &req.key_id) {
+    if cancel.load(Ordering::SeqCst)
+        || !still_authorized(&ctx.store_path, &req.device_id, &req.key_id)
+    {
         end_busy(ctx, sender, &req.request_id);
         return;
     }
     let info = meta.lock().map(|m| m.clone()).unwrap_or_default();
     // R7: das Modell laut CLI-Ausgabe; nennt sie keines, melden wir `unknown`
     // (nie die angefragte Kennung: das iPhone behandelt `unknown` als ungeprueft).
-    let model_tuple = info.model.clone().unwrap_or_else(|| MODEL_UNKNOWN.to_string());
+    let model_tuple = info
+        .model
+        .clone()
+        .unwrap_or_else(|| MODEL_UNKNOWN.to_string());
     let usage = (info.prompt_tokens + info.completion_tokens > 0).then(|| Usage {
         input_tokens: info.prompt_tokens,
         output_tokens: info.completion_tokens,
@@ -1760,11 +1866,27 @@ async fn process(ctx: &Arc<Ctx>, settings: &AppSettings, config_id: &str, req: R
         Ok(Err(e)) => {
             let code = map_error(&e);
             log::warn!("Buch-Relay: Modellaufruf fehlgeschlagen ({code})");
-            finish(ctx, &mut progress, &partial, &model_tuple, Some(code), usage).await;
+            finish(
+                ctx,
+                &mut progress,
+                &partial,
+                &model_tuple,
+                Some(code),
+                usage,
+            )
+            .await;
         }
         Err(_) => {
             log::warn!("Buch-Relay: Modellaufruf ueberschreitet den Zeitrahmen");
-            finish(ctx, &mut progress, &partial, &model_tuple, Some(ERR_TIMEOUT), usage).await;
+            finish(
+                ctx,
+                &mut progress,
+                &partial,
+                &model_tuple,
+                Some(ERR_TIMEOUT),
+                usage,
+            )
+            .await;
         }
     }
     end_busy(ctx, sender, &req.request_id);
@@ -1945,7 +2067,10 @@ pub async fn booktalk_relay_authorize(
         .into_iter()
         .map(|m| m.id)
         .collect();
-    let chosen: Vec<String> = model_ids.into_iter().filter(|id| offered.contains(id)).collect();
+    let chosen: Vec<String> = model_ids
+        .into_iter()
+        .filter(|id| offered.contains(id))
+        .collect();
     if chosen.is_empty() {
         return Err("Mindestens ein bereites Abo-Modell auswaehlen.".into());
     }
@@ -1953,7 +2078,9 @@ pub async fn booktalk_relay_authorize(
     let device_id = resolve_device_id(&client, &device_key)
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("Dieses Geraet hat noch nichts abgeglichen; bitte zuerst am iPhone synchronisieren.")?;
+        .ok_or(
+            "Dieses Geraet hat noch nichts abgeglichen; bitte zuerst am iPhone synchronisieren.",
+        )?;
     let grant = new_grant(&device_id, name.trim(), chosen, now_ms());
     let pairing = pairing_of(&cfg, &grant)?;
     update_store(&store_path(&app)?, |s| s.add_grant(grant))?;
@@ -1966,7 +2093,10 @@ pub async fn booktalk_relay_authorize(
 /// Code gilt wieder 10 Minuten. Name, Modelle und Geraet bleiben.
 #[tauri::command]
 #[specta::specta]
-pub fn booktalk_relay_renew_code(app: AppHandle, device_key: String) -> Result<RelayPairing, String> {
+pub fn booktalk_relay_renew_code(
+    app: AppHandle,
+    device_key: String,
+) -> Result<RelayPairing, String> {
     let cfg = account::load(&app).ok_or("Nicht angemeldet")?;
     let now = now_ms();
     let grant = update_store(&store_path(&app)?, |s| {

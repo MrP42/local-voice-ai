@@ -740,9 +740,11 @@ pub(crate) fn codex_model_of(ev: &serde_json::Value) -> Option<String> {
             .map(str::to_string)
     }
     direct(ev).or_else(|| {
-        ["item", "msg", "thread", "turn", "session", "config", "payload"]
-            .iter()
-            .find_map(|k| ev.get(k).and_then(direct))
+        [
+            "item", "msg", "thread", "turn", "session", "config", "payload",
+        ]
+        .iter()
+        .find_map(|k| ev.get(k).and_then(direct))
     })
 }
 
@@ -823,7 +825,12 @@ pub fn required_flags(cli: Cli) -> &'static [&'static str] {
             "--disable-slash-commands",
             "--system-prompt",
         ],
-        Cli::Codex => &["--json", "--sandbox", "--ephemeral", "--skip-git-repo-check"],
+        Cli::Codex => &[
+            "--json",
+            "--sandbox",
+            "--ephemeral",
+            "--skip-git-repo-check",
+        ],
     }
 }
 
@@ -851,7 +858,9 @@ pub fn api_key_vars(cli: Cli) -> &'static [&'static str] {
 
 /// Ist fuer die CLI ein API-Schluessel in der Umgebung gesetzt? (Spec 11.7 R6)
 pub fn api_key_in_env(cli: Cli) -> bool {
-    api_key_in(cli, |v| std::env::var_os(v).map(|x| x.to_string_lossy().into_owned()))
+    api_key_in(cli, |v| {
+        std::env::var_os(v).map(|x| x.to_string_lossy().into_owned())
+    })
 }
 
 /// Wie [`api_key_in_env`] mit frei waehlbarer Umgebung (Tests).
@@ -969,7 +978,15 @@ pub fn call_with_timeout(
     user: &str,
     timeout: Duration,
 ) -> Result<CliReply, String> {
-    call_with_options(cli, binary, model, system, user, timeout, &CallOptions::default())
+    call_with_options(
+        cli,
+        binary,
+        model,
+        system,
+        user,
+        timeout,
+        &CallOptions::default(),
+    )
 }
 
 /// Zusaetze eines Aufrufs.
@@ -1354,14 +1371,19 @@ mod tests {
         use AuthKind::*;
         let claude = |json: &str| parse_auth_kind(Cli::Claude, json, "");
         assert_eq!(
-            claude(r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"x@example.org"}"#),
+            claude(
+                r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","email":"x@example.org"}"#
+            ),
             Subscription
         );
         assert_eq!(
             claude(r#"{"loggedIn":true,"authMethod":"oauth_token","apiProvider":"firstParty"}"#),
             Subscription
         );
-        assert_eq!(claude(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#), Subscription);
+        assert_eq!(
+            claude(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#),
+            Subscription
+        );
         assert_eq!(
             claude(r#"{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}"#),
             Metered
@@ -1376,13 +1398,19 @@ mod tests {
         );
         // Unklar ist nie ein Abo.
         assert_eq!(claude(r#"{"loggedIn":true}"#), Unknown);
-        assert_eq!(claude(r#"{"loggedIn":false,"authMethod":"claude.ai"}"#), Unknown);
+        assert_eq!(
+            claude(r#"{"loggedIn":false,"authMethod":"claude.ai"}"#),
+            Unknown
+        );
         assert_eq!(claude("kaputt"), Unknown);
         assert_eq!(claude(""), Unknown);
         let codex = |out: &str, err: &str| parse_auth_kind(Cli::Codex, out, err);
         assert_eq!(codex("", "Logged in using ChatGPT"), Subscription);
         assert_eq!(codex("Logged in using ChatGPT\n", ""), Subscription);
-        assert_eq!(codex("", "Logged in using an API key - sk-proj-***abcd"), Metered);
+        assert_eq!(
+            codex("", "Logged in using an API key - sk-proj-***abcd"),
+            Metered
+        );
         assert_eq!(codex("Logged in using an API key", ""), Metered);
         assert_eq!(codex("Not logged in", ""), Unknown);
         assert_eq!(codex("Logged in", ""), Unknown);
@@ -1411,23 +1439,46 @@ mod tests {
     #[test]
     fn the_codex_model_is_read_from_several_event_shapes() {
         let m = |s: &str| codex_model_of(&serde_json::from_str(s).unwrap());
-        assert_eq!(m(r#"{"type":"thread.started","model":"gpt-6.1-sol"}"#).as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(m(r#"{"type":"session_configured","msg":{"model":"gpt-6.1-sol"}}"#).as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(m(r#"{"type":"turn.started","turn":{"model_slug":"gpt-6.1-sol"}}"#).as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(m(r#"{"type":"item.completed","item":{"type":"agent_message","model":"x1"}}"#).as_deref(), Some("x1"));
+        assert_eq!(
+            m(r#"{"type":"thread.started","model":"gpt-6.1-sol"}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"session_configured","msg":{"model":"gpt-6.1-sol"}}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"turn.started","turn":{"model_slug":"gpt-6.1-sol"}}"#).as_deref(),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            m(r#"{"type":"item.completed","item":{"type":"agent_message","model":"x1"}}"#)
+                .as_deref(),
+            Some("x1")
+        );
         assert_eq!(m(r#"{"type":"turn.completed","model":""}"#), None);
-        assert_eq!(m(r#"{"type":"turn.completed","usage":{"input_tokens":1}}"#), None);
+        assert_eq!(
+            m(r#"{"type":"turn.completed","usage":{"input_tokens":1}}"#),
+            None
+        );
         // Ohne Modellangabe bleibt es `None` (das Relay meldet dann `unknown`).
-        let out = "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Hi\"}}";
+        let out =
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Hi\"}}";
         assert_eq!(parse_codex(out).unwrap().model, None);
     }
 
     #[test]
     fn max_tokens_goes_to_codex_as_a_config_value_before_the_prompt_dash() {
-        assert_eq!(max_tokens_args(400), vec!["-c", "model_max_output_tokens=400"]);
+        assert_eq!(
+            max_tokens_args(400),
+            vec!["-c", "model_max_output_tokens=400"]
+        );
         assert_eq!(relay_flags(Cli::Codex), &["--config"]);
         assert!(relay_flags(Cli::Claude).is_empty());
-        assert_eq!(missing_relay_flags(Cli::Codex, "-c, --config <key=value>"), Vec::<&str>::new());
+        assert_eq!(
+            missing_relay_flags(Cli::Codex, "-c, --config <key=value>"),
+            Vec::<&str>::new()
+        );
         assert_eq!(missing_relay_flags(Cli::Codex, "--json"), vec!["--config"]);
     }
 
@@ -1456,7 +1507,12 @@ mod tests {
         assert!(is_cancelled(&err), "{err}");
         assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
         // Der Prozess ist weg (wait() im Abbruch hat ihn eingesammelt).
-        let alive = Command::new("kill").args(["-0", &pid.to_string()]).output().unwrap().status.success();
+        let alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .unwrap()
+            .status
+            .success();
         assert!(!alive, "Prozess {pid} laeuft noch");
     }
 
