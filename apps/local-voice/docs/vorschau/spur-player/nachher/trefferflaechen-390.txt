@@ -1,0 +1,6 @@
+Wiedergabe: 28x28 @148
+Wiedergabeposition: 136x24 @150
+Playback speed: 32x24 @150
+Wiedergabe: 28x28 @191
+Wiedergabeposition: 136x24 @193
+Playback speed: 32x24 @193
