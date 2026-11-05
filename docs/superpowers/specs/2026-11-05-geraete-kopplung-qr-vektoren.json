@@ -25,5 +25,10 @@
         "aad": "TFYtUEFJUi1TRUFMLXYyQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdwejfLwUIJPIt1XcGxDobLQmN0rRaqhT7QvfwLK4bRx8WGmv9FBUlzLLqu1eXfmzCm2jHLDldCutWtShp2jxpns",
         "sealed": "0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebncLFdsWjpYY3IxMaDLutxlPNi04QXtnT7QJdy/LU3CFOnLQwuKVs0bIlpSx4MXDLikaSJ4lsz/1ZCRX6qQsv1dmQHI/0bn/jWc4edD0/0XP4gpkcGOPnMTGk+WxVgPiGnBNLMsdcd8BwDJ0LXVCuHcW7LPysIpHS413Nw3almUfGd7Ky54U5YDQ==",
         "confirm": "V9ESya8YwmhGkQky7BiOM3QF1J2nnrrrXpWQgvrmFN8"
+    },
+    "zusatz_utf8": {
+        "device_name": "Patricks iPhone Ä",
+        "laenge_bytes": 18,
+        "phone_commit": "kkR7mXr-kqmlVUaahIb1bFfiNi0OWzQB2BqLYU3kS1U"
     }
 }

@@ -42,7 +42,7 @@ ersetzt; QR, ECDH und Oberfläche bleiben.
 - `id` (pair_id) geht als **ASCII-Text** (22 Byte, base64url) in alle Hashes ein, nicht dekodiert.
 - Alle übrigen Werte sind 32 Rohbytes; über die Leitung als **kanonisches base64url ohne
   Padding** (43 Zeichen). Nicht kanonische Werte lehnen Hub und Clients ab.
-- `name` = Gerätename, UTF-8, NFC, 1–60 Zeichen, ohne `\p{C}` (Steuer-, Format-/Bidi-,
+- `name` = Gerätename, UTF-8, NFC, 1–60 Zeichen (`len16be` = Länge in **UTF-8-Bytes**, Vektor `zusatz_utf8`), ohne `\p{C}` (Steuer-, Format-/Bidi-,
   Nullbreiten-, Privatzeichen), ohne Rand-Leerzeichen. Der Client bereinigt vorher; der Hub
   lehnt ab statt zu korrigieren, weil der Name in das Commitment eingeht.
 - Alle Labels enden auf `-v2`.
@@ -94,7 +94,8 @@ Desktop (angemeldet: T_d, K)                Hub                           iPhone
                                                                T_p und K in den Schlüsselbund
                                     ◀── POST /pair/{id}/confirm {HMAC(s, "LV-PAIR-CONFIRM-v2" ‖ id)}
 7  GET /pair/{id} → phone_confirm; prüft HMAC mit s
-   erst jetzt „Verbunden“. Falsch/fehlt nach 30 s → Warnung, Gerät abmelden anbieten.
+   erst jetzt „Verbunden“. Falsch oder fehlt bis expires_at + 30 s → Warnung, Gerät abmelden anbieten.
+   (Hub nimmt confirm bis expires_at + 60 s an, danach wird das Abhol-Token verworfen.)
 ```
 
 ### 4.4 Warum das hält
@@ -138,13 +139,13 @@ Antwort, im Hub nur sein Hash. Widerruf wirkt sofort (kein Auth-Cache, `verify` 
 | Zustand | Ereignis | Aktion | Nächster |
 |---|---|---|---|
 | Start | Knopf | `start`, Schlüssel + q erzeugen, QR | WarteAufScan |
-| WarteAufScan | Status `claimed` | mac mit q prüfen → falsch: Abbruch. C **einmalig speichern**, n_d erzeugen, `challenge` | WarteAufReveal |
+| WarteAufScan | Status `claimed` | mac mit q prüfen → falsch: Abbruch. C **und Name einmalig speichern** (angezeigt und in H(...) wird nur dieser Name verwendet), n_d erzeugen, `challenge` | WarteAufReveal |
 | WarteAufReveal | Status `revealed` | C gegen gespeichertes C, `p_pk ≠ d_pk`, Nullprüfung, SAS **einmal** berechnen | ZeigeSAS |
 | WarteAufReveal | `phone_commit` ≠ gespeichertes C | Abbruch, Warnung | Abbruch |
 | ZeigeSAS | Ja | `sealed` bauen, `approve` | WarteAufBestätigung |
 | ZeigeSAS | Nein | `reject` | Ende |
 | WarteAufBestätigung | `phone_confirm` gültig | „Verbunden“ | Ende |
-| WarteAufBestätigung | ungültig / 30 s nichts | Warnung, „Gerät abmelden“ anbieten | Ende |
+| WarteAufBestätigung | ungültig, oder nichts bis `expires_at` + 30 s | Warnung, „Gerät abmelden“ anbieten (inkl. Liste der mit abgemeldeten Geräte über `paired_by`) | Ende |
 | jeder Zustand ab `challenge` | jeder Fehler, 409, Zeitablauf | Kopplung beenden, **kein** neues n_d | Abbruch |
 
 ### 5.3 iPhone (P4, Swift)
@@ -153,11 +154,12 @@ Antwort, im Hub nur sein Hash. Widerruf wirkt sofort (kein Auth-Cache, `verify` 
 |---|---|---|---|
 | Scan | QR gelesen, v=2 | Schlüssel, n_p, C, mac; `claim` | WarteAufChallenge |
 | WarteAufChallenge | `challenge` mit n_d | n_d **einmalig speichern**, `reveal` (genau einmal), SAS **einmal** berechnen | ZeigeSAS |
-| ZeigeSAS | weitere/abweichende `challenge` | Abbruch, Warnung | Abbruch |
+| ZeigeSAS | `challenge` mit **gleichem** n_d (Reveal-Antwort verloren) | `reveal` mit identischen Werten wiederholen; 410 darauf gilt als erledigt | ZeigeSAS |
+| ZeigeSAS | `challenge` mit **abweichendem** n_d | Abbruch, Warnung | Abbruch |
 | ZeigeSAS | Ergebnis `ok` | Nullprüfung, s, öffnen, key_id + user_id prüfen, Schlüsselbund, `confirm` | Verbunden |
 | ZeigeSAS | 403 rejected | „Am PC abgelehnt“ | Ende |
 | jeder | 410 | „Code abgelaufen oder schon verwendet“ | Ende |
-| jeder | Netzfehler | Wiederholen nur für Abfragen; `reveal` nie wiederholen mit anderen Werten | – |
+| jeder | Netzfehler | Wiederholen nur für Abfragen (Intervall ≥ 1 s, wegen Drosselung 120/min); `reveal` nie mit anderen Werten | – |
 
 Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
 
@@ -177,8 +179,12 @@ Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
 8. Flüchtige Schlüssel (`d_sk`, `p_sk`, `z`, `s`, `q`) nur im Speicher, danach genullt.
 9. Keine Inhalte und keine Geheimnisse im Log; Audit nur mit IP-Präfix (/24, /48).
 10. Widerruf eines Geräts widerruft auch alle Geräte, die **über** dieses Gerät gekoppelt
-    wurden (Kette), damit ein abgemeldetes Gerät keinen Zugang über selbst ausgestellte
-    Tokens behält.
+    wurden (Kette, `VoicePairingService::revokeChain`), damit ein abgemeldetes Gerät keinen
+    Zugang über selbst ausgestellte Tokens behält. Gilt für „Abmelden“ in der Geräteliste
+    und für das eigene Abmelden (`/auth/logout`). Die Oberfläche nennt vorher, welche Geräte
+    mit abgemeldet werden.
+12. Betrieb: `post_max_size` des Hubs klein halten (offene Routen prüfen nur
+    `Content-Length`); `login_attempts` wird mit der bestehenden Bereinigung des Portals geleert.
 11. Gerätetokens laufen wie Login-Tokens nicht ab (Entscheidung D15); Kontrolle über die
     Geräteliste.
 
