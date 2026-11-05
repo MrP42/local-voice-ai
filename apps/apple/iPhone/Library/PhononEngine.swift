@@ -4,13 +4,32 @@ import AVFoundation
 
 /// Wiedergabe für Phonon. Eigener Player statt `PhononPlayer`, weil das Vorlesen echtes
 /// Pausieren und ein Tempo braucht: `AVAudioUnitTimePitch` ändert es ohne Tonhöhe.
+///
+/// `AVAudioPlayerNode.stop()` wartet synchron auf die Rückrufe der Node. Deshalb läuft alles,
+/// was blockieren kann, auf einer eigenen Warteschlange: nie auf dem Main Thread und nie in
+/// einem Cancel-Handler, dort hält die Laufzeit die Sperre der Task, die der Rückruf zum
+/// Fortsetzen braucht (Einfrieren am 05.11.2026 beim Wechsel Vorlesen → Hörbuch).
 private final class PhononAudio: @unchecked Sendable {
+    private static let queue = DispatchQueue(label: "phonon-audio", qos: .userInitiated)
+
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private let pitch = AVAudioUnitTimePitch()
     private let format = AVAudioFormat(standardFormatWithSampleRate: Phonon.sampleRate, channels: 1)!
+    private let played: @Sendable () -> Void
+    private let lock = NSLock()
+    private var pending = 0
+    private var stopped = false
+    private var waiters: [(limit: Int, done: CheckedContinuation<Void, Never>)] = []
 
-    init(rate: Float) throws {
+    static func make(rate: Float, played: @escaping @Sendable () -> Void) async throws -> PhononAudio {
+        try await withCheckedThrowingContinuation { done in
+            queue.async { done.resume(with: Result { try PhononAudio(rate: rate, played: played) }) }
+        }
+    }
+
+    private init(rate: Float, played: @escaping @Sendable () -> Void) throws {
+        self.played = played
         pitch.rate = rate
         engine.attach(node); engine.attach(pitch)
         engine.connect(node, to: pitch, format: format)
@@ -19,8 +38,6 @@ private final class PhononAudio: @unchecked Sendable {
         node.play()
     }
 
-    deinit { node.stop(); engine.stop() }
-
     private func buffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
         guard !samples.isEmpty, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)) else { return nil }
         buf.frameLength = AVAudioFrameCount(samples.count)
@@ -28,27 +45,100 @@ private final class PhononAudio: @unchecked Sendable {
         return buf
     }
 
-    func enqueue(_ samples: [Float]) { if let buf = buffer(samples) { node.scheduleBuffer(buf) } }
+    private var isStopped: Bool { lock.withLock { stopped } }
 
-    /// Kehrt zurück, wenn alles Eingereihte gespielt ist. Eine Pause verlängert das Warten.
-    func finished() async {
+    func enqueue(_ samples: [Float]) {
+        if !isStopped, let buf = buffer(samples) { node.scheduleBuffer(buf) }
+    }
+
+    /// Satzende. Der Rückruf kommt, wenn alles davor wirklich gespielt ist, auch bei anderem Tempo.
+    func mark() {
         guard let tail = buffer([Float](repeating: 0, count: 240)) else { return }
+        let accepted = lock.withLock { () -> Bool in
+            if !stopped { pending += 1 }
+            return !stopped
+        }
+        if accepted { node.scheduleBuffer(tail, completionCallbackType: .dataPlayedBack) { [self] _ in markPlayed() } }
+    }
+
+    private func markPlayed() {
+        var ready: [CheckedContinuation<Void, Never>] = []
+        let report = lock.withLock { () -> Bool in
+            pending -= 1
+            waiters.removeAll { waiter in
+                guard pending < waiter.limit else { return false }
+                ready.append(waiter.done)
+                return true
+            }
+            return !stopped
+        }
+        if report { played() }  // vor dem Aufwecken, damit „Ende“ nie vor dem letzten Satz ankommt
+        ready.forEach { $0.resume() }
+    }
+
+    /// Wartet, bis weniger als `limit` Sätze ungespielt sind. Eine Pause verlängert das Warten.
+    func wait(below limit: Int) async {
         await withTaskCancellationHandler {
             await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                node.scheduleBuffer(tail, completionCallbackType: .dataPlayedBack) { _ in done.resume() }
+                let goOn = lock.withLock { () -> Bool in
+                    if stopped || pending < limit { return true }
+                    waiters.append((limit, done))
+                    return false
+                }
+                if goOn { done.resume() }
             }
-        } onCancel: { [node] in node.stop() }
+        } onCancel: { [self] in
+            Self.queue.async { self.shutdown() }
+        }
     }
 
-    func pause() { node.pause() }
+    func pause() { Self.queue.async { [self] in node.pause() } }
+
     /// `false`, wenn die Audio-Engine inzwischen steht (Anruf, Aufnahme, Routenwechsel).
     func resume() -> Bool {
-        if !engine.isRunning { guard (try? engine.start()) != nil else { return false } }
-        node.play()
+        guard engine.isRunning else { return false }
+        Self.queue.async { [self] in node.play() }
         return true
     }
+
     func setRate(_ rate: Float) { pitch.rate = rate }
-    func stop() { node.stop() }
+
+    /// Blockiert nicht und darf mehrfach kommen.
+    func shutdown() {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>]? in
+            if stopped { return nil }
+            stopped = true
+            defer { waiters = [] }
+            return waiters.map(\.done)
+        }
+        guard let waiting else { return }
+        waiting.forEach { $0.resume() }
+        Self.queue.async { [self] in node.stop(); engine.stop() }
+    }
+}
+#endif
+
+#if PHONON
+/// Zuletzt erzeugte Sätze je Stimme. Das Tempo kommt erst bei der Wiedergabe dazu, also passt
+/// ein Eintrag immer: Zurückspringen, Pause und Weiterlesen klingen sofort, ohne neu zu erzeugen.
+private final class SentenceAudioCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(key: String, samples: [Float])] = []
+    private let limit = 12  // drei zurück, drei voraus und etwas Spielraum; rund 1 MB je Satz
+
+    func samples(_ voice: String, _ text: String) -> [Float]? {
+        lock.withLock { entries.first { $0.key == voice + "|" + text }?.samples }
+    }
+
+    func store(_ voice: String, _ text: String, _ samples: [Float]) {
+        guard !samples.isEmpty else { return }
+        let key = voice + "|" + text
+        lock.withLock {
+            entries.removeAll { $0.key == key }
+            entries.append((key, samples))
+            if entries.count > limit { entries.removeFirst(entries.count - limit) }
+        }
+    }
 }
 #endif
 
@@ -96,6 +186,9 @@ final class PhononEngine: ObservableObject {
     private var loaded: (language: String, tts: Phonon)?
     private var loading_: (language: String, task: Task<Phonon, Error>)?
     private var player: PhononAudio?
+    private var requestedRate: Float = 1
+    private let cache = SentenceAudioCache()
+    private var prefetch: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
 
     private func dropped(_ language: String) -> URL {
@@ -174,32 +267,84 @@ final class PhononEngine: ObservableObject {
         return tts
     }
 
+    /// Modell und Stimme laden und die ersten Sätze vorab erzeugen, damit Abspielen sofort klingt.
+    func prepare(voice name: String, sentences: [String] = []) {
+        prefetch?.cancel()
+        prefetch = Task { [weak self] in
+            guard let self, let parts = Self.parts(name), let tts = try? await self.engine(parts.language) else { return }
+            if tts.voice != parts.voice { try? await tts.setVoice(parts.voice) }
+            for sentence in sentences where !Task.isCancelled && self.cache.samples(name, sentence) == nil {
+                guard let samples = try? await tts.synthesize(sentence), !Task.isCancelled else { return }
+                self.cache.store(name, sentence, samples)
+            }
+        }
+    }
+
     /// Text sprechen und zurückkehren, wenn er zu Ende gespielt ist. Abbruch über die Task.
     func speak(_ text: String, voice name: String, rate: Float = 1) async throws {
+        var rest: String? = text
+        try await read(voice: name, rate: rate, next: { defer { rest = nil }; return rest }, audible: {}, played: {})
+    }
+
+    /// Sätze ohne Lücke nacheinander sprechen. `next` liefert den nächsten Satz (erzeugt wird
+    /// etwas im Voraus), `audible` meldet den ersten Ton, `played` das Ende jedes Satzes.
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> String?,
+              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws {
         guard let parts = Self.parts(name) else { throw PhononUnavailable() }
+        prefetch?.cancel()
         let tts = try await engine(parts.language)
         try Task.checkCancellation()
         if tts.voice != parts.voice { try await tts.setVoice(parts.voice) }
         try Task.checkCancellation()
-        // Je Äußerung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
-        let player = try PhononAudio(rate: rate)
-        self.player = player
-        for try await chunk in tts.stream(text) {
-            try Task.checkCancellation()
-            player.enqueue(chunk)
+        requestedRate = rate
+        // Je Lesung ein neuer Player: Nach Anruf, Aufnahme oder Routenwechsel steht die alte Audio-Engine.
+        let audio = try await PhononAudio.make(rate: rate) {
+            DispatchQueue.main.async { MainActor.assumeIsolated { played() } }
         }
-        await player.finished()
+        defer { audio.shutdown(); if player === audio { player = nil } }
+        try Task.checkCancellation()
+        audio.setRate(requestedRate)
+        player = audio
+        try await Self.pump(tts, audio, voice: name, cache: cache, next: next, audible: audible)
+    }
+
+    /// Erzeugen und Einreihen abseits des Main Threads. Zum hörbaren Satz liegen drei weitere bereit.
+    nonisolated private static func pump(_ tts: Phonon, _ audio: PhononAudio, voice: String, cache: SentenceAudioCache,
+                                         next: @MainActor () -> String?, audible: @MainActor () -> Void) async throws {
+        var silent = true
+        while let sentence = await next() {
+            await audio.wait(below: 4)
+            try Task.checkCancellation()
+            if let samples = cache.samples(voice, sentence) {
+                audio.enqueue(samples)
+                if silent { silent = false; await audible() }
+            } else {
+                var samples: [Float] = []
+                for try await chunk in tts.stream(sentence) {
+                    try Task.checkCancellation()
+                    audio.enqueue(chunk)
+                    samples += chunk
+                    if silent { silent = false; await audible() }
+                }
+                cache.store(voice, sentence, samples)
+            }
+            audio.mark()
+        }
+        await audio.wait(below: 1)
         try Task.checkCancellation()
     }
 
     func pause() { player?.pause() }
     func resume() -> Bool { player?.resume() ?? false }
-    func setRate(_ rate: Float) { player?.setRate(rate) }
-    func silence() { player?.stop(); player = nil }
+    func setRate(_ rate: Float) { requestedRate = rate; player?.setRate(rate) }
+    func silence() { player?.shutdown(); player = nil }
     #else
     var modelAvailable: Bool { false }
     func refresh() async {}
+    func prepare(voice name: String, sentences: [String] = []) {}
     func speak(_ text: String, voice name: String, rate: Float = 1) async throws { throw PhononUnavailable() }
+    func read(voice name: String, rate: Float, next: @escaping @MainActor () -> String?,
+              audible: @escaping @MainActor () -> Void, played: @escaping @MainActor () -> Void) async throws { throw PhononUnavailable() }
     func pause() {}
     func resume() -> Bool { false }
     func setRate(_ rate: Float) {}

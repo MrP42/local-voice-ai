@@ -296,7 +296,7 @@ struct LibraryBookDetail: View {
                 }
                 HStack(spacing: 10) {
                     if hasText {
-                        Button { playback.openReadAloud(book, autoplay: true); playback.presented = playback.book != nil } label: {
+                        Button { playback.openReadAloud(book); playback.presented = playback.book != nil } label: {
                             Label("Text vorlesen", systemImage: "book").frame(maxWidth: .infinity, minHeight: 44)
                         }.buttonStyle(.bordered).accessibilityIdentifier("readAloud")
                     }
@@ -342,7 +342,7 @@ struct LibraryBookDetail: View {
                             playback.openAudiobook(book, autoplay: false)
                             guard playback.book?.id == book.id else { return }
                             playback.seek(toMs: LibraryTracks.total(TrackPosition(index: i, offsetMs: 0), in: tracks))
-                            playback.play(); playback.presented = true
+                            playback.presented = true
                         } label: {
                             HStack(spacing: 12) {
                                 Text("Teil \(i + 1) · \(t.title)").lineLimit(2)
@@ -536,16 +536,19 @@ struct LibraryMiniPlayer: View {
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityLabel("\(playback.title), zum Player")
             Button { playback.toggle() } label: {
-                Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.headline)
-                    .foregroundStyle(VoicePalette.ink).frame(width: 44, height: 44).background(VoicePalette.brand, in: Circle())
-            }.accessibilityLabel(playback.playing ? "Pause" : "Abspielen")
+                Group {
+                    if playback.preparing { ProgressView().tint(VoicePalette.ink) }
+                    else { Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.headline) }
+                }
+                .foregroundStyle(VoicePalette.ink).frame(width: 44, height: 44).background(VoicePalette.brand, in: Circle())
+            }.accessibilityLabel(playback.preparing ? "Wird vorbereitet, abbrechen" : playback.playing ? "Pause" : "Abspielen")
         }
         .padding(.horizontal, 8).frame(minHeight: 60)
         .background(VoicePalette.ink, in: RoundedRectangle(cornerRadius: 14))
     }
     private var subtitle: String {
         playback.mode == .audiobook ? "\(playback.currentChapter?.title ?? "Teil \(playback.trackIndex + 1)") · \(LibraryFormat.clock(playback.positionMs)) · zum Player"
-                                    : "Text wird vorgelesen · zum Player"
+                                    : "\(playback.playing ? "Text wird vorgelesen" : "Text pausiert") · zum Player"
     }
 }
 
@@ -572,7 +575,7 @@ struct FollowText<Row: View>: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, p in row(i, p).id(i) }
+                    ForEach(paragraphs.indices, id: \.self) { i in row(i, paragraphs[i]).id(i) }
                 }.padding(.horizontal, 12).padding(.vertical, 12)
             }
             .simultaneousGesture(DragGesture().onChanged { _ in pausedUntil = Date().addingTimeInterval(5); showReturn = true })
@@ -584,10 +587,12 @@ struct FollowText<Row: View>: View {
                     }.buttonStyle(.borderedProminent).tint(VoicePalette.ink).foregroundStyle(VoicePalette.brand).padding(12)
                 }
             }
-            .onChange(of: current, initial: true) { _, value in
+            .onAppear { proxy.scrollTo(current, anchor: .center) }  // ohne Animation: sonst baut die Liste jede Zeile bis dorthin
+            .onChange(of: current) { old, value in
                 guard Date() >= pausedUntil else { return }
                 showReturn = false
-                withAnimation { proxy.scrollTo(value, anchor: .center) }
+                if abs(value - old) > 3 { proxy.scrollTo(value, anchor: .center) }
+                else { withAnimation { proxy.scrollTo(value, anchor: .center) } }
             }
         }
     }
@@ -633,9 +638,12 @@ struct PlayButton: View {
     @ObservedObject var playback = LibraryPlayback.shared
     var body: some View {
         Button { playback.toggle() } label: {
-            Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.title).foregroundStyle(VoicePalette.brand)
-                .frame(width: 64, height: 64).background(VoicePalette.ink, in: Circle())
-        }.accessibilityLabel(playback.playing ? "Pause" : "Abspielen")
+            Group {
+                if playback.preparing { ProgressView().tint(VoicePalette.brand) }
+                else { Image(systemName: playback.playing ? "pause.fill" : "play.fill").font(.title) }
+            }
+            .foregroundStyle(VoicePalette.brand).frame(width: 64, height: 64).background(VoicePalette.ink, in: Circle())
+        }.accessibilityLabel(playback.preparing ? "Wird vorbereitet, abbrechen" : playback.playing ? "Pause" : "Abspielen")
     }
 }
 
@@ -648,16 +656,15 @@ struct LibraryReadAloudView: View {
 
     private func highlighted(_ p: TextParagraph) -> AttributedString {
         var s = AttributedString(p.text)
-        guard let r = playback.wordRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
+        guard let r = playback.sentenceRange, let range = Range(r, in: p.text), let a = AttributedString.Index(range.lowerBound, within: s),
               let b = AttributedString.Index(range.upperBound, within: s) else { return s }
-        s[a..<b].backgroundColor = look.wordBackground
-        s[a..<b].foregroundColor = look.wordText
+        s[a..<b].backgroundColor = look.sentenceBackground
         return s
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.playing ? "wird vorgelesen" : "pausiert",
+            PlayerHeader(title: "\(playback.title) · Text", subtitle: playback.preparing ? "wird vorbereitet" : playback.playing ? "wird vorgelesen" : "pausiert",
                          trailing: AnyView(ReaderAppearanceButton()))
             Divider()
             FollowText(paragraphs: playback.paragraphs, current: playback.paragraphIndex) { i, p in
@@ -666,7 +673,6 @@ struct LibraryReadAloudView: View {
                     .foregroundStyle(i == playback.paragraphIndex ? look.text : look.muted)
                     .lineSpacing(look.lineSpacing).fixedSize(horizontal: false, vertical: true)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(i == playback.paragraphIndex ? Color.yellow.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
                     .contentShape(Rectangle()).onTapGesture { playback.jump(toParagraph: i) }
                     .accessibilityAddTraits(.isButton).accessibilityHint("Liest ab diesem Absatz vor")
             }
@@ -681,9 +687,9 @@ struct LibraryReadAloudView: View {
                 }.font(.caption).foregroundStyle(VoicePalette.secondaryText)
                 HStack {
                     RateMenu()
-                    Spacer(); ControlButton(title: "Absatz zurück", systemImage: "backward.fill") { playback.step(paragraphs: -1) }
+                    Spacer(); ControlButton(title: "Satz zurück", systemImage: "backward.fill") { playback.step(sentences: -1) }
                     Spacer(); PlayButton()
-                    Spacer(); ControlButton(title: "Absatz vor", systemImage: "forward.fill") { playback.step(paragraphs: 1) }
+                    Spacer(); ControlButton(title: "Satz vor", systemImage: "forward.fill") { playback.step(sentences: 1) }
                     Spacer(); ControlButton(title: "Stimme", systemImage: "person.wave.2") { voices = true }
                 }
             }.padding(.horizontal, 20).padding(.vertical, 10).background(.bar)
