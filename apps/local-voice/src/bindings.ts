@@ -10424,58 +10424,6 @@ modified_ms?: number;
  */
 preview?: string }
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
-/**
- * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
- */
-export type ParallelLimitedBy = 
-/**
- * Die Obergrenze der App ([`MAX_PARALLEL`]).
- */
-"maximum" | 
-/**
- * Die Zahl der Prozessorkerne.
- */
-"cpu" | 
-/**
- * Der Arbeitsspeicher.
- */
-"ram" | 
-/**
- * Der Grafikspeicher.
- */
-"vram"
-/**
- * Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
- */
-export type ParallelRecommendation = { 
-/**
- * So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
- */
-recommended: number; 
-/**
- * Hoechster einstellbarer Wert.
- */
-max: number; limited_by: ParallelLimitedBy; 
-/**
- * Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
- */
-by_cpu: number; by_ram: number | null; by_vram: number | null; 
-/**
- * Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
- */
-ram_per_run_mb: number; vram_per_run_mb: number | null; cpus: number; ram_total_mb: number; 
-/**
- * `None`: keine GPU fuer die Transkription oder nicht messbar.
- */
-vram_total_mb: number | null; 
-/**
- * Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
- */
-model_size_mb: number; 
-/**
- * Das Besprechungsmodell rechnet auf der GPU.
- */
-gpu_model: boolean }
 export type PairStage = 
 /**
  * QR anzeigen; mit `device_name` ist das iPhone erkannt und die Verbindung entsteht.
@@ -10530,6 +10478,58 @@ export type PairedDevice = { id: number; name: string; created_at?: string | nul
  * Geräte, die beim Abmelden dieses Geräts mit abgemeldet werden.
  */
 revokes_with?: number[] }
+/**
+ * Wodurch die Empfehlung begrenzt ist (fuer die Begruendung in der Oberflaeche).
+ */
+export type ParallelLimitedBy = 
+/**
+ * Die Obergrenze der App ([`MAX_PARALLEL`]).
+ */
+"maximum" | 
+/**
+ * Die Zahl der Prozessorkerne.
+ */
+"cpu" | 
+/**
+ * Der Arbeitsspeicher.
+ */
+"ram" | 
+/**
+ * Der Grafikspeicher.
+ */
+"vram"
+/**
+ * Empfehlung fuer diesen Rechner, wie die Einstellungen sie zeigen.
+ */
+export type ParallelRecommendation = { 
+/**
+ * So viele Transkriptionen laufen bei "Automatisch" gleichzeitig.
+ */
+recommended: number; 
+/**
+ * Hoechster einstellbarer Wert.
+ */
+max: number; limited_by: ParallelLimitedBy; 
+/**
+ * Laeufe, die jeder Faktor allein erlauben wuerde (ohne Obergrenze).
+ */
+by_cpu: number; by_ram: number | null; by_vram: number | null; 
+/**
+ * Bedarf je weiterem Lauf (das Modell wird je Lauf neu geladen).
+ */
+ram_per_run_mb: number; vram_per_run_mb: number | null; cpus: number; ram_total_mb: number; 
+/**
+ * `None`: keine GPU fuer die Transkription oder nicht messbar.
+ */
+vram_total_mb: number | null; 
+/**
+ * Groesse des Besprechungsmodells (MB), mit der gerechnet wurde.
+ */
+model_size_mb: number; 
+/**
+ * Das Besprechungsmodell rechnet auf der GPU.
+ */
+gpu_model: boolean }
 /**
  * Eine teilnehmende Person einer Besprechung.
  */
