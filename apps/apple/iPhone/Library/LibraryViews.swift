@@ -88,14 +88,16 @@ struct LibraryTab: View {
                 if args.contains("--phonon-probe") {
                     // Geräteprobe ohne Bedienung: Ergebnis landet in Documents/phonon-probe.txt.
                     let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("phonon-probe.txt")
-                    let start = Date(); var log = "start\n"
-                    do {
-                        try await PhononEngine.shared.prepare()
-                        log += "geladen nach \(Date().timeIntervalSince(start)) s, Stimmen: \(PhononEngine.shared.voices)\n"
-                        let t = Date()
-                        try await PhononEngine.shared.speak("Guten Tag. Das ist Phonon auf dem iPhone.", voice: PhononEngine.shared.voices.first ?? "")
-                        log += "gesprochen in \(Date().timeIntervalSince(t)) s\n"
-                    } catch { log += "FEHLER \(error)\n" }
+                    await PhononEngine.shared.refresh()
+                    var log = "Stimmen: \(PhononEngine.shared.voices.mapValues(\.count))\n"
+                    for (language, sentence) in [("de", "Guten Tag. Das ist Phonon auf dem iPhone."), ("en", "Hello. This is Phonon on the iPhone.")] {
+                        guard let voice = PhononEngine.shared.voices[language]?.first else { continue }
+                        let start = Date()
+                        do {
+                            try await PhononEngine.shared.speak(sentence, voice: "\(language):\(voice)")
+                            log += "\(language) \(voice): \(Date().timeIntervalSince(start)) s\n"
+                        } catch { log += "\(language) FEHLER \(error)\n" }
+                    }
                     try? log.write(to: out, atomically: true, encoding: .utf8)
                 }
                 if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count, LibrarySync.shared.account == nil {
@@ -699,21 +701,22 @@ private struct VoiceList: View {
     var body: some View {
         NavigationStack {
             List {
-                if phonon.modelAvailable {
-                    Section {
-                        if phonon.loading { HStack { ProgressView(); Text("Phonon wird vorbereitet …") }.frame(minHeight: 44) }
-                        ForEach(phonon.voices, id: \.self) { name in
-                            let id = PhononEngine.voicePrefix + name
-                            Button { playback.voiceIdentifier = id; dismiss() } label: {
-                                HStack {
-                                    Text(PhononEngine.displayName(name))
-                                    Spacer()
-                                    if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
-                                }.frame(minHeight: 44).contentShape(Rectangle())
-                            }.buttonStyle(.plain)
+                ForEach(PhononEngine.languages, id: \.self) { language in
+                    if let names = phonon.voices[language] {
+                        Section {
+                            ForEach(names, id: \.self) { name in
+                                let id = PhononEngine.identifier(language: language, voice: name)
+                                Button { playback.voiceIdentifier = id; dismiss() } label: {
+                                    HStack {
+                                        Text(name)
+                                        Spacer()
+                                        if id == playback.voiceIdentifier { Image(systemName: "checkmark") }
+                                    }.frame(minHeight: 44).contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                            }
+                        } header: { Text(PhononEngine.sectionTitle(language)) } footer: {
+                            Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts, das Tempo lässt sich nicht ändern. Die erste Nutzung einer Sprache dauert einige Sekunden.")
                         }
-                    } header: { Text("Phonon") } footer: {
-                        Text("Läuft auf dem iPhone. Markiert wird der Absatz statt des Worts, das Tempo lässt sich nicht ändern.")
                     }
                 }
                 Section {
@@ -736,7 +739,7 @@ private struct VoiceList: View {
                 }
             }
             .navigationTitle("Stimme").navigationBarTitleDisplayMode(.inline)
-            .task { if phonon.modelAvailable { try? await phonon.prepare() } }
+            .task { await phonon.refresh() }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Fertig") { dismiss() } } }
         }
     }
