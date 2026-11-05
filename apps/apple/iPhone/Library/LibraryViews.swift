@@ -85,6 +85,7 @@ struct LibraryTab: View {
             .task {
                 // Diagnose-Startargumente für Simulator-Bilder, kein Produktpfad.
                 let args = ProcessInfo.processInfo.arguments
+                if let i = args.firstIndex(of: "--pair-url"), i + 1 < args.count, let url = URL(string: args[i + 1]) { PairingFlow.shared.open(url) }
                 if let i = args.firstIndex(of: "--sync-test"), i + 1 < args.count, LibrarySync.shared.account == nil {
                     await LibrarySync.shared.login(email: "test@example.com", password: "geheim", url: args[i + 1], deviceName: "Simulator")
                 }
