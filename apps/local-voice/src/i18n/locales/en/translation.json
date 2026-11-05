@@ -2664,9 +2664,10 @@
           "unknown": "The sign-in could not be checked.",
           "login": "Sign in",
           "loginFailed": "The sign-in window could not be opened.",
+          "setup": "Set up and sign in",
           "missing": {
-            "claude_cli": "Claude Code is not installed on this computer, and this connection needs it. Install Claude Code (claude.com/claude-code) or add an “Anthropic” connection with an API key instead.",
-            "codex_cli": "The Codex CLI is not installed on this computer. Install it with npm i -g @openai/codex, or add an “OpenAI” connection with an API key instead."
+            "claude_cli": "Claude Code is missing on this computer. “Set up and sign in” downloads the official program from Anthropic (no admin rights needed) and then opens the sign-in in your browser. Without a Claude plan, use an “Anthropic” connection with an API key.",
+            "codex_cli": "The Codex CLI is missing on this computer. “Set up and sign in” downloads the official program from OpenAI (no admin rights needed) and then opens the sign-in in your browser. Without a ChatGPT plan, use an “OpenAI” connection with an API key."
           }
         },
         "cli": {
@@ -2711,6 +2712,7 @@
         }
       },
       "connections": {
+        "getApiKey": "Get an API key from the provider",
         "title": "Connections",
         "empty": "No connection yet. Pick a provider below — local or cloud.",
         "add": "Add provider…",

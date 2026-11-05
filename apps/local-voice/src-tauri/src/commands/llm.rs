@@ -405,6 +405,15 @@ pub fn llm_cli_login(kind: String) -> Result<(), String> {
     cli::open_login(cli)
 }
 
+/// Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
+/// laedt und danach ihre Anmeldung startet.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_setup(kind: String) -> Result<(), String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    cli::open_setup(cli)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {

@@ -2664,9 +2664,10 @@
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
           "login": "Anmelden",
           "loginFailed": "Das Anmeldefenster ließ sich nicht öffnen.",
+          "setup": "Einrichten und anmelden",
           "missing": {
-            "claude_cli": "Claude Code ist auf diesem Rechner nicht installiert. Ohne Claude Code geht dieser Weg nicht: Claude Code installieren (claude.com/claude-code) oder stattdessen die Verbindung „Anthropic“ mit API-Schlüssel anlegen.",
-            "codex_cli": "Die Codex CLI ist auf diesem Rechner nicht installiert. Installation: npm i -g @openai/codex. Alternativ die Verbindung „OpenAI“ mit API-Schlüssel anlegen."
+            "claude_cli": "Claude Code fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von Anthropic (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne Claude-Abo geht es mit der Verbindung „Anthropic“ und einem API-Schlüssel.",
+            "codex_cli": "Die Codex CLI fehlt auf diesem Rechner. „Einrichten und anmelden“ lädt das offizielle Programm von OpenAI (ohne Adminrechte) und öffnet danach die Anmeldung im Browser. Ohne ChatGPT-Abo geht es mit der Verbindung „OpenAI“ und einem API-Schlüssel."
           }
         },
         "cli": {
@@ -2711,6 +2712,7 @@
         }
       },
       "connections": {
+        "getApiKey": "API-Schlüssel beim Anbieter holen",
         "title": "Verbindungen",
         "empty": "Noch keine Verbindung. Wähle unten einen Anbieter — lokal oder in der Cloud.",
         "add": "Anbieter hinzufügen…",

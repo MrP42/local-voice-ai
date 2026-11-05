@@ -350,6 +350,18 @@ async llmCliLogin(kind: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Fehlt die CLI: oeffnet ein Fenster, das sie ueber den offiziellen Installer
+ * laedt und danach ihre Anmeldung startet.
+ */
+async llmCliSetup(kind: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("llm_cli_setup", { kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async llmSetCliAutoUpdate(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("llm_set_cli_auto_update", { enabled }) };

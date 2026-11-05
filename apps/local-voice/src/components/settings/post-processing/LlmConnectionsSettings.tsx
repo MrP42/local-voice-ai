@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import {
   commands,
@@ -54,6 +55,14 @@ const SUBSCRIPTION_OF: Record<string, string> = {
   openai_eu: "codex_cli",
 };
 
+/// Seite des Anbieters, auf der man einen API-Schluessel bekommt.
+const API_KEY_PAGES: Record<string, string> = {
+  gemini: "https://aistudio.google.com/apikey",
+  anthropic: "https://platform.claude.com/settings/keys",
+  openai: "https://platform.openai.com/api-keys",
+  openai_eu: "https://platform.openai.com/api-keys",
+};
+
 /// Zustand der CLI und der Weg zur Anmeldung: die Anmeldung selbst laeuft in
 /// der CLI, die App oeffnet sie nur und liest danach "angemeldet ja/nein".
 const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
@@ -83,9 +92,9 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
     return () => window.removeEventListener("focus", refresh);
   }, [waiting, refresh]);
 
-  const login = async () => {
+  const start = async (open: typeof commands.llmCliLogin) => {
     setFailed(false);
-    const result = await commands.llmCliLogin(kind);
+    const result = await open(kind);
     if (result.status === "ok") setWaiting(true);
     else setFailed(true);
   };
@@ -93,9 +102,23 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
   if (!status) return null;
   if (!status.installed) {
     return (
-      <p className="text-xs text-text/80" data-cli-status="missing">
-        {t(`settings.llm.cliStatus.missing.${kind}`)}
-      </p>
+      <div className="space-y-1" data-cli-status="missing">
+        <p className="text-xs text-text/80">
+          {t(`settings.llm.cliStatus.missing.${kind}`)}
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void start(commands.llmCliSetup)}
+        >
+          {t("settings.llm.cliStatus.setup")}
+        </Button>
+        {failed && (
+          <p className="text-xs text-red-500">
+            {t("settings.llm.cliStatus.loginFailed")}
+          </p>
+        )}
+      </div>
     );
   }
   if (status.logged_in === true) {
@@ -114,7 +137,11 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
             : "settings.llm.cliStatus.unknown",
         )}
       </p>
-      <Button variant="secondary" size="sm" onClick={() => void login()}>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => void start(commands.llmCliLogin)}
+      >
         {t("settings.llm.cliStatus.login")}
       </Button>
       {failed && (
@@ -598,6 +625,17 @@ const ConnectionRow: React.FC<RowProps> = ({
                 disabled={false}
                 className="w-full mt-1"
               />
+              {API_KEY_PAGES[connection.kind] && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-1"
+                  data-api-key-page={connection.kind}
+                  onClick={() => void openUrl(API_KEY_PAGES[connection.kind])}
+                >
+                  {t("settings.llm.connections.getApiKey")}
+                </Button>
+              )}
             </label>
           )}
 
