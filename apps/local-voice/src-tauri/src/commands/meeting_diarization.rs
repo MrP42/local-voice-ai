@@ -26,6 +26,9 @@ pub struct DiarizationModelStatus {
 }
 
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
+/// Abbruch des laufenden Downloads (Knopf „Abbrechen“).
+static CANCEL: std::sync::Mutex<Option<hf_hub::api::tokio::CancellationToken>> =
+    std::sync::Mutex::new(None);
 
 fn models_root(app: &AppHandle) -> PathBuf {
     crate::portable::app_data_dir(app)
@@ -80,10 +83,15 @@ pub async fn meeting_diarization_model_download(app: AppHandle) -> Result<(), St
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
+            *CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = None;
             DOWNLOADING.store(false, Ordering::SeqCst);
         }
     }
     let _reset = Reset;
+    // Ein paralleler Aufruf kann inzwischen fertig sein.
+    if dest.is_file() {
+        return Ok(());
+    }
     let dir = dest.parent().ok_or_else(|| "model_missing".to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let partial = PathBuf::from(format!("{}.partial", dest.display()));
@@ -94,6 +102,7 @@ pub async fn meeting_diarization_model_download(app: AppHandle) -> Result<(), St
         }
     };
     let cancel = hf_hub::api::tokio::CancellationToken::new();
+    *CANCEL.lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel.clone());
     let outcome = ModelManager::download_http_resumable_with_events(
         &entry.id,
         &file.url,
@@ -108,6 +117,18 @@ pub async fn meeting_diarization_model_download(app: AppHandle) -> Result<(), St
     if matches!(outcome, HttpDownloadOutcome::Completed) {
         std::fs::rename(&partial, &dest).map_err(|e| e.to_string())?;
         let _ = app.emit("model-download-complete", entry.id.as_str());
+        return Ok(());
+    }
+    Err("cancelled".into())
+}
+
+/// Bricht einen laufenden Download ab; die Teildatei bleibt fuer die
+/// Fortsetzung liegen. Ohne laufenden Download ohne Wirkung.
+#[tauri::command]
+#[specta::specta]
+pub fn meeting_diarization_model_cancel() -> Result<(), String> {
+    if let Some(token) = CANCEL.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        token.cancel();
     }
     Ok(())
 }

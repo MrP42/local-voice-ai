@@ -3994,6 +3994,18 @@ async meetingDiarizationModelDownload() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Bricht einen laufenden Download ab; die Teildatei bleibt fuer die
+ * Fortsetzung liegen. Ohne laufenden Download ohne Wirkung.
+ */
+async meetingDiarizationModelCancel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meeting_diarization_model_cancel") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async meetingVoiceprintStatus() : Promise<Result<VoiceprintStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meeting_voiceprint_status") };

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands, type DiarizationModelStatus } from "@/bindings";
@@ -9,29 +9,51 @@ interface DownloadProgress {
   percentage: number;
 }
 
+/** Fehlertext im Fluent-Token, nicht in einer festen Tailwind-Farbe. */
+const ERROR_STYLE: React.CSSProperties = {
+  color: "var(--colorPaletteRedForeground1)",
+};
+
+/** Fortschritt wird nur in diesen Schritten angesagt (Bildschirmleser). */
+const ANNOUNCE_STEP = 25;
+
 /**
  * Laden des Sprechertrennungs-Modells (Sortformer) auf Knopfdruck. Steht in
  * den Besprechungs-Einstellungen und im Hinweis „Modell nicht installiert“
- * einer Besprechung. Ist das Modell da, zeigt der Knopf „Installiert“ bzw.
- * (im Hinweis) einen Satz, dass die nächste Neu-Transkription Sprecher trennt.
+ * einer Besprechung.
+ *
+ * Barrierefreiheit (Codex-Abnahme #294): eine dauerhafte aria-live-Region
+ * sagt Start, Fortschritt in 25-%-Schritten, Fertig, Abbruch und Fehler an;
+ * der Fokus bleibt erhalten, wenn ein fokussierter Knopf durch „Installiert“
+ * ersetzt wird; ein fehlgeschlagener Statusabruf zeigt „Wiederholen“.
  */
 export const DiarizationModelButton: React.FC<{
   /** Im Hinweis einer Besprechung: kompakter, mit Satz nach dem Laden. */
   inline?: boolean;
-  onReady?: () => void;
-}> = ({ inline = false, onReady }) => {
+}> = ({ inline = false }) => {
   const { t } = useTranslation();
   const [status, setStatus] = useState<DiarizationModelStatus | null>(null);
+  const [statusFailed, setStatusFailed] = useState(false);
   const [percent, setPercent] = useState<number | null>(null);
   const [error, setError] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const lastAnnounced = useRef(-1);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const readyRef = useRef<HTMLSpanElement>(null);
+  const hadFocus = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
       const result = await commands.meetingDiarizationModelStatus();
-      if (result.status === "ok") setStatus(result.data);
+      if (result.status === "ok") {
+        setStatus(result.data);
+        setStatusFailed(false);
+        return;
+      }
     } catch {
-      // Ohne Stand kein Knopf.
+      // unten: sichtbarer Fehlerzustand
     }
+    setStatusFailed(true);
   }, []);
 
   const modelId = status?.model_id;
@@ -44,8 +66,18 @@ export const DiarizationModelButton: React.FC<{
     const unProgress = listen<DownloadProgress>(
       "model-download-progress",
       (e) => {
-        if (e.payload.model_id === modelId)
-          setPercent(Math.round(e.payload.percentage));
+        if (e.payload.model_id !== modelId) return;
+        const p = Math.round(e.payload.percentage);
+        setPercent(p);
+        const step = Math.floor(p / ANNOUNCE_STEP) * ANNOUNCE_STEP;
+        if (step > lastAnnounced.current && step > 0 && step < 100) {
+          lastAnnounced.current = step;
+          setAnnouncement(
+            t("settings.meetings.diarizationModelDownloadingPercent", {
+              percent: step,
+            }),
+          );
+        }
       },
     );
     const unDone = listen<string>("model-download-complete", (e) => {
@@ -58,33 +90,88 @@ export const DiarizationModelButton: React.FC<{
       void unProgress.then((f) => f());
       void unDone.then((f) => f());
     };
-  }, [modelId, refresh]);
+  }, [modelId, refresh, t]);
+
+  const rememberFocus = () => {
+    hadFocus.current =
+      !!rootRef.current && rootRef.current.contains(document.activeElement);
+  };
 
   const download = async () => {
+    rememberFocus();
     setError(false);
     setPercent(0);
+    lastAnnounced.current = 0;
+    setAnnouncement(t("settings.meetings.diarizationModelDownloading"));
     try {
       const result = await commands.meetingDiarizationModelDownload();
-      if (result.status === "error") setError(true);
+      // Läuft schon (zweites Fenster, Doppelklick): Fortschritt kommt weiter per Ereignis.
+      if (result.status === "error" && result.error === "download_running")
+        return;
+      if (result.status === "error") {
+        if (result.error === "cancelled") {
+          setAnnouncement(t("settings.meetings.diarizationModelCancelled"));
+        } else {
+          setError(true);
+          setAnnouncement(
+            t("settings.meetings.diarizationModelDownloadFailed"),
+          );
+        }
+      }
     } catch {
       setError(true);
+      setAnnouncement(t("settings.meetings.diarizationModelDownloadFailed"));
     }
     setPercent(null);
     await refresh();
   };
 
+  const cancel = () => {
+    rememberFocus();
+    void commands.meetingDiarizationModelCancel();
+  };
+
   const ready = status?.model_ready ?? false;
   useEffect(() => {
-    if (ready) onReady?.();
-  }, [ready, onReady]);
+    if (!ready) return;
+    if (lastAnnounced.current >= 0) {
+      setAnnouncement(t("settings.meetings.diarizationModelInstalledNow"));
+    }
+    // Der fokussierte Knopf ist weg: Fokus auf den Ersatztext, nicht auf <body>.
+    if (hadFocus.current) {
+      readyRef.current?.focus();
+      hadFocus.current = false;
+    }
+  }, [ready, t]);
 
-  if (!status) return null;
-  const downloading = percent !== null || status.downloading;
+  const downloading = percent !== null || (status?.downloading ?? false);
+  const size = inline ? "sm" : "md";
 
-  if (ready) {
-    return (
+  let body: React.ReactNode = null;
+  if (statusFailed && !status) {
+    body = (
+      <>
+        <span className="text-xs" style={ERROR_STYLE}>
+          {t("settings.meetings.diarizationModelStatusFailed")}
+        </span>
+        <Button
+          type="button"
+          variant="secondary"
+          size={size}
+          style={{ minHeight: 44 }}
+          onClick={() => void refresh()}
+          data-testid="diarization-model-retry"
+        >
+          {t("settings.meetings.diarizationModelRetry")}
+        </Button>
+      </>
+    );
+  } else if (status && ready) {
+    body = (
       <span
-        className="text-sm text-mid-gray"
+        ref={readyRef}
+        tabIndex={-1}
+        className="text-sm text-mid-gray outline-none"
         data-testid="diarization-model-state"
       >
         {inline
@@ -92,33 +179,61 @@ export const DiarizationModelButton: React.FC<{
           : t("settings.meetings.diarizationModelReady")}
       </span>
     );
+  } else if (status) {
+    body = (
+      <>
+        <span className="inline-flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size={size}
+            style={{ minHeight: 44 }}
+            onClick={() => void download()}
+            disabled={downloading}
+            data-testid="diarization-model-download"
+          >
+            {downloading
+              ? percent && percent > 0
+                ? t("settings.meetings.diarizationModelDownloadingPercent", {
+                    percent,
+                  })
+                : t("settings.meetings.diarizationModelDownloading")
+              : t("settings.meetings.diarizationModelDownload", {
+                  size: status.size_mb,
+                })}
+          </Button>
+          {downloading && (
+            <Button
+              type="button"
+              variant="ghost"
+              size={size}
+              style={{ minHeight: 44 }}
+              onClick={cancel}
+              data-testid="diarization-model-cancel"
+            >
+              {t("settings.meetings.diarizationModelCancel")}
+            </Button>
+          )}
+        </span>
+        {error && (
+          <span className="text-xs" style={ERROR_STYLE}>
+            {t("settings.meetings.diarizationModelDownloadFailed")}
+          </span>
+        )}
+      </>
+    );
   }
 
   return (
-    <span className="inline-flex flex-col items-start gap-1">
-      <Button
-        variant="secondary"
-        size={inline ? "sm" : "md"}
-        style={{ minHeight: 44 }}
-        onClick={() => void download()}
-        disabled={downloading}
-        data-testid="diarization-model-download"
-      >
-        {downloading
-          ? percent && percent > 0
-            ? t("settings.meetings.diarizationModelDownloadingPercent", {
-                percent,
-              })
-            : t("settings.meetings.diarizationModelDownloading")
-          : t("settings.meetings.diarizationModelDownload", {
-              size: status.size_mb,
-            })}
-      </Button>
-      {error && (
-        <span className="text-xs text-red-400">
-          {t("settings.meetings.diarizationModelDownloadFailed")}
-        </span>
-      )}
+    <span
+      ref={rootRef}
+      className="inline-flex flex-col items-start gap-1"
+      data-testid="diarization-model"
+    >
+      {body}
+      <span className="sr-only" aria-live="polite" role="status">
+        {announcement}
+      </span>
     </span>
   );
 };

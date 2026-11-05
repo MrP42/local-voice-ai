@@ -2324,6 +2324,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_voiceprint::meeting_voice_match_dismiss,
             commands::meeting_diarization::meeting_diarization_model_status,
             commands::meeting_diarization::meeting_diarization_model_download,
+            commands::meeting_diarization::meeting_diarization_model_cancel,
             commands::meeting_voiceprint::meeting_voiceprint_status,
             commands::meeting_voiceprint::meeting_voiceprint_download,
             commands::meeting_voiceprint::change_meeting_voice_suggestions_setting,

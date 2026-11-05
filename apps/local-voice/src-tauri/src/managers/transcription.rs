@@ -2828,11 +2828,6 @@ pub enum LiveLoadPlan {
     Refuse { need_mb: u64, free_mb: u64 },
 }
 
-/// RAM-Tor fuers Live-Modell: Bedarf = `final_pass::ram_need_mb`, dazu
-/// [`LIVE_MODEL_RESERVE_MB`] (die Notgrenze, nicht die Server-Reserve).
-/// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
-/// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
-/// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
 /// Reserve, die das Live-Modell einer Besprechung dem System laesst (MB).
 ///
 /// Bewusst die Notgrenze des Waechters, nicht die Server-Reserve
@@ -2844,6 +2839,11 @@ pub enum LiveLoadPlan {
 /// waehrend "Neu transkribieren" (ohne Tor) danach problemlos lief.
 pub const LIVE_MODEL_RESERVE_MB: u64 = crate::process_guard::RAM_EMERGENCY_MB;
 
+/// RAM-Tor fuers Live-Modell: Bedarf = `final_pass::ram_need_mb`, dazu
+/// [`LIVE_MODEL_RESERVE_MB`] (die Notgrenze, nicht die Server-Reserve).
+/// `free_ram_mb == 0` heisst nicht messbar und blockiert nie.
+/// `reclaimable_mb`: Speicher des Modells, das `load_model` vor dem neuen
+/// freigibt. `fallback`: (Modell-ID, Groesse in MB) des Ersatzes.
 pub fn plan_live_load(
     target_size_mb: u64,
     fallback: Option<(&str, u64)>,
