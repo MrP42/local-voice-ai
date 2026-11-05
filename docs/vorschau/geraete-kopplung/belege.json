@@ -1,0 +1,7 @@
+{
+ "hinweis": "Belege aufgeteilt: belege-touch.json (Touchziele 390 px, iPhone) und belege-tastatur.json (Tastatur, Fokusfalle, Scroll).",
+ "dateien": [
+  "belege-touch.json",
+  "belege-tastatur.json"
+ ]
+}
