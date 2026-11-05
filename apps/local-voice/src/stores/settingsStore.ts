@@ -763,6 +763,11 @@ export const useSettingsStore = create<SettingsStore>()(
       listen("model-state-changed", () => {
         get().refreshSettings();
       });
+      // Die App hat einmalig die Vorgabestimme gewählt (Phonon mit Anton, sobald freigegeben
+      // und eingerichtet): Stimmenwahl und Vorlesen zeigen sie sofort.
+      listen("tts-default-voice-applied", () => {
+        get().refreshSettings();
+      });
     },
   })),
 );

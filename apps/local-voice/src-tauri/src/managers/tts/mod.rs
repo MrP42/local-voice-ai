@@ -1275,10 +1275,15 @@ impl TtsCore {
         mut ready: tokio::sync::watch::Receiver<usize>,
     ) {
         let lookahead = self.lookahead.load(Ordering::Acquire);
-        // Anbieter (Netz, oft je Anfrage abgerechnet, mit Ratenlimit) bekommen
+        // Netz-Anbieter (oft je Anfrage abgerechnet, mit Ratenlimit) bekommen
         // keinen Vorpuffer: nach einem Stopp waeren sonst Saetze bezahlt, die
         // niemand hoert, und zwei parallele Anfragen koennen ein 429 ausloesen.
-        if lookahead == 0 || matches!(self.engine_snapshot(), EngineImpl::Provider(_)) {
+        // Lokale Anbieter wie Phonon (je Auftrag ein eigener Kindprozess) puffern
+        // wie Fish und Piper drei Saetze voraus: sonst reisst ein langer Satz
+        // beim Vorlesen eine Luecke.
+        let remote_provider =
+            matches!(self.engine_snapshot(), EngineImpl::Provider(ref p) if !p.is_local());
+        if lookahead == 0 || remote_provider {
             return;
         }
         let max_chars = *self.max_chars.lock().unwrap();
@@ -2724,10 +2729,10 @@ impl TtsManager {
     /// laufende Teil zu Ende spielt. So beginnt der naechste Teil ohne Pause.
     /// Ohne Fortschrittsmeldung; ein neuer Aufruf oder ein Stopp bricht ab.
     /// Laeuft nur, wenn die Engine schon bereit ist (kein Serverstart dafuer)
-    /// und nicht fuer Netz-Anbieter (wie der Vorpuffer). Gibt die Zahl der
+    /// und nicht fuer Netz-Anbieter (wie der Vorpuffer; lokale wie Phonon schon). Gibt die Zahl der
     /// angefragten Stuecke zurueck.
     pub async fn prefetch_head(self: &Arc<Self>, raw: &str) -> Result<u32, String> {
-        if matches!(self.core.engine_snapshot(), EngineImpl::Provider(_)) {
+        if matches!(self.core.engine_snapshot(), EngineImpl::Provider(ref p) if !p.is_local()) {
             return Ok(0);
         }
         if !matches!(self.core.phase(), TtsPhase::Ready | TtsPhase::Speaking) {
