@@ -285,18 +285,34 @@ struct BookTalkEngine {
 
     static let relayTimeout: TimeInterval = 75
 
+    private static let gemmaCheckedKey = "book_talk_gemma_checked"
+
+    /// Zugelassene Gemma-Datei. Der Hash wird je Datei einmal gerechnet (3 GB, einige Sekunden) und mit Größe und
+    /// Änderungsdatum gemerkt. Die Modellverwaltung prüft ihre Downloads selbst, das hier deckt auch vorhandene Dateien ab.
+    private static func gemmaFile() -> (URL, BookTalkGemmaVariant)? {
+        let manager = FileManager.default
+        for variant in BookTalkGemmaVariant.all {
+            let file = ModelLibrary.folder.appendingPathComponent(variant.fileName)
+            guard let attributes = try? manager.attributesOfItem(atPath: file.path),
+                  (attributes[.size] as? NSNumber)?.int64Value == variant.bytes else { continue }
+            let stamp = "\(variant.sha256)|\((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
+            let defaults = UserDefaults.standard
+            if defaults.stringArray(forKey: gemmaCheckedKey)?.contains(stamp) == true { return (file, variant) }
+            guard (try? BookTalkGemmaVariant.identify(file: file)) == variant else { continue }
+            defaults.set((defaults.stringArray(forKey: gemmaCheckedKey) ?? []) + [stamp], forKey: gemmaCheckedKey)
+            return (file, variant)
+        }
+        return nil
+    }
+
     /// Gemma 4 E2B laden prüfen und Zähler bauen; abseits des Hauptthreads.
     private static func gemmaEngine() -> BookTalkEngine {
-        guard let descriptor = LocalModel.all.first(where: \.isGemma) else { return off("Gemma 4 E2B ist nicht eingetragen.", budget: .large) }
-        let file = ModelLibrary.folder.appendingPathComponent(descriptor.name)
-        let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
-        guard size == descriptor.bytes else { return off("Gemma 4 E2B ist nicht geladen (Einstellungen › Lokale Sprachmodelle).", budget: .large) }
-        // Größe und SHA-256 prüft die Installation (`ModelLibrary.install`); ein erneutes Hashen von 3 GB vor jeder Frage entfällt.
+        guard let (file, variant) = gemmaFile() else { return off("Gemma 4 E2B ist nicht geladen (Einstellungen › Lokale Sprachmodelle).", budget: .large) }
         guard let counter = LlamaTokenCounter(modelURL: file) else {
             return off("Gemma 4 E2B lässt sich mit dieser llama.cpp-Version nicht laden. Es gibt Fundstellen.", budget: .large)
         }
         let model = LlamaBookTalkModel(modelURL: file, contextTokens: BookTalkBudget.large.contextTokens)
-        let status = BookTalkEval.status(provider: "llama_cpp", model: descriptor.name, budget: BookTalkBudget.large.name)
+        let status = BookTalkEval.status(provider: "llama_cpp", model: variant.evalModel, budget: BookTalkBudget.large.name)
         return BookTalkEngine(model: model, counter: counter, profile: nil, budget: .large, label: "Lokal · Gemma 4 E2B", note: nil,
                               llama: model, relay: nil, relayInfo: nil, timeout: 45, evalStatus: status)
     }
