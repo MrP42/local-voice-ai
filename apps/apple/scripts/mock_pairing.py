@@ -5,7 +5,7 @@ Eigene, unabhängige Umsetzung von X25519 und XChaCha20-Poly1305 in reinem Pytho
 damit die Probe nichts installieren muss und die Swift-Seite gegen zweite Quelle
 läuft. `python3 mock_pairing.py <vektoren.json>` prüft sie gegen die Testvektoren.
 Spec: docs/superpowers/specs/2026-11-05-geraete-kopplung-qr.md, Abschnitt 4.3."""
-import base64, hashlib, hmac, json, os, struct, sys, urllib.parse
+import base64, datetime, hashlib, hmac, json, os, struct, sys, urllib.parse
 
 P = 2**255 - 19
 
@@ -103,7 +103,8 @@ class Desktop:
         c = unb64u(b["phone_commit"])
         if mac(self.q, b"LV-PAIR-CLAIM-v2", self.id.encode(), c) != unb64u(b["phone_mac"]): return 400, {}
         self.c, self.name, self.status = c, b["device_name"], "challenged"
-        return 200, {"poll_token": "poll", "expires_at": 0}
+        ends = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=120)
+        return 200, {"poll_token": "poll", "expires_at": ends.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
     def reveal(self, b):
         if self.status != "challenged": return 410, {}

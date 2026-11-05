@@ -399,6 +399,15 @@ final class PairingTests: XCTestCase {
         XCTAssertFalse(confirmed, "nur 200 ist eine Bestätigung")
     }
 
+    func testClaimNeedsValidFutureExpiry() async {
+        let past = FakeHub()
+        await past.set { $0.expiresAt = "2020-01-01T00:00:00Z" }
+        await assertFails(past, .expired)
+        let broken = FakeHub()
+        await broken.set { $0.expiresAt = "bald" }
+        await assertFails(broken, .badResponse)
+    }
+
     func testSecretIsWipedAfterRun() async throws {
         let hub = FakeHub()
         let code = try await hub.code

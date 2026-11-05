@@ -238,7 +238,7 @@ private struct PairingSheet: View {
     private func progress(_ text: String) -> some View {
         VStack(spacing: 16) {
             ProgressView().controlSize(.large)
-            Text(text).foregroundStyle(.secondary)
+            Text(text).foregroundStyle(.primary.opacity(0.75))
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -266,7 +266,7 @@ private struct PairingSheet: View {
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .accessibilityLabel(sas.map(String.init).joined(separator: " "))
                 Text("Steht derselbe Code am PC? Dann dort bestätigen. Wenn nicht, am PC abbrechen.")
-                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
                 ProgressView("Bitte am PC bestätigen")
             }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
         }
@@ -292,12 +292,13 @@ private struct PairingSheet: View {
                 Image(systemName: "checkmark.circle.fill").font(.largeTitle).imageScale(.large).foregroundStyle(.green)
                 Text("Verbunden").font(.title2.weight(.semibold))
                 Text("Angemeldet als \(email). Das iPhone gleicht jetzt ab.")
-                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
                 if !confirmed {
                     Text("Ob die Bestätigung am PC angekommen ist, ist unklar. Er zeigt vielleicht eine Warnung. Das iPhone bleibt angemeldet.")
-                        .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
                 }
-                Button("Fertig") { flow.close() }.buttonStyle(.borderedProminent).padding(.top, 24)
+                Button { flow.close() } label: { Text("Fertig").frame(minWidth: 120, minHeight: 44) }
+                    .buttonStyle(.borderedProminent).padding(.top, 24)
             }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
         }
     }
@@ -308,8 +309,9 @@ private struct PairingSheet: View {
                 Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).imageScale(.large).foregroundStyle(.orange)
                 Text(message).multilineTextAlignment(.center)
                 Text("Die Anmeldung mit Passwort bleibt in „Konto & Sync“ möglich.")
-                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-                Button("Neuen Code scannen") { flow.startScan() }.buttonStyle(.borderedProminent).padding(.top, 24)
+                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
+                Button { flow.startScan() } label: { Text("Neuen Code scannen").frame(minHeight: 44) }
+                    .buttonStyle(.borderedProminent).padding(.top, 24)
             }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
         }
     }
@@ -323,7 +325,7 @@ private struct PairingScanStep: View {
         VStack(spacing: 12) {
             scanner
             Text("Am PC unter Einstellungen › Konto & Geräte auf „Handy verbinden“ gehen und den Code ins Bild halten.")
-                .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.primary.opacity(0.75))
             TextField("Gerätename", text: $flow.deviceName).textFieldStyle(.roundedBorder)
         }
         .padding(16)

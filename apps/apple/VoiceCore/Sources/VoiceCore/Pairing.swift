@@ -285,15 +285,14 @@ public struct PairingSession: Sendable {
         let phonePublic = [UInt8](phoneKey.publicKey.rawRepresentation)
         await stage(.claiming)
         let (poll, expires) = try await claim(phonePublic)
+        guard expires > now() else { throw PairingError.expired }
         await stage(.waitingForDesktop)
 
         var desktopNonce: [UInt8]?
         var revealTries = 0
         var lostContact = false
         let started = now()
-        // Frist des Hubs. Liegt sie schon zurück, geht die Uhr hier falsch: dann gilt nur die Obergrenze.
-        let limit = started.addingTimeInterval(Self.maxSeconds)
-        let deadline = expires.flatMap { $0 > started ? min($0, limit) : nil } ?? limit
+        let deadline = min(expires, started.addingTimeInterval(Self.maxSeconds))
         func wait() async throws {
             let left = deadline.timeIntervalSince(now())
             try await pause(min(Self.pollNanos, UInt64(max(0, left) * 1_000_000_000)))
@@ -355,7 +354,7 @@ public struct PairingSession: Sendable {
         throw lostContact ? PairingError.offline : PairingError.timedOut
     }
 
-    private func claim(_ phonePublic: [UInt8]) async throws -> (poll: String, expires: Date?) {
+    private func claim(_ phonePublic: [UInt8]) async throws -> (poll: String, expires: Date) {
         let commitment = PairingProto.commitment(id: code.id, phonePublic: phonePublic, phoneNonce: phoneNonce, name: name)
         let mac = code.q.use { PairingProto.claimMac(q: $0, id: code.id, commitment: commitment) }
         let answer: (Int, Data)
@@ -372,8 +371,11 @@ public struct PairingSession: Sendable {
         switch answer.0 {
         case 200:
             guard let json = (try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any],
-                  let poll = json["poll_token"] as? String, !poll.isEmpty else { throw PairingError.badResponse }
-            return (poll, (json["expires_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) })
+                  let poll = json["poll_token"] as? String, !poll.isEmpty,
+                  let expires = (json["expires_at"] as? String).flatMap({ ISO8601DateFormatter().date(from: $0) }) else {
+                throw PairingError.badResponse
+            }
+            return (poll, expires)
         case 410: throw PairingError.expired
         case 400:
             let error = ((try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any])?["error"] as? [String: Any]
