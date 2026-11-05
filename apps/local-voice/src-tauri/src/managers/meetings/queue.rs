@@ -1655,7 +1655,7 @@ mod tests {
         // Wenige Kerne.
         assert_eq!(rec(cap(8, 32, None), 750, false), (2, Cpu));
         assert_eq!(rec(cap(2, 8, None), 750, false), (1, Cpu));
-        // Wenig Arbeitsspeicher: (16 GB - 6 GB Reserve) / 2 = 5 GB, je Engine ~4,5 GB.
+        // Wenig Arbeitsspeicher: (16 GB - 3,2 GB Reserve) / 2 = 6,4 GB, je Engine ~4,7 GB.
         assert_eq!(rec(cap(32, 16, None), 2_900, false), (1, Ram));
         // Grosses Modell auf kleiner Karte: der Grafikspeicher begrenzt.
         assert_eq!(rec(cap(32, 64, Some(8)), 3_000, true), (1, Vram));

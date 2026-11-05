@@ -328,8 +328,6 @@ async llmSetAutoUpdateModels(mode: string) : Promise<Result<null, string>> {
 },
 /**
  * Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
- */
-/**
  * Ist die CLI einer Abo-Verbindung installiert und angemeldet?
  */
 async llmCliStatus(kind: string) : Promise<Result<CliStatus, string>> {
@@ -8542,6 +8540,14 @@ export type Citation = { n: number; meeting_id: string; meeting_title: string; s
  * Hoechstens 200 Zeichen aus der belegten Stelle.
  */
 quote: string }
+/**
+ * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
+ */
+export type CliStatus = { installed: boolean; 
+/**
+ * `None`: die CLI hat keine lesbare Antwort gegeben.
+ */
+logged_in: boolean | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CloneRequest = { source: CloneSource; 
 /**
@@ -10040,14 +10046,6 @@ started_at: number | null }
 /**
  * Ergebnis einer Pruefung auf neue Modelle.
  */
-/**
- * Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
- */
-export type CliStatus = { installed: boolean;
-/**
- * `None`: die CLI hat keine lesbare Antwort gegeben.
- */
-logged_in: boolean | null }
 export type ModelCheck = { 
 /**
  * Einstellung `llm_auto_update_models` zum Zeitpunkt der Pruefung.

@@ -38,7 +38,6 @@ pub const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 /// mit dem Messwert); ungueltige Werte werden ignoriert.
 pub const TEST_FREE_RAM_ENV: &str = "LVA_TEST_FREE_RAM_MB";
 
-/// Freier physischer Speicher in MB (0, wenn nicht messbar).
 /// Reserve fuer einen Rechner mit `total_mb` RAM: ein Fuenftel, zwischen
 /// [`RAM_RESERVE_MIN_MB`] und [`RAM_RESERVE_MB`]. Feste 6 GB verlangten auf
 /// dem 16-GB-Zielgeraet (docs/PORTABLE.md) 8,6 GB frei fuer das 2,6-GB-Modell;
@@ -62,6 +61,7 @@ pub fn ram_reserve_mb() -> u64 {
     })
 }
 
+/// Freier physischer Speicher in MB (0, wenn nicht messbar).
 pub fn available_ram_mb() -> u64 {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
@@ -131,7 +131,9 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
 /// Speicher-Deckel fuer einen Kindprozessbaum: alles, was frei ist, minus
 /// die Reserve — nie unter `RAM_MIN_LIMIT_MB`.
 pub fn memory_limit_mb(free_mb: u64) -> u64 {
-    free_mb.saturating_sub(ram_reserve_mb()).max(RAM_MIN_LIMIT_MB)
+    free_mb
+        .saturating_sub(ram_reserve_mb())
+        .max(RAM_MIN_LIMIT_MB)
 }
 
 /// Beendet Windows gerade die Sitzung (Herunterfahren, Neustart, Abmelden)?

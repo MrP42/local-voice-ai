@@ -46,8 +46,8 @@ use super::basis::{self, DocBasis};
 use super::doc_types::{self, DocHead, DocProfile};
 use super::llm_call::{
     ask_json, build_head_with, duration_label, head_facts_block, is_splittable_error,
-    is_truncation_error, mm_ss, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry, sorted_segments,
-    AskOptions, SemanticRetry,
+    is_truncation_error, mm_ss, ram_probe_for, resolve_provider_coded, retry_chunk, should_retry,
+    sorted_segments, AskOptions, SemanticRetry,
 };
 use super::notes::blocks::{run_blocks, Step, Work};
 use super::notes::budget;
@@ -2007,7 +2007,7 @@ pub async fn generate_minutes_with_basis(
         template_id,
         doc_basis,
         Limits {
-            free_mb: ram_probe_for(settings),
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
             ..Limits::default()
         },
         on_progress,
@@ -2034,7 +2034,7 @@ pub async fn generate_document_with_settings(
         doc_type,
         doc_basis,
         Limits {
-            free_mb: ram_probe_for(settings),
+            free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
             ..Limits::default()
         },
         on_progress,

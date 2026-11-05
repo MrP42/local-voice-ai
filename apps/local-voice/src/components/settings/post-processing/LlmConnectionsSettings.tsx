@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import {
@@ -59,24 +59,35 @@ const SUBSCRIPTION_OF: Record<string, string> = {
 const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
   const { t } = useTranslation();
   const [status, setStatus] = useState<CliStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const latest = useRef(0);
 
   const refresh = useCallback(async () => {
+    const request = ++latest.current;
     const result = await commands.llmCliStatus(kind);
-    if (result.status === "ok") setStatus(result.data);
+    if (result.status === "ok" && request === latest.current) {
+      setStatus(result.data);
+      if (result.data.logged_in === true) setWaiting(false);
+    }
   }, [kind]);
 
   useEffect(() => {
     void refresh();
-    // Nach der Anmeldung im Browser kommt man ueber das Fenster zurueck.
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
   }, [refresh]);
 
+  // Nur nach "Anmelden": jede Abfrage startet einen Prozess der CLI.
+  useEffect(() => {
+    if (!waiting) return;
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [waiting, refresh]);
+
   const login = async () => {
-    setError(null);
+    setFailed(false);
     const result = await commands.llmCliLogin(kind);
-    if (result.status === "error") setError(result.error);
+    if (result.status === "ok") setWaiting(true);
+    else setFailed(true);
   };
 
   if (!status) return null;
@@ -106,7 +117,11 @@ const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
       <Button variant="secondary" size="sm" onClick={() => void login()}>
         {t("settings.llm.cliStatus.login")}
       </Button>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {failed && (
+        <p className="text-xs text-red-500">
+          {t("settings.llm.cliStatus.loginFailed")}
+        </p>
+      )}
     </div>
   );
 };

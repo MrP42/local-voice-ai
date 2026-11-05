@@ -381,6 +381,17 @@ pub fn status(cli: Cli) -> CliStatus {
     }
 }
 
+/// Befehlszeile fuer `cmd`: scheitert die Anmeldung, bleibt das Fenster mit
+/// der Meldung der CLI offen, statt sich sofort zu schliessen.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn login_command_line(program: &Path, argv: &[String]) -> String {
+    let quoted: Vec<String> = std::iter::once(program.to_string_lossy().into_owned())
+        .chain(argv.iter().cloned())
+        .map(|a| format!("\"{a}\""))
+        .collect();
+    format!("/S /C \"{} || pause\"", quoted.join(" "))
+}
+
 /// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
 /// ganz in der CLI und im Browser; die App sieht davon nichts.
 #[cfg(windows)]
@@ -390,8 +401,8 @@ pub fn open_login(cli: Cli) -> Result<(), String> {
         .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
     let (program, mut argv) = launcher(&binary);
     argv.extend(login_args(cli).iter().map(|s| s.to_string()));
-    Command::new(program)
-        .args(&argv)
+    Command::new("cmd")
+        .raw_arg(login_command_line(&program, &argv))
         .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
         .spawn()
         .map(|_| ())
@@ -402,7 +413,11 @@ pub fn open_login(cli: Cli) -> Result<(), String> {
 pub fn open_login(cli: Cli) -> Result<(), String> {
     Err(format!(
         "cli_failed: Bitte im Terminal anmelden: {} {}",
-        if cli == Cli::Claude { "claude" } else { "codex" },
+        if cli == Cli::Claude {
+            "claude"
+        } else {
+            "codex"
+        },
         login_args(cli).join(" ")
     ))
 }
@@ -977,6 +992,18 @@ mod tests {
         );
         assert_eq!(parse_status(Cli::Codex, "Not logged in", ""), Some(false));
         assert_eq!(parse_status(Cli::Codex, "", ""), None);
+    }
+
+    #[test]
+    fn the_login_window_stays_open_on_failure() {
+        let line = login_command_line(
+            Path::new(r"C:\Program Files\claude.exe"),
+            &["auth".to_string(), "login".to_string()],
+        );
+        assert_eq!(
+            line,
+            r#"/S /C ""C:\Program Files\claude.exe" "auth" "login" || pause""#
+        );
     }
 
     #[test]

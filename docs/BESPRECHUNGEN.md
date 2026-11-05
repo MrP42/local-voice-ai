@@ -53,7 +53,7 @@ Transkripte, Anzeige und Export werden **nicht** nachträglich verändert; **Neu
   Grafikspeicher nehmen, die das Mitschreiben in Echtzeit braucht.
 - **Gleichzeitige Transkriptionen** (Einstellungen → Diktat → Besprechungen, 1 bis 3, Standard 1): transcribe.cpp erlaubt je
   Modell nur einen laufenden Aufruf, echte Gleichzeitigkeit braucht ein **eigenes Modell je Lauf** und damit das Modell noch
-  einmal im Speicher. Ein weiterer Lauf beginnt nur, wenn RAM (Modellgröße × 1,5 + 512 MB, plus 6 GB Systemreserve) und bei
+  einmal im Speicher. Ein weiterer Lauf beginnt nur, wenn RAM (Modellgröße × 1,5 + 512 MB, plus Systemreserve: ein Fünftel des Gesamtspeichers, 3 bis 6 GB) und bei
   GPU-Modellen der freie Grafikspeicher (Modell × 1,25 + 1 GB) reichen; sonst wartet die Datei („Wartet auf Arbeitsspeicher“).
   Es lädt immer nur eine weitere Engine zugleich. Laufende Läufe werden nie abgebrochen, auch nicht bei knappem Speicher.
 

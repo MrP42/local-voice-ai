@@ -2663,6 +2663,7 @@
           "loggedOut": "Nicht angemeldet. Die Anmeldung öffnet ein Fenster und danach den Browser.",
           "unknown": "Die Anmeldung ließ sich nicht prüfen.",
           "login": "Anmelden",
+          "loginFailed": "Das Anmeldefenster ließ sich nicht öffnen.",
           "missing": {
             "claude_cli": "Claude Code ist auf diesem Rechner nicht installiert. Ohne Claude Code geht dieser Weg nicht: Claude Code installieren (claude.com/claude-code) oder stattdessen die Verbindung „Anthropic“ mit API-Schlüssel anlegen.",
             "codex_cli": "Die Codex CLI ist auf diesem Rechner nicht installiert. Installation: npm i -g @openai/codex. Alternativ die Verbindung „OpenAI“ mit API-Schlüssel anlegen."
@@ -3813,7 +3814,7 @@
       "parallelSummaryMaximum": "Empfehlung für diesen PC: {{count}} gleichzeitig – Obergrenze der App. Die Hardware würde mehr erlauben.",
       "parallelDerivationTitle": "Herleitung",
       "parallelByCpu": "Prozessorkerne: {{cpus}} → {{count}} (ein Lauf je vier Kerne)",
-      "parallelByRam": "Arbeitsspeicher: {{ram}} GB → {{count}} (die Hälfte nach 6 GB Systemreserve, je Lauf {{perRun}} GB)",
+      "parallelByRam": "Arbeitsspeicher: {{ram}} GB → {{count}} (die Hälfte nach der Systemreserve, je Lauf {{perRun}} GB)",
       "parallelByRamUnknown": "Arbeitsspeicher: nicht messbar, begrenzt nicht",
       "parallelByVram": "Grafikspeicher: {{vram}} GB → {{count}} (je Lauf {{perRun}} GB)",
       "parallelByVramCpuModel": "Grafikspeicher: zählt nicht, das Modell rechnet auf dem Prozessor",

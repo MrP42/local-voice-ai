@@ -3673,7 +3673,8 @@ mod tests {
     // ---- P1i: RAM-Tor fuers Live-Modell der Besprechung -----------------------
 
     fn need(size_mb: u64) -> u64 {
-        crate::managers::meetings::final_pass::ram_need_mb(size_mb) + crate::process_guard::ram_reserve_mb()
+        crate::managers::meetings::final_pass::ram_need_mb(size_mb)
+            + crate::process_guard::ram_reserve_mb()
     }
 
     // ---- U7: eigene Engine fuer weitere gleichzeitige Importe -------------------

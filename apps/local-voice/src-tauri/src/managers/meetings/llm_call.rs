@@ -311,6 +311,8 @@ fn ram_not_involved() -> u64 {
 /// lokale Modell haengt am RAM dieses Rechners: bei einem Cloud- oder
 /// Abo-Anbieter hiesse jeder Fehler auf knappem RAM sonst `memory_low`, und
 /// aus "Claude nicht angemeldet" wuerde "zu wenig Arbeitsspeicher" (#283).
+/// Laeuft die Aufgabe mit `for_function`, muss die Sonde dieselben
+/// Einstellungen sehen: eine Funktion kann ein eigenes Modell haben.
 pub fn ram_probe_for(settings: &AppSettings) -> fn() -> u64 {
     let local = settings
         .active_post_process_provider()
