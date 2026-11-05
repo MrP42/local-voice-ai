@@ -936,6 +936,35 @@ fn load_progress(root: &Path) -> Result<BTreeMap<String, String>, String> {
     }
 }
 
+/// Lesegrenze des Buch-Gesprächs (lva#309): `frontier` in einem Fortschritts-
+/// Datensatz (`progress.*`) steigt nur. Hat der gespeicherte Datensatz eine
+/// höhere Grenze als der neue (oder der neue keine), bleibt die höhere. Alles
+/// andere (kein Datensatz, kein JSON-Objekt, keine Grenze) bleibt unverändert,
+/// der Text wird dann nicht neu serialisiert.
+fn keep_frontier(key: &str, old: Option<&String>, new: String) -> String {
+    if !key.starts_with("progress.") {
+        return new;
+    }
+    let frontier = |v: &serde_json::Value| v.get("frontier").and_then(serde_json::Value::as_f64);
+    let (Some(old), Ok(mut next)) = (
+        old.and_then(|o| serde_json::from_str::<serde_json::Value>(o).ok()),
+        serde_json::from_str::<serde_json::Value>(&new),
+    ) else {
+        return new;
+    };
+    let Some(old_frontier) = frontier(&old) else {
+        return new;
+    };
+    if frontier(&next).is_some_and(|f| f >= old_frontier) {
+        return new;
+    }
+    let Some(object) = next.as_object_mut() else {
+        return new;
+    };
+    object.insert("frontier".into(), old["frontier"].clone());
+    serde_json::to_string(&next).unwrap_or(new)
+}
+
 /// Einträge einpflegen (`None` löscht). Ungültige Schlüssel oder übergroße
 /// Werte werden verworfen statt die ganze Datei zu gefährden.
 pub fn merge_progress(map: &mut BTreeMap<String, String>, entries: Vec<ProgressEntry>) {
@@ -946,6 +975,7 @@ pub fn merge_progress(map: &mut BTreeMap<String, String>, entries: Vec<ProgressE
         }
         match entry.value {
             Some(v) if v.len() <= MAX_PROGRESS_VALUE => {
+                let v = keep_frontier(&entry.key, map.get(&entry.key), v);
                 map.insert(entry.key, v);
             }
             Some(_) => log::warn!(
@@ -2200,6 +2230,48 @@ mod tests {
         );
         assert_eq!(map.len(), 1);
         assert_eq!(map["a"], "3");
+    }
+
+    #[test]
+    fn progress_frontier_only_rises() {
+        let put = |map: &mut BTreeMap<String, String>, key: &str, value: &str| {
+            merge_progress(
+                map,
+                vec![ProgressEntry {
+                    key: key.into(),
+                    value: Some(value.into()),
+                }],
+            );
+        };
+        let frontier = |map: &BTreeMap<String, String>, key: &str| {
+            serde_json::from_str::<serde_json::Value>(&map[key]).unwrap()["frontier"].as_f64()
+        };
+        let key = "progress.text:page_1:original";
+        let mut map = BTreeMap::new();
+        put(&mut map, key, r#"{"offset":10,"frontier":500,"updated":1}"#);
+        // Zurückblättern (kleinerer Offset, kleinere Grenze) senkt die Grenze nicht.
+        put(&mut map, key, r#"{"offset":2,"frontier":120,"updated":2}"#);
+        assert_eq!(frontier(&map, key), Some(500.0));
+        // Ein älterer Stand ohne Feld (anderes Gerät) verliert sie ebenso wenig.
+        put(&mut map, key, r#"{"offset":3,"updated":3}"#);
+        assert_eq!(frontier(&map, key), Some(500.0));
+        // Der Rest des neuen Datensatzes gilt trotzdem.
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&map[key]).unwrap()["offset"],
+            3
+        );
+        // Eine höhere Grenze setzt sich durch und der Text bleibt unangetastet.
+        let raw = r#"{"offset":9,"frontier":900,"updated":4}"#;
+        put(&mut map, key, raw);
+        assert_eq!(map[key], raw);
+        // Ohne alte Grenze, andere Schlüssel und Nicht-JSON bleiben wie geliefert.
+        put(&mut map, "progress.text:page_2:original", r#"{"offset":1}"#);
+        assert_eq!(map["progress.text:page_2:original"], r#"{"offset":1}"#);
+        put(&mut map, "tts.resume.x", r#"{"frontier":5}"#);
+        put(&mut map, "tts.resume.x", r#"{"frontier":1}"#);
+        assert_eq!(map["tts.resume.x"], r#"{"frontier":1}"#);
+        put(&mut map, key, "kein json");
+        assert_eq!(map[key], "kein json");
     }
 
     #[test]

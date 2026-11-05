@@ -1,0 +1,84 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 2,
+          "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+          "end": 2025,
+          "page": 6,
+          "q": 1,
+          "quote": "„Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche“, sagte er.",
+          "start": 1953
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus. Das steht auf Seite 6: ‚Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche, sagte er.‘",
+      "text": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus."
+    }
+  },
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [],
+      "general": true,
+      "index": 1,
+      "speech": "Allgemein gilt: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile.",
+      "text": "Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile."
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 2,
+          "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+          "end": 2025,
+          "page": 6,
+          "q": 1,
+          "quote": "„Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche“, sagte er.",
+          "start": 1953
+        }
+      ],
+      "dropped": 0,
+      "found_only": false,
+      "frontier": 2569,
+      "intent": "explain",
+      "scope": "until_position",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 2,
+              "chapter_title": "Kapitel 2: Vermögen und Verpflichtungen",
+              "end": 2025,
+              "page": 6,
+              "q": 1,
+              "quote": "„Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche“, sagte er.",
+              "start": 1953
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus. Das steht auf Seite 6: ‚Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche, sagte er.‘",
+          "text": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus."
+        },
+        {
+          "citations": [],
+          "general": true,
+          "index": 1,
+          "speech": "Allgemein gilt: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile.",
+          "text": "Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile."
+        }
+      ],
+      "speech": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus. Das steht auf Seite 6: ‚Ein Vermögenswert bringt dir jeden Monat Geld in die Tasche, sagte er.‘ Allgemein gilt: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile.",
+      "text": "Ein Vermögenswert bringt jeden Monat Geld in die Tasche, eine Verpflichtung nimmt Geld heraus. Allgemein: Gemeint sind etwa Mieteinnahmen oder Unternehmensanteile."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

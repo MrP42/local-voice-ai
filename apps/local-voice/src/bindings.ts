@@ -5591,6 +5591,96 @@ async bookAiDocumentExport(pageId: string, id: string, path: string) : Promise<R
 }
 },
 /**
+ * Frage an ein Buch. Geprüfte Sätze kommen vorab als `sentence`-Ereignis,
+ * das Ergebnis ist die endgültige Antwort (auch als `done`). Bereich und
+ * Grenze gelten für genau diese Anfrage. Bei Eval-Status „durchgefallen“
+ * für das aufgelöste Modell, ohne Modell, ohne Cloud-Freigabe, offline oder ohne
+ * Budgetnachweis kommt eine Antwort `found_only` mit Grund. `Err` nur bei
+ * ungültiger Anfrage, laufender Frage und Abbruch (`cancelled`, dann
+ * `failed`-Ereignis, nichts wird gespeichert). Bei ausgeschaltetem Schalter
+ * `book_talk_enabled` gilt der Fundstellen-Modus (`found_only`, `no_model`).
+ * Der Schalter ist die Vorschau (Spec §11.5): ungeprüfte Tupel antworten,
+ * bestandene ebenso, durchgefallene nie. Das `done`-Ereignis bleibt
+ * unverändert (Vertrag ohne Zusatzfeld); die Oberfläche kennzeichnet jede
+ * generierte Antwort weiter als „Vorschau“.
+ */
+async bookTalkAsk(req: BookTalkRequest) : Promise<Result<BookTalkAnswer, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_ask", { req }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Bricht eine laufende Frage ab; es kommt nur noch `failed { cancelled }`,
+ * nichts wird gespeichert. Trifft der Abbruch vor der Anmeldung der Frage
+ * ein, wird er vorgemerkt und gilt für sie. `false`, wenn zu dieser Anfrage
+ * kein Lauf (mehr) existiert.
+ */
+async bookTalkCancel(requestId: string) : Promise<boolean> {
+    return await TAURI_INVOKE("book_talk_cancel", { requestId });
+},
+/**
+ * Verlauf des Gesprächs mit einem Buch (älteste zuerst, höchstens 200 Wechsel).
+ */
+async bookTalkHistory(bookId: string) : Promise<Result<StoredTurn[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_history", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Verlauf löschen.
+ */
+async bookTalkClear(bookId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_clear", { bookId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Sprachbefehl erkennen (ohne Modell). „Ja“ ist nur dann ein Befehl
+ * (`read_citation`), wenn die letzte Antwort die Stelle zum Vorlesen anbot.
+ */
+async bookTalkCommand(bookId: string, text: string) : Promise<Result<BookTalkCommand | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("book_talk_command", { bookId, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_enabled` (Schalter für das Gespräch mit dem Buch).
+ */
+async changeBookTalkEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Einstellung `book_talk_cloud_consent` (Schlüssel `Verbindung::Modell` mit
+ * Freigabe). Doppelte und unbekannte Schlüssel fallen weg; Lesen und
+ * Schreiben laufen unter der gemeinsamen Einstellungssperre, damit kein
+ * veralteter Stand einen frischen Widerruf überschreibt.
+ */
+async changeBookTalkCloudConsentSetting(providers: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_book_talk_cloud_consent_setting", { providers }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Eine Textfassung exportieren. Das Format ergibt sich aus der Endung
  * (`epub`, `pdf`, `docx`, `md`, `txt`). Rückgabe: der geschriebene Pfad.
  */
@@ -7391,6 +7481,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+bookTalkEvent: BookTalkEvent,
 briefRequestEvent: BriefRequestEvent,
 calendarSyncEvent: CalendarSyncEvent,
 documentEvent: DocumentEvent,
@@ -7411,6 +7502,7 @@ streamTextEvent: StreamTextEvent,
 ttsProviderPreview: TtsProviderPreview,
 ttsProviderVoiceSample: TtsProviderVoiceSample
 }>({
+bookTalkEvent: "book-talk-event",
 briefRequestEvent: "brief-request-event",
 calendarSyncEvent: "calendar-sync-event",
 documentEvent: "document-event",
@@ -7858,6 +7950,20 @@ meeting_default_template_id?: string | null;
  */
 meeting_semantic_search?: boolean; 
 /**
+ * Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+ * lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+ * brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+ * `consent_required`.
+ */
+book_talk_cloud_consent?: string[]; 
+/**
+ * Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+ * aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+ * Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+ * „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
+ */
+book_talk_enabled?: boolean; 
+/**
  * Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
  * innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
  * geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -8293,6 +8399,97 @@ export type BookCharacter = { name: string;
  */
 voice_id: string | null; description: string }
 export type BookPreview = { title: string; pages: number; voices: PackageVoice[]; rights_confirmed: boolean }
+/**
+ * Die Antwort in zwei Formen (D5; Form wie `BookTalkAnswer` im Vertrag).
+ */
+export type BookTalkAnswer = { intent: BookTalkIntent; sentences: BookTalkSentence[]; text: string; 
+/**
+ * Sprechfassung: Satz-Sprechfassungen, dann Rückfrage bzw. „bis Seite N“.
+ */
+speech: string; citations: BookTalkCitation[]; 
+/**
+ * Ohne belegte Modellantwort: nur Fundstellen oder ein Hinweis.
+ */
+found_only: boolean; 
+/**
+ * Grund für `found_only` (Codes des Vertrags oder `no_hits`); fehlt, wenn
+ * das Modell Sätze lieferte, aber keiner belegbar war.
+ */
+reason?: string | null; 
+/**
+ * Verworfene (unbelegte) Sätze der Modellantwort.
+ */
+dropped: number; scope: BookTalkScope; frontier: number }
+/**
+ * Ein Beleg: Stelle im Buch mit wörtlichem Zitat (Form wie `Citation` im Vertrag).
+ */
+export type BookTalkCitation = { 
+/**
+ * Auszugsnummer `Q<k>` im Prompt.
+ */
+q: number; 
+/**
+ * Seite aus der letzten Seitenmarke vor `start`; fehlt, wenn keine kam.
+ */
+page?: number | null; chapter_index: number; chapter_title: string; 
+/**
+ * UTF-16-Offsets im Originaltext (Ende exklusiv).
+ */
+start: number; end: number; quote: string }
+/**
+ * Ein Sprachbefehl, Form wie `Command` im Vertrag: `{ "kind": "jump" }`.
+ */
+export type BookTalkCommand = { kind: BookTalkCommandKind }
+export type BookTalkCommandKind = "jump" | "read_citation" | 
+/**
+ * „Ja“: nach der Rückfrage „Soll ich dir die Stelle vorlesen?“ gleich
+ * `ReadCitation`, sonst eine Frage (siehe `resolve_confirm`).
+ */
+"confirm" | "resume" | "scope_book" | "scope_position" | "stop" | "end"
+/**
+ * Ereignis `book-talk-event` (Form wie `BookTalkEvent` im Vertrag).
+ */
+export type BookTalkEvent = { kind: "sentence"; request_id: string; sentence: BookTalkSentence } | { kind: "done"; request_id: string; answer: BookTalkAnswer } | { kind: "failed"; request_id: string; code: string }
+export type BookTalkInput = "voice" | "text"
+export type BookTalkIntent = "recap" | "locate" | "explain" | "question"
+/**
+ * Anfrage (Form wie `BookTalkRequest` im Vertrag). Bereich und Grenze gelten
+ * für genau diese Anfrage.
+ */
+export type BookTalkRequest = { book_id: string; request_id: string; question: string; 
+/**
+ * Spoilergrenze: weitester gelesener oder gehörter Stand (UTF-16 im
+ * Originaltext). Fehlt sie, gilt Schutz mit 0 (`no_frontier`).
+ */
+frontier?: number | null; scope: BookTalkScope; input: BookTalkInput }
+/**
+ * Bereich der Suche (D4).
+ */
+export type BookTalkScope = 
+/**
+ * Nur der gelesene oder gehörte Teil (Standard).
+ */
+"until_position" | 
+/**
+ * Das ganze Buch.
+ */
+"book"
+/**
+ * Ein geprüfter Satz (Form wie `Sentence` im Vertrag).
+ */
+export type BookTalkSentence = { index: number; 
+/**
+ * Satz ohne `[Q<k>]`-Marker.
+ */
+text: string; 
+/**
+ * Sprechfassung, der erste belegte Satz mit gesprochenem Zitat.
+ */
+speech: string; citations: BookTalkCitation[]; 
+/**
+ * Allgemeinwissen, ohne Beleg.
+ */
+general: boolean }
 export type BookTemplate = { id: string; title: string; 
 /**
  * Gruppe in der Auswahl: "ueberblick" | "lernen" | "analyse" | "anwenden".
@@ -11345,6 +11542,18 @@ export type StoredSegment = { segment_index: number; text: string; start_ms: num
  * keine Migration.
  */
 words?: WordTime[] | null }
+/**
+ * Ein gespeicherter Wechsel (Form wie `StoredTurn` im Vertrag).
+ */
+export type StoredTurn = { question: string; answer: BookTalkAnswer; scope: BookTalkScope; 
+/**
+ * Spoilergrenze (UTF-16 im Originaltext) zum Zeitpunkt der Frage.
+ */
+frontier: number; input: BookTalkInput; 
+/**
+ * Zeitpunkt (RFC 3339, UTC).
+ */
+at: string }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

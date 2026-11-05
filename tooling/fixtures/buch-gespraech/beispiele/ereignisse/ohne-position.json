@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [],
+      "general": false,
+      "index": 0,
+      "speech": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?",
+      "text": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?"
+    }
+  },
+  {
+    "answer": {
+      "citations": [],
+      "dropped": 0,
+      "found_only": true,
+      "frontier": 0,
+      "intent": "question",
+      "reason": "no_frontier",
+      "scope": "until_position",
+      "sentences": [
+        {
+          "citations": [],
+          "general": false,
+          "index": 0,
+          "speech": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?",
+          "text": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?"
+        }
+      ],
+      "speech": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?",
+      "text": "Ich kenne deine Leseposition noch nicht. Soll ich im ganzen Buch suchen?"
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

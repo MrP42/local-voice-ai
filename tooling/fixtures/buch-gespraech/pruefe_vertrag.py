@@ -37,6 +37,21 @@ def main():
                 if ist != soll:
                     fehler += 1
                     print(f"FEHLER {datei} {art}[{i}]: gueltig={ist}, erwartet={soll}")
+    # Golden-Ereignisse beider Kerne: je Datei ein Array gültiger Ereignisse.
+    for datei in sorted((HIER / "beispiele" / "ereignisse").glob("*.json")):
+        ereignisse = json.loads(datei.read_text(encoding="utf-8"))
+        if not isinstance(ereignisse, list) or not ereignisse:
+            fehler += 1
+            print(f"FEHLER {datei.name}: kein Array von Ereignissen")
+            continue
+        for i, e in enumerate(ereignisse):
+            if not validators["event"].is_valid(e):
+                fehler += 1
+                print(f"FEHLER {datei.name}[{i}]: kein gültiges Ereignis")
+        arten = [e.get("kind") for e in ereignisse]
+        if arten[-1] not in ("done", "failed") or any(a != "sentence" for a in arten[:-1]):
+            fehler += 1
+            print(f"FEHLER {datei.name}: Reihenfolge {arten}")
     print("Vertrag: GRUEN" if fehler == 0 else f"Vertrag: ROT ({fehler})")
     return 1 if fehler else 0
 

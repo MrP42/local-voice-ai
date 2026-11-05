@@ -178,6 +178,11 @@ export class VoiceCallEngine {
 
   /** Orchestrator des Gesprächs (Werkzeuge, Modelle, Souveränität); je Engine einer. */
   private session: OrchestrationSession;
+  /**
+   * Eigene Denk-Seite statt Orchestrator (Buch-Gespräch, lva#309): Hören,
+   * Sprechen, Turn-Taking, Barge-in und Verlauf bleiben die der Engine.
+   */
+  private sideOverride: ChatSide | null = null;
   private unwatch: (() => void) | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
@@ -206,6 +211,22 @@ export class VoiceCallEngine {
       window.removeEventListener(COMPLIANCE_CHANGED, invalidate);
       off();
     };
+  }
+
+  /** Denken aus einer eigenen Seite (z. B. „Buch“); `null` = wieder der Orchestrator. */
+  setSideOverride(side: ChatSide | null): void {
+    this.sideOverride = side;
+  }
+
+  /**
+   * Laufende Antwort sofort verwerfen, ohne den Anruf zu beenden: die Seite
+   * wird abgebrochen, die Sprechwarteschlange geleert, vorsynthetisierte
+   * Sätze fallen weg (Plan §3.7 Bereichswechsel, Esc).
+   */
+  interrupt(): void {
+    this.cancelText(false);
+    this.cancelTurn(false);
+    if (!this.utt && this.inCall) this.setState("listening");
   }
 
   /** Läuft ein Anruf (Mikrofon offen)? Sonst gilt der Textmodus ohne Ton. */
@@ -580,6 +601,12 @@ export class VoiceCallEngine {
    */
   private async orchestrate(): Promise<Prepared> {
     await this.ensureListener();
+    if (this.sideOverride)
+      return {
+        side: this.sideOverride,
+        blocked: false,
+        systemPrompt: this.cfg.systemPrompt,
+      };
     return this.session.prepare({
       ...this.cfg.orchestration,
       systemPrompt: this.cfg.systemPrompt,

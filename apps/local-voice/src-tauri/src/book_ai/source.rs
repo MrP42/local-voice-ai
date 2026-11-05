@@ -87,7 +87,7 @@ pub fn select(text: &str, source: &SummarySource) -> Result<String, String> {
 }
 
 /// Seitenmarke `{{S. n}}` am Anfang von `s`: (Seite, Länge in Bytes).
-fn page_mark_at(s: &str) -> Option<(u32, usize)> {
+pub(crate) fn page_mark_at(s: &str) -> Option<(u32, usize)> {
     let rest = s.strip_prefix("{{S. ")?;
     let end = rest.find("}}")?;
     let page = rest[..end].trim().parse().ok()?;
@@ -97,7 +97,7 @@ fn page_mark_at(s: &str) -> Option<(u32, usize)> {
 /// Sprechstil-Marke `[calm]`: nur kurze Wörter aus Kleinbuchstaben. Fußnoten
 /// wie `[1]` bleiben stehen; ein Einschub wie `[sic]` fällt mit weg, was für
 /// eine Zusammenfassung unschädlich ist.
-fn style_mark_len(s: &str) -> Option<usize> {
+pub(crate) fn style_mark_len(s: &str) -> Option<usize> {
     let rest = s.strip_prefix('[')?;
     let end = rest.find(']')?;
     let word = &rest[..end];
@@ -109,7 +109,7 @@ fn style_mark_len(s: &str) -> Option<usize> {
 }
 
 /// Sprecher am Zeilenanfang `<Name>` (ohne Zeilenumbruch, höchstens 40 Zeichen).
-fn speaker_len(line: &str) -> Option<usize> {
+pub(crate) fn speaker_len(line: &str) -> Option<usize> {
     let rest = line.strip_prefix('<')?;
     let end = rest.find('>')?;
     let name = &rest[..end];
@@ -154,7 +154,7 @@ fn clean_line(line: &str, pages: &mut Vec<u32>) -> String {
 }
 
 /// Überschrift `#`, `##` oder `###`: (Ebene, Titel).
-fn heading(line: &str) -> Option<(usize, &str)> {
+pub(crate) fn heading(line: &str) -> Option<(usize, &str)> {
     let t = line.trim_start();
     let level = t.chars().take_while(|c| *c == '#').count();
     if !(1..=3).contains(&level) {

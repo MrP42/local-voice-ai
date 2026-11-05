@@ -290,14 +290,17 @@ pub const FN_MEETING_PROTOCOL: &str = "meeting_protocol";
 pub const FN_DICTATION_REFINE: &str = "dictation_refine";
 /// Vorlesen: Uebersetzen und KI-Dokumente (Zusammenfassung, Begriffe).
 pub const FN_READ_ALOUD: &str = "read_aloud";
+/// Buch-Gespraech: Fragen an ein Buch per Sprache oder Text (lva#307).
+pub const FN_BOOK_TALK: &str = "book_talk";
 
 /// Funktionen mit eigener Modellwahl. Der Denker des Gespraechs hat seine Wahl
 /// schon in den Gespraechseinstellungen (`denkerModelId`).
-pub const LLM_FUNCTIONS: [&str; 4] = [
+pub const LLM_FUNCTIONS: [&str; 5] = [
     FN_VOICE_SPEAKER,
     FN_MEETING_PROTOCOL,
     FN_DICTATION_REFINE,
     FN_READ_ALOUD,
+    FN_BOOK_TALK,
 ];
 
 fn default_llm_auto_update() -> String {
@@ -934,6 +937,18 @@ pub struct AppSettings {
     /// heruntergeladen ist; ohne den Schluessel gilt `true`.
     #[serde(default = "default_true")]
     pub meeting_semantic_search: bool,
+    /// Buch-Gespraech (lva#308): Schluessel `Verbindung::Modell` (je Modell,
+    /// lva#309), an die Buchauszuege gesendet werden duerfen. Lokale Modelle
+    /// brauchen keine Freigabe; ein anderes Modell ohne Eintrag ergibt den Code
+    /// `consent_required`.
+    #[serde(default)]
+    pub book_talk_cloud_consent: Vec<String>,
+    /// Buch-Gespraech (lva#308): Schalter „KI-Antworten (Vorschau)“, Standard
+    /// aus. Ein: auch Tupel ohne Eval-Eintrag (ungeprueft) antworten, mit
+    /// Vorschau-Kennzeichnung in der Oberflaeche; Tupel mit Status
+    /// „durchgefallen“ (`book_talk_eval_pass.json`) nie. Aus: nur Fundstellen.
+    #[serde(default)]
+    pub book_talk_enabled: bool,
     /// Stimmprofile 2a: Vorschläge „klingt wie …, zusammenführen?“ aus Stimmabdrücken
     /// innerhalb einer Besprechung (CAM++). Wirkt erst, wenn das Modell per Knopf
     /// geladen ist; ohne den Schluessel gilt `true`. Kein Abgleich ueber Besprechungen.
@@ -1942,6 +1957,8 @@ pub fn get_default_settings() -> AppSettings {
         meeting_auto_enhance: true,
         meeting_default_template_id: None,
         meeting_semantic_search: true,
+        book_talk_cloud_consent: Vec::new(),
+        book_talk_enabled: false,
         meeting_voice_suggestions: true,
         meeting_slide_vision: false,
         meeting_echo_cancellation: MeetingEchoCancellation::Auto,

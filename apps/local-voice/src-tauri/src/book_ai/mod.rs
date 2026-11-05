@@ -14,6 +14,7 @@ pub mod engine;
 pub mod kurzbuch;
 pub mod source;
 pub mod store;
+pub mod talk;
 pub mod templates;
 pub mod terms;
 pub mod tokens;

@@ -34,6 +34,13 @@ export interface ReaderPageInfo {
   perView: number;
   /** Seite des gerade gelesenen Satzes, 0-basiert; null ohne Wiedergabe. */
   currentPage: number | null;
+  /**
+   * Erste Seite, wenn der Nutzer sie durch Weiterblättern erreicht hat (Taste,
+   * Pfeil, Wischen, Knopf: eine Ansicht vor oder zurück); `null` nach jedem
+   * Sprung (Verzeichnis, Lesezeichen, Suche, Seitenzahl, Belegsprung), nach
+   * Umbruch und beim Mitfolgen der Wiedergabe. Grundlage der Lesegrenze.
+   */
+  turnedTo: number | null;
 }
 
 export interface ReaderViewApi {
@@ -375,11 +382,14 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const [animate, setAnimate] = useState(false);
   // Nicht animierte Wechsel (Umbruch, Sprung, Wiederherstellen) beenden eine
   // noch laufende Blätter-Animation, statt in ihr mitzugleiten.
+  const turnedToRef = useRef<number | null>(null);
   const setPage = useCallback((next: React.SetStateAction<number>) => {
+    turnedToRef.current = null;
     setAnimate(false);
     setPageRaw(next);
   }, []);
   const turnTo = useCallback((next: React.SetStateAction<number>) => {
+    turnedToRef.current = null;
     setPageRaw((prev) => {
       const value = typeof next === "function" ? next(prev) : next;
       if (value !== prev) setAnimate(true);
@@ -484,6 +494,12 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   useLayoutEffect(() => {
     measure();
   }, [measure, blocks, fontSize, fontFamily]);
+  // Die Klasse `reader-book--narrow` ändert die Höhe des Flusses erst nach der
+  // ersten Messung: ohne neue Messung bleibt die Seitenzahl zu klein (390 px:
+  // 111 statt 161 Seiten) und Sprünge ans Ende des Buchs landen auf der falschen Seite.
+  useLayoutEffect(() => {
+    measure();
+  }, [geo.narrow, measure]);
 
   useEffect(() => {
     const book = bookRef.current;
@@ -611,7 +627,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     setCurrentPage(current ? pageOfElement(curEl()) : null);
   }, [current, word, geo, pageOfElement]);
   useEffect(() => {
-    onPageInfo?.({ page, pages: geo.pages, perView: geo.perView, currentPage });
+    onPageInfo?.({
+      page,
+      pages: geo.pages,
+      perView: geo.perView,
+      currentPage,
+      turnedTo: turnedToRef.current === page ? page : null,
+    });
   }, [page, geo.pages, geo.perView, currentPage, onPageInfo]);
 
   useImperativeHandle(
@@ -639,7 +661,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   );
 
   const turn = (dir: number) => {
+    const target = clampPage(page + dir * geo.perView);
     turnTo((p) => clampPage(p + dir * geo.perView));
+    turnedToRef.current = target;
     if (current) onFollowChange(false);
   };
 

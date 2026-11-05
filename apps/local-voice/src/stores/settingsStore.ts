@@ -257,6 +257,11 @@ const settingUpdaters: {
     commands.changeMeetingDefaultTemplateSetting(
       (value as string | null) ?? null,
     ),
+  // Gespräch mit dem Buch (lva#309)
+  book_talk_enabled: (value) =>
+    commands.changeBookTalkEnabledSetting(value as boolean),
+  book_talk_cloud_consent: (value) =>
+    commands.changeBookTalkCloudConsentSetting(value as string[]),
   // M4-P4b
   meeting_semantic_search: (value) =>
     commands.changeMeetingSemanticSearchSetting(value as boolean),

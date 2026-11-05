@@ -1,0 +1,37 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [],
+      "general": false,
+      "index": 0,
+      "speech": "Dazu finde ich im Buch nichts.",
+      "text": "Dazu finde ich im Buch nichts."
+    }
+  },
+  {
+    "answer": {
+      "citations": [],
+      "dropped": 0,
+      "found_only": true,
+      "frontier": 0,
+      "intent": "locate",
+      "reason": "no_hits",
+      "scope": "book",
+      "sentences": [
+        {
+          "citations": [],
+          "general": false,
+          "index": 0,
+          "speech": "Dazu finde ich im Buch nichts.",
+          "text": "Dazu finde ich im Buch nichts."
+        }
+      ],
+      "speech": "Dazu finde ich im Buch nichts.",
+      "text": "Dazu finde ich im Buch nichts."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]
