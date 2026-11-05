@@ -2097,28 +2097,65 @@ fn silence_sample_count(ms: u32, sample_rate: u32, channels: u16) -> usize {
 ///
 /// `sentences` sind Teilstücke von `text` (aus `split_sentences` bzw.
 /// `split_speaker_segments`); der Rohtext zwischen dem Ende eines Satzes und
-/// dem Anfang des nächsten entscheidet. **Jeder** Zeilenumbruch dort zählt als
-/// Absatzende, nicht nur die Leerzeile: `split_sentences` schneidet zwar nur an
-/// Leerzeilen, aber Dokumente (docx, Markdown, EPUB, einfache Textdateien)
-/// trennen Absätze häufig mit einem einzelnen Umbruch, und ein Satzende direkt
-/// vor einem Umbruch ist in der Praxis ein Absatzende. Umbrüche MITTEN im Satz
-/// (Zeilenumbruch eines Hardwrap-Textes) liegen nie zwischen zwei Sätzen und
-/// lösen deshalb keine Pause aus. Der letzte Satz endet nie einen Absatz (dahinter
-/// folgt nichts).
+/// dem Anfang des nächsten entscheidet:
+/// - Leerzeile: immer Absatzende.
+/// - Einzelner Umbruch: Absatzende, denn Dokumente (docx, Markdown, EPUB,
+///   einfache Textdateien) trennen Absätze oft so. Ausnahme Hardwrap-Text (fast
+///   alle Zeilen ähnlich lang, wie in PDF-Auszügen): dort zählt der Umbruch nur
+///   hinter einer deutlich kürzeren Zeile, sonst stockte jede Zeile.
+///
+/// Der letzte Satz endet nie einen Absatz (dahinter folgt nichts).
 pub fn paragraph_ends(text: &str, sentences: &[String]) -> Vec<bool> {
     let spans = protocol::locate_sentences(text, sentences);
     let chars: Vec<char> = text.chars().collect();
+    let wrap = hard_wrap_width(text);
     (0..sentences.len())
         .map(|i| {
             let Some(next) = spans.get(i + 1) else {
                 return false;
             };
             let end = spans[i].1;
-            chars
-                .get(end..next.0.max(end))
-                .is_some_and(|gap| gap.contains(&'\n'))
+            let Some(gap) = chars.get(end..next.0.max(end)) else {
+                return false;
+            };
+            let newlines = gap.iter().filter(|&&c| c == '\n').count();
+            if newlines >= 2 {
+                return true;
+            }
+            if newlines == 0 {
+                return false;
+            }
+            match wrap {
+                None => true,
+                Some(width) => {
+                    // Länge der Zeile, die mit diesem Satz endet.
+                    let line_start = chars[..end]
+                        .iter()
+                        .rposition(|&c| c == '\n')
+                        .map_or(0, |p| p + 1);
+                    (end - line_start) * 4 < width * 3
+                }
+            }
         })
         .collect()
+}
+
+/// Zeilenbreite eines Hardwrap-Textes, sonst `None`: mindestens vier Zeilen,
+/// die längsten (90. Perzentil) höchstens 120 Zeichen, und mindestens die Hälfte
+/// der Zeilen reicht bis auf 80 % dieser Breite.
+fn hard_wrap_width(text: &str) -> Option<usize> {
+    let mut lengths: Vec<usize> = text
+        .lines()
+        .map(|l| l.trim_end().chars().count())
+        .filter(|&n| n > 0)
+        .collect();
+    if lengths.len() < 4 {
+        return None;
+    }
+    lengths.sort_unstable();
+    let width = lengths[(lengths.len() * 9 / 10).min(lengths.len() - 1)];
+    let full = lengths.iter().filter(|&&n| n * 5 >= width * 4).count();
+    (width <= 120 && full * 2 >= lengths.len()).then_some(width)
 }
 
 /// [`paragraph_ends`] für Utterances (Satztext ohne Stimme).
@@ -5965,6 +6002,18 @@ mod tests {
         // Überschrift ohne Satzzeichen vor Leerzeile steht für sich.
         let text = "Kapitel Eins\n\nEs war einmal ein langer Satz.";
         assert_eq!(absatzenden(text), vec![true, false]);
+    }
+
+    #[test]
+    fn absatzende_hardwrap_nur_hinter_kurzer_zeile() {
+        // PDF-Auszug mit festem Zeilenumbruch: Satzenden am Zeilenende sind
+        // kein Absatz, nur die kurze Schlusszeile.
+        let text = "Am Morgen ging Anna los, denn der Weg zum Bahnhof war sehr weit.\n\
+Sie dachte an das Gespräch vom Vortag und an die Frage nach dem Zug.\n\
+Noch immer wusste sie keine Antwort darauf, was sie sagen sollte, nein.\n\
+Dann kam der Zug.\n\
+Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
+        assert_eq!(absatzenden(text), vec![false, false, false, true, false]);
     }
 
     #[test]

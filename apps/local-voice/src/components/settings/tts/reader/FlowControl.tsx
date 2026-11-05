@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 /** Vorgaben des Sprachflusses; gleiche Werte wie `SpeechFlow` im Backend. */
@@ -26,15 +26,24 @@ export const FlowControl: React.FC<FlowControlProps> = ({
   className = "",
 }) => {
   const { t } = useTranslation();
+  // Beim Ziehen nur lokal mitführen; gespeichert wird beim Loslassen (sonst
+  // ein Einstellungsschreiben je Rasterschritt).
+  const [draft, setDraft] = useState<number | null>(null);
+  const shown = draft ?? value;
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    if (draft !== value) onChange(draft);
+  };
   return (
-    <div className={`flex flex-col gap-2 ${className}`}>
+    <div className={`flex flex-col gap-2 ${className}`} data-flow-control>
       <div
         role="group"
         aria-label={t("tts.settings.flow")}
         className="grid grid-cols-3 gap-1"
       >
         {FLOW_PRESETS.map((preset) => {
-          const active = Math.abs(value - preset.value) < 0.025;
+          const active = Math.abs(shown - preset.value) < 0.025;
           return (
             <button
               key={preset.value}
@@ -58,11 +67,14 @@ export const FlowControl: React.FC<FlowControlProps> = ({
         min={0}
         max={1}
         step={0.05}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        value={shown}
+        onChange={(e) => setDraft(parseFloat(e.target.value))}
+        onPointerUp={commit}
+        onKeyUp={commit}
+        onBlur={commit}
         aria-label={t("tts.settings.flow")}
         title={t("tts.settings.flowHint")}
-        aria-valuetext={`${Math.round(value * 100)} %`}
+        aria-valuetext={`${Math.round(shown * 100)} %`}
         className="w-full cursor-pointer accent-logo-primary"
         data-testid="flow-slider"
       />

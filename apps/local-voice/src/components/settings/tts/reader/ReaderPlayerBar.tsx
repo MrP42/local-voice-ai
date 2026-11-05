@@ -770,7 +770,7 @@ export const ReaderPlayerBar: React.FC<ReaderPlayerBarProps> = ({
                   aria-label={t("tts.reader.moreOptions")}
                   onKeyDown={(e) => {
                     // Der Schieberegler (Sprachfluss) braucht seine Pfeiltasten.
-                    if ((e.target as HTMLElement).tagName === "INPUT") return;
+                    if ((e.target as HTMLElement).closest("[data-flow-control]")) return;
                     if (
                       e.key !== "ArrowDown" &&
                       e.key !== "ArrowUp" &&
