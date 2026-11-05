@@ -1,0 +1,1018 @@
+{
+ "touchziele": [
+  {
+   "seite": "desktop",
+   "zustand": "liste",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "qr",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "✕",
+     "w": 32,
+     "h": 32
+    },
+    {
+     "text": "Abbrechen",
+     "w": 101,
+     "h": 32
+    },
+    {
+     "text": "Weiter (Demo)",
+     "w": 123,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "bestaetigen",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Nein, abbrechen",
+     "w": 137,
+     "h": 32
+    },
+    {
+     "text": "Ja, verbinden",
+     "w": 118,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "verbunden",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Fertig",
+     "w": 65,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "abgelaufen",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "✕",
+     "w": 32,
+     "h": 32
+    },
+    {
+     "text": "Schließen",
+     "w": 93,
+     "h": 32
+    },
+    {
+     "text": "Neuen Code",
+     "w": 110,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "widerrufen",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abbrechen",
+     "w": 101,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "netzfehler",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "✕",
+     "w": 32,
+     "h": 32
+    },
+    {
+     "text": "Schließen",
+     "w": 93,
+     "h": 32
+    },
+    {
+     "text": "Erneut versuchen",
+     "w": 146,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "abgebrochen",
+   "breite": 1440,
+   "ziele": [
+    {
+     "text": "⌂  Start",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⟲  Verlauf",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "👥  Aufnahmen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "🔊  Vorlesen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "☏  Sprachgespräch",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "⚙  Einstellungen",
+     "w": 232,
+     "h": 40
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 154,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 32
+    },
+    {
+     "text": "✕",
+     "w": 32,
+     "h": 32
+    },
+    {
+     "text": "Schließen",
+     "w": 93,
+     "h": 32
+    },
+    {
+     "text": "Neuen Code",
+     "w": 110,
+     "h": 32
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "liste",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "qr",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "✕",
+     "w": 44,
+     "h": 44
+    },
+    {
+     "text": "Abbrechen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Weiter (Demo)",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "bestaetigen",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Nein, abbrechen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Ja, verbinden",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "verbunden",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Fertig",
+     "w": 358,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "abgelaufen",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "✕",
+     "w": 44,
+     "h": 44
+    },
+    {
+     "text": "Schließen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Neuen Code",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "widerrufen",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abbrechen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "netzfehler",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "✕",
+     "w": 44,
+     "h": 44
+    },
+    {
+     "text": "Schließen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Erneut versuchen",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "desktop",
+   "zustand": "abgebrochen",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "Abmelden",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "QR-Code anzeigen",
+     "w": 316,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "Abmelden",
+     "w": 95,
+     "h": 44
+    },
+    {
+     "text": "✕",
+     "w": 44,
+     "h": 44
+    },
+    {
+     "text": "Schließen",
+     "w": 175,
+     "h": 44
+    },
+    {
+     "text": "Neuen Code",
+     "w": 175,
+     "h": 44
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "scan",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Stattdessen mit Passwort anmel",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "code",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Abbrechen",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "verbunden",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Fertig",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "abgelehnt",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Erneut scannen",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "verwendet",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Neuen Code scannen",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  },
+  {
+   "seite": "iphone",
+   "zustand": "netz",
+   "breite": 390,
+   "ziele": [
+    {
+     "text": "‹ Konto",
+     "w": 70,
+     "h": 44
+    },
+    {
+     "text": "Erneut versuchen",
+     "w": 358,
+     "h": 50
+    },
+    {
+     "text": "Abbrechen",
+     "w": 358,
+     "h": 50
+    }
+   ],
+   "unter44": []
+  }
+ ],
+ "fokus": [
+  {
+   "zustand": "qr",
+   "tabFolge": [
+    "Weiter (Demo)",
+    "✕",
+    "Abbrechen",
+    "Weiter (Demo)"
+   ]
+  },
+  {
+   "zustand": "bestaetigen",
+   "tabFolge": [
+    "Ja, verbinden",
+    "Nein, abbrechen",
+    "Ja, verbinden",
+    "Nein, abbrechen"
+   ]
+  }
+ ],
+ "scroll": [
+  {
+   "zustand": "qr",
+   "scrollH": 648,
+   "clientH": 515,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "bestaetigen",
+   "scrollH": 410,
+   "clientH": 410,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  },
+  {
+   "zustand": "abgebrochen",
+   "scrollH": 292,
+   "clientH": 292,
+   "overflowY": "auto",
+   "seiteHorizontal": false
+  }
+ ]
+}

@@ -7,6 +7,7 @@
 *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
 body{font:14px/20px "Segoe UI","Segoe UI Variable",Inter,system-ui,sans-serif;background:var(--bg);color:var(--text)}
 button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
 .top{height:40px;display:flex;align-items:center;gap:12px;padding:0 12px;font-weight:600}
 .logo{width:20px;height:20px;border-radius:4px;background:#111;display:grid;place-items:center;color:#f5c400;font-size:11px}
 .frame{display:flex;height:calc(100% - 40px)}
@@ -58,8 +59,8 @@ ol{margin:0;padding-left:20px}ol li{margin-bottom:10px}
 .warnbox{display:flex;gap:8px;background:var(--warnBg);color:var(--warn);border-radius:4px;padding:10px 12px}
 .ghostqr{opacity:.15;filter:blur(2px)}
 .stage{display:none}
-body[data-s=qr] .s-qr,body[data-s=bestaetigen] .s-bestaetigen,body[data-s=verbunden] .s-verbunden,body[data-s=abgelaufen] .s-abgelaufen,body[data-s=widerrufen] .s-widerrufen{display:block}
-body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .scrim,body[data-s=abgelaufen] .scrim,body[data-s=widerrufen] .scrim{display:flex}
+body[data-s=qr] .s-qr,body[data-s=bestaetigen] .s-bestaetigen,body[data-s=verbunden] .s-verbunden,body[data-s=abgelaufen] .s-abgelaufen,body[data-s=widerrufen] .s-widerrufen,body[data-s=netzfehler] .s-netzfehler,body[data-s=abgebrochen] .s-abgebrochen{display:block}
+body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .scrim,body[data-s=abgelaufen] .scrim,body[data-s=widerrufen] .scrim,body[data-s=netzfehler] .scrim,body[data-s=abgebrochen] .scrim{display:flex}
 .mob{display:none}
 @media (max-width:720px){
  nav.app,.topics{display:none}.mob{display:flex}
@@ -166,6 +167,21 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
     <div><div class="warnbox"><span aria-hidden="true">⏱</span><span>Der Code ist abgelaufen. Aus Sicherheitsgründen gilt jeder Code nur 2 Minuten.</span></div></div></div>
    <div class="foot"><button class="btn" onclick="go('liste')">Schließen</button><button class="btn primary" onclick="go('qr')">Neuen Code</button></div>
   </div>
+  <!-- Netzfehler -->
+  <div class="stage s-netzfehler">
+   <button class="close" aria-label="Schließen" onclick="go('liste')">✕</button>
+   <h3>Handy verbinden</h3>
+   <div class="warnbox" role="alert" style="margin:16px 0"><span aria-hidden="true">⚠</span><span>Keine Verbindung zum Server. Prüfen Sie die Internetverbindung; die Kopplung wurde nicht gestartet.</span></div>
+   <div class="foot"><button class="btn" onclick="go('liste')">Schließen</button><button class="btn primary" onclick="go('qr')">Erneut versuchen</button></div>
+  </div>
+  <!-- Sicherheitsabbruch (Commitment/Nullschlüssel) -->
+  <div class="stage s-abgebrochen">
+   <button class="close" aria-label="Schließen" onclick="go('liste')">✕</button>
+   <h3>Verbindung abgebrochen</h3>
+   <div class="warnbox" role="alert" style="margin:16px 0"><span aria-hidden="true">⚠</span><span>Die Antwort des Handys passte nicht zum gescannten Code. Aus Sicherheitsgründen wurde nichts übertragen.</span></div>
+   <p class="muted small">Zeigen Sie einen neuen Code an und scannen Sie ihn direkt am PC. Passiert das wiederholt, verbinden Sie das Handy in einem anderen Netz.</p>
+   <div class="foot"><button class="btn" onclick="go('liste')">Schließen</button><button class="btn primary" onclick="go('qr')">Neuen Code</button></div>
+  </div>
   <!-- Widerruf -->
   <div class="stage s-widerrufen">
    <h3>„iPhone von Patrick“ abmelden?</h3>
@@ -178,7 +194,14 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
 <script>
 const p=new URLSearchParams(location.search);
 if(p.get('theme')==='dark')document.documentElement.dataset.theme='dark';
-function go(s){document.body.dataset.s=s;history.replaceState(null,'','?'+(p.get('theme')?'theme='+p.get('theme')+'&':'')+'s='+s)}
+const FIRST={qr:'.s-qr .foot .btn',bestaetigen:'.s-bestaetigen .foot .btn',verbunden:'.s-verbunden .btn',abgelaufen:'.s-abgelaufen .btn.primary',widerrufen:'.s-widerrufen .foot .btn',netzfehler:'.s-netzfehler .btn.primary',abgebrochen:'.s-abgebrochen .btn.primary'};
+function go(s){document.body.dataset.s=s;history.replaceState(null,'','?'+(p.get('theme')?'theme='+p.get('theme')+'&':'')+'s='+s);
+ const open=s!=='liste';for(const el of document.querySelectorAll('.top,.frame'))el.inert=open;
+ if(open){const f=document.querySelector(FIRST[s]);if(f)f.focus({preventScroll:true});}}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.dataset.s!=='liste')go('liste');
+ if(e.key!=='Tab'||document.body.dataset.s==='liste')return;
+ const st=document.querySelector('.s-'+document.body.dataset.s);const f=[...st.querySelectorAll('button')];if(!f.length)return;
+ const i=f.indexOf(document.activeElement);e.preventDefault();f[(i+(e.shiftKey?-1:1)+f.length)%f.length].focus();});
 go(p.get('s')||'liste');
 </script>
 </body></html>

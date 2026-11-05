@@ -258,7 +258,10 @@ Das iPhone soll sich über einen QR-Code der Desktop-App anmelden, ohne Passwort
 Sync-Schlüssel `K` aus dem Passwort entsteht und den Hub nie erreicht, reicht ein
 Anmelde-Token allein nicht. Entschieden: Kopplungssitzung im Hub mit Einmalgeheimnis
 (≤ 120 s, einmalig), X25519-Schlüsseltausch zwischen Desktop und iPhone, sechsstelliger
-Vergleichscode, Bestätigung am PC. Der Hub stellt dem iPhone ein **eigenes**, einzeln
+Vergleichscode mit Commit/Reveal (iPhone legt sich auf seinen Schlüssel fest, bevor der
+Desktop seinen Zufall schickt; Muster RFC 6189), Abbruch bei X25519-Nullergebnis,
+Bestätigung am PC. Das Handy-Token entsteht erst beim Abholen (Revision 2 nach Codex-Befund
+vom 05.11.). Der Hub stellt dem iPhone ein **eigenes**, einzeln
 widerrufbares Token aus; `K` geht verschlüsselt am Hub vorbei. Im QR stehen weder Passwort
 noch Token noch `K`. Alle Schritte landen im Audit des Hubs. Kontendienst bleibt bis zum
 Keycloak-Betrieb der Hub (wai-portal); danach wird nur die Token-Ausstellung getauscht.
