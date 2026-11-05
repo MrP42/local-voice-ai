@@ -14,6 +14,10 @@ public enum BookTalkModelError: Error, Equatable {
     case unavailable
     /// Kontextüberlauf (`exceededContextWindowSize`, HTTP 400 context length): found_only mit Grund `budget`.
     case contextOverflow
+    /// Zeitrahmen des Modells (z. B. Relay: PC meldet `timeout`).
+    case timeout
+    /// Freigabe fehlt oder wurde widerrufen (Relay: `not_allowed`, Widerruf, abgelaufene Einrichtung).
+    case notAllowed
 }
 
 /// Ein Wechsel im Verlauf. Er trägt Scope und Spoilergrenze, unter denen er entstand.

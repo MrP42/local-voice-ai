@@ -167,10 +167,41 @@ struct LlamaChatError: Error { let code: Int }
 
 // MARK: - Auswahl
 
-enum BookTalkModelChoice: String, CaseIterable, Identifiable {
+/// Modellwahl je Gerät für die Funktion `book_talk` (Plan §11.2): lokal oder Abo-Modell über den PC.
+enum BookTalkModelChoice: Hashable, Identifiable {
     case apple, gemma
+    /// Abo-Modell, das der PC veröffentlicht (Modell-ID).
+    case relay(String)
+
     var id: String { rawValue }
-    var title: String { self == .apple ? "Apple-Systemmodell" : "Gemma 4 E2B" }
+
+    var rawValue: String {
+        switch self {
+        case .apple: "apple"
+        case .gemma: "gemma"
+        case .relay(let id): "relay:" + id
+        }
+    }
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "apple": self = .apple
+        case "gemma": self = .gemma
+        default:
+            guard rawValue.hasPrefix("relay:"), rawValue.count > 6 else { return nil }
+            self = .relay(String(rawValue.dropFirst(6)))
+        }
+    }
+
+    var isCloud: Bool { if case .relay = self { true } else { false } }
+    var title: String {
+        switch self {
+        case .apple: "Apple-Systemmodell"
+        case .gemma: "Gemma 4 E2B"
+        case .relay(let id): id
+        }
+    }
+
     static let key = "book_talk_model"
     static var stored: BookTalkModelChoice {
         UserDefaults.standard.string(forKey: key).flatMap(BookTalkModelChoice.init) ?? .apple
@@ -181,6 +212,7 @@ enum BookTalkModelChoice: String, CaseIterable, Identifiable {
 struct BookTalkEngine {
     let model: (any BookTalkModel)?
     let counter: (any BookTalkTokenCounter)?
+    let profile: BookTalkByteProfile?
     let budget: BookTalkBudget
     /// Anzeige unter der Antwort („Lokal · Apple-Systemmodell“).
     let label: String
@@ -188,42 +220,84 @@ struct BookTalkEngine {
     let note: String?
     /// Zum Freigeben beim Schließen.
     let llama: LlamaBookTalkModel?
+    /// Abo-Modell über den PC (Cloud).
+    let relay: BookTalkRelayModel?
+    let relayInfo: BookTalkRelayModelInfo?
+    /// Zeitrahmen der Sitzung: 45 s lokal, 75 s Relay (Plan R11).
+    let timeout: TimeInterval
+    /// Prüfstatus des Tupels (Plan §11.5); `apple-fm@1` ist immer ungeprüft (R12).
+    let evalStatus: BookTalkEvalStatus
 
-    /// Feature-Schalter `book_talk_enabled` (Standard aus): aus = nur Fundstellen. Der Eval-Nachweis nach Plan §3.9
-    /// (`book_talk_eval_pass.json`, Bindung an Modell und Prompt-Version) ist noch nicht angebunden.
-    static let enabledKey = "book_talk_enabled"
+    var isCloud: Bool { relay != nil }
+    var hasModel: Bool { model != nil }
+
+    /// Schalter „KI-Antworten (Vorschau)“, Standard aus, nie automatisch an (Plan §11.5). Der frühere Schalter
+    /// `book_talk_enabled` zählt nicht mehr: bestehende Installationen beginnen ebenfalls mit „aus“.
+    static let enabledKey = "book_talk_preview_enabled"
     static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
 
-    static func make(choice: BookTalkModelChoice, enabled: Bool) -> BookTalkEngine {
+    static func off(_ note: String, budget: BookTalkBudget = .appleFM1) -> BookTalkEngine {
+        BookTalkEngine(model: nil, counter: nil, profile: nil, budget: budget, label: "Fundstellen", note: note, llama: nil, relay: nil,
+                       relayInfo: nil, timeout: 45, evalStatus: .unchecked)
+    }
+
+    /// Baut das Modell zur Wahl. `durchgefallen` sperrt das Tupel auch in der Vorschau (Plan §11.5).
+    @MainActor
+    static func make(choice: BookTalkModelChoice, enabled: Bool, relays: BookTalkRelayStore = .shared) async -> BookTalkEngine {
+        let built = await build(choice: choice, enabled: enabled, relays: relays)
+        guard built.evalStatus == .failed, built.hasModel else { return built }
+        built.llama?.release()
+        return off("Dieses Modell hat den Prüflauf nicht bestanden und ist gesperrt. Es gibt Fundstellen.", budget: built.budget)
+    }
+
+    @MainActor
+    private static func build(choice: BookTalkModelChoice, enabled: Bool, relays: BookTalkRelayStore) async -> BookTalkEngine {
         guard enabled else {
-            return BookTalkEngine(model: nil, counter: nil, budget: .foundationModels, label: "Fundstellen",
-                                  note: "KI-Antworten sind aus. Das Blatt zeigt Fundstellen. Einschalten unter Einstellungen › Buch-Gespräch.", llama: nil)
+            return off("KI-Antworten sind aus. Das Blatt zeigt Fundstellen. Einschalten unter Einstellungen › Buch-Gespräch (Vorschau).")
         }
         switch choice {
         case .apple:
-            guard FoundationBookTalkModel.isAvailable else {
-                return BookTalkEngine(model: nil, counter: nil, budget: .foundationModels, label: "Fundstellen",
-                                      note: "Das Apple-Systemmodell ist auf diesem iPhone nicht verfügbar.", llama: nil)
-            }
-            return BookTalkEngine(model: FoundationBookTalkModel(), counter: nil, budget: .foundationModels, label: "Lokal · Apple-Systemmodell",
-                                  note: "Für das Apple-Systemmodell fehlt noch ein Token-Zähler: es gibt Fundstellen. Gemma 4 E2B beantwortet Fragen.", llama: nil)
+            guard FoundationBookTalkModel.isAvailable else { return off("Das Apple-Systemmodell ist auf diesem iPhone nicht verfügbar.") }
+            let status = BookTalkEval.status(provider: "apple", model: "system", budget: BookTalkBudget.appleFM1.name)
+            return BookTalkEngine(model: FoundationBookTalkModel(), counter: nil, profile: .appleFM1, budget: .appleFM1,
+                                  label: "Lokal · Apple-Systemmodell", note: nil, llama: nil, relay: nil, relayInfo: nil, timeout: 45, evalStatus: status)
         case .gemma:
-            guard let descriptor = LocalModel.all.first(where: \.isGemma) else {
-                return BookTalkEngine(model: nil, counter: nil, budget: .large, label: "Fundstellen", note: "Gemma 4 E2B ist nicht eingetragen.", llama: nil)
+            return await Task.detached(priority: .userInitiated) { gemmaEngine() }.value
+        case .relay(let id):
+            guard relays.enrollment != nil else {
+                return off("Abo-Modelle brauchen eine Einrichtung am PC (Einstellungen › Buch-Gespräch).", budget: .relayCLI1(contextTokens: 0))
             }
-            let file = ModelLibrary.folder.appendingPathComponent(descriptor.name)
-            let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
-            guard size == descriptor.bytes else {
-                return BookTalkEngine(model: nil, counter: nil, budget: .large, label: "Fundstellen",
-                                      note: "Gemma 4 E2B ist nicht geladen (Einstellungen › Lokale Sprachmodelle).", llama: nil)
+            guard relays.usable else {
+                return off("Die Einrichtung für Abo-Modelle ist abgelaufen oder gehört zu einem anderen Konto. Am PC neu freigeben.",
+                           budget: .relayCLI1(contextTokens: 0))
             }
-            // Größe und SHA-256 prüft die Installation (`ModelLibrary.install`); ein erneutes Hashen von 3 GB vor jeder Frage entfällt.
-            guard let counter = LlamaTokenCounter(modelURL: file) else {
-                return BookTalkEngine(model: nil, counter: nil, budget: .large, label: "Fundstellen",
-                                      note: "Gemma 4 E2B lässt sich mit dieser llama.cpp-Version nicht laden. Es gibt Fundstellen.", llama: nil)
+            guard let info = relays.info(id), let model = relays.makeModel(info) else {
+                return off("Dieses Abo-Modell ist am PC nicht freigegeben oder dein PC hat es nicht veröffentlicht.", budget: .relayCLI1(contextTokens: 0))
             }
-            let model = LlamaBookTalkModel(modelURL: file, contextTokens: BookTalkBudget.large.contextTokens)
-            return BookTalkEngine(model: model, counter: counter, budget: .large, label: "Lokal · Gemma 4 E2B", note: nil, llama: model)
+            let budget = BookTalkBudget.relayCLI1(contextTokens: info.contextTokens)
+            // Das tatsächliche Modell steht erst in der Antwort (R7); bis dahin zählt die angefragte ID. Unversionierte Namen
+            // gelten als ungeprüft, ein Eintrag der Tabelle braucht die versionierte Kennung.
+            let status = BookTalkEval.status(provider: info.provider.rawValue, model: info.id, budget: budget.name)
+            return BookTalkEngine(model: model, counter: nil, profile: .relayCLI1, budget: budget, label: "\(info.label) · Cloud über deinen PC",
+                                  note: nil, llama: nil, relay: model, relayInfo: info, timeout: Self.relayTimeout, evalStatus: status)
         }
+    }
+
+    static let relayTimeout: TimeInterval = 75
+
+    /// Gemma 4 E2B laden prüfen und Zähler bauen; abseits des Hauptthreads.
+    private static func gemmaEngine() -> BookTalkEngine {
+        guard let descriptor = LocalModel.all.first(where: \.isGemma) else { return off("Gemma 4 E2B ist nicht eingetragen.", budget: .large) }
+        let file = ModelLibrary.folder.appendingPathComponent(descriptor.name)
+        let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        guard size == descriptor.bytes else { return off("Gemma 4 E2B ist nicht geladen (Einstellungen › Lokale Sprachmodelle).", budget: .large) }
+        // Größe und SHA-256 prüft die Installation (`ModelLibrary.install`); ein erneutes Hashen von 3 GB vor jeder Frage entfällt.
+        guard let counter = LlamaTokenCounter(modelURL: file) else {
+            return off("Gemma 4 E2B lässt sich mit dieser llama.cpp-Version nicht laden. Es gibt Fundstellen.", budget: .large)
+        }
+        let model = LlamaBookTalkModel(modelURL: file, contextTokens: BookTalkBudget.large.contextTokens)
+        let status = BookTalkEval.status(provider: "llama_cpp", model: descriptor.name, budget: BookTalkBudget.large.name)
+        return BookTalkEngine(model: model, counter: counter, profile: nil, budget: .large, label: "Lokal · Gemma 4 E2B", note: nil,
+                              llama: model, relay: nil, relayInfo: nil, timeout: 45, evalStatus: status)
     }
 }

@@ -119,39 +119,59 @@ public actor BookTalkSession {
                 : (scope == .untilPosition ? "I find nothing about that so far." : "I find nothing about that in the book.")), ctx, out)
         }
         guard let model else { return finish(Fallback.foundOnly(ctx, retrieval, reason: .noModel), ctx, out) }
-        guard let fit = BookTalkPrompt.fit(
-            title: index.title, question: question, retrieval: retrieval, history: history.map(\.promptTurn),
-            language: language, scope: scope, frontier: request.frontier ?? 0, budget: budget, counter: counter, profile: profile)
+        let snapshot = history.map(\.promptTurn)
+        guard let first = prepare(
+            retrieval, question: question, language: language, scope: scope, frontier: request.frontier ?? 0,
+            intent: intent, history: snapshot)
         else { return finish(Fallback.foundOnly(ctx, retrieval, reason: .budget), ctx, out) }
 
-        let grounding = BookTalkGroundingContext(
-            index: index, excerpts: fit.retrieval.excerpts, entities: entities, intent: intent, question: question,
-            lateStems: scope == .untilPosition ? BookTalkCitations.lateStems(index: index, frontier: request.frontier ?? 0) : [],
-            bookStems: bookStems)
+        // Meldet das Modell trotzdem Überlauf: eine Wiederholung mit halbem Auszugsbudget (Plan §11.1).
+        let previous = eligible.last?.question
+        let makeRetry: @Sendable () -> Prepared? = { [self] in
+            let halved = BookTalkRetriever.retrieve(
+                index: index, question: question, intent: intent, frontier: request.frontier, scope: scope,
+                previousQuestion: previous, entities: entities, maxChars: budget.excerptChars / 2)
+            guard !halved.excerpts.isEmpty else { return nil }
+            return prepare(halved, question: question, language: language, scope: scope, frontier: request.frontier ?? 0,
+                           intent: intent, history: snapshot)
+        }
+        let grounding = first.grounding
         let rid = request.requestId
-        let parts = fit.parts
         let tokens = budget.answerTokens
 
         let work = Task<Outcome, Never> {
-            var collector = Collector(grounding: grounding, language: language, requestId: rid)
-            var failure: BookTalkCode?
-            do {
-                for try await piece in model.stream(instructions: parts.instructions, prompt: parts.prompt, maxTokens: tokens) {
-                    if Task.isCancelled { return .cancelled }
-                    for e in collector.feed(piece) { out.yield(e) }
+            var current = first
+            var retried = false
+            while true {
+                var collector = Collector(grounding: current.grounding, language: language, requestId: rid)
+                var failure: BookTalkCode?
+                var yielded = false
+                do {
+                    for try await piece in model.stream(instructions: current.parts.instructions, prompt: current.parts.prompt, maxTokens: tokens) {
+                        if Task.isCancelled { return .cancelled }
+                        for e in collector.feed(piece) { out.yield(e); yielded = true }
+                    }
+                } catch is CancellationError {
+                    return .cancelled
+                } catch let e as BookTalkModelError {
+                    switch e {
+                    case .offline: failure = .offline
+                    case .unavailable: failure = .noModel
+                    case .timeout: failure = .timeout
+                    case .notAllowed: failure = .consentRequired
+                    case .contextOverflow:
+                        if !retried, !yielded, let next = makeRetry() {
+                            retried = true
+                            current = next
+                            continue
+                        }
+                        failure = .budget
+                    }
+                } catch {
+                    failure = .llmFailed
                 }
-            } catch is CancellationError {
-                return .cancelled
-            } catch let e as BookTalkModelError {
-                switch e {
-                case .offline: failure = .offline
-                case .unavailable: failure = .noModel
-                case .contextOverflow: failure = .budget
-                }
-            } catch {
-                failure = .llmFailed
+                return Task.isCancelled ? .cancelled : .finished(collector, failure)
             }
-            return Task.isCancelled ? .cancelled : .finished(collector, failure)
         }
         active[rid] = { work.cancel() }
         let flag = TimeoutFlag()
@@ -195,6 +215,27 @@ public actor BookTalkSession {
             return finish(Fallback.foundOnly(ctx, retrieval, reason: .llmFailed, dropped: collector.dropped), ctx, out)
         }
         finish(answer, ctx, out)
+    }
+
+    private struct Prepared: Sendable {
+        let parts: BookTalkPromptParts
+        let grounding: BookTalkGroundingContext
+    }
+
+    /// Passt die Auszüge ins Budget und bereitet die Belegprüfung für genau diese Auszüge vor.
+    private nonisolated func prepare(
+        _ retrieval: BookTalkRetrieval, question: String, language: BookTalkLanguage, scope: BookTalkScope, frontier: Int,
+        intent: BookTalkIntent, history: [BookTalkTurn]
+    ) -> Prepared? {
+        guard let fit = BookTalkPrompt.fit(
+            title: index.title, question: question, retrieval: retrieval, history: history,
+            language: language, scope: scope, frontier: frontier, budget: budget, counter: counter, profile: profile)
+        else { return nil }
+        let grounding = BookTalkGroundingContext(
+            index: index, excerpts: fit.retrieval.excerpts, entities: entities, intent: intent, question: question,
+            lateStems: scope == .untilPosition ? BookTalkCitations.lateStems(index: index, frontier: frontier) : [],
+            bookStems: bookStems)
+        return Prepared(parts: fit.parts, grounding: grounding)
     }
 
     private func finish(_ f: Fallback.Result, _ ctx: BookTalkContext, _ out: AsyncStream<BookTalkEvent>.Continuation) {
@@ -327,8 +368,45 @@ enum Fallback {
         return Result(events: [.sentence(requestId: ctx.request.requestId, s)], answer: answer)
     }
 
+    /// recap ohne Modell (Plan §11.6): die letzten Fundstellen in Buchreihenfolge, mit Kapitelüberschriften.
+    static func recapFoundOnly(_ ctx: BookTalkContext, _ retrieval: BookTalkRetrieval, reason: BookTalkCode?, dropped: Int) -> Result? {
+        let de = ctx.language == .de
+        var sentences: [BookTalkAnswerSentence] = []
+        var cites: [BookTalkCitation] = []
+        var lastChapter: Int?
+        for e in retrieval.excerpts.suffix(4) {
+            guard let q = BookTalkCitations.bestQuote(statement: "", chunk: e.chunk) else { continue }
+            let page = ctx.index.page(at: q.start)
+            let place = page.map { de ? " auf Seite \($0)" : " on page \($0)" } ?? ""
+            let title = e.chunk.chapterTitle
+            let newChapter = lastChapter != e.chunk.chapterIndex
+            let lead: String
+            switch (sentences.isEmpty, newChapter, title.isEmpty) {
+            case (true, _, false): lead = de ? "Zuletzt in Kapitel „\(title)“" : "Most recently in chapter “\(title)”"
+            case (true, _, true): lead = de ? "Zuletzt" : "Most recently"
+            case (false, true, false): lead = de ? "Dann in Kapitel „\(title)“" : "Then in chapter “\(title)”"
+            case (false, true, true): lead = de ? "Dann" : "Then"
+            case (false, false, _): lead = de ? "Danach" : "After that"
+            }
+            lastChapter = e.chunk.chapterIndex
+            let c = BookTalkCitation(q: e.id, page: page, chapterIndex: e.chunk.chapterIndex, chapterTitle: title,
+                                     start: q.start, end: q.end, quote: q.text)
+            sentences.append(BookTalkAnswerSentence(
+                index: sentences.count, text: "\(lead)\(place): „\(q.text)“",
+                speech: "\(lead)\(place): ‚\(BookTalkSpeech.spokenQuote(q.text))‘", citations: [c], general: false))
+            cites.append(c)
+        }
+        guard !sentences.isEmpty else { return nil }
+        let answer = BookTalkAnswer(
+            intent: ctx.intent, sentences: sentences, text: sentences.map(\.text).joined(separator: " "),
+            speech: sentences.map(\.speech).joined(separator: " "), citations: cites, foundOnly: true, reason: reason,
+            dropped: dropped, scope: ctx.scope, frontier: ctx.frontier)
+        return Result(events: sentences.map { .sentence(requestId: ctx.request.requestId, $0) }, answer: answer)
+    }
+
     static func foundOnly(_ ctx: BookTalkContext, _ retrieval: BookTalkRetrieval, reason: BookTalkCode?, dropped: Int = 0) -> Result {
         let de = ctx.language == .de
+        if ctx.intent == .recap, let recap = recapFoundOnly(ctx, retrieval, reason: reason, dropped: dropped) { return recap }
         var sentences: [BookTalkAnswerSentence] = []
         var cites: [BookTalkCitation] = []
         for (n, e) in retrieval.bestFirst.prefix(2).enumerated() {

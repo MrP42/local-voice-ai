@@ -194,6 +194,14 @@ public struct BookTalkByteProfile: Sendable, Equatable {
     }
 }
 
+extension BookTalkByteProfile {
+    /// `apple-fm@1` (Plan §11.1): Obergrenze = UTF-8-Bytes aller Texte + 600 Token Rahmen. Gilt als „gemessen“,
+    /// sobald der Gerätetest (Grenzsuche über `exceededContextWindowSize` mit den Fixtures) es bestätigt; bis dahin Vorschau.
+    public static let appleFM1 = BookTalkByteProfile(name: "apple-fm@1", fixedTokens: 600, perMessageTokens: 0)
+    /// `relay-cli@1` (Plan §11.3): Bytes + 2.000 Token Rahmen ≤ gemeldete `context_tokens` des PC-Modells.
+    public static let relayCLI1 = BookTalkByteProfile(name: "relay-cli@1", fixedTokens: 2_000, perMessageTokens: 0)
+}
+
 /// Exakter Tokenzähler des Modells (llama_tokenize, `/tokenize`, Foundation Models `tokenCount`). Optional.
 public protocol BookTalkTokenCounter: Sendable {
     func count(_ text: String) -> Int

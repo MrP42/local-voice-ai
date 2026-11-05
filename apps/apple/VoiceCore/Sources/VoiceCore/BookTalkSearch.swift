@@ -143,6 +143,19 @@ public struct BookTalkBudget: Sendable, Equatable {
         name: "large", instructionChars: 1_200, historyChars: 3_000, questionChars: 800,
         excerptChars: 18_000, answerTokens: 500, contextTokens: 12_288)
 
+    /// Profil `apple-fm@1` (Plan §11.1): Kontext 4096, Ausgabe 400; zusammen mit `BookTalkByteProfile.appleFM1`.
+    public static let appleFM1 = BookTalkBudget(
+        name: "apple-fm@1", instructionChars: 1_200, historyChars: 1_400, questionChars: 520,
+        excerptChars: 7_000, answerTokens: 400, contextTokens: 4_096)
+
+    /// Profil `relay-cli@1` (Plan §11.3): Abo-Modell über den PC, Auszüge bis ~20.000 Zeichen.
+    /// `contextTokens` meldet der PC je Modell; die Ausgabe ist auf 800 Token begrenzt (kurze Antworten).
+    public static func relayCLI1(contextTokens: Int) -> BookTalkBudget {
+        BookTalkBudget(
+            name: "relay-cli@1", instructionChars: 1_200, historyChars: 3_000, questionChars: 800,
+            excerptChars: 20_000, answerTokens: 800, contextTokens: max(contextTokens, 0))
+    }
+
     public init(name: String, instructionChars: Int, historyChars: Int, questionChars: Int, excerptChars: Int,
                 answerTokens: Int, contextTokens: Int) {
         self.name = name

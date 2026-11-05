@@ -24,7 +24,7 @@ final class BookTalkController: ObservableObject {
     @Published private(set) var scope = BookTalkScope.untilPosition
     @Published private(set) var page: Int?
     @Published private(set) var loading = true
-    @Published private(set) var engine = BookTalkEngine.make(choice: .stored, enabled: false)
+    @Published private(set) var engine = BookTalkEngine.off("Das Gespräch wird vorbereitet.")
     @Published private(set) var choice = BookTalkModelChoice.stored
     @Published private(set) var enabled = BookTalkEngine.enabled
     @Published private(set) var selection: Selection?
@@ -32,9 +32,28 @@ final class BookTalkController: ObservableObject {
     @Published var typing = false
     @Published var draft = ""
     @Published var confirmingBook = false
+    @Published var confirmingPreview = false
     /// Mündliche Rückfrage „Auch spätere Kapitel einbeziehen? Sag Ja.“ läuft.
     @Published private(set) var awaitingScopeConfirm = false
     @Published private(set) var speaksAloud: Bool
+    /// Frage wartet auf die Freigabe des Cloud-Modells (Plan §11.4, R9).
+    @Published var pendingConsent: PendingConsent?
+    /// Kopfzeile je Antwort („Claude Sonnet · Cloud über deinen PC“) und Vorschau-Kennzeichnung, nach Eintrags-ID.
+    @Published private(set) var badges: [String: AnswerBadge] = [:]
+    let relays = BookTalkRelayStore.shared
+
+    struct PendingConsent: Identifiable {
+        let id = UUID()
+        let question: String
+        let input: BookTalkInput
+        let model: BookTalkRelayModelInfo
+    }
+
+    struct AnswerBadge: Equatable {
+        let label: String
+        let cloud: Bool
+        let preview: Bool
+    }
 
     static let antonKey = "book_talk_anton"
 
@@ -112,6 +131,8 @@ final class BookTalkController: ObservableObject {
         guard opened else { return }
         updateFrontier()
         loading = false
+        // Modellliste des PCs im Hintergrund auffrischen; aufgeräumt werden auch eigene alte Relay-Objekte (R5).
+        Task { await relays.refresh() }
         // VoiceOver-Nutzer hören die Antwort selbst: Anton nur auf Wunsch (Menü), nie ungefragt.
     }
 
@@ -127,6 +148,13 @@ final class BookTalkController: ObservableObject {
     }
 
     // MARK: Modell und Schalter
+
+    /// Einschalten verlangt erst den Vorschau-Hinweis (Plan §11.5); Ausschalten gilt sofort.
+    func requestEnabled(_ value: Bool) {
+        if value, !enabled { confirmingPreview = true } else { setEnabled(value) }
+    }
+
+    func confirmPreview() { confirmingPreview = false; setEnabled(true) }
 
     func setEnabled(_ value: Bool) {
         UserDefaults.standard.set(value, forKey: BookTalkEngine.enabledKey)
@@ -153,11 +181,12 @@ final class BookTalkController: ObservableObject {
         stopAnswer(announce: false)
         engine.llama?.release()
         let choice = self.choice, enabled = self.enabled
-        let made = await Task.detached(priority: .userInitiated) { BookTalkEngine.make(choice: choice, enabled: enabled) }.value
+        let made = await BookTalkEngine.make(choice: choice, enabled: enabled)
         guard generation == rebuildGeneration, opened else { made.llama?.release(); return }
         engine = made
         guard let index else { session = nil; return }
-        session = BookTalkSession(index: index, model: made.model, budget: made.budget, tokenCounter: made.counter, history: history)
+        session = BookTalkSession(index: index, model: made.model, budget: made.budget, tokenCounter: made.counter,
+                                  byteProfile: made.profile, timeout: made.timeout, history: history)
     }
 
     // MARK: Bereich und Grenze
@@ -216,6 +245,29 @@ final class BookTalkController: ObservableObject {
         ask(question, input: input)
     }
 
+    func grantConsent() {
+        guard let pending = pendingConsent else { return }
+        pendingConsent = nil
+        relays.grant(pending.model)
+        ask(pending.question, input: pending.input)
+    }
+
+    func declineConsent() {
+        guard pendingConsent != nil else { return }
+        pendingConsent = nil
+        notice = "Nichts wurde gesendet. Ohne Freigabe gibt es nur Fundstellen."
+    }
+
+    /// Widerruf (R10): keine neuen Aufrufe, laufende Anfrage abbrechen, späte Antworten verwerfen.
+    func revokeCloud() {
+        guard let info = engine.relayInfo else { return }
+        relays.revoke(info)
+        let hadActive = conversation.active != nil
+        stopAnswer(reason: .user, announce: false)
+        notice = hadActive ? "Freigabe widerrufen, Antwort abgebrochen." : "Freigabe widerrufen. Es geht nichts mehr an deinen PC."
+        announce(notice ?? "")
+    }
+
     func sendDraft() {
         let text = draft
         draft = ""
@@ -228,6 +280,11 @@ final class BookTalkController: ObservableObject {
 
     private func ask(_ question: String, input: BookTalkInput) {
         guard let session else { notice = "Das Gespräch ist noch nicht bereit."; return }
+        // Cloud-Modell: vor dem ersten Versand fragen (R9). Ohne Freigabe geht nichts über den Hub.
+        if let info = engine.relayInfo, engine.isCloud, !relays.isConsented(info) {
+            pendingConsent = PendingConsent(question: question, input: input, model: info)
+            return
+        }
         stopAnswer(announce: false)
         notice = nil
         awaitingReadOffer = false
@@ -254,8 +311,9 @@ final class BookTalkController: ObservableObject {
         switch event {
         case .sentence(_, let sentence):
             if speaksAloud { speaker.enqueue(sentence.speech) }
-        case .done(_, let answer):
+        case .done(let id, let answer):
             awaitingReadOffer = answer.offersRead
+            if !answer.foundOnly { badges[id] = badge() }
             // Gespeichert wird nur, was die Anzeige angenommen hat: bisheriger Stand plus dieser Wechsel.
             var turns = conversation.storedTurns
             if let last = await session.history.last, last.question == entry(for: event)?.question { turns.append(last) }
@@ -277,8 +335,16 @@ final class BookTalkController: ObservableObject {
         case .failed(_, let code):
             phase = .idle
             speaker.stop()
-            notice = Self.message(for: code)
+            notice = message(for: code)
         }
+    }
+
+    /// Kopfzeile der Antwort: Modell, Ort (lokal oder Cloud über den PC, R7 mit tatsächlichem Modell) und Vorschau (§11.5).
+    private func badge() -> AnswerBadge {
+        let preview = engine.evalStatus == .unchecked
+        guard let info = engine.relayInfo else { return AnswerBadge(label: engine.label, cloud: false, preview: preview) }
+        let actual = engine.relay?.actualModel.map { $0 == info.id ? "" : " (\($0))" } ?? ""
+        return AnswerBadge(label: "\(info.label)\(actual) · Cloud über deinen PC ‚\(relays.desktopName)‘", cloud: true, preview: preview)
     }
 
     private func entry(for event: BookTalkEvent) -> BookTalkEntry? {
@@ -286,10 +352,11 @@ final class BookTalkController: ObservableObject {
         return conversation.entries.last { $0.id == id }
     }
 
-    private static func message(for code: BookTalkCode) -> String? {
+    private func message(for code: BookTalkCode) -> String? {
         switch code {
         case .cancelled: nil
-        case .offline: "Keine Verbindung."
+        case .offline: engine.isCloud ? "Dein PC antwortet nicht." : "Keine Verbindung."
+        case .consentRequired: "Die Freigabe für dieses Abo-Modell fehlt oder wurde widerrufen."
         case .timeout: "Die Antwort hat zu lange gedauert."
         case .noModel: "Es ist kein Modell eingerichtet."
         default: "Die Antwort ist fehlgeschlagen."

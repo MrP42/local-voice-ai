@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // Buch-Gespräch (Epic #307, G5): Einstieg „Fragen“ und das Gesprächsblatt. Gestaltung nach
 // docs/vorschau/buch-gespraech (i1 bis i5), Nachweise in barrierefreiheit.md.
@@ -64,6 +65,19 @@ struct BookTalkSheet: View {
         .onDisappear { talk.teardown() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { talk.sceneInactive(background: phase == .background) } }
         .onChange(of: micPressed) { _, down in if down { talk.pressDown() } else { talk.pressUp() } }
+        .alert("An deinen PC senden?", isPresented: Binding(get: { talk.pendingConsent != nil }, set: { if !$0 { talk.declineConsent() } }),
+               presenting: talk.pendingConsent) { pending in
+            Button("Abbrechen", role: .cancel) { talk.declineConsent() }
+            Button("Freigeben") { talk.grantConsent() }
+        } message: { pending in
+            Text(BookTalkConsentText.body(model: pending.model, desktop: talk.relays.desktopName))
+        }
+        .alert("KI-Antworten (Vorschau) einschalten?", isPresented: $talk.confirmingPreview) {
+            Button("Abbrechen", role: .cancel) {}
+            Button("Einschalten") { talk.confirmPreview() }
+        } message: {
+            Text(BookTalkConsentText.preview)
+        }
         .alert("Spätere Kapitel einbeziehen?", isPresented: $talk.confirmingBook) {
             Button("Abbrechen", role: .cancel) {}
             Button("Einbeziehen") { talk.confirmBookScope() }
@@ -81,6 +95,7 @@ struct BookTalkSheet: View {
                 scopeMenu
             }
             Spacer(minLength: 8)
+            modelMenu
             optionsMenu
             Button { dismiss() } label: { Image(systemName: "xmark").font(.body.weight(.semibold)).frame(width: 44, height: 44) }
                 .accessibilityLabel("Gespräch schließen")
@@ -111,12 +126,40 @@ struct BookTalkSheet: View {
         .accessibilityLabel(talk.scope == .book ? "Bereich: ganzes Buch. Ändern" : "Bereich: \(talk.page.map { "bis Seite \($0)" } ?? "bis Leseposition") geschützt. Ändern")
     }
 
+    /// Modellknopf im Blattkopf: Wolke, solange ein Cloud-Modell gewählt ist (Plan §11.4).
+    private var modelMenu: some View {
+        let cloud = talk.choice.isCloud
+        return Menu {
+            Picker("Modell", selection: Binding(get: { talk.choice }, set: { talk.setChoice($0) })) {
+                Section("Lokal") {
+                    Text("Apple-Systemmodell").tag(BookTalkModelChoice.apple)
+                    Text("Gemma 4 E2B").tag(BookTalkModelChoice.gemma)
+                }
+                if !talk.relays.models.isEmpty {
+                    Section("Cloud · über deinen PC ‚\(talk.relays.desktopName)‘") {
+                        ForEach(talk.relays.models) { Label($0.label, systemImage: "cloud").tag(BookTalkModelChoice.relay($0.id)) }
+                    }
+                }
+            }
+            if let info = talk.engine.relayInfo, talk.relays.isConsented(info) {
+                Button("Freigabe für \(info.label) widerrufen", systemImage: "xmark.icloud", role: .destructive) { talk.revokeCloud() }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: cloud ? "cloud" : "cpu").font(.body)
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .foregroundStyle(VoicePalette.text)
+            .padding(.horizontal, 8)
+            .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel(cloud ? "Modell: \(talk.engine.label). Ändern" : "Modell: \(talk.engine.label). Ändern")
+        .accessibilityIdentifier("bookTalkModel")
+    }
+
     private var optionsMenu: some View {
         Menu {
-            Picker("Modell", selection: Binding(get: { talk.choice }, set: { talk.setChoice($0) })) {
-                ForEach(BookTalkModelChoice.allCases) { Text($0.title).tag($0) }
-            }
-            Toggle("KI-Antworten", isOn: Binding(get: { talk.enabled }, set: { talk.setEnabled($0) }))
+            Toggle("KI-Antworten (Vorschau)", isOn: Binding(get: { talk.enabled }, set: { talk.requestEnabled($0) }))
             Toggle("Antworten mit Anton sprechen", isOn: Binding(get: { talk.speaksAloud }, set: { talk.setSpeaksAloud($0) }))
             Button("Verlauf leeren", systemImage: "trash", role: .destructive) { talk.clearHistory() }
         } label: {
@@ -149,8 +192,11 @@ struct BookTalkSheet: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let note = talk.engine.note, !talk.loading, talk.engine.model == nil || talk.engine.counter == nil {
-                        banner(note)
+                    if let note = talk.engine.note, !talk.loading, !talk.engine.hasModel { banner(note) }
+                    if talk.engine.hasModel, talk.engine.evalStatus == .unchecked, !talk.loading {
+                        banner(talk.engine.isCloud
+                            ? "Vorschau: \(talk.engine.label.replacingOccurrences(of: " · Cloud über deinen PC", with: "")) hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Dein Buchtext verlässt dieses iPhone und geht über deinen PC an \(talk.engine.relayInfo?.provider.recipient ?? "den Anbieter")."
+                            : "Vorschau: Das Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein.")
                     }
                     if talk.conversation.isEmpty && !talk.loading { suggestions }
                     ForEach(talk.conversation.entries) { entry in
@@ -213,7 +259,8 @@ struct BookTalkSheet: View {
         case .listening:
             Label("Hört zu · Stille beendet die Frage", systemImage: "waveform").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
         case .thinking:
-            Label("Sucht im Buch …", systemImage: "magnifyingglass").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+            Label(talk.engine.isCloud ? "Frage geht an deinen PC …" : "Sucht im Buch …",
+                  systemImage: talk.engine.isCloud ? "cloud" : "magnifyingglass").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
         case .speaking:
             Button { talk.stopAnswer() } label: {
                 Label("Anton spricht · Antwort anhalten", systemImage: "speaker.wave.2.fill").font(.footnote.weight(.semibold))
@@ -293,7 +340,7 @@ private struct EntryView: View {
             question
             if !entry.sentences.isEmpty { answer }
             if let reason = entry.answer.flatMap({ $0.foundOnly ? $0.reason : nil }) {
-                Text(Self.caption(reason)).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                Text(caption(reason)).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
             }
             if let selection = talk.selection, selection.entryId == entry.id {
                 EvidenceCard(citation: selection.citation, talk: talk)
@@ -317,6 +364,16 @@ private struct EntryView: View {
 
     private var answer: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let badge = talk.badges[entry.id] {
+                HStack(spacing: 6) {
+                    Image(systemName: badge.cloud ? "cloud" : "cpu").font(.caption)
+                    Text(badge.label).font(.caption.weight(.semibold))
+                    if badge.preview { Text("· Vorschau").font(.caption.weight(.semibold)) }
+                }
+                .foregroundStyle(VoicePalette.secondaryText)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(badge.cloud ? "\(badge.label). Buchtext verlässt das Gerät." : badge.label)
+            }
             ForEach(entry.sentences, id: \.index) { sentence in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(sentence.text).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -340,7 +397,7 @@ private struct EntryView: View {
 
     private func chip(_ citation: BookTalkCitation) -> some View {
         let selected = talk.selection == .init(entryId: entry.id, citation: citation)
-        let label = citation.page.map { "S. \($0)" } ?? String(citation.chapterTitle.prefix(14))
+        let label = citation.page.map { "S. \($0)" } ?? "Kap. \(citation.chapterIndex + 1)"
         return Button { talk.select(citation, in: entry) } label: {
             Text(label).font(.footnote.weight(.semibold))
                 .padding(.horizontal, 12).frame(minHeight: 44)
@@ -363,13 +420,14 @@ private struct EntryView: View {
         }
     }
 
-    private static func caption(_ code: BookTalkCode) -> String {
+    private func caption(_ code: BookTalkCode) -> String {
         switch code {
         case .noHits: "Dazu habe ich im freigegebenen Teil des Buchs nichts gefunden."
         case .noFrontier: "Ich kenne deine Leseposition noch nicht."
         case .budget: "Zu viel Text für das Modell: hier sind nur die Fundstellen."
         case .noModel: "Kein Modell bereit: hier sind nur die Fundstellen."
-        case .offline: "Keine Verbindung: hier sind nur die Fundstellen."
+        case .offline: talk.engine.isCloud ? "Dein PC antwortet nicht: hier sind nur die Fundstellen." : "Keine Verbindung: hier sind nur die Fundstellen."
+        case .consentRequired: "Die Freigabe für das Abo-Modell fehlt: hier sind nur die Fundstellen."
         case .timeout: "Das Modell war zu langsam: hier sind nur die Fundstellen."
         default: "Hier sind nur die Fundstellen."
         }
@@ -445,21 +503,43 @@ private struct FlowLayout: Layout {
     }
 }
 
+// MARK: - Texte (Plan §11.4, §11.5, R9)
+
+enum BookTalkConsentText {
+    /// Freigabedialog je Cloud-Modell: Empfänger, Datenmenge, Region, Speicherung, Kontingent (R6, R9).
+    static func body(model: BookTalkRelayModelInfo, desktop: String) -> String {
+        let to = model.provider.recipient
+        return "Buchtext verlässt dieses iPhone. Frage, die letzten zwei Wechsel und Buchauszüge (bis ca. 20.000 Zeichen je Frage, beim ersten Mal der Höchstwert) gehen verschlüsselt an deinen PC ‚\(desktop)‘ und von dort an \(to) (\(model.label), dein Abo). Nie Audio, nie das ganze Buch.\n\nRegion: unbekannt, \(to) nennt für Abo-Pfade keine EU-Bindung. Speicherung und Training richten sich nach deinem Abo-Vertrag; die App kann das nicht prüfen. Zählt auf dein \(model.provider.quotaName)-Abo-Kontingent; Zusatzkosten keine, solange am PC kein API-Schlüssel gesetzt ist.\n\nWiderruf jederzeit im Modellmenü."
+    }
+
+    static let preview = "Vorschau: Das gewählte Modell hat den Prüflauf noch nicht bestanden. Antworten können falsch sein. Der Spoilerschutz verringert das Risiko, schließt es aber nicht aus."
+}
+
 // MARK: - Einstellungen
 
-/// Abschnitt „Buch-Gespräch“ in den Einstellungen: Schalter (Standard aus), Modell, Verlauf löschen.
+/// Abschnitt „Buch-Gespräch“ in den Einstellungen: Vorschau-Schalter (Standard aus), Modellwahl inkl. Abo-Modelle über den PC,
+/// Einrichtung und Widerruf, Verlauf löschen.
 struct BookTalkSettings: View {
     @AppStorage(BookTalkEngine.enabledKey) private var enabled = false
     @AppStorage(BookTalkModelChoice.key) private var choice = BookTalkModelChoice.apple.rawValue
+    @ObservedObject private var relays = BookTalkRelayStore.shared
     @State private var anton = BookTalkController.storedSpeaksAloud()
     @State private var confirming = false
+    @State private var confirmingPreview = false
     @State private var cleared = false
+    @State private var scanning = false
+    @State private var code = ""
+    @State private var enrollError: String?
 
     var body: some View {
         Section {
-            Toggle("KI-Antworten im Buch-Gespräch", isOn: $enabled)
+            Toggle("KI-Antworten (Vorschau)", isOn: Binding(get: { enabled }, set: { value in
+                if value { confirmingPreview = true } else { enabled = false }
+            }))
             Picker("Modell", selection: $choice) {
-                ForEach(BookTalkModelChoice.allCases) { Text($0.title).tag($0.rawValue) }
+                Text("Apple-Systemmodell · lokal").tag(BookTalkModelChoice.apple.rawValue)
+                Text("Gemma 4 E2B · lokal").tag(BookTalkModelChoice.gemma.rawValue)
+                ForEach(relays.models) { Text("\($0.label) · Cloud").tag(BookTalkModelChoice.relay($0.id).rawValue) }
             }
             Toggle("Antworten mit Anton sprechen", isOn: $anton)
                 .onChange(of: anton) { _, value in UserDefaults.standard.set(value, forKey: BookTalkController.antonKey) }
@@ -478,5 +558,59 @@ struct BookTalkSettings: View {
             }
             Button("Abbrechen", role: .cancel) {}
         }
+        .alert("KI-Antworten (Vorschau) einschalten?", isPresented: $confirmingPreview) {
+            Button("Abbrechen", role: .cancel) {}
+            Button("Einschalten") { enabled = true }
+        } message: { Text(BookTalkConsentText.preview) }
+        relaySection
+    }
+
+    @ViewBuilder private var relaySection: some View {
+        Section {
+            if let e = relays.enrollment {
+                Label("Eingerichtet mit ‚\(e.desktopName)‘", systemImage: "desktopcomputer")
+                if relays.models.isEmpty {
+                    Text(relays.status.isEmpty ? "Keine Abo-Modelle freigegeben." : relays.status).font(.footnote).foregroundStyle(VoicePalette.secondaryText)
+                }
+                ForEach(relays.models) { model in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(model.label)
+                            Text(relays.isConsented(model) ? "Freigegeben" : "Noch nicht freigegeben")
+                                .font(.caption).foregroundStyle(VoicePalette.secondaryText)
+                        }
+                        Spacer()
+                        if relays.isConsented(model) {
+                            Button("Widerrufen", role: .destructive) { relays.revoke(model) }.frame(minHeight: 44)
+                        }
+                    }
+                }
+                Button("Modelle neu laden") { Task { await relays.refresh() } }.frame(minHeight: 44).disabled(relays.refreshing)
+                Button("Einrichtung entfernen", role: .destructive) { relays.forget() }.frame(minHeight: 44)
+            } else {
+                Button { scanning = true } label: { Label("Einrichtungscode scannen", systemImage: "qrcode.viewfinder").frame(minHeight: 44) }
+                Button { paste() } label: { Label("Code aus der Zwischenablage", systemImage: "doc.on.clipboard").frame(minHeight: 44) }
+                if let enrollError { Text(enrollError).font(.footnote).foregroundStyle(VoicePalette.danger) }
+            }
+        } header: {
+            Text("Abo-Modelle über deinen PC")
+        } footer: {
+            Text("Claude- und Codex-Abo laufen nur über die CLI auf deinem PC. Am PC unter Einstellungen › Modelle je Funktion dieses iPhone freigeben und den Einrichtungscode scannen. Buchtext verlässt dann das iPhone (verschlüsselt, über deinen PC an Anthropic bzw. OpenAI), erst nach deiner Freigabe je Modell.")
+        }
+        .sheet(isPresented: $scanning) {
+            NavigationStack {
+                RelayCodeScanner { text in scanning = false; apply(text) }
+                    .ignoresSafeArea()
+                    .navigationTitle("Einrichtungscode")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { scanning = false } } }
+            }
+        }
+    }
+
+    private func paste() { apply(UIPasteboard.general.string ?? "") }
+
+    private func apply(_ text: String) {
+        enrollError = relays.enroll(text)
     }
 }

@@ -217,7 +217,7 @@ Model cards now download approved model files over HTTPS and verify size/SHA-256
 Fragen zum Buch im Player (Vorlesen und Hörbuch), Blatt unter `iPhone/BookTalk/`, Kern in `VoiceCore/BookTalk*.swift`.
 Plan: `docs/superpowers/specs/2026-11-05-buch-gespraech.md`, Vorschau: `docs/vorschau/buch-gespraech/`.
 
-- Schalter `book_talk_enabled` (Einstellungen › Buch-Gespräch, Standard aus): aus = nur Fundstellen, der Knopf „Fragen“ bleibt sichtbar.
+- Schalter `book_talk_preview_enabled` „KI-Antworten (Vorschau)“ (Einstellungen › Buch-Gespräch, Standard aus, auch für Bestand; der alte Schalter `book_talk_enabled` zählt nicht mehr): aus = nur Fundstellen, der Knopf „Fragen“ bleibt sichtbar. Modellwahl: Apple, Gemma, Abo-Modelle über den PC (Relay, Spec §11; Einrichtungscode vom PC, Freigabe je Modell).
 - Lesegrenze = max(gelesen, gehört) in UTF-16 aus `LibraryProgress` (Feld `frontier`, steigt nur; Hörstand nur mit echter Zeitachse).
 - Hören: `SpeechAnalyzer`/`SpeechTranscriber` live über `AVAudioEngine`, nie Server-Erkennung; ohne Apple-Sprachdateien Whisper (nach Ende der Äußerung).
 - Sprechen: Phonon-Stimme Anton, `sentence.speech` je Ereignis; ohne Phonon die beste deutsche Systemstimme.
