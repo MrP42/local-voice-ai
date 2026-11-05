@@ -736,6 +736,9 @@ struct LibrarySyncSheet: View {
                     Section { Button("Abmelden", role: .destructive) { Task { await sync.logout() } } }
                 } else {
                     Section {
+                        Button { PairingFlow.shared.startScan() } label: { Label("Mit Desktop-App verbinden", systemImage: "qrcode.viewfinder") }
+                    } footer: { Text("Am PC unter Einstellungen › Konto & Geräte auf „Handy verbinden“ gehen und den Code scannen. Ein Passwort ist dann nicht nötig.") }
+                    Section {
                         TextField("E-Mail", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never)
                         SecureField("Passwort", text: $password).textContentType(.password)
                         TextField("Gerätename", text: $device)

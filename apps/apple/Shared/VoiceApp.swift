@@ -212,7 +212,9 @@ private struct VoiceHome: View {
         }
         .sheet(isPresented: $showModels) { ModelPanel(model: model) }
         // „Öffnen in“ Local Voice: Datei vormerken, zu den Transkripten wechseln; dort folgt die Bestätigung.
-        .onOpenURL { url in if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } }
+        .onOpenURL { url in
+            if url.isFileURL { IncomingFiles.shared.add(url); tab = 2 } else { PairingFlow.shared.open(url) }
+        }
         #endif
     }
 

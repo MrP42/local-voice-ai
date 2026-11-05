@@ -115,6 +115,22 @@ final class LibrarySync: ObservableObject {
         }
     }
 
+    /// Konto aus der Geräte-Kopplung übernehmen: wie `login`, nur ohne Passwort.
+    func adopt(_ paired: PairedAccount) throws {
+        guard account == nil else { throw PairingError.adoptFailed("Dieses iPhone ist schon angemeldet.") }
+        var id = [UInt8](repeating: 0, count: 16)
+        guard SecRandomCopyBytes(kSecRandomDefault, 16, &id) == errSecSuccess else { throw PairingError.adoptFailed("Zufallszahlen nicht verfügbar.") }
+        let mail = paired.email.lowercased()
+        let acc = Account(url: paired.hub, email: mail, userId: paired.userId, token: paired.token, key: Data(paired.key),
+                          deviceId: id.map { String(format: "%02x", $0) }.joined(), deviceName: paired.deviceName)
+        guard Keychain.save(acc) else { throw PairingError.adoptFailed("Das Konto konnte nicht im Schlüsselbund gespeichert werden.") }
+        account = acc
+        error = nil
+        ledger = SyncLedger(); saveLedger()
+        status = "Angemeldet als \(mail)"
+        Task { await self.run() }
+    }
+
     func logout() async {
         if let acc = account { _ = try? await Self.send(acc.url + "/api/v1/voice/auth/logout", method: "POST", token: acc.token, body: Data("{}".utf8)) }
         Keychain.delete()
