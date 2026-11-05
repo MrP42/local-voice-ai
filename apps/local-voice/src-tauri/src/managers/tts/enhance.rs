@@ -333,9 +333,64 @@ pub fn soften_edges(samples: &mut [f32], channels: usize, sample_rate: u32) {
     }
 }
 
+/// Stille vor dem ersten Laut, die stehen bleibt (Anlaut nie abschneiden).
+const EDGE_LEAD_MS: f64 = 15.0;
+/// Längste Stille nach dem letzten Laut. Zusammen mit dem Vorlauf des
+/// nächsten Satzes ergibt das eine natürliche Satzpause von rund 0,15 s.
+const EDGE_TAIL_MS: f64 = 140.0;
+/// Pegel, ab dem ein Abtastwert als Laut zählt (rund −44 dBFS).
+const EDGE_THRESHOLD: f32 = 0.006;
+
+/// Lange Stille an den Satzrändern kürzen (#314).
+///
+/// Phonon und andere Modelle hängen an jeden Satz eigene Stille vorn und
+/// hinten. Aneinandergereiht klang das stockend: zwischen zwei Sätzen
+/// eines Absatzes lag fast eine Sekunde. Pausen IM Satz und ausdrückliche
+/// Pausen-Tags (eigene Stücke) bleiben unangetastet. Danach muss
+/// [`soften_edges`] laufen, damit die neuen Ränder nicht knacken.
+pub fn trim_edge_silence(samples: &mut Vec<f32>, channels: usize, sample_rate: u32) {
+    let channels = channels.max(1);
+    let frames = samples.len() / channels;
+    let loud = |f: usize| {
+        samples[f * channels..(f + 1) * channels]
+            .iter()
+            .any(|v| v.abs() >= EDGE_THRESHOLD)
+    };
+    let Some(first) = (0..frames).find(|&f| loud(f)) else {
+        return;
+    };
+    let last = (0..frames).rev().find(|&f| loud(f)).unwrap_or(first);
+    let ms = |m: f64| (m / 1000.0 * sample_rate as f64) as usize;
+    let start = first.saturating_sub(ms(EDGE_LEAD_MS));
+    let end = (last + 1 + ms(EDGE_TAIL_MS)).min(frames);
+    if start == 0 && end == frames {
+        return;
+    }
+    samples.truncate(end * channels);
+    samples.drain(..start * channels);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lange_randstille_wird_gekuerzt_innere_pause_bleibt() {
+        let rate = 24_000u32;
+        let tone = |ms: usize| -> Vec<f32> {
+            (0..rate as usize * ms / 1000)
+                .map(|i| 0.3 * (i as f32 * 0.05).sin() + 0.2)
+                .collect()
+        };
+        let quiet = |ms: usize| vec![0.0f32; rate as usize * ms / 1000];
+        let mut s = [quiet(400), tone(300), quiet(300), tone(300), quiet(700)].concat();
+        trim_edge_silence(&mut s, 1, rate);
+        let ms = s.len() as f64 / rate as f64 * 1000.0;
+        assert!((ms - (15.0 + 900.0 + 140.0)).abs() < 3.0, "{ms} ms");
+        let mut leer = vec![0.0f32; 1000];
+        trim_edge_silence(&mut leer, 1, rate);
+        assert_eq!(leer.len(), 1000, "reine Stille bleibt (Pausen-Stück)");
+    }
 
     fn rms(samples: &[f32]) -> f64 {
         if samples.is_empty() {

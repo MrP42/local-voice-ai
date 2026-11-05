@@ -31,6 +31,7 @@ pub mod protocol;
 pub mod providers;
 pub mod registry;
 pub mod state;
+pub mod stretch;
 pub mod voices;
 
 use engine::{EngineCaps, TtsEngine, TtsEngineKind};
@@ -1831,6 +1832,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
         let Some(mut interleaved) = decode_interleaved(&bytes) else {
             return bytes;
         };
+        enhance::trim_edge_silence(&mut interleaved, channels, spec.sample_rate);
         enhance::soften_edges(&mut interleaved, channels, spec.sample_rate);
         return write_wav_interleaved(&interleaved, spec).unwrap_or(bytes);
     }
@@ -1840,6 +1842,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
     if let Some(strength) = strength {
         enhance::process(&mut samples, rate, strength);
     }
+    enhance::trim_edge_silence(&mut samples, 1, rate);
     enhance::soften_edges(&mut samples, 1, rate);
     write_wav_pcm16(&samples, spec).unwrap_or(bytes)
 }
