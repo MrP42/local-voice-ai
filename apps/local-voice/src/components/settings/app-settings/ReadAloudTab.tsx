@@ -7,6 +7,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Select } from "../../ui/Select";
 import { Slider } from "../../ui/Slider";
+import { FlowControl } from "../tts/reader/FlowControl";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Input } from "../../ui/Input";
 import { ShortcutInput } from "../ShortcutInput";
@@ -246,6 +247,18 @@ export const ReadAloudTab = () => {
             </div>
           </SettingContainer>
         )}
+        <SettingContainer
+          title={t("tts.settings.flow")}
+          description={t("tts.settings.flowHint")}
+          grouped={true}
+          layout="horizontal"
+        >
+          <FlowControl
+            className="w-64"
+            value={getSetting("tts_flow") ?? 0.5}
+            onChange={(value) => void updateSetting("tts_flow", value)}
+          />
+        </SettingContainer>
         <SettingContainer
           title={t("tts.settings.exportFormat")}
           description={t("tts.settings.exportFormatDescription")}

@@ -13,6 +13,7 @@ pub mod dsp;
 pub mod encode;
 pub mod engine;
 pub mod enhance;
+pub mod flow;
 pub mod gradium;
 pub mod hf_access;
 pub mod lang;
@@ -121,6 +122,8 @@ pub struct TtsCore {
     normalize: AtomicBool,
     /// Klangbearbeitung und ihre Stufe (None = aus).
     enhance: Mutex<Option<enhance::Strength>>,
+    /// Sprachfluss (#318): Pausenlängen an Komma, Satz- und Absatzende.
+    flow: Mutex<flow::SpeechFlow>,
     /// Korrekturfaktor je Stimme, einmal je Sitzung aus dem ersten
     /// synthetisierten Satz dieser Stimme gemessen. Schlüssel ist die
     /// reference_id, leer für die Seed-Standardstimme.
@@ -392,6 +395,7 @@ impl TtsCore {
             stop_requested: AtomicBool::new(false),
             normalize: AtomicBool::new(true),
             enhance: Mutex::new(None),
+            flow: Mutex::new(flow::SpeechFlow::default()),
             voice_gains: Mutex::new(std::collections::HashMap::new()),
             voice_sounds: Mutex::new(std::collections::HashMap::new()),
             voice_epoch: tokio::sync::watch::Sender::new(0),
@@ -725,8 +729,11 @@ impl TtsCore {
         if prepared.truncated {
             log::warn!("TTS text truncated to {max_chars} chars");
         }
-        let sentences = single_voice(protocol::split_sentences(&prepared.text));
-        self.speak_sentence_run(sentences, 0, None, None).await
+        let texts = protocol::split_sentences(&prepared.text);
+        let paragraphs = paragraph_ends(&prepared.text, &texts);
+        let sentences = single_voice(texts);
+        self.speak_sentence_run_paragraphs(sentences, &paragraphs, 0, None, None)
+            .await
     }
 
     /// Gemeinsamer Sprechpfad für Freitext und Hörbuch: Sätze pipelined
@@ -736,6 +743,22 @@ impl TtsCore {
     pub async fn speak_sentence_run(
         &self,
         sentences: Vec<Utterance>,
+        start_index: usize,
+        on_playing: Option<OnPlaying>,
+        on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    ) -> Result<usize, String> {
+        self.speak_sentence_run_paragraphs(sentences, &[], start_index, on_playing, on_played)
+            .await
+    }
+
+    /// Wie [`Self::speak_sentence_run`], mit den Absatzenden der Sätze
+    /// ([`paragraph_ends`], gleicher Index wie `sentences`; fehlende Einträge
+    /// zählen als „kein Absatzende"): hinter einem Absatzende liegt die längere
+    /// Absatzpause des Sprachflusses.
+    pub async fn speak_sentence_run_paragraphs(
+        &self,
+        sentences: Vec<Utterance>,
+        paragraph_ends: &[bool],
         start_index: usize,
         on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
@@ -761,6 +784,7 @@ impl TtsCore {
                 my_cancel.clone(),
                 on_playing,
                 on_played,
+                paragraph_ends,
             )
             .await;
         // Nur der jüngste, NICHT stornierte Auftrag darf den Endzustand
@@ -1146,7 +1170,9 @@ impl TtsCore {
         parts: &[protocol::SpeechPart],
         voice: Option<&str>,
         cancelled: &Arc<AtomicBool>,
+        paragraph_end: bool,
     ) -> Result<Vec<(Vec<u8>, f32)>, String> {
+        let flow = *self.flow.lock().unwrap();
         let mut blobs: Vec<(Vec<u8>, f32)> = Vec::new();
         let mut pending_silence_ms = 0u32;
         let mut last_rate: Option<u32> = None;
@@ -1177,7 +1203,7 @@ impl TtsCore {
                     // laeuft, waehrend der vorige Satz noch spielt, faellt also
                     // nicht als Wartezeit auf.
                     let strength = *self.enhance.lock().unwrap();
-                    let bytes = prepare_sentence_audio(bytes, strength);
+                    let bytes = prepare_sentence_audio(bytes, strength, flow);
                     // Stimmen gleich laut: der Pegelausgleich dieses Satzes steht
                     // fest, der Nutzerregler skaliert ihn live.
                     let gain = self.playback_gain(voice, &bytes);
@@ -1187,6 +1213,11 @@ impl TtsCore {
                     blobs.push((bytes, gain));
                 }
             }
+        }
+        // Absatzende: zur Satzpause kommt Stille dazu, bis die Absatzpause
+        // erreicht ist (Sprachfluss, #318).
+        if paragraph_end {
+            pending_silence_ms += paragraph_extra_ms(flow);
         }
         // Pause am Satzende: Rate des letzten Stuecks, sonst die uebliche.
         if pending_silence_ms > 0 {
@@ -1239,6 +1270,7 @@ impl TtsCore {
         cancelled: Arc<AtomicBool>,
         on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+        paragraph_ends: &[bool],
     ) -> Result<usize, String> {
         let (ready, ready_rx) = tokio::sync::watch::channel(usize::MAX);
         let play = self.play_pipelined(
@@ -1248,6 +1280,7 @@ impl TtsCore {
             on_playing,
             on_played,
             ready,
+            paragraph_ends,
         );
         let warm = self.warm_ahead(sentences, &cancelled, ready_rx);
         tokio::pin!(play);
@@ -1360,6 +1393,7 @@ impl TtsCore {
         on_playing: Option<OnPlaying>,
         on_played: Option<Arc<dyn Fn(usize) + Send + Sync>>,
         ready: tokio::sync::watch::Sender<usize>,
+        paragraph_ends: &[bool],
     ) -> Result<usize, String> {
         let max_chars = *self.max_chars.lock().unwrap();
         // Der Index wird erst nach dem LETZTEN Stück eines Satzes gemeldet —
@@ -1394,6 +1428,7 @@ impl TtsCore {
             if cancelled.load(Ordering::Acquire) {
                 break;
             }
+            let paragraph_end = paragraph_ends.get(offset).copied().unwrap_or(false);
             // Einzelne Sätze absichern (leere überspringen, Monster kappen).
             let Some(prepared) = protocol::prepare_text(sentence, max_chars) else {
                 notify(offset, cancelled.load(Ordering::Acquire));
@@ -1417,7 +1452,8 @@ impl TtsCore {
 
                 // 1. Satz berechnen, solange er noch zur Stimme passt.
                 let computed = {
-                    let work = self.prepare_sentence(&parts, voice.as_deref(), &cancelled);
+                    let work =
+                        self.prepare_sentence(&parts, voice.as_deref(), &cancelled, paragraph_end);
                     tokio::pin!(work);
                     loop {
                         tokio::select! {
@@ -1637,6 +1673,8 @@ struct SpeakSession {
     /// Satz samt Stimme — sonst spraeche ein "Fortsetzen" den Rest eines
     /// Dialogs mit der falschen Stimme weiter.
     sentences: Vec<Utterance>,
+    /// Absatzende je Satz ([`paragraph_ends`]); gleicher Index wie `sentences`.
+    paragraph_ends: Vec<bool>,
     position: usize,
 }
 
@@ -1644,6 +1682,8 @@ struct ReadingSession {
     key: String,
     title: String,
     sentences: Vec<String>,
+    /// Absatzende je Satz ([`paragraph_ends`]).
+    paragraph_ends: Vec<bool>,
 }
 
 /// Fortschritt eines Dokuments — Persistenz-Eintrag und Event-Payload.
@@ -1819,7 +1859,16 @@ fn decode_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32, f32)> {
 ///
 /// Lässt sich der Blob nicht lesen, kommt er unverändert zurück. Eine
 /// Aufbereitung ist es nicht wert, an ihr zu scheitern.
-fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -> Vec<u8> {
+fn prepare_sentence_audio(
+    bytes: Vec<u8>,
+    strength: Option<enhance::Strength>,
+    flow: flow::SpeechFlow,
+) -> Vec<u8> {
+    let trim = enhance::EdgeTrim {
+        lead_ms: flow::SpeechFlow::LEAD_MS,
+        tail_ms: flow.tail_ms(),
+        inner_ms: Some(flow.comma_ms()),
+    };
     let Ok(reader) = hound::WavReader::new(std::io::Cursor::new(bytes.as_slice())) else {
         return bytes;
     };
@@ -1832,7 +1881,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
         let Some(mut interleaved) = decode_interleaved(&bytes) else {
             return bytes;
         };
-        enhance::trim_edge_silence(&mut interleaved, channels, spec.sample_rate);
+        enhance::trim_edge_silence(&mut interleaved, channels, spec.sample_rate, trim);
         enhance::soften_edges(&mut interleaved, channels, spec.sample_rate);
         return write_wav_interleaved(&interleaved, spec).unwrap_or(bytes);
     }
@@ -1842,7 +1891,7 @@ fn prepare_sentence_audio(bytes: Vec<u8>, strength: Option<enhance::Strength>) -
     if let Some(strength) = strength {
         enhance::process(&mut samples, rate, strength);
     }
-    enhance::trim_edge_silence(&mut samples, 1, rate);
+    enhance::trim_edge_silence(&mut samples, 1, rate, trim);
     enhance::soften_edges(&mut samples, 1, rate);
     write_wav_pcm16(&samples, spec).unwrap_or(bytes)
 }
@@ -2042,6 +2091,82 @@ fn encode_wav_mono(samples: &[f32], rate: u32) -> Vec<u8> {
 fn silence_sample_count(ms: u32, sample_rate: u32, channels: u16) -> usize {
     let per_channel = sample_rate as u64 * ms as u64 / 1000;
     per_channel as usize * channels.max(1) as usize
+}
+
+/// Für jeden Satz: endet mit ihm ein Absatz (rein)?
+///
+/// `sentences` sind Teilstücke von `text` (aus `split_sentences` bzw.
+/// `split_speaker_segments`); der Rohtext zwischen dem Ende eines Satzes und
+/// dem Anfang des nächsten entscheidet:
+/// - Leerzeile: immer Absatzende.
+/// - Einzelner Umbruch: Absatzende, denn Dokumente (docx, Markdown, EPUB,
+///   einfache Textdateien) trennen Absätze oft so. Ausnahme Hardwrap-Text (fast
+///   alle Zeilen ähnlich lang, wie in PDF-Auszügen): dort zählt der Umbruch nur
+///   hinter einer deutlich kürzeren Zeile, sonst stockte jede Zeile.
+///
+/// Der letzte Satz endet nie einen Absatz (dahinter folgt nichts).
+pub fn paragraph_ends(text: &str, sentences: &[String]) -> Vec<bool> {
+    let spans = protocol::locate_sentences(text, sentences);
+    let chars: Vec<char> = text.chars().collect();
+    let wrap = hard_wrap_width(text);
+    (0..sentences.len())
+        .map(|i| {
+            let Some(next) = spans.get(i + 1) else {
+                return false;
+            };
+            let end = spans[i].1;
+            let Some(gap) = chars.get(end..next.0.max(end)) else {
+                return false;
+            };
+            let newlines = gap.iter().filter(|&&c| c == '\n').count();
+            if newlines >= 2 {
+                return true;
+            }
+            if newlines == 0 {
+                return false;
+            }
+            match wrap {
+                None => true,
+                Some(width) => {
+                    // Länge der Zeile, die mit diesem Satz endet.
+                    let line_start = chars[..end]
+                        .iter()
+                        .rposition(|&c| c == '\n')
+                        .map_or(0, |p| p + 1);
+                    (end - line_start) * 4 < width * 3
+                }
+            }
+        })
+        .collect()
+}
+
+/// Zeilenbreite eines Hardwrap-Textes, sonst `None`: mindestens vier Zeilen,
+/// die längsten (90. Perzentil) höchstens 120 Zeichen, und mindestens die Hälfte
+/// der Zeilen reicht bis auf 80 % dieser Breite.
+fn hard_wrap_width(text: &str) -> Option<usize> {
+    let mut lengths: Vec<usize> = text
+        .lines()
+        .map(|l| l.trim_end().chars().count())
+        .filter(|&n| n > 0)
+        .collect();
+    if lengths.len() < 4 {
+        return None;
+    }
+    lengths.sort_unstable();
+    let width = lengths[(lengths.len() * 9 / 10).min(lengths.len() - 1)];
+    let full = lengths.iter().filter(|&&n| n * 5 >= width * 4).count();
+    (width <= 120 && full * 2 >= lengths.len()).then_some(width)
+}
+
+/// [`paragraph_ends`] für Utterances (Satztext ohne Stimme).
+fn utterance_paragraph_ends(text: &str, sentences: &[Utterance]) -> Vec<bool> {
+    let texts: Vec<String> = sentences.iter().map(|(t, _)| t.clone()).collect();
+    paragraph_ends(text, &texts)
+}
+
+/// Stille, die zur Satzpause kommt, damit am Absatzende die Absatzpause steht.
+fn paragraph_extra_ms(flow: flow::SpeechFlow) -> u32 {
+    (flow.paragraph_ms() - flow.sentence_ms()).max(0.0).round() as u32
 }
 
 /// Ein Mono-WAV aus Stille — die Pause fürs Abspielen, mit der Abtastrate des
@@ -2487,6 +2612,7 @@ impl TtsManager {
             .then_some(settings.tts_enhance_strength);
         self.core.controls.set_volume(settings.tts_volume);
         self.core.controls.set_speed(settings.tts_speed);
+        *self.core.flow.lock().unwrap() = flow::SpeechFlow::new(settings.tts_flow);
         *self.core.export_format.lock().unwrap() = settings.tts_export_format;
         *self.core.output_device.lock().unwrap() = settings.selected_output_device;
         // Ob eine FESTE Stimme gewaehlt ist, haengt an der Engine: bei Fish das
@@ -2615,11 +2741,13 @@ impl TtsManager {
         }
         let sentences = self.utterances(&prepared.text).await;
         let start = clamp_start_sentence(sentence_index, sentences.len());
+        let paragraphs = utterance_paragraph_ends(&prepared.text, &sentences);
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: sentences.clone(),
+            paragraph_ends: paragraphs.clone(),
             position: start,
         });
-        self.run_speak_session(sentences, start).await
+        self.run_speak_session(sentences, paragraphs, start).await
     }
 
     /// Ab einem Satz vorlesen -- oder nur diesen einen. `char_offset` ist
@@ -2647,16 +2775,20 @@ impl TtsManager {
         let texts: Vec<String> = sentences.iter().map(|(t, _)| t.clone()).collect();
         let spans = protocol::locate_sentences(&prepared.text, &texts);
         let index = protocol::sentence_index_at(&spans, offset);
-        let (session_sentences, start) = if only_one {
-            (vec![sentences[index].clone()], 0)
+        let (session_sentences, session_paragraphs, start) = if only_one {
+            // Ein einzelner Satz: keine Absatzpause dahinter.
+            (vec![sentences[index].clone()], vec![false], 0)
         } else {
-            (sentences, index)
+            let paragraphs = utterance_paragraph_ends(&prepared.text, &sentences);
+            (sentences, paragraphs, index)
         };
         *self.speak_session.lock().unwrap() = Some(SpeakSession {
             sentences: session_sentences.clone(),
+            paragraph_ends: session_paragraphs.clone(),
             position: start,
         });
-        self.run_speak_session(session_sentences, start).await
+        self.run_speak_session(session_sentences, session_paragraphs, start)
+            .await
     }
 
     /// Geaenderte Saetze vorab erzeugen: alles, was nicht im Cache liegt,
@@ -2892,15 +3024,20 @@ impl TtsManager {
     /// Pausiertes Freitext-Vorlesen ab dem letzten vollständig gehörten Satz
     /// fortsetzen.
     pub async fn speak_resume(self: &Arc<Self>) -> Result<usize, String> {
-        let (sentences, position) = {
+        let (sentences, paragraphs, position) = {
             let guard = self.speak_session.lock().unwrap();
             let session = guard.as_ref().ok_or("nichts zum Fortsetzen")?;
             if session.position >= session.sentences.len() {
                 return Err("bereits zu Ende gelesen".into());
             }
-            (session.sentences.clone(), session.position)
+            (
+                session.sentences.clone(),
+                session.paragraph_ends.clone(),
+                session.position,
+            )
         };
-        self.run_speak_session(sentences, position).await
+        self.run_speak_session(sentences, paragraphs, position)
+            .await
     }
 
     /// Alles im Cache → gar keinen Server anfassen (Offline-Wiedergabe);
@@ -2933,6 +3070,7 @@ impl TtsManager {
     async fn run_speak_session(
         self: &Arc<Self>,
         sentences: Vec<Utterance>,
+        paragraphs: Vec<bool>,
         start: usize,
     ) -> Result<usize, String> {
         use tauri::Emitter;
@@ -2998,7 +3136,13 @@ impl TtsManager {
             );
         });
         self.core
-            .speak_sentence_run(sentences, start, Some(on_playing), Some(on_played))
+            .speak_sentence_run_paragraphs(
+                sentences,
+                &paragraphs,
+                start,
+                Some(on_playing),
+                Some(on_played),
+            )
             .await
     }
 
@@ -3841,8 +3985,10 @@ impl TtsManager {
         let port = *self.core.port.lock().unwrap();
         let seed = *self.core.seed.lock().unwrap();
         let strength = *self.core.enhance.lock().unwrap();
+        let flow = *self.core.flow.lock().unwrap();
+        let paragraphs = utterance_paragraph_ends(raw.trim(), &utterances);
         let mut out = Vec::new();
-        for (sentence, own_voice) in &utterances {
+        for (index, (sentence, own_voice)) in utterances.iter().enumerate() {
             let Some(part) = protocol::prepare_text(sentence, max_chars) else {
                 continue;
             };
@@ -3858,7 +4004,14 @@ impl TtsManager {
                     .core
                     .fetch_wav_uncached(port, seed, &text, chosen, Some(cancel))
                     .await?;
-                out.push(prepare_sentence_audio(bytes, strength));
+                out.push(prepare_sentence_audio(bytes, strength, flow));
+            }
+            // Absatzende: zusätzliche Stille als eigenes Stück, in der
+            // Abtastrate des vorigen.
+            if paragraphs.get(index).copied().unwrap_or(false) {
+                if let Some(rate) = out.last().and_then(|wav| wav_sample_rate(wav)) {
+                    out.push(silence_wav(paragraph_extra_ms(flow), rate));
+                }
             }
         }
         *self.core.last_used.lock().unwrap() = Instant::now();
@@ -4353,6 +4506,8 @@ impl TtsManager {
         // Lage jedes Satzes in der Datei, zunaechst in geschriebenen Werten:
         // die Abtastrate steht erst mit dem ersten Teilstueck fest.
         let mut marks: Vec<(String, Option<String>, usize, usize)> = Vec::new();
+        let flow = *self.core.flow.lock().unwrap();
+        let paragraphs = utterance_paragraph_ends(raw.trim(), &utterances);
         for (index, (sentence, voice)) in utterances.iter().enumerate() {
             if cancel.load(Ordering::Acquire) {
                 // Halbe Datei ist schlimmer als keine: sie sieht fertig aus.
@@ -4405,7 +4560,7 @@ impl TtsManager {
                 // Dieselbe Aufbereitung wie beim Hoeren — die Datei soll
                 // klingen wie das, was man vorher gehoert hat.
                 let strength = *self.core.enhance.lock().unwrap();
-                let bytes = prepare_sentence_audio(bytes, strength);
+                let bytes = prepare_sentence_audio(bytes, strength, flow);
                 // Derselbe Ausgleich wie beim Hören: eine exportierte Datei
                 // mit wechselnden Stimmen soll nicht lauter und leiser werden.
                 let gain = self.core.playback_gain(voice.as_deref(), &bytes);
@@ -4454,6 +4609,11 @@ impl TtsManager {
                 segment_start,
                 written,
             ));
+            // Absatzende: die Stille kommt vor das nächste Stück (oder ans
+            // Textende) und gehört damit nicht mehr zu diesem Satz.
+            if paragraphs.get(index).copied().unwrap_or(false) {
+                pending_silence_ms += paragraph_extra_ms(flow);
+            }
             self.emit_export_progress(index as u32 + 1, total, false);
         }
         // Pause am Textende: mit der `spec` des letzten Teilstuecks.
@@ -4529,13 +4689,17 @@ impl TtsManager {
     /// ein Sprung um 15 Sekunden gaebe es hier gar nicht. Der Satz ist die
     /// Einheit, in der man sich in vorgelesenem Text bewegt.
     pub async fn speak_seek(self: &Arc<Self>, delta: i32) -> Result<usize, String> {
-        let (sentences, target) = {
+        let (sentences, paragraphs, target) = {
             let mut guard = self.speak_session.lock().unwrap();
             let session = guard.as_mut().ok_or("nichts zum Springen")?;
             let len = session.sentences.len() as i32;
             let next = (session.position as i32 + delta).clamp(0, (len - 1).max(0));
             session.position = next as usize;
-            (session.sentences.clone(), next as usize)
+            (
+                session.sentences.clone(),
+                session.paragraph_ends.clone(),
+                next as usize,
+            )
         };
         // Die neue Position meldet `run_speak_session` gleich zu Beginn (jeder Lauf
         // tut das). Ohne diese Meldung erfuhr die Oberfläche vom Sprung nichts:
@@ -4543,7 +4707,7 @@ impl TtsManager {
         // wenn ein Satz VOLLSTÄNDIG gespielt wurde. Wer sprang und dann pausierte,
         // bekam beim nächsten Druck auf Play einen Neustart von vorn statt der
         // Fortsetzung an der Sprungmarke.
-        self.run_speak_session(sentences, target).await
+        self.run_speak_session(sentences, paragraphs, target).await
     }
 
     /// Tempo und Lautstaerke der laufenden Wiedergabe. Oeffentlich, damit
@@ -4552,6 +4716,12 @@ impl TtsManager {
     /// nur zu Beginn eines Sprechlaufs laeuft.
     pub fn controls(&self) -> &Arc<PlaybackControls> {
         &self.core.controls
+    }
+
+    /// Sprachfluss sofort setzen (Befehl `change_tts_flow_setting`): gilt ab dem
+    /// nächsten aufbereiteten Satz, ohne den laufenden Auftrag anzufassen.
+    pub fn set_flow(&self, value: f32) {
+        *self.core.flow.lock().unwrap() = flow::SpeechFlow::new(value);
     }
 
     /// Die aktive Stimme (oder der Seed, der die Standardstimme IST) hat sich
@@ -4680,6 +4850,7 @@ impl TtsManager {
         let p = std::path::Path::new(path);
         let text = crate::media::extract_document_text(p)?;
         let sentences = protocol::split_sentences(&text);
+        let paragraphs = paragraph_ends(&text, &sentences);
         let total = sentences.len() as u32;
         if total == 0 {
             return Err("Das Dokument enthält keine vorlesbaren Sätze".into());
@@ -4697,6 +4868,7 @@ impl TtsManager {
             key: path.to_string(),
             title: title.clone(),
             sentences,
+            paragraph_ends: paragraphs,
         });
         self.persist_reading(path, &title, position, total);
         let info = ReadingInfo {
@@ -4714,13 +4886,14 @@ impl TtsManager {
     /// Wiedergabe des geöffneten Dokuments ab der gespeicherten Position.
     /// Kehrt sofort zurück; Fortschritt kommt als `tts-reading-progress`.
     pub fn reading_play(self: &Arc<Self>) -> Result<(), String> {
-        let (key, title, sentences) = {
+        let (key, title, sentences, paragraphs) = {
             let guard = self.reading.lock().unwrap();
             let session = guard.as_ref().ok_or("kein Dokument geöffnet")?;
             (
                 session.key.clone(),
                 session.title.clone(),
                 session.sentences.clone(),
+                session.paragraph_ends.clone(),
             )
         };
         let total = sentences.len() as u32;
@@ -4776,8 +4949,9 @@ impl TtsManager {
             });
             let result = manager
                 .core
-                .speak_sentence_run(
+                .speak_sentence_run_paragraphs(
                     single_voice(sentences),
+                    &paragraphs,
                     start as usize,
                     Some(on_playing),
                     Some(on_played),
@@ -5796,6 +5970,60 @@ mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn absatzenden(text: &str) -> Vec<bool> {
+        let sentences = protocol::split_sentences(text);
+        paragraph_ends(text, &sentences)
+    }
+
+    #[test]
+    fn absatzende_leerzeile_und_einzelner_umbruch() {
+        // Leerzeile: Absatzende; innerhalb des Absatzes nicht.
+        let text = "Der erste Satz ist lang genug. Der zweite auch.\n\nNeuer Absatz beginnt hier.";
+        assert_eq!(absatzenden(text), vec![false, true, false]);
+        // Einzelner Umbruch (docx/Markdown): ebenfalls Absatzende.
+        let text = "Der erste Satz ist lang genug.\nDer zweite Satz folgt in Zeile zwei.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+        // Umbruch mit Leerzeichen davor/dahinter.
+        let text = "Der erste Satz ist lang genug. \r\n  Der zweite Satz folgt hier.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+    }
+
+    #[test]
+    fn absatzende_kein_umbruch_und_raender() {
+        assert_eq!(absatzenden("Nur ein einziger Satz ohne Ende."), vec![false]);
+        assert_eq!(
+            absatzenden("Erster Satz steht hier. Zweiter Satz steht hier."),
+            vec![false, false]
+        );
+        assert!(paragraph_ends("", &[]).is_empty());
+        // Letzter Satz endet nie einen Absatz, auch nicht mit Umbruch dahinter.
+        assert_eq!(absatzenden("Ein Satz mit Ende genug.\n"), vec![false]);
+        // Überschrift ohne Satzzeichen vor Leerzeile steht für sich.
+        let text = "Kapitel Eins\n\nEs war einmal ein langer Satz.";
+        assert_eq!(absatzenden(text), vec![true, false]);
+    }
+
+    #[test]
+    fn absatzende_hardwrap_nur_hinter_kurzer_zeile() {
+        // PDF-Auszug mit festem Zeilenumbruch: Satzenden am Zeilenende sind
+        // kein Absatz, nur die kurze Schlusszeile.
+        let text = "Am Morgen ging Anna los, denn der Weg zum Bahnhof war sehr weit.\n\
+Sie dachte an das Gespräch vom Vortag und an die Frage nach dem Zug.\n\
+Noch immer wusste sie keine Antwort darauf, was sie sagen sollte, nein.\n\
+Dann kam der Zug.\n\
+Sie stieg ein und setzte sich ans Fenster, wo die Sonne hereinschien.";
+        assert_eq!(absatzenden(text), vec![false, false, false, true, false]);
+    }
+
+    #[test]
+    fn absatzpause_ergaenzt_satzpause_bis_zur_absatzpause() {
+        for v in [0.0f32, 0.5, 1.0] {
+            let f = flow::SpeechFlow::new(v);
+            let total = f.sentence_ms() + paragraph_extra_ms(f) as f32;
+            assert!((total - f.paragraph_ms()).abs() <= 1.0, "{v}: {total}");
+        }
+    }
 
     /// "Ab Satz n fortsetzen" (Aufnahmen: Wiedergabe nach Seitenwechsel neu
     /// aufnehmen): ein gemerkter Satz hinter dem Textende darf nie ins Leere

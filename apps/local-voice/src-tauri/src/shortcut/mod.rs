@@ -840,6 +840,25 @@ pub fn change_tts_speed_setting(app: AppHandle, value: f32) -> Result<(), String
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_tts_flow_setting(app: AppHandle, value: f32) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.tts_flow = if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    let flow = settings.tts_flow;
+    settings::write_settings(&app, settings);
+    // Wirkt ab dem nächsten aufbereiteten Satz, auch mitten im Vorlesen.
+    use tauri::Manager;
+    if let Some(tts) = app.try_state::<std::sync::Arc<crate::managers::tts::TtsManager>>() {
+        tts.set_flow(flow);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_tts_normalize_setting(app: AppHandle, value: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.tts_normalize = value;

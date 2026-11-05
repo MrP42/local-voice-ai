@@ -2027,6 +2027,7 @@ fn specta_builder() -> Builder<tauri::Wry> {
             shortcut::change_tts_piper_auto_language_setting,
             shortcut::change_tts_script_check_setting,
             shortcut::change_tts_speed_setting,
+            shortcut::change_tts_flow_setting,
             shortcut::change_tts_export_format_setting,
             shortcut::change_tts_export_bitrate_setting,
             shortcut::change_tts_context_menu_setting,
