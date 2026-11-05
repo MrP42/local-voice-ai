@@ -174,8 +174,37 @@ async fn error_from(res: reqwest::Response) -> HubError {
         (410, _) => HubError::CursorExpired,
         (_, Some((code, msg))) if !msg.is_empty() => HubError::Other(format!("{code}: {msg}")),
         (_, Some((code, _))) => HubError::Other(code),
-        (s, None) => HubError::Other(format!("HTTP {s}")),
+        (s, None) => {
+            // Kein JSON der App: Hosting oder PHP-Abbruch. Ein Auszug macht die Ursache im Log sichtbar.
+            let hint = body_hint(&text);
+            log::warn!("Hub: HTTP {s} ohne App-Fehler, Antwort: {hint:?}");
+            if hint.is_empty() {
+                HubError::Other(format!("HTTP {s}"))
+            } else {
+                HubError::Other(format!("HTTP {s} ({hint})"))
+            }
+        }
     }
+}
+
+/// Kurzer, einzeiliger Auszug einer Fehlerantwort ohne HTML-Tags (höchstens 160 Zeichen).
+fn body_hint(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in text.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if in_tag => {}
+            c if c.is_whitespace() || c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    let joined = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    joined.chars().take(160).collect()
 }
 
 pub async fn login(
@@ -447,5 +476,25 @@ impl HubClient {
             return Err(error_from(res).await);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod body_hint_tests {
+    use super::body_hint;
+
+    #[test]
+    fn html_wird_zu_einer_zeile() {
+        let html = "<html><head><title>500 Internal Server Error</title></head>\n<body><h1>Internal\nServer Error</h1></body></html>";
+        assert_eq!(
+            body_hint(html),
+            "500 Internal Server Error Internal Server Error"
+        );
+    }
+
+    #[test]
+    fn leer_und_lang() {
+        assert_eq!(body_hint(""), "");
+        assert_eq!(body_hint(&"x".repeat(500)).chars().count(), 160);
     }
 }

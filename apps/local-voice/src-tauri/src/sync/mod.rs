@@ -149,6 +149,7 @@ pub fn sync_status(engine: State<'_, SyncEngine>) -> SyncStatus {
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_now(app: AppHandle, engine: State<'_, SyncEngine>) -> Result<SyncStatus, String> {
+    engine.retry_files_now();
     Ok(engine.run_once(&app).await)
 }
 
