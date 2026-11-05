@@ -25,6 +25,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Aufträgen, die hier nicht (mehr) stehen, ändern nichts an der Buchführung.
     private var inFlight: [String: [Int: AudioDownload.ChunkKey]] = [:]
     /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
+    private var legacyFallback = AudioDownload.LegacyFallback()
     private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
@@ -388,9 +389,8 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         guard library.books.contains(where: { $0.id == id }) else { discard(id); return }
         if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
         let name = AudioDownload.taskDescription(bookId: id, key)
-        if status == 404, job.parts.indices.contains(key.part), retries[name] == nil,
-           AudioDownload.restartsWhenMissing(job.parts[key.part], index: key.index) {
-            retries[name] = 1  // nur einmal: Fehlt das Stück wirklich, gilt danach der normale Fehlerweg
+        if status == 404, job.parts.indices.contains(key.part),
+           legacyFallback.shouldRestart(job.parts[key.part], index: key.index, task: name) {
             _ = try? FileManager.default.removeItem(at: audioDir(id).appendingPathComponent(job.parts[key.part].file).appendingPathExtension("part"))
             pump(id)
             return

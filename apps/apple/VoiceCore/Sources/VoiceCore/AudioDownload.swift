@@ -68,6 +68,18 @@ public enum AudioDownload {
         index == 1 && LibrarySyncFormat.mayBeLegacySingleChunk(size: part.size)
     }
 
+    /// Merkt sich je Auftrag, ob der Rückfall auf Stück 0 schon genutzt ist. Unabhängig von den
+    /// allgemeinen Fehlversuchen: Ein Netzfehler vorher darf ihn nicht verbrauchen.
+    public struct LegacyFallback: Sendable {
+        private var used: Set<String> = []
+        public init() {}
+
+        /// `true`: Teildatei verwerfen und neu beginnen. Fehlt das Stück danach wieder, ist es ein Fehler.
+        public mutating func shouldRestart(_ part: Part, index: Int, task: String) -> Bool {
+            restartsWhenMissing(part, index: index) && used.insert(task).inserted
+        }
+    }
+
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
     public static func missingChunks(_ job: Job, states: [PartState], staged: Set<ChunkKey>, inFlight: Set<ChunkKey>,
                                      chunkPlainBytes: Int, limit: Int = window) -> [ChunkKey] {

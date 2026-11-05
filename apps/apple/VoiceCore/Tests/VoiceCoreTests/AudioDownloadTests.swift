@@ -83,6 +83,33 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertFalse(AudioDownload.restartsWhenMissing(big, index: 1))
     }
 
+    /// Ablauf am Nachbau: Netzfehler, 404, Neubeginn, und ein zweites 404 ist ein Fehler.
+    func testLegacyFallbackFlowSurvivesEarlierFailureAndFiresOnce() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "h", size: size, chunks: 2, file: "teil_008.m4a")
+        let task = "buch#0#1"
+        var fallback = AudioDownload.LegacyFallback()
+        var partial = plain  // abgerissene Teildatei
+        var retries = 0
+        func next() -> Int? { AudioDownload.nextChunk(part, .init(complete: false, partialBytes: partial), chunkPlainBytes: plain) }
+
+        XCTAssertEqual(next(), 1)
+        retries += 1  // Netzfehler auf Stück 1: zählt nur als Fehlversuch
+        XCTAssertEqual(next(), 1)
+        XCTAssertTrue(fallback.shouldRestart(part, index: 1, task: task), "der Fehlversuch verbraucht den Rückfall nicht")
+        partial = 0  // Teildatei verworfen
+        XCTAssertEqual(next(), 0)
+        partial = size  // Stück 0 trägt die ganze Datei: Abschluss
+        XCTAssertNil(next())
+        XCTAssertEqual(retries, 1)
+
+        // Echtes Zwei-Stück-Blob, dem Stück 1 fehlt: kein endloser Kreis.
+        partial = plain
+        XCTAssertEqual(next(), 1)
+        XCTAssertFalse(fallback.shouldRestart(part, index: 1, task: task))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))
