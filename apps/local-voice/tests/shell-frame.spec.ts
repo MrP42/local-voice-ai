@@ -55,6 +55,7 @@ async function setup(page: Page, theme: "light" | "dark") {
           if (cmd === "get_app_settings" || cmd === "get_default_settings") return settings;
           if (cmd === "plugin:os|locale") return "de-DE";
           if (cmd === "plugin:app|version") return "0.21.30";
+          if (cmd === "local_update_check") return (window as unknown as { __LV_UPDATE?: unknown }).__LV_UPDATE ?? null;
           if (cmd.includes("permission")) return true;
           if (cmd === "plugin:event|listen") return ++callback;
           if (cmd === "get_selected_model") return "";
@@ -97,7 +98,7 @@ test("Fussleiste: 24 px, Modelle des Moduls links, Version ganz rechts", async (
   await expect(bar.locator("[data-model-status]")).toHaveCount(1);
   const version = bar.getByTestId("footer-version");
   await expect(version).toHaveText("v0.21.30");
-  await expect(version).toHaveAccessibleName(/^v0\.21\.30, /);
+  await expect(version).toHaveAccessibleName("v0.21.30, Nach Updates suchen");
   const barBox = (await bar.boundingBox())!;
   const versionBox = (await version.boundingBox())!;
   expect(barBox.x + barBox.width - (versionBox.x + versionBox.width)).toBeLessThan(16);
@@ -372,3 +373,69 @@ for (const theme of ["light", "dark"] as const) {
     }
   });
 }
+
+// Version in der Fußleiste (#281, Codex zu lva#282): Fokus sichtbar,
+// Update-Angebot mit ↑, Touchziel ≥ 44 px. Bilder nach LVA_SHOTS.
+const fussClip = async (page: Page) => {
+  const b = (await page.locator(".lv-statusbar").boundingBox())!;
+  const w = page.viewportSize()!.width;
+  const breite = Math.min(w, 700);
+  return { x: w - breite, y: Math.max(0, b.y - 8), width: breite, height: b.height + 8 };
+};
+const angebot = (page: Page) =>
+  page.addInitScript(() => {
+    (window as unknown as { __LV_UPDATE: unknown }).__LV_UPDATE = {
+      version: "0.23.0", path: "C:/Updates/local-voice_0.23.0.exe", file_name: "local-voice_0.23.0.exe", notes: "- Version wieder rechts",
+    };
+  });
+
+for (const theme of ["light", "dark"] as const) {
+  test(`Fußleiste ▸ Version: Fokus und Update-Angebot (${theme})`, async ({ page }) => {
+    await setup(page, theme);
+    await angebot(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    // Das Angebot meldet sich einmal von selbst; „Später“ lässt es in der Leiste stehen.
+    await page.getByRole("button", { name: "Später" }).first().click();
+    const version = page.locator(".lv-statusbar").getByTestId("footer-version");
+    await expect(version).toContainText("v0.21.30");
+    await expect(version).toContainText("↑");
+    await expect(version).toHaveAccessibleName("v0.21.30, Version 0.23.0 ist verfügbar – klicken zum Installieren");
+    await expect(version).toHaveAttribute("title", "Version 0.23.0 ist verfügbar – klicken zum Installieren");
+    // Hervorgehoben: Akzentschrift statt der Farbe der Nachbarknöpfe.
+    const farbe = await version.evaluate((el) => getComputedStyle(el).color);
+    const mikro = await page.locator(".lv-statusbar [data-mic-selector]").evaluate((el) => getComputedStyle(el).color);
+    expect(farbe).not.toBe(mikro);
+    await page.screenshot({ path: `${SHOTS}/version-angebot-${theme}-1440.png`, clip: await fussClip(page), animations: "disabled" });
+
+    // Tastaturfokus: sichtbarer Rahmen um die Version.
+    await page.keyboard.press("Shift");
+    await version.focus();
+    expect(await version.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("solid");
+    await page.screenshot({ path: `${SHOTS}/version-fokus-${theme}-1440.png`, clip: await fussClip(page), animations: "disabled" });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const v = (await version.boundingBox())!;
+    expect(v.x + v.width).toBeLessThanOrEqual(390);
+    await page.screenshot({ path: `${SHOTS}/version-angebot-${theme}-390.png`, clip: await fussClip(page), animations: "disabled" });
+  });
+}
+
+test.describe("Fußleiste ▸ Version mit Touch", () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  for (const theme of ["light", "dark"] as const) {
+    test(`Touchziel ≥ 44 px (${theme})`, async ({ page }) => {
+      await setup(page, theme);
+      await page.goto("/");
+      expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+      const version = page.locator(".lv-statusbar").getByTestId("footer-version");
+      await expect(version).toHaveText("v0.21.30");
+      const b = (await version.boundingBox())!;
+      console.log(`touchziel ${theme} 390: ${b.width.toFixed(1)} x ${b.height.toFixed(1)} px`);
+      expect(b.height).toBeGreaterThanOrEqual(44);
+      expect(b.width).toBeGreaterThanOrEqual(44);
+      expect(b.x + b.width).toBeLessThanOrEqual(390);
+      await page.screenshot({ path: `${SHOTS}/version-touch-${theme}-390.png`, clip: await fussClip(page), animations: "disabled" });
+    });
+  }
+});

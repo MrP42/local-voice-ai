@@ -422,12 +422,13 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({
             disabled={isChecking || isInstalling}
             title={versionTitle}
             aria-label={`v${version}, ${versionTitle}`}
-            className={`tabular-nums transition-colors disabled:opacity-50 ${
+            className={`lv-status-btn tabular-nums transition-colors disabled:opacity-50 ${
               offered
                 ? "text-logo-primary font-medium hover:text-logo-primary/80"
                 : "text-text/60 hover:text-text/80"
             }`}
             data-testid="footer-version"
+            data-angebot={offered ? "" : undefined}
           >
             {`v${version}`}
             {offered && (
