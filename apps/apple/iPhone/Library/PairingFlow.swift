@@ -54,6 +54,8 @@ final class PairingFlow: ObservableObject {
     @Published var deviceName = UserDefaults.standard.string(forKey: "pairing.deviceName") ?? "iPhone"
 
     private var task: Task<Void, Never>?
+    /// Jeder Ablauf zählt hoch; Meldungen eines abgebrochenen werden verworfen.
+    private var generation = 0
     private var decision: CheckedContinuation<Bool, Never>?
     private weak var sheet: UIViewController?
 
@@ -113,35 +115,40 @@ final class PairingFlow: ObservableObject {
         deviceName = name
         UserDefaults.standard.set(name, forKey: "pairing.deviceName")
         phase = .running(.claiming)
+        generation += 1
+        let run = generation
+        // Ein Link oder fremder Server kann ein fremdes Konto bringen: vor dem Speichern fragen.
+        let ask = viaLink || code.hub != LibrarySync.defaultHub
         let session = PairingSession(code: code, name: name, transport: HubTransport(base: code.hub))
         task = Task { [weak self] in
             var email = ""
             do {
                 let confirmed = try await session.run(stage: { stage in
-                    await MainActor.run { self?.show(stage) }
+                    await MainActor.run { self?.show(stage, run) }
                 }, adopt: { paired in
                     guard let self else { throw PairingError.declined }
-                    try await self.adopt(paired, ask: viaLink)
+                    try await self.adopt(paired, ask: ask, run: run)
                     await MainActor.run { email = paired.email }
                 })
-                self?.phase = .done(email: email, confirmed: confirmed)
+                if self?.generation == run { self?.phase = .done(email: email, confirmed: confirmed) }
             } catch is CancellationError {
                 return
             } catch {
-                self?.phase = .failed(error.localizedDescription)
+                if self?.generation == run { self?.phase = .failed(error.localizedDescription) }
             }
         }
     }
 
-    private func show(_ stage: PairingStage) {
-        if !Task.isCancelled { phase = .running(stage) }
+    private func show(_ stage: PairingStage, _ run: Int) {
+        if generation == run { phase = .running(stage) }
     }
 
-    private func adopt(_ paired: PairedAccount, ask: Bool) async throws {
+    private func adopt(_ paired: PairedAccount, ask: Bool, run: Int) async throws {
+        guard generation == run else { throw CancellationError() }
         if ask && !autoAccept {
             phase = .confirmAccount(paired.email)
             let accepted = await withCheckedContinuation { decision = $0 }
-            guard accepted else { throw PairingError.declined }
+            guard accepted, generation == run else { throw PairingError.declined }
             phase = .running(.opening)
         }
         try LibrarySync.shared.adopt(paired)
@@ -153,9 +160,11 @@ final class PairingFlow: ObservableObject {
     }
 
     func cancel() {
+        generation += 1  // vor `decide`, damit die Antwort des alten Ablaufs nichts mehr anzeigt
         decide(false)
         task?.cancel()
         task = nil
+        phase = .scan  // nimmt auch den Code samt `q` aus dem Speicher
     }
 
     func close() {
@@ -165,11 +174,20 @@ final class PairingFlow: ObservableObject {
 
     /// Eigene Darstellung über dem obersten Blatt: Der Ablauf kommt aus „Konto & Sync“
     /// (selbst ein Blatt) oder von einem Link, während irgendein Blatt offen ist.
-    private func present() {
+    private func present(attempt: Int = 0) {
         guard sheet?.presentingViewController == nil else { return }
         let window = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows).first(where: \.isKeyWindow)
-        guard var top = window?.rootViewController else { return }
+        guard var top = window?.rootViewController else {
+            // Kaltstart über den Link: Das Fenster kommt erst gleich.
+            if attempt < 20 {
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    self?.present(attempt: attempt + 1)
+                }
+            }
+            return
+        }
         while let next = top.presentedViewController { top = next }
         let host = UIHostingController(rootView: PairingSheet())
         host.isModalInPresentation = true  // Schließen nur über den Knopf, damit der Ablauf sauber endet
@@ -189,15 +207,18 @@ private struct PairingSheet: View {
                 .navigationTitle("Mit Desktop-App verbinden").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        if !isFinished { Button("Abbrechen") { flow.close() } }
+                        if canCancel { Button("Abbrechen") { flow.close() } }
                     }
                 }
         }
     }
 
-    private var isFinished: Bool {
-        if case .done = flow.phase { return true }
-        return false
+    /// Beim Übernehmen nicht mehr: Das Konto kann schon gespeichert sein.
+    private var canCancel: Bool {
+        switch flow.phase {
+        case .done, .running(.opening): return false
+        default: return true
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -226,8 +247,10 @@ private struct PairingSheet: View {
                 LabeledContent("Server", value: code.hubHost)
                 TextField("Gerätename", text: $flow.deviceName)
             } footer: {
-                Text(viaLink ? "Nur fortfahren, wenn du das Verbinden gerade selbst am eigenen PC gestartet hast."
-                             : "Dieser Code nennt einen anderen Server als üblich. Nur fortfahren, wenn du ihm vertraust.")
+                VStack(alignment: .leading, spacing: 6) {
+                    if code.hub != LibrarySync.defaultHub { Text("Dieser Code nennt einen anderen Server als üblich. Nur fortfahren, wenn du ihm vertraust.") }
+                    if viaLink { Text("Nur fortfahren, wenn du das Verbinden gerade selbst am eigenen PC gestartet hast.") }
+                }
             }
             Section { Button("Verbinden") { flow.begin(code, viaLink: viaLink) } }
         }

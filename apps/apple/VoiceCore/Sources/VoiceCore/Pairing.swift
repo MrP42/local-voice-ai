@@ -10,7 +10,7 @@ import CryptoKit
 public enum PairingError: LocalizedError, Equatable {
     case invalidCode, outdatedCode, insecureHub
     case expired, rejected, nonceChanged, commitmentFailed, nameRejected
-    case badResponse, openFailed, keyMismatch, offline, timedOut, declined
+    case badResponse, openFailed, keyMismatch, offline, timedOut, declined, tooManyAttempts, serverFailed
     case adoptFailed(String)
 
     public var errorDescription: String? {
@@ -29,6 +29,8 @@ public enum PairingError: LocalizedError, Equatable {
         case .offline: return "Keine Verbindung zum Server. Bitte am PC einen neuen Code anzeigen."
         case .timedOut: return "Der PC hat nicht rechtzeitig geantwortet. Bitte neu beginnen."
         case .declined: return "Kopplung abgebrochen."
+        case .tooManyAttempts: return "Zu viele Versuche aus diesem Netz. Bitte in einer Viertelstunde erneut versuchen."
+        case .serverFailed: return "Der Server hat gerade ein Problem. Bitte gleich am PC einen neuen Code anzeigen."
         case .adoptFailed(let why): return why
         }
     }
@@ -160,8 +162,12 @@ public struct PairingCode: Equatable, Sendable {
 
     private static func hubBase(_ raw: String, allowLocalHTTP: Bool) throws -> String {
         let base = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URLComponents(string: base), let host = url.host, !host.isEmpty,
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { throw PairingError.insecureHub }
+        guard let url = URLComponents(string: base), let host = url.percentEncodedHost, !host.isEmpty,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              // Nur ASCII: Sonst sieht ein fremder Server in der Anzeige aus wie der eigene.
+              host.utf8.allSatisfy({ c in
+                  (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c == 0x2D || c == 0x2E
+              }) else { throw PairingError.insecureHub }
         let scheme = url.scheme?.lowercased()
         guard scheme == "https" || (allowLocalHTTP && scheme == "http" && host == "127.0.0.1") else { throw PairingError.insecureHub }
         return base
@@ -212,6 +218,8 @@ public struct PairingSession: Sendable {
     public static let pollNanos: UInt64 = 1_500_000_000  // Hub drosselt auf 120 Abfragen je Minute
     /// Frist am Hub sind 120 s; dieses Limit greift nur, wenn der Hub nicht mehr antwortet.
     private static let maxPolls = 140
+    /// Der Hub lässt 120 s; danach kann nichts mehr kommen, auch wenn er schweigt.
+    private static let maxSeconds: TimeInterval = 150
     private static let confirmTries = 4
 
     let code: PairingCode
@@ -220,16 +228,19 @@ public struct PairingSession: Sendable {
     let phoneKey: Curve25519.KeyAgreement.PrivateKey
     let phoneNonce: [UInt8]
     let pause: @Sendable (UInt64) async throws -> Void
+    let now: @Sendable () -> Date
 
     public init(code: PairingCode, name: String, transport: any PairingTransport,
                 phoneKey: Curve25519.KeyAgreement.PrivateKey = .init(), phoneNonce: [UInt8]? = nil,
-                pause: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) {
+                pause: @escaping @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.code = code
         self.name = name
         self.transport = transport
         self.phoneKey = phoneKey
         self.phoneNonce = phoneNonce ?? SymmetricKey(size: .bits256).withUnsafeBytes { Array($0) }
         self.pause = pause
+        self.now = now
     }
 
     /// `adopt` speichert das Konto. Erst danach geht die Bestätigung an den Hub.
@@ -244,17 +255,22 @@ public struct PairingSession: Sendable {
 
         var desktopNonce: [UInt8]?
         var revealTries = 0
+        var lostContact = false
+        let deadline = now().addingTimeInterval(Self.maxSeconds)
         for _ in 0..<Self.maxPolls {
             try Task.checkCancellation()
+            if now() > deadline { break }
             let answer: (Int, Data)
             do {
                 answer = try await transport.get("/api/v1/voice/pair/\(code.id)/result", pollToken: poll)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                lostContact = true
                 try await pause(Self.pollNanos)
                 continue
             }
+            lostContact = false
             switch answer.0 {
             case 200:
                 guard let json = (try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any],
@@ -287,12 +303,14 @@ public struct PairingSession: Sendable {
                 throw PairingError.rejected
             case 410:
                 throw PairingError.expired
-            default:
+            case 429, 500...599:
                 break  // Drosselung und Serverfehler: nur die Abfrage wiederholen
+            default:
+                throw PairingError.badResponse
             }
             try await pause(Self.pollNanos)
         }
-        throw PairingError.timedOut
+        throw lostContact ? PairingError.offline : PairingError.timedOut
     }
 
     private func claim(_ phonePublic: [UInt8]) async throws -> String {
@@ -318,6 +336,8 @@ public struct PairingSession: Sendable {
         case 400:
             let error = ((try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any])?["error"] as? [String: Any]
             throw error?["code"] as? String == "invalid_device_name" ? PairingError.nameRejected : PairingError.badResponse
+        case 429: throw PairingError.tooManyAttempts
+        case 500...599: throw PairingError.serverFailed
         default: throw PairingError.badResponse
         }
     }
@@ -347,7 +367,8 @@ public struct PairingSession: Sendable {
     private func finish(_ json: [String: Any], phonePublic: [UInt8], poll: String,
                         adopt: @Sendable (PairedAccount) async throws -> Void) async throws -> Bool {
         guard let token = json["token"] as? String, !token.isEmpty, let sealed = json["sealed"] as? String,
-              let user = json["user"] as? [String: Any], let userId = (user["id"] as? NSNumber)?.int64Value else {
+              let user = json["user"] as? [String: Any], let userId = (user["id"] as? NSNumber)?.int64Value,
+              let hubEmail = user["email"] as? String else {
             throw PairingError.badResponse
         }
         var z = try PairingProto.shared(phoneKey, desktopPublic: code.desktopPublic)
@@ -361,16 +382,31 @@ public struct PairingSession: Sendable {
         }
         guard let payload = try? JSONDecoder().decode(Payload.self, from: Data(plain)), payload.v == 1,
               let key = PairingProto.b64u32(payload.k), !payload.email.isEmpty else { throw PairingError.openFailed }
-        guard payload.key_id == SyncCrypto.keyId(key), payload.user_id == userId else { throw PairingError.keyMismatch }
+        // Die Anzeige beruht auf der Angabe des Hubs: Der PC-Inhalt allein könnte ein fremdes Konto tarnen.
+        guard payload.key_id == SyncCrypto.keyId(key), payload.user_id == userId,
+              payload.email.caseInsensitiveCompare(hubEmail) == .orderedSame else { throw PairingError.keyMismatch }
 
-        try await adopt(PairedAccount(hub: code.hub, email: payload.email, userId: userId, token: token, key: key, deviceName: name))
+        try Task.checkCancellation()
+        try await adopt(PairedAccount(hub: code.hub, email: hubEmail, userId: userId, token: token, key: key, deviceName: name))
 
+        // Das Konto steht: Die Bestätigung geht auch raus, wenn die Oberfläche inzwischen weg ist.
         let tag = PairingProto.b64u(PairingProto.confirm(s: s, id: code.id))
+        let session = self
+        return await Task.detached { await session.confirm(tag, poll: poll) }.value
+    }
+
+    private func confirm(_ tag: String, poll: String) async -> Bool {
+        var unclear = false
         for attempt in 0..<Self.confirmTries {
             if attempt > 0 { try? await pause(Self.pollNanos) }
-            guard let answer = try? await transport.post("/api/v1/voice/pair/\(code.id)/confirm", body: ["confirm": tag], pollToken: poll) else { continue }
+            guard let answer = try? await transport.post("/api/v1/voice/pair/\(code.id)/confirm", body: ["confirm": tag], pollToken: poll) else {
+                unclear = true
+                continue
+            }
             if answer.0 == 200 { return true }
-            if answer.0 != 429 && answer.0 < 500 { return false }
+            if answer.0 == 410 { return unclear }  // Antwort ging verloren, der Hub hat sie schon
+            if answer.0 == 429 || answer.0 >= 500 { unclear = true; continue }
+            return false
         }
         return false
     }

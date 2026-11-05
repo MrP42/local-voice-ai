@@ -46,6 +46,11 @@ private actor FakeHub: PairingTransport {
     var wrongUser = false
     var skipReveal = false
     var confirmFails = 0
+    var confirmAnswerLost = false
+    var hubLostRevealAnswer = false
+    var claimStatus = 200
+    var revealStatus = 200
+    var fakeEmail: String?
     func set(_ change: @Sendable (isolated FakeHub) -> Void) { change(self) }
 
     var code: PairingCode {
@@ -59,6 +64,8 @@ private actor FakeHub: PairingTransport {
         calls.append(path)
         if path.hasSuffix("/claim") {
             if claimFails { throw Fail() }
+            if claimStatus == 400 { return (400, Data(#"{"error":{"code":"invalid_device_name"}}"#.utf8)) }
+            if claimStatus != 200 { return (claimStatus, Data()) }
             name = body["device_name"] ?? ""
             commitment = PairingProto.b64u32(body["phone_commit"] ?? "") ?? []
             let mac = PairingProto.claimMac(q: q, id: id, commitment: commitment)
@@ -69,16 +76,22 @@ private actor FakeHub: PairingTransport {
         XCTAssertEqual(pollToken, "poll")
         if path.hasSuffix("/reveal") {
             reveals.append(body)
+            if revealStatus != 200 { return (revealStatus, Data()) }
             phonePublic = PairingProto.b64u32(body["phone_pub"] ?? "") ?? []
             phoneNonce = PairingProto.b64u32(body["phone_nonce"] ?? "") ?? []
             let check = PairingProto.commitment(id: id, phonePublic: phonePublic, phoneNonce: phoneNonce, name: name)
             guard check == commitment else { return (409, Data()) }
             if loseFirstRevealAnswer, reveals.count == 1 { throw Fail() }  // bleibt am Hub „challenged“
+            if hubLostRevealAnswer { status = "revealed"; throw Fail() }  // wie am Hub: erledigt, Antwort weg
             if loseFirstRevealAnswer { status = "revealed"; return (410, Data()) }  // Wiederholung: schon erledigt
             status = "revealed"
             return (200, Data(#"{"status":"revealed"}"#.utf8))
         }
         confirms.append(body["confirm"] ?? "")
+        if confirmAnswerLost {
+            if confirms.count == 1 { throw Fail() }
+            return (410, Data())
+        }
         if confirmFails > 0 { confirmFails -= 1; throw Fail() }
         return (200, Data(#"{"status":"confirmed"}"#.utf8))
     }
@@ -112,7 +125,7 @@ private actor FakeHub: PairingTransport {
     private func result() -> (Int, Data) {
         let s = (try? sessionKey()) ?? []
         let keyId = wrongKeyId ? "00000000" : SyncCrypto.keyId(accountKey)
-        let plain = #"{"v":1,"k":"\#(PairingProto.b64u(accountKey))","email":"p@example.org","user_id":42,"key_id":"\#(keyId)"}"#
+        let plain = #"{"v":1,"k":"\#(PairingProto.b64u(accountKey))","email":"\#(fakeEmail ?? "p@example.org")","user_id":42,"key_id":"\#(keyId)"}"#
         let sealNonce = [UInt8](repeating: 4, count: 24)
         let aad = PairingProto.sealAAD(id: id, desktopPublic: [UInt8](desktop.publicKey.rawRepresentation), phonePublic: phonePublic)
         let box = (try? XChaCha20Poly1305.seal(key: s, nonce: sealNonce, plaintext: Array(plain.utf8), aad: aad)) ?? []
@@ -120,6 +133,13 @@ private actor FakeHub: PairingTransport {
         let user = wrongUser ? 43 : 42
         return (200, Data(#"{"status":"ok","token":"wai_pat_x","sealed":"\#(sealed)","user":{"id":\#(user),"email":"p@example.org"}}"#.utf8))
     }
+}
+
+/// Jede Abfrage der Uhr rückt zehn Sekunden vor.
+private final class Ticker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seconds = 0.0
+    func next() -> TimeInterval { lock.withLock { seconds += 10; return seconds } }
 }
 
 private actor Recorder {
@@ -333,6 +353,64 @@ final class PairingTests: XCTestCase {
         let userHub = FakeHub()
         await userHub.set { $0.wrongUser = true }
         await assertFails(userHub, .keyMismatch)
+    }
+
+    func testEmailInSealedMustMatchHub() async {
+        let hub = FakeHub()
+        await hub.set { $0.fakeEmail = "opfer@example.org" }
+        await assertFails(hub, .keyMismatch)
+        let same = FakeHub(), recorder = Recorder()
+        await same.set { $0.fakeEmail = "P@Example.org" }
+        _ = try? await run(same, recorder)
+        let adopted = await recorder.adopted
+        XCTAssertEqual(adopted.first?.email, "p@example.org")
+    }
+
+    func testHubHostMustBePlainAscii() {
+        XCTAssertThrowsError(try PairingCode(uri: uri(hub: "https%3A%2F%2Fp%D0%BErtal.wolffappliedai.de"))) { XCTAssertEqual($0 as? PairingError, .insecureHub) }
+        XCTAssertThrowsError(try PairingCode(uri: uri(hub: "https%3A%2F%2Fa%2500b.example"))) { XCTAssertEqual($0 as? PairingError, .insecureHub) }
+    }
+
+    func testRevealAnswerLostAtHubContinuesByWaiting() async throws {
+        let hub = FakeHub()
+        await hub.set { $0.hubLostRevealAnswer = true }
+        let confirmed = try await run(hub)
+        XCTAssertTrue(confirmed)
+        let reveals = await hub.reveals
+        XCTAssertEqual(reveals.count, 1)
+    }
+
+    func testClaimAndRevealRefusals() async {
+        for (status, expected) in [(400, PairingError.nameRejected), (429, .tooManyAttempts), (503, .serverFailed)] {
+            let hub = FakeHub()
+            await hub.set { $0.claimStatus = status }
+            await assertFails(hub, expected)
+        }
+        let hub = FakeHub()
+        await hub.set { $0.revealStatus = 409 }
+        await assertFails(hub, .commitmentFailed)
+    }
+
+    func testLostConfirmAnswerThen410CountsAsConfirmed() async throws {
+        let hub = FakeHub()
+        await hub.set { $0.confirmAnswerLost = true }
+        let confirmed = try await run(hub)
+        XCTAssertTrue(confirmed)
+    }
+
+    func testDeadlineStopsWhenHubIsGone() async throws {
+        let hub = FakeHub()
+        await hub.set { $0.failPolls = 1000 }
+        let start = Date()
+        let tick = Ticker()
+        let session = PairingSession(code: try await hub.code, name: "iPhone", transport: hub, pause: { _ in },
+                                     now: { start.addingTimeInterval(tick.next()) })
+        do {
+            _ = try await session.run(stage: { _ in }, adopt: { _ in })
+            XCTFail("hätte scheitern müssen")
+        } catch { XCTAssertEqual(error as? PairingError, .offline) }
+        let polls = await hub.polls
+        XCTAssertLessThan(polls, 20)
     }
 
     func testResultWithoutRevealIsRefused() async {
