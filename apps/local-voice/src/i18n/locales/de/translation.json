@@ -2718,13 +2718,15 @@
           "voice_speaker": "Sprachgespräch (Sprecher)",
           "meeting_protocol": "Besprechungsprotokoll und Notizen",
           "dictation_refine": "Diktat-Nachbearbeitung",
-          "read_aloud": "Vorlesen"
+          "read_aloud": "Vorlesen",
+          "book_talk": "Buch-Gespräch"
         },
         "hints": {
           "voice_speaker": "Antwortet im Gespräch und im Hauptgespräch. Ein schnelles oder lokales Modell hält die Antwortzeit kurz; schwere Fragen gehen an den Denker.",
           "meeting_protocol": "Schreibt Protokolle, Projektprotokolle und verbessert Notizen.",
           "dictation_refine": "Überarbeitet diktierten Text nach der Erkennung.",
-          "read_aloud": "Übersetzen und KI-Dokumente beim Vorlesen (Zusammenfassung, Begriffe). Ein kleines oder lokales Modell reicht meist."
+          "read_aloud": "Übersetzen und KI-Dokumente beim Vorlesen (Zusammenfassung, Begriffe). Ein kleines oder lokales Modell reicht meist.",
+          "book_talk": "Beantwortet Fragen an ein Buch im Reader, per Sprache und Text. Ein schnelles oder lokales Modell hält die Antwortzeit kurz."
         }
       },
       "connections": {

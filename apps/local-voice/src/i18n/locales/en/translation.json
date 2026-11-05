@@ -2718,13 +2718,15 @@
           "voice_speaker": "Voice conversation (speaker)",
           "meeting_protocol": "Meeting minutes and notes",
           "dictation_refine": "Dictation refinement",
-          "read_aloud": "Read aloud"
+          "read_aloud": "Read aloud",
+          "book_talk": "Book conversation"
         },
         "hints": {
           "voice_speaker": "Answers in conversations and the main conversation. A fast or local model keeps response times short; hard questions go to the thinker.",
           "meeting_protocol": "Writes minutes, project minutes and improves notes.",
           "dictation_refine": "Refines dictated text after recognition.",
-          "read_aloud": "Translation and AI documents while reading aloud (summary, terms). A small or local model is usually enough."
+          "read_aloud": "Translation and AI documents while reading aloud (summary, terms). A small or local model is usually enough.",
+          "book_talk": "Answers questions about a book in the reader, by voice and text. A fast or local model keeps the response time short."
         }
       },
       "connections": {

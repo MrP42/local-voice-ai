@@ -1,0 +1,66 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 464,
+          "page": 2,
+          "q": 1,
+          "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+          "start": 333
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+      "text": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur."
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 464,
+          "page": 2,
+          "q": 1,
+          "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+          "start": 333
+        }
+      ],
+      "dropped": 1,
+      "found_only": false,
+      "frontier": 940,
+      "intent": "question",
+      "scope": "until_position",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 0,
+              "chapter_title": "Einleitung: Zwei Lehrmeister",
+              "end": 464,
+              "page": 2,
+              "q": 1,
+              "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+              "start": 333
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+          "text": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur."
+        }
+      ],
+      "speech": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+      "text": "Der Meister ist Konrad Ilg, ein Schreiner ohne Abitur."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

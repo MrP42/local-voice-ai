@@ -1,0 +1,66 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 332,
+          "page": 2,
+          "q": 1,
+          "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+          "start": 259
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister. Das steht auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘",
+      "text": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister."
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 332,
+          "page": 2,
+          "q": 1,
+          "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+          "start": 259
+        }
+      ],
+      "dropped": 1,
+      "found_only": false,
+      "frontier": 2146,
+      "intent": "locate",
+      "scope": "until_position",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 0,
+              "chapter_title": "Einleitung: Zwei Lehrmeister",
+              "end": 332,
+              "page": 2,
+              "q": 1,
+              "quote": "Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.",
+              "start": 259
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister. Das steht auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘",
+          "text": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister."
+        }
+      ],
+      "speech": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister. Das steht auf Seite 2: ‚Der eine war mein eigener Vater, den ich in diesem Buch den Lehrer nenne.‘ Soll ich dir die Stelle vorlesen?",
+      "text": "Der Erzähler hat zwei Lehrmeister: seinen eigenen Vater, den Lehrer, und Konrad Ilg, den Vater seines Freundes, den Meister."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]

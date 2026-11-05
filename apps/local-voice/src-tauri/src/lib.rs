@@ -2472,6 +2472,12 @@ fn specta_builder() -> Builder<tauri::Wry> {
             book_ai::book_ai_term_hits,
             book_ai::book_ai_document_import,
             book_ai::book_ai_document_export,
+            // lva#308
+            book_ai::talk::book_talk_ask,
+            book_ai::talk::book_talk_cancel,
+            book_ai::talk::book_talk_history,
+            book_ai::talk::book_talk_clear,
+            book_ai::talk::book_talk_command,
             library_export::library_export_text,
             library_export::library_ffmpeg_available,
             library_export::library_export_audio,
@@ -2670,6 +2676,8 @@ fn specta_builder() -> Builder<tauri::Wry> {
             managers::meeting_detect::MeetingDetectEvent,
             // M4-P4c
             commands::meeting_chat::MeetingChatEvent,
+            // lva#308
+            book_ai::talk::BookTalkEvent,
             // M3-P3c
             commands::meeting_speakers::SpeakersChanged,
             // M5-P5b

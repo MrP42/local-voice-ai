@@ -1,0 +1,66 @@
+[
+  {
+    "kind": "sentence",
+    "request_id": "golden",
+    "sentence": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 464,
+          "page": 2,
+          "q": 1,
+          "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+          "start": 333
+        }
+      ],
+      "general": false,
+      "index": 0,
+      "speech": "Der Freund heißt Jonas. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+      "text": "Der Freund heißt Jonas."
+    }
+  },
+  {
+    "answer": {
+      "citations": [
+        {
+          "chapter_index": 0,
+          "chapter_title": "Einleitung: Zwei Lehrmeister",
+          "end": 464,
+          "page": 2,
+          "q": 1,
+          "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+          "start": 333
+        }
+      ],
+      "dropped": 1,
+      "found_only": false,
+      "frontier": 0,
+      "intent": "question",
+      "scope": "book",
+      "sentences": [
+        {
+          "citations": [
+            {
+              "chapter_index": 0,
+              "chapter_title": "Einleitung: Zwei Lehrmeister",
+              "end": 464,
+              "page": 2,
+              "q": 1,
+              "quote": "Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.",
+              "start": 333
+            }
+          ],
+          "general": false,
+          "index": 0,
+          "speech": "Der Freund heißt Jonas. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+          "text": "Der Freund heißt Jonas."
+        }
+      ],
+      "speech": "Der Freund heißt Jonas. Das steht auf Seite 2: ‚Der andere war Konrad Ilg, der Vater meines besten Freundes Jonas, ein Schreiner ohne Abitur, dem später drei Werkstätten gehörten.‘",
+      "text": "Der Freund heißt Jonas."
+    },
+    "kind": "done",
+    "request_id": "golden"
+  }
+]
