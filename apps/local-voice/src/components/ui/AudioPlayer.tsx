@@ -723,6 +723,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       PageDown: -30,
       PageUp: 30,
     };
+    // Alt+Pfeil, Strg+Pos1 usw. gehoeren dem System, nicht dem Zeitstrahl.
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const audio = audioRef.current;
     if (!audio || !isFinite(audio.duration)) return;
     if (e.key in steps) {
@@ -750,7 +752,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       onMouseDown={handleSliderMouseDown}
       onTouchStart={handleSliderTouchStart}
       className={extraClass}
-      style={{ "--_seek": `${progressPercent}%` } as React.CSSProperties}
+      style={{ "--_seek": progressPercent / 100 } as React.CSSProperties}
     />
   );
 

@@ -559,14 +559,20 @@ html[data-fluent] .lva-logo__accent {
   -webkit-appearance: none;
   --_rail: color-mix(in srgb, var(--colorNeutralForeground1) 22%, transparent);
   --_fill: var(--colorBrandBackground);
+  /* Aeusserer Ring des Griffs: deutlich staerker als die Schiene, damit der
+     Griff auch im Dunkelmodus >= 3:1 gegen die Flaeche steht. */
+  --_ring: color-mix(in srgb, var(--colorNeutralForeground1) 60%, transparent);
+  /* Fuellkante unter der Griffmitte: der Griff (14 px) laeuft von 7 px bis
+     Breite - 7 px, nicht von 0 bis 100 %. */
+  --_seek-at: calc(7px + (100% - 14px) * var(--_seek, 0));
 }
 .mplayer__seek::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
   background: linear-gradient(
     to right,
-    var(--_fill) 0 var(--_seek, 0%),
-    var(--_rail) var(--_seek, 0%) 100%
+    var(--_fill) 0 var(--_seek-at),
+    var(--_rail) var(--_seek-at) 100%
   );
 }
 .mplayer__seek::-moz-range-track {
@@ -582,22 +588,24 @@ html[data-fluent] .lva-logo__accent {
 .mplayer__seek::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
+  box-sizing: border-box;
   width: 14px;
   height: 14px;
   margin-top: -5px;
   border-radius: 50%;
   background: var(--_fill);
   border: 2px solid var(--colorNeutralBackground1);
-  box-shadow: 0 0 0 1px var(--_rail);
+  box-shadow: 0 0 0 1px var(--_ring);
   transition: transform 120ms ease;
 }
 .mplayer__seek::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--_fill);
   border: 2px solid var(--colorNeutralBackground1);
-  box-shadow: 0 0 0 1px var(--_rail);
+  box-shadow: 0 0 0 1px var(--_ring);
 }
 .mplayer__seek:hover::-webkit-slider-thumb,
 .mplayer__seek:active::-webkit-slider-thumb {
