@@ -138,6 +138,7 @@ import {
 import { ReaderPlayerBar } from "./reader/ReaderPlayerBar";
 import { ReaderBookmarks } from "./reader/ReaderBookmarks";
 import { ReaderContents } from "./reader/ReaderContents";
+import { bookStart, skipHeadingMark } from "../../../lib/reader/bookStart";
 import { useKiDocuments } from "./kidocs/useKiDocuments";
 import { KiDocumentsPanel } from "./kidocs/KiDocumentsPanel";
 import { KiDocumentHeader } from "./kidocs/KiDocumentHeader";
@@ -1278,7 +1279,10 @@ export const TtsSettings = () => {
 
   const speakNow = async () => {
     // Weiterlesen ab der gemerkten Stelle dieser Seite (lva#148).
-    const resumeOffset = loadResumePoint(resumeKeyRef.current, spokenText);
+    const fallback = startNow();
+    const resumeOffset =
+      loadResumePoint(resumeKeyRef.current, spokenText) ??
+      (fallback > 0 ? fallback : null);
     if (resumeOffset !== null) {
       setFollow(true);
       await speakFrom(resumeOffset, false);
@@ -1774,6 +1778,23 @@ export const TtsSettings = () => {
         : openDocId && docLoadedFor === openDocId
           ? summary
           : "";
+  // Vorspann überspringen (Patrick 05.11.2026): ohne gemerkte Stelle beginnt
+  // Play beim ersten echten Inhalt, nicht bei Titelei, Inhalt oder Impressum.
+  const [readPreface, setReadPreface] = usePersistentState<"1" | "0">(
+    "tts.reader.readPreface",
+    "1",
+    (v) => v === "1" || v === "0",
+  );
+  // Nicht in KI-Dokumenten und nicht, während die Übersetzung noch einläuft.
+  const startApplies = !(
+    tab === "summary" ||
+    (tab === "translation" && translating)
+  );
+  /** Startpunkt jetzt berechnen (Play): auch in der Bearbeiten-Ansicht. */
+  const startNow = () =>
+    startApplies
+      ? bookStart(spokenText, { readPreface: readPreface === "1" }).offset
+      : 0;
   textRef.current = text;
   targetLangRef.current = targetLang;
   translationRef.current = translation ?? "";
@@ -1802,6 +1823,17 @@ export const TtsSettings = () => {
     (modeNow === "read" || streaming) && spokenText.trim().length > 0
       ? "read"
       : "edit";
+  // Nur in der Leseansicht laufend berechnen: im Editor ändert jeder
+  // Tastendruck den Text, und der Startpunkt wird erst beim Abspielen gebraucht.
+  const textStart = useMemo(
+    () =>
+      viewMode === "read" && startApplies
+        ? bookStart(spokenText, { readPreface: readPreface === "1" })
+        : { offset: 0, hasPreface: false },
+    [viewMode, startApplies, spokenText, readPreface],
+  );
+  const textStartRef = useRef(0);
+  textStartRef.current = textStart.offset;
   const chooseViewMode = (mode: "read" | "edit") => {
     setViewMode(mode);
     setModeNow(mode);
@@ -2014,6 +2046,11 @@ export const TtsSettings = () => {
   // nach der gelesenen Stelle, sonst nach der sichtbaren Seite.
   const contents = useMemo(() => buildContents(readerBlocks), [readerBlocks]);
   const book = useMemo(() => bookInfo(readerBlocks), [readerBlocks]);
+  const startProps = {
+    startAt: textStart.offset > 0 ? textStart.offset : undefined,
+    readPreface: textStart.hasPreface ? readPreface === "1" : undefined,
+    onReadPreface: (on: boolean) => setReadPreface(on ? "1" : "0"),
+  };
   // Buchdaten per ISBN (lva#149): Vorschlag aus dem Impressum, Abfrage erst
   // im Dialog auf Knopfdruck, Übernahme erst nach Bestätigung.
   const [isbnOpen, setIsbnOpen] = useState(false);
@@ -2072,7 +2109,7 @@ export const TtsSettings = () => {
     // Aufschlagen und als Weiterlesen-Stelle merken: Play liest ab dort.
     setFollow(false);
     readerApiRef.current?.revealOffset(b.offset);
-    // Ein Lesezeichen am Anfang heißt: Play beginnt vorn.
+    // Ein Lesezeichen am Anfang heißt: Play beginnt vorn (am Anfang des Inhalts).
     if (b.offset <= 0) {
       forgetResumePoint(resumeKey);
       return;
@@ -2089,7 +2126,12 @@ export const TtsSettings = () => {
   useEffect(() => {
     if (viewMode !== "read" || !spokenText || pageInfo === null) return;
     if (revealedResumeFor.current === resumeKey) return;
-    const at = loadResumePoint(resumeKey, spokenText);
+    // Ohne gemerkte Stelle: beim ersten Inhalt aufschlagen (wie ein E-Reader).
+    // Beim Startpunkt das „# “ überspringen: der Umbruch zählt es zur Seite davor.
+    const start = textStartRef.current;
+    const at =
+      loadResumePoint(resumeKey, spokenText) ??
+      (start > 0 ? skipHeadingMark(spokenText, start) : null);
     if (at === null) {
       revealedResumeFor.current = resumeKey;
       return;
@@ -3631,6 +3673,7 @@ export const TtsSettings = () => {
                 onGo={goToChapter}
                 pages={contentsPages}
                 book={book}
+                {...startProps}
                 onIsbn={
                   tab === "original" && activePage
                     ? () => setIsbnOpen(true)
@@ -3878,6 +3921,7 @@ export const TtsSettings = () => {
                       }}
                       pages={contentsPages}
                       book={book}
+                      {...startProps}
                     />
                   ) : null
                 }
@@ -4137,7 +4181,10 @@ export const TtsSettings = () => {
                 }
                 onRestart={() => {
                   forgetResumePoint(resumeKeyRef.current);
-                  readerApiRef.current?.goToPage(0);
+                  // „Von vorn“ heißt: am Anfang des Inhalts (wie Play danach).
+                  const at = textStartRef.current;
+                  if (at > 0) readerApiRef.current?.revealOffset(skipHeadingMark(spokenText, at));
+                  else readerApiRef.current?.goToPage(0);
                 }}
               />
             </div>
