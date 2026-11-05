@@ -70,6 +70,7 @@ final class BookTalkSpeaker {
         let g = generation
         isActive = true
         task = Task { [weak self] in
+            Self.activatePlayback()
             var announced = false
             while let self, g == self.generation, !self.queue.isEmpty {
                 let text = self.queue.removeFirst()
@@ -80,6 +81,14 @@ final class BookTalkSpeaker {
             self.task = nil
             self.finishIfDrained()
         }
+    }
+
+    /// Nach dem Zuhören steht die Sitzung auf `.playAndRecord`/`.voiceChat` oder ist aus: vor jeder Antwort
+    /// wieder die Wiedergabe-Kategorie, wie sie auch das Vorlesen nutzt.
+    private static func activatePlayback() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio)
+        try? session.setActive(true)
     }
 
     private func finishIfDrained() {

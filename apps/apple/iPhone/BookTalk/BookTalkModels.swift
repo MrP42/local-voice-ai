@@ -30,8 +30,11 @@ struct FoundationBookTalkModel: BookTalkModel {
                         try Task.checkCancellation()
                         // Die Schnappschüsse enthalten den bisherigen Text; der Kern will nur das Neue.
                         let full = snapshot.content
-                        guard full.hasPrefix(sent), full.count > sent.count else { continue }
-                        continuation.yield(String(full.dropFirst(sent.count)))
+                        // Gemeinsames Präfix: wächst der Text, kommt das Neue; wird er umgeschrieben, geht nichts verloren,
+                        // was hinter dem gemeinsamen Teil steht (ein Durchlauf je Schnappschuss).
+                        let common = sent.commonPrefix(with: full)
+                        let delta = full.dropFirst(common.count)
+                        if !delta.isEmpty { continuation.yield(String(delta)) }
                         sent = full
                     }
                     continuation.finish()
@@ -112,13 +115,24 @@ final class LlamaBookTalkModel: BookTalkModel, @unchecked Sendable {
         init(_ continuation: AsyncThrowingStream<String, Error>.Continuation) { self.continuation = continuation }
     }
 
+    /// Abbruchmarke, die vor dem (langen) Laden des Modells gelesen werden kann.
+    private final class Cancelled: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+    }
+
     func stream(instructions: String, prompt: String, maxTokens: Int) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let cancellation = InferenceCancellation()
-            continuation.onTermination = { _ in cancellation.cancel() }
+            let cancelled = Cancelled()
+            continuation.onTermination = { _ in cancelled.set(); cancellation.cancel() }
             Self.queue.async { [self] in
                 do {
+                    guard !cancelled.isSet else { throw CancellationError() }
                     let model = try model()
+                    guard !cancelled.isSet else { throw CancellationError() }
                     let sink = Sink(continuation)
                     let code = lv_llama_chat(
                         model, frame.head, frame.systemText(instructions), frame.middle, frame.userText(prompt), frame.tail,

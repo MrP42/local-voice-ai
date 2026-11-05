@@ -38,6 +38,11 @@ final class BookTalkController: ObservableObject {
 
     static let antonKey = "book_talk_anton"
 
+    /// Eine Regel für Blatt und Einstellungen: ausdrücklich gewählt, sonst an, außer VoiceOver liest selbst vor.
+    static func storedSpeaksAloud() -> Bool {
+        (UserDefaults.standard.object(forKey: antonKey) as? Bool) ?? !UIAccessibility.isVoiceOverRunning
+    }
+
     // MARK: Abhängigkeiten
 
     let book: LibraryBook
@@ -58,13 +63,15 @@ final class BookTalkController: ObservableObject {
     private var awaitingReadOffer = false
     private var lastInput = BookTalkInput.text
     private var opened = false
+    private var rebuildGeneration = 0
+    /// Abbruch und Zurücksetzen des Kern-Verlaufs nach `stopAnswer`; eine neue Frage wartet darauf.
+    private var settle: Task<Void, Never>?
 
     init(book: LibraryBook, library: PhoneLibrary = .shared, playback: LibraryPlayback = .shared) {
         self.book = book
         self.library = library
         self.playback = playback
-        let stored = UserDefaults.standard.object(forKey: Self.antonKey) as? Bool
-        speaksAloud = stored ?? !UIAccessibility.isVoiceOverRunning
+        speaksAloud = Self.storedSpeaksAloud()
         wire()
     }
 
@@ -76,10 +83,11 @@ final class BookTalkController: ObservableObject {
         opened = true
         if playback.busy { playback.pause() }
         library.flush()
-        playback.remoteIntercept = { [weak self] in
-            guard let self, self.phase != .idle else { return false }
-            self.stopAnswer()
-            return true
+        playback.remoteIntercept = { [weak self] command in
+            guard let self else { return false }
+            // Läuft etwas, hält jede Fernbedienung es an. Sonst darf „Play“ nicht unter dem Blatt vorlesen.
+            if self.phase != .idle { self.stopAnswer(); return true }
+            return command != .pause
         }
         speaker.prepare()
         let url = library.textURL(book)
@@ -88,6 +96,7 @@ final class BookTalkController: ObservableObject {
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (BookTalkIndex(title: title, text: text), text.utf16.count)
         }.value
+        guard opened else { return }
         if let built {
             index = built.0
             textLength = built.1
@@ -100,6 +109,7 @@ final class BookTalkController: ObservableObject {
         let turns = store.load(bookId: book.id)
         conversation = BookTalkConversation(history: turns)
         await rebuild(history: turns)
+        guard opened else { return }
         updateFrontier()
         loading = false
         // VoiceOver-Nutzer hören die Antwort selbst: Anton nur auf Wunsch (Menü), nie ungefragt.
@@ -108,11 +118,12 @@ final class BookTalkController: ObservableObject {
     /// Blatt ist zu: alles still, Modell frei, Wiedergabe-Haken zurück.
     func teardown() {
         stopAnswer(announce: false)
+        pressCancel()
         listener.cancel()
-        pressTask?.cancel()
         playback.remoteIntercept = nil
         engine.llama?.release()
         opened = false
+        rebuildGeneration += 1
     }
 
     // MARK: Modell und Schalter
@@ -135,11 +146,15 @@ final class BookTalkController: ObservableObject {
         if !value { speaker.stop(); if phase == .speaking { phase = .idle } }
     }
 
+    /// Nur der jüngste Aufruf gilt: ältere (Schalter schnell umgelegt) und solche nach dem Schließen geben ihr Modell frei.
     private func rebuild(history: [BookTalkStoredTurn]) async {
+        rebuildGeneration += 1
+        let generation = rebuildGeneration
         stopAnswer(announce: false)
         engine.llama?.release()
         let choice = self.choice, enabled = self.enabled
         let made = await Task.detached(priority: .userInitiated) { BookTalkEngine.make(choice: choice, enabled: enabled) }.value
+        guard generation == rebuildGeneration, opened else { made.llama?.release(); return }
         engine = made
         guard let index else { session = nil; return }
         session = BookTalkSession(index: index, model: made.model, budget: made.budget, tokenCounter: made.counter, history: history)
@@ -222,7 +237,10 @@ final class BookTalkController: ObservableObject {
         conversation.begin(request)
         phase = .thinking
         speaker.begin(language: BookTalkIntents.language(of: question))
+        let waiting = settle
         runTask = Task { [weak self] in
+            await waiting?.value
+            guard !Task.isCancelled else { return }
             for await event in session.events(request) {
                 guard let self else { return }
                 await self.receive(event, session: session)
@@ -238,14 +256,20 @@ final class BookTalkController: ObservableObject {
             if speaksAloud { speaker.enqueue(sentence.speech) }
         case .done(_, let answer):
             awaitingReadOffer = answer.offersRead
-            let turns = await session.history
+            // Gespeichert wird nur, was die Anzeige angenommen hat: bisheriger Stand plus dieser Wechsel.
+            var turns = conversation.storedTurns
+            if let last = await session.history.last, last.question == entry(for: event)?.question { turns.append(last) }
             conversation.sync(stored: turns)
+            await session.restore(history: turns)
             try? store.save(bookId: book.id, turns: turns)
             announce(answer.citations.isEmpty ? "Antwort fertig." : "Antwort fertig, \(answer.citations.count) Belege.")
             if speaksAloud {
                 speaker.enqueue(answer.speechTail)
                 speaker.endOfInput()
-                if phase == .thinking { phase = .speaking }
+                if phase == .thinking {
+                    phase = speaker.isActive ? .speaking : .idle
+                    if phase == .idle { continueIfOffered() }
+                }
             } else {
                 phase = .idle
                 continueIfOffered()
@@ -255,6 +279,11 @@ final class BookTalkController: ObservableObject {
             speaker.stop()
             notice = Self.message(for: code)
         }
+    }
+
+    private func entry(for event: BookTalkEvent) -> BookTalkEntry? {
+        guard case .done(let id, _) = event else { return nil }
+        return conversation.entries.last { $0.id == id }
     }
 
     private static func message(for code: BookTalkCode) -> String? {
@@ -270,7 +299,14 @@ final class BookTalkController: ObservableObject {
     /// Antwort sofort beenden (Anhalten, Barge-in, Bereichswechsel, Hintergrund). Gespeichert wird nichts.
     func stopAnswer(reason: BookTalkAbort = .user, announce shouldAnnounce: Bool = true) {
         if let id = conversation.activeRequestId, let session {
-            Task { await session.cancel(requestId: id) }
+            // Ein Wechsel, den die Anzeige verwirft, darf auch im Kern nicht bleiben (Prompt, Platte).
+            let stored = conversation.storedTurns
+            let before = settle
+            settle = Task {
+                await before?.value
+                await session.cancel(requestId: id)
+                await session.restore(history: stored)
+            }
         }
         runTask?.cancel()
         runTask = nil
@@ -329,8 +365,14 @@ final class BookTalkController: ObservableObject {
     /// Belegkarte: im Buch an die Stelle gehen (zählt nicht als gelesen).
     func go(to citation: BookTalkCitation, autoplay: Bool) {
         stopAnswer(announce: false)
-        playback.jump(toOffset: citation.start, autoplay: autoplay)
-        if autoplay { close?() } else {
+        if autoplay {
+            Task {
+                await listener.cancelAndWait()
+                playback.jump(toOffset: citation.start, autoplay: true)
+                close?()
+            }
+        } else {
+            playback.jump(toOffset: citation.start, autoplay: false)
             let place = citation.page.map { "Seite \($0)" } ?? citation.chapterTitle
             notice = "Im Buch bei \(place). Das Vorlesen ist pausiert."
             announce(notice ?? "")
@@ -340,9 +382,14 @@ final class BookTalkController: ObservableObject {
     /// „Weiterlesen“: Gespräch stumm, Vorlesen ab der gemerkten Stelle, Blatt zu.
     func resumeReading() {
         stopAnswer(announce: false)
-        listener.cancel()
-        playback.play()
-        close?()
+        pressCancel()
+        phase = .idle
+        Task {
+            // Erst wenn das Mikrofon und die Sitzung frei sind, darf das Vorlesen die Sitzung übernehmen.
+            await listener.cancelAndWait()
+            playback.play()
+            close?()
+        }
     }
 
     // MARK: Mikrofon
@@ -367,13 +414,22 @@ final class BookTalkController: ObservableObject {
         }
     }
 
+    /// Geste abgebrochen (Hintergrund, Blatt zu): nichts senden, Aufnahme verwerfen.
+    func pressCancel() {
+        pressTask?.cancel()
+        pressTask = nil
+        if pushActive { pushActive = false; listener.cancel(); phase = .idle }
+    }
+
     func pressUp() {
+        // Ohne laufenden Druck (abgebrochen durch `pressCancel`) ist das Loslassen nur das Echo der Geste.
+        let pressed = pressTask != nil
         pressTask?.cancel()
         pressTask = nil
         if pushActive {
             pushActive = false
             listener.finish()
-        } else {
+        } else if pressed {
             tap()
         }
     }
@@ -397,7 +453,9 @@ final class BookTalkController: ObservableObject {
         let code = Locale.current.language.languageCode?.identifier
         Task { [weak self] in
             guard let self else { return }
-            do { try await listener.start(mode: mode, languageCode: code) } catch {
+            do { try await listener.start(mode: mode, languageCode: code) } catch is CancellationError {
+                if phase == .listening { phase = .idle }
+            } catch {
                 // Erster Start mit Berechtigungsdialog: die Taste ist beim Schließen des Dialogs los, noch einmal tippen.
                 phase = .idle
                 notice = error.localizedDescription
@@ -445,9 +503,9 @@ final class BookTalkController: ObservableObject {
     // MARK: Vordergrundregel
 
     /// `scenePhase != .active`: Mikrofon und Antwort aus, Stand sichern. Weiter nur durch den Nutzer.
-    func sceneInactive() {
+    func sceneInactive(background: Bool = false) {
         guard opened else { return }
-        pressTask?.cancel(); pressTask = nil; pushActive = false
+        pressCancel()
         listener.cancel()
         stableText = ""; volatileText = ""
         let hadAnswer = conversation.active != nil
@@ -455,7 +513,8 @@ final class BookTalkController: ObservableObject {
         phase = .idle
         awaitingScopeConfirm = false
         if hadAnswer { notice = "Das Gespräch wurde angehalten. Tippe auf Weiter fragen." }
-        engine.llama?.release()
+        // Modell erst im Hintergrund freigeben: ein kurzes Inaktiv (Kontrollzentrum, Anruf-Banner) soll es nicht kosten.
+        if background { engine.llama?.release() }
         library.flush()
     }
 

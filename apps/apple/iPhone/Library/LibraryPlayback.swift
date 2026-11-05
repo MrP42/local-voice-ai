@@ -75,7 +75,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
     private var sessionObservers: [NSObjectProtocol] = []
     /// Buch-Gespräch (G5): Solange das Blatt offen ist, hält die Pause-Taste (AirPods, Sperrbildschirm) die Antwort
     /// an statt die Wiedergabe. Gibt `true` zurück, wenn der Befehl verbraucht wurde.
-    var remoteIntercept: (() -> Bool)?
+    enum RemoteCommand { case play, pause, toggle }
+    var remoteIntercept: ((RemoteCommand) -> Bool)?
 
     init(library: PhoneLibrary? = nil) {
         self.library = library ?? .shared
@@ -593,11 +594,12 @@ final class LibraryPlayback: NSObject, ObservableObject {
         guard !remoteReady else { return }
         remoteReady = true
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.play() }; return .success }
+        c.playCommand.addTarget { [weak self] _ in
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.play) != true { self?.play() } }; return .success }
         c.pauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { if self?.remoteIntercept?() != true { self?.pause() } }; return .success }
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.pause) != true { self?.pause() } }; return .success }
         c.togglePlayPauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { if self?.remoteIntercept?() != true { self?.toggle() } }; return .success }
+            MainActor.assumeIsolated { if self?.remoteIntercept?(.toggle) != true { self?.toggle() } }; return .success }
         c.skipBackwardCommand.preferredIntervals = [15]
         c.skipForwardCommand.preferredIntervals = [15]
         c.skipBackwardCommand.addTarget { [weak self] _ in

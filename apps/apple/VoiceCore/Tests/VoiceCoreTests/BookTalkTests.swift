@@ -671,6 +671,24 @@ final class BookTalkTests: XCTestCase {
         XCTAssertTrue(hist.isEmpty, "abgebrochene Antworten werden nie gespeichert")
     }
 
+    func testRestoreDropsATurnTheUiDiscarded() async throws {
+        let f = try Fixtures.load()
+        let idx = BookTalkIndex(title: f.title, text: f.text)
+        let s = session(idx, FakeModel(answer: "Er hält das große Haus für eine Verpflichtung [Q1]."))
+        _ = try await s.ask("Was sagt der Meister über das Haus des Lehrers?", frontier: nil, scope: .book)
+        let kept = await s.history
+        XCTAssertEqual(kept.count, 1)
+        _ = try await s.ask("Und der Vater?", frontier: nil, scope: .book)
+        let two = await s.history
+        XCTAssertEqual(two.count, 2)
+        await s.restore(history: kept)
+        let back = await s.history
+        XCTAssertEqual(back, kept)
+        await s.restore(history: [])
+        let none = await s.history
+        XCTAssertTrue(none.isEmpty)
+    }
+
     func testSessionHistoryEntersPromptOnlyWithinScopeAndFrontier() async throws {
         let f = try Fixtures.load()
         let idx = BookTalkIndex(title: f.title, text: f.text)
