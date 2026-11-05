@@ -25,7 +25,8 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     /// Aufträgen, die hier nicht (mehr) stehen, ändern nichts an der Buchführung.
     private var inFlight: [String: [Int: AudioDownload.ChunkKey]] = [:]
     /// Fehlversuche je Stück (`<buch>|<teil>|<stück>`); erst nach dreien schlägt das Laden fehl.
-    private var legacyFallback = AudioDownload.LegacyFallback()
+    /// Je laufendem Auftrag; endet mit ihm, damit ein späteres Laden wieder zurückfallen darf.
+    private var legacyFallbacks: [String: AudioDownload.LegacyFallback] = [:]
     private var retries: [String: Int] = [:]
     private var assembling: Set<String> = []
     private var waiters: [String: [CheckedContinuation<Bool, Never>]] = [:]
@@ -132,6 +133,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
 
     /// Ladevorgang verwerfen (Hörbuch wird entfernt oder Buch gelöscht).
     func discard(_ id: String) {
+        legacyFallbacks[id] = nil
         guard jobs[id] != nil || inFlight[id] != nil else { return }
         jobs[id] = nil; done[id] = nil
         persist(); resolve(id, false)
@@ -298,6 +300,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func finish(_ id: String) {
+        legacyFallbacks[id] = nil
         jobs[id] = nil; done[id] = nil
         inFlight[id] = nil
         try? FileManager.default.removeItem(at: stagingDir(id))
@@ -307,6 +310,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
     }
 
     private func fail(_ id: String, _ message: String) {
+        legacyFallbacks[id] = nil
         guard jobs[id] != nil else { return }
         jobs[id]?.phase = .failed; jobs[id]?.message = message
         persist(); resolve(id, false)
@@ -390,7 +394,7 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         if status == 401 { fail(id, "Die Anmeldung ist abgelaufen. Bitte unter „Konto & Sync“ neu anmelden."); return }
         let name = AudioDownload.taskDescription(bookId: id, key)
         if status == 404, job.parts.indices.contains(key.part),
-           legacyFallback.shouldRestart(job.parts[key.part], index: key.index, task: name) {
+           legacyFallbacks[id, default: .init()].shouldRestart(job.parts[key.part], index: key.index, task: name) {
             _ = try? FileManager.default.removeItem(at: audioDir(id).appendingPathComponent(job.parts[key.part].file).appendingPathExtension("part"))
             pump(id)
             return

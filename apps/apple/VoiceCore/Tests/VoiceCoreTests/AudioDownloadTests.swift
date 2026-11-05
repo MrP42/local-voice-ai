@@ -108,6 +108,10 @@ final class AudioDownloadTests: XCTestCase {
         partial = plain
         XCTAssertEqual(next(), 1)
         XCTAssertFalse(fallback.shouldRestart(part, index: 1, task: task))
+
+        // Ein neuer Auftrag für dieselbe Datei (Hörbuch entfernt, neu geladen) beginnt frisch.
+        var again = AudioDownload.LegacyFallback()
+        XCTAssertTrue(again.shouldRestart(part, index: 1, task: task))
     }
 
     func testSpaceProblem() {
