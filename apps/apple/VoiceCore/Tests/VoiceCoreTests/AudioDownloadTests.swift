@@ -37,6 +37,83 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(AudioDownload.nextChunk(job().parts[0], .init(complete: true, partialBytes: 0), chunkPlainBytes: chunk))
     }
 
+    func testTornSingleChunkLargerThanChunkSizeIsFetchedAgain() {
+        let part = AudioDownload.Part(blob: "c", size: 7, chunks: 1, file: "teil_003.m4a")
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 5), chunkPlainBytes: chunk), 0)
+        XCTAssertNil(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 7), chunkPlainBytes: chunk))
+    }
+
+    func testLegacyBlobBetweenOneChunkLimitsAsksForSecondChunkOnlyIfNeeded() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "d", size: size, chunks: 2, file: "teil_004.m4a")
+        let job = AudioDownload.Job(bookId: "b", parts: [part])
+        func missing(_ partial: Int) -> [Int] {
+            AudioDownload.missingChunks(job, states: [.init(complete: false, partialBytes: partial)], staged: [], inFlight: [], chunkPlainBytes: plain).map(\.index)
+        }
+        XCTAssertEqual(missing(0), [0], "nicht gleich Stück 1 anfordern: Am Hub gibt es vielleicht nur eins")
+        XCTAssertEqual(missing(size), [], "Alt-Blob: ein Stück reicht")
+        XCTAssertEqual(missing(plain), [1], "neues Format: Stück 0 war 3 MiB")
+        XCTAssertEqual(missing(plain + 5), [0], "abgerissen: von vorn")
+        let legacyRef = AudioDownload.Part(blob: "e", size: LibrarySyncFormat.legacyOneChunkMaxBytes, chunks: 1, file: "teil_005.m4a")
+        XCTAssertEqual(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: 0), chunkPlainBytes: plain), 0)
+        XCTAssertNil(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: legacyRef.size), chunkPlainBytes: plain))
+        // Abgerissen bei genau 3 MiB: Der Verweis kennt nur Stück 0.
+        XCTAssertEqual(AudioDownload.nextChunk(legacyRef, .init(complete: false, partialBytes: plain), chunkPlainBytes: plain), 0)
+        // Teildatei schon vollständig, neuer Verweis sagt zwei Stücke: nichts mehr holen.
+        XCTAssertNil(LibrarySyncFormat.resumeChunk(size: size, chunks: 2, partialBytes: size))
+        XCTAssertEqual(LibrarySyncFormat.resumeChunk(size: 7 * 1024 * 1024, chunks: 3, partialBytes: 3 * 1024 * 1024 + 5), 1)
+        XCTAssertEqual(LibrarySyncFormat.resumeChunk(size: 0, chunks: 1, partialBytes: 0), 0)
+    }
+
+    func testTwoChunkRefWithRealSingleChunkBlobFallsBackToChunkZero() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "f", size: size, chunks: 2, file: "teil_006.m4a")
+        // Abgerissene Teildatei von genau 3 MiB: Das sieht aus wie ein fertiges erstes Stück.
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: plain), chunkPlainBytes: plain), 1)
+        // Der Hub antwortet 404, die Teildatei wird verworfen und es geht bei Stück 0 weiter.
+        XCTAssertTrue(AudioDownload.restartsWhenMissing(part, index: 1))
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 0), chunkPlainBytes: plain), 0)
+        // Stück 0 trägt die ganze Datei.
+        XCTAssertNil(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: size), chunkPlainBytes: plain))
+        // Außerhalb des Bereichs bleibt ein fehlendes Stück ein Fehler.
+        XCTAssertFalse(AudioDownload.restartsWhenMissing(part, index: 0))
+        let big = AudioDownload.Part(blob: "g", size: 3 * plain, chunks: 3, file: "teil_007.m4a")
+        XCTAssertFalse(AudioDownload.restartsWhenMissing(big, index: 1))
+    }
+
+    /// Ablauf am Nachbau: Netzfehler, 404, Neubeginn, und ein zweites 404 ist ein Fehler.
+    func testLegacyFallbackFlowSurvivesEarlierFailureAndFiresOnce() {
+        let size = LibrarySyncFormat.oneChunkMaxBytes + 1000
+        let plain = LibrarySyncFormat.chunkPlainBytes
+        let part = AudioDownload.Part(blob: "h", size: size, chunks: 2, file: "teil_008.m4a")
+        let task = "buch#0#1"
+        var fallback = AudioDownload.LegacyFallback()
+        var partial = plain  // abgerissene Teildatei
+        var retries = 0
+        func next() -> Int? { AudioDownload.nextChunk(part, .init(complete: false, partialBytes: partial), chunkPlainBytes: plain) }
+
+        XCTAssertEqual(next(), 1)
+        retries += 1  // Netzfehler auf Stück 1: zählt nur als Fehlversuch
+        XCTAssertEqual(next(), 1)
+        XCTAssertTrue(fallback.shouldRestart(part, index: 1, task: task), "der Fehlversuch verbraucht den Rückfall nicht")
+        partial = 0  // Teildatei verworfen
+        XCTAssertEqual(next(), 0)
+        partial = size  // Stück 0 trägt die ganze Datei: Abschluss
+        XCTAssertNil(next())
+        XCTAssertEqual(retries, 1)
+
+        // Echtes Zwei-Stück-Blob, dem Stück 1 fehlt: kein endloser Kreis.
+        partial = plain
+        XCTAssertEqual(next(), 1)
+        XCTAssertFalse(fallback.shouldRestart(part, index: 1, task: task))
+
+        // Ein neuer Auftrag für dieselbe Datei (Hörbuch entfernt, neu geladen) beginnt frisch.
+        var again = AudioDownload.LegacyFallback()
+        XCTAssertTrue(again.shouldRestart(part, index: 1, task: task))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

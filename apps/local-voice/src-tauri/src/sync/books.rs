@@ -65,7 +65,8 @@ impl BlobRef {
 
     fn valid(&self) -> bool {
         blobs::valid_blob_id(&self.blob)
-            && self.chunks == blobs::chunk_count(self.size)
+            && (self.chunks == blobs::chunk_count(self.size)
+                || (self.chunks == 1 && self.size <= blobs::LEGACY_ONE_CHUNK_MAX))
             && self.chunks <= blobs::MAX_CHUNKS
     }
 }
@@ -1222,6 +1223,28 @@ mod tests {
         core.as_object_mut().unwrap().remove("files");
         let book: LibraryBook = serde_json::from_value(core).unwrap();
         assert_eq!(book.audio.unwrap().file, "teil_001.m4b");
+    }
+
+    #[test]
+    fn alt_blob_als_ein_stueck_bleibt_gueltig() {
+        let alt = BlobRef {
+            blob: "0".repeat(64),
+            size: blobs::LEGACY_ONE_CHUNK_MAX,
+            chunks: 1,
+            kind: None,
+            file: None,
+        };
+        assert!(alt.valid());
+        assert!(BlobRef {
+            size: blobs::ONE_CHUNK_MAX + 1,
+            ..alt.clone()
+        }
+        .valid());
+        assert!(!BlobRef {
+            size: blobs::LEGACY_ONE_CHUNK_MAX + 1,
+            ..alt
+        }
+        .valid());
     }
 
     #[test]
