@@ -101,7 +101,7 @@ public actor BookTalkSession {
             index: index, question: question, intent: intent, frontier: request.frontier, scope: scope,
             previousQuestion: eligible.last?.question, entities: entities, maxChars: budget.excerptChars)
         let readingPage: Int? = request.frontier.flatMap { index.page(at: max($0 - 1, 0)) } ?? retrieval.excerpts.last?.chunk.page
-        let ctx = Context(request: request, intent: intent, language: language, readingPage: readingPage, index: index)
+        let ctx = BookTalkContext(request: request, intent: intent, language: language, readingPage: readingPage, index: index)
 
         if scope == .untilPosition, request.frontier == nil {
             return finish(Fallback.notice(ctx, reason: .noFrontier, language == .de
@@ -191,12 +191,12 @@ public actor BookTalkSession {
         finish(answer, ctx, out)
     }
 
-    private func finish(_ f: Fallback.Result, _ ctx: Context, _ out: AsyncStream<BookTalkEvent>.Continuation) {
+    private func finish(_ f: Fallback.Result, _ ctx: BookTalkContext, _ out: AsyncStream<BookTalkEvent>.Continuation) {
         for e in f.events { out.yield(e) }
         finish(f.answer, ctx, out)
     }
 
-    private func finish(_ answer: BookTalkAnswer, _ ctx: Context, _ out: AsyncStream<BookTalkEvent>.Continuation) {
+    private func finish(_ answer: BookTalkAnswer, _ ctx: BookTalkContext, _ out: AsyncStream<BookTalkEvent>.Continuation) {
         let at = ISO8601DateFormatter().string(from: Date())
         history.append(BookTalkStoredTurn(question: ctx.request.question, answer: answer, scope: ctx.request.scope,
                                           frontier: answer.frontier, input: ctx.request.input, at: at))
@@ -205,7 +205,7 @@ public actor BookTalkSession {
     }
 }
 
-struct Context {
+struct BookTalkContext {
     let request: BookTalkRequest
     let intent: BookTalkIntent
     let language: BookTalkLanguage
@@ -289,7 +289,7 @@ struct Collector: Sendable {
         return .sentence(requestId: requestId, s)
     }
 
-    func answer(_ ctx: Context) -> BookTalkAnswer {
+    func answer(_ ctx: BookTalkContext) -> BookTalkAnswer {
         let cites = kept.flatMap(\.citations)
         var speech = kept.map(\.speech).joined(separator: " ")
         let tail = BookTalkSpeech.tail(intent: ctx.intent, hasCitation: !cites.isEmpty, language: ctx.language, readingPage: ctx.readingPage)
@@ -307,7 +307,7 @@ enum Fallback {
         let answer: BookTalkAnswer
     }
 
-    static func notice(_ ctx: Context, reason: BookTalkCode, _ text: String) -> Result {
+    static func notice(_ ctx: BookTalkContext, reason: BookTalkCode, _ text: String) -> Result {
         var speech = BookTalkSpeech.plain(text, language: ctx.language)
         var shown = text
         if ctx.scope == .untilPosition {
@@ -321,7 +321,7 @@ enum Fallback {
         return Result(events: [.sentence(requestId: ctx.request.requestId, s)], answer: answer)
     }
 
-    static func foundOnly(_ ctx: Context, _ retrieval: BookTalkRetrieval, reason: BookTalkCode?, dropped: Int = 0) -> Result {
+    static func foundOnly(_ ctx: BookTalkContext, _ retrieval: BookTalkRetrieval, reason: BookTalkCode?, dropped: Int = 0) -> Result {
         let de = ctx.language == .de
         var sentences: [BookTalkAnswerSentence] = []
         var cites: [BookTalkCitation] = []
