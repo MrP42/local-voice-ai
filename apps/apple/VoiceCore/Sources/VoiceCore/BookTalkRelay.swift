@@ -25,6 +25,14 @@ public enum BookTalkRelay {
 
     /// Objekt-ID im Hub. Das Hub-Muster `^[A-Za-z0-9_-]{1,64}$` erlaubt kein „/“: statt `req/<id>` heißt es `req_<id>`.
     public static func objectId(_ kind: Kind, _ id: String) -> String { "\(kind.rawValue)_\(id)" }
+
+    /// Kurzkennung wie in der Hub-Geräteliste: die ersten 12 Hex-Zeichen von SHA-256(device_id).
+    public static func deviceKey(_ deviceId: String) -> String { String(BookTalkHash.sha256Hex(deviceId).prefix(12)) }
+
+    /// Modellliste je Gerät, signiert mit dessen Relay-Schlüssel: `models_<desktop_device_id>_<device_key>`.
+    public static func modelsObjectId(desktopDeviceId: String, deviceId: String) -> String {
+        objectId(.models, "\(desktopDeviceId)_\(deviceKey(deviceId))")
+    }
 }
 
 public enum BookTalkRelayProvider: String, Sendable, Codable, Equatable {
@@ -49,7 +57,7 @@ public struct BookTalkRelayModelInfo: Sendable, Codable, Equatable, Identifiable
     enum CodingKeys: String, CodingKey { case id, label, provider, contextTokens = "context_tokens" }
 }
 
-/// `models_<desktop_device_id>`: `{v:1, models:[…], updated_at, desktop_device_id, device_id, issued_at, mac}`.
+/// `models_<desktop_device_id>_<device_key>`: `{v:1, models:[…], desktop_device_id, device_id, issued_at, mac}`.
 /// Der PC signiert die Liste je Gerät mit dem Relay-Schlüssel (Befund 12): unsignierte oder falsch signierte Listen zählen nicht.
 public struct BookTalkRelayModelList: Sendable, Codable, Equatable {
     public let v: Int

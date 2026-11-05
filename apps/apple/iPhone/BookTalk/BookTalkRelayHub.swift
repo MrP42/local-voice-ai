@@ -74,9 +74,10 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
     // MARK: Modelle und Aufräumen
 
     /// Vom PC veröffentlichte Liste (noch ungeprüft: die Signatur prüft der Aufrufer mit `isAuthentic`), `nil` wenn keine da ist.
-    func modelList(desktopDeviceId: String) async throws -> BookTalkRelayModelList? {
+    func modelList(desktopDeviceId: String, deviceId: String) async throws -> BookTalkRelayModelList? {
         try await pull()
-        guard let data = slots[BookTalkRelay.objectId(.models, desktopDeviceId)]?.json else { return nil }
+        let id = BookTalkRelay.modelsObjectId(desktopDeviceId: desktopDeviceId, deviceId: deviceId)
+        guard let data = slots[id]?.json else { return nil }
         return try? JSONDecoder().decode(BookTalkRelayModelList.self, from: data)
     }
 
@@ -232,7 +233,7 @@ final class BookTalkRelayStore: ObservableObject {
         defer { refreshing = false }
         let hub = channel(for: account)
         do {
-            if let list = try await hub.modelList(desktopDeviceId: e.desktopDeviceId) {
+            if let list = try await hub.modelList(desktopDeviceId: e.desktopDeviceId, deviceId: e.deviceId) {
                 // Nur eine vom PC mit dem Relay-Schlüssel signierte Liste für genau dieses Gerät zählt (Befund 12).
                 guard list.isAuthentic(key: e.key, desktopDeviceId: e.desktopDeviceId, deviceId: e.deviceId) else {
                     models = []
