@@ -40,12 +40,26 @@ export const DiarizationModelButton: React.FC<{
   const lastAnnounced = useRef(-1);
   const rootRef = useRef<HTMLSpanElement>(null);
   const readyRef = useRef<HTMLSpanElement>(null);
-  const hadFocus = useRef(false);
+  const downloadRef = useRef<HTMLButtonElement>(null);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  /** Lag der Fokus in diesem Bereich, unmittelbar bevor sich der Zustand änderte? */
+  const focusHandoff = useRef(false);
+
+  /**
+   * Unmittelbar vor jeder Zustandsänderung, die ein Bedienelement entfernen
+   * kann: liegt der Fokus jetzt hier, wird er nach dem Rendern übergeben.
+   * Hat der Nutzer ihn inzwischen woanders hin bewegt, bleibt er dort.
+   */
+  const captureFocus = () => {
+    focusHandoff.current =
+      !!rootRef.current && rootRef.current.contains(document.activeElement);
+  };
 
   const refresh = useCallback(async () => {
     try {
       const result = await commands.meetingDiarizationModelStatus();
       if (result.status === "ok") {
+        captureFocus();
         setStatus(result.data);
         setStatusFailed(false);
         return;
@@ -53,6 +67,9 @@ export const DiarizationModelButton: React.FC<{
     } catch {
       // unten: sichtbarer Fehlerzustand
     }
+    captureFocus();
+    // Auch nach einem früheren Erfolg: kein veralteter Ladezustand.
+    setPercent(null);
     setStatusFailed(true);
   }, []);
 
@@ -82,6 +99,7 @@ export const DiarizationModelButton: React.FC<{
     );
     const unDone = listen<string>("model-download-complete", (e) => {
       if (e.payload === modelId) {
+        captureFocus();
         setPercent(null);
         void refresh();
       }
@@ -92,13 +110,7 @@ export const DiarizationModelButton: React.FC<{
     };
   }, [modelId, refresh, t]);
 
-  const rememberFocus = () => {
-    hadFocus.current =
-      !!rootRef.current && rootRef.current.contains(document.activeElement);
-  };
-
   const download = async () => {
-    rememberFocus();
     setError(false);
     setPercent(0);
     lastAnnounced.current = 0;
@@ -122,12 +134,12 @@ export const DiarizationModelButton: React.FC<{
       setError(true);
       setAnnouncement(t("settings.meetings.diarizationModelDownloadFailed"));
     }
+    captureFocus();
     setPercent(null);
     await refresh();
   };
 
   const cancel = () => {
-    rememberFocus();
     void commands.meetingDiarizationModelCancel();
   };
 
@@ -137,36 +149,49 @@ export const DiarizationModelButton: React.FC<{
     if (lastAnnounced.current >= 0) {
       setAnnouncement(t("settings.meetings.diarizationModelInstalledNow"));
     }
-    // Der fokussierte Knopf ist weg: Fokus auf den Ersatztext, nicht auf <body>.
-    if (hadFocus.current) {
-      readyRef.current?.focus();
-      hadFocus.current = false;
-    }
   }, [ready, t]);
 
   const downloading = percent !== null || (status?.downloading ?? false);
+
+  // Fokusübergabe nach dem Rendern: nur wenn der Fokus vor der Änderung hier
+  // lag und das fokussierte Element jetzt fehlt (Fokus auf <body>).
+  useEffect(() => {
+    if (!focusHandoff.current) return;
+    focusHandoff.current = false;
+    const root = rootRef.current;
+    if (!root || root.contains(document.activeElement)) return;
+    const target =
+      readyRef.current ?? retryRef.current ?? downloadRef.current ?? null;
+    target?.focus();
+  }, [ready, downloading, statusFailed, status]);
   const size = inline ? "sm" : "md";
 
   let body: React.ReactNode = null;
-  if (statusFailed && !status) {
-    body = (
-      <>
-        <span className="text-xs" style={ERROR_STYLE}>
-          {t("settings.meetings.diarizationModelStatusFailed")}
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          size={size}
-          style={{ minHeight: 44 }}
-          onClick={() => void refresh()}
-          data-testid="diarization-model-retry"
-        >
-          {t("settings.meetings.diarizationModelRetry")}
-        </Button>
-      </>
-    );
-  } else if (status && ready) {
+  // Ein Statusfehler ist immer sichtbar und wiederholbar, auch nach einem
+  // früheren Erfolg (dann steht er unter dem letzten bekannten Stand).
+  const statusError = statusFailed ? (
+    <>
+      <span className="text-xs" style={ERROR_STYLE}>
+        {t("settings.meetings.diarizationModelStatusFailed")}
+      </span>
+      <Button
+        ref={retryRef}
+        type="button"
+        variant="secondary"
+        size={size}
+        style={{ minHeight: 44 }}
+        onClick={() => {
+          captureFocus();
+          void refresh();
+        }}
+        data-testid="diarization-model-retry"
+      >
+        {t("settings.meetings.diarizationModelRetry")}
+      </Button>
+    </>
+  ) : null;
+
+  if (status && ready) {
     body = (
       <span
         ref={readyRef}
@@ -184,6 +209,7 @@ export const DiarizationModelButton: React.FC<{
       <>
         <span className="inline-flex flex-wrap items-center gap-2">
           <Button
+            ref={downloadRef}
             type="button"
             variant="secondary"
             size={size}
@@ -231,6 +257,7 @@ export const DiarizationModelButton: React.FC<{
       data-testid="diarization-model"
     >
       {body}
+      {statusError}
       <span className="sr-only" aria-live="polite" role="status">
         {announcement}
       </span>

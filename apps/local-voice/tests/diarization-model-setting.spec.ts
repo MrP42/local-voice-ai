@@ -51,7 +51,17 @@ const open = async (
         }
         if (cmd === "meeting_diarization_model_download") {
           w.__calls.push({ cmd, args });
+          if (w.__diarSlow) {
+            // Laeuft, bis "Abbrechen" kommt (Teildatei bleibt liegen).
+            await new Promise<void>((resolve) => (w.__diarRelease = resolve));
+            throw "cancelled";
+          }
           w.__diarStatus = { ...w.__diarStatus, model_ready: true };
+          return null;
+        }
+        if (cmd === "meeting_diarization_model_cancel") {
+          w.__calls.push({ cmd, args });
+          w.__diarRelease?.();
           return null;
         }
         return original(cmd, args);
@@ -102,6 +112,83 @@ test("Fehler beim Statusabruf zeigt Wiederholen statt nichts", async ({
     };
   });
   await page.getByTestId("diarization-model-retry").click();
+  await expect(page.getByTestId("diarization-model-download")).toBeVisible();
+});
+
+test("Abbrechen gibt den Fokus an den Download-Knopf zurueck", async ({
+  page,
+}) => {
+  await open(page, MISSING, 390);
+  await page.evaluate(() => ((window as any).__diarSlow = true));
+  await page.getByTestId("diarization-model-download").click();
+  const cancel = page.getByTestId("diarization-model-cancel");
+  await expect(cancel).toBeVisible();
+  await expect(page.getByTestId("diarization-model-download")).toBeDisabled();
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.mouse.move(0, 0);
+  await page
+    .getByTestId("diarization-model")
+    .screenshot({ path: `${SHOTS}/laden-390-hell.png` });
+  await cancel.focus();
+  await cancel.press("Enter");
+  await expect(cancel).toHaveCount(0);
+  const button = page.getByTestId("diarization-model-download");
+  await expect(button).toBeEnabled();
+  await expect(button).toBeFocused();
+  await expect(
+    page.getByTestId("diarization-model").getByRole("status"),
+  ).toHaveText(/^Download abgebrochen\./);
+});
+
+test("Fokus woanders: kein Zurueckholen nach dem Laden", async ({ page }) => {
+  await open(page, MISSING);
+  await page.evaluate(() => ((window as any).__diarSlow = true));
+  await page.getByTestId("diarization-model-download").click();
+  await expect(page.getByTestId("diarization-model-cancel")).toBeVisible();
+  // Nutzer geht weiter, waehrend geladen wird.
+  await page.evaluate(() => {
+    const b = document.createElement("button");
+    b.id = "anderswo";
+    b.textContent = "anderswo";
+    document.body.appendChild(b);
+    b.focus();
+  });
+  await page.evaluate(() => (window as any).__diarRelease());
+  await expect(page.getByTestId("diarization-model-download")).toBeEnabled();
+  await expect(page.locator("#anderswo")).toBeFocused();
+});
+
+test("Statusfehler nach frueherem Erfolg bleibt sichtbar und wiederholbar", async ({
+  page,
+}) => {
+  await open(page, MISSING, 390);
+  await expect(page.getByTestId("diarization-model-download")).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__diarStatus = "fail";
+    w.__diarSlow = true;
+  });
+  // Laden abbrechen loest einen neuen Statusabruf aus, der jetzt scheitert.
+  await page.getByTestId("diarization-model-download").click();
+  await page.getByTestId("diarization-model-cancel").focus();
+  await page.getByTestId("diarization-model-cancel").press("Enter");
+  const retry = page.getByTestId("diarization-model-retry");
+  await expect(retry).toBeVisible();
+  await expect(page.getByTestId("diarization-model-cancel")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await page
+    .getByTestId("diarization-model")
+    .screenshot({ path: `${SHOTS}/fehler-390-hell.png` });
+  await page.evaluate(() => {
+    (window as any).__diarStatus = {
+      model_id: "diar-sortformer-4spk-v2.1-q8",
+      model_ready: false,
+      downloading: false,
+      size_mb: 140,
+    };
+  });
+  await retry.click();
+  await expect(retry).toHaveCount(0);
   await expect(page.getByTestId("diarization-model-download")).toBeVisible();
 });
 
