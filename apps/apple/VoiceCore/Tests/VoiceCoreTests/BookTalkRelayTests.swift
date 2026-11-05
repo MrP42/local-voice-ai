@@ -227,13 +227,14 @@ final class BookTalkRelayTests: XCTestCase {
         XCTAssertEqual(r.error as? BookTalkModelError, .unavailable)
     }
 
-    func testSwitchingModelTupleMidStreamIsIgnored() async {
+    func testSwitchingModelTupleMidStreamIsRejected() async {
         let channel = FakeChannel(), clock = FakeClock()
         await channel.setScript { _, n in
-            n == 1 ? reply(seq: 0, "A") : (n == 2 ? reply(seq: 1, "AB", tuple: "claude-sonnet-4") : reply(seq: 2, "AC", done: true))
+            n == 1 ? reply(seq: 0, "A") : reply(seq: 1, "AB", tuple: "claude-sonnet-4")
         }
         let r = await collect(model(channel, clock: clock))
-        XCTAssertEqual(r.pieces.joined(), "AC")
+        XCTAssertEqual(r.pieces, ["A"])
+        XCTAssertEqual(r.error as? BookTalkModelError, .unavailable, "R7: anderes Modell nach dem Pinning verwirft die Antwort")
     }
 
     func testNoFirstResponseWithin15SecondsIsOffline() async {
@@ -455,6 +456,292 @@ final class BookTalkRelayTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(a.sentences.count, 1)
     }
 }
+
+// MARK: - Fixrunde: Antwortsemantik, Modellabgleich, Liste, Einrichtungscode, Aufräumen
+
+private func evalModel(_ channel: FakeChannel, clock: FakeClock, alias: BookTalkRelayModelInfo = sonnet,
+                       status: @escaping @Sendable (String) -> BookTalkEvalStatus) -> BookTalkRelayModel {
+    BookTalkRelayModel(
+        info: alias, enrollment: enrollment(), channel: channel, evalStatus: status,
+        now: { clock.date }, sleep: { clock.advance($0); try Task.checkCancellation() }, makeId: { rid })
+}
+
+private final class Seen: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    var value: [String] { lock.lock(); defer { lock.unlock() }; return items }
+    func add(_ x: String) { lock.lock(); items.append(x); lock.unlock() }
+}
+
+final class BookTalkRelayFixTests: XCTestCase {
+    private let bookText = "# Das Haus\n\n{{S. 1}}\nDer Meister hält das große Haus für eine Verpflichtung. Der Lehrer wohnt im kleinen Haus am Fluss.\n"
+
+    // MARK: Antwortsemantik (Befund 3)
+
+    func testPendingIsLifelineThatResetsTheFifteenSecondFrameWithoutPinning() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, n in
+            n <= 24 ? reply(seq: n, n == 3 ? "Vorab" : "", tuple: "pending") : reply(seq: n, "Antwort", done: true, tuple: "claude-sonnet-4-5-20250929")
+        }
+        let m = model(channel, clock: clock)
+        let r = await collect(m)
+        XCTAssertNil(r.error, "\(String(describing: r.error))")
+        XCTAssertEqual(r.pieces, ["Antwort"], "Text vor dem Tupel wird nicht angezeigt")
+        XCTAssertEqual(m.actualModel, "claude-sonnet-4-5-20250929", "gepinnt wird erst das echte Tupel")
+        let spent = clock.date.timeIntervalSince1970 - 1_800_000_000
+        XCTAssertGreaterThan(spent, 15, "länger als die erste 15-s-Frist")
+        XCTAssertLessThan(spent, 75)
+    }
+
+    func testPendingForeverStillEndsAtTheTotalFrame() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, n in reply(seq: n, "", tuple: "pending") }
+        let r = await collect(model(channel, clock: clock))
+        XCTAssertEqual(r.error as? BookTalkModelError, .timeout)
+        let spent = clock.date.timeIntervalSince1970 - 1_800_000_000
+        XCTAssertGreaterThanOrEqual(spent, 75)
+        XCTAssertLessThan(spent, 77)
+    }
+
+    func testPendingThatStopsEndsOfflineFifteenSecondsAfterTheLastSign() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, n in n <= 5 ? reply(seq: n, "", tuple: "pending") : nil }
+        let r = await collect(model(channel, clock: clock))
+        XCTAssertEqual(r.error as? BookTalkModelError, .offline)
+        let spent = clock.date.timeIntervalSince1970 - 1_800_000_000
+        XCTAssertGreaterThanOrEqual(spent, 19)
+        XCTAssertLessThan(spent, 21)
+    }
+
+    func testPendingWithInvalidMacOrOldSeqIsNoSign() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, n in
+            n % 2 == 0 ? reply(seq: n, "", tuple: "pending", key: [UInt8](repeating: 9, count: 32)) : reply(seq: 0, "", tuple: "pending")
+        }
+        let r = await collect(model(channel, clock: clock))
+        XCTAssertEqual(r.error as? BookTalkModelError, .offline)
+    }
+
+    func testPcErrorCodesBecomeOwnFailCodes() async throws {
+        let idx = BookTalkIndex(title: "Test", text: bookText)
+        let q = "Was hält der Meister vom Haus?"
+        let cases: [(BookTalkRelayError, BookTalkCode)] = [
+            (.notAllowed, .consentRequired), (.limit, .llmFailed), (.modelUnavailable, .noModel), (.clock, .timeout),
+            (.timeout, .timeout), (.llmFailed, .llmFailed), (BookTalkRelayError(rawValue: "neu_vom_pc"), .llmFailed),
+        ]
+        for (error, code) in cases {
+            let channel = FakeChannel(), clock = FakeClock()
+            await channel.setScript { _, _ in reply(seq: 1, "", done: true, error: error, tuple: "unknown") }
+            let m = model(channel, clock: clock)
+            let s = BookTalkSession(index: idx, model: m, budget: .relayCLI1(contextTokens: 200_000), byteProfile: .relayCLI1, timeout: 75)
+            let a = try await s.ask(q, frontier: nil, scope: .book)
+            XCTAssertTrue(a.foundOnly, error.rawValue)
+            XCTAssertEqual(a.reason, code, error.rawValue)
+            XCTAssertNil(m.actualModel, "Fehler mit unknown pinnt nichts")
+        }
+    }
+
+    func testUnknownErrorCodeKeepsTheMacCheckable() throws {
+        let r = BookTalkRelayResponse.signed(key: key, requestId: rid, deviceId: device, seq: 1, modelTuple: "unknown", text: "", done: true,
+                                             error: BookTalkRelayError(rawValue: "quota_x"))
+        let back = try JSONDecoder().decode(BookTalkRelayResponse.self, from: JSONEncoder().encode(r))
+        XCTAssertEqual(back.error?.rawValue, "quota_x")
+        XCTAssertTrue(back.macIsValid(key: key))
+    }
+
+    func testUnknownTupleIsAllowedOnlyAsFinalAnswerAndStaysUnchecked() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, n in n == 1 ? reply(seq: 0, "Zwischen", tuple: "pending") : reply(seq: 1, "Fertig", done: true, tuple: "unknown") }
+        let m = evalModel(channel, clock: clock) { _ in .passed }
+        let r = await collect(m)
+        XCTAssertNil(r.error)
+        XCTAssertEqual(r.pieces, ["Fertig"])
+        XCTAssertEqual(m.actualModel, "unknown")
+        XCTAssertEqual(m.actualEvalStatus, .unchecked, "unknown gilt als ungeprüft, auch wenn die Tabelle alles bestehen ließe")
+
+        let channel2 = FakeChannel(), clock2 = FakeClock()
+        await channel2.setScript { _, _ in reply(seq: 0, "Teil", done: false, tuple: "unknown") }
+        let r2 = await collect(model(channel2, clock: clock2))
+        XCTAssertTrue(r2.pieces.isEmpty)
+        XCTAssertEqual(r2.error as? BookTalkModelError, .unavailable, "unknown nur als finale Antwort")
+
+        let channel3 = FakeChannel(), clock3 = FakeClock()
+        await channel3.setScript { _, n in n == 1 ? reply(seq: 0, "A") : reply(seq: 1, "AB", done: true, tuple: "unknown") }
+        let r3 = await collect(model(channel3, clock: clock3))
+        XCTAssertEqual(r3.error as? BookTalkModelError, .unavailable, "nach dem Pinning kein Wechsel auf unknown")
+    }
+
+    // MARK: Modellabgleich und Eval nach dem tatsächlichen Modell (Befund 6)
+
+    func testEvalStatusComesFromTheActualModelNotTheAlias() async {
+        let seen = Seen()
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, _ in reply(seq: 0, "Antwort", done: true, tuple: "claude-sonnet-5-5") }
+        let m = evalModel(channel, clock: clock) { tuple in seen.add(tuple); return tuple == "claude-sonnet-5-5" ? .passed : .unchecked }
+        XCTAssertEqual(m.actualEvalStatus, .unchecked, "vor der Antwort ungeprüft")
+        let r = await collect(m)
+        XCTAssertNil(r.error)
+        XCTAssertEqual(seen.value, ["claude-sonnet-5-5"], "Abfrage mit dem Tupel der Antwort, nie mit `sonnet`")
+        XCTAssertEqual(m.actualEvalStatus, .passed)
+        XCTAssertFalse(m.rejectedByEval)
+    }
+
+    func testFailedActualModelDiscardsTheAnswerAsFoundOnly() async throws {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, _ in reply(seq: 0, "Der Meister hält das große Haus für eine Verpflichtung [Q1].", done: true, tuple: "claude-sonnet-5-5") }
+        let m = evalModel(channel, clock: clock) { $0 == "claude-sonnet-5-5" ? .failed : .passed }
+        let idx = BookTalkIndex(title: "Test", text: bookText)
+        let s = BookTalkSession(index: idx, model: m, budget: .relayCLI1(contextTokens: 200_000), byteProfile: .relayCLI1, timeout: 75)
+        let a = try await s.ask("Was hält der Meister vom Haus?", frontier: nil, scope: .book)
+        XCTAssertTrue(a.foundOnly)
+        XCTAssertEqual(a.reason, .noModel)
+        XCTAssertTrue(m.rejectedByEval)
+        XCTAssertEqual(m.actualEvalStatus, .failed)
+        let removed = await channel.removed
+        XCTAssertTrue(removed.contains("req_" + rid))
+    }
+
+    func testAliasFamilyMatching() {
+        let yes: [(String, String)] = [
+            ("sonnet", "sonnet"), ("sonnet", "claude-sonnet-5-5"), ("sonnet", "claude-sonnet-4-5-20250929"), ("sonnet", "claude-sonnet-5"),
+            ("sonnet", "Claude-Sonnet-5-5"), ("opus", "claude-opus-4-1"), ("haiku", "claude-haiku-4-5-20251001"),
+            ("gpt-6.1-sol", "gpt-6.1-sol"), ("gpt-6.1-sol", "gpt-6.1-sol-2026-11-01"), ("gpt-6.1-sol", "gpt-6.1-sol-20261101"),
+            ("claude-sonnet-4-5", "claude-sonnet-4-5-20250929"),
+        ]
+        let no: [(String, String)] = [
+            ("sonnet", "claude-opus-4-1"), ("sonnet", "claude-sonnet-5-5-mini"), ("sonnet", "claude-sonnet-x"), ("sonnet", "claude-sonnet-"),
+            ("sonnet", "claude-sonnet-5-"), ("sonnet", "my-sonnet-5"), ("sonnet", "xsonnet"), ("sonnet", "claude-sonnet-5-5 mini"),
+            ("sonnet", "unknown"), ("sonnet", "pending"), ("sonnet", ""), ("opus", "claude-sonnet-5-5"), ("haiku", "claude-haiku"),
+            ("gpt-6.1-sol", "gpt-6.1-sol-mini"), ("gpt-6.1-sol", "gpt-6.1-solar"), ("gpt-6.1-sol", "gpt-6.1"),
+            ("gpt-6.1-sol", "gpt-6.1-sol-mini-2026"), ("gpt-6.1-sol", "gpt-6.1-sol-2026-mini"), ("gpt-6.1-sol", "x-gpt-6.1-sol"),
+            ("claude-sonnet-4-5", "claude-sonnet-4-5-latest"),
+        ]
+        for (alias, tuple) in yes { XCTAssertTrue(BookTalkRelayModelMatch.accepts(alias: alias, tuple: tuple), "\(alias) ↔ \(tuple)") }
+        for (alias, tuple) in no { XCTAssertFalse(BookTalkRelayModelMatch.accepts(alias: alias, tuple: tuple), "\(alias) ↔ \(tuple)") }
+    }
+
+    func testSubstringOfAnotherFamilyNoLongerPassesTheModelCheck() async {
+        let channel = FakeChannel(), clock = FakeClock()
+        await channel.setScript { _, _ in reply(seq: 0, "x", done: true, tuple: "claude-sonnet-5-5-mini-opus-sonnet") }
+        let r = await collect(model(channel, clock: clock))
+        XCTAssertEqual(r.error as? BookTalkModelError, .unavailable)
+    }
+
+    // MARK: Signierte Modellliste (Befund 12)
+
+    private let models = [
+        BookTalkRelayModelInfo(id: "sonnet", label: "Claude Sonnet", provider: .claudeCLI, contextTokens: 200_000),
+        BookTalkRelayModelInfo(id: "gpt-6.1-sol", label: "Codex „Sol“", provider: .codexCLI, contextTokens: 128_000),
+    ]
+
+    func testModelListCanonicalSortsEntriesAndFixesTheFieldOrder() {
+        let c = BookTalkRelayModelList.canonical(models: models, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000)
+        XCTAssertEqual(c, "{\"desktop_device_id\":\"desk\",\"device_id\":\"\(device)\",\"issued_at\":1800000000,\"models\":["
+            + "{\"context_tokens\":128000,\"id\":\"gpt-6.1-sol\",\"label\":\"Codex „Sol“\",\"provider\":\"codex_cli\"},"
+            + "{\"context_tokens\":200000,\"id\":\"sonnet\",\"label\":\"Claude Sonnet\",\"provider\":\"claude_cli\"}],\"v\":1}")
+        XCTAssertEqual(c, BookTalkRelayModelList.canonical(models: models.reversed(), desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000))
+    }
+
+    func testSignedModelListIsAuthenticOnlyForThisPcDeviceAndKey() throws {
+        let list = BookTalkRelayModelList.signed(key: key, models: models, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000)
+        XCTAssertTrue(list.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device))
+        let back = try JSONDecoder().decode(BookTalkRelayModelList.self, from: JSONEncoder().encode(list))
+        XCTAssertTrue(back.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device))
+        XCTAssertFalse(list.isAuthentic(key: [UInt8](repeating: 1, count: 32), desktopDeviceId: "desk", deviceId: device), "falscher Schlüssel")
+        XCTAssertFalse(list.isAuthentic(key: key, desktopDeviceId: "anderer-pc", deviceId: device), "anderer PC")
+        XCTAssertFalse(list.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: "anderes-iphone"), "anderes Gerät")
+    }
+
+    func testUnsignedOrTamperedModelListIsIgnored() throws {
+        let raw = Data("""
+        {"v":1,"models":[{"id":"sonnet","label":"Claude Sonnet","provider":"claude_cli","context_tokens":200000}],"updated_at":1800000000}
+        """.utf8)
+        let unsigned = try JSONDecoder().decode(BookTalkRelayModelList.self, from: raw)
+        XCTAssertFalse(unsigned.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device), "unsigniert")
+        let good = BookTalkRelayModelList.signed(key: key, models: models, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000)
+        var bigger = models
+        bigger[0] = BookTalkRelayModelInfo(id: "sonnet", label: "Claude Sonnet", provider: .claudeCLI, contextTokens: 999_999)
+        let tamperedModels = BookTalkRelayModelList(models: bigger, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000, mac: good.mac)
+        XCTAssertFalse(tamperedModels.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device), "Eintrag verändert")
+        let extra = BookTalkRelayModelList(models: models + [sonnet], desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000, mac: good.mac)
+        XCTAssertFalse(extra.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device), "Eintrag hinzugefügt")
+        let later = BookTalkRelayModelList(models: models, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_001, mac: good.mac)
+        XCTAssertFalse(later.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device), "issued_at verändert")
+        let noMac = BookTalkRelayModelList(models: models, desktopDeviceId: "desk", deviceId: device, issuedAt: 1_800_000_000, mac: nil)
+        XCTAssertFalse(noMac.isAuthentic(key: key, desktopDeviceId: "desk", deviceId: device))
+    }
+
+    // MARK: Einrichtungscode (grant_expires_at)
+
+    func testEnrollmentCodeAndGrantHaveSeparateExpiry() throws {
+        let e = BookTalkRelayEnrollment(keyId: "k1", key: key, desktopDeviceId: "desk", desktopName: "PC", deviceId: device, expiresAt: 1_000, grantExpiresAt: 9_000)
+        XCTAssertFalse(e.codeExpired(now: 999))
+        XCTAssertTrue(e.codeExpired(now: 1_000), "Code abgelaufen")
+        XCTAssertFalse(e.isExpired(now: 1_000), "Freigabe läuft weiter")
+        XCTAssertFalse(e.isExpired(now: 8_999))
+        XCTAssertTrue(e.isExpired(now: 9_000))
+        let text = "lvrelay1:" + String(decoding: try JSONEncoder().encode(e), as: UTF8.self)
+        XCTAssertTrue(text.contains("\"grant_expires_at\":9000"))
+        XCTAssertEqual(BookTalkRelayEnrollment.parse(text), e)
+        let legacy = BookTalkRelayEnrollment(keyId: "k1", key: key, desktopDeviceId: "desk", desktopName: "PC", deviceId: device, expiresAt: 1_000)
+        XCTAssertNil(legacy.grantExpiresAt)
+        XCTAssertTrue(legacy.isExpired(now: 1_000), "ohne grant_expires_at gilt expires_at auch für die Freigabe")
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(legacy), as: UTF8.self).contains("grant_expires_at"))
+    }
+
+    func testRelayModelRefusesAfterTheGrantExpiredButNotAfterTheCodeExpired() async {
+        let now = 1_800_000_000
+        let channel = FakeChannel(), clock = FakeClock()
+        let codeOnlyExpired = BookTalkRelayEnrollment(keyId: "k1", key: key, desktopDeviceId: "desk", desktopName: "PC", deviceId: device,
+                                                      expiresAt: now - 10, grantExpiresAt: now + 86_400)
+        await channel.setScript { _, _ in reply(seq: 0, "Ok", done: true) }
+        let ok = await collect(model(channel, clock: clock, enroll: codeOnlyExpired))
+        XCTAssertNil(ok.error)
+        let grantExpired = BookTalkRelayEnrollment(keyId: "k1", key: key, desktopDeviceId: "desk", desktopName: "PC", deviceId: device,
+                                                   expiresAt: now - 1_000, grantExpiresAt: now - 10)
+        let refused = await collect(model(channel, clock: clock, enroll: grantExpired))
+        XCTAssertEqual(refused.error as? BookTalkModelError, .notAllowed)
+    }
+
+    // MARK: Aufräumen (Befund 10)
+
+    private func reqObject(_ id: String, device d: String = device, created: Int) throws -> BookTalkRelayCleanup.Object {
+        let r = BookTalkRelayRequest.make(key: key, keyId: "k1", deviceId: d, requestId: id, modelId: "sonnet", system: "S", prompt: "P", maxTokens: 10, now: created)
+        return .init(id: "req_" + id, json: try JSONEncoder().encode(r), firstSeen: created)
+    }
+
+    private func respObject(_ id: String, device d: String = device, seen: Int) throws -> BookTalkRelayCleanup.Object {
+        let r = BookTalkRelayResponse.signed(key: key, requestId: id, deviceId: d, seq: 1, modelTuple: "claude-sonnet-5-5", text: "x", done: false)
+        return .init(id: "resp_" + id, json: try JSONEncoder().encode(r), firstSeen: seen)
+    }
+
+    func testCleanupOnlyRemovesOwnOldObjectsOfClosedRequests() throws {
+        let now = 1_800_000_000
+        let old = now - 700, young = now - 30
+        let objects = [
+            try reqObject("a", created: old),                                  // eigen, alt: weg
+            try reqObject("b", created: young),                                // eigen, jung: bleibt
+            try reqObject("c", device: "fremd", created: old),                 // fremd: bleibt
+            try reqObject("d", created: old),                                  // eigen, alt, aber offen: bleibt
+            try respObject("e", seen: old),                                    // eigen, alt, geschlossen: weg
+            try respObject("f", seen: young),                                  // eigen, jung gesehen: bleibt
+            try respObject("g", seen: old),                                    // offene Anfrage: bleibt
+            try respObject("h", device: "fremd", seen: old),                   // fremd: bleibt
+            try respObject("b", seen: old),                                    // gehört zu jungem req: bleibt
+        ]
+        let stale = BookTalkRelayCleanup.stale(objects: objects, deviceId: device, openRequestIds: ["d", "g"], now: now)
+        XCTAssertEqual(Set(stale), ["req_a", "resp_e"])
+        XCTAssertEqual(stale.count, 2)
+    }
+
+    func testCleanupKeepsAnOpenRequestsResponseEvenWhenItsReqIsGone() throws {
+        let now = 1_800_000_000
+        let objects = [try respObject("x", seen: now - 5_000)]
+        XCTAssertEqual(BookTalkRelayCleanup.stale(objects: objects, deviceId: device, openRequestIds: ["x"], now: now), [])
+        XCTAssertEqual(BookTalkRelayCleanup.stale(objects: objects, deviceId: device, openRequestIds: [], now: now), ["resp_x"])
+    }
+}
+
 
 private final class Flag: @unchecked Sendable {
     private let lock = NSLock()

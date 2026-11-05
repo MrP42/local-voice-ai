@@ -275,9 +275,9 @@ struct BookTalkEngine {
                 return off("Dieses Abo-Modell ist am PC nicht freigegeben oder dein PC hat es nicht veröffentlicht.", budget: .relayCLI1(contextTokens: 0))
             }
             let budget = BookTalkBudget.relayCLI1(contextTokens: info.contextTokens)
-            // Das tatsächliche Modell steht erst in der Antwort (R7); bis dahin zählt die angefragte ID. Unversionierte Namen
-            // gelten als ungeprüft, ein Eintrag der Tabelle braucht die versionierte Kennung.
-            let status = BookTalkEval.status(provider: info.provider.rawValue, model: info.id, budget: budget.name)
+            // Das tatsächliche Modell steht erst in der Antwort (R7): Prüfstatus und „Vorschau“ kommen aus `relay.actualEvalStatus`
+            // nach der Antwort. Vorher gilt das Tupel (unversionierter Alias) als ungeprüft.
+            let status = BookTalkEvalStatus.unchecked
             return BookTalkEngine(model: model, counter: nil, profile: .relayCLI1, budget: budget, label: "\(info.label) · Cloud über deinen PC",
                                   note: nil, llama: nil, relay: model, relayInfo: info, timeout: Self.relayTimeout, evalStatus: status)
         }

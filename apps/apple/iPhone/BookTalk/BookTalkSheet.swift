@@ -259,7 +259,7 @@ struct BookTalkSheet: View {
         case .listening:
             Label("Hört zu · Stille beendet die Frage", systemImage: "waveform").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
         case .thinking:
-            Label(talk.engine.isCloud ? "Frage geht an deinen PC …" : "Sucht im Buch …",
+            Label(talk.engine.isCloud ? (talk.relayPhase == .sending ? "Frage geht an deinen PC …" : "PC rechnet …") : "Sucht im Buch …",
                   systemImage: talk.engine.isCloud ? "cloud" : "magnifyingglass").font(.footnote).foregroundStyle(VoicePalette.secondaryText)
         case .speaking:
             Button { talk.stopAnswer() } label: {
@@ -420,15 +420,25 @@ private struct EntryView: View {
         }
     }
 
+    private var noModelCaption: String {
+        if talk.engine.relay?.rejectedByEval == true { return "Das antwortende Modell hat den Prüflauf nicht bestanden, die Antwort wurde verworfen: hier sind nur die Fundstellen." }
+        return talk.engine.isCloud ? "Dein PC hat dieses Modell nicht (mehr) verfügbar: hier sind nur die Fundstellen." : "Kein Modell bereit: hier sind nur die Fundstellen."
+    }
+
     private func caption(_ code: BookTalkCode) -> String {
         switch code {
         case .noHits: "Dazu habe ich im freigegebenen Teil des Buchs nichts gefunden."
         case .noFrontier: "Ich kenne deine Leseposition noch nicht."
         case .budget: "Zu viel Text für das Modell: hier sind nur die Fundstellen."
-        case .noModel: "Kein Modell bereit: hier sind nur die Fundstellen."
+        case .noModel: noModelCaption
         case .offline: talk.engine.isCloud ? "Dein PC antwortet nicht: hier sind nur die Fundstellen." : "Keine Verbindung: hier sind nur die Fundstellen."
         case .consentRequired: "Die Freigabe für das Abo-Modell fehlt: hier sind nur die Fundstellen."
-        case .timeout: "Das Modell war zu langsam: hier sind nur die Fundstellen."
+        case .timeout: talk.engine.isCloud
+            ? "Der PC war zu langsam (oder die Uhren von iPhone und PC weichen ab): hier sind nur die Fundstellen."
+            : "Das Modell war zu langsam: hier sind nur die Fundstellen."
+        case .llmFailed: talk.engine.isCloud
+            ? "Dein PC konnte keine Antwort liefern (Fehler des Modells oder Grenze des Abos): hier sind nur die Fundstellen."
+            : "Das Modell hat nicht geantwortet: hier sind nur die Fundstellen."
         default: "Hier sind nur die Fundstellen."
         }
     }

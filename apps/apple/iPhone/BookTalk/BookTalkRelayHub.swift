@@ -44,6 +44,10 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
     private let account: LibrarySync.Account
     private var cursor: Int64 = 0
     private var slots: [String: Slot] = [:]
+    /// `request_id`s eigener, noch laufender Anfragen: ihre Objekte räumt das Aufräumen nie ab (R5).
+    private var openRequests: Set<String> = []
+    /// Wann dieses iPhone ein Objekt zum ersten Mal sah (Unix-Sekunden); `resp` trägt keinen eigenen Zeitstempel.
+    private var firstSeen: [String: Int] = [:]
 
     init(account: LibrarySync.Account) { self.account = account }
 
@@ -51,6 +55,7 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
 
     func put(objectId: String, json: Data) async throws {
         try await push(objectId: objectId, json: json, deleted: false)
+        if objectId.hasPrefix("req_") { openRequests.insert(String(objectId.dropFirst(4))) }
     }
 
     func fetch(objectId: String) async throws -> Data? {
@@ -59,6 +64,8 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
     }
 
     func remove(objectId: String) async throws {
+        // Die Anfrage gilt als beendet, sobald ihre Antwort abgeräumt wird (immer vor dem Löschversuch, auch wenn nichts mehr da ist).
+        if objectId.hasPrefix("resp_") { openRequests.remove(String(objectId.dropFirst(5))) }
         if slots[objectId] == nil { try await pull() }
         guard let slot = slots[objectId], slot.json != nil else { return }
         try await push(objectId: objectId, json: nil, deleted: true)
@@ -66,24 +73,26 @@ actor BookTalkRelayHub: BookTalkRelayChannel {
 
     // MARK: Modelle und Aufräumen
 
-    /// Vom PC veröffentlichte Liste, `nil` wenn keine da ist.
+    /// Vom PC veröffentlichte Liste (noch ungeprüft: die Signatur prüft der Aufrufer mit `isAuthentic`), `nil` wenn keine da ist.
     func modelList(desktopDeviceId: String) async throws -> BookTalkRelayModelList? {
         try await pull()
         guard let data = slots[BookTalkRelay.objectId(.models, desktopDeviceId)]?.json else { return nil }
         return try? JSONDecoder().decode(BookTalkRelayModelList.self, from: data)
     }
 
-    /// Eigene Relay-Objekte älter als 10 min abräumen (R5). Läuft nur, wenn keine Anfrage offen ist.
+    /// Eigene Relay-Objekte abräumen (R5, Entscheidung in `BookTalkRelayCleanup`): nie das Objekt einer offenen Anfrage,
+    /// `req` erst nach 10 min, `resp` erst nach 10 min Sichtbarkeit; fremde Objekte nie.
     func cleanup(deviceId: String, now: Int) async {
         try? await pull()
+        var live: [BookTalkRelayCleanup.Object] = []
         for (id, slot) in slots {
-            guard let json = slot.json else { continue }
-            if id.hasPrefix("req_"), let r = try? JSONDecoder().decode(BookTalkRelayRequest.self, from: json), r.deviceId == deviceId,
-               now - r.createdAt > BookTalkRelay.staleAfter {
-                try? await remove(objectId: id)
-            } else if id.hasPrefix("resp_"), let r = try? JSONDecoder().decode(BookTalkRelayResponse.self, from: json), r.deviceId == deviceId {
-                try? await remove(objectId: id)
-            }
+            guard let json = slot.json else { firstSeen[id] = nil; continue }
+            let seen = firstSeen[id] ?? now
+            firstSeen[id] = seen
+            live.append(.init(id: id, json: json, firstSeen: seen))
+        }
+        for id in BookTalkRelayCleanup.stale(objects: live, deviceId: deviceId, openRequestIds: openRequests, now: now) {
+            try? await remove(objectId: id)
         }
     }
 
@@ -187,12 +196,14 @@ final class BookTalkRelayStore: ObservableObject {
 
     // MARK: Einrichtung (R1)
 
-    /// Einrichtungscode vom PC (QR oder Einfügen). Nur für genau dieses Gerät, nie abgelaufen.
+    /// Einrichtungscode vom PC (QR oder Einfügen). Nur für genau dieses Gerät; der Code selbst läuft nach ca. 10 min ab
+    /// (`expires_at`), die Freigabe danach bis `grant_expires_at`.
     func enroll(_ text: String) -> String? {
         guard let e = BookTalkRelayEnrollment.parse(text) else { return "Das ist kein Einrichtungscode vom PC." }
         guard let account = LibrarySync.shared.account else { return "Zuerst unter „Konto & Sync“ anmelden oder koppeln." }
         guard e.deviceId == account.deviceId else { return "Dieser Code gehört zu einem anderen Gerät." }
-        guard !e.isExpired(now: Self.now) else { return "Dieser Code ist abgelaufen. Am PC einen neuen erzeugen." }
+        guard !e.codeExpired(now: Self.now) else { return "Dieser Code ist abgelaufen. Am PC einen neuen erzeugen." }
+        guard !e.isExpired(now: Self.now) else { return "Die Freigabe in diesem Code ist abgelaufen. Am PC neu freigeben." }
         guard RelayKeychain.save(e) else { return "Der Schlüssel konnte nicht im Schlüsselbund gespeichert werden." }
         enrollment = e
         status = ""
@@ -222,6 +233,12 @@ final class BookTalkRelayStore: ObservableObject {
         let hub = channel(for: account)
         do {
             if let list = try await hub.modelList(desktopDeviceId: e.desktopDeviceId) {
+                // Nur eine vom PC mit dem Relay-Schlüssel signierte Liste für genau dieses Gerät zählt (Befund 12).
+                guard list.isAuthentic(key: e.key, desktopDeviceId: e.desktopDeviceId, deviceId: e.deviceId) else {
+                    models = []
+                    status = "Die Modellliste von \(e.desktopName) ist nicht signiert oder gehört nicht zu diesem iPhone und wird ignoriert."
+                    return
+                }
                 models = e.allowed(list.models)
                 UserDefaults.standard.set(try? JSONEncoder().encode(list.models), forKey: Self.modelsKey)
                 status = models.isEmpty ? "\(e.desktopName) hat keine Abo-Modelle für dieses iPhone freigegeben." : ""
@@ -250,8 +267,12 @@ final class BookTalkRelayStore: ObservableObject {
     func makeModel(_ info: BookTalkRelayModelInfo) -> BookTalkRelayModel? {
         guard usable, let e = enrollment, let account = LibrarySync.shared.account else { return nil }
         let consent = Self.consentId(info.id, e.desktopDeviceId)
+        let budget = BookTalkBudget.relayCLI1(contextTokens: info.contextTokens).name
+        let provider = info.provider.rawValue
+        // Prüfstatus nach dem tatsächlichen Modell der Antwort (R7, §11.5), nie nach dem Alias.
         return BookTalkRelayModel(info: info, enrollment: e, channel: channel(for: account),
-                                  authorized: { Self.isConsented(consent) })
+                                  authorized: { Self.isConsented(consent) },
+                                  evalStatus: { BookTalkEval.status(provider: provider, model: $0, budget: budget) })
     }
 
     func info(_ id: String) -> BookTalkRelayModelInfo? { models.first { $0.id == id } }

@@ -40,6 +40,8 @@ final class BookTalkController: ObservableObject {
     @Published var pendingConsent: PendingConsent?
     /// Kopfzeile je Antwort („Claude Sonnet · Cloud über deinen PC“) und Vorschau-Kennzeichnung, nach Eintrags-ID.
     @Published private(set) var badges: [String: AnswerBadge] = [:]
+    /// Stand der Relay-Anfrage („Frage geht an deinen PC“ → „PC rechnet“), nur für die Anzeige beim Denken.
+    @Published private(set) var relayPhase = BookTalkRelayPhase.sending
     let relays = BookTalkRelayStore.shared
 
     struct PendingConsent: Identifiable {
@@ -184,6 +186,7 @@ final class BookTalkController: ObservableObject {
         let made = await BookTalkEngine.make(choice: choice, enabled: enabled)
         guard generation == rebuildGeneration, opened else { made.llama?.release(); return }
         engine = made
+        made.relay?.setPhaseHandler { [weak self] value in Task { @MainActor in self?.relayPhase = value } }
         guard let index else { session = nil; return }
         session = BookTalkSession(index: index, model: made.model, budget: made.budget, tokenCounter: made.counter,
                                   byteProfile: made.profile, timeout: made.timeout, history: history)
@@ -292,6 +295,7 @@ final class BookTalkController: ObservableObject {
         updateFrontier()
         let request = BookTalkRequest(bookId: book.id, requestId: UUID().uuidString, question: question, frontier: frontier, scope: scope, input: input)
         conversation.begin(request)
+        relayPhase = .sending
         phase = .thinking
         speaker.begin(language: BookTalkIntents.language(of: question))
         let waiting = settle
@@ -340,10 +344,19 @@ final class BookTalkController: ObservableObject {
     }
 
     /// Kopfzeile der Antwort: Modell, Ort (lokal oder Cloud über den PC, R7 mit tatsächlichem Modell) und Vorschau (§11.5).
+    /// Eval-Status und „Vorschau“ folgen dem tatsächlichen Modell der Antwort, nicht dem Alias; ein unbekanntes Modell
+    /// (`unknown`) gilt als ungeprüft.
     private func badge() -> AnswerBadge {
-        let preview = engine.evalStatus == .unchecked
-        guard let info = engine.relayInfo else { return AnswerBadge(label: engine.label, cloud: false, preview: preview) }
-        let actual = engine.relay?.actualModel.map { $0 == info.id ? "" : " (\($0))" } ?? ""
+        guard let info = engine.relayInfo, let relay = engine.relay else {
+            return AnswerBadge(label: engine.label, cloud: false, preview: engine.evalStatus == .unchecked)
+        }
+        let preview = relay.actualEvalStatus != .passed
+        let actual: String
+        switch relay.actualModel {
+        case nil: actual = ""
+        case BookTalkRelayModelMatch.unknown?: actual = " (Modell unbestätigt)"
+        case let model?: actual = model == info.id ? "" : " (\(model))"
+        }
         return AnswerBadge(label: "\(info.label)\(actual) · Cloud über deinen PC ‚\(relays.desktopName)‘", cloud: true, preview: preview)
     }
 
@@ -352,13 +365,22 @@ final class BookTalkController: ObservableObject {
         return conversation.entries.last { $0.id == id }
     }
 
+    private func noModelMessage() -> String {
+        if engine.relay?.rejectedByEval == true { return "Das Modell, das tatsächlich geantwortet hat, hat den Prüflauf nicht bestanden. Die Antwort wurde verworfen." }
+        return engine.isCloud ? "Dein PC hat dieses Modell nicht (mehr) verfügbar." : "Es ist kein Modell eingerichtet."
+    }
+
     private func message(for code: BookTalkCode) -> String? {
         switch code {
         case .cancelled: nil
         case .offline: engine.isCloud ? "Dein PC antwortet nicht." : "Keine Verbindung."
         case .consentRequired: "Die Freigabe für dieses Abo-Modell fehlt oder wurde widerrufen."
-        case .timeout: "Die Antwort hat zu lange gedauert."
-        case .noModel: "Es ist kein Modell eingerichtet."
+        case .timeout: engine.isCloud
+            ? "Die Antwort über deinen PC hat zu lange gedauert (oder die Uhren von iPhone und PC weichen ab)."
+            : "Die Antwort hat zu lange gedauert."
+        case .noModel: noModelMessage()
+        case .llmFailed:
+            engine.isCloud ? "Dein PC konnte keine Antwort liefern (Fehler des Modells oder Grenze des Abos erreicht)." : "Die Antwort ist fehlgeschlagen."
         default: "Die Antwort ist fehlgeschlagen."
         }
     }
