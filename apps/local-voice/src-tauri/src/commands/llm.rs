@@ -8,6 +8,7 @@
 
 use tauri::AppHandle;
 
+use crate::managers::llm::cli::{self, Cli};
 use crate::managers::llm::updates::{self, ModelUpdate};
 use crate::settings::{self, AppSettings, LlmConnection, LlmModelConfig, PostProcessProvider};
 
@@ -246,7 +247,6 @@ fn try_start_model_check() -> Option<RunningGuard> {
 #[tauri::command]
 #[specta::specta]
 pub async fn llm_check_new_models(app: AppHandle) -> Result<ModelCheck, String> {
-    use crate::managers::llm::cli::{self, Cli};
     // Laeuft schon eine Pruefung, antwortet dieser Aufruf nur mit dem Stand.
     let guard = try_start_model_check();
     let first = guard.is_some();
@@ -386,6 +386,25 @@ pub fn llm_answer_model_updates(
 }
 
 /// Erlaubt oder verbietet, dass die App die Codex-CLI selbst aktualisiert.
+/// Ist die CLI einer Abo-Verbindung installiert und angemeldet?
+#[tauri::command]
+#[specta::specta]
+pub async fn llm_cli_status(kind: String) -> Result<cli::CliStatus, String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    tokio::task::spawn_blocking(move || cli::status(cli))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Oeffnet die Anmeldung der CLI (`claude auth login`, `codex login`) in einem
+/// eigenen Fenster. Zugangsdaten bleiben bei der CLI.
+#[tauri::command]
+#[specta::specta]
+pub fn llm_cli_login(kind: String) -> Result<(), String> {
+    let cli = Cli::from_kind(&kind).ok_or_else(|| format!("Keine CLI-Vorlage: {kind}"))?;
+    cli::open_login(cli)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn llm_set_cli_auto_update(app: AppHandle, enabled: bool) -> Result<(), String> {

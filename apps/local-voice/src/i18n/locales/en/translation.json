@@ -2658,6 +2658,17 @@
       }
     },
     "llm": {
+        "cliStatus": {
+          "loggedIn": "Signed in.",
+          "loggedOut": "Not signed in. Signing in opens a window and then your browser.",
+          "unknown": "The sign-in could not be checked.",
+          "login": "Sign in",
+          "loginFailed": "The sign-in window could not be opened.",
+          "missing": {
+            "claude_cli": "Claude Code is not installed on this computer, and this connection needs it. Install Claude Code (claude.com/claude-code) or add an “Anthropic” connection with an API key instead.",
+            "codex_cli": "The Codex CLI is not installed on this computer. Install it with npm i -g @openai/codex, or add an “OpenAI” connection with an API key instead."
+          }
+        },
         "cli": {
           "claude_cli": "Uses your Claude subscription (Pro/Max) through the installed Claude Code. Sign in inside Claude Code itself (claude, then /login) – the app never sees credentials. Personal use only. Blocked under the \"EU\" rule set (USA, no DPA).",
           "codex_cli": "Uses your ChatGPT subscription (Plus/Pro) through the installed Codex CLI. Sign in inside Codex itself (codex login). Note: OpenAI's terms recommend API keys for programmatic use; going through the subscription is a grey area. Blocked under the \"EU\" rule set (USA, no DPA)."
@@ -3803,7 +3814,7 @@
       "parallelSummaryMaximum": "Recommendation for this PC: {{count}} at a time – the app's maximum. The hardware would allow more.",
       "parallelDerivationTitle": "Derivation",
       "parallelByCpu": "Processor cores: {{cpus}} → {{count}} (one run per four cores)",
-      "parallelByRam": "Memory: {{ram}} GB → {{count}} (half after 6 GB system reserve, {{perRun}} GB per run)",
+      "parallelByRam": "Memory: {{ram}} GB → {{count}} (half after the system reserve, {{perRun}} GB per run)",
       "parallelByRamUnknown": "Memory: not measurable, no limit",
       "parallelByVram": "Graphics memory: {{vram}} GB → {{count}} ({{perRun}} GB per run)",
       "parallelByVramCpuModel": "Graphics memory: not counted, the model runs on the processor",

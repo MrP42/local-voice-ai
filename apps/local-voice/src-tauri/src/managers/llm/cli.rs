@@ -212,6 +212,15 @@ pub enum Cli {
 }
 
 impl Cli {
+    /// Vorlagenkennung der Verbindung (`claude_cli`, `codex_cli`).
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        match kind {
+            "claude_cli" => Some(Self::Claude),
+            "codex_cli" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
     pub fn from_base_url(url: &str) -> Option<Self> {
         match url.trim_end_matches('/') {
             CLAUDE_CLI_URL => Some(Self::Claude),
@@ -286,6 +295,131 @@ pub fn locate(cli: Cli) -> Option<PathBuf> {
     dirs.iter()
         .flat_map(|d| names.iter().map(move |n| d.join(n)))
         .find(|p| p.is_file())
+}
+
+/// Zustand einer CLI auf diesem Rechner, fuer die Verbindungsseite.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct CliStatus {
+    pub installed: bool,
+    /// `None`: die CLI hat keine lesbare Antwort gegeben.
+    pub logged_in: Option<bool>,
+}
+
+/// Wie lange die Statusabfrage dauern darf.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn status_args(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &["auth", "status", "--json"],
+        Cli::Codex => &["login", "status"],
+    }
+}
+
+fn login_args(cli: Cli) -> &'static [&'static str] {
+    match cli {
+        Cli::Claude => &["auth", "login"],
+        Cli::Codex => &["login"],
+    }
+}
+
+/// Liest nur "angemeldet ja/nein" aus der Antwort der CLI. Konto und E-Mail,
+/// die `claude auth status` mitliefert, werden weder gespeichert noch gezeigt.
+fn parse_status(cli: Cli, stdout: &str, stderr: &str) -> Option<bool> {
+    match cli {
+        Cli::Claude => serde_json::from_str::<serde_json::Value>(stdout)
+            .ok()?
+            .get("loggedIn")?
+            .as_bool(),
+        Cli::Codex => {
+            let text = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+            if text.contains("not logged in") {
+                Some(false)
+            } else if text.contains("logged in") {
+                Some(true)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Ist die CLI da, und ist man angemeldet? Blockiert -- auf einem
+/// Blocking-Thread ausfuehren.
+pub fn status(cli: Cli) -> CliStatus {
+    let Some(binary) = locate(cli) else {
+        return CliStatus {
+            installed: false,
+            logged_in: None,
+        };
+    };
+    let (program, mut argv) = launcher(&binary);
+    argv.extend(status_args(cli).iter().map(|s| s.to_string()));
+    let mut cmd = Command::new(program);
+    cmd.args(&argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let logged_in = cmd
+        .spawn()
+        .ok()
+        .and_then(|child| run_with_timeout(child, None, STATUS_TIMEOUT).ok())
+        .and_then(|out| {
+            parse_status(
+                cli,
+                &String::from_utf8_lossy(&out.stdout),
+                &String::from_utf8_lossy(&out.stderr),
+            )
+        });
+    CliStatus {
+        installed: true,
+        logged_in,
+    }
+}
+
+/// Befehlszeile fuer `cmd`: scheitert die Anmeldung, bleibt das Fenster mit
+/// der Meldung der CLI offen, statt sich sofort zu schliessen.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn login_command_line(program: &Path, argv: &[String]) -> String {
+    let quoted: Vec<String> = std::iter::once(program.to_string_lossy().into_owned())
+        .chain(argv.iter().cloned())
+        .map(|a| format!("\"{a}\""))
+        .collect();
+    format!("/S /C \"{} || pause\"", quoted.join(" "))
+}
+
+/// Oeffnet die Anmeldung der CLI in einem eigenen Konsolenfenster. Sie laeuft
+/// ganz in der CLI und im Browser; die App sieht davon nichts.
+#[cfg(windows)]
+pub fn open_login(cli: Cli) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let binary = locate(cli)
+        .ok_or_else(|| "cli_missing: Die CLI des Anbieters ist nicht installiert".to_string())?;
+    let (program, mut argv) = launcher(&binary);
+    argv.extend(login_args(cli).iter().map(|s| s.to_string()));
+    Command::new("cmd")
+        .raw_arg(login_command_line(&program, &argv))
+        .creation_flags(0x0000_0010) // CREATE_NEW_CONSOLE
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("cli_failed: {e}"))
+}
+
+#[cfg(not(windows))]
+pub fn open_login(cli: Cli) -> Result<(), String> {
+    Err(format!(
+        "cli_failed: Bitte im Terminal anmelden: {} {}",
+        if cli == Cli::Claude {
+            "claude"
+        } else {
+            "codex"
+        },
+        login_args(cli).join(" ")
+    ))
 }
 
 /// Argumente des isolierten Aufrufs (Prompt kommt ueber stdin).
@@ -841,6 +975,43 @@ pub(crate) fn mcp_disable_args(list_json: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_login_state_is_read_from_both_clis() {
+        let logged_in = r#"{"loggedIn":true,"email":"x@example.org"}"#;
+        assert_eq!(parse_status(Cli::Claude, logged_in, ""), Some(true));
+        assert_eq!(
+            parse_status(Cli::Claude, r#"{"loggedIn":false}"#, ""),
+            Some(false)
+        );
+        assert_eq!(parse_status(Cli::Claude, "kaputt", ""), None);
+        // Codex schreibt je nach Version nach stdout oder stderr.
+        assert_eq!(
+            parse_status(Cli::Codex, "", "Logged in using ChatGPT"),
+            Some(true)
+        );
+        assert_eq!(parse_status(Cli::Codex, "Not logged in", ""), Some(false));
+        assert_eq!(parse_status(Cli::Codex, "", ""), None);
+    }
+
+    #[test]
+    fn the_login_window_stays_open_on_failure() {
+        let line = login_command_line(
+            Path::new(r"C:\Program Files\claude.exe"),
+            &["auth".to_string(), "login".to_string()],
+        );
+        assert_eq!(
+            line,
+            r#"/S /C ""C:\Program Files\claude.exe" "auth" "login" || pause""#
+        );
+    }
+
+    #[test]
+    fn only_the_two_cli_kinds_are_accepted() {
+        assert_eq!(Cli::from_kind("claude_cli"), Some(Cli::Claude));
+        assert_eq!(Cli::from_kind("codex_cli"), Some(Cli::Codex));
+        assert_eq!(Cli::from_kind("anthropic"), None);
+    }
 
     #[test]
     fn claude_json_reply_is_parsed_with_tokens() {

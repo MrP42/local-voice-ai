@@ -18,9 +18,12 @@
 
 use std::time::Duration;
 
-/// RAM, den die App dem System immer laesst (MB). Darunter wird kein Server
-/// gestartet, und ein Kindprozess darf nie mehr als (frei - Reserve) belegen.
+/// RAM, den die App dem System hoechstens laesst (MB). Darunter wird kein
+/// Server gestartet, und ein Kindprozess darf nie mehr als (frei - Reserve)
+/// belegen. Die wirksame Reserve liefert [`ram_reserve_mb`].
 pub const RAM_RESERVE_MB: u64 = 6 * 1024;
+/// Untergrenze der Reserve (MB), auch auf kleinen Rechnern.
+pub const RAM_RESERVE_MIN_MB: u64 = 3 * 1024;
 /// Notgrenze des Wächters (MB): darunter werden laufende Server gestoppt.
 pub const RAM_EMERGENCY_MB: u64 = 2 * 1024;
 /// Unter diesem Deckel lohnt kein Start: das Modell passt dann ohnehin nicht.
@@ -34,6 +37,29 @@ pub const WATCH_INTERVAL: Duration = Duration::from_secs(5);
 /// freien RAM auf n MB. Er kann Tore nur SCHLIESSEN, nie oeffnen (Minimum
 /// mit dem Messwert); ungueltige Werte werden ignoriert.
 pub const TEST_FREE_RAM_ENV: &str = "LVA_TEST_FREE_RAM_MB";
+
+/// Reserve fuer einen Rechner mit `total_mb` RAM: ein Fuenftel, zwischen
+/// [`RAM_RESERVE_MIN_MB`] und [`RAM_RESERVE_MB`]. Feste 6 GB verlangten auf
+/// dem 16-GB-Zielgeraet (docs/PORTABLE.md) 8,6 GB frei fuer das 2,6-GB-Modell;
+/// ab 32 GB bleibt es bei 6 GB. `0` heisst "nicht messbar": dann die volle
+/// Reserve.
+pub fn reserve_for_total_mb(total_mb: u64) -> u64 {
+    if total_mb == 0 {
+        return RAM_RESERVE_MB;
+    }
+    (total_mb / 5).clamp(RAM_RESERVE_MIN_MB, RAM_RESERVE_MB)
+}
+
+/// Wirksame Reserve dieses Rechners (MB); der Gesamtspeicher aendert sich
+/// zur Laufzeit nicht und wird einmal gemessen.
+pub fn ram_reserve_mb() -> u64 {
+    static RESERVE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *RESERVE.get_or_init(|| {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        reserve_for_total_mb(sys.total_memory() / (1024 * 1024))
+    })
+}
 
 /// Freier physischer Speicher in MB (0, wenn nicht messbar).
 pub fn available_ram_mb() -> u64 {
@@ -90,12 +116,13 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
     if free == 0 {
         return Ok(0); // nicht messbar: nicht blockieren
     }
-    if free < need_mb + RAM_RESERVE_MB {
+    let reserve = ram_reserve_mb();
+    if free < need_mb + reserve {
         return Err(format!(
             "Zu wenig freier Arbeitsspeicher: {:.1} GB frei, gebraucht werden etwa {:.1} GB plus {:.0} GB Reserve fuer das System. Andere Programme schliessen und erneut starten.",
             free as f64 / 1024.0,
             need_mb as f64 / 1024.0,
-            RAM_RESERVE_MB as f64 / 1024.0
+            reserve as f64 / 1024.0
         ));
     }
     Ok(free)
@@ -104,7 +131,9 @@ pub fn check_ram_for_start(need_mb: u64) -> Result<u64, String> {
 /// Speicher-Deckel fuer einen Kindprozessbaum: alles, was frei ist, minus
 /// die Reserve — nie unter `RAM_MIN_LIMIT_MB`.
 pub fn memory_limit_mb(free_mb: u64) -> u64 {
-    free_mb.saturating_sub(RAM_RESERVE_MB).max(RAM_MIN_LIMIT_MB)
+    free_mb
+        .saturating_sub(ram_reserve_mb())
+        .max(RAM_MIN_LIMIT_MB)
 }
 
 /// Beendet Windows gerade die Sitzung (Herunterfahren, Neustart, Abmelden)?
@@ -554,6 +583,17 @@ mod tests {
     }
 
     #[test]
+    fn the_reserve_follows_the_size_of_the_machine() {
+        assert_eq!(reserve_for_total_mb(8 * 1024), RAM_RESERVE_MIN_MB);
+        // Zielgeraet 16 GB: Windows meldet etwas weniger als 16 384 MB.
+        assert_eq!(reserve_for_total_mb(15_900), 3_180);
+        assert_eq!(reserve_for_total_mb(32 * 1024), RAM_RESERVE_MB);
+        assert_eq!(reserve_for_total_mb(64 * 1024), RAM_RESERVE_MB);
+        // Nicht messbar: die volle Reserve, nicht die kleine.
+        assert_eq!(reserve_for_total_mb(0), RAM_RESERVE_MB);
+    }
+
+    #[test]
     fn test_cap_only_ever_lowers_the_free_ram() {
         assert_eq!(capped_free_mb(20_000, None), 20_000);
         assert_eq!(capped_free_mb(20_000, Some(5_000)), 5_000);
@@ -570,6 +610,7 @@ mod tests {
     fn start_gate_needs_need_plus_reserve() {
         // Nicht messbar (0) blockiert nie; das testet available_ram_mb nicht,
         // sondern die Regel selbst über memory_limit/Reserve.
-        assert!(RAM_RESERVE_MB > RAM_EMERGENCY_MB);
+        assert!(RAM_RESERVE_MIN_MB > RAM_EMERGENCY_MB);
+        assert!(RAM_RESERVE_MIN_MB <= RAM_RESERVE_MB);
     }
 }

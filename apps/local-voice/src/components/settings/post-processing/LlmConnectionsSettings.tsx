@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Select as FluentSelect } from "@fluentui/react-components";
 import { useTranslation } from "react-i18next";
 import {
   commands,
+  type CliStatus,
   type LlmConnection,
   type LlmModelConfig,
   type LlmModelSeen,
@@ -51,6 +52,78 @@ const SUBSCRIPTION_OF: Record<string, string> = {
   anthropic: "claude_cli",
   openai: "codex_cli",
   openai_eu: "codex_cli",
+};
+
+/// Zustand der CLI und der Weg zur Anmeldung: die Anmeldung selbst laeuft in
+/// der CLI, die App oeffnet sie nur und liest danach "angemeldet ja/nein".
+const CliSignIn: React.FC<{ kind: string }> = ({ kind }) => {
+  const { t } = useTranslation();
+  const [status, setStatus] = useState<CliStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [waiting, setWaiting] = useState(false);
+  const latest = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const request = ++latest.current;
+    const result = await commands.llmCliStatus(kind);
+    if (result.status === "ok" && request === latest.current) {
+      setStatus(result.data);
+      if (result.data.logged_in === true) setWaiting(false);
+    }
+  }, [kind]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Nur nach "Anmelden": jede Abfrage startet einen Prozess der CLI.
+  useEffect(() => {
+    if (!waiting) return;
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [waiting, refresh]);
+
+  const login = async () => {
+    setFailed(false);
+    const result = await commands.llmCliLogin(kind);
+    if (result.status === "ok") setWaiting(true);
+    else setFailed(true);
+  };
+
+  if (!status) return null;
+  if (!status.installed) {
+    return (
+      <p className="text-xs text-text/80" data-cli-status="missing">
+        {t(`settings.llm.cliStatus.missing.${kind}`)}
+      </p>
+    );
+  }
+  if (status.logged_in === true) {
+    return (
+      <p className="text-xs text-text/80" data-cli-status="logged-in">
+        {t("settings.llm.cliStatus.loggedIn")}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-1" data-cli-status="logged-out">
+      <p className="text-xs text-text/80">
+        {t(
+          status.logged_in === false
+            ? "settings.llm.cliStatus.loggedOut"
+            : "settings.llm.cliStatus.unknown",
+        )}
+      </p>
+      <Button variant="secondary" size="sm" onClick={() => void login()}>
+        {t("settings.llm.cliStatus.login")}
+      </Button>
+      {failed && (
+        <p className="text-xs text-red-500">
+          {t("settings.llm.cliStatus.loginFailed")}
+        </p>
+      )}
+    </div>
+  );
 };
 
 /// Fehler beim Laden der Modelle als Klartext: abgelehnter Schluessel statt Roh-JSON.
@@ -476,6 +549,10 @@ const ConnectionRow: React.FC<RowProps> = ({
             <p className="text-xs text-text/60" data-cli-hint={connection.kind}>
               {t(`settings.llm.cli.${connection.kind}`)}
             </p>
+          )}
+          {(connection.kind === "claude_cli" ||
+            connection.kind === "codex_cli") && (
+            <CliSignIn kind={connection.kind} />
           )}
           {connection.kind === "bedrock_mantle" && (
             <label className="block text-sm">

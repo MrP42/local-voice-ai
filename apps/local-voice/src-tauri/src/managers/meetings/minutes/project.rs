@@ -62,8 +62,8 @@ use super::{
     MinutesRunGuard, ProgressFn, Reporter, CODE_CANCELLED,
 };
 use crate::managers::meetings::llm_call::{
-    ask_json, is_splittable_error, is_truncation_error, resolve_provider_coded, retry_chunk,
-    should_retry, SemanticRetry,
+    ask_json, is_splittable_error, is_truncation_error, ram_probe_for, resolve_provider_coded,
+    retry_chunk, should_retry, SemanticRetry,
 };
 use crate::managers::meetings::notes::blocks::{run_blocks, Step, Work};
 use crate::managers::meetings::notes::budget;
@@ -1122,7 +1122,11 @@ pub async fn generate_project_minutes(
     request: &Request<'_>,
     on_progress: ProgressFn<'_>,
 ) -> Result<ProjectMinutes, String> {
-    generate_guarded(settings, store, request, Limits::default(), on_progress)
+    let limits = Limits {
+        free_mb: ram_probe_for(&settings.for_function(crate::settings::FN_MEETING_PROTOCOL)),
+        ..Limits::default()
+    };
+    generate_guarded(settings, store, request, limits, on_progress)
         .await
         .map_err(String::from)
 }

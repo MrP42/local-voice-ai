@@ -259,7 +259,7 @@ pub fn plan_final_pass(
         },
     };
     if let Some(free) = hw.free_ram_mb {
-        if free < ram_need_mb(size_mb) + crate::process_guard::RAM_RESERVE_MB {
+        if free < ram_need_mb(size_mb) + crate::process_guard::ram_reserve_mb() {
             return FinalPlan::Keep(KeepReason::LowRam);
         }
     }
