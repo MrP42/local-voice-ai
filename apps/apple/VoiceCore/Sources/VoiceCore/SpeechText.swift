@@ -13,14 +13,14 @@ public enum SpeechText {
         (#"usw\."#, "und so weiter"), (#"bzw\."#, "beziehungsweise"), (#"ca\."#, "circa"),
         (#"vgl\."#, "vergleiche"), (#"evtl\."#, "eventuell"), (#"ggf\."#, "gegebenenfalls"),
         (#"inkl\."#, "inklusive"), (#"etc\."#, "et cetera"), (#"Dr\."#, "Doktor"),
-        (#"Prof\."#, "Professor"), (#"Nr\.(?=\s?\d)"#, "Nummer"), (#"S\.(?=\s?\d)"#, "Seite"),
+        (#"Prof\."#, "Professor"), (#"Nr\.\s?(?=\d)"#, "Nummer "), (#"S\.\s?(?=\d)"#, "Seite "),
         (#"Hr\."#, "Herr"), (#"Fr\.(?=\s\p{Lu})"#, "Frau"), (#"Mio\."#, "Millionen"),
         (#"Mrd\."#, "Milliarden"), (#"Jh\."#, "Jahrhundert"),
     ]
     private static let english: [(String, String)] = [
         (#"e\.\s?g\."#, "for example"), (#"i\.\s?e\."#, "that is"), (#"etc\."#, "et cetera"),
         (#"vs\."#, "versus"), (#"Mr\."#, "Mister"), (#"Mrs\."#, "Missus"), (#"Dr\."#, "Doctor"),
-        (#"No\.(?=\s?\d)"#, "number"),
+        (#"No\.\s?(?=\d)"#, "number "),
     ]
 
     private static let compiled: [String: [(NSRegularExpression, String)]] = {

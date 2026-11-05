@@ -23,7 +23,8 @@ final class LibraryPlayback: NSObject, ObservableObject {
         didSet {
             UserDefaults.standard.set(flow, forKey: SpeechFlow.storageKey)
             guard mode == .readAloud, oldValue != flow else { return }
-            if phononTask != nil, !playing { discardPausedSpeech() } else if playing, phononTask != nil { speakCurrent() }
+            // Während Phonon noch lädt nichts tun: read() liest Tempo und Fluss erst danach.
+            if phononTask != nil, phononPaused { discardPausedSpeech() } else if playing, phononTask != nil { speakCurrent() }
         }
     }
     @Published private(set) var sleepEnds: Date?
@@ -411,14 +412,15 @@ final class LibraryPlayback: NSObject, ObservableObject {
         PhononEngine.shared.prepare(voice: voice, sentences: upcoming)
     }
 
-    /// Pausierte Äußerung verwerfen: Weiter beginnt am aktuellen Satz.
     /// Bibliothek geöffnet: Modell und Stimme schon laden, bevor ein Buch gewählt ist.
     /// Das erste Laden (Core ML) dauert einige Sekunden; danach beginnt Vorlesen sofort.
     func warmUp() {
-        guard !busy, phononTask == nil, let voice = phononVoice else { return }
+        // Mit offenem Buch läuft schon die Vorschau der nächsten Sätze; nicht abbrechen.
+        guard book == nil, !busy, phononTask == nil, let voice = phononVoice else { return }
         PhononEngine.shared.prepare(voice: voice)
     }
 
+    /// Pausierte Äußerung verwerfen: Weiter beginnt am aktuellen Satz.
     private func discardPausedSpeech() {
         if synth.isPaused { currentUtterance = nil; synth.stopSpeaking(at: .immediate) }
         stopPhonon()
@@ -547,7 +549,7 @@ final class LibraryPlayback: NSObject, ObservableObject {
             // Phonon: Das Tempo steckt im erzeugten Ton, also am aktuellen Satz neu ansetzen
             // (aus dem Satzspeicher sofort). Pausiert gilt es beim Weiterlesen.
             PhononEngine.shared.setRate(rate)
-            if phononTask != nil, !playing { discardPausedSpeech() } else if playing { speakCurrent() }
+            if phononTask != nil, phononPaused { discardPausedSpeech() } else if playing { speakCurrent() }
         }
     }
 

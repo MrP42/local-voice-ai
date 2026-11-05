@@ -6,6 +6,7 @@ final class SpeechTextTests: XCTestCase {
         XCTAssertEqual(SpeechText.spoken("Obst, z. B. Äpfel, d.h. gesund.", language: "de"),
                        "Obst, zum Beispiel Äpfel, das heißt gesund.")
         XCTAssertEqual(SpeechText.spoken("Siehe S. 12 bzw. Nr. 3.", language: "de"), "Siehe Seite 12 beziehungsweise Nummer 3.")
+        XCTAssertEqual(SpeechText.spoken("Nr.5 auf S.7", language: "de"), "Nummer 5 auf Seite 7")
         XCTAssertEqual(SpeechText.spoken("Dr. Meier kam.", language: "de"), "Doktor Meier kam.")
     }
 
