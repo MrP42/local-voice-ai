@@ -17,6 +17,8 @@ import { useActiveLlm, useSttModelName } from "./useVoiceInfo";
 import { RecognitionLearning } from "./RecognitionLearning";
 import {
   KNOWLEDGE_AREAS,
+  GLOBAL_AREAS,
+  type GlobalArea,
   SOUVERAENITAET_STUFEN,
   blockedBy,
   describeModels,
@@ -211,7 +213,54 @@ const KnowledgeTab: React.FC = () => {
           )}
         </React.Fragment>
       ))}
+      <GlobalKnowledge ids={ids} toggle={toggle} />
     </>
+  );
+};
+
+/**
+ * Globales Wissen (lva#325): Abrufindex über Bücher, Buchnotizen und
+ * KI-Dokumente sowie die freigegebenen Bereiche oben. Hauptschalter Standard
+ * aus; ohne ihn wird nichts indiziert. Nur mit lokalem Sprachmodell.
+ */
+const GlobalKnowledge: React.FC<{
+  ids: string;
+  toggle: (area: GlobalArea, on: boolean) => void;
+}> = ({ ids, toggle }) => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting } = useSettings();
+  const enabled = !!getSetting("voice_global_context_enabled" as never);
+  const areas = (getSetting("voice_call_knowledge") ?? []) as string[];
+  return (
+    <section
+      aria-labelledby={`${ids}-global`}
+      className="flex flex-col gap-2 border-t border-mid-gray/20 pt-3"
+    >
+      <h3 id={`${ids}-global`} className="m-0 text-[13px] font-semibold">
+        {t("voiceCall.knowledge.global.title")}
+      </h3>
+      <KnowledgeRow
+        id={`${ids}-global-switch`}
+        label={t("voiceCall.knowledge.global.switch")}
+        hint={t("voiceCall.knowledge.global.hint")}
+        checked={enabled}
+        onChange={(on) =>
+          void updateSetting("voice_global_context_enabled" as never, on as never)
+        }
+      />
+      {GLOBAL_AREAS.map((area) => (
+        <KnowledgeRow
+          key={area}
+          id={`${ids}-${area}`}
+          nested
+          label={t(`voiceCall.knowledge.areas.${area}.label`)}
+          hint={t(`voiceCall.knowledge.areas.${area}.hint`)}
+          checked={areas.includes(area)}
+          disabled={!enabled}
+          onChange={(on) => toggle(area, on)}
+        />
+      ))}
+    </section>
   );
 };
 

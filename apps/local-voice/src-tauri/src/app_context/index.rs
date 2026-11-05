@@ -153,6 +153,11 @@ impl AppIndex {
         }
     }
 
+    /// Gibt es Dokumente dieser Art im Index?
+    pub fn has_kind(&self, kind: SourceKind) -> bool {
+        self.docs.keys().any(|k| k.kind == kind)
+    }
+
     pub fn contains(&self, key: &DocKey) -> bool {
         self.docs.contains_key(key)
     }

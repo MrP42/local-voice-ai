@@ -233,6 +233,16 @@ export const KNOWLEDGE_AREAS = [
 ] as const;
 export type KnowledgeArea = (typeof KNOWLEDGE_AREAS)[number];
 
+/**
+ * Bereiche nur des globalen Abrufindex (lva#325): keine Werkzeuge, nur mit dem
+ * Schalter `voice_global_context_enabled`. Sie stehen in derselben Einstellung
+ * `voice_call_knowledge` und bleiben beim Umschalten der Werkzeugbereiche erhalten.
+ */
+export const GLOBAL_AREAS = ["books", "book_notes", "ki_docs"] as const;
+export type GlobalArea = (typeof GLOBAL_AREAS)[number];
+/** Alle Schlüssel in fester Reihenfolge (wie `normalize_keys` im Kern). */
+export const ALL_AREAS = [...KNOWLEDGE_AREAS, ...GLOBAL_AREAS] as const;
+
 /** Deutsche Namen der Bereiche für den Hinweis an das Modell (Transkripte hängen an den Besprechungen). */
 const AREA_LABEL: Record<KnowledgeArea | "transcripts", string> = {
   meetings: "Besprechungen",

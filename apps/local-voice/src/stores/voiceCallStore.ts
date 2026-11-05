@@ -92,6 +92,14 @@ export function compactMainHistory(
 export type VoiceSettingsTab =
   "talk" | "voice" | "recognition" | "knowledge" | "models";
 
+/** Ein geprüfter Beleg einer Antwort (Anzeige, nicht gesprochen). */
+export interface VoiceSource {
+  k: number;
+  kind: string;
+  title: string;
+  page: number | null;
+}
+
 export interface VoiceLine {
   id: number;
   role: "user" | "assistant";
@@ -102,6 +110,8 @@ export interface VoiceLine {
   at: number;
   /** Zeit bis zum ersten Ton (ms), nur bei gesprochenen Antworten. */
   latencyMs?: number;
+  /** Geprüfte Belege des globalen Wissens (lva#325), nur bei Antworten. */
+  sources?: VoiceSource[];
   /** Gesprochen (Anruf) oder getippt; so steht es im gespeicherten Beitrag. */
   mode?: "typed" | "spoken";
   /** Kennung der Äußerung in der Engine (für spätere Korrekturen im Verlauf der KI). */
@@ -518,6 +528,29 @@ export const useVoiceCallStore = create<VoiceCallStore>()((set, get) => {
               break;
             }
             return { lines, metrics: [...s.metrics.slice(-19), m] };
+          }),
+        onCitations: (turnId, hits) =>
+          set((s) => {
+            if (hits.length === 0) return {};
+            const at = s.lines.findIndex(
+              (l) => l.role === "user" && l.turnId === turnId,
+            );
+            if (at < 0) return {};
+            const i = s.lines.findIndex(
+              (l, j) => j > at && l.role === "assistant",
+            );
+            if (i < 0) return {};
+            const lines = [...s.lines];
+            lines[i] = {
+              ...lines[i],
+              sources: hits.map((h) => ({
+                k: h.k,
+                kind: h.kind,
+                title: h.title,
+                page: h.jump.page,
+              })),
+            };
+            return { lines };
           }),
         onError: (error) => set({ error }),
         conversationId: async () => {

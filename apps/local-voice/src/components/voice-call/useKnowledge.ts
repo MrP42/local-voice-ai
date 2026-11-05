@@ -2,7 +2,8 @@ import { useCallback, useMemo } from "react";
 import { useSettings } from "@/hooks/useSettings";
 import { useVoiceCallStore } from "@/stores/voiceCallStore";
 import {
-  KNOWLEDGE_AREAS,
+  ALL_AREAS,
+  type GlobalArea,
   knowledgeFrom,
   type KnowledgeArea,
   type KnowledgeState,
@@ -40,11 +41,11 @@ export function useKnowledgeEditor() {
     [updateSetting, knowledgeChanged],
   );
   const toggle = useCallback(
-    (area: KnowledgeArea, on: boolean) => {
+    (area: KnowledgeArea | GlobalArea, on: boolean) => {
       const current = (getSetting("voice_call_knowledge") ?? []) as string[];
       save(
         "voice_call_knowledge",
-        KNOWLEDGE_AREAS.filter((a) => (a === area ? on : current.includes(a))),
+        ALL_AREAS.filter((a) => (a === area ? on : current.includes(a))),
       );
     },
     [getSetting, save],

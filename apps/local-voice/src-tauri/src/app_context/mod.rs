@@ -30,6 +30,7 @@ pub mod model;
 pub mod progress;
 pub mod prompt;
 pub mod retrieve;
+pub mod service;
 
 #[cfg(test)]
 mod tests;

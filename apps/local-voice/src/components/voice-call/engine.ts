@@ -18,6 +18,13 @@ import {
   type Prepared,
 } from "./orchestration";
 import { COMPLIANCE_CHANGED } from "@/stores/complianceStore";
+import {
+  GlobalContext,
+  speakable,
+  withContext,
+  type ContextHit,
+  type PreparedContext,
+} from "./globalContext";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { ChatSide } from "@/vendor/wai-voice/backend.ts";
 
@@ -48,6 +55,10 @@ export interface TurnMetrics {
   ttsFirstMs: number;
   /** letzter Sprachlaut des Nutzers bis erster Ton der KI (ms) */
   firstSoundMs: number;
+  /** Globaler Kontext: Abruf und Prompt fertig (ms ab Start des Abrufs), fehlt ohne Kontext. */
+  contextMs?: number;
+  /** Zahl der Auszüge im Prompt (0 = gesucht, nichts gefunden). */
+  contextHits?: number;
 }
 
 export interface CallReady {
@@ -88,6 +99,10 @@ export interface CallCallbacks {
   onStatus?(status: CallStatus | null): void;
   /** Das laufende gespeicherte Gespräch (für die Wissenswerkzeuge); `null` bis zum ersten Beitrag; wartet auf ein laufendes Speichern. */
   conversationId?(): string | null | Promise<string | null>;
+  /** Globaler Sprachassistent (lva#325): geprüfte Belege einer Antwort. */
+  onCitations?(turnId: string, hits: ContextHit[]): void;
+  /** Zeitpunkte des Kontexts (Messung t2/t3, Plan M7). */
+  onContextTiming?(turnId: string, retrieveMs: number, promptMs: number, hits: number): void;
 }
 
 interface ChatMessage {
@@ -183,6 +198,17 @@ export class VoiceCallEngine {
    * Sprechen, Turn-Taking, Barge-in und Verlauf bleiben die der Engine.
    */
   private sideOverride: ChatSide | null = null;
+  /**
+   * Globaler Kontext aus allen freigegebenen Inhalten (lva#325). Nur aktiv mit
+   * Schalter `voice_global_context_enabled`, ohne eigene Denk-Seite (im Buch
+   * gilt das Buch-Gespräch) und nur mit LOKALEM Sprecher ohne Orchestrator:
+   * Abrufkontext geht so nie an ein Cloud-Modell (Plan M6; die Freigabe je
+   * Anbieter folgt mit P5).
+   */
+  private globalContext = new GlobalContext(
+    <T,>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args),
+  );
+  private speakerLocal = false;
   private unwatch: (() => void) | null = null;
 
   constructor(cb: CallCallbacks, cfg: CallConfig) {
@@ -216,6 +242,68 @@ export class VoiceCallEngine {
   /** Denken aus einer eigenen Seite (z. B. „Buch“); `null` = wieder der Orchestrator. */
   setSideOverride(side: ChatSide | null): void {
     this.sideOverride = side;
+    // Seitenwechsel: vorbereiteter Kontext gilt nicht mehr (Plan M5).
+    this.globalContext.clear();
+  }
+
+  /** Schalter an und Bereiche frei (sonst kein Abruf, kein Vorwärmen; Plan M8). */
+  private globalContextOn(): boolean {
+    const s = useSettingsStore.getState().settings as
+      | {
+          voice_global_context_enabled?: boolean;
+          voice_call_knowledge?: string[];
+        }
+      | null
+      | undefined;
+    return (
+      !!s?.voice_global_context_enabled &&
+      (s.voice_call_knowledge?.length ?? 0) > 0
+    );
+  }
+
+  /** Letzte Nutzeräußerung (Rückbezug für den Abruf). */
+  private lastUserText(): string | null {
+    for (let i = this.history.length - 1; i >= 0; i--)
+      if (this.history[i].role === "user") return this.history[i].content;
+    return null;
+  }
+
+  /** Kontext für einen Schritt; `null`, wenn er nicht gilt (siehe `globalContext`). */
+  private async contextFor(
+    turnId: string,
+    text: string,
+    side: ChatSide | null | undefined,
+  ): Promise<PreparedContext | null> {
+    if (side || this.sideOverride || !this.speakerLocal) return null;
+    if (!this.globalContextOn()) return null;
+    const conversationId = (await this.cb.conversationId?.()) ?? null;
+    const ctx =
+      (await this.globalContext.take(turnId, text)) ??
+      (await this.globalContext.prepare({
+        turnId,
+        transcript: text,
+        previous: this.lastUserText(),
+        conversationId,
+      }));
+    if (ctx)
+      this.cb.onContextTiming?.(
+        turnId,
+        ctx.retrieveMs,
+        ctx.promptMs,
+        ctx.hits.hits.length,
+      );
+    return ctx;
+  }
+
+  private async reportCitations(
+    turnId: string,
+    answer: string,
+    ctx: PreparedContext | null,
+  ): Promise<void> {
+    if (!ctx || ctx.hits.hits.length === 0) return;
+    const ok = await this.globalContext.verify(answer, ctx);
+    this.globalContext.discard(turnId);
+    this.cb.onCitations?.(turnId, ok);
   }
 
   /**
@@ -348,6 +436,9 @@ export class VoiceCallEngine {
     try {
       const ready = await invoke<CallReady>("voice_call_start");
       if (aborted()) throw new Error(START_ABORTED);
+      this.speakerLocal = ready.llm_local;
+      if (this.globalContextOn())
+        void invoke("app_context_warm").catch(() => undefined);
       ctx = new AudioContext({ latencyHint: "interactive" });
       this.ctx = ctx;
       await ctx.resume();
@@ -658,6 +749,8 @@ export class VoiceCallEngine {
       };
       const { side, blocked, systemPrompt } = await this.orchestrate();
       if (stale() || blocked) return;
+      const gctx = await this.contextFor(id, text, side);
+      if (stale()) return;
       let full = "";
       if (side) {
         run.side = side;
@@ -677,7 +770,10 @@ export class VoiceCallEngine {
         });
         full = await invoke<string>("voice_call_chat", {
           requestId: id,
-          messages: this.messagesFor(text, systemPrompt),
+          messages: withContext(
+            this.messagesFor(text, systemPrompt),
+            gctx?.message ?? null,
+          ),
         });
         if (stale()) return;
         await Promise.race([
@@ -691,6 +787,7 @@ export class VoiceCallEngine {
         this.history.push({ role: "user", content: shown, turnId: id });
         this.history.push({ role: "assistant", content: answer });
         this.cb.onAssistant(answer, true, false);
+        void this.reportCitations(id, answer, gctx);
       }
     } catch (e) {
       if (!stale()) this.cb.onError(String(e));
@@ -719,6 +816,8 @@ export class VoiceCallEngine {
     let firstAudioAt = 0;
     let chain: Promise<void> = Promise.resolve();
     let assistantText = "";
+    // Kontext dieses Schritts (für die Messung; gesetzt nach dem Abruf).
+    let turnCtx: PreparedContext | null = null;
 
     let finishStream!: () => void;
     const streamEnded = new Promise<void>((r) => (finishStream = r));
@@ -731,8 +830,10 @@ export class VoiceCallEngine {
         if (dead()) return;
         let wav: string;
         try {
+          const spoken = speakable(piece);
+          if (!spoken.trim()) return;
           wav = await invoke<string>("voice_call_synthesize", {
-            text: piece,
+            text: spoken,
           });
         } catch (err) {
           if (!dead()) this.cb.onError(String(err));
@@ -752,6 +853,12 @@ export class VoiceCallEngine {
               llmFirstMs: Math.round(firstSentenceAt - tChat),
               ttsFirstMs: Math.round(firstAudioAt - firstSentenceAt),
               firstSoundMs: Math.round(at - turn.lastSpeechWall),
+              ...(turnCtx
+                ? {
+                    contextMs: turnCtx.promptMs,
+                    contextHits: turnCtx.hits.hits.length,
+                  }
+                : {}),
             });
           };
         }
@@ -762,6 +869,13 @@ export class VoiceCallEngine {
 
     const { side, blocked, systemPrompt } = await this.orchestrate();
     if (dead()) return;
+    // Globaler Kontext: lokal geholt, schon beim spekulativen Start (Plan L1/M5).
+    const gctx = blocked ? null : await this.contextFor(turn.id, text, side);
+    turnCtx = gctx;
+    if (dead()) {
+      this.globalContext.discard(turn.id);
+      return;
+    }
     if (blocked) {
       // Kein Gespräch mit einem gesperrten Modell: der Hinweis steht im Gespräch.
       this.dropTurn(turn);
@@ -783,7 +897,10 @@ export class VoiceCallEngine {
       });
       await invoke<string>("voice_call_chat", {
         requestId: turn.id,
-        messages: this.messagesFor(text, systemPrompt),
+        messages: withContext(
+          this.messagesFor(text, systemPrompt),
+          gctx?.message ?? null,
+        ),
       });
       // Das letzte Häppchen kann nach dem Rückgabewert eintreffen: auf `done` warten.
       if (!dead())
@@ -809,6 +926,7 @@ export class VoiceCallEngine {
     this.history.push({ role: "assistant", content: assistantText });
     turn.historyPushed = true;
     this.cb.onAssistant(assistantText, true, false);
+    void this.reportCitations(turn.id, assistantText, gctx);
     // Ende der Wiedergabe meldet player.onIdle -> finishTurn.
     if (!this.player?.active) this.finishTurn();
   }
@@ -831,6 +949,7 @@ export class VoiceCallEngine {
     turn.cancelled = true;
     turn.finishStream?.();
     this.turn = null;
+    this.globalContext.discard(turn.id);
     this.sentenceHandlers.delete(turn.id);
     void turn.side?.cancel?.(turn.id);
     void invoke("voice_call_cancel", { requestId: turn.id }).catch(

@@ -238,6 +238,26 @@ export const Transcript: React.FC<{
                   >
                     {line.text}
                     {line.interrupted ? " …" : ""}
+                    {line.sources && line.sources.length > 0 && (
+                      <ul
+                        aria-label={t("voiceCall.sources.label")}
+                        data-testid="voice-sources"
+                        className="m-0 mt-1.5 p-0 list-none flex flex-col gap-0.5 text-xs text-text/70"
+                      >
+                        {line.sources.map((src) => (
+                          <li key={src.k}>
+                            [Q{src.k}]{" "}
+                            {t(`voiceCall.sources.kind.${src.kind}`, {
+                              defaultValue: src.kind,
+                            })}
+                            : {src.title}
+                            {src.page !== null
+                              ? `, ${t("voiceCall.sources.page", { page: src.page })}`
+                              : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 )}
                 <div

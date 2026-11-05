@@ -152,7 +152,7 @@ pub fn book_ai_template_import(app: AppHandle, path: String) -> Result<BookTempl
 // --------------------------------------------------------------- Erzeugen --
 
 /// Originaltext der Seite aus ihrem Arbeitsstand (`state.json`, Feld `text`).
-fn page_text(dir: &std::path::Path) -> Result<String, String> {
+pub(crate) fn page_text(dir: &std::path::Path) -> Result<String, String> {
     let raw = std::fs::read_to_string(dir.join("state.json"))
         .map_err(|_| "book_ai:page_without_text".to_string())?;
     serde_json::from_str::<serde_json::Value>(&raw)
