@@ -583,14 +583,19 @@ mod tests {
     fn stuecke_einer_datei() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("teil.mp3");
-        let data: Vec<u8> = (0..(ONE_CHUNK_MAX as usize + 10)).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..(ONE_CHUNK_MAX as usize + 10))
+            .map(|i| (i % 251) as u8)
+            .collect();
         std::fs::write(&p, &data).unwrap();
         let src = Source::File(p.clone());
         let size = data.len() as u64;
         assert_eq!(src.read_chunk(0, size).unwrap(), data[..CHUNK_PLAIN]);
         assert_eq!(src.read_chunk(1, size).unwrap(), data[CHUNK_PLAIN..]);
         let bytes = Source::Bytes(data.clone());
-        assert_eq!(bytes.read_chunk(1, size).unwrap().len(), 10);
+        assert_eq!(
+            bytes.read_chunk(1, size).unwrap().len(),
+            data.len() - CHUNK_PLAIN
+        );
 
         let mut cache = BTreeMap::new();
         let mut budget = 1;

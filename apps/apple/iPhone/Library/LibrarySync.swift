@@ -368,7 +368,7 @@ final class LibrarySync: ObservableObject {
                 return try JSONSerialization.data(withJSONObject: [
                     "data": sealed.base64EncodedString(),
                     "sha256": SHA256.hash(data: sealed).map { String(format: "%02x", $0) }.joined(),
-                ])
+                ], options: .withoutEscapingSlashes)  // „\\/“ machte die Anfrage rund 1,5 % größer
             }.value
             let (code, data) = try await Self.send(acc.url + "/api/v1/voice/blobs/\(blob)/chunks/\(index)", method: "POST", token: acc.token, body: body, bulk: wifiOnly)
             guard code == 200 else { throw Self.httpError(code, data) }
@@ -390,8 +390,9 @@ final class LibrarySync: ObservableObject {
             fm.createFile(atPath: part.path, contents: nil, attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication])
         }
         let chunk = LibrarySyncFormat.chunkPlainBytes
-        var have = (Self.fileSize(part) ?? 0) / chunk
-        have = min(have, ref.chunks)
+        let partial = Self.fileSize(part) ?? 0
+        var have = min(partial / chunk, ref.chunks)
+        if have == ref.chunks, partial != ref.size { have = ref.chunks - 1 }  // abgerissenes Einzelstück neu holen
         let key = [UInt8](acc.key), userId = acc.userId
         progress(have * chunk)
         for index in have..<ref.chunks {

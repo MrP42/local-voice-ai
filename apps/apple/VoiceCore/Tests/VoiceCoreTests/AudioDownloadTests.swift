@@ -37,6 +37,12 @@ final class AudioDownloadTests: XCTestCase {
         XCTAssertNil(AudioDownload.nextChunk(job().parts[0], .init(complete: true, partialBytes: 0), chunkPlainBytes: chunk))
     }
 
+    func testTornSingleChunkLargerThanChunkSizeIsFetchedAgain() {
+        let part = AudioDownload.Part(blob: "c", size: 7, chunks: 1, file: "teil_003.m4a")
+        XCTAssertEqual(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 5), chunkPlainBytes: chunk), 0)
+        XCTAssertNil(AudioDownload.nextChunk(part, .init(complete: false, partialBytes: 7), chunkPlainBytes: chunk))
+    }
+
     func testSpaceProblem() {
         let fmt: (Int64) -> String = { "\($0) B" }
         XCTAssertNil(AudioDownload.spaceProblem(remainingBytes: 100, freeBytes: nil, format: fmt))

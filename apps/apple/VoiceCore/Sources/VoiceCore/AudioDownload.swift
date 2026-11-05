@@ -60,7 +60,9 @@ public enum AudioDownload {
     public static func nextChunk(_ part: Part, _ state: PartState, chunkPlainBytes: Int) -> Int? {
         if state.complete { return nil }
         let have = min(state.partialBytes / chunkPlainBytes, part.chunks)
-        return have < part.chunks ? have : nil
+        if have < part.chunks { return have }
+        // Ein Einzelstück kann größer sein als `chunkPlainBytes`: Abgerissen wird es neu geholt.
+        return state.partialBytes == part.size ? nil : part.chunks - 1
     }
 
     /// Fehlende Stücke in Hörreihenfolge, ohne angekommene und laufende; höchstens `limit`.
