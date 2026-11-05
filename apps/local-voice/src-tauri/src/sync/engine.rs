@@ -244,8 +244,10 @@ async fn cycle(app: &AppHandle, cfg: &SyncConfig) -> Result<Outcome, HubError> {
     let my_key_id = crypto::key_id(&key);
     let client = HubClient::new(&cfg.url, &cfg.token);
     let mut led = ledger::load(app);
-    if app.state::<SyncEngine>().take_retry_files() {
+    if app.state::<SyncEngine>().take_retry_files() && !led.failed.is_empty() {
         led.failed.clear();
+        // Sofort sichern: bricht dieser Lauf früh ab, gilt der Neuversuch trotzdem.
+        ledger::save(app, &led).map_err(HubError::Other)?;
     }
     let mut changed = false;
     let mut warning: Option<String> = None;
