@@ -110,6 +110,7 @@ import {
 import { storeOutputLanguage, useLanguageInfo } from "./language/languages";
 import { documentBasisText, useDocumentBasis } from "./language/documentBasis";
 import { useRegenerateGuard } from "./useRegenerateGuard";
+import { DiarizationModelButton } from "./DiarizationModelButton";
 
 const formatMmSs = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -1172,6 +1173,11 @@ export const MeetingDetail: React.FC<MeetingDetailProps> = ({
               {t(`meetings.speakers.notices.${code}`, {
                 defaultValue: code,
               })}
+              {code === "model_missing" && (
+                <span className="block mt-1">
+                  <DiarizationModelButton inline />
+                </span>
+              )}
             </li>
           ))}
         </ul>

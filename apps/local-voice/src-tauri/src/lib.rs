@@ -333,6 +333,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
+    // Phonon mit Anton als Vorgabestimme, wenn Phonon schon freigegeben und eingerichtet ist
+    // (einmalig; auch für bestehende Installationen).
+    commands::tts_providers::spawn_default_voice(app_handle);
     app_handle.manage(tts_model_manager);
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
@@ -2322,6 +2325,9 @@ fn specta_builder() -> Builder<tauri::Wry> {
             commands::meeting_speakers::meeting_speaker_unmerge,
             commands::meeting_voiceprint::meeting_voice_matches,
             commands::meeting_voiceprint::meeting_voice_match_dismiss,
+            commands::meeting_diarization::meeting_diarization_model_status,
+            commands::meeting_diarization::meeting_diarization_model_download,
+            commands::meeting_diarization::meeting_diarization_model_cancel,
             commands::meeting_voiceprint::meeting_voiceprint_status,
             commands::meeting_voiceprint::meeting_voiceprint_download,
             commands::meeting_voiceprint::change_meeting_voice_suggestions_setting,

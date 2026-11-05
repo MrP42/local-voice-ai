@@ -791,6 +791,19 @@ test.describe("Wiedergabe und Fortschritt", () => {
       );
       // Der Dateiname steht nicht mehr doppelt ueber dem Player.
       await expect(player).not.toContainText("SWK-Lastgang");
+      // Einzeiler: Play, Zeitstrahl und Tempo auf einer Linie, Ziele >= 24 px.
+      const play = (await player
+        .getByRole("button", { name: "Wiedergabe" })
+        .boundingBox())!;
+      const seek = (await player
+        .getByRole("slider", { name: "Wiedergabeposition" })
+        .boundingBox())!;
+      const mid = (b: { y: number; height: number }) => b.y + b.height / 2;
+      expect(Math.abs(mid(seek) - mid(play))).toBeLessThanOrEqual(2);
+      expect(Math.abs(mid(rb) - mid(play))).toBeLessThanOrEqual(2);
+      for (const b of [play, seek, rb]) {
+        expect(b.height).toBeGreaterThanOrEqual(24);
+      }
     });
   }
 

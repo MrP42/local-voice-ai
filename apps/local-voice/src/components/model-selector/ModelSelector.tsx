@@ -118,6 +118,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
       "model-download-complete",
       (event) => {
         const modelId = event.payload;
+        // Dasselbe Ereignis melden auch Stimmabdruck und Sprechertrennung;
+        // nur Spracherkennungsmodelle werden zum Diktatmodell.
+        if (!useModelStore.getState().models.some((m) => m.id === modelId))
+          return;
         setTimeout(async () => {
           try {
             const isRecording = await commands.isRecording();
