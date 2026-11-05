@@ -333,6 +333,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
     app_handle.manage(tts_manager);
+    // Phonon mit Anton als Vorgabestimme, wenn Phonon schon freigegeben und eingerichtet ist
+    // (einmalig; auch für bestehende Installationen).
+    commands::tts_providers::spawn_default_voice(app_handle);
     app_handle.manage(tts_model_manager);
     app_handle.manage(llm_runtime);
     app_handle.manage(llm_server);
