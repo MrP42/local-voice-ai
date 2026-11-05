@@ -250,3 +250,17 @@ Fallback-Meldung pro Satz wäre unbrauchbar. Beide Pfade teilen jetzt ein Modell
 Nicht gemessen: Das Verhalten wurde bisher mit einem simulierten Desktop getestet, nicht
 auf einem echten Windows-Fenstersystem (Issue #9 verlangt eine Messung, wie oft der Fall
 auftritt). Die Abnahme am Installer steht aus.
+
+## D15 — Handy-Kopplung per QR: eigenes Gerätetoken vom Hub, Schlüssel Gerät-zu-Gerät
+**Datum:** 2026-11-05 · **Status:** entschieden, Umsetzung offen (Issue #289)
+
+Das iPhone soll sich über einen QR-Code der Desktop-App anmelden, ohne Passwort. Weil der
+Sync-Schlüssel `K` aus dem Passwort entsteht und den Hub nie erreicht, reicht ein
+Anmelde-Token allein nicht. Entschieden: Kopplungssitzung im Hub mit Einmalgeheimnis
+(≤ 120 s, einmalig), X25519-Schlüsseltausch zwischen Desktop und iPhone, sechsstelliger
+Vergleichscode, Bestätigung am PC. Der Hub stellt dem iPhone ein **eigenes**, einzeln
+widerrufbares Token aus; `K` geht verschlüsselt am Hub vorbei. Im QR stehen weder Passwort
+noch Token noch `K`. Alle Schritte landen im Audit des Hubs. Kontendienst bleibt bis zum
+Keycloak-Betrieb der Hub (wai-portal); danach wird nur die Token-Ausstellung getauscht.
+Verworfen: Token/Schlüssel direkt im QR (ein Foto wäre Vollzugriff), reines RFC 8628
+(überträgt `K` nicht). Details: `docs/superpowers/specs/2026-11-05-geraete-kopplung-qr.md`.
