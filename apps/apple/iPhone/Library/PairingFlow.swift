@@ -10,7 +10,7 @@ private struct HubTransport: PairingTransport {
     let base: String
 
     private func send(_ request: URLRequest) async throws -> (Int, Data) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request, delegate: NoRedirects.shared)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 
@@ -200,6 +200,7 @@ final class PairingFlow: ObservableObject {
 
 private struct PairingSheet: View {
     @ObservedObject private var flow = PairingFlow.shared
+    @ScaledMetric(relativeTo: .largeTitle) private var sasSize: CGFloat = 52
 
     var body: some View {
         NavigationStack {
@@ -257,17 +258,18 @@ private struct PairingSheet: View {
     }
 
     private func compareStep(_ sas: String) -> some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Text("Vergleichscode").font(.headline)
-            Text(sas.prefix(3) + " " + sas.suffix(3))
-                .font(.system(size: 52, weight: .semibold, design: .monospaced))
-                .accessibilityLabel(sas.map(String.init).joined(separator: " "))
-            Text("Steht derselbe Code am PC? Dann dort bestätigen. Wenn nicht, am PC abbrechen.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            ProgressView("Bitte am PC bestätigen")
-            Spacer()
-        }.padding(24)
+        ScrollView {
+            VStack(spacing: 20) {
+                Text("Vergleichscode").font(.headline)
+                Text(sas.prefix(3) + " " + sas.suffix(3))
+                    .font(.system(size: sasSize, weight: .semibold, design: .monospaced))
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .accessibilityLabel(sas.map(String.init).joined(separator: " "))
+                Text("Steht derselbe Code am PC? Dann dort bestätigen. Wenn nicht, am PC abbrechen.")
+                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                ProgressView("Bitte am PC bestätigen")
+            }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
+        }
     }
 
     private func accountStep(_ email: String) -> some View {
@@ -285,31 +287,31 @@ private struct PairingSheet: View {
     }
 
     private func doneStep(_ email: String, confirmed: Bool) -> some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(.green)
-            Text("Verbunden").font(.title2.weight(.semibold))
-            Text("Angemeldet als \(email). Das iPhone gleicht jetzt ab.")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            if !confirmed {
-                Text("Der PC hat die Bestätigung nicht erhalten und zeigt vielleicht eine Warnung. Das iPhone bleibt trotzdem angemeldet.")
-                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Fertig") { flow.close() }.buttonStyle(.borderedProminent)
-        }.padding(24)
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "checkmark.circle.fill").font(.largeTitle).imageScale(.large).foregroundStyle(.green)
+                Text("Verbunden").font(.title2.weight(.semibold))
+                Text("Angemeldet als \(email). Das iPhone gleicht jetzt ab.")
+                    .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                if !confirmed {
+                    Text("Ob die Bestätigung am PC angekommen ist, ist unklar. Er zeigt vielleicht eine Warnung. Das iPhone bleibt angemeldet.")
+                        .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                }
+                Button("Fertig") { flow.close() }.buttonStyle(.borderedProminent).padding(.top, 24)
+            }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
+        }
     }
 
     private func failedStep(_ message: String) -> some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 48)).foregroundStyle(.orange)
-            Text(message).multilineTextAlignment(.center)
-            Text("Die Anmeldung mit Passwort bleibt in „Konto & Sync“ möglich.")
-                .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Spacer()
-            Button("Neuen Code scannen") { flow.startScan() }.buttonStyle(.borderedProminent)
-        }.padding(24)
+        ScrollView {
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle.fill").font(.largeTitle).imageScale(.large).foregroundStyle(.orange)
+                Text(message).multilineTextAlignment(.center)
+                Text("Die Anmeldung mit Passwort bleibt in „Konto & Sync“ möglich.")
+                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                Button("Neuen Code scannen") { flow.startScan() }.buttonStyle(.borderedProminent).padding(.top, 24)
+            }.padding(.horizontal, 24).padding(.vertical, 80).frame(maxWidth: .infinity)
+        }
     }
 }
 

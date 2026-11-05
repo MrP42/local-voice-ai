@@ -102,8 +102,10 @@ public enum PairingProto {
     }
 
     public static func sessionKey(z: [UInt8], q: [UInt8], desktopPublic: [UInt8], phonePublic: [UInt8], id: String) -> [UInt8] {
-        HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: z), salt: q + desktopPublic + phonePublic,
-                               info: text("LV-PAIR-KEY-v2") + text(id), outputByteCount: 32)
+        var salt = q + desktopPublic + phonePublic
+        defer { for index in salt.indices { salt[index] = 0 } }
+        return HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: z), salt: salt,
+                                      info: text("LV-PAIR-KEY-v2") + text(id), outputByteCount: 32)
             .withUnsafeBytes { Array($0) }
     }
 
@@ -125,12 +127,42 @@ public enum PairingProto {
     }
 }
 
+/// Flüchtiges Geheimnis mit Löschpfad (Spec 5a.8). Eigener Speicher, weil ein `[UInt8]` beim
+/// Überschreiben kopiert werden kann. `p_sk` löscht CryptoKit selbst, wenn die Session endet.
+public final class PairingSecret: @unchecked Sendable, Equatable {
+    private let lock = NSLock()
+    private let memory: UnsafeMutableBufferPointer<UInt8>
+
+    init(_ bytes: [UInt8]) {
+        memory = .allocate(capacity: bytes.count)
+        _ = memory.initialize(from: bytes)
+    }
+
+    deinit {
+        wipe()
+        memory.deallocate()
+    }
+
+    /// Das Array gilt nur innerhalb von `body` und wird danach genullt.
+    public func use<T>(_ body: ([UInt8]) throws -> T) rethrows -> T {
+        var copy = lock.withLock { Array(memory) }
+        defer { for index in copy.indices { copy[index] = 0 } }
+        return try body(copy)
+    }
+
+    public func wipe() {
+        lock.withLock { memory.update(repeating: 0) }
+    }
+
+    public static func == (a: PairingSecret, b: PairingSecret) -> Bool { a === b }
+}
+
 /// Inhalt des QR-Codes. `q` und `d_pk` kennt der Hub nicht.
 public struct PairingCode: Equatable, Sendable {
     public let hub: String
     public let id: String
     public let secret: String
-    public let q: [UInt8]
+    public let q: PairingSecret
     public let desktopPublic: [UInt8]
 
     /// Adresse für die Anzeige, damit ein fremder Server auffällt.
@@ -151,12 +183,13 @@ public struct PairingCode: Equatable, Sendable {
         guard version == "2" else { throw PairingError.outdatedCode }
         guard let rawHub = values["h"], let id = values["p"], PairingProto.validPairId(id),
               let secret = values["s"], PairingProto.b64u32(secret) != nil,
-              let q = values["q"].flatMap(PairingProto.b64u32),
+              var q = values["q"].flatMap(PairingProto.b64u32),
               let key = values["k"].flatMap(PairingProto.b64u32) else { throw PairingError.invalidCode }
         self.hub = try Self.hubBase(rawHub, allowLocalHTTP: allowLocalHTTP)
         self.id = id
         self.secret = secret
-        self.q = q
+        self.q = PairingSecret(q)
+        for index in q.indices { q[index] = 0 }
         self.desktopPublic = key
     }
 
@@ -244,19 +277,27 @@ public struct PairingSession: Sendable {
     }
 
     /// `adopt` speichert das Konto. Erst danach geht die Bestätigung an den Hub.
-    /// Rückgabe: ob die Bestätigung angekommen ist. Ohne sie warnt der PC, das Konto steht trotzdem.
+    /// Rückgabe: ob die Bestätigung sicher angekommen ist. Sonst ist sie unklar, das Konto steht trotzdem.
     @discardableResult
     public func run(stage: @escaping @Sendable (PairingStage) async -> Void,
                     adopt: @Sendable (PairedAccount) async throws -> Void) async throws -> Bool {
+        defer { code.q.wipe() }  // bei Erfolg, Fehler und Abbruch
         let phonePublic = [UInt8](phoneKey.publicKey.rawRepresentation)
         await stage(.claiming)
-        let poll = try await claim(phonePublic)
+        let (poll, expires) = try await claim(phonePublic)
         await stage(.waitingForDesktop)
 
         var desktopNonce: [UInt8]?
         var revealTries = 0
         var lostContact = false
-        let deadline = now().addingTimeInterval(Self.maxSeconds)
+        let started = now()
+        // Frist des Hubs. Liegt sie schon zurück, geht die Uhr hier falsch: dann gilt nur die Obergrenze.
+        let limit = started.addingTimeInterval(Self.maxSeconds)
+        let deadline = expires.flatMap { $0 > started ? min($0, limit) : nil } ?? limit
+        func wait() async throws {
+            let left = deadline.timeIntervalSince(now())
+            try await pause(min(Self.pollNanos, UInt64(max(0, left) * 1_000_000_000)))
+        }
         for _ in 0..<Self.maxPolls {
             try Task.checkCancellation()
             if now() > deadline { break }
@@ -267,7 +308,7 @@ public struct PairingSession: Sendable {
                 throw CancellationError()
             } catch {
                 lostContact = true
-                try await pause(Self.pollNanos)
+                try await wait()
                 continue
             }
             lostContact = false
@@ -290,6 +331,7 @@ public struct PairingSession: Sendable {
                     }
                 case "ok":
                     guard revealTries > 0 else { throw PairingError.badResponse }
+                    guard now() <= deadline else { throw PairingError.expired }
                     await stage(.opening)
                     return try await finish(json, phonePublic: phonePublic, poll: poll, adopt: adopt)
                 case "waiting":
@@ -308,14 +350,14 @@ public struct PairingSession: Sendable {
             default:
                 throw PairingError.badResponse
             }
-            try await pause(Self.pollNanos)
+            try await wait()
         }
         throw lostContact ? PairingError.offline : PairingError.timedOut
     }
 
-    private func claim(_ phonePublic: [UInt8]) async throws -> String {
+    private func claim(_ phonePublic: [UInt8]) async throws -> (poll: String, expires: Date?) {
         let commitment = PairingProto.commitment(id: code.id, phonePublic: phonePublic, phoneNonce: phoneNonce, name: name)
-        let mac = PairingProto.claimMac(q: code.q, id: code.id, commitment: commitment)
+        let mac = code.q.use { PairingProto.claimMac(q: $0, id: code.id, commitment: commitment) }
         let answer: (Int, Data)
         do {
             answer = try await transport.post("/api/v1/voice/pair/claim", body: [
@@ -331,7 +373,7 @@ public struct PairingSession: Sendable {
         case 200:
             guard let json = (try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any],
                   let poll = json["poll_token"] as? String, !poll.isEmpty else { throw PairingError.badResponse }
-            return poll
+            return (poll, (json["expires_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) })
         case 410: throw PairingError.expired
         case 400:
             let error = ((try? JSONSerialization.jsonObject(with: answer.1)) as? [String: Any])?["error"] as? [String: Any]
@@ -373,7 +415,7 @@ public struct PairingSession: Sendable {
         }
         var z = try PairingProto.shared(phoneKey, desktopPublic: code.desktopPublic)
         defer { Self.wipe(&z) }
-        var s = PairingProto.sessionKey(z: z, q: code.q, desktopPublic: code.desktopPublic, phonePublic: phonePublic, id: code.id)
+        var s = code.q.use { PairingProto.sessionKey(z: z, q: $0, desktopPublic: code.desktopPublic, phonePublic: phonePublic, id: code.id) }
         defer { Self.wipe(&s) }
         var plain = try PairingProto.open(sealed: sealed, s: s, aad: PairingProto.sealAAD(id: code.id, desktopPublic: code.desktopPublic, phonePublic: phonePublic))
         defer { Self.wipe(&plain) }
@@ -396,17 +438,12 @@ public struct PairingSession: Sendable {
     }
 
     private func confirm(_ tag: String, poll: String) async -> Bool {
-        var unclear = false
+        // Nur 200 ist eine Bestätigung. 410 nach einem verlorenen Versuch kann beides heißen.
         for attempt in 0..<Self.confirmTries {
             if attempt > 0 { try? await pause(Self.pollNanos) }
-            guard let answer = try? await transport.post("/api/v1/voice/pair/\(code.id)/confirm", body: ["confirm": tag], pollToken: poll) else {
-                unclear = true
-                continue
-            }
+            guard let answer = try? await transport.post("/api/v1/voice/pair/\(code.id)/confirm", body: ["confirm": tag], pollToken: poll) else { continue }
             if answer.0 == 200 { return true }
-            if answer.0 == 410 { return unclear }  // Antwort ging verloren, der Hub hat sie schon
-            if answer.0 == 429 || answer.0 >= 500 { unclear = true; continue }
-            return false
+            if answer.0 != 429 && answer.0 < 500 { return false }
         }
         return false
     }

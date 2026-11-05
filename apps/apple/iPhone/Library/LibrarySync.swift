@@ -6,6 +6,15 @@ import Security
 /// Abgleich der Bibliothek mit dem Hub (Epic #210, P6), nach
 /// docs/superpowers/specs/2026-11-02-bibliothek-sync.md. Gleiches Konto und
 /// gleicher Schlüssel wie die Desktop-App; der Server sieht nur Chiffrat.
+/// Anfragen an den Hub folgen keiner Umleitung: Sonst gingen Token, Schlüsseldaten oder der
+/// Kopplungs-Claim an einen Server, den niemand bestätigt hat. Die 3xx-Antwort gilt als Fehler.
+final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    static let shared = NoRedirects()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? { nil }
+}
+
 @MainActor
 final class LibrarySync: ObservableObject {
     static let shared = LibrarySync()
@@ -584,7 +593,7 @@ final class LibrarySync: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body { req.httpBody = body; req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req, delegate: NoRedirects.shared)
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
     }
 

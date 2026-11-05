@@ -51,6 +51,7 @@ private actor FakeHub: PairingTransport {
     var claimStatus = 200
     var revealStatus = 200
     var fakeEmail: String?
+    var expiresAt: String?
     func set(_ change: @Sendable (isolated FakeHub) -> Void) { change(self) }
 
     var code: PairingCode {
@@ -71,7 +72,7 @@ private actor FakeHub: PairingTransport {
             let mac = PairingProto.claimMac(q: q, id: id, commitment: commitment)
             guard PairingProto.b64u(mac) == body["phone_mac"] else { return (400, Data()) }
             status = "challenged"
-            return (200, Data(#"{"poll_token":"poll","expires_at":1}"#.utf8))
+            return (200, Data(#"{"poll_token":"poll","expires_at":"\#(expiresAt ?? "2099-01-01T00:00:00Z")"}"#.utf8))
         }
         XCTAssertEqual(pollToken, "poll")
         if path.hasSuffix("/reveal") {
@@ -240,7 +241,7 @@ final class PairingTests: XCTestCase {
         XCTAssertEqual(code.hub, "https://portal.wolffappliedai.de")
         XCTAssertEqual(code.hubHost, "portal.wolffappliedai.de")
         XCTAssertEqual(code.id, "AAECAwQFBgcICQoLDA0ODw")
-        XCTAssertEqual(code.q, [UInt8](repeating: 2, count: 32))
+        code.q.use { XCTAssertEqual($0, [UInt8](repeating: 2, count: 32)) }
     }
 
     func testCodeOnlyAcceptsHttps() throws {
@@ -391,11 +392,40 @@ final class PairingTests: XCTestCase {
         await assertFails(hub, .commitmentFailed)
     }
 
-    func testLostConfirmAnswerThen410CountsAsConfirmed() async throws {
+    func testConfirmAfterLostAnswerStaysUnclear() async throws {
         let hub = FakeHub()
         await hub.set { $0.confirmAnswerLost = true }
         let confirmed = try await run(hub)
-        XCTAssertTrue(confirmed)
+        XCTAssertFalse(confirmed, "nur 200 ist eine Bestätigung")
+    }
+
+    func testSecretIsWipedAfterRun() async throws {
+        let hub = FakeHub()
+        let code = try await hub.code
+        let session = PairingSession(code: code, name: "iPhone", transport: hub, pause: { _ in })
+        _ = try await session.run(stage: { _ in }, adopt: { _ in })
+        code.q.use { XCTAssertEqual($0, [UInt8](repeating: 0, count: 32)) }
+        let failing = FakeHub()
+        await failing.set { $0.claimFails = true }
+        let other = try await failing.code
+        _ = try? await PairingSession(code: other, name: "iPhone", transport: failing, pause: { _ in }).run(stage: { _ in }, adopt: { _ in })
+        other.q.use { XCTAssertEqual($0, [UInt8](repeating: 0, count: 32)) }
+    }
+
+    func testHubExpiryLimitsWaitingAndAdopt() async throws {
+        let hub = FakeHub()
+        let start = Date()
+        await hub.set { $0.expiresAt = ISO8601DateFormatter().string(from: start.addingTimeInterval(45)) }  // läuft genau zwischen Abfrage und Abholung ab
+        let tick = Ticker()
+        let recorder = Recorder()
+        let session = PairingSession(code: try await hub.code, name: "iPhone", transport: hub, pause: { _ in },
+                                     now: { start.addingTimeInterval(tick.next()) })
+        do {
+            _ = try await session.run(stage: { _ in }, adopt: { await recorder.add($0) })
+            XCTFail("hätte scheitern müssen")
+        } catch { XCTAssertEqual(error as? PairingError, .expired) }
+        let adopted = await recorder.adopted
+        XCTAssertTrue(adopted.isEmpty)
     }
 
     func testDeadlineStopsWhenHubIsGone() async throws {

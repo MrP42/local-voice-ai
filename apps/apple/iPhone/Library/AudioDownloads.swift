@@ -431,6 +431,12 @@ final class AudioDownloads: NSObject, ObservableObject, URLSessionDownloadDelega
         }
     }
 
+    /// Wie `NoRedirects`: Das Token geht an keinen anderen Server.
+    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                                newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         MainActor.assumeIsolated { self.eventsFinished = true; self.finishBackgroundEventsIfPossible() }
     }
