@@ -34,133 +34,175 @@ Schlüsselübergabe wie bei Signal/WhatsApp-Gerätekopplung. Wenn später Keyclo
 führt, wird nur Schritt 5 (Token ausstellen) durch einen Device-Grant gegen Keycloak
 ersetzt; QR, ECDH und Oberfläche bleiben.
 
-## 4 · Ablauf (Revision 2 nach Codex 05.11.: Commit/Reveal)
+## 4 · Protokoll v2 (nach Codex- und Opus-Review 05.11.)
 
-Schreibweise: `H` = SHA-256, `‖` = Verkettung der Rohbytes, `b64u` = base64url ohne Padding.
-Alle Zufallswerte 32 Byte aus dem System-CSPRNG.
+### 4.1 Kodierung (verbindlich, Testvektoren in `2026-11-05-geraete-kopplung-qr-vektoren.json`)
+
+- `H` = SHA-256, `HMAC` = HMAC-SHA-256, `‖` = Verkettung von Bytes.
+- `id` (pair_id) geht als **ASCII-Text** (22 Byte, base64url) in alle Hashes ein, nicht dekodiert.
+- Alle übrigen Werte sind 32 Rohbytes; über die Leitung als **kanonisches base64url ohne
+  Padding** (43 Zeichen). Nicht kanonische Werte lehnen Hub und Clients ab.
+- `name` = Gerätename, UTF-8, NFC, 1–60 Zeichen, ohne `\p{C}` (Steuer-, Format-/Bidi-,
+  Nullbreiten-, Privatzeichen), ohne Rand-Leerzeichen. Der Client bereinigt vorher; der Hub
+  lehnt ab statt zu korrigieren, weil der Name in das Commitment eingeht.
+- Alle Labels enden auf `-v2`.
+
+### 4.2 Werte
+
+| Wert | Wer erzeugt | Wer sieht ihn |
+|---|---|---|
+| `secret` (32 B) | Hub | Hub (nur Hash), QR |
+| `q` (32 B) | Desktop | **nur QR**, nie der Hub |
+| `d_sk/d_pk` (X25519) | Desktop | `d_pk` nur im QR |
+| `p_sk/p_pk`, `n_p` (32 B) | iPhone | Hub erst nach Reveal |
+| `n_d` (32 B) | Desktop, erst nach Sicht auf C | Hub, iPhone |
+
+QR-Inhalt: `localvoice://pair?v=2&h=<hub>&p=<id>&s=<secret>&q=<q>&k=<d_pk>`
+
+### 4.3 Ablauf
 
 ```
-Desktop (angemeldet: T_d, K)               Hub                              iPhone
-1  (d_sk, d_pk) ← X25519
-   POST /pair/start {d_pk} ──────────▶  id, secret, Frist 120 s
-                            ◀──────────  {id, secret, expires_at}
-2  QR: localvoice://pair?v=1&h=<hub>&p=<id>&s=<secret>&k=<d_pk>
-                                                               3  (p_sk, p_pk) ← X25519, n_p ← Zufall
-                                                                  C = H("LV-PAIR-COMMIT-v1" ‖ id ‖ p_pk ‖ n_p)
-                                        ◀── POST /pair/claim {id, secret, phone_commit=C, device_name}
-                                        pending → claimed, poll_token ──▶
-4  GET /pair/{id}: claimed, C, Gerätename
-   n_d ← Zufall (erst JETZT, nach Sicht auf C)
+Desktop (angemeldet: T_d, K)                Hub                           iPhone
+1  POST /pair/start {} ─────────────▶   id, secret, Frist 120 s
+   (d_sk,d_pk), q ← Zufall; QR anzeigen
+                                                            2  scannt; (p_sk,p_pk), n_p ← Zufall
+                                                               C   = H("LV-PAIR-COMMIT-v2" ‖ id ‖ p_pk ‖ n_p ‖ len16be(name) ‖ name)
+                                                               mac = HMAC(q, "LV-PAIR-CLAIM-v2" ‖ id ‖ C)
+                                    ◀── POST /pair/claim {id, secret, C, mac, name}
+3  GET /pair/{id} → claimed, C, mac, name
+   prüft mac mit q (sonst Abbruch: „nicht dieses Handy“)
+   hält C UNVERÄNDERLICH fest, n_d ← Zufall
    POST /pair/{id}/challenge {n_d} ──▶  claimed → challenged
-                                        ◀── GET /pair/{id}/result (poll_token): {challenge, n_d}
-                                        ◀── POST /pair/{id}/reveal {p_pk, n_p}
-                                        prüft C (sonst Abbruch), → revealed
-5  GET /pair/{id}: p_pk, n_p
-   prüft C selbst (sonst Abbruch)
-   z = X25519(d_sk, p_pk); z == 0³² → Abbruch                    zeigt SAS, „Bitte am PC bestätigen“
-   SAS = (erste 4 Byte von H("LV-PAIR-SAS-v1" ‖ id ‖ d_pk ‖ p_pk ‖ n_p ‖ n_d), big-endian) mod 10⁶, 6 Ziffern mit führenden Nullen
-   zeigt SAS + Gerätename [Ja, verbinden] [Nein]
-6  Ja: s = HKDF-SHA256(z, salt=d_pk‖p_pk, info="LV-PAIR-KEY-v1"‖id), 32 Byte
-   sealed = nonce24 ‖ XChaCha20-Poly1305(s, {K, email, user_id, key_id}, AAD=id)
-   POST /pair/{id}/approve {sealed} ─▶  revealed → approved (nur Paket, KEIN Token)
-                                        ◀── GET /pair/{id}/result
-                                        approved → done UND Token T_p anlegen
-                                        in einer Transaktion; Klartext nur in
-                                        dieser Antwort ──▶ {T_p, sealed, user}
-                                                               7  z = X25519(p_sk, d_pk); z == 0³² → Abbruch
-                                                                  s wie oben, öffnet sealed, prüft key_id,
-                                                                  T_p und K in den Schlüsselbund
+                                    ◀── GET result → {challenge, n_d}   iPhone hält n_d fest
+                                    ◀── POST /pair/{id}/reveal {p_pk, n_p}  (genau einmal)
+                                        Hub prüft C → revealed
+4  GET /pair/{id} → p_pk, n_p
+   prüft H(...) == festgehaltenes C, p_pk ≠ d_pk, mac erneut
+   z = X25519(d_sk, p_pk); z == 0³² → Abbruch
+   SAS = u32be(H("LV-PAIR-SAS-v2" ‖ id ‖ d_pk ‖ p_pk ‖ n_p ‖ n_d)[0..4]) mod 10⁶
+   zeigt SAS + „vom Gerät angegeben: name“                  zeigt denselben SAS
+5  Ja: s = HKDF-SHA256(ikm=z, salt=q ‖ d_pk ‖ p_pk, info="LV-PAIR-KEY-v2" ‖ id, 32 B)
+   P = JSON {"v":1,"k":b64u(K),"email":…,"user_id":…,"key_id":hex(H(K)[0..4])}
+   sealed = base64(nonce24 ‖ XChaCha20-Poly1305(s, P, AAD = "LV-PAIR-SEAL-v2" ‖ id ‖ d_pk ‖ p_pk))
+   POST /pair/{id}/approve {sealed} ─▶  revealed → approved (kein Token)
+                                    ◀── GET result → approved → done + Token T_p (eine Transaktion)
+                                        {token, sealed, user}
+                                                            6  z = X25519(p_sk, d_pk); z == 0³² → Abbruch
+                                                               s wie oben (q aus dem QR), öffnet sealed,
+                                                               prüft key_id == hex(H(k)[0..4]) und
+                                                               user_id == result.user.id,
+                                                               T_p und K in den Schlüsselbund
+                                    ◀── POST /pair/{id}/confirm {HMAC(s, "LV-PAIR-CONFIRM-v2" ‖ id)}
+7  GET /pair/{id} → phone_confirm; prüft HMAC mit s
+   erst jetzt „Verbunden“. Falsch/fehlt nach 30 s → Warnung, Gerät abmelden anbieten.
 ```
 
-**Warum Commit/Reveal (Codex-Befund 1):** Ohne Commitment könnte ein bösartiger Hub nach
-dem Claim ein Ersatz-`p_pk'` erzeugen und offline ~10⁶ Varianten durchprobieren, bis der
-6-stellige Code zum echten iPhone-Code passt. Jetzt gilt (Muster RFC 6189 §4.4.1.1, ZRTP):
-- Das iPhone legt sich mit `C` auf `(p_pk, n_p)` fest, **bevor** es `n_d` kennt.
-- Der Desktop erzeugt `n_d` erst, **nachdem** er `C` gesehen hat. Ein Hub, der dem Desktop
-  ein eigenes `C'` gibt, ist damit festgelegt, bevor `n_d` existiert.
-- Ein Hub, der dem iPhone ein falsches `n_d'` gibt, muss es wählen, bevor das iPhone
-  `(p_pk, n_p)` aufdeckt. In beiden Fällen bleibt ihm genau **ein** Versuch, Trefferchance 10⁻⁶.
-- `d_pk` kommt über den QR am Hub vorbei; der Desktop prüft `C` selbst, nicht nur der Hub.
+### 4.4 Warum das hält
 
-**Null-Prüfung (Codex-Befund 2):** Liefert X25519 ein Ergebnis aus 32 Nullbytes (Punkt
-kleiner Ordnung, RFC 7748 §6.1), brechen beide Seiten **vor** HKDF ab. Rust:
-`x25519_dalek::SharedSecret::was_contributory()`; Swift: Vergleich der Rohbytes von
-`sharedSecretFromKeyAgreement` mit 32 Nullbytes in konstanter Zeit.
+- **Commit/Reveal (RFC 6189 §4.4.1.1):** Das iPhone legt sich mit `C` fest, bevor `n_d`
+  existiert; der Desktop erzeugt `n_d` erst nach Sicht auf `C` und prüft gegen **sein
+  festgehaltenes** `C`. Ein bösartiger Hub hat damit genau einen Versuch (10⁻⁶).
+- **QR-Geheimnis q:** Der Hub (oder wer nur `secret` kennt) kann sich nicht als iPhone
+  ausgeben: ohne `q` kein gültiges `mac`, kein `s`, kein Öffnen von `sealed`, keine
+  gültige Bestätigung. Ein Angreifer mit **Foto des QR** bleibt durch den Vergleichscode
+  und den sichtbaren Gerätenamen begrenzt.
+- **Null-Prüfung (RFC 7748 §6.1):** beide Seiten vor HKDF; Rust
+  `SharedSecret::was_contributory()`, Swift Vergleich mit 32 Nullbytes in konstanter Zeit.
+- **Reflexion:** Desktop bricht ab, wenn `p_pk == d_pk`.
+- **Schlüsselbestätigung:** Der Desktop meldet „Verbunden“ erst nach gültigem Bestätigungs-HMAC.
 
-## 5 · Zustandsautomat und Token-Lebenszyklus (Codex-Befund 3)
+## 5 · Zustandsautomaten
 
-| Zustand | Erreicht durch | Erlaubte nächste | Token T_p | Sensible Felder im Hub |
+### 5.1 Hub (wai-portal, `VoicePairingService`)
+
+| Zustand | Erreicht durch | Erlaubte nächste | Token T_p | Sensible Felder |
 |---|---|---|---|---|
 | `pending` | start | claimed, rejected, expired | – | secret-Hash |
-| `claimed` | claim (secret ok, atomar) | challenged, rejected, expired | – | + poll_token-Hash, C |
-| `challenged` | challenge (nur Starter-Token) | revealed, rejected, expired | – | + n_d |
-| `revealed` | reveal (C geprüft) | approved, rejected, expired | – | + p_pk, n_p |
-| `approved` | approve (nur Starter-Token, einmal) | done, rejected, expired | – | + sealed (Chiffrat) |
-| `done` | result (einmal, Transaktion) | – | **angelegt** | sealed und poll_token-Hash gelöscht |
+| `claimed` | claim (secret ok) | challenged, rejected, expired | – | + poll-Hash, C, mac, name |
+| `challenged` | challenge (Starter-Token, einmal) | revealed, rejected, expired | – | + n_d |
+| `revealed` | reveal (C geprüft, einmal) | approved, rejected, expired | – | + p_pk, n_p |
+| `approved` | approve (Starter-Token, einmal) | done, rejected, expired | – | + sealed |
+| `done` | result (einmal, Transaktion) | (confirm) | **angelegt** | sealed gelöscht; poll-Hash bis confirm |
 | `rejected` | reject | – | – | sealed gelöscht |
-| `expired` | Frist, 3 Fehlversuche, Commitment falsch, neuer Start | – | widerrufen, falls je vermerkt | sealed und poll_token-Hash gelöscht |
+| `expired` | Frist, 3 Fehlversuche, C falsch, neuer Start | – | – | sealed, poll-Hash gelöscht |
 
-Regeln:
-1. Jeder Übergang ist ein bedingtes `UPDATE … WHERE status = <erwartet>`; der Verlierer
-   eines Wettlaufs bekommt 409/410.
-2. **T_p entsteht erst beim Abholen** im selben Datenbankvorgang wie `approved → done`.
-   Zwischen Bestätigung und Abholung existiert kein Token, das ablaufen oder liegen
-   bleiben könnte. Der Klartext steht nur in der einen HTTP-Antwort, im Hub nur der
-   SHA-256-Hash (`api_tokens`).
-3. Verfällt eine Kopplung, die je ein Token vermerkt hat, wird es **widerrufen**
-   (`revoked_at`), nicht gelöscht.
-4. Widerruf wirkt sofort: `ApiTokenService::verify` liest bei jedem Aufruf aus der
-   Datenbank, es gibt keinen Auth-Cache.
-5. Auf den Geräten liegen T_p und K im Schlüsselbund (iOS Keychain,
-   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`).
-6. Grenze: Geht die Antwort von Schritt 6 verloren, existiert T_p ungenutzt. Es
-   erscheint in „Verbundene Geräte“ und kann dort abgemeldet werden.
+Regeln: jeder Übergang ist `UPDATE … WHERE status = <von> AND expires_ts >= jetzt`;
+der Verlierer erhält 409/410. `reject` nach `done` antwortet **409 mit `status: done`**,
+der Desktop bietet dann „Gerät abmelden“ an. Der Token-Klartext steht nur in der einen
+Antwort, im Hub nur sein Hash. Widerruf wirkt sofort (kein Auth-Cache, `verify` je Aufruf).
+`done`-Zeilen bleiben ohne Geheimnisse erhalten (Herkunft in der Geräteliste);
+`rejected/expired` werden nach einem Tag gelegentlich aufgeräumt.
 
-Tests (wai-portal `tests/cases/55_voice_sync_pairing_test.php`): voller Ablauf mit
-Audit-Spur, einmaliger Claim, 3 Fehlversuche, approve vor reveal (409), approve doppelt
-(409), Ablauf nach Bestätigung ohne Token, getauschtes p_pk (Commitment-Abbruch),
-reveal vor challenge, Ablehnung, fremdes Gerät/Konto, Drosselung, Geräteliste/Widerruf.
+### 5.2 Desktop (P3, Rust `sync/pairing.rs`)
+
+| Zustand | Ereignis | Aktion | Nächster |
+|---|---|---|---|
+| Start | Knopf | `start`, Schlüssel + q erzeugen, QR | WarteAufScan |
+| WarteAufScan | Status `claimed` | mac mit q prüfen → falsch: Abbruch. C **einmalig speichern**, n_d erzeugen, `challenge` | WarteAufReveal |
+| WarteAufReveal | Status `revealed` | C gegen gespeichertes C, `p_pk ≠ d_pk`, Nullprüfung, SAS **einmal** berechnen | ZeigeSAS |
+| WarteAufReveal | `phone_commit` ≠ gespeichertes C | Abbruch, Warnung | Abbruch |
+| ZeigeSAS | Ja | `sealed` bauen, `approve` | WarteAufBestätigung |
+| ZeigeSAS | Nein | `reject` | Ende |
+| WarteAufBestätigung | `phone_confirm` gültig | „Verbunden“ | Ende |
+| WarteAufBestätigung | ungültig / 30 s nichts | Warnung, „Gerät abmelden“ anbieten | Ende |
+| jeder Zustand ab `challenge` | jeder Fehler, 409, Zeitablauf | Kopplung beenden, **kein** neues n_d | Abbruch |
+
+### 5.3 iPhone (P4, Swift)
+
+| Zustand | Ereignis | Aktion | Nächster |
+|---|---|---|---|
+| Scan | QR gelesen, v=2 | Schlüssel, n_p, C, mac; `claim` | WarteAufChallenge |
+| WarteAufChallenge | `challenge` mit n_d | n_d **einmalig speichern**, `reveal` (genau einmal), SAS **einmal** berechnen | ZeigeSAS |
+| ZeigeSAS | weitere/abweichende `challenge` | Abbruch, Warnung | Abbruch |
+| ZeigeSAS | Ergebnis `ok` | Nullprüfung, s, öffnen, key_id + user_id prüfen, Schlüsselbund, `confirm` | Verbunden |
+| ZeigeSAS | 403 rejected | „Am PC abgelehnt“ | Ende |
+| jeder | 410 | „Code abgelaufen oder schon verwendet“ | Ende |
+| jeder | Netzfehler | Wiederholen nur für Abfragen; `reveal` nie wiederholen mit anderen Werten | – |
+
+Tests für 5.2/5.3 entstehen mit P3/P4 gegen die Testvektoren.
 
 ## 5a · Sicherheitsregeln
 
 1. Im QR steht **kein** Passwort, **kein** Token und **nicht** `K`.
-2. `secret` = 32 Byte Zufall, im Hub nur als SHA-256 gespeichert, Vergleich in konstanter Zeit.
-3. Frist **120 s** ab Start für den gesamten Ablauf.
-4. **Einmalig:** genau ein `claim`, ein `challenge`, ein `reveal`, ein `approve`, ein Abholen.
-5. Sehen, challenge, approve und reject nur mit dem Token, das die Kopplung gestartet hat.
+2. `secret` und `q` je 32 Byte Zufall; `secret` im Hub nur als SHA-256; `q` nie beim Hub.
+3. Frist **120 s** ab Start für den gesamten Ablauf; Restzeit aus `server_time`/`expires_at`.
+4. **Einmalig:** claim, challenge, reveal, approve, Abholen, confirm.
+5. Sehen, challenge, approve, reject nur mit dem Starter-Token; Kopplung und Geräteliste
+   verlangen `voice.sync` **explizit** (ein Agenten-Token mit `*` genügt nicht).
 6. Je Konto höchstens **eine** offene Kopplung; ein neuer Start verwirft die alte.
-7. Drosselung: `claim` je IP 10/15 min; nach 3 falschen Geheimnissen wird die Kopplung verworfen.
-   Unbekannt, abgelaufen, verwendet und falsches Geheimnis antworten gleich (410).
-8. Flüchtige Schlüssel (`d_sk`, `p_sk`, `z`, `s`) nur im Speicher, nach Abschluss genullt.
-9. Keine Inhalte und keine Geheimnisse im Log.
+7. Offene Routen (claim, reveal, result, confirm): Body ≤ 8 KB; IP-Drosselung claim
+   10/15 min, Abfragen 120/min. Hinter CGNAT kann ein Dritter im selben Netz die Kopplung
+   stören (akzeptiert). Unbekannt, abgelaufen, verwendet und falsches Geheimnis antworten
+   gleich (410).
+8. Flüchtige Schlüssel (`d_sk`, `p_sk`, `z`, `s`, `q`) nur im Speicher, danach genullt.
+9. Keine Inhalte und keine Geheimnisse im Log; Audit nur mit IP-Präfix (/24, /48).
+10. Widerruf eines Geräts widerruft auch alle Geräte, die **über** dieses Gerät gekoppelt
+    wurden (Kette), damit ein abgemeldetes Gerät keinen Zugang über selbst ausgestellte
+    Tokens behält.
+11. Gerätetokens laufen wie Login-Tokens nicht ab (Entscheidung D15); Kontrolle über die
+    Geräteliste.
 
-## 6 · Audit (Hub, `AuditService::log`)
+## 6 · Audit (Hub, `AuditService::log`, Hash-Kette)
 
-| Ereignis | Wann |
-|---|---|
-| `voice_pairing.started` | Desktop startet |
-| `voice_pairing.claimed` | iPhone hat gescannt (Gerätename, IP-Präfix) |
-| `voice_pairing.approved` | Am PC bestätigt (noch kein Token) |
-| `voice_pairing.delivered` | Abgeholt, Token angelegt (Token-ID) |
-| `voice_pairing.rejected` | Am PC abgelehnt |
-| `voice_pairing.expired` | Frist, Fehlversuche, Commitment falsch, neuer Start |
-| `voice_pairing.secret_failed` | Falsches Geheimnis |
-| `api_token.revoked` | Gerät in der Desktop-App abgemeldet |
+`voice_pairing.started`, `.claimed` (Name, IP-Präfix), `.secret_failed` (Zähler, IP-Präfix),
+`.challenged`, `.revealed`, `.approved`, `.delivered` (Token-ID), `.confirmed`,
+`.rejected`, `.expired` (Grund), dazu `api_token.created` / `api_token.revoked`.
 
 ## 7 · Hub-Schnittstelle (wai-portal)
 
 | Methode | Pfad | Auth | Zweck |
 |---|---|---|---|
-| POST | `/api/v1/voice/pair/start` | `voice.sync` | `{desktop_pub}` → `{pair_id, secret, expires_at, ttl}` |
-| POST | `/api/v1/voice/pair/claim` | Geheimnis | `{pairing_id, secret, phone_commit, device_name}` → `{poll_token, expires_at}` |
-| GET | `/api/v1/voice/pair/{id}` | Starter-Token | Status, `device_name`, `phone_commit`, `phone_pub`, `phone_nonce` |
+| POST | `/api/v1/voice/pair/start` | `voice.sync` explizit | `{}` → `{pair_id, secret, expires_at, ttl, server_time}` |
+| POST | `/api/v1/voice/pair/claim` | Geheimnis | `{pairing_id, secret, phone_commit, phone_mac, device_name}` → `{poll_token, expires_at}` |
+| GET | `/api/v1/voice/pair/{id}` | Starter-Token | Status, Name, C, mac, p_pk, n_p, phone_confirm, Zeiten |
 | POST | `/api/v1/voice/pair/{id}/challenge` | Starter-Token | `{desktop_nonce}` |
 | POST | `/api/v1/voice/pair/{id}/reveal` | `X-Pairing-Token` | `{phone_pub, phone_nonce}` |
 | POST | `/api/v1/voice/pair/{id}/approve` | Starter-Token | `{sealed}` (base64, ≤ 4 KB) |
-| POST | `/api/v1/voice/pair/{id}/reject` | Starter-Token | Abbruch |
+| POST | `/api/v1/voice/pair/{id}/reject` | Starter-Token | 200 oder 409 `{status}` |
 | GET | `/api/v1/voice/pair/{id}/result` | `X-Pairing-Token` | 202 waiting · 200 challenge+n_d · 403 rejected · 200 `{token, sealed, user}` einmalig · 410 |
-| GET | `/api/v1/voice/devices` | `voice.sync` | Geräte = Tokens mit `voice.sync`: id, Name, angelegt, zuletzt aktiv, `current`, `via_pairing` |
-| POST | `/api/v1/voice/devices/{id}/revoke` | `voice.sync` | Token widerrufen (nicht das eigene → 409) |
+| POST | `/api/v1/voice/pair/{id}/confirm` | `X-Pairing-Token` | `{confirm}` einmalig |
+| GET | `/api/v1/voice/devices` | `voice.sync` explizit | id, Name, angelegt, zuletzt aktiv, `current`, `via_pairing`, `paired_by` |
+| POST | `/api/v1/voice/devices/{id}/revoke` | `voice.sync` explizit | Widerruf inkl. Kette (nicht das eigene → 409) |
 
 ## 8 · Oberfläche Desktop
 
@@ -169,7 +211,7 @@ Ort: **Einstellungen › Konto & Geräte**, unter der Sync-Karte.
 1. Knopf **„Handy verbinden“** (nur aktiv, wenn angemeldet; sonst Hinweis „Zuerst hier anmelden“).
 2. Dialog Schritt 1: QR (≥ 240 px, hoher Kontrast, auch im Dunkelmodus schwarz auf weiß),
    Anleitung in drei Zeilen, Restzeit-Anzeige `1:47`, „Neuen Code“.
-3. Schritt 2: „**iPhone von Patrick** möchte sich mit Ihrem Konto verbinden.“ Vergleichscode
+3. Schritt 2: „**iPhone von Patrick** (vom Gerät angegeben) möchte sich mit Ihrem Konto verbinden.“ Vergleichscode
    groß `482 913`, „Steht derselbe Code auf dem iPhone?“ [**Ja, verbinden**] [Nein, abbrechen].
 4. Schritt 3: „Verbunden. Das iPhone gleicht jetzt ab.“ [Fertig]
 5. Abgelaufen: „Der Code ist abgelaufen.“ [Neuen Code].
@@ -190,6 +232,8 @@ Ort: **Einstellungen › Konto & Geräte**, unter der Sync-Karte.
   Schlüsselrotation bei Verlust oder Kompromittierung ist ein eigenes Folge-Issue
   (Codex 05.11.: Hinweis genügt für #289).
 - Der Desktop muss online und am Hub angemeldet sein.
+- Geht die Antwort mit T_p verloren, existiert T_p ungenutzt; ohne Bestätigung zeigt der
+  Desktop eine Warnung und bietet „Gerät abmelden“ an.
 - Keycloak: Wechsel betrifft nur Token-Ausstellung (Schritt 5) und Geräteliste.
 
 ## 11 · Umsetzung

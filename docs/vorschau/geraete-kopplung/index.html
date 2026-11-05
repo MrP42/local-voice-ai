@@ -146,7 +146,7 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
   <div class="stage s-bestaetigen">
    <h3>Gerät bestätigen</h3>
    <div class="devbox"><div class="ico" aria-hidden="true" style="background:transparent"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5.5" y="1.75" width="9" height="16.5" rx="2"/><path d="M8.5 15.5h3"/></svg></div>
-    <div><b>iPhone von Patrick</b> möchte sich mit Ihrem Konto verbinden.<div class="small muted">Gerade gescannt</div></div></div>
+    <div><b>iPhone von Patrick</b> möchte sich mit Ihrem Konto verbinden.<div class="small muted">Name vom Gerät angegeben · gerade gescannt</div></div></div>
    <div class="sas" aria-label="Vergleichscode 4 8 2 9 1 3">482 913</div>
    <p style="margin:0 0 8px"><b>Steht derselbe Code auf dem iPhone?</b></p>
    <p class="muted small" style="margin:0">Nur bestätigen, wenn Sie das Handy selbst in der Hand halten. Stimmt der Code nicht, hat womöglich jemand anderes den QR-Code gescannt.</p>
@@ -156,7 +156,7 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
   <div class="stage s-verbunden center">
    <div class="big-ok" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 10.5l4 4 8-9"/></svg></div>
    <h3>Verbunden</h3>
-   <p class="muted" style="margin:0">„iPhone von Patrick“ ist mit Ihrem Konto verbunden und gleicht jetzt ab.<br>Sie finden es unter „Verbundene Geräte“.</p>
+   <p class="muted" style="margin:0">„iPhone von Patrick“ hat den Schlüssel erhalten und bestätigt. Es gleicht jetzt ab.<br>Sie finden es unter „Verbundene Geräte“.</p>
    <div class="foot" style="justify-content:center"><button class="btn primary" onclick="go('liste')">Fertig</button></div>
   </div>
   <!-- Abgelaufen -->
@@ -178,7 +178,7 @@ body[data-s=qr] .scrim,body[data-s=bestaetigen] .scrim,body[data-s=verbunden] .s
   <div class="stage s-abgebrochen">
    <button class="close" aria-label="Schließen" onclick="go('liste')">✕</button>
    <h3>Verbindung abgebrochen</h3>
-   <div class="warnbox" role="alert" style="margin:16px 0"><span aria-hidden="true">⚠</span><span>Die Antwort des Handys passte nicht zum gescannten Code. Aus Sicherheitsgründen wurde nichts übertragen.</span></div>
+   <div class="warnbox" role="alert" style="margin:16px 0"><span aria-hidden="true">⚠</span><span>Die Antwort passte nicht zum angezeigten Code oder kam nicht von dem Handy, das ihn gescannt hat. Aus Sicherheitsgründen wurde nichts übertragen.</span></div>
    <p class="muted small">Zeigen Sie einen neuen Code an und scannen Sie ihn direkt am PC. Passiert das wiederholt, verbinden Sie das Handy in einem anderen Netz.</p>
    <div class="foot"><button class="btn" onclick="go('liste')">Schließen</button><button class="btn primary" onclick="go('qr')">Neuen Code</button></div>
   </div>

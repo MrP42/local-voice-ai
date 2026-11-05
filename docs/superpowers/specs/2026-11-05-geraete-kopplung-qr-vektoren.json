@@ -1,0 +1,29 @@
+{
+    "hinweis": "Protokoll v2, local-voice-ai#289. Strings sind base64url ohne Padding, ausser sealed (base64 Standard). pair_id geht als ASCII-Text (22 Byte) in alle Hashes ein.",
+    "eingaben": {
+        "pair_id": "AAECAwQFBgcICQoLDA0ODw",
+        "secret": "oaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2-v8A",
+        "q": "gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A",
+        "d_sk": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+        "p_sk": "ISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-P0A",
+        "n_p": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2A",
+        "n_d": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4A",
+        "device_name": "iPhone von Patrick",
+        "K": "wcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3-A",
+        "seal_nonce": "0NHS09TV1tfY2drb3N3e3-Dh4uPk5ebn"
+    },
+    "ergebnisse": {
+        "d_pk": "B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9_AsrhtHHw",
+        "p_pk": "WGmv9FBUlzLLqu1eXfmzCm2jHLDldCutWtShp2jxpns",
+        "phone_commit": "5Xp3DO_KJj_3Uxw0MRrZtS_K39ON1jUDC5XUIPYTZfo",
+        "phone_mac": "HzCFmlHIM6eJD7_bzlENBx0xodBBLr3SPuPSgzqxEGQ",
+        "z": "qE3Hw8jwWLGy3EzR6bXcCnmH-ItqlWTN4zkfxCEVnnc",
+        "s": "uoH6niXxuJrGWqkT-nw77KEtCh9MGL2LRRXzPJcxrfw",
+        "sas": "303394",
+        "key_id": "5e6ff0b5",
+        "plaintext": "{\"v\":1,\"k\":\"wcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3-A\",\"email\":\"patrick@example.org\",\"user_id\":42,\"key_id\":\"5e6ff0b5\"}",
+        "aad": "TFYtUEFJUi1TRUFMLXYyQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdwejfLwUIJPIt1XcGxDobLQmN0rRaqhT7QvfwLK4bRx8WGmv9FBUlzLLqu1eXfmzCm2jHLDldCutWtShp2jxpns",
+        "sealed": "0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebncLFdsWjpYY3IxMaDLutxlPNi04QXtnT7QJdy/LU3CFOnLQwuKVs0bIlpSx4MXDLikaSJ4lsz/1ZCRX6qQsv1dmQHI/0bn/jWc4edD0/0XP4gpkcGOPnMTGk+WxVgPiGnBNLMsdcd8BwDJ0LXVCuHcW7LPysIpHS413Nw3almUfGd7Ky54U5YDQ==",
+        "confirm": "V9ESya8YwmhGkQky7BiOM3QF1J2nnrrrXpWQgvrmFN8"
+    }
+}

@@ -1009,8 +1009,8 @@
   },
   {
    "zustand": "abgebrochen",
-   "scrollH": 292,
-   "clientH": 292,
+   "scrollH": 312,
+   "clientH": 312,
    "overflowY": "auto",
    "seiteHorizontal": false
   }
